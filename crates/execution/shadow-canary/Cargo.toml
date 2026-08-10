@@ -23,6 +23,9 @@ reth-node-api.workspace = true
 reth-primitives-traits.workspace = true
 reth-tasks.workspace = true
 
+# alloy
+alloy-consensus.workspace = true
+
 # tokio
 tokio.workspace = true
 

@@ -4,7 +4,7 @@ mod extension;
 pub use extension::{ShadowCanaryConfig, ShadowCanaryExtension};
 
 mod exex;
-pub use exex::{run_exex, ShadowCanaryExEx};
+pub use exex::{ShadowBlockRecord, ShadowCanaryExEx, run_exex};
 
 mod writer;
-pub use writer::{spawn_writer, ShadowWriter};
+pub use writer::{ShadowWriter, spawn_writer};

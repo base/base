@@ -1,24 +1,38 @@
+use alloy_consensus::{
+    Transaction, TxReceipt, Typed2718,
+    transaction::{SignerRecoverable, TxHashRef},
+};
+use base_shadow_canary_db::{ShadowBlockRow, ShadowBlockTransactionRow};
 use chrono::Utc;
 use eyre::Result;
 use futures::TryStreamExt;
-use reth_exex::{ExExContext, ExExEvent, ExExNotification};
 use reth_execution_types::Chain;
+use reth_exex::{ExExContext, ExExEvent, ExExNotification};
 use reth_node_api::FullNodeComponents;
-use reth_primitives_traits::{AlloyBlockHeader, NodePrimitives};
+use reth_primitives_traits::{
+    AlloyBlockHeader, BlockBody, NodePrimitives, RecoveredBlock, SignedTransaction,
+};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
-use base_shadow_canary_db::ShadowBlockRow;
+/// A committed block plus the transactions captured for it.
+#[derive(Debug)]
+pub struct ShadowBlockRecord {
+    /// Block-level shadow canary row.
+    pub block: ShadowBlockRow,
+    /// Per-transaction rows for the block.
+    pub transactions: Vec<ShadowBlockTransactionRow>,
+}
 
 /// Shadow canary `ExEx` handler.
 #[derive(Debug)]
 pub struct ShadowCanaryExEx {
-    tx: mpsc::Sender<ShadowBlockRow>,
+    tx: mpsc::Sender<ShadowBlockRecord>,
 }
 
 impl ShadowCanaryExEx {
     /// Create a new shadow canary `ExEx` handler.
-    pub const fn new(tx: mpsc::Sender<ShadowBlockRow>) -> Self {
+    pub const fn new(tx: mpsc::Sender<ShadowBlockRecord>) -> Self {
         Self { tx }
     }
 
@@ -92,18 +106,15 @@ impl ShadowCanaryExEx {
         reorged_out: bool,
         canonical_hash: Option<String>,
     ) -> Result<ShadowBlockRow> {
-        let number = i64::try_from(header.number()).map_err(|error| {
-            eyre::eyre!("block number overflow for shadow canary row: {error}")
-        })?;
-        let timestamp = i64::try_from(header.timestamp()).map_err(|error| {
-            eyre::eyre!("timestamp overflow for shadow canary row: {error}")
-        })?;
+        let number = i64::try_from(header.number())
+            .map_err(|error| eyre::eyre!("block number overflow for shadow canary row: {error}"))?;
+        let timestamp = i64::try_from(header.timestamp())
+            .map_err(|error| eyre::eyre!("timestamp overflow for shadow canary row: {error}"))?;
         let tx_count = i32::try_from(tx_count).map_err(|error| {
             eyre::eyre!("transaction count overflow for shadow canary row: {error}")
         })?;
-        let gas_used = i64::try_from(header.gas_used()).map_err(|error| {
-            eyre::eyre!("gas used overflow for shadow canary row: {error}")
-        })?;
+        let gas_used = i64::try_from(header.gas_used())
+            .map_err(|error| eyre::eyre!("gas used overflow for shadow canary row: {error}"))?;
         let created_at = Utc::now();
 
         Ok(ShadowBlockRow {
@@ -128,21 +139,98 @@ impl ShadowCanaryExEx {
         })
     }
 
+    fn build_transaction_rows<N>(
+        block: &RecoveredBlock<N::Block>,
+        receipts: &[N::Receipt],
+        reorged_out: bool,
+    ) -> Result<Vec<ShadowBlockTransactionRow>>
+    where
+        N: NodePrimitives,
+        N::SignedTx: SignedTransaction,
+        N::Receipt: TxReceipt,
+    {
+        let header = block.header();
+        let base_fee = header.base_fee_per_gas();
+        let base_fee_per_gas = base_fee
+            .map(i64::try_from)
+            .transpose()
+            .map_err(|error| eyre::eyre!("base fee overflow for shadow canary tx row: {error}"))?;
+        let block_number = i64::try_from(header.number()).map_err(|error| {
+            eyre::eyre!("block number overflow for shadow canary tx row: {error}")
+        })?;
+        let block_hash = block.hash().to_string();
+        let created_at = Utc::now();
+
+        let transactions = block.body().transactions();
+        let mut rows = Vec::with_capacity(transactions.len());
+        let mut previous_cumulative_gas = 0u64;
+
+        for (index, (transaction, receipt)) in transactions.iter().zip(receipts.iter()).enumerate()
+        {
+            let tx_index = i32::try_from(index).map_err(|error| {
+                eyre::eyre!("transaction index overflow for shadow canary tx row: {error}")
+            })?;
+            let cumulative_gas = receipt.cumulative_gas_used();
+            let gas_used = i64::try_from(cumulative_gas.saturating_sub(previous_cumulative_gas))
+                .map_err(|error| {
+                    eyre::eyre!("gas used overflow for shadow canary tx row: {error}")
+                })?;
+            previous_cumulative_gas = cumulative_gas;
+
+            let effective_gas_price = transaction.effective_gas_price(base_fee);
+            let effective_priority_fee_per_gas = Self::effective_priority_fee_per_gas(
+                base_fee,
+                effective_gas_price,
+                transaction.max_priority_fee_per_gas(),
+            );
+
+            rows.push(ShadowBlockTransactionRow {
+                block_number,
+                block_hash: block_hash.clone(),
+                tx_index,
+                tx_hash: transaction.tx_hash().to_string(),
+                sender: transaction.recover_signer().ok().map(|sender| sender.to_string()),
+                tx_type: i16::from(transaction.ty()),
+                effective_priority_fee_per_gas: effective_priority_fee_per_gas
+                    .map(|fee| fee.to_string()),
+                base_fee_per_gas,
+                gas_used,
+                reorged_out,
+                created_at,
+            });
+        }
+
+        Ok(rows)
+    }
+
+    fn effective_priority_fee_per_gas(
+        base_fee_per_gas: Option<u64>,
+        effective_gas_price: u128,
+        max_priority_fee_per_gas: Option<u128>,
+    ) -> Option<u128> {
+        base_fee_per_gas
+            .map(|base_fee| effective_gas_price.saturating_sub(u128::from(base_fee)))
+            .or(max_priority_fee_per_gas)
+    }
+
     async fn handle_chain_committed<N>(&self, chain: &Chain<N>) -> Result<bool>
     where
         N: NodePrimitives,
+        N::SignedTx: SignedTransaction,
+        N::Receipt: TxReceipt,
     {
         for (block, receipts) in chain.blocks_and_receipts() {
             let header = block.header();
-            let row = self.build_row_from_header(
+            let block_row = self.build_row_from_header(
                 header,
                 block.hash().to_string(),
                 receipts.len(),
                 false,
                 None,
             )?;
+            let transactions = Self::build_transaction_rows::<N>(block, receipts, false)?;
 
-            if !self.send_row(row).await? {
+            if !self.send_record(ShadowBlockRecord { block: block_row, transactions }).await? {
                 return Ok(false);
             }
         }
@@ -153,6 +241,8 @@ impl ShadowCanaryExEx {
     async fn handle_chain_reorged<N>(&self, old: &Chain<N>, new: &Chain<N>) -> Result<bool>
     where
         N: NodePrimitives,
+        N::SignedTx: SignedTransaction,
+        N::Receipt: TxReceipt,
     {
         for (block, receipts) in old.blocks_and_receipts() {
             let header = block.header();
@@ -172,30 +262,32 @@ impl ShadowCanaryExEx {
                 );
             }
 
-            let row = self.build_row_from_header(
+            let block_row = self.build_row_from_header(
                 header,
                 block.hash().to_string(),
                 receipts.len(),
                 true,
                 canonical_hash,
             )?;
+            let transactions = Self::build_transaction_rows::<N>(block, receipts, true)?;
 
-            if !self.send_row(row).await? {
+            if !self.send_record(ShadowBlockRecord { block: block_row, transactions }).await? {
                 return Ok(false);
             }
         }
 
         for (block, receipts) in new.blocks_and_receipts() {
             let header = block.header();
-            let row = self.build_row_from_header(
+            let block_row = self.build_row_from_header(
                 header,
                 block.hash().to_string(),
                 receipts.len(),
                 false,
                 None,
             )?;
+            let transactions = Self::build_transaction_rows::<N>(block, receipts, false)?;
 
-            if !self.send_row(row).await? {
+            if !self.send_record(ShadowBlockRecord { block: block_row, transactions }).await? {
                 return Ok(false);
             }
         }
@@ -203,8 +295,8 @@ impl ShadowCanaryExEx {
         Ok(true)
     }
 
-    async fn send_row(&self, row: ShadowBlockRow) -> Result<bool> {
-        match self.tx.send(row).await {
+    async fn send_record(&self, record: ShadowBlockRecord) -> Result<bool> {
+        match self.tx.send(record).await {
             Ok(()) => Ok(true),
             Err(error) => {
                 info!(
@@ -221,7 +313,7 @@ impl ShadowCanaryExEx {
 /// Runs the shadow canary `ExEx` loop.
 pub async fn run_exex<Node>(
     ctx: ExExContext<Node>,
-    tx: mpsc::Sender<ShadowBlockRow>,
+    tx: mpsc::Sender<ShadowBlockRecord>,
 ) -> Result<()>
 where
     Node: FullNodeComponents,
@@ -272,10 +364,10 @@ mod tests {
         Chain::new(blocks, execution_outcome, Default::default())
     }
 
-    fn drain(mut rx: mpsc::Receiver<ShadowBlockRow>) -> Vec<ShadowBlockRow> {
+    fn drain(mut rx: mpsc::Receiver<ShadowBlockRecord>) -> Vec<ShadowBlockRow> {
         let mut rows = Vec::new();
-        while let Ok(row) = rx.try_recv() {
-            rows.push(row);
+        while let Ok(record) = rx.try_recv() {
+            rows.push(record.block);
         }
         rows
     }
@@ -352,5 +444,23 @@ mod tests {
             .find(|row| row.number == 6 && row.reorged_out)
             .expect("old block 6 reorged out");
         assert_eq!(present.canonical_hash, Some(block_hash(6, NEW_CHAIN_VARIANT).to_string()));
+    }
+
+    #[test]
+    fn effective_priority_fee_uses_base_fee_when_present() {
+        let fee = ShadowCanaryExEx::effective_priority_fee_per_gas(Some(7), 20, Some(100));
+        assert_eq!(fee, Some(13), "tip = effective_gas_price - base_fee");
+    }
+
+    #[test]
+    fn effective_priority_fee_saturates_below_base_fee() {
+        let fee = ShadowCanaryExEx::effective_priority_fee_per_gas(Some(50), 20, Some(100));
+        assert_eq!(fee, Some(0), "effective price below base fee saturates to zero");
+    }
+
+    #[test]
+    fn effective_priority_fee_falls_back_to_max_priority_without_base_fee() {
+        let fee = ShadowCanaryExEx::effective_priority_fee_per_gas(None, 20, Some(100));
+        assert_eq!(fee, Some(100), "without base fee, fall back to max priority fee");
     }
 }

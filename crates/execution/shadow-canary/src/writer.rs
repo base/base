@@ -1,12 +1,17 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
+use base_shadow_canary_db::{
+    ShadowBlockRepo, ShadowBlockRow, ShadowBlockTransactionRow, ShadowDbConfig,
+};
 use reth_tasks::TaskExecutor;
-use tokio::sync::mpsc;
-use tokio::time::{MissedTickBehavior, interval, sleep};
+use tokio::{
+    sync::mpsc,
+    time::{MissedTickBehavior, interval, sleep},
+};
 use tracing::{error, info};
 
-use base_shadow_canary_db::{ShadowBlockRepo, ShadowBlockRow, ShadowDbConfig};
+use crate::ShadowBlockRecord;
 
 const BATCH_SIZE: usize = 100;
 const FLUSH_INTERVAL: Duration = Duration::from_secs(1);
@@ -17,6 +22,10 @@ const RETRY_BACKOFF: Duration = Duration::from_millis(200);
 #[async_trait]
 trait BlockInserter: Send + Sync {
     async fn insert_batch(&self, rows: &[ShadowBlockRow]) -> anyhow::Result<usize>;
+    async fn insert_transactions_batch(
+        &self,
+        rows: &[ShadowBlockTransactionRow],
+    ) -> anyhow::Result<usize>;
 }
 
 #[async_trait]
@@ -24,12 +33,19 @@ impl BlockInserter for ShadowBlockRepo {
     async fn insert_batch(&self, rows: &[ShadowBlockRow]) -> anyhow::Result<usize> {
         Self::insert_batch(self, rows).await
     }
+
+    async fn insert_transactions_batch(
+        &self,
+        rows: &[ShadowBlockTransactionRow],
+    ) -> anyhow::Result<usize> {
+        Self::insert_transactions_batch(self, rows).await
+    }
 }
 
 /// Shadow canary writer task.
 #[derive(Debug)]
 pub struct ShadowWriter {
-    rx: mpsc::Receiver<ShadowBlockRow>,
+    rx: mpsc::Receiver<ShadowBlockRecord>,
     db_config: ShadowDbConfig,
     builder_version: String,
 }
@@ -38,7 +54,7 @@ impl ShadowWriter {
     /// Spawns the writer task on the provided executor.
     pub fn spawn(
         executor: TaskExecutor,
-        rx: mpsc::Receiver<ShadowBlockRow>,
+        rx: mpsc::Receiver<ShadowBlockRecord>,
         db_config: ShadowDbConfig,
         builder_version: String,
     ) {
@@ -65,38 +81,46 @@ impl ShadowWriter {
         let repo = ShadowBlockRepo::new(pool);
         let mut interval = interval(FLUSH_INTERVAL);
         interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        let mut buffer = Vec::with_capacity(BATCH_SIZE);
+        let mut block_buffer = Vec::with_capacity(BATCH_SIZE);
+        let mut tx_buffer: Vec<ShadowBlockTransactionRow> = Vec::new();
 
         loop {
             tokio::select! {
-                maybe_row = self.rx.recv() => {
-                    match maybe_row {
-                        Some(row) => {
-                            let mut row = row;
-                            self.stamp_row(&mut row);
-                            buffer.push(row);
-                            if buffer.len() >= BATCH_SIZE {
-                                self.flush(&repo, &mut buffer).await;
+                maybe_record = self.rx.recv() => {
+                    match maybe_record {
+                        Some(record) => {
+                            let ShadowBlockRecord { mut block, transactions } = record;
+                            self.stamp_row(&mut block);
+                            block_buffer.push(block);
+                            tx_buffer.extend(transactions);
+                            if block_buffer.len() >= BATCH_SIZE {
+                                self.flush(&repo, &mut block_buffer, &mut tx_buffer).await;
                             }
                         }
                         None => {
-                            if !buffer.is_empty() {
-                                self.flush(&repo, &mut buffer).await;
-                            }
+                            self.flush(&repo, &mut block_buffer, &mut tx_buffer).await;
                             break;
                         }
                     }
                 }
                 _ = interval.tick() => {
-                    if !buffer.is_empty() {
-                        self.flush(&repo, &mut buffer).await;
-                    }
+                    self.flush(&repo, &mut block_buffer, &mut tx_buffer).await;
                 }
             }
         }
     }
 
-    async fn flush(&self, repo: &dyn BlockInserter, buffer: &mut Vec<ShadowBlockRow>) {
+    async fn flush(
+        &self,
+        repo: &dyn BlockInserter,
+        block_buffer: &mut Vec<ShadowBlockRow>,
+        tx_buffer: &mut Vec<ShadowBlockTransactionRow>,
+    ) {
+        self.flush_blocks(repo, block_buffer).await;
+        self.flush_transactions(repo, tx_buffer).await;
+    }
+
+    async fn flush_blocks(&self, repo: &dyn BlockInserter, buffer: &mut Vec<ShadowBlockRow>) {
         if buffer.is_empty() {
             return;
         }
@@ -129,15 +153,65 @@ impl ShadowWriter {
             }
         }
 
-        let (min_number, max_number) = buffer.iter().fold((i64::MAX, i64::MIN), |acc, row| {
-            (acc.0.min(row.number), acc.1.max(row.number))
-        });
+        let (min_number, max_number) = buffer
+            .iter()
+            .fold((i64::MAX, i64::MIN), |acc, row| (acc.0.min(row.number), acc.1.max(row.number)));
         error!(
             target: "base::shadow-canary",
             dropped = buffer.len(),
             min_block_number = min_number,
             max_block_number = max_number,
             "Dropping shadow canary rows after failed retries"
+        );
+        buffer.clear();
+    }
+
+    async fn flush_transactions(
+        &self,
+        repo: &dyn BlockInserter,
+        buffer: &mut Vec<ShadowBlockTransactionRow>,
+    ) {
+        if buffer.is_empty() {
+            return;
+        }
+
+        let batch_size = buffer.len();
+
+        for attempt in 1..=MAX_FLUSH_ATTEMPTS {
+            match repo.insert_transactions_batch(buffer).await {
+                Ok(inserted) => {
+                    info!(
+                        target: "base::shadow-canary",
+                        inserted,
+                        batch_size,
+                        "Inserted shadow canary transaction rows"
+                    );
+                    buffer.clear();
+                    return;
+                }
+                Err(error) => {
+                    error!(
+                        target: "base::shadow-canary",
+                        error = ?error,
+                        batch_size,
+                        "Failed to insert shadow canary transaction rows"
+                    );
+                    if attempt < MAX_FLUSH_ATTEMPTS {
+                        sleep(RETRY_BACKOFF).await;
+                    }
+                }
+            }
+        }
+
+        let (min_number, max_number) = buffer.iter().fold((i64::MAX, i64::MIN), |acc, row| {
+            (acc.0.min(row.block_number), acc.1.max(row.block_number))
+        });
+        error!(
+            target: "base::shadow-canary",
+            dropped = buffer.len(),
+            min_block_number = min_number,
+            max_block_number = max_number,
+            "Dropping shadow canary transaction rows after failed retries"
         );
         buffer.clear();
     }
@@ -150,7 +224,7 @@ impl ShadowWriter {
 /// Spawns the shadow canary writer task.
 pub fn spawn_writer(
     executor: TaskExecutor,
-    rx: mpsc::Receiver<ShadowBlockRow>,
+    rx: mpsc::Receiver<ShadowBlockRecord>,
     db_config: ShadowDbConfig,
     builder_version: String,
 ) {
@@ -162,11 +236,11 @@ mod tests {
     use std::time::Duration;
 
     use anyhow::anyhow;
+    use base_shadow_canary_db::{ShadowBlockRow, ShadowBlockTransactionRow, ShadowDbConfig};
     use chrono::{DateTime, Utc};
     use tokio::sync::mpsc;
 
     use super::{MAX_FLUSH_ATTEMPTS, MockBlockInserter, ShadowWriter};
-    use base_shadow_canary_db::{ShadowBlockRow, ShadowDbConfig};
 
     fn test_writer() -> ShadowWriter {
         let (_tx, rx) = mpsc::channel(1);
@@ -202,8 +276,24 @@ mod tests {
         }
     }
 
+    fn sample_tx_row(block_number: i64) -> ShadowBlockTransactionRow {
+        ShadowBlockTransactionRow {
+            block_number,
+            block_hash: "hash".to_string(),
+            tx_index: 0,
+            tx_hash: "0xtx".to_string(),
+            sender: None,
+            tx_type: 2,
+            effective_priority_fee_per_gas: Some("1000".to_string()),
+            base_fee_per_gas: Some(7),
+            gas_used: 21_000,
+            reorged_out: false,
+            created_at: Utc::now(),
+        }
+    }
+
     #[tokio::test]
-    async fn flush_retries_then_drops_buffer() {
+    async fn flush_blocks_retries_then_drops_buffer() {
         let writer = test_writer();
         let created_at = Utc::now();
         let mut buffer = vec![sample_row(1, created_at)];
@@ -214,12 +304,12 @@ mod tests {
             .times(MAX_FLUSH_ATTEMPTS)
             .returning(|_| Err(anyhow!("insert failed")));
 
-        writer.flush(&repo, &mut buffer).await;
+        writer.flush_blocks(&repo, &mut buffer).await;
         assert!(buffer.is_empty());
     }
 
     #[tokio::test]
-    async fn flush_does_not_mutate_created_at() {
+    async fn flush_blocks_does_not_mutate_created_at() {
         let writer = test_writer();
         let created_at = Utc::now();
         let mut buffer = vec![sample_row(7, created_at)];
@@ -227,15 +317,27 @@ mod tests {
 
         let expected_created_at = created_at;
         let mut repo = MockBlockInserter::new();
-        repo.expect_insert_batch()
-            .times(MAX_FLUSH_ATTEMPTS)
-            .returning(move |rows| {
-                for row in rows {
-                    assert_eq!(row.created_at, expected_created_at);
-                }
-                Err(anyhow!("insert failed"))
-            });
+        repo.expect_insert_batch().times(MAX_FLUSH_ATTEMPTS).returning(move |rows| {
+            for row in rows {
+                assert_eq!(row.created_at, expected_created_at);
+            }
+            Err(anyhow!("insert failed"))
+        });
 
-        writer.flush(&repo, &mut buffer).await;
+        writer.flush_blocks(&repo, &mut buffer).await;
+    }
+
+    #[tokio::test]
+    async fn flush_transactions_retries_then_drops_buffer() {
+        let writer = test_writer();
+        let mut buffer = vec![sample_tx_row(1)];
+
+        let mut repo = MockBlockInserter::new();
+        repo.expect_insert_transactions_batch()
+            .times(MAX_FLUSH_ATTEMPTS)
+            .returning(|_| Err(anyhow!("insert failed")));
+
+        writer.flush_transactions(&repo, &mut buffer).await;
+        assert!(buffer.is_empty());
     }
 }

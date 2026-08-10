@@ -6282,6 +6282,7 @@ dependencies = [
 name = "base-shadow-canary"
 version = "0.0.0"
 dependencies = [
+ "alloy-consensus 2.2.0",
  "alloy-primitives",
  "anyhow",
  "async-trait",
