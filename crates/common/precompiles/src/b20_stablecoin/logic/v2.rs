@@ -357,6 +357,9 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
         if to == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
         }
+        if from == to {
+            return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
+        }
         B20Guards::ensure_seizable(token, from)?;
         // Gate the destination like `mint` gates `MintReceiver`: an unset scope is always-allow, so a
         // treasury need not be allowlisted by default.
@@ -1355,6 +1358,29 @@ mod tests {
         assert_eq!(
             err,
             BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO })
+        );
+    }
+
+    #[test]
+    fn seize_reverts_on_self_seize() {
+        let mut tok = token();
+        fund(&mut tok, ALICE, U256::from(100u64));
+        make_seizable(&mut tok);
+        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
+
+        let err = LOGIC
+            .seize_with_memo(&mut tok, ADMIN, ALICE, ALICE, U256::from(1u64), MEMO)
+            .unwrap_err();
+
+        assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver: ALICE }));
+        assert_eq!(
+            tok.accounting().balance_of(ALICE).unwrap(),
+            U256::from(100u64),
+            "balance unchanged"
+        );
+        assert!(
+            event_sigs(&tok).is_empty(),
+            "no misleading Transfer/Memo/Seized on a rejected self-seize"
         );
     }
 
