@@ -124,13 +124,7 @@ impl ShadowCanaryExEx {
             timestamp,
             tx_count,
             gas_used,
-            // Placeholder until builder metrics are wired for DA bytes.
-            da_bytes: 0,
             state_root: header.state_root().to_string(),
-            build_latency_ms: None,
-            deadline_miss: false,
-            fb_count: None,
-            panicked: false,
             reorged_out,
             canonical_hash,
             // The writer injects the configured builder version before persistence.

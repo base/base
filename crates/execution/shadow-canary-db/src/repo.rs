@@ -24,8 +24,8 @@ impl ShadowBlockRepo {
     ///
     /// Returns an error if the insert fails.
     pub async fn insert_batch(&self, rows: &[ShadowBlockRow]) -> Result<usize> {
-        // 16 columns per row are bound. Postgres caps a single statement at 65_535
-        // bind parameters, so keep chunks below 65_535 / 16 ≈ 4_095 rows.
+        // 11 columns per row are bound. Postgres caps a single statement at 65_535
+        // bind parameters, so keep chunks below 65_535 / 11 ≈ 5_957 rows.
         const CHUNK_SIZE: usize = 4_000;
 
         if rows.is_empty() {
@@ -44,9 +44,8 @@ impl ShadowBlockRepo {
         for chunk in deduped.chunks(CHUNK_SIZE) {
             let mut query_builder: QueryBuilder<'_, Postgres> = QueryBuilder::new(
                 "INSERT INTO shadow_blocks \
-                 (number, hash, parent_hash, timestamp, tx_count, gas_used, da_bytes, \
-                  state_root, build_latency_ms, deadline_miss, fb_count, panicked, \
-                  reorged_out, canonical_hash, builder_version, created_at) ",
+                 (number, hash, parent_hash, timestamp, tx_count, gas_used, \
+                  state_root, reorged_out, canonical_hash, builder_version, created_at) ",
             );
 
             query_builder.push_values(chunk, |mut row, entry| {
@@ -56,12 +55,7 @@ impl ShadowBlockRepo {
                     .push_bind(entry.timestamp)
                     .push_bind(entry.tx_count)
                     .push_bind(entry.gas_used)
-                    .push_bind(entry.da_bytes)
                     .push_bind(&entry.state_root)
-                    .push_bind(entry.build_latency_ms)
-                    .push_bind(entry.deadline_miss)
-                    .push_bind(entry.fb_count)
-                    .push_bind(entry.panicked)
                     .push_bind(entry.reorged_out)
                     .push_bind(&entry.canonical_hash)
                     .push_bind(&entry.builder_version)
@@ -197,12 +191,7 @@ mod tests {
             timestamp: 0,
             tx_count: 0,
             gas_used: 0,
-            da_bytes: 0,
             state_root: "state".to_string(),
-            build_latency_ms: None,
-            deadline_miss: false,
-            fb_count: None,
-            panicked: false,
             reorged_out,
             canonical_hash: None,
             builder_version: String::new(),

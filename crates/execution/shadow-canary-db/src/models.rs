@@ -15,18 +15,8 @@ pub struct ShadowBlockRow {
     pub tx_count: i32,
     /// Total gas used.
     pub gas_used: i64,
-    /// Data availability bytes.
-    pub da_bytes: i64,
     /// State root hash.
     pub state_root: String,
-    /// Build latency in milliseconds.
-    pub build_latency_ms: Option<i64>,
-    /// Whether the block missed its deadline.
-    pub deadline_miss: bool,
-    /// Fallback block count.
-    pub fb_count: Option<i32>,
-    /// Whether the builder panicked.
-    pub panicked: bool,
     /// Whether the block was reorged out.
     pub reorged_out: bool,
     /// Canonical block hash at the same height after reorg.
