@@ -327,6 +327,10 @@ along mechanically.
    land standalone/early since it is independent).
 6. **Transaction validity window** — landed. `expiry` → `valid_after`/
    `valid_before` (ms), replay-id rebinding, span-batch body swap.
+7. **`validateSignature` port** — landed. Native `SignatureVerifier` mirroring
+   `Keystore.validateSignature`/`envelopeDigest`/`replaySafeHash` (typed
+   `SignatureType` envelope over an app digest). Available in the Rust API but
+   deliberately not wired into any execution flow yet.
 
 ---
 
