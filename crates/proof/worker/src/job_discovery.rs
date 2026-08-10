@@ -356,9 +356,14 @@ where
         }
 
         self.proof_generator.shutdown();
-        while let Some(result) = proof_tasks.join_next().await {
-            Self::log_proof_task_join_result(result);
-        }
+        tokio::join!(
+            async {
+                while let Some(result) = proof_tasks.join_next().await {
+                    Self::log_proof_task_join_result(result);
+                }
+            },
+            self.proof_generator.join_shutdown(),
+        );
 
         info!(
             worker_id = %self.config.worker_id,
@@ -622,6 +627,7 @@ mod tests {
             sequence_window: None,
             l1_head: None,
             intermediate_root_interval: None,
+            schedule_l2_block_number: None,
             zk_vm: ZkVm::Sp1,
             zk_backend: ZkBackend::Cluster,
         }

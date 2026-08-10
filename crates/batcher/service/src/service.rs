@@ -30,12 +30,13 @@ use url::Url;
 
 use crate::{
     BatcherConfig, L2BlockParityMonitor, L2BlockParityMonitorConfig, MAX_CHECK_RECENT_TXS_DEPTH,
-    NullL1HeadSubscription, NullSubscription, RecentTxScanner, RpcL1HeadPollingSource,
+    NullL1HeadSubscription, NullSubscription, RecentTxSyncTarget, RpcL1HeadPollingSource,
     RpcL2BlockProvider, RpcPollingSource, RpcThrottleClient, SafeHeadPoller, ShadowParityMonitor,
     ShadowParityMonitorConfig, WsBlockSubscription, WsL1HeadSubscription,
 };
 
 const WEI_PER_ETHER: f64 = 1_000_000_000_000_000_000.0;
+const MAX_SHADOW_PARITY_START_DEPTH: u64 = 128;
 
 /// Service-internal throttle client variant: either a no-op or an RPC client.
 ///
@@ -349,90 +350,59 @@ impl BatcherService {
         ))
     }
 
-    /// Block until the rollup node reports a non-zero sync status, or until
-    /// `timeout` elapses.
+    /// Block until the rollup node has processed `target_l1`, or until `timeout` elapses.
     ///
-    /// Polls `optimism_syncStatus` on `poll_interval` and returns once both
-    /// `current_l1.number` and `unsafe_l2.block_info.number` are non-zero.
-    /// RPC errors are logged and retried with exponential backoff (capped at
-    /// 30 seconds) so a permanently-broken endpoint is not hammered at the
-    /// poll cadence. Returns an error when `timeout` is exceeded so operators
-    /// see an explicit failure rather than a silent hang.
+    /// RPC errors use exponential backoff capped at 30 seconds.
     async fn wait_for_node_sync(
         rollup_client: &HttpClient,
+        target_l1: u64,
         poll_interval: std::time::Duration,
         timeout: std::time::Duration,
     ) -> eyre::Result<()> {
-        // Cap RPC-error backoff so a broken endpoint backs off but eventually
-        // recovers within a reasonable window.
         const MAX_ERROR_BACKOFF: std::time::Duration = std::time::Duration::from_secs(30);
 
         info!(
+            target_l1 = %target_l1,
             timeout_secs = %timeout.as_secs(),
-            "waiting for rollup node to report a non-zero sync status"
+            "waiting for rollup node to process L1 target"
         );
-        let deadline = std::time::Instant::now() + timeout;
-        let mut error_backoff = poll_interval;
-        loop {
-            match rollup_client.sync_status().await {
-                Ok(status)
-                    if status.current_l1.number > 0 && status.unsafe_l2.block_info.number > 0 =>
-                {
-                    info!(
-                        current_l1 = %status.current_l1.number,
-                        unsafe_l2 = %status.unsafe_l2.block_info.number,
-                        safe_l2 = %status.safe_l2.block_info.number,
-                        "rollup node reports sync, proceeding with batcher startup"
-                    );
-                    return Ok(());
-                }
-                Ok(status) => {
-                    // Reset error backoff: the RPC is responsive, the node
-                    // just hasn't produced/derived blocks yet.
-                    error_backoff = poll_interval;
-                    info!(
-                        current_l1 = %status.current_l1.number,
-                        unsafe_l2 = %status.unsafe_l2.block_info.number,
-                        "rollup node not yet synced, waiting"
-                    );
-                    Self::sleep_or_timeout(poll_interval, deadline).await?;
-                }
-                Err(e) => {
-                    warn!(
-                        error = %e,
-                        backoff_secs = %error_backoff.as_secs(),
-                        "optimism_syncStatus RPC failed during wait, backing off"
-                    );
-                    Self::sleep_or_timeout(error_backoff, deadline).await?;
-                    error_backoff = (error_backoff * 2).min(MAX_ERROR_BACKOFF);
+        let wait = async {
+            let mut error_backoff = poll_interval;
+            loop {
+                match rollup_client.sync_status().await {
+                    Ok(status) if status.current_l1.number >= target_l1 => {
+                        info!(
+                            current_l1 = %status.current_l1.number,
+                            unsafe_l2 = %status.unsafe_l2.block_info.number,
+                            safe_l2 = %status.safe_l2.block_info.number,
+                            "rollup node reports sync, proceeding with batcher startup"
+                        );
+                        return;
+                    }
+                    Ok(status) => {
+                        error_backoff = poll_interval;
+                        info!(
+                            target_l1 = %target_l1,
+                            current_l1 = %status.current_l1.number,
+                            "rollup node not yet synced, waiting"
+                        );
+                        tokio::time::sleep(poll_interval).await;
+                    }
+                    Err(error) => {
+                        warn!(
+                            error = %error,
+                            backoff_secs = %error_backoff.as_secs(),
+                            "optimism_syncStatus RPC failed during wait, backing off"
+                        );
+                        tokio::time::sleep(error_backoff).await;
+                        error_backoff = (error_backoff * 2).min(MAX_ERROR_BACKOFF);
+                    }
                 }
             }
-        }
-    }
-
-    /// Sleep for `dur` or until `deadline`, whichever is sooner.
-    ///
-    /// Returns `Err` if the deadline is reached before or during the sleep so
-    /// callers surface a single timeout error rather than silently looping
-    /// past the deadline.
-    async fn sleep_or_timeout(
-        dur: std::time::Duration,
-        deadline: std::time::Instant,
-    ) -> eyre::Result<()> {
-        let now = std::time::Instant::now();
-        if now >= deadline {
-            return Err(eyre::eyre!(
-                "wait_for_node_sync timed out before the rollup node reported a non-zero sync status"
-            ));
-        }
-        let remaining = deadline - now;
-        tokio::time::sleep(dur.min(remaining)).await;
-        if std::time::Instant::now() >= deadline {
-            return Err(eyre::eyre!(
-                "wait_for_node_sync timed out before the rollup node reported a non-zero sync status"
-            ));
-        }
-        Ok(())
+        };
+        tokio::time::timeout(timeout, wait)
+            .await
+            .map_err(|_| eyre::eyre!("wait_for_node_sync timed out"))
     }
 
     /// Initialise all batcher components and return a [`ReadyBatcher`].
@@ -463,6 +433,16 @@ impl BatcherService {
         }
         if self.config.rollup_rpc_url.is_empty() {
             eyre::bail!("at least one rollup RPC endpoint is required");
+        }
+        if self.config.check_recent_txs_depth > MAX_CHECK_RECENT_TXS_DEPTH {
+            eyre::bail!(
+                "check_recent_txs_depth {} exceeds maximum of {}",
+                self.config.check_recent_txs_depth,
+                MAX_CHECK_RECENT_TXS_DEPTH,
+            );
+        }
+        if self.config.check_recent_txs_depth > 0 && !self.config.wait_node_sync {
+            eyre::bail!("check_recent_txs_depth requires wait_node_sync");
         }
 
         let signer_config = self
@@ -549,11 +529,35 @@ impl BatcherService {
             );
         }
 
-        // Optionally block startup until the rollup node reports a non-zero
-        // sync status. Mirrors the reference batcher's `--wait-node-sync`.
+        // Connect to L1 before the optional node-sync gate.
+        let l1_provider: RootProvider =
+            Self::connect_first(&self.config.l1_rpc_url, "l1-rpc", |url| {
+                let url = url.clone();
+                async move {
+                    ProviderBuilder::new().disable_recommended_fillers().connect(url.as_str()).await
+                }
+            })
+            .await?;
+
+        // Recent transactions only select an L1 synchronization target.
+        // They never advance the L2 backfill cursor.
         if self.config.wait_node_sync {
+            let target_l1 = if self.config.check_recent_txs_depth > 0 {
+                RecentTxSyncTarget::find(
+                    &l1_provider,
+                    signer_address,
+                    self.config.check_recent_txs_depth,
+                )
+                .await?
+            } else {
+                l1_provider
+                    .get_block_number()
+                    .await
+                    .map_err(|e| eyre::eyre!("failed to fetch L1 sync target: {e}"))?
+            };
             Self::wait_for_node_sync(
                 &rollup_client,
+                target_l1,
                 self.config.poll_interval,
                 self.config.wait_node_sync_timeout,
             )
@@ -570,26 +574,6 @@ impl BatcherService {
             sync_status.safe_l2.block_info.timestamp.saturating_add(rollup_config.block_time);
         self.config.encoder_config.validate_for_rollup_config(&rollup_config, next_l2_timestamp)?;
         info!(safe_l2 = %safe_l2_number, "fetched safe L2 head");
-
-        // Validate the recent-tx scan depth against the maximum. Do this early so
-        // the error surfaces before any network I/O for the scan.
-        if self.config.check_recent_txs_depth > MAX_CHECK_RECENT_TXS_DEPTH {
-            return Err(eyre::eyre!(
-                "check_recent_txs_depth {} exceeds maximum of {}",
-                self.config.check_recent_txs_depth,
-                MAX_CHECK_RECENT_TXS_DEPTH,
-            ));
-        }
-
-        // Connect to L1 early so it is available for the optional recent-tx scan.
-        let l1_provider: RootProvider =
-            Self::connect_first(&self.config.l1_rpc_url, "l1-rpc", |url| {
-                let url = url.clone();
-                async move {
-                    ProviderBuilder::new().disable_recommended_fillers().connect(url.as_str()).await
-                }
-            })
-            .await?;
 
         if self.config.metrics_enabled {
             let (layer, mut balance_rx) = BalanceMonitorLayer::new(
@@ -633,11 +617,7 @@ impl BatcherService {
                 );
             } else {
                 let channel_timeout_depth = rollup_config.channel_timeout(next_l2_timestamp);
-                let start_depth = self
-                    .config
-                    .check_recent_txs_depth
-                    .max(channel_timeout_depth)
-                    .clamp(1, MAX_CHECK_RECENT_TXS_DEPTH);
+                let start_depth = channel_timeout_depth.clamp(1, MAX_SHADOW_PARITY_START_DEPTH);
                 let monitor_config = ShadowParityMonitorConfig {
                     canonical_inbox: rollup_config.batch_inbox_address,
                     canonical_batcher: rollup_config
@@ -720,44 +700,21 @@ impl BatcherService {
             }
         }
 
-        // Optionally scan recent L1 blocks to find the highest L2 block already
-        // submitted but not yet reflected in the safe head, preventing re-submissions
-        // after an unclean restart. Peek at the batcher address from the private key
-        // (without consuming it) only when the scan is requested.
-        let scanned_highest = if self.config.check_recent_txs_depth > 0 {
-            let batcher_address = signer_address;
-            RecentTxScanner::highest_submitted_l2_block(
-                &l1_provider,
-                batcher_address,
-                effective_batch_inbox,
-                self.config.check_recent_txs_depth,
-                &rollup_config,
-            )
-            .await?
-        } else {
-            None
-        };
-
         // Get the current L2 latest block to decide whether historical backfill is needed.
         let latest_l2 = l2_provider
             .get_block_number()
             .await
             .map_err(|e| eyre::eyre!("failed to fetch L2 latest block number: {e}"))?;
 
-        // Advance the cursor past any L2 blocks that are already on L1 but not yet safe.
-        // Use the higher of the safe head and the scan result as the backfill start.
-        let cursor_start = safe_l2_number.max(scanned_highest.unwrap_or(0));
-
-        // Build the L2 polling source. If blocks between cursor_start+1 and latest
+        // Build the L2 polling source. If blocks between the safe head and latest
         // were not yet submitted, use sequential catchup mode to avoid skipping them.
-        let poller = if cursor_start < latest_l2 {
+        let poller = if safe_l2_number < latest_l2 {
             info!(
                 safe_l2 = %safe_l2_number,
-                cursor_start = %cursor_start,
                 latest_l2 = %latest_l2,
-                "starting sequential backfill from cursor"
+                "starting sequential backfill from safe head"
             );
-            RpcPollingSource::new_from(Arc::clone(&l2_provider), cursor_start + 1)
+            RpcPollingSource::new_from(Arc::clone(&l2_provider), safe_l2_number.saturating_add(1))
         } else {
             RpcPollingSource::new(Arc::clone(&l2_provider))
         };

@@ -112,6 +112,7 @@ impl ProofDispatcher {
             intermediate_block_interval: self.config.intermediate_block_interval,
             l1_head_number: l1_header.number,
             image_hash: self.config.tee_image_hash,
+            schedule_l2_block_number: None,
         })
     }
 
