@@ -181,14 +181,26 @@ impl AssetV2 {
         Ok(())
     }
 
-    /// Ensures `policy_scope` names a built-in B-20 policy slot.
+    /// Ensures `policy_scope` names a built-in B-20 policy slot available on the V2 (Cobalt) common
+    /// surface, which adds the seize scopes (`SEIZE_HOLDER_POLICY` / `SEIZE_RECEIVER_POLICY`) on top
+    /// of V1.
+    ///
+    /// The match is exhaustive on purpose: a policy scope added to `B20PolicyType` for a future fork
+    /// must not silently widen this frozen V2 surface — it should fail to compile until V2's stance
+    /// on it is decided explicitly.
     fn ensure_supported_policy_type(policy_scope: B256) -> Result<()> {
-        if B20PolicyType::from_id(policy_scope).is_some() {
-            Ok(())
-        } else {
-            Err(BasePrecompileError::revert(IB20::UnsupportedPolicyType {
+        match B20PolicyType::from_id(policy_scope) {
+            Some(
+                B20PolicyType::TransferSender
+                | B20PolicyType::TransferReceiver
+                | B20PolicyType::TransferExecutor
+                | B20PolicyType::MintReceiver
+                | B20PolicyType::SeizeHolder
+                | B20PolicyType::SeizeReceiver,
+            ) => Ok(()),
+            None => Err(BasePrecompileError::revert(IB20::UnsupportedPolicyType {
                 policyScope: policy_scope,
-            }))
+            })),
         }
     }
 
@@ -650,12 +662,13 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
         if !privileged {
             B20Guards::ensure_token_role(token, caller, B20TokenRole::DefaultAdmin)?;
         }
-        let old_policy_id = self.policy_id(token, policy_scope)?;
+        Self::ensure_supported_policy_type(policy_scope)?;
         if !token.policy().policy_exists(token.policy_storage(), new_policy_id)? {
             return Err(BasePrecompileError::revert(IB20::PolicyNotFound {
                 policyId: new_policy_id,
             }));
         }
+        let old_policy_id = token.accounting().policy_id(policy_scope)?;
         token.accounting_mut().set_policy_id(policy_scope, new_policy_id)?;
         token.accounting_mut().emit_event(
             IB20::PolicyUpdated {

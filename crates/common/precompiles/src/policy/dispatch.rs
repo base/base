@@ -1,4 +1,4 @@
-use alloy_primitives::Bytes;
+use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::SolCall;
 use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, StorageCtx};
@@ -8,8 +8,8 @@ use crate::{
     ActivationFeature, ActivationRegistryStorage, BerylAuxiliaryMetrics, BerylCallRecorder,
     BerylMetricLabels,
     IPolicyRegistry::{self, IPolicyRegistryCalls as C},
-    NoopPrecompileCallObserver, PolicyRegistryStorage, PolicyVersion, PolicyVersions,
-    PrecompileCallObserver,
+    NoopPrecompileCallObserver, PolicyRegistryStorage, PolicyRegistryV2, PolicyVersion,
+    PolicyVersions, PrecompileCallObserver,
 };
 
 impl PolicyRegistryStorage<'_> {
@@ -62,6 +62,8 @@ impl PolicyRegistryStorage<'_> {
             Some(sel)
                 if abi.valid_selector(sel)
                     && (sel == IPolicyRegistry::isAuthorizedCall::SELECTOR
+                        || sel == IPolicyRegistry::MIN_COMPOSITE_CHILD_POLICIESCall::SELECTOR
+                        || sel == IPolicyRegistry::MAX_COMPOSITE_CHILD_POLICIESCall::SELECTOR
                         || sel == IPolicyRegistry::policyExistsCall::SELECTOR
                         || sel == IPolicyRegistry::policyAdminCall::SELECTOR
                         || sel == IPolicyRegistry::pendingPolicyAdminCall::SELECTOR
@@ -146,6 +148,20 @@ impl PolicyRegistryStorage<'_> {
             C::isAuthorized(call) => {
                 let authorized = logic.is_authorized(self, call.policyId, call.account)?;
                 Ok(IPolicyRegistry::isAuthorizedCall::abi_encode_returns(&authorized).into())
+            }
+            // Introduced in V2 (Cobalt). Version-invariant constants, answered without going
+            // through the logic trait.
+            C::MIN_COMPOSITE_CHILD_POLICIES(_) => {
+                Ok(IPolicyRegistry::MIN_COMPOSITE_CHILD_POLICIESCall::abi_encode_returns(
+                    &U256::from(PolicyRegistryV2::MIN_CHILD_POLICIES),
+                )
+                .into())
+            }
+            C::MAX_COMPOSITE_CHILD_POLICIES(_) => {
+                Ok(IPolicyRegistry::MAX_COMPOSITE_CHILD_POLICIESCall::abi_encode_returns(
+                    &U256::from(PolicyRegistryV2::MAX_CHILD_POLICIES),
+                )
+                .into())
             }
             C::policyExists(call) => {
                 let exists = logic.policy_exists(self, call.policyId)?;
@@ -657,6 +673,48 @@ mod tests {
         .abi_encode();
         let out = run(&mut storage, &update_blocklist);
         assert!(!out.is_revert());
+    }
+
+    #[test]
+    fn dispatch_min_max_composite_child_policies() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_policy_registry(&mut storage);
+
+        let min_calldata = IPolicyRegistry::MIN_COMPOSITE_CHILD_POLICIESCall {}.abi_encode();
+        let min_out = run_at(&mut storage, &min_calldata, BaseUpgrade::Cobalt);
+        assert!(!min_out.is_revert());
+        assert_eq!(
+            IPolicyRegistry::MIN_COMPOSITE_CHILD_POLICIESCall::abi_decode_returns(&min_out.bytes)
+                .unwrap(),
+            alloy_primitives::U256::from(2)
+        );
+
+        let max_calldata = IPolicyRegistry::MAX_COMPOSITE_CHILD_POLICIESCall {}.abi_encode();
+        let max_out = run_at(&mut storage, &max_calldata, BaseUpgrade::Cobalt);
+        assert!(!max_out.is_revert());
+        assert_eq!(
+            IPolicyRegistry::MAX_COMPOSITE_CHILD_POLICIESCall::abi_decode_returns(&max_out.bytes)
+                .unwrap(),
+            alloy_primitives::U256::from(4)
+        );
+    }
+
+    #[test]
+    fn dispatch_min_max_composite_child_policies_succeed_when_deactivated_and_pre_cobalt() {
+        let mut storage = HashMapStorageProvider::new(1);
+        // Never activated, and dispatched at Beryl where the selectors are unknown — pinning
+        // that pre-Cobalt call sites see `UnknownFunctionSelector`, not a feature-inactive revert.
+        let min_calldata = IPolicyRegistry::MIN_COMPOSITE_CHILD_POLICIESCall {}.abi_encode();
+        let beryl_out = run(&mut storage, &min_calldata);
+        assert!(beryl_out.is_revert());
+        assert_eq!(
+            beryl_out.bytes,
+            Bytes::from(IPolicyRegistry::MIN_COMPOSITE_CHILD_POLICIESCall::SELECTOR.as_ref())
+        );
+
+        // At Cobalt, the same never-activated registry still answers the getter (view bypass).
+        let cobalt_out = run_at(&mut storage, &min_calldata, BaseUpgrade::Cobalt);
+        assert!(!cobalt_out.is_revert(), "getter must not revert when feature is deactivated");
     }
 
     #[test]

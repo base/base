@@ -129,14 +129,32 @@ impl StablecoinV1 {
         Ok(())
     }
 
-    /// Ensures `policy_scope` names a built-in B-20 policy slot.
+    /// Ensures `policy_scope` names a built-in B-20 policy slot available on the frozen V1 (Beryl)
+    /// common surface.
+    ///
+    /// The seize scopes (`SEIZE_HOLDER_POLICY` / `SEIZE_RECEIVER_POLICY`) were introduced at Cobalt
+    /// (V2), so they are rejected here — matching the base-std `v1.0.0` reference. This is what keeps
+    /// the common `updatePolicy` / `policyId` selectors (dialable on V1) from reaching a V2-only
+    /// scope.
+    ///
+    /// The match is exhaustive by design (no `_` arm): every `B20PolicyType` variant is named, so a
+    /// scope added for a future fork fails to compile here until an engineer explicitly places it in
+    /// the supported or rejected arm, reconciling V1 against the base-std `v1.0.0` reference. A
+    /// wildcard would silently reject a newly added scope that should be valid at V1.
     fn ensure_supported_policy_type(policy_scope: B256) -> Result<()> {
-        if B20PolicyType::from_id(policy_scope).is_some() {
-            Ok(())
-        } else {
-            Err(BasePrecompileError::revert(IB20::UnsupportedPolicyType {
-                policyScope: policy_scope,
-            }))
+        match B20PolicyType::from_id(policy_scope) {
+            Some(
+                B20PolicyType::TransferSender
+                | B20PolicyType::TransferReceiver
+                | B20PolicyType::TransferExecutor
+                | B20PolicyType::MintReceiver,
+            ) => Ok(()),
+            // Cobalt (V2)-only scopes, and any unrecognized id, are not part of the frozen V1 surface.
+            Some(B20PolicyType::SeizeHolder | B20PolicyType::SeizeReceiver) | None => {
+                Err(BasePrecompileError::revert(IB20::UnsupportedPolicyType {
+                    policyScope: policy_scope,
+                }))
+            }
         }
     }
 }
@@ -540,12 +558,13 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
         if !privileged {
             B20Guards::ensure_token_role(token, caller, B20TokenRole::DefaultAdmin)?;
         }
-        let old_policy_id = self.policy_id(token, policy_scope)?;
+        Self::ensure_supported_policy_type(policy_scope)?;
         if !token.policy().policy_exists(token.policy_storage(), new_policy_id)? {
             return Err(BasePrecompileError::revert(IB20::PolicyNotFound {
                 policyId: new_policy_id,
             }));
         }
+        let old_policy_id = token.accounting().policy_id(policy_scope)?;
         token.accounting_mut().set_policy_id(policy_scope, new_policy_id)?;
         token.accounting_mut().emit_event(
             IB20::PolicyUpdated {

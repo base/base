@@ -23,6 +23,7 @@ async-trait.workspace = true
 tokio = { workspace = true, features = ["rt", "time"] }
 
 # misc
+chrono.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 

@@ -235,7 +235,6 @@ mod tests {
             gas_limit: None,
             eip_1559_params: None,
             min_base_fee: None,
-            timestamp_millis_part: None,
         }
     }
 

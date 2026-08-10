@@ -116,15 +116,12 @@ impl PolicyRegistryV2 {
         policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID
     }
 
-    /// Reverts `ChildPoliciesOutsideOfRange(2, 4)` when the child count is outside `[2, 4]`.
+    /// Reverts `ChildPoliciesOutsideOfRange` when the child count is outside `[2, 4]`.
     fn require_child_policy_in_range(child_policy_ids: &[u64]) -> Result<()> {
         let count = child_policy_ids.len();
         if !(Self::MIN_CHILD_POLICIES..=Self::MAX_CHILD_POLICIES).contains(&count) {
             return Err(BasePrecompileError::revert(
-                IPolicyRegistry::ChildPoliciesOutsideOfRange {
-                    min: U256::from(Self::MIN_CHILD_POLICIES),
-                    max: U256::from(Self::MAX_CHILD_POLICIES),
-                },
+                IPolicyRegistry::ChildPoliciesOutsideOfRange {},
             ));
         }
         Ok(())
@@ -1466,10 +1463,8 @@ mod tests {
     fn create_composite_child_count_out_of_range_reverts() {
         let mut rt = initialized();
         let ids: Vec<u64> = (0..5).map(|_| create_allowlist(&mut rt)).collect();
-        let range_err = BasePrecompileError::revert(IPolicyRegistry::ChildPoliciesOutsideOfRange {
-            min: U256::from(2),
-            max: U256::from(4),
-        });
+        let range_err =
+            BasePrecompileError::revert(IPolicyRegistry::ChildPoliciesOutsideOfRange {});
         // Too few (1) and too many (5) both revert with the same range error.
         let too_few = LOGIC
             .create_composite_policy(&mut rt, ADMIN, PolicyType::UNION, vec![ids[0]])

@@ -613,6 +613,7 @@ impl ClusterZkProver {
                     L1HeadSource::Pinned,
                 ),
                 intermediate_root_interval,
+                schedule_l2_block_number: request.schedule_l2_block_number,
             })
             .await
         {

@@ -942,8 +942,7 @@ mod tests {
     }
 
     /// The submission loop must submit each pipeline submission as one L1 tx. The
-    /// pipeline is responsible for choosing the frames that belong in a tx, matching
-    /// op-batcher's `NextTxData` boundary.
+    /// pipeline is responsible for choosing the frames that belong in a transaction.
     #[test]
     fn test_submission_loop_submits_each_pipeline_submission_as_one_tx() {
         Runner::start(Config::seeded(0), |ctx| async move {
@@ -983,8 +982,8 @@ mod tests {
     }
 
     /// A single submission may contain multiple blob-filling frames when
-    /// `target_num_frames > 1`. Matching op-batcher, each frame becomes its own
-    /// blob in the same L1 transaction.
+    /// `target_num_frames > 1`. Each frame becomes its own blob in the same L1
+    /// transaction.
     #[test]
     fn test_multi_frame_blob_submission_maps_frames_to_blobs() {
         Runner::start(Config::seeded(0), |ctx| async move {

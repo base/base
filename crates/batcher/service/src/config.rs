@@ -87,13 +87,13 @@ pub struct BatcherConfig {
     pub resubmission_timeout: Duration,
     /// Throttle configuration (optional).
     pub throttle: Option<ThrottleConfig>,
-    /// Number of recent L1 blocks to scan on startup for already-submitted batcher frames.
+    /// Number of recent L1 blocks to inspect for a confirmed batcher transaction.
     ///
-    /// When nonzero, the service walks back this many blocks from the current L1 head
-    /// on startup, decodes any calldata batcher frames it finds, and advances the L2
-    /// block cursor past data already pending on L1. This avoids re-submitting frames
-    /// that were posted but not yet reflected in the safe head after an unclean shutdown.
+    /// When [`wait_node_sync`](Self::wait_node_sync) is enabled, recent batcher
+    /// account nonce activity selects the L1 synchronization target in this window.
+    /// This never changes the L2 backfill cursor.
     ///
+    /// Must be zero unless [`wait_node_sync`](Self::wait_node_sync) is enabled.
     /// Must be at most [`MAX_CHECK_RECENT_TXS_DEPTH`](crate::MAX_CHECK_RECENT_TXS_DEPTH)
     /// (128). A value of 0 disables the scan (default).
     pub check_recent_txs_depth: u64,
@@ -104,16 +104,13 @@ pub struct BatcherConfig {
     pub admin_addr: Option<SocketAddr>,
     /// If `true`, start in a stopped state and defer batch submission until
     /// `admin_startBatcher` is called via the admin API.
-    ///
-    /// Matches the reference batcher's `--stopped` behavior (env: `BATCHER_STOPPED`).
     pub stopped: bool,
-    /// If `true`, block startup until the rollup node reports a non-zero
-    /// `unsafe_l2` and `current_l1` head via `optimism_syncStatus`.
+    /// If `true`, block startup until the rollup node has processed the selected
+    /// L1 synchronization target.
     ///
     /// Useful when the batcher is started before the node has finished its
     /// initial sync — without this gate the initial backfill would race the
     /// node's derivation pipeline and could submit redundant data.
-    /// Matches the reference batcher's `--wait-node-sync` flag.
     pub wait_node_sync: bool,
     /// Maximum time to wait for the rollup node to report sync when
     /// [`wait_node_sync`](Self::wait_node_sync) is set.
