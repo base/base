@@ -117,14 +117,12 @@ impl PolicyAbi {
 pub struct PolicyVersions;
 
 impl PolicyVersions {
-    /// Returns the version active at `upgrade`, or `None` before Beryl, where the policy
+    /// Returns the version active at `upgrade`, or `None` before the introduction
     pub fn from_base_upgrade(upgrade: BaseUpgrade) -> Option<PolicyVersion> {
-        if upgrade >= BaseUpgrade::Cobalt {
-            Some(PolicyVersion::V2)
-        } else if upgrade >= BaseUpgrade::Beryl {
-            Some(PolicyVersion::V1)
-        } else {
-            None
+        match upgrade {
+            u if u >= BaseUpgrade::Cobalt => Some(PolicyVersion::V2),
+            u if u >= BaseUpgrade::Beryl => Some(PolicyVersion::V1),
+            _ => None,
         }
     }
 }
