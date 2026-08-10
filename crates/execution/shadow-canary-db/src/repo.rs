@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use anyhow::{Context, Result};
 use sqlx::{PgPool, Postgres, QueryBuilder, query_as};
 
@@ -22,15 +24,24 @@ impl ShadowBlockRepo {
     ///
     /// Returns an error if the insert fails.
     pub async fn insert_batch(&self, rows: &[ShadowBlockRow]) -> Result<usize> {
-        const CHUNK_SIZE: usize = 5_000;
+        // 16 columns per row are bound. Postgres caps a single statement at 65_535
+        // bind parameters, so keep chunks below 65_535 / 16 ≈ 4_095 rows.
+        const CHUNK_SIZE: usize = 4_000;
 
         if rows.is_empty() {
             return Ok(0);
         }
 
+        // Collapse duplicate `(number, hash)` rows within the batch, keeping the
+        // last occurrence. A single `INSERT ... ON CONFLICT DO UPDATE` cannot
+        // touch the same conflict key twice (Postgres error 21000), which would
+        // otherwise reject the entire batch when a block is committed and then
+        // reorged out inside one flush window.
+        let deduped = Self::dedupe_last_write_wins(rows);
+
         let mut inserted = 0usize;
 
-        for chunk in rows.chunks(CHUNK_SIZE) {
+        for chunk in deduped.chunks(CHUNK_SIZE) {
             let mut query_builder: QueryBuilder<'_, Postgres> = QueryBuilder::new(
                 "INSERT INTO shadow_blocks \
                  (number, hash, parent_hash, timestamp, tx_count, gas_used, da_bytes, \
@@ -75,6 +86,14 @@ impl ShadowBlockRepo {
         Ok(inserted)
     }
 
+    fn dedupe_last_write_wins(rows: &[ShadowBlockRow]) -> Vec<&ShadowBlockRow> {
+        let mut by_key: HashMap<(i64, &str), &ShadowBlockRow> = HashMap::with_capacity(rows.len());
+        for row in rows {
+            by_key.insert((row.number, row.hash.as_str()), row);
+        }
+        by_key.into_values().collect()
+    }
+
     /// Lists shadow block rows with block numbers in the provided inclusive range.
     ///
     /// # Errors
@@ -91,5 +110,60 @@ impl ShadowBlockRepo {
         .context("failed to list shadow blocks by number range")?;
 
         Ok(rows)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::Utc;
+
+    use super::*;
+
+    fn sample_row(number: i64, hash: &str, reorged_out: bool) -> ShadowBlockRow {
+        ShadowBlockRow {
+            number,
+            hash: hash.to_string(),
+            parent_hash: "parent".to_string(),
+            timestamp: 0,
+            tx_count: 0,
+            gas_used: 0,
+            da_bytes: 0,
+            state_root: "state".to_string(),
+            build_latency_ms: None,
+            deadline_miss: false,
+            fb_count: None,
+            panicked: false,
+            reorged_out,
+            canonical_hash: None,
+            builder_version: String::new(),
+            created_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn dedupe_collapses_duplicate_number_hash_to_last_write() {
+        let rows = vec![
+            sample_row(1, "0xaa", false),
+            sample_row(2, "0xbb", false),
+            sample_row(1, "0xaa", true),
+        ];
+
+        let deduped = ShadowBlockRepo::dedupe_last_write_wins(&rows);
+
+        assert_eq!(deduped.len(), 2);
+        let kept = deduped
+            .iter()
+            .find(|row| row.number == 1 && row.hash == "0xaa")
+            .expect("duplicated key survives");
+        assert!(kept.reorged_out, "duplicate key keeps the last write");
+    }
+
+    #[test]
+    fn dedupe_keeps_same_number_with_distinct_hash() {
+        let rows = vec![sample_row(1, "0xaa", true), sample_row(1, "0xbb", false)];
+
+        let deduped = ShadowBlockRepo::dedupe_last_write_wins(&rows);
+
+        assert_eq!(deduped.len(), 2, "distinct hashes at the same height are separate rows");
     }
 }
