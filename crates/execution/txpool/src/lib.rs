@@ -27,6 +27,9 @@ pub use validator::{BaseL1BlockInfo, BaseTransactionValidator, BaseTxPoolError, 
 
 mod best;
 
+mod validity;
+pub use validity::{ValidityOperator, ValidityPredicate};
+
 mod transaction;
 pub use transaction::{
     BLOCK_TIME_SECS, BasePooledTransaction, BasePooledTx, BundleTransaction,
