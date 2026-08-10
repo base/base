@@ -1,6 +1,6 @@
 //! Dispute-game discovery client for the `basectl proofs games` command group.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Mutex};
 
 use alloy_consensus::Transaction as _;
 use alloy_primitives::{Address, B256};
@@ -12,7 +12,7 @@ use base_proof_contracts::{
     DisputeGameFactoryClient, DisputeGameFactoryContractClient, decode_create_calldata,
     encode_extra_data,
 };
-use futures::{StreamExt, lock::Mutex, stream, try_join};
+use futures::{StreamExt, stream, try_join};
 use url::Url;
 
 use crate::errors::ProofsCommandError;
@@ -274,7 +274,12 @@ impl GamesClient {
         &self,
         game_type: u32,
     ) -> Result<bool, ProofsCommandError> {
-        if let Some(&is_aggregate) = self.aggregate_game_types.lock().await.get(&game_type) {
+        if let Some(&is_aggregate) = self
+            .aggregate_game_types
+            .lock()
+            .expect("aggregate game type cache lock poisoned")
+            .get(&game_type)
+        {
             return Ok(is_aggregate);
         }
         // The lock is released while probing L1 so concurrent scans are not
@@ -291,7 +296,10 @@ impl GamesClient {
                 Err(error) => return Err(self.contract_error(error)),
             }
         };
-        self.aggregate_game_types.lock().await.insert(game_type, is_aggregate);
+        self.aggregate_game_types
+            .lock()
+            .expect("aggregate game type cache lock poisoned")
+            .insert(game_type, is_aggregate);
         Ok(is_aggregate)
     }
 
@@ -383,7 +391,12 @@ impl GamesClient {
                 Err(error) => return Err(self.contract_error(error)),
             };
 
-        let block_interval = info.l2_block_number.saturating_sub(starting_block);
+        let block_interval = info.l2_block_number.checked_sub(starting_block).ok_or_else(|| {
+            self.contract_error(ContractError::validation(format!(
+                "game target block {} precedes starting block {starting_block}",
+                info.l2_block_number
+            )))
+        })?;
         let intermediate_root_count = intermediate_roots.len();
         Ok(GameDetails {
             address,
@@ -463,7 +476,7 @@ impl GamesClient {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::{collections::HashMap, sync::Mutex};
 
     use alloy_primitives::{Address, B256, Bytes, U256};
     use alloy_provider::RootProvider;
@@ -471,7 +484,6 @@ mod tests {
     use alloy_sol_types::SolValue;
     use alloy_transport::mock::Asserter;
     use base_proof_contracts::{AggregateVerifierContractClient, DisputeGameFactoryContractClient};
-    use futures::lock::Mutex;
     use url::Url;
 
     use super::{GameListFilter, GamesClient};
