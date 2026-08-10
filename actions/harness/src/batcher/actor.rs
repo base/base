@@ -10,7 +10,7 @@ use base_batcher_encoder::{BatchEncoder, EncoderConfig};
 use base_batcher_source::{ChannelBlockSource, ChannelL1HeadSource, L2BlockEvent};
 use base_common_consensus::BaseBlock;
 use base_common_genesis::RollupConfig;
-use base_protocol::{BatchType, L2BlockInfo};
+use base_protocol::BatchType;
 use base_runtime::TokioRuntime;
 use base_tx_manager::TxManager;
 use tokio_util::sync::CancellationToken;
@@ -421,8 +421,8 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// Panics if the driver task has already exited.
     ///
     /// [`BatchDriver`]: base_batcher_core::BatchDriver
-    pub async fn signal_reorg(&self, new_safe_head: L2BlockInfo) {
-        self.block_tx.send(L2BlockEvent::Reorg { new_safe_head }).expect("driver task alive");
+    pub async fn signal_reorg(&self) {
+        self.block_tx.send(L2BlockEvent::Reorg).expect("driver task alive");
         tokio::task::yield_now().await;
     }
 

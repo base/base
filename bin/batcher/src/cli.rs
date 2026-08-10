@@ -70,13 +70,6 @@ pub(crate) struct BatcherArgs {
     #[arg(long = "l1-ws-url", env = "BATCHER_L1_WS_URL")]
     pub l1_ws_url: Option<Url>,
 
-    /// Optional L2 WebSocket endpoint for new-block subscriptions.
-    ///
-    /// When provided, the batcher subscribes to new block headers over this
-    /// WebSocket connection. Without it, polling is used exclusively.
-    #[arg(long = "l2-ws-url", env = "BATCHER_L2_WS_URL")]
-    pub l2_ws_url: Option<Url>,
-
     /// Parity validator L2 RPC endpoint for shadow mode.
     ///
     /// Required with `--dangerously-override-batch-inbox-address` and rejected
@@ -325,7 +318,6 @@ impl BatcherArgs {
             l1_rpc_url: self.l1_rpc_url,
             l1_ws_url: self.l1_ws_url,
             l2_rpc_url: self.l2_rpc_url,
-            l2_ws_url: self.l2_ws_url,
             parity_validator_l2_rpc_url: self.parity_validator_l2_rpc_url,
             rollup_rpc_url: self.rollup_rpc_url,
             l1_beacon_url: self.l1_beacon_url,

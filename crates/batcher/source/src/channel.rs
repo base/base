@@ -41,7 +41,6 @@ impl UnsafeBlockSource for ChannelBlockSource {
 mod tests {
     use alloy_primitives::B256;
     use base_common_consensus::BaseBlock;
-    use base_protocol::{BlockInfo, L2BlockInfo};
 
     use super::*;
 
@@ -55,11 +54,6 @@ mod tests {
             },
             body: Default::default(),
         }
-    }
-
-    /// Helper to build a minimal [`L2BlockInfo`].
-    fn make_l2_block_info(number: u64) -> L2BlockInfo {
-        L2BlockInfo::new(BlockInfo::new(B256::ZERO, number, B256::ZERO, 0), Default::default(), 0)
     }
 
     #[tokio::test]
@@ -77,16 +71,9 @@ mod tests {
     #[tokio::test]
     async fn receive_reorg_event() {
         let (mut source, tx) = ChannelBlockSource::new();
-        let info = make_l2_block_info(5);
-        tx.send(L2BlockEvent::Reorg { new_safe_head: info }).unwrap();
+        tx.send(L2BlockEvent::Reorg).unwrap();
 
-        let event = source.next().await.unwrap();
-        match event {
-            L2BlockEvent::Reorg { new_safe_head } => {
-                assert_eq!(new_safe_head.block_info.number, 5);
-            }
-            _ => panic!("expected Reorg event"),
-        }
+        assert!(matches!(source.next().await.unwrap(), L2BlockEvent::Reorg));
     }
 
     #[tokio::test]
@@ -123,7 +110,7 @@ mod tests {
         let (mut source, tx) = ChannelBlockSource::new();
         tx.send(L2BlockEvent::Block(Box::new(make_block(1)))).unwrap();
         tx.send(L2BlockEvent::Block(Box::new(make_block(2)))).unwrap();
-        tx.send(L2BlockEvent::Reorg { new_safe_head: make_l2_block_info(0) }).unwrap();
+        tx.send(L2BlockEvent::Reorg).unwrap();
 
         match source.next().await.unwrap() {
             L2BlockEvent::Block(b) => assert_eq!(b.header.number, 1),
@@ -133,11 +120,6 @@ mod tests {
             L2BlockEvent::Block(b) => assert_eq!(b.header.number, 2),
             _ => panic!("expected Block(2)"),
         }
-        match source.next().await.unwrap() {
-            L2BlockEvent::Reorg { new_safe_head } => {
-                assert_eq!(new_safe_head.block_info.number, 0);
-            }
-            _ => panic!("expected Reorg"),
-        }
+        assert!(matches!(source.next().await.unwrap(), L2BlockEvent::Reorg));
     }
 }

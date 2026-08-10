@@ -4,7 +4,6 @@ use std::collections::VecDeque;
 
 use async_trait::async_trait;
 use base_common_consensus::BaseBlock;
-use base_protocol::L2BlockInfo;
 
 pub use crate::{ChannelBlockSource, ChannelL1HeadSource};
 use crate::{L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource};
@@ -31,8 +30,8 @@ impl InMemoryBlockSource {
     }
 
     /// Push a reorg event into the queue.
-    pub fn push_reorg(&mut self, new_safe_head: L2BlockInfo) {
-        self.queue.push_back(L2BlockEvent::Reorg { new_safe_head });
+    pub fn push_reorg(&mut self) {
+        self.queue.push_back(L2BlockEvent::Reorg);
     }
 }
 
@@ -87,7 +86,6 @@ impl L1HeadSource for InMemoryL1HeadSource {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
-    use base_protocol::BlockInfo;
 
     use super::*;
 
@@ -96,10 +94,6 @@ mod tests {
             header: alloy_consensus::Header { number, parent_hash, ..Default::default() },
             body: Default::default(),
         }
-    }
-
-    fn make_l2_block_info(number: u64) -> L2BlockInfo {
-        L2BlockInfo::new(BlockInfo::new(B256::ZERO, number, B256::ZERO, 0), Default::default(), 0)
     }
 
     #[tokio::test]
@@ -125,16 +119,9 @@ mod tests {
     #[tokio::test]
     async fn test_in_memory_push_reorg() {
         let mut source = InMemoryBlockSource::new();
-        let info = make_l2_block_info(10);
-        source.push_reorg(info);
+        source.push_reorg();
 
-        let event = source.next().await.unwrap();
-        match event {
-            L2BlockEvent::Reorg { new_safe_head } => {
-                assert_eq!(new_safe_head.block_info.number, 10);
-            }
-            _ => panic!("expected Reorg event"),
-        }
+        assert!(matches!(source.next().await.unwrap(), L2BlockEvent::Reorg));
     }
 
     #[tokio::test]
@@ -142,7 +129,7 @@ mod tests {
         let mut source = InMemoryBlockSource::new();
         source.push_block(make_block(1, B256::ZERO));
         source.push_block(make_block(2, B256::ZERO));
-        source.push_reorg(make_l2_block_info(0));
+        source.push_reorg();
         source.push_block(make_block(3, B256::ZERO));
 
         match source.next().await.unwrap() {
@@ -153,12 +140,7 @@ mod tests {
             L2BlockEvent::Block(b) => assert_eq!(b.header.number, 2),
             _ => panic!("expected Block(2)"),
         }
-        match source.next().await.unwrap() {
-            L2BlockEvent::Reorg { new_safe_head } => {
-                assert_eq!(new_safe_head.block_info.number, 0);
-            }
-            _ => panic!("expected Reorg"),
-        }
+        assert!(matches!(source.next().await.unwrap(), L2BlockEvent::Reorg));
         match source.next().await.unwrap() {
             L2BlockEvent::Block(b) => assert_eq!(b.header.number, 3),
             _ => panic!("expected Block(3)"),

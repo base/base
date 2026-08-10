@@ -1,61 +1,35 @@
-//! Action tests for the batcher gap-filling invariant.
+//! Action tests for derivation across gaps in submitted L2 blocks.
 //!
-//! When the batcher is repointed between L2 nodes with different safe heads,
-//! it must properly reset its encoder and start submitting from the current
-//! safe head. This mirrors the production batcher flow that starts fresh and
-//! clears channel manager state after a source divergence.
-//!
-//! The core invariant: **the batcher always submits blocks starting from
-//! `safe_head + 1`**, regardless of what it was previously posting.
+//! Batches submitted after a gap cannot advance the verifier's safe head.
+//! Submitting the missing sequence fills the gap, and duplicate later blocks
+//! remain harmless.
 
-use alloy_eips::BlockNumHash;
-use alloy_primitives::B256;
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
     TestRollupConfigBuilder,
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
-use base_protocol::{BlockInfo, L2BlockInfo};
-
-/// Helper to construct a minimal [`L2BlockInfo`] for [`Batcher::signal_reorg`].
-///
-/// The driver only uses the `block_info.number` field from the reorg event
-/// (for logging), so the other fields can be zeroed.
-struct DummyL2Info;
-
-impl DummyL2Info {
-    fn at_number(number: u64) -> L2BlockInfo {
-        L2BlockInfo {
-            block_info: BlockInfo::new(B256::ZERO, number, B256::ZERO, 0),
-            l1_origin: BlockNumHash::default(),
-            seq_num: 0,
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // A. Gap-filling with a single persistent batcher (reorg signal path)
 // ---------------------------------------------------------------------------
 
-/// Verifies the batcher gap-filling invariant using a single persistent
-/// [`Batcher`] instance that is "repointed" between nodes via
-/// [`signal_reorg`].
+/// Verifies gap filling with a persistent [`Batcher`] whose encoder is reset
+/// between block sequences via [`signal_reorg`].
 ///
 /// Scenario (maps to the batcher's source-divergence handling):
 ///
-/// 1. **Phase 1** — Batcher at node A (safe head 0 → 5):
-///    Posts blocks 1-5. Verifier derives them; safe head advances to 5.
+/// 1. **Phase 1** — Posts blocks 1-5. The verifier derives them and advances
+///    its safe head to 5.
 ///
-/// 2. **Phase 2** — Batcher repointed to node B (safe head 7):
-///    [`signal_reorg`] clears the encoder. Batcher posts blocks 8-10.
+/// 2. **Phase 2** — [`signal_reorg`] clears the encoder, then the batcher posts
+///    blocks 8-10.
 ///    These land on L1 but the verifier **cannot** derive them because
 ///    blocks 6-7 are missing (parent-hash mismatch against safe head 5).
 ///
-/// 3. **Phase 3** — Batcher repointed back to node A (safe head 5):
-///    [`signal_reorg`] clears the encoder again. Batcher posts blocks
-///    6-10 (from `safe_head + 1 = 6` through `unsafe_head = 10`),
-///    filling the gap. The verifier derives all remaining blocks;
-///    safe head reaches 10.
+/// 3. **Phase 3** — [`signal_reorg`] clears the encoder again, then the batcher
+///    posts blocks 6-10. The verifier derives all remaining blocks and reaches
+///    safe head 10.
 ///
 /// This tests:
 /// - Encoder reset on reorg signal (no stale state leaks between repoints)
@@ -104,10 +78,8 @@ async fn batcher_gap_fill_single_instance_reorg_signal() {
     assert_eq!(derived, 5, "Phase 1: expected 5 L2 blocks derived");
     assert_eq!(node.l2_safe_number(), 5, "Phase 1: safe head must be 5");
 
-    // ----- Phase 2: repoint to node B (safe head 7), post blocks 8-10 -----
-    // signal_reorg clears the encoder, modelling the batcher detecting that
-    // its block source has switched to a different chain position.
-    batcher.signal_reorg(DummyL2Info::at_number(7)).await;
+    // ----- Phase 2: reset the encoder, then post blocks 8-10 -----
+    batcher.signal_reorg().await;
 
     for block in &blocks[7..10] {
         batcher.push_block(block.clone());
@@ -125,10 +97,8 @@ async fn batcher_gap_fill_single_instance_reorg_signal() {
     );
     assert_eq!(derived, 0, "Phase 2: no new blocks should be derived");
 
-    // ----- Phase 3: repoint back to node A (safe head 5), fill the gap -----
-    // In production, the batcher queries safe_head = 5 and loads blocks
-    // [6, unsafe_head]. signal_reorg clears the encoder so we start fresh.
-    batcher.signal_reorg(DummyL2Info::at_number(5)).await;
+    // ----- Phase 3: reset the encoder, then fill the gap with blocks 6-10 -----
+    batcher.signal_reorg().await;
 
     // Post blocks 6-10: fills the gap (6-7) and re-posts 8-10.
     for block in &blocks[5..10] {
@@ -146,10 +116,8 @@ async fn batcher_gap_fill_single_instance_reorg_signal() {
 // B. Gap-filling with separate batcher instances (restart model)
 // ---------------------------------------------------------------------------
 
-/// Verifies the same gap-filling invariant using separate [`Batcher`]
-/// instances, modelling the scenario where the batcher process is
-/// restarted (or a fresh `channelManager.Clear()` equivalent) each time
-/// it is repointed to a different node.
+/// Verifies the same derivation behavior using separate [`Batcher`] instances,
+/// modelling a fresh encoder for each submitted block sequence.
 ///
 /// Each `Batcher` instance starts with a clean [`BatchEncoder`], which
 /// is the state that results from the batcher's fresh-start path.
@@ -177,7 +145,7 @@ async fn batcher_gap_fill_separate_instances() {
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
 
-    // ----- Phase 1: batcher at node A posts blocks 1-5 -----
+    // ----- Phase 1: post blocks 1-5 -----
     {
         let mut source = ActionL2Source::new();
         for block in &blocks[..5] {
@@ -192,7 +160,7 @@ async fn batcher_gap_fill_separate_instances() {
     assert_eq!(derived, 5, "Phase 1: expected 5 L2 blocks derived");
     assert_eq!(node.l2_safe_number(), 5, "Phase 1: safe head must be 5");
 
-    // ----- Phase 2: batcher at node B posts blocks 8-10 (gap) -----
+    // ----- Phase 2: post blocks 8-10 with a fresh batcher (gap) -----
     {
         let mut source = ActionL2Source::new();
         for block in &blocks[7..10] {
@@ -210,7 +178,7 @@ async fn batcher_gap_fill_separate_instances() {
     );
     assert_eq!(derived, 0, "Phase 2: no blocks derived (gap)");
 
-    // ----- Phase 3: batcher back at node A posts blocks 6-10 -----
+    // ----- Phase 3: post blocks 6-10 with a fresh batcher -----
     {
         let mut source = ActionL2Source::new();
         for block in &blocks[5..10] {

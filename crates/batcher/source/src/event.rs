@@ -1,7 +1,6 @@
 //! Events emitted by an [`UnsafeBlockSource`][crate::UnsafeBlockSource].
 
 use base_common_consensus::BaseBlock;
-use base_protocol::L2BlockInfo;
 use tokio::sync::oneshot;
 
 /// Events emitted by an [`UnsafeBlockSource`][crate::UnsafeBlockSource].
@@ -15,11 +14,8 @@ use tokio::sync::oneshot;
 pub enum L2BlockEvent {
     /// A new unsafe L2 block arrived.
     Block(Box<BaseBlock>),
-    /// An L2 reorg was detected; all state should be rewound to `new_safe_head`.
-    Reorg {
-        /// The new safe head after the reorg.
-        new_safe_head: L2BlockInfo,
-    },
+    /// An L2 reorg was detected.
+    Reorg,
     /// Signal the driver to force-close the current channel and flush pending
     /// frames as submissions without exhausting the source.
     ///

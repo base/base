@@ -269,11 +269,8 @@ where
                     }
                     debug!("flush signal received, force-closed channel");
                 }
-                DriverEvent::Reorg(head) => {
-                    warn!(
-                        reorg_head = %head.block_info.number,
-                        "L2 reorg detected, resetting pipeline and catching up from safe head"
-                    );
+                DriverEvent::Reorg => {
+                    warn!("L2 reorg detected, resetting pipeline and catching up from safe head");
                     self.reset_to_safe_head();
                 }
                 DriverEvent::Receipt(ids, o) => {
@@ -333,7 +330,7 @@ where
         self.pipeline.reset();
 
         if let Some(safe_head) = self.safe_head {
-            self.source.reset_catchup(safe_head.number.saturating_add(1));
+            self.source.reset_catchup(safe_head);
         }
 
         self.discard_pending_flush_acks();
@@ -454,8 +451,7 @@ where
                         }
                         AdminCommand::Resume => {
                             if let Some(safe_head) = self.safe_head {
-                                self.source
-                                    .reset_catchup(safe_head.number.saturating_add(1));
+                                self.source.reset_catchup(safe_head);
                                 info!(
                                     stopped = false,
                                     safe_l2 = %safe_head.number,
@@ -522,7 +518,7 @@ where
                     }
                     Ok(L2BlockEvent::Block(block)) => DriverEvent::Block(block),
                     Ok(L2BlockEvent::Flush { ack }) => DriverEvent::Flush(ack),
-                    Ok(L2BlockEvent::Reorg { new_safe_head }) => DriverEvent::Reorg(new_safe_head),
+                    Ok(L2BlockEvent::Reorg) => DriverEvent::Reorg,
                     Err(SourceError::Exhausted) => DriverEvent::Shutdown,
                     Err(e) => return Err(e.into()),
                 },
@@ -622,7 +618,7 @@ mod tests {
             }
         }
 
-        fn reset_catchup(&mut self, _: u64) {}
+        fn reset_catchup(&mut self, _: BlockInfo) {}
     }
 
     #[derive(Debug)]

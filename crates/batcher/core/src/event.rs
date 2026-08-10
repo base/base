@@ -2,7 +2,7 @@
 
 use base_batcher_encoder::SubmissionId;
 use base_common_consensus::BaseBlock;
-use base_protocol::{BlockInfo, L2BlockInfo};
+use base_protocol::BlockInfo;
 use tokio::sync::oneshot;
 
 use crate::TxOutcome;
@@ -19,8 +19,8 @@ pub enum DriverEvent {
     /// If the ack is set, it fires once every frame resulting from this flush has been
     /// encoded and handed to the tx manager.
     Flush(Option<oneshot::Sender<()>>),
-    /// L2 reorganisation; new safe head provided.
-    Reorg(L2BlockInfo),
+    /// L2 reorganisation detected.
+    Reorg,
     /// An in-flight L1 transaction settled, carrying one or more submissions.
     Receipt(Vec<SubmissionId>, TxOutcome),
     /// L1 chain head advanced.

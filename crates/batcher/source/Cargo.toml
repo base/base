@@ -1,6 +1,6 @@
 [package]
 name = "base-batcher-source"
-description = "L2 unsafe block source: UnsafeBlockSource trait and HybridBlockSource"
+description = "Ordered L2 block polling and L1 head sourcing"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -14,15 +14,17 @@ workspace = true
 [dependencies]
 futures.workspace = true
 async-trait.workspace = true
+base-runtime.workspace = true
 tracing = { workspace = true, features = ["std"] }
-tokio = { workspace = true, features = ["macros", "sync"] }
 thiserror = { workspace = true, features = ["std"] }
 base-protocol = { workspace = true, features = ["std"] }
 derive_more = { workspace = true, features = ["debug"] }
-base-runtime = { workspace = true, features = ["tokio"] }
-alloy-primitives = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["macros", "sync"] }
 base-common-consensus = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
+mockall.workspace = true
 alloy-consensus.workspace = true
+tokio = { workspace = true, features = ["rt"] }
+alloy-primitives = { workspace = true, features = ["std"] }
 base-runtime = { workspace = true, features = ["test-utils"] }
