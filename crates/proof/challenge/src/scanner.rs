@@ -227,7 +227,7 @@ impl GameScanner {
             *open_games.entry(candidate.protocol_version).or_default() += 1;
         }
         for (protocol_version, count) in open_games {
-            ChallengerMetrics::open_games(&protocol_version.to_string()).set(count as f64);
+            ChallengerMetrics::open_games(protocol_version.to_string()).set(count as f64);
         }
 
         ChallengerMetrics::games_scanned_total().increment(games_to_scan);
