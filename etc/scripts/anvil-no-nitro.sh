@@ -73,9 +73,9 @@ L1_PROOF_RPC="$L1_RPC"
 L2_ETH_RPC="${CALLER_L2_ETH_RPC:-http://localhost:58645}"
 L2_NODE_RPC="${CALLER_L2_NODE_RPC:-http://localhost:58649}"
 L1_BEACON_RPC="${CALLER_L1_BEACON_RPC:-http://localhost:54052}"
-# Base Sepolia by default; override with the real L2's ID when pointing the
-# RPCs above at one. Live runs load the exact node-served rollup config.
-L2_CHAIN_ID_VALUE="${CALLER_L2_CHAIN_ID:-84532}"
+# Match the local Docker devnet by default; override with the real L2's ID when
+# pointing the RPCs above elsewhere. Live runs load the exact node-served config.
+L2_CHAIN_ID_VALUE="${CALLER_L2_CHAIN_ID:-84538453}"
 
 POSTGRES_CONTAINER="anvil-no-nitro-postgres"
 POSTGRES_PORT_VALUE="${ANVIL_NO_NITRO_POSTGRES_PORT:-15433}"
@@ -164,7 +164,7 @@ provide all four of its endpoints:
   L2_ETH_RPC     L2 execution RPC          (default: dead endpoint)
   L2_NODE_RPC    L2 rollup node RPC        (default: dead endpoint)
   L1_BEACON_RPC  L1 beacon API             (default: dead endpoint)
-  L2_CHAIN_ID    L2 chain id               (default: 84532, Base Sepolia)
+  L2_CHAIN_ID    L2 chain id               (default: 84538453, Docker devnet)
 When L2_NODE_RPC is reachable at `up` time, the anchor state and the
 ProtocolVersions ladder are seeded from it; otherwise placeholder anchors are
 deployed, the ladder is left empty, and the provers/proposer idle. Re-run `up`
