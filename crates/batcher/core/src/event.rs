@@ -2,10 +2,9 @@
 
 use base_batcher_encoder::SubmissionId;
 use base_common_consensus::BaseBlock;
-use base_protocol::BlockInfo;
 use tokio::sync::oneshot;
 
-use crate::TxOutcome;
+use crate::{DerivationStatus, TxOutcome};
 
 /// Events the driver can receive from external sources during the I/O phase.
 #[derive(Debug)]
@@ -25,8 +24,8 @@ pub enum DriverEvent {
     Receipt(Vec<SubmissionId>, TxOutcome),
     /// L1 chain head advanced.
     L1Head(u64),
-    /// Safe L2 head changed.
-    SafeHead(BlockInfo),
+    /// Derivation progress changed.
+    DerivationStatus(DerivationStatus),
     /// L1 head source permanently closed (Exhausted or Closed error).
     L1SourceClosed,
 }

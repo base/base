@@ -16,8 +16,8 @@ use rand::{RngCore, SeedableRng, rngs::SmallRng};
 use tracing::{debug, warn};
 
 use crate::{
-    BatchPipeline, BatchSubmission, BatcherMetrics, DaType, EncoderConfig, ReorgError, StepError,
-    StepResult, SubmissionId,
+    BatchPipeline, BatchSubmission, BatcherMetrics, DaType, DerivationReconciliation,
+    EncoderConfig, ReorgError, StepError, StepResult, SubmissionId,
     channel::{FrameState, OpenChannel, PendingRef, ReadyChannel},
 };
 
@@ -512,8 +512,7 @@ impl BatchEncoder {
                 return true;
             }
 
-            let incomplete =
-                channel.frame_states.iter().any(|state| *state != FrameState::Confirmed);
+            let incomplete = !channel.is_fully_confirmed();
             incomplete && self.l1_head.saturating_sub(first) >= channel_timeout
         }) else {
             return;
@@ -540,6 +539,111 @@ impl BatchEncoder {
             channel.encoded_block_range.end =
                 channel.encoded_block_range.end.saturating_sub(prune_count);
         }
+    }
+
+    /// Prune buffered blocks at or below the reported safe L2 head.
+    fn prune_safe(&mut self, safe_l2: BlockInfo) -> bool {
+        // Validate the safe head against the buffered chain before mutating state.
+        let Some(oldest) = self.blocks.front() else {
+            self.tip = Some(safe_l2.hash);
+            return true;
+        };
+
+        let oldest_number = oldest.header.number;
+        let next_safe = safe_l2.number.saturating_add(1);
+        if next_safe < oldest_number {
+            return false;
+        }
+
+        let prune_count = (next_safe - oldest_number) as usize;
+        if prune_count > self.blocks.len() {
+            return false;
+        }
+
+        if prune_count == 0 {
+            return oldest.header.parent_hash == safe_l2.hash;
+        }
+        if self.blocks[prune_count - 1].header.hash_slow() != safe_l2.hash {
+            return false;
+        }
+
+        debug!(
+            prune_count,
+            safe_l2_number = safe_l2.number,
+            "pruning safe blocks from input queue"
+        );
+
+        // Rewind staged span state when pruning crosses into its buffered blocks.
+        let span_start = self.block_cursor.saturating_sub(self.span_accumulator.len());
+        if !self.span_accumulator.is_empty() && prune_count > span_start {
+            self.block_cursor = span_start;
+            self.clear_span_accumulator();
+        }
+
+        // Remove channels fully covered by the safe head and rebase pending references.
+        let ready_channels_to_prune = self
+            .ready_channels
+            .iter()
+            .take_while(|channel| channel.encoded_block_range.end <= prune_count)
+            .count();
+        if ready_channels_to_prune > 0 {
+            let removed_pending_frames = self
+                .ready_channels
+                .iter()
+                .take(ready_channels_to_prune)
+                .flat_map(|channel| &channel.frame_states)
+                .filter(|state| **state == FrameState::Ready)
+                .count();
+            self.ready_channels.drain(..ready_channels_to_prune);
+            self.pending.retain(|_, pending| {
+                if pending.channel_idx < ready_channels_to_prune {
+                    return false;
+                }
+                pending.channel_idx -= ready_channels_to_prune;
+                true
+            });
+            if removed_pending_frames > 0 {
+                BatcherMetrics::pending_frames().decrement(removed_pending_frames as f64);
+            }
+        }
+
+        if self.current_channel.as_ref().is_some_and(|channel| {
+            channel.block_start.saturating_add(channel.blocks_added) <= prune_count
+        }) {
+            self.current_channel = None;
+        }
+
+        // Remove the safe block prefix and rebase every remaining block-relative offset.
+        self.blocks.drain(..prune_count);
+        self.rebase_after_block_prune(prune_count);
+        if self.blocks.is_empty() {
+            self.tip = Some(safe_l2.hash);
+        }
+        BatcherMetrics::pending_blocks().decrement(prune_count as f64);
+        true
+    }
+
+    /// Returns whether derivation passed a fully confirmed channel without making its tail safe.
+    fn is_derivation_stalled(&self, current_l1: u64, safe_l2: BlockInfo) -> bool {
+        self.ready_channels.iter().any(|channel| {
+            if !channel.is_fully_confirmed() {
+                return false;
+            }
+
+            let Some(last_inclusion) = channel.last_confirmed_l1_block else {
+                return false;
+            };
+            if current_l1 <= last_inclusion {
+                return false;
+            }
+
+            channel
+                .encoded_block_range
+                .end
+                .checked_sub(1)
+                .and_then(|last_block_index| self.blocks.get(last_block_index))
+                .is_some_and(|last_block| safe_l2.number < last_block.header.number)
+        })
     }
 }
 
@@ -817,7 +921,7 @@ impl BatchPipeline for BatchEncoder {
 
         // Safe-head advancement owns channel removal. Retaining fully submitted
         // channels lets timeout handling detect stalled derivation.
-        if channel.frame_states.iter().all(|state| *state == FrameState::Confirmed) {
+        if channel.is_fully_confirmed() {
             debug!(channel_id = ?channel.id, "channel fully confirmed");
             BatcherMetrics::channel_fully_submitted_total().increment(1);
         }
@@ -905,85 +1009,18 @@ impl BatchPipeline for BatchEncoder {
         BatcherMetrics::pending_frames().set(0.0);
     }
 
-    fn prune_safe(&mut self, safe_l2: BlockInfo) -> bool {
-        // Validate the safe head against the buffered chain before mutating state.
-        let Some(oldest) = self.blocks.front() else {
-            self.tip = Some(safe_l2.hash);
-            return true;
-        };
-
-        let oldest_number = oldest.header.number;
-        let next_safe = safe_l2.number.saturating_add(1);
-        if next_safe < oldest_number {
-            return false;
+    fn reconcile_derivation(
+        &mut self,
+        safe_l2: BlockInfo,
+        current_l1: Option<u64>,
+    ) -> DerivationReconciliation {
+        if !self.prune_safe(safe_l2) {
+            return DerivationReconciliation::SafeHeadMismatch;
         }
-
-        let prune_count = (next_safe - oldest_number) as usize;
-        if prune_count > self.blocks.len() {
-            return false;
+        if current_l1.is_some_and(|current_l1| self.is_derivation_stalled(current_l1, safe_l2)) {
+            return DerivationReconciliation::StalledChannel;
         }
-
-        if prune_count == 0 {
-            return oldest.header.parent_hash == safe_l2.hash;
-        }
-        if self.blocks[prune_count - 1].header.hash_slow() != safe_l2.hash {
-            return false;
-        }
-
-        debug!(
-            prune_count,
-            safe_l2_number = safe_l2.number,
-            "pruning safe blocks from input queue"
-        );
-
-        // Rewind staged span state when pruning crosses into its buffered blocks.
-        let span_start = self.block_cursor.saturating_sub(self.span_accumulator.len());
-        if !self.span_accumulator.is_empty() && prune_count > span_start {
-            self.block_cursor = span_start;
-            self.clear_span_accumulator();
-        }
-
-        // Remove channels fully covered by the safe head and rebase pending references.
-        let ready_channels_to_prune = self
-            .ready_channels
-            .iter()
-            .take_while(|channel| channel.encoded_block_range.end <= prune_count)
-            .count();
-        if ready_channels_to_prune > 0 {
-            let removed_pending_frames = self
-                .ready_channels
-                .iter()
-                .take(ready_channels_to_prune)
-                .flat_map(|channel| &channel.frame_states)
-                .filter(|state| **state == FrameState::Ready)
-                .count();
-            self.ready_channels.drain(..ready_channels_to_prune);
-            self.pending.retain(|_, pending| {
-                if pending.channel_idx < ready_channels_to_prune {
-                    return false;
-                }
-                pending.channel_idx -= ready_channels_to_prune;
-                true
-            });
-            if removed_pending_frames > 0 {
-                BatcherMetrics::pending_frames().decrement(removed_pending_frames as f64);
-            }
-        }
-
-        if self.current_channel.as_ref().is_some_and(|channel| {
-            channel.block_start.saturating_add(channel.blocks_added) <= prune_count
-        }) {
-            self.current_channel = None;
-        }
-
-        // Remove the safe block prefix and rebase every remaining block-relative offset.
-        self.blocks.drain(..prune_count);
-        self.rebase_after_block_prune(prune_count);
-        if self.blocks.is_empty() {
-            self.tip = Some(safe_l2.hash);
-        }
-        BatcherMetrics::pending_blocks().decrement(prune_count as f64);
-        true
+        DerivationReconciliation::Consistent
     }
 
     fn da_backlog_bytes(&self) -> u64 {
@@ -997,9 +1034,7 @@ impl BatchPipeline for BatchEncoder {
         let ready_channels = self
             .ready_channels
             .iter()
-            .filter(|channel| {
-                channel.frame_states.iter().any(|state| *state != FrameState::Confirmed)
-            })
+            .filter(|channel| !channel.is_fully_confirmed())
             .map(|channel| channel.da_backlog_bytes)
             .fold(0u64, u64::saturating_add);
 
@@ -1651,13 +1686,48 @@ mod tests {
         encoder.advance_l1_head(100);
 
         assert_eq!(encoder.ready_channels.len(), 1);
-        assert!(
-            encoder.ready_channels[0]
-                .frame_states
-                .iter()
-                .all(|state| *state == FrameState::Confirmed)
-        );
+        assert!(encoder.ready_channels[0].is_fully_confirmed());
         assert_eq!(encoder.block_cursor, 1);
+    }
+
+    #[test]
+    fn test_fully_confirmed_channel_requires_replay_after_derivation_passes_inclusion() {
+        let mut encoder = encoder_with_confirmation_timeout(2);
+        let mut block = make_block_with_user_tx(B256::ZERO);
+        block.header.number = 101;
+        let block_hash = block.header.hash_slow();
+        encoder.add_block(block).unwrap();
+        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
+        encoder.force_close_channel();
+
+        for submission in drain_submissions(&mut encoder) {
+            encoder.confirm(submission.id, 1_000);
+        }
+
+        let previous_safe_l2 = BlockInfo { number: 100, ..Default::default() };
+        assert_eq!(
+            encoder.reconcile_derivation(previous_safe_l2, None),
+            DerivationReconciliation::Consistent,
+            "providers without a derivation cursor cannot prove the channel stalled",
+        );
+        assert_eq!(
+            encoder.reconcile_derivation(previous_safe_l2, Some(1_000)),
+            DerivationReconciliation::Consistent,
+            "the current L1 block may still be processing",
+        );
+        assert_eq!(
+            encoder.reconcile_derivation(previous_safe_l2, Some(1_001)),
+            DerivationReconciliation::StalledChannel,
+            "passing the last inclusion without making the channel safe requires replay",
+        );
+        assert_eq!(
+            encoder.reconcile_derivation(
+                BlockInfo { hash: block_hash, number: 101, ..Default::default() },
+                Some(1_001),
+            ),
+            DerivationReconciliation::Consistent,
+            "a safe head covering the channel does not require replay",
+        );
     }
 
     #[test]

@@ -9,7 +9,7 @@ L1 submission frames. No async, no I/O, no tokio dependency.
 
 ```rust,ignore
 use base_batcher_encoder::{
-    BatchEncoder, BatchPipeline, EncoderConfig, FrameEncoder, StepResult,
+    BatchEncoder, BatchPipeline, DerivationReconciliation, EncoderConfig, FrameEncoder, StepResult,
 };
 
 let mut encoder = BatchEncoder::new(rollup_config, EncoderConfig::default());
@@ -37,9 +37,13 @@ while let Some(sub) = encoder.next_submission() {
     // Call encoder.requeue(sub.id) if submission fails and frames must be retried.
 }
 
-// Apply safe-head updates. Reset and restart block loading if validation fails.
-if !encoder.prune_safe(safe_head) {
-    encoder.reset();
+// Reconcile derivation progress. Reset and restart block loading if validation fails.
+match encoder.reconcile_derivation(safe_head, current_l1_number) {
+    DerivationReconciliation::Consistent => {}
+    DerivationReconciliation::SafeHeadMismatch
+    | DerivationReconciliation::StalledChannel => {
+        encoder.reset();
+    }
 }
 ```
 
@@ -49,7 +53,7 @@ Every submission drained from `next_submission()` **must** be resolved with eith
 `confirm(id, l1_block)` or `requeue(id)`:
 
 - `confirm` records frame inclusion. Completed channels and their L2 blocks remain
-  buffered until `prune_safe` observes the corresponding safe-head advance.
+  buffered until `reconcile_derivation` observes the corresponding safe-head advance.
 - `requeue` makes the submission's frames available again. Use this when an L1
   transaction fails or is dropped.
 

@@ -20,7 +20,7 @@ mod config;
 pub use config::{CompressionAlgo, EncoderConfig, EncoderConfigError};
 
 mod pipeline;
-pub use pipeline::BatchPipeline;
+pub use pipeline::{BatchPipeline, DerivationReconciliation};
 
 mod channel;
 pub use channel::{FrameState, OpenChannel, PendingRef, ReadyChannel};

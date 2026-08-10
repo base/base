@@ -12,7 +12,7 @@ use base_protocol::BlockInfo;
 ///
 /// Use this in tests that do not exercise the block-delivery path, so that
 /// the driver's source arm never fires and other arms (receipts, L1 head,
-/// safe-head feed) can be tested in isolation.
+/// derivation-status feed) can be tested in isolation.
 #[derive(Debug)]
 pub struct PendingSource;
 

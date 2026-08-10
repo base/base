@@ -5,6 +5,17 @@ use base_protocol::BlockInfo;
 
 use crate::{BatchSubmission, ReorgError, StepError, StepResult, SubmissionId};
 
+/// Result of reconciling buffered batcher state with derivation progress.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DerivationReconciliation {
+    /// Buffered state is consistent with derivation and safe blocks were pruned.
+    Consistent,
+    /// The reported safe L2 head does not match the buffered L2 chain.
+    SafeHeadMismatch,
+    /// Derivation passed a fully confirmed channel without making its last L2 block safe.
+    StalledChannel,
+}
+
 /// The batcher pipeline -- inverse of the derivation pipeline.
 ///
 /// Where the derivation pipeline accepts L1 data and produces L2 payload attributes,
@@ -15,7 +26,8 @@ use crate::{BatchSubmission, ReorgError, StepError, StepResult, SubmissionId};
 /// 2. Advancing state via [`step`](Self::step) until [`StepResult::Idle`].
 /// 3. Draining ready submissions via [`next_submission`](Self::next_submission).
 /// 4. Reporting outcomes via [`confirm`](Self::confirm) / [`requeue`](Self::requeue).
-/// 5. Applying safe-head updates via [`prune_safe`](Self::prune_safe).
+/// 5. Reconciling derivation progress via
+///    [`reconcile_derivation`](Self::reconcile_derivation).
 pub trait BatchPipeline: Send {
     /// Add an L2 block to the pipeline's input queue.
     ///
@@ -52,7 +64,7 @@ pub trait BatchPipeline: Send {
     /// Mark a submission as confirmed at the given L1 block number.
     ///
     /// Records frame inclusion without removing the channel or its L2 blocks.
-    /// [`prune_safe`](Self::prune_safe) owns both channel and block removal.
+    /// [`reconcile_derivation`](Self::reconcile_derivation) owns both channel and block removal.
     /// Call [`advance_l1_head`](Self::advance_l1_head) after processing the receipt.
     fn confirm(&mut self, id: SubmissionId, l1_block: u64);
 
@@ -81,16 +93,22 @@ pub trait BatchPipeline: Send {
     /// in-flight submissions to settle (confirm or requeue) before calling reset.
     fn reset(&mut self);
 
-    /// Prune buffered blocks at or below the reported safe L2 head.
+    /// Reconcile buffered state with the reported derivation progress.
     ///
-    /// Returns `false` without pruning when the safe head leaves a gap below the
-    /// buffered window, lies above it, or has a different hash than the boundary
-    /// block. The caller must reset the pipeline in these cases. An empty buffer
-    /// is valid.
+    /// Prunes buffered blocks at or below `safe_l2`, returning
+    /// [`DerivationReconciliation::SafeHeadMismatch`] without mutation when the safe head leaves a
+    /// gap below the buffered window, lies above it, or has a different hash than the boundary
+    /// block. An empty buffer is valid.
     ///
-    /// Pruning includes blocks not yet fed into a channel and clamps the encoding
-    /// cursor to the remaining queue.
-    fn prune_safe(&mut self, safe_l2: BlockInfo) -> bool;
+    /// After pruning, returns [`DerivationReconciliation::StalledChannel`] if `current_l1` has
+    /// moved strictly beyond the last inclusion block of a fully confirmed channel whose last L2
+    /// block is not safe. `current_l1` must be the derivation cursor, not the live L1 chain head;
+    /// `None` disables this check for providers that do not expose the cursor.
+    fn reconcile_derivation(
+        &mut self,
+        safe_l2: BlockInfo,
+        current_l1: Option<u64>,
+    ) -> DerivationReconciliation;
 
     /// Returns the estimated DA backlog in bytes.
     ///

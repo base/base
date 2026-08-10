@@ -5,7 +5,10 @@ use std::collections::VecDeque;
 use base_common_consensus::BaseBlock;
 use base_protocol::BlockInfo;
 
-use crate::{BatchPipeline, BatchSubmission, ReorgError, StepError, StepResult, SubmissionId};
+use crate::{
+    BatchPipeline, BatchSubmission, DerivationReconciliation, ReorgError, StepError, StepResult,
+    SubmissionId,
+};
 
 /// A mock implementation of [`BatchPipeline`] for testing downstream consumers
 /// such as the [`BatchDriver`](crate::BatchPipeline).
@@ -64,9 +67,13 @@ impl BatchPipeline for MockBatchPipeline {
         self.l1_heads.push(l1_block);
     }
 
-    fn prune_safe(&mut self, safe_l2: BlockInfo) -> bool {
+    fn reconcile_derivation(
+        &mut self,
+        safe_l2: BlockInfo,
+        _: Option<u64>,
+    ) -> DerivationReconciliation {
         self.safe_l2_numbers_pruned.push(safe_l2.number);
-        true
+        DerivationReconciliation::Consistent
     }
 
     fn reset(&mut self) {

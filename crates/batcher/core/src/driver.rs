@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use base_batcher_encoder::{BatchPipeline, StepResult};
+use base_batcher_encoder::{BatchPipeline, DerivationReconciliation, StepResult};
 use base_batcher_source::{
     L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource,
 };
@@ -14,8 +14,8 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    AdminCommand, BatchDriverConfig, BatchDriverError, BatcherStatus, DaThrottle, SubmissionQueue,
-    ThrottleClient, ThrottleController, event::DriverEvent,
+    AdminCommand, BatchDriverConfig, BatchDriverError, BatcherStatus, DaThrottle, DerivationStatus,
+    SubmissionQueue, ThrottleClient, ThrottleController, event::DriverEvent,
 };
 
 /// Async orchestration loop for the batcher.
@@ -53,8 +53,8 @@ where
     l1_head_source: Option<L>,
     /// Last trusted L2 safe head.
     safe_head: Option<BlockInfo>,
-    /// Ordered safe-head updates.
-    safe_head_rx: Option<mpsc::Receiver<BlockInfo>>,
+    /// Ordered derivation-progress snapshots.
+    derivation_status_rx: Option<mpsc::Receiver<DerivationStatus>>,
     /// Maximum wall-clock time to wait for in-flight submissions to settle
     /// when draining on cancellation or source exhaustion.
     drain_timeout: Duration,
@@ -85,8 +85,8 @@ where
     /// starving receipt processing and cancellation checks.
     pub const STEP_BUDGET: usize = 128;
 
-    /// Create a new [`BatchDriver`] with its L1 source, initial safe L2 head,
-    /// and ordered safe-head updates.
+    /// Create a new [`BatchDriver`] with its L1 source, initial derivation status,
+    /// and ordered status updates.
     pub fn new(
         runtime: R,
         pipeline: P,
@@ -94,9 +94,9 @@ where
         tx_manager: TM,
         config: BatchDriverConfig,
         throttle: DaThrottle<TC>,
-        head_sources: (L, BlockInfo, mpsc::Receiver<BlockInfo>),
+        head_sources: (L, DerivationStatus, mpsc::Receiver<DerivationStatus>),
     ) -> Self {
-        let (l1_head_source, safe_head, safe_head_rx) = head_sources;
+        let (l1_head_source, initial_status, derivation_status_rx) = head_sources;
         Self::new_inner(
             runtime,
             pipeline,
@@ -104,13 +104,13 @@ where
             tx_manager,
             config,
             throttle,
-            (l1_head_source, Some((safe_head, safe_head_rx))),
+            (l1_head_source, Some((initial_status, derivation_status_rx))),
         )
     }
 
-    /// Create a driver without safe-head tracking for tests that do not exercise pruning.
+    /// Create a driver without derivation-status tracking for tests that do not exercise it.
     #[cfg(any(test, feature = "test-utils"))]
-    pub fn new_without_safe_head(
+    pub fn new_without_derivation_status(
         runtime: R,
         pipeline: P,
         source: S,
@@ -137,10 +137,10 @@ where
         tx_manager: TM,
         config: BatchDriverConfig,
         throttle: DaThrottle<TC>,
-        head_sources: (L, Option<(BlockInfo, mpsc::Receiver<BlockInfo>)>),
+        head_sources: (L, Option<(DerivationStatus, mpsc::Receiver<DerivationStatus>)>),
     ) -> Self {
-        let (l1_head_source, safe_head_feed) = head_sources;
-        let (safe_head, safe_head_rx) = safe_head_feed.unzip();
+        let (l1_head_source, derivation_status_feed) = head_sources;
+        let (initial_status, derivation_status_rx) = derivation_status_feed.unzip();
         Self {
             runtime,
             pipeline,
@@ -152,8 +152,8 @@ where
             ),
             throttle,
             l1_head_source: Some(l1_head_source),
-            safe_head,
-            safe_head_rx,
+            safe_head: initial_status.map(|status| status.safe_l2),
+            derivation_status_rx,
             drain_timeout: config.drain_timeout,
             stopped: false,
             admin_rx: None,
@@ -162,11 +162,15 @@ where
         }
     }
 
-    /// Attach a safe-head feed to a test driver created without one.
+    /// Attach a derivation-status feed to a test driver created without one.
     #[cfg(any(test, feature = "test-utils"))]
-    pub fn with_safe_head_rx(mut self, initial: BlockInfo, rx: mpsc::Receiver<BlockInfo>) -> Self {
-        self.safe_head = Some(initial);
-        self.safe_head_rx = Some(rx);
+    pub fn with_derivation_status_rx(
+        mut self,
+        initial: DerivationStatus,
+        rx: mpsc::Receiver<DerivationStatus>,
+    ) -> Self {
+        self.safe_head = Some(initial.safe_l2);
+        self.derivation_status_rx = Some(rx);
         self
     }
 
@@ -222,7 +226,7 @@ where
         let mut shutting_down = false;
         loop {
             if !shutting_down {
-                self.apply_pending_safe_head_updates()?;
+                self.apply_pending_derivation_status_updates()?;
             }
 
             let encoding_idle = self.drain_encoding()?;
@@ -280,8 +284,8 @@ where
                     self.pipeline.advance_l1_head(n);
                     debug!(l1_head = %n, "L1 head advanced via source");
                 }
-                DriverEvent::SafeHead(head) => {
-                    self.on_safe_head(head);
+                DriverEvent::DerivationStatus(status) => {
+                    self.on_derivation_status(status);
                 }
                 DriverEvent::L1SourceClosed => {
                     debug!("L1 head source closed, disabling arm");
@@ -336,8 +340,9 @@ where
         self.discard_pending_flush_acks();
     }
 
-    /// Apply an ordered safe-head update.
-    fn on_safe_head(&mut self, head: BlockInfo) {
+    /// Reconcile buffered state with an ordered derivation-progress snapshot.
+    fn on_derivation_status(&mut self, status: DerivationStatus) {
+        let head = status.safe_l2;
         let previous = self.safe_head.replace(head);
 
         if let Some(previous) = previous.filter(|previous| {
@@ -355,34 +360,47 @@ where
             return;
         }
 
-        if !self.pipeline.prune_safe(head) {
-            warn!(
-                safe_l2 = %head.number,
-                safe_hash = %head.hash,
-                "safe L2 head does not match buffered chain, resetting pipeline"
-            );
-            self.reset_to_safe_head();
-            return;
+        match self
+            .pipeline
+            .reconcile_derivation(head, status.current_l1.map(|current_l1| current_l1.number))
+        {
+            DerivationReconciliation::Consistent => {
+                debug!(safe_l2_number = %head.number, "reconciled pipeline with derivation");
+            }
+            DerivationReconciliation::SafeHeadMismatch => {
+                warn!(
+                    safe_l2 = %head.number,
+                    safe_hash = %head.hash,
+                    "safe L2 head does not match buffered chain, resetting pipeline"
+                );
+                self.reset_to_safe_head();
+            }
+            DerivationReconciliation::StalledChannel => {
+                warn!(
+                    current_l1 = ?status.current_l1.map(|current_l1| current_l1.number),
+                    safe_l2 = %head.number,
+                    "rollup node passed a fully confirmed channel without deriving it, resetting pipeline"
+                );
+                self.reset_to_safe_head();
+            }
         }
-
-        debug!(safe_l2_number = %head.number, "pruned safe L2 blocks");
     }
 
-    /// Apply safe-head updates that arrived before the next CPU phase.
-    fn apply_pending_safe_head_updates(&mut self) -> Result<(), BatchDriverError> {
+    /// Apply derivation-status updates that arrived before the next CPU phase.
+    fn apply_pending_derivation_status_updates(&mut self) -> Result<(), BatchDriverError> {
         loop {
-            let Some(rx) = self.safe_head_rx.as_mut() else {
+            let Some(rx) = self.derivation_status_rx.as_mut() else {
                 return Ok(());
             };
 
             match rx.try_recv() {
-                Ok(head) => self.on_safe_head(head),
+                Ok(status) => self.on_derivation_status(status),
                 Err(mpsc::error::TryRecvError::Empty) => return Ok(()),
                 Err(mpsc::error::TryRecvError::Disconnected) if self.runtime.is_cancelled() => {
                     return Ok(());
                 }
                 Err(mpsc::error::TryRecvError::Disconnected) => {
-                    return Err(BatchDriverError::SafeHeadSourceClosed);
+                    return Err(BatchDriverError::DerivationStatusSourceClosed);
                 }
             }
         }
@@ -430,7 +448,7 @@ where
     /// are returned to the caller. Admin commands are placed before the source
     /// arm so control-plane operations (pause, resume, flush) are never starved
     /// by sustained block throughput.
-    /// Safe-head changes are also handled before unsafe blocks so reorg
+    /// Derivation-status changes are also handled before unsafe blocks so pruning and
     /// recovery cannot be starved by sequential catchup.
     ///
     /// [`AdminCommand::Pause`] immediately discards in-flight submissions and
@@ -498,16 +516,16 @@ where
                     continue;
                 }
 
-                safe_head = async {
-                    if let Some(ref mut rx) = self.safe_head_rx {
+                derivation_status = async {
+                    if let Some(ref mut rx) = self.derivation_status_rx {
                         rx.recv().await
                     } else {
-                        std::future::pending::<Option<BlockInfo>>().await
+                        std::future::pending::<Option<DerivationStatus>>().await
                     }
                 } => {
-                    match safe_head {
-                        Some(head) => DriverEvent::SafeHead(head),
-                        None => return Err(BatchDriverError::SafeHeadSourceClosed),
+                    match derivation_status {
+                        Some(status) => DriverEvent::DerivationStatus(status),
+                        None => return Err(BatchDriverError::DerivationStatusSourceClosed),
                     }
                 }
 
@@ -598,8 +616,8 @@ mod tests {
     use tokio::sync::{mpsc, oneshot};
 
     use crate::{
-        AdminCommand, BatchDriver, BatchDriverConfig, DaThrottle, NoopThrottleClient,
-        ThrottleController,
+        AdminCommand, BatchDriver, BatchDriverConfig, DaThrottle, DerivationStatus,
+        NoopThrottleClient, ThrottleController,
         event::DriverEvent,
         test_utils::{
             DriverFixture, ImmediateConfirmTxManager, ImmediateFailTxManager,
@@ -719,7 +737,7 @@ mod tests {
         Arc<NoopThrottleClient>,
         QueuedL1HeadSource,
     > {
-        BatchDriver::new_without_safe_head(
+        BatchDriver::new_without_derivation_status(
             runtime,
             TrackingPipeline::new(Arc::new(Mutex::new(Recorded::default()))),
             QueuedSource::new(source_events),
@@ -867,14 +885,14 @@ mod tests {
     #[test]
     fn next_event_prioritizes_source_before_receipts_and_heads() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            let (_safe_tx, safe_rx) = mpsc::channel(1);
+            let (_status_tx, status_rx) = mpsc::channel(1);
             let mut driver = driver_for_next_event(
                 ctx,
                 [Ok(L2BlockEvent::Flush { ack: None })],
                 [Ok(L1HeadEvent::NewHead(9))],
                 ImmediateConfirmTxManager { l1_block: 1 },
             )
-            .with_safe_head_rx(safe_head(0), safe_rx);
+            .with_derivation_status_rx(DerivationStatus::from_safe_l2(safe_head(0)), status_rx);
             driver.pipeline.submissions.push_back(SubmissionStub::stub());
             driver.submissions.submit_pending(&mut driver.pipeline).await;
 
@@ -884,10 +902,13 @@ mod tests {
     }
 
     #[test]
-    fn next_event_prioritizes_safe_head_before_source_and_receipts() {
+    fn next_event_prioritizes_derivation_status_before_source_and_receipts() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            let (safe_tx, safe_rx) = mpsc::channel(1);
-            safe_tx.send(safe_head(5)).await.expect("safe-head receiver should be open");
+            let (status_tx, status_rx) = mpsc::channel(1);
+            status_tx
+                .send(DerivationStatus::from_safe_l2(safe_head(5)))
+                .await
+                .expect("derivation-status receiver should be open");
 
             let mut driver = driver_for_next_event(
                 ctx,
@@ -895,20 +916,26 @@ mod tests {
                 [Ok(L1HeadEvent::NewHead(9))],
                 ImmediateConfirmTxManager { l1_block: 42 },
             )
-            .with_safe_head_rx(safe_head(0), safe_rx);
+            .with_derivation_status_rx(DerivationStatus::from_safe_l2(safe_head(0)), status_rx);
             driver.pipeline.submissions.push_back(SubmissionStub::stub());
             driver.submissions.submit_pending(&mut driver.pipeline).await;
 
             let event = driver.next_event().await.expect("next_event should succeed");
-            assert!(matches!(event, DriverEvent::SafeHead(head) if head.number == 5));
+            assert!(matches!(
+                event,
+                DriverEvent::DerivationStatus(status) if status.safe_l2.number == 5
+            ));
         });
     }
 
     #[test]
-    fn next_event_prioritizes_safe_head_before_l1_head() {
+    fn next_event_prioritizes_derivation_status_before_l1_head() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            let (safe_tx, safe_rx) = mpsc::channel(1);
-            safe_tx.send(safe_head(5)).await.expect("safe-head receiver should be open");
+            let (status_tx, status_rx) = mpsc::channel(1);
+            status_tx
+                .send(DerivationStatus::from_safe_l2(safe_head(5)))
+                .await
+                .expect("derivation-status receiver should be open");
 
             let mut driver = driver_for_next_event(
                 ctx,
@@ -916,10 +943,13 @@ mod tests {
                 [Ok(L1HeadEvent::NewHead(9))],
                 ImmediateConfirmTxManager { l1_block: 1 },
             )
-            .with_safe_head_rx(safe_head(0), safe_rx);
+            .with_derivation_status_rx(DerivationStatus::from_safe_l2(safe_head(0)), status_rx);
 
             let event = driver.next_event().await.expect("next_event should succeed");
-            assert!(matches!(event, DriverEvent::SafeHead(head) if head.number == 5));
+            assert!(matches!(
+                event,
+                DriverEvent::DerivationStatus(status) if status.safe_l2.number == 5
+            ));
         });
     }
 

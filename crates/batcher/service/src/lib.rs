@@ -42,8 +42,8 @@ pub use l2_block_parity::{
 mod throttle;
 pub use throttle::RpcThrottleClient;
 
-mod safe_head_poller;
-pub use safe_head_poller::{SafeHeadPoller, SafeHeadProvider};
+mod derivation_status_poller;
+pub use derivation_status_poller::{DerivationStatusPoller, DerivationStatusProvider};
 
 mod shadow_parity;
 pub use shadow_parity::{

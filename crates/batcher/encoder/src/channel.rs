@@ -63,6 +63,13 @@ pub struct ReadyChannel {
     pub last_confirmed_l1_block: Option<u64>,
 }
 
+impl ReadyChannel {
+    /// Returns `true` once every frame in the channel is confirmed on L1.
+    pub fn is_fully_confirmed(&self) -> bool {
+        self.frame_states.iter().all(|state| *state == FrameState::Confirmed)
+    }
+}
+
 /// Tracks a pending submission back to its channel and frame range.
 #[derive(Debug, Clone)]
 pub struct PendingRef {

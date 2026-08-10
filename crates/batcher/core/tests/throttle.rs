@@ -16,7 +16,8 @@ use base_batcher_core::{
     },
 };
 use base_batcher_encoder::{
-    BatchPipeline, BatchSubmission, ReorgError, StepError, StepResult, SubmissionId,
+    BatchPipeline, BatchSubmission, DerivationReconciliation, ReorgError, StepError, StepResult,
+    SubmissionId,
 };
 use base_batcher_source::{L2BlockEvent, SourceError, UnsafeBlockSource};
 use base_common_consensus::BaseBlock;
@@ -39,7 +40,7 @@ fn test_throttle_client_called_on_high_backlog() {
         let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
         let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
 
-        let driver = BatchDriver::new_without_safe_head(
+        let driver = BatchDriver::new_without_derivation_status(
             ctx.clone(),
             pipeline,
             PendingSource,
@@ -84,7 +85,7 @@ fn test_throttle_client_called_with_upper_limits_on_zero_backlog() {
         let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
         let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
 
-        let driver = BatchDriver::new_without_safe_head(
+        let driver = BatchDriver::new_without_derivation_status(
             ctx.clone(),
             pipeline,
             PendingSource,
@@ -129,7 +130,7 @@ fn test_throttle_not_called_redundantly() {
         let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
         let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
 
-        let driver = BatchDriver::new_without_safe_head(
+        let driver = BatchDriver::new_without_derivation_status(
             ctx.clone(),
             pipeline,
             PendingSource,
@@ -174,7 +175,7 @@ fn test_step_strategy_full_intensity_applies_lower_limits() {
         let throttle = ThrottleController::new(config, ThrottleStrategy::Step);
         let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
 
-        let driver = BatchDriver::new_without_safe_head(
+        let driver = BatchDriver::new_without_derivation_status(
             ctx.clone(),
             pipeline,
             PendingSource,
@@ -239,8 +240,12 @@ fn test_throttle_transitions_from_active_to_inactive() {
         fn requeue(&mut self, _: SubmissionId) {}
         fn force_close_channel(&mut self) {}
         fn advance_l1_head(&mut self, _: u64) {}
-        fn prune_safe(&mut self, _: BlockInfo) -> bool {
-            true
+        fn reconcile_derivation(
+            &mut self,
+            _: BlockInfo,
+            _: Option<u64>,
+        ) -> DerivationReconciliation {
+            DerivationReconciliation::Consistent
         }
         fn reset(&mut self) {}
 
@@ -276,7 +281,7 @@ fn test_throttle_transitions_from_active_to_inactive() {
         let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
         let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
 
-        let driver = BatchDriver::new_without_safe_head(
+        let driver = BatchDriver::new_without_derivation_status(
             ctx.clone(),
             pipeline,
             ChannelSource { rx: source_rx },

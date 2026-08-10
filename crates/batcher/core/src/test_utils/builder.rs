@@ -70,7 +70,7 @@ impl DriverFixture {
         Arc<NoopThrottleClient>,
         PendingL1HeadSource,
     > {
-        BatchDriver::new_without_safe_head(
+        BatchDriver::new_without_derivation_status(
             runtime,
             pipeline,
             PendingSource,

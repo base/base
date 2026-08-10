@@ -164,7 +164,7 @@ impl<S: L2BlockProvider> Batcher<S> {
         let runtime = TokioRuntime::with_token(cancel.clone());
 
         let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Off);
-        let driver = BatchDriver::new_without_safe_head(
+        let driver = BatchDriver::new_without_derivation_status(
             runtime,
             pipeline,
             source,
