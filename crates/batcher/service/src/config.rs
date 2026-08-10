@@ -104,8 +104,6 @@ pub struct BatcherConfig {
     pub admin_addr: Option<SocketAddr>,
     /// If `true`, start in a stopped state and defer batch submission until
     /// `admin_startBatcher` is called via the admin API.
-    ///
-    /// Matches the reference batcher's `--stopped` behavior (env: `BATCHER_STOPPED`).
     pub stopped: bool,
     /// If `true`, block startup until the rollup node reports a non-zero
     /// `unsafe_l2` and `current_l1` head via `optimism_syncStatus`.
