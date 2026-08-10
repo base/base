@@ -29,6 +29,7 @@ target_gps: 20000000
 # Keep local devnet RPC pressure batched while leaving enough in-flight room
 # for block receipt confirmation to provide backpressure.
 in_flight_per_sender: 96
+batch_size: 20
 
 # Test duration
 duration: "30s"

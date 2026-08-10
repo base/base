@@ -18,6 +18,7 @@ sender_count: 100
 target_gps: 15000000
 block_time: "2s"
 in_flight_per_sender: 16
+batch_size: 200
 duration: "30s"
 seed: 1
 
