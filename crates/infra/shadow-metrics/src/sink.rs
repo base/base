@@ -131,16 +131,6 @@ impl ShadowMetricsSink {
 
         Ok(())
     }
-
-    /// Checks optional shadow-metrics storage readiness.
-    pub async fn check_optional_schema_ready(
-        sink: Option<&Self>,
-    ) -> Result<(), ShadowMetricsSchemaReadinessError> {
-        match sink {
-            Some(sink) => sink.check_schema_ready().await,
-            None => Ok(()),
-        }
-    }
 }
 
 #[cfg(test)]

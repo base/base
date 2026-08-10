@@ -136,6 +136,34 @@ async fn run_server(args: Args) -> Result<()> {
         result = http_server => {
             result.map_err(|e| anyhow::anyhow!("shadow-metrics health server stopped unexpectedly: {e}"))
         }
+        () = shutdown_signal() => {
+            info!("Shutdown signal received; stopping shadow-metrics");
+            Ok(())
+        }
+    }
+}
+
+/// Resolves on SIGINT or, on Unix, SIGTERM so the k8s pre-kill SIGTERM unwinds
+/// the runtime and drops the `PgPool` cleanly instead of a hard kill.
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c().await.expect("failed to install SIGINT handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        () = ctrl_c => {},
+        () = terminate => {},
     }
 }
 
@@ -159,11 +187,15 @@ async fn healthz_handler() -> &'static str {
 }
 
 async fn readyz_handler(State(state): State<HealthState>) -> Response {
-    match ShadowMetricsSink::check_optional_schema_ready(state.sink.as_ref()).await {
-        Ok(()) => (StatusCode::OK, "ready\n".to_string()).into_response(),
+    let readiness = match &state.sink {
+        Some(sink) => sink.check_schema_ready().await,
+        None => Ok(()),
+    };
+    match readiness {
+        Ok(()) => (StatusCode::OK, "ready\n").into_response(),
         Err(err) => {
             error!(error = %err, "shadow-metrics readiness check failed");
-            (StatusCode::SERVICE_UNAVAILABLE, "not ready\n".to_string()).into_response()
+            (StatusCode::SERVICE_UNAVAILABLE, "not ready\n").into_response()
         }
     }
 }
