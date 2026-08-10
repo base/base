@@ -2354,7 +2354,10 @@ mod tests {
             .unwrap();
         set_now(&mut tok, U256::from(100u64));
         let matured = LOGIC.cancel_scheduled_multiplier(&mut tok, ALICE, true).unwrap_err();
-        assert_eq!(matured, BasePrecompileError::revert(IB20Asset::UIMultiplierUpdateDoesNotExist {}));
+        assert_eq!(
+            matured,
+            BasePrecompileError::revert(IB20Asset::UIMultiplierUpdateDoesNotExist {})
+        );
     }
 
     #[test]

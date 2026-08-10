@@ -2597,9 +2597,7 @@ fn golden_set_ui_multiplier_reverts_schedule_overlap() {
     .unwrap_err();
     assert_eq!(
         err,
-        BasePrecompileError::revert(IB20Asset::UIMultiplierUpdateExists {
-            effectiveAt: u(1_000)
-        })
+        BasePrecompileError::revert(IB20Asset::UIMultiplierUpdateExists { effectiveAt: u(1_000) })
     );
 }
 
