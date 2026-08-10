@@ -6,10 +6,10 @@ pub use build::{PayloadBuilder, UnsealedPayloadHandle};
 mod config;
 pub use config::SequencerConfig;
 
-mod origin_selector;
+mod l1_origin;
 #[cfg(test)]
-pub use origin_selector::MockOriginSelector;
-pub use origin_selector::{
+pub use l1_origin::MockOriginSelector;
+pub use l1_origin::{
     DelayedL1OriginSelectorProvider, L1OriginSelector, L1OriginSelectorError,
     L1OriginSelectorProvider, OriginSelector,
 };
