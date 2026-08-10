@@ -100,13 +100,17 @@ serde = [
 	"revm?/serde",
 ]
 network = [ "dep:alloy-network" ]
-reth = [
+eip8130 = [
 	"dep:alloy-evm",
-	"dep:alloy-signer",
 	"dep:base-common-evm",
+	"dep:revm",
+	"std",
+]
+reth = [
+	"dep:alloy-signer",
 	"dep:reth-primitives-traits",
 	"dep:reth-rpc-convert",
-	"dep:revm",
+	"eip8130",
 	"network",
 	"std",
 ]

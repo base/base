@@ -1,44 +1,24 @@
 //! Reth compatibility implementations for RPC types.
 
-use alloc::vec;
 use core::convert::Infallible;
 
 use alloy_consensus::{SignableTransaction, error::ValueError};
 use alloy_evm::{
-    EvmEnv, FromRecoveredTx,
+    EvmEnv,
     env::BlockEnvironment,
     rpc::{EthTxEnvError, TryIntoTxEnv},
 };
 use alloy_network::TxSigner;
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes};
 use alloy_signer::Signature;
-use base_common_consensus::{
-    BaseTransactionInfo, BaseTxEnvelope, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
-    TxEip8130,
-};
-use base_common_evm::{BaseTransaction as BaseRevm, Eip8130ExecutionMode};
+use base_common_consensus::{BaseTransactionInfo, BaseTxEnvelope};
+use base_common_evm::BaseTransaction as BaseRevm;
 use reth_rpc_convert::{FromConsensusTx, SignTxRequestError, SignableTxRequest, TryIntoSimTx};
 use revm::context::TxEnv;
 
-use crate::{BaseTransactionRequest, Eip8130AuthScheme, Transaction};
+use crate::{BaseTransactionRequest, Transaction};
 
-/// Filler byte for synthesized authentication stubs. Non-zero so the EIP-2028
-/// calldata cost of the stub matches a real (high-entropy) signature rather
-/// than under-pricing it as zero bytes; the bytes are never recovered.
-const STUB_AUTH_FILL: u8 = 0xff;
-
-/// Length (in bytes) of the leading authenticator-address selector on a prefixed
-/// (`authenticator(20) || data`) authentication blob.
-const AUTHENTICATOR_SELECTOR_LEN: usize = 20;
-
-/// Upper bound (in bytes) on the caller-supplied authentication-payload data
-/// (the `sender_auth` / `payer_auth` bytes after any 20-byte selector). Real
-/// authenticator payloads are at most a few hundred bytes (e.g. a `WebAuthn`
-/// assertion with its client-data JSON), so 8 `KiB` is generous. The cap bounds
-/// the calldata the estimate has to hash and price; an over-cap blob is rejected
-/// (surfaced as `INVALID_PARAMS`) rather than priced.
-const MAX_AUTH_SIZE: u32 = 8_192;
-
+#[cfg(not(feature = "eip8130"))]
 impl BaseTransactionRequest {
     /// Builds the unsigned simulation transaction for an EIP-8130
     /// `eth_estimateGas` / `eth_call` request, or `None` when the request
@@ -319,9 +299,14 @@ impl SignableTxRequest<BaseTxEnvelope> for BaseTransactionRequest {
 mod tests {
     use alloy_primitives::address;
     use base_common_consensus::{Eip8130Constants, Eip8130Contracts, Eip8130Signed};
+    use base_common_evm::Eip8130ExecutionMode;
     use serde_json::json;
 
     use super::*;
+    use crate::{
+        Eip8130AuthScheme,
+        eip8130::{MAX_AUTH_SIZE, STUB_AUTH_FILL},
+    };
 
     const CHAIN_ID: u64 = 8453;
     const GAS_CAP: u64 = 30_000_000;
