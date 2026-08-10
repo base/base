@@ -12,7 +12,7 @@ pub struct ShadowBlockRepo {
 impl ShadowBlockRepo {
     /// Create a new repository backed by the provided pool.
     #[must_use]
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 

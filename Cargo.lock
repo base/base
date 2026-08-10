@@ -6282,11 +6282,14 @@ dependencies = [
 name = "base-shadow-canary"
 version = "0.0.0"
 dependencies = [
+ "anyhow",
+ "async-trait",
  "base-node-runner",
  "base-shadow-canary-db",
  "chrono",
  "eyre",
  "futures",
+ "mockall",
  "reth-execution-types",
  "reth-exex",
  "reth-node-api",

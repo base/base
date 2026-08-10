@@ -15,7 +15,7 @@ pub struct ShadowCanaryConfig {
     pub builder_version: String,
 }
 
-/// Wires the shadow canary ExEx into the Base node.
+/// Wires the shadow canary `ExEx` into the Base node.
 #[derive(Debug)]
 pub struct ShadowCanaryExtension {
     cfg: ShadowCanaryConfig,
@@ -41,7 +41,7 @@ impl BaseNodeExtension for ShadowCanaryExtension {
 
         hooks
             .add_node_started_hook(move |node| {
-                spawn_writer(node.task_executor.clone(), rx, db, builder_version);
+                spawn_writer(node.task_executor, rx, db, builder_version);
                 Ok(())
             })
             .install_exex("shadow-canary", move |ctx| async move { Ok(run_exex(ctx, tx)) })

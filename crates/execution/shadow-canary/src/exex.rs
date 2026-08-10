@@ -10,19 +10,19 @@ use tracing::{debug, info, warn};
 
 use base_shadow_canary_db::ShadowBlockRow;
 
-/// Shadow canary ExEx handler.
+/// Shadow canary `ExEx` handler.
 #[derive(Debug)]
 pub struct ShadowCanaryExEx {
     tx: mpsc::Sender<ShadowBlockRow>,
 }
 
 impl ShadowCanaryExEx {
-    /// Create a new shadow canary ExEx handler.
+    /// Create a new shadow canary `ExEx` handler.
     pub const fn new(tx: mpsc::Sender<ShadowBlockRow>) -> Self {
         Self { tx }
     }
 
-    /// Runs the shadow canary ExEx loop.
+    /// Runs the shadow canary `ExEx` loop.
     pub async fn run<Node>(self, mut ctx: ExExContext<Node>) -> Result<()>
     where
         Node: FullNodeComponents,
@@ -218,7 +218,7 @@ impl ShadowCanaryExEx {
     }
 }
 
-/// Runs the shadow canary ExEx loop.
+/// Runs the shadow canary `ExEx` loop.
 pub async fn run_exex<Node>(
     ctx: ExExContext<Node>,
     tx: mpsc::Sender<ShadowBlockRow>,

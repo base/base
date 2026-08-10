@@ -30,6 +30,11 @@ tokio.workspace = true
 tracing = { workspace = true, features = ["std"] }
 
 # misc
+anyhow.workspace = true
+async-trait.workspace = true
 chrono.workspace = true
 eyre.workspace = true
 futures.workspace = true
+
+[dev-dependencies]
+mockall.workspace = true
