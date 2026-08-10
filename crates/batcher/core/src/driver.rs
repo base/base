@@ -1,6 +1,6 @@
 //! The async batch driver that orchestrates encoding, block sourcing, and L1 submission.
 
-use std::time::Duration;
+use std::{collections::VecDeque, time::Duration};
 
 use base_batcher_encoder::{BatchPipeline, StepResult};
 use base_batcher_source::{
@@ -53,6 +53,8 @@ where
     l1_head_source: Option<L>,
     /// Last trusted L2 safe head.
     safe_head: Option<BlockInfo>,
+    /// Contiguous accepted chain from the safe head through the latest unsafe block.
+    block_history: VecDeque<BlockInfo>,
     /// Ordered safe-head updates.
     safe_head_rx: Option<mpsc::Receiver<BlockInfo>>,
     /// Maximum wall-clock time to wait for in-flight submissions to settle
@@ -141,6 +143,7 @@ where
     ) -> Self {
         let (l1_head_source, safe_head_feed) = head_sources;
         let (safe_head, safe_head_rx) = safe_head_feed.unzip();
+        let block_history = safe_head.iter().copied().collect();
         Self {
             runtime,
             pipeline,
@@ -153,6 +156,7 @@ where
             throttle,
             l1_head_source: Some(l1_head_source),
             safe_head,
+            block_history,
             safe_head_rx,
             drain_timeout: config.drain_timeout,
             stopped: false,
@@ -166,6 +170,8 @@ where
     #[cfg(any(test, feature = "test-utils"))]
     pub fn with_safe_head_rx(mut self, initial: BlockInfo, rx: mpsc::Receiver<BlockInfo>) -> Self {
         self.safe_head = Some(initial);
+        self.block_history.clear();
+        self.block_history.push_back(initial);
         self.safe_head_rx = Some(rx);
         self
     }
@@ -333,28 +339,42 @@ where
             self.source.reset_catchup(safe_head);
         }
 
+        self.reset_block_history();
         self.discard_pending_flush_acks();
+    }
+
+    /// Retain only the current safe head as the accepted-chain anchor.
+    fn reset_block_history(&mut self) {
+        self.block_history.clear();
+        if let Some(safe_head) = self.safe_head {
+            self.block_history.push_back(safe_head);
+        }
     }
 
     /// Apply an ordered safe-head update.
     fn on_safe_head(&mut self, head: BlockInfo) {
         let previous = self.safe_head.replace(head);
+        let known_index = self
+            .block_history
+            .iter()
+            .position(|block| block.number == head.number && block.hash == head.hash);
 
-        if let Some(previous) = previous.filter(|previous| {
-            head.number < previous.number
-                || (head.number == previous.number && head.hash != previous.hash)
-        }) {
+        let Some(known_index) = known_index else {
             warn!(
-                previous_safe_l2 = %previous.number,
-                previous_safe_hash = %previous.hash,
+                previous_safe_l2 = ?previous.map(|block| block.number),
+                previous_safe_hash = ?previous.map(|block| block.hash),
                 safe_l2 = %head.number,
                 safe_hash = %head.hash,
-                "safe L2 head changed chain, resetting pipeline"
+                "safe L2 head is not on the accepted chain, resetting pipeline"
             );
             self.reset_to_safe_head();
             return;
-        }
+        };
 
+        self.block_history.drain(..known_index);
+        if let Some(anchor) = self.block_history.front_mut() {
+            *anchor = head;
+        }
         self.pipeline.prune_safe(head.number);
         debug!(safe_l2_number = %head.number, "pruned safe L2 blocks");
     }
@@ -391,8 +411,26 @@ where
             return;
         }
 
+        let block_info = BlockInfo::from(block.as_ref());
+        if let Some(tip) = self.block_history.back()
+            && (number != tip.number.saturating_add(1) || block.header.parent_hash != tip.hash)
+        {
+            warn!(
+                block = %number,
+                expected = %tip.number.saturating_add(1),
+                expected_parent = %tip.hash,
+                received_parent = %block.header.parent_hash,
+                "L2 block is not the next child of the accepted chain, resetting pipeline"
+            );
+            self.reset_to_safe_head();
+            return;
+        }
+
         match self.pipeline.add_block(*block) {
             Ok(()) => {
+                if self.safe_head.is_some() {
+                    self.block_history.push_back(block_info);
+                }
                 debug!(block = %number, "added unsafe block to pipeline");
             }
             Err((e, _block)) => {
@@ -445,6 +483,7 @@ where
                         AdminCommand::Pause => {
                             self.submissions.discard();
                             self.pipeline.reset();
+                            self.reset_block_history();
                             self.stopped = true;
                             self.discard_pending_flush_acks();
                             info!(stopped = true, "batcher paused via admin");
@@ -452,6 +491,7 @@ where
                         AdminCommand::Resume => {
                             if let Some(safe_head) = self.safe_head {
                                 self.source.reset_catchup(safe_head);
+                                self.reset_block_history();
                                 info!(
                                     stopped = false,
                                     safe_l2 = %safe_head.number,
