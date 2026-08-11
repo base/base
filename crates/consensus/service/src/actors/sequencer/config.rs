@@ -33,6 +33,13 @@ pub struct SequencerConfig {
     pub conductor_rpc_timeout: Duration,
     /// The confirmation delay for the sequencer.
     pub l1_conf_delay: u64,
+    /// Request timeout for L1 RPC calls on the sequencer block-production hot path.
+    pub l1_rpc_timeout: Duration,
+}
+
+impl SequencerConfig {
+    /// Default request timeout for L1 RPC calls on the sequencer block-production hot path.
+    pub const DEFAULT_L1_RPC_TIMEOUT: Duration = Duration::from_millis(500);
 }
 
 impl Default for SequencerConfig {
@@ -44,6 +51,7 @@ impl Default for SequencerConfig {
             conductor_binary_commit: false,
             conductor_rpc_timeout: DEFAULT_CONDUCTOR_RPC_TIMEOUT,
             l1_conf_delay: 0,
+            l1_rpc_timeout: Self::DEFAULT_L1_RPC_TIMEOUT,
         }
     }
 }

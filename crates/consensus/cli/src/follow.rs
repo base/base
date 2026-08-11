@@ -9,7 +9,7 @@ use base_common_network::Base;
 use base_consensus_node::{
     EngineConfig, FollowNode, FollowNodeConfig, L1Config, NodeMode, RemoteL2Client,
 };
-use base_consensus_providers::OnlineBeaconClient;
+use base_consensus_providers::{L1RpcProvider, OnlineBeaconClient};
 use base_consensus_rpc::RpcBuilder;
 use clap::Args;
 use reth_node_core::args::TraceArgs;
@@ -188,6 +188,7 @@ impl ConsensusFollowNodeArgs {
             l2_url: l2_engine_rpc,
             l2_jwt_secret: jwt_secret,
             l1_url: self.config.l1_rpc_args.l1_eth_rpc.clone(),
+            l1_rpc_timeout: self.config.l1_rpc_args.l1_rpc_timeout,
             mode: NodeMode::Validator,
         };
         let engine_client =
@@ -265,7 +266,10 @@ impl ConsensusFollowNodeArgs {
             chain_config: Arc::new(l1_chain_config),
             trust_rpc: self.config.l1_rpc_args.l1_trust_rpc,
             beacon_client: l1_beacon,
-            engine_provider: RootProvider::new_http(self.config.l1_rpc_args.l1_eth_rpc.clone()),
+            engine_provider: L1RpcProvider::new_http_with_timeout(
+                self.config.l1_rpc_args.l1_eth_rpc.clone(),
+                self.config.l1_rpc_args.l1_rpc_timeout,
+            ),
             finalized_poll_interval: L1Config::default_finalized_poll_interval(cfg.l1_chain_id),
             verifier_l1_confs: self.config.l1_rpc_args.l1_verifier_confs,
         })
