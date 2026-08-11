@@ -26,6 +26,17 @@ pub struct SequencerArgs {
     #[arg(long = "sequencer.l1-confs", default_value = "4", env = "BASE_NODE_SEQUENCER_L1_CONFS")]
     pub l1_confs: u64,
 
+    /// Request timeout for L1 RPC calls on the sequencer block-production hot path.
+    #[arg(
+        long = "sequencer.l1-rpc-timeout-ms",
+        default_value = "500",
+        env = "BASE_NODE_SEQUENCER_L1_RPC_TIMEOUT_MS",
+        value_parser = |arg: &str| -> Result<Duration, ParseIntError> {
+            Ok(Duration::from_millis(arg.parse()?))
+        }
+    )]
+    pub l1_rpc_timeout: Duration,
+
     /// Force the sequencer to strictly prepare the next L1 origin and create empty L2 blocks.
     #[arg(
         long = "sequencer.recover",
@@ -88,17 +99,35 @@ impl SequencerArgs {
             conductor_binary_commit: self.conductor_binary_commit,
             conductor_rpc_timeout: self.conductor_rpc_timeout,
             l1_conf_delay: self.l1_confs,
+            l1_rpc_timeout: self.l1_rpc_timeout,
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::num::NonZeroU64;
+    use std::{num::NonZeroU64, time::Duration};
 
     use clap::Parser;
 
     use super::SequencerArgs;
+
+    #[test]
+    fn defaults_l1_rpc_timeout_to_five_hundred_milliseconds() {
+        let args = SequencerArgs::default();
+
+        assert_eq!(args.l1_rpc_timeout, Duration::from_millis(500));
+        assert_eq!(args.config().l1_rpc_timeout, Duration::from_millis(500));
+    }
+
+    #[test]
+    fn parses_l1_rpc_timeout_in_milliseconds() {
+        let args =
+            SequencerArgs::parse_from(["base-consensus", "--sequencer.l1-rpc-timeout-ms", "750"]);
+
+        assert_eq!(args.l1_rpc_timeout, Duration::from_millis(750));
+        assert_eq!(args.config().l1_rpc_timeout, Duration::from_millis(750));
+    }
 
     #[test]
     fn parses_shadow_blocks_per_cycle() {

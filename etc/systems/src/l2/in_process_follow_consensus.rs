@@ -107,6 +107,7 @@ impl InProcessFollowConsensus {
             l2_url: config.l2_engine_url,
             l2_jwt_secret: config.jwt_secret,
             l1_url: l1_rpc_url.clone(),
+            l1_rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,
             mode: NodeMode::Validator,
         };
         let engine_client = Arc::new(
