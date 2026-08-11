@@ -449,6 +449,7 @@ fn intrinsic_gas_entries<T: alloy_consensus::Transaction>(
         access_list_addresses,
         access_list_storage_keys,
         authorization_count,
+        None,
     );
     let intrinsic_gas = initial_gas.initial_total_gas();
     let floor_gas = initial_gas.floor_gas();

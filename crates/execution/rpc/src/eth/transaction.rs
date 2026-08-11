@@ -158,12 +158,12 @@ where
     {
         let this = self.clone();
         async move {
-            let Some((tx, meta, receipt, all_receipts)) =
+            let Some((tx, meta, receipt, all_receipts, block)) =
                 this.load_transaction_and_receipt(hash).await?
             else {
                 return Ok(None);
             };
-            this.build_transaction_receipt(tx, meta, receipt, all_receipts).await.map(Some)
+            this.build_transaction_receipt(tx, meta, receipt, all_receipts, block).await.map(Some)
         }
     }
 }

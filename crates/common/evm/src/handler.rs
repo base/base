@@ -23,8 +23,8 @@ use revm::{
         pre_execution::{calculate_caller_fee, validate_account_nonce_and_code_with_components},
     },
     inspector::{Inspector, InspectorEvmTr, InspectorHandler},
-    interpreter::{Gas, interpreter::EthInterpreter, interpreter_action::FrameInit},
-    primitives::{U256, hardfork::SpecId},
+    interpreter::{Gas, GasTracker, interpreter::EthInterpreter, interpreter_action::FrameInit},
+    primitives::U256,
 };
 
 use crate::{
@@ -185,8 +185,8 @@ where
     fn last_frame_result(
         &mut self,
         evm: &mut Self::Evm,
-        _original_reservoir: u64,
         frame_result: &mut <<Self::Evm as EvmTr>::Frame as FrameTr>::FrameResult,
+        parent_gas: &mut GasTracker,
     ) -> Result<(), Self::Error> {
         let ctx = evm.ctx();
         let tx = ctx.tx();
@@ -222,6 +222,7 @@ where
             gas.set_reservoir(reservoir.saturating_add_signed(state_gas_spent));
         }
 
+        *parent_gas = *gas.tracker();
         Ok(())
     }
 
@@ -247,7 +248,7 @@ where
         evm: &mut Self::Evm,
         frame_result: &mut <<Self::Evm as EvmTr>::Frame as FrameTr>::FrameResult,
         eip7702_refund: i64,
-    ) {
+    ) -> Result<(), Self::Error> {
         frame_result.gas_mut().record_refund(eip7702_refund);
 
         let is_deposit = evm.ctx().tx().tx_type() == DEPOSIT_TRANSACTION_TYPE;
@@ -256,10 +257,11 @@ where
         // Prior to Regolith, deposit transactions did not receive gas refunds.
         let is_gas_refund_disabled = is_deposit && !is_regolith;
         if !is_gas_refund_disabled {
-            frame_result.gas_mut().set_final_refund(
-                evm.ctx().cfg().spec().into_eth_spec().is_enabled_in(SpecId::LONDON),
-            );
+            frame_result
+                .gas_mut()
+                .set_final_refund(evm.ctx().cfg().gas_params().max_refund_quotient());
         }
+        Ok(())
     }
 
     fn reward_beneficiary(
@@ -447,8 +449,9 @@ mod tests {
         let mut handler =
             BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
 
-        handler.last_frame_result(&mut evm, 0, &mut exec_result).unwrap();
-        handler.refund(&mut evm, &mut exec_result, 0);
+        let mut parent_gas = *gas.tracker();
+        handler.last_frame_result(&mut evm, &mut exec_result, &mut parent_gas).unwrap();
+        handler.refund(&mut evm, &mut exec_result, 0).unwrap();
         *exec_result.gas()
     }
 
