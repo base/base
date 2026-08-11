@@ -145,7 +145,11 @@ impl StatusPoller {
     /// Publish the pending-jobs gauge, grouped by required prover protocol version.
     ///
     /// The repository returns every stored version, including zero pending jobs, so drained
-    /// versions do not freeze at their last gauge value.
+    /// versions do not freeze at their last gauge value. That relies on completed and failed rows
+    /// staying in `proof_requests`: the version is only discoverable while it still has rows. A
+    /// future retention job that prunes them would make a fully pruned version's gauge freeze,
+    /// because this service is deliberately version-agnostic and has no configured version list to
+    /// seed zeros from.
     async fn record_pending_jobs(&self) {
         let counts = match self.repo.count_pending_jobs_by_protocol_version().await {
             Ok(counts) => counts,
