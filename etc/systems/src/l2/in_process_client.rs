@@ -315,11 +315,11 @@ impl InProcessClient {
         extensions.push(Box::new(TxPoolExtension::new(txpool_config)));
 
         // TxForwarding extension (optional - forwards txs to builder RPC)
-        if let Some(ref tx_fwd_config) = config.tx_forwarding_config
-            && tx_fwd_config.enabled
-            && !tx_fwd_config.builder_urls.is_empty()
-        {
-            if config.enable_experimental_validity_transactions {
+        if let Some(ref tx_fwd_config) = config.tx_forwarding_config {
+            if config.enable_experimental_validity_transactions
+                && tx_fwd_config.enabled
+                && !tx_fwd_config.builder_urls.is_empty()
+            {
                 extensions.push(Box::new(SendRawTransactionValidityExtension::from_config(())));
             }
             extensions.push(Box::new(TxForwardingExtension::from_config(tx_fwd_config.clone())));
