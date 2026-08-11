@@ -18,7 +18,7 @@ use base_tx_forwarding::{
     DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS, DEFAULT_RESEND_AFTER_MS, TxForwardingConfig,
     TxForwardingExtension,
 };
-use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
+use base_txpool_rpc::{SendRawTransactionValidityExtension, TxPoolRpcConfig, TxPoolRpcExtension};
 use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
 use base_upgrade_signal::UpgradeSignalStartupMode;
 use tracing::warn;
@@ -424,7 +424,11 @@ impl StandardBaseRethNode {
         };
         runner.install_ext::<MeteringExtension>(metering_config);
         runner.install_ext::<BundleExtension>(());
-        runner.install_ext::<TxForwardingExtension>((&args).into());
+        let tx_forwarding_config: TxForwardingConfig = (&args).into();
+        if tx_forwarding_config.enabled && !tx_forwarding_config.builder_urls.is_empty() {
+            runner.install_ext::<SendRawTransactionValidityExtension>(());
+        }
+        runner.install_ext::<TxForwardingExtension>(tx_forwarding_config);
         runner.install_ext::<ProofsHistoryExtension>(rollup_args.clone());
         Self::install_upgrade_signal_runtime_extension(&mut runner, &rollup_args)?;
         let eip8130_rpc_mode = if flashblocks_config.is_some() {

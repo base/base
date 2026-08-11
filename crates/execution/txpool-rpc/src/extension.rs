@@ -4,8 +4,8 @@ use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, N
 use reth_rpc_server_types::RethRpcModule;
 
 use crate::{
-    AdminTxPoolApiImpl, AdminTxPoolApiServer, SendRawTransactionValidityApiServer,
-    TransactionStatusApiImpl, TransactionStatusApiServer,
+    AdminTxPoolApiImpl, AdminTxPoolApiServer, SendRawTransactionValidityApiImpl,
+    SendRawTransactionValidityApiServer, TransactionStatusApiImpl, TransactionStatusApiServer,
 };
 
 /// Configuration for the `TxPool` RPC extension.
@@ -30,10 +30,7 @@ impl BaseNodeExtension for TxPoolRpcExtension {
             // Register Base transaction pool APIs.
             let status_api = TransactionStatusApiImpl::new(sequencer_rpc, ctx.pool().clone())
                 .expect("Failed to create transaction status API");
-            ctx.modules
-                .merge_configured(TransactionStatusApiServer::into_rpc(status_api.clone()))?;
-            ctx.modules
-                .merge_configured(SendRawTransactionValidityApiServer::into_rpc(status_api))?;
+            ctx.modules.merge_configured(TransactionStatusApiServer::into_rpc(status_api))?;
 
             // Register AdminTxPoolApi
             let admin_txpool_api = AdminTxPoolApiImpl::new(ctx.pool().clone());
@@ -42,6 +39,28 @@ impl BaseNodeExtension for TxPoolRpcExtension {
 
             Ok(())
         })
+    }
+}
+
+/// Extension registering local validity-bearing transaction ingress.
+#[derive(Debug, Default)]
+pub struct SendRawTransactionValidityExtension;
+
+impl BaseNodeExtension for SendRawTransactionValidityExtension {
+    fn apply(self: Box<Self>, builder: NodeHooks) -> NodeHooks {
+        builder.add_rpc_module(|ctx: &mut BaseRpcContext<'_>| {
+            let api = SendRawTransactionValidityApiImpl::new(ctx.pool().clone());
+            ctx.modules.merge_configured(api.into_rpc())?;
+            Ok(())
+        })
+    }
+}
+
+impl FromExtensionConfig for SendRawTransactionValidityExtension {
+    type Config = ();
+
+    fn from_config(_config: Self::Config) -> Self {
+        Self
     }
 }
 

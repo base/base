@@ -6548,6 +6548,7 @@ dependencies = [
  "base-node-runner",
  "base-observability-events",
  "base-test-utils",
+ "base-txpool-rpc",
  "eyre",
  "futures",
  "jsonrpsee",
@@ -6602,12 +6603,13 @@ dependencies = [
 name = "base-txpool-rpc"
 version = "0.0.0"
 dependencies = [
- "alloy-eips 2.2.0",
  "alloy-primitives",
+ "base-execution-txpool",
  "base-node-runner",
  "eyre",
  "httpmock",
  "jsonrpsee",
+ "reth-rpc-eth-types",
  "reth-rpc-server-types",
  "reth-transaction-pool",
  "serde",

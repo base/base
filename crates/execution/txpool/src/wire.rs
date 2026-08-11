@@ -91,7 +91,10 @@ pub struct ValidatedTransaction<E = NoExtensions> {
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::U256;
+
     use super::*;
+    use crate::{TransactionValidity, ValidityOperator, ValidityPredicate};
 
     /// Mirrors the field layout this type had before `extensions` was added, so
     /// the tests below can assert byte-identical encoding against it.
@@ -148,6 +151,58 @@ mod tests {
             serde_json::to_string(&current).unwrap(),
             "default instantiation must be byte-identical to the pre-generic layout"
         );
+    }
+
+    #[test]
+    fn empty_validity_encoding_matches_legacy_layout() {
+        let legacy = LegacyValidatedTransaction {
+            sender: sender(),
+            raw: raw(),
+            min_block_number: Some(3),
+            max_block_number: None,
+            min_timestamp: None,
+            max_timestamp: Some(7),
+        };
+        let current = ValidatedTransaction {
+            sender: sender(),
+            raw: raw(),
+            min_block_number: Some(3),
+            max_block_number: None,
+            min_timestamp: None,
+            max_timestamp: Some(7),
+            extensions: TransactionValidity::default(),
+        };
+
+        assert_eq!(serde_json::to_value(legacy).unwrap(), serde_json::to_value(current).unwrap());
+    }
+
+    #[test]
+    fn storage_validity_is_flattened_and_round_trips() {
+        let predicate = ValidityPredicate::Storage {
+            address: sender(),
+            slot: U256::from(1),
+            mask: U256::MAX,
+            op: ValidityOperator::Equal,
+            value: U256::from(2),
+        };
+        let tx = ValidatedTransaction {
+            sender: sender(),
+            raw: raw(),
+            min_block_number: None,
+            max_block_number: None,
+            min_timestamp: None,
+            max_timestamp: None,
+            extensions: TransactionValidity { validity: vec![predicate.clone()] },
+        };
+
+        let value = serde_json::to_value(&tx).unwrap();
+        assert_eq!(value["validity"][0]["type"], "storage");
+        assert_eq!(value["validity"][0]["params"]["slot"], "0x1");
+        assert!(value.get("extensions").is_none());
+
+        let decoded: ValidatedTransaction<TransactionValidity> =
+            serde_json::from_value(value).unwrap();
+        assert_eq!(decoded.extensions.validity, vec![predicate]);
     }
 
     #[test]

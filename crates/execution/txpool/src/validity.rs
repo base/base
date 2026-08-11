@@ -1,6 +1,9 @@
 //! State predicates carried by pooled transactions.
 
 use alloy_primitives::{Address, U256};
+use reth_transaction_pool::ValidPoolTransaction;
+
+use crate::{BasePooledTransaction, ExtensionError, ValidatedTransactionExtensions};
 
 /// A comparison used by a [`ValidityPredicate`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
@@ -80,6 +83,24 @@ impl ValidityPredicate {
     #[must_use]
     pub const fn default_mask() -> U256 {
         U256::MAX
+    }
+}
+
+/// Validity predicates carried with a validated transaction.
+#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct TransactionValidity {
+    /// Predicates controlling when the transaction is valid for inclusion.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub validity: Vec<ValidityPredicate>,
+}
+
+impl ValidatedTransactionExtensions<BasePooledTransaction> for TransactionValidity {
+    fn extract(tx: &ValidPoolTransaction<BasePooledTransaction>) -> Self {
+        Self { validity: tx.transaction.validity_predicates().to_vec() }
+    }
+
+    fn apply(self, tx: BasePooledTransaction) -> Result<BasePooledTransaction, ExtensionError> {
+        Ok(tx.with_validity_predicates(self.validity))
     }
 }
 
@@ -183,5 +204,35 @@ mod tests {
         ] {
             assert_eq!(op.matches(U256::from(10), U256::from(11)), expected);
         }
+    }
+
+    #[test]
+    fn empty_payload_is_omitted() {
+        assert_eq!(serde_json::to_value(TransactionValidity::default()).unwrap(), json!({}));
+    }
+
+    #[test]
+    fn predicates_round_trip() {
+        let value = json!({
+            "validity": [{
+                "type": "balance",
+                "params": {
+                    "address": "0x1111111111111111111111111111111111111111",
+                    "op": "=",
+                    "value": "0x2"
+                }
+            }]
+        });
+        let payload: TransactionValidity = serde_json::from_value(value.clone()).unwrap();
+
+        assert_eq!(
+            payload.validity,
+            vec![ValidityPredicate::Balance {
+                address: Address::repeat_byte(0x11),
+                op: ValidityOperator::Equal,
+                value: U256::from(2),
+            }]
+        );
+        assert_eq!(serde_json::to_value(payload).unwrap(), value);
     }
 }

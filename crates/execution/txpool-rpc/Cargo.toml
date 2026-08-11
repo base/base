@@ -14,8 +14,10 @@ workspace = true
 [dependencies]
 # workspace
 base-node-runner.workspace = true
+base-execution-txpool.workspace = true
 
 # reth
+reth-rpc-eth-types.workspace = true
 reth-rpc-server-types.workspace = true
 reth-transaction-pool.workspace = true
 
@@ -28,11 +30,10 @@ jsonrpsee.workspace = true
 # misc
 serde.workspace = true
 tracing.workspace = true
-serde_json.workspace = true
 
 [dev-dependencies]
 eyre.workspace = true
 tokio.workspace = true
 httpmock.workspace = true
-alloy-eips.workspace = true
+serde_json.workspace = true
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }

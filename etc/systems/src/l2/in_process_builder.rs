@@ -157,7 +157,9 @@ impl InProcessBuilder {
             .on_component_initialized(move |_ctx| Ok(()))
             // Register the builder API RPC module (base_insertValidatedTransaction)
             .extend_rpc_modules(|ctx| {
-                let api = BuilderApiImpl::new(ctx.pool().clone());
+                let api = BuilderApiImpl::<_, base_execution_txpool::TransactionValidity>::with_extensions(
+                    ctx.pool().clone(),
+                );
                 ctx.modules.merge_configured(api.into_rpc())?;
                 Ok(())
             });
