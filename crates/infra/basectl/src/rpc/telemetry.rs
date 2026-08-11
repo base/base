@@ -9,6 +9,7 @@ use thiserror::Error;
 use url::Url;
 
 const EL_REACHABILITY_PATH: &str = "/v1/p2p/reachability/el";
+const CL_REACHABILITY_PATH: &str = "/v1/p2p/reachability/cl";
 const TELEMETRY_REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
 
 /// JSON response for a completed execution-layer reachability check.
@@ -73,6 +74,72 @@ impl ElReachabilityStage {
             Self::TcpConnect => "tcp_connect",
             Self::EncryptedHandshake => "encrypted_handshake",
             Self::Devp2pHello => "devp2p_hello",
+        }
+    }
+}
+
+/// JSON response for a completed consensus-layer reachability check.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClReachabilityResponse {
+    /// Stable outcome of the probe.
+    pub outcome: ClReachabilityOutcome,
+    /// Protocol stage reached by the probe.
+    pub stage: ClReachabilityStage,
+    /// Advertised address probed by the telemetry service.
+    pub observed_address: SocketAddr,
+    /// Total probe duration in milliseconds.
+    pub elapsed_ms: u64,
+    /// Agent version returned by the remote libp2p identify exchange.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_version: Option<String>,
+}
+
+/// Stable outcome returned by a consensus-layer reachability probe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClReachabilityOutcome {
+    /// TCP, the Noise handshake, and multiplexer negotiation reached the remote node.
+    Reachable,
+    /// The telemetry service could not establish the target TCP connection.
+    ConnectionFailed,
+    /// The probe deadline elapsed.
+    TimedOut,
+    /// TCP connected, but the Noise handshake or peer identity check failed.
+    HandshakeFailed,
+}
+
+impl ClReachabilityOutcome {
+    /// Returns the stable wire label for this outcome.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Reachable => "reachable",
+            Self::ConnectionFailed => "connection_failed",
+            Self::TimedOut => "timed_out",
+            Self::HandshakeFailed => "handshake_failed",
+        }
+    }
+}
+
+/// Protocol stage reached by a consensus-layer reachability probe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClReachabilityStage {
+    /// Establishing the TCP connection.
+    TcpConnect,
+    /// Authenticating the Noise transport and negotiating the multiplexer.
+    SecurityHandshake,
+    /// Exchanging libp2p identify information.
+    Identify,
+}
+
+impl ClReachabilityStage {
+    /// Returns the stable wire label for this stage.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::TcpConnect => "tcp_connect",
+            Self::SecurityHandshake => "security_handshake",
+            Self::Identify => "identify",
         }
     }
 }
@@ -157,12 +224,24 @@ impl TelemetryClient {
         &self,
         enode: &str,
     ) -> Result<ElReachabilityResponse, TelemetryClientError> {
-        let response = self
-            .http
-            .post(self.el_reachability_endpoint()?)
-            .json(&json!({ "enode": enode }))
-            .send()
-            .await?;
+        self.check_reachability(EL_REACHABILITY_PATH, &json!({ "enode": enode })).await
+    }
+
+    /// Requests an external consensus-layer reachability check for `enr`.
+    pub async fn check_cl_reachability(
+        &self,
+        enr: &str,
+    ) -> Result<ClReachabilityResponse, TelemetryClientError> {
+        self.check_reachability(CL_REACHABILITY_PATH, &json!({ "enr": enr })).await
+    }
+
+    /// Posts one reachability request and decodes the typed response or error.
+    async fn check_reachability<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &serde_json::Value,
+    ) -> Result<T, TelemetryClientError> {
+        let response = self.http.post(self.reachability_endpoint(path)?).json(body).send().await?;
         let status = response.status();
 
         if status.is_success() {
@@ -193,7 +272,7 @@ impl TelemetryClient {
     }
 
     /// Returns the reachability endpoint while preserving the configured path prefix.
-    fn el_reachability_endpoint(&self) -> Result<Url, TelemetryClientError> {
+    fn reachability_endpoint(&self, path: &str) -> Result<Url, TelemetryClientError> {
         let mut endpoint = self.base_url.clone();
         endpoint
             .path_segments_mut()
@@ -201,7 +280,7 @@ impl TelemetryClient {
                 message: format!("telemetry URL `{}` cannot have a path appended", self.base_url),
             })?
             .pop_if_empty()
-            .extend(EL_REACHABILITY_PATH.split('/').filter(|segment| !segment.is_empty()));
+            .extend(path.split('/').filter(|segment| !segment.is_empty()));
         Ok(endpoint)
     }
 }
@@ -221,6 +300,7 @@ mod tests {
     use url::Url;
 
     use super::{
+        CL_REACHABILITY_PATH, ClReachabilityOutcome, ClReachabilityResponse, ClReachabilityStage,
         EL_REACHABILITY_PATH, ElReachabilityOutcome, ElReachabilityResponse, ElReachabilityStage,
         TelemetryApiError, TelemetryClient, TelemetryClientError, TelemetryErrorResponse,
     };
@@ -273,6 +353,58 @@ mod tests {
                 elapsed_ms: 42,
                 client_version: Some("reth/v1.0.0".to_string()),
             }
+        );
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn decodes_cl_reachability_response() {
+        async fn cl_reachable(Json(request): Json<Value>) -> Json<Value> {
+            assert_eq!(request["enr"], "enr:test");
+            Json(json!({
+                "outcome": "reachable",
+                "stage": "identify",
+                "observedAddress": "203.0.113.10:9222",
+                "elapsedMs": 42,
+                "clientVersion": "op-node/v1.0.0",
+            }))
+        }
+        let router = Router::new().route(CL_REACHABILITY_PATH, post(cl_reachable));
+        let (base_url, handle) = start_server(router).await;
+        let client = TelemetryClient::new(base_url).unwrap();
+
+        let response = client.check_cl_reachability("enr:test").await.unwrap();
+
+        assert_eq!(
+            response,
+            ClReachabilityResponse {
+                outcome: ClReachabilityOutcome::Reachable,
+                stage: ClReachabilityStage::Identify,
+                observed_address: SocketAddr::from(([203, 0, 113, 10], 9222)),
+                elapsed_ms: 42,
+                client_version: Some("op-node/v1.0.0".to_string()),
+            }
+        );
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn preserves_cl_typed_api_errors() {
+        async fn cl_error(Json(request): Json<Value>) -> Response {
+            assert_eq!(request["enr"], "enr:invalid");
+            (
+                StatusCode::BAD_REQUEST,
+                Json(TelemetryErrorResponse { error: TelemetryApiError::InvalidRequest }),
+            )
+                .into_response()
+        }
+        let router = Router::new().route(CL_REACHABILITY_PATH, post(cl_error));
+        let (base_url, handle) = start_server(router).await;
+        let client = TelemetryClient::new(base_url).unwrap();
+
+        assert_eq!(
+            client.check_cl_reachability("enr:invalid").await.unwrap_err(),
+            TelemetryClientError::InvalidRequest
         );
         handle.abort();
     }

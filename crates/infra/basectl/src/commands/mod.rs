@@ -21,7 +21,7 @@ mod p2p;
 pub use p2p::{
     AddTarget, BanAction, DestructiveClBulkArgs, DestructivePeerArgs, P2pArgs, P2pCommand,
     P2pCommands, PeerAction, PeerActionJson, PeerBulkAction, PeerBulkActionResultJson, PeerLayer,
-    PeerTarget, PeersJson,
+    PeerTarget, PeersJson, ReachabilityTarget,
 };
 
 mod node_metrics;
