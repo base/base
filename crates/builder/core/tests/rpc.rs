@@ -6,13 +6,16 @@ use alloy_primitives::{Address, Bytes, Signature, TxKind, U256};
 use alloy_rpc_client::RpcClient;
 use base_builder_core::BuilderApiExtension;
 use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction, TxDeposit};
-use base_execution_txpool::{NoExtensions, ValidatedTransaction};
+use base_execution_txpool::{
+    NoExtensions, TransactionValidity, ValidatedTransaction, ValidityOperator, ValidityPredicate,
+};
 use base_node_runner::test_utils::TestHarness;
 use base_test_utils::Account;
 
 /// Sets up a test harness with the `BuilderApiExtension` installed.
-async fn setup() -> eyre::Result<(TestHarness, RpcClient)> {
-    let harness = TestHarness::builder().with_ext::<BuilderApiExtension>(()).build().await?;
+async fn setup(accept_validity: bool) -> eyre::Result<(TestHarness, RpcClient)> {
+    let harness =
+        TestHarness::builder().with_ext::<BuilderApiExtension>(accept_validity).build().await?;
     let client = harness.rpc_client()?;
     Ok((harness, client))
 }
@@ -59,7 +62,7 @@ fn create_eip1559_tx(chain_id: u64) -> (Address, Bytes) {
 /// The pool doesn't accept deposit transactions, but the RPC should decode it successfully.
 #[tokio::test]
 async fn test_insert_validated_deposit_tx() -> eyre::Result<()> {
-    let (_harness, client) = setup().await?;
+    let (_harness, client) = setup(false).await?;
 
     let (sender, raw) = create_deposit_tx();
     let validated_tx = ValidatedTransaction {
@@ -90,7 +93,7 @@ async fn test_insert_validated_deposit_tx() -> eyre::Result<()> {
 /// The pool should accept this transaction type.
 #[tokio::test]
 async fn test_insert_validated_eip1559_tx() -> eyre::Result<()> {
-    let (harness, client) = setup().await?;
+    let (harness, client) = setup(false).await?;
 
     let (sender, raw) = create_eip1559_tx(harness.chain_id());
     let validated_tx = ValidatedTransaction {
@@ -114,7 +117,7 @@ async fn test_insert_validated_eip1559_tx() -> eyre::Result<()> {
 /// Verifies the RPC endpoint rejects an invalid transaction at the pool insertion stage.
 #[tokio::test]
 async fn test_insert_invalid_tx_fails() -> eyre::Result<()> {
-    let (_harness, client) = setup().await?;
+    let (_harness, client) = setup(false).await?;
 
     // Invalid raw bytes that can't be decoded (0xFF is not a valid tx type)
     let validated_tx = ValidatedTransaction {
@@ -136,5 +139,54 @@ async fn test_insert_invalid_tx_fails() -> eyre::Result<()> {
         err_str.contains("-32602") || err_str.contains("failed to decode"),
         "expected InvalidParams for decode failure, got: {err_str}"
     );
+    Ok(())
+}
+
+/// Verifies validity-bearing requests require explicit builder opt-in.
+#[tokio::test]
+async fn test_validity_transactions_require_explicit_opt_in() -> eyre::Result<()> {
+    let validity = TransactionValidity {
+        validity: vec![ValidityPredicate::Balance {
+            address: Account::Alice.address(),
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        }],
+    };
+
+    let (disabled_harness, disabled_client) = setup(false).await?;
+    let (sender, raw) = create_eip1559_tx(disabled_harness.chain_id());
+    let disabled_tx = ValidatedTransaction {
+        sender,
+        raw,
+        min_block_number: None,
+        max_block_number: None,
+        min_timestamp: None,
+        max_timestamp: None,
+        extensions: validity.clone(),
+    };
+    let disabled: Result<(), _> =
+        disabled_client.request("base_insertValidatedTransaction", (disabled_tx,)).await;
+    assert!(
+        disabled
+            .expect_err("disabled builder should reject validity")
+            .to_string()
+            .contains("transaction extensions are disabled")
+    );
+
+    let (enabled_harness, enabled_client) = setup(true).await?;
+    let (sender, raw) = create_eip1559_tx(enabled_harness.chain_id());
+    let enabled_tx = ValidatedTransaction {
+        sender,
+        raw,
+        min_block_number: None,
+        max_block_number: None,
+        min_timestamp: None,
+        max_timestamp: None,
+        extensions: validity,
+    };
+    let enabled: Result<(), _> =
+        enabled_client.request("base_insertValidatedTransaction", (enabled_tx,)).await;
+    assert!(enabled.is_ok(), "enabled builder should accept validity: {enabled:?}");
+
     Ok(())
 }

@@ -116,15 +116,12 @@ impl PolicyRegistryV2 {
         policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID
     }
 
-    /// Reverts `ChildPoliciesOutsideOfRange(2, 4)` when the child count is outside `[2, 4]`.
+    /// Reverts `ChildPoliciesOutsideOfRange` when the child count is outside `[2, 4]`.
     fn require_child_policy_in_range(child_policy_ids: &[u64]) -> Result<()> {
         let count = child_policy_ids.len();
         if !(Self::MIN_CHILD_POLICIES..=Self::MAX_CHILD_POLICIES).contains(&count) {
             return Err(BasePrecompileError::revert(
-                IPolicyRegistry::ChildPoliciesOutsideOfRange {
-                    min: U256::from(Self::MIN_CHILD_POLICIES),
-                    max: U256::from(Self::MAX_CHILD_POLICIES),
-                },
+                IPolicyRegistry::ChildPoliciesOutsideOfRange {},
             ));
         }
         Ok(())
@@ -568,6 +565,16 @@ impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryV2 {
             return Ok(Address::ZERO);
         }
         storage.read_pending_admin(policy_id)
+    }
+
+    fn composite_policy_child_ids(&self, storage: &S, policy_id: u64) -> Result<Vec<u64>> {
+        if !Self::is_well_formed(policy_id) {
+            return Ok(Vec::new());
+        }
+        if !Self::is_composite(policy_id) {
+            return Ok(Vec::new());
+        }
+        storage.read_children(policy_id)
     }
 }
 
@@ -1264,6 +1271,13 @@ mod tests {
     }
 
     #[test]
+    fn composite_policy_child_ids_malformed_policy_id_returns_empty() {
+        let rt = initialized();
+        let malformed: u64 = (4u64 << 56) | 42;
+        assert!(LOGIC.composite_policy_child_ids(&rt, malformed).unwrap().is_empty());
+    }
+
+    #[test]
     fn pending_policy_admin_nonexistent_well_formed_policy_returns_zero_address() {
         let rt = initialized();
         let nonexistent = PolicyRegistryV2::make_id(0, 999);
@@ -1374,6 +1388,66 @@ mod tests {
     }
 
     #[test]
+    fn composite_policy_child_ids_returns_the_set_in_creation_order() {
+        let mut rt = initialized();
+        let a = create_allowlist(&mut rt);
+        let b = create_allowlist(&mut rt);
+        let c = create_allowlist(&mut rt);
+        let id = create_union(&mut rt, vec![c, a, b]);
+        // Order is preserved verbatim; the registry never sorts or dedupes the child set.
+        assert_eq!(LOGIC.composite_policy_child_ids(&rt, id).unwrap(), vec![c, a, b]);
+    }
+
+    #[test]
+    fn composite_policy_child_ids_tracks_update_composite() {
+        let mut rt = initialized();
+        let a = create_allowlist(&mut rt);
+        let b = create_allowlist(&mut rt);
+        let c = create_allowlist(&mut rt);
+        let id = create_intersect(&mut rt, vec![a, b]);
+        assert_eq!(LOGIC.composite_policy_child_ids(&rt, id).unwrap(), vec![a, b]);
+        set_caller(&mut rt, ADMIN);
+        LOGIC.update_composite(&mut rt, id, vec![b, c]).unwrap();
+        // Full replacement, not a merge — `a` is gone rather than retained as a stale tail.
+        assert_eq!(LOGIC.composite_policy_child_ids(&rt, id).unwrap(), vec![b, c]);
+    }
+
+    #[test]
+    fn composite_policy_child_ids_matches_the_emitted_event() {
+        let mut rt = initialized();
+        let a = create_allowlist(&mut rt);
+        let b = create_allowlist(&mut rt);
+        let before = rt.events.len();
+        let id = create_union(&mut rt, vec![a, b]);
+        let emitted =
+            IPolicyRegistry::CompositePolicyUpdated::decode_log_data(&rt.events[before + 2])
+                .unwrap()
+                .childPolicyIds;
+        assert_eq!(LOGIC.composite_policy_child_ids(&rt, id).unwrap(), emitted);
+    }
+
+    #[test]
+    fn composite_policy_child_ids_returns_empty_for_non_composites() {
+        let mut rt = initialized();
+        let simple = create_allowlist(&mut rt);
+        let malformed = PolicyRegistryV2::make_id(9, 1);
+        let uncreated_union = PolicyRegistryV2::make_id(PolicyType::UNION as u8, 999);
+
+        for policy_id in [
+            simple,
+            PolicyRegistryV2::ALWAYS_ALLOW_ID,
+            PolicyRegistryV2::ALWAYS_BLOCK_ID,
+            malformed,
+            uncreated_union,
+        ] {
+            assert!(
+                LOGIC.composite_policy_child_ids(&rt, policy_id).unwrap().is_empty(),
+                "expected an empty child set for policy {policy_id}"
+            );
+        }
+    }
+
+    #[test]
     fn create_composite_zero_admin_reverts() {
         let mut rt = initialized();
         let a = create_allowlist(&mut rt);
@@ -1399,10 +1473,8 @@ mod tests {
     fn create_composite_child_count_out_of_range_reverts() {
         let mut rt = initialized();
         let ids: Vec<u64> = (0..5).map(|_| create_allowlist(&mut rt)).collect();
-        let range_err = BasePrecompileError::revert(IPolicyRegistry::ChildPoliciesOutsideOfRange {
-            min: U256::from(2),
-            max: U256::from(4),
-        });
+        let range_err =
+            BasePrecompileError::revert(IPolicyRegistry::ChildPoliciesOutsideOfRange {});
         // Too few (1) and too many (5) both revert with the same range error.
         let too_few = LOGIC
             .create_composite_policy(&mut rt, ADMIN, PolicyType::UNION, vec![ids[0]])

@@ -20,8 +20,7 @@ use crate::{
     IB20::{self, IB20Calls as C},
     IB20Stablecoin::{self, IB20StablecoinCalls as SC},
     NoopPrecompileCallObserver, PermitArgs, PolicyAccounting, PrecompileCallObserver,
-    StablecoinAccounting, StablecoinV1, StablecoinVersion, StablecoinVersions,
-    macros::decode_precompile_call,
+    StablecoinAccounting, StablecoinVersion, StablecoinVersions,
 };
 
 impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
@@ -75,18 +74,24 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
         recorder.record_base_result(ctx, self.route(ctx, calldata, version, false, observer), |b| b)
     }
 
-    /// Grants `role` to `account` without checking caller authorization.
+    /// Grants `role` to `account` without checking caller authorization, using the token logic
+    /// implementation active at `upgrade`.
     ///
     /// The one token-level mutation the factory needs at bootstrap, when no admin exists yet and the
     /// authorized [`Stablecoin::grant_role`](crate::Stablecoin) path is not yet reachable.
-    // TODO: When factory get's logic for threading fork, remove this and pull in versions into the factory to use that function
     pub fn grant_role_unchecked(
         &mut self,
         role: B256,
         account: Address,
         sender: Address,
+        upgrade: BaseUpgrade,
     ) -> base_precompile_storage::Result<()> {
-        StablecoinV1.grant_role_unchecked(self, role, account, sender)
+        // `None` is unreachable in practice — the precompile is only installed from Beryl — but
+        // we revert defensively, mirroring `dispatch_with_observer`.
+        let Some(version) = StablecoinVersions::from_base_upgrade(upgrade) else {
+            return Err(BasePrecompileError::Revert(Bytes::new()));
+        };
+        version.implementation().grant_role_unchecked(self, role, account, sender)
     }
 
     /// Decodes calldata, observes the decoded operation, and routes it to `version` with optional
@@ -119,7 +124,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
             });
         }
 
-        let call = decode_precompile_call!(calldata, IB20::IB20Calls);
+        let call = version.common_abi().decode(calldata)?;
         let label = call.as_label();
 
         observer.observe(label, || {
@@ -147,6 +152,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
                 C::MINT_ROLE(_) => B20TokenRole::Mint.id().abi_encode().into(),
                 C::BURN_ROLE(_) => B20TokenRole::Burn.id().abi_encode().into(),
                 C::BURN_BLOCKED_ROLE(_) => B20TokenRole::BurnBlocked.id().abi_encode().into(),
+                C::SEIZE_ROLE(_) => B20TokenRole::Seize.id().abi_encode().into(),
                 C::PAUSE_ROLE(_) => B20TokenRole::Pause.id().abi_encode().into(),
                 C::UNPAUSE_ROLE(_) => B20TokenRole::Unpause.id().abi_encode().into(),
                 C::METADATA_ROLE(_) => B20TokenRole::Metadata.id().abi_encode().into(),
@@ -160,6 +166,10 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
                     B20PolicyType::TransferExecutor.id().abi_encode().into()
                 }
                 C::MINT_RECEIVER_POLICY(_) => B20PolicyType::MintReceiver.id().abi_encode().into(),
+                C::SEIZE_HOLDER_POLICY(_) => B20PolicyType::SeizeHolder.id().abi_encode().into(),
+                C::SEIZE_RECEIVER_POLICY(_) => {
+                    B20PolicyType::SeizeReceiver.id().abi_encode().into()
+                }
                 C::hasRole(c) => logic.has_role(self, c.role, c.account)?.abi_encode().into(),
                 C::getRoleAdmin(c) => logic.role_admin(self, c.role)?.abi_encode().into(),
                 C::pausedFeatures(_) => logic.paused_features(self)?.abi_encode().into(),
@@ -240,6 +250,12 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
                 C::burnBlocked(c) => {
                     let caller = ctx.caller();
                     logic.burn_blocked(self, caller, c.from, c.amount, privileged)?;
+                    Bytes::new()
+                }
+
+                C::seizeWithMemo(c) => {
+                    let caller = ctx.caller();
+                    logic.seize_with_memo(self, caller, c.from, c.to, c.amount, c.memo)?;
                     Bytes::new()
                 }
 

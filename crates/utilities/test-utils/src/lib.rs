@@ -16,8 +16,11 @@ pub use genesis::{
     build_test_genesis_cobalt,
 };
 
+#[cfg(feature = "contracts")]
 mod contracts;
+#[cfg(feature = "contracts")]
 pub use contracts::{
     AccessListContract, ContractFactory, DoubleCounter, Logic, Logic2, Minimal7702Account,
-    MockERC20, ParentBlockhashGuard, Proxy, SimpleStorage, TransparentUpgradeableProxy,
+    MockERC20, MockProtocolVersions, ParentBlockhashGuard, Proxy, SimpleStorage,
+    TransparentUpgradeableProxy,
 };

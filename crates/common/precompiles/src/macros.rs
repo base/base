@@ -77,6 +77,18 @@ macro_rules! decode_precompile_call {
 
 pub(crate) use decode_precompile_call;
 
+/// Rejects a call as an unknown selector, freezing the observable behavior of every version that
+/// predates the selector.
+macro_rules! reject_frozen_selector {
+    () => {
+        ::core::result::Result::Err(
+            ::base_precompile_storage::BasePrecompileError::UnknownFunctionSelector([0u8; 4]),
+        )
+    };
+}
+
+pub(crate) use reject_frozen_selector;
+
 #[cfg(test)]
 mod tests {
     use alloy_sol_types::SolCall;

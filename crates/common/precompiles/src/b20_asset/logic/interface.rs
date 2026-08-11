@@ -7,6 +7,7 @@ use base_precompile_storage::Result;
 
 use crate::{
     AssetAccounting, B20AssetToken, Eip712Domain, IB20, PermitArgs, PolicyAccounting, Token,
+    macros::reject_frozen_selector,
 };
 
 /// The asset logic interface.
@@ -72,6 +73,21 @@ pub trait Asset<S: AssetAccounting, A: PolicyAccounting> {
         privileged: bool,
     ) -> Result<()>;
 
+    /// Transfer-based seize: reassigns a seizable `from`'s balance to `to`
+    /// (`Transfer` -> `Memo` -> `Seized`). Introduced at `AssetV2`.
+    /// An admin op with no factory-privileged path, so the role is always enforced.
+    fn seize_with_memo(
+        &self,
+        _token: &mut B20AssetToken<S, A>,
+        _caller: Address,
+        _from: Address,
+        _to: Address,
+        _amount: U256,
+        _memo: B256,
+    ) -> Result<()> {
+        reject_frozen_selector!()
+    }
+
     /// Pauses the given features.
     fn pause(
         &self,
@@ -134,6 +150,18 @@ pub trait Asset<S: AssetAccounting, A: PolicyAccounting> {
         role: B256,
         account: Address,
         privileged: bool,
+    ) -> Result<()>;
+
+    /// Grants `role` to `account` without checking caller authorization.
+    ///
+    /// The one token-level mutation the factory needs at bootstrap, when no admin exists yet and
+    /// the authorized [`Self::grant_role`] path is not reachable.
+    fn grant_role_unchecked(
+        &self,
+        token: &mut B20AssetToken<S, A>,
+        role: B256,
+        account: Address,
+        sender: Address,
     ) -> Result<()>;
 
     /// Revokes `role` from `account`.
@@ -387,7 +415,7 @@ pub trait Asset<S: AssetAccounting, A: PolicyAccounting> {
     }
 
     /// Schedules a multiplier update.
-    fn set_ui_multiplier(
+    fn update_ui_multiplier(
         &self,
         _token: &mut B20AssetToken<S, A>,
         _caller: Address,
@@ -399,7 +427,7 @@ pub trait Asset<S: AssetAccounting, A: PolicyAccounting> {
     }
 
     /// Cancels a scheduled multiplier update.
-    fn cancel_scheduled_multiplier(
+    fn cancel_ui_multiplier_update(
         &self,
         _token: &mut B20AssetToken<S, A>,
         _caller: Address,
@@ -410,6 +438,11 @@ pub trait Asset<S: AssetAccounting, A: PolicyAccounting> {
 
     /// ERC-165 interface support query.
     fn supports_interface(&self, _interface_id: FixedBytes<4>) -> Result<bool> {
+        reject_frozen_selector!()
+    }
+
+    /// The maximum UI multiplier the setters accept (`type(uint128).max`), the overflow guard.
+    fn max_ui_multiplier(&self) -> Result<U256> {
         reject_frozen_selector!()
     }
 }

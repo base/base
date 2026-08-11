@@ -56,6 +56,7 @@ pub fn start_background_services(
     resources: &mut Resources,
     conductor_rpc: Option<Url>,
 ) {
+    let mut background_tasks = Vec::new();
     let (fb_tx, fb_rx) = mpsc::channel::<TimestampedFlashblock>(100);
     let (da_fb_tx, da_fb_rx) = mpsc::channel::<Flashblock>(100);
     let (sync_tx, sync_rx) = mpsc::channel::<u64>(10);
@@ -89,50 +90,73 @@ pub fn start_background_services(
     );
     resources.toasts.set_channel(toast_rx);
 
-    tokio::spawn(run_flashblock_ws_timestamped(fb_url_rx.clone(), fb_tx, toast_tx.clone()));
-    tokio::spawn(run_flashblock_ws(fb_url_rx, da_fb_tx, toast_tx.clone()));
+    background_tasks.push(
+        tokio::spawn(run_flashblock_ws_timestamped(fb_url_rx.clone(), fb_tx, toast_tx.clone()))
+            .abort_handle(),
+    );
+    background_tasks.push(
+        tokio::spawn(run_flashblock_ws(fb_url_rx, da_fb_tx, toast_tx.clone())).abort_handle(),
+    );
 
-    tokio::spawn(run_block_fetcher(
-        config.rpc.to_string(),
-        block_req_rx,
-        block_res_tx,
-        toast_tx.clone(),
-    ));
+    background_tasks.push(
+        tokio::spawn(run_block_fetcher(
+            config.rpc.to_string(),
+            block_req_rx,
+            block_res_tx,
+            toast_tx.clone(),
+        ))
+        .abort_handle(),
+    );
 
     if let Some(batcher_addr) = config.batcher_address {
         let (l1_mode_tx, l1_mode_rx) = mpsc::channel::<L1ConnectionMode>(1);
         resources.da.set_l1_mode_channel(l1_mode_rx);
-        tokio::spawn(run_l1_blob_watcher(
-            config.l1_rpc.to_string(),
-            batcher_addr,
-            l1_block_tx,
-            l1_mode_tx,
-            toast_tx.clone(),
-        ));
+        background_tasks.push(
+            tokio::spawn(run_l1_blob_watcher(
+                config.l1_rpc.to_string(),
+                batcher_addr,
+                l1_block_tx,
+                l1_mode_tx,
+                toast_tx.clone(),
+            ))
+            .abort_handle(),
+        );
     }
 
-    tokio::spawn(fetch_initial_backlog_with_progress(config.rpc.to_string(), backlog_tx));
+    background_tasks.push(
+        tokio::spawn(fetch_initial_backlog_with_progress(config.rpc.to_string(), backlog_tx))
+            .abort_handle(),
+    );
 
     let proofs_toast_tx = toast_tx.clone();
 
     if let Some(consensus_rpc) = config.consensus_node_rpc.clone() {
         let (upgrades_tx, upgrades_rx) = mpsc::channel(1);
         resources.set_upgrades_channel(upgrades_rx);
-        tokio::spawn(run_rollup_config_poller(consensus_rpc, upgrades_tx, toast_tx.clone()));
+        background_tasks.push(
+            tokio::spawn(run_rollup_config_poller(consensus_rpc, upgrades_tx, toast_tx.clone()))
+                .abort_handle(),
+        );
     }
 
-    tokio::spawn(run_safe_head_poller(config.rpc.to_string(), sync_tx, toast_tx));
+    background_tasks.push(
+        tokio::spawn(run_safe_head_poller(config.rpc.to_string(), sync_tx, toast_tx))
+            .abort_handle(),
+    );
 
     let (sys_config_tx, sys_config_rx) = mpsc::channel::<SystemConfig>(1);
     resources.set_sys_config_channel(sys_config_rx);
 
     let l1_rpc = config.l1_rpc.to_string();
     let system_config_addr = config.system_config;
-    tokio::spawn(async move {
-        if let Ok(cfg) = fetch_full_system_config(&l1_rpc, system_config_addr).await {
-            let _ = sys_config_tx.send(cfg).await;
-        }
-    });
+    background_tasks.push(
+        tokio::spawn(async move {
+            if let Ok(cfg) = fetch_full_system_config(&l1_rpc, system_config_addr).await {
+                let _ = sys_config_tx.send(cfg).await;
+            }
+        })
+        .abort_handle(),
+    );
 
     if let Some(source) = config.conductor_source(conductor_rpc) {
         let (conductor_tx, conductor_rx) = mpsc::channel::<ConductorPollUpdate>(8);
@@ -163,32 +187,39 @@ pub fn start_background_services(
                 }
             }
         }
-        tokio::spawn(run_conductor_poller(source, conductor_tx));
+        background_tasks
+            .push(tokio::spawn(run_conductor_poller(source, conductor_tx)).abort_handle());
     }
 
     if let Some(validator_nodes) = config.validators.clone() {
         let (validator_tx, validator_rx) = mpsc::channel::<Vec<ValidatorNodeStatus>>(4);
         resources.validators.set_channel(validator_rx);
-        tokio::spawn(run_validator_poller(validator_nodes, validator_tx));
+        background_tasks
+            .push(tokio::spawn(run_validator_poller(validator_nodes, validator_tx)).abort_handle());
     }
 
     if let Some(proofs_config) = config.proofs.clone() {
         let (proofs_tx, proofs_rx) = mpsc::channel::<ProofsSnapshot>(4);
         resources.proofs.set_channel(proofs_rx);
-        tokio::spawn(run_proofs_poller(
-            proofs_config,
-            config.l1_rpc.clone(),
-            config.rpc.clone(),
-            proofs_tx,
-            proofs_toast_tx,
-        ));
+        background_tasks.push(
+            tokio::spawn(run_proofs_poller(
+                proofs_config,
+                config.l1_rpc.clone(),
+                config.rpc.clone(),
+                proofs_tx,
+                proofs_toast_tx,
+            ))
+            .abort_handle(),
+        );
     }
 
     if let Some(pods_config) = config.pods.clone() {
         let (pods_tx, pods_rx) = mpsc::channel::<PodsSnapshot>(4);
         resources.pods.set_channel(pods_rx);
-        tokio::spawn(run_pods_poller(pods_config, pods_tx));
+        background_tasks.push(tokio::spawn(run_pods_poller(pods_config, pods_tx)).abort_handle());
     }
+
+    resources.set_background_tasks(background_tasks);
 }
 
 /// Streams flashblocks as JSON lines to stdout.

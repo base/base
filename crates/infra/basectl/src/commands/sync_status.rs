@@ -12,8 +12,8 @@ use serde::Serialize;
 use url::Url;
 
 use crate::{
-    JsonOutput, KeyValueTable, MonitoringConfig, SyncStatusCommandError, SyncStatusReport,
-    TimestampJson, fetch_block, fetch_sync_status, format_duration, format_unix_timestamp,
+    JsonOutput, KeyValueTable, MonitoringConfig, SyncStatusReport, TimestampJson, fetch_block,
+    fetch_sync_status, format_duration, format_unix_timestamp,
 };
 
 /// Arguments for reporting combined consensus- and execution-layer sync status.
@@ -21,18 +21,12 @@ use crate::{
 pub struct SyncStatusCommand {
     /// Override the execution-layer RPC URL.
     ///
-    /// Defaults to the chain config's `rpc` field, which on the
-    /// `mainnet` and `sepolia` presets resolves to the public proxyd
-    /// fleet — `eth_syncing` against that always reports "not syncing"
-    /// because proxyd routes only-healthy backends. Pass this flag to
-    /// point at a single node.
+    /// Defaults to the chain config's local `rpc` field.
     #[arg(long = "el-rpc", value_name = "URL")]
     pub el_rpc: Option<Url>,
     /// Override the consensus-node RPC URL.
     ///
-    /// The mainnet and sepolia presets ship `consensus_node_rpc` unset, so
-    /// non-devnet users must pass this flag (or set the field in their YAML
-    /// config).
+    /// Defaults to the chain config's `consensus_node_rpc` field.
     #[arg(long = "cl-rpc", value_name = "URL")]
     pub cl_rpc: Option<Url>,
     /// Block tolerance for the tip-reference `caught_up` classification.
@@ -58,17 +52,20 @@ impl SyncStatusCommand {
     /// Fetches sync status and renders the selected output format.
     pub async fn run(self, config: MonitoringConfig) -> Result<()> {
         let el_rpc = self.el_rpc.unwrap_or_else(|| config.rpc.clone());
-        let cl_rpc = Self::resolve_cl_rpc(&config, self.cl_rpc.as_ref())?;
+        let cl_rpc = config.resolve_cl_rpc(self.cl_rpc.as_ref(), "sync-status")?;
+        let public_rpc = config.public_rpc.as_ref().filter(|url| *url != &el_rpc);
+        let tip_url = public_rpc.map_or(el_rpc.as_str(), Url::as_str);
         // Public tip reference is best-effort — failure marks the row unavailable
         // rather than failing the whole command. Run in parallel with the local
         // sync fetch.
-        let (sync_result, tip_result) = tokio::join!(
-            fetch_sync_status(&el_rpc, &cl_rpc),
-            fetch_block(&config.rpc, BlockId::Number(BlockNumberOrTag::Latest)),
-        );
+        let (sync_result, tip_result) = tokio::join!(fetch_sync_status(&el_rpc, &cl_rpc), async {
+            match public_rpc {
+                Some(url) => fetch_block(url, BlockId::Number(BlockNumberOrTag::Latest)).await.ok(),
+                None => None,
+            }
+        },);
         let report = sync_result?;
-        let public_tip_block = tip_result.ok().map(|b| b.header.number);
-        let tip_url = config.rpc.as_str();
+        let public_tip_block = tip_result.map(|block| block.header.number);
 
         match (self.json, self.raw) {
             (true, true) => JsonOutput::print(&report.cl)?,
@@ -83,23 +80,17 @@ impl SyncStatusCommand {
                 JsonOutput::print(&summary)?;
             }
             (false, _) => {
-                print_pretty(&config.name, &report, tip_url, public_tip_block, self.tip_tolerance)?;
+                print_pretty(
+                    &config.name,
+                    &report,
+                    tip_url,
+                    public_rpc.is_some(),
+                    public_tip_block,
+                    self.tip_tolerance,
+                )?;
             }
         }
         Ok(())
-    }
-
-    /// Resolves the consensus-node RPC URL from the flag or chain config.
-    pub fn resolve_cl_rpc(
-        config: &MonitoringConfig,
-        override_url: Option<&Url>,
-    ) -> Result<Url, SyncStatusCommandError> {
-        if let Some(u) = override_url {
-            return Ok(u.clone());
-        }
-        config.consensus_node_rpc.clone().ok_or_else(|| {
-            SyncStatusCommandError::MissingConsensusRpc { config_name: config.name.clone() }
-        })
     }
 }
 
@@ -108,6 +99,7 @@ fn print_pretty(
     network: &str,
     report: &SyncStatusReport,
     tip_url: &str,
+    has_tip_reference: bool,
     public_tip_block: Option<u64>,
     tip_tolerance: u64,
 ) -> Result<()> {
@@ -161,6 +153,7 @@ fn print_pretty(
         "tip_reference",
         format_tip_reference(
             tip_url,
+            has_tip_reference,
             cl.unsafe_l2.block_info.number,
             public_tip_block,
             tip_tolerance,
@@ -172,7 +165,16 @@ fn print_pretty(
 }
 
 /// Formats the public-tip comparison row.
-fn format_tip_reference(url: &str, local: u64, public: Option<u64>, tolerance: u64) -> String {
+fn format_tip_reference(
+    url: &str,
+    has_reference: bool,
+    local: u64,
+    public: Option<u64>,
+    tolerance: u64,
+) -> String {
+    if !has_reference {
+        return "unavailable (no independent public RPC configured)".to_string();
+    }
     let tip = TipReferenceJson::from_local_and_public(url, local, public, tolerance);
     match (tip.block_number, tip.delta_blocks) {
         (Some(block), Some(delta)) => {
@@ -321,14 +323,14 @@ pub struct ElSyncInfoJson {
     pub remaining_blocks: u64,
 }
 
-/// Comparison of the local node's unsafe L2 head against a public-RPC
-/// reference (`config.rpc` for the active preset). Best-effort — when the
-/// public fetch fails, `block_number` and `delta_blocks` are `None` and
-/// `status` is `unavailable`.
+/// Comparison of the local node's unsafe L2 head against an independent public
+/// RPC reference.
+/// Best-effort — when the fetch fails, `block_number` and `delta_blocks` are
+/// `None` and `status` is `unavailable`.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TipReferenceJson {
-    /// The public-RPC URL queried (the preset's `config.rpc`).
+    /// The effective public-reference RPC URL queried.
     pub url: String,
     /// Latest block number reported by the public RPC. `None` if the call failed.
     pub block_number: Option<u64>,
@@ -405,32 +407,11 @@ impl TipReferenceJson {
 #[cfg(test)]
 mod tests {
     use alloy_eips::BlockNumHash;
-    use alloy_primitives::{Address, B256, U256};
+    use alloy_primitives::{B256, U256};
     use base_protocol::{BlockInfo, L2BlockInfo, SyncStatus};
-    use url::Url;
 
-    use super::{SyncStatusCommand, SyncStatusJson};
-    use crate::{MonitoringConfig, SyncStatusCommandError, SyncStatusReport};
-
-    fn test_config(consensus_node_rpc: Option<Url>) -> MonitoringConfig {
-        MonitoringConfig {
-            name: "mainnet".to_string(),
-            rpc: Url::parse("http://127.0.0.1:8545").unwrap(),
-            flashblocks_ws: Url::parse("ws://127.0.0.1:7111").unwrap(),
-            l1_rpc: Url::parse("http://127.0.0.1:9545").unwrap(),
-            consensus_node_rpc,
-            prover_rpc: None,
-            upgrades: None,
-            system_config: Address::ZERO,
-            batcher_address: None,
-            l1_blob_target: 14,
-            conductors: None,
-            discovery: None,
-            validators: None,
-            proofs: None,
-            pods: None,
-        }
-    }
+    use super::{SyncStatusJson, format_tip_reference};
+    use crate::SyncStatusReport;
 
     fn sample_l2(block: u64, ts: u64) -> L2BlockInfo {
         L2BlockInfo::new(
@@ -456,19 +437,6 @@ mod tests {
             finalized_l2: sample_l2(18_425_000, 1_780_260_000),
             local_safe_l2: L2BlockInfo::default(),
         }
-    }
-
-    #[test]
-    fn resolve_cl_rpc_errors_without_config() {
-        let config = test_config(None);
-
-        assert!(matches!(
-            SyncStatusCommand::resolve_cl_rpc(&config, None).unwrap_err(),
-            SyncStatusCommandError::MissingConsensusRpc {
-                config_name,
-                ..
-            } if config_name == "mainnet"
-        ));
     }
 
     #[test]
@@ -567,6 +535,14 @@ mod tests {
         assert!(value["tipReference"]["deltaBlocks"].is_null());
         assert_eq!(value["tipReference"]["status"], "unavailable");
         assert_eq!(value["tipReference"]["url"], "https://mainnet.base.org/");
+    }
+
+    #[test]
+    fn tip_reference_is_unavailable_without_independent_public_rpc() {
+        assert_eq!(
+            format_tip_reference("http://127.0.0.1:8545/", false, 100, Some(100), 5),
+            "unavailable (no independent public RPC configured)"
+        );
     }
 
     #[test]

@@ -10,7 +10,7 @@ use base_batcher_encoder::{BatchEncoder, EncoderConfig};
 use base_batcher_source::{ChannelBlockSource, ChannelL1HeadSource, L2BlockEvent};
 use base_common_consensus::BaseBlock;
 use base_common_genesis::RollupConfig;
-use base_protocol::{BatchType, L2BlockInfo};
+use base_protocol::BatchType;
 use base_runtime::TokioRuntime;
 use base_tx_manager::TxManager;
 use tokio_util::sync::CancellationToken;
@@ -71,6 +71,12 @@ pub enum BatcherError {
     /// The L2 source was exhausted before any blocks could be batched.
     #[error("no L2 blocks available to batch")]
     NoBlocks,
+    /// A new batch cycle was started before prior submissions were mined.
+    #[error("cannot start a batch cycle with outstanding frame submissions")]
+    OutstandingSubmissions,
+    /// The driver did not queue a frame submission before the harness timeout.
+    #[error("timed out waiting for batch frame submission")]
+    SubmissionTimeout,
 }
 
 /// Batcher actor that drives a persistent [`BatchDriver`] through [`L1Miner`].
@@ -83,8 +89,9 @@ pub enum BatcherError {
 ///
 /// Each call to [`advance`] drives one complete batch cycle:
 /// 1. Drain the L2 source and forward each block to the driver via the channel.
-/// 2. Send a [`L2BlockEvent::Flush`] to force-close the current channel.
-/// 3. Yield to let the driver encode blocks, submit frames, and suspend.
+/// 2. Send a [`L2BlockEvent::Flush`] (with an ack) to force-close the current channel.
+/// 3. Wait for the ack, confirming the driver has encoded every resulting frame and
+///    handed it to the tx manager (not just the first).
 /// 4. Mine one L1 block via the shared [`L1MinerTxManager`], firing all
 ///    receipt oneshots and delivering an [`L1HeadEvent::NewHead`] to the driver.
 /// 5. Yield to let the driver confirm receipts and advance its L1 head.
@@ -127,38 +134,11 @@ impl<S: L2BlockProvider> Batcher<S> {
     ///
     /// [`advance`]: Batcher::advance
     pub fn new(l2_source: S, rollup_config: &RollupConfig, config: BatcherConfig) -> Self {
-        Self::build(l2_source, rollup_config, config, None)
-    }
-
-    /// Create a new [`Batcher`] with an external L2 safe head watch channel.
-    ///
-    /// When the receiver fires, the [`BatchDriver`] prunes confirmed blocks
-    /// from the encoder and uses the safe head value to determine the
-    /// catchup position after a reorg or [`signal_reorg`] call.
-    ///
-    /// Without this, the driver defaults to `safe_head = 0` when computing
-    /// `catchup_from = safe_head + 1`, which is correct for fresh starts
-    /// but does not model the production batcher's awareness of the current
-    /// safe head.
-    ///
-    /// [`BatchDriver`]: base_batcher_core::BatchDriver
-    /// [`signal_reorg`]: Batcher::signal_reorg
-    pub fn with_safe_head_rx(
-        l2_source: S,
-        rollup_config: &RollupConfig,
-        config: BatcherConfig,
-        safe_head_rx: tokio::sync::watch::Receiver<u64>,
-    ) -> Self {
-        Self::build(l2_source, rollup_config, config, Some(safe_head_rx))
+        Self::build(l2_source, rollup_config, config)
     }
 
     /// Shared constructor. Builds and spawns the [`BatchDriver`] task.
-    fn build(
-        l2_source: S,
-        rollup_config: &RollupConfig,
-        config: BatcherConfig,
-        safe_head_rx: Option<tokio::sync::watch::Receiver<u64>>,
-    ) -> Self {
+    fn build(l2_source: S, rollup_config: &RollupConfig, config: BatcherConfig) -> Self {
         let l1_chain_id = rollup_config.l1_chain_id;
         let rollup_config = Arc::new(rollup_config.clone());
         let mut encoder_config = config.encoder.clone();
@@ -184,7 +164,7 @@ impl<S: L2BlockProvider> Batcher<S> {
         let runtime = TokioRuntime::with_token(cancel.clone());
 
         let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Off);
-        let mut driver = BatchDriver::new(
+        let driver = BatchDriver::new_without_derivation_status(
             runtime,
             pipeline,
             source,
@@ -199,10 +179,6 @@ impl<S: L2BlockProvider> Batcher<S> {
             l1_source,
         );
 
-        if let Some(rx) = safe_head_rx {
-            driver = driver.with_safe_head_rx(rx);
-        }
-
         let driver_task = tokio::spawn(async move { driver.run().await });
 
         Self { l2_source, block_tx, tx_manager, driver_task, cancel }
@@ -210,10 +186,16 @@ impl<S: L2BlockProvider> Batcher<S> {
 
     /// Drain the L2 source and forward all blocks to the driver, then flush.
     ///
-    /// Performs steps 1–3 of [`advance`] without mining: sends all L2 blocks,
-    /// sends [`L2BlockEvent::Flush`], and yields once so the driver encodes the
-    /// blocks and calls [`send_async`] for each submission. After this returns,
-    /// [`pending_count`] reflects how many frame transactions are waiting.
+    /// Performs steps 1–3 of [`advance`] without mining: sends all L2 blocks, then a
+    /// [`L2BlockEvent::Flush`] carrying an acknowledgement, and waits for that ack. The ack
+    /// fires once the driver has fully drained encoding and submission for this cycle — i.e.
+    /// every frame resulting from the flush (not just the first) has been handed to the tx
+    /// manager — so after this returns, [`pending_count`] reflects the *complete* set of
+    /// frame transactions waiting, even when a cycle produces more than one frame.
+    ///
+    /// The ack is delivered through the same ordered channel as the preceding `Block` events
+    /// (rather than a side channel like the admin API) so it can't be observed before the
+    /// driver has actually ingested them.
     ///
     /// # Panics
     ///
@@ -223,7 +205,6 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// [`advance`]: Batcher::advance
     /// [`try_advance`]: Batcher::try_advance
     /// [`pending_count`]: Batcher::pending_count
-    /// [`send_async`]: crate::L1MinerTxManager::send_async
     pub async fn encode_only(&mut self) {
         self.try_encode_only().await.unwrap_or_else(|e| panic!("Batcher::encode_only failed: {e}"))
     }
@@ -232,6 +213,9 @@ impl<S: L2BlockProvider> Batcher<S> {
     ///
     /// [`encode_only`]: Batcher::encode_only
     async fn try_encode_only(&mut self) -> Result<(), BatcherError> {
+        if self.pending_count() > 0 || self.staged_count() > 0 {
+            return Err(BatcherError::OutstandingSubmissions);
+        }
         let mut block_count = 0u64;
         while let Some(block) = self.l2_source.next_block() {
             self.block_tx.send(L2BlockEvent::Block(Box::new(block))).expect("driver task alive");
@@ -240,8 +224,12 @@ impl<S: L2BlockProvider> Batcher<S> {
         if block_count == 0 {
             return Err(BatcherError::NoBlocks);
         }
-        self.block_tx.send(L2BlockEvent::Flush).expect("driver task alive");
-        tokio::task::yield_now().await;
+        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+        self.block_tx.send(L2BlockEvent::Flush { ack: Some(ack_tx) }).expect("driver task alive");
+        tokio::time::timeout(Duration::from_secs(10), ack_rx)
+            .await
+            .map_err(|_| BatcherError::SubmissionTimeout)?
+            .map_err(|_| BatcherError::SubmissionTimeout)?;
         Ok(())
     }
 
@@ -426,30 +414,15 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// Signal that the batcher has been repointed to a different L2 node.
     ///
     /// Sends an [`L2BlockEvent::Reorg`] to the background [`BatchDriver`],
-    /// which triggers [`BatchPipeline::reset`] (clearing the encoder) and
-    /// [`UnsafeBlockSource::reset_catchup`]. After this call returns, the
-    /// encoder is empty and ready to accept blocks from the new node's chain.
-    ///
-    /// In production, this corresponds to the batcher detecting that the
-    /// L2 unsafe chain has diverged (e.g. because it was repointed to a
-    /// different sequencer node). The batcher achieves the same effect by
-    /// starting fresh and clearing the channel manager state.
-    ///
-    /// The `new_safe_head` is forwarded to the driver for logging. The
-    /// actual catchup position is determined by the [`safe_head_rx`] watch
-    /// channel (if wired via [`with_safe_head_rx`]).
+    /// which clears the encoder before blocks from the new chain are sent.
     ///
     /// # Panics
     ///
     /// Panics if the driver task has already exited.
     ///
     /// [`BatchDriver`]: base_batcher_core::BatchDriver
-    /// [`BatchPipeline::reset`]: base_batcher_encoder::BatchPipeline::reset
-    /// [`UnsafeBlockSource::reset_catchup`]: base_batcher_source::UnsafeBlockSource::reset_catchup
-    /// [`safe_head_rx`]: Batcher::with_safe_head_rx
-    /// [`with_safe_head_rx`]: Batcher::with_safe_head_rx
-    pub async fn signal_reorg(&self, new_safe_head: L2BlockInfo) {
-        self.block_tx.send(L2BlockEvent::Reorg { new_safe_head }).expect("driver task alive");
+    pub async fn signal_reorg(&self) {
+        self.block_tx.send(L2BlockEvent::Reorg).expect("driver task alive");
         tokio::task::yield_now().await;
     }
 

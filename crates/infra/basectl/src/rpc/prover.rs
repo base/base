@@ -3,7 +3,9 @@
 use std::time::Duration;
 
 use alloy_primitives::B256;
-use base_prover_service_client::{ProofRequesterClient, ProverServiceClientConfig};
+use base_prover_service_client::{
+    ProofRequesterClient, ProverServiceClientConfig, ProverServiceClientError,
+};
 use base_prover_service_protocol::{
     GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse, ProofRequest,
     ProofRequestKind, ProofSessionId, ProofStatus, ProveBlockRangeRequest, ZkBackend,
@@ -35,7 +37,9 @@ pub struct ProofFinalizeRequest {
 
 impl ProofFinalizeRequest {
     /// Session ID namespace for proofs requested via basectl.
-    const SESSION_NAMESPACE: &'static [u8] = b"basectl";
+    ///
+    /// v2 prevents reuse of prover-service or SP1 journals created before schedule pinning.
+    const SESSION_NAMESPACE: &'static [u8] = b"basectl/v2";
 
     /// Session ID proof subtype for compressed SP1 proofs.
     const SESSION_SUBTYPE: &'static str = "zk/sp1/compressed";
@@ -72,6 +76,7 @@ impl ProofFinalizeRequest {
                     sequence_window: self.sequence_window,
                     l1_head: self.l1_head,
                     intermediate_root_interval: self.intermediate_root_interval,
+                    schedule_l2_block_number: None,
                     zk_vm: ZkVm::Sp1,
                     zk_backend: ZkBackend::Cluster,
                 }),
@@ -93,11 +98,8 @@ impl ProofsClient {
     /// Connects a requester client to the prover-service `endpoint`.
     pub fn connect(endpoint: &Url) -> Result<Self, ProofsCommandError> {
         let config = ProverServiceClientConfig::new(endpoint.as_str());
-        let requester = ProofRequesterClient::connect(&config).map_err(|error| {
-            ProofsCommandError::BuildClient {
-                endpoint: endpoint.to_string(),
-                message: error.to_string(),
-            }
+        let requester = ProofRequesterClient::connect(&config).map_err(|source| {
+            ProofsCommandError::BuildClient { endpoint: endpoint.to_string(), source }
         })?;
         Ok(Self {
             endpoint: endpoint.clone(),
@@ -140,7 +142,7 @@ impl ProofsClient {
             .requester
             .prove_block_range(request)
             .await
-            .map_err(|error| self.rpc_error("prover_proveBlockRange", &error))?;
+            .map_err(|error| self.rpc_error("prover_proveBlockRange", error))?;
         info!(
             endpoint = %self.endpoint,
             session_id = %response.session_id,
@@ -157,7 +159,7 @@ impl ProofsClient {
         self.requester
             .get_proof(GetProofRequest { session_id: session_id.to_string() })
             .await
-            .map_err(|error| self.rpc_error("prover_getProof", &error))
+            .map_err(|error| self.rpc_error("prover_getProof", error))
     }
 
     /// Lists submitted proof requests.
@@ -168,7 +170,7 @@ impl ProofsClient {
         self.requester
             .list_proofs(request)
             .await
-            .map_err(|error| self.rpc_error("prover_listProofs", &error))
+            .map_err(|error| self.rpc_error("prover_listProofs", error))
     }
 
     /// Polls `session_id` until it reaches a terminal status or the wait
@@ -203,12 +205,12 @@ impl ProofsClient {
         }
     }
 
-    fn rpc_error(&self, method: &'static str, error: &dyn std::fmt::Display) -> ProofsCommandError {
-        ProofsCommandError::Rpc {
-            endpoint: self.endpoint.to_string(),
-            method,
-            message: error.to_string(),
-        }
+    fn rpc_error(
+        &self,
+        method: &'static str,
+        source: ProverServiceClientError,
+    ) -> ProofsCommandError {
+        ProofsCommandError::Rpc { endpoint: self.endpoint.to_string(), method, source }
     }
 }
 

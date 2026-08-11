@@ -4,22 +4,20 @@
 //! Account Configuration system contract, the account implementations, and the
 //! canonical authenticators). Every contract is deployed through Nick's
 //! deterministic-deployment proxy ([`Eip8130Contracts::CREATE2_FACTORY`]) with a
-//! zero salt, so the address is a pure function of the contract init code and is
-//! identical on every chain that deploys the same bytecode.
+//! **per-contract mined salt**, so each address is a pure function of the
+//! contract init code (under its own salt) and is identical on every chain that
+//! deploys the same bytecode. Each salt is mined individually so that every
+//! contract shares the `0x8130…` vanity prefix.
 //!
-//! # ⚠️ These values are NOT final
+//! # ⚠️ These values track the contract bytecode
 //!
-//! EIP-8130 is in Draft and the reference contracts (`base/eip-8130`) are still
-//! churning. Because each address is derived from the contract init code, **any
-//! change to the contract bytecode changes its address**, and the account-
-//! implementation and delegate-authenticator addresses additionally cascade off
-//! the Account Configuration address (it is passed as a constructor argument).
-//!
-//! The values below are the current Base Sepolia deployment. They are expected to
-//! change as the contracts evolve and finalize. On each redeploy, re-pin both the
-//! address and its `*_INIT_CODE_HASH` together (the [`tests`] module asserts they
-//! stay consistent under CREATE2) and, once the bytecode is frozen for the Cobalt
-//! upgrade, freeze these as the canonical mainnet values.
+//! Because each address is derived from the contract init code, **any change to
+//! the contract bytecode changes its address**, and the account-implementation
+//! and delegate-authenticator addresses additionally cascade off the Account
+//! Configuration address (it is passed as a constructor argument). On each
+//! redeploy, re-pin the address, its `*_SALT`, and its `*_INIT_CODE_HASH`
+//! together — the [`tests`] module asserts each triple stays consistent under
+//! CREATE2 (`address == create2(factory, salt, init_code_hash)`).
 //!
 //! [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
 
@@ -27,8 +25,8 @@ use alloy_primitives::{Address, B256, address, b256, keccak256};
 
 /// Canonical [EIP-8130] contract addresses and the node authenticator allowlist.
 ///
-/// See the [module docs](self) for the (important) caveat that these are
-/// provisional Base Sepolia values that change with the contract bytecode.
+/// See the [module docs](self) for the caveat that each address is derived from
+/// its per-contract salt and init code, and changes with the contract bytecode.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Eip8130Contracts;
@@ -36,13 +34,10 @@ pub struct Eip8130Contracts;
 impl Eip8130Contracts {
     /// Nick's deterministic-deployment proxy (the "Arachnid" CREATE2 factory),
     /// deployed at the same address on every EVM chain. Every EIP-8130 contract is
-    /// deployed by sending `SALT || init_code` to this factory.
+    /// deployed by sending `salt || init_code` to this factory.
     ///
     /// <https://github.com/Arachnid/deterministic-deployment-proxy>
     pub const CREATE2_FACTORY: Address = address!("0x4e59b44847b379578588920cA78FbF26c0B4956C");
-
-    /// The CREATE2 salt used for every EIP-8130 deployment (zero).
-    pub const SALT: B256 = B256::ZERO;
 
     // ─────────────────────────────────────────────────────────────────────────
     // System contract
@@ -50,33 +45,46 @@ impl Eip8130Contracts {
 
     /// Account Configuration system contract (`ACCOUNT_CONFIG_ADDRESS`). The
     /// protocol reads actor/account state directly from this contract's storage.
-    pub const ACCOUNT_CONFIG: Address = address!("0x53648Cf00356fbAA1F2B531715c6B64AaBDE1555");
+    pub const ACCOUNT_CONFIG: Address = address!("0x81305d4f4976220D2af17E5Dc246848E235600AC");
+
+    /// Per-contract mined CREATE2 salt for [`Self::ACCOUNT_CONFIG`], yielding its
+    /// `0x8130…` vanity address.
+    pub const ACCOUNT_CONFIG_SALT: B256 =
+        b256!("0xf8341777f1a47fdc9c6bbb706dfa8e4f44580ec92fb58e3aae32d77c9d6039a8");
 
     /// keccak256 of the `ACCOUNT_CONFIG` deployment init code (for CREATE2
     /// derivation and bytecode-drift detection).
     pub const ACCOUNT_CONFIG_INIT_CODE_HASH: B256 =
-        b256!("0x7c9289d84f391aa48b89cffe374fac16926d7763b5647a832f0810fb9d98aef5");
+        b256!("0xd5fec2364f479536d9ac6412580b918a6094bdab5f5a8c66e2f77b8ad5d33536");
 
     // ─────────────────────────────────────────────────────────────────────────
     // Account implementations (init code embeds `ACCOUNT_CONFIG`)
     // ─────────────────────────────────────────────────────────────────────────
 
     /// Default wallet implementation, used as the target of default EOA delegation.
-    pub const DEFAULT_ACCOUNT: Address = address!("0x58da469ef71Dd4B092B010CdA37DE124C926EebD");
+    pub const DEFAULT_ACCOUNT: Address = address!("0x813078f98b3eb214046C8Dc93A771ac9de5AaDEf");
+
+    /// Per-contract mined CREATE2 salt for [`Self::DEFAULT_ACCOUNT`].
+    pub const DEFAULT_ACCOUNT_SALT: B256 =
+        b256!("0x0000000000000000000000000000000000000000000000000000000139a99218");
 
     /// keccak256 of the `DEFAULT_ACCOUNT` deployment init code.
     pub const DEFAULT_ACCOUNT_INIT_CODE_HASH: B256 =
-        b256!("0x9ec5fba8d1093ed7edd44bf786513788d5f7b0fc8a29d2b43f8b509f022706b3");
+        b256!("0xc8d4dce2ca2004fc9e2ed3c1955a7cb27cacae31ea44c5e60608895f70edda2c");
 
     /// Canonical high-rate payer account implementation
     /// (`CanonicalHighRatePayerAccount`). Wallets that block ETH transfers when
     /// locked, granting higher EIP-8130 mempool access (rate limits).
     pub const CANONICAL_HIGH_RATE_PAYER_ACCOUNT: Address =
-        address!("0x23Fe6949d6370330Ae32e7c17E1265D65955C92a");
+        address!("0x8130931874c894aC4963e128D6273AE520dAFa57");
+
+    /// Per-contract mined CREATE2 salt for [`Self::CANONICAL_HIGH_RATE_PAYER_ACCOUNT`].
+    pub const CANONICAL_HIGH_RATE_PAYER_ACCOUNT_SALT: B256 =
+        b256!("0x00000000000000000000000000000000000000000000000000000000ac6f081b");
 
     /// keccak256 of the `CANONICAL_HIGH_RATE_PAYER_ACCOUNT` deployment init code.
     pub const CANONICAL_HIGH_RATE_PAYER_ACCOUNT_INIT_CODE_HASH: B256 =
-        b256!("0xb694f9cf053eaf4d5a778c60d67d50fb08bf41d88c817904e1295333040980ac");
+        b256!("0x73c468cb90dce847524dfcec5acb6a0c152885c38e810311241142f13594ca4b");
 
     /// keccak256 of the ERC-1167 minimal-proxy *runtime* bytecode whose
     /// implementation is [`Self::CANONICAL_HIGH_RATE_PAYER_ACCOUNT`]:
@@ -88,7 +96,7 @@ impl Eip8130Contracts {
     /// Used to recognize high-rate payer accounts by codehash (e.g. mempool
     /// admission) without resolving an EIP-7702 delegation target.
     pub const CANONICAL_HIGH_RATE_PAYER_PROXY_CODE_HASH: B256 =
-        b256!("0x3e37c64c39476e47c52408ea45eb3ae0f07e3ca0fd1d713acbcf17bf3b51312c");
+        b256!("0xd48297a99e6d846a9b112783ed7c41c036d99709fbcaef3c205c3d16715768bf");
 
     // ─────────────────────────────────────────────────────────────────────────
     // Canonical authenticators (accepted on the EIP-8130 block-validation path)
@@ -100,7 +108,11 @@ impl Eip8130Contracts {
     // (`address(1)`), handled directly by the protocol, not a deployed contract.
 
     /// secp256r1 / P-256 (raw) authenticator contract.
-    pub const P256_AUTHENTICATOR: Address = address!("0xf8847a74F8067CabaE5fe56B70b372A7D670f0f8");
+    pub const P256_AUTHENTICATOR: Address = address!("0x8130C89F65750431b564A4730397552a11CeA256");
+
+    /// Per-contract mined CREATE2 salt for [`Self::P256_AUTHENTICATOR`].
+    pub const P256_AUTHENTICATOR_SALT: B256 =
+        b256!("0x000000000000000000000000000000000000000000000000000000014139e07b");
 
     /// keccak256 of the `P256_AUTHENTICATOR` deployment init code.
     pub const P256_AUTHENTICATOR_INIT_CODE_HASH: B256 =
@@ -108,7 +120,11 @@ impl Eip8130Contracts {
 
     /// secp256r1 / P-256 (`WebAuthn`) authenticator contract.
     pub const WEBAUTHN_AUTHENTICATOR: Address =
-        address!("0x871c72d3950308A028E9c4917591bcfd3D6a1EF7");
+        address!("0x813007b6b1b48E75D91dEc5927ab515d12a0F1d0");
+
+    /// Per-contract mined CREATE2 salt for [`Self::WEBAUTHN_AUTHENTICATOR`].
+    pub const WEBAUTHN_AUTHENTICATOR_SALT: B256 =
+        b256!("0x000000000000000000000000000000000000000000000000000000015ec496a4");
 
     /// keccak256 of the `WEBAUTHN_AUTHENTICATOR` deployment init code.
     pub const WEBAUTHN_AUTHENTICATOR_INIT_CODE_HASH: B256 =
@@ -117,21 +133,15 @@ impl Eip8130Contracts {
     /// Delegated-validation (1-hop) authenticator contract (init code embeds
     /// `ACCOUNT_CONFIG`).
     pub const DELEGATE_AUTHENTICATOR: Address =
-        address!("0xbb73E3871FBaC8aef1a7Ee8A24E21139916f14C2");
+        address!("0x8130b7D430D041ED4050935814D493299980aDE1");
+
+    /// Per-contract mined CREATE2 salt for [`Self::DELEGATE_AUTHENTICATOR`].
+    pub const DELEGATE_AUTHENTICATOR_SALT: B256 =
+        b256!("0x000000000000000000000000000000000000000000000000000000006f100b8d");
 
     /// keccak256 of the `DELEGATE_AUTHENTICATOR` deployment init code.
     pub const DELEGATE_AUTHENTICATOR_INIT_CODE_HASH: B256 =
-        b256!("0x27e4ead86d2bf8cebc501d9e0c795a139c4616d972152c4f79fa503b84fb4170");
-
-    /// Always-valid authenticator (keyless relay / test). Deployed alongside the
-    /// canonical set but **not** on the node block-validation allowlist
-    /// ([`Self::CANONICAL_AUTHENTICATORS`]).
-    pub const ALWAYS_VALID_AUTHENTICATOR: Address =
-        address!("0xA550545Da91720c23483c5B3493412A02D1cF9F9");
-
-    /// keccak256 of the `ALWAYS_VALID_AUTHENTICATOR` deployment init code.
-    pub const ALWAYS_VALID_AUTHENTICATOR_INIT_CODE_HASH: B256 =
-        b256!("0xc45c91538660545608577c119aeffc5a5550becf4cd2a8710d8368fce6a6b27a");
+        b256!("0x6060f8131b34060e3046ba3dda205f07c1c2f93ae956b3d3d2166a8b7ee09336");
 
     /// The canonical authenticator allowlist: the deployed `IAuthenticator`
     /// contracts a compliant node accepts on the EIP-8130 block-validation path.
@@ -139,7 +149,6 @@ impl Eip8130Contracts {
     /// secp256k1 is **not** a contract entry here: on EIP-8130 chains it is the
     /// protocol-reserved native ecrecover sentinel (`address(1)`), handled
     /// directly by the protocol rather than via a deployed authenticator contract.
-    /// [`Self::ALWAYS_VALID_AUTHENTICATOR`] is also excluded (test / keyless relay).
     pub const CANONICAL_AUTHENTICATORS: [Address; 3] =
         [Self::P256_AUTHENTICATOR, Self::WEBAUTHN_AUTHENTICATOR, Self::DELEGATE_AUTHENTICATOR];
 
@@ -198,39 +207,46 @@ mod tests {
 
     use super::*;
 
-    /// Each `(address, init_code_hash)` pair must be self-consistent under
-    /// CREATE2 with the canonical factory + zero salt. If the contract bytecode
-    /// changes, both values must be re-pinned together or this fails — the drift
-    /// guard for the provisional addresses.
+    /// Each `(address, salt, init_code_hash)` triple must be self-consistent
+    /// under CREATE2 with the canonical factory. If the contract bytecode
+    /// changes, all three values must be re-pinned together or this fails — the
+    /// drift guard for the deployed addresses.
     #[test]
     fn addresses_match_create2_derivation() {
         let cases = [
-            (Eip8130Contracts::ACCOUNT_CONFIG, Eip8130Contracts::ACCOUNT_CONFIG_INIT_CODE_HASH),
-            (Eip8130Contracts::DEFAULT_ACCOUNT, Eip8130Contracts::DEFAULT_ACCOUNT_INIT_CODE_HASH),
+            (
+                Eip8130Contracts::ACCOUNT_CONFIG,
+                Eip8130Contracts::ACCOUNT_CONFIG_SALT,
+                Eip8130Contracts::ACCOUNT_CONFIG_INIT_CODE_HASH,
+            ),
+            (
+                Eip8130Contracts::DEFAULT_ACCOUNT,
+                Eip8130Contracts::DEFAULT_ACCOUNT_SALT,
+                Eip8130Contracts::DEFAULT_ACCOUNT_INIT_CODE_HASH,
+            ),
             (
                 Eip8130Contracts::CANONICAL_HIGH_RATE_PAYER_ACCOUNT,
+                Eip8130Contracts::CANONICAL_HIGH_RATE_PAYER_ACCOUNT_SALT,
                 Eip8130Contracts::CANONICAL_HIGH_RATE_PAYER_ACCOUNT_INIT_CODE_HASH,
             ),
             (
                 Eip8130Contracts::P256_AUTHENTICATOR,
+                Eip8130Contracts::P256_AUTHENTICATOR_SALT,
                 Eip8130Contracts::P256_AUTHENTICATOR_INIT_CODE_HASH,
             ),
             (
                 Eip8130Contracts::WEBAUTHN_AUTHENTICATOR,
+                Eip8130Contracts::WEBAUTHN_AUTHENTICATOR_SALT,
                 Eip8130Contracts::WEBAUTHN_AUTHENTICATOR_INIT_CODE_HASH,
             ),
             (
                 Eip8130Contracts::DELEGATE_AUTHENTICATOR,
+                Eip8130Contracts::DELEGATE_AUTHENTICATOR_SALT,
                 Eip8130Contracts::DELEGATE_AUTHENTICATOR_INIT_CODE_HASH,
             ),
-            (
-                Eip8130Contracts::ALWAYS_VALID_AUTHENTICATOR,
-                Eip8130Contracts::ALWAYS_VALID_AUTHENTICATOR_INIT_CODE_HASH,
-            ),
         ];
-        for (expected, init_code_hash) in cases {
-            let derived =
-                Eip8130Contracts::CREATE2_FACTORY.create2(Eip8130Contracts::SALT, init_code_hash);
+        for (expected, salt, init_code_hash) in cases {
+            let derived = Eip8130Contracts::CREATE2_FACTORY.create2(salt, init_code_hash);
             assert_eq!(derived, expected, "CREATE2 derivation mismatch for {expected}");
         }
     }
@@ -242,10 +258,6 @@ mod tests {
             assert!(Eip8130Contracts::is_canonical_authenticator(&auth));
         }
         assert!(!Eip8130Contracts::is_canonical_authenticator(&Address::ZERO));
-        // Deployed, but not on the node allowlist.
-        assert!(!Eip8130Contracts::is_canonical_authenticator(
-            &Eip8130Contracts::ALWAYS_VALID_AUTHENTICATOR
-        ));
     }
 
     #[test]

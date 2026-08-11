@@ -4,9 +4,11 @@ use std::sync::{Arc, Mutex};
 
 use alloy_primitives::B256;
 use base_batcher_encoder::{
-    BatchPipeline, BatchSubmission, ReorgError, StepError, StepResult, SubmissionId,
+    BatchPipeline, BatchSubmission, DerivationReconciliation, ReorgError, StepError, StepResult,
+    SubmissionId,
 };
 use base_common_consensus::BaseBlock;
+use base_protocol::BlockInfo;
 
 /// Shared recording state populated by the test pipeline implementations.
 #[derive(Debug, Default)]
@@ -19,7 +21,7 @@ pub struct Recorded {
     pub dequeued: Vec<SubmissionId>,
     /// Number of times `reset()` was called.
     pub resets: usize,
-    /// Safe L2 block numbers passed to `prune_safe` in order.
+    /// Safe L2 block numbers passed to `reconcile_derivation` in order.
     pub safe_numbers: Vec<u64>,
     /// Number of times `force_close_channel()` was called.
     pub force_close_count: usize,
@@ -37,17 +39,39 @@ pub struct TrackingPipeline {
     pub submissions: std::collections::VecDeque<BatchSubmission>,
     /// Value returned by `da_backlog_bytes`. Default: 0.
     da_backlog_bytes_value: u64,
+    /// Whether derivation reconciliation reports a safe-head mismatch.
+    safe_head_matches: bool,
+    /// Whether derivation reconciliation reports a stalled channel.
+    derivation_stalled: bool,
 }
 
 impl TrackingPipeline {
     /// Create a new pipeline that records into `recorded`.
     pub fn new(recorded: Arc<Mutex<Recorded>>) -> Self {
-        Self { recorded, submissions: Default::default(), da_backlog_bytes_value: 0 }
+        Self {
+            recorded,
+            submissions: Default::default(),
+            da_backlog_bytes_value: 0,
+            safe_head_matches: true,
+            derivation_stalled: false,
+        }
     }
 
     /// Set the value returned by `da_backlog_bytes`.
     pub const fn with_da_backlog(mut self, value: u64) -> Self {
         self.da_backlog_bytes_value = value;
+        self
+    }
+
+    /// Set whether safe-head validation succeeds.
+    pub const fn with_safe_head_match(mut self, matches: bool) -> Self {
+        self.safe_head_matches = matches;
+        self
+    }
+
+    /// Set whether derivation-stall detection requests a replay.
+    pub const fn with_derivation_stalled(mut self, stalled: bool) -> Self {
+        self.derivation_stalled = stalled;
         self
     }
 }
@@ -67,6 +91,10 @@ impl BatchPipeline for TrackingPipeline {
         Some(sub)
     }
 
+    fn has_ready_submission(&self) -> bool {
+        !self.submissions.is_empty()
+    }
+
     fn confirm(&mut self, _: SubmissionId, _: u64) {}
 
     fn requeue(&mut self, id: SubmissionId) {
@@ -81,11 +109,23 @@ impl BatchPipeline for TrackingPipeline {
         self.recorded.lock().unwrap().l1_heads.push(l1_block);
     }
 
-    fn prune_safe(&mut self, safe_l2_number: u64) {
-        self.recorded.lock().unwrap().safe_numbers.push(safe_l2_number);
+    fn reconcile_derivation(
+        &mut self,
+        safe_l2: BlockInfo,
+        _: Option<u64>,
+    ) -> DerivationReconciliation {
+        self.recorded.lock().unwrap().safe_numbers.push(safe_l2.number);
+        if !self.safe_head_matches {
+            return DerivationReconciliation::SafeHeadMismatch;
+        }
+        if self.derivation_stalled {
+            return DerivationReconciliation::StalledChannel;
+        }
+        DerivationReconciliation::Consistent
     }
 
     fn reset(&mut self) {
+        self.submissions.clear();
         self.recorded.lock().unwrap().resets += 1;
     }
 
@@ -127,71 +167,20 @@ impl BatchPipeline for ReorgPipeline {
         None
     }
 
+    fn has_ready_submission(&self) -> bool {
+        false
+    }
+
     fn confirm(&mut self, _: SubmissionId, _: u64) {}
     fn requeue(&mut self, _: SubmissionId) {}
     fn force_close_channel(&mut self) {}
     fn advance_l1_head(&mut self, _: u64) {}
-    fn prune_safe(&mut self, _: u64) {}
+    fn reconcile_derivation(&mut self, _: BlockInfo, _: Option<u64>) -> DerivationReconciliation {
+        DerivationReconciliation::Consistent
+    }
 
     fn reset(&mut self) {
         self.recorded.lock().unwrap().resets += 1;
-    }
-
-    fn da_backlog_bytes(&self) -> u64 {
-        0
-    }
-}
-
-/// [`BatchPipeline`] that rejects the first `add_block` call and accepts all subsequent ones.
-///
-/// Used to verify that the driver re-adds the triggering block after `reset()`, so the
-/// block is not silently lost when the source will not re-deliver it.
-#[derive(Debug)]
-pub struct OneReorgPipeline {
-    /// Incremented each time `add_block` succeeds (post-reorg re-adds).
-    pub blocks_accepted: Arc<Mutex<usize>>,
-    /// Whether the next `add_block` call should simulate a reorg.
-    fail_next: bool,
-    /// Incremented each time `reset()` is called.
-    pub resets: Arc<Mutex<usize>>,
-}
-
-impl OneReorgPipeline {
-    /// Create a new pipeline backed by the given shared counters.
-    pub const fn new(blocks_accepted: Arc<Mutex<usize>>, resets: Arc<Mutex<usize>>) -> Self {
-        Self { blocks_accepted, fail_next: true, resets }
-    }
-}
-
-impl BatchPipeline for OneReorgPipeline {
-    fn add_block(&mut self, block: BaseBlock) -> Result<(), (ReorgError, Box<BaseBlock>)> {
-        if self.fail_next {
-            self.fail_next = false;
-            return Err((
-                ReorgError::ParentMismatch { expected: B256::ZERO, got: B256::with_last_byte(1) },
-                Box::new(block),
-            ));
-        }
-        *self.blocks_accepted.lock().unwrap() += 1;
-        Ok(())
-    }
-
-    fn step(&mut self) -> Result<StepResult, StepError> {
-        Ok(StepResult::Idle)
-    }
-
-    fn next_submission(&mut self) -> Option<BatchSubmission> {
-        None
-    }
-
-    fn confirm(&mut self, _: SubmissionId, _: u64) {}
-    fn requeue(&mut self, _: SubmissionId) {}
-    fn force_close_channel(&mut self) {}
-    fn advance_l1_head(&mut self, _: u64) {}
-    fn prune_safe(&mut self, _: u64) {}
-
-    fn reset(&mut self) {
-        *self.resets.lock().unwrap() += 1;
     }
 
     fn da_backlog_bytes(&self) -> u64 {

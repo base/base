@@ -386,7 +386,7 @@ impl PrecompileStorageProvider for StateProviderPrecompileStorage<'_> {
         JournalCheckpoint::default()
     }
 
-    fn checkpoint_commit(&mut self) {}
+    fn commit_latest_checkpoint(&mut self) {}
 
     fn checkpoint_revert(&mut self, _checkpoint: JournalCheckpoint) {}
 
@@ -615,7 +615,7 @@ impl PrecompileStorageProvider for OverlayPrecompileStorage<'_> {
         JournalCheckpoint::default()
     }
 
-    fn checkpoint_commit(&mut self) {}
+    fn commit_latest_checkpoint(&mut self) {}
 
     // A `checkpoint_revert` would silently leak partial writes (the overlay
     // cannot roll back), so trip loudly in debug/test builds if the admission
@@ -1497,7 +1497,7 @@ where
             TxAuthError::SenderRecovery => "EOA sender recovery failed",
             TxAuthError::Scope { .. } => "actor scope insufficient",
             TxAuthError::AccountLocked => "account is locked",
-            TxAuthError::DelegationUnauthorized => "delegation requires native-k1 admin self actor",
+            TxAuthError::DelegationUnauthorized => "delegation requires admin actor",
             TxAuthError::ConfigChainId { .. } => "config change targets a foreign chain",
             TxAuthError::ConfigSequence { .. } => "config change sequence mismatch",
             TxAuthError::Apply(apply) => Self::map_apply_error(apply),
@@ -3387,7 +3387,7 @@ mod tests {
         let signer_addr = signer.address();
         let actor_id = {
             let mut id = [0u8; 32];
-            id[..20].copy_from_slice(signer_addr.as_slice());
+            id[12..].copy_from_slice(signer_addr.as_slice());
             B256::from_slice(&id)
         };
         let initial_actors =

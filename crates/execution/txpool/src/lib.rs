@@ -27,6 +27,11 @@ pub use validator::{BaseL1BlockInfo, BaseTransactionValidator, BaseTxPoolError, 
 
 mod best;
 
+mod validity;
+pub use validity::{
+    MAX_VALIDITY_PREDICATES, TransactionValidity, ValidityOperator, ValidityPredicate,
+};
+
 mod transaction;
 pub use transaction::{
     BLOCK_TIME_SECS, BasePooledTransaction, BasePooledTx, BundleTransaction,
@@ -36,12 +41,6 @@ pub use transaction::{
 
 mod ordering;
 pub use ordering::{BaseOrdering, TimestampOrdering};
-
-mod consumer;
-pub use consumer::{Consumer, ConsumerConfig, ConsumerMetrics, RecentlySent, SpawnedConsumer};
-
-mod forwarder;
-pub use forwarder::{Forwarder, ForwarderConfig, ForwarderMetrics, SpawnedForwarder};
 
 mod pool;
 pub use pool::{AccountStateDiff, BaseTransactionPool};

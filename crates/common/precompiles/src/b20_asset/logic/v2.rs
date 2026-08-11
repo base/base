@@ -21,7 +21,7 @@ use base_precompile_storage::{BasePrecompileError, Result};
 use crate::{
     Asset, AssetAccounting, B20_MAX_SUPPLY_CAP, B20AssetStorage, B20AssetToken, B20Guards,
     B20PausableFeature, B20PolicyType, B20TokenRole, Eip712Domain, IB20, IB20Asset, PermitArgs,
-    PolicyAccounting, Token,
+    PolicyAccounting, Token, TransferPolicyIds,
 };
 
 /// `keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)")`
@@ -32,12 +32,19 @@ const DOMAIN_TYPEHASH: B256 =
 const VERSION: &[u8] = b"1";
 
 /// Second asset B-20 implementation. Activated at Cobalt; adds the ERC-8056 scheduled-multiplier
-/// surface (lazy multiplier, `setUIMultiplier`/`cancelScheduledMultiplier`, ERC-165) on top of a
+/// surface (lazy multiplier, `updateUIMultiplier`/`cancelUIMultiplierUpdate`, ERC-165) on top of a
 /// self-contained copy of the frozen V1 behavior.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct AssetV2;
 
 impl AssetV2 {
+    const PAUSABLE_FEATURES: &[IB20::PausableFeature] = &[
+        IB20::PausableFeature::TRANSFER,
+        IB20::PausableFeature::MINT,
+        IB20::PausableFeature::BURN,
+        IB20::PausableFeature::SEIZE,
+    ];
+
     /// Role identifier for asset operators: `keccak256("OPERATOR_ROLE")`.
     ///
     /// Asset-specific (not part of [`B20TokenRole`]); kept inherent to V2 so it stays frozen with
@@ -45,14 +52,23 @@ impl AssetV2 {
     pub(crate) const OPERATOR_ROLE: B256 =
         b256!("97667070c54ef182b0f5858b034beac1b6f3089aa2d3188bb1e8929f4fa9b929");
 
+    /// Upper bound the multiplier setters accept: `type(uint128).max`. With supply capped at
+    /// `type(uint128).max`, a `uint128` multiplier keeps `balance * multiplier` inside `uint256`,
+    /// so balance-derived reads never overflow. Single source of truth for the setter guards and
+    /// the `MAX_UI_MULTIPLIER()` getter.
+    pub const MAX_UI_MULTIPLIER: U256 = U256::from_limbs([u64::MAX, u64::MAX, 0, 0]);
+
     /// Balance-moving core of `transfer`/`transferFrom`, without the pause check.
+    ///
+    /// `policies` carries the sender/receiver ids pre-read from their shared slot by the caller;
+    /// `Some` enforces both (unprivileged path), `None` skips them (factory-privileged path).
     fn transfer_inner<S: AssetAccounting, A: PolicyAccounting>(
         &self,
         token: &mut B20AssetToken<S, A>,
         from: Address,
         to: Address,
         amount: U256,
-        privileged: bool,
+        policies: Option<&TransferPolicyIds>,
     ) -> Result<()> {
         if to == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
@@ -60,9 +76,19 @@ impl AssetV2 {
         if from == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidSender { sender: from }));
         }
-        if !privileged {
-            B20Guards::ensure_policy_type(token, B20PolicyType::TransferSender, from)?;
-            B20Guards::ensure_policy_type(token, B20PolicyType::TransferReceiver, to)?;
+        if let Some(policies) = policies {
+            B20Guards::ensure_authorized_by_id(
+                token,
+                B20PolicyType::TransferSender.id(),
+                policies.sender,
+                from,
+            )?;
+            B20Guards::ensure_authorized_by_id(
+                token,
+                B20PolicyType::TransferReceiver.id(),
+                policies.receiver,
+                to,
+            )?;
         }
         self.move_balance(token, from, to, amount)
     }
@@ -123,34 +149,6 @@ impl AssetV2 {
             .emit_event(IB20::Transfer { from, to: Address::ZERO, amount }.encode_log_data())
     }
 
-    /// Grants `role` to `account` without checking caller authorization.
-    ///
-    /// The one token-level mutation the factory needs at bootstrap, when no admin exists yet and the
-    /// authorized [`grant_role`](Asset::grant_role) path is not reachable. Bumps the `DefaultAdmin`
-    /// member count and emits `RoleGranted`. Kept inherent to V2 (off the `Asset` trait) so it stays
-    /// frozen with this version and off `&dyn Asset`.
-    pub(crate) fn grant_role_unchecked<S: AssetAccounting, A: PolicyAccounting>(
-        &self,
-        token: &mut B20AssetToken<S, A>,
-        role: B256,
-        account: Address,
-        sender: Address,
-    ) -> Result<()> {
-        if token.accounting().has_role(role, account)? {
-            return Ok(());
-        }
-        token.accounting_mut().set_role(role, account, true)?;
-        if role == B20TokenRole::DefaultAdmin.id() {
-            let current = token.accounting().role_member_count(role)?;
-            let next =
-                current.checked_add(U256::ONE).ok_or_else(BasePrecompileError::under_overflow)?;
-            token.accounting_mut().set_role_member_count(role, next)?;
-        }
-        token
-            .accounting_mut()
-            .emit_event(IB20::RoleGranted { role, account, sender }.encode_log_data())
-    }
-
     /// Revokes `role` from `account` without checking caller authorization.
     fn revoke_role_unchecked<S: AssetAccounting, A: PolicyAccounting>(
         &self,
@@ -190,14 +188,26 @@ impl AssetV2 {
         Ok(())
     }
 
-    /// Ensures `policy_scope` names a built-in B-20 policy slot.
+    /// Ensures `policy_scope` names a built-in B-20 policy slot available on the V2 (Cobalt) common
+    /// surface, which adds the seize scopes (`SEIZE_HOLDER_POLICY` / `SEIZE_RECEIVER_POLICY`) on top
+    /// of V1.
+    ///
+    /// The match is exhaustive on purpose: a policy scope added to `B20PolicyType` for a future fork
+    /// must not silently widen this frozen V2 surface — it should fail to compile until V2's stance
+    /// on it is decided explicitly.
     fn ensure_supported_policy_type(policy_scope: B256) -> Result<()> {
-        if B20PolicyType::from_id(policy_scope).is_some() {
-            Ok(())
-        } else {
-            Err(BasePrecompileError::revert(IB20::UnsupportedPolicyType {
+        match B20PolicyType::from_id(policy_scope) {
+            Some(
+                B20PolicyType::TransferSender
+                | B20PolicyType::TransferReceiver
+                | B20PolicyType::TransferExecutor
+                | B20PolicyType::MintReceiver
+                | B20PolicyType::SeizeHolder
+                | B20PolicyType::SeizeReceiver,
+            ) => Ok(()),
+            None => Err(BasePrecompileError::revert(IB20::UnsupportedPolicyType {
                 policyScope: policy_scope,
-            }))
+            })),
         }
     }
 
@@ -236,7 +246,11 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
         privileged: bool,
     ) -> Result<()> {
         B20Guards::ensure_not_paused(token, IB20::PausableFeature::TRANSFER)?;
-        self.transfer_inner(token, caller, to, amount, privileged)
+        if privileged {
+            return self.transfer_inner(token, caller, to, amount, None);
+        }
+        let policies = token.accounting().transfer_policy_ids()?;
+        self.transfer_inner(token, caller, to, amount, Some(&policies))
     }
 
     fn transfer_from(
@@ -264,10 +278,22 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
                 needed: amount,
             }));
         }
-        if !privileged && caller != from {
-            B20Guards::ensure_policy_type(token, B20PolicyType::TransferExecutor, caller)?;
+        if privileged {
+            self.transfer_inner(token, from, to, amount, None)?;
+        } else {
+            // One SLOAD fetches all transfer policy ids, reused for the executor and
+            // sender/receiver checks.
+            let policies = token.accounting().transfer_policy_ids()?;
+            if caller != from {
+                B20Guards::ensure_authorized_by_id(
+                    token,
+                    B20PolicyType::TransferExecutor.id(),
+                    policies.executor,
+                    caller,
+                )?;
+            }
+            self.transfer_inner(token, from, to, amount, Some(&policies))?;
         }
-        self.transfer_inner(token, from, to, amount, privileged)?;
         if is_infinite {
             return Ok(());
         }
@@ -364,6 +390,40 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
             .emit_event(IB20::BurnedBlocked { caller, from, amount }.encode_log_data())
     }
 
+    fn seize_with_memo(
+        &self,
+        token: &mut B20AssetToken<S, A>,
+        caller: Address,
+        from: Address,
+        to: Address,
+        amount: U256,
+        memo: B256,
+    ) -> Result<()> {
+        B20Guards::ensure_not_paused(token, IB20::PausableFeature::SEIZE)?;
+        B20Guards::ensure_token_role(token, caller, B20TokenRole::Seize)?;
+        // `to != 0` guards against a disguised burn; `from != 0` guards against a disguised mint
+        // (`Transfer(0x0, to, ...)`), matching `transfer_inner`.
+        if to == Address::ZERO {
+            return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
+        }
+        if from == Address::ZERO {
+            return Err(BasePrecompileError::revert(IB20::InvalidSender { sender: from }));
+        }
+        if from == to {
+            return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
+        }
+        B20Guards::ensure_seizable(token, from)?;
+        // Gate the destination like `mint` gates `MintReceiver`: an unset scope is always-allow, so a
+        // treasury need not be allowlisted by default.
+        B20Guards::ensure_policy_type(token, B20PolicyType::SeizeReceiver, to)?;
+        self.move_balance(token, from, to, amount)?;
+        // `Memo` must immediately follow the `Transfer` (from `move_balance`), before `Seized`.
+        self.emit_memo(token, caller, memo)?;
+        token
+            .accounting_mut()
+            .emit_event(IB20::Seized { caller, from, to, amount }.encode_log_data())
+    }
+
     fn pause(
         &self,
         token: &mut B20AssetToken<S, A>,
@@ -372,7 +432,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
         privileged: bool,
     ) -> Result<()> {
         for feature in &features {
-            B20PausableFeature::ensure_valid(*feature)?;
+            B20PausableFeature::ensure_one_of(*feature, Self::PAUSABLE_FEATURES)?;
         }
         if !privileged {
             B20Guards::ensure_token_role(token, caller, B20TokenRole::Pause)?;
@@ -398,7 +458,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
         privileged: bool,
     ) -> Result<()> {
         for feature in &features {
-            B20PausableFeature::ensure_valid(*feature)?;
+            B20PausableFeature::ensure_one_of(*feature, Self::PAUSABLE_FEATURES)?;
         }
         if !privileged {
             B20Guards::ensure_token_role(token, caller, B20TokenRole::Unpause)?;
@@ -506,6 +566,28 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
         self.grant_role_unchecked(token, role, account, caller)
     }
 
+    fn grant_role_unchecked(
+        &self,
+        token: &mut B20AssetToken<S, A>,
+        role: B256,
+        account: Address,
+        sender: Address,
+    ) -> Result<()> {
+        if token.accounting().has_role(role, account)? {
+            return Ok(());
+        }
+        token.accounting_mut().set_role(role, account, true)?;
+        if role == B20TokenRole::DefaultAdmin.id() {
+            let current = token.accounting().role_member_count(role)?;
+            let next =
+                current.checked_add(U256::ONE).ok_or_else(BasePrecompileError::under_overflow)?;
+            token.accounting_mut().set_role_member_count(role, next)?;
+        }
+        token
+            .accounting_mut()
+            .emit_event(IB20::RoleGranted { role, account, sender }.encode_log_data())
+    }
+
     fn revoke_role(
         &self,
         token: &mut B20AssetToken<S, A>,
@@ -594,12 +676,13 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
         if !privileged {
             B20Guards::ensure_token_role(token, caller, B20TokenRole::DefaultAdmin)?;
         }
-        let old_policy_id = self.policy_id(token, policy_scope)?;
+        Self::ensure_supported_policy_type(policy_scope)?;
         if !token.policy().policy_exists(token.policy_storage(), new_policy_id)? {
             return Err(BasePrecompileError::revert(IB20::PolicyNotFound {
                 policyId: new_policy_id,
             }));
         }
+        let old_policy_id = token.accounting().policy_id(policy_scope)?;
         token.accounting_mut().set_policy_id(policy_scope, new_policy_id)?;
         token.accounting_mut().emit_event(
             IB20::PolicyUpdated {
@@ -635,8 +718,9 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
     // --- Asset-specific mutations ---
 
     /// Instantaneous failsafe. Writes the current multiplier immediately, clearing any pending
-    /// update and (for a still-live schedule) emitting `MultiplierUpdateCancelled`. Emits the
-    /// ERC-8056 `UIMultiplierUpdated` event rather than V1's `MultiplierUpdated`.
+    /// update and (for a still-live schedule) emitting `UIMultiplierUpdateCancelled`. Emits BOTH
+    /// the deprecated V1 `MultiplierUpdated` event (kept for backward compatibility with existing
+    /// indexers) and the ERC-8056 `UIMultiplierUpdated` event.
     fn update_multiplier(
         &self,
         token: &mut B20AssetToken<S, A>,
@@ -646,7 +730,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
     ) -> Result<()> {
         let now = token.accounting().timestamp()?;
         self.ensure_operator_role(token, caller, privileged)?;
-        if new_multiplier.is_zero() || new_multiplier > U256::from(u128::MAX) {
+        if new_multiplier.is_zero() || new_multiplier > Self::MAX_UI_MULTIPLIER {
             return Err(BasePrecompileError::revert(IB20Asset::InvalidMultiplier {}));
         }
         let pending_multiplier = U256::from(token.accounting().pending_multiplier()?);
@@ -660,13 +744,18 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
         }
         if live_pending {
             token.accounting_mut().emit_event(
-                IB20Asset::MultiplierUpdateCancelled {
+                IB20Asset::UIMultiplierUpdateCancelled {
                     cancelledMultiplier: pending_multiplier,
                     cancelledEffectiveAt: pending_effective_at,
                 }
                 .encode_log_data(),
             )?;
         }
+        // Emit the deprecated V1 event alongside the ERC-8056 event so indexers watching the legacy
+        // `MultiplierUpdated` topic keep working through the transition.
+        token.accounting_mut().emit_event(
+            IB20Asset::MultiplierUpdated { multiplier: new_multiplier }.encode_log_data(),
+        )?;
         token.accounting_mut().emit_event(
             IB20Asset::UIMultiplierUpdated {
                 oldMultiplier: old,
@@ -755,7 +844,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
         token: &B20AssetToken<S, A>,
         feature: IB20::PausableFeature,
     ) -> Result<bool> {
-        B20PausableFeature::ensure_valid(feature)?;
+        B20PausableFeature::ensure_one_of(feature, Self::PAUSABLE_FEATURES)?;
         Ok((token.accounting().paused()? & B20PausableFeature::mask(feature)) != U256::ZERO)
     }
 
@@ -766,6 +855,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
             IB20::PausableFeature::TRANSFER,
             IB20::PausableFeature::MINT,
             IB20::PausableFeature::BURN,
+            IB20::PausableFeature::SEIZE,
         ] {
             if (paused & B20PausableFeature::mask(feature)) != U256::ZERO {
                 features.push(feature);
@@ -876,7 +966,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
         Ok(product / B20AssetStorage::WAD)
     }
 
-    fn set_ui_multiplier(
+    fn update_ui_multiplier(
         &self,
         token: &mut B20AssetToken<S, A>,
         caller: Address,
@@ -886,7 +976,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
     ) -> Result<()> {
         let now = token.accounting().timestamp()?;
         self.ensure_operator_role(token, caller, privileged)?;
-        if new_multiplier.is_zero() || new_multiplier > U256::from(u128::MAX) {
+        if new_multiplier.is_zero() || new_multiplier > Self::MAX_UI_MULTIPLIER {
             return Err(BasePrecompileError::revert(IB20Asset::InvalidMultiplier {}));
         }
         if effective_at <= now {
@@ -903,8 +993,8 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
         let pending_effective_at = token.accounting().pending_effective_at()?;
         // A live pending blocks a new schedule.
         if U256::from(pending_effective_at) > now {
-            return Err(BasePrecompileError::revert(IB20Asset::ScheduleOverlap {
-                pendingEffectiveAt: U256::from(pending_effective_at),
+            return Err(BasePrecompileError::revert(IB20Asset::UIMultiplierUpdateExists {
+                effectiveAt: U256::from(pending_effective_at),
             }));
         }
         // Fold a matured pending into the current multiplier before overwriting it.
@@ -928,7 +1018,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
         )
     }
 
-    fn cancel_scheduled_multiplier(
+    fn cancel_ui_multiplier_update(
         &self,
         token: &mut B20AssetToken<S, A>,
         caller: Address,
@@ -940,11 +1030,11 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
         let pending_effective_at = U256::from(token.accounting().pending_effective_at()?);
         // A pending maturing at exactly `now` has already taken effect and is not cancellable.
         if pending_effective_at <= now {
-            return Err(BasePrecompileError::revert(IB20Asset::NoScheduledMultiplier {}));
+            return Err(BasePrecompileError::revert(IB20Asset::UIMultiplierUpdateDoesNotExist {}));
         }
         token.accounting_mut().clear_pending_multiplier_and_effective_at()?;
         token.accounting_mut().emit_event(
-            IB20Asset::MultiplierUpdateCancelled {
+            IB20Asset::UIMultiplierUpdateCancelled {
                 cancelledMultiplier: pending_multiplier,
                 cancelledEffectiveAt: pending_effective_at,
             }
@@ -955,6 +1045,10 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
     fn supports_interface(&self, interface_id: FixedBytes<4>) -> Result<bool> {
         Ok(interface_id == crate::ERC165_INTERFACE_ID
             || crate::ERC8056_INTERFACE_IDS.contains(&interface_id))
+    }
+
+    fn max_ui_multiplier(&self) -> Result<U256> {
+        Ok(Self::MAX_UI_MULTIPLIER)
     }
 }
 
@@ -975,7 +1069,7 @@ mod tests {
     use crate::{
         Asset, AssetAccounting, AssetV2, B20_MAX_SUPPLY_CAP, B20AssetStorage, B20AssetToken,
         B20PolicyType, B20TokenRole, IB20, IB20Asset, PackedPolicy, PermitArgs, PolicyAccounting,
-        PolicyRegistryStorage, PolicyVersion, Token, TokenAccounting,
+        PolicyRegistryStorage, PolicyVersion, Token, TokenAccounting, TransferPolicyIds,
     };
 
     // --- Self-contained in-memory fakes (no dependency on `common::test_utils`, so shared test
@@ -985,6 +1079,7 @@ mod tests {
     const ADMIN: Address = Address::repeat_byte(0xAD);
     const ALICE: Address = Address::repeat_byte(0xA1);
     const BOB: Address = Address::repeat_byte(0xB0);
+    const MEMO: B256 = B256::repeat_byte(0x77);
     const CHAIN_ID: u64 = 8453;
     const LOGIC: AssetV2 = AssetV2;
 
@@ -1149,6 +1244,10 @@ mod tests {
         fn set_policy_id(&mut self, policy_scope: B256, policy_id: u64) -> Result<()> {
             self.policy_ids.insert(policy_scope, policy_id);
             Ok(())
+        }
+
+        fn transfer_policy_ids(&self) -> Result<TransferPolicyIds> {
+            TransferPolicyIds::read_individually(self)
         }
         fn emit_event(&mut self, log: LogData) -> Result<()> {
             self.events.push(log);
@@ -1519,6 +1618,246 @@ mod tests {
         assert_eq!(last_event_sig(&tok), IB20::BurnedBlocked::SIGNATURE_HASH);
     }
 
+    // --- seize ---
+
+    /// Points `SEIZE_HOLDER_POLICY` at the always-block policy, making every account seizable.
+    fn make_seizable(tok: &mut Tok) {
+        tok.accounting_mut()
+            .set_policy_id(B20PolicyType::SeizeHolder.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID)
+            .unwrap();
+    }
+
+    fn event_sigs(tok: &Tok) -> Vec<B256> {
+        tok.accounting().events.iter().map(|e| e.topics()[0]).collect()
+    }
+
+    #[test]
+    fn seize_moves_balance_and_emits_transfer_memo_event() {
+        let mut tok = token();
+        fund(&mut tok, ALICE, U256::from(100u64));
+        make_seizable(&mut tok);
+        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
+        let supply = tok.accounting().total_supply().unwrap();
+
+        LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(40u64), MEMO).unwrap();
+
+        assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(60u64));
+        assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(40u64));
+        assert_eq!(tok.accounting().total_supply().unwrap(), supply, "seize is a transfer");
+        assert_eq!(
+            event_sigs(&tok),
+            vec![
+                IB20::Transfer::SIGNATURE_HASH,
+                IB20::Memo::SIGNATURE_HASH,
+                IB20::Seized::SIGNATURE_HASH,
+            ]
+        );
+    }
+
+    #[test]
+    fn seize_reverts_when_account_not_seizable() {
+        let mut tok = token();
+        fund(&mut tok, ALICE, U256::from(100u64));
+        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
+        // SEIZE_HOLDER_POLICY unset => ALWAYS_ALLOW => ALICE authorized => not seizable.
+        let err =
+            LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(1u64), MEMO).unwrap_err();
+        assert_eq!(err, BasePrecompileError::revert(IB20::AccountNotSeizable { account: ALICE }));
+    }
+
+    #[test]
+    fn seize_reverts_on_zero_receiver() {
+        let mut tok = token();
+        make_seizable(&mut tok);
+        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
+        let err = LOGIC
+            .seize_with_memo(&mut tok, ADMIN, ALICE, Address::ZERO, U256::from(1u64), MEMO)
+            .unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO })
+        );
+    }
+
+    #[test]
+    fn seize_reverts_on_zero_from() {
+        let mut tok = token();
+        // A non-default `SeizeHolder` (here ALWAYS_BLOCK via `make_seizable`) treats the zero
+        // address as seizable, so without the `from != 0` guard a zero-amount seize from the zero
+        // address would emit a misleading `Transfer(0x0, to, 0)` that indexers read as a mint.
+        make_seizable(&mut tok);
+        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
+
+        let err = LOGIC
+            .seize_with_memo(&mut tok, ADMIN, Address::ZERO, BOB, U256::ZERO, MEMO)
+            .unwrap_err();
+
+        assert_eq!(err, BasePrecompileError::revert(IB20::InvalidSender { sender: Address::ZERO }));
+        assert!(
+            event_sigs(&tok).is_empty(),
+            "no misleading Transfer/Memo/Seized on a rejected zero-from seize"
+        );
+    }
+
+    #[test]
+    fn seize_reverts_on_self_seize() {
+        let mut tok = token();
+        fund(&mut tok, ALICE, U256::from(100u64));
+        make_seizable(&mut tok);
+        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
+
+        let err = LOGIC
+            .seize_with_memo(&mut tok, ADMIN, ALICE, ALICE, U256::from(1u64), MEMO)
+            .unwrap_err();
+
+        assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver: ALICE }));
+        assert_eq!(
+            tok.accounting().balance_of(ALICE).unwrap(),
+            U256::from(100u64),
+            "balance unchanged"
+        );
+        assert!(
+            event_sigs(&tok).is_empty(),
+            "no misleading Transfer/Memo/Seized on a rejected self-seize"
+        );
+    }
+
+    #[test]
+    fn seize_ignores_receiver_policy_on_to() {
+        let mut tok = token();
+        fund(&mut tok, ALICE, U256::from(50u64));
+        make_seizable(&mut tok);
+        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
+        // A normal transfer to BOB would revert on this; seize does not consult it.
+        tok.accounting_mut()
+            .set_policy_id(
+                B20PolicyType::TransferReceiver.id(),
+                PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+            )
+            .unwrap();
+        LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(50u64), MEMO).unwrap();
+        assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
+    }
+
+    #[test]
+    fn seize_reverts_when_receiver_policy_forbids() {
+        let mut tok = token();
+        fund(&mut tok, ALICE, U256::from(50u64));
+        make_seizable(&mut tok);
+        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
+        tok.accounting_mut()
+            .set_policy_id(
+                B20PolicyType::SeizeReceiver.id(),
+                PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+            )
+            .unwrap();
+        let err =
+            LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(1u64), MEMO).unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::PolicyForbids {
+                policyScope: B20PolicyType::SeizeReceiver.id(),
+                policyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+            })
+        );
+    }
+
+    #[test]
+    fn seize_unset_receiver_policy_allows_any_destination() {
+        let mut tok = token();
+        fund(&mut tok, ALICE, U256::from(50u64));
+        make_seizable(&mut tok);
+        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
+        // SEIZE_RECEIVER_POLICY left unset => ALWAYS_ALLOW => any destination is allowed.
+        LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(50u64), MEMO).unwrap();
+        assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
+    }
+
+    #[test]
+    fn seize_succeeds_with_configured_receiver_policy_allow() {
+        let mut tok = token();
+        fund(&mut tok, ALICE, U256::from(50u64));
+        make_seizable(&mut tok);
+        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
+        tok.accounting_mut()
+            .set_policy_id(
+                B20PolicyType::SeizeReceiver.id(),
+                PolicyRegistryStorage::ALWAYS_ALLOW_ID,
+            )
+            .unwrap();
+        LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(50u64), MEMO).unwrap();
+        assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
+    }
+
+    #[test]
+    fn seize_holder_policy_beats_receiver_policy() {
+        let mut tok = token();
+        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
+        // SEIZE_HOLDER unset => ALICE not seizable; SEIZE_RECEIVER blocks BOB. Holder check fires first.
+        tok.accounting_mut()
+            .set_policy_id(
+                B20PolicyType::SeizeReceiver.id(),
+                PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+            )
+            .unwrap();
+        let err =
+            LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(1u64), MEMO).unwrap_err();
+        assert_eq!(err, BasePrecompileError::revert(IB20::AccountNotSeizable { account: ALICE }));
+    }
+
+    #[test]
+    fn seize_receiver_policy_beats_balance() {
+        let mut tok = token();
+        make_seizable(&mut tok);
+        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
+        // ALICE is seizable and has zero balance, but the receiver policy forbids BOB first.
+        tok.accounting_mut()
+            .set_policy_id(
+                B20PolicyType::SeizeReceiver.id(),
+                PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+            )
+            .unwrap();
+        let err =
+            LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(1u64), MEMO).unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::PolicyForbids {
+                policyScope: B20PolicyType::SeizeReceiver.id(),
+                policyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+            })
+        );
+    }
+
+    #[test]
+    fn seize_requires_role() {
+        let mut tok = token();
+        make_seizable(&mut tok);
+        let err =
+            LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(1u64), MEMO).unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+                account: ADMIN,
+                neededRole: B20TokenRole::Seize.id(),
+            })
+        );
+    }
+
+    #[test]
+    fn seize_reverts_when_seize_paused() {
+        let mut tok = token();
+        make_seizable(&mut tok);
+        LOGIC.pause(&mut tok, ADMIN, vec![IB20::PausableFeature::SEIZE], true).unwrap();
+        let err =
+            LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(1u64), MEMO).unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::ContractPaused {
+                feature: IB20::PausableFeature::SEIZE
+            })
+        );
+    }
+
     // --- pause ---
 
     #[test]
@@ -1528,6 +1867,14 @@ mod tests {
         assert!(LOGIC.is_paused(&tok, IB20::PausableFeature::MINT).unwrap());
         LOGIC.unpause(&mut tok, ADMIN, vec![IB20::PausableFeature::MINT], true).unwrap();
         assert!(!LOGIC.is_paused(&tok, IB20::PausableFeature::MINT).unwrap());
+    }
+
+    #[test]
+    fn paused_features_includes_seize() {
+        let mut tok = token();
+        LOGIC.pause(&mut tok, ADMIN, vec![IB20::PausableFeature::SEIZE], true).unwrap();
+        let features = LOGIC.paused_features(&tok).unwrap();
+        assert_eq!(features, vec![IB20::PausableFeature::SEIZE]);
     }
 
     // --- roles ---
@@ -1667,7 +2014,13 @@ mod tests {
         let new_multiplier = B20AssetStorage::WAD * U256::from(3u64);
         LOGIC.update_multiplier(&mut tok, ADMIN, new_multiplier, true).unwrap();
         assert_eq!(tok.accounting().multiplier().unwrap(), new_multiplier);
-        // V2 emits the ERC-8056 `UIMultiplierUpdated` rather than V1's `MultiplierUpdated`.
+        // V2's instant setter emits the deprecated `MultiplierUpdated` (backward compat) then the
+        // ERC-8056 `UIMultiplierUpdated`.
+        let events = &tok.accounting().events;
+        assert_eq!(
+            events[events.len() - 2].topics()[0],
+            IB20Asset::MultiplierUpdated::SIGNATURE_HASH
+        );
         assert_eq!(last_event_sig(&tok), IB20Asset::UIMultiplierUpdated::SIGNATURE_HASH);
     }
 
@@ -1874,7 +2227,7 @@ mod tests {
         let target = wad() * U256::from(3u64);
         let effective_at = U256::from(100u64);
         set_now(&mut tok, U256::from(10u64));
-        LOGIC.set_ui_multiplier(&mut tok, ALICE, target, effective_at, true).unwrap();
+        LOGIC.update_ui_multiplier(&mut tok, ALICE, target, effective_at, true).unwrap();
 
         // T-1: still the old (current) multiplier.
         set_now(&mut tok, U256::from(99u64));
@@ -1890,12 +2243,12 @@ mod tests {
     }
 
     #[test]
-    fn set_ui_multiplier_emits_event_and_records_pending() {
+    fn update_ui_multiplier_emits_event_and_records_pending() {
         let mut tok = token();
         let target = wad() * U256::from(2u64);
         let effective_at = U256::from(500u64);
         set_now(&mut tok, U256::from(1u64));
-        LOGIC.set_ui_multiplier(&mut tok, ALICE, target, effective_at, true).unwrap();
+        LOGIC.update_ui_multiplier(&mut tok, ALICE, target, effective_at, true).unwrap();
 
         assert_eq!(
             last_event(&tok),
@@ -1911,11 +2264,12 @@ mod tests {
     }
 
     #[test]
-    fn set_ui_multiplier_requires_operator_role() {
+    fn update_ui_multiplier_requires_operator_role() {
         let mut tok = token();
         set_now(&mut tok, U256::from(1u64));
-        let err =
-            LOGIC.set_ui_multiplier(&mut tok, ALICE, wad(), U256::from(2u64), false).unwrap_err();
+        let err = LOGIC
+            .update_ui_multiplier(&mut tok, ALICE, wad(), U256::from(2u64), false)
+            .unwrap_err();
         assert_eq!(
             err,
             BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
@@ -1925,38 +2279,39 @@ mod tests {
         );
         // Once granted, the same call succeeds.
         grant(&mut tok, AssetV2::OPERATOR_ROLE, ALICE);
-        LOGIC.set_ui_multiplier(&mut tok, ALICE, wad(), U256::from(2u64), false).unwrap();
+        LOGIC.update_ui_multiplier(&mut tok, ALICE, wad(), U256::from(2u64), false).unwrap();
     }
 
     #[test]
-    fn set_ui_multiplier_rejects_zero_and_above_uint128() {
+    fn update_ui_multiplier_rejects_zero_and_above_uint128() {
         let mut tok = token();
         set_now(&mut tok, U256::from(1u64));
         let zero = LOGIC
-            .set_ui_multiplier(&mut tok, ALICE, U256::ZERO, U256::from(2u64), true)
+            .update_ui_multiplier(&mut tok, ALICE, U256::ZERO, U256::from(2u64), true)
             .unwrap_err();
         assert_eq!(zero, BasePrecompileError::revert(IB20Asset::InvalidMultiplier {}));
 
         let too_big = U256::from(u128::MAX) + U256::ONE;
-        let over =
-            LOGIC.set_ui_multiplier(&mut tok, ALICE, too_big, U256::from(2u64), true).unwrap_err();
+        let over = LOGIC
+            .update_ui_multiplier(&mut tok, ALICE, too_big, U256::from(2u64), true)
+            .unwrap_err();
         assert_eq!(over, BasePrecompileError::revert(IB20Asset::InvalidMultiplier {}));
     }
 
     #[test]
-    fn set_ui_multiplier_rejects_effective_at_in_past_and_too_far() {
+    fn update_ui_multiplier_rejects_effective_at_in_past_and_too_far() {
         let mut tok = token();
         let now = U256::from(100u64);
         set_now(&mut tok, now);
         // effectiveAt == now is not in the future.
-        let past = LOGIC.set_ui_multiplier(&mut tok, ALICE, wad(), now, true).unwrap_err();
+        let past = LOGIC.update_ui_multiplier(&mut tok, ALICE, wad(), now, true).unwrap_err();
         assert_eq!(
             past,
             BasePrecompileError::revert(IB20Asset::EffectiveAtInPast { effectiveAt: now })
         );
 
         let too_far = U256::from(u64::MAX) + U256::ONE;
-        let far = LOGIC.set_ui_multiplier(&mut tok, ALICE, wad(), too_far, true).unwrap_err();
+        let far = LOGIC.update_ui_multiplier(&mut tok, ALICE, wad(), too_far, true).unwrap_err();
         assert_eq!(
             far,
             BasePrecompileError::revert(IB20Asset::EffectiveAtTooFar { effectiveAt: too_far })
@@ -1964,15 +2319,21 @@ mod tests {
     }
 
     #[test]
-    fn set_ui_multiplier_reverts_on_live_overlap() {
+    fn update_ui_multiplier_reverts_on_live_overlap() {
         let mut tok = token();
         let first_effective_at = U256::from(1_000u64);
         set_now(&mut tok, U256::from(1u64));
         LOGIC
-            .set_ui_multiplier(&mut tok, ALICE, wad() * U256::from(2u64), first_effective_at, true)
+            .update_ui_multiplier(
+                &mut tok,
+                ALICE,
+                wad() * U256::from(2u64),
+                first_effective_at,
+                true,
+            )
             .unwrap();
         let err = LOGIC
-            .set_ui_multiplier(
+            .update_ui_multiplier(
                 &mut tok,
                 ALICE,
                 wad() * U256::from(3u64),
@@ -1982,19 +2343,19 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             err,
-            BasePrecompileError::revert(IB20Asset::ScheduleOverlap {
-                pendingEffectiveAt: first_effective_at,
+            BasePrecompileError::revert(IB20Asset::UIMultiplierUpdateExists {
+                effectiveAt: first_effective_at,
             })
         );
     }
 
     #[test]
-    fn set_ui_multiplier_materializes_matured_pending() {
+    fn update_ui_multiplier_materializes_matured_pending() {
         let mut tok = token();
         let first = wad() * U256::from(2u64);
         let first_effective_at = U256::from(100u64);
         set_now(&mut tok, U256::from(1u64));
-        LOGIC.set_ui_multiplier(&mut tok, ALICE, first, first_effective_at, true).unwrap();
+        LOGIC.update_ui_multiplier(&mut tok, ALICE, first, first_effective_at, true).unwrap();
 
         // After maturity, schedule a second: the matured first must fold into the current slot.
         let now = U256::from(150u64);
@@ -2002,7 +2363,7 @@ mod tests {
         assert_eq!(LOGIC.multiplier(&tok).unwrap(), first, "first has matured");
         let second = wad() * U256::from(3u64);
         let second_effective_at = U256::from(300u64);
-        LOGIC.set_ui_multiplier(&mut tok, ALICE, second, second_effective_at, true).unwrap();
+        LOGIC.update_ui_multiplier(&mut tok, ALICE, second, second_effective_at, true).unwrap();
 
         // `old` in the emitted event is the folded (matured) value, not the pre-fold WAD.
         assert_eq!(
@@ -2028,13 +2389,13 @@ mod tests {
         let target = wad() * U256::from(2u64);
         let effective_at = U256::from(1_000u64);
         set_now(&mut tok, U256::from(1u64));
-        LOGIC.set_ui_multiplier(&mut tok, ALICE, target, effective_at, true).unwrap();
+        LOGIC.update_ui_multiplier(&mut tok, ALICE, target, effective_at, true).unwrap();
 
-        LOGIC.cancel_scheduled_multiplier(&mut tok, ALICE, true).unwrap();
+        LOGIC.cancel_ui_multiplier_update(&mut tok, ALICE, true).unwrap();
 
         assert_eq!(
             last_event(&tok),
-            IB20Asset::MultiplierUpdateCancelled {
+            IB20Asset::UIMultiplierUpdateCancelled {
                 cancelledMultiplier: target,
                 cancelledEffectiveAt: effective_at,
             }
@@ -2049,16 +2410,25 @@ mod tests {
     fn cancel_reverts_without_live_pending() {
         let mut tok = token();
         set_now(&mut tok, U256::from(1u64));
-        let none = LOGIC.cancel_scheduled_multiplier(&mut tok, ALICE, true).unwrap_err();
-        assert_eq!(none, BasePrecompileError::revert(IB20Asset::NoScheduledMultiplier {}));
+        let none = LOGIC.cancel_ui_multiplier_update(&mut tok, ALICE, true).unwrap_err();
+        assert_eq!(none, BasePrecompileError::revert(IB20Asset::UIMultiplierUpdateDoesNotExist {}));
 
         // A matured pending is no longer "live", so cancel still reverts.
         LOGIC
-            .set_ui_multiplier(&mut tok, ALICE, wad() * U256::from(2u64), U256::from(100u64), true)
+            .update_ui_multiplier(
+                &mut tok,
+                ALICE,
+                wad() * U256::from(2u64),
+                U256::from(100u64),
+                true,
+            )
             .unwrap();
         set_now(&mut tok, U256::from(100u64));
-        let matured = LOGIC.cancel_scheduled_multiplier(&mut tok, ALICE, true).unwrap_err();
-        assert_eq!(matured, BasePrecompileError::revert(IB20Asset::NoScheduledMultiplier {}));
+        let matured = LOGIC.cancel_ui_multiplier_update(&mut tok, ALICE, true).unwrap_err();
+        assert_eq!(
+            matured,
+            BasePrecompileError::revert(IB20Asset::UIMultiplierUpdateDoesNotExist {})
+        );
     }
 
     #[test]
@@ -2086,7 +2456,7 @@ mod tests {
         let pending = wad() * U256::from(2u64);
         let pending_effective_at = U256::from(1_000u64);
         set_now(&mut tok, U256::from(1u64));
-        LOGIC.set_ui_multiplier(&mut tok, ALICE, pending, pending_effective_at, true).unwrap();
+        LOGIC.update_ui_multiplier(&mut tok, ALICE, pending, pending_effective_at, true).unwrap();
 
         let now = U256::from(10u64);
         let instant = wad() * U256::from(5u64);
@@ -2095,12 +2465,16 @@ mod tests {
 
         let events = &tok.accounting().events;
         assert_eq!(
-            events[events.len() - 2],
-            IB20Asset::MultiplierUpdateCancelled {
+            events[events.len() - 3],
+            IB20Asset::UIMultiplierUpdateCancelled {
                 cancelledMultiplier: pending,
                 cancelledEffectiveAt: pending_effective_at,
             }
             .encode_log_data()
+        );
+        assert_eq!(
+            events[events.len() - 2],
+            IB20Asset::MultiplierUpdated { multiplier: instant }.encode_log_data()
         );
         assert_eq!(
             events[events.len() - 1],
@@ -2120,17 +2494,22 @@ mod tests {
         let mut tok = token();
         let matured = wad() * U256::from(2u64);
         set_now(&mut tok, U256::from(1u64));
-        LOGIC.set_ui_multiplier(&mut tok, ALICE, matured, U256::from(100u64), true).unwrap();
+        LOGIC.update_ui_multiplier(&mut tok, ALICE, matured, U256::from(100u64), true).unwrap();
 
         let now = U256::from(150u64); // matured
         let instant = wad() * U256::from(5u64);
         set_now(&mut tok, now);
         LOGIC.update_multiplier(&mut tok, ALICE, instant, true).unwrap();
 
-        // Only UIMultiplierUpdated is emitted (matured folds into `old` silently); `old` is the
-        // matured effective value.
+        // MultiplierUpdated + UIMultiplierUpdated are emitted (no cancellation for a matured
+        // pending, which folds into `old` silently); `old` is the matured effective value.
+        let events = &tok.accounting().events;
         assert_eq!(
-            last_event(&tok),
+            events[events.len() - 2],
+            IB20Asset::MultiplierUpdated { multiplier: instant }.encode_log_data()
+        );
+        assert_eq!(
+            events[events.len() - 1],
             IB20Asset::UIMultiplierUpdated {
                 oldMultiplier: matured,
                 newMultiplier: instant,
@@ -2138,7 +2517,7 @@ mod tests {
             }
             .encode_log_data()
         );
-        let cancelled_sig = IB20Asset::MultiplierUpdateCancelled::SIGNATURE_HASH;
+        let cancelled_sig = IB20Asset::UIMultiplierUpdateCancelled::SIGNATURE_HASH;
         assert!(
             !tok.accounting().events.iter().any(|log| log.topics()[0] == cancelled_sig),
             "no cancellation event for a matured pending"
@@ -2162,7 +2541,7 @@ mod tests {
         let target = wad() * U256::from(2u64);
         let effective_at = U256::from(100u64);
         set_now(&mut tok, U256::from(1u64));
-        LOGIC.set_ui_multiplier(&mut tok, ALICE, target, effective_at, true).unwrap();
+        LOGIC.update_ui_multiplier(&mut tok, ALICE, target, effective_at, true).unwrap();
 
         let now = U256::from(150u64);
         set_now(&mut tok, now);
@@ -2180,7 +2559,7 @@ mod tests {
         let target = wad() * U256::from(2u64);
         let effective_at = U256::from(100u64);
         set_now(&mut tok, U256::from(1u64));
-        LOGIC.set_ui_multiplier(&mut tok, ALICE, target, effective_at, true).unwrap();
+        LOGIC.update_ui_multiplier(&mut tok, ALICE, target, effective_at, true).unwrap();
 
         // Before maturity: 1:1.
         set_now(&mut tok, U256::from(50u64));
@@ -2200,12 +2579,14 @@ mod tests {
 
     #[test]
     fn supports_interface_advertises_claimed_ids_only() {
-        // IERC165, IScaledUIAmount, IScaledUIAmountNewUIMultiplier, IScaledUIAmountBalances.
+        // IERC165, IScaledUIAmount, IScaledUIAmountNewUIMultiplier, IScaledUIAmountBalances, and the
+        // IScaledUIAmountConversion extension (0x57854fc3), claimed by the interface review.
         for id in [
             [0x01, 0xff, 0xc9, 0xa7],
             [0xa6, 0x0b, 0xf1, 0x3d],
             [0x4b, 0xd2, 0x76, 0x48],
             [0xd8, 0x90, 0xfd, 0x71],
+            [0x57, 0x85, 0x4f, 0xc3],
         ] {
             assert!(
                 <AssetV2 as Asset<FakeAccounting, FakePolicyAccounting>>::supports_interface(
@@ -2215,8 +2596,8 @@ mod tests {
                 .unwrap()
             );
         }
-        // Conversion extension is NOT claimed; nor is an arbitrary id.
-        for id in [[0x57, 0x85, 0x4f, 0xc3], [0xde, 0xad, 0xbe, 0xef], [0xff, 0xff, 0xff, 0xff]] {
+        // An arbitrary id is not advertised.
+        for id in [[0xde, 0xad, 0xbe, 0xef], [0xff, 0xff, 0xff, 0xff]] {
             assert!(
                 !<AssetV2 as Asset<FakeAccounting, FakePolicyAccounting>>::supports_interface(
                     &LOGIC,
@@ -2225,6 +2606,17 @@ mod tests {
                 .unwrap()
             );
         }
+    }
+
+    #[test]
+    fn max_ui_multiplier_getter_returns_uint128_max() {
+        // Pins the const definition (the U256 limbs must equal type(uint128).max, the value the
+        // setter guards enforce) and the getter that exposes it.
+        assert_eq!(AssetV2::MAX_UI_MULTIPLIER, U256::from(u128::MAX));
+        let value =
+            <AssetV2 as Asset<FakeAccounting, FakePolicyAccounting>>::max_ui_multiplier(&LOGIC)
+                .unwrap();
+        assert_eq!(value, U256::from(u128::MAX));
     }
 
     /// Pins this version's frozen EIP-712 domain typehash to the exact type string it must hash.

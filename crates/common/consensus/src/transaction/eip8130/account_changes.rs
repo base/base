@@ -17,15 +17,17 @@ use crate::transaction::eip8130::constants::Eip8130Constants;
 
 /// Bitmask describing the contexts in which an actor is valid.
 ///
-/// On the wire, `Scope` is encoded as a single RLP-encoded byte (matching the
-/// EIP-8130 `uint8` spec), not as a one-element list. The derived RLP impls
-/// from `alloy_rlp` would wrap the inner byte in a list header, so the
-/// `Encodable`/`Decodable` impls are written by hand.
+/// On the wire, `Scope` is encoded as a minimal RLP-encoded integer (matching
+/// the EIP-8130 `uint16` spec), not as a one-element list. The derived RLP impls
+/// from `alloy_rlp` would wrap the inner value in a list header, so the
+/// `Encodable`/`Decodable` impls are written by hand. RLP integers are
+/// minimal-big-endian, so values `<= 0xff` encode identically to the earlier
+/// `uint8` form.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
-pub struct Scope(pub u8);
+pub struct Scope(pub u16);
 
 impl Encodable for Scope {
     fn encode(&self, out: &mut dyn BufMut) {
@@ -39,7 +41,7 @@ impl Encodable for Scope {
 
 impl Decodable for Scope {
     fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
-        u8::decode(buf).map(Self)
+        u16::decode(buf).map(Self)
     }
 }
 
@@ -48,7 +50,7 @@ impl Scope {
     pub const UNRESTRICTED: Self = Self(Eip8130Constants::SCOPE_UNRESTRICTED);
 
     /// Returns the raw bitmask.
-    pub const fn bits(&self) -> u8 {
+    pub const fn bits(&self) -> u16 {
         self.0
     }
 
@@ -89,8 +91,9 @@ impl Scope {
 /// (initial actors are always non-expiring, committed as `0`) and a
 /// self-referential `manager = account` (the account address is not known at
 /// commitment time). The field order matches the wire encoding and the
-/// address-derivation commitment (`actorId || authenticator || scope ||
-/// policyData`).
+/// per-actor leaf hashed into the address-derivation commitment
+/// (`keccak256(actorId || authenticator || scope || policyData)`, then the
+/// commitment is `keccak256` over the packed leaves).
 ///
 /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
 #[derive(Debug, Clone, PartialEq, Eq, Hash, RlpEncodable, RlpDecodable)]
@@ -102,8 +105,8 @@ pub struct InitialActor {
     pub actor_id: B256,
     /// Address of the authenticator contract (e.g. an ERC-1271 authenticator).
     pub authenticator: Address,
-    /// Scope byte (`0x00` = unrestricted admin), stored verbatim.
-    pub scope: u8,
+    /// Scope bitfield (`uint16`; `0x0000` = unrestricted admin), stored verbatim.
+    pub scope: u16,
     /// Policy data: empty unless `scope` sets `POLICY`, otherwise exactly
     /// `manager (20) || commitment (32)`. Committed to the derived address.
     pub policy_data: Bytes,

@@ -130,6 +130,7 @@ pub struct ProofsHistoryRocksdbArgs {
     /// `RocksDB` block cache size in `MiB`.
     #[arg(
         long = "proofs-history.rocksdb.block-cache-size-mib",
+        alias = "proofs.rocksdb.block-cache-size-mib",
         value_name = "PROOFS_HISTORY_ROCKSDB_BLOCK_CACHE_SIZE_MIB",
         default_value_t = DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_MIB,
         value_parser = clap::value_parser!(u64).range(1..),
@@ -140,6 +141,7 @@ pub struct ProofsHistoryRocksdbArgs {
     /// Bytes-per-sync threshold in `MiB`. Set 0 to disable.
     #[arg(
         long = "proofs-history.rocksdb.bytes-per-sync-mib",
+        alias = "proofs.rocksdb.bytes-per-sync-mib",
         value_name = "PROOFS_HISTORY_ROCKSDB_BYTES_PER_SYNC_MIB",
         default_value_t = DEFAULT_ROCKSDB_BYTES_PER_SYNC_MIB,
         hide = true
@@ -149,6 +151,7 @@ pub struct ProofsHistoryRocksdbArgs {
     /// Readahead size in `MiB` for compaction input reads. Set 0 to disable.
     #[arg(
         long = "proofs-history.rocksdb.compaction-readahead-size-mib",
+        alias = "proofs.rocksdb.compaction-readahead-size-mib",
         value_name = "PROOFS_HISTORY_ROCKSDB_COMPACTION_READAHEAD_SIZE_MIB",
         default_value_t = DEFAULT_ROCKSDB_COMPACTION_READAHEAD_SIZE_MIB,
         hide = true
@@ -158,6 +161,7 @@ pub struct ProofsHistoryRocksdbArgs {
     /// Number of L0 files that triggers compaction.
     #[arg(
         long = "proofs-history.rocksdb.level-zero-file-num-compaction-trigger",
+        alias = "proofs.rocksdb.level-zero-file-num-compaction-trigger",
         value_name = "PROOFS_HISTORY_ROCKSDB_LEVEL_ZERO_FILE_NUM_COMPACTION_TRIGGER",
         default_value_t = DEFAULT_ROCKSDB_LEVEL_ZERO_FILE_NUM_COMPACTION_TRIGGER,
         value_parser = clap::value_parser!(i32).range(1..),
@@ -168,6 +172,7 @@ pub struct ProofsHistoryRocksdbArgs {
     /// Number of L0 files that triggers write slowdown. Set 0 to disable slowdown.
     #[arg(
         long = "proofs-history.rocksdb.level-zero-slowdown-writes-trigger",
+        alias = "proofs.rocksdb.level-zero-slowdown-writes-trigger",
         value_name = "PROOFS_HISTORY_ROCKSDB_LEVEL_ZERO_SLOWDOWN_WRITES_TRIGGER",
         default_value_t = DEFAULT_ROCKSDB_LEVEL_ZERO_SLOWDOWN_WRITES_TRIGGER,
         value_parser = clap::value_parser!(i32).range(0..),
@@ -178,6 +183,7 @@ pub struct ProofsHistoryRocksdbArgs {
     /// Number of L0 files that stops writes.
     #[arg(
         long = "proofs-history.rocksdb.level-zero-stop-writes-trigger",
+        alias = "proofs.rocksdb.level-zero-stop-writes-trigger",
         value_name = "PROOFS_HISTORY_ROCKSDB_LEVEL_ZERO_STOP_WRITES_TRIGGER",
         default_value_t = DEFAULT_ROCKSDB_LEVEL_ZERO_STOP_WRITES_TRIGGER,
         value_parser = clap::value_parser!(i32).range(1..),
@@ -188,6 +194,7 @@ pub struct ProofsHistoryRocksdbArgs {
     /// Maximum `RocksDB` background jobs for proof history.
     #[arg(
         long = "proofs-history.rocksdb.max-background-jobs",
+        alias = "proofs.rocksdb.max-background-jobs",
         value_name = "PROOFS_HISTORY_ROCKSDB_MAX_BACKGROUND_JOBS",
         default_value_t = DEFAULT_ROCKSDB_MAX_BACKGROUND_JOBS,
         value_parser = clap::value_parser!(i32).range(1..),
@@ -198,6 +205,7 @@ pub struct ProofsHistoryRocksdbArgs {
     /// Maximum subcompactions per compaction.
     #[arg(
         long = "proofs-history.rocksdb.max-subcompactions",
+        alias = "proofs.rocksdb.max-subcompactions",
         value_name = "PROOFS_HISTORY_ROCKSDB_MAX_SUBCOMPACTIONS",
         default_value_t = DEFAULT_ROCKSDB_MAX_SUBCOMPACTIONS,
         value_parser = clap::value_parser!(u32).range(1..),
@@ -208,6 +216,7 @@ pub struct ProofsHistoryRocksdbArgs {
     /// Maximum total WAL size in `MiB`.
     #[arg(
         long = "proofs-history.rocksdb.max-total-wal-size-mib",
+        alias = "proofs.rocksdb.max-total-wal-size-mib",
         value_name = "PROOFS_HISTORY_ROCKSDB_MAX_TOTAL_WAL_SIZE_MIB",
         value_parser = clap::value_parser!(u64).range(1..),
         hide = true
@@ -217,6 +226,7 @@ pub struct ProofsHistoryRocksdbArgs {
     /// Maximum write buffers per proof-history column family.
     #[arg(
         long = "proofs-history.rocksdb.max-write-buffer-number",
+        alias = "proofs.rocksdb.max-write-buffer-number",
         value_name = "PROOFS_HISTORY_ROCKSDB_MAX_WRITE_BUFFER_NUMBER",
         default_value_t = DEFAULT_ROCKSDB_MAX_WRITE_BUFFER_NUMBER,
         value_parser = clap::value_parser!(i32).range(1..),
@@ -227,6 +237,7 @@ pub struct ProofsHistoryRocksdbArgs {
     /// Base target SST file size in `MiB`.
     #[arg(
         long = "proofs-history.rocksdb.target-file-size-base-mib",
+        alias = "proofs.rocksdb.target-file-size-base-mib",
         value_name = "PROOFS_HISTORY_ROCKSDB_TARGET_FILE_SIZE_BASE_MIB",
         default_value_t = DEFAULT_ROCKSDB_TARGET_FILE_SIZE_BASE_MIB,
         value_parser = clap::value_parser!(u64).range(1..),
@@ -237,6 +248,7 @@ pub struct ProofsHistoryRocksdbArgs {
     /// Write buffer size per proof-history column family in `MiB`.
     #[arg(
         long = "proofs-history.rocksdb.write-buffer-size-mib",
+        alias = "proofs.rocksdb.write-buffer-size-mib",
         value_name = "PROOFS_HISTORY_ROCKSDB_WRITE_BUFFER_SIZE_MIB",
         default_value_t = DEFAULT_ROCKSDB_WRITE_BUFFER_SIZE_MIB,
         value_parser = clap::value_parser!(u64).range(1..),
@@ -247,6 +259,7 @@ pub struct ProofsHistoryRocksdbArgs {
     /// Enable direct I/O for `RocksDB` flush and compaction.
     #[arg(
         long = "proofs-history.rocksdb.direct-io-for-flush-and-compaction",
+        alias = "proofs.rocksdb.direct-io-for-flush-and-compaction",
         default_value_t = true,
         action = ArgAction::Set,
         hide = true
@@ -316,6 +329,12 @@ impl ProofsHistoryRocksdbArgs {
 
 fn mib_to_usize(size_mib: u64) -> usize {
     usize::try_from(size_mib.saturating_mul(MIB)).unwrap_or(usize::MAX)
+}
+
+/// Provides access to shared rollup arguments.
+pub trait HasRollupArgs {
+    /// Returns the shared rollup arguments.
+    fn rollup_args(&self) -> &RollupArgs;
 }
 
 /// Parameters for rollup configuration
@@ -393,6 +412,7 @@ pub struct RollupArgs {
     /// faster.
     #[arg(
         long = "proofs-history",
+        visible_alias = "proofs",
         value_name = "PROOFS_HISTORY",
         default_value_ifs([
             ("proofs-history.storage-path", ArgPredicate::IsPresent, "true")
@@ -401,11 +421,20 @@ pub struct RollupArgs {
     pub proofs_history: bool,
 
     /// The path to the storage DB for proofs history.
-    #[arg(long = "proofs-history.storage-path", value_name = "PROOFS_HISTORY_STORAGE_PATH")]
+    #[arg(
+        long = "proofs-history.storage-path",
+        visible_alias = "proofs.storage-path",
+        value_name = "PROOFS_HISTORY_STORAGE_PATH"
+    )]
     pub proofs_history_storage_path: Option<PathBuf>,
 
     /// The on-disk database backend for proofs history.
-    #[arg(long = "proofs-history.db", value_name = "PROOFS_HISTORY_DB", default_value = "mdbx")]
+    #[arg(
+        long = "proofs-history.db",
+        visible_alias = "proofs.db",
+        value_name = "PROOFS_HISTORY_DB",
+        default_value = "mdbx"
+    )]
     pub proofs_history_db: ProofsHistoryDbBackend,
 
     /// Runtime tuning options for the `RocksDB` proofs history backend.
@@ -423,6 +452,7 @@ pub struct RollupArgs {
     /// Must be greater than 12 hours of blocks based on 2 seconds block time.
     #[arg(
         long = "proofs-history.window",
+        visible_alias = "proofs.window",
         default_value_t = DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS,
         value_name = "PROOFS_HISTORY_WINDOW",
         value_parser = clap::value_parser!(u64).range((TWELVE_HOURS_IN_BLOCKS + 1)..)
@@ -443,6 +473,7 @@ pub struct RollupArgs {
     /// CLI: `--proofs-history.prune-interval 10m`
     #[arg(
         long = "proofs-history.prune-interval",
+        visible_alias = "proofs.prune-interval",
         value_name = "PROOFS_HISTORY_PRUNE_INTERVAL",
         default_value = "15s",
         value_parser = humantime::parse_duration
@@ -460,6 +491,7 @@ pub struct RollupArgs {
     /// CLI: `--proofs-history.verification-interval 100`
     #[arg(
         long = "proofs-history.verification-interval",
+        visible_alias = "proofs.verification-interval",
         value_name = "PROOFS_HISTORY_VERIFICATION_INTERVAL",
         default_value_t = 0
     )]
@@ -472,6 +504,12 @@ pub struct RollupArgs {
     /// Execution-side L1 RPC argument for the upgrade signal observer.
     #[command(flatten)]
     pub upgrade_signal_l1_rpc: UpgradeSignalL1RpcArgs,
+}
+
+impl HasRollupArgs for RollupArgs {
+    fn rollup_args(&self) -> &RollupArgs {
+        self
+    }
 }
 
 impl Default for RollupArgs {
@@ -514,6 +552,12 @@ mod tests {
     struct CommandParser<T: Args> {
         #[command(flatten)]
         args: T,
+    }
+
+    #[test]
+    fn rollup_args_provides_itself() {
+        let args = RollupArgs::default();
+        assert!(std::ptr::eq(args.rollup_args(), &args));
     }
 
     #[test]
@@ -691,6 +735,28 @@ mod tests {
         let args =
             CommandParser::<RollupArgs>::parse_from(["reth", "--proofs-history.db", "v2"]).args;
         assert_eq!(args.proofs_history_db, ProofsHistoryDbBackend::Rocksdb);
+    }
+
+    #[test]
+    fn test_parse_proofs_short_aliases() {
+        let args = CommandParser::<RollupArgs>::parse_from([
+            "reth",
+            "--proofs",
+            "--proofs.db",
+            "rocksdb",
+            "--proofs.storage-path",
+            "/tmp/proofs",
+            "--proofs.window",
+            "86400",
+        ])
+        .args;
+        assert!(args.proofs_history);
+        assert_eq!(args.proofs_history_db, ProofsHistoryDbBackend::Rocksdb);
+        assert_eq!(
+            args.proofs_history_storage_path.as_deref(),
+            Some(std::path::Path::new("/tmp/proofs"))
+        );
+        assert_eq!(args.proofs_history_window, 86400);
     }
 
     #[test]

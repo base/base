@@ -3,9 +3,7 @@
 pub use base_prover_service_protocol::{ZkBackend, ZkVm};
 
 mod prover;
-pub use prover::{
-    UnimplementedZkProver, ZkProofRequestKind, ZkProver, ZkProverError, ZkSessionState,
-};
+pub use prover::{ZkProofRequestKind, ZkProver, ZkProverError, ZkSessionState};
 
 mod session_handle;
 pub use session_handle::ProofSessionHandle;

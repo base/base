@@ -3,9 +3,10 @@ use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Paragraph},
 };
+use url::Url;
 
 use super::Keybinding;
-use crate::output::COLOR_BASE_BLUE;
+use crate::{config::MonitoringConfig, output::COLOR_BASE_BLUE};
 
 const HELP_SIDEBAR_WIDTH: u16 = 30;
 
@@ -41,22 +42,65 @@ impl AppFrame {
     pub fn render(
         f: &mut Frame<'_>,
         layout: &AppLayout,
-        config_name: &str,
+        config: &MonitoringConfig,
+        using_public_rpc: bool,
+        pending_network: bool,
         keybindings: &[Keybinding],
     ) {
-        render_network_badge(f, config_name);
+        render_network_badge(f, layout.content, config, using_public_rpc, pending_network);
         if let Some(sidebar) = layout.sidebar {
-            render_help_sidebar(f, sidebar, config_name, keybindings);
+            render_help_sidebar(f, sidebar, &config.name, keybindings);
         }
+    }
+
+    /// Returns a compact host-and-port label for an RPC URL.
+    pub fn endpoint_label(url: &Url) -> String {
+        let origin = url.origin().ascii_serialization();
+        origin
+            .strip_prefix("http://")
+            .or_else(|| origin.strip_prefix("https://"))
+            .unwrap_or(&origin)
+            .to_string()
     }
 }
 
-/// Renders a `[network]` badge pinned to the top-right corner of the full frame.
-fn render_network_badge(f: &mut Frame<'_>, config_name: &str) {
-    let badge = format!(" [{config_name}] ");
-    let badge_width = badge.len() as u16;
-    let area = f.area();
-    if area.width < badge_width || area.height == 0 {
+/// Renders active RPC endpoints in a badge pinned to the top-right corner.
+fn render_network_badge(
+    f: &mut Frame<'_>,
+    area: Rect,
+    config: &MonitoringConfig,
+    using_public_rpc: bool,
+    pending_network: bool,
+) {
+    let mode = if using_public_rpc { "pub" } else { "cfg" };
+    let toggle = if config.public_rpc.is_some() {
+        if using_public_rpc { " | e:cfg" } else { " | e:pub" }
+    } else {
+        ""
+    };
+    let short_badge = format!(" [{} | EL {mode}{toggle}] ", config.name);
+    let badge = if pending_network {
+        " [...] ".to_string()
+    } else {
+        let el = AppFrame::endpoint_label(&config.rpc);
+        let cl = config
+            .consensus_node_rpc
+            .as_ref()
+            .map(AppFrame::endpoint_label)
+            .unwrap_or_else(|| "-".to_string());
+        format!(" [{} | EL {mode} {el} | CL {cl}{toggle}] ", config.name)
+    };
+    let badge_width = Line::from(badge.as_str()).width() as u16;
+    if area.height == 0 {
+        return;
+    }
+    let badge = if !pending_network && area.width < badge_width.saturating_add(20) {
+        short_badge
+    } else {
+        badge
+    };
+    let badge_width = Line::from(badge.as_str()).width() as u16;
+    if area.width < badge_width {
         return;
     }
     let badge_area =
@@ -100,6 +144,11 @@ fn render_help_sidebar(
         Span::styled("Switch network", Style::default().fg(Color::White)),
     ]));
     lines.push(Line::from(vec![
+        Span::styled("           e", Style::default().fg(Color::Yellow)),
+        Span::raw("  "),
+        Span::styled("Toggle configured/public EL", Style::default().fg(Color::White)),
+    ]));
+    lines.push(Line::from(vec![
         Span::styled("           ?", Style::default().fg(Color::Yellow)),
         Span::raw("  "),
         Span::styled("Close help", Style::default().fg(Color::White)),
@@ -107,4 +156,17 @@ fn render_help_sidebar(
 
     let para = Paragraph::new(lines);
     f.render_widget(para, inner);
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::text::Line;
+
+    #[test]
+    fn unicode_badge_width_uses_display_columns() {
+        let badge = " [网络 | EL cfg] ";
+
+        assert_eq!(Line::from(badge).width(), 17);
+        assert_ne!(Line::from(badge).width(), badge.len());
+    }
 }

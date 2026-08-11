@@ -7,7 +7,7 @@ use base_precompile_storage::Result;
 
 use crate::{
     B20StablecoinToken, Eip712Domain, IB20, PermitArgs, PolicyAccounting, StablecoinAccounting,
-    Token,
+    Token, macros::reject_frozen_selector,
 };
 
 /// The stablecoin logic interface.
@@ -82,6 +82,21 @@ pub trait Stablecoin<S: StablecoinAccounting, A: PolicyAccounting> {
         privileged: bool,
     ) -> Result<()>;
 
+    /// Transfer-based seize: reassigns a seizable `from`'s balance to `to`
+    /// (`Transfer` -> `Memo` -> `Seized`). Introduced at `StablecoinV2`.
+    /// An admin op with no factory-privileged path, so the role is always enforced.
+    fn seize_with_memo(
+        &self,
+        _token: &mut B20StablecoinToken<S, A>,
+        _caller: Address,
+        _from: Address,
+        _to: Address,
+        _amount: U256,
+        _memo: B256,
+    ) -> Result<()> {
+        reject_frozen_selector!()
+    }
+
     /// Pauses the given features.
     fn pause(
         &self,
@@ -144,6 +159,18 @@ pub trait Stablecoin<S: StablecoinAccounting, A: PolicyAccounting> {
         role: B256,
         account: Address,
         privileged: bool,
+    ) -> Result<()>;
+
+    /// Grants `role` to `account` without checking caller authorization.
+    ///
+    /// The one token-level mutation the factory needs at bootstrap, when no admin exists yet and
+    /// the authorized [`Self::grant_role`] path is not reachable.
+    fn grant_role_unchecked(
+        &self,
+        token: &mut B20StablecoinToken<S, A>,
+        role: B256,
+        account: Address,
+        sender: Address,
     ) -> Result<()>;
 
     /// Revokes `role` from `account`.

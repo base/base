@@ -86,6 +86,8 @@ impl ShadowSequencer {
             auth_port: None,
             p2p_port: None,
             flashblocks_port: None,
+            enable_experimental_validity_transactions: false,
+            extra_extensions: Vec::new(),
         })
         .await
         .wrap_err("Failed to start shadow builder")?;
@@ -108,6 +110,7 @@ impl ShadowSequencer {
             sequencer_stopped: true,
             verifier_l1_confs: 0,
             shadow_blocks_per_cycle: Some(config.shadow_blocks_per_cycle),
+            upgrade_signal: None,
         })
         .await
         .wrap_err("Failed to start shadow consensus")?;

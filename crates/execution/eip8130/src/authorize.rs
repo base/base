@@ -104,7 +104,7 @@ impl ActorAuthorizer {
                 // SENDER actor without POLICY): an operational key may sign for
                 // its own account but MUST NOT vouch as a delegate, to preserve
                 // non-escalation. Followed by the outer
-                // `_actorConfig[bytes20(delegate)][account]` binding check.
+                // `_actorConfig[uint256(uint160(delegate))][account]` binding check.
                 //
                 // Independent depth-1 guard: `authenticate_actor` re-enters the
                 // public dispatch, which routes a delegate authenticator straight
@@ -139,7 +139,8 @@ impl ActorAuthorizer {
     /// signer against `account`.
     ///
     /// The account's own key — the **secp256k1 self** (`recovered ==
-    /// bytes32(bytes20(account))`) — resolves entirely from the inline config in
+    /// bytes32(uint256(uint160(account)))`, right-aligned) — resolves entirely from
+    /// the inline config in
     /// the account-state slot, a single SLOAD: a set `DEFAULT_EOA_REVOKED` flag
     /// disables it (revoked, or a non-k1 self is the live self authenticator), an
     /// all-zero inline config is the implicit full owner, and a non-zero inline
@@ -263,18 +264,20 @@ mod tests {
     const NOW: u64 = 1_000;
     const ACCOUNT: Address = address!("0x00000000000000000000000000000000000000a1");
 
-    /// Canonical Solidity packing of `ActorConfig` (each field at its bit offset).
-    fn pack(authenticator: Address, scope: u8, expiry: u64) -> U256 {
+    /// Canonical Solidity packing of `ActorConfig` (each field at its bit offset:
+    /// authenticator 0..160, expiry 160..208, scope 208..224).
+    fn pack(authenticator: Address, scope: u16, expiry: u64) -> U256 {
         U256::from_be_slice(authenticator.as_slice())
-            | (U256::from(scope) << 160)
-            | (U256::from(expiry) << 168)
+            | (U256::from(expiry) << 160)
+            | (U256::from(scope) << 208)
     }
 
     /// Packs an `AccountState` word carrying the inline secp256k1 self config
-    /// (each field at its bit offset; sequences/lock left zero).
-    fn pack_self(scope: u8, expiry: u64, revoked: bool) -> U256 {
+    /// (each field at its bit offset: defaultEOAExpiry 184..232, defaultEOAScope
+    /// 232..248; sequences/lock left zero).
+    fn pack_self(scope: u16, expiry: u64, revoked: bool) -> U256 {
         let flags = if revoked { Eip8130Constants::DEFAULT_EOA_REVOKED } else { 0 };
-        (U256::from(flags) << 128) | (U256::from(scope) << 176) | (U256::from(expiry) << 184)
+        (U256::from(flags) << 128) | (U256::from(expiry) << 184) | (U256::from(scope) << 232)
     }
 
     fn actor_id(address: Address) -> B256 {

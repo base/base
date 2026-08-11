@@ -7,7 +7,10 @@ use std::{
 use base_common_flashblocks::Flashblock;
 use base_common_genesis::{SystemConfig, UpgradeConfig};
 use base_consensus_rpc::ClusterMembership;
-use tokio::sync::{mpsc, watch};
+use tokio::{
+    sync::{mpsc, watch},
+    task::AbortHandle,
+};
 use url::Url;
 
 use crate::{
@@ -220,6 +223,9 @@ impl PodsState {
 pub struct Resources {
     /// Active chain configuration.
     pub config: MonitoringConfig,
+    /// Configured execution-layer RPC retained while the TUI uses the public RPC.
+    pub configured_rpc: Url,
+    background_tasks: Vec<AbortHandle>,
     /// Data availability monitoring state.
     pub da: DaState,
     /// Flashblock stream state.
@@ -287,8 +293,11 @@ pub struct FlashState {
 impl Resources {
     /// Creates new resources with the given chain configuration.
     pub fn new(config: MonitoringConfig) -> Self {
+        let configured_rpc = config.rpc.clone();
         Self {
             config,
+            configured_rpc,
+            background_tasks: Vec::new(),
             da: DaState::new(),
             flash: FlashState::new(),
             toasts: ToastState::new(),
@@ -305,6 +314,11 @@ impl Resources {
     /// Returns the configured chain name.
     pub fn chain_name(&self) -> &str {
         &self.config.name
+    }
+
+    /// Replaces the task set aborted when these resources are dropped.
+    pub fn set_background_tasks(&mut self, background_tasks: Vec<AbortHandle>) {
+        self.background_tasks = background_tasks;
     }
 
     /// Sets the channel for receiving L1 system config updates.
@@ -332,6 +346,14 @@ impl Resources {
             while let Ok(upgrades) = rx.try_recv() {
                 self.config.upgrades = Some(upgrades);
             }
+        }
+    }
+}
+
+impl Drop for Resources {
+    fn drop(&mut self) {
+        for task in &self.background_tasks {
+            task.abort();
         }
     }
 }
@@ -698,10 +720,26 @@ impl FlashState {
 
 #[cfg(test)]
 mod tests {
+    use std::future;
+
     use tokio::sync::mpsc;
 
-    use super::DaState;
-    use crate::rpc::{BacklogFetchResult, BlockDaInfo, L1BlockInfo};
+    use super::{DaState, Resources};
+    use crate::{
+        MonitoringConfig,
+        rpc::{BacklogFetchResult, BlockDaInfo, L1BlockInfo},
+    };
+
+    #[tokio::test]
+    async fn dropping_resources_aborts_background_tasks() {
+        let task = tokio::spawn(future::pending::<()>());
+        let mut resources = Resources::new(MonitoringConfig::mainnet());
+        resources.set_background_tasks(vec![task.abort_handle()]);
+
+        drop(resources);
+
+        assert!(task.await.unwrap_err().is_cancelled());
+    }
 
     #[test]
     fn records_l1_blocks_before_backlog_load_completes() {

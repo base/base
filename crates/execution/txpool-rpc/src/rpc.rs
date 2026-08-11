@@ -1,6 +1,7 @@
-//! RPC implementation for transaction status queries and pool management.
+//! RPC implementation for transaction submission, status queries, and pool management.
 
-use alloy_primitives::{Address, TxHash};
+use alloy_primitives::{Address, Bytes, TxHash};
+use base_execution_txpool::{BasePooledTransaction, MAX_VALIDITY_PREDICATES, ValidityPredicate};
 use jsonrpsee::{
     core::{RpcResult, async_trait, client::ClientT},
     http_client::{HttpClient, HttpClientBuilder},
@@ -8,7 +9,8 @@ use jsonrpsee::{
     rpc_params,
     types::{ErrorCode, ErrorObjectOwned},
 };
-use reth_transaction_pool::TransactionPool;
+use reth_rpc_eth_types::error::RpcPoolError;
+use reth_transaction_pool::{PoolTransaction, TransactionOrigin, TransactionPool};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
@@ -28,12 +30,34 @@ pub struct TransactionStatusResponse {
     pub status: Status,
 }
 
+/// Request for `base_sendRawTransactionValidity`.
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
+pub struct SendRawTransactionValidityRequest {
+    /// EIP-2718 encoded signed transaction.
+    pub tx: Bytes,
+    /// Experimental predicates transported to builders alongside the transaction.
+    ///
+    /// Predicates are not currently evaluated during block construction.
+    pub validity: Vec<ValidityPredicate>,
+}
+
 /// RPC API for transaction status
 #[rpc(server, namespace = "base")]
 pub trait TransactionStatusApi {
     /// Gets the status of a transaction
     #[method(name = "transactionStatus")]
     async fn transaction_status(&self, tx_hash: TxHash) -> RpcResult<TransactionStatusResponse>;
+}
+
+/// Experimental RPC API for submitting a raw transaction with validity criteria.
+#[rpc(server, namespace = "base")]
+pub trait SendRawTransactionValidityApi {
+    /// Submits a raw transaction and transports its currently unenforced validity criteria.
+    #[method(name = "sendRawTransactionValidity")]
+    async fn send_raw_transaction_validity(
+        &self,
+        request: SendRawTransactionValidityRequest,
+    ) -> RpcResult<TxHash>;
 }
 
 /// Admin RPC API for transaction pool management operations.
@@ -51,18 +75,31 @@ pub trait AdminTxPoolApi {
     async fn drop_transaction(&self, tx_hash: TxHash) -> RpcResult<bool>;
 }
 
-/// Implementation of the transaction status RPC API.
-#[derive(Debug)]
+/// Implementation of the Base transaction pool RPC APIs.
+#[derive(Debug, Clone)]
 pub struct TransactionStatusApiImpl<Pool: TransactionPool> {
     sequencer_client: Option<HttpClient>,
     pool: Pool,
 }
 
+/// Local mempool-ingress implementation for validity-bearing transactions.
+#[derive(Debug, Clone)]
+pub struct SendRawTransactionValidityApiImpl<Pool> {
+    pool: Pool,
+}
+
+impl<Pool> SendRawTransactionValidityApiImpl<Pool> {
+    /// Creates a validity transaction ingress backed by the given pool.
+    pub const fn new(pool: Pool) -> Self {
+        Self { pool }
+    }
+}
+
 impl<Pool: TransactionPool + 'static> TransactionStatusApiImpl<Pool> {
     /// Creates a new transaction status API instance.
     ///
-    /// If `sequencer_url` is provided, status queries will be forwarded to the sequencer.
-    /// Otherwise, the local transaction pool will be queried.
+    /// If `sequencer_url` is provided, transaction status queries are forwarded to the
+    /// sequencer. Otherwise, the local transaction pool is used.
     pub fn new(
         sequencer_url: Option<String>,
         pool: Pool,
@@ -108,6 +145,49 @@ impl<Pool: TransactionPool + 'static> TransactionStatusApiServer
     }
 }
 
+#[async_trait]
+impl<Pool> SendRawTransactionValidityApiServer for SendRawTransactionValidityApiImpl<Pool>
+where
+    Pool: TransactionPool<Transaction = BasePooledTransaction> + 'static,
+{
+    async fn send_raw_transaction_validity(
+        &self,
+        request: SendRawTransactionValidityRequest,
+    ) -> RpcResult<TxHash> {
+        if request.validity.len() > MAX_VALIDITY_PREDICATES {
+            return Err(ErrorObjectOwned::owned(
+                ErrorCode::InvalidParams.code(),
+                format!(
+                    "too many validity predicates: {} (maximum {MAX_VALIDITY_PREDICATES})",
+                    request.validity.len()
+                ),
+                None::<()>,
+            ));
+        }
+
+        let transaction = BasePooledTransaction::recover_raw_transaction(request.tx.as_ref())
+            .map_err(|error| {
+                ErrorObjectOwned::owned(
+                    ErrorCode::InvalidParams.code(),
+                    format!("failed to decode transaction: {error}"),
+                    None::<()>,
+                )
+            })?;
+        let tx_hash = *transaction.hash();
+
+        // Retain the currently unenforced predicates for canonical forwarding to builders.
+        self.pool
+            .add_transaction(
+                TransactionOrigin::Private,
+                transaction.with_validity_predicates(request.validity),
+            )
+            .await
+            .map_err(|error| ErrorObjectOwned::from(RpcPoolError::from(error)))?;
+
+        Ok(tx_hash)
+    }
+}
+
 /// Implementation of the admin transaction pool management RPC API.
 #[derive(Debug)]
 pub struct AdminTxPoolApiImpl<Pool: TransactionPool> {
@@ -140,14 +220,81 @@ impl<Pool: TransactionPool + 'static> AdminTxPoolApiServer for AdminTxPoolApiImp
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::U256;
     use httpmock::prelude::*;
     use reth_transaction_pool::{
         PoolTransaction, TransactionOrigin,
+        noop::NoopTransactionPool,
         test_utils::{MockTransaction, testing_pool},
     };
     use serde_json::{self, json};
 
     use super::*;
+
+    fn validity_request(tx: Bytes) -> SendRawTransactionValidityRequest {
+        SendRawTransactionValidityRequest {
+            tx,
+            validity: vec![ValidityPredicate::Storage {
+                address: Address::repeat_byte(0xab),
+                slot: U256::from(1),
+                mask: U256::MAX,
+                op: base_execution_txpool::ValidityOperator::Equal,
+                value: U256::from(0x789),
+            }],
+        }
+    }
+
+    #[test]
+    fn send_raw_transaction_validity_request_uses_top_level_keys() {
+        let request = validity_request(Bytes::from_static(&[0x02]));
+        let value = serde_json::to_value(request).expect("request should serialize");
+
+        assert_eq!(value["tx"], "0x02");
+        assert_eq!(value["validity"][0]["type"], "storage");
+        assert_eq!(value["validity"][0]["params"]["slot"], "0x1");
+    }
+
+    #[test]
+    fn send_raw_transaction_validity_method_is_registered() {
+        let rpc = SendRawTransactionValidityApiImpl::new(NoopTransactionPool::<
+            BasePooledTransaction,
+        >::new());
+        let module = SendRawTransactionValidityApiServer::into_rpc(rpc);
+
+        assert!(module.method_names().any(|name| name == "base_sendRawTransactionValidity"));
+    }
+
+    #[tokio::test]
+    async fn send_raw_transaction_validity_rejects_malformed_transaction() {
+        let rpc = SendRawTransactionValidityApiImpl::new(NoopTransactionPool::<
+            BasePooledTransaction,
+        >::new());
+
+        let error = rpc
+            .send_raw_transaction_validity(validity_request(Bytes::from_static(&[0xff])))
+            .await
+            .expect_err("malformed transaction should be rejected");
+
+        assert_eq!(error.code(), ErrorCode::InvalidParams.code());
+        assert!(error.message().contains("failed to decode transaction"));
+    }
+
+    #[tokio::test]
+    async fn send_raw_transaction_validity_rejects_too_many_predicates() {
+        let rpc = SendRawTransactionValidityApiImpl::new(NoopTransactionPool::<
+            BasePooledTransaction,
+        >::new());
+        let mut request = validity_request(Bytes::from_static(&[0x02]));
+        request.validity = vec![request.validity[0].clone(); MAX_VALIDITY_PREDICATES + 1];
+
+        let error = rpc
+            .send_raw_transaction_validity(request)
+            .await
+            .expect_err("oversized validity should be rejected before transaction decoding");
+
+        assert_eq!(error.code(), ErrorCode::InvalidParams.code());
+        assert!(error.message().contains("too many validity predicates"));
+    }
 
     #[tokio::test]
     async fn test_transaction_status() -> eyre::Result<()> {

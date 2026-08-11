@@ -214,6 +214,7 @@ impl Doctor {
     /// Runs doctor checks and returns a complete report.
     pub async fn run(config: MonitoringConfig, options: DoctorOptions) -> DoctorReport {
         let el_rpc = options.el_rpc.clone();
+        let public_tip_rpc = config.public_rpc.as_ref().unwrap_or(&config.rpc);
         let (
             (el_info, chain_id, telemetry_url, el_reachability),
             cl_info,
@@ -246,7 +247,7 @@ impl Doctor {
                 }
             },
             fetch_l2_block_number(&options.el_rpc),
-            fetch_l2_block_number(&config.rpc),
+            fetch_l2_block_number(public_tip_rpc),
             async {
                 match &options.cl_rpc {
                     Some(cl_rpc) => Some(fetch_sync_status(&options.el_rpc, cl_rpc).await),
@@ -260,7 +261,7 @@ impl Doctor {
             el_rpc: options.el_rpc.clone(),
             cl_rpc: options.cl_rpc.clone(),
             l1_rpc: config.l1_rpc.clone(),
-            public_tip_rpc: config.rpc.clone(),
+            public_tip_rpc: public_tip_rpc.clone(),
             reth_config: options.reth_config.clone(),
             telemetry_url: telemetry_url.clone(),
         };
@@ -328,7 +329,7 @@ impl Doctor {
                 &public_head,
                 &options.thresholds,
                 &options.el_rpc,
-                &config.rpc,
+                public_tip_rpc,
             ),
             Self::safe_head_recency_check(sync_status.as_ref(), &options.thresholds),
             Self::l1_reachability_check(&l1_head, &config.l1_rpc),
@@ -436,8 +437,8 @@ impl Doctor {
     }
 
     fn bootnode_check(live_chain_id: Option<&u64>, config: &MonitoringConfig) -> DoctorCheck {
-        let expected = expected_chain_id(&config.name);
-        let chain = bootnode_chain(&config.name, live_chain_id.copied());
+        let expected = expected_chain_id(config);
+        let chain = bootnode_chain(config, live_chain_id.copied());
         let Some(chain) = chain else {
             return DoctorCheck::new(
                 "bootnode_config",
@@ -498,7 +499,7 @@ impl Doctor {
     }
 
     fn declared_network_check(config: &MonitoringConfig, chain_id: &Result<u64>) -> DoctorCheck {
-        let expected = expected_chain_id(&config.name);
+        let expected = expected_chain_id(config);
         match (expected, chain_id) {
             (_, Err(err)) => DoctorCheck::new(
                 "declared_network",
@@ -1084,18 +1085,20 @@ fn worst_status(statuses: impl IntoIterator<Item = DoctorStatus>) -> DoctorStatu
     }
 }
 
-fn expected_chain_id(network: &str) -> Option<u64> {
-    match network {
+fn expected_chain_id(config: &MonitoringConfig) -> Option<u64> {
+    config.chain_id.or(match config.name.as_str() {
         "mainnet" => Some(8453),
         "sepolia" => Some(84532),
-        "devnet" => Some(1337),
         "zeronet" => Some(763360),
         _ => None,
-    }
+    })
 }
 
-fn bootnode_chain(network: &str, live_chain_id: Option<u64>) -> Option<&'static ChainConfig> {
-    expected_chain_id(network)
+fn bootnode_chain(
+    config: &MonitoringConfig,
+    live_chain_id: Option<u64>,
+) -> Option<&'static ChainConfig> {
+    expected_chain_id(config)
         .and_then(ChainConfig::by_chain_id)
         .or_else(|| live_chain_id.and_then(ChainConfig::by_chain_id))
 }
@@ -1138,10 +1141,10 @@ mod tests {
     use super::{
         Doctor, DoctorCheck, DoctorStatus, DoctorSummary, DoctorThresholds, ElInfoReport,
         ElReachabilityOutcome, ElReachabilityResponse, RethLimits, TelemetryClientError,
-        bootnode_addrs, bootnode_chain, bootnode_layer_summary, classify_ip, peer_count_check,
-        worst_status,
+        bootnode_addrs, bootnode_chain, bootnode_layer_summary, classify_ip, expected_chain_id,
+        peer_count_check, worst_status,
     };
-    use crate::{ElNodeIdentity, ElReachabilityStage};
+    use crate::{ElNodeIdentity, ElReachabilityStage, MonitoringConfig};
 
     #[test]
     fn summary_counts_all_statuses() {
@@ -1297,17 +1300,51 @@ mod tests {
     }
 
     #[test]
+    fn expected_chain_id_prefers_config_field_then_known_names() {
+        assert_eq!(expected_chain_id(&named_config("mainnet", None)), Some(8453));
+        assert_eq!(expected_chain_id(&named_config("sepolia", None)), Some(84532));
+        assert_eq!(expected_chain_id(&named_config("zeronet", None)), Some(763360));
+        // Local regenerating nets have no fixed mapping until rollup load sets chain_id.
+        assert_eq!(expected_chain_id(&named_config("devnet", None)), None);
+        assert_eq!(expected_chain_id(&named_config("devnet", Some(84538453))), Some(84538453));
+        assert_eq!(expected_chain_id(&named_config("custom", None)), None);
+    }
+
+    #[test]
     fn bootnode_chain_prefers_declared_config_over_live_chain_id() {
-        let chain = bootnode_chain("mainnet", Some(84532)).unwrap();
+        let chain = bootnode_chain(&named_config("mainnet", None), Some(84532)).unwrap();
 
         assert_eq!(chain.chain_id, 8453);
     }
 
     #[test]
     fn bootnode_chain_falls_back_to_live_chain_for_unknown_config() {
-        let chain = bootnode_chain("custom", Some(84532)).unwrap();
+        let chain = bootnode_chain(&named_config("custom", None), Some(84532)).unwrap();
 
         assert_eq!(chain.chain_id, 84532);
+    }
+
+    fn named_config(name: &str, chain_id: Option<u64>) -> MonitoringConfig {
+        MonitoringConfig {
+            name: name.to_string(),
+            rpc: Url::parse("http://127.0.0.1:8545").unwrap(),
+            el_ws_rpc: None,
+            public_rpc: None,
+            flashblocks_ws: Url::parse("ws://127.0.0.1:7111").unwrap(),
+            l1_rpc: Url::parse("http://127.0.0.1:9545").unwrap(),
+            consensus_node_rpc: None,
+            chain_id,
+            prover_rpc: None,
+            upgrades: None,
+            system_config: alloy_primitives::Address::ZERO,
+            batcher_address: None,
+            l1_blob_target: 14,
+            conductors: None,
+            discovery: None,
+            validators: None,
+            proofs: None,
+            pods: None,
+        }
     }
 
     fn check(status: DoctorStatus) -> DoctorCheck {

@@ -12,6 +12,9 @@ pub enum EngineError {
     /// Closed channel error.
     #[error("a channel has been closed unexpectedly")]
     ChannelClosed,
+    /// The execution head could not be loaded during engine bootstrap.
+    #[error("failed to query execution head during bootstrap: {0}")]
+    BootstrapHeadQuery(String),
     /// Engine reset error.
     #[error(transparent)]
     EngineReset(#[from] EngineResetError),

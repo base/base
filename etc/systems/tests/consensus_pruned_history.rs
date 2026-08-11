@@ -21,7 +21,7 @@ use base_consensus_engine::{
 };
 use base_consensus_node::{
     DerivationClientResult, EngineActorRequest, EngineDerivationClient, EngineError,
-    EngineProcessor, EngineProcessorOptions, EngineRequestHandler, NodeMode, NoopCheckpointWriter,
+    EngineProcessor, NoopCheckpointWriter, ValidatorEngineRequestHandler,
 };
 use base_protocol::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
 use tokio::{
@@ -165,12 +165,11 @@ impl PrunedHistoryStartup {
             Arc::clone(&self.rollup),
             NoopDerivationClient,
             engine,
-            validator_options(),
             checkpoint_reader,
             Arc::new(NoopCheckpointWriter),
         );
         let (request_tx, request_rx) = mpsc::channel(8);
-        let handler = EngineRequestHandler::new(processor, None);
+        let handler = ValidatorEngineRequestHandler::new(processor);
         let handle = base_consensus_node::EngineRequestReceiver::start(handler, request_rx);
 
         RunningValidatorProcessor {
@@ -266,15 +265,6 @@ impl RunningValidatorProcessor {
             matches!(result, Err(EngineError::ChannelClosed)),
             "expected clean ChannelClosed shutdown after test, got {result:?}"
         );
-    }
-}
-
-fn validator_options() -> EngineProcessorOptions {
-    EngineProcessorOptions {
-        node_mode: NodeMode::Validator,
-        unsafe_head_tx: None,
-        conductor: None,
-        sequencer_stopped: false,
     }
 }
 

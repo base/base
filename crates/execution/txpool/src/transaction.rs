@@ -75,6 +75,9 @@ pub struct BasePooledTransaction<
     /// Optional maximum timestamp (millis since Unix epoch) from bundle submission.
     /// The transaction should be evicted after this time.
     max_timestamp: Option<u64>,
+    /// State predicates that must hold before this transaction is eligible for
+    /// inclusion.
+    validity_predicates: Vec<crate::ValidityPredicate>,
     /// The set of on-chain state surfaces whose change invalidates this
     /// transaction, computed once during validation and consumed by the pool's
     /// invalidation index. Empty until set; see [`crate::WatchSet`].
@@ -93,20 +96,7 @@ pub struct BasePooledTransaction<
 impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
     /// Create new instance of [Self].
     pub fn new(transaction: Recovered<Cons>, encoded_length: usize) -> Self {
-        Self {
-            inner: EthPooledTransaction::new(transaction, encoded_length),
-            estimated_tx_compressed_size: Default::default(),
-            _pd: core::marker::PhantomData,
-            encoded_2718: Default::default(),
-            received_at: unix_time_millis(),
-            min_block_number: None,
-            max_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
-            watch_set: OnceLock::new(),
-            limit_class: OnceLock::new(),
-            watch_manifest: OnceLock::new(),
-        }
+        Self::new_with_received_at(transaction, encoded_length, unix_time_millis())
     }
 
     /// Create new instance with an explicit `received_at` timestamp (millis since Unix epoch).
@@ -127,6 +117,7 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
             max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            validity_predicates: Vec::new(),
             watch_set: OnceLock::new(),
             limit_class: OnceLock::new(),
             watch_manifest: OnceLock::new(),
@@ -148,6 +139,22 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
         self
     }
 
+    /// Sets the state predicates required for this transaction's inclusion.
+    #[must_use]
+    pub fn with_validity_predicates(
+        mut self,
+        validity_predicates: Vec<crate::ValidityPredicate>,
+    ) -> Self {
+        self.validity_predicates = validity_predicates;
+        self
+    }
+
+    /// Returns the state predicates required for this transaction's inclusion.
+    #[must_use]
+    pub fn validity_predicates(&self) -> &[crate::ValidityPredicate] {
+        &self.validity_predicates
+    }
+
     /// Returns the estimated compressed size of a transaction in bytes.
     /// This value is computed based on the following formula:
     /// `max(minTransactionSize, intercept + fastlzCoef*fastlzSize) / 1e6`
@@ -161,11 +168,6 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
     /// Returns lazily computed EIP-2718 encoded bytes of the transaction.
     pub fn encoded_2718(&self) -> &Bytes {
         self.encoded_2718.get_or_init(|| self.inner.transaction().encoded_2718().into())
-    }
-
-    /// Returns the timestamp (millis since Unix epoch) when this transaction was received.
-    const fn inner_received_at(&self) -> u128 {
-        self.received_at
     }
 }
 
@@ -247,14 +249,17 @@ impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Po
             .watch_manifest
             .get()
             .map_or(0, |manifest| core::mem::size_of_val(manifest.config_slots()));
+        let validity_predicates_size = core::mem::size_of_val(self.validity_predicates.as_slice());
         self.inner.size()
             + core::mem::size_of::<u128>()
             + core::mem::size_of::<Option<u64>>() * 4
+            + core::mem::size_of::<Vec<crate::ValidityPredicate>>()
             + core::mem::size_of::<OnceLock<crate::WatchSet>>()
             + watch_keys_size
             + core::mem::size_of::<OnceLock<crate::LimitClass>>()
             + core::mem::size_of::<OnceLock<crate::WatchManifest>>()
             + manifest_slots_size
+            + validity_predicates_size
     }
 }
 
@@ -371,6 +376,14 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
     /// Returns the EIP-2718 encoded bytes of the transaction.
     fn encoded_2718(&self) -> Cow<'_, Bytes>;
 
+    /// Returns state predicates required for this transaction's inclusion.
+    ///
+    /// Defaults to an empty slice for transaction types that do not carry
+    /// validity predicates.
+    fn validity_predicates(&self) -> &[crate::ValidityPredicate] {
+        &[]
+    }
+
     /// Returns the signed EIP-8130 payload when this transaction carries one.
     ///
     /// Required for the mempool validator's structural admission checks; the
@@ -443,6 +456,10 @@ where
         Cow::Borrowed(self.encoded_2718())
     }
 
+    fn validity_predicates(&self) -> &[crate::ValidityPredicate] {
+        &self.validity_predicates
+    }
+
     fn as_eip8130(&self) -> Option<&Eip8130Signed> {
         self.inner.transaction().inner().as_eip8130()
     }
@@ -504,7 +521,7 @@ where
     Pooled: Send + Sync + 'static,
 {
     fn received_at(&self) -> u128 {
-        self.inner_received_at()
+        self.received_at
     }
 }
 
@@ -613,7 +630,7 @@ mod tests {
 
     use crate::{
         BasePooledTransaction, BasePooledTx, BaseTransactionValidator, ConfigSlot, InvalidationKey,
-        WatchManifest, WatchSet,
+        ValidityOperator, ValidityPredicate, WatchManifest, WatchSet,
     };
 
     fn signer() -> PrivateKeySigner {
@@ -724,5 +741,22 @@ mod tests {
         transaction.set_watch_manifest(manifest);
 
         assert_eq!(transaction.size(), size_without_slots + slots_size);
+    }
+
+    #[test]
+    fn retains_validity_predicates() {
+        let predicate = ValidityPredicate::Balance {
+            address: Address::repeat_byte(1),
+            op: ValidityOperator::GreaterThanOrEqual,
+            value: U256::from(1),
+        };
+        let transaction =
+            eip8130_pooled(U256::ZERO).with_validity_predicates(vec![predicate.clone()]);
+
+        assert_eq!(transaction.validity_predicates(), core::slice::from_ref(&predicate));
+        assert_eq!(
+            BasePooledTx::validity_predicates(&transaction),
+            core::slice::from_ref(&predicate)
+        );
     }
 }

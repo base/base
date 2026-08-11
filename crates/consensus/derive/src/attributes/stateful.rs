@@ -190,7 +190,7 @@ where
         );
         txs.push(encoded_l1_info_tx.into());
 
-        let payload_timestamp_millis_part = if base_time_active {
+        if base_time_active {
             let base_time = BaseTimeUpdateTx::new(next_l2_timestamp_millis_part).map_err(|e| {
                 PipelineError::AttributesBuilder(BuilderError::BaseTimeUpdate(e)).crit()
             })?;
@@ -198,10 +198,7 @@ where
             let mut encoded = Vec::with_capacity(envelope.length());
             envelope.encode_2718(&mut encoded);
             txs.push(encoded.into());
-            Some(next_l2_timestamp_millis_part)
-        } else {
-            None
-        };
+        }
 
         txs.extend(deposit_transactions);
         txs.extend(upgrade_transactions);
@@ -242,7 +239,6 @@ where
                 .is_jovian_active(next_l2_time)
                 .then(|| sys_config.min_base_fee.unwrap_or_default()), /* Default to zero if not
                                                                         * set at Jovian */
-            timestamp_millis_part: payload_timestamp_millis_part,
         })
     }
 }
@@ -534,7 +530,6 @@ mod tests {
             )),
             eip_1559_params: None,
             min_base_fee: None,
-            timestamp_millis_part: None,
         };
         assert_eq!(payload, expected);
         assert_eq!(payload.transactions.unwrap().len(), 1);
@@ -586,7 +581,6 @@ mod tests {
             payload.payload_attributes.timestamp,
             cfg.l2_block_timestamp(next_l2_block_number)
         );
-        assert_eq!(payload.timestamp_millis_part, Some(expected_millis_part));
         let transactions = payload.transactions.unwrap();
         assert_eq!(transactions.len(), 8);
         let envelope = BaseTxEnvelope::decode_2718_exact(&transactions[1]).unwrap();
@@ -645,8 +639,6 @@ mod tests {
 
         let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
         assert_eq!(payload.payload_attributes.timestamp, expected_timestamp);
-        assert_eq!(payload.timestamp_millis_part, Some(expected_millis_part));
-
         let transactions = payload.transactions.unwrap();
         assert_eq!(transactions.len(), 2);
         let envelope = BaseTxEnvelope::decode_2718_exact(&transactions[1]).unwrap();
@@ -711,7 +703,6 @@ mod tests {
             )),
             eip_1559_params: None,
             min_base_fee: None,
-            timestamp_millis_part: None,
         };
         assert_eq!(payload, expected);
         assert_eq!(payload.transactions.unwrap().len(), 1);
@@ -772,7 +763,6 @@ mod tests {
             )),
             eip_1559_params: None,
             min_base_fee: None,
-            timestamp_millis_part: None,
         };
         assert_eq!(payload, expected);
         assert_eq!(payload.transactions.unwrap().len(), 7);
@@ -832,7 +822,6 @@ mod tests {
             )),
             eip_1559_params: None,
             min_base_fee: None,
-            timestamp_millis_part: None,
         };
         assert_eq!(payload.transactions.as_ref().unwrap().len(), 10);
         assert_eq!(payload, expected);

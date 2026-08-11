@@ -994,21 +994,6 @@ pub struct UpdateReceipt {
     pub error_message: Option<String>,
 }
 
-/// Parameters for completing a proof request with a protocol-native result payload.
-#[derive(Debug, Clone)]
-pub struct CompleteProofResult {
-    /// Proof request identifier.
-    pub id: Uuid,
-    /// Protocol result to store in `result_payload`.
-    pub result: ProtocolProofResult,
-    /// Worker id that submitted the proof, if completed through the worker API.
-    pub submitted_by_worker_id: Option<String>,
-    /// Worker lock token that submitted the proof, if completed through the worker API.
-    pub submitted_lock_id: Option<String>,
-    /// Error message to store with the completion. Usually `None`.
-    pub error_message: Option<String>,
-}
-
 /// Parameters for claiming the next available worker proof job.
 #[derive(Debug, Clone)]
 pub struct ClaimProofJob {
@@ -1268,6 +1253,7 @@ mod tests {
                 sequence_window: Some(50),
                 l1_head: None,
                 intermediate_root_interval: None,
+                schedule_l2_block_number: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             }),

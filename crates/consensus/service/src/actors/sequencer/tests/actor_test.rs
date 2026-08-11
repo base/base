@@ -21,8 +21,8 @@ use rstest::rstest;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
-    ConductorError, NodeActor, ScheduledTicker, SealState, SealStepError, SealStepOutcome,
-    SequencerActorError, SequencerAdminQuery, UnsafePayloadGossipClientError,
+    ConductorError, L1OriginSelectorError, NodeActor, ScheduledTicker, SealState, SealStepError,
+    SealStepOutcome, SequencerActorError, SequencerAdminQuery, UnsafePayloadGossipClientError,
     UnsealedPayloadHandle,
     actors::{
         MockConductor, MockOriginSelector, MockSequencerEngineClient,
@@ -530,6 +530,56 @@ async fn test_try_seal_handle_non_fatal_seal_error_returns_none() {
 
     assert!(result.unwrap().is_none());
     assert!(!actor.cancellation_token.is_cancelled());
+}
+
+#[tokio::test(start_paused = true)]
+async fn test_l1_origin_retries_are_paced_after_immediate_budget() {
+    let attempts_before_delay = usize::from(ScheduledTicker::MAX_IMMEDIATE_L1_ORIGIN_RETRIES) + 1;
+    let expected_attempts = attempts_before_delay + 1;
+    let (attempt_tx, mut attempt_rx) = mpsc::unbounded_channel();
+
+    let mut client = MockSequencerEngineClient::new();
+    client.expect_reset_engine_forkchoice().times(1).return_once(|| Ok(()));
+    client
+        .expect_get_unsafe_head()
+        .times(expected_attempts)
+        .returning(|| Ok(L2BlockInfo::default()));
+    client.expect_start_build_block().times(0);
+
+    let mut origin_selector = MockOriginSelector::new();
+    origin_selector.expect_next_l1_origin().times(expected_attempts).returning(move |_, _| {
+        attempt_tx.send(()).unwrap();
+        Err(L1OriginSelectorError::NotEnoughData(BlockInfo::default()))
+    });
+
+    let engine_client = Arc::new(client);
+    let rollup_config = Arc::new(RollupConfig { block_time: 2, ..Default::default() });
+    let mut actor = test_actor();
+    actor.builder.engine_client = Arc::clone(&engine_client);
+    actor.builder.origin_selector = origin_selector;
+    actor.builder.rollup_config = Arc::clone(&rollup_config);
+    actor.engine_client = engine_client;
+    actor.rollup_config = rollup_config;
+
+    let cancellation_token = actor.cancellation_token.clone();
+    let actor_task = tokio::spawn(actor.start(()));
+
+    // The initial attempt and five retries run immediately to absorb a near-complete fetch.
+    for _ in 0..attempts_before_delay {
+        attempt_rx.recv().await.unwrap();
+    }
+    tokio::task::yield_now().await;
+    assert!(attempt_rx.try_recv().is_err());
+
+    tokio::time::advance(ScheduledTicker::L1_ORIGIN_RETRY_DELAY - Duration::from_millis(50)).await;
+    tokio::task::yield_now().await;
+    assert!(attempt_rx.try_recv().is_err());
+
+    tokio::time::advance(Duration::from_millis(50)).await;
+    attempt_rx.recv().await.unwrap();
+
+    cancellation_token.cancel();
+    actor_task.await.unwrap().unwrap();
 }
 
 // --- build tests ---

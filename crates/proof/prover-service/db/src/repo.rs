@@ -6,14 +6,13 @@ use sqlx::{PgPool, Result, Row};
 use uuid::Uuid;
 
 use crate::{
-    ApiProofType, ClaimAuth, ClaimProofJob, CompleteClaimedProofJob, CompleteProofResult,
-    CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome,
-    CreateProofRequestValidationError, CreateProofSession, DeleteProofRequestOutcome,
-    FailExpiredProofJobs, HeartbeatOutcome, HeartbeatProofJob, JobLockState, ProofJob,
-    ProofJobStatus, ProofRequest, ProofRequestListItem, ProofRequestPage, ProofSession,
-    ProofStatus, ProofType, RecordSessionOutcome, RetryOutcome, SessionStatus, SessionType,
-    SubmitProofOutcome, TeeKind, UpdateProofSession, UpdateReceipt, WorkerSessionUpsert, ZkVmKind,
-    canonical_session_id,
+    ApiProofType, ClaimAuth, ClaimProofJob, CompleteClaimedProofJob, CreateProofRequest,
+    CreateProofRequestError, CreateProofRequestOutcome, CreateProofRequestValidationError,
+    CreateProofSession, DeleteProofRequestOutcome, FailExpiredProofJobs, HeartbeatOutcome,
+    HeartbeatProofJob, JobLockState, ProofJob, ProofJobStatus, ProofRequest, ProofRequestListItem,
+    ProofRequestPage, ProofSession, ProofStatus, ProofType, RecordSessionOutcome, RetryOutcome,
+    SessionStatus, SessionType, SubmitProofOutcome, TeeKind, UpdateProofSession, UpdateReceipt,
+    WorkerSessionUpsert, ZkVmKind, canonical_session_id,
 };
 
 /// Repository for proof request database operations
@@ -566,44 +565,6 @@ impl ProofRequestRepo {
         Ok(result.rows_affected() > 0)
     }
 
-    /// Transition proof request RUNNING → SUCCEEDED with a protocol-native result payload.
-    ///
-    /// ZK results are also mirrored into `stark_receipt` or `snark_receipt` for legacy
-    /// compatibility. TEE results are stored only in `result_payload`.
-    pub async fn complete_running_proof_result(&self, update: CompleteProofResult) -> Result<bool> {
-        let result_payload =
-            serde_json::to_value(&update.result).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
-        let (stark_receipt, snark_receipt) = compatibility_receipts_for_result(&update.result);
-
-        let result = sqlx::query(
-            r#"
-            UPDATE proof_requests
-            SET result_payload = $1,
-                submitted_by_worker_id = $2,
-                submitted_lock_id = $3,
-                stark_receipt = COALESCE($4, stark_receipt),
-                snark_receipt = COALESCE($5, snark_receipt),
-                status = $6,
-                error_message = $7,
-                completed_at = NOW()
-            WHERE id = $8 AND status = $9
-            "#,
-        )
-        .bind(&result_payload)
-        .bind(&update.submitted_by_worker_id)
-        .bind(&update.submitted_lock_id)
-        .bind(&stark_receipt)
-        .bind(&snark_receipt)
-        .bind(ProofStatus::Succeeded.as_str())
-        .bind(&update.error_message)
-        .bind(update.id)
-        .bind(ProofStatus::Running.as_str())
-        .execute(&self.pool)
-        .await?;
-
-        Ok(result.rows_affected() > 0)
-    }
-
     // ========== Worker Job API Methods ==========
 
     /// Atomically claim the next eligible worker proof job (`getNextProof`).
@@ -1059,116 +1020,6 @@ impl ProofRequestRepo {
 
         let id: i64 = row.get("id");
         Ok(id)
-    }
-
-    /// Reserve a `(proof_request_id, session_type)` slot for a future backend submission.
-    /// Returns `Some(reservation_id)` for the single race winner; `None` if another
-    /// caller already holds an active (`SUBMITTING` or `RUNNING`) row.
-    ///
-    /// The row is inserted as `SUBMITTING` so sync loops (which only poll `RUNNING`
-    /// rows) skip it until activation. Callers must follow up with
-    /// [`Self::activate_reserved_proof_session`] on success or
-    /// [`Self::fail_reserved_proof_session`] on failure.
-    pub async fn reserve_proof_session(
-        &self,
-        proof_request_id: Uuid,
-        session_type: SessionType,
-    ) -> Result<Option<String>> {
-        let reservation_id = format!(
-            "reservation-{}-{}",
-            session_type.as_str().to_ascii_lowercase(),
-            Uuid::new_v4()
-        );
-
-        // ON CONFLICT predicate mirrors the partial unique index predicate.
-        let row = sqlx::query(
-            r#"
-            INSERT INTO proof_sessions (
-                proof_request_id, session_type, backend_session_id, status, metadata
-            )
-            VALUES ($1, $2, $3, $4, NULL)
-            ON CONFLICT (proof_request_id, session_type)
-                WHERE status IN ('SUBMITTING', 'RUNNING')
-                DO NOTHING
-            RETURNING backend_session_id
-            "#,
-        )
-        .bind(proof_request_id)
-        .bind(session_type.as_str())
-        .bind(&reservation_id)
-        .bind(SessionStatus::Submitting.as_str())
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(row.map(|r| r.get("backend_session_id")))
-    }
-
-    /// Promote a `SUBMITTING` reservation row to `RUNNING` with the real backend session
-    /// id. Returns `false` if the row was no longer eligible (failed or activated
-    /// out-of-band); the caller should then treat the backend job as orphaned.
-    pub async fn activate_reserved_proof_session(
-        &self,
-        reservation_id: &str,
-        session: CreateProofSession,
-    ) -> Result<bool> {
-        let result = sqlx::query(
-            r#"
-            UPDATE proof_sessions
-            SET backend_session_id = $1,
-                metadata = $2,
-                status = $3,
-                error_message = NULL
-            WHERE backend_session_id = $4
-              AND proof_request_id = $5
-              AND session_type = $6
-              AND status = $7
-            "#,
-        )
-        .bind(&session.backend_session_id)
-        .bind(&session.metadata)
-        .bind(SessionStatus::Running.as_str())
-        .bind(reservation_id)
-        .bind(session.proof_request_id)
-        .bind(session.session_type.as_str())
-        .bind(SessionStatus::Submitting.as_str())
-        .execute(&self.pool)
-        .await?;
-
-        Ok(result.rows_affected() > 0)
-    }
-
-    /// Mark a `SUBMITTING` reservation row as `FAILED` so the partial unique index
-    /// releases the slot and a future poll can retry. Used when the backend submit step
-    /// itself fails after a successful reservation.
-    pub async fn fail_reserved_proof_session(
-        &self,
-        proof_request_id: Uuid,
-        session_type: SessionType,
-        reservation_id: &str,
-        error_message: &str,
-    ) -> Result<bool> {
-        let result = sqlx::query(
-            r#"
-            UPDATE proof_sessions
-            SET status = $1,
-                error_message = $2,
-                completed_at = NOW()
-            WHERE backend_session_id = $3
-              AND proof_request_id = $4
-              AND session_type = $5
-              AND status = $6
-            "#,
-        )
-        .bind(SessionStatus::Failed.as_str())
-        .bind(error_message)
-        .bind(reservation_id)
-        .bind(proof_request_id)
-        .bind(session_type.as_str())
-        .bind(SessionStatus::Submitting.as_str())
-        .execute(&self.pool)
-        .await?;
-
-        Ok(result.rows_affected() > 0)
     }
 
     /// Get a proof session by backend session ID
@@ -2489,6 +2340,7 @@ mod tests {
                 sequence_window: Some(50),
                 l1_head: None,
                 intermediate_root_interval: Some(5),
+                schedule_l2_block_number: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             }),
@@ -2525,6 +2377,7 @@ mod tests {
                 sequence_window: None,
                 l1_head: None,
                 intermediate_root_interval: None,
+                schedule_l2_block_number: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             }),
@@ -2541,6 +2394,7 @@ mod tests {
         assert!(!payload.contains_key("sequence_window"));
         assert!(!payload.contains_key("l1_head"));
         assert!(!payload.contains_key("intermediate_root_interval"));
+        assert!(!payload.contains_key("schedule_l2_block_number"));
     }
 
     #[test]
@@ -2738,6 +2592,7 @@ mod tests {
                 sequence_window: None,
                 l1_head: None,
                 intermediate_root_interval: None,
+                schedule_l2_block_number: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             }),

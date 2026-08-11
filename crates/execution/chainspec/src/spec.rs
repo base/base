@@ -175,6 +175,7 @@ impl BaseChainSpec {
         let azul_time = genesis_info.base.azul;
         let beryl_time = genesis_info.base.beryl;
         let cobalt_time = genesis_info.base.cobalt;
+        let zenith_time = genesis_info.base.zenith;
         let time_upgrade_opts = [
             (BaseUpgrade::Regolith.boxed(), genesis_info.regolith_time),
             (EthereumHardfork::Shanghai.boxed(), genesis_info.canyon_time),
@@ -191,6 +192,7 @@ impl BaseChainSpec {
             (BaseUpgrade::Azul.boxed(), azul_time),
             (BaseUpgrade::Beryl.boxed(), beryl_time),
             (BaseUpgrade::Cobalt.boxed(), cobalt_time),
+            (BaseUpgrade::Zenith.boxed(), zenith_time),
         ];
 
         let mut time_upgrades = time_upgrade_opts
@@ -447,7 +449,7 @@ impl BaseChainSpec {
             inserted = true;
         }
         // Only execution-ladder upgrades enter the reth hardfork schedule; contract-only
-        // upgrades (Delta, PectraBlobSchedule) and the permanently-off Zenith gate are ignored.
+        // upgrades (Delta, PectraBlobSchedule) and genesis-only Zenith are ignored here.
         if hardfork_id.is_execution() {
             hardforks.insert(hardfork_id, condition);
             inserted = true;
@@ -961,8 +963,7 @@ mod tests {
 
     #[test]
     fn builtin_chain_specs_never_activate_zenith() {
-        // Zenith is a permanently-off gate: it never enters any chain's fork schedule, so it is
-        // always `Never` and never active.
+        // Built-in production schedules do not configure the genesis-only Zenith upgrade.
         for spec in [BaseChainSpec::mainnet(), BaseChainSpec::sepolia(), BaseChainSpec::devnet()] {
             assert_eq!(spec.fork(BaseUpgrade::Zenith), ForkCondition::Never);
             assert!(!spec.is_fork_active_at_timestamp(BaseUpgrade::Zenith, 0));
@@ -1214,7 +1215,8 @@ mod tests {
         "base": {
           "v1": 55,
           "v2": 60,
-          "v3": 65
+          "v3": 65,
+          "zenith": 1000000
         },
         "activationAdminAddress": "0xcb00000000000000000000000000000000000000",
         "optimism": {
@@ -1257,10 +1259,8 @@ mod tests {
         assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Beryl, 60));
         assert!(!chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Cobalt, 64));
         assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Cobalt, 65));
-
-        // Zenith is a permanently-off gate: never scheduled, always Never.
-        assert_eq!(chain_spec.fork(BaseUpgrade::Zenith), ForkCondition::Never);
-        assert!(!chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Zenith, 9999));
+        assert!(!chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Zenith, 999_999));
+        assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Zenith, 1_000_000));
     }
 
     #[test]

@@ -28,11 +28,8 @@ fn main() {
 
     cli.run(|builder, builder_args| async move {
         let rollup_args = builder_args.rollup_args.clone();
-        let builder = StandardBaseRethNode::apply_initial_upgrade_signal_from_rollup_args(
-            builder,
-            &rollup_args,
-        )
-        .await?;
+        let builder =
+            StandardBaseRethNode::apply_initial_upgrade_signal(builder, &builder_args).await?;
 
         let metering_provider: base_builder_core::SharedMeteringProvider =
             Arc::new(builder_args.build_metering_store());
@@ -41,6 +38,7 @@ fn main() {
             transaction_events_enabled.then(|| builder_args.transaction_events.writer_config()),
         )?;
 
+        let accept_validity_transactions = builder_args.enable_experimental_validity_transactions;
         let builder_config = builder_args
             .clone()
             .into_builder_config(Arc::clone(&metering_provider))
@@ -60,7 +58,7 @@ fn main() {
             );
         runner.install_ext::<MeteringStoreExtension>(metering_provider);
         runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig::default());
-        runner.install_ext::<BuilderApiExtension>(());
+        runner.install_ext::<BuilderApiExtension>(accept_validity_transactions);
         StandardBaseRethNode::install_upgrade_signal_runtime_extension(&mut runner, &rollup_args)?;
         runner.add_started_callback(|| {
             base_cli_utils::register_version_metrics!();

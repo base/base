@@ -7,7 +7,7 @@ use base_builder_core::{
     BuilderConfig, ExecutionMeteringMode, RejectionCache, SharedMeteringProvider,
 };
 use base_builder_metering::MeteringStore;
-use base_node_core::args::RollupArgs;
+use base_node_core::{HasRollupArgs, RollupArgs};
 use base_observability_events::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, TransactionEventProducer,
     TransactionEventWriterConfig,
@@ -183,6 +183,12 @@ pub struct Args {
     #[arg(long = "builder.enable-resource-metering", default_value = "false")]
     pub enable_resource_metering: bool,
 
+    /// Accept experimental validity-bearing transactions from forwarding nodes.
+    ///
+    /// Predicates are preserved but are not yet enforced during block construction.
+    #[arg(long = "builder.enable-experimental-validity-transactions", default_value = "false")]
+    pub enable_experimental_validity_transactions: bool,
+
     /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes
     #[arg(long = "builder.max-uncompressed-block-size")]
     pub max_uncompressed_block_size: Option<u64>,
@@ -249,6 +255,12 @@ pub struct Args {
     pub transaction_events: TransactionEventsArgs,
 }
 
+impl HasRollupArgs for Args {
+    fn rollup_args(&self) -> &RollupArgs {
+        &self.rollup_args
+    }
+}
+
 impl Args {
     /// Creates a [`MeteringStore`] from the CLI arguments.
     pub fn build_metering_store(&self) -> MeteringStore {
@@ -274,6 +286,7 @@ impl Default for Args {
             execution_metering_mode: ExecutionMeteringMode::Off,
             extra_block_deadline_secs: 20,
             enable_resource_metering: false,
+            enable_experimental_validity_transactions: false,
             max_uncompressed_block_size: None,
             metering_wait_duration_ms: None,
             audit_archiver_url: None,
@@ -366,11 +379,29 @@ mod tests {
     }
 
     #[test]
+    fn builder_args_provides_embedded_rollup_args() {
+        let args = Args::default();
+        assert!(std::ptr::eq(args.rollup_args(), &args.rollup_args));
+    }
+
+    #[test]
     fn default_args_produce_valid_config() {
-        let config = convert(Args::default());
+        let args = Args::default();
+        assert!(!args.enable_experimental_validity_transactions);
+        let config = convert(args);
         assert_eq!(config.block_time, Duration::from_millis(1000));
         assert!(config.max_gas_per_txn.is_none());
         assert!(config.manifest_precheck_enabled);
+    }
+
+    #[test]
+    fn experimental_validity_transactions_require_explicit_opt_in() {
+        let parsed = CommandParser::parse_from([
+            "builder",
+            "--builder.enable-experimental-validity-transactions",
+        ]);
+
+        assert!(parsed.args.enable_experimental_validity_transactions);
     }
 
     #[rstest]

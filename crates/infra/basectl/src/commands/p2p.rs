@@ -56,16 +56,12 @@ pub enum P2pCommands {
 pub struct P2pArgs {
     /// Override the execution-layer RPC URL.
     ///
-    /// Defaults to the chain config's `rpc` field, which on the
-    /// `mainnet` and `sepolia` presets resolves to the public proxyd
-    /// fleet. Pass this flag to query a single node directly.
+    /// Defaults to the chain config's local `rpc` field.
     #[arg(long = "el-rpc", value_name = "URL")]
     pub el_rpc: Option<Url>,
     /// Override the consensus-node RPC URL.
     ///
-    /// The mainnet and sepolia presets ship `consensus_node_rpc` unset,
-    /// so non-devnet users must pass this flag (or set the field in
-    /// their YAML config).
+    /// Defaults to the chain config's `consensus_node_rpc` field.
     #[arg(long = "cl-rpc", value_name = "URL")]
     pub cl_rpc: Option<Url>,
     /// Emit JSON instead of the pretty table output.
@@ -84,16 +80,12 @@ pub struct DestructivePeerArgs {
     pub target: String,
     /// Override the execution-layer RPC URL.
     ///
-    /// Defaults to the chain config's `rpc` field, which on the
-    /// `mainnet` and `sepolia` presets resolves to the public proxyd
-    /// fleet. Pass this flag to query a single node directly.
+    /// Defaults to the chain config's local `rpc` field.
     #[arg(long = "el-rpc", value_name = "URL")]
     pub el_rpc: Option<Url>,
     /// Override the consensus-node RPC URL.
     ///
-    /// The mainnet and sepolia presets ship `consensus_node_rpc` unset,
-    /// so non-devnet users must pass this flag (or set the field in
-    /// their YAML config).
+    /// Defaults to the chain config's `consensus_node_rpc` field.
     #[arg(long = "cl-rpc", value_name = "URL")]
     pub cl_rpc: Option<Url>,
     /// Skip the interactive confirmation prompt.
@@ -109,9 +101,7 @@ pub struct DestructivePeerArgs {
 pub struct DestructiveClBulkArgs {
     /// Override the consensus-node RPC URL.
     ///
-    /// The mainnet and sepolia presets ship `consensus_node_rpc` unset,
-    /// so non-devnet users must pass this flag (or set the field in
-    /// their YAML config).
+    /// Defaults to the chain config's `consensus_node_rpc` field.
     #[arg(long = "cl-rpc", value_name = "URL")]
     pub cl_rpc: Option<Url>,
     /// Skip the interactive confirmation prompt.
@@ -125,26 +115,21 @@ pub struct DestructiveClBulkArgs {
 impl P2pCommand {
     /// Runs the selected `basectl p2p` operation.
     pub async fn run(self, config: MonitoringConfig) -> Result<CommandOutcome> {
+        let success = CommandOutcome::Success;
         match self.command {
             P2pCommands::Reachability { enode, json } => {
                 run_reachability(&config, &enode, json).await
             }
-            other => {
-                match other {
-                    P2pCommands::Peers(args) => run_peers(config, args).await?,
-                    P2pCommands::Info(args) => run_info(config, args).await?,
-                    P2pCommands::AddPeer(args) => run_add_peer(config, args).await?,
-                    P2pCommands::RemovePeer(args) => run_remove_peer(config, args).await?,
-                    P2pCommands::Ban(args) => {
-                        run_peer_ban_action(config, args, BanAction::Ban).await?
-                    }
-                    P2pCommands::Unban(args) => {
-                        run_peer_ban_action(config, args, BanAction::Unban).await?
-                    }
-                    P2pCommands::UnbanAll(args) => run_unban_all(config, args).await?,
-                    P2pCommands::Reachability { .. } => unreachable!(),
-                }
-                Ok(CommandOutcome::Success)
+            P2pCommands::UnbanAll(args) => run_unban_all(config, args).await,
+            P2pCommands::Peers(args) => run_peers(config, args).await.map(|()| success),
+            P2pCommands::Info(args) => run_info(config, args).await.map(|()| success),
+            P2pCommands::AddPeer(args) => run_add_peer(config, args).await.map(|()| success),
+            P2pCommands::RemovePeer(args) => run_remove_peer(config, args).await.map(|()| success),
+            P2pCommands::Ban(args) => {
+                run_peer_ban_action(config, args, BanAction::Ban).await.map(|()| success)
+            }
+            P2pCommands::Unban(args) => {
+                run_peer_ban_action(config, args, BanAction::Unban).await.map(|()| success)
             }
         }
     }
@@ -187,7 +172,7 @@ async fn run_reachability(
 async fn run_peers(config: MonitoringConfig, args: P2pArgs) -> Result<()> {
     let P2pArgs { el_rpc: el_rpc_override, cl_rpc: cl_rpc_override, json, raw } = args;
     let el_rpc = el_rpc_override.unwrap_or_else(|| config.rpc.clone());
-    let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), "p2p peers")?;
+    let cl_rpc = config.resolve_cl_rpc(cl_rpc_override.as_ref(), "p2p peers")?;
 
     match (json, raw) {
         (true, true) => {
@@ -196,7 +181,7 @@ async fn run_peers(config: MonitoringConfig, args: P2pArgs) -> Result<()> {
         }
         (true, false) => {
             let report = fetch_connected_peers(&el_rpc, &cl_rpc).await?;
-            JsonOutput::print(&PeersJson::from_report(&config.name, &report))?;
+            JsonOutput::print(&PeersJson::from_report(&config.name, report))?;
         }
         (false, _) => {
             let report = fetch_connected_peers(&el_rpc, &cl_rpc).await?;
@@ -222,8 +207,7 @@ async fn run_add_peer(config: MonitoringConfig, args: DestructivePeerArgs) -> Re
             );
             let el_rpc = el_rpc_override.unwrap_or_else(|| config.rpc.clone());
             let prompt = format!("Add EL peer {enode} through {el_rpc}? [y/N] ");
-            if !Confirm::prompt(&prompt, yes)? {
-                println!("aborted");
+            if !Confirm::prompt_or_abort(&prompt, yes)? {
                 return Ok(());
             }
             let accepted = add_peer(&el_rpc, &enode).await?;
@@ -239,10 +223,9 @@ async fn run_add_peer(config: MonitoringConfig, args: DestructivePeerArgs) -> Re
                 "CL targets",
                 PeerLayer::Cl,
             );
-            let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), "p2p add-peer")?;
+            let cl_rpc = config.resolve_cl_rpc(cl_rpc_override.as_ref(), "p2p add-peer")?;
             let prompt = format!("Connect CL peer {multiaddr} through {cl_rpc}? [y/N] ");
-            if !Confirm::prompt(&prompt, yes)? {
-                println!("aborted");
+            if !Confirm::prompt_or_abort(&prompt, yes)? {
                 return Ok(());
             }
             connect_peer(&cl_rpc, &multiaddr).await?;
@@ -268,8 +251,7 @@ async fn run_remove_peer(config: MonitoringConfig, args: DestructivePeerArgs) ->
             );
             let el_rpc = el_rpc_override.unwrap_or_else(|| config.rpc.clone());
             let prompt = format!("Remove EL peer {enode} through {el_rpc}? [y/N] ");
-            if !Confirm::prompt(&prompt, yes)? {
-                println!("aborted");
+            if !Confirm::prompt_or_abort(&prompt, yes)? {
                 return Ok(());
             }
             let accepted = remove_peer(&el_rpc, &enode).await?;
@@ -285,10 +267,9 @@ async fn run_remove_peer(config: MonitoringConfig, args: DestructivePeerArgs) ->
                 "CL targets",
                 PeerLayer::Cl,
             );
-            let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), "p2p remove-peer")?;
+            let cl_rpc = config.resolve_cl_rpc(cl_rpc_override.as_ref(), "p2p remove-peer")?;
             let prompt = format!("Disconnect CL peer {peer_id} from {cl_rpc}? [y/N] ");
-            if !Confirm::prompt(&prompt, yes)? {
-                println!("aborted");
+            if !Confirm::prompt_or_abort(&prompt, yes)? {
                 return Ok(());
             }
             disconnect_peer(&cl_rpc, &peer_id).await?;
@@ -326,8 +307,7 @@ async fn run_peer_ban_action(
                 return Err(P2pCommandError::TrustedElPeerBan { target: enode }.into());
             }
             let prompt = format!("{verb} EL peer {enode} through {el_rpc}? [y/N] ");
-            if !Confirm::prompt(&prompt, yes)? {
-                println!("aborted");
+            if !Confirm::prompt_or_abort(&prompt, yes)? {
                 return Ok(());
             }
             let accepted = match action {
@@ -346,10 +326,9 @@ async fn run_peer_ban_action(
                 "CL targets",
                 PeerLayer::Cl,
             );
-            let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), command_name)?;
+            let cl_rpc = config.resolve_cl_rpc(cl_rpc_override.as_ref(), command_name)?;
             let prompt = format!("{verb} CL peer {peer_id} through {cl_rpc}? [y/N] ");
-            if !Confirm::prompt(&prompt, yes)? {
-                println!("aborted");
+            if !Confirm::prompt_or_abort(&prompt, yes)? {
                 return Ok(());
             }
             let disconnect_error = match action {
@@ -376,28 +355,30 @@ async fn run_peer_ban_action(
     Ok(())
 }
 
-async fn run_unban_all(config: MonitoringConfig, args: DestructiveClBulkArgs) -> Result<()> {
+async fn run_unban_all(
+    config: MonitoringConfig,
+    args: DestructiveClBulkArgs,
+) -> Result<CommandOutcome> {
     let DestructiveClBulkArgs { cl_rpc: cl_rpc_override, yes, json } = args;
-    let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), "p2p unban-all")?;
+    let cl_rpc = config.resolve_cl_rpc(cl_rpc_override.as_ref(), "p2p unban-all")?;
     let mut peer_ids = list_banned_peers(&cl_rpc).await?;
     peer_ids.sort();
 
     if peer_ids.is_empty() {
         if json {
             print_peer_action(
-                &PeerActionJson::cl_bulk(&config.name, PeerAction::UnbanAll, vec![]),
+                &PeerActionJson::cl_bulk(&config.name, PeerBulkAction::UnbanAll, vec![]),
                 json,
             )?;
         } else {
             println!("no peers are currently banned");
         }
-        return Ok(());
+        return Ok(CommandOutcome::Success);
     }
 
     let prompt = format!("Unban all {} banned CL peers through {cl_rpc}? [y/N] ", peer_ids.len());
-    if !Confirm::prompt(&prompt, yes)? {
-        println!("aborted");
-        return Ok(());
+    if !Confirm::prompt_or_abort(&prompt, yes)? {
+        return Ok(CommandOutcome::Success);
     }
 
     let mut results = Vec::with_capacity(peer_ids.len());
@@ -407,24 +388,16 @@ async fn run_unban_all(config: MonitoringConfig, args: DestructiveClBulkArgs) ->
             Err(err) => results.push(PeerBulkActionResultJson::err(peer_id, err.to_string())),
         }
     }
-    let action = PeerActionJson::cl_bulk(&config.name, PeerAction::UnbanAll, results);
+    let action = PeerActionJson::cl_bulk(&config.name, PeerBulkAction::UnbanAll, results);
     let failed = action.failed_count();
     print_peer_action(&action, json)?;
-    fail_unban_all_if_partial(failed)?;
-    Ok(())
-}
-
-const fn fail_unban_all_if_partial(failed: usize) -> Result<(), P2pCommandError> {
-    if failed > 0 {
-        return Err(P2pCommandError::UnbanAllPartialFailure { failed });
-    }
-    Ok(())
+    Ok(CommandOutcome::from_failures(failed > 0))
 }
 
 async fn run_info(config: MonitoringConfig, args: P2pArgs) -> Result<()> {
     let P2pArgs { el_rpc: el_rpc_override, cl_rpc: cl_rpc_override, json, raw } = args;
     let el_rpc = el_rpc_override.unwrap_or_else(|| config.rpc.clone());
-    let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), "p2p info")?;
+    let cl_rpc = config.resolve_cl_rpc(cl_rpc_override.as_ref(), "p2p info")?;
 
     match (json, raw) {
         (true, true) => {
@@ -442,20 +415,6 @@ async fn run_info(config: MonitoringConfig, args: P2pArgs) -> Result<()> {
     }
 
     Ok(())
-}
-
-fn resolve_cl_rpc(
-    config: &MonitoringConfig,
-    override_url: Option<&Url>,
-    command_name: &str,
-) -> Result<Url, P2pCommandError> {
-    if let Some(u) = override_url {
-        return Ok(u.clone());
-    }
-    config.consensus_node_rpc.clone().ok_or_else(|| P2pCommandError::MissingConsensusRpc {
-        config_name: config.name.clone(),
-        command_name: command_name.to_string(),
-    })
 }
 
 /// Minimum length used to catch obvious non-libp2p peer IDs before hitting the CL RPC.
@@ -595,7 +554,7 @@ pub enum PeerActionJson {
         /// Selected network name.
         network: String,
         /// Peer action performed.
-        action: PeerAction,
+        action: PeerBulkAction,
         /// Peer layer targeted.
         layer: PeerLayer,
         /// Number of peers attempted.
@@ -609,7 +568,7 @@ pub enum PeerActionJson {
     },
 }
 
-/// Peer-management action represented in command output.
+/// Single-peer management action represented in command output.
 #[derive(Debug, Clone, Copy, Serialize)]
 pub enum PeerAction {
     /// Add or connect a peer.
@@ -624,6 +583,11 @@ pub enum PeerAction {
     /// Unban a peer.
     #[serde(rename = "unbanPeer")]
     Unban,
+}
+
+/// Bulk peer-management action represented in command output.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub enum PeerBulkAction {
     /// Unban every banned consensus peer.
     #[serde(rename = "unbanAll")]
     UnbanAll,
@@ -691,7 +655,11 @@ impl PeerActionJson {
         }
     }
 
-    fn cl_bulk(network: &str, action: PeerAction, results: Vec<PeerBulkActionResultJson>) -> Self {
+    fn cl_bulk(
+        network: &str,
+        action: PeerBulkAction,
+        results: Vec<PeerBulkActionResultJson>,
+    ) -> Self {
         let attempted = results.len();
         let succeeded = results.iter().filter(|result| result.ok).count();
         let failed = attempted.saturating_sub(succeeded);
@@ -803,11 +771,6 @@ fn print_peer_action_pretty(action: &PeerActionJson) -> Result<()> {
                 }
             }
         }
-        PeerActionJson::El { action, .. } | PeerActionJson::Cl { action, .. } => {
-            return Err(
-                P2pCommandError::UnsupportedPrettyAction { action: format!("{action:?}") }.into()
-            );
-        }
     }
     Ok(())
 }
@@ -825,8 +788,8 @@ pub struct PeersJson {
 }
 
 impl PeersJson {
-    fn from_report(network: &str, report: &PeerListReport) -> Self {
-        Self { network: network.to_string(), el: report.el.clone(), cl: report.cl.clone() }
+    fn from_report(network: &str, report: PeerListReport) -> Self {
+        Self { network: network.to_string(), el: report.el, cl: report.cl }
     }
 }
 
@@ -877,10 +840,10 @@ mod tests {
     use url::Url;
 
     use super::{
-        AddTarget, PeerAction, PeerActionJson, PeerBulkActionResultJson, PeerTarget,
-        fail_unban_all_if_partial, resolve_cl_rpc, run_reachability,
+        AddTarget, PeerAction, PeerActionJson, PeerBulkAction, PeerBulkActionResultJson,
+        PeerTarget, run_reachability,
     };
-    use crate::{MonitoringConfig, P2pCommandError, P2pTargetError};
+    use crate::{MonitoringConfig, P2pTargetError};
 
     const VALID_ENODE: &str = "enode://d7dfaea49c7ef37701e668652bcf1bc63d3abb2ae97593374a949e175e4ff128730a2f35199f3462a56298b981dfc395a5abebd2d6f0284ffe5bdc3d8e258b86@127.0.0.1:30304?discport=30301";
     const VALID_ENR: &str = "enr:-J64QBbwPjPLZ6IOOToOLsSjtFUjjzN66qmBZdUexpO32Klrc458Q24kbty2PdRaLacHM5z-cZQr8mjeQu3pik6jPSOGAYYFIqBfgmlkgnY0gmlwhDaRWFWHb3BzdGFja4SzlAUAiXNlY3AyNTZrMaECmeSnJh7zjKrDSPoNMGXoopeDF4hhpj5I0OsQUUt4u8uDdGNwgiQGg3VkcIIkBg";
@@ -889,9 +852,12 @@ mod tests {
         MonitoringConfig {
             name: "devnet".to_string(),
             rpc: Url::parse("http://127.0.0.1:8545").unwrap(),
+            el_ws_rpc: None,
+            public_rpc: None,
             flashblocks_ws: Url::parse("ws://127.0.0.1:7111").unwrap(),
             l1_rpc: Url::parse("http://127.0.0.1:9545").unwrap(),
             consensus_node_rpc,
+            chain_id: None,
             prover_rpc: None,
             upgrades: None,
             system_config: Address::ZERO,
@@ -903,40 +869,6 @@ mod tests {
             proofs: None,
             pods: None,
         }
-    }
-
-    #[test]
-    fn resolve_cl_rpc_prefers_flag() {
-        let config = test_config(None);
-        let override_url = Url::parse("http://127.0.0.1:9545").unwrap();
-
-        let resolved = resolve_cl_rpc(&config, Some(&override_url), "p2p info").unwrap();
-
-        assert_eq!(resolved, override_url);
-    }
-
-    #[test]
-    fn resolve_cl_rpc_falls_back_to_config() {
-        let cl_url = Url::parse("http://127.0.0.1:7545").unwrap();
-        let config = test_config(Some(cl_url.clone()));
-
-        let resolved = resolve_cl_rpc(&config, None, "p2p info").unwrap();
-
-        assert_eq!(resolved, cl_url);
-    }
-
-    #[test]
-    fn resolve_cl_rpc_errors_without_config() {
-        let config = test_config(None);
-
-        assert!(matches!(
-            resolve_cl_rpc(&config, None, "p2p info").unwrap_err(),
-            P2pCommandError::MissingConsensusRpc {
-                config_name,
-                command_name,
-                ..
-            } if config_name == "devnet" && command_name == "p2p info"
-        ));
     }
 
     #[tokio::test]
@@ -1063,15 +995,6 @@ mod tests {
     }
 
     #[test]
-    fn unban_all_partial_failure_is_typed() {
-        assert!(fail_unban_all_if_partial(0).is_ok());
-        assert!(matches!(
-            fail_unban_all_if_partial(2).unwrap_err(),
-            P2pCommandError::UnbanAllPartialFailure { failed: 2 }
-        ));
-    }
-
-    #[test]
     fn peer_action_json_serializes_typed_action_and_layer() {
         let el = serde_json::to_value(PeerActionJson::el(
             "devnet",
@@ -1147,7 +1070,7 @@ mod tests {
 
         let unban_all = serde_json::to_value(PeerActionJson::cl_bulk(
             "devnet",
-            PeerAction::UnbanAll,
+            PeerBulkAction::UnbanAll,
             vec![
                 PeerBulkActionResultJson::ok("16Uiu2HAmExamplePeerId".to_string()),
                 PeerBulkActionResultJson::err(

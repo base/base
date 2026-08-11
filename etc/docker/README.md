@@ -17,10 +17,14 @@ The `docker-compose.yml` orchestrates a complete local devnet environment with b
 - An L1 execution client (Reth) and consensus client (Lighthouse) with a validator
 - Unified Base sequencer and validator/RPC nodes on L2
 - The `base-batcher` for submitting L2 data to L1
-- The `base-prover-service` JSON-RPC coordinator with local Postgres storage
-- The `base-prover-zk-host` worker (dry-run when RPC URLs are set)
 
 All services read configuration from `devnet-env` in this directory. The devnet stores chain data in `.devnet/` which is created on first run.
+
+`docker-compose.prover.yml` is a separate standalone stack that runs the prover
+trio (Postgres, `base-prover-service`, `base-prover-zk-host`) against
+user-provided RPC endpoints — including a running devnet's. Run it as
+`just prover up <network>` so jobs and Postgres data stay isolated per network;
+see the `just prover` recipes.
 
 ## Usage
 
@@ -31,6 +35,13 @@ just devnet up     # Start fresh devnet (stops existing, clears data, rebuilds)
 just devnet down   # Stop devnet and remove data
 just devnet logs   # Stream logs from all containers
 just devnet status # Check block numbers and sync status
+```
+
+Zenith is disabled by default. To activate it at block 23 and switch the sequencer to its 200ms
+cadence, start with:
+
+```bash
+just devnet up zenith
 ```
 
 `just devnet up` deploys a local L1 `MockProtocolVersions` contract, writes

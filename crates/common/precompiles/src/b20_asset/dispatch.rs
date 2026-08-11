@@ -8,22 +8,18 @@
 //! internal-call loop stays here because re-dispatching arbitrary sub-calls is a
 //! routing responsibility; its version-defined business steps live on [`Asset`].
 
-use alloc::string::ToString;
-
 use alloy_primitives::{Bytes, U256};
-use alloy_sol_types::{SolCall, SolInterface, SolValue};
+use alloy_sol_types::{SolCall, SolValue};
 use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    AssetAccounting, AssetV1, AssetVersion, AssetVersions, B20AssetStorage, B20AssetToken,
+    AssetAccounting, AssetCall, AssetVersion, AssetVersions, B20AssetStorage, B20AssetToken,
     B20PolicyType, B20TokenRole, BerylAuxiliaryMetrics, BerylCallRecorder, BerylMetricLabels,
-    BerylSelector,
     IB20::{self, IB20Calls as C},
     IB20Asset::{self, IB20AssetCalls as SC},
     NoopPrecompileCallObserver, PermitArgs, PolicyAccounting, PrecompileCallObserver,
-    macros::decode_precompile_call,
 };
 
 impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
@@ -75,19 +71,24 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
         recorder.record_base_result(ctx, self.route(ctx, calldata, version, false, observer), |b| b)
     }
 
-    /// Grants `role` to `account` without checking caller authorization.
+    /// Grants `role` to `account` without checking caller authorization, using the token logic
+    /// implementation active at `upgrade`.
     ///
     /// The one token-level mutation the factory needs at bootstrap, when no admin exists yet and the
-    /// authorized [`Asset::grant_role`](crate::Asset) path is not yet reachable. Pinned to
-    /// [`AssetV1`], the token's introduction version.
-    // TODO: When the factory gains fork threading, remove this and pull versions into the factory.
+    /// authorized [`Asset::grant_role`](crate::Asset) path is not yet reachable.
     pub fn grant_role_unchecked(
         &mut self,
         role: alloy_primitives::B256,
         account: alloy_primitives::Address,
         sender: alloy_primitives::Address,
+        upgrade: BaseUpgrade,
     ) -> base_precompile_storage::Result<()> {
-        AssetV1.grant_role_unchecked(self, role, account, sender)
+        // `None` is unreachable in practice — the precompile is only installed from Beryl — but
+        // we revert defensively, mirroring `dispatch_with_observer`.
+        let Some(version) = AssetVersions::from_base_upgrade(upgrade) else {
+            return Err(BasePrecompileError::Revert(Bytes::new()));
+        };
+        version.implementation().grant_role_unchecked(self, role, account, sender)
     }
 
     /// Decodes calldata, observes the decoded operation, and routes it to `version` with optional
@@ -103,44 +104,19 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
     where
         O: PrecompileCallObserver,
     {
-        // Asset-specific and overridden selectors are caught here first.
-        if let Some(selector) = BerylSelector::selector(calldata)
-            && IB20Asset::IB20AssetCalls::valid_selector(selector)
-        {
-            // Fork gate (pre-decode): the ERC-8056 scheduled-multiplier selectors were introduced
-            // at Cobalt with `AssetV2`. A version that predates them must reject them as an unknown
-            // selector *before* argument decoding, so pre-Cobalt calldata keeps returning
-            // `UnknownFunctionSelector` byte-for-byte as it did at that version's activation fork.
-            // Gating on the raw selector here (rather than per-arm in `handle_asset_call`,
-            // which only runs after a successful decode) is what preserves it.
-            if version < AssetVersion::V2
-                && (selector == IB20Asset::uiMultiplierCall::SELECTOR
-                    || selector == IB20Asset::newUIMultiplierCall::SELECTOR
-                    || selector == IB20Asset::effectiveAtCall::SELECTOR
-                    || selector == IB20Asset::balanceOfUICall::SELECTOR
-                    || selector == IB20Asset::totalSupplyUICall::SELECTOR
-                    || selector == IB20Asset::setUIMultiplierCall::SELECTOR
-                    || selector == IB20Asset::cancelScheduledMultiplierCall::SELECTOR
-                    || selector == IB20Asset::supportsInterfaceCall::SELECTOR)
-            {
-                return Err(BasePrecompileError::UnknownFunctionSelector(selector));
-            }
-            let call =
-                IB20Asset::IB20AssetCalls::abi_decode_validate(calldata).map_err(|error| {
-                    BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() }
-                })?;
-            let label = call.as_label();
-            let asset_observer = observer.clone();
-            return observer.observe(label, move || {
-                self.handle_asset_call(ctx, call, version, privileged, asset_observer)
-            });
-        }
-
-        // Fall through to inherited IB20 selectors.
-        let call = decode_precompile_call!(calldata, IB20::IB20Calls);
+        let call = version.abi().decode(calldata)?;
         let label = call.as_label();
-
-        observer.observe(label, || self.handle_b20_call(ctx, call, version, privileged))
+        match call {
+            AssetCall::Asset(call) => {
+                let asset_observer = observer.clone();
+                observer.observe(label, move || {
+                    self.handle_asset_call(ctx, call, version, privileged, asset_observer)
+                })
+            }
+            AssetCall::Common(call) => {
+                observer.observe(label, || self.handle_b20_call(ctx, call, version, privileged))
+            }
+        }
     }
 
     fn handle_b20_call(
@@ -169,6 +145,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
             C::MINT_ROLE(_) => B20TokenRole::Mint.id().abi_encode().into(),
             C::BURN_ROLE(_) => B20TokenRole::Burn.id().abi_encode().into(),
             C::BURN_BLOCKED_ROLE(_) => B20TokenRole::BurnBlocked.id().abi_encode().into(),
+            C::SEIZE_ROLE(_) => B20TokenRole::Seize.id().abi_encode().into(),
             C::PAUSE_ROLE(_) => B20TokenRole::Pause.id().abi_encode().into(),
             C::UNPAUSE_ROLE(_) => B20TokenRole::Unpause.id().abi_encode().into(),
             C::METADATA_ROLE(_) => B20TokenRole::Metadata.id().abi_encode().into(),
@@ -182,6 +159,8 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                 B20PolicyType::TransferExecutor.id().abi_encode().into()
             }
             C::MINT_RECEIVER_POLICY(_) => B20PolicyType::MintReceiver.id().abi_encode().into(),
+            C::SEIZE_HOLDER_POLICY(_) => B20PolicyType::SeizeHolder.id().abi_encode().into(),
+            C::SEIZE_RECEIVER_POLICY(_) => B20PolicyType::SeizeReceiver.id().abi_encode().into(),
 
             // --- Role reads ---
             C::hasRole(c) => logic.has_role(self, c.role, c.account)?.abi_encode().into(),
@@ -262,6 +241,12 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
             }
             C::burnBlocked(c) => {
                 logic.burn_blocked(self, caller, c.from, c.amount, privileged)?;
+                Bytes::new()
+            }
+
+            // --- Seize ---
+            C::seizeWithMemo(c) => {
+                logic.seize_with_memo(self, caller, c.from, c.to, c.amount, c.memo)?;
                 Bytes::new()
             }
 
@@ -361,6 +346,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
         let encoded: Bytes = match call {
             SC::OPERATOR_ROLE(_) => logic.operator_role().abi_encode().into(),
             SC::WAD_PRECISION(_) => B20AssetStorage::WAD.abi_encode().into(),
+            SC::MAX_UI_MULTIPLIER(_) => logic.max_ui_multiplier()?.abi_encode().into(),
 
             // --- Multiplier reads ---
             SC::multiplier(_) => logic.multiplier(self)?.abi_encode().into(),
@@ -371,6 +357,9 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                 logic.to_scaled_balance(self, c.rawBalance)?.abi_encode().into()
             }
             SC::toRawBalance(c) => logic.to_raw_balance(self, c.scaledBalance)?.abi_encode().into(),
+            // ERC-8056 Conversion extension: aliases of `toScaledBalance` / `toRawBalance`.
+            SC::toUIAmount(c) => logic.to_scaled_balance(self, c.rawAmount)?.abi_encode().into(),
+            SC::fromUIAmount(c) => logic.to_raw_balance(self, c.uiAmount)?.abi_encode().into(),
             SC::scaledBalanceOf(c) => logic.scaled_balance_of(self, c.account)?.abi_encode().into(),
             SC::balanceOfUI(c) => logic.balance_of_ui(self, c.account)?.abi_encode().into(),
             SC::totalSupplyUI(_) => logic.total_supply_ui(self)?.abi_encode().into(),
@@ -393,8 +382,8 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                 logic.update_multiplier(self, caller, c.newMultiplier, privileged)?;
                 Bytes::new()
             }
-            SC::setUIMultiplier(c) => {
-                logic.set_ui_multiplier(
+            SC::updateUIMultiplier(c) => {
+                logic.update_ui_multiplier(
                     self,
                     caller,
                     c.newMultiplier,
@@ -403,8 +392,8 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                 )?;
                 Bytes::new()
             }
-            SC::cancelScheduledMultiplier(_) => {
-                logic.cancel_scheduled_multiplier(self, caller, privileged)?;
+            SC::cancelUIMultiplierUpdate(_) => {
+                logic.cancel_ui_multiplier_update(self, caller, privileged)?;
                 Bytes::new()
             }
 
@@ -749,7 +738,7 @@ mod tests {
             &mut token,
             ALICE,
             U256::from(1u64),
-            IB20Asset::setUIMultiplierCall { newMultiplier: target, effectiveAt: effective_at }
+            IB20Asset::updateUIMultiplierCall { newMultiplier: target, effectiveAt: effective_at }
                 .abi_encode(),
         )
         .unwrap();
@@ -801,13 +790,14 @@ mod tests {
     #[test]
     fn route_v1_rejects_scheduled_selector_as_unknown() {
         let mut token = make_token();
-        let calldata = IB20Asset::setUIMultiplierCall {
+        let calldata = IB20Asset::updateUIMultiplierCall {
             newMultiplier: B20AssetStorage::WAD,
             effectiveAt: U256::from(2u64),
         }
         .abi_encode();
         let selector: [u8; 4] = calldata[..4].try_into().unwrap();
-        // Routed at V1 (Beryl) the ERC-8056 selector is gated out and stays unknown.
+        // Routed at V1 (Beryl) the ERC-8056 selector is absent from the frozen asset surface, so it
+        // falls through to the disjoint inherited IB20 decode and stays unknown.
         let err = call_asset(&mut token, ALICE, calldata).unwrap_err();
         assert_eq!(
             err,
@@ -815,15 +805,17 @@ mod tests {
         );
     }
 
-    /// Pins the gate *ahead* of argument decoding: a pre-Cobalt (V1) call carrying an ERC-8056
+    /// Pins rejection *ahead* of argument decoding: a pre-Cobalt (V1) call carrying an ERC-8056
     /// selector but non-decodable arguments must still reject as `UnknownFunctionSelector`, exactly
-    /// as it did before the shared ABI enum grew; never `AbiDecodeFailed`. Moving the gate per-arm
-    /// (post-decode) would leak `AbiDecodeFailed` here and fork historical Beryl execution.
+    /// as it did before the shared ABI enum grew; never `AbiDecodeFailed`. This falls out of the
+    /// frozen V1 surface not declaring the selector — the asset branch is skipped before any
+    /// argument decode, and the disjoint inherited IB20 decode yields the unknown selector. A gate
+    /// that decoded first (post-decode) would leak `AbiDecodeFailed` here and fork historical Beryl.
     #[test]
     fn route_v1_rejects_scheduled_selector_with_malformed_args_as_unknown() {
         let mut token = make_token();
-        // A valid `setUIMultiplier` selector followed by truncated (non-decodable) arguments.
-        let mut calldata = IB20Asset::setUIMultiplierCall::SELECTOR.to_vec();
+        // A valid `updateUIMultiplier` selector followed by truncated (non-decodable) arguments.
+        let mut calldata = IB20Asset::updateUIMultiplierCall::SELECTOR.to_vec();
         calldata.extend_from_slice(&[0u8; 3]);
         let selector: [u8; 4] = calldata[..4].try_into().unwrap();
         let err = call_asset(&mut token, ALICE, calldata).unwrap_err();

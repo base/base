@@ -2,26 +2,27 @@
 
 use std::time::Duration;
 
-use base_batcher_encoder::{BatchPipeline, StepResult};
+use base_batcher_encoder::{BatchPipeline, DerivationReconciliation, StepResult};
 use base_batcher_source::{
     L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource,
 };
 use base_common_consensus::BaseBlock;
+use base_protocol::BlockInfo;
 use base_runtime::Runtime;
 use base_tx_manager::TxManager;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    AdminCommand, BatchDriverConfig, BatchDriverError, BatcherStatus, DaThrottle, SubmissionQueue,
-    ThrottleClient, ThrottleController, event::DriverEvent,
+    AdminCommand, BatchDriverConfig, BatchDriverError, BatcherStatus, DaThrottle, DerivationStatus,
+    SubmissionQueue, ThrottleClient, ThrottleController, event::DriverEvent,
 };
 
 /// Async orchestration loop for the batcher.
 ///
 /// Combines a [`BatchPipeline`] (encoding), an [`UnsafeBlockSource`] (L2 block delivery),
-/// an [`L1HeadSource`] (L1 chain head tracking), and a [`TxManager`] (L1 submission)
-/// into a single `tokio::select!` task.
+/// an [`L1HeadSource`] (L1 chain head tracking), ordered [`DerivationStatus`] updates,
+/// and a [`TxManager`] (L1 submission) into a single `tokio::select!` task.
 ///
 /// Uses [`SubmissionQueue`] for concurrent receipt tracking and semaphore backpressure,
 /// and [`DaThrottle`] for DA backlog throttle management.
@@ -50,8 +51,10 @@ where
     /// Set to `None` after the source returns [`SourceError::Exhausted`] or
     /// [`SourceError::Closed`], causing the driver to park that select arm forever.
     l1_head_source: Option<L>,
-    /// Optional external L2 safe head feed for pruning confirmed blocks.
-    safe_head_rx: Option<tokio::sync::watch::Receiver<u64>>,
+    /// Last trusted L2 safe head.
+    safe_head: Option<BlockInfo>,
+    /// Ordered derivation-progress snapshots.
+    derivation_status_rx: Option<mpsc::Receiver<DerivationStatus>>,
     /// Maximum wall-clock time to wait for in-flight submissions to settle
     /// when draining on cancellation or source exhaustion.
     drain_timeout: Duration,
@@ -63,6 +66,9 @@ where
     /// whenever DA-backlog throttling activates. Lifted from
     /// [`BatchDriverConfig::force_blobs_when_throttling`].
     force_blobs_when_throttling: bool,
+    /// Acknowledgements for in-progress flushes, fired once encoding and submission both
+    /// report no further ready work for the current channel (see [`Self::run`]).
+    pending_flush_acks: Vec<oneshot::Sender<()>>,
 }
 
 impl<R, P, S, TM, TC, L> BatchDriver<R, P, S, TM, TC, L>
@@ -79,8 +85,32 @@ where
     /// starving receipt processing and cancellation checks.
     pub const STEP_BUDGET: usize = 128;
 
-    /// Create a new [`BatchDriver`].
+    /// Create a new [`BatchDriver`] with its L1 source, initial derivation status,
+    /// and ordered status updates.
     pub fn new(
+        runtime: R,
+        pipeline: P,
+        source: S,
+        tx_manager: TM,
+        config: BatchDriverConfig,
+        throttle: DaThrottle<TC>,
+        head_sources: (L, DerivationStatus, mpsc::Receiver<DerivationStatus>),
+    ) -> Self {
+        let (l1_head_source, initial_status, derivation_status_rx) = head_sources;
+        Self::new_inner(
+            runtime,
+            pipeline,
+            source,
+            tx_manager,
+            config,
+            throttle,
+            (l1_head_source, Some((initial_status, derivation_status_rx))),
+        )
+    }
+
+    /// Create a driver without derivation-status tracking for tests that do not exercise it.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn new_without_derivation_status(
         runtime: R,
         pipeline: P,
         source: S,
@@ -89,6 +119,28 @@ where
         throttle: DaThrottle<TC>,
         l1_head_source: L,
     ) -> Self {
+        Self::new_inner(
+            runtime,
+            pipeline,
+            source,
+            tx_manager,
+            config,
+            throttle,
+            (l1_head_source, None),
+        )
+    }
+
+    fn new_inner(
+        runtime: R,
+        pipeline: P,
+        source: S,
+        tx_manager: TM,
+        config: BatchDriverConfig,
+        throttle: DaThrottle<TC>,
+        head_sources: (L, Option<(DerivationStatus, mpsc::Receiver<DerivationStatus>)>),
+    ) -> Self {
+        let (l1_head_source, derivation_status_feed) = head_sources;
+        let (initial_status, derivation_status_rx) = derivation_status_feed.unzip();
         Self {
             runtime,
             pipeline,
@@ -100,21 +152,25 @@ where
             ),
             throttle,
             l1_head_source: Some(l1_head_source),
-            safe_head_rx: None,
+            safe_head: initial_status.map(|status| status.safe_l2),
+            derivation_status_rx,
             drain_timeout: config.drain_timeout,
             stopped: false,
             admin_rx: None,
             force_blobs_when_throttling: config.force_blobs_when_throttling,
+            pending_flush_acks: Vec::new(),
         }
     }
 
-    /// Attach an external L2 safe head watch channel.
-    ///
-    /// When the receiver fires, the pipeline's [`prune_safe`](BatchPipeline::prune_safe)
-    /// is called with the new safe L2 block number, allowing the encoder to
-    /// free blocks that are confirmed safe on L2.
-    pub fn with_safe_head_rx(mut self, rx: tokio::sync::watch::Receiver<u64>) -> Self {
-        self.safe_head_rx = Some(rx);
+    /// Attach a derivation-status feed to a test driver created without one.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn with_derivation_status_rx(
+        mut self,
+        initial: DerivationStatus,
+        rx: mpsc::Receiver<DerivationStatus>,
+    ) -> Self {
+        self.safe_head = Some(initial.safe_l2);
+        self.derivation_status_rx = Some(rx);
         self
     }
 
@@ -145,8 +201,20 @@ where
     /// 1. **CPU phase**: drain encoding, apply throttle, recover txpool, submit pending frames.
     /// 2. **I/O phase**: block on `tokio::select!` until one external event fires.
     ///
-    /// When draining (after cancellation or source exhaustion), the I/O phase is
+    /// When shutting down (after cancellation or source exhaustion), the I/O phase is
     /// replaced by a bounded drain of all in-flight receipts.
+    ///
+    /// If a [`DriverEvent::Flush`] carried an acknowledgement, it fires as soon as a later
+    /// CPU phase reports both encoding and submission fully drained (i.e. the flush's frames
+    /// have all been handed to the tx manager) — see the `pending_flush_acks` field.
+    ///
+    /// This "fully drained" check is global, not scoped to the triggering flush: it's the
+    /// weakest condition that's still always *sufficient* (the flush's own frames can never be
+    /// dequeued before this fires) but not *tight* — if further `Block` events keep arriving
+    /// and producing fresh encoding/submission work while the ack is outstanding, it's delayed
+    /// until that work drains too, and under sustained continuous ingestion may not fire at
+    /// all. Callers that need a precise, always-terminating signal must ensure the source is
+    /// otherwise quiesced before flushing (as the action-test harness does).
     pub async fn run(mut self) -> Result<(), BatchDriverError> {
         if self.stopped {
             info!(
@@ -154,17 +222,32 @@ where
                 "batcher starting in stopped state; call admin_startBatcher to begin submission"
             );
         }
-        let mut draining = false;
+
+        let mut shutting_down = false;
         loop {
-            self.drain_encoding()?;
+            if !shutting_down {
+                self.apply_pending_derivation_status_updates()?;
+            }
+
+            let encoding_idle = self.drain_encoding()?;
             let is_throttling = self.throttle.apply(self.pipeline.da_backlog_bytes()).await;
             if self.force_blobs_when_throttling {
                 self.pipeline.set_blob_override(is_throttling);
             }
             self.submissions.recover_txpool().await;
-            self.submissions.submit_pending(&mut self.pipeline).await;
+            let submissions_idle = self.submissions.submit_pending(&mut self.pipeline).await;
 
-            if draining {
+            if encoding_idle && submissions_idle && !self.pending_flush_acks.is_empty() {
+                debug!(
+                    acks = %self.pending_flush_acks.len(),
+                    "flush settled: encoding and submission fully drained"
+                );
+                for ack in self.pending_flush_acks.drain(..) {
+                    let _ = ack.send(());
+                }
+            }
+
+            if shutting_down {
                 self.submissions
                     .drain(&mut self.pipeline, self.runtime.sleep(self.drain_timeout))
                     .await;
@@ -178,27 +261,21 @@ where
                         "batcher shutting down, draining in-flight submissions"
                     );
                     self.pipeline.force_close_channel();
-                    draining = true;
+                    shutting_down = true;
                 }
                 DriverEvent::Block(b) => {
                     self.on_block(b);
                 }
-                DriverEvent::Flush => {
+                DriverEvent::Flush(ack) => {
                     self.pipeline.force_close_channel();
+                    if let Some(ack) = ack {
+                        self.pending_flush_acks.push(ack);
+                    }
                     debug!("flush signal received, force-closed channel");
                 }
-                DriverEvent::Reorg(head) => {
-                    let safe_head = self.safe_head_rx.as_ref().map(|rx| *rx.borrow()).unwrap_or(0);
-                    let catchup_from = safe_head + 1;
-                    warn!(
-                        reorg_head = %head.block_info.number,
-                        safe_head = %safe_head,
-                        catchup_from = %catchup_from,
-                        "L2 reorg detected, resetting pipeline and catching up from safe head"
-                    );
-                    self.submissions.discard();
-                    self.pipeline.reset();
-                    self.source.reset_catchup(catchup_from);
+                DriverEvent::Reorg => {
+                    warn!("L2 reorg detected, resetting pipeline and catching up from safe head");
+                    self.reset_to_safe_head();
                 }
                 DriverEvent::Receipt(ids, o) => {
                     self.submissions.handle_outcome(&mut self.pipeline, ids, o);
@@ -207,9 +284,8 @@ where
                     self.pipeline.advance_l1_head(n);
                     debug!(l1_head = %n, "L1 head advanced via source");
                 }
-                DriverEvent::SafeHead(n) => {
-                    self.pipeline.prune_safe(n);
-                    debug!(safe_l2_number = %n, "pruned safe blocks via watch");
+                DriverEvent::DerivationStatus(status) => {
+                    self.on_derivation_status(status);
                 }
                 DriverEvent::L1SourceClosed => {
                     debug!("L1 head source closed, disabling arm");
@@ -221,13 +297,15 @@ where
 
     /// Drain encoding steps synchronously up to [`Self::STEP_BUDGET`].
     ///
-    /// Returns `Err` on a fatal [`StepError`](base_batcher_encoder::StepError).
-    fn drain_encoding(&mut self) -> Result<(), BatchDriverError> {
+    /// Returns `Ok(true)` if the pipeline reached [`StepResult::Idle`] (nothing left to
+    /// encode), or `Ok(false)` if the step budget ran out first. Returns `Err` on a fatal
+    /// [`StepError`](base_batcher_encoder::StepError).
+    fn drain_encoding(&mut self) -> Result<bool, BatchDriverError> {
         let mut budget = Self::STEP_BUDGET;
         let mut steps = 0usize;
-        loop {
+        let idle = loop {
             match self.pipeline.step() {
-                Ok(StepResult::Idle) => break,
+                Ok(StepResult::Idle) => break true,
                 Ok(
                     StepResult::BlockEncoded | StepResult::SpanFlushed | StepResult::ChannelClosed,
                 ) => {
@@ -235,7 +313,7 @@ where
                     budget -= 1;
                     if budget == 0 {
                         debug!(steps = %steps, "encoding step budget exhausted, yielding");
-                        break;
+                        break false;
                     }
                 }
                 Err(e) => {
@@ -243,11 +321,87 @@ where
                     return Err(e.into());
                 }
             }
-        }
+        };
         if steps > 0 {
             debug!(steps = %steps, "completed encoding drain");
         }
-        Ok(())
+        Ok(idle)
+    }
+
+    /// Reset volatile state and restart delivery above the latest safe head.
+    fn reset_to_safe_head(&mut self) {
+        self.submissions.discard();
+        self.pipeline.reset();
+
+        if let Some(safe_head) = self.safe_head {
+            self.source.reset_catchup(safe_head);
+        }
+
+        self.discard_pending_flush_acks();
+    }
+
+    /// Reconcile buffered state with an ordered derivation-progress snapshot.
+    fn on_derivation_status(&mut self, status: DerivationStatus) {
+        let head = status.safe_l2;
+        let previous = self.safe_head.replace(head);
+
+        if let Some(previous) = previous.filter(|previous| {
+            head.number < previous.number
+                || (head.number == previous.number && head.hash != previous.hash)
+        }) {
+            warn!(
+                previous_safe_l2 = %previous.number,
+                previous_safe_hash = %previous.hash,
+                safe_l2 = %head.number,
+                safe_hash = %head.hash,
+                "safe L2 head changed chain, resetting pipeline"
+            );
+            self.reset_to_safe_head();
+            return;
+        }
+
+        match self
+            .pipeline
+            .reconcile_derivation(head, status.current_l1.map(|current_l1| current_l1.number))
+        {
+            DerivationReconciliation::Consistent => {}
+            DerivationReconciliation::SafeHeadMismatch => {
+                warn!(
+                    safe_l2 = %head.number,
+                    safe_hash = %head.hash,
+                    "safe L2 head does not match buffered chain, resetting pipeline"
+                );
+                self.reset_to_safe_head();
+            }
+            DerivationReconciliation::StalledChannel => {
+                warn!(
+                    current_l1 = ?status.current_l1.map(|current_l1| current_l1.number),
+                    safe_l2 = %head.number,
+                    "rollup node passed a fully confirmed channel without deriving it, resetting pipeline"
+                );
+                self.reset_to_safe_head();
+            }
+        }
+    }
+
+    /// Apply derivation-status updates that arrived before the next CPU phase.
+    fn apply_pending_derivation_status_updates(&mut self) -> Result<(), BatchDriverError> {
+        loop {
+            let Some(rx) = self.derivation_status_rx.as_mut() else {
+                return Ok(());
+            };
+
+            match rx.try_recv() {
+                Ok(status) => self.on_derivation_status(status),
+                Err(mpsc::error::TryRecvError::Empty) => return Ok(()),
+                Err(mpsc::error::TryRecvError::Disconnected) if self.runtime.is_cancelled() => {
+                    return Ok(());
+                }
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    return Err(BatchDriverError::DerivationStatusSourceClosed);
+                }
+            }
+        }
     }
 
     /// Ingest a new L2 block into the pipeline.
@@ -258,25 +412,32 @@ where
     /// re-delivered by the sequential poller.
     fn on_block(&mut self, block: Box<BaseBlock>) {
         let number = block.header.number;
+        if self.safe_head.is_some_and(|safe_head| number <= safe_head.number) {
+            return;
+        }
+
         match self.pipeline.add_block(*block) {
             Ok(()) => {
                 debug!(block = %number, "added unsafe block to pipeline");
             }
             Err((e, _block)) => {
-                let safe_head = self.safe_head_rx.as_ref().map(|rx| *rx.borrow()).unwrap_or(0);
-                let catchup_from = safe_head + 1;
                 warn!(
                     block = %number,
-                    safe_head = %safe_head,
-                    catchup_from = %catchup_from,
                     error = %e,
                     "reorg detected during block ingestion, resetting pipeline and catching up from safe head"
                 );
-                self.submissions.discard();
-                self.pipeline.reset();
-                self.source.reset_catchup(catchup_from);
+                self.reset_to_safe_head();
             }
         }
+    }
+
+    /// Drop any outstanding flush acknowledgements without firing them.
+    ///
+    /// Called whenever the pipeline is reset: the blocks a pending flush was waiting on no
+    /// longer exist, so firing the ack would falsely report settlement. Dropping the sender
+    /// surfaces as a closed-channel error to the waiter.
+    fn discard_pending_flush_acks(&mut self) {
+        self.pending_flush_acks.clear();
     }
 
     /// Block on the next external event using a biased `tokio::select!`.
@@ -285,6 +446,8 @@ where
     /// are returned to the caller. Admin commands are placed before the source
     /// arm so control-plane operations (pause, resume, flush) are never starved
     /// by sustained block throughput.
+    /// Derivation-status changes are also handled before unsafe blocks so pruning and
+    /// recovery cannot be starved by sequential catchup.
     ///
     /// [`AdminCommand::Pause`] immediately discards in-flight submissions and
     /// resets the pipeline, then drops `Block` and `Flush` source events until
@@ -303,21 +466,20 @@ where
 
                 cmd = Self::next_admin_cmd(&mut self.admin_rx) => {
                     match cmd {
-                        AdminCommand::Flush => return Ok(DriverEvent::Flush),
+                        AdminCommand::Flush { ack } => return Ok(DriverEvent::Flush(ack)),
                         AdminCommand::Pause => {
                             self.submissions.discard();
                             self.pipeline.reset();
                             self.stopped = true;
+                            self.discard_pending_flush_acks();
                             info!(stopped = true, "batcher paused via admin");
                         }
                         AdminCommand::Resume => {
-                            let safe_head =
-                                self.safe_head_rx.as_ref().map(|rx| *rx.borrow());
-                            if let Some(n) = safe_head {
-                                self.source.reset_catchup(n + 1);
+                            if let Some(safe_head) = self.safe_head {
+                                self.source.reset_catchup(safe_head);
                                 info!(
                                     stopped = false,
-                                    catchup_from = %(n + 1),
+                                    safe_l2 = %safe_head.number,
                                     "batcher resumed via admin, catching up from safe head"
                                 );
                             } else {
@@ -352,13 +514,36 @@ where
                     continue;
                 }
 
+                derivation_status = async {
+                    if let Some(ref mut rx) = self.derivation_status_rx {
+                        rx.recv().await
+                    } else {
+                        std::future::pending::<Option<DerivationStatus>>().await
+                    }
+                } => {
+                    match derivation_status {
+                        Some(status) => DriverEvent::DerivationStatus(status),
+                        None => return Err(BatchDriverError::DerivationStatusSourceClosed),
+                    }
+                }
+
                 event = self.source.next() => match event {
-                    Ok(L2BlockEvent::Block(_) | L2BlockEvent::Flush) if self.stopped => {
+                    Ok(L2BlockEvent::Block(_)) if self.stopped => {
+                        continue;
+                    }
+                    Ok(L2BlockEvent::Flush { ack }) if self.stopped => {
+                        // Drop (rather than fire) any ack: the batcher is paused, so this
+                        // flush produces no frames and firing would falsely report
+                        // settlement. The waiter observes a closed-channel error instead of
+                        // a silent, indefinite-looking drop.
+                        if ack.is_some() {
+                            debug!("flush ack dropped: batcher is stopped, flush produces no frames");
+                        }
                         continue;
                     }
                     Ok(L2BlockEvent::Block(block)) => DriverEvent::Block(block),
-                    Ok(L2BlockEvent::Flush) => DriverEvent::Flush,
-                    Ok(L2BlockEvent::Reorg { new_safe_head }) => DriverEvent::Reorg(new_safe_head),
+                    Ok(L2BlockEvent::Flush { ack }) => DriverEvent::Flush(ack),
+                    Ok(L2BlockEvent::Reorg) => DriverEvent::Reorg,
                     Err(SourceError::Exhausted) => DriverEvent::Shutdown,
                     Err(e) => return Err(e.into()),
                 },
@@ -378,28 +563,6 @@ where
                     Err(SourceError::Exhausted | SourceError::Closed) => DriverEvent::L1SourceClosed,
                     Err(e) => {
                         warn!(error = %e, "L1 head source error");
-                        continue;
-                    }
-                },
-
-                _ = async {
-                    if let Some(ref mut rx) = self.safe_head_rx {
-                        rx.changed().await.ok();
-                    } else {
-                        std::future::pending::<()>().await;
-                    }
-                } => {
-                    if let Some(rx) = &mut self.safe_head_rx {
-                        if rx.has_changed().is_err() {
-                            // Sender dropped; safe-head poller has exited. Disable this
-                            // arm permanently and warn so operators know pruning stopped.
-                            warn!("safe-head watch sender dropped; safe-head pruning disabled");
-                            self.safe_head_rx = None;
-                            continue;
-                        }
-                        let n = *rx.borrow();
-                        DriverEvent::SafeHead(n)
-                    } else {
                         continue;
                     }
                 }
@@ -442,17 +605,17 @@ mod tests {
         L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource,
     };
     use base_blobs::{BlobDecoder, BlobEncoder};
-    use base_protocol::{ChannelId, Frame};
+    use base_protocol::{BlockInfo, ChannelId, Frame};
     use base_runtime::{
         Cancellation, Clock, Spawner,
         deterministic::{Config, Runner},
     };
     use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError};
-    use tokio::sync::{mpsc, oneshot, watch};
+    use tokio::sync::{mpsc, oneshot};
 
     use crate::{
-        AdminCommand, BatchDriver, BatchDriverConfig, DaThrottle, NoopThrottleClient,
-        ThrottleController,
+        AdminCommand, BatchDriver, BatchDriverConfig, DaThrottle, DerivationStatus,
+        NoopThrottleClient, ThrottleController,
         event::DriverEvent,
         test_utils::{
             DriverFixture, ImmediateConfirmTxManager, ImmediateFailTxManager,
@@ -480,7 +643,7 @@ mod tests {
             }
         }
 
-        fn reset_catchup(&mut self, _: u64) {}
+        fn reset_catchup(&mut self, _: BlockInfo) {}
     }
 
     #[derive(Debug)]
@@ -502,6 +665,10 @@ mod tests {
                 None => std::future::pending().await,
             }
         }
+    }
+
+    fn safe_head(number: u64) -> BlockInfo {
+        BlockInfo { hash: B256::with_last_byte(number as u8), number, ..Default::default() }
     }
 
     /// Build a [`BatchSubmission`] whose single frame exactly fills one blob payload,
@@ -568,7 +735,7 @@ mod tests {
         Arc<NoopThrottleClient>,
         QueuedL1HeadSource,
     > {
-        BatchDriver::new(
+        BatchDriver::new_without_derivation_status(
             runtime,
             TrackingPipeline::new(Arc::new(Mutex::new(Recorded::default()))),
             QueuedSource::new(source_events),
@@ -671,11 +838,14 @@ mod tests {
     fn next_event_prioritizes_cancellation_over_ready_admin() {
         Runner::start(Config::seeded(0), |ctx| async move {
             let (admin_tx, admin_rx) = mpsc::channel(1);
-            admin_tx.send(AdminCommand::Flush).await.expect("admin receiver should be open");
+            admin_tx
+                .send(AdminCommand::Flush { ack: None })
+                .await
+                .expect("admin receiver should be open");
 
             let mut driver = driver_for_next_event(
                 ctx.clone(),
-                [Ok(L2BlockEvent::Flush)],
+                [Ok(L2BlockEvent::Flush { ack: None })],
                 [Ok(L1HeadEvent::NewHead(9))],
                 ImmediateConfirmTxManager { l1_block: 1 },
             )
@@ -692,7 +862,10 @@ mod tests {
     fn next_event_prioritizes_admin_before_source() {
         Runner::start(Config::seeded(0), |ctx| async move {
             let (admin_tx, admin_rx) = mpsc::channel(1);
-            admin_tx.send(AdminCommand::Flush).await.expect("admin receiver should be open");
+            admin_tx
+                .send(AdminCommand::Flush { ack: None })
+                .await
+                .expect("admin receiver should be open");
 
             let mut driver = driver_for_next_event(
                 ctx,
@@ -703,55 +876,64 @@ mod tests {
             .with_admin_rx(admin_rx);
 
             let event = driver.next_event().await.expect("next_event should succeed");
-            assert!(matches!(event, DriverEvent::Flush));
+            assert!(matches!(event, DriverEvent::Flush(_)));
         });
     }
 
     #[test]
     fn next_event_prioritizes_source_before_receipts_and_heads() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            let (_safe_tx, safe_rx) = watch::channel(0);
+            let (_status_tx, status_rx) = mpsc::channel(1);
             let mut driver = driver_for_next_event(
                 ctx,
-                [Ok(L2BlockEvent::Flush)],
+                [Ok(L2BlockEvent::Flush { ack: None })],
                 [Ok(L1HeadEvent::NewHead(9))],
                 ImmediateConfirmTxManager { l1_block: 1 },
             )
-            .with_safe_head_rx(safe_rx);
+            .with_derivation_status_rx(DerivationStatus::from_safe_l2(safe_head(0)), status_rx);
             driver.pipeline.submissions.push_back(SubmissionStub::stub());
             driver.submissions.submit_pending(&mut driver.pipeline).await;
 
             let event = driver.next_event().await.expect("next_event should succeed");
-            assert!(matches!(event, DriverEvent::Flush));
+            assert!(matches!(event, DriverEvent::Flush(_)));
         });
     }
 
     #[test]
-    fn next_event_prioritizes_receipts_before_l1_head_and_safe_head() {
+    fn next_event_prioritizes_derivation_status_before_source_and_receipts() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            let (safe_tx, safe_rx) = watch::channel(0);
-            safe_tx.send(5).expect("safe-head receiver should be open");
+            let (status_tx, status_rx) = mpsc::channel(1);
+            status_tx
+                .send(DerivationStatus::from_safe_l2(safe_head(5)))
+                .await
+                .expect("derivation-status receiver should be open");
 
             let mut driver = driver_for_next_event(
                 ctx,
-                [],
+                [Ok(L2BlockEvent::Flush { ack: None })],
                 [Ok(L1HeadEvent::NewHead(9))],
                 ImmediateConfirmTxManager { l1_block: 42 },
             )
-            .with_safe_head_rx(safe_rx);
+            .with_derivation_status_rx(DerivationStatus::from_safe_l2(safe_head(0)), status_rx);
             driver.pipeline.submissions.push_back(SubmissionStub::stub());
             driver.submissions.submit_pending(&mut driver.pipeline).await;
 
             let event = driver.next_event().await.expect("next_event should succeed");
-            assert!(matches!(event, DriverEvent::Receipt(_, _)));
+            assert!(matches!(
+                event,
+                DriverEvent::DerivationStatus(status) if status.safe_l2.number == 5
+            ));
         });
     }
 
     #[test]
-    fn next_event_prioritizes_l1_head_before_safe_head() {
+    fn next_event_prioritizes_derivation_status_before_l1_head() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            let (safe_tx, safe_rx) = watch::channel(0);
-            safe_tx.send(5).expect("safe-head receiver should be open");
+            let (status_tx, status_rx) = mpsc::channel(1);
+            status_tx
+                .send(DerivationStatus::from_safe_l2(safe_head(5)))
+                .await
+                .expect("derivation-status receiver should be open");
 
             let mut driver = driver_for_next_event(
                 ctx,
@@ -759,25 +941,13 @@ mod tests {
                 [Ok(L1HeadEvent::NewHead(9))],
                 ImmediateConfirmTxManager { l1_block: 1 },
             )
-            .with_safe_head_rx(safe_rx);
+            .with_derivation_status_rx(DerivationStatus::from_safe_l2(safe_head(0)), status_rx);
 
             let event = driver.next_event().await.expect("next_event should succeed");
-            assert!(matches!(event, DriverEvent::L1Head(9)));
-        });
-    }
-
-    #[test]
-    fn next_event_returns_safe_head_when_only_safe_head_is_ready() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let (safe_tx, safe_rx) = watch::channel(0);
-            safe_tx.send(7).expect("safe-head receiver should be open");
-
-            let mut driver =
-                driver_for_next_event(ctx, [], [], ImmediateConfirmTxManager { l1_block: 1 })
-                    .with_safe_head_rx(safe_rx);
-
-            let event = driver.next_event().await.expect("next_event should succeed");
-            assert!(matches!(event, DriverEvent::SafeHead(7)));
+            assert!(matches!(
+                event,
+                DriverEvent::DerivationStatus(status) if status.safe_l2.number == 5
+            ));
         });
     }
 
@@ -834,10 +1004,9 @@ mod tests {
         });
     }
 
-    /// When blob encoding fails the submission has already been dequeued from the pipeline
-    /// (cursor advanced, `pending_confirmations` incremented). Without a requeue the channel
-    /// is permanently stuck — `pending_confirmations` never returns to zero and blocks are
-    /// never pruned. The driver must call requeue so the encoder can unwind that state.
+    /// When blob encoding fails, the submission has already been dequeued and its frames marked
+    /// pending. Without a requeue those frames never become ready again, so the driver must
+    /// requeue the submission before retrying.
     #[test]
     fn test_blob_encoding_failure_requeues_submission() {
         // Blob submission encoding feeds DERIVATION_VERSION_0 (1) + frame.encode()
@@ -883,8 +1052,7 @@ mod tests {
     }
 
     /// The submission loop must submit each pipeline submission as one L1 tx. The
-    /// pipeline is responsible for choosing the frames that belong in a tx, matching
-    /// op-batcher's `NextTxData` boundary.
+    /// pipeline is responsible for choosing the frames that belong in a transaction.
     #[test]
     fn test_submission_loop_submits_each_pipeline_submission_as_one_tx() {
         Runner::start(Config::seeded(0), |ctx| async move {
@@ -924,8 +1092,8 @@ mod tests {
     }
 
     /// A single submission may contain multiple blob-filling frames when
-    /// `target_num_frames > 1`. Matching op-batcher, each frame becomes its own
-    /// blob in the same L1 transaction.
+    /// `target_num_frames > 1`. Each frame becomes its own blob in the same L1
+    /// transaction.
     #[test]
     fn test_multi_frame_blob_submission_maps_frames_to_blobs() {
         Runner::start(Config::seeded(0), |ctx| async move {
@@ -1074,6 +1242,93 @@ mod tests {
                 1,
                 "driver must attempt txpool recovery with cancel_tx"
             );
+        });
+    }
+
+    /// A flush acknowledgement must not fire until every ready submission has been dequeued
+    /// and handed to the tx manager — not just the first. Regression test for a race where a
+    /// caller could observe the ack after only the first frame of a multi-frame flush was
+    /// queued, then mine an L1 block missing the later frames.
+    #[test]
+    fn test_flush_ack_waits_for_all_ready_submissions() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let recorded = Arc::new(Mutex::new(Recorded::default()));
+            let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+            pipeline.submissions.push_back(SubmissionStub::with_id(0));
+            pipeline.submissions.push_back(SubmissionStub::with_id(1));
+
+            let (admin_tx, admin_rx) = mpsc::channel(1);
+            let (ack_tx, ack_rx) = oneshot::channel();
+            admin_tx
+                .send(AdminCommand::Flush { ack: Some(ack_tx) })
+                .await
+                .expect("admin receiver should be open");
+
+            let handle = ctx.spawn(
+                DriverFixture::build_with_max_pending(
+                    ctx.clone(),
+                    pipeline,
+                    ImmediateConfirmTxManager { l1_block: 1 },
+                    2,
+                )
+                .with_admin_rx(admin_rx)
+                .run(),
+            );
+
+            ack_rx.await.expect("flush ack must fire");
+            assert_eq!(
+                recorded.lock().unwrap().dequeued.len(),
+                2,
+                "ack must not fire until both ready submissions are dequeued"
+            );
+
+            ctx.cancel();
+            assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
+        });
+    }
+
+    /// If a ready submission can't fit within semaphore capacity, the flush ack must not
+    /// fire — firing early would let a caller believe the flush fully settled before every
+    /// frame was actually handed to the tx manager.
+    #[test]
+    fn test_flush_ack_does_not_fire_while_backpressured() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let recorded = Arc::new(Mutex::new(Recorded::default()));
+            let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+            pipeline.submissions.push_back(SubmissionStub::with_id(0));
+            pipeline.submissions.push_back(SubmissionStub::with_id(1));
+
+            let (admin_tx, admin_rx) = mpsc::channel(1);
+            let (ack_tx, mut ack_rx) = oneshot::channel();
+            admin_tx
+                .send(AdminCommand::Flush { ack: Some(ack_tx) })
+                .await
+                .expect("admin receiver should be open");
+
+            let handle = ctx.spawn(
+                DriverFixture::build_with_max_pending(
+                    ctx.clone(),
+                    pipeline,
+                    NeverConfirmTxManager,
+                    1,
+                )
+                .with_admin_rx(admin_rx)
+                .run(),
+            );
+
+            ctx.sleep(Duration::from_millis(50)).await;
+            assert!(
+                ack_rx.try_recv().is_err(),
+                "ack must not fire while a ready submission is still waiting on semaphore capacity"
+            );
+            assert_eq!(
+                recorded.lock().unwrap().dequeued.len(),
+                1,
+                "only the single available permit should have been used"
+            );
+
+            ctx.cancel();
+            assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
         });
     }
 }
