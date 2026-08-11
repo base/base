@@ -28,6 +28,9 @@ k256 = { workspace = true, features = ["ecdsa"] }
 # X.509 / CRL
 x509-parser.workspace = true
 
+# CBOR (attestation document decode after strict COSE parse)
+ciborium.workspace = true
+
 # HTTP (CRL fetching)
 reqwest.workspace = true
 
@@ -77,7 +80,6 @@ hex.workspace = true
 [dev-dependencies]
 hex-literal.workspace = true
 async-trait.workspace = true
-serde_bytes.workspace = true
 alloy-consensus.workspace = true
 alloy-rpc-types-eth.workspace = true
 tokio = { workspace = true, features = ["rt", "macros", "test-util"] }

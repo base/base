@@ -98,19 +98,23 @@ impl AttestationVerifier {
         opt.as_ref().map_or_else(Bytes::new, |b| Bytes::copy_from_slice(b.as_ref()))
     }
 
-    /// Validates attestation document content (M-02 audit checks).
+    /// Validates attestation document content (M-02 / `NitroValidator` checks).
     ///
     /// Per `NitroValidator.sol` reference:
     /// - `module_id` non-empty
     /// - `timestamp` non-zero
     /// - `digest` == `"SHA384"`
-    /// - `cabundle` has >= 1 certificate
+    /// - `cabundle` has 1..=32 certificates, each 1..=1024 bytes
+    /// - leaf `certificate` is 1..=1024 bytes
     /// - PCR count between 1 and 32, each index 0-31
     /// - PCRs are not all zero (AWS Nitro debug-mode attestations)
     /// - `public_key`: null or 1-1024 bytes (present-but-empty is rejected, matching Solidity)
     /// - `user_data`: null or <= 512 bytes
     /// - `nonce`: null or <= 512 bytes
-    fn validate_attestation_content(doc: &AttestationDocument) -> Result<()> {
+    ///
+    /// PCR duplicate detection requires a raw CBOR walk (maps collapse duplicates);
+    /// callers that need that should validate the payload bytes separately.
+    pub fn validate_attestation_content(doc: &AttestationDocument) -> Result<()> {
         if doc.module_id.is_empty() {
             return Err(VerifierError::ContentValidation("module_id is empty".into()));
         }
@@ -126,8 +130,25 @@ impl AttestationVerifier {
             )));
         }
 
-        if doc.cabundle.is_empty() {
-            return Err(VerifierError::ContentValidation("cabundle is empty".into()));
+        let cabundle_len = doc.cabundle.len();
+        if cabundle_len == 0 || cabundle_len > 32 {
+            return Err(VerifierError::ContentValidation(format!(
+                "cabundle has {cabundle_len} certificates, must be 1-32"
+            )));
+        }
+        for (i, cert) in doc.cabundle.iter().enumerate() {
+            if cert.is_empty() || cert.len() > 1024 {
+                return Err(VerifierError::ContentValidation(format!(
+                    "cabundle[{i}] length {} out of range (1-1024)",
+                    cert.len()
+                )));
+            }
+        }
+        if doc.certificate.is_empty() || doc.certificate.len() > 1024 {
+            return Err(VerifierError::ContentValidation(format!(
+                "certificate length {} out of range (1-1024)",
+                doc.certificate.len()
+            )));
         }
 
         // PCR count: 1-32, each index 0-31.

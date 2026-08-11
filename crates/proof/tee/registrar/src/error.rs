@@ -90,7 +90,11 @@ pub type Result<T> = std::result::Result<T, RegistrarError>;
 /// Errors that can occur while parsing a Nitro attestation into a registration plan.
 #[derive(Debug, Error)]
 pub enum PlannerError {
-    /// Underlying attestation parse / format failure from `nitro-verifier`.
+    /// Strict COSE / payload CBOR validation failed (`NitroValidator` parity).
+    #[error("COSE format error: {0}")]
+    Cose(String),
+
+    /// Underlying attestation decode / content validation failure from `nitro-verifier`.
     #[error("attestation parse error")]
     Parse(#[from] VerifierError),
 

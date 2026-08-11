@@ -22,6 +22,9 @@ pub use error::{PlannerError, PlannerResult, RegistrarError, Result};
 mod metrics;
 pub use metrics::RegistrarMetrics;
 
+mod cbor;
+pub use cbor::{CborItem, NitroCose, ParsedCoseSign1};
+
 mod planner;
 pub use planner::{AttestationPlanner, CertManagerKeys, PINNED_ROOT_CERT_HASH};
 
