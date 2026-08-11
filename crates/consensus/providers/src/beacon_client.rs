@@ -1,6 +1,6 @@
 //! Contains an online implementation of the `BeaconClient` trait.
 
-use std::{boxed::Box, collections::HashMap, format, string::String, vec::Vec};
+use std::{boxed::Box, collections::HashMap, format, string::String, time::Duration, vec::Vec};
 
 use alloy_eips::eip4844::{env_settings::EnvKzgSettings, kzg_to_versioned_hash};
 use alloy_primitives::{B256, FixedBytes};
@@ -140,14 +140,23 @@ pub struct OnlineBeaconClient {
 
 impl OnlineBeaconClient {
     /// Creates a new [`OnlineBeaconClient`] from the provided base URL string.
-    pub fn new_http(mut base: String) -> Self {
+    ///
+    /// Requests use the default [`crate::L1_RPC_TIMEOUT`] deadline.
+    pub fn new_http(base: String) -> Self {
+        Self::with_timeout(base, crate::L1_RPC_TIMEOUT)
+    }
+
+    fn with_timeout(mut base: String, timeout: Duration) -> Self {
         // If base ends with a slash, remove it
         if base.ends_with('/') {
             base.remove(base.len() - 1);
         }
         Self {
             base,
-            inner: Client::builder().build().expect("Failed to create beacon client"),
+            inner: Client::builder()
+                .timeout(timeout)
+                .build()
+                .expect("Failed to create beacon client"),
             l1_slot_duration: None,
         }
     }
@@ -293,6 +302,8 @@ mod tests {
 
     const TEST_BLOB_HASH_HEX: &str =
         "0x016c357b8b3a6b3fd82386e7bebf77143d537cdb1c856509661c412602306a04";
+    const TEST_REQUEST_TIMEOUT: Duration = Duration::from_millis(25);
+    const TEST_RESPONSE_DELAY: Duration = Duration::from_millis(250);
 
     /// Computes the versioned hash for a blob using the same path as production code.
     fn versioned_hash_for(blob: &Blob) -> B256 {
@@ -400,5 +411,27 @@ mod tests {
             matches!(response, Err(BeaconClientError::SlotNotFound(s)) if s == slot),
             "expected SlotNotFound({slot}), got {response:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn beacon_requests_timeout_at_the_client_boundary() {
+        let server = MockServer::start_async().await;
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(GET).path("/eth/v1/config/spec");
+                then.status(200).delay(TEST_RESPONSE_DELAY);
+            })
+            .await;
+        let client = OnlineBeaconClient::with_timeout(server.base_url(), TEST_REQUEST_TIMEOUT);
+
+        let result = tokio::time::timeout(Duration::from_millis(500), client.slot_interval())
+            .await
+            .expect("beacon requests must not remain pending");
+
+        assert!(
+            matches!(result, Err(BeaconClientError::Http(error)) if error.is_timeout()),
+            "beacon request should fail with a request timeout"
+        );
+        mock.assert_async().await;
     }
 }

@@ -1,7 +1,10 @@
 //! Upgrade signal metrics observer actor.
 
+use std::time::Duration;
+
 use alloy_provider::RootProvider;
 use base_common_genesis::BaseUpgrade;
+use base_consensus_providers::L1RpcProvider;
 use base_upgrade_signal::{
     AlloyUpgradeSignalReader, UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalError,
     UpgradeSignalMetricLayer, UpgradeSignalMonitor, UpgradeSignalRefresher,
@@ -35,11 +38,13 @@ impl UpgradeSignalNodeConfig {
         config: UpgradeSignalConfig,
         l1_rpc: Option<&Url>,
         default_l1_provider: RootProvider,
+        l1_rpc_timeout: Duration,
         chain_id: u64,
         runtime_validation: Option<UpgradeSignalRuntimeValidation>,
     ) -> Self {
-        let l1_provider =
-            l1_rpc.map(|url| RootProvider::new_http(url.clone())).unwrap_or(default_l1_provider);
+        let l1_provider = l1_rpc
+            .map(|url| L1RpcProvider::new_http_with_timeout(url.clone(), l1_rpc_timeout))
+            .unwrap_or(default_l1_provider);
         let runtime_validation =
             runtime_validation.unwrap_or_else(UpgradeSignalRuntimeValidation::fail_closed);
         Self { config, l1_provider, chain_id, runtime_validation }
