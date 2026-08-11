@@ -262,8 +262,12 @@ jobs:
           cat "$body" >> "$GITHUB_STEP_SUMMARY"
           echo "overall=$overall" >> "$GITHUB_OUTPUT"
 
+      # Skip commenting on forked PRs — we don't have permission to comment on them.
       - name: Comment fork-test results on PR
-        if: github.event_name == 'pull_request' && steps.aggregate.outcome == 'success'
+        if: >
+          github.event_name == 'pull_request' &&
+          steps.aggregate.outcome == 'success' &&
+          github.event.pull_request.head.repo.full_name == github.repository
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
