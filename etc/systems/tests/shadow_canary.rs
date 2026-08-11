@@ -47,10 +47,7 @@ async fn shadow_canary_persists_committed_blocks() -> Result<()> {
         .await
         .wrap_err("builder did not reach target block height")?;
 
-    let pool = db_config
-        .init_pool()
-        .await
-        .map_err(|err| eyre::eyre!(err.to_string()))?;
+    let pool = db_config.init_pool().await.map_err(|err| eyre::eyre!(err.to_string()))?;
     let repo = ShadowBlockRepo::new(pool);
 
     let deadline = Instant::now() + DB_POLL_TIMEOUT;
