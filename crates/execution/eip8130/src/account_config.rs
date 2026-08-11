@@ -188,12 +188,13 @@ impl AccountConfigurationStorage<'_> {
         Ok(self.get_account_state(account)?.lock_status(now))
     }
 
-    /// The implicit-EOA self-actor id for `account`: `bytes32(bytes20(account))`,
-    /// i.e. the address left-aligned in the high 20 bytes.
+    /// The implicit-EOA self-actor id for `account`:
+    /// `bytes32(uint256(uint160(account)))`, i.e. the address right-aligned in the
+    /// low 20 bytes (matches the finalized `Keystore.ActorId.fromAddress`).
     #[must_use]
     pub fn self_actor_id(account: Address) -> B256 {
         let mut word = [0u8; 32];
-        word[..20].copy_from_slice(account.as_slice());
+        word[12..].copy_from_slice(account.as_slice());
         B256::from(word)
     }
 
@@ -869,10 +870,10 @@ mod tests {
     }
 
     #[test]
-    fn self_actor_id_left_aligns_the_address() {
+    fn self_actor_id_right_aligns_the_address() {
         let id = AccountConfigurationStorage::self_actor_id(ACCOUNT);
-        assert_eq!(&id.as_slice()[..20], ACCOUNT.as_slice());
-        assert_eq!(&id.as_slice()[20..], &[0u8; 12]);
+        assert_eq!(&id.as_slice()[12..], ACCOUNT.as_slice());
+        assert_eq!(&id.as_slice()[..12], &[0u8; 12]);
     }
 
     /// Packs an `ActorConfig` carrying only an authenticator (scope/expiry/policy
