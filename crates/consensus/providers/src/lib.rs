@@ -6,6 +6,9 @@
 )]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
+mod l1_rpc;
+pub use l1_rpc::{L1_RPC_TIMEOUT, L1RpcProvider};
+
 mod metrics;
 pub use metrics::Metrics;
 

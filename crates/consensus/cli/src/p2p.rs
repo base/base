@@ -21,7 +21,7 @@ use base_consensus_gossip::{
 };
 use base_consensus_node::NetworkConfig;
 use base_consensus_peers::{BootNode, BootStoreFile, PeerMonitoring, PeerScoreLevel};
-use base_consensus_providers::AlloyChainProvider;
+use base_consensus_providers::{AlloyChainProvider, L1RpcProvider};
 use clap::Parser;
 use discv5::enr::k256;
 use eyre::{Result, WrapErr};
@@ -430,6 +430,7 @@ impl P2PArgs {
         l2_chain_id: u64,
         rollup_config: &RollupConfig,
         l1_eth_rpc: Option<Url>,
+        l1_rpc_timeout: Duration,
         genesis_signer: Option<alloy_primitives::Address>,
     ) -> eyre::Result<alloy_primitives::Address> {
         if let Some(l1_eth_rpc) = l1_eth_rpc {
@@ -438,7 +439,10 @@ impl P2PArgs {
             const UNSAFE_BLOCK_SIGNER_ADDRESS_STORAGE_SLOT: B256 =
                 b256!("0x65a7ed542fb37fe237fdfbdd70b31598523fe5b32879e307bae27a0bd9581c08");
 
-            let mut provider = AlloyChainProvider::new_http(l1_eth_rpc, 1024);
+            let mut provider = AlloyChainProvider::new(
+                L1RpcProvider::new_http_with_timeout(l1_eth_rpc, l1_rpc_timeout),
+                1024,
+            );
             let latest_block_num = provider.latest_block_number().await?;
 
             // The L1 EL may report a latest block number that it has not fully executed
@@ -504,6 +508,7 @@ impl P2PArgs {
     /// - `config`: The rollup configuration.
     /// - `l2_chain_id`: The L2 chain ID.
     /// - `l1_rpc`: Optional L1 RPC URL for fetching the unsafe block signer.
+    /// - `l1_rpc_timeout`: Request timeout for calls made while fetching the unsafe block signer.
     /// - `genesis_signer`: Optional genesis signer address.
     ///
     /// Errors if the genesis unsafe block signer isn't available for the specified L2 Chain ID.
@@ -512,6 +517,7 @@ impl P2PArgs {
         config: &RollupConfig,
         l2_chain_id: u64,
         l1_rpc: Option<Url>,
+        l1_rpc_timeout: Duration,
         genesis_signer: Option<alloy_primitives::Address>,
     ) -> Result<NetworkConfig, P2PConfigError> {
         // Note: the advertised address is contained in the ENR for external peers from the
@@ -574,8 +580,9 @@ impl P2PArgs {
         let mut gossip_address = libp2p::Multiaddr::from(self.listen_ip);
         gossip_address.push(libp2p::multiaddr::Protocol::Tcp(self.listen_tcp_port));
 
-        let unsafe_block_signer =
-            self.unsafe_block_signer(l2_chain_id, config, l1_rpc, genesis_signer).await?;
+        let unsafe_block_signer = self
+            .unsafe_block_signer(l2_chain_id, config, l1_rpc, l1_rpc_timeout, genesis_signer)
+            .await?;
 
         let bootnodes = self
             .bootnode_strings()?
@@ -678,6 +685,7 @@ mod tests {
     use alloy_primitives::{Address, b256};
     use base_common_genesis::RollupConfig;
     use base_consensus_peers::NodeRecord;
+    use base_consensus_providers::L1_RPC_TIMEOUT;
     use clap::Parser;
 
     use super::*;
@@ -890,7 +898,13 @@ mod tests {
         let args = MockCommand::parse_from(["test"]).p2p;
         let genesis: Address = "0xAf6E19BE0F9cE7f8afd49a1824851023A8249e8a".parse().unwrap();
         let signer = args
-            .unsafe_block_signer(8453, &RollupConfig::default(), None, Some(genesis))
+            .unsafe_block_signer(
+                8453,
+                &RollupConfig::default(),
+                None,
+                L1_RPC_TIMEOUT,
+                Some(genesis),
+            )
             .await
             .unwrap();
         assert_eq!(signer, genesis);
@@ -905,8 +919,10 @@ mod tests {
             "0xAf6E19BE0F9cE7f8afd49a1824851023A8249e8a",
         ])
         .p2p;
-        let signer =
-            args.unsafe_block_signer(8453, &RollupConfig::default(), None, None).await.unwrap();
+        let signer = args
+            .unsafe_block_signer(8453, &RollupConfig::default(), None, L1_RPC_TIMEOUT, None)
+            .await
+            .unwrap();
         assert_eq!(signer, expected);
     }
 
@@ -920,7 +936,13 @@ mod tests {
         ])
         .p2p;
         let signer = args
-            .unsafe_block_signer(8453, &RollupConfig::default(), None, Some(genesis))
+            .unsafe_block_signer(
+                8453,
+                &RollupConfig::default(),
+                None,
+                L1_RPC_TIMEOUT,
+                Some(genesis),
+            )
             .await
             .unwrap();
         assert_eq!(signer, genesis);
@@ -930,7 +952,7 @@ mod tests {
     async fn test_unsafe_block_signer_errors_with_no_fallbacks() {
         let args = MockCommand::parse_from(["test"]).p2p;
         let err = args
-            .unsafe_block_signer(99999, &RollupConfig::default(), None, None)
+            .unsafe_block_signer(99999, &RollupConfig::default(), None, L1_RPC_TIMEOUT, None)
             .await
             .unwrap_err()
             .to_string();
@@ -943,7 +965,7 @@ mod tests {
 
         let err = args
             .p2p
-            .config(&RollupConfig::default(), 8453, None, Some(Address::ZERO))
+            .config(&RollupConfig::default(), 8453, None, L1_RPC_TIMEOUT, Some(Address::ZERO))
             .await
             .expect_err("invalid bootnode should fail config")
             .to_string();
@@ -957,7 +979,7 @@ mod tests {
 
         let config = args
             .p2p
-            .config(&RollupConfig::default(), 8453, None, Some(Address::ZERO))
+            .config(&RollupConfig::default(), 8453, None, L1_RPC_TIMEOUT, Some(Address::ZERO))
             .await
             .unwrap();
 
@@ -972,7 +994,7 @@ mod tests {
 
         let config = args
             .p2p
-            .config(&RollupConfig::default(), 8453, None, Some(Address::ZERO))
+            .config(&RollupConfig::default(), 8453, None, L1_RPC_TIMEOUT, Some(Address::ZERO))
             .await
             .unwrap();
 
@@ -985,7 +1007,7 @@ mod tests {
 
         let config = args
             .p2p
-            .config(&RollupConfig::default(), 8453, None, Some(Address::ZERO))
+            .config(&RollupConfig::default(), 8453, None, L1_RPC_TIMEOUT, Some(Address::ZERO))
             .await
             .unwrap();
 
@@ -998,7 +1020,7 @@ mod tests {
 
         let config = args
             .p2p
-            .config(&RollupConfig::default(), 8453, None, Some(Address::ZERO))
+            .config(&RollupConfig::default(), 8453, None, L1_RPC_TIMEOUT, Some(Address::ZERO))
             .await
             .unwrap();
 
