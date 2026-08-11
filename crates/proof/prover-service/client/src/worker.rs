@@ -599,7 +599,7 @@ mod tests {
             tee_kinds: Vec::new(),
             zk_vms: vec![ZkVm::Sp1],
             zk_backends: vec![ZkBackend::Cluster],
-            protocol_version: 1,
+            protocol_versions: vec![1],
             lock_duration_seconds: 60,
         }
     }
@@ -701,7 +701,7 @@ mod tests {
             tee_kinds: Vec::new(),
             zk_vms: vec![ZkVm::Sp1],
             zk_backends: vec![ZkBackend::Cluster],
-            protocol_version: 1,
+            protocol_versions: vec![1],
             lock_duration_seconds: 60,
         };
         let provider: &dyn ProverWorkerProvider = &server.client;
