@@ -415,7 +415,7 @@ pub trait Asset<S: AssetAccounting, A: PolicyAccounting> {
     }
 
     /// Schedules a multiplier update.
-    fn set_ui_multiplier(
+    fn update_ui_multiplier(
         &self,
         _token: &mut B20AssetToken<S, A>,
         _caller: Address,
@@ -427,7 +427,7 @@ pub trait Asset<S: AssetAccounting, A: PolicyAccounting> {
     }
 
     /// Cancels a scheduled multiplier update.
-    fn cancel_scheduled_multiplier(
+    fn cancel_ui_multiplier_update(
         &self,
         _token: &mut B20AssetToken<S, A>,
         _caller: Address,

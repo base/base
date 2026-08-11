@@ -101,6 +101,20 @@ impl<'a> arbitrary::Arbitrary<'a> for Eip8130Signed {
     }
 }
 
+/// Why an [`Eip8130Signed`] failed static, state-independent admission.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum Eip8130StaticError {
+    /// Transaction chain ID differs from the local chain.
+    #[error("transaction chain ID does not match the local chain")]
+    ChainIdMismatch,
+    /// Priority fee exceeds the maximum fee.
+    #[error("max priority fee per gas exceeds max fee per gas")]
+    TipAboveFeeCap,
+    /// Gas limit or maximum fee is zero.
+    #[error("gas limit and max fee per gas must be non-zero")]
+    ZeroGasOrFee,
+}
+
 /// Why an [`Eip8130Signed`] failed the timestamp-sensitive admission rules in
 /// [`Eip8130Signed::validate_timestamp`].
 ///
@@ -117,7 +131,6 @@ impl<'a> arbitrary::Arbitrary<'a> for Eip8130Signed {
 /// [`Eip8130Signed::validate_static`] — only because those preconditions gate
 /// the very nonce-free `expiry` window checks that follow it, so validating them
 /// in the same pass keeps the nonce-free rules in one place.
-#[cfg(feature = "reth")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Eip8130TimestampError {
     /// Nonce-free mode (`nonce_key == NONCE_KEY_MAX`) requires `nonce_sequence
@@ -176,28 +189,40 @@ impl Eip8130Signed {
         &self.hash
     }
 
-    /// Validates the static admission rules that depend only on the transaction
-    /// body and the local chain id.
-    ///
-    /// This keeps the chain-id, fee-cap ordering, and non-zero gas/fee-cap
-    /// checks colocated with [`TxEip8130`]'s signed wrapper so txpool callers
-    /// only need to orchestrate pool-specific concerns.
+    /// Validates static admission rules without node-specific dependencies.
+    pub const fn validate_admission_static(
+        &self,
+        local_chain_id: u64,
+    ) -> Result<(), Eip8130StaticError> {
+        let tx = self.tx();
+        if tx.chain_id != local_chain_id {
+            return Err(Eip8130StaticError::ChainIdMismatch);
+        }
+        if tx.max_fee_per_gas < tx.max_priority_fee_per_gas {
+            return Err(Eip8130StaticError::TipAboveFeeCap);
+        }
+        if tx.gas_limit == 0 || tx.max_fee_per_gas == 0 {
+            return Err(Eip8130StaticError::ZeroGasOrFee);
+        }
+        Ok(())
+    }
+
+    /// Validates static admission rules using Reth's transaction error type.
     #[cfg(feature = "reth")]
     pub const fn validate_static(
         &self,
         local_chain_id: u64,
     ) -> Result<(), InvalidTransactionError> {
-        let tx = self.tx();
-        if tx.chain_id != local_chain_id {
-            return Err(InvalidTransactionError::ChainIdMismatch);
+        match self.validate_admission_static(local_chain_id) {
+            Ok(()) => Ok(()),
+            Err(Eip8130StaticError::ChainIdMismatch) => {
+                Err(InvalidTransactionError::ChainIdMismatch)
+            }
+            Err(Eip8130StaticError::TipAboveFeeCap) => Err(InvalidTransactionError::TipAboveFeeCap),
+            Err(Eip8130StaticError::ZeroGasOrFee) => {
+                Err(InvalidTransactionError::TxTypeNotSupported)
+            }
         }
-        if tx.max_fee_per_gas < tx.max_priority_fee_per_gas {
-            return Err(InvalidTransactionError::TipAboveFeeCap);
-        }
-        if tx.gas_limit == 0 || tx.max_fee_per_gas == 0 {
-            return Err(InvalidTransactionError::TxTypeNotSupported);
-        }
-        Ok(())
     }
 
     /// Validates the timestamp-sensitive admission rules for nonce-bearing and
@@ -205,7 +230,6 @@ impl Eip8130Signed {
     ///
     /// Txpool passes in one head-block timestamp snapshot so both branches see
     /// the same wall-clock value even if the tip updates concurrently.
-    #[cfg(feature = "reth")]
     pub fn validate_timestamp(&self, now: u64) -> Result<(), Eip8130TimestampError> {
         let tx = self.tx();
         if tx.nonce_key == Eip8130Constants::NONCE_KEY_MAX {
@@ -682,6 +706,69 @@ mod tests {
         assert_eq!(
             signed.explicit_sender(),
             Some(address!("0x00000000000000000000000000000000000000aa"))
+        );
+    }
+
+    #[test]
+    fn admission_static_reports_each_rejection() {
+        let signed = sample_signed(false);
+        assert_eq!(signed.validate_admission_static(8453), Ok(()));
+        assert_eq!(
+            signed.validate_admission_static(84532),
+            Err(Eip8130StaticError::ChainIdMismatch)
+        );
+
+        let mut tx = signed.clone().into_tx();
+        tx.max_priority_fee_per_gas = tx.max_fee_per_gas + 1;
+        assert_eq!(
+            Eip8130Signed::new(tx, Bytes::new(), Bytes::new()).validate_admission_static(8453),
+            Err(Eip8130StaticError::TipAboveFeeCap)
+        );
+
+        let mut tx = signed.into_tx();
+        tx.gas_limit = 0;
+        assert_eq!(
+            Eip8130Signed::new(tx, Bytes::new(), Bytes::new()).validate_admission_static(8453),
+            Err(Eip8130StaticError::ZeroGasOrFee)
+        );
+    }
+
+    #[test]
+    fn timestamp_validation_covers_channel_and_nonce_free_rules() {
+        let now = 1_000;
+        let mut tx = sample_signed(false).into_tx();
+        tx.expiry = now;
+        assert_eq!(
+            Eip8130Signed::new(tx.clone(), Bytes::new(), Bytes::new()).validate_timestamp(now),
+            Err(Eip8130TimestampError::Expired)
+        );
+        tx.expiry = now + 1;
+        assert_eq!(
+            Eip8130Signed::new(tx.clone(), Bytes::new(), Bytes::new()).validate_timestamp(now),
+            Ok(())
+        );
+
+        tx.nonce_key = Eip8130Constants::NONCE_KEY_MAX;
+        tx.nonce_sequence = 1;
+        assert_eq!(
+            Eip8130Signed::new(tx.clone(), Bytes::new(), Bytes::new()).validate_timestamp(now),
+            Err(Eip8130TimestampError::NonceFreeMalformed)
+        );
+        tx.nonce_sequence = 0;
+        tx.expiry = now;
+        assert_eq!(
+            Eip8130Signed::new(tx.clone(), Bytes::new(), Bytes::new()).validate_timestamp(now),
+            Err(Eip8130TimestampError::NonceFreeExpired)
+        );
+        tx.expiry = now + Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW + 1;
+        assert_eq!(
+            Eip8130Signed::new(tx.clone(), Bytes::new(), Bytes::new()).validate_timestamp(now),
+            Err(Eip8130TimestampError::NonceFreeExpiryTooFar)
+        );
+        tx.expiry = now + 1;
+        assert_eq!(
+            Eip8130Signed::new(tx, Bytes::new(), Bytes::new()).validate_timestamp(now),
+            Ok(())
         );
     }
 

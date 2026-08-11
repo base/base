@@ -104,7 +104,7 @@ impl ActorAuthorizer {
                 // SENDER actor without POLICY): an operational key may sign for
                 // its own account but MUST NOT vouch as a delegate, to preserve
                 // non-escalation. Followed by the outer
-                // `_actorConfig[bytes20(delegate)][account]` binding check.
+                // `_actorConfig[uint256(uint160(delegate))][account]` binding check.
                 //
                 // Independent depth-1 guard: `authenticate_actor` re-enters the
                 // public dispatch, which routes a delegate authenticator straight
@@ -139,7 +139,8 @@ impl ActorAuthorizer {
     /// signer against `account`.
     ///
     /// The account's own key — the **secp256k1 self** (`recovered ==
-    /// bytes32(bytes20(account))`) — resolves entirely from the inline config in
+    /// bytes32(uint256(uint160(account)))`, right-aligned) — resolves entirely from
+    /// the inline config in
     /// the account-state slot, a single SLOAD: a set `DEFAULT_EOA_REVOKED` flag
     /// disables it (revoked, or a non-k1 self is the live self authenticator), an
     /// all-zero inline config is the implicit full owner, and a non-zero inline

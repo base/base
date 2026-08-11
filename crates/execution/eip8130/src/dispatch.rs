@@ -91,16 +91,17 @@ impl AuthenticatorDispatch {
         Err(AuthError::NotCanonical(authenticator))
     }
 
-    /// `actorId = bytes32(bytes20(address))`: the 20 address bytes left-aligned,
-    /// right-padded with zeros.
+    /// `actorId = bytes32(uint256(uint160(address)))`: the 20 address bytes
+    /// right-aligned in the low bytes, high 12 bytes zero (matches the finalized
+    /// `Keystore.ActorId.fromAddress`).
     fn address_actor_id(address: Address) -> B256 {
         let mut id = [0u8; 32];
-        id[..20].copy_from_slice(address.as_slice());
+        id[12..].copy_from_slice(address.as_slice());
         B256::from(id)
     }
 
     /// Native secp256k1 ecrecover for the `K1_AUTHENTICATOR` sentinel, resolving
-    /// `actorId = bytes32(bytes20(recovered))`. Delegates to
+    /// `actorId = bytes32(uint256(uint160(recovered)))`. Delegates to
     /// [`RecoveredActorId::recover_k1`] — the single source of truth for the k1
     /// recovery (`v in {27, 28}`, EIP-2 low-`s`) — so the dispatch path and the
     /// proof-of-recovery token cannot drift from one another or from the
@@ -223,7 +224,7 @@ impl AuthenticatorDispatch {
     /// `nested_auth = nested_authenticator(20) || nested_data`.
     ///
     /// Structural only, mirroring the deployed `DelegateAuthenticator`: it derives
-    /// `actorId = bytes32(bytes20(delegate))`, enforces the single-hop rule
+    /// `actorId = bytes32(uint256(uint160(delegate)))`, enforces the single-hop rule
     /// (`nested_authenticator != DELEGATE_AUTHENTICATOR`), and surfaces a
     /// [`DispatchOutcome::Delegated`] obligation. It does **not** verify the nested
     /// signature or resolve the nested actor — the deployed contract likewise only

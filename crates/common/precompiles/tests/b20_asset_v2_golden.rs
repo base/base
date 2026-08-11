@@ -135,11 +135,11 @@ const ROOT_UPDATE_MULTIPLIER_V2: B256 =
     b256!("fedb235aa7953b3224856747a42ef936f814559763791f14126249a05f5f9a6b");
 const ROOT_UPDATE_MULTIPLIER_CLEARS_PENDING: B256 =
     b256!("1bcd7dd7a84d36e144d3f9a4547acda2eb80f6622ed7eec9a8cd6ad3a021f0ba");
-const ROOT_SET_UI_MULTIPLIER: B256 =
+const ROOT_UPDATE_UI_MULTIPLIER: B256 =
     b256!("f75ebc45a2ee2e3e1027ac80d1245ba8a4f594c69e4ab73be9a213f25a2f0a9f");
-const ROOT_SET_UI_MULTIPLIER_FOLDS_MATURED: B256 =
+const ROOT_UPDATE_UI_MULTIPLIER_FOLDS_MATURED: B256 =
     b256!("a0942971f4c3b38bd0d2ebd19730bda7585f517774ffaf8d7c5ba21c5cf63475");
-const ROOT_CANCEL_SCHEDULED_MULTIPLIER: B256 =
+const ROOT_CANCEL_UI_MULTIPLIER_UPDATE: B256 =
     b256!("63ac7df12f8dc4e2af852b1a6545c284a98a65fa604b6671c39293de9bcc967b");
 const ROOT_SEIZE: B256 = b256!("3b853f2d0f2ed769695b5577e4df3e8e8ecac537d4f26c29da283a724a426301");
 const ROOT_ANNOUNCE_V2: B256 =
@@ -2355,7 +2355,7 @@ fn golden_update_multiplier_clears_live_pending_and_emits_cancellation() {
 // ============================================================================
 
 #[test]
-fn golden_set_ui_multiplier_schedules_pending() {
+fn golden_update_ui_multiplier_schedules_pending() {
     let mut s = fresh();
     seed(&mut s, |t| give_role(t, operator_role(), ALICE));
     warp(&mut s, u(1));
@@ -2386,7 +2386,7 @@ fn golden_set_ui_multiplier_schedules_pending() {
         }
         .encode_log_data()
     );
-    assert_root("set_ui_multiplier", s, ROOT_SET_UI_MULTIPLIER);
+    assert_root("update_ui_multiplier", s, ROOT_UPDATE_UI_MULTIPLIER);
 }
 
 #[test]
@@ -2527,7 +2527,7 @@ fn golden_balance_of_ui_and_total_supply_ui_scale_by_effective_multiplier() {
 }
 
 #[test]
-fn golden_set_ui_multiplier_reverts_invalid_multiplier() {
+fn golden_update_ui_multiplier_reverts_invalid_multiplier() {
     let mut s = fresh();
     seed(&mut s, |t| give_role(t, operator_role(), ALICE));
     warp(&mut s, u(1));
@@ -2543,7 +2543,7 @@ fn golden_set_ui_multiplier_reverts_invalid_multiplier() {
 }
 
 #[test]
-fn golden_set_ui_multiplier_reverts_effective_at_in_past() {
+fn golden_update_ui_multiplier_reverts_effective_at_in_past() {
     let mut s = fresh();
     seed(&mut s, |t| give_role(t, operator_role(), ALICE));
     warp(&mut s, u(1_000));
@@ -2565,7 +2565,7 @@ fn golden_set_ui_multiplier_reverts_effective_at_in_past() {
 }
 
 #[test]
-fn golden_set_ui_multiplier_reverts_effective_at_too_far() {
+fn golden_update_ui_multiplier_reverts_effective_at_too_far() {
     let mut s = fresh();
     seed(&mut s, |t| give_role(t, operator_role(), ALICE));
     warp(&mut s, u(1));
@@ -2588,7 +2588,7 @@ fn golden_set_ui_multiplier_reverts_effective_at_too_far() {
 }
 
 #[test]
-fn golden_set_ui_multiplier_reverts_schedule_overlap() {
+fn golden_update_ui_multiplier_reverts_schedule_overlap() {
     let mut s = fresh();
     seed(&mut s, |t| give_role(t, operator_role(), ALICE));
     warp(&mut s, u(1));
@@ -2622,7 +2622,7 @@ fn golden_set_ui_multiplier_reverts_schedule_overlap() {
 }
 
 #[test]
-fn golden_set_ui_multiplier_folds_matured_pending_before_rescheduling() {
+fn golden_update_ui_multiplier_folds_matured_pending_before_rescheduling() {
     let mut s = fresh();
     seed(&mut s, |t| give_role(t, operator_role(), ALICE));
     warp(&mut s, u(1));
@@ -2668,11 +2668,11 @@ fn golden_set_ui_multiplier_folds_matured_pending_before_rescheduling() {
         }
         .encode_log_data()
     );
-    assert_root("set_ui_multiplier_folds_matured", s, ROOT_SET_UI_MULTIPLIER_FOLDS_MATURED);
+    assert_root("update_ui_multiplier_folds_matured", s, ROOT_UPDATE_UI_MULTIPLIER_FOLDS_MATURED);
 }
 
 #[test]
-fn golden_set_ui_multiplier_unprivileged_requires_role() {
+fn golden_update_ui_multiplier_unprivileged_requires_role() {
     let mut s = fresh();
     let err = op(
         &mut s,
@@ -2695,7 +2695,7 @@ fn golden_set_ui_multiplier_unprivileged_requires_role() {
 }
 
 #[test]
-fn golden_cancel_scheduled_multiplier() {
+fn golden_cancel_ui_multiplier_update() {
     let mut s = fresh();
     seed(&mut s, |t| give_role(t, operator_role(), ALICE));
     warp(&mut s, u(1));
@@ -2733,11 +2733,11 @@ fn golden_cancel_scheduled_multiplier() {
         }
         .encode_log_data()
     );
-    assert_root("cancel_scheduled_multiplier", s, ROOT_CANCEL_SCHEDULED_MULTIPLIER);
+    assert_root("cancel_ui_multiplier_update", s, ROOT_CANCEL_UI_MULTIPLIER_UPDATE);
 }
 
 #[test]
-fn golden_cancel_scheduled_multiplier_reverts_when_none() {
+fn golden_cancel_ui_multiplier_update_reverts_when_none() {
     let mut s = fresh();
     seed(&mut s, |t| give_role(t, operator_role(), ALICE));
     let err = op(
@@ -2751,7 +2751,7 @@ fn golden_cancel_scheduled_multiplier_reverts_when_none() {
 }
 
 #[test]
-fn golden_cancel_scheduled_multiplier_reverts_when_already_matured() {
+fn golden_cancel_ui_multiplier_update_reverts_when_already_matured() {
     let mut s = fresh();
     seed(&mut s, |t| give_role(t, operator_role(), ALICE));
     warp(&mut s, u(1));
@@ -2779,7 +2779,7 @@ fn golden_cancel_scheduled_multiplier_reverts_when_already_matured() {
 }
 
 #[test]
-fn golden_cancel_scheduled_multiplier_unprivileged_requires_role() {
+fn golden_cancel_ui_multiplier_update_unprivileged_requires_role() {
     let mut s = fresh();
     let err = op(
         &mut s,
@@ -3308,7 +3308,7 @@ fn golden_gas_footprints() {
             ),
         ),
         (
-            "set_ui_multiplier",
+            "update_ui_multiplier",
             gas(
                 |_t| {},
                 ADMIN,
@@ -3321,7 +3321,7 @@ fn golden_gas_footprints() {
             ),
         ),
         (
-            "cancel_scheduled_multiplier",
+            "cancel_ui_multiplier_update",
             gas(
                 |t| {
                     t.set_pending_and_effective_at(
@@ -3402,8 +3402,8 @@ fn golden_gas_footprints() {
         ("set_role_admin", (1, 1, 0)),
         ("update_policy", (2, 1, 0)),
         ("update_multiplier", (4, 1, 0)),
-        ("set_ui_multiplier", (3, 1, 0)),
-        ("cancel_scheduled_multiplier", (3, 1, 0)),
+        ("update_ui_multiplier", (3, 1, 0)),
+        ("cancel_ui_multiplier_update", (3, 1, 0)),
         ("batch_mint", (11, 4, 0)),
         ("announce", (1, 1, 0)),
         ("update_extra_metadata", (0, 1, 0)),
@@ -3649,19 +3649,19 @@ fn v2_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
             covered(&[golden_balance_of_ui_and_total_supply_ui_scale_by_effective_multiplier])
         }
         SC::updateUIMultiplier(_) => covered(&[
-            golden_set_ui_multiplier_schedules_pending,
-            golden_set_ui_multiplier_reverts_invalid_multiplier,
-            golden_set_ui_multiplier_reverts_effective_at_in_past,
-            golden_set_ui_multiplier_reverts_effective_at_too_far,
-            golden_set_ui_multiplier_reverts_schedule_overlap,
-            golden_set_ui_multiplier_folds_matured_pending_before_rescheduling,
-            golden_set_ui_multiplier_unprivileged_requires_role,
+            golden_update_ui_multiplier_schedules_pending,
+            golden_update_ui_multiplier_reverts_invalid_multiplier,
+            golden_update_ui_multiplier_reverts_effective_at_in_past,
+            golden_update_ui_multiplier_reverts_effective_at_too_far,
+            golden_update_ui_multiplier_reverts_schedule_overlap,
+            golden_update_ui_multiplier_folds_matured_pending_before_rescheduling,
+            golden_update_ui_multiplier_unprivileged_requires_role,
         ]),
         SC::cancelUIMultiplierUpdate(_) => covered(&[
-            golden_cancel_scheduled_multiplier,
-            golden_cancel_scheduled_multiplier_reverts_when_none,
-            golden_cancel_scheduled_multiplier_reverts_when_already_matured,
-            golden_cancel_scheduled_multiplier_unprivileged_requires_role,
+            golden_cancel_ui_multiplier_update,
+            golden_cancel_ui_multiplier_update_reverts_when_none,
+            golden_cancel_ui_multiplier_update_reverts_when_already_matured,
+            golden_cancel_ui_multiplier_update_unprivileged_requires_role,
         ]),
         SC::supportsInterface(_) => covered(&[
             golden_supports_interface_true_for_erc165_and_erc8056_ids,

@@ -44,6 +44,29 @@ pub struct BaseTransactionReceipt {
     pub metadata: Option<Bytes>,
 }
 
+/// EIP-8130-specific fields attached to a transaction receipt response.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Eip8130ReceiptFields {
+    /// Resolved gas payer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payer: Option<Address>,
+    /// Per-phase execution statuses.
+    #[serde(default, skip_serializing_if = "Vec::is_empty", with = "alloy_serde::quantity::vec")]
+    pub phase_statuses: Vec<u8>,
+    /// Opaque transaction metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Bytes>,
+}
+
+impl TryFrom<Eip8130ReceiptFields> for OtherFields {
+    type Error = serde_json::Error;
+
+    fn try_from(value: Eip8130ReceiptFields) -> Result<Self, Self::Error> {
+        serde_json::to_value(value)?.try_into()
+    }
+}
+
 impl alloy_network_primitives::ReceiptResponse for BaseTransactionReceipt {
     fn contract_address(&self) -> Option<alloy_primitives::Address> {
         self.inner.contract_address
@@ -369,5 +392,23 @@ mod tests {
 
         let base_fields: TransactionReceiptFields = serde_json::from_value(json).unwrap();
         assert_eq!(base_fields.l1_block_info.l1_fee_scalar, None);
+    }
+
+    #[test]
+    fn eip8130_receipt_fields_use_canonical_rpc_shape() {
+        let payer = Address::repeat_byte(0xaa);
+        let fields = Eip8130ReceiptFields {
+            payer: Some(payer),
+            phase_statuses: vec![0x01, 0x00],
+            metadata: Some(Bytes::from_static(&[0xca, 0xfe])),
+        };
+        let json = serde_json::to_value(&fields).unwrap();
+
+        assert_eq!(json["payer"], serde_json::to_value(payer).unwrap());
+        assert_eq!(json["phaseStatuses"], json!(["0x1", "0x0"]));
+        assert_eq!(json["metadata"], "0xcafe");
+
+        let other = OtherFields::try_from(fields).unwrap();
+        assert_eq!(other.get("phaseStatuses"), Some(&json!(["0x1", "0x0"])));
     }
 }

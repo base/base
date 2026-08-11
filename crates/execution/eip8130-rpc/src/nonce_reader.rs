@@ -6,6 +6,7 @@ use alloy_rpc_types::state::StateOverride;
 use base_common_consensus::Eip8130Constants;
 use base_common_network::Base;
 use base_common_precompiles::NonceManagerStorage;
+use base_common_rpc_types::Eip8130Nonce;
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
 use reth_provider::StateProvider;
 use reth_rpc_eth_api::helpers::{EthState, FullEthApi};
@@ -107,18 +108,7 @@ impl ChannelNonceReader {
         address: Address,
         slot: B256,
     ) -> Option<U256> {
-        let account_override = state_overrides?.get(&address)?;
-        if let Some(state) = account_override.state.as_ref() {
-            return Some(
-                state
-                    .get(&slot)
-                    .copied()
-                    .map(|value| U256::from_be_bytes(value.0))
-                    .unwrap_or_default(),
-            );
-        }
-        let state_diff = account_override.state_diff.as_ref()?;
-        state_diff.get(&slot).copied().map(|value| U256::from_be_bytes(value.0))
+        Eip8130Nonce::override_for_slot(state_overrides, address, slot)
     }
 
     /// Decodes a Solidity-packed `u64` (the channel nonce) from the low 64
@@ -128,7 +118,7 @@ impl ChannelNonceReader {
     /// [`EthState::transaction_count`] so all three `nonce_key` branches of
     /// [`Self::read`] return the same shape.
     pub fn decode_channel_nonce(slot_value: U256) -> U256 {
-        slot_value & U256::from(u64::MAX)
+        Eip8130Nonce::decode_channel_nonce(slot_value)
     }
 }
 

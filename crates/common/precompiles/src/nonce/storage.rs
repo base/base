@@ -57,6 +57,8 @@ impl NonceManagerStorage<'_> {
     /// readers (e.g. RPC) can derive `nonces[account][nonce_key]` slots
     /// without instantiating the precompile. Pair with [`Self::nonce_slot`].
     pub const NONCES_BASE_SLOT: U256 = slots::NONCES;
+    /// Base storage slot of the nonce-free replay mapping.
+    pub const EXPIRING_NONCE_SEEN_BASE_SLOT: U256 = slots::EXPIRING_NONCE_SEEN;
 
     /// Fixed capacity of the nonce-free `replay_id` ring buffer
     /// (`REPLAY_BUFFER_CAPACITY` in the EIP-8130 constant table).
@@ -109,6 +111,11 @@ impl NonceManagerStorage<'_> {
             return Err(BasePrecompileError::revert(INonceManager::ProtocolNonceNotSupported {}));
         }
         Ok(nonce_key.mapping_slot(account.mapping_slot(Self::NONCES_BASE_SLOT)))
+    }
+
+    /// Returns the storage slot holding the expiry recorded for `replay_id`.
+    pub fn expiring_nonce_seen_slot(replay_id: B256) -> U256 {
+        U256::from_be_bytes(replay_id.0).mapping_slot(Self::EXPIRING_NONCE_SEEN_BASE_SLOT)
     }
 
     /// Increments the 2D nonce for `account` at `nonce_key`, returning the new
