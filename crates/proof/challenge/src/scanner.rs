@@ -434,15 +434,10 @@ impl GameScanner {
 
         let fingerprint = proof_protocol.fingerprint();
         let protocol_version = self.protocol_versions.get(&fingerprint).copied().ok_or_else(|| {
-            // Distinct from the caller's generic "game query failed" warning: a transient RPC
-            // error retries on the next scan, an unmapped fingerprint never will. Counted so an
-            // alert can fire instead of the game silently going unchallenged.
+            // A transient RPC error retries on the next scan; an unmapped fingerprint never will,
+            // so the game goes unchallenged until an operator adds the mapping. The caller logs
+            // the message below; this counter is what an alert can fire on.
             ChallengerMetrics::unmapped_fingerprint_games_total().increment(1);
-            error!(
-                index = index,
-                fingerprint = %fingerprint,
-                "no prover protocol version configured; game will not be challenged"
-            );
             eyre::eyre!(
                 "no prover protocol version configured for game {index} capability {fingerprint}"
             )
