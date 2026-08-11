@@ -1,16 +1,20 @@
 //! Contains the [`MeteringExtension`] which wires up the metering RPC surface
 //! on the Base node builder.
 
-use std::{num::NonZeroUsize, sync::Arc};
+use std::{
+    num::NonZeroUsize,
+    sync::{Arc, OnceLock},
+};
 
 use alloy_primitives::U256;
+use base_bundles::SharedInlineMetering;
 use base_flashblocks::{FlashblocksAPI, FlashblocksConfig, FlashblocksState};
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use parking_lot::RwLock;
 use tracing::{debug, info, warn};
 
 use crate::{
-    DEFAULT_INLINE_METERING_MAX_CONCURRENT, InlineMeteringService, MeteredOpcodes, MeteringApiImpl,
+    DEFAULT_METERING_MAX_PROCESSES, InlineMeteringService, MeteredOpcodes, MeteringApiImpl,
     MeteringApiServer, MeteringCache, MeteringCollector, PriorityFeeEstimator, ResourceLimits,
     estimator::assert_valid_percentile,
 };
@@ -68,11 +72,11 @@ pub struct MeteringExtension {
     pub target_flashblocks_per_block: Option<usize>,
     /// Opcodes and precompiles to track for gas metering.
     pub metered_opcodes: MeteredOpcodes,
-    /// Max concurrent in-process meterBundle workers for mempool inline simulation.
-    pub inline_max_concurrent: usize,
-    /// Slot shared with `EthApi` / tx-forwarding for the inline metering handle.
-    pub inline_metering_slot:
-        Option<std::sync::Arc<std::sync::OnceLock<base_bundles::SharedInlineMetering>>>,
+    /// Max in-process meterBundle workers for mempool transaction metering.
+    pub metering_max_processes: usize,
+    /// Cell shared with `EthApi` / tx-forwarding for the inline metering handle.
+    pub inline_metering_cell:
+        Option<Arc<OnceLock<SharedInlineMetering>>>,
 }
 
 impl Default for MeteringExtension {
@@ -86,8 +90,8 @@ impl Default for MeteringExtension {
             cache_size: 12,
             target_flashblocks_per_block: None,
             metered_opcodes: MeteredOpcodes::default(),
-            inline_max_concurrent: DEFAULT_INLINE_METERING_MAX_CONCURRENT,
-            inline_metering_slot: None,
+            metering_max_processes: DEFAULT_METERING_MAX_PROCESSES,
+            inline_metering_cell: None,
         }
     }
 }
@@ -104,23 +108,23 @@ impl MeteringExtension {
             cache_size: 12,
             target_flashblocks_per_block: None,
             metered_opcodes: MeteredOpcodes::default(),
-            inline_max_concurrent: DEFAULT_INLINE_METERING_MAX_CONCURRENT,
-            inline_metering_slot: None,
+            metering_max_processes: DEFAULT_METERING_MAX_PROCESSES,
+            inline_metering_cell: None,
         }
     }
 
-    /// Sets the max concurrent inline meterBundle workers.
-    pub const fn with_inline_max_concurrent(mut self, max: usize) -> Self {
-        self.inline_max_concurrent = max;
+    /// Sets the max in-process meterBundle workers for mempool transaction metering.
+    pub const fn with_metering_max_processes(mut self, max: usize) -> Self {
+        self.metering_max_processes = max;
         self
     }
 
-    /// Sets the shared slot used to publish the inline metering handle.
-    pub fn with_inline_metering_slot(
+    /// Sets the shared cell used to publish the inline metering handle.
+    pub fn with_inline_metering_cell(
         mut self,
-        slot: std::sync::Arc<std::sync::OnceLock<base_bundles::SharedInlineMetering>>,
+        cell: Arc<OnceLock<SharedInlineMetering>>,
     ) -> Self {
-        self.inline_metering_slot = Some(slot);
+        self.inline_metering_cell = Some(cell);
         self
     }
 
@@ -205,8 +209,8 @@ impl BaseNodeExtension for MeteringExtension {
             .then(|| self.resolved_target_flashblocks_per_block(requires_target_flashblocks));
         let flashblocks_config = self.flashblocks_config;
         let metered_opcodes = Arc::new(self.metered_opcodes);
-        let inline_max_concurrent = self.inline_max_concurrent;
-        let inline_metering_slot = self.inline_metering_slot;
+        let metering_max_processes = self.metering_max_processes;
+        let inline_metering_cell = self.inline_metering_cell;
 
         hooks.add_rpc_module(move |ctx| {
             let fb_state: Arc<FlashblocksState> =
@@ -265,23 +269,23 @@ impl BaseNodeExtension for MeteringExtension {
                 MeteringApiImpl::new(ctx.provider().clone(), fb_state, Arc::clone(&metered_opcodes))
             };
 
-            // Only install inline metering when a slot was provided (mempool +
+            // Only install inline metering when a cell was provided (mempool +
             // tx-forwarding). Builders enable metering RPC without wanting
             // eth_sendRawTransaction workers / cache / semaphore.
-            if let Some(slot) = inline_metering_slot.as_ref() {
+            if let Some(cell) = inline_metering_cell.as_ref() {
                 let metering_api = Arc::new(metering_api.clone());
                 let inline_service =
-                    Arc::new(InlineMeteringService::new(metering_api, inline_max_concurrent));
-                let inline_handle: base_bundles::SharedInlineMetering =
+                    Arc::new(InlineMeteringService::new(metering_api, metering_max_processes));
+                let inline_handle: SharedInlineMetering =
                     Arc::clone(&inline_service) as _;
 
                 info!(
-                    max_concurrent = inline_max_concurrent,
-                    "inline mempool metering service started"
+                    max_processes = metering_max_processes,
+                    "mempool metering service started"
                 );
 
                 ctx.registry.eth_api().set_inline_metering(Arc::clone(&inline_handle));
-                let _ = slot.set(inline_handle);
+                let _ = cell.set(inline_handle);
             }
 
             ctx.modules.merge_configured(metering_api.into_rpc())?;
@@ -315,11 +319,11 @@ pub struct MeteringConfig {
     pub target_flashblocks_per_block: Option<usize>,
     /// Opcodes and precompiles to track for gas metering.
     pub metered_opcodes: MeteredOpcodes,
-    /// Max concurrent in-process meterBundle workers for mempool inline simulation.
-    pub inline_max_concurrent: usize,
-    /// Slot shared with `EthApi` / tx-forwarding for the inline metering handle.
-    pub inline_metering_slot:
-        Option<std::sync::Arc<std::sync::OnceLock<base_bundles::SharedInlineMetering>>>,
+    /// Max in-process meterBundle workers for mempool transaction metering.
+    pub metering_max_processes: usize,
+    /// Cell shared with `EthApi` / tx-forwarding for the inline metering handle.
+    pub inline_metering_cell:
+        Option<Arc<OnceLock<SharedInlineMetering>>>,
 }
 
 impl MeteringConfig {
@@ -339,8 +343,8 @@ impl MeteringConfig {
             cache_size: 12,
             target_flashblocks_per_block: None,
             metered_opcodes: MeteredOpcodes::default(),
-            inline_max_concurrent: DEFAULT_INLINE_METERING_MAX_CONCURRENT,
-            inline_metering_slot: None,
+            metering_max_processes: DEFAULT_METERING_MAX_PROCESSES,
+            inline_metering_cell: None,
         }
     }
 
@@ -355,8 +359,8 @@ impl MeteringConfig {
             cache_size: 12,
             target_flashblocks_per_block: None,
             metered_opcodes: MeteredOpcodes::default(),
-            inline_max_concurrent: DEFAULT_INLINE_METERING_MAX_CONCURRENT,
-            inline_metering_slot: None,
+            metering_max_processes: DEFAULT_METERING_MAX_PROCESSES,
+            inline_metering_cell: None,
         }
     }
 
@@ -397,18 +401,18 @@ impl MeteringConfig {
         self
     }
 
-    /// Sets the max concurrent inline meterBundle workers.
-    pub const fn with_inline_max_concurrent(mut self, max: usize) -> Self {
-        self.inline_max_concurrent = max;
+    /// Sets the max in-process meterBundle workers for mempool transaction metering.
+    pub const fn with_metering_max_processes(mut self, max: usize) -> Self {
+        self.metering_max_processes = max;
         self
     }
 
-    /// Sets the shared slot used to publish the inline metering handle.
-    pub fn with_inline_metering_slot(
+    /// Sets the shared cell used to publish the inline metering handle.
+    pub fn with_inline_metering_cell(
         mut self,
-        slot: std::sync::Arc<std::sync::OnceLock<base_bundles::SharedInlineMetering>>,
+        cell: Arc<OnceLock<SharedInlineMetering>>,
     ) -> Self {
-        self.inline_metering_slot = Some(slot);
+        self.inline_metering_cell = Some(cell);
         self
     }
 }
@@ -427,8 +431,8 @@ impl FromExtensionConfig for MeteringExtension {
             cache_size: config.cache_size,
             target_flashblocks_per_block: config.target_flashblocks_per_block,
             metered_opcodes: config.metered_opcodes,
-            inline_max_concurrent: config.inline_max_concurrent,
-            inline_metering_slot: config.inline_metering_slot,
+            metering_max_processes: config.metering_max_processes,
+            inline_metering_cell: config.inline_metering_cell,
         }
     }
 }

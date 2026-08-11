@@ -8,7 +8,7 @@ use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
 use base_metering::{
-    DEFAULT_INLINE_METERING_MAX_CONCURRENT, MeteredOpcodes, MeteringConfig, MeteringExtension,
+    DEFAULT_METERING_MAX_PROCESSES, MeteredOpcodes, MeteringConfig, MeteringExtension,
     MeteringResourceLimits,
 };
 use base_node_core::{HasRollupArgs, RollupArgs};
@@ -78,13 +78,13 @@ pub struct MeteringArgs {
     #[arg(long = "metering.metered-opcodes", requires = "enable_metering", value_delimiter = ',')]
     pub metering_metered_opcodes: Vec<String>,
 
-    /// Max concurrent in-process meterBundle workers for mempool inline simulation.
+    /// Max in-process meterBundle workers for mempool transaction metering.
     #[arg(
-        long = "inline-metering-max-concurrent",
+        long = "metering.max-processes",
         requires = "enable_metering",
-        default_value_t = DEFAULT_INLINE_METERING_MAX_CONCURRENT
+        default_value_t = DEFAULT_METERING_MAX_PROCESSES
     )]
-    pub inline_metering_max_concurrent: usize,
+    pub metering_max_processes: usize,
 }
 
 /// CLI arguments for a standard Base execution node.
@@ -423,7 +423,7 @@ impl StandardBaseRethNode {
         };
         // Inline metering is only for mempool nodes that both meter and forward.
         // Builders can enable metering RPC without allocating the inline service.
-        let inline_metering_slot = (args.metering.enable_metering
+        let inline_metering_cell = (args.metering.enable_metering
             && args.enable_tx_forwarding
             && !args.builder_rpc_urls.is_empty())
         .then(|| Arc::new(std::sync::OnceLock::<SharedInlineMetering>::new()));
@@ -440,22 +440,22 @@ impl StandardBaseRethNode {
                 .map_or_else(MeteringConfig::enabled, MeteringConfig::with_flashblocks)
                 .with_resource_limits(resource_limits)
                 .with_metered_opcodes(metered_opcodes)
-                .with_inline_max_concurrent(args.metering.inline_metering_max_concurrent);
+                .with_metering_max_processes(args.metering.metering_max_processes);
             if let Some(target_flashblocks_per_block) =
                 args.metering.metering_target_flashblocks_per_block
             {
                 config = config.with_target_flashblocks_per_block(target_flashblocks_per_block);
             }
-            if let Some(slot) = inline_metering_slot.as_ref() {
-                config = config.with_inline_metering_slot(Arc::clone(slot));
+            if let Some(cell) = inline_metering_cell.as_ref() {
+                config = config.with_inline_metering_cell(Arc::clone(cell));
             }
             config
         } else {
             MeteringConfig::disabled()
         };
         let mut tx_forwarding_config: TxForwardingConfig = (&args).into();
-        if let Some(slot) = inline_metering_slot {
-            tx_forwarding_config = tx_forwarding_config.with_inline_metering_slot(slot);
+        if let Some(cell) = inline_metering_cell {
+            tx_forwarding_config = tx_forwarding_config.with_inline_metering_cell(cell);
         }
         runner.install_ext::<MeteringExtension>(metering_config);
         runner.install_ext::<BundleExtension>(());

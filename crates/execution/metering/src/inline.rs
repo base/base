@@ -18,8 +18,8 @@ use tracing::{debug, warn};
 
 use crate::{MeteringApiImpl, MeteringApiServer};
 
-/// Default max concurrent inline meterBundle workers.
-pub const DEFAULT_INLINE_METERING_MAX_CONCURRENT: usize = 32;
+/// Default max in-process meterBundle workers for mempool transaction metering.
+pub const DEFAULT_METERING_MAX_PROCESSES: usize = 32;
 /// Default cache capacity for inline metering results.
 pub const DEFAULT_INLINE_METERING_CACHE_CAPACITY: u64 = 10_000;
 /// Default TTL for inline metering cache entries.
@@ -57,8 +57,8 @@ where
     FB: FlashblocksAPI + Send + Sync + 'static,
 {
     /// Creates a new service wrapping the given metering API implementation.
-    pub fn new(api: Arc<MeteringApiImpl<Provider, FB>>, max_concurrent: usize) -> Self {
-        let max_concurrent = max_concurrent.max(1);
+    pub fn new(api: Arc<MeteringApiImpl<Provider, FB>>, max_processes: usize) -> Self {
+        let max_processes = max_processes.max(1);
         let cache = Cache::builder()
             .max_capacity(DEFAULT_INLINE_METERING_CACHE_CAPACITY)
             .eviction_policy(EvictionPolicy::lru())
@@ -68,7 +68,7 @@ where
             api,
             cache,
             in_flight: Arc::new(Mutex::new(HashSet::new())),
-            semaphore: Arc::new(Semaphore::new(max_concurrent)),
+            semaphore: Arc::new(Semaphore::new(max_processes)),
         }
     }
 
@@ -80,14 +80,13 @@ where
             return;
         }
 
-        {
-            let mut in_flight = self.in_flight.lock();
-            // Cache + in_flight under one lock so a concurrent completion cannot
-            // race a second spawn past a stale contains_key check.
-            if self.cache.contains_key(&tx_hash) || !in_flight.insert(tx_hash) {
-                return;
-            }
+        let mut in_flight = self.in_flight.lock();
+        // Cache + in_flight under one lock so a concurrent completion cannot
+        // race a second spawn past a stale contains_key check.
+        if self.cache.contains_key(&tx_hash) || !in_flight.insert(tx_hash) {
+            return;
         }
+        drop(in_flight);
 
         let api = Arc::clone(&self.api);
         let cache = self.cache.clone();

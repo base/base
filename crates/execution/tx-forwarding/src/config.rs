@@ -32,8 +32,8 @@ pub struct TxForwardingConfig {
     pub max_rps: u32,
     /// Require Ready meterBundle before forwarding when inline metering is available.
     pub require_metering: bool,
-    /// Slot populated by [`MeteringExtension`] with the shared inline metering handle.
-    pub inline_metering_slot: Option<Arc<OnceLock<SharedInlineMetering>>>,
+    /// Cell populated by [`MeteringExtension`] with the shared inline metering handle.
+    pub inline_metering_cell: Option<Arc<OnceLock<SharedInlineMetering>>>,
 }
 
 impl Default for TxForwardingConfig {
@@ -46,7 +46,7 @@ impl Default for TxForwardingConfig {
             max_batch_size: DEFAULT_MAX_BATCH_SIZE,
             max_rps: DEFAULT_MAX_RPS,
             require_metering: false,
-            inline_metering_slot: None,
+            inline_metering_cell: None,
         }
     }
 }
@@ -86,9 +86,9 @@ impl TxForwardingConfig {
         self
     }
 
-    /// Sets the shared slot for the inline metering handle.
-    pub fn with_inline_metering_slot(mut self, slot: Arc<OnceLock<SharedInlineMetering>>) -> Self {
-        self.inline_metering_slot = Some(slot);
+    /// Sets the shared cell for the inline metering handle.
+    pub fn with_inline_metering_cell(mut self, cell: Arc<OnceLock<SharedInlineMetering>>) -> Self {
+        self.inline_metering_cell = Some(cell);
         self
     }
 
@@ -108,8 +108,8 @@ impl TxForwardingConfig {
             require_metering: self.require_metering,
             ..Default::default()
         };
-        if let Some(slot) = self.inline_metering_slot.as_ref()
-            && let Some(metering) = slot.get()
+        if let Some(cell) = self.inline_metering_cell.as_ref()
+            && let Some(metering) = cell.get()
         {
             config.inline_metering = Some(Arc::clone(metering));
         }

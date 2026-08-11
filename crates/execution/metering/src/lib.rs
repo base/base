@@ -41,7 +41,7 @@ pub use rpc::MeteringApiImpl;
 mod inline;
 pub use inline::{
     DEFAULT_INLINE_METERING_CACHE_CAPACITY, DEFAULT_INLINE_METERING_CACHE_TTL,
-    DEFAULT_INLINE_METERING_MAX_CONCURRENT, InlineMeteringService,
+    DEFAULT_METERING_MAX_PROCESSES, InlineMeteringService,
 };
 
 mod traits;
