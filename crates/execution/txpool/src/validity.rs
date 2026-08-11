@@ -106,6 +106,10 @@ impl ValidatedTransactionExtensions<BasePooledTransaction> for TransactionValidi
 
 #[cfg(test)]
 mod tests {
+    use alloy_consensus::transaction::Recovered;
+    use alloy_eips::eip2718::Encodable2718;
+    use alloy_primitives::TxKind;
+    use base_common_consensus::{BaseTransactionSigned, TxDeposit};
     use serde_json::json;
 
     use super::*;
@@ -234,5 +238,37 @@ mod tests {
             }]
         );
         assert_eq!(serde_json::to_value(payload).unwrap(), value);
+    }
+
+    #[test]
+    fn apply_attaches_validity_predicates_to_pooled_transaction() {
+        let signed: BaseTransactionSigned = TxDeposit {
+            source_hash: Default::default(),
+            from: Address::ZERO,
+            to: TxKind::Create,
+            mint: 0,
+            value: U256::ZERO,
+            gas_limit: 21_000,
+            is_system_transaction: false,
+            input: Default::default(),
+        }
+        .into();
+        let encoded_length = signed.encode_2718_len();
+        let transaction = BasePooledTransaction::new(
+            Recovered::new_unchecked(signed, Address::ZERO),
+            encoded_length,
+        );
+        let expected = vec![ValidityPredicate::Storage {
+            address: Address::repeat_byte(0x11),
+            slot: U256::from(1),
+            mask: U256::MAX,
+            op: ValidityOperator::Equal,
+            value: U256::from(2),
+        }];
+        let extension = TransactionValidity { validity: expected.clone() };
+
+        let transaction = extension.apply(transaction).unwrap();
+
+        assert_eq!(transaction.validity_predicates(), expected);
     }
 }
