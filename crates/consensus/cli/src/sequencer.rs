@@ -28,6 +28,7 @@ pub struct SequencerArgs {
 
     /// Request timeout for L1 RPC calls on the sequencer block-production hot path.
     #[arg(
+        id = "sequencer_l1_rpc_timeout",
         long = "sequencer.l1-rpc-timeout-ms",
         default_value = "500",
         env = "BASE_NODE_SEQUENCER_L1_RPC_TIMEOUT_MS",
@@ -111,6 +112,15 @@ mod tests {
     use clap::Parser;
 
     use super::SequencerArgs;
+    use crate::L1ClientArgs;
+
+    #[derive(Parser)]
+    struct Command {
+        #[command(flatten)]
+        l1: L1ClientArgs,
+        #[command(flatten)]
+        sequencer: SequencerArgs,
+    }
 
     #[test]
     fn defaults_l1_rpc_timeout_to_five_hundred_milliseconds() {
@@ -127,6 +137,24 @@ mod tests {
 
         assert_eq!(args.l1_rpc_timeout, Duration::from_millis(750));
         assert_eq!(args.config().l1_rpc_timeout, Duration::from_millis(750));
+    }
+
+    #[test]
+    fn parses_general_and_sequencer_l1_rpc_timeouts_together() {
+        let args = Command::parse_from([
+            "base-consensus",
+            "--l1-eth-rpc",
+            "http://localhost:8545",
+            "--l1-beacon",
+            "http://localhost:5052",
+            "--l1.rpc-timeout-ms",
+            "2500",
+            "--sequencer.l1-rpc-timeout-ms",
+            "750",
+        ]);
+
+        assert_eq!(args.l1.l1_rpc_timeout, Duration::from_millis(2500));
+        assert_eq!(args.sequencer.l1_rpc_timeout, Duration::from_millis(750));
     }
 
     #[test]
