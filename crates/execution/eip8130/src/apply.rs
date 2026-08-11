@@ -68,10 +68,20 @@ pub enum ApplyError {
     #[error("malformed actor-change revoke data")]
     MalformedRevokeData,
 
-    /// A signed batch carried an environment op (`IncrementLocalEpoch`, `Lock`,
-    /// or `Unlock`) whose apply handler is not yet enshrined. These ops are
-    /// wired into the apply path by a subsequent change; until then a batch
-    /// carrying one is rejected rather than silently ignored.
+    /// An op that requires an empty `payload` (currently `IncrementLocalEpoch`)
+    /// carried a non-empty one. Mirrors `Keystore.InvalidChangePayload`.
+    #[error("account-change op payload must be empty")]
+    InvalidChangePayload,
+
+    /// An `IncrementLocalEpoch` op could not advance because the local epoch is
+    /// at its terminal `u32::MAX` value. Mirrors `Keystore.EpochSaturated`.
+    #[error("local epoch is saturated and cannot be incremented")]
+    EpochSaturated,
+
+    /// A signed batch carried an environment op (`Lock` or `Unlock`) whose apply
+    /// handler is not yet enshrined. These ops are wired into the apply path by a
+    /// subsequent change; until then a batch carrying one is rejected rather than
+    /// silently ignored.
     #[error("unsupported account-change op in the enshrined apply path")]
     UnsupportedChangeType,
 
@@ -384,9 +394,11 @@ impl AccountChangeApplier {
                         Self::revoke_actor_with_account_state(storage, account, actor_id, state)?,
                     );
                 }
-                // Environment ops (IncrementLocalEpoch / Lock / Unlock) are
-                // wired into the apply path by a subsequent change.
-                ChangeType::IncrementLocalEpoch | ChangeType::Lock | ChangeType::Unlock => {
+                ChangeType::IncrementLocalEpoch => {
+                    Self::apply_increment_local_epoch(&change.payload, state)?;
+                }
+                // Lock / Unlock apply handlers are not yet enshrined.
+                ChangeType::Lock | ChangeType::Unlock => {
                     return Err(ApplyError::UnsupportedChangeType);
                 }
             }
@@ -444,6 +456,29 @@ impl AccountChangeApplier {
                     state.multichain_sequence.checked_add(1).ok_or(ApplyError::SequenceOverflow)?;
             }
         }
+        Ok(())
+    }
+
+    /// Applies an `IncrementLocalEpoch` op, mirroring `_applyIncrementLocalEpoch`:
+    /// a strict `local_epoch += 1` (rejecting the terminal `u32::MAX`) that also
+    /// resets `local_sequence` to 0, retiring every unlanded local signature (each
+    /// commits the full 64-bit `localEpoch ‖ localSequence` word). Allowed on
+    /// either channel — a Multichain batch may bump the local epoch without a
+    /// separate Local batch. The payload MUST be empty.
+    fn apply_increment_local_epoch(
+        payload: &[u8],
+        state: &mut AccountState,
+    ) -> Result<(), ApplyError> {
+        if !payload.is_empty() {
+            return Err(ApplyError::InvalidChangePayload);
+        }
+        // `local_epoch` stores a `uint32`; only the terminal value cannot advance
+        // (the epoch half has no reserved sentinel).
+        if state.local_epoch == u64::from(u32::MAX) {
+            return Err(ApplyError::EpochSaturated);
+        }
+        state.local_epoch += 1;
+        state.local_sequence = 0;
         Ok(())
     }
 
@@ -1265,6 +1300,76 @@ mod tests {
             .unwrap();
             assert_eq!(acc.get_change_sequences(ACCOUNT).unwrap(), (1, 1));
         });
+    }
+
+    /// An `IncrementLocalEpoch` op (empty payload).
+    fn increment_epoch_op() -> SignedChange {
+        SignedChange { change_type: ChangeType::IncrementLocalEpoch, payload: Bytes::new() }
+    }
+
+    #[test]
+    fn increment_local_epoch_bumps_epoch_and_resets_sequence() {
+        with_storage(|acc| {
+            // Seed a local sequence of 4; a Local sequenced batch at seq 4 advances
+            // it to 5, and the trailing IncrementLocalEpoch resets it to 0 while
+            // bumping the epoch to 1.
+            let mut state = acc.get_account_state(ACCOUNT).unwrap();
+            state.local_sequence = 4;
+            acc.set_account_state(ACCOUNT, state).unwrap();
+
+            AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &[increment_epoch_op()],
+                AccountChangeChannel::Local,
+                4,
+            )
+            .unwrap();
+
+            let state = acc.get_account_state(ACCOUNT).unwrap();
+            assert_eq!(state.local_epoch, 1);
+            assert_eq!(state.local_sequence, 0);
+        });
+    }
+
+    #[test]
+    fn increment_local_epoch_on_multichain_channel_bumps_epoch() {
+        with_storage(|acc| {
+            // A Multichain batch may bump the local epoch; its own counter advances
+            // independently.
+            AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &[increment_epoch_op()],
+                AccountChangeChannel::Multichain,
+                0,
+            )
+            .unwrap();
+
+            let state = acc.get_account_state(ACCOUNT).unwrap();
+            assert_eq!(state.local_epoch, 1);
+            assert_eq!(state.multichain_sequence, 1);
+            assert_eq!(state.local_sequence, 0);
+        });
+    }
+
+    #[test]
+    fn increment_local_epoch_rejects_nonempty_payload() {
+        let mut state = AccountState::from_word(alloy_primitives::U256::ZERO);
+        assert_eq!(
+            AccountChangeApplier::apply_increment_local_epoch(&[0xaa], &mut state),
+            Err(ApplyError::InvalidChangePayload),
+        );
+    }
+
+    #[test]
+    fn increment_local_epoch_rejects_saturated_epoch() {
+        let mut state = AccountState::from_word(alloy_primitives::U256::ZERO);
+        state.local_epoch = u64::from(u32::MAX);
+        assert_eq!(
+            AccountChangeApplier::apply_increment_local_epoch(&[], &mut state),
+            Err(ApplyError::EpochSaturated),
+        );
     }
 
     #[test]
