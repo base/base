@@ -26,10 +26,8 @@ pub enum ProofResult {
         aggregate_proposal: Proposal,
         /// The individual per-block proposals that were aggregated.
         proposals: Vec<Proposal>,
-        /// Ethereum address of the enclave signer that produced the proof.
-        ///
-        /// Stamped by the enclave at signing time so the signer and proof are
-        /// returned atomically.
+        /// Stamped by the enclave at signing time, so the signer and the proof
+        /// are returned atomically.
         tee_signer: Address,
     },
     /// Result from a ZK backend.

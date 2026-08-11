@@ -65,14 +65,6 @@ mod tests {
         }
     }
 
-    fn nitro_tee_proof(tee_signer: Address) -> NitroProofResult {
-        NitroProofResult::Tee {
-            aggregate_proposal: proposal(10),
-            proposals: vec![proposal(8), proposal(9), proposal(10)],
-            tee_signer,
-        }
-    }
-
     #[test]
     fn tee_proof_request_forwards_enclave_signer() {
         let tee_signer = Address::repeat_byte(0x11);
@@ -80,7 +72,11 @@ mod tests {
             "session-1".to_string(),
             "lock-1".to_string(),
             "worker-1".to_string(),
-            nitro_tee_proof(tee_signer),
+            NitroProofResult::Tee {
+                aggregate_proposal: proposal(10),
+                proposals: vec![proposal(8), proposal(9), proposal(10)],
+                tee_signer,
+            },
         )
         .expect("tee proof should build a submission request");
 

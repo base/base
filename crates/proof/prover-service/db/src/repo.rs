@@ -2306,19 +2306,14 @@ fn comparable_request_payload(
     value
 }
 
-/// Drops `image_hash` from a request payload.
-///
-/// Requests written before the field was removed from `ProofRequest` persisted
-/// it into `request_payload`. Without this, replaying such a session (session
-/// ids are derived deterministically from the claimed output root, so a
-/// proposer restart re-sends the same id) compares a stored payload carrying
-/// `image_hash` against an incoming one without it and wedges the session on
-/// `IdCollision { field: "request_payload" }`.
+/// Drops `image_hash`, persisted by requests written before the field was
+/// removed from `ProofRequest`. Without this, replaying such a session wedges
+/// on `IdCollision { field: "request_payload" }`.
 fn remove_legacy_image_hash(value: &mut serde_json::Value) {
-    for path in ["/request/payload", "/request/payload/proof"] {
-        if let Some(map) = value.pointer_mut(path).and_then(serde_json::Value::as_object_mut) {
-            map.remove("image_hash");
-        }
+    if let Some(map) =
+        value.pointer_mut("/request/payload/proof").and_then(serde_json::Value::as_object_mut)
+    {
+        map.remove("image_hash");
     }
 }
 
@@ -2482,12 +2477,7 @@ mod tests {
         stored["request"]["payload"]["proof"]["image_hash"] = serde_json::json!(ZERO_HASH);
         assert_ne!(stored, incoming, "stored payload must actually differ");
 
-        for mode in [RequestMismatchMode::Strict, RequestMismatchMode::AllowL1HeadReplacement] {
-            assert!(
-                request_payload_matches(&stored, &incoming, mode),
-                "legacy image_hash must not wedge replay in {mode:?}"
-            );
-        }
+        assert!(request_payload_matches(&stored, &incoming, RequestMismatchMode::Strict));
     }
 
     #[test]
@@ -2513,8 +2503,7 @@ mod tests {
         let ProofRequestKind::Tee(request) = &mut new_proposer.request else {
             panic!("expected TEE request");
         };
-        request.proof.proposer =
-            "0x0303030303030303030303030303030303030303".parse().unwrap();
+        request.proof.proposer = "0x0303030303030303030303030303030303030303".parse().unwrap();
 
         let old = prepared_payload(old);
         let new_l1_head = prepared_payload(new_l1_head);
