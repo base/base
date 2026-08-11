@@ -269,6 +269,11 @@ pub struct Args {
     #[command(flatten)]
     pub flashblocks: FlashblocksArgs,
 
+    /// Enables flashblocks + basic dual payload builders for 200ms cutover validation.
+    /// Reads always continue to come from flashblocks.
+    #[arg(long = "builder.dual-payload-builders", default_value = "false")]
+    pub dual_payload_builders: bool,
+
     /// Transaction event journal configuration
     #[command(flatten)]
     pub transaction_events: TransactionEventsArgs,
@@ -325,6 +330,7 @@ impl Default for Args {
             sampling_ratio: 100,
             manifest_precheck_enabled: true,
             flashblocks: FlashblocksArgs::default(),
+            dual_payload_builders: false,
             transaction_events: TransactionEventsArgs::default(),
             shadow_indexer: ShadowIndexerArgs::default(),
         }
@@ -494,6 +500,12 @@ mod tests {
         let parsed =
             CommandParser::parse_from(["test", "--builder.eip8130-manifest-precheck=false"]);
         assert!(!parsed.args.manifest_precheck_enabled);
+    }
+
+    #[test]
+    fn dual_payload_builders_defaults_to_disabled() {
+        let parsed = CommandParser::parse_from(["test"]);
+        assert!(!parsed.args.dual_payload_builders);
     }
 
     #[rstest]

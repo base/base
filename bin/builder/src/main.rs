@@ -6,8 +6,9 @@
 use std::sync::Arc;
 
 use base_builder_cli::Args;
-use base_builder_core::{BuilderApiExtension, FlashblocksServiceBuilder};
+use base_builder_core::BuilderApiExtension;
 use base_builder_metering::MeteringStoreExtension;
+use base_builder_multiplex::MultiplexingServiceBuilder;
 use base_execution_cli::{Cli, StandardBaseRethNode};
 use base_node_runner::BaseNodeRunner;
 use base_observability_events::GlobalTransactionEventWriter;
@@ -41,6 +42,7 @@ fn main() {
         let builder_api_config = builder_args.builder_api_config()?;
         let shadow_indexer_config = ShadowIndexerConfig::try_from(&builder_args.shadow_indexer)?;
         let builder_config = builder_args
+            .clone()
             .into_builder_config(Arc::clone(&metering_provider))
             .expect("Failed to convert rollup args to builder config");
         let da_config = builder_config.da_config.clone();
@@ -51,7 +53,11 @@ fn main() {
             .with_da_config(da_config)
             .with_gas_limit_config(gas_limit_config)
             .with_manifest_precheck_enabled(manifest_precheck_enabled)
-            .with_service_builder(FlashblocksServiceBuilder::new(builder_config));
+            .with_service_builder(
+                MultiplexingServiceBuilder::new(builder_config)
+                    .with_compute_pending_block(rollup_args.compute_pending_block)
+                    .with_dual_builders_enabled(builder_args.dual_payload_builders),
+            );
         runner.install_ext::<MeteringStoreExtension>(metering_provider);
         runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig::default());
         runner.install_ext::<BuilderApiExtension>(builder_api_config);
