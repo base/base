@@ -6279,6 +6279,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-shadow-metrics"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "sqlx",
+ "thiserror 2.0.19",
+]
+
+[[package]]
+name = "base-shadow-metrics-bin"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "axum 0.8.9",
+ "base-cli-utils",
+ "base-shadow-metrics",
+ "clap",
+ "dotenvy",
+ "serde",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "base-sidecrush"
 version = "0.0.0"
 dependencies = [
