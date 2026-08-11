@@ -383,7 +383,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                 Bytes::new()
             }
             SC::updateUIMultiplier(c) => {
-                logic.set_ui_multiplier(
+                logic.update_ui_multiplier(
                     self,
                     caller,
                     c.newMultiplier,
@@ -393,7 +393,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                 Bytes::new()
             }
             SC::cancelUIMultiplierUpdate(_) => {
-                logic.cancel_scheduled_multiplier(self, caller, privileged)?;
+                logic.cancel_ui_multiplier_update(self, caller, privileged)?;
                 Bytes::new()
             }
 
