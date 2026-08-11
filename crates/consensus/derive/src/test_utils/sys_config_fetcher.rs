@@ -1,6 +1,6 @@
 //! Implements a mock [`L2ChainProvider`] and [`BatchValidationProvider`] for testing.
 
-use alloc::{boxed::Box, string::ToString, sync::Arc};
+use alloc::{boxed::Box, string::ToString, sync::Arc, vec::Vec};
 
 use alloy_primitives::map::HashMap;
 use async_trait::async_trait;
@@ -19,6 +19,8 @@ use crate::{
 pub struct TestSystemConfigL2Fetcher {
     /// A map from [u64] block number to a [`SystemConfig`].
     pub system_configs: HashMap<u64, SystemConfig>,
+    /// The block numbers for which the system config was requested, in call order.
+    pub system_config_calls: Vec<u64>,
 }
 
 impl TestSystemConfigL2Fetcher {
@@ -69,6 +71,7 @@ impl L2ChainProvider for TestSystemConfigL2Fetcher {
         number: u64,
         _: Arc<RollupConfig>,
     ) -> Result<SystemConfig, <Self as L2ChainProvider>::Error> {
+        self.system_config_calls.push(number);
         self.system_configs
             .get(&number)
             .copied()

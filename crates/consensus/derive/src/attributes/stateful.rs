@@ -1,6 +1,8 @@
 //! The [`AttributesBuilder`] and it's default implementation.
 
-use alloc::{boxed::Box, fmt::Debug, string::ToString, sync::Arc, vec, vec::Vec};
+use alloc::{
+    boxed::Box, collections::VecDeque, fmt::Debug, string::ToString, sync::Arc, vec, vec::Vec,
+};
 
 use alloy_consensus::{Eip658Value, Receipt};
 use alloy_eips::{BlockNumHash, eip2718::Encodable2718};
@@ -10,7 +12,7 @@ use alloy_rlp::Encodable;
 use alloy_rpc_types_engine::PayloadAttributes;
 use async_trait::async_trait;
 use base_common_consensus::Predeploys;
-use base_common_genesis::RollupConfig;
+use base_common_genesis::{BaseUpgrade, RollupConfig, SystemConfig};
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_consensus_upgrades::{Upgrade, Upgrades};
 use base_protocol::{BaseTimeUpdateTx, Deposits, L1BlockInfoTx, L2BlockInfo};
@@ -20,6 +22,9 @@ use crate::{
     AttributesBuilder, BuilderError, ChainProvider, L2ChainProvider, PipelineEncodingError,
     PipelineError, PipelineErrorKind, PipelineResult,
 };
+
+/// The maximum number of [`SystemConfig`]s cached by L1 origin hash.
+const MAX_SYSTEM_CONFIG_CACHE_ENTRIES: usize = 8;
 
 /// A stateful implementation of the [`AttributesBuilder`].
 #[derive(Debug, Default)]
@@ -36,6 +41,8 @@ where
     config_fetcher: L2P,
     /// The L1 receipts fetcher.
     receipts_fetcher: L1P,
+    /// Cache of [`SystemConfig`]s keyed by L1 origin hash, most recently used first.
+    system_configs: VecDeque<(B256, SystemConfig)>,
 }
 
 impl<L1P, L2P> StatefulAttributesBuilder<L1P, L2P>
@@ -55,7 +62,28 @@ where
             l1_cfg,
             config_fetcher: sys_cfg_fetcher,
             receipts_fetcher: receipts,
+            system_configs: VecDeque::new(),
         }
+    }
+
+    /// Returns the cached [`SystemConfig`] for the given L1 origin hash, promoting it to most
+    /// recently used.
+    fn cached_system_config(&mut self, origin: &B256) -> Option<SystemConfig> {
+        let index = self.system_configs.iter().position(|(hash, _)| hash == origin)?;
+        let entry = self.system_configs.remove(index)?;
+        let config = entry.1;
+        self.system_configs.push_front(entry);
+        Some(config)
+    }
+
+    /// Caches the [`SystemConfig`] for the given L1 origin hash, evicting the least recently used
+    /// entries beyond [`MAX_SYSTEM_CONFIG_CACHE_ENTRIES`].
+    fn cache_system_config(&mut self, origin: B256, config: SystemConfig) {
+        if let Some(index) = self.system_configs.iter().position(|(hash, _)| hash == &origin) {
+            self.system_configs.remove(index);
+        }
+        self.system_configs.push_front((origin, config));
+        self.system_configs.truncate(MAX_SYSTEM_CONFIG_CACHE_ENTRIES);
     }
 }
 
@@ -73,11 +101,28 @@ where
         let l1_header;
         let deposit_transactions: Vec<Bytes>;
 
-        let mut sys_config = self
-            .config_fetcher
-            .system_config_by_number(l2_parent.block_info.number, Arc::clone(&self.rollup_cfg))
-            .await
-            .map_err(Into::into)?;
+        let next_l2_block_number = l2_parent.block_info.number + 1;
+        let (next_l2_time, next_l2_timestamp_millis_part) =
+            self.rollup_cfg.l2_block_timestamp_parts(next_l2_block_number);
+
+        // The system config for the parent's L1 origin: carried forward in memory, read from
+        // the L2 EL only when the origin is unknown (startup, reset, reorg, or immediately after
+        // a network upgrade).
+        let mut sys_config = match self.cached_system_config(&l2_parent.l1_origin.hash) {
+            Some(config) => config,
+            None => {
+                let config = self
+                    .config_fetcher
+                    .system_config_by_number(
+                        l2_parent.block_info.number,
+                        Arc::clone(&self.rollup_cfg),
+                    )
+                    .await
+                    .map_err(Into::into)?;
+                self.cache_system_config(l2_parent.l1_origin.hash, config);
+                config
+            }
+        };
 
         // If the L1 origin changed in this block, then we are in the first block of the epoch.
         // In this case we need to fetch all transaction receipts from the L1 origin block so
@@ -86,6 +131,9 @@ where
             let header =
                 self.receipts_fetcher.header_by_hash(epoch.hash).await.map_err(Into::into)?;
             if l2_parent.l1_origin.hash != header.parent_hash {
+                // A reset means the carried-forward configs may not match the chain the
+                // pipeline resets to; drop them so the EL is re-read after the reset.
+                self.system_configs.clear();
                 return Err(PipelineErrorKind::Reset(
                     BuilderError::BlockMismatchEpochReset(
                         epoch,
@@ -112,10 +160,16 @@ where
             for err in &errors {
                 warn!(target: "attributes", error = ?err, epoch = epoch.number, "Malformed system config update (skipped)");
             }
+            // Cache the config of the new origin: subsequent blocks in this epoch use it
+            // without consulting the EL.
+            self.cache_system_config(epoch.hash, sys_config);
             l1_header = header;
             deposit_transactions = deposits;
             0
         } else if l2_parent.l1_origin.hash != epoch.hash {
+            // A reset means the carried-forward configs may not match the chain the pipeline
+            // resets to; drop them so the EL is re-read after the reset.
+            self.system_configs.clear();
             return Err(PipelineErrorKind::Reset(
                 BuilderError::BlockMismatch(epoch, l2_parent.l1_origin).into(),
             ));
@@ -127,12 +181,24 @@ where
             l2_parent.seq_num + 1
         };
 
+        // A fork may change which SystemConfig fields can be decoded from an L2 block. Drop the
+        // carried value at every configured fork boundary so the next build decodes the new
+        // format from the EL. Iterating the canonical upgrade list automatically covers future
+        // forks; the extra read happens only once per fork.
+        if BaseUpgrade::VARIANTS.iter().any(|&upgrade| {
+            self.rollup_cfg.upgrade_activation_timestamp(upgrade).is_some_and(|activation| {
+                l2_parent.block_info.timestamp < activation && activation <= next_l2_time
+            })
+        }) {
+            self.system_configs.clear();
+        }
+
         // Sanity check the L1 origin was correctly selected to maintain the time invariant
         // between L1 and L2.
-        let next_l2_block_number = l2_parent.block_info.number + 1;
-        let (next_l2_time, next_l2_timestamp_millis_part) =
-            self.rollup_cfg.l2_block_timestamp_parts(next_l2_block_number);
         if next_l2_time < l1_header.timestamp {
+            // A reset means the carried-forward configs may not match the chain the pipeline
+            // resets to; drop them so the EL is re-read after the reset.
+            self.system_configs.clear();
             return Err(PipelineErrorKind::Reset(
                 BuilderError::BrokenTimeInvariant(
                     l2_parent.l1_origin,
@@ -281,7 +347,7 @@ mod tests {
 
     use alloy_consensus::Header;
     use alloy_eips::eip2718::Decodable2718;
-    use alloy_primitives::{B256, Log, LogData, U64, U256, address};
+    use alloy_primitives::{B64, B256, Log, LogData, U64, U256, address};
     use base_common_chains::Sepolia;
     use base_common_consensus::{BaseTxEnvelope, SystemAddresses};
     use base_common_genesis::{
@@ -879,5 +945,243 @@ mod tests {
 
         // Should succeed despite the malformed system config receipt.
         assert!(builder.prepare_payload_attributes(l2_parent, epoch).await.is_ok());
+    }
+
+    /// Builds a rollup config with the requested block time and no scheduled upgrades.
+    fn cache_test_cfg(block_time: u64, timestamp: u64) -> Arc<RollupConfig> {
+        Arc::new(RollupConfig {
+            block_time,
+            genesis: ChainGenesis {
+                l2_time: timestamp.saturating_sub(block_time),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+    }
+
+    /// Sets up an L2 parent at block 1 with L1 origin block 1, and the next epoch's origin
+    /// block 2 whose parent hash links back to it. Returns the builder, the epoch block's
+    /// [`BlockNumHash`], and the first L2 parent.
+    fn transition_setup() -> (
+        StatefulAttributesBuilder<TestChainProvider, TestSystemConfigL2Fetcher>,
+        BlockNumHash,
+        L2BlockInfo,
+    ) {
+        let block_time = 2_u64;
+        let timestamp = 100_u64;
+        let cfg = cache_test_cfg(block_time, timestamp);
+        let l1_cfg = Arc::new(Sepolia::l1_config());
+        let mut fetcher = TestSystemConfigL2Fetcher::default();
+        fetcher.insert(1, SystemConfig::default());
+        let mut provider = TestChainProvider::default();
+        let parent_header = Header { number: 1, timestamp, ..Default::default() };
+        let parent_hash = parent_header.hash_slow();
+        let epoch_header = Header { number: 2, timestamp, parent_hash, ..Default::default() };
+        let epoch_hash = epoch_header.hash_slow();
+        provider.insert_header(parent_hash, parent_header);
+        provider.insert_header(epoch_hash, epoch_header);
+        provider.insert_receipts(epoch_hash, vec![]);
+        let builder = StatefulAttributesBuilder::new(cfg, l1_cfg, fetcher, provider);
+        let l2_parent = L2BlockInfo {
+            block_info: BlockInfo { hash: B256::ZERO, number: 1, timestamp, parent_hash },
+            l1_origin: BlockNumHash { hash: parent_hash, number: 1 },
+            seq_num: 0,
+        };
+        (builder, BlockNumHash { hash: epoch_hash, number: 2 }, l2_parent)
+    }
+
+    /// Advances to the next L2 parent within the same L1 origin.
+    fn next_l2_parent(prev: &L2BlockInfo, cfg: &RollupConfig, epoch: BlockNumHash) -> L2BlockInfo {
+        let number = prev.block_info.number + 1;
+        L2BlockInfo {
+            block_info: BlockInfo {
+                hash: B256::ZERO,
+                number,
+                timestamp: cfg.l2_block_timestamp(number),
+                parent_hash: prev.block_info.hash,
+            },
+            l1_origin: epoch,
+            seq_num: prev.seq_num + 1,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_system_config_carried_forward_within_epoch() {
+        let (mut builder, epoch, l2_parent) = transition_setup();
+
+        // Epoch transition: reads the EL once for the parent origin's config.
+        builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
+        assert_eq!(builder.config_fetcher.system_config_calls, vec![1]);
+
+        // Same-epoch blocks reuse the carried-forward config even when the EL can no longer
+        // serve it.
+        builder.config_fetcher.clear();
+        let cfg = Arc::clone(&builder.rollup_cfg);
+        let l2_parent = next_l2_parent(&l2_parent, &cfg, epoch);
+        builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
+        let l2_parent = next_l2_parent(&l2_parent, &cfg, epoch);
+        builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
+        assert_eq!(builder.config_fetcher.system_config_calls, vec![1]);
+    }
+
+    #[tokio::test]
+    async fn test_system_config_cache_ignores_stale_el_value() {
+        let (mut builder, epoch, l2_parent) = transition_setup();
+
+        builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
+        let cached_gas_limit = SystemConfig::default().gas_limit;
+
+        // The EL now reports a different config for the next block; the carried-forward config
+        // must win because it already includes the new epoch's updates.
+        let stale = SystemConfig { gas_limit: cached_gas_limit + 1, ..Default::default() };
+        builder.config_fetcher.insert(2, stale);
+
+        let cfg = Arc::clone(&builder.rollup_cfg);
+        let l2_parent = next_l2_parent(&l2_parent, &cfg, epoch);
+        let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
+        assert_eq!(
+            payload.gas_limit,
+            Some(u64::from_be_bytes(alloy_primitives::U64::from(cached_gas_limit).to_be_bytes()))
+        );
+        assert_eq!(builder.config_fetcher.system_config_calls, vec![1]);
+    }
+
+    #[tokio::test]
+    async fn test_unknown_l1_origin_falls_back_to_el() {
+        let (mut builder, epoch, l2_parent) = transition_setup();
+        builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
+        assert_eq!(builder.config_fetcher.system_config_calls, vec![1]);
+
+        // A reorged L1 origin (same number, unknown hash) is not in the cache: the config is
+        // read from the EL.
+        let reorged_header = Header { number: 2, timestamp: 100, ..Default::default() };
+        let reorged_hash = reorged_header.hash_slow();
+        builder.receipts_fetcher.insert_header(reorged_hash, reorged_header);
+        builder.config_fetcher.insert(2, SystemConfig::default());
+
+        let cfg = Arc::clone(&builder.rollup_cfg);
+        let mut l2_parent =
+            next_l2_parent(&l2_parent, &cfg, BlockNumHash { hash: reorged_hash, number: 2 });
+        l2_parent.l1_origin = BlockNumHash { hash: reorged_hash, number: 2 };
+        let epoch = BlockNumHash { hash: reorged_hash, number: 2 };
+        builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
+        assert_eq!(builder.config_fetcher.system_config_calls, vec![1, 2]);
+    }
+
+    #[test]
+    fn test_system_config_cache_evicts_least_recently_used() {
+        let mut builder = StatefulAttributesBuilder::new(
+            Arc::new(RollupConfig::default()),
+            Arc::new(Sepolia::l1_config()),
+            TestSystemConfigL2Fetcher::default(),
+            TestChainProvider::default(),
+        );
+        let origins: Vec<B256> = (0..10).map(|i| B256::from([i as u8; 32])).collect();
+        for &origin in &origins {
+            builder.cache_system_config(origin, SystemConfig::default());
+        }
+        assert_eq!(builder.system_configs.len(), MAX_SYSTEM_CONFIG_CACHE_ENTRIES);
+        assert!(builder.cached_system_config(&origins[0]).is_none());
+        assert!(builder.cached_system_config(&origins[9]).is_some());
+
+        // A hit promotes the entry, evicting the next-oldest on the following insert.
+        assert!(builder.cached_system_config(&origins[2]).is_some());
+        builder.cache_system_config(B256::from([10_u8; 32]), SystemConfig::default());
+        assert!(builder.cached_system_config(&origins[2]).is_some());
+        assert!(builder.cached_system_config(&origins[3]).is_none());
+    }
+
+    /// Crossing a fork that changes the system config encoding (here Holocene, which moves the
+    /// EIP-1559 parameters into the header's `extra_data`) must force one EL re-read: the
+    /// pre-fork cached config has no EIP-1559 parameters, and carrying it forward would emit
+    /// zeroed params where the EL decodes the persisted values from the parent block.
+    #[tokio::test]
+    async fn test_fork_boundary_forces_el_reseed() {
+        let block_time = 2_u64;
+        // Blocks: 1 -> ts 100 (pre-Holocene), 2 -> ts 102 (first Holocene), 3 -> ts 104.
+        let cfg = Arc::new(RollupConfig {
+            block_time,
+            genesis: ChainGenesis { l2_time: 98, ..Default::default() },
+            upgrades: UpgradeConfig { holocene_time: Some(102), ..Default::default() },
+            ..Default::default()
+        });
+        let l1_cfg = Arc::new(Sepolia::l1_config());
+        let mut fetcher = TestSystemConfigL2Fetcher::default();
+        fetcher.insert(1, SystemConfig::default());
+        let mut provider = TestChainProvider::default();
+        let origin_header = Header { number: 1, timestamp: 100, ..Default::default() };
+        let origin_hash = origin_header.hash_slow();
+        provider.insert_header(origin_hash, origin_header);
+        let mut builder =
+            StatefulAttributesBuilder::new(Arc::clone(&cfg), l1_cfg, fetcher, provider);
+        let epoch = BlockNumHash { hash: origin_hash, number: 1 };
+
+        // Build block 2 (the Holocene transition block) on the pre-fork parent: seeds the
+        // cache from the EL and emits the zeroed transition sentinel.
+        let l2_parent = L2BlockInfo {
+            block_info: BlockInfo {
+                hash: B256::ZERO,
+                number: 1,
+                timestamp: 100,
+                ..Default::default()
+            },
+            l1_origin: epoch,
+            seq_num: 0,
+        };
+        let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
+        assert_eq!(payload.eip_1559_params, Some(B64::ZERO));
+        assert_eq!(builder.config_fetcher.system_config_calls, vec![1]);
+
+        // The EL's view of block 2 decodes the persisted EIP-1559 parameters from its
+        // `extra_data`; the pre-fork cached config has neither.
+        let post_fork = SystemConfig {
+            eip1559_denominator: Some(250),
+            eip1559_elasticity: Some(6),
+            ..Default::default()
+        };
+        builder.config_fetcher.insert(2, post_fork);
+
+        // Build block 3 on the post-fork parent: the transition cleared the cache, so the EL is
+        // re-read, yielding the persisted parameters instead of zeros.
+        let l2_parent = next_l2_parent(&l2_parent, &cfg, epoch);
+        let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
+        assert_eq!(
+            payload.eip_1559_params,
+            Some(B64::from_slice(&[250_u32.to_be_bytes(), 6_u32.to_be_bytes()].concat()))
+        );
+        assert_eq!(builder.config_fetcher.system_config_calls, vec![1, 2]);
+
+        // Build block 4 without another fork, served from the re-seeded cache.
+        let l2_parent = next_l2_parent(&l2_parent, &cfg, epoch);
+        builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
+        assert_eq!(builder.config_fetcher.system_config_calls, vec![1, 2]);
+    }
+
+    /// A Reset-class error (here a broken time invariant) must clear the carried-forward
+    /// configs: after the pipeline resets, the chain may differ, so the EL is re-read.
+    #[tokio::test]
+    async fn test_reset_error_clears_config_cache() {
+        let (mut builder, _epoch, l2_parent) = transition_setup();
+        let origin = l2_parent.l1_origin;
+
+        // Same-epoch build seeds the cache.
+        builder.prepare_payload_attributes(l2_parent, origin).await.unwrap();
+        assert_eq!(builder.config_fetcher.system_config_calls, vec![1]);
+
+        // An epoch transition to an origin whose timestamp breaks the time invariant returns a
+        // Reset error and clears the cache.
+        let bad_header =
+            Header { number: 2, timestamp: 1_000, parent_hash: origin.hash, ..Default::default() };
+        let bad_hash = bad_header.hash_slow();
+        builder.receipts_fetcher.insert_header(bad_hash, bad_header);
+        builder.receipts_fetcher.insert_receipts(bad_hash, vec![]);
+        let bad_epoch = BlockNumHash { hash: bad_hash, number: 2 };
+        let err = builder.prepare_payload_attributes(l2_parent, bad_epoch).await.unwrap_err();
+        assert!(matches!(err, PipelineErrorKind::Reset(_)));
+        assert!(builder.system_configs.is_empty());
+
+        // The next build re-reads the EL instead of trusting a pre-reset config.
+        builder.prepare_payload_attributes(l2_parent, origin).await.unwrap();
+        assert_eq!(builder.config_fetcher.system_config_calls, vec![1, 1]);
     }
 }
