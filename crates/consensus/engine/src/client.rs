@@ -1,6 +1,6 @@
 //! An Engine API Client.
 
-use std::{future::Future, io, sync::Arc};
+use std::{future::Future, io, sync::Arc, time::Duration};
 
 use alloy_eips::{BlockId, eip1898::BlockNumberOrTag};
 use alloy_network::{Ethereum, Network};
@@ -172,6 +172,8 @@ pub struct EngineClientBuilder {
     pub l2_jwt: JwtSecret,
     /// The L1 RPC URL.
     pub l1_rpc: Url,
+    /// Request timeout for L1 execution JSON-RPC calls.
+    pub l1_rpc_timeout: Duration,
     /// The [`RollupConfig`] for determining Engine API versions based on upgrade activations.
     pub cfg: Arc<RollupConfig>,
 }
@@ -191,7 +193,7 @@ impl EngineClientBuilder {
         )
         .await?;
 
-        let l1_provider = L1RpcProvider::new_http(self.l1_rpc);
+        let l1_provider = L1RpcProvider::new_http_with_timeout(self.l1_rpc, self.l1_rpc_timeout);
 
         Ok(BaseEngineClient { engine, l1_provider, cfg: self.cfg })
     }
@@ -402,6 +404,7 @@ async fn record_call_time<T, Err>(
 #[cfg(test)]
 mod tests {
     use alloy_rpc_types_engine::JwtSecret;
+    use base_consensus_providers::L1_RPC_TIMEOUT;
     use tokio::net::TcpListener;
     use tokio_tungstenite::accept_async;
 
@@ -507,6 +510,7 @@ mod tests {
             l2: "http://127.0.0.1:8551".parse().unwrap(),
             l2_jwt: JwtSecret::random(),
             l1_rpc: "http://127.0.0.1:8545".parse().unwrap(),
+            l1_rpc_timeout: L1_RPC_TIMEOUT,
             cfg: Arc::new(RollupConfig::default()),
         };
         let _client = builder.build().await.unwrap();
@@ -527,6 +531,7 @@ mod tests {
             l2: format!("ws://127.0.0.1:{port}").parse().unwrap(),
             l2_jwt: JwtSecret::random(),
             l1_rpc: "http://127.0.0.1:8545".parse().unwrap(),
+            l1_rpc_timeout: L1_RPC_TIMEOUT,
             cfg: Arc::new(RollupConfig::default()),
         };
         let _client = builder.build().await.unwrap();

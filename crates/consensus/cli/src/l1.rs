@@ -1,6 +1,9 @@
 //! L1 Client CLI arguments.
 
+use std::{num::ParseIntError, time::Duration};
+
 use alloy_primitives::Address;
+use base_consensus_providers::L1_RPC_TIMEOUT;
 use url::Url;
 
 const DEFAULT_L1_TRUST_RPC: bool = true;
@@ -11,6 +14,16 @@ pub struct L1ClientArgs {
     /// URL of the L1 execution client RPC API.
     #[arg(long, visible_alias = "l1", env = "BASE_NODE_L1_ETH_RPC")]
     pub l1_eth_rpc: Url,
+    /// Request timeout for general L1 execution JSON-RPC calls.
+    #[arg(
+        long = "l1.rpc-timeout-ms",
+        default_value = L1_RPC_TIMEOUT.as_millis().to_string(),
+        env = "BASE_NODE_L1_RPC_TIMEOUT_MS",
+        value_parser = |arg: &str| -> Result<Duration, ParseIntError> {
+            Ok(Duration::from_millis(arg.parse()?))
+        }
+    )]
+    pub l1_rpc_timeout: Duration,
     /// Whether to trust the L1 RPC.
     /// If false, block hash verification is performed for all retrieved blocks.
     #[arg(
@@ -52,11 +65,48 @@ impl Default for L1ClientArgs {
     fn default() -> Self {
         Self {
             l1_eth_rpc: Url::parse("http://localhost:8545").unwrap(),
+            l1_rpc_timeout: L1_RPC_TIMEOUT,
             l1_trust_rpc: DEFAULT_L1_TRUST_RPC,
             l1_beacon: Url::parse("http://localhost:5052").unwrap(),
             l1_slot_duration_override: None,
             l1_da_batcher_sender_override: None,
             l1_verifier_confs: 0,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use clap::Parser;
+
+    use super::{L1_RPC_TIMEOUT, L1ClientArgs};
+
+    #[derive(Parser)]
+    struct Command {
+        #[command(flatten)]
+        args: L1ClientArgs,
+    }
+
+    #[test]
+    fn defaults_l1_rpc_timeout_to_fifteen_seconds() {
+        assert_eq!(L1ClientArgs::default().l1_rpc_timeout, L1_RPC_TIMEOUT);
+    }
+
+    #[test]
+    fn parses_l1_rpc_timeout_in_milliseconds() {
+        let args = Command::parse_from([
+            "base-consensus",
+            "--l1-eth-rpc",
+            "http://localhost:8545",
+            "--l1-beacon",
+            "http://localhost:5052",
+            "--l1.rpc-timeout-ms",
+            "2500",
+        ])
+        .args;
+
+        assert_eq!(args.l1_rpc_timeout, Duration::from_millis(2500));
     }
 }
