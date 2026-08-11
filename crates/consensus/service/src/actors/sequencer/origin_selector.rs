@@ -12,6 +12,25 @@ use tokio::sync::watch;
 
 use crate::Metrics;
 
+macro_rules! rpc_outcome {
+    ($result:expr) => {
+        match $result {
+            Ok(Some(_)) => "success",
+            Ok(None) => "not_found",
+            Err(error)
+                if error
+                    .as_transport_err()
+                    .and_then(|error| error.as_custom())
+                    .and_then(|error| error.downcast_ref::<reqwest::Error>())
+                    .is_some_and(reqwest::Error::is_timeout) =>
+            {
+                "timeout"
+            }
+            Err(_) => "error",
+        }
+    };
+}
+
 /// Trait for selecting the next L1 origin block for sequencing.
 ///
 /// This trait is used by the sequencer to determine which L1 block should be used
@@ -255,20 +274,7 @@ impl L1OriginSelectorProvider for DelayedL1OriginSelectorProvider {
         // By-hash lookups are not delayed, as they're direct indexes.
         let start = Instant::now();
         let result = Provider::get_block_by_hash(&self.inner, hash).await;
-        let outcome = match &result {
-            Ok(Some(_)) => "success",
-            Ok(None) => "not_found",
-            Err(error)
-                if error
-                    .as_transport_err()
-                    .and_then(|error| error.as_custom())
-                    .and_then(|error| error.downcast_ref::<reqwest::Error>())
-                    .is_some_and(reqwest::Error::is_timeout) =>
-            {
-                "timeout"
-            }
-            Err(_) => "error",
-        };
+        let outcome = rpc_outcome!(&result);
         Metrics::sequencer_l1_origin_rpc_duration_seconds("block_by_hash", outcome)
             .record(start.elapsed());
         Metrics::sequencer_l1_origin_rpc_calls_total("block_by_hash", outcome).increment(1);
@@ -290,20 +296,7 @@ impl L1OriginSelectorProvider for DelayedL1OriginSelectorProvider {
 
         let start = Instant::now();
         let result = Provider::get_block_by_number(&self.inner, number.into()).await;
-        let outcome = match &result {
-            Ok(Some(_)) => "success",
-            Ok(None) => "not_found",
-            Err(error)
-                if error
-                    .as_transport_err()
-                    .and_then(|error| error.as_custom())
-                    .and_then(|error| error.downcast_ref::<reqwest::Error>())
-                    .is_some_and(reqwest::Error::is_timeout) =>
-            {
-                "timeout"
-            }
-            Err(_) => "error",
-        };
+        let outcome = rpc_outcome!(&result);
         Metrics::sequencer_l1_origin_rpc_duration_seconds("block_by_number", outcome)
             .record(start.elapsed());
         Metrics::sequencer_l1_origin_rpc_calls_total("block_by_number", outcome).increment(1);
