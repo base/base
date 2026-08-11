@@ -12,38 +12,40 @@ const EL_REACHABILITY_PATH: &str = "/v1/p2p/reachability/el";
 const CL_REACHABILITY_PATH: &str = "/v1/p2p/reachability/cl";
 const TELEMETRY_REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
 
-/// JSON response for a completed execution-layer reachability check.
+/// JSON response for a completed reachability check on either layer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ElReachabilityResponse {
+pub struct ReachabilityResponse {
     /// Stable outcome of the probe.
-    pub outcome: ElReachabilityOutcome,
-    /// Protocol stage reached by the probe.
-    pub stage: ElReachabilityStage,
+    pub outcome: ReachabilityOutcome,
+    /// Stable label of the protocol stage reached by the probe, such as
+    /// `tcp_connect`. Kept as a string because the client only displays it
+    /// and the per-layer stage sets can grow independently.
+    pub stage: String,
     /// Advertised address probed by the telemetry service.
     pub observed_address: SocketAddr,
     /// Total probe duration in milliseconds.
     pub elapsed_ms: u64,
-    /// Client version returned by the remote devp2p Hello.
+    /// Client version returned by the remote handshake, when advertised.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_version: Option<String>,
 }
 
-/// Stable outcome returned by an execution-layer reachability probe.
+/// Stable outcome returned by a reachability probe on either layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ElReachabilityOutcome {
-    /// TCP, ECIES, and the devp2p Hello exchange reached the remote node.
+pub enum ReachabilityOutcome {
+    /// TCP and the layer's security handshake reached the remote node.
     Reachable,
     /// The telemetry service could not establish the target TCP connection.
     ConnectionFailed,
     /// The probe deadline elapsed.
     TimedOut,
-    /// TCP connected, but ECIES or the devp2p Hello exchange failed.
+    /// TCP connected, but the security handshake failed.
     HandshakeFailed,
 }
 
-impl ElReachabilityOutcome {
+impl ReachabilityOutcome {
     /// Returns the stable wire label for this outcome.
     pub const fn as_str(&self) -> &'static str {
         match self {
@@ -51,95 +53,6 @@ impl ElReachabilityOutcome {
             Self::ConnectionFailed => "connection_failed",
             Self::TimedOut => "timed_out",
             Self::HandshakeFailed => "handshake_failed",
-        }
-    }
-}
-
-/// Protocol stage reached by an execution-layer reachability probe.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ElReachabilityStage {
-    /// Establishing the TCP connection.
-    TcpConnect,
-    /// Authenticating the encrypted ECIES transport.
-    EncryptedHandshake,
-    /// Exchanging the devp2p Hello message.
-    Devp2pHello,
-}
-
-impl ElReachabilityStage {
-    /// Returns the stable wire label for this stage.
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::TcpConnect => "tcp_connect",
-            Self::EncryptedHandshake => "encrypted_handshake",
-            Self::Devp2pHello => "devp2p_hello",
-        }
-    }
-}
-
-/// JSON response for a completed consensus-layer reachability check.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ClReachabilityResponse {
-    /// Stable outcome of the probe.
-    pub outcome: ClReachabilityOutcome,
-    /// Protocol stage reached by the probe.
-    pub stage: ClReachabilityStage,
-    /// Advertised address probed by the telemetry service.
-    pub observed_address: SocketAddr,
-    /// Total probe duration in milliseconds.
-    pub elapsed_ms: u64,
-    /// Agent version returned by the remote libp2p identify exchange.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_version: Option<String>,
-}
-
-/// Stable outcome returned by a consensus-layer reachability probe.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ClReachabilityOutcome {
-    /// TCP, the Noise handshake, and multiplexer negotiation reached the remote node.
-    Reachable,
-    /// The telemetry service could not establish the target TCP connection.
-    ConnectionFailed,
-    /// The probe deadline elapsed.
-    TimedOut,
-    /// TCP connected, but the Noise handshake or peer identity check failed.
-    HandshakeFailed,
-}
-
-impl ClReachabilityOutcome {
-    /// Returns the stable wire label for this outcome.
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::Reachable => "reachable",
-            Self::ConnectionFailed => "connection_failed",
-            Self::TimedOut => "timed_out",
-            Self::HandshakeFailed => "handshake_failed",
-        }
-    }
-}
-
-/// Protocol stage reached by a consensus-layer reachability probe.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ClReachabilityStage {
-    /// Establishing the TCP connection.
-    TcpConnect,
-    /// Authenticating the Noise transport and negotiating the multiplexer.
-    SecurityHandshake,
-    /// Exchanging libp2p identify information.
-    Identify,
-}
-
-impl ClReachabilityStage {
-    /// Returns the stable wire label for this stage.
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::TcpConnect => "tcp_connect",
-            Self::SecurityHandshake => "security_handshake",
-            Self::Identify => "identify",
         }
     }
 }
@@ -223,7 +136,7 @@ impl TelemetryClient {
     pub async fn check_el_reachability(
         &self,
         enode: &str,
-    ) -> Result<ElReachabilityResponse, TelemetryClientError> {
+    ) -> Result<ReachabilityResponse, TelemetryClientError> {
         self.check_reachability(EL_REACHABILITY_PATH, &json!({ "enode": enode })).await
     }
 
@@ -231,16 +144,16 @@ impl TelemetryClient {
     pub async fn check_cl_reachability(
         &self,
         enr: &str,
-    ) -> Result<ClReachabilityResponse, TelemetryClientError> {
+    ) -> Result<ReachabilityResponse, TelemetryClientError> {
         self.check_reachability(CL_REACHABILITY_PATH, &json!({ "enr": enr })).await
     }
 
     /// Posts one reachability request and decodes the typed response or error.
-    async fn check_reachability<T: serde::de::DeserializeOwned>(
+    async fn check_reachability(
         &self,
         path: &str,
         body: &serde_json::Value,
-    ) -> Result<T, TelemetryClientError> {
+    ) -> Result<ReachabilityResponse, TelemetryClientError> {
         let response = self.http.post(self.reachability_endpoint(path)?).json(body).send().await?;
         let status = response.status();
 
@@ -300,8 +213,7 @@ mod tests {
     use url::Url;
 
     use super::{
-        CL_REACHABILITY_PATH, ClReachabilityOutcome, ClReachabilityResponse, ClReachabilityStage,
-        EL_REACHABILITY_PATH, ElReachabilityOutcome, ElReachabilityResponse, ElReachabilityStage,
+        CL_REACHABILITY_PATH, EL_REACHABILITY_PATH, ReachabilityOutcome, ReachabilityResponse,
         TelemetryApiError, TelemetryClient, TelemetryClientError, TelemetryErrorResponse,
     };
 
@@ -346,9 +258,9 @@ mod tests {
 
         assert_eq!(
             response,
-            ElReachabilityResponse {
-                outcome: ElReachabilityOutcome::Reachable,
-                stage: ElReachabilityStage::Devp2pHello,
+            ReachabilityResponse {
+                outcome: ReachabilityOutcome::Reachable,
+                stage: "devp2p_hello".to_string(),
                 observed_address: SocketAddr::from(([203, 0, 113, 10], 30303)),
                 elapsed_ms: 42,
                 client_version: Some("reth/v1.0.0".to_string()),
@@ -377,9 +289,9 @@ mod tests {
 
         assert_eq!(
             response,
-            ClReachabilityResponse {
-                outcome: ClReachabilityOutcome::Reachable,
-                stage: ClReachabilityStage::Identify,
+            ReachabilityResponse {
+                outcome: ReachabilityOutcome::Reachable,
+                stage: "identify".to_string(),
                 observed_address: SocketAddr::from(([203, 0, 113, 10], 9222)),
                 elapsed_ms: 42,
                 client_version: Some("op-node/v1.0.0".to_string()),
@@ -417,7 +329,7 @@ mod tests {
         for base in [format!("{base_url}telemetry"), format!("{base_url}telemetry/")] {
             let client = TelemetryClient::new(Url::parse(&base).unwrap()).unwrap();
             let response = client.check_el_reachability("enode://test").await.unwrap();
-            assert_eq!(response.outcome, ElReachabilityOutcome::Reachable);
+            assert_eq!(response.outcome, ReachabilityOutcome::Reachable);
         }
         handle.abort();
     }

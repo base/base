@@ -1,9 +1,6 @@
 //! Implementation of the `basectl p2p` command group.
 
-use std::{
-    io::{self, Write},
-    net::SocketAddr,
-};
+use std::io::{self, Write};
 
 use anyhow::{Context, Result, anyhow};
 use base_consensus_peers::BootNode;
@@ -11,9 +8,9 @@ use serde::Serialize;
 use url::Url;
 
 use crate::{
-    ClReachabilityOutcome, CommandOutcome, Confirm, ElReachabilityOutcome, JsonOutput,
-    KeyValueTable, MonitoringConfig, P2pCommandError, P2pInfoJson, P2pInfoTable, P2pTargetError,
-    PeerListReport, PeerSummary, TelemetryClient, add_peer, ban_el_peer, ban_peer, connect_peer,
+    CommandOutcome, Confirm, JsonOutput, KeyValueTable, MonitoringConfig, P2pCommandError,
+    P2pInfoJson, P2pInfoTable, P2pTargetError, PeerListReport, PeerSummary, ReachabilityOutcome,
+    ReachabilityResponse, TelemetryClient, add_peer, ban_el_peer, ban_peer, connect_peer,
     disconnect_peer, el_peer_is_trusted, fetch_connected_peers, fetch_info, fetch_l2_chain_id,
     fetch_raw_info, fetch_raw_peers, list_banned_peers, remove_peer, unban_el_peer, unban_peer,
 };
@@ -147,7 +144,18 @@ async fn run_reachability(
     target: &str,
     json: bool,
 ) -> Result<CommandOutcome> {
-    let target = ReachabilityTarget::parse(target)?;
+    let target = target.trim();
+    if target.is_empty() {
+        return Err(P2pTargetError::EmptyTarget.into());
+    }
+    if !target.starts_with("enode://") && !target.starts_with("enr:") {
+        return Err(
+            P2pTargetError::ReachabilityTargetUnsupported { target: target.to_string() }.into()
+        );
+    }
+    let bootnode = BootNode::parse_bootnode(target).map_err(|error| {
+        P2pTargetError::InvalidBootnode { target: target.to_string(), message: error.to_string() }
+    })?;
     let chain_id = fetch_l2_chain_id(&config.rpc).await.with_context(|| {
         format!("could not detect network from selected config RPC {}", config.rpc)
     })?;
@@ -157,57 +165,26 @@ async fn run_reachability(
         )
     })?;
     let client = TelemetryClient::new(telemetry_url)?;
-    let reachable = match target {
-        ReachabilityTarget::Enr(enr) => {
-            let response = client.check_cl_reachability(&enr).await?;
-            print_reachability(
-                &response,
-                json,
-                response.outcome.as_str(),
-                response.stage.as_str(),
-                response.observed_address,
-                response.elapsed_ms,
-                response.client_version.as_deref(),
-            )?;
-            response.outcome == ClReachabilityOutcome::Reachable
-        }
-        ReachabilityTarget::Enode(enode) => {
-            let response = client.check_el_reachability(&enode).await?;
-            print_reachability(
-                &response,
-                json,
-                response.outcome.as_str(),
-                response.stage.as_str(),
-                response.observed_address,
-                response.elapsed_ms,
-                response.client_version.as_deref(),
-            )?;
-            response.outcome == ElReachabilityOutcome::Reachable
-        }
+    let response = match bootnode {
+        BootNode::Enode(_) => client.check_el_reachability(target).await?,
+        BootNode::Enr(_) => client.check_cl_reachability(target).await?,
     };
-    Ok(CommandOutcome::from_failures(!reachable))
+    print_reachability(&response, json)?;
+    Ok(CommandOutcome::from_failures(response.outcome != ReachabilityOutcome::Reachable))
 }
 
 /// Prints one telemetry reachability response as JSON or a key-value table.
-fn print_reachability<T: Serialize>(
-    response: &T,
-    json: bool,
-    outcome: &str,
-    stage: &str,
-    observed_address: SocketAddr,
-    elapsed_ms: u64,
-    client_version: Option<&str>,
-) -> Result<()> {
+fn print_reachability(response: &ReachabilityResponse, json: bool) -> Result<()> {
     if json {
         JsonOutput::print(response)?;
     } else {
         let mut table = KeyValueTable::new();
         table
-            .row("outcome", outcome)
-            .row("stage", stage)
-            .row("observed address", observed_address.to_string())
-            .row("elapsed", format!("{elapsed_ms} ms"));
-        if let Some(client_version) = client_version {
+            .row("outcome", response.outcome.as_str())
+            .row("stage", response.stage.as_str())
+            .row("observed address", response.observed_address.to_string())
+            .row("elapsed", format!("{} ms", response.elapsed_ms));
+        if let Some(client_version) = response.client_version.as_deref() {
             table.row("client version", client_version);
         }
         table.print()?;
@@ -493,42 +470,6 @@ pub enum PeerTarget {
     Enode(String),
     /// Consensus-layer libp2p peer ID.
     PeerId(String),
-}
-
-/// Parsed peer target accepted by `basectl p2p reachability`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ReachabilityTarget {
-    /// Execution-layer enode target.
-    Enode(String),
-    /// Consensus-layer signed ENR target.
-    Enr(String),
-}
-
-impl ReachabilityTarget {
-    /// Parses a reachability target, accepting only `enode://` URLs and
-    /// `enr:` records, and validates it before spending a rate-limited
-    /// telemetry probe.
-    pub fn parse(raw: &str) -> Result<Self, P2pTargetError> {
-        let target = raw.trim();
-        if target.is_empty() {
-            return Err(P2pTargetError::EmptyTarget);
-        }
-        if !target.starts_with("enode://") && !target.starts_with("enr:") {
-            return Err(P2pTargetError::ReachabilityTargetUnsupported {
-                target: target.to_string(),
-            });
-        }
-
-        let bootnode =
-            BootNode::parse_bootnode(target).map_err(|error| P2pTargetError::InvalidBootnode {
-                target: target.to_string(),
-                message: error.to_string(),
-            })?;
-        match bootnode {
-            BootNode::Enode(_) => Ok(Self::Enode(target.to_string())),
-            BootNode::Enr(_) => Ok(Self::Enr(target.to_string())),
-        }
-    }
 }
 
 impl AddTarget {
@@ -923,7 +864,7 @@ mod tests {
 
     use super::{
         AddTarget, PeerAction, PeerActionJson, PeerBulkAction, PeerBulkActionResultJson,
-        PeerTarget, ReachabilityTarget, run_reachability,
+        PeerTarget, run_reachability,
     };
     use crate::{MonitoringConfig, P2pTargetError};
 
@@ -968,52 +909,40 @@ mod tests {
         );
     }
 
-    #[test]
-    fn parse_reachability_target_routes_enode_to_el() {
-        assert_eq!(
-            ReachabilityTarget::parse(VALID_ENODE).unwrap(),
-            ReachabilityTarget::Enode(VALID_ENODE.to_string())
-        );
+    /// Runs `run_reachability` against an unused config and returns the
+    /// `P2pTargetError` produced before any network access.
+    async fn reachability_target_error(target: &str) -> P2pTargetError {
+        let error = run_reachability(&test_config(None), target, false).await.unwrap_err();
+        error.downcast::<P2pTargetError>().expect("expected a target validation error")
     }
 
-    #[test]
-    fn parse_reachability_target_routes_enr_to_cl() {
-        assert_eq!(
-            ReachabilityTarget::parse(VALID_ENR).unwrap(),
-            ReachabilityTarget::Enr(VALID_ENR.to_string())
-        );
-    }
-
-    #[test]
-    fn parse_reachability_target_rejects_unsupported_scheme() {
+    #[tokio::test]
+    async fn reachability_rejects_unsupported_scheme() {
         assert!(matches!(
-            ReachabilityTarget::parse("16Uiu2HAkxp9nAsXsCthNWPkkpm4yG1eW7L4ENpVyzDZM8HE1yr12")
-                .unwrap_err(),
+            reachability_target_error("16Uiu2HAkxp9nAsXsCthNWPkkpm4yG1eW7L4ENpVyzDZM8HE1yr12")
+                .await,
             P2pTargetError::ReachabilityTargetUnsupported { target }
                 if target == "16Uiu2HAkxp9nAsXsCthNWPkkpm4yG1eW7L4ENpVyzDZM8HE1yr12"
         ));
     }
 
-    #[test]
-    fn parse_reachability_target_rejects_empty() {
-        assert!(matches!(
-            ReachabilityTarget::parse("  ").unwrap_err(),
-            P2pTargetError::EmptyTarget
-        ));
+    #[tokio::test]
+    async fn reachability_rejects_empty_target() {
+        assert!(matches!(reachability_target_error("  ").await, P2pTargetError::EmptyTarget));
     }
 
-    #[test]
-    fn parse_reachability_target_rejects_malformed_enode() {
+    #[tokio::test]
+    async fn reachability_rejects_malformed_enode() {
         assert!(matches!(
-            ReachabilityTarget::parse("enode://nope").unwrap_err(),
+            reachability_target_error("enode://nope").await,
             P2pTargetError::InvalidBootnode { target, .. } if target == "enode://nope"
         ));
     }
 
-    #[test]
-    fn parse_reachability_target_rejects_malformed_enr() {
+    #[tokio::test]
+    async fn reachability_rejects_malformed_enr() {
         assert!(matches!(
-            ReachabilityTarget::parse("enr:!!!").unwrap_err(),
+            reachability_target_error("enr:!!!").await,
             P2pTargetError::InvalidBootnode { target, .. } if target == "enr:!!!"
         ));
     }

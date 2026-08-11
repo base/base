@@ -55,8 +55,7 @@ pub use rollup::{
 
 mod telemetry;
 pub use telemetry::{
-    ClReachabilityOutcome, ClReachabilityResponse, ClReachabilityStage, ElReachabilityOutcome,
-    ElReachabilityResponse, ElReachabilityStage, TelemetryApiError, TelemetryClient,
+    ReachabilityOutcome, ReachabilityResponse, TelemetryApiError, TelemetryClient,
     TelemetryClientError, TelemetryErrorResponse,
 };
 

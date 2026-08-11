@@ -18,7 +18,7 @@ use discv5::enr::{CombinedPublicKey, Enr, EnrPublicKey};
 use libp2p::PeerId;
 use reth_network_peers::{NodeRecord, id2pk};
 use serde::{Deserialize, Serialize};
-use tokio::sync::Semaphore;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tracing::{debug, info};
 
 use crate::{
@@ -242,23 +242,36 @@ impl P2pRoutes {
             .with_state(P2pState::new(global_capacity, el_prober, cl_prober))
     }
 
+    /// Validates one reachability request body, resolves its probe target,
+    /// and reserves global probe capacity. Shared by both layer handlers.
+    fn accept_probe<R, T>(
+        state: &P2pState,
+        layer: &'static str,
+        body: Result<Json<R>, JsonRejection>,
+        target: fn(&R) -> Option<T>,
+    ) -> Result<(T, OwnedSemaphorePermit), P2pApiError> {
+        let Json(request) = body.map_err(|rejection| {
+            debug!(status = %rejection.status(), layer, "reachability request body rejected");
+            P2pApiError::from_json_rejection(rejection)
+        })?;
+        let target = target(&request).ok_or_else(|| {
+            debug!(layer, "reachability request target validation failed");
+            P2pApiError::InvalidRequest
+        })?;
+        let permit = Arc::clone(&state.limiter).try_acquire_owned().map_err(|_| {
+            debug!(layer, "reachability probe capacity exhausted");
+            P2pApiError::Saturated
+        })?;
+        Ok((target, permit))
+    }
+
     /// Handles one execution-layer P2P reachability check.
     pub async fn check_el(
         State(state): State<P2pState>,
         body: Result<Json<ElReachabilityRequest>, JsonRejection>,
     ) -> Result<Json<ElReachabilityResponse>, P2pApiError> {
-        let Json(request) = body.map_err(|rejection| {
-            debug!(status = %rejection.status(), layer = "el", "reachability request body rejected");
-            P2pApiError::from_json_rejection(rejection)
-        })?;
-        let target = request.target().ok_or_else(|| {
-            debug!(layer = "el", "reachability request target validation failed");
-            P2pApiError::InvalidRequest
-        })?;
-        let _permit = Arc::clone(&state.limiter).try_acquire_owned().map_err(|_| {
-            debug!(layer = "el", "reachability probe capacity exhausted");
-            P2pApiError::Saturated
-        })?;
+        let (target, _permit) =
+            Self::accept_probe(&state, "el", body, ElReachabilityRequest::target)?;
         let result = state.el_prober.probe(target).await;
         let elapsed_ms = u64::try_from(result.elapsed.as_millis()).unwrap_or(u64::MAX);
 
@@ -285,18 +298,8 @@ impl P2pRoutes {
         State(state): State<P2pState>,
         body: Result<Json<ClReachabilityRequest>, JsonRejection>,
     ) -> Result<Json<ClReachabilityResponse>, P2pApiError> {
-        let Json(request) = body.map_err(|rejection| {
-            debug!(status = %rejection.status(), layer = "cl", "reachability request body rejected");
-            P2pApiError::from_json_rejection(rejection)
-        })?;
-        let target = request.target().ok_or_else(|| {
-            debug!(layer = "cl", "reachability request target validation failed");
-            P2pApiError::InvalidRequest
-        })?;
-        let _permit = Arc::clone(&state.limiter).try_acquire_owned().map_err(|_| {
-            debug!(layer = "cl", "reachability probe capacity exhausted");
-            P2pApiError::Saturated
-        })?;
+        let (target, _permit) =
+            Self::accept_probe(&state, "cl", body, ClReachabilityRequest::target)?;
         let result = state.cl_prober.probe(target).await;
         let elapsed_ms = u64::try_from(result.elapsed.as_millis()).unwrap_or(u64::MAX);
 
