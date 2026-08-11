@@ -92,7 +92,7 @@ fn test_resume_triggers_catchup_from_safe_head() {
         ctx.sleep(Duration::from_millis(10)).await;
         ctx.cancel();
 
-        // Keep the safe-head channel alive until the driver stops.
+        // Keep the derivation-status channel alive until the driver stops.
         drop(derivation_status_tx);
         assert!(handle.await.unwrap().is_ok());
         assert_eq!(

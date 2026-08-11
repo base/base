@@ -64,7 +64,7 @@ pub trait BatchPipeline: Send {
     /// Mark a submission as confirmed at the given L1 block number.
     ///
     /// Records frame inclusion without removing the channel or its L2 blocks.
-    /// [`reconcile_derivation`](Self::reconcile_derivation) owns both channel and block removal.
+    /// [`reconcile_derivation`](Self::reconcile_derivation) owns safe-prefix removal.
     /// Call [`advance_l1_head`](Self::advance_l1_head) after processing the receipt.
     fn confirm(&mut self, id: SubmissionId, l1_block: u64);
 
@@ -73,8 +73,8 @@ pub trait BatchPipeline: Send {
 
     /// Notify the pipeline of the current L1 head block number.
     ///
-    /// Used to detect channel timeouts: if `l1_head - channel.opened_at > max_channel_duration`,
-    /// the channel is force-closed and its blocks are requeued.
+    /// Closes open channels that reach their maximum duration and replays closed channels
+    /// whose confirmation window expires.
     fn advance_l1_head(&mut self, l1_block: u64);
 
     /// Force-close the current channel, moving it to the submission queue.
@@ -87,10 +87,11 @@ pub trait BatchPipeline: Send {
     /// simulating L1 time progression.
     fn force_close_channel(&mut self);
 
-    /// Reset all pipeline state.
+    /// Reset buffered encoding and submission state.
     ///
-    /// Called after a reorg is detected. The caller is responsible for waiting for all
-    /// in-flight submissions to settle (confirm or requeue) before calling reset.
+    /// Called when buffered state must be discarded, such as after a reorg, derivation
+    /// mismatch, or pause. The caller must discard in-flight submission tracking first
+    /// so stale outcomes cannot mutate the rebuilt state.
     fn reset(&mut self);
 
     /// Reconcile buffered state with the reported derivation progress.

@@ -21,8 +21,8 @@ use crate::{
 /// Async orchestration loop for the batcher.
 ///
 /// Combines a [`BatchPipeline`] (encoding), an [`UnsafeBlockSource`] (L2 block delivery),
-/// an [`L1HeadSource`] (L1 chain head tracking), and a [`TxManager`] (L1 submission)
-/// into a single `tokio::select!` task.
+/// an [`L1HeadSource`] (L1 chain head tracking), ordered [`DerivationStatus`] updates,
+/// and a [`TxManager`] (L1 submission) into a single `tokio::select!` task.
 ///
 /// Uses [`SubmissionQueue`] for concurrent receipt tracking and semaphore backpressure,
 /// and [`DaThrottle`] for DA backlog throttle management.
@@ -364,9 +364,7 @@ where
             .pipeline
             .reconcile_derivation(head, status.current_l1.map(|current_l1| current_l1.number))
         {
-            DerivationReconciliation::Consistent => {
-                debug!(safe_l2_number = %head.number, "reconciled pipeline with derivation");
-            }
+            DerivationReconciliation::Consistent => {}
             DerivationReconciliation::SafeHeadMismatch => {
                 warn!(
                     safe_l2 = %head.number,
@@ -435,9 +433,9 @@ where
 
     /// Drop any outstanding flush acknowledgements without firing them.
     ///
-    /// Called when a reorg discards the in-flight submissions and resets the pipeline: the
-    /// blocks a pending flush was waiting on no longer exist, so firing the ack would falsely
-    /// report settlement. Dropping the sender surfaces as a closed-channel error to the waiter.
+    /// Called whenever the pipeline is reset: the blocks a pending flush was waiting on no
+    /// longer exist, so firing the ack would falsely report settlement. Dropping the sender
+    /// surfaces as a closed-channel error to the waiter.
     fn discard_pending_flush_acks(&mut self) {
         self.pending_flush_acks.clear();
     }
@@ -1006,10 +1004,9 @@ mod tests {
         });
     }
 
-    /// When blob encoding fails the submission has already been dequeued from the pipeline
-    /// (cursor advanced, `pending_confirmations` incremented). Without a requeue the channel
-    /// is permanently stuck — `pending_confirmations` never returns to zero and blocks are
-    /// never pruned. The driver must call requeue so the encoder can unwind that state.
+    /// When blob encoding fails, the submission has already been dequeued and its frames marked
+    /// pending. Without a requeue those frames never become ready again, so the driver must
+    /// requeue the submission before retrying.
     #[test]
     fn test_blob_encoding_failure_requeues_submission() {
         // Blob submission encoding feeds DERIVATION_VERSION_0 (1) + frame.encode()

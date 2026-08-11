@@ -330,7 +330,7 @@ impl BatcherService {
     /// if any of those steps fail — the caller sees the failure immediately,
     /// before any background work is spawned.
     ///
-    /// The runtime's cancellation token is forwarded to the safe-head poller
+    /// The runtime's cancellation token is forwarded to the derivation-status poller
     /// spawned here so it stops cleanly when the batcher shuts down.
     pub async fn setup(self, runtime: TokioRuntime) -> eyre::Result<ReadyBatcher> {
         let cancellation = runtime.token().clone();

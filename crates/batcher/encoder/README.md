@@ -9,7 +9,8 @@ L1 submission frames. No async, no I/O, no tokio dependency.
 
 ```rust,ignore
 use base_batcher_encoder::{
-    BatchEncoder, BatchPipeline, DerivationReconciliation, EncoderConfig, FrameEncoder, StepResult,
+    BatchEncoder, BatchPipeline, DerivationReconciliation, EncoderConfig, FrameEncoder,
+    StepResult,
 };
 
 let mut encoder = BatchEncoder::new(rollup_config, EncoderConfig::default());
@@ -19,7 +20,7 @@ encoder.add_block(block)?;
 
 // Step until idle.
 loop {
-    match encoder.step() {
+    match encoder.step()? {
         StepResult::Idle => break,
         _ => {}
     }
@@ -37,7 +38,7 @@ while let Some(sub) = encoder.next_submission() {
     // Call encoder.requeue(sub.id) if submission fails and frames must be retried.
 }
 
-// Reconcile derivation progress. Reset and restart block loading if validation fails.
+// Reconcile derivation progress. `current_l1_number` is `None` when no cursor is available.
 match encoder.reconcile_derivation(safe_head, current_l1_number) {
     DerivationReconciliation::Consistent => {}
     DerivationReconciliation::SafeHeadMismatch
@@ -49,8 +50,8 @@ match encoder.reconcile_derivation(safe_head, current_l1_number) {
 
 ## Confirm / requeue lifecycle
 
-Every submission drained from `next_submission()` **must** be resolved with either
-`confirm(id, l1_block)` or `requeue(id)`:
+During normal operation, every submission drained from `next_submission()` **must**
+be resolved with either `confirm(id, l1_block)` or `requeue(id)`:
 
 - `confirm` records frame inclusion. Completed channels and their L2 blocks remain
   buffered until `reconcile_derivation` observes the corresponding safe-head advance.
@@ -58,7 +59,8 @@ Every submission drained from `next_submission()` **must** be resolved with eith
   transaction fails or is dropped.
 
 Failing to call either leaves the submission in the encoder's internal `pending` map.
-The block deque contains the `(safe, unsafe]` range and is bounded by safe-head pruning.
+The block deque tracks the `(safe, unsafe]` range; normal removal happens during
+derivation reconciliation.
 
 ## Frame encoding
 

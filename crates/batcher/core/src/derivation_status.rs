@@ -5,7 +5,7 @@ use base_protocol::BlockInfo;
 /// A coherent snapshot of the derivation progress relevant to the batcher.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DerivationStatus {
-    /// The derivation pipeline's local safe L2 head.
+    /// The trusted safe L2 head reported by the derivation provider.
     pub safe_l2: BlockInfo,
     /// The L1 block currently being processed by derivation, when available.
     pub current_l1: Option<BlockInfo>,

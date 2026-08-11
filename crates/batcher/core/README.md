@@ -26,8 +26,8 @@ stuck transaction. On reorg, `SubmissionQueue::discard` drops all in-flight futu
 their permits so the freshly reset pipeline is not corrupted by stale completions.
 
 `TxOutcome` represents the three terminal states of an L1 submission: `Confirmed { l1_block }`,
-`Failed`, and `TxpoolBlocked`. Failed frames are always requeued for retry; txpool-blocked frames
-are also requeued but submission is suspended until the nonce slot is freed.
+`Failed`, and `TxpoolBlocked`. During normal operation, failed frames are requeued for retry;
+txpool-blocked frames are also requeued but submission is suspended until the nonce slot is freed.
 
 The throttle subsystem controls how much DA data the sequencer may include per block and per
 transaction based on the L1 DA backlog. `ThrottleController` takes a `ThrottleConfig` and a

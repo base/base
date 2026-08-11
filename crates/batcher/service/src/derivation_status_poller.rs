@@ -123,6 +123,8 @@ mod tests {
 
     use super::{DerivationStatusPoller, DerivationStatusProvider};
 
+    /// Scripted provider kept explicit because `mockall` cannot generate this trait's
+    /// borrowed `impl Future` return without changing the production API.
     struct MockProvider {
         statuses: Mutex<VecDeque<DerivationStatus>>,
         fallback: DerivationStatus,

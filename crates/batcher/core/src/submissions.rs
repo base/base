@@ -307,12 +307,12 @@ impl<TM: TxManager> SubmissionQueue<TM> {
 
     /// Discard all in-flight futures, returning their semaphore permits.
     ///
-    /// Used on reorg to prevent stale completions from modifying the freshly
-    /// reset pipeline.
+    /// Used before resetting the pipeline so stale completions cannot modify
+    /// freshly rebuilt state.
     pub fn discard(&mut self) {
         let discarded = self.in_flight.len();
         if discarded > 0 {
-            warn!(discarded = %discarded, "discarding in-flight submissions due to reorg");
+            warn!(discarded = %discarded, "discarding in-flight submissions before pipeline reset");
             BatcherMetrics::in_flight_submissions().set(0.0);
         }
         self.in_flight = FuturesUnordered::new();

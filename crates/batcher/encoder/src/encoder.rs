@@ -40,7 +40,7 @@ pub struct BatchEncoder {
     tip: Option<B256>,
     /// The channel currently being built. `None` between channels.
     current_channel: Option<OpenChannel>,
-    /// Closed channels retained until their L2 ranges become safe.
+    /// Closed channels awaiting submission, safe-head pruning, or timeout replay.
     ready_channels: VecDeque<ReadyChannel>,
     /// In-flight submissions: id -> reference into `ready_channels`.
     pending: HashMap<SubmissionId, PendingRef>,
@@ -819,15 +819,11 @@ impl BatchPipeline for BatchEncoder {
         };
         // Find the first channel with a contiguous range of ready frames.
         for (chan_idx, channel) in self.ready_channels.iter_mut().enumerate() {
-            let Some(frame_start) =
-                channel.frame_states.iter().position(|state| *state == FrameState::Ready)
-            else {
+            let Some(ready_range) = channel.next_ready_frame_range() else {
                 continue;
             };
-            let available = channel.frame_states[frame_start..]
-                .iter()
-                .take_while(|state| **state == FrameState::Ready)
-                .count();
+            let frame_start = ready_range.start;
+            let available = ready_range.len();
 
             // Pack up to `target_num_frames` frames into a single L1 transaction.
             let frame_count = if effective_da_type == DaType::Calldata {
@@ -869,7 +865,7 @@ impl BatchPipeline for BatchEncoder {
             let id = SubmissionId(self.next_id);
             self.next_id += 1;
 
-            channel.frame_states[frame_start..frame_start + frame_count].fill(FrameState::Pending);
+            channel.mark_pending(frame_start..frame_start + frame_count);
 
             self.pending.insert(id, PendingRef { channel_idx: chan_idx, frame_start, frame_count });
 
@@ -910,16 +906,16 @@ impl BatchPipeline for BatchEncoder {
         }
 
         let channel = &mut self.ready_channels[chan_idx];
-        channel.frame_states
-            [pending_ref.frame_start..pending_ref.frame_start + pending_ref.frame_count]
-            .fill(FrameState::Confirmed);
+        channel.mark_confirmed(
+            pending_ref.frame_start..pending_ref.frame_start + pending_ref.frame_count,
+        );
         // Receipts can settle out of order, so retain both ends of the inclusion range.
         channel.first_confirmed_l1_block =
             Some(channel.first_confirmed_l1_block.map_or(l1_block, |first| first.min(l1_block)));
         channel.last_confirmed_l1_block =
             Some(channel.last_confirmed_l1_block.map_or(l1_block, |last| last.max(l1_block)));
 
-        // Safe-head advancement owns channel removal. Retaining fully submitted
+        // Safe-head reconciliation owns normal channel removal. Retaining fully confirmed
         // channels lets timeout handling detect stalled derivation.
         if channel.is_fully_confirmed() {
             debug!(channel_id = ?channel.id, "channel fully confirmed");
@@ -940,9 +936,9 @@ impl BatchPipeline for BatchEncoder {
         }
 
         let channel = &mut self.ready_channels[chan_idx];
-        channel.frame_states
-            [pending_ref.frame_start..pending_ref.frame_start + pending_ref.frame_count]
-            .fill(FrameState::Ready);
+        // Requeue only this submission's range; confirmed frames remain untouched.
+        channel
+            .mark_ready(pending_ref.frame_start..pending_ref.frame_start + pending_ref.frame_count);
         // Frames are ready for submission again.
         BatcherMetrics::pending_frames().increment(pending_ref.frame_count as f64);
 
@@ -1389,8 +1385,8 @@ mod tests {
     // before the reset could match a fresh post-reset submission with the same ID.
 
     /// Get a submission into the in-flight state (pending but not yet confirmed),
-    /// then call `reset()`. A subsequent `confirm()` for the stale ID must be a no-op:
-    /// the block must not be pruned and the pending map must remain empty.
+    /// then call `reset()`. A subsequent `confirm()` for the stale ID must be a no-op
+    /// and the pending map must remain empty.
     #[test]
     fn test_stale_confirm_after_reset_is_noop() {
         let mut encoder = default_encoder();

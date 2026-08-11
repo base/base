@@ -30,8 +30,8 @@ pub struct MockBatchPipeline {
     pub resets: usize,
     /// L1 heads that were advanced to.
     pub l1_heads: Vec<u64>,
-    /// Safe L2 block numbers that were pruned to.
-    pub safe_l2_numbers_pruned: Vec<u64>,
+    /// Safe L2 block numbers passed to derivation reconciliation.
+    pub safe_l2_numbers_reconciled: Vec<u64>,
 }
 
 impl BatchPipeline for MockBatchPipeline {
@@ -72,7 +72,7 @@ impl BatchPipeline for MockBatchPipeline {
         safe_l2: BlockInfo,
         _: Option<u64>,
     ) -> DerivationReconciliation {
-        self.safe_l2_numbers_pruned.push(safe_l2.number);
+        self.safe_l2_numbers_reconciled.push(safe_l2.number);
         DerivationReconciliation::Consistent
     }
 
