@@ -28,10 +28,6 @@ const VERSION: &[u8] = b"1";
 pub struct AssetV1;
 
 impl AssetV1 {
-    /// Pausable features dialable on this frozen version.
-    ///
-    /// `SEIZE` was introduced at Cobalt (V2). The Beryl wire already rejects it at `IB20V1` decode;
-    /// this allowlist is the matching logic-layer guard so V1 rejects later features by omission.
     const PAUSABLE_FEATURES: &[IB20::PausableFeature] = &[
         IB20::PausableFeature::TRANSFER,
         IB20::PausableFeature::MINT,

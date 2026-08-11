@@ -29,10 +29,6 @@ const VERSION: &[u8] = b"1";
 pub struct StablecoinV2;
 
 impl StablecoinV2 {
-    /// Pausable features dialable on this frozen version.
-    ///
-    /// Extends V1 with `SEIZE` (Cobalt). Later features are rejected by omission until a new
-    /// version adds them to its own allowlist.
     const PAUSABLE_FEATURES: &[IB20::PausableFeature] = &[
         IB20::PausableFeature::TRANSFER,
         IB20::PausableFeature::MINT,
