@@ -154,7 +154,7 @@ impl PrecompileCallOutcome {
         Self {
             status,
             gas_used: output.gas_used,
-            state_gas_used: output.state_gas_used as u64,
+            state_gas_used: output.state_gas_used.max(0) as u64,
             gas_refunded: output.gas_refunded,
             duration_seconds,
             error,
@@ -631,7 +631,7 @@ where
         error: BasePrecompileError,
     ) -> PrecompileResult {
         self.record_base_error(&error);
-        let result = error.into_precompile_result(ctx.gas_used(), ctx.state_gas_used());
+        let result = ctx.error_result(error);
         self.record_result(&result);
         result
     }
@@ -662,7 +662,7 @@ mod tests {
     use crate::{
         BerylCallOutcome, BerylCallRecorder, BerylErrorKind, BerylMetricLabels, BerylSelector,
         CALLDATA_WORD_GAS, IActivationRegistry, IB20, IB20Factory, IPolicyRegistry,
-        NoopPrecompileCallObserver,
+        NoopPrecompileCallObserver, PrecompileCallOutcome,
     };
 
     #[test]
@@ -737,6 +737,16 @@ mod tests {
         assert_eq!(BerylCallOutcome::from_result(&success), BerylCallOutcome::Success);
         assert_eq!(BerylCallOutcome::from_result(&revert), BerylCallOutcome::Revert);
         assert_eq!(BerylCallOutcome::from_result(&fatal), BerylCallOutcome::Fatal);
+    }
+
+    #[test]
+    fn negative_state_gas_is_saturated_for_metrics() {
+        let mut output = revm::precompile::PrecompileOutput::new(1, Default::default(), 0);
+        output.state_gas_used = -1;
+
+        let outcome = PrecompileCallOutcome::from_output(&output, None, None);
+
+        assert_eq!(outcome.state_gas_used, 0);
     }
 
     #[test]

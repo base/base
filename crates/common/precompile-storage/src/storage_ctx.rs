@@ -267,7 +267,11 @@ impl<'a> StorageCtx<'a> {
 
     /// Returns a [`PrecompileResult`] constructed from the given error.
     pub fn error_result(&self, error: impl Into<BasePrecompileError>) -> PrecompileResult {
-        error.into().into_precompile_result(self.gas_used(), self.state_gas_used())
+        error.into().into_precompile_result(
+            self.gas_used(),
+            self.state_gas_used(),
+            self.reservoir(),
+        )
     }
 
     /// Converts a `Result<T>` into a [`PrecompileResult`], reading all gas accounting fields
@@ -288,6 +292,7 @@ impl<'a> StorageCtx<'a> {
         result.into_precompile_result(
             self.gas_used(),
             self.state_gas_used(),
+            self.reservoir(),
             self.gas_refunded(),
             encode_ok,
         )

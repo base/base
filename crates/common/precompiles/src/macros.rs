@@ -17,7 +17,7 @@ macro_rules! base_precompile {
                     return ::base_precompile_storage::BasePrecompileError::revert(
                         ::base_precompile_storage::DelegateCallNotAllowed {},
                     )
-                    .into_precompile_result(0, 0);
+                    .into_precompile_result(0, 0, input.reservoir);
                 }
 
                 let $calldata: ::alloy_primitives::Bytes = input.data.to_vec().into();

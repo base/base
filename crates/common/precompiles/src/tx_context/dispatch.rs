@@ -2,7 +2,7 @@
 
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolCall;
-use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
+use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use crate::{
@@ -29,8 +29,8 @@ impl TxContextStorage<'_> {
     pub fn dispatch(&self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
         // Transaction-context getters are nonpayable; reject attached ETH first.
         if !ctx.call_value().is_zero() {
-            return BasePrecompileError::revert(ITransactionContext::NonPayable {})
-                .into_precompile_result(ctx.gas_used(), ctx.state_gas_used());
+            return ctx
+                .error_result(BasePrecompileError::revert(ITransactionContext::NonPayable {}));
         }
         let result = self.inner(calldata).and_then(|output| {
             let words = u64::try_from(output.len().div_ceil(32))
@@ -40,8 +40,7 @@ impl TxContextStorage<'_> {
             ctx.deduct_gas(output_cost)?;
             Ok(output)
         });
-        // These getters never produce a gas refund, so the refund arg is 0.
-        result.into_precompile_result(ctx.gas_used(), ctx.state_gas_used(), 0, |output| output)
+        ctx.result_output(result, |output| output)
     }
 
     fn inner(&self, calldata: &[u8]) -> base_precompile_storage::Result<Bytes> {

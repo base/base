@@ -2,7 +2,7 @@
 
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolCall;
-use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
+use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use crate::{
@@ -27,20 +27,13 @@ impl NonceManagerStorage<'_> {
     pub fn dispatch(&self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
         // `getNonce` is nonpayable; reject attached ETH before charging calldata gas.
         if !ctx.call_value().is_zero() {
-            return BasePrecompileError::revert(INonceManager::NonPayable {})
-                .into_precompile_result(ctx.gas_used(), ctx.state_gas_used());
+            return ctx.error_result(BasePrecompileError::revert(INonceManager::NonPayable {}));
         }
         let calldata_cost = (calldata.len() as u64).div_ceil(32).saturating_mul(CALLDATA_WORD_GAS);
         if let Err(error) = ctx.deduct_gas(calldata_cost) {
-            return error.into_precompile_result(ctx.gas_used(), ctx.state_gas_used());
+            return ctx.error_result(error);
         }
-        // `getNonce` is a read-only getter and never produces a gas refund.
-        self.inner(calldata).into_precompile_result(
-            ctx.gas_used(),
-            ctx.state_gas_used(),
-            0,
-            |output| output,
-        )
+        ctx.result_output(self.inner(calldata), |output| output)
     }
 
     fn inner(&self, calldata: &[u8]) -> base_precompile_storage::Result<Bytes> {

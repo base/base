@@ -112,12 +112,17 @@ impl BasePrecompileError {
     ///
     /// Internal dispatch diagnostics use compact, non-ABI revert data: unknown selectors return the
     /// raw selector bytes, and decode failures return `selector || utf8_error_string`.
-    pub fn into_precompile_result(self, gas: u64, state_gas: u64) -> PrecompileResult {
+    pub fn into_precompile_result(
+        self,
+        gas: u64,
+        state_gas: u64,
+        reservoir: u64,
+    ) -> PrecompileResult {
         let bytes: Bytes = match self {
             Self::Revert(bytes) => bytes,
             Self::Panic(kind) => Panic { code: U256::from(kind as u32) }.abi_encode().into(),
             Self::OutOfGas => {
-                return Ok(PrecompileOutput::halt(PrecompileHalt::OutOfGas, 0));
+                return Ok(PrecompileOutput::halt(PrecompileHalt::OutOfGas, reservoir));
             }
             Self::SlotOverflow => {
                 return Err(PrecompileError::Fatal("slot overflow".into()));
@@ -133,7 +138,7 @@ impl BasePrecompileError {
                 bytes.into()
             }
         };
-        let mut out = PrecompileOutput::revert(gas, bytes, 0);
+        let mut out = PrecompileOutput::revert(gas, bytes, reservoir);
         out.state_gas_used = state_gas as i64;
         Ok(out)
     }
@@ -157,6 +162,7 @@ pub trait IntoPrecompileResult<T> {
         self,
         gas: u64,
         state_gas: u64,
+        reservoir: u64,
         gas_refunded: i64,
         encode_ok: impl FnOnce(T) -> Bytes,
     ) -> PrecompileResult;
@@ -167,17 +173,18 @@ impl<T> IntoPrecompileResult<T> for Result<T> {
         self,
         gas: u64,
         state_gas: u64,
+        reservoir: u64,
         gas_refunded: i64,
         encode_ok: impl FnOnce(T) -> Bytes,
     ) -> PrecompileResult {
         match self {
             Ok(res) => {
-                let mut out = PrecompileOutput::new(gas, encode_ok(res), 0);
+                let mut out = PrecompileOutput::new(gas, encode_ok(res), reservoir);
                 out.state_gas_used = state_gas as i64;
                 out.gas_refunded = gas_refunded;
                 Ok(out)
             }
-            Err(err) => err.into_precompile_result(gas, state_gas),
+            Err(err) => err.into_precompile_result(gas, state_gas, reservoir),
         }
     }
 }
@@ -192,26 +199,28 @@ mod tests {
     fn delegate_call_not_allowed_encodes_to_typed_revert() {
         let expected: Bytes = DelegateCallNotAllowed {}.abi_encode().into();
         let result =
-            BasePrecompileError::revert(DelegateCallNotAllowed {}).into_precompile_result(0, 0);
+            BasePrecompileError::revert(DelegateCallNotAllowed {}).into_precompile_result(0, 0, 17);
         let output = result.unwrap();
         assert!(output.is_revert());
         assert_eq!(output.bytes, expected);
+        assert_eq!(output.reservoir, 17);
     }
 
     #[test]
     fn into_precompile_result_propagates_gas_refunded_on_success() {
         let ok: Result<Bytes> = Ok(Bytes::from("out"));
-        let out = ok.into_precompile_result(500, 0, 200, |b| b).unwrap();
+        let out = ok.into_precompile_result(500, 0, 17, 200, |b| b).unwrap();
 
         assert!(out.is_success());
         assert_eq!(out.gas_used, 500);
+        assert_eq!(out.reservoir, 17);
         assert_eq!(out.gas_refunded, 200);
     }
 
     #[test]
     fn into_precompile_result_zero_refund_on_success() {
         let ok: Result<Bytes> = Ok(Bytes::new());
-        let out = ok.into_precompile_result(0, 0, 0, |b| b).unwrap();
+        let out = ok.into_precompile_result(0, 0, 0, 0, |b| b).unwrap();
 
         assert!(out.is_success());
         assert_eq!(out.gas_refunded, 0);
@@ -222,9 +231,10 @@ mod tests {
         // The error path goes through BasePrecompileError::into_precompile_result which
         // does not set gas_refunded (refunds are only meaningful on success).
         let err: Result<Bytes> = Err(BasePrecompileError::Revert(Bytes::new()));
-        let out = err.into_precompile_result(100, 0, 999, |b| b).unwrap();
+        let out = err.into_precompile_result(100, 0, 23, 999, |b| b).unwrap();
 
         assert!(out.is_revert());
+        assert_eq!(out.reservoir, 23);
         assert_eq!(out.gas_refunded, 0, "error path must not propagate gas_refunded");
     }
 }

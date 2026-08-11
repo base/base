@@ -40,7 +40,7 @@ impl B20StablecoinPrecompile {
             |ctx, calldata| {
             let observer = observer.clone();
             let Some(version) = PolicyVersions::from_base_upgrade(upgrade) else {
-                return BasePrecompileError::Revert(Bytes::new()).into_precompile_result(0, 0);
+                return ctx.error_result(BasePrecompileError::Revert(Bytes::new()));
             };
             B20StablecoinToken::with_storage_and_policy(
                 B20StablecoinStorage::from_address(token_address, ctx),
