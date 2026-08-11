@@ -133,6 +133,15 @@ impl ShadowMetricsSink {
             return Err(ShadowMetricsSchemaReadinessError::ShadowMetricsRelationMissing);
         }
 
+        sqlx::query("SELECT 1 FROM shadow_blocks LIMIT 0")
+            .execute(&self.pool)
+            .await
+            .map_err(|source| ShadowMetricsSchemaReadinessError::QueryFailed { source })?;
+        sqlx::query("SELECT 1 FROM shadow_block_transactions LIMIT 0")
+            .execute(&self.pool)
+            .await
+            .map_err(|source| ShadowMetricsSchemaReadinessError::QueryFailed { source })?;
+
         Ok(())
     }
 }
