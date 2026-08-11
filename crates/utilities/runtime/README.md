@@ -39,8 +39,8 @@ Components in this workspace that accept `R: Runtime`:
 
 - `BatchDriver` (`base-batcher-core`) — uses `runtime.cancelled()` as a shutdown signal
   and `runtime.sleep(drain_timeout)` to bound the drain phase after cancellation.
-- `HybridBlockSource` (`base-batcher-source`) — uses `runtime.interval(poll_interval)`
-  to schedule periodic RPC polling alongside a live subscription stream.
+- `PollingBlockSource` (`base-batcher-source`) — uses `runtime.sleep(poll_interval)`
+  between unsuccessful RPC polls.
 
 ## Usage
 
@@ -52,7 +52,7 @@ Create a fresh runtime with its own cancellation scope:
 use base_runtime::TokioRuntime;
 
 let rt = TokioRuntime::new();
-// Pass rt into BatchDriver::new(...) or HybridBlockSource::new(...)
+// Pass rt into BatchDriver::new(...) or PollingBlockSource::new(...)
 ```
 
 When migrating code that already holds a `CancellationToken`, wrap it instead of

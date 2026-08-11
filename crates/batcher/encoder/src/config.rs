@@ -53,7 +53,6 @@ pub struct EncoderConfig {
     /// Maximum number of L2 blocks to accumulate into one span batch.
     ///
     /// When unset, span batches close only on size and channel-duration thresholds.
-    /// Set this to match the reference batcher's `max-blocks-per-span-batch` behavior.
     ///
     /// Default: `None`.
     pub max_blocks_per_span_batch: Option<usize>,
@@ -83,7 +82,7 @@ pub struct EncoderConfig {
     /// to avoid creating a small leftover frame. Also passed to the `ShadowCompressor`
     /// as the ratio hint used when operating in [`BatchType::Single`] mode.
     ///
-    /// Default: `0.6` (matches the reference batcher's `--approx-compr-ratio` default).
+    /// Default: `0.6`.
     pub approx_compr_ratio: f64,
 
     /// Maximum serialized size of a single L1 calldata transaction in bytes.
@@ -96,7 +95,7 @@ pub struct EncoderConfig {
     /// This is a no-op when [`da_type`] is [`DaType::Blob`], since the blob size is
     /// the binding constraint for blob DA.
     ///
-    /// Default: `None` (no cap; reference batcher equivalent default is 120,000 bytes).
+    /// Default: `None` (no cap).
     ///
     /// [`max_frame_size`]: EncoderConfig::max_frame_size
     /// [`da_type`]: EncoderConfig::da_type

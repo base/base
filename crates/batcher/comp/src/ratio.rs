@@ -1,6 +1,4 @@
 //! Contains the ratio compressor for Base.
-//!
-//! This is a port of the reference batcher's ratio compressor.
 
 use crate::{CompressorResult, CompressorWriter, Config, VariantCompressor};
 

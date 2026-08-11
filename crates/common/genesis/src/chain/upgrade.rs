@@ -137,7 +137,7 @@ impl BaseUpgrade {
     /// [`Zenith`](Self::Zenith), which is activated via genesis config only until the L1
     /// upgrade-signal contract is updated to recognise it.
     ///
-    /// Order is load-bearing: `map_schedule` and `ScheduleId::from_upgrades` attribute onchain
+    /// Order is load-bearing: `map_schedule` and `ScheduleId::pin` attribute onchain
     /// schedule entries to hardforks *by position*, and the `ProtocolVersions` contract keys
     /// upgrades by ascending append-only registration id with names kept offchain. This order MUST
     /// match the contract's registration order — reordering silently misattributes every

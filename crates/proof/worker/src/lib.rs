@@ -7,7 +7,8 @@ pub use claimed_job::{
 
 mod heartbeat;
 pub use heartbeat::{
-    DEFAULT_WORKER_HEARTBEAT_INTERVAL, DEFAULT_WORKER_HEARTBEAT_LOCK_DURATION_SECONDS,
+    ASSUMED_DEFAULT_WORKER_LOCK_DURATION_SECONDS, DEFAULT_WORKER_HEARTBEAT_INTERVAL,
+    DEFAULT_WORKER_HEARTBEAT_LOCK_DURATION_SECONDS,
     DEFAULT_WORKER_MAX_CONSECUTIVE_HEARTBEAT_FAILURES, MIN_WORKER_HEARTBEAT_INTERVAL,
     WorkerHeartbeat, WorkerHeartbeatConfig,
 };
@@ -23,4 +24,6 @@ mod proof_submitter;
 pub use proof_submitter::{ProofSubmitter, ProofSubmitterError};
 
 mod task;
-pub use task::{ProofSubmissionTask, ProofTaskController};
+pub use task::{
+    DEFAULT_MAX_PENDING_SUBMISSIONS, DEFAULT_SUBMISSION_SHUTDOWN_GRACE, ProofTaskController,
+};

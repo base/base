@@ -1,6 +1,7 @@
 //! Core trait for unsafe L2 block sources.
 
 use async_trait::async_trait;
+use base_protocol::BlockInfo;
 
 use crate::{L2BlockEvent, SourceError};
 
@@ -13,19 +14,16 @@ pub trait UnsafeBlockSource: Send {
     /// Wait for the next L2 block event.
     ///
     /// Blocks (asynchronously) until a new block or reorg is available.
-    /// Implementations are responsible for deduplicating blocks seen from multiple
-    /// sources (subscription + polling) — if both deliver the same block hash, only
-    /// one `Block` event is emitted.
     async fn next(&mut self) -> Result<L2BlockEvent, SourceError>;
 
-    /// Reset the source to begin sequential catchup from `start_from`.
+    /// Reset the source to begin sequential catchup above `safe_head`.
     ///
     /// Called by the driver on resume after a pause, ensuring blocks between
     /// the last safe head and the current unsafe tip are not skipped. The
-    /// source should deliver blocks `start_from, start_from+1, …` sequentially
-    /// before switching back to live polling.
+    /// source should validate the first block against the safe-head hash, then
+    /// continue delivering subsequent blocks in order.
     ///
     /// The default implementation is a no-op, suitable for sources that do not
     /// support positional reset (e.g. in-memory test sources).
-    fn reset_catchup(&mut self, _start_from: u64) {}
+    fn reset_catchup(&mut self, _safe_head: BlockInfo) {}
 }

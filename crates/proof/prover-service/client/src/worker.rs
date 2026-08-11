@@ -114,6 +114,8 @@ impl ProverWorkerClient {
     }
 
     /// Extend a claimed proof job lock.
+    ///
+    /// Single-attempt: host-side heartbeat loops own retry / lease budgets.
     pub async fn heartbeat(
         &self,
         request: HeartbeatRequest,
@@ -125,25 +127,7 @@ impl ProverWorkerClient {
             lock_duration_seconds = request.lock_duration_seconds,
             "heartbeating proof job"
         );
-        (|| {
-            let request = request.clone();
-
-            async move { Ok(self.inner.heartbeat(request).await?) }
-        })
-        .retry(self.retry.to_backoff_builder())
-        .when(ProverServiceClientError::is_retryable)
-        .notify(|error, delay| {
-            warn!(
-                session_id = %request.session_id,
-                lock_id = %request.lock_id,
-                worker_id = %request.worker_id,
-                lock_duration_seconds = request.lock_duration_seconds,
-                backoff_ms = delay.as_millis(),
-                error = %error,
-                "heartbeat failed; retrying"
-            );
-        })
-        .await
+        Ok(self.inner.heartbeat(request).await?)
     }
 
     /// Submit a proof result for a proof job.
@@ -689,6 +673,7 @@ mod tests {
                 sequence_window: None,
                 l1_head: None,
                 intermediate_root_interval: None,
+                schedule_l2_block_number: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             }),
@@ -817,20 +802,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn worker_retries_retryable_heartbeat_until_success() {
+    async fn worker_does_not_retry_retryable_heartbeat() {
         let api = MockWorkerApi::new();
         api.queue_heartbeat_outcomes([ScriptedOutcome::Retryable, ScriptedOutcome::Success]);
         let api_clone = api.clone();
         let server = RunningWorkerServer::spawn_with_retry(api, fast_retry_config()).await;
 
-        let response = server
+        let err = server
             .client
             .heartbeat(sample_heartbeat_request("session-heartbeat-retry"))
             .await
-            .expect("heartbeat should succeed after retry");
+            .expect_err("heartbeat retryable error should not be retried");
 
-        assert_eq!(response.job.session_id, "session-heartbeat-retry");
-        assert_eq!(api_clone.heartbeat_calls(), 2);
+        assert!(err.is_retryable());
+        assert_eq!(api_clone.heartbeat_calls(), 1);
 
         server.shutdown().await;
     }

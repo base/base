@@ -68,8 +68,6 @@ pub struct BasePayloadBuilderAttributes<T> {
     pub eip_1559_params: Option<B64>,
     /// Min base fee for the generated payload (only available post-Jovian)
     pub min_base_fee: Option<u64>,
-    /// The millisecond component of the payload timestamp.
-    pub timestamp_millis_part: Option<u16>,
 }
 
 impl<T> Default for BasePayloadBuilderAttributes<T> {
@@ -81,7 +79,6 @@ impl<T> Default for BasePayloadBuilderAttributes<T> {
             eip_1559_params: Default::default(),
             transactions: Default::default(),
             min_base_fee: Default::default(),
-            timestamp_millis_part: Default::default(),
         }
     }
 }
@@ -108,7 +105,6 @@ impl<T> BasePayloadBuilderAttributes<T> {
             gas_limit: self.gas_limit,
             eip_1559_params: self.eip_1559_params,
             min_base_fee: self.min_base_fee,
-            timestamp_millis_part: self.timestamp_millis_part,
         }
     }
 
@@ -186,7 +182,6 @@ impl<T: Decodable2718 + Send + Sync + Debug + Unpin + 'static> BasePayloadBuilde
             gas_limit: attributes.gas_limit,
             eip_1559_params: attributes.eip_1559_params,
             min_base_fee: attributes.min_base_fee,
-            timestamp_millis_part: attributes.timestamp_millis_part,
         })
     }
 }
@@ -573,7 +568,6 @@ mod tests {
             gas_limit: Some(30000000),
             eip_1559_params: None,
             min_base_fee: None,
-            timestamp_millis_part: None,
         };
 
         // Reth's `PayloadId` should match op-geth's `PayloadId`. This fails
@@ -606,7 +600,6 @@ mod tests {
             gas_limit: Some(30000000),
             eip_1559_params: None,
             min_base_fee: Some(100),
-            timestamp_millis_part: None,
         };
 
         // Reth's `PayloadId` should match op-geth's `PayloadId`. This fails
@@ -628,22 +621,6 @@ mod tests {
             };
         let extra_data = attributes.get_holocene_extra_data(BaseFeeParams::new(80, 60));
         assert_eq!(extra_data.unwrap(), Bytes::copy_from_slice(&[0, 0, 0, 0, 8, 0, 0, 0, 8]));
-    }
-
-    #[test]
-    fn test_payload_builder_preserves_timestamp_millis_part() {
-        let attributes =
-            BasePayloadAttributes { timestamp_millis_part: Some(400), ..Default::default() };
-
-        let builder = BasePayloadBuilderAttributes::<BaseTransactionSigned>::try_new(
-            B256::ZERO,
-            attributes,
-            EngineApiMessageVersion::V3 as u8,
-        )
-        .unwrap();
-
-        assert_eq!(builder.timestamp_millis_part, Some(400));
-        assert_eq!(builder.as_rpc_payload_attributes().timestamp_millis_part, Some(400));
     }
 
     #[test]
