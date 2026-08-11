@@ -58,6 +58,7 @@ use base_execution_eip8130::{
 };
 use base_precompile_storage::{JournalStorageProvider, StorageCtx};
 use revm::{
+    Inspector,
     context::{BlockEnv, LocalContextTr, TxEnv, journaled_state::account::JournaledAccountTr},
     context_interface::{
         Block, Cfg, ContextTr, JournalTr,
@@ -65,11 +66,13 @@ use revm::{
         result::{EVMError, ExecutionResult, Output, ResultGas, SuccessReason},
     },
     handler::{EthFrame, EvmTr, FrameResult, Handler, PrecompileProvider},
+    inspector::{InspectorEvmTr, InspectorHandler, JournalExt},
     interpreter::{
-        CallInput, CallInputs, CallScheme, CallValue, FrameInput, InterpreterResult, SharedMemory,
-        interpreter::EthInterpreter, interpreter_action::FrameInit,
+        CallInput, CallInputs, CallOutcome, CallScheme, CallValue, FrameInput, Gas,
+        InstructionResult, InterpreterResult, SharedMemory, interpreter::EthInterpreter,
+        interpreter_action::FrameInit,
     },
-    primitives::hardfork::SpecId,
+    primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::Bytecode,
 };
 
@@ -174,13 +177,14 @@ impl Eip8130Executor {
     ) -> Result<ExecutionResult<BaseHaltReason>, EVMError<DB::Error, BaseTransactionError>>
     where
         DB: AlloyDatabase,
+        I: Inspector<BaseContext<DB>>,
         P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
         BaseContext<DB>: BaseContextTr
             + ContextTr<
                 Db = DB,
                 Tx = BaseTransaction<TxEnv>,
                 Block = BlockEnv,
-                Journal: core::fmt::Debug,
+                Journal: core::fmt::Debug + JournalExt,
             >,
     {
         // Discard any phase statuses a previous transaction may have leaked into
@@ -239,7 +243,7 @@ impl Eip8130Executor {
             match Self::authorize_and_apply(ctx, &signed, &encoded, chain_id, now, base_fee) {
                 Ok(outcome) => outcome,
                 Err(err) => {
-                    Self::teardown_after_error(evm);
+                    Self::discard_transaction_state(evm);
                     return Err(err.into());
                 }
             };
@@ -249,7 +253,7 @@ impl Eip8130Executor {
         let prepay = match Self::prepay(ctx, &outcome, &encoded, spec) {
             Ok(prepay) => prepay,
             Err(err) => {
-                Self::teardown_after_error(evm);
+                Self::discard_transaction_state(evm);
                 return Err(err);
             }
         };
@@ -261,11 +265,21 @@ impl Eip8130Executor {
         // chain.
         Self::warm_pre_call_accounts(evm);
 
+        let inspection =
+            Self::start_inspection(evm, outcome.sender, encoded.clone(), outcome.gas_limit);
         let mut calls =
             match Self::execute_calls(evm, &signed, &outcome, outcome.execution_gas_available) {
                 Ok(calls) => calls,
                 Err(err) => {
-                    Self::teardown_after_error(evm);
+                    Self::end_inspection(
+                        evm,
+                        inspection,
+                        true,
+                        Bytes::new(),
+                        outcome.gas_limit,
+                        outcome.gas_limit,
+                    );
+                    Self::discard_transaction_state(evm);
                     return Err(err);
                 }
             };
@@ -281,11 +295,27 @@ impl Eip8130Executor {
         ) {
             Ok(gas_used) => gas_used,
             Err(err) => {
-                Self::teardown_after_error(evm);
+                Self::end_inspection(
+                    evm,
+                    inspection,
+                    calls.reverted,
+                    calls.output.clone(),
+                    outcome.gas_limit,
+                    outcome.gas_limit,
+                );
+                Self::discard_transaction_state(evm);
                 return Err(err);
             }
         };
 
+        Self::end_inspection(
+            evm,
+            inspection,
+            calls.reverted,
+            calls.output.clone(),
+            outcome.gas_limit,
+            gas_used,
+        );
         let ctx = evm.ctx_mut();
 
         let logs = ctx.journal_mut().take_logs();
@@ -355,13 +385,14 @@ impl Eip8130Executor {
     ) -> Result<ExecutionResult<BaseHaltReason>, EVMError<DB::Error, BaseTransactionError>>
     where
         DB: AlloyDatabase,
+        I: Inspector<BaseContext<DB>>,
         P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
         BaseContext<DB>: BaseContextTr
             + ContextTr<
                 Db = DB,
                 Tx = BaseTransaction<TxEnv>,
                 Block = BlockEnv,
-                Journal: core::fmt::Debug,
+                Journal: core::fmt::Debug + JournalExt,
             >,
     {
         // Clone the envelope + optional acting-actor hint before taking a mutable
@@ -386,13 +417,12 @@ impl Eip8130Executor {
                 BaseTransactionError::eip8130("missing enveloped transaction bytes")
             })?;
 
-        let checkpoint = ctx.journal_mut().checkpoint();
         let outcome =
             match Self::simulate_resolve(ctx, &signed, &encoded, from, base_fee, acting_actor_hint)
             {
                 Ok(outcome) => outcome,
                 Err(err) => {
-                    ctx.journal_mut().checkpoint_revert(checkpoint);
+                    Self::discard_transaction_state(evm);
                     return Err(err.into());
                 }
             };
@@ -405,6 +435,8 @@ impl Eip8130Executor {
         // [`Self::execute`] does, so the simulated `calls` are charged the same
         // warm-access gas a real execution would — keeping the estimate aligned.
         Self::warm_pre_call_accounts(evm);
+        let inspection =
+            Self::start_inspection(evm, outcome.sender, encoded.clone(), outcome.gas_limit);
 
         // The estimate must return a gas *limit* that guarantees execution
         // succeeds, not the net charge. Two effects make that more than the gas a
@@ -432,10 +464,25 @@ impl Eip8130Executor {
         // and decides whether the transaction can succeed at all. Probed under a
         // nested checkpoint so its writes (and logs) are rolled back before the
         // search reuses the resolved state.
+        //
+        // Probes are implementation details of gas estimation, not user-visible
+        // executions. Suppress inspection while probing so `debug_traceCall`
+        // records only the final canonical run rather than every bisection
+        // candidate.
+        let inspect = core::mem::replace(&mut evm.inspect, false);
         let ceiling = match Self::probe_calls(evm, &signed, &outcome, ceiling_pool) {
             Ok(ceiling) => ceiling,
             Err(err) => {
-                Self::teardown_after_error(evm);
+                evm.inspect = inspect;
+                Self::end_inspection(
+                    evm,
+                    inspection,
+                    true,
+                    Bytes::new(),
+                    outcome.gas_limit,
+                    outcome.gas_limit,
+                );
+                Self::discard_transaction_state(evm);
                 return Err(err);
             }
         };
@@ -445,19 +492,36 @@ impl Eip8130Executor {
         // `eth_estimateGas`. Re-run once un-reverted to capture the revert output
         // and any logs the committed phases emitted before the failing phase.
         if ceiling.reverted {
+            evm.inspect = inspect;
             let final_calls = match Self::execute_calls(evm, &signed, &outcome, ceiling_pool) {
                 Ok(final_calls) => final_calls,
                 Err(err) => {
-                    Self::teardown_after_error(evm);
+                    Self::end_inspection(
+                        evm,
+                        inspection,
+                        true,
+                        Bytes::new(),
+                        outcome.gas_limit,
+                        outcome.gas_limit,
+                    );
+                    Self::discard_transaction_state(evm);
                     return Err(err);
                 }
             };
             let logs = evm.ctx_mut().journal_mut().take_logs();
-            evm.ctx_mut().journal_mut().checkpoint_revert(checkpoint);
             let gross = outcome
                 .sender_intrinsic
                 .saturating_add(final_calls.call_gas_spent)
                 .saturating_add(outcome.payer_auth);
+            Self::end_inspection(
+                evm,
+                inspection,
+                true,
+                final_calls.output.clone(),
+                outcome.gas_limit,
+                gross,
+            );
+            Self::discard_transaction_state(evm);
             let result_gas = ResultGas::new_with_state_gas(gross, 0, 0, 0);
             return Ok(ExecutionResult::Revert {
                 gas: result_gas,
@@ -475,22 +539,39 @@ impl Eip8130Executor {
         ) {
             Ok(pool) => pool,
             Err(err) => {
-                Self::teardown_after_error(evm);
+                evm.inspect = inspect;
+                Self::end_inspection(
+                    evm,
+                    inspection,
+                    true,
+                    Bytes::new(),
+                    outcome.gas_limit,
+                    outcome.gas_limit,
+                );
+                Self::discard_transaction_state(evm);
                 return Err(err);
             }
         };
 
         // Final canonical run at the chosen pool (un-reverted) to capture the logs
         // and output at the returned gas limit, then discard all simulated state.
+        evm.inspect = inspect;
         let final_calls = match Self::execute_calls(evm, &signed, &outcome, feasible_pool) {
             Ok(final_calls) => final_calls,
             Err(err) => {
-                Self::teardown_after_error(evm);
+                Self::end_inspection(
+                    evm,
+                    inspection,
+                    true,
+                    Bytes::new(),
+                    outcome.gas_limit,
+                    outcome.gas_limit,
+                );
+                Self::discard_transaction_state(evm);
                 return Err(err);
             }
         };
         let logs = evm.ctx_mut().journal_mut().take_logs();
-        evm.ctx_mut().journal_mut().checkpoint_revert(checkpoint);
 
         // gas_limit = intrinsic + feasible_pool + payer_auth. The on-chain call
         // pool at this limit is `gas_limit - intrinsic = feasible_pool + payer_auth`
@@ -501,6 +582,15 @@ impl Eip8130Executor {
             .sender_intrinsic
             .saturating_add(feasible_pool)
             .saturating_add(outcome.payer_auth);
+        Self::end_inspection(
+            evm,
+            inspection,
+            final_calls.reverted,
+            final_calls.output.clone(),
+            outcome.gas_limit,
+            estimate_gas,
+        );
+        Self::discard_transaction_state(evm);
         let result_gas = ResultGas::new_with_state_gas(estimate_gas, 0, 0, 0);
         if final_calls.reverted {
             Ok(ExecutionResult::Revert { gas: result_gas, logs, output: final_calls.output })
@@ -527,13 +617,14 @@ impl Eip8130Executor {
     ) -> Result<CallsResult, EVMError<DB::Error, BaseTransactionError>>
     where
         DB: AlloyDatabase,
+        I: Inspector<BaseContext<DB>>,
         P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
         BaseContext<DB>: BaseContextTr
             + ContextTr<
                 Db = DB,
                 Tx = BaseTransaction<TxEnv>,
                 Block = BlockEnv,
-                Journal: core::fmt::Debug,
+                Journal: core::fmt::Debug + JournalExt,
             >,
     {
         let checkpoint = evm.ctx_mut().journal_mut().checkpoint();
@@ -563,13 +654,14 @@ impl Eip8130Executor {
     ) -> Result<u64, EVMError<DB::Error, BaseTransactionError>>
     where
         DB: AlloyDatabase,
+        I: Inspector<BaseContext<DB>>,
         P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
         BaseContext<DB>: BaseContextTr
             + ContextTr<
                 Db = DB,
                 Tx = BaseTransaction<TxEnv>,
                 Block = BlockEnv,
-                Journal: core::fmt::Debug,
+                Journal: core::fmt::Debug + JournalExt,
             >,
     {
         // The calls consumed `ceiling_spent` at the full pool, so no smaller pool
@@ -1032,13 +1124,14 @@ impl Eip8130Executor {
     ) -> Result<CallsResult, EVMError<DB::Error, BaseTransactionError>>
     where
         DB: AlloyDatabase,
+        I: Inspector<BaseContext<DB>>,
         P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
         BaseContext<DB>: BaseContextTr
             + ContextTr<
                 Db = DB,
                 Tx = BaseTransaction<TxEnv>,
                 Block = BlockEnv,
-                Journal: core::fmt::Debug,
+                Journal: core::fmt::Debug + JournalExt,
             >,
     {
         let mut remaining = pool;
@@ -1112,8 +1205,9 @@ impl Eip8130Executor {
             // revm's `checkpoint_commit` merges the phase savepoint into its
             // parent without finalizing the journal entries, so a committed phase
             // is still rolled back if the transaction is ultimately discarded
-            // (see `teardown_after_error`) — e.g. when a subsequent phase surfaces a database
-            // error. Committed phases are only durable once `commit_tx` runs.
+            // (see `discard_transaction_state`) — e.g. when a subsequent phase
+            // surfaces a database error. Committed phases are only durable once
+            // `commit_tx` runs.
             evm.ctx_mut().journal_mut().checkpoint_commit();
             phase_statuses.push(0x01);
             refund = refund.saturating_add(phase_refund);
@@ -1128,10 +1222,91 @@ impl Eip8130Executor {
         })
     }
 
+    /// Opens the synthetic transaction root used to attach inspected EIP-8130
+    /// protocol calls to one connected trace arena.
+    fn start_inspection<DB, I, P>(
+        evm: &mut BaseEvm<DB, I, P>,
+        sender: Address,
+        encoded: Bytes,
+        gas_limit: u64,
+    ) -> Option<CallInputs>
+    where
+        DB: AlloyDatabase,
+        I: Inspector<BaseContext<DB>>,
+        P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
+        BaseContext<DB>: BaseContextTr
+            + ContextTr<
+                Db = DB,
+                Tx = BaseTransaction<TxEnv>,
+                Block = BlockEnv,
+                Journal: core::fmt::Debug + JournalExt,
+            >,
+    {
+        if !evm.inspect {
+            return None;
+        }
+        let mut inputs = CallInputs {
+            input: CallInput::Bytes(encoded),
+            return_memory_offset: 0..0,
+            gas_limit,
+            reservoir: 0,
+            bytecode_address: sender,
+            known_bytecode: (KECCAK_EMPTY, Bytecode::default()),
+            target_address: sender,
+            caller: sender,
+            value: CallValue::Transfer(U256::ZERO),
+            scheme: CallScheme::Call,
+            is_static: false,
+            charged_new_account_state_gas: false,
+        };
+        let (ctx, inspector) = evm.ctx_inspector();
+        let _ = inspector.call(ctx, &mut inputs);
+        Some(inputs)
+    }
+
+    /// Closes the synthetic EIP-8130 transaction trace root.
+    fn end_inspection<DB, I, P>(
+        evm: &mut BaseEvm<DB, I, P>,
+        inputs: Option<CallInputs>,
+        reverted: bool,
+        output: Bytes,
+        gas_limit: u64,
+        gas_used: u64,
+    ) where
+        DB: AlloyDatabase,
+        I: Inspector<BaseContext<DB>>,
+        P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
+        BaseContext<DB>: BaseContextTr
+            + ContextTr<
+                Db = DB,
+                Tx = BaseTransaction<TxEnv>,
+                Block = BlockEnv,
+                Journal: core::fmt::Debug + JournalExt,
+            >,
+    {
+        let Some(inputs) = inputs else { return };
+        let mut gas = Gas::new(gas_limit);
+        let _ = gas.record_regular_cost(gas_used.min(gas_limit));
+        let mut outcome = CallOutcome::new(
+            InterpreterResult {
+                result: if reverted {
+                    InstructionResult::Revert
+                } else {
+                    InstructionResult::Return
+                },
+                output,
+                gas,
+            },
+            0..0,
+        );
+        let (ctx, inspector) = evm.ctx_inspector();
+        inspector.call_end(ctx, &inputs, &mut outcome);
+    }
+
     /// Dispatches a single protocol call (`from = sender`, `value = 0`) as a
     /// top-level EVM call frame with `gas_limit` and runs it to completion,
-    /// returning the [`FrameResult`]. Reuses the Base handler's frame loop; the
-    /// inspector is intentionally not driven (see [`BaseEvm::transact_raw`]).
+    /// returning the [`FrameResult`]. Reuses the Base handler's frame loop and
+    /// drives the configured inspector when inspection is enabled.
     fn run_call<DB, I, P>(
         evm: &mut BaseEvm<DB, I, P>,
         caller: Address,
@@ -1141,13 +1316,14 @@ impl Eip8130Executor {
     ) -> Result<FrameResult, EVMError<DB::Error, BaseTransactionError>>
     where
         DB: AlloyDatabase,
+        I: Inspector<BaseContext<DB>>,
         P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
         BaseContext<DB>: BaseContextTr
             + ContextTr<
                 Db = DB,
                 Tx = BaseTransaction<TxEnv>,
                 Block = BlockEnv,
-                Journal: core::fmt::Debug,
+                Journal: core::fmt::Debug + JournalExt,
             >,
     {
         // Resolve the bytecode at `to`, following an EIP-7702 delegation
@@ -1215,7 +1391,11 @@ impl Eip8130Executor {
             EVMError<DB::Error, BaseTransactionError>,
             EthFrame<EthInterpreter>,
         >::new();
-        let frame = handler.run_exec_loop(evm, frame_init)?;
+        let frame = if evm.inspect {
+            handler.inspect_run_exec_loop(evm, frame_init)?
+        } else {
+            handler.run_exec_loop(evm, frame_init)?
+        };
 
         // A top-level frame's database error is recorded on the context and the
         // interpreter halts with `FatalExternalError`; unlike a nested frame
@@ -1266,13 +1446,16 @@ impl Eip8130Executor {
         }
     }
 
-    /// Centralized post-error teardown mirroring the mainnet handler's
-    /// `catch_error` cleanup: discards the transaction, clears the
-    /// cached L1 cost, and drains the frame stack and local context. A database
-    /// error raised inside a nested subcall surfaces while the parent frame is
-    /// still on the stack, so draining both prevents stale frame/local state
-    /// from leaking into the next transaction when a `BaseEvm` is reused.
-    fn teardown_after_error<DB, I, P>(evm: &mut BaseEvm<DB, I, P>)
+    /// Discards all transaction-scoped EVM state.
+    ///
+    /// Used both after execution failures and to roll back successful read-only
+    /// simulations. Mirrors the mainnet handler's `catch_error` cleanup by
+    /// discarding the transaction, clearing the cached L1 cost, and draining the
+    /// frame stack and local context. A database error raised inside a nested
+    /// subcall surfaces while the parent frame is still on the stack, so draining
+    /// both prevents stale frame/local state from leaking into the next
+    /// transaction when a `BaseEvm` is reused.
+    fn discard_transaction_state<DB, I, P>(evm: &mut BaseEvm<DB, I, P>)
     where
         DB: AlloyDatabase,
         P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,

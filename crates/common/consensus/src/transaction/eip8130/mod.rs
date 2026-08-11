@@ -25,6 +25,4 @@ mod tx;
 pub use tx::TxEip8130;
 
 mod signed;
-pub use signed::Eip8130Signed;
-#[cfg(feature = "reth")]
-pub use signed::Eip8130TimestampError;
+pub use signed::{Eip8130Signed, Eip8130StaticError, Eip8130TimestampError};
