@@ -7,6 +7,7 @@ use alloy_primitives::{B64, B256};
 use alloy_provider::{Identity, Provider, ProviderBuilder, RootProvider};
 use alloy_rpc_types_engine::{ForkchoiceState, PayloadAttributes};
 use base_builder_core::{BuilderConfig, FlashblocksServiceBuilder};
+use base_builder_multiplex::{MultiplexRouter, MultiplexingServiceBuilder};
 use base_common_consensus::BaseTxEnvelope;
 use base_common_network::Base;
 use base_common_rpc_types_engine::BasePayloadAttributes;
@@ -19,8 +20,6 @@ use reth_node_api::{EngineTypes, PayloadTypes};
 use reth_node_builder::NodeBuilder;
 use reth_payload_builder::PayloadId;
 use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
-
-use base_builder_multiplex::{MultiplexRouter, MultiplexingServiceBuilder};
 
 #[derive(Debug)]
 struct RunningNode {
@@ -44,8 +43,8 @@ impl RunningNode {
     }
 
     async fn launch_multiplex() -> eyre::Result<Self> {
-        let service_builder = MultiplexingServiceBuilder::new(test_builder_config())
-            .with_dual_builders_enabled(true);
+        let service_builder =
+            MultiplexingServiceBuilder::new(test_builder_config()).with_dual_builders_enabled(true);
         Self::launch(service_builder).await
     }
 
@@ -90,7 +89,8 @@ impl RunningNode {
             reth_db::mdbx::DatabaseArguments::new(reth_db::ClientVersion::default()),
         )?;
 
-        let runner = BaseNodeRunner::new(RollupArgs::default()).with_service_builder(service_builder);
+        let runner =
+            BaseNodeRunner::new(RollupArgs::default()).with_service_builder(service_builder);
         let builder = NodeBuilder::new(node_config.clone())
             .with_database(db)
             .with_launch_context(runtime.clone());
@@ -132,7 +132,8 @@ async fn engine_forkchoice_updated(
     attrs: Option<<BaseEngineTypes as PayloadTypes>::PayloadAttributes>,
 ) -> eyre::Result<alloy_rpc_types_engine::ForkchoiceUpdated> {
     let client = reth_ipc::client::IpcClientBuilder::default().build(auth_ipc_path).await?;
-    Ok(BaseEngineApiClient::<BaseEngineTypes>::fork_choice_updated_v3(&client, state, attrs).await?)
+    Ok(BaseEngineApiClient::<BaseEngineTypes>::fork_choice_updated_v3(&client, state, attrs)
+        .await?)
 }
 
 async fn engine_get_payload(
@@ -172,7 +173,6 @@ async fn build_new_block(
             no_tx_pool: Some(true),
             min_base_fee: Some(0),
             eip_1559_params: Some(B64::from(eip_1559_params)),
-            timestamp_millis_part: None,
         },
         3,
     )?;
@@ -188,9 +188,7 @@ async fn build_new_block(
     )
     .await?;
 
-    let payload_id = fcu
-        .payload_id
-        .ok_or_else(|| eyre::eyre!("fcu did not return payload id"))?;
+    let payload_id = fcu.payload_id.ok_or_else(|| eyre::eyre!("fcu did not return payload id"))?;
 
     tokio::time::sleep(Duration::from_secs(1)).await;
 
@@ -227,8 +225,10 @@ async fn multiplex_flashblocks_equivalence_and_shadow_dispatch() -> eyre::Result
 
     assert_eq!(baseline_head.header.hash, multiplex_head.header.hash, "genesis mismatch");
 
-    let wall_clock = std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH)?;
-    let build_timestamp = std::cmp::max(baseline_head.header.timestamp + 2, wall_clock.as_secs() + 2);
+    let wall_clock =
+        std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH)?;
+    let build_timestamp =
+        std::cmp::max(baseline_head.header.timestamp + 2, wall_clock.as_secs() + 2);
     let baseline_block =
         build_new_block(&baseline_provider, &baseline.auth_ipc_path, build_timestamp).await?;
     let multiplex_block =

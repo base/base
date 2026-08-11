@@ -13,10 +13,7 @@ pub struct RoutingConfig {
 
 impl Default for RoutingConfig {
     fn default() -> Self {
-        Self {
-            dual_builders_enabled: false,
-            getpayload_deadline: Duration::from_secs(5),
-        }
+        Self { dual_builders_enabled: false, getpayload_deadline: Duration::from_secs(5) }
     }
 }
 

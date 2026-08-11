@@ -66,7 +66,10 @@ pub struct BuilderUnavailableError {
 pub type ResolveFuture = std::pin::Pin<
     Box<
         dyn std::future::Future<
-                Output = Result<<BaseEngineTypes as PayloadTypes>::BuiltPayload, PayloadBuilderError>,
+                Output = Result<
+                    <BaseEngineTypes as PayloadTypes>::BuiltPayload,
+                    PayloadBuilderError,
+                >,
             > + Send,
     >,
 >;
@@ -435,8 +438,7 @@ mod tests {
         if let PayloadServiceCommand::BuildNewPayload(input, _, tx) = basic_cmd {
             basic_seen = true;
             assert_eq!(input.payload_id(), payload_id);
-            tx.send(Err(PayloadBuilderError::MissingPayload))
-                .expect("basic response");
+            tx.send(Err(PayloadBuilderError::MissingPayload)).expect("basic response");
         }
 
         assert!(flash_seen);
@@ -519,15 +521,11 @@ mod tests {
         let (resolve_tx, resolve_rx) = tokio::sync::oneshot::channel();
 
         tokio::spawn(async move {
-            router
-                .handle_resolve(payload_id, PayloadKind::Earliest, resolve_tx)
-                .await;
+            router.handle_resolve(payload_id, PayloadKind::Earliest, resolve_tx).await;
         });
 
-        let future = resolve_rx
-            .await
-            .expect("resolve response")
-            .expect("resolve future should be present");
+        let future =
+            resolve_rx.await.expect("resolve response").expect("resolve future should be present");
 
         let resolve_task = tokio::spawn(future);
 
