@@ -195,7 +195,14 @@ impl FilterType {
                 if let Some(tx_str) = tx.as_str() {
                     let tx_lower = tx_str.to_lowercase();
                     for address in addresses {
-                        if tx_lower.contains(address) {
+                        // Subscribed addresses are `0x`-prefixed (the balances and
+                        // log-address branches above compare them against
+                        // `0x`-prefixed JSON fields), but a raw EIP-2718 transaction
+                        // is one hex string whose only `0x` is the leading one, so an
+                        // embedded address appears un-prefixed. Search for the bare
+                        // hex body.
+                        let needle = address.strip_prefix("0x").unwrap_or(address);
+                        if tx_lower.contains(needle) {
                             debug!(tx = %tx_str, "Found address in transaction");
                             return true;
                         }
@@ -433,6 +440,87 @@ mod tests {
         // Test topic filter that should not match
         let filter = FilterType::new_topics(vec![
             "0x1111111111111111111111111111111111111111111111111111111111111111".to_string(),
+        ]);
+        assert!(!filter.matches(&payload, false));
+    }
+
+    /// A payload whose only occurrence of the subscribed address is inside the
+    /// raw transaction hex in `diff.transactions` — not in
+    /// `metadata.new_account_balances` and not in any receipt log.
+    ///
+    /// This is exactly what the third branch of `contains_any_address` exists to
+    /// catch, so an address-only filter must match.
+    fn payload_with_address_only_in_transaction() -> Vec<u8> {
+        // `0x4200...0015` (the L1Block predeploy) is the `to` of this deposit tx.
+        // It appears in the tx payload as the bare 20-byte word `4200..0015`, and
+        // nowhere in the metadata.
+        r#"
+  {
+    "payload_id": "0x0307de8ff1df8ed8",
+    "index": 0,
+    "diff": {
+      "transactions": [
+        "0x7ef90104a0799b8b5182a2612920c032590217fd987cdcf1e07a2de17907e02eea535cc30694deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8b0098999be0000044d000a118b000000000000000000000000683f28fc0000000000813aea000000000000000000000000000000000000000000000000000000000000094a0000000000000000000000000000000000000000000000000000000000000001f10c9d7f8fab954891476f8daa9189f45ee736b02bc43cb190e4f891c82e7edf000000000000000000000000fc56e7272eebbba5bc6c544e159483c4a38f8ba3000000000000000000000000"
+      ]
+    },
+    "metadata": {
+      "block_number": 26600873,
+      "new_account_balances": {
+        "0x336f495c2d3d764f541426228178a2369c9b78db": "0x13fbe85edc90000",
+        "0x4200000000000000000000000000000000000007": "0xf61bc4ad468f1bd"
+      },
+      "receipts": {
+        "0x3fb39b336c13a09d04a34f72cd88a7b0066d65dcf246288ac5bdbba33376eb41": {
+          "Deposit": {
+            "logs": [
+              {
+                "address": "0x4200000000000000000000000000000000000010",
+                "topics": [
+                  "0xb0444523268717a02698be47d0803aa7468c00acbed2f8bd93a0459cde61dd89",
+                  "0x0000000000000000000000000000000000000000000000000000000000000000"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+"#
+        .to_string()
+        .into_bytes()
+    }
+
+    #[test]
+    fn address_only_in_transaction_payload_matches() {
+        let payload = payload_with_address_only_in_transaction();
+
+        // Sanity: the bare (un-prefixed) form really is present in the payload,
+        // so the only thing standing between the filter and a match is how the
+        // subscribed address is compared.
+        let raw = String::from_utf8(payload.clone()).unwrap();
+        assert!(raw.contains("42000000000000000000000000000000000000158080"));
+        assert!(!raw.contains("0x4200000000000000000000000000000000000015"));
+
+        // Subscribers pass `0x`-prefixed addresses: the query string is parsed by
+        // `create_filter_from_query`, and the other two branches of
+        // `contains_any_address` (new_account_balances keys, log `address`
+        // fields) only match `0x`-prefixed input.
+        let filter = FilterType::new_addresses(vec![
+            "0x4200000000000000000000000000000000000015".to_string(),
+        ]);
+        assert!(
+            filter.matches(&payload, false),
+            "address appearing only inside diff.transactions must match an address filter"
+        );
+    }
+
+    #[test]
+    fn unrelated_address_in_transaction_payload_does_not_match() {
+        let payload = payload_with_address_only_in_transaction();
+
+        let filter = FilterType::new_addresses(vec![
+            "0x1111111111111111111111111111111111111111".to_string(),
         ]);
         assert!(!filter.matches(&payload, false));
     }
