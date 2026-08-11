@@ -1,4 +1,4 @@
-//! Reusable Zenith activation checks over one hash-pinned L2 snapshot.
+//! Reusable Denim activation checks over one hash-pinned L2 snapshot.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -33,9 +33,9 @@ alloy_sol_types::sol! {
     function timestampMs() external view returns (uint64);
 }
 
-/// Snapshot selection for a Zenith check.
+/// Snapshot selection for a Denim check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ZenithCheckTarget {
+pub enum DenimCheckTarget {
     /// Resolve the latest block once, then pin all reads to its hash.
     Latest,
     /// Check the snapshot identified by this block hash.
@@ -44,29 +44,29 @@ pub enum ZenithCheckTarget {
 
 /// Last hash-pinned snapshot checked by a caller that polls `Latest`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ZenithCheckCursor {
+pub struct DenimCheckCursor {
     /// Checked block number.
     pub block_number: u64,
     /// Checked block hash.
     pub block_hash: B256,
 }
 
-/// Zenith schedule state at the snapshot.
+/// Denim schedule state at the snapshot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ZenithSchedule {
-    /// The CL has no Zenith activation configured.
+pub enum DenimSchedule {
+    /// The CL has no Denim activation configured.
     NotScheduled,
-    /// Zenith is configured after the snapshot timestamp.
+    /// Denim is configured after the snapshot timestamp.
     Scheduled,
-    /// Zenith is active at the snapshot timestamp.
+    /// Denim is active at the snapshot timestamp.
     Active,
 }
 
 /// Status of a report dimension or individual check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ZenithCheckStatus {
+pub enum DenimCheckStatus {
     /// The invariant holds.
     Pass,
     /// The invariant does not hold.
@@ -75,26 +75,26 @@ pub enum ZenithCheckStatus {
     Indeterminate,
 }
 
-/// One evaluated Zenith invariant.
+/// One evaluated Denim invariant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ZenithCheck {
+pub struct DenimCheck {
     /// Stable check name.
     pub name: String,
     /// Check result.
-    pub status: ZenithCheckStatus,
+    pub status: DenimCheckStatus,
     /// Expected value.
     pub expected: String,
     /// Observed value.
     pub observed: String,
 }
 
-/// Serializable report for one hash-pinned Zenith snapshot.
+/// Serializable report for one hash-pinned Denim snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ZenithReport {
+pub struct DenimReport {
     /// Activation state.
-    pub schedule: ZenithSchedule,
+    pub schedule: DenimSchedule,
     /// Explicit snapshot block number.
     pub block_number: u64,
     /// Explicit snapshot block hash.
@@ -103,19 +103,19 @@ pub struct ZenithReport {
     pub timestamp: u64,
     /// Snapshot timestamp in milliseconds, when exposed.
     pub timestamp_ms: Option<u64>,
-    /// CL Zenith activation timestamp.
+    /// CL Denim activation timestamp.
     pub activation: Option<u64>,
     /// Detailed checks.
-    pub checks: Vec<ZenithCheck>,
+    pub checks: Vec<DenimCheck>,
     /// Safe polling cursor, absent when cadence ancestry was incomplete.
     #[serde(skip)]
-    pub cursor: Option<ZenithCheckCursor>,
+    pub cursor: Option<DenimCheckCursor>,
 }
 
-/// Pure observations used to evaluate a Zenith report.
+/// Pure observations used to evaluate a Denim report.
 #[derive(Debug, Clone)]
-pub struct ZenithObservations {
-    /// CL Zenith activation timestamp.
+pub struct DenimObservations {
+    /// CL Denim activation timestamp.
     pub activation: Option<u64>,
     /// Snapshot block number.
     pub block_number: u64,
@@ -153,20 +153,20 @@ pub struct ZenithObservations {
     pub getter_timestamp_ms_error: Option<String>,
 }
 
-/// Zenith RPC entry point.
+/// Denim RPC entry point.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct ZenithChecker;
+pub struct DenimChecker;
 
-impl ZenithChecker {
+impl DenimChecker {
     /// Checks a snapshot, including every cadence edge after `previous` for `Latest`.
     pub async fn check(
         &self,
         el_rpc: &Url,
         cl_rpc: &Url,
         el_ws_rpc: Option<&Url>,
-        target: ZenithCheckTarget,
-        previous: Option<ZenithCheckCursor>,
-    ) -> Result<ZenithReport> {
+        target: DenimCheckTarget,
+        previous: Option<DenimCheckCursor>,
+    ) -> Result<DenimReport> {
         let http = alloy_transport_http::reqwest::Client::builder()
             .timeout(Duration::from_secs(10))
             .build()?;
@@ -182,7 +182,7 @@ impl ZenithChecker {
             .await
             .with_context(|| format!("fetching optimism_rollupConfig from {cl_rpc}"))?;
         let hash = match target {
-            ZenithCheckTarget::Latest => {
+            DenimCheckTarget::Latest => {
                 provider
                     .get_block_by_number(BlockNumberOrTag::Latest)
                     .full()
@@ -191,7 +191,7 @@ impl ZenithChecker {
                     .header
                     .hash
             }
-            ZenithCheckTarget::BlockHash(hash) => hash,
+            DenimCheckTarget::BlockHash(hash) => hash,
         };
         let block_id = BlockId::Hash(hash.into());
         let full_hash = provider
@@ -229,7 +229,7 @@ impl ZenithChecker {
             None
         };
 
-        let active = rollup.upgrades.base.zenith.is_some_and(|at| full_hash.header.timestamp >= at);
+        let active = rollup.upgrades.base.denim.is_some_and(|at| full_hash.header.timestamp >= at);
         let envelopes: Vec<_> =
             full_hash.transactions.txns().take(2).map(|tx| tx.as_ref().clone()).collect();
         let metadata = active
@@ -294,8 +294,8 @@ impl ZenithChecker {
             (None, None)
         };
 
-        let mut report = ZenithReport::evaluate(ZenithObservations {
-            activation: rollup.upgrades.base.zenith,
+        let mut report = DenimReport::evaluate(DenimObservations {
+            activation: rollup.upgrades.base.denim,
             block_number: number,
             block_hash: hash,
             timestamp: full_hash.header.timestamp,
@@ -319,8 +319,8 @@ impl ZenithChecker {
             .checks
             .iter()
             .find(|check| check.name == "cadence_200ms")
-            .is_some_and(|check| check.status == ZenithCheckStatus::Pass);
-        report.cursor = (cadence_complete && cadence_passed).then_some(ZenithCheckCursor {
+            .is_some_and(|check| check.status == DenimCheckStatus::Pass);
+        report.cursor = (cadence_complete && cadence_passed).then_some(DenimCheckCursor {
             block_number: report.block_number,
             block_hash: report.block_hash,
         });
@@ -365,7 +365,7 @@ async fn raw_call<P: Provider<Base>>(
 }
 
 fn check_wire_object(
-    report: &mut ZenithReport,
+    report: &mut DenimReport,
     name: &str,
     outcome: RawOutcome,
     field: &str,
@@ -374,7 +374,7 @@ fn check_wire_object(
 ) {
     match outcome {
         RawOutcome::Value(value) if value.is_null() => {
-            report.add_check(name, ZenithCheckStatus::Fail, field, "known snapshot object missing")
+            report.add_check(name, DenimCheckStatus::Fail, field, "known snapshot object missing")
         }
         RawOutcome::Value(value) => {
             let object = value.as_object();
@@ -396,7 +396,7 @@ fn check_wire_object(
             let pass = timestamp == Some(expected_timestamp) && identity_matches;
             report.add_check(
                 name,
-                if pass { ZenithCheckStatus::Pass } else { ZenithCheckStatus::Fail },
+                if pass { DenimCheckStatus::Pass } else { DenimCheckStatus::Fail },
                 format!("{field}=0x{expected_timestamp:x} with pinned identity"),
                 timestamp.map_or_else(
                     || format!("missing or invalid {field}"),
@@ -411,16 +411,16 @@ fn check_wire_object(
             );
         }
         RawOutcome::MethodError(error) => {
-            report.add_check(name, ZenithCheckStatus::Fail, field, error)
+            report.add_check(name, DenimCheckStatus::Fail, field, error)
         }
         RawOutcome::Unavailable(error) => {
-            report.add_check(name, ZenithCheckStatus::Indeterminate, field, error)
+            report.add_check(name, DenimCheckStatus::Indeterminate, field, error)
         }
     }
 }
 
 fn check_wire_logs(
-    report: &mut ZenithReport,
+    report: &mut DenimReport,
     name: &str,
     outcome: RawOutcome,
     expected_timestamp: u64,
@@ -429,13 +429,13 @@ fn check_wire_logs(
     match outcome {
         RawOutcome::Value(value) => {
             let Some(logs) = value.as_array() else {
-                report.add_check(name, ZenithCheckStatus::Fail, "log array", "invalid result");
+                report.add_check(name, DenimCheckStatus::Fail, "log array", "invalid result");
                 return;
             };
             if logs.is_empty() {
                 report.add_check(
                     name,
-                    ZenithCheckStatus::Indeterminate,
+                    DenimCheckStatus::Indeterminate,
                     "at least one pinned log",
                     "no logs in pinned block",
                 );
@@ -452,16 +452,16 @@ fn check_wire_logs(
             });
             report.add_check(
                 name,
-                if valid { ZenithCheckStatus::Pass } else { ZenithCheckStatus::Fail },
+                if valid { DenimCheckStatus::Pass } else { DenimCheckStatus::Fail },
                 "blockTimestampMs with pinned blockHash",
                 if valid { "conformant" } else { "missing, wrong, or mismatched log field" },
             );
         }
         RawOutcome::MethodError(error) => {
-            report.add_check(name, ZenithCheckStatus::Fail, "blockTimestampMs", error)
+            report.add_check(name, DenimCheckStatus::Fail, "blockTimestampMs", error)
         }
         RawOutcome::Unavailable(error) => {
-            report.add_check(name, ZenithCheckStatus::Indeterminate, "blockTimestampMs", error)
+            report.add_check(name, DenimCheckStatus::Indeterminate, "blockTimestampMs", error)
         }
     }
 }
@@ -474,42 +474,42 @@ fn parse_quantity(value: &str) -> Option<u64> {
     u64::from_str_radix(digits, 16).ok()
 }
 
-fn cadence_status(parent: Option<u64>, child: Option<u64>, contiguous: bool) -> ZenithCheckStatus {
+fn cadence_status(parent: Option<u64>, child: Option<u64>, contiguous: bool) -> DenimCheckStatus {
     match (parent, child, contiguous) {
         (Some(parent), Some(child), true) if parent.checked_add(200) == Some(child) => {
-            ZenithCheckStatus::Pass
+            DenimCheckStatus::Pass
         }
-        (Some(_), Some(_), true) => ZenithCheckStatus::Fail,
-        _ => ZenithCheckStatus::Indeterminate,
+        (Some(_), Some(_), true) => DenimCheckStatus::Fail,
+        _ => DenimCheckStatus::Indeterminate,
     }
 }
 
 async fn append_cadence_check<P: Provider<Base>>(
     provider: &P,
-    report: &mut ZenithReport,
-    target: ZenithCheckTarget,
-    previous: Option<ZenithCheckCursor>,
+    report: &mut DenimReport,
+    target: DenimCheckTarget,
+    previous: Option<DenimCheckCursor>,
 ) -> bool {
     if previous.is_some_and(|cursor| {
-        matches!(target, ZenithCheckTarget::Latest)
+        matches!(target, DenimCheckTarget::Latest)
             && cursor.block_number == report.block_number
             && cursor.block_hash == report.block_hash
     }) {
         report.add_check(
             "cadence_200ms",
-            ZenithCheckStatus::Pass,
+            DenimCheckStatus::Pass,
             "every canonical parent-child edge is exactly +200ms",
             "no new blocks",
         );
         return true;
     }
     let stop = match (target, previous) {
-        (ZenithCheckTarget::Latest, Some(cursor)) => Some(cursor),
+        (DenimCheckTarget::Latest, Some(cursor)) => Some(cursor),
         _ => None,
     };
     let mut hash = report.block_hash;
     let mut child_ms = None;
-    let mut status = ZenithCheckStatus::Pass;
+    let mut status = DenimCheckStatus::Pass;
     let mut complete = false;
     let mut checked_edge = false;
     let mut child_number = None;
@@ -517,18 +517,18 @@ async fn append_cadence_check<P: Provider<Base>>(
     let mut visited = HashSet::new();
     loop {
         if !visited.insert(hash) {
-            status = ZenithCheckStatus::Indeterminate;
+            status = DenimCheckStatus::Indeterminate;
             break;
         }
         let block = match provider.get_block(BlockId::Hash(hash.into())).full().await {
             Ok(Some(block)) => block,
             _ => {
-                status = ZenithCheckStatus::Indeterminate;
+                status = DenimCheckStatus::Indeterminate;
                 break;
             }
         };
         if block.header.hash != hash {
-            status = ZenithCheckStatus::Indeterminate;
+            status = DenimCheckStatus::Indeterminate;
             break;
         }
         let envelopes: Vec<_> =
@@ -540,18 +540,18 @@ async fn append_cadence_check<P: Provider<Base>>(
             });
         let active = report.activation.is_some_and(|at| block.header.timestamp >= at);
         if active && millis.is_none() {
-            status = ZenithCheckStatus::Fail;
+            status = DenimCheckStatus::Fail;
         }
         let mut edge_checked = false;
         if active && child_ms.is_some() {
             if child_number != block.header.number.checked_add(1) {
-                status = ZenithCheckStatus::Indeterminate;
+                status = DenimCheckStatus::Indeterminate;
                 break;
             }
             edge_checked = true;
             checked_edge = true;
             let edge = cadence_status(millis, child_ms, true);
-            if edge != ZenithCheckStatus::Pass && status != ZenithCheckStatus::Fail {
+            if edge != DenimCheckStatus::Pass && status != DenimCheckStatus::Fail {
                 status = edge;
             }
         }
@@ -568,7 +568,7 @@ async fn append_cadence_check<P: Provider<Base>>(
         if stop.is_some_and(|cursor| block.header.number == cursor.block_number) {
             replacement_cursor = true;
         } else if stop.is_some_and(|cursor| block.header.number < cursor.block_number) {
-            status = ZenithCheckStatus::Indeterminate;
+            status = DenimCheckStatus::Indeterminate;
             break;
         }
         if stop.is_none() && checked_edge {
@@ -577,7 +577,7 @@ async fn append_cadence_check<P: Provider<Base>>(
         }
         if !active {
             if stop.is_some() {
-                status = ZenithCheckStatus::Indeterminate;
+                status = DenimCheckStatus::Indeterminate;
             } else {
                 complete = true;
             }
@@ -587,17 +587,17 @@ async fn append_cadence_check<P: Provider<Base>>(
         child_number = Some(block.header.number);
         hash = block.header.parent_hash;
     }
-    if status == ZenithCheckStatus::Pass && !checked_edge {
-        status = ZenithCheckStatus::Indeterminate;
+    if status == DenimCheckStatus::Pass && !checked_edge {
+        status = DenimCheckStatus::Indeterminate;
     }
     report.add_check(
         "cadence_200ms",
         status,
         "every canonical parent-child edge is exactly +200ms",
         match status {
-            ZenithCheckStatus::Pass => "exact +200ms progression",
-            ZenithCheckStatus::Fail => "wrong timestamp gap",
-            ZenithCheckStatus::Indeterminate => "activation boundary, missing range, or reorg",
+            DenimCheckStatus::Pass => "exact +200ms progression",
+            DenimCheckStatus::Fail => "wrong timestamp gap",
+            DenimCheckStatus::Indeterminate => "activation boundary, missing range, or reorg",
         },
     );
     complete
@@ -605,10 +605,10 @@ async fn append_cadence_check<P: Provider<Base>>(
 
 async fn append_wire_checks<P: Provider<Base>>(
     provider: &P,
-    report: &mut ZenithReport,
+    report: &mut DenimReport,
     block: &<Base as Network>::BlockResponse,
     el_ws_rpc: Option<&Url>,
-    target: ZenithCheckTarget,
+    target: DenimCheckTarget,
 ) {
     let transactions =
         block.transactions.txns().take(2).map(|tx| tx.as_ref().clone()).collect::<Vec<_>>();
@@ -633,7 +633,7 @@ async fn append_wire_checks<P: Provider<Base>>(
         ] {
             report.add_check(
                 name,
-                ZenithCheckStatus::Indeterminate,
+                DenimCheckStatus::Indeterminate,
                 "canonical metadata timestamp",
                 "canonical BaseTime metadata unavailable",
             );
@@ -645,7 +645,7 @@ async fn append_wire_checks<P: Provider<Base>>(
         ] {
             report.add_check(
                 name,
-                ZenithCheckStatus::Indeterminate,
+                DenimCheckStatus::Indeterminate,
                 "live event",
                 "canonical BaseTime metadata unavailable",
             );
@@ -739,7 +739,7 @@ async fn append_wire_checks<P: Provider<Base>>(
                     if let Some(check) =
                         report.checks.iter_mut().rev().find(|check| check.name == name)
                     {
-                        check.status = ZenithCheckStatus::Fail;
+                        check.status = DenimCheckStatus::Fail;
                         check.observed = "filter cleanup failed".into();
                     }
                 }
@@ -751,11 +751,11 @@ async fn append_wire_checks<P: Provider<Base>>(
                 "rpc_eth_getFilterLogs_blockTimestampMs",
             ] {
                 let (status, reason) = match &outcome {
-                    RawOutcome::MethodError(error) => (ZenithCheckStatus::Fail, error.as_str()),
+                    RawOutcome::MethodError(error) => (DenimCheckStatus::Fail, error.as_str()),
                     RawOutcome::Unavailable(error) => {
-                        (ZenithCheckStatus::Indeterminate, error.as_str())
+                        (DenimCheckStatus::Indeterminate, error.as_str())
                     }
-                    RawOutcome::Value(_) => (ZenithCheckStatus::Fail, "invalid filter identifier"),
+                    RawOutcome::Value(_) => (DenimCheckStatus::Fail, "invalid filter identifier"),
                 };
                 report.add_check(name, status, "blockHash filter", reason);
             }
@@ -817,9 +817,9 @@ async fn subscription_event_result<P: Provider<Base>>(
     provider: &P,
     kind: &str,
     notification: &Value,
-) -> (ZenithCheckStatus, String) {
+) -> (DenimCheckStatus, String) {
     let Some(result) = notification.pointer("/params/result") else {
-        return (ZenithCheckStatus::Fail, "notification has no result".into());
+        return (DenimCheckStatus::Fail, "notification has no result".into());
     };
     let block_hash = match kind {
         "newHeads" => result.get("hash").and_then(Value::as_str),
@@ -833,11 +833,11 @@ async fn subscription_event_result<P: Provider<Base>>(
         _ => None,
     };
     let Some(hash) = block_hash.and_then(|hash| hash.parse::<B256>().ok()) else {
-        return (ZenithCheckStatus::Fail, "event has no valid block hash".into());
+        return (DenimCheckStatus::Fail, "event has no valid block hash".into());
     };
     let block = match provider.get_block(BlockId::Hash(hash.into())).full().await {
         Ok(Some(block)) if block.header.hash == hash => block,
-        _ => return (ZenithCheckStatus::Indeterminate, "event block unavailable".into()),
+        _ => return (DenimCheckStatus::Indeterminate, "event block unavailable".into()),
     };
     let transactions =
         block.transactions.txns().take(2).map(|tx| tx.as_ref().clone()).collect::<Vec<_>>();
@@ -846,11 +846,11 @@ async fn subscription_event_result<P: Provider<Base>>(
             |metadata| block.header.timestamp * 1_000 + u64::from(metadata.timestamp_millis_part()),
         )
     else {
-        return (ZenithCheckStatus::Indeterminate, "event block metadata unavailable".into());
+        return (DenimCheckStatus::Indeterminate, "event block metadata unavailable".into());
     };
     if kind == "transactionReceipts" {
         let Some(receipts) = result.as_array().filter(|receipts| !receipts.is_empty()) else {
-            return (ZenithCheckStatus::Fail, "malformed receipt event".into());
+            return (DenimCheckStatus::Fail, "malformed receipt event".into());
         };
         if !receipts.iter().all(|receipt| {
             receipt
@@ -862,7 +862,7 @@ async fn subscription_event_result<P: Provider<Base>>(
                     == Some(block.header.number)
                 && receipt.get("logs").is_some_and(Value::is_array)
         }) {
-            return (ZenithCheckStatus::Fail, "malformed or mismatched receipt event".into());
+            return (DenimCheckStatus::Fail, "malformed or mismatched receipt event".into());
         }
         let logs: Vec<_> = receipts
             .iter()
@@ -870,7 +870,7 @@ async fn subscription_event_result<P: Provider<Base>>(
             .flatten()
             .collect();
         if logs.is_empty() {
-            return (ZenithCheckStatus::Indeterminate, "receipt event has no logs".into());
+            return (DenimCheckStatus::Indeterminate, "receipt event has no logs".into());
         }
         let valid = logs.iter().all(|log| {
             log.get("blockHash")
@@ -881,7 +881,7 @@ async fn subscription_event_result<P: Provider<Base>>(
                     == Some(expected)
         });
         return (
-            if valid { ZenithCheckStatus::Pass } else { ZenithCheckStatus::Fail },
+            if valid { DenimCheckStatus::Pass } else { DenimCheckStatus::Fail },
             if valid {
                 format!("matching event timestamp 0x{expected:x}")
             } else {
@@ -901,7 +901,7 @@ async fn subscription_event_result<P: Provider<Base>>(
         _ => false,
     };
     (
-        if valid { ZenithCheckStatus::Pass } else { ZenithCheckStatus::Fail },
+        if valid { DenimCheckStatus::Pass } else { DenimCheckStatus::Fail },
         if valid {
             format!("matching event timestamp 0x{expected:x}")
         } else {
@@ -912,9 +912,9 @@ async fn subscription_event_result<P: Provider<Base>>(
 
 async fn append_subscription_checks<P: Provider<Base>>(
     provider: &P,
-    report: &mut ZenithReport,
+    report: &mut DenimReport,
     el_ws_rpc: Option<&Url>,
-    target: ZenithCheckTarget,
+    target: DenimCheckTarget,
 ) {
     const SUBSCRIPTIONS: [(&str, &str); 3] = [
         ("rpc_eth_subscribe_newHeads_timestampMs", "newHeads"),
@@ -925,18 +925,18 @@ async fn append_subscription_checks<P: Provider<Base>>(
         for (name, _) in SUBSCRIPTIONS {
             report.add_check(
                 name,
-                ZenithCheckStatus::Indeterminate,
+                DenimCheckStatus::Indeterminate,
                 "matching WebSocket event",
                 "standard execution WebSocket RPC is not configured",
             );
         }
         return;
     };
-    if matches!(target, ZenithCheckTarget::BlockHash(_)) {
+    if matches!(target, DenimCheckTarget::BlockHash(_)) {
         for (name, _) in SUBSCRIPTIONS {
             report.add_check(
                 name,
-                ZenithCheckStatus::Indeterminate,
+                DenimCheckStatus::Indeterminate,
                 "matching WebSocket event",
                 "historical block subscriptions cannot be replayed",
             );
@@ -950,7 +950,7 @@ async fn append_subscription_checks<P: Provider<Base>>(
         for (name, _) in SUBSCRIPTIONS {
             report.add_check(
                 name,
-                ZenithCheckStatus::Indeterminate,
+                DenimCheckStatus::Indeterminate,
                 "accepted WebSocket subscription",
                 "WebSocket connection unavailable",
             );
@@ -996,7 +996,7 @@ async fn append_subscription_checks<P: Provider<Base>>(
             if let Some(error) = value.get("error") {
                 report.add_check(
                     name,
-                    ZenithCheckStatus::Fail,
+                    DenimCheckStatus::Fail,
                     "accepted WebSocket subscription",
                     error.get("message").and_then(Value::as_str).unwrap_or("subscription rejected"),
                 );
@@ -1006,7 +1006,7 @@ async fn append_subscription_checks<P: Provider<Base>>(
             } else {
                 report.add_check(
                     name,
-                    ZenithCheckStatus::Fail,
+                    DenimCheckStatus::Fail,
                     "subscription identifier",
                     "malformed subscription response",
                 );
@@ -1034,7 +1034,7 @@ async fn append_subscription_checks<P: Provider<Base>>(
         if !completed.contains(name) {
             report.add_check(
                 name,
-                ZenithCheckStatus::Indeterminate,
+                DenimCheckStatus::Indeterminate,
                 "matching timestamped WebSocket event",
                 if pending.values().any(|(pending_name, _)| *pending_name == name) {
                     "subscription response unavailable"
@@ -1047,16 +1047,16 @@ async fn append_subscription_checks<P: Provider<Base>>(
     let _ = socket.close(None).await;
 }
 
-impl ZenithReport {
+impl DenimReport {
     /// Appends a detailed check.
     pub fn add_check(
         &mut self,
         name: &str,
-        status: ZenithCheckStatus,
+        status: DenimCheckStatus,
         expected: impl ToString,
         observed: impl ToString,
     ) {
-        self.checks.push(ZenithCheck {
+        self.checks.push(DenimCheck {
             name: name.into(),
             status,
             expected: expected.to_string(),
@@ -1065,13 +1065,13 @@ impl ZenithReport {
     }
 
     /// Evaluates complete RPC observations into detailed snapshot checks.
-    pub fn evaluate(input: ZenithObservations) -> Self {
+    pub fn evaluate(input: DenimObservations) -> Self {
         let schedule = match input.activation {
-            None => ZenithSchedule::NotScheduled,
-            Some(at) if input.timestamp < at => ZenithSchedule::Scheduled,
-            Some(_) => ZenithSchedule::Active,
+            None => DenimSchedule::NotScheduled,
+            Some(at) if input.timestamp < at => DenimSchedule::Scheduled,
+            Some(_) => DenimSchedule::Active,
         };
-        let active = schedule == ZenithSchedule::Active;
+        let active = schedule == DenimSchedule::Active;
         let initial = input.implementation
             == U256::from_be_slice(BaseTime::IMPLEMENTATION_ADDRESS.as_slice());
         let empty_code_hash = keccak256([]);
@@ -1112,11 +1112,11 @@ impl ZenithReport {
         };
         let status = |matches| {
             if matches {
-                ZenithCheckStatus::Pass
+                DenimCheckStatus::Pass
             } else if active {
-                ZenithCheckStatus::Fail
+                DenimCheckStatus::Fail
             } else {
-                ZenithCheckStatus::Indeterminate
+                DenimCheckStatus::Indeterminate
             }
         };
         for (name, matches, expected, observed) in [
@@ -1229,7 +1229,7 @@ mod tests {
 
     use super::*;
 
-    async fn zenith_rpc_fixture(
+    async fn denim_rpc_fixture(
         State(requests): State<Arc<Mutex<Vec<Value>>>>,
         Json(request): Json<Value>,
     ) -> Json<Value> {
@@ -1239,7 +1239,7 @@ mod tests {
             "optimism_rollupConfig" => {
                 let mut config = serde_json::to_value(RollupConfig::default()).unwrap();
                 config["l2_chain_id"] = json!(8453);
-                config["base"]["zenith"] = json!(20);
+                config["base"]["denim"] = json!(20);
                 config
             }
             "eth_getBlockByHash"
@@ -1292,9 +1292,9 @@ mod tests {
         )
     }
 
-    fn observations(activation: Option<u64>, timestamp: u64) -> ZenithObservations {
+    fn observations(activation: Option<u64>, timestamp: u64) -> DenimObservations {
         let part = 200;
-        ZenithObservations {
+        DenimObservations {
             activation,
             block_number: 10,
             block_hash: B256::ZERO,
@@ -1322,16 +1322,16 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let router =
-            Router::new().route("/", post(zenith_rpc_fixture)).with_state(Arc::clone(&requests));
+            Router::new().route("/", post(denim_rpc_fixture)).with_state(Arc::clone(&requests));
         let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
         let url = Url::parse(&format!("http://{address}")).unwrap();
         let hash = B256::repeat_byte(0x42);
-        let report = ZenithChecker
-            .check(&url, &url, None, ZenithCheckTarget::BlockHash(hash), None)
+        let report = DenimChecker
+            .check(&url, &url, None, DenimCheckTarget::BlockHash(hash), None)
             .await
             .unwrap();
 
-        assert_eq!(report.schedule, ZenithSchedule::Scheduled);
+        assert_eq!(report.schedule, DenimSchedule::Scheduled);
         assert_eq!(report.block_number, 10);
         assert_eq!(report.block_hash, hash);
 
@@ -1365,23 +1365,23 @@ mod tests {
 
     #[test]
     fn schedule_selection_and_inactive_metadata_are_stable() {
-        let unscheduled = ZenithReport::evaluate(observations(None, 10));
-        assert_eq!(unscheduled.schedule, ZenithSchedule::NotScheduled);
-        assert!(unscheduled.checks.iter().all(|check| check.status != ZenithCheckStatus::Fail));
+        let unscheduled = DenimReport::evaluate(observations(None, 10));
+        assert_eq!(unscheduled.schedule, DenimSchedule::NotScheduled);
+        assert!(unscheduled.checks.iter().all(|check| check.status != DenimCheckStatus::Fail));
 
-        let scheduled = ZenithReport::evaluate(observations(Some(20), 10));
-        assert_eq!(scheduled.schedule, ZenithSchedule::Scheduled);
+        let scheduled = DenimReport::evaluate(observations(Some(20), 10));
+        assert_eq!(scheduled.schedule, DenimSchedule::Scheduled);
     }
 
     #[test]
     fn active_snapshot_requires_canonical_metadata_and_state() {
         let mut input = observations(Some(10), 10);
         input.storage_millis_part = 400;
-        let report = ZenithReport::evaluate(input);
-        assert_eq!(report.schedule, ZenithSchedule::Active);
+        let report = DenimReport::evaluate(input);
+        assert_eq!(report.schedule, DenimSchedule::Active);
         assert_eq!(
             report.checks.iter().find(|check| check.name == "storage_millis_part").unwrap().status,
-            ZenithCheckStatus::Fail
+            DenimCheckStatus::Fail
         );
     }
 
@@ -1390,10 +1390,10 @@ mod tests {
         let mut input = observations(Some(10), 10);
         input.implementation = U256::from(1);
         input.implementation_code_hash = Some(B256::with_last_byte(1));
-        let report = ZenithReport::evaluate(input);
+        let report = DenimReport::evaluate(input);
         assert_eq!(
             report.checks.iter().find(|check| check.name == "implementation").unwrap().status,
-            ZenithCheckStatus::Pass
+            DenimCheckStatus::Pass
         );
     }
 
@@ -1409,12 +1409,12 @@ mod tests {
         unavailable.implementation_code_hash = None;
 
         for input in [malformed, empty, unavailable] {
-            let check = ZenithReport::evaluate(input)
+            let check = DenimReport::evaluate(input)
                 .checks
                 .into_iter()
                 .find(|check| check.name == "implementation")
                 .unwrap();
-            assert_eq!(check.status, ZenithCheckStatus::Fail);
+            assert_eq!(check.status, DenimCheckStatus::Fail);
             assert_eq!(check.observed, "Inconsistent");
         }
     }
@@ -1428,12 +1428,12 @@ mod tests {
         input.getter_millis_part_error = Some("execution reverted".into());
         input.getter_timestamp_ms = None;
         input.getter_timestamp_ms_error = Some("execution reverted".into());
-        let report = ZenithReport::evaluate(input);
+        let report = DenimReport::evaluate(input);
 
         let getter_checks: Vec<_> =
             report.checks.iter().filter(|check| check.name.starts_with("getter_")).collect();
         assert_eq!(getter_checks.len(), 2);
-        assert!(getter_checks.iter().all(|check| check.status == ZenithCheckStatus::Fail));
+        assert!(getter_checks.iter().all(|check| check.status == DenimCheckStatus::Fail));
     }
 
     #[test]
@@ -1445,12 +1445,12 @@ mod tests {
         input.getter_timestamp_ms = Some(expected);
 
         assert!(
-            ZenithReport::evaluate(input)
+            DenimReport::evaluate(input)
                 .checks
                 .iter()
                 .filter(|check| check.name.starts_with("getter_")
                     || check.name == "header_timestamp_ms")
-                .all(|check| check.status == ZenithCheckStatus::Pass)
+                .all(|check| check.status == DenimCheckStatus::Pass)
         );
     }
 
@@ -1458,7 +1458,7 @@ mod tests {
     fn report_serializes_consumer_dimensions_and_failure_context() {
         let mut input = observations(Some(10), 10);
         input.metadata_receipt_valid = Some(false);
-        let value = serde_json::to_value(ZenithReport::evaluate(input)).unwrap();
+        let value = serde_json::to_value(DenimReport::evaluate(input)).unwrap();
         assert_eq!(value["schedule"], "active");
         assert_eq!(
             value["checks"]
@@ -1480,18 +1480,18 @@ mod tests {
 
     #[test]
     fn cadence_classifies_boundary_exact_gap_and_wrong_gap() {
-        assert_eq!(cadence_status(None, Some(1_000), true), ZenithCheckStatus::Indeterminate);
-        assert_eq!(cadence_status(Some(1_000), Some(1_200), true), ZenithCheckStatus::Pass);
-        assert_eq!(cadence_status(Some(1_000), Some(1_400), true), ZenithCheckStatus::Fail);
+        assert_eq!(cadence_status(None, Some(1_000), true), DenimCheckStatus::Indeterminate);
+        assert_eq!(cadence_status(Some(1_000), Some(1_200), true), DenimCheckStatus::Pass);
+        assert_eq!(cadence_status(Some(1_000), Some(1_400), true), DenimCheckStatus::Fail);
         assert_eq!(
             cadence_status(Some(1_000), Some(1_200), false),
-            ZenithCheckStatus::Indeterminate
+            DenimCheckStatus::Indeterminate
         );
     }
 
     #[test]
     fn raw_object_classifies_field_and_method_evidence() {
-        let mut report = ZenithReport::evaluate(observations(Some(10), 10));
+        let mut report = DenimReport::evaluate(observations(Some(10), 10));
         let identity = [("hash", B256::repeat_byte(0x42).to_string())];
         check_wire_object(
             &mut report,
@@ -1523,10 +1523,10 @@ mod tests {
         assert_eq!(
             statuses,
             vec![
-                ZenithCheckStatus::Indeterminate,
-                ZenithCheckStatus::Fail,
-                ZenithCheckStatus::Fail,
-                ZenithCheckStatus::Pass,
+                DenimCheckStatus::Indeterminate,
+                DenimCheckStatus::Fail,
+                DenimCheckStatus::Fail,
+                DenimCheckStatus::Pass,
             ]
         );
     }

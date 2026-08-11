@@ -37,8 +37,15 @@ just devnet logs   # Stream logs from all containers
 just devnet status # Check block numbers and sync status
 ```
 
-Zenith is disabled by default. To activate it at block 23 and switch the sequencer to its 200ms
-cadence, start with:
+Denim is activated at block 23 by default, switching the sequencer to its 200ms cadence. To
+start a pre-Denim devnet, set `L2_BASE_DENIM_BLOCK` to an empty value:
+
+```bash
+L2_BASE_DENIM_BLOCK= just devnet up
+```
+
+Zenith is the permanently unscheduled, genesis-only gate for future hardfork feature testing.
+To additionally activate it at block 23, start with:
 
 ```bash
 just devnet up zenith

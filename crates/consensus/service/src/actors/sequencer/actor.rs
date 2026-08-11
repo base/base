@@ -327,7 +327,7 @@ where
             + Duration::from_millis(self.rollup_config.l2_block_timestamp_millis(block_number));
         let block_interval = if self
             .rollup_config
-            .is_zenith_active(self.rollup_config.l2_block_timestamp(block_number))
+            .is_denim_active(self.rollup_config.l2_block_timestamp(block_number))
         {
             Duration::from_millis(RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS)
         } else {

@@ -17,25 +17,25 @@ pub trait BaseUpgradeExt: Sized {
     fn into_eth_spec(self) -> SpecId;
 
     /// Returns the execution fork ladder with activation conditions for the given chain config.
-    fn forks_for(cfg: &ChainConfig) -> [(BaseUpgrade, ForkCondition); 12];
+    fn forks_for(cfg: &ChainConfig) -> [(BaseUpgrade, ForkCondition); 13];
 
     /// Base mainnet list of execution upgrades.
-    fn mainnet() -> [(BaseUpgrade, ForkCondition); 12] {
+    fn mainnet() -> [(BaseUpgrade, ForkCondition); 13] {
         Self::forks_for(ChainConfig::mainnet())
     }
 
     /// Base Sepolia list of execution upgrades.
-    fn sepolia() -> [(BaseUpgrade, ForkCondition); 12] {
+    fn sepolia() -> [(BaseUpgrade, ForkCondition); 13] {
         Self::forks_for(ChainConfig::sepolia())
     }
 
     /// Devnet list of execution upgrades.
-    fn devnet() -> [(BaseUpgrade, ForkCondition); 12] {
+    fn devnet() -> [(BaseUpgrade, ForkCondition); 13] {
         Self::forks_for(ChainConfig::devnet())
     }
 
     /// Base Zeronet list of execution upgrades.
-    fn zeronet() -> [(BaseUpgrade, ForkCondition); 12] {
+    fn zeronet() -> [(BaseUpgrade, ForkCondition); 13] {
         Self::forks_for(ChainConfig::zeronet())
     }
 
@@ -56,16 +56,17 @@ impl BaseUpgradeExt for BaseUpgrade {
             | Self::Holocene
             | Self::PectraBlobSchedule => SpecId::CANCUN,
             Self::Isthmus | Self::Jovian => SpecId::PRAGUE,
-            // Azul, Beryl, Cobalt, Zenith, and newer Base upgrades inherit the latest known
-            // Ethereum spec until explicitly mapped.
+            // Azul, Beryl, Cobalt, Denim, Zenith, and newer Base upgrades inherit the latest
+            // known Ethereum spec until explicitly mapped.
             _ => SpecId::OSAKA,
         }
     }
 
-    fn forks_for(cfg: &ChainConfig) -> [(BaseUpgrade, ForkCondition); 12] {
+    fn forks_for(cfg: &ChainConfig) -> [(BaseUpgrade, ForkCondition); 13] {
         let azul = cfg.azul_timestamp.map_or(ForkCondition::Never, ForkCondition::Timestamp);
         let beryl = cfg.beryl_timestamp.map_or(ForkCondition::Never, ForkCondition::Timestamp);
         let cobalt = cfg.cobalt_timestamp.map_or(ForkCondition::Never, ForkCondition::Timestamp);
+        let denim = cfg.denim_timestamp.map_or(ForkCondition::Never, ForkCondition::Timestamp);
         [
             (Self::Bedrock, ForkCondition::Block(cfg.bedrock_block)),
             (Self::Regolith, ForkCondition::Timestamp(cfg.regolith_timestamp)),
@@ -79,11 +80,14 @@ impl BaseUpgradeExt for BaseUpgrade {
             (Self::Azul, azul),
             (Self::Beryl, beryl),
             (Self::Cobalt, cobalt),
+            (Self::Denim, denim),
         ]
     }
 
     fn from_timestamp(chain_spec: impl Upgrades, timestamp: u64) -> BaseUpgrade {
-        if chain_spec.is_cobalt_active_at_timestamp(timestamp) {
+        if chain_spec.is_denim_active_at_timestamp(timestamp) {
+            Self::Denim
+        } else if chain_spec.is_cobalt_active_at_timestamp(timestamp) {
             Self::Cobalt
         } else if chain_spec.is_beryl_active_at_timestamp(timestamp) {
             Self::Beryl
@@ -126,7 +130,7 @@ mod tests {
     fn check_base_upgrade_from_str() {
         let upgrade_str = [
             "beDrOck", "rEgOlITH", "cAnYoN", "eCoToNe", "FJorD", "GRaNiTe", "hOlOcEnE", "isthMUS",
-            "jOvIaN", "aZuL", "bErYl", "cObAlT", "zEnItH",
+            "jOvIaN", "aZuL", "bErYl", "cObAlT", "dEnIm", "zEnItH",
         ];
         let expected_upgrades = [
             BaseUpgrade::Bedrock,
@@ -141,6 +145,7 @@ mod tests {
             BaseUpgrade::Azul,
             BaseUpgrade::Beryl,
             BaseUpgrade::Cobalt,
+            BaseUpgrade::Denim,
             BaseUpgrade::Zenith,
         ];
 
@@ -224,6 +229,7 @@ mod tests {
             (BaseUpgrade::Azul, SpecId::OSAKA),
             (BaseUpgrade::Beryl, SpecId::OSAKA),
             (BaseUpgrade::Cobalt, SpecId::OSAKA),
+            (BaseUpgrade::Denim, SpecId::OSAKA),
             (BaseUpgrade::Zenith, SpecId::OSAKA),
         ];
 
@@ -248,6 +254,17 @@ mod tests {
         assert!(!BaseUpgrade::Bedrock.is_contract_backed());
         assert_eq!(BaseUpgrade::from_contract_fork_name("bedrock"), None);
         assert!(!BaseUpgrade::CONTRACT_VARIANTS.contains(&BaseUpgrade::Bedrock));
+    }
+
+    #[test]
+    fn denim_is_contract_backed_and_in_execution_ladder() {
+        // Denim is a first-class upgrade: schedulable via the L1 upgrade signal on live chains
+        // and part of the execution fork ladder, but unscheduled by default.
+        assert!(BaseUpgrade::Denim.is_contract_backed());
+        assert!(BaseUpgrade::Denim.is_execution());
+        assert_eq!(BaseUpgrade::from_contract_fork_name("denim"), Some(BaseUpgrade::Denim));
+        assert!(BaseUpgrade::CONTRACT_VARIANTS.contains(&BaseUpgrade::Denim));
+        assert!(BaseUpgrade::EXECUTION_VARIANTS.contains(&BaseUpgrade::Denim));
     }
 
     #[test]

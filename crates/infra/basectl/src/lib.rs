@@ -19,10 +19,10 @@ pub use commands::{
     TxpoolReadJson, UnsafeHeadSource,
 };
 
-mod zenith;
-pub use zenith::{
-    ZenithCheck, ZenithCheckCursor, ZenithCheckStatus, ZenithCheckTarget, ZenithChecker,
-    ZenithObservations, ZenithReport, ZenithSchedule,
+mod denim;
+pub use denim::{
+    DenimCheck, DenimCheckCursor, DenimCheckStatus, DenimCheckTarget, DenimChecker,
+    DenimObservations, DenimReport, DenimSchedule,
 };
 
 mod confirm;

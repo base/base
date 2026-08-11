@@ -276,6 +276,7 @@ pub struct SystemTestStackBuilder {
     base_azul_activation_block: Option<u64>,
     base_beryl_activation_block: Option<u64>,
     base_cobalt_activation_block: Option<u64>,
+    base_denim_activation_block: Option<u64>,
     base_zenith_activation_block: Option<u64>,
     output_dir: Option<PathBuf>,
     stable_config: Option<StableSystemTestConfig>,
@@ -341,7 +342,13 @@ impl SystemTestStackBuilder {
         self
     }
 
-    /// Sets the L2 block number at which Base Zenith activates.
+    /// Sets the L2 block number at which Base Denim activates.
+    pub const fn with_base_denim_activation_block(mut self, block: u64) -> Self {
+        self.base_denim_activation_block = Some(block);
+        self
+    }
+
+    /// Sets the L2 block number at which the genesis-only Base Zenith testing gate activates.
     pub const fn with_base_zenith_activation_block(mut self, block: u64) -> Self {
         self.base_zenith_activation_block = Some(block);
         self
@@ -492,6 +499,10 @@ impl SystemTestStackBuilder {
 
         if let Some(block) = self.base_cobalt_activation_block {
             setup = setup.with_base_cobalt_activation_block(block);
+        }
+
+        if let Some(block) = self.base_denim_activation_block {
+            setup = setup.with_base_denim_activation_block(block);
         }
 
         if let Some(block) = self.base_zenith_activation_block {

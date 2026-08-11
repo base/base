@@ -27,6 +27,10 @@ pub struct BaseUpgradeConfig {
     /// Active if `cobalt` != None && L2 block timestamp >= `Some(cobalt)`, inactive otherwise.
     #[cfg_attr(feature = "serde", serde(alias = "v3", skip_serializing_if = "Option::is_none"))]
     pub cobalt: Option<u64>,
+    /// `denim` sets the activation time for the Denim network upgrade.
+    /// Active if `denim` != None && L2 block timestamp >= `Some(denim)`, inactive otherwise.
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    pub denim: Option<u64>,
     /// `zenith` sets the activation time for the Zenith network upgrade.
     /// Active if `zenith` != None && L2 block timestamp >= `Some(zenith)`, inactive otherwise.
     #[cfg_attr(
@@ -42,6 +46,7 @@ impl BaseUpgradeConfig {
         self.azul.is_none()
             && self.beryl.is_none()
             && self.cobalt.is_none()
+            && self.denim.is_none()
             && self.zenith.is_none()
     }
 }
@@ -61,6 +66,11 @@ hardfork!(
     /// [`Delta`](BaseUpgrade::Delta) and [`PectraBlobSchedule`](BaseUpgrade::PectraBlobSchedule)
     /// are contract-backed config upgrades that do not change EVM execution and therefore never
     /// enter the execution fork ladder.
+    ///
+    /// [`Denim`](BaseUpgrade::Denim) is the fourth Base-specific network upgrade. It is
+    /// unscheduled for now, but it is a first-class upgrade: contract-backed and part of the
+    /// execution fork ladder, so live chains can activate it once an activation time is
+    /// configured.
     ///
     /// [`Zenith`](BaseUpgrade::Zenith) is a hardfork for future experimental features. It is
     /// genesis-configurable but not contract-backed, since the L1 upgrade-signal contract does
@@ -101,6 +111,8 @@ hardfork!(
         Beryl,
         /// Cobalt: Third Base-specific network upgrade.
         Cobalt,
+        /// Denim: Fourth Base-specific network upgrade. Unscheduled for now.
+        Denim,
         /// Zenith: hardfork for future experimental features.
         Zenith,
     }
@@ -115,7 +127,7 @@ impl BaseUpgrade {
     /// These are the upgrades that participate in the reth/revm hardfork schedule. Excludes the
     /// contract-only [`Delta`](Self::Delta) and [`PectraBlobSchedule`](Self::PectraBlobSchedule)
     /// upgrades, and [`Zenith`](Self::Zenith), which does not yet change EVM execution.
-    pub const EXECUTION_VARIANTS: [Self; 12] = [
+    pub const EXECUTION_VARIANTS: [Self; 13] = [
         Self::Bedrock,
         Self::Regolith,
         Self::Canyon,
@@ -128,6 +140,7 @@ impl BaseUpgrade {
         Self::Azul,
         Self::Beryl,
         Self::Cobalt,
+        Self::Denim,
     ];
 
     /// The contract-backed upgrade set, in activation order.
@@ -142,7 +155,7 @@ impl BaseUpgrade {
     /// upgrades by ascending append-only registration id with names kept offchain. This order MUST
     /// match the contract's registration order — reordering silently misattributes every
     /// activation timestamp. Only ever append.
-    pub const CONTRACT_VARIANTS: [Self; 13] = [
+    pub const CONTRACT_VARIANTS: [Self; 14] = [
         Self::Regolith,
         Self::Canyon,
         Self::Delta,
@@ -156,6 +169,7 @@ impl BaseUpgrade {
         Self::Azul,
         Self::Beryl,
         Self::Cobalt,
+        Self::Denim,
     ];
 
     /// Returns true if this upgrade participates in the execution fork ladder.
@@ -187,6 +201,7 @@ impl BaseUpgrade {
             Self::Azul => 9,
             Self::Beryl => 10,
             Self::Cobalt => 11,
+            Self::Denim => 12,
             Self::Delta | Self::PectraBlobSchedule | Self::Zenith => return None,
         })
     }
@@ -212,6 +227,7 @@ impl BaseUpgrade {
             Self::Azul => "azul",
             Self::Beryl => "beryl",
             Self::Cobalt => "cobalt",
+            Self::Denim => "denim",
             Self::Zenith => "zenith",
         }
     }
@@ -255,6 +271,7 @@ impl BaseUpgrade {
             "osaka" | "azul" | "baseazul" | "v1" => Self::Azul,
             "beryl" | "baseberyl" | "v2" => Self::Beryl,
             "cobalt" | "basecobalt" | "v3" => Self::Cobalt,
+            "denim" | "basedenim" => Self::Denim,
             // Zenith is not contract-backed: even though `contract_id` emits "zenith", it is
             // deliberately not resolvable here, so the L1 upgrade signal can never address it.
             _ => return None,
@@ -458,25 +475,31 @@ impl RuntimeUpgradeRegistry {
         Self::set_activation(chain_id, upgrade_id, UpgradeActivation::Timestamp(timestamp))
     }
 
-    /// Activates Zenith for a chain via the runtime registry, bypassing the normal
-    /// override block, for the lifetime of the returned test guard.
+    /// Activates an upgrade for a chain via the runtime registry, bypassing the normal
+    /// override block (e.g. for the genesis-only Zenith gate), for the lifetime of the
+    /// returned test guard.
     #[cfg(any(test, feature = "test-utils"))]
     #[must_use = "the guard must be held for the duration of the test activation"]
-    pub fn activate_zenith_for_testing(chain_id: u64, timestamp: u64) -> impl Drop {
-        struct ZenithActivationGuard {
+    pub fn activate_upgrade_for_testing(
+        chain_id: u64,
+        upgrade_id: BaseUpgrade,
+        timestamp: u64,
+    ) -> impl Drop {
+        struct UpgradeActivationGuard {
             chain_id: u64,
+            upgrade_id: BaseUpgrade,
             previous: Option<UpgradeActivation>,
             remove_chain_if_empty: bool,
         }
 
-        impl Drop for ZenithActivationGuard {
+        impl Drop for UpgradeActivationGuard {
             fn drop(&mut self) {
                 let mut registry = RuntimeUpgradeRegistry::write_registry();
                 let overrides = registry.entry(self.chain_id).or_default();
                 if let Some(previous) = self.previous {
-                    overrides.activations.insert(BaseUpgrade::Zenith, previous);
+                    overrides.activations.insert(self.upgrade_id, previous);
                 } else {
-                    overrides.activations.remove(&BaseUpgrade::Zenith);
+                    overrides.activations.remove(&self.upgrade_id);
                 }
                 if self.remove_chain_if_empty && overrides.is_empty() {
                     registry.remove(&self.chain_id);
@@ -487,9 +510,9 @@ impl RuntimeUpgradeRegistry {
         let mut registry = Self::write_registry();
         let remove_chain_if_empty = !registry.contains_key(&chain_id);
         let overrides = registry.entry(chain_id).or_default();
-        let previous = overrides.activation(BaseUpgrade::Zenith);
-        overrides.activations.insert(BaseUpgrade::Zenith, UpgradeActivation::Timestamp(timestamp));
-        ZenithActivationGuard { chain_id, previous, remove_chain_if_empty }
+        let previous = overrides.activation(upgrade_id);
+        overrides.activations.insert(upgrade_id, UpgradeActivation::Timestamp(timestamp));
+        UpgradeActivationGuard { chain_id, upgrade_id, previous, remove_chain_if_empty }
     }
 
     /// Sets one runtime override that clears a chain upgrade activation.
@@ -605,6 +628,7 @@ impl UpgradeConfig {
             azul: Some(1_779_991_200),
             beryl: Some(1_782_410_400),
             cobalt: None,
+            denim: None,
             zenith: None,
         },
     };
@@ -628,6 +652,7 @@ impl UpgradeConfig {
             azul: Some(1_776_708_000),
             beryl: Some(1_781_805_600),
             cobalt: None,
+            denim: None,
             zenith: None,
         },
     };
@@ -677,6 +702,7 @@ impl UpgradeConfig {
             BaseUpgrade::Azul => self.base.azul = None,
             BaseUpgrade::Beryl => self.base.beryl = None,
             BaseUpgrade::Cobalt => self.base.cobalt = None,
+            BaseUpgrade::Denim => self.base.denim = None,
             BaseUpgrade::Zenith => self.base.zenith = None,
         }
     }
@@ -716,6 +742,7 @@ impl UpgradeConfig {
             BaseUpgrade::Azul => self.base.azul,
             BaseUpgrade::Beryl => self.base.beryl,
             BaseUpgrade::Cobalt => self.base.cobalt,
+            BaseUpgrade::Denim => self.base.denim,
             BaseUpgrade::Zenith => self.base.zenith,
         };
 
@@ -745,6 +772,7 @@ impl UpgradeConfig {
             BaseUpgrade::Azul => self.base.azul = Some(timestamp),
             BaseUpgrade::Beryl => self.base.beryl = Some(timestamp),
             BaseUpgrade::Cobalt => self.base.cobalt = Some(timestamp),
+            BaseUpgrade::Denim => self.base.denim = Some(timestamp),
             BaseUpgrade::Zenith => self.base.zenith = Some(timestamp),
         }
     }
@@ -876,7 +904,8 @@ mod tests {
                 azul: Some(11),
                 beryl: Some(12),
                 cobalt: Some(13),
-                zenith: Some(14),
+                denim: Some(14),
+                zenith: None,
             },
         };
 
@@ -899,6 +928,7 @@ mod tests {
         upgrades.set_activation_timestamp(BaseUpgrade::Azul, 3);
         upgrades.set_activation_timestamp(BaseUpgrade::Beryl, 5);
         upgrades.set_activation_timestamp(BaseUpgrade::Cobalt, 6);
+        upgrades.set_activation_timestamp(BaseUpgrade::Denim, 8);
         upgrades.set_activation_timestamp(BaseUpgrade::Zenith, 7);
 
         assert_eq!(upgrades.regolith_time, Some(1));
@@ -906,12 +936,14 @@ mod tests {
         assert_eq!(upgrades.base.azul, Some(3));
         assert_eq!(upgrades.base.beryl, Some(5));
         assert_eq!(upgrades.base.cobalt, Some(6));
+        assert_eq!(upgrades.base.denim, Some(8));
         assert_eq!(upgrades.activation(BaseUpgrade::Zenith), UpgradeActivation::Timestamp(7));
 
         upgrades.clear_activation_timestamp(BaseUpgrade::Azul);
         assert_eq!(upgrades.base.azul, None);
         assert_eq!(upgrades.base.beryl, Some(5));
         assert_eq!(upgrades.base.cobalt, Some(6));
+        assert_eq!(upgrades.base.denim, Some(8));
         assert_eq!(upgrades.activation(BaseUpgrade::Zenith), UpgradeActivation::Timestamp(7));
 
         upgrades.clear_activation_timestamps();

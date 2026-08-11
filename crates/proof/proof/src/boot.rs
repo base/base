@@ -508,7 +508,13 @@ mod tests {
         let chain_config = BaseChainConfig::MAINNET;
         let upgrades = UpgradeConfig {
             canyon_time: Some(123),
-            base: BaseUpgradeConfig { azul: Some(456), beryl: None, cobalt: None, zenith: None },
+            base: BaseUpgradeConfig {
+                azul: Some(456),
+                beryl: None,
+                cobalt: None,
+                denim: None,
+                zenith: None,
+            },
             ..Default::default()
         };
         let mut rollup_config = chain_config.rollup_config();
