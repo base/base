@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use base_shadow_canary_db::{
+use base_shadow_indexer_db::{
     ShadowBlockRepo, ShadowBlockRow, ShadowBlockTransactionRow, ShadowDbConfig,
 };
 use reth_tasks::TaskExecutor;
@@ -42,7 +42,7 @@ impl BlockInserter for ShadowBlockRepo {
     }
 }
 
-/// Shadow canary writer task.
+/// Shadow indexer writer task.
 #[derive(Debug)]
 pub struct ShadowWriter {
     rx: mpsc::Receiver<ShadowBlockRecord>,
@@ -59,23 +59,23 @@ impl ShadowWriter {
         builder_version: String,
     ) {
         let writer = Self { rx, db_config, builder_version };
-        executor.spawn_critical_task("shadow-canary-writer", async move {
+        executor.spawn_critical_task("shadow-indexer-writer", async move {
             writer.run().await;
         });
     }
 
     async fn run(mut self) {
-        info!(target: "base::shadow-canary", "Starting shadow canary writer");
+        info!(target: "base::shadow-indexer", "Starting shadow indexer writer");
 
         let pool = match self.db_config.init_pool().await {
             Ok(pool) => pool,
             Err(error) => {
                 error!(
-                    target: "base::shadow-canary",
+                    target: "base::shadow-indexer",
                     error = ?error,
-                    "Failed to initialize shadow canary database pool"
+                    "Failed to initialize shadow indexer database pool"
                 );
-                panic!("failed to initialize shadow canary database pool: {error:?}");
+                panic!("failed to initialize shadow indexer database pool: {error:?}");
             }
         };
         let repo = ShadowBlockRepo::new(pool);
@@ -131,20 +131,20 @@ impl ShadowWriter {
             match repo.insert_batch(buffer).await {
                 Ok(inserted) => {
                     info!(
-                        target: "base::shadow-canary",
+                        target: "base::shadow-indexer",
                         inserted,
                         batch_size,
-                        "Inserted shadow canary rows"
+                        "Inserted shadow indexer rows"
                     );
                     buffer.clear();
                     return;
                 }
                 Err(error) => {
                     error!(
-                        target: "base::shadow-canary",
+                        target: "base::shadow-indexer",
                         error = ?error,
                         batch_size,
-                        "Failed to insert shadow canary rows"
+                        "Failed to insert shadow indexer rows"
                     );
                     if attempt < MAX_FLUSH_ATTEMPTS {
                         sleep(RETRY_BACKOFF).await;
@@ -157,11 +157,11 @@ impl ShadowWriter {
             .iter()
             .fold((i64::MAX, i64::MIN), |acc, row| (acc.0.min(row.number), acc.1.max(row.number)));
         error!(
-            target: "base::shadow-canary",
+            target: "base::shadow-indexer",
             dropped = buffer.len(),
             min_block_number = min_number,
             max_block_number = max_number,
-            "Dropping shadow canary rows after failed retries"
+            "Dropping shadow indexer rows after failed retries"
         );
         buffer.clear();
     }
@@ -181,20 +181,20 @@ impl ShadowWriter {
             match repo.insert_transactions_batch(buffer).await {
                 Ok(inserted) => {
                     info!(
-                        target: "base::shadow-canary",
+                        target: "base::shadow-indexer",
                         inserted,
                         batch_size,
-                        "Inserted shadow canary transaction rows"
+                        "Inserted shadow indexer transaction rows"
                     );
                     buffer.clear();
                     return;
                 }
                 Err(error) => {
                     error!(
-                        target: "base::shadow-canary",
+                        target: "base::shadow-indexer",
                         error = ?error,
                         batch_size,
-                        "Failed to insert shadow canary transaction rows"
+                        "Failed to insert shadow indexer transaction rows"
                     );
                     if attempt < MAX_FLUSH_ATTEMPTS {
                         sleep(RETRY_BACKOFF).await;
@@ -207,11 +207,11 @@ impl ShadowWriter {
             (acc.0.min(row.block_number), acc.1.max(row.block_number))
         });
         error!(
-            target: "base::shadow-canary",
+            target: "base::shadow-indexer",
             dropped = buffer.len(),
             min_block_number = min_number,
             max_block_number = max_number,
-            "Dropping shadow canary transaction rows after failed retries"
+            "Dropping shadow indexer transaction rows after failed retries"
         );
         buffer.clear();
     }
@@ -221,7 +221,7 @@ impl ShadowWriter {
     }
 }
 
-/// Spawns the shadow canary writer task.
+/// Spawns the shadow indexer writer task.
 pub fn spawn_writer(
     executor: TaskExecutor,
     rx: mpsc::Receiver<ShadowBlockRecord>,
@@ -236,7 +236,7 @@ mod tests {
     use std::time::Duration;
 
     use anyhow::anyhow;
-    use base_shadow_canary_db::{ShadowBlockRow, ShadowBlockTransactionRow, ShadowDbConfig};
+    use base_shadow_indexer_db::{ShadowBlockRow, ShadowBlockTransactionRow, ShadowDbConfig};
     use chrono::{DateTime, Utc};
     use tokio::sync::mpsc;
 

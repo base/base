@@ -14,8 +14,8 @@ use base_observability_events::{
     GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventWriterConfig,
 };
 use base_proofs_extension::ProofsHistoryExtension;
-use base_shadow_canary::{ShadowCanaryConfig, ShadowCanaryExtension};
-use base_shadow_canary_db::ShadowDbConfig;
+use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension};
+use base_shadow_indexer_db::ShadowDbConfig;
 use base_tx_forwarding::{
     DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS, DEFAULT_RESEND_AFTER_MS, TxForwardingConfig,
     TxForwardingExtension,
@@ -76,57 +76,57 @@ pub struct MeteringArgs {
     pub metering_metered_opcodes: Vec<String>,
 }
 
-/// Default maximum number of open shadow canary database connections.
-const DEFAULT_SHADOW_CANARY_MAX_CONNECTIONS: u32 = 5;
-/// Default timeout when acquiring a shadow canary database connection.
-const DEFAULT_SHADOW_CANARY_CONNECTION_TIMEOUT: &str = "30s";
+/// Default maximum number of open shadow indexer database connections.
+const DEFAULT_SHADOW_INDEXER_MAX_CONNECTIONS: u32 = 5;
+/// Default timeout when acquiring a shadow indexer database connection.
+const DEFAULT_SHADOW_INDEXER_CONNECTION_TIMEOUT: &str = "30s";
 
-/// CLI arguments for the shadow canary `ExEx` that persists committed execution blocks.
+/// CLI arguments for the shadow indexer `ExEx` that persists committed execution blocks.
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
-pub struct ShadowCanaryArgs {
-    /// Enable the shadow canary `ExEx` that persists committed execution blocks to Postgres.
-    #[arg(long = "enable-shadow-canary", env = "ENABLE_SHADOW_CANARY")]
-    pub enable_shadow_canary: bool,
+pub struct ShadowIndexerArgs {
+    /// Enable the shadow indexer `ExEx` that persists committed execution blocks to Postgres.
+    #[arg(long = "enable-shadow-indexer", env = "ENABLE_SHADOW_INDEXER")]
+    pub enable_shadow_indexer: bool,
 
-    /// `PostgreSQL` connection URL for the shadow canary database.
+    /// `PostgreSQL` connection URL for the shadow indexer database.
     #[arg(
-        long = "shadow-canary.database-url",
-        env = "SHADOW_CANARY_DATABASE_URL",
-        value_name = "SHADOW_CANARY_DATABASE_URL",
-        requires = "enable_shadow_canary"
+        long = "shadow-indexer.database-url",
+        env = "SHADOW_INDEXER_DATABASE_URL",
+        value_name = "SHADOW_INDEXER_DATABASE_URL",
+        requires = "enable_shadow_indexer"
     )]
-    pub shadow_canary_database_url: Option<String>,
+    pub shadow_indexer_database_url: Option<String>,
 
-    /// Maximum number of open shadow canary database connections.
+    /// Maximum number of open shadow indexer database connections.
     #[arg(
-        long = "shadow-canary.max-connections",
-        env = "SHADOW_CANARY_MAX_CONNECTIONS",
-        default_value_t = DEFAULT_SHADOW_CANARY_MAX_CONNECTIONS,
-        requires = "enable_shadow_canary"
+        long = "shadow-indexer.max-connections",
+        env = "SHADOW_INDEXER_MAX_CONNECTIONS",
+        default_value_t = DEFAULT_SHADOW_INDEXER_MAX_CONNECTIONS,
+        requires = "enable_shadow_indexer"
     )]
-    pub shadow_canary_max_connections: u32,
+    pub shadow_indexer_max_connections: u32,
 
-    /// Timeout when acquiring a shadow canary database connection.
+    /// Timeout when acquiring a shadow indexer database connection.
     #[arg(
-        long = "shadow-canary.connection-timeout",
-        env = "SHADOW_CANARY_CONNECTION_TIMEOUT",
-        default_value = DEFAULT_SHADOW_CANARY_CONNECTION_TIMEOUT,
+        long = "shadow-indexer.connection-timeout",
+        env = "SHADOW_INDEXER_CONNECTION_TIMEOUT",
+        default_value = DEFAULT_SHADOW_INDEXER_CONNECTION_TIMEOUT,
         value_parser = humantime::parse_duration,
-        requires = "enable_shadow_canary"
+        requires = "enable_shadow_indexer"
     )]
-    pub shadow_canary_connection_timeout: Duration,
+    pub shadow_indexer_connection_timeout: Duration,
 }
 
-impl Default for ShadowCanaryArgs {
+impl Default for ShadowIndexerArgs {
     fn default() -> Self {
         Self {
-            enable_shadow_canary: false,
-            shadow_canary_database_url: None,
-            shadow_canary_max_connections: DEFAULT_SHADOW_CANARY_MAX_CONNECTIONS,
-            shadow_canary_connection_timeout: humantime::parse_duration(
-                DEFAULT_SHADOW_CANARY_CONNECTION_TIMEOUT,
+            enable_shadow_indexer: false,
+            shadow_indexer_database_url: None,
+            shadow_indexer_max_connections: DEFAULT_SHADOW_INDEXER_MAX_CONNECTIONS,
+            shadow_indexer_connection_timeout: humantime::parse_duration(
+                DEFAULT_SHADOW_INDEXER_CONNECTION_TIMEOUT,
             )
-            .expect("valid default shadow canary connection timeout"),
+            .expect("valid default shadow indexer connection timeout"),
         }
     }
 }
@@ -143,9 +143,9 @@ pub struct StandardNodeArgs {
     #[command(flatten)]
     pub metering: MeteringArgs,
 
-    /// Shadow canary `ExEx` arguments.
+    /// Shadow indexer `ExEx` arguments.
     #[command(flatten)]
-    pub shadow_canary: ShadowCanaryArgs,
+    pub shadow_indexer: ShadowIndexerArgs,
 
     /// Enable transaction forwarding for mempool nodes to builder RPC endpoints
     #[arg(
@@ -275,7 +275,7 @@ impl From<RpcStandardNodeArgs> for StandardNodeArgs {
         Self {
             rpc: args,
             metering: MeteringArgs::default(),
-            shadow_canary: ShadowCanaryArgs::default(),
+            shadow_indexer: ShadowIndexerArgs::default(),
             enable_tx_forwarding: false,
             enable_experimental_validity_transactions: false,
             builder_rpc_urls: Vec::new(),
@@ -293,22 +293,22 @@ impl StandardNodeArgs {
         self
     }
 
-    /// Sets the shadow canary arguments on this standard node configuration.
-    pub fn with_shadow_canary(mut self, shadow_canary: ShadowCanaryArgs) -> Self {
-        self.shadow_canary = shadow_canary;
+    /// Sets the shadow indexer arguments on this standard node configuration.
+    pub fn with_shadow_indexer(mut self, shadow_indexer: ShadowIndexerArgs) -> Self {
+        self.shadow_indexer = shadow_indexer;
         self
     }
 }
 
-impl TryFrom<&ShadowCanaryArgs> for ShadowCanaryConfig {
+impl TryFrom<&ShadowIndexerArgs> for ShadowIndexerConfig {
     type Error = eyre::Error;
 
-    fn try_from(args: &ShadowCanaryArgs) -> eyre::Result<Self> {
-        let url = if args.enable_shadow_canary {
-            args.shadow_canary_database_url.clone().ok_or_else(|| {
+    fn try_from(args: &ShadowIndexerArgs) -> eyre::Result<Self> {
+        let url = if args.enable_shadow_indexer {
+            args.shadow_indexer_database_url.clone().ok_or_else(|| {
                 eyre::eyre!(
-                    "--enable-shadow-canary (env ENABLE_SHADOW_CANARY) requires \
-                     --shadow-canary.database-url (env SHADOW_CANARY_DATABASE_URL)"
+                    "--enable-shadow-indexer (env ENABLE_SHADOW_INDEXER) requires \
+                     --shadow-indexer.database-url (env SHADOW_INDEXER_DATABASE_URL)"
                 )
             })?
         } else {
@@ -316,11 +316,11 @@ impl TryFrom<&ShadowCanaryArgs> for ShadowCanaryConfig {
         };
 
         Ok(Self {
-            enabled: args.enable_shadow_canary,
+            enabled: args.enable_shadow_indexer,
             db: ShadowDbConfig {
                 url,
-                max_connections: args.shadow_canary_max_connections,
-                connection_timeout: args.shadow_canary_connection_timeout,
+                max_connections: args.shadow_indexer_max_connections,
+                connection_timeout: args.shadow_indexer_connection_timeout,
             },
             builder_version: env!("CARGO_PKG_VERSION").to_string(),
         })
@@ -525,7 +525,7 @@ impl StandardBaseRethNode {
             MeteringConfig::disabled()
         };
         runner.install_ext::<MeteringExtension>(metering_config);
-        runner.install_ext::<ShadowCanaryExtension>((&args.shadow_canary).try_into()?);
+        runner.install_ext::<ShadowIndexerExtension>((&args.shadow_indexer).try_into()?);
         runner.install_ext::<BundleExtension>(());
         let tx_forwarding_config: TxForwardingConfig = (&args).into();
         if args.enable_experimental_validity_transactions {
@@ -897,53 +897,54 @@ mod tests {
     }
 
     #[test]
-    fn test_standard_node_args_parses_shadow_canary_flags() {
+    fn test_standard_node_args_parses_shadow_indexer_flags() {
         let args = CommandParser::<StandardNodeArgs>::parse_from([
             "reth",
-            "--enable-shadow-canary",
-            "--shadow-canary.database-url",
+            "--enable-shadow-indexer",
+            "--shadow-indexer.database-url",
             "postgres://localhost/shadow",
-            "--shadow-canary.max-connections",
+            "--shadow-indexer.max-connections",
             "9",
-            "--shadow-canary.connection-timeout",
+            "--shadow-indexer.connection-timeout",
             "45s",
         ])
         .args;
 
-        assert!(args.shadow_canary.enable_shadow_canary);
+        assert!(args.shadow_indexer.enable_shadow_indexer);
         assert_eq!(
-            args.shadow_canary.shadow_canary_database_url.as_deref(),
+            args.shadow_indexer.shadow_indexer_database_url.as_deref(),
             Some("postgres://localhost/shadow")
         );
-        assert_eq!(args.shadow_canary.shadow_canary_max_connections, 9);
-        assert_eq!(args.shadow_canary.shadow_canary_connection_timeout, Duration::from_secs(45));
+        assert_eq!(args.shadow_indexer.shadow_indexer_max_connections, 9);
+        assert_eq!(args.shadow_indexer.shadow_indexer_connection_timeout, Duration::from_secs(45));
     }
 
     #[test]
-    fn test_shadow_canary_database_url_requires_enable_flag() {
+    fn test_shadow_indexer_database_url_requires_enable_flag() {
         let error = CommandParser::<StandardNodeArgs>::try_parse_from([
             "reth",
-            "--shadow-canary.database-url",
+            "--shadow-indexer.database-url",
             "postgres://localhost/shadow",
         ])
-        .expect_err("shadow canary database url should require the enable flag");
+        .expect_err("shadow indexer database url should require the enable flag");
 
-        assert!(error.to_string().contains("--enable-shadow-canary"));
+        assert!(error.to_string().contains("--enable-shadow-indexer"));
     }
 
     #[test]
-    fn test_shadow_canary_config_requires_database_url_when_enabled() {
-        let args = ShadowCanaryArgs { enable_shadow_canary: true, ..ShadowCanaryArgs::default() };
-        let error = ShadowCanaryConfig::try_from(&args)
-            .expect_err("enabled shadow canary should require a database url");
+    fn test_shadow_indexer_config_requires_database_url_when_enabled() {
+        let args =
+            ShadowIndexerArgs { enable_shadow_indexer: true, ..ShadowIndexerArgs::default() };
+        let error = ShadowIndexerConfig::try_from(&args)
+            .expect_err("enabled shadow indexer should require a database url");
 
-        assert!(error.to_string().contains("--shadow-canary.database-url"));
+        assert!(error.to_string().contains("--shadow-indexer.database-url"));
     }
 
     #[test]
-    fn test_shadow_canary_config_disabled_by_default() {
-        let config = ShadowCanaryConfig::try_from(&ShadowCanaryArgs::default())
-            .expect("disabled shadow canary config should build without a url");
+    fn test_shadow_indexer_config_disabled_by_default() {
+        let config = ShadowIndexerConfig::try_from(&ShadowIndexerArgs::default())
+            .expect("disabled shadow indexer config should build without a url");
 
         assert!(!config.enabled);
         assert_eq!(config.builder_version, env!("CARGO_PKG_VERSION"));

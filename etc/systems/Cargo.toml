@@ -128,8 +128,8 @@ base-prover-service-client.workspace = true
 base-prover-service-protocol.workspace = true
 
 # execution
-base-shadow-canary.workspace = true
-base-shadow-canary-db.workspace = true
+base-shadow-indexer.workspace = true
+base-shadow-indexer-db.workspace = true
 
 # misc
 indicatif.workspace = true

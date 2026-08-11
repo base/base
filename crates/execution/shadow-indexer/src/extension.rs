@@ -1,35 +1,35 @@
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
-use base_shadow_canary_db::ShadowDbConfig;
+use base_shadow_indexer_db::ShadowDbConfig;
 use tokio::sync::mpsc;
 
 use crate::{run_exex, spawn_writer};
 
-/// Configuration for the shadow canary extension.
+/// Configuration for the shadow indexer extension.
 #[derive(Clone, Debug)]
-pub struct ShadowCanaryConfig {
-    /// Whether the shadow canary pipeline is enabled.
+pub struct ShadowIndexerConfig {
+    /// Whether the shadow indexer pipeline is enabled.
     pub enabled: bool,
-    /// Database configuration for the shadow canary writer.
+    /// Database configuration for the shadow indexer writer.
     pub db: ShadowDbConfig,
     /// Builder version string to attach to persisted rows.
     pub builder_version: String,
 }
 
-/// Wires the shadow canary `ExEx` into the Base node.
+/// Wires the shadow indexer `ExEx` into the Base node.
 #[derive(Debug)]
-pub struct ShadowCanaryExtension {
-    cfg: ShadowCanaryConfig,
+pub struct ShadowIndexerExtension {
+    cfg: ShadowIndexerConfig,
 }
 
-impl FromExtensionConfig for ShadowCanaryExtension {
-    type Config = ShadowCanaryConfig;
+impl FromExtensionConfig for ShadowIndexerExtension {
+    type Config = ShadowIndexerConfig;
 
     fn from_config(config: Self::Config) -> Self {
         Self { cfg: config }
     }
 }
 
-impl BaseNodeExtension for ShadowCanaryExtension {
+impl BaseNodeExtension for ShadowIndexerExtension {
     fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks {
         if !self.cfg.enabled {
             return hooks;
@@ -44,6 +44,6 @@ impl BaseNodeExtension for ShadowCanaryExtension {
                 spawn_writer(node.task_executor, rx, db, builder_version);
                 Ok(())
             })
-            .install_exex("shadow-canary", move |ctx| async move { Ok(run_exex(ctx, tx)) })
+            .install_exex("shadow-indexer", move |ctx| async move { Ok(run_exex(ctx, tx)) })
     }
 }

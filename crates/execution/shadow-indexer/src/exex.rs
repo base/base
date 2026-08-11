@@ -1,8 +1,5 @@
-use alloy_consensus::{
-    Transaction, TxReceipt, Typed2718,
-    transaction::{SignerRecoverable, TxHashRef},
-};
-use base_shadow_canary_db::{ShadowBlockRow, ShadowBlockTransactionRow};
+use alloy_consensus::{Transaction, TxReceipt, Typed2718, transaction::TxHashRef};
+use base_shadow_indexer_db::{ShadowBlockRow, ShadowBlockTransactionRow};
 use chrono::Utc;
 use eyre::Result;
 use futures::TryStreamExt;
@@ -18,25 +15,25 @@ use tracing::{debug, info, warn};
 /// A committed block plus the transactions captured for it.
 #[derive(Debug)]
 pub struct ShadowBlockRecord {
-    /// Block-level shadow canary row.
+    /// Block-level shadow indexer row.
     pub block: ShadowBlockRow,
     /// Per-transaction rows for the block.
     pub transactions: Vec<ShadowBlockTransactionRow>,
 }
 
-/// Shadow canary `ExEx` handler.
+/// Shadow indexer `ExEx` handler.
 #[derive(Debug)]
-pub struct ShadowCanaryExEx {
+pub struct ShadowIndexerExEx {
     tx: mpsc::Sender<ShadowBlockRecord>,
 }
 
-impl ShadowCanaryExEx {
-    /// Create a new shadow canary `ExEx` handler.
+impl ShadowIndexerExEx {
+    /// Create a new shadow indexer `ExEx` handler.
     pub const fn new(tx: mpsc::Sender<ShadowBlockRecord>) -> Self {
         Self { tx }
     }
 
-    /// Runs the shadow canary `ExEx` loop.
+    /// Runs the shadow indexer `ExEx` loop.
     pub async fn run<Node>(self, mut ctx: ExExContext<Node>) -> Result<()>
     where
         Node: FullNodeComponents,
@@ -45,7 +42,7 @@ impl ShadowCanaryExEx {
             let fully_processed = match &notification {
                 ExExNotification::ChainCommitted { new } => {
                     debug!(
-                        target: "base::shadow-canary",
+                        target: "base::shadow-indexer",
                         block_number = new.tip().header().number(),
                         block_hash = ?new.tip().hash(),
                         "Committed chain notification received"
@@ -54,7 +51,7 @@ impl ShadowCanaryExEx {
                 }
                 ExExNotification::ChainReorged { old, new } => {
                     info!(
-                        target: "base::shadow-canary",
+                        target: "base::shadow-indexer",
                         old_block_number = old.tip().header().number(),
                         old_block_hash = ?old.tip().hash(),
                         new_block_number = new.tip().header().number(),
@@ -65,7 +62,7 @@ impl ShadowCanaryExEx {
                 }
                 ExExNotification::ChainReverted { old } => {
                     info!(
-                        target: "base::shadow-canary",
+                        target: "base::shadow-indexer",
                         old_block_number = old.tip().header().number(),
                         old_block_hash = ?old.tip().hash(),
                         "ChainReverted notification ignored for S1 MVP"
@@ -78,7 +75,7 @@ impl ShadowCanaryExEx {
                 let tip = committed_chain.tip().num_hash();
                 if fully_processed {
                     debug!(
-                        target: "base::shadow-canary",
+                        target: "base::shadow-indexer",
                         block_number = tip.number,
                         block_hash = ?tip.hash,
                         "Sending FinishedHeight event"
@@ -86,7 +83,7 @@ impl ShadowCanaryExEx {
                     ctx.events.send(ExExEvent::FinishedHeight(tip))?;
                 } else {
                     warn!(
-                        target: "base::shadow-canary",
+                        target: "base::shadow-indexer",
                         block_number = tip.number,
                         block_hash = ?tip.hash,
                         "Skipping FinishedHeight event after partial processing"
@@ -106,15 +103,16 @@ impl ShadowCanaryExEx {
         reorged_out: bool,
         canonical_hash: Option<String>,
     ) -> Result<ShadowBlockRow> {
-        let number = i64::try_from(header.number())
-            .map_err(|error| eyre::eyre!("block number overflow for shadow canary row: {error}"))?;
+        let number = i64::try_from(header.number()).map_err(|error| {
+            eyre::eyre!("block number overflow for shadow indexer row: {error}")
+        })?;
         let timestamp = i64::try_from(header.timestamp())
-            .map_err(|error| eyre::eyre!("timestamp overflow for shadow canary row: {error}"))?;
+            .map_err(|error| eyre::eyre!("timestamp overflow for shadow indexer row: {error}"))?;
         let tx_count = i32::try_from(tx_count).map_err(|error| {
-            eyre::eyre!("transaction count overflow for shadow canary row: {error}")
+            eyre::eyre!("transaction count overflow for shadow indexer row: {error}")
         })?;
         let gas_used = i64::try_from(header.gas_used())
-            .map_err(|error| eyre::eyre!("gas used overflow for shadow canary row: {error}"))?;
+            .map_err(|error| eyre::eyre!("gas used overflow for shadow indexer row: {error}"))?;
         let created_at = Utc::now();
 
         Ok(ShadowBlockRow {
@@ -148,26 +146,27 @@ impl ShadowCanaryExEx {
         let base_fee_per_gas = base_fee
             .map(i64::try_from)
             .transpose()
-            .map_err(|error| eyre::eyre!("base fee overflow for shadow canary tx row: {error}"))?;
+            .map_err(|error| eyre::eyre!("base fee overflow for shadow indexer tx row: {error}"))?;
         let block_number = i64::try_from(header.number()).map_err(|error| {
-            eyre::eyre!("block number overflow for shadow canary tx row: {error}")
+            eyre::eyre!("block number overflow for shadow indexer tx row: {error}")
         })?;
         let block_hash = block.hash().to_string();
         let created_at = Utc::now();
 
         let transactions = block.body().transactions();
+        let senders = block.senders();
         let mut rows = Vec::with_capacity(transactions.len());
         let mut previous_cumulative_gas = 0u64;
 
         for (index, (transaction, receipt)) in transactions.iter().zip(receipts.iter()).enumerate()
         {
             let tx_index = i32::try_from(index).map_err(|error| {
-                eyre::eyre!("transaction index overflow for shadow canary tx row: {error}")
+                eyre::eyre!("transaction index overflow for shadow indexer tx row: {error}")
             })?;
             let cumulative_gas = receipt.cumulative_gas_used();
             let gas_used = i64::try_from(cumulative_gas.saturating_sub(previous_cumulative_gas))
                 .map_err(|error| {
-                    eyre::eyre!("gas used overflow for shadow canary tx row: {error}")
+                    eyre::eyre!("gas used overflow for shadow indexer tx row: {error}")
                 })?;
             previous_cumulative_gas = cumulative_gas;
 
@@ -183,7 +182,7 @@ impl ShadowCanaryExEx {
                 block_hash: block_hash.clone(),
                 tx_index,
                 tx_hash: transaction.tx_hash().to_string(),
-                sender: transaction.recover_signer().ok().map(|sender| sender.to_string()),
+                sender: senders.get(index).map(|sender| sender.to_string()),
                 tx_type: i16::from(transaction.ty()),
                 effective_priority_fee_per_gas: effective_priority_fee_per_gas
                     .map(|fee| fee.to_string()),
@@ -247,7 +246,7 @@ impl ShadowCanaryExEx {
 
             if canonical_hash.is_none() {
                 warn!(
-                    target: "base::shadow-canary",
+                    target: "base::shadow-indexer",
                     block_number = header.number(),
                     old_block_hash = ?block.hash(),
                     new_tip_number = new.tip().header().number(),
@@ -294,9 +293,9 @@ impl ShadowCanaryExEx {
             Ok(()) => Ok(true),
             Err(error) => {
                 info!(
-                    target: "base::shadow-canary",
+                    target: "base::shadow-indexer",
                     error = ?error,
-                    "Shadow canary writer channel closed"
+                    "Shadow indexer writer channel closed"
                 );
                 Ok(false)
             }
@@ -304,7 +303,7 @@ impl ShadowCanaryExEx {
     }
 }
 
-/// Runs the shadow canary `ExEx` loop.
+/// Runs the shadow indexer `ExEx` loop.
 pub async fn run_exex<Node>(
     ctx: ExExContext<Node>,
     tx: mpsc::Sender<ShadowBlockRecord>,
@@ -312,7 +311,7 @@ pub async fn run_exex<Node>(
 where
     Node: FullNodeComponents,
 {
-    ShadowCanaryExEx::new(tx).run(ctx).await
+    ShadowIndexerExEx::new(tx).run(ctx).await
 }
 
 #[cfg(test)]
@@ -369,7 +368,7 @@ mod tests {
     #[tokio::test]
     async fn chain_committed_emits_one_canonical_row_per_block() {
         let (tx, rx) = mpsc::channel(16);
-        let exex = ShadowCanaryExEx::new(tx);
+        let exex = ShadowIndexerExEx::new(tx);
 
         let processed =
             exex.handle_chain_committed(&mk_chain(1, 3, 0)).await.expect("handle committed");
@@ -388,7 +387,7 @@ mod tests {
     #[tokio::test]
     async fn chain_reorged_marks_old_rows_and_sets_canonical_hash() {
         let (tx, rx) = mpsc::channel(32);
-        let exex = ShadowCanaryExEx::new(tx);
+        let exex = ShadowIndexerExEx::new(tx);
 
         // Old chain 6..=8 is reorged out; new canonical chain 6..=9 has distinct hashes.
         let old = mk_chain(6, 8, 0);
@@ -419,7 +418,7 @@ mod tests {
     #[tokio::test]
     async fn chain_reorged_leaves_canonical_hash_none_when_height_missing() {
         let (tx, rx) = mpsc::channel(32);
-        let exex = ShadowCanaryExEx::new(tx);
+        let exex = ShadowIndexerExEx::new(tx);
 
         // New chain is shorter than old, so old block 9 has no canonical counterpart.
         let old = mk_chain(6, 9, 0);
@@ -442,19 +441,19 @@ mod tests {
 
     #[test]
     fn effective_priority_fee_uses_base_fee_when_present() {
-        let fee = ShadowCanaryExEx::effective_priority_fee_per_gas(Some(7), 20, Some(100));
+        let fee = ShadowIndexerExEx::effective_priority_fee_per_gas(Some(7), 20, Some(100));
         assert_eq!(fee, Some(13), "tip = effective_gas_price - base_fee");
     }
 
     #[test]
     fn effective_priority_fee_saturates_below_base_fee() {
-        let fee = ShadowCanaryExEx::effective_priority_fee_per_gas(Some(50), 20, Some(100));
+        let fee = ShadowIndexerExEx::effective_priority_fee_per_gas(Some(50), 20, Some(100));
         assert_eq!(fee, Some(0), "effective price below base fee saturates to zero");
     }
 
     #[test]
     fn effective_priority_fee_falls_back_to_max_priority_without_base_fee() {
-        let fee = ShadowCanaryExEx::effective_priority_fee_per_gas(None, 20, Some(100));
+        let fee = ShadowIndexerExEx::effective_priority_fee_per_gas(None, 20, Some(100));
         assert_eq!(fee, Some(100), "without base fee, fall back to max priority fee");
     }
 }

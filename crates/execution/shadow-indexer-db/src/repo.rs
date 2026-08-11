@@ -5,7 +5,7 @@ use sqlx::{PgPool, Postgres, QueryBuilder, query_as};
 
 use crate::{ShadowBlockRow, ShadowBlockTransactionRow};
 
-/// Repository for shadow canary block persistence.
+/// Repository for shadow indexer block persistence.
 #[derive(Debug)]
 pub struct ShadowBlockRepo {
     pool: PgPool,

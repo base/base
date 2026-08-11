@@ -1,10 +1,10 @@
-//! End-to-end test ensuring shadow-canary persists committed blocks to Postgres.
+//! End-to-end test ensuring shadow-indexer persists committed blocks to Postgres.
 
 use std::time::Duration;
 
 use base_node_runner::FromExtensionConfig;
-use base_shadow_canary::{ShadowCanaryConfig, ShadowCanaryExtension};
-use base_shadow_canary_db::{ShadowBlockRepo, ShadowDbConfig};
+use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension};
+use base_shadow_indexer_db::{ShadowBlockRepo, ShadowDbConfig};
 use base_system_tests::{SystemTestProviderExt, SystemTestStackBuilder};
 use eyre::{Result, WrapErr, ensure};
 use testcontainers::runners::AsyncRunner;
@@ -18,7 +18,7 @@ const DB_POLL_TIMEOUT: Duration = Duration::from_secs(20);
 const DB_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 #[tokio::test]
-async fn shadow_canary_persists_committed_blocks() -> Result<()> {
+async fn shadow_indexer_persists_committed_blocks() -> Result<()> {
     let container = Postgres::default().start().await?;
     let port = container.get_host_port_ipv4(5432).await?;
     let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
@@ -28,7 +28,7 @@ async fn shadow_canary_persists_committed_blocks() -> Result<()> {
         max_connections: 5,
         connection_timeout: Duration::from_secs(5),
     };
-    let ext = Box::new(ShadowCanaryExtension::from_config(ShadowCanaryConfig {
+    let ext = Box::new(ShadowIndexerExtension::from_config(ShadowIndexerConfig {
         enabled: true,
         db: db_config.clone(),
         builder_version: "e2e-test".to_string(),

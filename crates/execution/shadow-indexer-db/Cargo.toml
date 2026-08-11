@@ -1,6 +1,6 @@
 [package]
-name = "base-shadow-canary-db"
-description = "Shadow canary database access layer"
+name = "base-shadow-indexer-db"
+description = "Shadow indexer database access layer"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

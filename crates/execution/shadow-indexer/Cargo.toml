@@ -1,6 +1,6 @@
 [package]
-name = "base-shadow-canary"
-description = "Shadow canary ExEx for capturing executed blocks"
+name = "base-shadow-indexer"
+description = "Shadow indexer ExEx for capturing executed blocks"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -14,7 +14,7 @@ workspace = true
 [dependencies]
 # workspace
 base-node-runner.workspace = true
-base-shadow-canary-db = { path = "../shadow-canary-db" }
+base-shadow-indexer-db = { path = "../shadow-indexer-db" }
 
 # reth
 reth-exex.workspace = true

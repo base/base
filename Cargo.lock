@@ -4495,8 +4495,8 @@ dependencies = [
  "base-node-runner",
  "base-observability-events",
  "base-proofs-extension",
- "base-shadow-canary",
- "base-shadow-canary-db",
+ "base-shadow-indexer",
+ "base-shadow-indexer-db",
  "base-tx-forwarding",
  "base-txpool-rpc",
  "base-txpool-tracing",
@@ -6281,7 +6281,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-shadow-canary"
+name = "base-shadow-indexer"
 version = "0.0.0"
 dependencies = [
  "alloy-consensus 2.2.0",
@@ -6289,7 +6289,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base-node-runner",
- "base-shadow-canary-db",
+ "base-shadow-indexer-db",
  "chrono",
  "eyre",
  "futures",
@@ -6305,7 +6305,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-shadow-canary-db"
+name = "base-shadow-indexer-db"
 version = "0.0.0"
 dependencies = [
  "anyhow",
@@ -6494,8 +6494,8 @@ dependencies = [
  "base-prover-service-client",
  "base-prover-service-protocol",
  "base-runtime",
- "base-shadow-canary",
- "base-shadow-canary-db",
+ "base-shadow-indexer",
+ "base-shadow-indexer-db",
  "base-test-utils",
  "base-tx-forwarding",
  "base-tx-manager",

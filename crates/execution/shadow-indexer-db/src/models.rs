@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 
-/// Row representation for a shadow canary block.
+/// Row representation for a shadow indexer block.
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct ShadowBlockRow {
     /// Block number.
@@ -27,7 +27,7 @@ pub struct ShadowBlockRow {
     pub created_at: DateTime<Utc>,
 }
 
-/// Row representation for a single transaction within a shadow canary block.
+/// Row representation for a single transaction within a shadow indexer block.
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct ShadowBlockTransactionRow {
     /// Block number the transaction was included in.

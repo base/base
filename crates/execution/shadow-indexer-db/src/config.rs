@@ -3,7 +3,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 
-/// Configuration for the shadow canary database.
+/// Configuration for the shadow indexer database.
 #[derive(Clone, Debug)]
 pub struct ShadowDbConfig {
     /// Database connection URL.
@@ -26,12 +26,12 @@ impl ShadowDbConfig {
             .acquire_timeout(self.connection_timeout)
             .connect(&self.url)
             .await
-            .context("failed to connect to shadow canary database")?;
+            .context("failed to connect to shadow indexer database")?;
 
         sqlx::migrate!("./migrations")
             .run(&pool)
             .await
-            .context("failed to run shadow canary database migrations")?;
+            .context("failed to run shadow indexer database migrations")?;
 
         Ok(pool)
     }
