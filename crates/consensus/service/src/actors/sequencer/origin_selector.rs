@@ -308,7 +308,6 @@ impl L1OriginSelectorProvider for DelayedL1OriginSelectorProvider {
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
-
     #[cfg(feature = "metrics")]
     use std::time::Duration;
 
