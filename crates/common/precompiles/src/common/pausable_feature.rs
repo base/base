@@ -10,14 +10,19 @@ use crate::IB20;
 pub struct B20PausableFeature;
 
 impl B20PausableFeature {
-    /// Returns an enum-conversion panic when `feature` is outside the B-20 pause enum.
-    pub const fn ensure_valid(feature: IB20::PausableFeature) -> Result<()> {
-        match feature {
-            IB20::PausableFeature::TRANSFER
-            | IB20::PausableFeature::MINT
-            | IB20::PausableFeature::BURN
-            | IB20::PausableFeature::SEIZE => Ok(()),
-            IB20::PausableFeature::__Invalid => Err(BasePrecompileError::enum_conversion_error()),
+    /// Returns an enum-conversion error when `feature` is not in `allowed`.
+    ///
+    /// Each frozen version passes its own allowlist so a feature introduced at a later fork is
+    /// rejected by omission on older versions (e.g. V1 allows only TRANSFER/MINT/BURN; V2 adds
+    /// SEIZE). New versions extend their local list; already-shipped versions stay untouched.
+    pub fn ensure_one_of(
+        feature: IB20::PausableFeature,
+        allowed: &[IB20::PausableFeature],
+    ) -> Result<()> {
+        if allowed.contains(&feature) {
+            Ok(())
+        } else {
+            Err(BasePrecompileError::enum_conversion_error())
         }
     }
 
