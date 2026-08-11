@@ -160,10 +160,13 @@ impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
             return Ok(current);
         }
 
-        // An in-flight background fetch is intentionally not exposed as `next`. Past the drift
-        // limit, the caller must defer the build until the verified successor becomes ready rather
+        // Any ready successor was already handled above: a successor at or behind the next L2
+        // timestamp returns at the first check, and one ahead of it returns the current origin.
+        // An in-flight background fetch is intentionally not exposed as `next`, so past the drift
+        // limit the caller must defer the build until the verified successor becomes ready rather
         // than continue building on an expired origin.
-        next.copied().ok_or(L1OriginSelectorError::NotEnoughData(current))
+        debug_assert!(next.is_none(), "a ready successor must be handled before the drift path");
+        Err(L1OriginSelectorError::NotEnoughData(current))
     }
 
     /// Selects the current origin and drives the background next-origin state machine.
@@ -336,6 +339,10 @@ impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
     /// Waits until an in-flight fetch can be settled through the production polling path.
     #[cfg(test)]
     async fn wait_for_inflight_completion(&self) {
+        debug_assert!(
+            matches!(&self.next, NextSlot::InFlight { .. }),
+            "wait_for_inflight_completion called without an InFlight slot"
+        );
         loop {
             if matches!(&self.next, NextSlot::InFlight { handle, .. } if handle.is_finished()) {
                 return;
