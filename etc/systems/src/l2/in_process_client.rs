@@ -56,6 +56,8 @@ pub struct InProcessClientConfig {
     /// Optional transaction forwarding configuration.
     /// When set, the client will forward transactions to builder RPC endpoints.
     pub tx_forwarding_config: Option<TxForwardingConfig>,
+    /// Whether to register the experimental validity transaction RPC.
+    pub enable_experimental_validity_transactions: bool,
     /// Optional L1 upgrade signal configuration.
     ///
     /// When the mode applies at startup, the schedule is read from L1 and applied to the chain
@@ -317,7 +319,9 @@ impl InProcessClient {
             && tx_fwd_config.enabled
             && !tx_fwd_config.builder_urls.is_empty()
         {
-            extensions.push(Box::new(SendRawTransactionValidityExtension::from_config(())));
+            if config.enable_experimental_validity_transactions {
+                extensions.push(Box::new(SendRawTransactionValidityExtension::from_config(())));
+            }
             extensions.push(Box::new(TxForwardingExtension::from_config(tx_fwd_config.clone())));
         }
 

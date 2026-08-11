@@ -5,6 +5,9 @@ use reth_transaction_pool::ValidPoolTransaction;
 
 use crate::{BasePooledTransaction, ExtensionError, ValidatedTransactionExtensions};
 
+/// Maximum number of experimental validity predicates carried by one transaction.
+pub const MAX_VALIDITY_PREDICATES: usize = 64;
+
 /// A comparison used by a [`ValidityPredicate`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub enum ValidityOperator {
@@ -86,20 +89,33 @@ impl ValidityPredicate {
     }
 }
 
-/// Validity predicates carried with a validated transaction.
+/// Experimental validity predicates carried with a validated transaction.
+///
+/// The builder transport preserves these predicates but does not currently
+/// evaluate them during block construction.
 #[derive(Clone, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct TransactionValidity {
-    /// Predicates controlling when the transaction is valid for inclusion.
+    /// Predicates intended to control when the transaction is valid for inclusion.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub validity: Vec<ValidityPredicate>,
 }
 
 impl ValidatedTransactionExtensions<BasePooledTransaction> for TransactionValidity {
+    fn is_empty(&self) -> bool {
+        self.validity.is_empty()
+    }
+
     fn extract(tx: &ValidPoolTransaction<BasePooledTransaction>) -> Self {
         Self { validity: tx.transaction.validity_predicates().to_vec() }
     }
 
     fn apply(self, tx: BasePooledTransaction) -> Result<BasePooledTransaction, ExtensionError> {
+        if self.validity.len() > MAX_VALIDITY_PREDICATES {
+            return Err(ExtensionError(format!(
+                "too many validity predicates: {} (maximum {MAX_VALIDITY_PREDICATES})",
+                self.validity.len()
+            )));
+        }
         Ok(tx.with_validity_predicates(self.validity))
     }
 }
@@ -270,5 +286,36 @@ mod tests {
         let transaction = extension.apply(transaction).unwrap();
 
         assert_eq!(transaction.validity_predicates(), expected);
+    }
+
+    #[test]
+    fn apply_rejects_too_many_predicates() {
+        let signed: BaseTransactionSigned = TxDeposit {
+            source_hash: Default::default(),
+            from: Address::ZERO,
+            to: TxKind::Create,
+            mint: 0,
+            value: U256::ZERO,
+            gas_limit: 21_000,
+            is_system_transaction: false,
+            input: Default::default(),
+        }
+        .into();
+        let encoded_length = signed.encode_2718_len();
+        let transaction = BasePooledTransaction::new(
+            Recovered::new_unchecked(signed, Address::ZERO),
+            encoded_length,
+        );
+        let predicate = ValidityPredicate::Balance {
+            address: Address::ZERO,
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
+        let extension =
+            TransactionValidity { validity: vec![predicate; MAX_VALIDITY_PREDICATES + 1] };
+
+        let error = extension.apply(transaction).unwrap_err();
+
+        assert!(error.to_string().contains("too many validity predicates"));
     }
 }

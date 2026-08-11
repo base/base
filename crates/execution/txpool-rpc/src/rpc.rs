@@ -1,7 +1,7 @@
 //! RPC implementation for transaction submission, status queries, and pool management.
 
 use alloy_primitives::{Address, Bytes, TxHash};
-use base_execution_txpool::{BasePooledTransaction, ValidityPredicate};
+use base_execution_txpool::{BasePooledTransaction, MAX_VALIDITY_PREDICATES, ValidityPredicate};
 use jsonrpsee::{
     core::{RpcResult, async_trait, client::ClientT},
     http_client::{HttpClient, HttpClientBuilder},
@@ -35,7 +35,9 @@ pub struct TransactionStatusResponse {
 pub struct SendRawTransactionValidityRequest {
     /// EIP-2718 encoded signed transaction.
     pub tx: Bytes,
-    /// Predicates that control when the transaction is valid for inclusion.
+    /// Experimental predicates transported to builders alongside the transaction.
+    ///
+    /// Predicates are not currently evaluated during block construction.
     pub validity: Vec<ValidityPredicate>,
 }
 
@@ -47,10 +49,10 @@ pub trait TransactionStatusApi {
     async fn transaction_status(&self, tx_hash: TxHash) -> RpcResult<TransactionStatusResponse>;
 }
 
-/// RPC API for submitting a raw transaction with validity criteria.
+/// Experimental RPC API for submitting a raw transaction with validity criteria.
 #[rpc(server, namespace = "base")]
 pub trait SendRawTransactionValidityApi {
-    /// Submits a raw transaction together with its validity criteria.
+    /// Submits a raw transaction and transports its currently unenforced validity criteria.
     #[method(name = "sendRawTransactionValidity")]
     async fn send_raw_transaction_validity(
         &self,
@@ -152,6 +154,17 @@ where
         &self,
         request: SendRawTransactionValidityRequest,
     ) -> RpcResult<TxHash> {
+        if request.validity.len() > MAX_VALIDITY_PREDICATES {
+            return Err(ErrorObjectOwned::owned(
+                ErrorCode::InvalidParams.code(),
+                format!(
+                    "too many validity predicates: {} (maximum {MAX_VALIDITY_PREDICATES})",
+                    request.validity.len()
+                ),
+                None::<()>,
+            ));
+        }
+
         let transaction = BasePooledTransaction::recover_raw_transaction(request.tx.as_ref())
             .map_err(|error| {
                 ErrorObjectOwned::owned(
@@ -162,7 +175,7 @@ where
             })?;
         let tx_hash = *transaction.hash();
 
-        // Defer validity evaluation, retaining predicates so canonical forwarding carries them to builders.
+        // Retain the currently unenforced predicates for canonical forwarding to builders.
         self.pool
             .add_transaction(
                 TransactionOrigin::Private,
@@ -264,6 +277,23 @@ mod tests {
 
         assert_eq!(error.code(), ErrorCode::InvalidParams.code());
         assert!(error.message().contains("failed to decode transaction"));
+    }
+
+    #[tokio::test]
+    async fn send_raw_transaction_validity_rejects_too_many_predicates() {
+        let rpc = SendRawTransactionValidityApiImpl::new(NoopTransactionPool::<
+            BasePooledTransaction,
+        >::new());
+        let mut request = validity_request(Bytes::from_static(&[0x02]));
+        request.validity = vec![request.validity[0].clone(); MAX_VALIDITY_PREDICATES + 1];
+
+        let error = rpc
+            .send_raw_transaction_validity(request)
+            .await
+            .expect_err("oversized validity should be rejected before transaction decoding");
+
+        assert_eq!(error.code(), ErrorCode::InvalidParams.code());
+        assert!(error.message().contains("too many validity predicates"));
     }
 
     #[tokio::test]

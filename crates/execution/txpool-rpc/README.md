@@ -12,7 +12,8 @@ Exposes JSON-RPC APIs for transaction pool administration and transaction lifecy
 allows clients to query the current status of individual transactions by hash. The separate
 `SendRawTransactionValidityExtension` registers local mempool ingress through
 `base_sendRawTransactionValidity`; typed validity predicates are preserved while forwarding to
-builders, but detailed evaluation remains deferred.
+builders. This endpoint is experimental: predicates are not currently evaluated during block
+construction, so callers must not rely on them to prevent transaction inclusion.
 
 ## Usage
 
@@ -29,6 +30,7 @@ use base_txpool_rpc::{
 };
 
 runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig::default());
+// Install only when the node's explicit experimental validity flag is enabled.
 runner.install_ext::<SendRawTransactionValidityExtension>(());
 ```
 

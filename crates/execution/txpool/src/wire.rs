@@ -30,6 +30,14 @@ pub struct ExtensionError(pub String);
 pub trait ValidatedTransactionExtensions<T: PoolTransaction>:
     Serialize + DeserializeOwned + Debug + Clone + Send + Sync + Unpin + 'static
 {
+    /// Returns whether the payload carries no extension data.
+    ///
+    /// Builders use this to preserve legacy transaction handling while rejecting
+    /// or privately inserting non-empty extension payloads.
+    fn is_empty(&self) -> bool {
+        false
+    }
+
     /// Extracts extension data from an outbound pooled transaction.
     ///
     /// Called by the forwarder for each transaction it relays to a builder.
@@ -43,6 +51,10 @@ pub trait ValidatedTransactionExtensions<T: PoolTransaction>:
 }
 
 impl<T: PoolTransaction> ValidatedTransactionExtensions<T> for NoExtensions {
+    fn is_empty(&self) -> bool {
+        true
+    }
+
     fn extract(_tx: &ValidPoolTransaction<T>) -> Self {
         Self {}
     }
@@ -62,6 +74,10 @@ impl<T: PoolTransaction> ValidatedTransactionExtensions<T> for NoExtensions {
 /// exactly the same bytes as a struct without the field at all, so the default
 /// instantiation is wire-compatible in both directions with peers that predate
 /// this parameter.
+///
+/// Legacy [`NoExtensions`] readers silently ignore extension fields. Any future
+/// behavior that relies on extension enforcement must therefore negotiate peer
+/// support instead of relying on this compatibility fallback.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidatedTransaction<E = NoExtensions> {
     /// Recovered signer address.
