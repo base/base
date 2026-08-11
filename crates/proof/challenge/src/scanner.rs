@@ -33,7 +33,7 @@
 //! provers zero) are skipped.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
 };
 
@@ -220,6 +220,15 @@ impl GameScanner {
         }
 
         candidates.sort_unstable_by_key(|c| c.index);
+
+        // Drop cached intervals for games that fell behind the anchor. Keyed by game proxy, the
+        // cache would otherwise grow for the life of the process; live games are re-cached by the
+        // next scan's `evaluate_game`.
+        let live: HashSet<Address> = candidates.iter().map(|c| c.factory.proxy).collect();
+        self.interval_cache
+            .lock()
+            .expect("interval_cache lock poisoned")
+            .retain(|a, _| live.contains(a));
 
         let mut open_games: HashMap<u32, usize> =
             self.protocol_versions.values().map(|&version| (version, 0)).collect();
@@ -425,6 +434,15 @@ impl GameScanner {
 
         let fingerprint = proof_protocol.fingerprint();
         let protocol_version = self.protocol_versions.get(&fingerprint).copied().ok_or_else(|| {
+            // Distinct from the caller's generic "game query failed" warning: a transient RPC
+            // error retries on the next scan, an unmapped fingerprint never will. Counted so an
+            // alert can fire instead of the game silently going unchallenged.
+            ChallengerMetrics::unmapped_fingerprint_games_total().increment(1);
+            error!(
+                index = index,
+                fingerprint = %fingerprint,
+                "no prover protocol version configured; game will not be challenged"
+            );
             eyre::eyre!(
                 "no prover protocol version configured for game {index} capability {fingerprint}"
             )

@@ -290,9 +290,14 @@ gauge is zero.
 
 ### base/base
 
-- Prover-service persists an arbitrary `u32` route ID and claims jobs by exact match.
+- Prover-service persists an arbitrary `u32` route ID and claims jobs matching any version the
+  worker announces.
 - Nitro and ZK workers require `PROVER_PROTOCOL_VERSION` at runtime; shared job discovery announces
   it on every claim.
+- Multi-version fleets are Nitro-only in this phase. The Nitro host takes a comma-separated
+  `PROVER_PROTOCOL_VERSION` and one fleet serves every version it announces; zk-host takes a single
+  version, so N versions means N zk-host deployments. See
+  [ZK multi-version](#zk-multi-version-deferred) for the cost of closing that gap.
 - The proposer requires `BASE_PROPOSER_PROOF_PROTOCOL_VERSION`.
 - The challenger requires one or more comma-separated mappings in
   `BASE_CHALLENGER_PROOF_PROTOCOL_VERSION`, formatted as
@@ -302,10 +307,110 @@ gauge is zero.
 - Nitro selects only registered enclaves whose recorded image hash matches the proof request.
 - Pending jobs and open actionable games are reported by route ID.
 
+## ZK multi-version (deferred)
+
+Phase 1 gives the Nitro host a comma-separated `PROVER_PROTOCOL_VERSION` so one fleet claims
+several versions. zk-host keeps a single scalar version. This section records why the asymmetry is
+deliberate and what closing it would cost.
+
+### Why the asymmetry is not a capability gap
+
+ZK already covers N versions today, by running N deployments. The `zk-host` chart takes a
+`workers[]` list, each entry with its own `protocolVersion` and `replicaCount`, and zeronet already
+runs two (`v0` and `v1`). So "serve two versions" is a solved problem on the ZK side — it costs one
+extra Rollout.
+
+The reason that answer does not transfer to Nitro is the shape of the compute:
+
+- A zk-host pod is a thin claimer and orchestrator. It requests 8Gi/1cpu (limit 32Gi/2cpu) and
+  offloads the actual proving to the **shared** SP1 cluster behind `SP1_CLUSTER_API_ENDPOINT`. An
+  extra per-version deployment duplicates the orchestrator, not the prover hardware.
+- A Nitro fleet is an Odin/EC2 auto-scaling group of instances running enclaves, plus per-instance
+  attestation and registration against `TEEProverRegistry`, all sharing exactly one ALB target
+  group (the only ARN the registrar discovers). An extra per-version fleet duplicates the proving
+  hardware and adds a registration lifecycle.
+
+So multi-version-per-fleet buys a lot for Nitro and comparatively little for ZK. That is the whole
+justification for shipping it on one side first.
+
+### The hard constraint: one ELF pair per binary
+
+`base-proof-succinct-elfs` embeds the programs at compile time:
+
+```rust
+pub const AGGREGATION_ELF: &[u8] = include_bytes!(env!("AGGREGATION_ELF_PATH"));
+pub const RANGE_ELF_EMBEDDED: &[u8] = include_bytes!(env!("RANGE_ELF_EMBEDDED_PATH"));
+```
+
+A zk-host binary therefore has exactly one `(range vkey, aggregation vkey)` pair, and the
+capability fingerprint mixes both into the version identity:
+
+```text
+keccak256("base-proof-protocol-v1" || schedule_kind || schedule_id || config_hash
+          || tee_image_hash || zk_range_hash || zk_aggregate_hash)
+```
+
+That splits the work into two very different problems.
+
+**Case 1 — versions differing only outside the ZK commitments.** A TEE image rotation, a config
+change, or a schedule-era change mints a new version while `zk_range_hash` and `zk_aggregate_hash`
+stay identical. One binary is genuinely valid for both versions, and announcing both is sound. This
+is the common case and the only one worth automating.
+
+**Case 2 — versions with different ZK programs.** One binary cannot serve both, full stop. Doing so
+means embedding multiple ELF sets, selecting per job, holding several prover instances, and
+registering every program set with the SP1 cluster. This is a large change with a real memory and
+artifact-management cost, and it is explicitly out of scope. For case 2, run a fleet per version —
+which is what the chart already does.
+
+### What case 1 actually costs
+
+The Rust diff is nearly free, because the shared plumbing is already multi-version from this phase:
+
+- the `GetNextProofRequest.protocol_versions` wire field is already `Vec<u32>`;
+- `JobDiscoveryConfig::with_protocol_versions` already sorts, dedups and falls back to `[0]`;
+- the ZK branch of the claim query already matches `request_protocol_version = ANY($n::bigint[])`.
+
+Only the host edge is scalar. Restoring the vector is roughly 20 lines: `ZkHostConfig`'s field and
+setter go back to `Vec<u32>`, and the zk-host CLI arg regains `value_delimiter = ','` with
+`num_args = 1..`, exactly mirroring `bin/prover/nitro-host/src/cli.rs`.
+
+The cost is everything around that:
+
+1. **A startup cross-check, and the manifest it depends on.** Nothing today binds a declared
+   version to the artifacts the process actually runs. A fleet that announces a version whose
+   `zk_range_hash` does not match its embedded ELF will claim those jobs and then fail every one —
+   and because a failed job is logged and dropped rather than nacked, the job returns when the
+   lease expires and the mismatched fleet can claim it again. It fails closed, but it also starves
+   the version. The fix is for the host to derive its own vkeys at boot, look up each announced
+   version's expected hashes, and refuse to start on mismatch. That requires the **version →
+   artifact manifest** listed under "Remaining fleet work", which does not exist yet. This is the
+   real dependency; the multi-version flag is not safe to expose without it. Note the same hazard
+   already exists for Nitro, where it is bounded by `select_enclaves_for_image` rejecting a
+   non-matching PCR0 before proving.
+2. **Helm label plumbing.** `zk-host-rollout.yaml` and `zk-host-pdb.yaml` stamp
+   `base.org/proof-protocol-version: {{ ... | quote }}`, and the PDB selects on it. Kubernetes label
+   values cannot contain commas, so a multi-version value breaks rendering and PDB selection. The
+   label needs a sanitized form (for example `v0-1`) or must move out of the selector, and
+   `verify-helm-charts.yml`, which asserts one `PROVER_PROTOCOL_VERSION` per worker entry, needs
+   updating with it.
+3. **Deciding what a fleet may announce.** Case 1 soundness is a property of the manifest, not of
+   the operator's intent. Whoever writes the version list has to know that two versions share ZK
+   commitments. Without the manifest that is tribal knowledge, which is the failure mode item 1
+   guards against.
+
+### Recommendation
+
+Do it after the artifact manifest lands, not before, and only for case 1. Sequenced that way it is
+a ~20-line Rust change plus the Helm label fix, with the cross-check falling out of the manifest
+work that is already planned. Done before the manifest, it is a foot-gun that trades one extra
+8Gi pod for a silent way to starve a protocol version.
+
 ## Remaining fleet work
 
 - Add versioned zk-host Sif configurations and Nitro Odin configurations with
-  `PROVER_PROTOCOL_VERSION` and immutable artifact pins.
+  `PROVER_PROTOCOL_VERSION` and immutable artifact pins. One zk-host worker entry per version; a
+  Nitro fleet may announce several.
 - Publish an artifact manifest containing base/base commit, prover-service schema compatibility,
   Nitro PCR0, range vkey, aggregation vkey, and descriptor hash.
 - Keep one shared prover-service per network unless a future server wire break requires a staged

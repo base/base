@@ -17,6 +17,13 @@ base_metrics::define_metrics! {
     #[label(name = "protocol_version")]
     open_games: gauge,
 
+    #[describe(
+        "Total games skipped because their capability fingerprint has no configured protocol \
+         version. Non-zero means a deployed verifier is missing from --proof-protocol-version and \
+         its games are going unchallenged."
+    )]
+    unmapped_fingerprint_games_total: counter,
+
     #[describe("Total number of games found to be invalid during validation")]
     games_invalid_total: counter,
 
