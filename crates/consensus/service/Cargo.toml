@@ -95,6 +95,7 @@ base-common-rpc-types.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 alloy-primitives = { workspace = true, features = ["k256"] }
 metrics-util = { workspace = true, features = ["debugging"] }
+base-common-genesis = { workspace = true, features = ["test-utils"] }
 base-consensus-derive = { workspace = true, features = ["test-utils"] }
 base-consensus-engine = { workspace = true, features = ["test-utils"] }
 alloy-consensus = { workspace = true, features = ["arbitrary", "std"] }

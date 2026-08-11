@@ -4068,6 +4068,7 @@ dependencies = [
  "base-consensus-rpc",
  "base-consensus-sources",
  "base-jwt",
+ "base-protocol",
  "base-retry",
  "base-upgrade-signal",
  "clap",

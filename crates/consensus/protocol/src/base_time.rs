@@ -10,6 +10,15 @@ use base_common_consensus::{
 
 use crate::REGOLITH_SYSTEM_TX_GAS;
 
+/// The default fixed offset into a subsecond slot at which the sequencer requests the
+/// sealed payload (`engine_getPayload`) once Denim is active.
+///
+/// This is the single shared default for both timing knobs derived from it: the CL's block
+/// seal target and the builder's wall-clock transaction cutoff. The two run in separate
+/// processes, so each defaults from this constant; a mismatch shows up as every
+/// `getPayload` waiting on an unfinished build.
+pub const DEFAULT_SEAL_OFFSET: core::time::Duration = core::time::Duration::from_millis(150);
+
 /// Versioned calldata for the `BaseTime` metadata deposit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

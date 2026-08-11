@@ -44,6 +44,7 @@ pub(super) fn test_actor() -> SequencerActor<
         shadow_blocks_per_cycle: None,
         recovery_mode,
         rollup_config,
+        seal_offset: base_protocol::DEFAULT_SEAL_OFFSET,
         unsafe_payload_gossip_client: MockUnsafePayloadGossipClient::new(),
         sealer: None,
         pending_stop: None,
