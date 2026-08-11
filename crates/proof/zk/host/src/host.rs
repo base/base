@@ -15,7 +15,7 @@ use crate::{ProofGenerator, ProofGeneratorHeartbeatConfig, ZkBackend, ZkProver, 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ZkHostConfig {
     worker_id: String,
-    protocol_version: u32,
+    protocol_versions: Vec<u32>,
     zk_vms: Vec<ZkVm>,
     job_discovery_poll_interval: Duration,
     job_discovery_lock_duration_seconds: u32,
@@ -28,7 +28,7 @@ impl ZkHostConfig {
     pub fn new(worker_id: impl Into<String>, zk_vms: impl Into<Vec<ZkVm>>) -> Self {
         Self {
             worker_id: worker_id.into(),
-            protocol_version: 0,
+            protocol_versions: vec![0],
             zk_vms: zk_vms.into(),
             job_discovery_poll_interval: DEFAULT_JOB_DISCOVERY_POLL_INTERVAL,
             job_discovery_lock_duration_seconds: DEFAULT_JOB_DISCOVERY_LOCK_DURATION_SECONDS,
@@ -52,9 +52,9 @@ impl ZkHostConfig {
         &self.zk_vms
     }
 
-    /// Returns the proof protocol version announced by this worker.
-    pub const fn protocol_version(&self) -> u32 {
-        self.protocol_version
+    /// Returns the proof protocol versions announced by this worker.
+    pub fn protocol_versions(&self) -> &[u32] {
+        &self.protocol_versions
     }
 
     /// Returns the heartbeat settings used while proofs are generated.
@@ -87,10 +87,10 @@ impl ZkHostConfig {
         self
     }
 
-    /// Sets the proof protocol version announced by this worker.
+    /// Sets the proof protocol versions announced by this worker.
     #[must_use]
-    pub const fn with_protocol_version(mut self, protocol_version: u32) -> Self {
-        self.protocol_version = protocol_version;
+    pub fn with_protocol_versions(mut self, protocol_versions: impl Into<Vec<u32>>) -> Self {
+        self.protocol_versions = protocol_versions.into();
         self
     }
 
@@ -160,7 +160,7 @@ where
         let mut zk_backends = provers.keys().copied().collect::<Vec<_>>();
         zk_backends.sort_unstable_by_key(|backend| backend.as_str());
         let discovery_config = JobDiscoveryConfig::zk(config.worker_id, config.zk_vms, zk_backends)
-            .with_protocol_version(config.protocol_version)
+            .with_protocol_versions(config.protocol_versions)
             .with_poll_interval(config.job_discovery_poll_interval)
             .with_lock_duration_seconds(config.job_discovery_lock_duration_seconds)
             .with_max_concurrent_jobs(config.job_discovery_max_concurrent_jobs);

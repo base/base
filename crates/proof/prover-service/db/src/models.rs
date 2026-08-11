@@ -999,8 +999,8 @@ pub struct UpdateReceipt {
 pub struct ClaimProofJob {
     /// Worker identifier acquiring the claim.
     pub worker_id: String,
-    /// Prover protocol implemented by this worker.
-    pub protocol_version: u32,
+    /// Prover protocols implemented by this worker. Empty is treated as `[0]`.
+    pub protocol_versions: Vec<u32>,
     /// Protocol proof type this worker can execute.
     pub api_proof_type: ApiProofType,
     /// TEE implementations this worker can execute (matched for TEE proofs).

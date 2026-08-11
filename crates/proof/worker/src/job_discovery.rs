@@ -92,12 +92,12 @@ impl JobClaimFilter {
     pub fn get_next_proof_requests(
         &self,
         worker_id: String,
-        protocol_version: u32,
+        protocol_versions: Vec<u32>,
         lock_duration_seconds: u32,
     ) -> impl Iterator<Item = GetNextProofRequest> {
         self.get_next_proof_requests_starting_at(
             worker_id,
-            protocol_version,
+            protocol_versions,
             lock_duration_seconds,
             0,
         )
@@ -107,7 +107,7 @@ impl JobClaimFilter {
     pub fn get_next_proof_requests_starting_at(
         &self,
         worker_id: String,
-        protocol_version: u32,
+        protocol_versions: Vec<u32>,
         lock_duration_seconds: u32,
         proof_type_offset: usize,
     ) -> impl Iterator<Item = GetNextProofRequest> {
@@ -119,7 +119,7 @@ impl JobClaimFilter {
                     tee_kinds: tee_kinds.clone(),
                     zk_vms: Vec::new(),
                     zk_backends: Vec::new(),
-                    protocol_version,
+                    protocol_versions,
                     lock_duration_seconds,
                 }),
                 None,
@@ -141,7 +141,7 @@ impl JobClaimFilter {
                         tee_kinds: Vec::new(),
                         zk_vms: zk_vms.clone(),
                         zk_backends: zk_backends.clone(),
-                        protocol_version,
+                        protocol_versions: protocol_versions.clone(),
                         lock_duration_seconds,
                     }),
                     Some(GetNextProofRequest {
@@ -150,7 +150,7 @@ impl JobClaimFilter {
                         tee_kinds: Vec::new(),
                         zk_vms,
                         zk_backends,
-                        protocol_version,
+                        protocol_versions,
                         lock_duration_seconds,
                     }),
                 ]
@@ -165,7 +165,7 @@ impl JobClaimFilter {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JobDiscoveryConfig {
     worker_id: String,
-    protocol_version: u32,
+    protocol_versions: Vec<u32>,
     claim_filter: JobClaimFilter,
     poll_interval: Duration,
     lock_duration_seconds: u32,
@@ -191,7 +191,7 @@ impl JobDiscoveryConfig {
     pub fn new(worker_id: impl Into<String>, claim_filter: JobClaimFilter) -> Self {
         Self {
             worker_id: worker_id.into(),
-            protocol_version: 0,
+            protocol_versions: vec![0],
             claim_filter,
             poll_interval: DEFAULT_JOB_DISCOVERY_POLL_INTERVAL,
             lock_duration_seconds: DEFAULT_JOB_DISCOVERY_LOCK_DURATION_SECONDS,
@@ -214,14 +214,23 @@ impl JobDiscoveryConfig {
         self.lock_duration_seconds
     }
 
-    /// Returns the proof protocol version announced by this worker.
-    pub const fn protocol_version(&self) -> u32 {
-        self.protocol_version
+    /// Returns the proof protocol versions announced by this worker.
+    pub fn protocol_versions(&self) -> &[u32] {
+        &self.protocol_versions
     }
 
-    /// Sets the proof protocol version announced by this worker.
-    pub const fn with_protocol_version(mut self, protocol_version: u32) -> Self {
-        self.protocol_version = protocol_version;
+    /// Sets the proof protocol versions announced by this worker.
+    ///
+    /// An empty list is normalized to `[0]` so a misconfigured worker claims legacy jobs rather
+    /// than silently claiming everything or nothing.
+    pub fn with_protocol_versions(mut self, protocol_versions: impl Into<Vec<u32>>) -> Self {
+        let mut protocol_versions = protocol_versions.into();
+        protocol_versions.sort_unstable();
+        protocol_versions.dedup();
+        if protocol_versions.is_empty() {
+            protocol_versions.push(0);
+        }
+        self.protocol_versions = protocol_versions;
         self
     }
 
@@ -265,7 +274,7 @@ impl JobDiscoveryConfig {
     ) -> impl Iterator<Item = GetNextProofRequest> {
         self.claim_filter.get_next_proof_requests_starting_at(
             self.worker_id.clone(),
-            self.protocol_version,
+            self.protocol_versions.clone(),
             self.lock_duration_seconds,
             proof_type_offset,
         )
@@ -691,7 +700,7 @@ mod tests {
             vec![ZkVm::Sp1],
             vec![ZkBackend::Cluster, ZkBackend::Network],
         )
-        .with_protocol_version(7)
+        .with_protocol_versions(vec![7, 8])
         .with_lock_duration_seconds(30)
         .with_max_concurrent_jobs(0);
 
@@ -699,14 +708,14 @@ mod tests {
 
         assert_eq!(requests.len(), 2);
         assert_eq!(requests[0].worker_id, "worker-a");
-        assert_eq!(requests[0].protocol_version, 7);
+        assert_eq!(requests[0].protocol_versions, vec![7, 8]);
         assert_eq!(requests[0].proof_type, ProofType::Compressed);
         assert!(requests[0].tee_kinds.is_empty());
         assert_eq!(requests[0].zk_vms, vec![ZkVm::Sp1]);
         assert_eq!(requests[0].zk_backends, vec![ZkBackend::Cluster, ZkBackend::Network]);
         assert_eq!(requests[0].lock_duration_seconds, 30);
         assert_eq!(requests[1].worker_id, "worker-a");
-        assert_eq!(requests[1].protocol_version, 7);
+        assert_eq!(requests[1].protocol_versions, vec![7, 8]);
         assert_eq!(requests[1].proof_type, ProofType::SnarkPlonk);
         assert!(requests[1].tee_kinds.is_empty());
         assert_eq!(requests[1].zk_vms, vec![ZkVm::Sp1]);
@@ -718,7 +727,7 @@ mod tests {
     #[test]
     fn config_builds_nitro_claim_request() {
         let config = JobDiscoveryConfig::tee("worker-a", vec![TeeKind::AwsNitro])
-            .with_protocol_version(9)
+            .with_protocol_versions(vec![9])
             .with_lock_duration_seconds(45);
 
         let requests = config.get_next_proof_requests().collect::<Vec<_>>();
@@ -726,11 +735,28 @@ mod tests {
         let request = &requests[0];
 
         assert_eq!(request.worker_id, "worker-a");
-        assert_eq!(request.protocol_version, 9);
+        assert_eq!(request.protocol_versions, vec![9]);
         assert_eq!(request.proof_type, ProofType::Tee);
         assert_eq!(request.tee_kinds, vec![TeeKind::AwsNitro]);
         assert!(request.zk_vms.is_empty());
         assert_eq!(request.lock_duration_seconds, 45);
+    }
+
+    #[test]
+    fn config_normalizes_announced_protocol_versions() {
+        let config = JobDiscoveryConfig::tee("worker-a", vec![TeeKind::AwsNitro]);
+
+        assert_eq!(config.protocol_versions(), [0], "default announces legacy only");
+        assert_eq!(
+            config.clone().with_protocol_versions(vec![3, 1, 3]).protocol_versions(),
+            [1, 3],
+            "duplicates are collapsed and order is stable"
+        );
+        assert_eq!(
+            config.with_protocol_versions(Vec::new()).protocol_versions(),
+            [0],
+            "an empty list must not claim everything or nothing"
+        );
     }
 
     #[tokio::test]

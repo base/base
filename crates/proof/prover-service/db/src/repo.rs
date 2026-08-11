@@ -582,6 +582,12 @@ impl ProofRequestRepo {
     pub async fn claim_next_proof_job(&self, req: ClaimProofJob) -> Result<Option<ProofJob>> {
         let lock_id = Uuid::new_v4();
         let sql = claim_query(req.api_proof_type);
+        // An empty announcement is a pre-versioning worker, which only ever produced version 0.
+        let protocol_versions: Vec<i64> = if req.protocol_versions.is_empty() {
+            vec![0]
+        } else {
+            req.protocol_versions.iter().copied().map(i64::from).collect()
+        };
 
         let row = match req.api_proof_type {
             ApiProofType::Tee => {
@@ -593,7 +599,7 @@ impl ProofRequestRepo {
                     .bind(i64::from(req.lock_duration_seconds))
                     .bind(req.api_proof_type.as_str())
                     .bind(&tee_kinds)
-                    .bind(i64::from(req.protocol_version))
+                    .bind(&protocol_versions)
                     .bind(i64::from(req.max_attempts))
                     .fetch_optional(&self.pool)
                     .await?
@@ -615,7 +621,7 @@ impl ProofRequestRepo {
                     .bind(req.api_proof_type.as_str())
                     .bind(&zk_vms)
                     .bind(&zk_backends)
-                    .bind(i64::from(req.protocol_version))
+                    .bind(&protocol_versions)
                     .bind(i64::from(req.max_attempts))
                     .fetch_optional(&self.pool)
                     .await?
@@ -2094,6 +2100,16 @@ const PROOF_JOB_RETURNING_COLUMNS: &str = "id, COALESCE(session_id, id::text) AS
 /// hardcoded as literals in each variant rather than interpolated from a value,
 /// so no caller-derived string can ever reach the SQL as a column name. The only
 /// interpolated token is the fixed [`PROOF_JOB_RETURNING_COLUMNS`] constant.
+///
+/// `request_protocol_version = ANY(...)` lets one worker fleet serve several protocol versions,
+/// which matters because the challenger's capability fingerprint mixes TEE and ZK commitments: a
+/// ZK-only program rotation mints a new version for an otherwise unchanged TEE image, and exact
+/// match would force a whole new Nitro fleet (and a fresh enclave registration) to serve it.
+///
+// ponytail: single-element arrays keep the `idx_proof_requests_*_job_claim` index scan; multi-
+// element arrays may add a sort for `ORDER BY start_block_number`. Queue depth is small enough
+// that this is not worth optimizing. If it ever is, split into a per-version `UNION ALL` with
+// `LIMIT 1` per branch and take the minimum.
 fn claim_query(api_proof_type: ApiProofType) -> String {
     let columns = PROOF_JOB_RETURNING_COLUMNS;
     match api_proof_type {
@@ -2112,7 +2128,7 @@ fn claim_query(api_proof_type: ApiProofType) -> String {
                 SELECT id FROM proof_requests
                 WHERE api_proof_type = $4
                   AND tee_kind = ANY($5::text[])
-                  AND request_protocol_version = $6
+                  AND request_protocol_version = ANY($6::bigint[])
                   AND (
                       job_status = 'PENDING'
                       OR (job_status = 'CLAIMED' AND lock_expires_at < NOW() AND attempt < $7)
@@ -2140,7 +2156,7 @@ fn claim_query(api_proof_type: ApiProofType) -> String {
                 WHERE api_proof_type = $4
                   AND zk_vm = ANY($5::text[])
                   AND COALESCE(zk_backend, 'cluster') = ANY($6::text[])
-                  AND request_protocol_version = $7
+                  AND request_protocol_version = ANY($7::bigint[])
                   AND (
                       job_status = 'PENDING'
                       OR (job_status = 'CLAIMED' AND lock_expires_at < NOW() AND attempt < $8)

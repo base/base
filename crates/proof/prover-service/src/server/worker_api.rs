@@ -80,7 +80,7 @@ impl ProverServiceServer {
     ) -> RpcResult<GetNextProofResponse> {
         let claim = ClaimProofJob {
             worker_id: request.worker_id,
-            protocol_version: request.protocol_version,
+            protocol_versions: request.protocol_versions,
             api_proof_type: request.proof_type.into(),
             tee_kinds: request.tee_kinds.into_iter().map(Into::into).collect(),
             zk_vms: request.zk_vms.into_iter().map(Into::into).collect(),

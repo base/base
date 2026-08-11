@@ -54,9 +54,14 @@ struct WorkerArgs {
     #[arg(long, env = "PROVER_WORKER_ID")]
     worker_id: Option<String>,
 
-    /// Proof protocol version claimed by this worker deployment.
-    #[arg(long, env = "PROVER_PROTOCOL_VERSION")]
-    protocol_version: u32,
+    /// Proof protocol versions claimed by this worker deployment.
+    ///
+    /// Repeatable or comma-separated. A fleet serves every version its embedded range and
+    /// aggregation programs satisfy, which is usually more than one: the challenger fingerprint
+    /// mixes TEE and ZK commitments, so a TEE-only image rotation mints a new version for
+    /// unchanged ZK programs.
+    #[arg(long, env = "PROVER_PROTOCOL_VERSION", value_delimiter = ',', num_args = 1..)]
+    protocol_version: Vec<u32>,
 
     /// Base consensus node RPC URL. Required for dry-run, cluster, or network backends.
     #[arg(long, env = "BASE_CONSENSUS_ADDRESS")]
@@ -239,7 +244,7 @@ impl WorkerArgs {
         let worker_id =
             args.worker_id.clone().unwrap_or_else(|| format!("zk-host-{}", Uuid::new_v4()));
         let host_config = ZkHostConfig::sp1(worker_id.clone())
-            .with_protocol_version(args.protocol_version)
+            .with_protocol_versions(args.protocol_version.clone())
             .with_job_discovery_poll_interval(Duration::from_millis(
                 args.job_discovery_poll_interval_ms,
             ))
@@ -250,7 +255,7 @@ impl WorkerArgs {
 
         info!(
             worker_id = %worker_id,
-            protocol_version = args.protocol_version,
+            protocol_versions = ?args.protocol_version,
             prover_service_endpoint = %args.prover_service_endpoint,
             ?backends,
             "starting zk prover host worker"

@@ -101,25 +101,23 @@ impl RunningServer {
 /// Claim every currently-claimable compressed job under a long lease so the test
 /// starts from a known-empty compressed queue, independent of leftover rows.
 async fn drain_claimable_compressed_jobs(repo: &ProofRequestRepo) {
-    for protocol_version in [0, 1] {
-        let drain = ClaimProofJob {
-            worker_id: "worker-api-e2e-drain".to_owned(),
-            protocol_version,
-            api_proof_type: ApiProofType::Compressed,
-            tee_kinds: Vec::new(),
-            zk_vms: vec![ZkVmKind::Sp1],
-            zk_backends: vec![ZkBackend::Cluster],
-            lock_duration_seconds: 3600,
-            max_attempts: u32::MAX,
-        };
+    let drain = ClaimProofJob {
+        worker_id: "worker-api-e2e-drain".to_owned(),
+        protocol_versions: vec![0, 1],
+        api_proof_type: ApiProofType::Compressed,
+        tee_kinds: Vec::new(),
+        zk_vms: vec![ZkVmKind::Sp1],
+        zk_backends: vec![ZkBackend::Cluster],
+        lock_duration_seconds: 3600,
+        max_attempts: u32::MAX,
+    };
 
-        while repo
-            .claim_next_proof_job(drain.clone())
-            .await
-            .expect("drain claim should not error")
-            .is_some()
-        {}
-    }
+    while repo
+        .claim_next_proof_job(drain.clone())
+        .await
+        .expect("drain claim should not error")
+        .is_some()
+    {}
 }
 
 fn compressed_request(session_id: &str, start_block_number: u64) -> CreateProofRequest {
@@ -148,7 +146,7 @@ fn worker_claim(worker_id: &str) -> GetNextProofRequest {
         zk_vms: vec![ZkVm::Sp1],
         // Omitted by legacy workers; the server defaults this capability to cluster.
         zk_backends: Vec::new(),
-        protocol_version: 1,
+        protocol_versions: vec![1],
         lock_duration_seconds: 60,
     }
 }
@@ -295,7 +293,7 @@ fn current_prove_request(session_id: &str, start_block_number: u64) -> ProveBloc
 
 fn legacy_worker_claim(worker_id: &str) -> GetNextProofRequest {
     let mut claim = worker_claim(worker_id);
-    claim.protocol_version = 0;
+    claim.protocol_versions = vec![0];
     claim
 }
 

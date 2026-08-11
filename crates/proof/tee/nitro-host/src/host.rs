@@ -41,10 +41,10 @@ impl<Client> NitroHost<Client> {
         self
     }
 
-    /// Sets the proof protocol version announced by this worker.
+    /// Sets the proof protocol versions announced by this worker.
     #[must_use]
-    pub fn with_protocol_version(mut self, protocol_version: u32) -> Self {
-        self.discovery = self.discovery.with_protocol_version(protocol_version);
+    pub fn with_protocol_versions(mut self, protocol_versions: impl Into<Vec<u32>>) -> Self {
+        self.discovery = self.discovery.with_protocol_versions(protocol_versions);
         self
     }
 

@@ -394,9 +394,14 @@ pub struct GetNextProofRequest {
     /// ZK proving backends this worker can execute for ZK proofs.
     #[serde(default)]
     pub zk_backends: Vec<ZkBackend>,
-    /// Worker protocol version used to gate incompatible jobs. Omission defaults to `0`.
+    /// Worker protocol versions used to gate incompatible jobs.
+    ///
+    /// A worker announces every version it can serve, because one artifact set is usually valid
+    /// for more than one: the challenger's capability fingerprint mixes TEE and ZK commitments, so
+    /// a ZK-only program rotation mints a new version even when the TEE image is unchanged.
+    /// Omission or an empty list means `[0]`, matching pre-versioning workers.
     #[serde(default)]
-    pub protocol_version: u32,
+    pub protocol_versions: Vec<u32>,
     /// Requested lock duration in seconds. Zero uses the server default.
     pub lock_duration_seconds: u32,
 }
@@ -950,7 +955,7 @@ mod tests {
             tee_kinds: Vec::new(),
             zk_vms: vec![ZkVm::Sp1],
             zk_backends: vec![ZkBackend::Cluster, ZkBackend::DryRun],
-            protocol_version: 1,
+            protocol_versions: vec![1, 2],
             lock_duration_seconds: 30,
         };
 
@@ -964,7 +969,7 @@ mod tests {
                 "tee_kinds": [],
                 "zk_vms": ["sp1"],
                 "zk_backends": ["cluster", "dry_run"],
-                "protocol_version": 1,
+                "protocol_versions": [1, 2],
                 "lock_duration_seconds": 30
             })
         );
@@ -982,7 +987,7 @@ mod tests {
         assert_eq!(request.tee_kinds, Vec::new());
         assert_eq!(request.zk_vms, Vec::new());
         assert_eq!(request.zk_backends, Vec::new());
-        assert_eq!(request.protocol_version, 0);
+        assert_eq!(request.protocol_versions, Vec::<u32>::new());
     }
 
     #[test]

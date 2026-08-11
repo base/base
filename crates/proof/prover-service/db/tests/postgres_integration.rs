@@ -373,7 +373,7 @@ async fn test_legacy_rollout_pre_migration_row_claimable_only_by_legacy_worker()
 
     // A v0 (legacy) worker can claim it.
     let mut legacy = compressed_claim("legacy-worker", 3);
-    legacy.protocol_version = 0;
+    legacy.protocol_versions = vec![0];
     let legacy_job = repo
         .claim_next_proof_job(legacy)
         .await
@@ -1602,7 +1602,7 @@ fn claim_job(
 ) -> ClaimProofJob {
     ClaimProofJob {
         worker_id: worker_id.to_owned(),
-        protocol_version: 1,
+        protocol_versions: vec![1],
         api_proof_type,
         tee_kinds,
         zk_vms,
@@ -1631,31 +1631,27 @@ fn compressed_claim(worker_id: &str, max_attempts: u32) -> ClaimProofJob {
 /// an unexpired lock (rather than completing them) keeps this independent of the
 /// worker submit API.
 async fn drain_claimable_tee_jobs(repo: &ProofRequestRepo) {
-    for protocol_version in [0, 1] {
-        let mut claim = tee_claim("drain-worker", u32::MAX);
-        claim.protocol_version = protocol_version;
-        while repo
-            .claim_next_proof_job(claim.clone())
-            .await
-            .expect("drain claim should not error")
-            .is_some()
-        {}
-    }
+    let mut claim = tee_claim("drain-worker", u32::MAX);
+    claim.protocol_versions = vec![0, 1];
+    while repo
+        .claim_next_proof_job(claim.clone())
+        .await
+        .expect("drain claim should not error")
+        .is_some()
+    {}
 }
 
 /// Drain every currently claimable compressed job for tests that need to claim a
 /// freshly inserted ZK request deterministically.
 async fn drain_claimable_compressed_jobs(repo: &ProofRequestRepo) {
-    for protocol_version in [0, 1] {
-        let mut claim = compressed_claim("drain-zk-worker", u32::MAX);
-        claim.protocol_version = protocol_version;
-        while repo
-            .claim_next_proof_job(claim.clone())
-            .await
-            .expect("drain claim should not error")
-            .is_some()
-        {}
-    }
+    let mut claim = compressed_claim("drain-zk-worker", u32::MAX);
+    claim.protocol_versions = vec![0, 1];
+    while repo
+        .claim_next_proof_job(claim.clone())
+        .await
+        .expect("drain claim should not error")
+        .is_some()
+    {}
 }
 
 /// Force a job's lock to appear expired so it becomes reclaimable.
@@ -1799,13 +1795,39 @@ async fn test_claim_next_proof_job_matches_request_protocol_version() {
     );
 
     let mut legacy = compressed_claim("legacy-worker", 3);
-    legacy.protocol_version = 0;
+    legacy.protocol_versions = vec![0];
     let legacy_job = repo
         .claim_next_proof_job(legacy)
         .await
         .unwrap()
         .expect("a legacy worker should claim the legacy job");
     assert_eq!(legacy_job.id, legacy_id);
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_claim_next_proof_job_matches_any_announced_protocol_version() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool);
+
+    drain_claimable_compressed_jobs(&repo).await;
+    let mut legacy_request = compressed_request();
+    legacy_request.request_payload.protocol_version = 0;
+    let legacy_id = repo.create(legacy_request).await.unwrap();
+    let current_id = repo.create(compressed_request()).await.unwrap();
+
+    let mut multi = compressed_claim("multi-version-worker", 3);
+    multi.protocol_versions = vec![0, 1];
+
+    let mut claimed = Vec::new();
+    while let Some(job) = repo.claim_next_proof_job(multi.clone()).await.unwrap() {
+        claimed.push(job.id);
+    }
+    claimed.sort();
+
+    let mut expected = vec![legacy_id, current_id];
+    expected.sort();
+    assert_eq!(claimed, expected, "a worker announcing [0, 1] should claim both versions");
 }
 
 #[tokio::test]
