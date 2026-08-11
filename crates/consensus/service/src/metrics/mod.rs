@@ -16,6 +16,14 @@ base_metrics::define_metrics! {
     #[label(active)]
     #[label(recovery)]
     sequencer_state: gauge,
+    #[describe("Sequencer L1 origin RPC calls by method and outcome")]
+    #[label(name = "method", default = ["block_by_hash", "block_by_number"])]
+    #[label(name = "outcome", default = ["success", "not_found", "timeout", "error"])]
+    sequencer_l1_origin_rpc_calls_total: counter,
+    #[describe("Wall-clock duration of sequencer L1 origin RPC calls in seconds")]
+    #[label(name = "method", default = ["block_by_hash", "block_by_number"])]
+    #[label(name = "outcome", default = ["success", "not_found", "timeout", "error"])]
+    sequencer_l1_origin_rpc_duration_seconds: histogram,
     #[describe("Duration of the sequencer attributes builder")]
     sequencer_attributes_build_duration: histogram,
     #[describe("Duration of the sequencer block building start task")]

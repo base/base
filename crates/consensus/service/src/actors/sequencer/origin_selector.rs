@@ -1,6 +1,6 @@
 //! The [`L1OriginSelector`].
 
-use std::{fmt::Debug, sync::Arc};
+use std::{fmt::Debug, sync::Arc, time::Instant};
 
 use alloy_primitives::B256;
 use alloy_provider::{Provider, RootProvider};
@@ -9,6 +9,27 @@ use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_protocol::{BlockInfo, L2BlockInfo};
 use tokio::sync::watch;
+
+use crate::Metrics;
+
+macro_rules! rpc_outcome {
+    ($result:expr) => {
+        match $result {
+            Ok(Some(_)) => "success",
+            Ok(None) => "not_found",
+            Err(error)
+                if error
+                    .as_transport_err()
+                    .and_then(|error| error.as_custom())
+                    .and_then(|error| error.downcast_ref::<reqwest::Error>())
+                    .is_some_and(reqwest::Error::is_timeout) =>
+            {
+                "timeout"
+            }
+            Err(_) => "error",
+        }
+    };
+}
 
 /// Trait for selecting the next L1 origin block for sequencing.
 ///
@@ -251,39 +272,69 @@ impl L1OriginSelectorProvider for DelayedL1OriginSelectorProvider {
         hash: B256,
     ) -> Result<Option<BlockInfo>, L1OriginSelectorError> {
         // By-hash lookups are not delayed, as they're direct indexes.
-        Ok(Provider::get_block_by_hash(&self.inner, hash).await?.map(Into::into))
+        let start = Instant::now();
+        let result = Provider::get_block_by_hash(&self.inner, hash).await;
+        let outcome = rpc_outcome!(&result);
+        Metrics::sequencer_l1_origin_rpc_duration_seconds("block_by_hash", outcome)
+            .record(start.elapsed());
+        Metrics::sequencer_l1_origin_rpc_calls_total("block_by_hash", outcome).increment(1);
+
+        Ok(result?.map(Into::into))
     }
 
     async fn get_block_by_number(
         &self,
         number: u64,
     ) -> Result<Option<BlockInfo>, L1OriginSelectorError> {
-        let Some(l1_head) = *self.l1_head.borrow() else {
-            // If the L1 head is not available, do not enforce a confirmation delay.
-            return Ok(Provider::get_block_by_number(&self.inner, number.into())
-                .await?
-                .map(Into::into));
-        };
-
-        if number == 0
-            || self.confirmation_depth == 0
-            || number + self.confirmation_depth <= l1_head.number
+        if let Some(l1_head) = *self.l1_head.borrow()
+            && number != 0
+            && self.confirmation_depth != 0
+            && number + self.confirmation_depth > l1_head.number
         {
-            Ok(Provider::get_block_by_number(&self.inner, number.into()).await?.map(Into::into))
-        } else {
-            Ok(None)
+            return Ok(None);
         }
+
+        let start = Instant::now();
+        let result = Provider::get_block_by_number(&self.inner, number.into()).await;
+        let outcome = rpc_outcome!(&result);
+        Metrics::sequencer_l1_origin_rpc_duration_seconds("block_by_number", outcome)
+            .record(start.elapsed());
+        Metrics::sequencer_l1_origin_rpc_calls_total("block_by_number", outcome).increment(1);
+
+        Ok(result?.map(Into::into))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+    #[cfg(feature = "metrics")]
+    use std::time::Duration;
 
     use alloy_eips::NumHash;
+    #[cfg(feature = "metrics")]
+    use alloy_rpc_client::RpcClient;
+    #[cfg(feature = "metrics")]
+    use httpmock::prelude::*;
+    #[cfg(feature = "metrics")]
+    use metrics_util::{
+        CompositeKey, MetricKind,
+        debugging::{DebugValue, DebuggingRecorder},
+    };
+    #[cfg(feature = "metrics")]
+    use reqwest::Client;
     use rstest::rstest;
 
     use super::*;
+
+    #[cfg(feature = "metrics")]
+    type SnapshotEntry =
+        (CompositeKey, Option<metrics::Unit>, Option<metrics::SharedString>, DebugValue);
+
+    #[cfg(feature = "metrics")]
+    const REQUEST_TIMEOUT: Duration = Duration::from_millis(25);
+    #[cfg(feature = "metrics")]
+    const RESPONSE_DELAY: Duration = Duration::from_millis(250);
 
     /// A mock [`OriginSelectorProvider`] with a local set of [`BlockInfo`]s available.
     #[derive(Default, Debug, Clone)]
@@ -325,6 +376,196 @@ mod tests {
 
             Ok(self.blocks.iter().find(|b| b.number == number).copied())
         }
+    }
+
+    #[cfg(feature = "metrics")]
+    fn test_provider(
+        server: &MockServer,
+        l1_head: Option<BlockInfo>,
+        confirmation_depth: u64,
+    ) -> DelayedL1OriginSelectorProvider {
+        let client = Client::builder()
+            .timeout(REQUEST_TIMEOUT)
+            .build()
+            .expect("test HTTP client must build");
+        let rpc_url = server.url("/").parse().expect("mock server URL must parse");
+        let provider = RootProvider::new(RpcClient::new_http_with_client(client, rpc_url));
+        let (_, l1_head_rx) = watch::channel(l1_head);
+        DelayedL1OriginSelectorProvider::new(provider, l1_head_rx, confirmation_depth)
+    }
+
+    #[cfg(feature = "metrics")]
+    fn metric<'a>(
+        snapshot: &'a [SnapshotEntry],
+        kind: MetricKind,
+        name: &str,
+        method: &str,
+        outcome: &str,
+    ) -> Option<&'a DebugValue> {
+        snapshot
+            .iter()
+            .find(|(key, _, _, _)| {
+                key.kind() == kind
+                    && key.key().name() == name
+                    && key
+                        .key()
+                        .labels()
+                        .any(|label| label.key() == "method" && label.value() == method)
+                    && key
+                        .key()
+                        .labels()
+                        .any(|label| label.key() == "outcome" && label.value() == outcome)
+            })
+            .map(|(_, _, _, value)| value)
+    }
+
+    #[cfg(feature = "metrics")]
+    fn assert_observation(snapshot: &[SnapshotEntry], method: &str, outcome: &str) {
+        assert_eq!(
+            metric(
+                snapshot,
+                MetricKind::Counter,
+                "base_node.sequencer_l1_origin_rpc_calls_total",
+                method,
+                outcome,
+            ),
+            Some(&DebugValue::Counter(1)),
+        );
+        match metric(
+            snapshot,
+            MetricKind::Histogram,
+            "base_node.sequencer_l1_origin_rpc_duration_seconds",
+            method,
+            outcome,
+        ) {
+            Some(DebugValue::Histogram(values)) => {
+                assert_eq!(values.len(), 1);
+                assert!(values[0].into_inner() > 0.0);
+            }
+            value => panic!("expected one duration observation, got {value:?}"),
+        }
+    }
+
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn records_block_by_hash_timeouts() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+
+        metrics::with_local_recorder(&recorder, || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("test runtime must build")
+                .block_on(async {
+                    let server = MockServer::start_async().await;
+                    let mock = server
+                        .mock_async(|when, then| {
+                            when.method(POST).path("/");
+                            then.status(200).delay(RESPONSE_DELAY);
+                        })
+                        .await;
+                    let provider = test_provider(&server, None, 0);
+
+                    assert!(provider.get_block_by_hash(B256::ZERO).await.is_err());
+                    mock.assert_calls_async(1).await;
+                });
+        });
+
+        assert_observation(&snapshotter.snapshot().into_vec(), "block_by_hash", "timeout");
+    }
+
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn records_block_by_number_timeouts() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+
+        metrics::with_local_recorder(&recorder, || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("test runtime must build")
+                .block_on(async {
+                    let server = MockServer::start_async().await;
+                    let mock = server
+                        .mock_async(|when, then| {
+                            when.method(POST).path("/");
+                            then.status(200).delay(RESPONSE_DELAY);
+                        })
+                        .await;
+                    let provider = test_provider(
+                        &server,
+                        Some(BlockInfo { number: 10, ..Default::default() }),
+                        0,
+                    );
+
+                    assert!(provider.get_block_by_number(1).await.is_err());
+                    mock.assert_calls_async(1).await;
+                });
+        });
+
+        assert_observation(&snapshotter.snapshot().into_vec(), "block_by_number", "timeout");
+    }
+
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn records_not_found_responses() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+
+        metrics::with_local_recorder(&recorder, || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("test runtime must build")
+                .block_on(async {
+                    let server = MockServer::start_async().await;
+                    server
+                        .mock_async(|when, then| {
+                            when.method(POST).path("/");
+                            then.status(200)
+                                .header("content-type", "application/json")
+                                .body(r#"{"jsonrpc":"2.0","id":0,"result":null}"#);
+                        })
+                        .await;
+                    let provider = test_provider(&server, None, 0);
+
+                    assert_eq!(provider.get_block_by_hash(B256::ZERO).await.unwrap(), None);
+                });
+        });
+
+        assert_observation(&snapshotter.snapshot().into_vec(), "block_by_hash", "not_found");
+    }
+
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn skips_metrics_when_no_number_request_is_made() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+
+        metrics::with_local_recorder(&recorder, || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("test runtime must build")
+                .block_on(async {
+                    let server = MockServer::start_async().await;
+                    let provider = test_provider(
+                        &server,
+                        Some(BlockInfo { number: 1, ..Default::default() }),
+                        1,
+                    );
+
+                    assert_eq!(provider.get_block_by_number(1).await.unwrap(), None);
+                });
+        });
+
+        let snapshot = snapshotter.snapshot().into_vec();
+        assert!(snapshot.iter().all(|(key, _, _, _)| {
+            key.key().name() != "base_node.sequencer_l1_origin_rpc_calls_total"
+                && key.key().name() != "base_node.sequencer_l1_origin_rpc_duration_seconds"
+        }));
     }
 
     #[tokio::test]
