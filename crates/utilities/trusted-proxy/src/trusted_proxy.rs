@@ -73,12 +73,15 @@ impl TrustedProxyConfig {
                 value: String::from_utf8_lossy(value.as_bytes()).into_owned(),
             })?;
             for entry in value.split(',').rev().map(str::trim).filter(|entry| !entry.is_empty()) {
-                let ip = entry.parse::<IpAddr>().map(|ip| ip.to_canonical()).map_err(|_| {
-                    ForwardedClientIpError::InvalidIp {
+                let Ok(ip) = entry.parse::<IpAddr>().map(|ip| ip.to_canonical()) else {
+                    if let Some(trusted) = outermost_trusted {
+                        return Ok(trusted);
+                    }
+                    return Err(ForwardedClientIpError::InvalidIp {
                         header: header.clone(),
                         value: entry.to_string(),
-                    }
-                })?;
+                    });
+                };
                 if self.is_trusted_proxy(ip) {
                     outermost_trusted = Some(ip);
                     continue;
@@ -313,5 +316,16 @@ mod tests {
 
         headers.insert("x-forwarded-for", HeaderValue::from_static("::ffff:203.0.113.10"));
         assert_eq!(config.client_ip(mapped_proxy, &headers), client);
+    }
+
+    #[test]
+    fn invalid_entry_left_of_trusted_hops_still_uses_outermost() {
+        let config = xff_config(vec!["10.0.0.0/8"]);
+        let outermost = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", HeaderValue::from_static("garbage, 10.0.0.1, 10.0.0.2"));
+
+        assert_eq!(config.forwarded_client_ip(&headers).unwrap(), outermost);
     }
 }
