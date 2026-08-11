@@ -61,7 +61,10 @@ pub trait OriginSelector: Debug + Send + Sync {
 /// current L2 unsafe head's sequence epoch.
 ///
 /// Next-origin lookups run in a self-aborting background task and are adopted only if they still
-/// extend the current origin under the same observed L1 chain view.
+/// extend the current origin under the same observed L1 chain view. While sequencer drift permits,
+/// an unfinished lookup does not prevent building on the current origin. Once drift is exceeded,
+/// selection returns [`L1OriginSelectorError::NotEnoughData`] until the lookup is ready rather than
+/// awaiting speculative work on the build path.
 #[derive(Debug)]
 pub struct L1OriginSelector<P: L1OriginSelectorProvider> {
     /// The [`RollupConfig`].
@@ -157,6 +160,9 @@ impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
             return Ok(current);
         }
 
+        // An in-flight background fetch is intentionally not exposed as `next`. Past the drift
+        // limit, the caller must defer the build until the verified successor becomes ready rather
+        // than continue building on an expired origin.
         next.copied().ok_or(L1OriginSelectorError::NotEnoughData(current))
     }
 
@@ -266,7 +272,11 @@ impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
                     adopted => adopted,
                 }
             }
-            in_flight @ NextSlot::InFlight { .. } => in_flight,
+            in_flight @ NextSlot::InFlight { .. } => {
+                // Preserve the sole outstanding fetch without awaiting it or spawning another.
+                // This keeps speculative L1 latency off the block-building path.
+                in_flight
+            }
             NextSlot::Idle | NextSlot::Ready { .. } => {
                 self.spawn_next(current_hash, current_number, chain_view)
             }
@@ -341,7 +351,7 @@ pub enum L1OriginSelectorError {
     /// An error produced by the [`alloy_provider::RootProvider`].
     #[error(transparent)]
     Provider(#[from] RpcError<TransportErrorKind>),
-    /// The L1 provider does not have enough data to select the next L1 origin block.
+    /// Sequencer drift requires advancing, but no verified next L1 origin is ready yet.
     #[error(
         "Waiting for more L1 data to be available to select the next L1 origin block. Current L1 origin: {0:?}"
     )]

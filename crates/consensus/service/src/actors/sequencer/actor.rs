@@ -27,7 +27,7 @@ use crate::{
         engine::{EngineClientError, EngineClientResult},
         sequencer::{
             BuildPipelineState, ScheduledTicker, ShadowSequencingState,
-            build::{PayloadBuilder, UnsealedPayloadHandle},
+            build::{BuildOutcome, PayloadBuilder, UnsealedPayloadHandle},
             conductor::Conductor,
             error::SequencerActorError,
             l1_origin::OriginSelector,
@@ -281,10 +281,11 @@ where
         pipeline.pending_build_parent = None;
         let canonical_head = self.engine_client.get_unsafe_head().await?;
         *shadow = Some(ShadowSequencingState::new(canonical_head)?);
-        pipeline.next_payload_to_seal =
-            if self.is_active { self.builder.build_on(canonical_head).await? } else { None };
-        if self.is_active && pipeline.next_payload_to_seal.is_none() {
-            build_ticker.reset_immediately();
+        if self.is_active {
+            let outcome = self.builder.build_on(canonical_head).await?;
+            Self::apply_eager_build_outcome(outcome, pipeline, build_ticker);
+        } else {
+            pipeline.next_payload_to_seal = None;
         }
         Ok(())
     }
@@ -370,6 +371,7 @@ where
             // Clear the previous completion timestamp so the first block after a stop->start
             // cycle does not record the entire idle period as sequencer_block_to_block_duration.
             pipeline.clear_for_active_transition();
+            build_ticker.reset_l1_origin_retry_budget();
             build_ticker.reset_immediately();
         }
 
@@ -400,10 +402,8 @@ where
                     .cycle
                     .reconcile(head)?;
                 if self.is_active {
-                    pipeline.next_payload_to_seal = self.builder.build_on(head).await?;
-                    if pipeline.next_payload_to_seal.is_none() {
-                        build_ticker.reset_immediately();
-                    }
+                    let outcome = self.builder.build_on(head).await?;
+                    Self::apply_eager_build_outcome(outcome, pipeline, build_ticker);
                 }
             }
             // The gate is not ready until every canonical P2P payload has arrived. Back off one
@@ -479,6 +479,57 @@ where
         Ok(())
     }
 
+    /// Stores a build started outside the normal ticker path, scheduling only outcomes that need
+    /// another attempt. A ready payload keeps the ticker target already owned by the caller.
+    fn apply_eager_build_outcome(
+        outcome: BuildOutcome<UnsealedPayloadHandle>,
+        pipeline: &mut BuildPipelineState,
+        build_ticker: &mut ScheduledTicker,
+    ) {
+        match outcome {
+            BuildOutcome::Ready(payload) => {
+                build_ticker.reset_l1_origin_retry_budget();
+                pipeline.next_payload_to_seal = Some(payload);
+            }
+            BuildOutcome::Deferred => {
+                build_ticker.reset_l1_origin_retry_budget();
+                pipeline.next_payload_to_seal = None;
+                build_ticker.reset_immediately();
+            }
+            BuildOutcome::AwaitingL1Origin => {
+                pipeline.next_payload_to_seal = None;
+                build_ticker.schedule_l1_origin_retry();
+            }
+        }
+    }
+
+    /// Stores and schedules the result of a ticker-driven build attempt.
+    fn schedule_build_outcome(
+        &self,
+        outcome: BuildOutcome<UnsealedPayloadHandle>,
+        pipeline: &mut BuildPipelineState,
+        build_ticker: &mut ScheduledTicker,
+    ) {
+        match outcome {
+            BuildOutcome::Ready(payload) => {
+                let target =
+                    self.block_seal_target(payload.block_number(), pipeline.last_seal_duration);
+                build_ticker.reset_l1_origin_retry_budget();
+                pipeline.next_payload_to_seal = Some(payload);
+                build_ticker.schedule_after_build(Some(target));
+            }
+            BuildOutcome::Deferred => {
+                build_ticker.reset_l1_origin_retry_budget();
+                pipeline.next_payload_to_seal = None;
+                build_ticker.schedule_after_build(None);
+            }
+            BuildOutcome::AwaitingL1Origin => {
+                pipeline.next_payload_to_seal = None;
+                build_ticker.schedule_l1_origin_retry();
+            }
+        }
+    }
+
     /// Starts building the queued child on its acknowledged parent. Does not start this build
     /// before its inserted parent's timestamp: if it is already past, the ticker is immediately
     /// runnable.
@@ -488,11 +539,8 @@ where
         build_ticker: &mut ScheduledTicker,
     ) -> Result<(), SequencerActorError> {
         let parent = pipeline.pending_build_parent.take().expect("caller checked Some");
-        pipeline.next_payload_to_seal = self.builder.build_on(parent).await?;
-        let target = pipeline.next_payload_to_seal.as_ref().map(|payload| {
-            self.block_seal_target(payload.block_number(), pipeline.last_seal_duration)
-        });
-        build_ticker.schedule_after_build(target);
+        let outcome = self.builder.build_on(parent).await?;
+        self.schedule_build_outcome(outcome, pipeline, build_ticker);
         Ok(())
     }
 
@@ -518,11 +566,8 @@ where
             None => {
                 // Stale build or non-fatal seal error: rebuild immediately on the current unsafe
                 // head.
-                pipeline.next_payload_to_seal = self.builder.build().await?;
-                let target = pipeline.next_payload_to_seal.as_ref().map(|payload| {
-                    self.block_seal_target(payload.block_number(), pipeline.last_seal_duration)
-                });
-                build_ticker.schedule_after_build(target);
+                let outcome = self.builder.build().await?;
+                self.schedule_build_outcome(outcome, pipeline, build_ticker);
             }
         }
         Ok(())
@@ -534,11 +579,8 @@ where
         pipeline: &mut BuildPipelineState,
         build_ticker: &mut ScheduledTicker,
     ) -> Result<(), SequencerActorError> {
-        pipeline.next_payload_to_seal = self.builder.build().await?;
-        let target = pipeline.next_payload_to_seal.as_ref().map(|payload| {
-            self.block_seal_target(payload.block_number(), pipeline.last_seal_duration)
-        });
-        build_ticker.schedule_after_build(target);
+        let outcome = self.builder.build().await?;
+        self.schedule_build_outcome(outcome, pipeline, build_ticker);
         Ok(())
     }
 

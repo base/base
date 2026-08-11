@@ -1,7 +1,7 @@
 //! The `SequencerActor` and its components.
 
 mod build;
-pub use build::{PayloadBuilder, UnsealedPayloadHandle};
+pub use build::{BuildOutcome, PayloadBuilder, UnsealedPayloadHandle};
 
 mod config;
 pub use config::SequencerConfig;
