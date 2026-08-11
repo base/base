@@ -23,7 +23,7 @@ use tracing::{debug, info};
 
 use crate::{
     cl_prober::{ClReachabilityProber, Libp2pProbeOutcome, Libp2pProbeStage, Libp2pProbeTarget},
-    prober::{ReachabilityProber, RlpxProbeOutcome, RlpxProbeStage, RlpxProbeTarget},
+    el_prober::{ReachabilityProber, RlpxProbeOutcome, RlpxProbeStage, RlpxProbeTarget},
 };
 
 /// HTTP path for execution-layer P2P reachability checks.

@@ -10,10 +10,10 @@ pub use p2p::{
     P2pRoutes, P2pState,
 };
 
-mod prober;
+mod el_prober;
 #[cfg(test)]
-pub use prober::MockReachabilityProber;
-pub use prober::{
+pub use el_prober::MockReachabilityProber;
+pub use el_prober::{
     RLPX_PROBE_TIMEOUT, ReachabilityProber, RlpxProbeError, RlpxProbeOutcome, RlpxProbeResult,
     RlpxProbeStage, RlpxProbeTarget, RlpxProber,
 };
