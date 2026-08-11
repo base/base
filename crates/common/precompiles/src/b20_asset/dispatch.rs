@@ -346,6 +346,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
         let encoded: Bytes = match call {
             SC::OPERATOR_ROLE(_) => logic.operator_role().abi_encode().into(),
             SC::WAD_PRECISION(_) => B20AssetStorage::WAD.abi_encode().into(),
+            SC::MAX_UI_MULTIPLIER(_) => logic.max_ui_multiplier()?.abi_encode().into(),
 
             // --- Multiplier reads ---
             SC::multiplier(_) => logic.multiplier(self)?.abi_encode().into(),
@@ -356,6 +357,9 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                 logic.to_scaled_balance(self, c.rawBalance)?.abi_encode().into()
             }
             SC::toRawBalance(c) => logic.to_raw_balance(self, c.scaledBalance)?.abi_encode().into(),
+            // ERC-8056 Conversion extension: aliases of `toScaledBalance` / `toRawBalance`.
+            SC::toUIAmount(c) => logic.to_scaled_balance(self, c.rawAmount)?.abi_encode().into(),
+            SC::fromUIAmount(c) => logic.to_raw_balance(self, c.uiAmount)?.abi_encode().into(),
             SC::scaledBalanceOf(c) => logic.scaled_balance_of(self, c.account)?.abi_encode().into(),
             SC::balanceOfUI(c) => logic.balance_of_ui(self, c.account)?.abi_encode().into(),
             SC::totalSupplyUI(_) => logic.total_supply_ui(self)?.abi_encode().into(),
@@ -378,7 +382,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                 logic.update_multiplier(self, caller, c.newMultiplier, privileged)?;
                 Bytes::new()
             }
-            SC::setUIMultiplier(c) => {
+            SC::updateUIMultiplier(c) => {
                 logic.set_ui_multiplier(
                     self,
                     caller,
@@ -388,7 +392,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                 )?;
                 Bytes::new()
             }
-            SC::cancelScheduledMultiplier(_) => {
+            SC::cancelUIMultiplierUpdate(_) => {
                 logic.cancel_scheduled_multiplier(self, caller, privileged)?;
                 Bytes::new()
             }
@@ -734,7 +738,7 @@ mod tests {
             &mut token,
             ALICE,
             U256::from(1u64),
-            IB20Asset::setUIMultiplierCall { newMultiplier: target, effectiveAt: effective_at }
+            IB20Asset::updateUIMultiplierCall { newMultiplier: target, effectiveAt: effective_at }
                 .abi_encode(),
         )
         .unwrap();
@@ -786,7 +790,7 @@ mod tests {
     #[test]
     fn route_v1_rejects_scheduled_selector_as_unknown() {
         let mut token = make_token();
-        let calldata = IB20Asset::setUIMultiplierCall {
+        let calldata = IB20Asset::updateUIMultiplierCall {
             newMultiplier: B20AssetStorage::WAD,
             effectiveAt: U256::from(2u64),
         }
@@ -810,8 +814,8 @@ mod tests {
     #[test]
     fn route_v1_rejects_scheduled_selector_with_malformed_args_as_unknown() {
         let mut token = make_token();
-        // A valid `setUIMultiplier` selector followed by truncated (non-decodable) arguments.
-        let mut calldata = IB20Asset::setUIMultiplierCall::SELECTOR.to_vec();
+        // A valid `updateUIMultiplier` selector followed by truncated (non-decodable) arguments.
+        let mut calldata = IB20Asset::updateUIMultiplierCall::SELECTOR.to_vec();
         calldata.extend_from_slice(&[0u8; 3]);
         let selector: [u8; 4] = calldata[..4].try_into().unwrap();
         let err = call_asset(&mut token, ALICE, calldata).unwrap_err();

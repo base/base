@@ -13,6 +13,9 @@ use super::L1OriginSelectorError;
 /// L1 [`BlockInfo`] provider interface for the [`super::L1OriginSelector`].
 #[async_trait]
 pub trait L1OriginSelectorProvider: Debug + Sync {
+    /// Returns the latest observed L1 head hash, used to identify the canonical chain view.
+    fn chain_view(&self) -> Option<B256>;
+
     /// Returns a [`BlockInfo`] by its hash.
     async fn get_block_by_hash(
         &self,
@@ -51,6 +54,10 @@ impl DelayedL1OriginSelectorProvider {
 
 #[async_trait]
 impl L1OriginSelectorProvider for DelayedL1OriginSelectorProvider {
+    fn chain_view(&self) -> Option<B256> {
+        self.l1_head.borrow().as_ref().map(|head| head.hash)
+    }
+
     async fn get_block_by_hash(
         &self,
         hash: B256,
@@ -64,10 +71,9 @@ impl L1OriginSelectorProvider for DelayedL1OriginSelectorProvider {
         number: u64,
     ) -> Result<Option<BlockInfo>, L1OriginSelectorError> {
         let Some(l1_head) = *self.l1_head.borrow() else {
-            // If the L1 head is not available, do not enforce a confirmation delay.
-            return Ok(Provider::get_block_by_number(&self.inner, number.into())
-                .await?
-                .map(Into::into));
+            // Without an observed head, a by-number result cannot be tied to a canonical chain
+            // view or checked against the confirmation delay.
+            return Ok(None);
         };
 
         if number == 0
