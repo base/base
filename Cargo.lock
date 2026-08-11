@@ -3155,6 +3155,7 @@ dependencies = [
  "base-builder-cli",
  "base-builder-core",
  "base-builder-metering",
+ "base-builder-multiplex",
  "base-cli-utils",
  "base-execution-cli",
  "base-node-runner",
@@ -3325,6 +3326,44 @@ dependencies = [
  "base-node-runner",
  "jsonrpsee",
  "moka",
+ "tracing",
+]
+
+[[package]]
+name = "base-builder-multiplex"
+version = "0.0.0"
+dependencies = [
+ "alloy-eips 2.2.0",
+ "alloy-primitives",
+ "alloy-provider 2.2.0",
+ "alloy-rpc-types-engine",
+ "base-builder-core",
+ "base-common-consensus",
+ "base-common-network",
+ "base-common-rpc-types-engine",
+ "base-execution-chainspec",
+ "base-execution-evm",
+ "base-execution-payload-builder",
+ "base-execution-rpc",
+ "base-node-core",
+ "base-node-runner",
+ "eyre",
+ "futures",
+ "metrics",
+ "metrics-exporter-prometheus",
+ "reth-basic-payload-builder",
+ "reth-db",
+ "reth-ipc",
+ "reth-node-api",
+ "reth-node-builder",
+ "reth-node-core",
+ "reth-payload-builder",
+ "reth-payload-builder-primitives",
+ "reth-payload-primitives",
+ "reth-provider",
+ "reth-tasks",
+ "thiserror 2.0.19",
+ "tokio",
  "tracing",
 ]
 
