@@ -85,3 +85,26 @@ pub enum RegistrarError {
 
 /// Convenience result alias for registrar operations.
 pub type Result<T> = std::result::Result<T, RegistrarError>;
+
+/// Errors that can occur while parsing a Nitro attestation into a registration plan.
+#[derive(Debug, Error)]
+pub enum PlannerError {
+    /// Underlying attestation parse / format failure from `nitro-verifier`.
+    #[error("attestation parse error: {0}")]
+    Parse(String),
+
+    /// Attestation document is missing fields required for Base registration.
+    #[error("attestation format error: {0}")]
+    Attestation(String),
+
+    /// Certificate parsing or `CertManager` key derivation failed.
+    #[error("certificate error: {0}")]
+    Certificate(String),
+
+    /// Attestation `public_key` cannot be converted to a signer address.
+    #[error("public key error: {0}")]
+    PublicKey(String),
+}
+
+/// Convenience result alias for planner operations.
+pub type PlannerResult<T> = std::result::Result<T, PlannerError>;
