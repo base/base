@@ -5902,6 +5902,7 @@ dependencies = [
  "metrics",
  "reqwest 0.13.4",
  "rustls 0.23.43",
+ "serde_bytes",
  "thiserror 2.0.19",
  "tokio",
  "tokio-util",

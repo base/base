@@ -3,6 +3,7 @@ use std::time::Duration;
 use alloy_primitives::{Address, B256};
 use base_proof_contracts::ContractError;
 use base_proof_tee_nitro_attestation_prover::ProverError;
+use base_proof_tee_nitro_verifier::VerifierError;
 use base_tx_manager::TxManagerError;
 use thiserror::Error;
 
@@ -90,16 +91,16 @@ pub type Result<T> = std::result::Result<T, RegistrarError>;
 #[derive(Debug, Error)]
 pub enum PlannerError {
     /// Underlying attestation parse / format failure from `nitro-verifier`.
-    #[error("attestation parse error: {0}")]
-    Parse(String),
+    #[error("attestation parse error")]
+    Parse(#[from] VerifierError),
 
     /// Attestation document is missing fields required for Base registration.
     #[error("attestation format error: {0}")]
     Attestation(String),
 
     /// Certificate parsing or `CertManager` key derivation failed.
-    #[error("certificate error: {0}")]
-    Certificate(String),
+    #[error("certificate error")]
+    Certificate(#[source] Box<dyn std::error::Error + Send + Sync>),
 
     /// Attestation `public_key` cannot be converted to a signer address.
     #[error("public key error: {0}")]

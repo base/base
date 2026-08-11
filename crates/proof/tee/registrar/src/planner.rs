@@ -40,13 +40,11 @@ impl AttestationPlanner {
     /// Does not generate P-384 inverse hints or submit transactions. The signer is
     /// derived from attestation `public_key` (Base semantics), never from `user_data`.
     pub fn prepare_registration_plan(attestation: &[u8]) -> PlannerResult<RegistrationPlan> {
-        let report = AttestationReport::parse(attestation)
-            .map_err(|e| PlannerError::Parse(e.to_string()))?;
-        Self::from_report(&report)
+        Self::from_report(&AttestationReport::parse(attestation)?)
     }
 
     /// Builds a registration plan from an already-parsed attestation report.
-    pub(crate) fn from_report(report: &AttestationReport) -> PlannerResult<RegistrationPlan> {
+    pub fn from_report(report: &AttestationReport) -> PlannerResult<RegistrationPlan> {
         Self::validate_report(report)?;
 
         let public_key = report.doc.public_key.as_ref().ok_or_else(|| {
@@ -76,12 +74,12 @@ impl AttestationPlanner {
             )));
         }
 
+        // Capacity = non-root CAs (`cabundle.len() - 1`) + leaf.
         let mut parent_hash = root_hash;
         let mut certs = Vec::with_capacity(report.doc.cabundle.len());
         for (i, cert) in report.doc.cabundle.iter().enumerate().skip(1) {
             let cert = cert.as_ref();
-            let cert_hash = CertManagerKeys::cache_key(cert)?;
-            let revocation_id = CertManagerKeys::revocation_id(cert)?;
+            let (cert_hash, revocation_id) = CertManagerKeys::keys(cert)?;
             certs.push(CertPlan {
                 kind: CertKind::Ca,
                 label: Self::ca_label(i),
@@ -94,8 +92,7 @@ impl AttestationPlanner {
         }
 
         let leaf = report.doc.certificate.as_ref();
-        let leaf_hash = CertManagerKeys::cache_key(leaf)?;
-        let leaf_revocation_id = CertManagerKeys::revocation_id(leaf)?;
+        let (leaf_hash, leaf_revocation_id) = CertManagerKeys::keys(leaf)?;
         certs.push(CertPlan {
             kind: CertKind::Leaf,
             label: "client / leaf cert".into(),
@@ -105,9 +102,6 @@ impl AttestationPlanner {
             revocation_id: leaf_revocation_id,
         });
 
-        let attestation_tbs =
-            report.cose.sig_structure().map_err(|e| PlannerError::Parse(e.to_string()))?;
-
         Ok(RegistrationPlan {
             signer,
             pcr0,
@@ -115,7 +109,7 @@ impl AttestationPlanner {
             nonce: report.doc.nonce.as_ref().map(|n| n.to_vec()),
             root_cert_hash: root_hash,
             leaf_cert_hash: leaf_hash,
-            attestation_tbs,
+            attestation_tbs: report.cose.sig_structure()?,
             signature: report.cose.signature.clone(),
             certs,
         })
@@ -175,25 +169,21 @@ impl AttestationPlanner {
 pub struct CertManagerKeys;
 
 impl CertManagerKeys {
-    /// Returns the verifier cache key for `cert`.
+    /// Returns `(cache_key, revocation_id)` for `cert` from a single X.509 parse.
     ///
-    /// Root certificates use `keccak256(full DER)`. Every non-root certificate uses
-    /// `keccak256(TBSCertificate DER TLV)` including tag and length.
-    pub fn cache_key(cert: &[u8]) -> PlannerResult<B256> {
+    /// Root certificates use `keccak256(full DER)` as the cache key. Every non-root
+    /// certificate uses `keccak256(TBSCertificate DER TLV)` including tag and length.
+    /// `revocation_id` is always `keccak256(issuerHash || serialHash)`.
+    pub fn keys(cert: &[u8]) -> PlannerResult<(B256, B256)> {
         let full_hash = keccak256(cert);
-        if full_hash == PINNED_ROOT_CERT_HASH {
-            return Ok(full_hash);
-        }
         let (_, parsed) = x509_parser::certificate::X509Certificate::from_der(cert)
-            .map_err(|e| PlannerError::Certificate(format!("parse X.509 certificate: {e}")))?;
-        Ok(keccak256(parsed.tbs_certificate.as_ref()))
-    }
+            .map_err(|e| PlannerError::Certificate(Box::new(e)))?;
 
-    /// Returns `CertManager.computeCertId`: `keccak256(issuerHash || serialHash)` where each
-    /// component hashes the ASN.1 content octets (excluding tag and length).
-    pub fn revocation_id(cert: &[u8]) -> PlannerResult<B256> {
-        let (_, parsed) = x509_parser::certificate::X509Certificate::from_der(cert)
-            .map_err(|e| PlannerError::Certificate(format!("parse X.509 certificate: {e}")))?;
+        let cache_key = if full_hash == PINNED_ROOT_CERT_HASH {
+            full_hash
+        } else {
+            keccak256(parsed.tbs_certificate.as_ref())
+        };
 
         let serial_hash = keccak256(parsed.tbs_certificate.raw_serial());
         let issuer_content = Self::der_content_octets(parsed.tbs_certificate.issuer().as_raw())?;
@@ -201,13 +191,24 @@ impl CertManagerKeys {
         let mut material = [0u8; 64];
         material[..32].copy_from_slice(issuer_hash.as_slice());
         material[32..].copy_from_slice(serial_hash.as_slice());
-        Ok(keccak256(material))
+        Ok((cache_key, keccak256(material)))
+    }
+
+    /// Returns the verifier cache key for `cert`.
+    pub fn cache_key(cert: &[u8]) -> PlannerResult<B256> {
+        Ok(Self::keys(cert)?.0)
+    }
+
+    /// Returns `CertManager.computeCertId`: `keccak256(issuerHash || serialHash)` where each
+    /// component hashes the ASN.1 content octets (excluding tag and length).
+    pub fn revocation_id(cert: &[u8]) -> PlannerResult<B256> {
+        Ok(Self::keys(cert)?.1)
     }
 
     /// Strips the DER tag and length from a TLV, returning content octets.
     fn der_content_octets(tlv: &[u8]) -> PlannerResult<&[u8]> {
         if tlv.len() < 2 {
-            return Err(PlannerError::Certificate("DER TLV too short".into()));
+            return Err(Self::cert_error("DER TLV too short"));
         }
         let first = tlv[1];
         let (header_len, content_len) = if first & 0x80 == 0 {
@@ -215,7 +216,7 @@ impl CertManagerKeys {
         } else {
             let nbytes = (first & 0x7f) as usize;
             if nbytes == 0 || nbytes > 4 || tlv.len() < 2 + nbytes {
-                return Err(PlannerError::Certificate("invalid DER length".into()));
+                return Err(Self::cert_error("invalid DER length"));
             }
             let mut len = 0usize;
             for b in &tlv[2..2 + nbytes] {
@@ -225,11 +226,15 @@ impl CertManagerKeys {
         };
         let end = header_len
             .checked_add(content_len)
-            .ok_or_else(|| PlannerError::Certificate("DER length overflow".into()))?;
+            .ok_or_else(|| Self::cert_error("DER length overflow"))?;
         if end != tlv.len() {
-            return Err(PlannerError::Certificate("DER TLV length mismatch".into()));
+            return Err(Self::cert_error("DER TLV length mismatch"));
         }
         Ok(&tlv[header_len..end])
+    }
+
+    fn cert_error(message: &'static str) -> PlannerError {
+        PlannerError::Certificate(Box::new(std::io::Error::other(message)))
     }
 }
 
@@ -240,17 +245,18 @@ mod tests {
 
     use super::*;
 
+    fn fixture_attestation() -> Vec<u8> {
+        hex::decode(include_str!("testdata/nitro_attestation.hex").trim()).unwrap()
+    }
+
     fn leaf_cert_der() -> Vec<u8> {
-        let attestation =
-            hex::decode(include_str!("testdata/nitro_attestation.hex").trim()).unwrap();
-        AttestationReport::parse(&attestation).unwrap().doc.certificate.to_vec()
+        AttestationReport::parse(&fixture_attestation()).unwrap().doc.certificate.to_vec()
     }
 
     #[test]
     fn cert_manager_keys_use_tbs_cache_key_and_issuer_serial_id() {
         let cert = leaf_cert_der();
-        let cache_key = CertManagerKeys::cache_key(&cert).unwrap();
-        let revocation_id = CertManagerKeys::revocation_id(&cert).unwrap();
+        let (cache_key, revocation_id) = CertManagerKeys::keys(&cert).unwrap();
 
         // Non-root cache keys are TBS hashes, not full-DER hashes.
         assert_ne!(cache_key, keccak256(&cert));
@@ -271,5 +277,40 @@ mod tests {
             .to_vec();
         bad[0] = 0x02;
         assert!(AttestationPlanner::signer_from_public_key(&bad).is_err());
+    }
+
+    #[test]
+    fn prepare_registration_plan_from_fixture() {
+        // Agora's stable nitro fixture omits `public_key`; inject a valid secp256k1 key so the
+        // full planner path (root pin, CA walk, leaf, TBS, signer) is exercised.
+        let mut report = AttestationReport::parse(&fixture_attestation()).unwrap();
+        let public_key = SigningKey::from_bytes(&[7u8; 32].into())
+            .unwrap()
+            .verifying_key()
+            .to_encoded_point(false)
+            .as_bytes()
+            .to_vec();
+        report.doc.public_key = Some(serde_bytes::ByteBuf::from(public_key.clone()));
+
+        let plan = AttestationPlanner::from_report(&report).unwrap();
+
+        assert_eq!(plan.root_cert_hash, PINNED_ROOT_CERT_HASH);
+        assert_eq!(plan.signature.len(), P384_SIGNATURE_BYTES);
+        assert_eq!(plan.timestamp, report.doc.timestamp);
+        assert_eq!(plan.pcr0, report.doc.pcrs.get(&0).unwrap().as_slice());
+        assert_eq!(plan.attestation_tbs, report.cose.sig_structure().unwrap());
+        assert_eq!(plan.signer, AttestationPlanner::signer_from_public_key(&public_key).unwrap());
+
+        // Plan contains every non-root CA plus the leaf.
+        assert_eq!(plan.certs.len(), report.doc.cabundle.len());
+        assert!(plan.certs.iter().take(plan.certs.len() - 1).all(|c| c.kind == CertKind::Ca));
+        assert_eq!(plan.certs.last().unwrap().kind, CertKind::Leaf);
+        assert_eq!(plan.leaf_cert_hash, plan.certs.last().unwrap().cert_hash);
+
+        // Parent links: first CA parent is pinned root; each next parent is prior cache key.
+        assert_eq!(plan.certs[0].parent_cert_hash, PINNED_ROOT_CERT_HASH);
+        for window in plan.certs.windows(2) {
+            assert_eq!(window[1].parent_cert_hash, window[0].cert_hash);
+        }
     }
 }
