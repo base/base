@@ -280,6 +280,7 @@ pub struct SystemTestStackBuilder {
     output_dir: Option<PathBuf>,
     stable_config: Option<StableSystemTestConfig>,
     tx_forwarding_config: Option<TxForwardingConfig>,
+    enable_experimental_validity_transactions: bool,
     verifier_l1_confs: u64,
     client_consensus_mode: L2ClientConsensusMode,
     shadow_sequencer_count: usize,
@@ -363,6 +364,12 @@ impl SystemTestStackBuilder {
     /// the `base_insertValidatedTransaction` RPC endpoint.
     pub fn with_tx_forwarding(mut self, config: TxForwardingConfig) -> Self {
         self.tx_forwarding_config = Some(config);
+        self
+    }
+
+    /// Enables experimental validity transaction ingress and builder acceptance.
+    pub const fn with_experimental_validity_transactions(mut self) -> Self {
+        self.enable_experimental_validity_transactions = true;
         self
     }
 
@@ -630,6 +637,8 @@ impl SystemTestStackBuilder {
             l1_beacon_url: l1_stack.beacon().beacon_url().await?,
             container_config: l2_container_config,
             tx_forwarding_config: self.tx_forwarding_config,
+            enable_experimental_validity_transactions: self
+                .enable_experimental_validity_transactions,
             verifier_l1_confs: self.verifier_l1_confs,
             client_consensus_mode: self.client_consensus_mode,
             upgrade_signal: l2_upgrade_signal,
