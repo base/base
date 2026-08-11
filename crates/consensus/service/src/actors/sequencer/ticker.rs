@@ -18,15 +18,26 @@ use crate::Metrics;
 pub struct ScheduledTicker {
     interval: Interval,
     target: Option<SystemTime>,
+    immediate_l1_origin_retries: u8,
 }
 
 impl ScheduledTicker {
+    /// Delay between next-origin build attempts after the immediate retry budget is exhausted.
+    pub const L1_ORIGIN_RETRY_DELAY: Duration = Duration::from_millis(200);
+
+    /// Number of immediate next-origin retries allowed before applying the retry delay.
+    pub const MAX_IMMEDIATE_L1_ORIGIN_RETRIES: u8 = 5;
+
     /// Creates a new ticker with the given period.
     ///
     /// The first fire occurs immediately, mirroring [`tokio::time::interval`]
     /// semantics. No target is set, so the first tick records no drift.
     pub fn new(period: Duration) -> Self {
-        Self { interval: tokio::time::interval(period), target: None }
+        Self {
+            interval: tokio::time::interval(period),
+            target: None,
+            immediate_l1_origin_retries: 0,
+        }
     }
 
     /// Reschedules the next tick for the given wall-clock target.
@@ -75,6 +86,25 @@ impl ScheduledTicker {
         }
     }
 
+    /// Resets the immediate retry budget after origin selection advances past the drift wait.
+    pub const fn reset_l1_origin_retry_budget(&mut self) {
+        self.immediate_l1_origin_retries = 0;
+    }
+
+    /// Schedules a build retry while drift requires a next L1 origin that is not ready yet.
+    ///
+    /// A short burst handles races where the background fetch is about to complete. Once the
+    /// budget is exhausted, subsequent retries are spaced by [`Self::L1_ORIGIN_RETRY_DELAY`] so
+    /// the actor remains responsive without hot-looping the build path.
+    pub fn schedule_l1_origin_retry(&mut self) {
+        if self.immediate_l1_origin_retries < Self::MAX_IMMEDIATE_L1_ORIGIN_RETRIES {
+            self.immediate_l1_origin_retries += 1;
+            self.reset_immediately();
+        } else {
+            self.reset_at(SystemTime::now() + Self::L1_ORIGIN_RETRY_DELAY);
+        }
+    }
+
     /// Awaits the next tick.
     ///
     /// On fire, records [`Metrics::sequencer_ticker_drift_seconds`] using the
@@ -119,6 +149,36 @@ mod tests {
         let mut ticker = ScheduledTicker::new(Duration::from_secs(2));
 
         ticker.schedule_after_build(None);
+
+        assert!(ticker.target().is_some_and(|target| target <= SystemTime::now()));
+    }
+
+    #[tokio::test]
+    async fn l1_origin_retry_backs_off_after_immediate_retry_budget() {
+        let mut ticker = ScheduledTicker::new(Duration::from_secs(2));
+
+        for _ in 0..ScheduledTicker::MAX_IMMEDIATE_L1_ORIGIN_RETRIES {
+            ticker.schedule_l1_origin_retry();
+            assert!(ticker.target().is_some_and(|target| target <= SystemTime::now()));
+        }
+
+        let before_backoff = SystemTime::now();
+        ticker.schedule_l1_origin_retry();
+
+        assert!(ticker.target().is_some_and(|target| {
+            target >= before_backoff + ScheduledTicker::L1_ORIGIN_RETRY_DELAY
+        }));
+    }
+
+    #[tokio::test]
+    async fn l1_origin_retry_budget_can_be_reset() {
+        let mut ticker = ScheduledTicker::new(Duration::from_secs(2));
+
+        for _ in 0..=ScheduledTicker::MAX_IMMEDIATE_L1_ORIGIN_RETRIES {
+            ticker.schedule_l1_origin_retry();
+        }
+        ticker.reset_l1_origin_retry_budget();
+        ticker.schedule_l1_origin_retry();
 
         assert!(ticker.target().is_some_and(|target| target <= SystemTime::now()));
     }

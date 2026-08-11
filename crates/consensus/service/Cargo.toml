@@ -60,7 +60,7 @@ backon.workspace = true
 libp2p.workspace = true
 futures.workspace = true
 http-body.workspace = true
-tokio-util.workspace = true
+tokio-util = { workspace = true, features = ["rt"] }
 opentelemetry.workspace = true
 async-trait.workspace = true
 async-stream.workspace = true

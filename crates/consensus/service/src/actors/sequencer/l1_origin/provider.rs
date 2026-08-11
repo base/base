@@ -32,7 +32,7 @@ macro_rules! rpc_outcome {
 
 /// L1 [`BlockInfo`] provider interface for the [`super::L1OriginSelector`].
 #[async_trait]
-pub trait L1OriginSelectorProvider: Debug + Sync {
+pub trait L1OriginSelectorProvider: Debug + Send + Sync + 'static {
     /// Returns the latest observed L1 head hash, used to identify the canonical chain view.
     fn chain_view(&self) -> Option<B256>;
 

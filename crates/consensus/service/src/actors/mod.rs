@@ -59,8 +59,8 @@ pub use network::{
 
 mod sequencer;
 pub use sequencer::{
-    BuildPipelineState, CanonicalReconciliationInputs, CanonicalUnsafeCatchup, Conductor,
-    ConductorClient, ConductorError, DelayedL1OriginSelectorProvider, L1OriginSelector,
+    BuildOutcome, BuildPipelineState, CanonicalReconciliationInputs, CanonicalUnsafeCatchup,
+    Conductor, ConductorClient, ConductorError, DelayedL1OriginSelectorProvider, L1OriginSelector,
     L1OriginSelectorError, L1OriginSelectorProvider, OriginSelector, PayloadBuilder, PayloadSealer,
     PendingStopSender, PoolActivation, QueuedSequencerEngineClient, RecoveryModeGuard,
     ScheduledTicker, SealState, SealStepError, SealStepOutcome, SequencerActor,
