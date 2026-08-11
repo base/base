@@ -264,18 +264,20 @@ mod tests {
     const NOW: u64 = 1_000;
     const ACCOUNT: Address = address!("0x00000000000000000000000000000000000000a1");
 
-    /// Canonical Solidity packing of `ActorConfig` (each field at its bit offset).
-    fn pack(authenticator: Address, scope: u8, expiry: u64) -> U256 {
+    /// Canonical Solidity packing of `ActorConfig` (each field at its bit offset:
+    /// authenticator 0..160, expiry 160..208, scope 208..224).
+    fn pack(authenticator: Address, scope: u16, expiry: u64) -> U256 {
         U256::from_be_slice(authenticator.as_slice())
-            | (U256::from(scope) << 160)
-            | (U256::from(expiry) << 168)
+            | (U256::from(expiry) << 160)
+            | (U256::from(scope) << 208)
     }
 
     /// Packs an `AccountState` word carrying the inline secp256k1 self config
-    /// (each field at its bit offset; sequences/lock left zero).
-    fn pack_self(scope: u8, expiry: u64, revoked: bool) -> U256 {
+    /// (each field at its bit offset: defaultEOAExpiry 184..232, defaultEOAScope
+    /// 232..248; sequences/lock left zero).
+    fn pack_self(scope: u16, expiry: u64, revoked: bool) -> U256 {
         let flags = if revoked { Eip8130Constants::DEFAULT_EOA_REVOKED } else { 0 };
-        (U256::from(flags) << 128) | (U256::from(scope) << 176) | (U256::from(expiry) << 184)
+        (U256::from(flags) << 128) | (U256::from(expiry) << 184) | (U256::from(scope) << 232)
     }
 
     fn actor_id(address: Address) -> B256 {

@@ -25,7 +25,7 @@ impl Operation {
     /// The scope bit that grants this operation, or unrestricted scope for
     /// admin-only configuration changes.
     #[must_use]
-    pub const fn required_bit(self) -> u8 {
+    pub const fn required_bit(self) -> u16 {
         match self {
             Self::Sender => Eip8130Constants::SCOPE_SENDER,
             Self::SelfPayer => Eip8130Constants::SCOPE_SELF_PAYER,
@@ -36,7 +36,7 @@ impl Operation {
 
     /// Whether `scope` grants this operation.
     #[must_use]
-    pub const fn is_granted_by(self, scope: u8) -> bool {
+    pub const fn is_granted_by(self, scope: u16) -> bool {
         match self {
             Self::Config => scope == Eip8130Constants::SCOPE_UNRESTRICTED,
             Self::Sender => {

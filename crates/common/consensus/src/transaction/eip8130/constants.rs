@@ -45,28 +45,30 @@ impl Eip8130Constants {
 
     /// Actor scope bit: ungated `sender_auth` validation context; may originate
     /// transactions to any `call.to`.
-    pub const SCOPE_SENDER: u8 = 0x01;
+    pub const SCOPE_SENDER: u16 = 0x0001;
 
     /// Actor scope bit: policy-gated sender context; may originate transactions
     /// only to the actor's `policy_manager`.
-    pub const SCOPE_POLICY: u8 = 0x02;
+    pub const SCOPE_POLICY: u16 = 0x0002;
 
     /// Actor scope bit: nonce authorization context; permits a restricted actor
     /// to use sequenced `nonce_key`s (otherwise nonceless-only).
-    pub const SCOPE_NONCE: u8 = 0x04;
+    pub const SCOPE_NONCE: u16 = 0x0004;
 
     /// Actor scope bit: self-pay gas; authorizes paying the account's own gas
     /// when `payer == sender`.
-    pub const SCOPE_SELF_PAYER: u8 = 0x08;
+    pub const SCOPE_SELF_PAYER: u16 = 0x0008;
 
     /// Actor scope bit: sponsor gas; authorizes acting as `payer_auth` for a
     /// different sender (`payer != sender`).
-    pub const SCOPE_SPONSOR_PAYER: u8 = 0x10;
+    pub const SCOPE_SPONSOR_PAYER: u16 = 0x0010;
 
     // ERC-1271 signing rides on operational authority (admin `scope == 0x00`, or
     // a SENDER actor without POLICY); it is not its own scope bit, so there is no
-    // `SCOPE_SIGNATURE`. Bits `0x20`, `0x40`, and `0x80` are spare, reserved for
-    // future pure grants.
+    // `SCOPE_SIGNATURE`. The remaining bits of the `uint16` scope are spare,
+    // reserved for future pure grants. The Keystore itself is scope-agnostic
+    // except for `scope == 0` (admin) and the single interpreted `SCOPE_POLICY`
+    // bit; every other bit is stored verbatim and interpreted protocol-side.
 
     /// Domain-separation prefix for the `replay_id` preimage
     /// (`keccak256(REPLAY_ID_TYPE || rlp([...])`).
@@ -80,7 +82,7 @@ impl Eip8130Constants {
     pub const REPLAY_ID_TYPE: [u8; 2] = [0x79, 0x01];
 
     /// Unrestricted scope value (actor is valid in all contexts).
-    pub const SCOPE_UNRESTRICTED: u8 = 0x00;
+    pub const SCOPE_UNRESTRICTED: u16 = 0x0000;
 
     /// [EIP-7702]-style delegation indicator code prefix.
     ///
@@ -259,7 +261,7 @@ mod tests {
             Eip8130Constants::SCOPE_SELF_PAYER,
             Eip8130Constants::SCOPE_SPONSOR_PAYER,
         ];
-        let mut acc: u8 = 0;
+        let mut acc: u16 = 0;
         for b in bits {
             assert_eq!(b.count_ones(), 1, "scope bit must be a single bit");
             assert_eq!(acc & b, 0, "scope bits must be orthogonal");
