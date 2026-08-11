@@ -222,6 +222,7 @@ impl SnarkE2e {
                         prover_address: Address::ZERO,
                     }),
                 },
+                retry_failed: true,
             })
             .await
             .with_context(|| {

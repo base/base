@@ -252,7 +252,7 @@ pub enum ProofsCommandError {
         /// The configured `DisputeGameFactory` address.
         factory: Address,
     },
-    /// Re-running `proofs finalize` would requeue a failed proof session.
+    /// A proof command would requeue a failed session without explicit approval.
     #[error(
         "proof session {session_id} already exists and failed: {message}. \
          Re-running requeues the proof request; pass --retry-failed to explicitly confirm \

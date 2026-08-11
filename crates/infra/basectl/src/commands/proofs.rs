@@ -157,6 +157,12 @@ pub struct ProofsProposeArgs {
     /// duplicate proof.
     #[arg(long = "session-id", value_name = "ID")]
     pub session_id: Option<String>,
+    /// Allow an existing failed proof session to be requeued.
+    ///
+    /// Failed sessions are otherwise left unchanged so rerunning this command
+    /// cannot accidentally purchase another proof.
+    #[arg(long)]
+    pub retry_failed: bool,
     /// Intermediate output root interval (checkpoint stride).
     ///
     /// Only needed when the game type has no registered implementation to
@@ -541,6 +547,7 @@ async fn run_propose(config: MonitoringConfig, args: ProofsProposeArgs) -> Resul
         prover_address,
         zk_backend,
         session_id,
+        retry_failed,
         intermediate_root_interval,
         wait,
         prover_rpc,
@@ -563,8 +570,22 @@ async fn run_propose(config: MonitoringConfig, args: ProofsProposeArgs) -> Resul
         session_id,
         intermediate_root_interval,
     )?;
-    let prove_request = request.to_prove_request(&config.name);
+    let prove_request = request.to_prove_request(&config.name, retry_failed);
     let prover_rpc_display = display_rpc_url(&endpoint);
+    let session_id = prove_request.proof.session_id.clone();
+    let client = ProofsClient::connect(&endpoint)?.with_max_wait(PROOF_MAX_WAIT);
+    let existing = existing_proof_session(&client, &session_id).await?;
+    let retrying_failed =
+        existing.as_ref().is_some_and(|response| response.status == ProofStatus::Failed);
+    if retrying_failed && !retry_failed {
+        return Err(ProofsCommandError::FailedSessionRetry {
+            session_id,
+            message: existing
+                .and_then(|response| response.error_message)
+                .unwrap_or_else(|| "unknown error".to_string()),
+        }
+        .into());
+    }
     info!(
         network = %config.name,
         prover_rpc = %prover_rpc_display,
@@ -587,18 +608,22 @@ async fn run_propose(config: MonitoringConfig, args: ProofsProposeArgs) -> Resul
     } else {
         ""
     };
+    let retry_warning = if retrying_failed {
+        " This retries the failed proof session with a NEW proof request."
+    } else {
+        ""
+    };
     let prompt = format!(
         "Submit PLONK proposal proof request for game {game} covering blocks \
          {first_block}..={end_block} ({num_blocks} block(s), pre-state block {}) \
          bound to prover address {prover_address} via the {zk_backend} backend \
-         to {prover_rpc_display}?{paid_warning} [y/N] ",
+         to {prover_rpc_display}?{paid_warning}{retry_warning} [y/N] ",
         request.pre_state_block
     );
     if !Confirm::prompt_or_abort(&prompt, yes)? {
         return Ok(CommandOutcome::Success);
     }
 
-    let client = ProofsClient::connect(&endpoint)?.with_max_wait(PROOF_MAX_WAIT);
     // The confirmation prompt can sit for a while; re-read the game so we
     // refuse to pay for a proof when it resolved or gained a ZK proof in the
     // meantime.
@@ -784,7 +809,7 @@ async fn run_finalize(
         session_id,
         intermediate_root_interval,
     )?;
-    let prove_request = request.to_prove_request(&config.name);
+    let prove_request = request.to_prove_request(&config.name, retry_failed);
     let l1_rpc_display = display_rpc_url(&l1_rpc);
     let prover_rpc_display = display_rpc_url(&endpoint);
     info!(
@@ -838,22 +863,6 @@ async fn run_finalize(
     );
     if !Confirm::prompt_or_abort(&prompt, yes)? {
         return Ok(CommandOutcome::Success);
-    }
-
-    // The confirmation prompt can sit for a while; re-check the session so a
-    // proof that failed in the meantime cannot be silently requeued as a new
-    // paid request past the --retry-failed gate.
-    if !retry_failed {
-        let recheck = existing_proof_session(&client, &session_id).await?;
-        if let Some(response) = recheck
-            && response.status == ProofStatus::Failed
-        {
-            return Err(ProofsCommandError::FailedSessionRetry {
-                session_id: session_id.clone(),
-                message: response.error_message.unwrap_or_else(|| "unknown error".to_string()),
-            }
-            .into());
-        }
     }
 
     // The confirmation prompt can sit for a while; re-read the game so we
@@ -1355,9 +1364,8 @@ pub struct GamesListJson {
     pub factory: Address,
     /// Total number of games the factory has created.
     pub total_games: u64,
-    /// Whether the listing came back short of the requested limit while
-    /// games older than the scanned window remain, so older matches may
-    /// exist beyond the listed games.
+    /// Whether older games remain unscanned, so additional matches may exist
+    /// beyond the listed games.
     pub search_truncated: bool,
     /// Listed games, newest first.
     pub games: Vec<GameSummaryJson>,
@@ -2148,7 +2156,6 @@ mod tests {
             game_type: 3,
             created_at: 1_750_000_000,
             status: GameStatus::InProgress,
-            root_claim: B256::repeat_byte(0x11),
             starting_block: 4000,
             target_block: 5000,
             tee_prover: Address::repeat_byte(0xBB),

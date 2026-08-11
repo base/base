@@ -5,7 +5,7 @@ use std::{env, fmt, fs, path::Path, sync::Arc, time::Duration};
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer_local::PrivateKeySigner;
-use base_proof_submission::{AggregateProofSubmitter, SnarkReceiptEncoder};
+use base_proof_submission::{AggregateProofSubmitter, ProofSubmissionError, SnarkReceiptEncoder};
 use base_prover_service_protocol::{GetProofResponse, ProofResult, ProofStatus};
 use base_tx_manager::{
     NoopTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig, TxManagerError,
@@ -146,9 +146,14 @@ pub struct SubmittedProof {
 
 /// Sends `AggregateVerifier.verifyProposalProof` transactions to L1 dispute
 /// games, signed by a [`SubmitterKey`].
-#[derive(Debug)]
 pub struct ProposalProofSubmitter {
     tx_manager: SimpleTxManager<RootProvider>,
+}
+
+impl fmt::Debug for ProposalProofSubmitter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ProposalProofSubmitter").finish_non_exhaustive()
+    }
 }
 
 impl ProposalProofSubmitter {
@@ -168,11 +173,11 @@ impl ProposalProofSubmitter {
                     "fetching L1 chain ID timed out after {CHAIN_ID_TIMEOUT:?}"
                 )),
             })?
-            .map_err(|error| ProofsCommandError::BuildTxManager {
+            .map_err(|_| ProofsCommandError::BuildTxManager {
                 // Origin only: operator L1 URLs commonly embed API keys in
                 // the path or userinfo, which must not leak into error output.
                 endpoint: l1_rpc.origin().ascii_serialization(),
-                source: TxManagerError::Rpc(format!("fetching L1 chain ID: {error}")),
+                source: TxManagerError::Rpc("fetching L1 chain ID failed".to_string()),
             })?;
         let config = TxManagerConfig {
             num_confirmations: 1,
@@ -189,7 +194,7 @@ impl ProposalProofSubmitter {
         .await
         .map_err(|source| ProofsCommandError::BuildTxManager {
             endpoint: l1_rpc.origin().ascii_serialization(),
-            source,
+            source: Self::sanitize_tx_manager_error(source),
         })?;
         Ok(Self { tx_manager })
     }
@@ -202,15 +207,29 @@ impl ProposalProofSubmitter {
         proof: Bytes,
     ) -> Result<SubmittedProof, ProofsCommandError> {
         let submitter = AggregateProofSubmitter::new(&self.tx_manager);
-        let receipt = submitter
-            .verify_proposal_proof(game, proof)
-            .await
-            .map_err(|source| ProofsCommandError::Submission { game: game.to_string(), source })?;
+        let receipt = submitter.verify_proposal_proof(game, proof).await.map_err(|source| {
+            let source = match source {
+                ProofSubmissionError::TxManager(error) => {
+                    ProofSubmissionError::TxManager(Self::sanitize_tx_manager_error(error))
+                }
+                other => other,
+            };
+            ProofsCommandError::Submission { game: game.to_string(), source }
+        })?;
         Ok(SubmittedProof {
             tx_hash: receipt.transaction_hash,
             block_number: receipt.block_number,
             gas_used: receipt.gas_used,
         })
+    }
+
+    fn sanitize_tx_manager_error(error: TxManagerError) -> TxManagerError {
+        match error {
+            TxManagerError::Rpc(_) => {
+                TxManagerError::Rpc("L1 transport request failed".to_string())
+            }
+            other => other,
+        }
     }
 }
 
@@ -280,6 +299,20 @@ mod tests {
         let debug = format!("{key:?}");
         assert!(debug.contains(&format!("{:?}", key.address())));
         assert!(!debug.to_lowercase().contains(&TEST_KEY[2..]));
+    }
+
+    #[test]
+    fn submitter_sanitizes_l1_endpoint_secrets_from_transport_errors() {
+        let endpoint =
+            Url::parse("https://user:password@l1.example/v3/api-key?token=secret").unwrap();
+        let error = TxManagerError::Rpc(format!("request to {endpoint} failed"));
+        let sanitized = ProposalProofSubmitter::sanitize_tx_manager_error(error);
+        let message = sanitized.to_string();
+
+        assert!(message.contains("L1 transport request failed"));
+        for secret in ["user", "password", "api-key", "token=secret"] {
+            assert!(!message.contains(secret));
+        }
     }
 
     #[test]

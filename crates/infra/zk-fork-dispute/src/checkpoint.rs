@@ -170,6 +170,7 @@ impl Checkpoint {
                     session_id: session_id.clone(),
                     request: ProofRequestKind::SnarkPlonk(snark_request),
                 },
+                retry_failed: true,
             })
             .await
             .context("failed to submit proveBlockRange")?;

@@ -1,16 +1,18 @@
 //! Prover-service requester client helpers for the `basectl proofs` command group.
 
-use std::time::Duration;
+use std::{fmt, time::Duration};
 
 use alloy_primitives::{Address, B256};
 use base_prover_service_client::{
-    ProofRequesterClient, ProverServiceClientConfig, ProverServiceClientError,
+    ProofRequesterClient, ProverServiceClientBuildError, ProverServiceClientConfig,
+    ProverServiceClientError,
 };
 use base_prover_service_protocol::{
     GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse, ProofRequest,
     ProofRequestKind, ProofSessionId, ProofStatus, ProveBlockRangeRequest, SnarkPlonkProofRequest,
     ZkBackend, ZkProofRequest, ZkVm,
 };
+use jsonrpsee::core::client::Error as JsonRpcClientError;
 use tokio::time::{Instant, sleep};
 use tracing::{debug, info};
 use url::Url;
@@ -232,7 +234,7 @@ impl ProofProposeRequest {
 
     /// Builds the prover-service prove-block-range request for `network`, deriving
     /// its effective session ID with [`Self::effective_session_id`].
-    pub fn to_prove_request(&self, network: &str) -> ProveBlockRangeRequest {
+    pub fn to_prove_request(&self, network: &str, retry_failed: bool) -> ProveBlockRangeRequest {
         ProveBlockRangeRequest {
             proof: ProofRequest {
                 session_id: self.effective_session_id(network),
@@ -250,17 +252,28 @@ impl ProofProposeRequest {
                     prover_address: self.prover_address,
                 }),
             },
+            retry_failed,
         }
     }
 }
 
 /// Prover-service requester client used by the `basectl proofs` commands.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ProofsClient {
-    endpoint: Url,
+    endpoint: String,
     requester: ProofRequesterClient,
     poll_interval: Duration,
     max_wait: Duration,
+}
+
+impl fmt::Debug for ProofsClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ProofsClient")
+            .field("endpoint", &self.endpoint)
+            .field("poll_interval", &self.poll_interval)
+            .field("max_wait", &self.max_wait)
+            .finish_non_exhaustive()
+    }
 }
 
 impl ProofsClient {
@@ -268,10 +281,19 @@ impl ProofsClient {
     pub fn connect(endpoint: &Url) -> Result<Self, ProofsCommandError> {
         let config = ProverServiceClientConfig::new(endpoint.as_str());
         let requester = ProofRequesterClient::connect(&config).map_err(|source| {
-            ProofsCommandError::BuildClient { endpoint: endpoint.to_string(), source }
+            let source = match source {
+                ProverServiceClientBuildError::RpcTransport(error) => {
+                    ProverServiceClientBuildError::RpcTransport(Self::sanitize_rpc_error(error))
+                }
+                other => other,
+            };
+            ProofsCommandError::BuildClient {
+                endpoint: endpoint.origin().ascii_serialization(),
+                source,
+            }
         })?;
         Ok(Self {
-            endpoint: endpoint.clone(),
+            endpoint: endpoint.origin().ascii_serialization(),
             requester,
             poll_interval: config.poll_interval(),
             max_wait: config.max_wait(),
@@ -386,7 +408,22 @@ impl ProofsClient {
         method: &'static str,
         source: ProverServiceClientError,
     ) -> ProofsCommandError {
-        ProofsCommandError::Rpc { endpoint: self.endpoint.to_string(), method, source }
+        let source = match source {
+            ProverServiceClientError::RpcTransport(error) => {
+                ProverServiceClientError::RpcTransport(Self::sanitize_rpc_error(error))
+            }
+            other => other,
+        };
+        ProofsCommandError::Rpc { endpoint: self.endpoint.clone(), method, source }
+    }
+
+    fn sanitize_rpc_error(error: JsonRpcClientError) -> JsonRpcClientError {
+        match error {
+            JsonRpcClientError::Transport(_) | JsonRpcClientError::RestartNeeded(_) => {
+                JsonRpcClientError::Custom("transport request failed".to_string())
+            }
+            other => other,
+        }
     }
 }
 
@@ -394,6 +431,8 @@ impl ProofsClient {
 mod tests {
     use std::{
         collections::VecDeque,
+        error::Error as _,
+        io,
         net::SocketAddr,
         sync::{Arc, Mutex},
         time::Duration,
@@ -406,7 +445,7 @@ mod tests {
         ProveBlockRangeRequest, ProveBlockRangeResponse, ProverRequesterApiServer, ZkBackend, ZkVm,
     };
     use jsonrpsee::{
-        core::{RpcResult, async_trait},
+        core::{RpcResult, async_trait, client::Error as JsonRpcClientError},
         server::{Server, ServerHandle},
         types::{ErrorObjectOwned, error::ErrorCode},
     };
@@ -638,8 +677,9 @@ mod tests {
 
     #[test]
     fn propose_to_prove_request_builds_snark_plonk_kind() {
-        let prove = propose_request().to_prove_request("devnet");
+        let prove = propose_request().to_prove_request("devnet", false);
 
+        assert!(!prove.retry_failed);
         match prove.proof.request {
             ProofRequestKind::SnarkPlonk(snark) => {
                 assert_eq!(snark.prover_address, Address::repeat_byte(0xDD));
@@ -652,6 +692,27 @@ mod tests {
                 assert_eq!(snark.proof.zk_backend, ZkBackend::Network);
             }
             other => panic!("unexpected proof request kind: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn client_redacts_endpoint_secrets_from_logs_and_errors() {
+        let endpoint =
+            Url::parse("https://user:password@prover.example/rpc/api-key?token=secret").unwrap();
+        let client = ProofsClient::connect(&endpoint).expect("client should build");
+        let source = base_prover_service_client::ProverServiceClientError::RpcTransport(
+            JsonRpcClientError::Transport(
+                io::Error::other(format!("request to {endpoint} failed")).into(),
+            ),
+        );
+        let error = client.rpc_error("prover_getProof", source);
+        let source = error.source().expect("RPC error should preserve a source").to_string();
+        let debug = format!("{client:?}");
+
+        assert_eq!(client.endpoint, "https://prover.example");
+        for secret in ["user", "password", "api-key", "token=secret"] {
+            assert!(!source.contains(secret));
+            assert!(!debug.contains(secret));
         }
     }
 

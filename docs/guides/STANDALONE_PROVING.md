@@ -78,24 +78,6 @@ Endpoints served from your own machine must be addressed as
 `http://host.docker.internal:<port>`, not `localhost` — inside the containers,
 `localhost` is the container itself.
 
-## Dev container
-
-The checked-in dev container is the recommended packaged environment for this
-workflow. It installs the repository's Rust, `just`, and SP1 toolchains plus a
-private Docker daemon, so `just prover up <network>` starts the existing
-Postgres, prover-service, and zk-host containers inside the dev container.
-
-Open the repository in a Dev Containers-compatible client, locally or on a
-remote development machine, then follow the operator flow below in its
-terminal. `BASECTL_PROVER_RPC` defaults to `http://127.0.0.1:9000` there.
-Export RPC URLs and private keys at runtime; do not add them to
-`.devcontainer/devcontainer.json` or commit an environment file.
-
-A local dev container still uses the local machine's CPU and memory for Base
-witness generation. Run it on a suitably provisioned remote machine when the
-local machine cannot replay the requested block range. SP1 Network proving is
-remote in either case.
-
 ## Operator flow
 
 1. Export the endpoints and, for paid proving, the requester key:
@@ -199,7 +181,9 @@ range proof, then aggregation into an ~870-byte PLONK proof; on the `network`
 backend both stages are paid Succinct Network requests. The proof journal
 commits to `--prover-address`, so the proof only verifies when submitted from
 exactly that wallet. Track progress with `basectl proofs status <SESSION_ID>`;
-the completed session stores the PLONK proof bytes.
+the completed session stores the PLONK proof bytes. As with `finalize`, a
+failed session is left unchanged unless `--retry-failed` explicitly
+authorizes a new proof request.
 
 Then submit, signing with the wallet passed as `--prover-address`:
 

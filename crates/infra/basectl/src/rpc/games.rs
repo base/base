@@ -1,11 +1,15 @@
 //! Dispute-game discovery client for the `basectl proofs games` command group.
 
-use std::{collections::HashMap, sync::Mutex};
+use std::{
+    collections::HashMap,
+    fmt,
+    sync::{Mutex, PoisonError},
+};
 
 use alloy_consensus::Transaction as _;
 use alloy_primitives::{Address, B256};
 use alloy_provider::{Provider, RootProvider};
-use alloy_transport::TransportError;
+use alloy_transport::{TransportError, TransportErrorKind};
 pub use base_proof_contracts::GameStatus;
 use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, ContractError,
@@ -13,6 +17,7 @@ use base_proof_contracts::{
     encode_extra_data,
 };
 use futures::{StreamExt, stream, try_join};
+use tracing::debug;
 use url::Url;
 
 use crate::errors::ProofsCommandError;
@@ -45,8 +50,6 @@ pub struct GameSummary {
     pub created_at: u64,
     /// Current game status.
     pub status: GameStatus,
-    /// Output root claimed by the game.
-    pub root_claim: B256,
     /// Pre-state L2 block number (start of the proved range).
     pub starting_block: u64,
     /// L2 block number the game proposes (end of the proved range).
@@ -101,7 +104,6 @@ pub struct GameDetails {
 }
 
 /// Read-only L1 client for listing and inspecting dispute games.
-#[derive(Debug)]
 pub struct GamesClient {
     endpoint: Url,
     provider: RootProvider,
@@ -109,6 +111,15 @@ pub struct GamesClient {
     factory: DisputeGameFactoryContractClient,
     verifier: AggregateVerifierContractClient,
     aggregate_game_types: Mutex<HashMap<u32, bool>>,
+}
+
+impl fmt::Debug for GamesClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GamesClient")
+            .field("endpoint", &self.endpoint.origin().ascii_serialization())
+            .field("factory_address", &self.factory_address)
+            .finish_non_exhaustive()
+    }
 }
 
 impl GamesClient {
@@ -196,13 +207,12 @@ impl GamesClient {
 
     /// Lists recent games newest-first, applying `filter`.
     ///
-    /// Returns the factory's total game count, the matches, and whether the
-    /// search was truncated (`true` when the matches came back short of
-    /// `filter.limit` while games older than the scanned window remain, so
-    /// older matches may exist). Scans backwards from the newest factory
-    /// index with up to [`Self::SCAN_CONCURRENCY`] games in flight,
-    /// preserving newest-first order, and stops after collecting
-    /// `filter.limit` matches or scanning [`Self::MAX_SCAN`] games.
+    /// Returns the factory's total game count, the matches, and whether older
+    /// games remain unscanned, so additional matches may exist. Scans
+    /// backwards from the newest factory index with up to
+    /// [`Self::SCAN_CONCURRENCY`] games in flight, preserving newest-first
+    /// order, and stops after collecting `filter.limit` matches or scanning
+    /// [`Self::MAX_SCAN`] games.
     pub async fn list_recent(
         &self,
         filter: GameListFilter,
@@ -214,7 +224,9 @@ impl GamesClient {
             .buffered(Self::SCAN_CONCURRENCY);
 
         let mut games = Vec::new();
+        let mut games_scanned = 0_u64;
         while let Some(scanned) = scans.next().await {
+            games_scanned += 1;
             if let Some(summary) = scanned? {
                 games.push(summary);
                 if games.len() >= filter.limit {
@@ -222,10 +234,7 @@ impl GamesClient {
                 }
             }
         }
-        // A short page means the whole window was scanned; unscanned older
-        // games can then silently hide matches. A full page is ordinary
-        // pagination, already visible from the total-versus-listed counts.
-        let truncated = games.len() < filter.limit && count > Self::MAX_SCAN as u64;
+        let truncated = count > games_scanned;
         Ok((count, games, truncated))
     }
 
@@ -274,11 +283,8 @@ impl GamesClient {
         &self,
         game_type: u32,
     ) -> Result<bool, ProofsCommandError> {
-        if let Some(&is_aggregate) = self
-            .aggregate_game_types
-            .lock()
-            .expect("aggregate game type cache lock poisoned")
-            .get(&game_type)
+        if let Some(&is_aggregate) =
+            self.aggregate_game_types.lock().unwrap_or_else(PoisonError::into_inner).get(&game_type)
         {
             return Ok(is_aggregate);
         }
@@ -292,13 +298,17 @@ impl GamesClient {
         } else {
             match self.verifier.read_intermediate_block_interval(implementation).await {
                 Ok(_) => true,
-                Err(error) if error.is_missing_method() => false,
+                Err(error) if error.is_missing_method() => {
+                    // Empty reverts are indistinguishable from missing selectors; log for diagnosis.
+                    debug!(game_type = %game_type, implementation = %implementation, "probe missing method; game type treated as non-aggregate");
+                    false
+                }
                 Err(error) => return Err(self.contract_error(error)),
             }
         };
         self.aggregate_game_types
             .lock()
-            .expect("aggregate game type cache lock poisoned")
+            .unwrap_or_else(PoisonError::into_inner)
             .insert(game_type, is_aggregate);
         Ok(is_aggregate)
     }
@@ -449,7 +459,6 @@ impl GamesClient {
             game_type,
             created_at,
             status,
-            root_claim: info.root_claim,
             starting_block,
             target_block: info.l2_block_number,
             tee_prover,
@@ -466,23 +475,39 @@ impl GamesClient {
     /// Maps a contract read failure onto the proofs command error type.
     fn contract_error(&self, source: ContractError) -> ProofsCommandError {
         // Origin only: operator L1 URLs commonly embed API keys in the path
-        // or userinfo, which must not leak into error output.
-        ProofsCommandError::L1Contract {
-            endpoint: self.endpoint.origin().ascii_serialization(),
-            source,
-        }
+        // or userinfo, which must not leak into error output or its source
+        // chain.
+        let origin = self.endpoint.origin().ascii_serialization();
+        let sanitize_transport =
+            |_: TransportError| TransportErrorKind::custom_str("L1 transport request failed");
+        let source = match source {
+            ContractError::Call { context, source } => {
+                let source = match *source {
+                    alloy_contract::Error::TransportError(error) => {
+                        alloy_contract::Error::TransportError(sanitize_transport(error))
+                    }
+                    other => other,
+                };
+                ContractError::call(context, source)
+            }
+            ContractError::Provider { context, source } => {
+                ContractError::provider(context, sanitize_transport(source))
+            }
+            other => other,
+        };
+        ProofsCommandError::L1Contract { endpoint: origin, source }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, sync::Mutex};
+    use std::{collections::HashMap, error::Error as _, sync::Mutex};
 
     use alloy_primitives::{Address, B256, Bytes, U256};
     use alloy_provider::RootProvider;
     use alloy_rpc_client::RpcClient;
     use alloy_sol_types::SolValue;
-    use alloy_transport::mock::Asserter;
+    use alloy_transport::{TransportErrorKind, mock::Asserter};
     use base_proof_contracts::{AggregateVerifierContractClient, DisputeGameFactoryContractClient};
     use url::Url;
 
@@ -522,6 +547,29 @@ mod tests {
         push_abi(asserter, &U256::ZERO);
         push_abi(asserter, &Bytes::from(B256::repeat_byte(0x77).to_vec()));
         push_abi(asserter, &2_u32);
+    }
+
+    #[test]
+    fn l1_transport_errors_redact_endpoint_secrets_from_source_chain() {
+        let mut client = mocked_client(Asserter::new());
+        client.endpoint =
+            Url::parse("https://user:password@l1.example/v3/api-key?token=secret").unwrap();
+        let transport = TransportErrorKind::custom_str(&format!(
+            "request to {} failed: connection refused",
+            client.endpoint
+        ));
+
+        let error = client.provider_error(transport);
+        let message = error.to_string();
+        let source = error.source().expect("L1 error should preserve a source").to_string();
+        let debug = format!("{client:?}");
+
+        assert!(message.contains("https://l1.example"));
+        assert!(source.contains("L1 transport request failed"));
+        for secret in ["user", "password", "api-key", "token=secret"] {
+            assert!(!source.contains(secret));
+            assert!(!debug.contains(secret));
+        }
     }
 
     #[tokio::test]

@@ -155,7 +155,7 @@ async fn worker_claim_heartbeat_submit_round_trip() {
     drain_claimable_compressed_jobs(&repo).await;
 
     let session_id = Uuid::new_v4().to_string();
-    repo.create_for_worker_queue(compressed_request(&session_id, 10), TEST_MAX_PROOF_RETRIES)
+    repo.create_for_worker_queue(compressed_request(&session_id, 10), TEST_MAX_PROOF_RETRIES, true)
         .await
         .expect("seeding the worker queue should succeed");
 

@@ -46,6 +46,7 @@ impl ChallengerProofAdapter {
         let session_id = Self::snark_plonk_session_id(game_address, invalid_index);
         ProveBlockRangeRequest {
             proof: ProofRequest { session_id, request: ProofRequestKind::SnarkPlonk(request) },
+            retry_failed: true,
         }
     }
 
@@ -64,6 +65,7 @@ impl ChallengerProofAdapter {
                     tee_kind: TeeKind::AwsNitro,
                 }),
             },
+            retry_failed: true,
         }
     }
 

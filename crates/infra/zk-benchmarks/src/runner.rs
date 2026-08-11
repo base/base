@@ -159,6 +159,7 @@ impl ZkBenchRunner {
                     zk_backend,
                 }),
             },
+            retry_failed: true,
         }
     }
 

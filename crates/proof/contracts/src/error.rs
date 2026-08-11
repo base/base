@@ -46,12 +46,9 @@ impl ContractError {
 
     /// Returns whether a probe failed because the contract does not expose the called method.
     ///
-    /// Only explicit unknown-selector errors and empty (`0x`) returns qualify:
-    /// those are the shapes produced by a contract that genuinely lacks the
-    /// method. Non-empty reverts and ABI decoding failures signal a real
-    /// contract or interface failure and must propagate to the caller, so a
-    /// probe failure cannot be cached as "unsupported" and silently hide
-    /// valid game types.
+    /// Unknown selectors and empty (`0x`) returns or reverts indicate that
+    /// the method is unavailable. Non-empty reverts and ABI decoding
+    /// failures are preserved as contract errors.
     pub fn is_missing_method(&self) -> bool {
         let Self::Call { source, .. } = self else {
             return false;
@@ -62,7 +59,7 @@ impl ContractError {
             alloy_contract::Error::UnknownFunction(_)
                 | alloy_contract::Error::UnknownSelector(_)
                 | alloy_contract::Error::ZeroData(_, _)
-        )
+        ) || source.as_revert_data().is_some_and(|data| data.is_empty())
     }
 }
 
@@ -105,6 +102,30 @@ mod tests {
         );
 
         assert!(err.is_missing_method());
+    }
+
+    #[test]
+    fn missing_method_detects_empty_revert() {
+        let source =
+            AlloyContractError::TransportError(alloy_transport::TransportError::ErrorResp(
+                serde_json::from_str(r#"{"code":3,"message":"execution reverted","data":"0x"}"#)
+                    .unwrap(),
+            ));
+
+        assert!(ContractError::call("probe failed", source).is_missing_method());
+    }
+
+    #[test]
+    fn missing_method_rejects_nonempty_revert() {
+        let source =
+            AlloyContractError::TransportError(alloy_transport::TransportError::ErrorResp(
+                serde_json::from_str(
+                    r#"{"code":3,"message":"execution reverted","data":"0x1234"}"#,
+                )
+                .unwrap(),
+            ));
+
+        assert!(!ContractError::call("probe failed", source).is_missing_method());
     }
 
     #[test]
