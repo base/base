@@ -119,12 +119,19 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Cargo source patches do not replace the 0.0.0 lock entries with
+          # versioned release crates, so rewrite the temporary checkout instead.
+          networks_manifest="$BASE_ANVIL_DIR/crates/evm/networks/Cargo.toml"
+          sed -i \
+            -e "s|^base-common-precompiles = .*$|base-common-precompiles = { path = \"$GITHUB_WORKSPACE/crates/common/precompiles\" }|" \
+            -e "s|^base-common-chains = .*$|base-common-chains = { path = \"$GITHUB_WORKSPACE/crates/common/chains\" }|" \
+            "$networks_manifest"
+          grep -Fqx "base-common-precompiles = { path = \"$GITHUB_WORKSPACE/crates/common/precompiles\" }" "$networks_manifest"
+          grep -Fqx "base-common-chains = { path = \"$GITHUB_WORKSPACE/crates/common/chains\" }" "$networks_manifest"
+
           cd "$BASE_ANVIL_DIR"
           rustup show active-toolchain
-          cargo \
-            --config "patch.\"https://github.com/base/base.git\".base-common-precompiles.path=\"$GITHUB_WORKSPACE/crates/common/precompiles\"" \
-            --config "patch.\"https://github.com/base/base.git\".base-common-chains.path=\"$GITHUB_WORKSPACE/crates/common/chains\"" \
-            build --release --no-default-features --features anvil/cli -p anvil -p forge
+          cargo build --release --no-default-features --features anvil/cli -p anvil -p forge
 
           "$BASE_ANVIL_DIR/target/release/anvil" --version
           "$BASE_ANVIL_DIR/target/release/forge" --version
