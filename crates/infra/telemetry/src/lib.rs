@@ -4,9 +4,10 @@ mod p2p;
 #[cfg(test)]
 pub use p2p::TEST_NODE_ID;
 pub use p2p::{
-    DEFAULT_P2P_REACHABILITY_MAX_CONCURRENT_PROBES, P2P_REACHABILITY_MAX_REQUEST_BYTES,
-    P2P_REACHABILITY_PATH, P2pApiError, P2pErrorResponse, P2pReachabilityRequest,
-    P2pReachabilityResponse, P2pRoutes, P2pState,
+    ClReachabilityRequest, ClReachabilityResponse, DEFAULT_P2P_REACHABILITY_MAX_CONCURRENT_PROBES,
+    ElReachabilityRequest, ElReachabilityResponse, P2P_REACHABILITY_CL_PATH,
+    P2P_REACHABILITY_EL_PATH, P2P_REACHABILITY_MAX_REQUEST_BYTES, P2pApiError, P2pErrorResponse,
+    P2pRoutes, P2pState,
 };
 
 mod prober;
@@ -15,6 +16,14 @@ pub use prober::MockReachabilityProber;
 pub use prober::{
     RLPX_PROBE_TIMEOUT, ReachabilityProber, RlpxProbeError, RlpxProbeOutcome, RlpxProbeResult,
     RlpxProbeStage, RlpxProbeTarget, RlpxProber,
+};
+
+mod cl_prober;
+#[cfg(test)]
+pub use cl_prober::MockClReachabilityProber;
+pub use cl_prober::{
+    ClReachabilityProber, LIBP2P_PROBE_TIMEOUT, Libp2pProbeError, Libp2pProbeOutcome,
+    Libp2pProbeResult, Libp2pProbeStage, Libp2pProbeTarget, Libp2pProber,
 };
 
 mod rate_limit;
