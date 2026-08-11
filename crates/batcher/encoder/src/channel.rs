@@ -31,7 +31,18 @@ impl fmt::Debug for OpenChannel {
     }
 }
 
-/// A channel that has been closed and is ready for frame submission.
+/// Submission lifecycle of a frame in a closed channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameState {
+    /// The frame is available for submission.
+    Ready,
+    /// The frame was submitted and is awaiting an outcome.
+    Pending,
+    /// The frame was confirmed on L1.
+    Confirmed,
+}
+
+/// A closed channel retained while its frames and derivation progress are tracked.
 #[derive(Debug)]
 pub struct ReadyChannel {
     /// The channel identifier.
@@ -40,22 +51,60 @@ pub struct ReadyChannel {
     /// [`BatchSubmission`] is a cheap pointer copy rather than a deep clone of
     /// the frame payload (up to `max_frame_size` bytes per frame).
     pub frames: Vec<Arc<Frame>>,
-    /// Next frame index to submit (cursor). Rewound on requeue.
-    pub cursor: usize,
-    /// Which input blocks this channel covers (indices into the encoder's block queue).
-    pub block_range: Range<usize>,
+    /// Submission state for each frame.
+    pub frame_states: Vec<FrameState>,
     /// Exact input block range encoded into this channel.
     pub encoded_block_range: Range<usize>,
     /// DA bytes still represented by this closed channel's frames.
     pub da_backlog_bytes: u64,
-    /// Number of in-flight submissions for this channel.
-    pub pending_confirmations: usize,
-    /// Number of frames that have been confirmed.
-    pub confirmed_count: usize,
     /// Earliest L1 block that confirmed any frame from this channel.
     pub first_confirmed_l1_block: Option<u64>,
     /// Latest L1 block that confirmed any frame from this channel.
     pub last_confirmed_l1_block: Option<u64>,
+}
+
+impl ReadyChannel {
+    /// Returns the first contiguous range of frames available for submission.
+    ///
+    /// Per-frame state replaces a monotonic cursor so retries can make only the
+    /// affected frames ready again without resubmitting confirmed frames.
+    pub fn next_ready_frame_range(&self) -> Option<Range<usize>> {
+        let start = self.frame_states.iter().position(|state| *state == FrameState::Ready)?;
+        let count = self.frame_states[start..]
+            .iter()
+            .take_while(|state| **state == FrameState::Ready)
+            .count();
+        Some(start..start + count)
+    }
+
+    /// Marks a ready frame range as awaiting an L1 submission outcome.
+    pub fn mark_pending(&mut self, range: Range<usize>) {
+        debug_assert!(
+            self.frame_states[range.clone()].iter().all(|state| *state == FrameState::Ready)
+        );
+        self.frame_states[range].fill(FrameState::Pending);
+    }
+
+    /// Marks a pending frame range as confirmed on L1.
+    pub fn mark_confirmed(&mut self, range: Range<usize>) {
+        debug_assert!(
+            self.frame_states[range.clone()].iter().all(|state| *state == FrameState::Pending)
+        );
+        self.frame_states[range].fill(FrameState::Confirmed);
+    }
+
+    /// Returns a pending frame range to the submission queue.
+    pub fn mark_ready(&mut self, range: Range<usize>) {
+        debug_assert!(
+            self.frame_states[range.clone()].iter().all(|state| *state == FrameState::Pending)
+        );
+        self.frame_states[range].fill(FrameState::Ready);
+    }
+
+    /// Returns `true` once every frame in the channel is confirmed on L1.
+    pub fn is_fully_confirmed(&self) -> bool {
+        self.frame_states.iter().all(|state| *state == FrameState::Confirmed)
+    }
 }
 
 /// Tracks a pending submission back to its channel and frame range.
@@ -67,4 +116,59 @@ pub struct PendingRef {
     pub frame_start: usize,
     /// Number of frames included in this submission (1 when `target_num_frames == 1`).
     pub frame_count: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use base_protocol::Frame;
+
+    use super::{FrameState, ReadyChannel};
+
+    fn channel_with_states(frame_states: Vec<FrameState>) -> ReadyChannel {
+        let frames = frame_states.iter().map(|_| Arc::new(Frame::default())).collect();
+        ReadyChannel {
+            id: Default::default(),
+            frames,
+            frame_states,
+            encoded_block_range: 0..0,
+            da_backlog_bytes: 0,
+            first_confirmed_l1_block: None,
+            last_confirmed_l1_block: None,
+        }
+    }
+
+    #[test]
+    fn returns_first_contiguous_ready_range() {
+        let channel = channel_with_states(vec![
+            FrameState::Confirmed,
+            FrameState::Ready,
+            FrameState::Ready,
+            FrameState::Pending,
+            FrameState::Ready,
+        ]);
+
+        assert_eq!(channel.next_ready_frame_range(), Some(1..3));
+    }
+
+    #[test]
+    fn transitions_only_selected_frame_range() {
+        let mut channel = channel_with_states(vec![
+            FrameState::Ready,
+            FrameState::Ready,
+            FrameState::Pending,
+            FrameState::Confirmed,
+        ]);
+
+        channel.mark_pending(0..2);
+        channel.mark_confirmed(0..1);
+        channel.mark_ready(1..3);
+
+        assert_eq!(
+            channel.frame_states,
+            [FrameState::Confirmed, FrameState::Ready, FrameState::Ready, FrameState::Confirmed,]
+        );
+        assert_eq!(channel.next_ready_frame_range(), Some(1..3));
+    }
 }

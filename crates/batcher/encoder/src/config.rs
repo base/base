@@ -1,6 +1,7 @@
 //! Encoder configuration and its validation error type.
 
 use base_common_genesis::RollupConfig;
+pub use base_comp::CompressionAlgo;
 use base_protocol::{
     BLOB_DERIVATION_PREFIX_SIZE as PROTOCOL_BLOB_DERIVATION_PREFIX_SIZE,
     BLOB_MAX_DATA_SIZE as PROTOCOL_BLOB_MAX_DATA_SIZE, BatchType,
@@ -85,6 +86,14 @@ pub struct EncoderConfig {
     /// Default: `0.6`.
     pub approx_compr_ratio: f64,
 
+    /// Compression algorithm used for newly opened channels.
+    ///
+    /// Brotli channels are accepted only after Fjord. Zlib remains valid on both
+    /// sides of the fork and should be selected for pre-Fjord environments.
+    ///
+    /// Default: [`CompressionAlgo::Brotli10`].
+    pub compression_algo: CompressionAlgo,
+
     /// Maximum serialized size of a single L1 calldata transaction in bytes.
     ///
     /// When set, the calldata frame packing path accumulates frames until adding
@@ -114,6 +123,7 @@ impl Default for EncoderConfig {
             batch_type: BatchType::Single,
             da_type: DaType::Blob,
             approx_compr_ratio: 0.6,
+            compression_algo: CompressionAlgo::Brotli10,
             max_l1_tx_size_bytes: None,
         }
     }
@@ -176,8 +186,8 @@ impl EncoderConfig {
     /// Validate the configuration against the active rollup state.
     ///
     /// `next_l2_timestamp` should be the timestamp of the next L2 block the
-    /// batcher may encode. Span batches are only valid once Fjord is active for
-    /// that next block.
+    /// batcher may encode. Span batches and Brotli compression are only valid
+    /// once Fjord is active for that next block.
     pub fn validate_for_rollup_config(
         &self,
         rollup_config: &RollupConfig,
@@ -195,12 +205,17 @@ impl EncoderConfig {
                 },
             );
         }
+        if !matches!(self.compression_algo, CompressionAlgo::Zlib)
+            && !rollup_config.is_fjord_active(next_l2_timestamp)
+        {
+            return Err(EncoderConfigError::BrotliRequiresFjord { next_l2_timestamp });
+        }
 
         Ok(())
     }
 }
 
-/// Errors returned by [`EncoderConfig::validate`].
+/// Errors returned when validating [`EncoderConfig`].
 #[derive(Debug, thiserror::Error)]
 pub enum EncoderConfigError {
     /// `sub_safety_margin >= max_channel_duration`.
@@ -284,6 +299,15 @@ pub enum EncoderConfigError {
          next_l2_timestamp is {next_l2_timestamp}"
     )]
     SpanBatchRequiresScheduledFjord {
+        /// The timestamp of the next L2 block the batcher may encode.
+        next_l2_timestamp: u64,
+    },
+    /// Brotli compression is configured before Fjord activates.
+    #[error(
+        "brotli compression requires Fjord to be active for the next L2 block; \
+         next_l2_timestamp is {next_l2_timestamp}"
+    )]
+    BrotliRequiresFjord {
         /// The timestamp of the next L2 block the batcher may encode.
         next_l2_timestamp: u64,
     },
@@ -434,10 +458,20 @@ mod tests {
 
     #[test]
     fn validate_for_rollup_config_allows_single_before_fjord() {
-        let cfg = EncoderConfig::default();
+        let cfg =
+            EncoderConfig { compression_algo: CompressionAlgo::Zlib, ..EncoderConfig::default() };
         let rollup_config = rollup_config_with(2, Some(100));
 
         assert!(cfg.validate_for_rollup_config(&rollup_config, 98).is_ok());
+    }
+
+    #[test]
+    fn validate_for_rollup_config_rejects_brotli_before_fjord() {
+        let cfg = EncoderConfig::default();
+        let rollup_config = rollup_config_with(2, Some(100));
+
+        let err = cfg.validate_for_rollup_config(&rollup_config, 98).unwrap_err();
+        assert!(matches!(err, EncoderConfigError::BrotliRequiresFjord { next_l2_timestamp: 98 }));
     }
 
     #[test]

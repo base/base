@@ -28,7 +28,7 @@ fn test_add_block_reorg_resets_pipeline_instead_of_fatal_error() {
         let recorded = Arc::new(Mutex::new(Recorded::default()));
         let pipeline = ReorgPipeline::new(Arc::clone(&recorded));
 
-        let driver = BatchDriver::new_without_safe_head(
+        let driver = BatchDriver::new_without_derivation_status(
             ctx.clone(),
             pipeline,
             OneBlockSource::new(),
@@ -67,7 +67,7 @@ fn test_l2_reorg_event_resets_pipeline() {
         let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
         let (source, source_tx) = ChannelBlockSource::new();
 
-        let driver = BatchDriver::new_without_safe_head(
+        let driver = BatchDriver::new_without_derivation_status(
             ctx.clone(),
             pipeline,
             source,

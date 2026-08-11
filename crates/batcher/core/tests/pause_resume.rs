@@ -7,7 +7,7 @@ use std::{
 
 use alloy_primitives::Address;
 use base_batcher_core::{
-    AdminHandle, BatchDriver, BatchDriverConfig, DaThrottle, NoopThrottleClient,
+    AdminHandle, BatchDriver, BatchDriverConfig, DaThrottle, DerivationStatus, NoopThrottleClient,
     ThrottleController,
     test_utils::{
         DriverFixture, ImmediateConfirmTxManager, PendingL1HeadSource, Recorded, TrackingPipeline,
@@ -15,7 +15,8 @@ use base_batcher_core::{
     },
 };
 use base_batcher_encoder::{
-    BatchPipeline, BatchSubmission, ReorgError, StepError, StepResult, SubmissionId,
+    BatchPipeline, BatchSubmission, DerivationReconciliation, ReorgError, StepError, StepResult,
+    SubmissionId,
 };
 use base_batcher_source::{ChannelBlockSource, L2BlockEvent};
 use base_common_consensus::BaseBlock;
@@ -55,17 +56,17 @@ fn test_pause_resets_pipeline() {
 }
 
 /// `AdminCommand::Resume` must reanchor the source at the safe head so it
-/// delivers missed blocks sequentially after that head. When no safe-head feed
+/// delivers missed blocks sequentially after that head. When no derivation-status feed
 /// is wired, no catchup is triggered.
 #[test]
 fn test_resume_triggers_catchup_from_safe_head() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let (source, catchup_args) = TrackingSource::new();
         let (admin_handle, admin_rx) = AdminHandle::channel();
-        let (safe_head_tx, safe_head_rx) = mpsc::channel(1);
+        let (derivation_status_tx, derivation_status_rx) = mpsc::channel(1);
         let safe_head = BlockInfo { number: 42, ..Default::default() };
 
-        let driver = BatchDriver::new_without_safe_head(
+        let driver = BatchDriver::new_without_derivation_status(
             ctx.clone(),
             TrackingPipeline::new(Arc::new(Mutex::new(Recorded::default()))),
             source,
@@ -80,7 +81,7 @@ fn test_resume_triggers_catchup_from_safe_head() {
             PendingL1HeadSource,
         )
         .with_admin_rx(admin_rx)
-        .with_safe_head_rx(safe_head, safe_head_rx);
+        .with_derivation_status_rx(DerivationStatus::from_safe_l2(safe_head), derivation_status_rx);
 
         let handle = ctx.spawn(driver.run());
 
@@ -91,8 +92,8 @@ fn test_resume_triggers_catchup_from_safe_head() {
         ctx.sleep(Duration::from_millis(10)).await;
         ctx.cancel();
 
-        // Keep the safe-head channel alive until the driver stops.
-        drop(safe_head_tx);
+        // Keep the derivation-status channel alive until the driver stops.
+        drop(derivation_status_tx);
         assert!(handle.await.unwrap().is_ok());
         assert_eq!(
             *catchup_args.lock().unwrap(),
@@ -142,8 +143,12 @@ fn test_paused_drops_block_and_flush_events() {
             fn advance_l1_head(&mut self, n: u64) {
                 self.inner.advance_l1_head(n);
             }
-            fn prune_safe(&mut self, n: u64) {
-                self.inner.prune_safe(n);
+            fn reconcile_derivation(
+                &mut self,
+                safe_l2: BlockInfo,
+                current_l1: Option<u64>,
+            ) -> DerivationReconciliation {
+                self.inner.reconcile_derivation(safe_l2, current_l1)
             }
             fn reset(&mut self) {
                 self.inner.reset();
@@ -158,7 +163,7 @@ fn test_paused_drops_block_and_flush_events() {
             inner: TrackingPipeline::new(Arc::new(Mutex::new(Recorded::default()))),
         };
 
-        let driver = BatchDriver::new_without_safe_head(
+        let driver = BatchDriver::new_without_derivation_status(
             ctx.clone(),
             pipeline,
             source,

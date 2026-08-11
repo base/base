@@ -28,10 +28,10 @@ use tracing::{info, warn};
 use url::Url;
 
 use crate::{
-    BatcherConfig, L2BlockParityMonitor, L2BlockParityMonitorConfig, MAX_CHECK_RECENT_TXS_DEPTH,
-    NullL1HeadSubscription, RecentTxSyncTarget, RpcL1HeadPollingSource, RpcL2BlockProvider,
-    RpcPollingSource, RpcThrottleClient, SafeHeadPoller, SafeHeadProvider, ShadowParityMonitor,
-    ShadowParityMonitorConfig, WsL1HeadSubscription,
+    BatcherConfig, DerivationStatusPoller, DerivationStatusProvider, L2BlockParityMonitor,
+    L2BlockParityMonitorConfig, MAX_CHECK_RECENT_TXS_DEPTH, NullL1HeadSubscription,
+    RecentTxSyncTarget, RpcL1HeadPollingSource, RpcL2BlockProvider, RpcPollingSource,
+    RpcThrottleClient, ShadowParityMonitor, ShadowParityMonitorConfig, WsL1HeadSubscription,
 };
 
 const WEI_PER_ETHER: f64 = 1_000_000_000_000_000_000.0;
@@ -330,7 +330,7 @@ impl BatcherService {
     /// if any of those steps fail — the caller sees the failure immediately,
     /// before any background work is spawned.
     ///
-    /// The runtime's cancellation token is forwarded to the safe-head poller
+    /// The runtime's cancellation token is forwarded to the derivation-status poller
     /// spawned here so it stops cleanly when the batcher shuts down.
     pub async fn setup(self, runtime: TokioRuntime) -> eyre::Result<ReadyBatcher> {
         let cancellation = runtime.token().clone();
@@ -501,19 +501,18 @@ impl BatcherService {
             .await?;
         }
 
-        let safe_l2 = if let Some(provider) = validator_provider.as_ref() {
+        let initial_derivation_status = if let Some(provider) = validator_provider.as_ref() {
             provider
-                .safe_l2_head()
+                .derivation_status()
                 .await
-                .map_err(|e| eyre::eyre!("failed to fetch parity validator safe L2 head: {e}"))?
+                .map_err(|e| eyre::eyre!("failed to fetch parity validator safe L2 status: {e}"))?
         } else {
             rollup_client
-                .sync_status()
+                .derivation_status()
                 .await
                 .map_err(|e| eyre::eyre!("optimism_syncStatus RPC failed: {e}"))?
-                .local_safe_l2
-                .block_info
         };
+        let safe_l2 = initial_derivation_status.safe_l2;
         if safe_l2 == BlockInfo::default() {
             eyre::bail!("safe L2 head is empty");
         }
@@ -672,28 +671,33 @@ impl BatcherService {
         .await
         .map_err(|e| eyre::eyre!("failed to create tx manager: {e}"))?;
 
-        let (safe_head_tx, safe_head_rx) = mpsc::channel(1);
+        let (derivation_status_tx, derivation_status_rx) = mpsc::channel(1);
 
         // Canonical mode follows the rollup node's LocalSafeL2. Shadow mode
         // follows the parity validator's safe label so canonical DA progress
         // cannot cause shadow-only gaps to be skipped.
-        let safe_head_handle = if let Some(provider) = validator_provider {
+        let derivation_status_handle = if let Some(provider) = validator_provider {
             tokio::spawn(
-                SafeHeadPoller::new(provider, self.config.poll_interval, safe_l2, safe_head_tx)
-                    .run(runtime.clone()),
+                DerivationStatusPoller::new(
+                    provider,
+                    self.config.poll_interval,
+                    initial_derivation_status,
+                    derivation_status_tx,
+                )
+                .run(runtime.clone()),
             )
         } else {
             tokio::spawn(
-                SafeHeadPoller::new(
+                DerivationStatusPoller::new(
                     rollup_client,
                     self.config.poll_interval,
-                    safe_l2,
-                    safe_head_tx,
+                    initial_derivation_status,
+                    derivation_status_tx,
                 )
                 .run(runtime.clone()),
             )
         };
-        background_tasks.push(("safe head poller", safe_head_handle));
+        background_tasks.push(("derivation status poller", derivation_status_handle));
 
         // Build the driver — all fallible setup is complete at this point.
         let mut driver = BatchDriver::new(
@@ -708,7 +712,7 @@ impl BatcherService {
                 force_blobs_when_throttling: self.config.force_blobs_when_throttling,
             },
             DaThrottle::new(throttle, throttle_client),
-            (l1_head_source, safe_l2, safe_head_rx),
+            (l1_head_source, initial_derivation_status, derivation_status_rx),
         )
         .with_stopped(self.config.stopped);
 

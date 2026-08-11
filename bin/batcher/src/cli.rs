@@ -311,6 +311,8 @@ impl BatcherArgs {
             batch_type: self.batch_type.into(),
             da_type: self.da_type,
             approx_compr_ratio: self.approx_compr_ratio,
+            // The batcher binary only targets post-Fjord chains, so it always uses Brotli.
+            compression_algo: base_batcher_encoder::CompressionAlgo::Brotli10,
             max_l1_tx_size_bytes: self.max_l1_tx_size_bytes,
         };
         encoder_config.validate()?;

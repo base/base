@@ -4,7 +4,7 @@ use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
     TestRollupConfigBuilder,
 };
-use base_batcher_encoder::{DaType, EncoderConfig};
+use base_batcher_encoder::{CompressionAlgo, DaType, EncoderConfig};
 use base_common_genesis::UpgradeConfig;
 use base_protocol::L1BlockInfoTx;
 
@@ -105,19 +105,20 @@ async fn ecotone_l1_info_format_transitions_at_activation() {
 #[tokio::test]
 async fn ecotone_activation_block_user_txs_accepted_at_batch_layer() {
     let batcher_cfg = BatcherConfig {
-        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        encoder: EncoderConfig {
+            da_type: DaType::Calldata,
+            compression_algo: CompressionAlgo::Zlib,
+            ..EncoderConfig::default()
+        },
         ..BatcherConfig::default()
     };
 
     // Canyon and Delta active at genesis; Ecotone at ts=6 (block 3).
-    // Fjord must be active so the batcher's brotli-compressed frames are
-    // accepted by the pipeline's BatchReader.
     let ecotone_time = 6u64;
     let upgrades = UpgradeConfig {
         canyon_time: Some(0),
         delta_time: Some(0),
         ecotone_time: Some(ecotone_time),
-        fjord_time: Some(0),
         ..Default::default()
     };
     let rollup_cfg =
@@ -179,8 +180,7 @@ async fn ecotone_activation_block_user_txs_accepted_at_batch_layer() {
 /// following the same pattern as `jovian_derivation_crosses_activation_boundary`
 /// in `upgrade/activation.rs`.
 ///
-/// - Canyon and Delta active at genesis (via Fjord cascade ensures brotli is
-///   accepted by the verifier's `BatchReader`).
+/// - Canyon and Delta active at genesis.
 /// - Ecotone activates at ts=6 (L2 block 3, `block_time=2`).
 /// - Blocks 1–2: pre-Ecotone, submitted with user transactions.
 /// - Block 3: first Ecotone block — submitted **empty** (no user txs) because
@@ -191,19 +191,20 @@ async fn ecotone_activation_block_user_txs_accepted_at_batch_layer() {
 #[tokio::test]
 async fn ecotone_derivation_crosses_activation_boundary() {
     let batcher_cfg = BatcherConfig {
-        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        encoder: EncoderConfig {
+            da_type: DaType::Calldata,
+            compression_algo: CompressionAlgo::Zlib,
+            ..EncoderConfig::default()
+        },
         ..BatcherConfig::default()
     };
 
-    // All forks through Delta active at genesis so that at ts=6 only Ecotone
-    // is "new". Fjord must be active so the batcher's brotli compression is
-    // accepted. Ecotone activates at ts=6 (block 3).
+    // All forks through Delta active at genesis so that Ecotone activates alone at ts=6.
     let ecotone_time = 6u64;
     let upgrades = UpgradeConfig {
         canyon_time: Some(0),
         delta_time: Some(0),
         ecotone_time: Some(ecotone_time),
-        fjord_time: Some(0),
         ..Default::default()
     };
     let rollup_cfg =
