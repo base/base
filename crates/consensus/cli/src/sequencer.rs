@@ -30,7 +30,7 @@ pub struct SequencerArgs {
     #[arg(
         id = "sequencer_l1_rpc_timeout",
         long = "sequencer.l1-rpc-timeout-ms",
-        default_value = "500",
+        default_value = SequencerConfig::DEFAULT_L1_RPC_TIMEOUT.as_millis().to_string(),
         env = "BASE_NODE_SEQUENCER_L1_RPC_TIMEOUT_MS",
         value_parser = |arg: &str| -> Result<Duration, ParseIntError> {
             Ok(Duration::from_millis(arg.parse()?))
@@ -111,7 +111,7 @@ mod tests {
 
     use clap::Parser;
 
-    use super::SequencerArgs;
+    use super::{SequencerArgs, SequencerConfig};
     use crate::L1ClientArgs;
 
     #[derive(Parser)]
@@ -126,8 +126,8 @@ mod tests {
     fn defaults_l1_rpc_timeout_to_five_hundred_milliseconds() {
         let args = SequencerArgs::default();
 
-        assert_eq!(args.l1_rpc_timeout, Duration::from_millis(500));
-        assert_eq!(args.config().l1_rpc_timeout, Duration::from_millis(500));
+        assert_eq!(args.l1_rpc_timeout, SequencerConfig::DEFAULT_L1_RPC_TIMEOUT);
+        assert_eq!(args.config().l1_rpc_timeout, SequencerConfig::DEFAULT_L1_RPC_TIMEOUT);
     }
 
     #[test]

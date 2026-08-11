@@ -222,10 +222,14 @@ impl RollupNodeBuilder {
             verifier_l1_confs: self.l1_config_builder.verifier_l1_confs,
             da_batcher_sender_override: self.l1_config_builder.da_batcher_sender_override,
         };
-        let sequencer_l1_provider = L1RpcProvider::new_http_with_timeout(
-            self.l1_config_builder.rpc_url.clone(),
-            sequencer_config.l1_rpc_timeout,
-        );
+        let sequencer_l1_provider = if self.engine_config.mode.is_sequencer() {
+            L1RpcProvider::new_http_with_timeout(
+                self.l1_config_builder.rpc_url.clone(),
+                sequencer_config.l1_rpc_timeout,
+            )
+        } else {
+            l1_config.engine_provider.clone()
+        };
 
         let l2_provider_url = Self::derivation_l2_provider_url(self.engine_config.l2_url.clone());
         let l2_provider = BaseEngineClient::<RootProvider, RootProvider<Base>>::rpc_client::<Base>(

@@ -17,7 +17,7 @@ pub struct L1ClientArgs {
     /// Request timeout for general L1 execution JSON-RPC calls.
     #[arg(
         long = "l1.rpc-timeout-ms",
-        default_value = "15000",
+        default_value = L1_RPC_TIMEOUT.as_millis().to_string(),
         env = "BASE_NODE_L1_RPC_TIMEOUT_MS",
         value_parser = |arg: &str| -> Result<Duration, ParseIntError> {
             Ok(Duration::from_millis(arg.parse()?))
@@ -81,7 +81,7 @@ mod tests {
 
     use clap::Parser;
 
-    use super::L1ClientArgs;
+    use super::{L1_RPC_TIMEOUT, L1ClientArgs};
 
     #[derive(Parser)]
     struct Command {
@@ -91,7 +91,7 @@ mod tests {
 
     #[test]
     fn defaults_l1_rpc_timeout_to_fifteen_seconds() {
-        assert_eq!(L1ClientArgs::default().l1_rpc_timeout, Duration::from_secs(15));
+        assert_eq!(L1ClientArgs::default().l1_rpc_timeout, L1_RPC_TIMEOUT);
     }
 
     #[test]
