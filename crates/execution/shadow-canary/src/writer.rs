@@ -75,7 +75,7 @@ impl ShadowWriter {
                     error = ?error,
                     "Failed to initialize shadow canary database pool"
                 );
-                return;
+                panic!("failed to initialize shadow canary database pool: {error:?}");
             }
         };
         let repo = ShadowBlockRepo::new(pool);
