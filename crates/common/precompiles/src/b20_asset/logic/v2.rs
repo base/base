@@ -38,6 +38,13 @@ const VERSION: &[u8] = b"1";
 pub struct AssetV2;
 
 impl AssetV2 {
+    const PAUSABLE_FEATURES: &[IB20::PausableFeature] = &[
+        IB20::PausableFeature::TRANSFER,
+        IB20::PausableFeature::MINT,
+        IB20::PausableFeature::BURN,
+        IB20::PausableFeature::SEIZE,
+    ];
+
     /// Role identifier for asset operators: `keccak256("OPERATOR_ROLE")`.
     ///
     /// Asset-specific (not part of [`B20TokenRole`]); kept inherent to V2 so it stays frozen with
@@ -425,7 +432,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
         privileged: bool,
     ) -> Result<()> {
         for feature in &features {
-            B20PausableFeature::ensure_valid(*feature)?;
+            B20PausableFeature::ensure_one_of(*feature, Self::PAUSABLE_FEATURES)?;
         }
         if !privileged {
             B20Guards::ensure_token_role(token, caller, B20TokenRole::Pause)?;
@@ -451,7 +458,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
         privileged: bool,
     ) -> Result<()> {
         for feature in &features {
-            B20PausableFeature::ensure_valid(*feature)?;
+            B20PausableFeature::ensure_one_of(*feature, Self::PAUSABLE_FEATURES)?;
         }
         if !privileged {
             B20Guards::ensure_token_role(token, caller, B20TokenRole::Unpause)?;
@@ -837,7 +844,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
         token: &B20AssetToken<S, A>,
         feature: IB20::PausableFeature,
     ) -> Result<bool> {
-        B20PausableFeature::ensure_valid(feature)?;
+        B20PausableFeature::ensure_one_of(feature, Self::PAUSABLE_FEATURES)?;
         Ok((token.accounting().paused()? & B20PausableFeature::mask(feature)) != U256::ZERO)
     }
 
