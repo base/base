@@ -1059,6 +1059,26 @@ fn golden_seize_reverts_zero_receiver() {
 }
 
 #[test]
+fn golden_seize_reverts_zero_from() {
+    let mut s = fresh();
+    seed(&mut s, |t| {
+        give_role(t, B20TokenRole::Seize.id(), ADMIN);
+        // A non-default `SeizeHolder` treats the zero address as seizable; the `from != 0` guard
+        // still rejects a zero-amount seize that would otherwise emit a mint-like Transfer(0x0,..).
+        make_seizable(t);
+    });
+    let err = op(
+        &mut s,
+        ADMIN,
+        FakePolicyAccounting::new(),
+        IB20::seizeWithMemoCall { from: Address::ZERO, to: BOB, amount: u(0), memo: MEMO }
+            .abi_encode(),
+    )
+    .unwrap_err();
+    assert_eq!(err, BasePrecompileError::revert(IB20::InvalidSender { sender: Address::ZERO }));
+}
+
+#[test]
 fn golden_seize_reverts_account_not_seizable() {
     let mut s = fresh();
     seed(&mut s, |t| {

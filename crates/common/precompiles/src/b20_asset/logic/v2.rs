@@ -394,9 +394,13 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
     ) -> Result<()> {
         B20Guards::ensure_not_paused(token, IB20::PausableFeature::SEIZE)?;
         B20Guards::ensure_token_role(token, caller, B20TokenRole::Seize)?;
-        // `to != 0` guards against a disguised burn; `from` is not zero-checked (burn-blocked family).
+        // `to != 0` guards against a disguised burn; `from != 0` guards against a disguised mint
+        // (`Transfer(0x0, to, ...)`), matching `transfer_inner`.
         if to == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
+        }
+        if from == Address::ZERO {
+            return Err(BasePrecompileError::revert(IB20::InvalidSender { sender: from }));
         }
         if from == to {
             return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
@@ -1665,6 +1669,26 @@ mod tests {
         assert_eq!(
             err,
             BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO })
+        );
+    }
+
+    #[test]
+    fn seize_reverts_on_zero_from() {
+        let mut tok = token();
+        // A non-default `SeizeHolder` (here ALWAYS_BLOCK via `make_seizable`) treats the zero
+        // address as seizable, so without the `from != 0` guard a zero-amount seize from the zero
+        // address would emit a misleading `Transfer(0x0, to, 0)` that indexers read as a mint.
+        make_seizable(&mut tok);
+        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
+
+        let err = LOGIC
+            .seize_with_memo(&mut tok, ADMIN, Address::ZERO, BOB, U256::ZERO, MEMO)
+            .unwrap_err();
+
+        assert_eq!(err, BasePrecompileError::revert(IB20::InvalidSender { sender: Address::ZERO }));
+        assert!(
+            event_sigs(&tok).is_empty(),
+            "no misleading Transfer/Memo/Seized on a rejected zero-from seize"
         );
     }
 
