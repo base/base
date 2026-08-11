@@ -14,7 +14,8 @@ env:
   # branch movement. Bump in lockstep with base/base's reth/revm version; a
   # cutover to a new base-anvil (e.g. reth 2.3.0) rides in the same base/base PR.
   BASE_ANVIL_REF: 0092692587d8d064dd2c6923ce26a682c58f3694
-  BASE_STD_REF: main
+  # This was base-std/main when the v1.2 release line branched.
+  BASE_STD_REF: v1.0.0
   CARGO_TERM_COLOR: always
   RUSTC_WRAPPER: "sccache"
   SCCACHE_GHA_ENABLED: "true"
