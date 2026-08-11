@@ -30,12 +30,3 @@ CREATE TABLE IF NOT EXISTS shadow_block_transactions(
   PRIMARY KEY(block_hash, tx_index)
 );
 CREATE INDEX IF NOT EXISTS idx_shadow_block_transactions_number ON shadow_block_transactions(block_number, tx_index);
-
-DO $$
-BEGIN
-    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'shadow_metrics') THEN
-        GRANT SELECT ON _sqlx_migrations TO shadow_metrics;
-        GRANT SELECT, INSERT, UPDATE, DELETE ON shadow_blocks TO shadow_metrics;
-        GRANT SELECT, INSERT, UPDATE, DELETE ON shadow_block_transactions TO shadow_metrics;
-    END IF;
-END $$;
