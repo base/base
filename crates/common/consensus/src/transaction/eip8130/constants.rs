@@ -152,30 +152,6 @@ impl Eip8130Constants {
     /// is never a valid authenticator selector; addresses below this are reserved.
     pub const K1_AUTHENTICATOR: Address = address!("0x0000000000000000000000000000000000000001");
 
-    /// `AccountState.flags` bit that disables the implicit default-EOA path.
-    ///
-    /// The implicit default EOA is a [`Self::K1_AUTHENTICATOR`] signature whose
-    /// recovered signer equals the account; with no explicit `actor_config` it
-    /// resolves to a full owner, gated solely on this flag. Set by
-    /// `createAccount`/`importAccount` (disabled by default), and by authorizing
-    /// or revoking the self-actor; once set it is never cleared (monotonic), so
-    /// an explicit self-actor entry always implies the flag is set.
-    pub const DEFAULT_EOA_REVOKED: u8 = 0x01;
-
-    /// `AccountState.flags` bit (spec `LOCKED`): when set, actor configuration is
-    /// frozen — every config change and delegation is rejected on both the native
-    /// and EVM paths. The only permitted operation is `applySignedLockChanges`'s
-    /// unlock op. Set/cleared exclusively through the EVM `applySignedLockChanges`
-    /// entry point.
-    pub const FLAG_LOCKED: u8 = 0x02;
-
-    /// `AccountState.flags` bit (spec `UNLOCK_INITIATED`): selects how the packed
-    /// `lock_union` field is interpreted. While clear, `lock_union` holds the
-    /// configured `unlock_delay` (seconds, `uint16` range); while set, it holds
-    /// `unlocks_at` (the timestamp at which the pending unlock takes effect). Only
-    /// meaningful when [`Self::FLAG_LOCKED`] is set.
-    pub const FLAG_UNLOCK_INITIATED: u8 = 0x04;
-
     /// `AccountState.flags` bit (spec `CONTRACT_ESTABLISHED`): set on every
     /// account the keystore establishes — `createAccount` (mirrored by the
     /// node's create path) and `importAccount` — marking it
@@ -187,7 +163,31 @@ impl Eip8130Constants {
     /// so empty code alone must never be read as proof of a known EOA key. The
     /// node therefore rejects a delegation onto an empty-code account that carries
     /// this flag (it is not a proven-key EOA and must not be re-delegated as one).
-    pub const FLAG_CONTRACT_ESTABLISHED: u8 = 0x08;
+    pub const FLAG_CONTRACT_ESTABLISHED: u8 = 0x01;
+
+    /// `AccountState.flags` bit that disables the implicit default-EOA path.
+    ///
+    /// The implicit default EOA is a [`Self::K1_AUTHENTICATOR`] signature whose
+    /// recovered signer equals the account; with no explicit `actor_config` it
+    /// resolves to a full owner, gated solely on this flag. Set by
+    /// `createAccount`/`importAccount` (disabled by default), and by authorizing
+    /// or revoking the self-actor; once set it is never cleared (monotonic), so
+    /// an explicit self-actor entry always implies the flag is set.
+    pub const DEFAULT_EOA_REVOKED: u8 = 0x02;
+
+    /// `AccountState.flags` bit (spec `LOCKED`): when set, actor configuration is
+    /// frozen — every config change and delegation is rejected on both the native
+    /// and EVM paths. The only permitted operation is `applySignedLockChanges`'s
+    /// unlock op. Set/cleared exclusively through the EVM `applySignedLockChanges`
+    /// entry point.
+    pub const FLAG_LOCKED: u8 = 0x04;
+
+    /// `AccountState.flags` bit (spec `UNLOCK_INITIATED`): selects how the packed
+    /// `lock_union` field is interpreted. While clear, `lock_union` holds the
+    /// configured `unlock_delay` (seconds, `uint16` range); while set, it holds
+    /// `unlocks_at` (the timestamp at which the pending unlock takes effect). Only
+    /// meaningful when [`Self::FLAG_LOCKED`] is set.
+    pub const FLAG_UNLOCK_INITIATED: u8 = 0x08;
 
     /// Exact byte length of a policy-bearing actor's `policyData`:
     /// `manager (20) || commitment (32)`. Required when `scope & SCOPE_POLICY`
