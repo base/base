@@ -3304,6 +3304,7 @@ dependencies = [
  "reth-provider",
  "reth-revm",
  "reth-transaction-pool",
+ "reth-trie-common",
  "serde_json",
  "tempfile",
  "thiserror 2.0.19",
