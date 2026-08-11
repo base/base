@@ -109,7 +109,26 @@ pub enum PlannerError {
     /// Attestation `public_key` cannot be converted to a signer address.
     #[error("public key error: {0}")]
     PublicKey(String),
+
+    /// P-384 inverse-hint generation failed.
+    #[error(transparent)]
+    Hint(#[from] HintError),
 }
+
+/// Errors from the Agora / `nitro-validator` P-384 inverse-hint transcript.
+#[derive(Debug, Error)]
+pub enum HintError {
+    /// Signature, key, or arithmetic input rejected by the verifier transcript.
+    #[error("{0}")]
+    Rejected(String),
+
+    /// Certificate DER could not be parsed into P-384 verify inputs.
+    #[error("certificate error: {0}")]
+    Certificate(String),
+}
+
+/// Convenience result alias for hint generation.
+pub type HintResult<T> = std::result::Result<T, HintError>;
 
 /// Convenience result alias for planner operations.
 pub type PlannerResult<T> = std::result::Result<T, PlannerError>;

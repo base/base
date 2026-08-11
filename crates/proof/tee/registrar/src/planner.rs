@@ -11,7 +11,8 @@ use x509_parser::prelude::{FromDer, X509Version};
 use crate::{
     cbor::NitroCose,
     error::{PlannerError, PlannerResult},
-    types::{CertKind, CertPlan, RegistrationPlan},
+    hints::P384Hints,
+    types::{CertKind, CertPlan, HintedRegistrationPlan, RegistrationPlan},
 };
 
 const UNCOMPRESSED_SECP256K1_LEN: usize = 65;
@@ -106,6 +107,22 @@ impl AttestationPlanner {
             signature: cose.signature,
             certs,
         })
+    }
+
+    /// Parses a Nitro attestation into a registration plan plus P-384 inverse hints.
+    ///
+    /// Hint streams cover every non-root CA, the leaf certificate, and the final
+    /// attestation signature. Unused by the running Boundless registrar path until
+    /// hinted orchestration lands.
+    pub fn prepare_hinted_registration_plan(
+        attestation: &[u8],
+    ) -> PlannerResult<HintedRegistrationPlan> {
+        let plan = Self::prepare_registration_plan(attestation)?;
+        let cose = NitroCose::parse_sign1(attestation)?;
+        let doc: AttestationDocument = ciborium::de::from_reader(cose.payload.as_slice())
+            .map_err(|e| PlannerError::Attestation(format!("attestation document decode: {e}")))?;
+        let hints = P384Hints::for_registration_plan(doc.cabundle[0].as_ref(), &plan)?;
+        Ok(HintedRegistrationPlan { plan, hints })
     }
 
     /// Human-readable role label for a non-root CA index in the cabundle.
