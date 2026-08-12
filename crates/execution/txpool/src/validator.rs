@@ -1522,13 +1522,20 @@ where
             ApplyError::ActorsNotSortedOrDuplicate => {
                 "create initial actors are not strictly ascending"
             }
+            ApplyError::EmptyBytecode => "create bytecode is empty",
             ApplyError::BytecodeTooLarge => "create bytecode exceeds the size limit",
+            ApplyError::AccountDeploymentFailed { .. } => {
+                "create bytecode is not deployable (size or reserved 0xEF prefix)"
+            }
             ApplyError::AlreadyCreated { .. } => "create account already exists",
             ApplyError::CreateAddressMismatch { .. } => "create address does not match the sender",
             ApplyError::InvalidCreatePosition => "create entry must be the only one, at index 0",
             ApplyError::MultipleDelegations => "at most one delegation is allowed",
             ApplyError::CreateAndDelegation => "create and delegation may not coexist",
             ApplyError::NonDelegatableCode { .. } => "delegation sender has non-delegation code",
+            ApplyError::ContractEstablishedCodeless { .. } => {
+                "delegation target is an empty-code keystore-established account"
+            }
             ApplyError::SequenceOverflow => "config change sequence overflow",
         }
     }
@@ -1798,8 +1805,13 @@ where
                     if create_count > 1 || idx != 0 {
                         return Err(InvalidTransactionError::TxTypeNotSupported.into());
                     }
+                    // Reject at admission the runtime code shapes the enshrined
+                    // deploy (`AccountChangeApplier::apply_create`) refuses:
+                    // EIP-170 oversize and the EIP-3541 reserved leading `0xEF`
+                    // byte (which `CREATE2` would reject with `address(0)`).
                     if create.code.is_empty()
                         || create.code.len() > Eip8130Constants::MAX_CODE_SIZE
+                        || create.code.first() == Some(&0xEF)
                         || create.initial_actors.is_empty()
                     {
                         return Err(InvalidTransactionError::TxTypeNotSupported.into());
