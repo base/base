@@ -3,7 +3,7 @@
 //! Strictly parses `COSE_Sign1` (raw protected/payload TLVs for TBS) and builds
 //! `CertManager`-oriented plan fields required by hinted registration.
 
-use alloy_primitives::{Address, B256, keccak256};
+use alloy_primitives::{Address, B256, b256, keccak256};
 use base_proof_tee_nitro_verifier::{AttestationDocument, AttestationVerifier};
 use k256::ecdsa::VerifyingKey;
 use x509_parser::prelude::{FromDer, X509Version};
@@ -17,16 +17,8 @@ use crate::{
 const UNCOMPRESSED_SECP256K1_LEN: usize = 65;
 
 /// Full-DER hash of the pinned AWS Nitro root certificate.
-pub const PINNED_ROOT_CERT_HASH: B256 = B256::new(hex_literal_root());
-
-const fn hex_literal_root() -> [u8; 32] {
-    // 0x311d96fcd5c5e0ccf72ef548e2ea7d4c0cd53ad7c4cc49e67471aed41d61f185
-    [
-        0x31, 0x1d, 0x96, 0xfc, 0xd5, 0xc5, 0xe0, 0xcc, 0xf7, 0x2e, 0xf5, 0x48, 0xe2, 0xea, 0x7d,
-        0x4c, 0x0c, 0xd5, 0x3a, 0xd7, 0xc4, 0xcc, 0x49, 0xe6, 0x74, 0x71, 0xae, 0xd4, 0x1d, 0x61,
-        0xf1, 0x85,
-    ]
-}
+pub const PINNED_ROOT_CERT_HASH: B256 =
+    b256!("0x311d96fcd5c5e0ccf72ef548e2ea7d4c0cd53ad7c4cc49e67471aed41d61f185");
 
 /// Parses AWS Nitro `COSE_Sign1` attestations into certificate registration plans.
 #[derive(Debug, Default)]
@@ -171,6 +163,9 @@ impl CertManagerKeys {
             keccak256(parsed.tbs_certificate.as_ref())
         };
 
+        // `raw_serial()` is the ASN.1 INTEGER content octets, including a leading `0x00` when
+        // DER sign-extends a high-bit serial. `CertManager._certIdentity` hashes the same bytes
+        // (`serialPtr.content()` / `length()`), so do not strip padding.
         let serial_hash = keccak256(parsed.tbs_certificate.raw_serial());
         let issuer_content = Self::der_content_octets(parsed.tbs_certificate.issuer().as_raw())?;
         let issuer_hash = keccak256(issuer_content);
