@@ -248,6 +248,9 @@ impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
             return Ok(());
         };
 
+        // Taking the slot first intentionally leaves it idle if successor adoption proves the
+        // current origin was orphaned and returns an error. Stale speculative state must not
+        // survive that error path.
         self.next = match std::mem::take(&mut self.next) {
             NextSlot::Ready { block, chain_view: ready_view }
                 if block.header.parent_hash == current_hash && ready_view == chain_view =>
