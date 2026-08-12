@@ -36,8 +36,7 @@ impl Server {
         let listener = TcpListener::bind(listen_addr)
             .await
             .with_context(|| format!("failed to bind roxy server to {listen_addr}"))?;
-        let listen_addr =
-            listener.local_addr().context("failed to read roxy listen address")?;
+        let listen_addr = listener.local_addr().context("failed to read roxy listen address")?;
 
         ready.store(true, Ordering::SeqCst);
         info!(%listen_addr, "roxy server started");
@@ -92,14 +91,9 @@ mod tests {
         let ready = Arc::new(AtomicBool::new(false));
         let (addr, _handle, cancel) = start_test_server(ready).await;
 
-        let response = reqwest::get(format!("http://{addr}/healthz"))
-            .await
-            .expect("healthz request");
-        assert_eq!(
-            response.status().as_u16(),
-            200,
-            "liveness must return 200 even when not ready"
-        );
+        let response =
+            reqwest::get(format!("http://{addr}/healthz")).await.expect("healthz request");
+        assert_eq!(response.status().as_u16(), 200, "liveness must return 200 even when not ready");
 
         cancel.cancel();
     }
@@ -112,22 +106,14 @@ mod tests {
         let response = reqwest::get(format!("http://{addr}/readyz"))
             .await
             .expect("readyz request while not ready");
-        assert_eq!(
-            response.status().as_u16(),
-            503,
-            "readiness must return 503 before ready"
-        );
+        assert_eq!(response.status().as_u16(), 503, "readiness must return 503 before ready");
 
         ready.store(true, Ordering::SeqCst);
 
         let response = reqwest::get(format!("http://{addr}/readyz"))
             .await
             .expect("readyz request while ready");
-        assert_eq!(
-            response.status().as_u16(),
-            200,
-            "readiness must return 200 after ready"
-        );
+        assert_eq!(response.status().as_u16(), 200, "readiness must return 200 after ready");
 
         cancel.cancel();
     }
