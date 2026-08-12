@@ -31,7 +31,7 @@ use tokio::{sync::mpsc, task::JoinHandle};
 use url::Url;
 
 use crate::{
-    ZenithCheck, ZenithCheckCursor, ZenithCheckStatus, ZenithCheckTarget, ZenithChecker,
+    DenimCheck, DenimCheckCursor, DenimCheckStatus, DenimCheckTarget, DenimChecker,
     app::{Action, Resources, View},
     output::COLOR_BASE_BLUE,
     tui::Keybinding,
@@ -107,6 +107,7 @@ impl ChainUpgrades {
         self.set_timestamp(BaseUpgrade::Azul, upgrades.base.azul);
         self.set_timestamp(BaseUpgrade::Beryl, upgrades.base.beryl);
         self.set_timestamp(BaseUpgrade::Cobalt, upgrades.base.cobalt);
+        self.set_timestamp(BaseUpgrade::Denim, upgrades.base.denim);
         self.set_timestamp(BaseUpgrade::Zenith, upgrades.base.zenith);
     }
 
@@ -191,6 +192,7 @@ fn specs_from_config(cfg: &ChainConfig) -> Vec<UpgradeSpec> {
             name: "Cobalt",
             timestamp: cfg.cobalt_timestamp,
         },
+        UpgradeSpec { upgrade: BaseUpgrade::Denim, name: "Denim", timestamp: None },
         UpgradeSpec { upgrade: BaseUpgrade::Zenith, name: "Zenith", timestamp: None },
     ]
 }
@@ -285,8 +287,8 @@ const BERYL_CHECKS: &[(&str, &str)] = &[
     ("B-20 asset feature", "B-20 asset feature"),
 ];
 
-/// Expected Zenith checks and visible labels, in report order.
-const ZENITH_CHECKS: &[(&str, &str)] = &[
+/// Expected Denim checks and visible labels, in report order.
+const DENIM_CHECKS: &[(&str, &str)] = &[
     ("proxy_code_hash", "BaseTime proxy code"),
     ("proxy_admin", "BaseTime proxy admin"),
     ("implementation", "BaseTime implementation"),
@@ -331,7 +333,7 @@ const BERYL_FEATURE_CHECKS: &[(&str, ActivationFeature)] = &[
 
 fn checks_for(upgrade: &str) -> &'static [(&'static str, &'static str)] {
     match upgrade {
-        "Zenith" => ZENITH_CHECKS,
+        "Denim" => DENIM_CHECKS,
         "Beryl" => BERYL_CHECKS,
         "Azul" => AZUL_CHECKS,
         "Jovian" => JOVIAN_CHECKS,
@@ -393,7 +395,7 @@ enum CheckUpdate {
         name: String,
         result: CheckResult,
     },
-    Cursor(ZenithCheckCursor),
+    Cursor(DenimCheckCursor),
 }
 
 /// State for the checks panel. Tracks streaming results per chain.
@@ -416,7 +418,7 @@ struct ChecksPanel {
     /// auto-refresh so we don't re-issue checks faster than the configured
     /// cadence even if the previous run finished quickly.
     last_run_at: Option<Instant>,
-    cursor: Option<ZenithCheckCursor>,
+    cursor: Option<DenimCheckCursor>,
     scroll: usize,
 }
 
@@ -2056,13 +2058,11 @@ async fn run_checks_streaming(
     endpoints: (String, Option<Url>, Option<Url>),
     mode: CheckMode,
     tx: mpsc::Sender<CheckUpdate>,
-    cursor: Option<ZenithCheckCursor>,
+    cursor: Option<DenimCheckCursor>,
 ) {
     let (rpc_url, consensus_rpc, el_ws_rpc) = endpoints;
     match upgrade {
-        "Zenith" => {
-            run_zenith_checks_streaming(rpc_url, consensus_rpc, el_ws_rpc, cursor, tx).await
-        }
+        "Denim" => run_denim_checks_streaming(rpc_url, consensus_rpc, el_ws_rpc, cursor, tx).await,
         "Beryl" => run_beryl_checks_streaming(rpc_url, mode, tx).await,
         "Azul" => run_azul_checks_streaming(rpc_url, tx).await,
         "Jovian" => run_jovian_checks_streaming(rpc_url, mode, tx).await,
@@ -2070,11 +2070,11 @@ async fn run_checks_streaming(
     }
 }
 
-fn zenith_check_result(check: ZenithCheck) -> CheckResult {
+fn denim_check_result(check: DenimCheck) -> CheckResult {
     let passed = match check.status {
-        ZenithCheckStatus::Pass => Some(true),
-        ZenithCheckStatus::Fail => Some(false),
-        ZenithCheckStatus::Indeterminate => None,
+        DenimCheckStatus::Pass => Some(true),
+        DenimCheckStatus::Fail => Some(false),
+        DenimCheckStatus::Indeterminate => None,
     };
     let shorten = |value: String| {
         if value.starts_with("0x") { truncate_hex(value, 14) } else { value }
@@ -2091,23 +2091,23 @@ fn zenith_check_result(check: ZenithCheck) -> CheckResult {
     CheckResult {
         passed,
         detail: match check.status {
-            ZenithCheckStatus::Pass | ZenithCheckStatus::Indeterminate => observed,
-            ZenithCheckStatus::Fail => format!("expected {expected}; got {observed}"),
+            DenimCheckStatus::Pass | DenimCheckStatus::Indeterminate => observed,
+            DenimCheckStatus::Fail => format!("expected {expected}; got {observed}"),
         },
     }
 }
 
-async fn run_zenith_checks_streaming(
+async fn run_denim_checks_streaming(
     rpc_url: String,
     consensus_rpc: Option<Url>,
     el_ws_rpc: Option<Url>,
-    cursor: Option<ZenithCheckCursor>,
+    cursor: Option<DenimCheckCursor>,
     tx: mpsc::Sender<CheckUpdate>,
 ) {
     let report = match (Url::parse(&rpc_url), consensus_rpc) {
         (Ok(el_rpc), Some(cl_rpc)) => {
-            ZenithChecker
-                .check(&el_rpc, &cl_rpc, el_ws_rpc.as_ref(), ZenithCheckTarget::Latest, cursor)
+            DenimChecker
+                .check(&el_rpc, &cl_rpc, el_ws_rpc.as_ref(), DenimCheckTarget::Latest, cursor)
                 .await
         }
         (Err(error), _) => Err(anyhow::anyhow!("invalid execution RPC URL: {error}")),
@@ -2119,7 +2119,7 @@ async fn run_zenith_checks_streaming(
             let cursor = report.cursor;
             let mut checks: HashMap<_, _> =
                 report.checks.into_iter().map(|check| (check.name.clone(), check)).collect();
-            for &(name, _) in ZENITH_CHECKS {
+            for &(name, _) in DENIM_CHECKS {
                 if tx.send(CheckUpdate::Starting(name.to_string())).await.is_err() {
                     return;
                 }
@@ -2128,20 +2128,20 @@ async fn run_zenith_checks_streaming(
                         passed: None,
                         detail: format!("not applicable for {:?} snapshot", report.schedule),
                     },
-                    zenith_check_result,
+                    denim_check_result,
                 );
                 if tx.send(CheckUpdate::Completed { name: name.to_string(), result }).await.is_err()
                 {
                     return;
                 }
             }
-            debug_assert!(checks.is_empty(), "unexpected Zenith checks: {checks:?}");
+            debug_assert!(checks.is_empty(), "unexpected Denim checks: {checks:?}");
             if let Some(cursor) = cursor {
                 let _ = tx.send(CheckUpdate::Cursor(cursor)).await;
             }
         }
         Err(error) => {
-            for (index, &(name, _)) in ZENITH_CHECKS.iter().enumerate() {
+            for (index, &(name, _)) in DENIM_CHECKS.iter().enumerate() {
                 if tx.send(CheckUpdate::Starting(name.to_string())).await.is_err() {
                     return;
                 }
@@ -2809,7 +2809,13 @@ mod tests {
         assert_eq!(target_upgrade(&chain, 100), Some("Beryl"));
 
         chain.apply_upgrades(&UpgradeConfig {
-            base: BaseUpgradeConfig { azul: Some(10), beryl: Some(12), cobalt: None, zenith: None },
+            base: BaseUpgradeConfig {
+                azul: Some(10),
+                beryl: Some(12),
+                cobalt: None,
+                denim: None,
+                zenith: None,
+            },
             ..UpgradeConfig::default()
         });
 
@@ -2828,7 +2834,13 @@ mod tests {
         };
         chain.apply_upgrades(&UpgradeConfig {
             jovian_time: Some(10),
-            base: BaseUpgradeConfig { azul: Some(20), beryl: None, cobalt: None, zenith: None },
+            base: BaseUpgradeConfig {
+                azul: Some(20),
+                beryl: None,
+                cobalt: None,
+                denim: None,
+                zenith: None,
+            },
             ..UpgradeConfig::default()
         });
 
@@ -2837,7 +2849,7 @@ mod tests {
     }
 
     #[test]
-    fn live_rollup_config_schedules_zenith() {
+    fn live_rollup_config_schedules_denim() {
         let mut chain = ChainUpgrades {
             display_name: "Devnet",
             chain_id: ChainConfig::devnet().chain_id,
@@ -2846,14 +2858,14 @@ mod tests {
         };
 
         chain.apply_upgrades(&UpgradeConfig {
-            base: BaseUpgradeConfig { zenith: Some(30), ..BaseUpgradeConfig::default() },
+            base: BaseUpgradeConfig { denim: Some(30), ..BaseUpgradeConfig::default() },
             ..UpgradeConfig::default()
         });
 
-        let zenith = chain.specs.iter().find(|spec| spec.name == "Zenith").unwrap();
-        assert_eq!(zenith.timestamp, Some(30));
-        assert_eq!(target_upgrade(&chain, 29), Some("Zenith"));
-        assert_eq!(target_upgrade(&chain, 30), Some("Zenith"));
+        let denim = chain.specs.iter().find(|spec| spec.name == "Denim").unwrap();
+        assert_eq!(denim.timestamp, Some(30));
+        assert_eq!(target_upgrade(&chain, 29), Some("Denim"));
+        assert_eq!(target_upgrade(&chain, 30), Some("Denim"));
     }
 
     #[test]
@@ -2867,7 +2879,13 @@ mod tests {
         let delta = chain.specs.iter().find(|spec| spec.name == "Delta").unwrap().timestamp;
 
         chain.apply_upgrades(&UpgradeConfig {
-            base: BaseUpgradeConfig { azul: Some(20), beryl: None, cobalt: None, zenith: None },
+            base: BaseUpgradeConfig {
+                azul: Some(20),
+                beryl: None,
+                cobalt: None,
+                denim: None,
+                zenith: None,
+            },
             ..UpgradeConfig::default()
         });
 
@@ -2898,19 +2916,19 @@ mod tests {
         let names: Vec<_> =
             checkable_specs_display(&chain).into_iter().map(|spec| spec.name).collect();
 
-        assert_eq!(names, vec!["Zenith", "Beryl", "Azul", "Jovian"]);
+        assert_eq!(names, vec!["Denim", "Beryl", "Azul", "Jovian"]);
     }
 
     #[test]
-    fn zenith_report_checks_map_to_existing_rows() {
+    fn denim_report_checks_map_to_existing_rows() {
         let (tx, rx) = mpsc::channel(2);
-        let check = ZenithCheck {
+        let check = DenimCheck {
             name: "proxy_code_hash".to_string(),
-            status: ZenithCheckStatus::Fail,
+            status: DenimCheckStatus::Fail,
             expected: B256::repeat_byte(0xaa).to_string(),
             observed: B256::repeat_byte(0xbb).to_string(),
         };
-        let result = zenith_check_result(check);
+        let result = denim_check_result(check);
         tx.try_send(CheckUpdate::Starting("proxy_code_hash".to_string())).unwrap();
         tx.try_send(CheckUpdate::Completed { name: "proxy_code_hash".to_string(), result })
             .unwrap();
@@ -2928,10 +2946,10 @@ mod tests {
     }
 
     #[test]
-    fn zenith_initial_implementation_has_operator_friendly_detail() {
-        let result = zenith_check_result(ZenithCheck {
+    fn denim_initial_implementation_has_operator_friendly_detail() {
+        let result = denim_check_result(DenimCheck {
             name: "implementation".to_string(),
-            status: ZenithCheckStatus::Pass,
+            status: DenimCheckStatus::Pass,
             expected: "a linked implementation with deployed code".to_string(),
             observed: "LinkedInitial".to_string(),
         });
@@ -2944,7 +2962,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let panel = ChecksPanel {
             chain_idx: Some(0),
-            upgrade: Some("Zenith"),
+            upgrade: Some("Denim"),
             mode: Some(mode),
             rpc_url: "http://localhost:7545".to_string(),
             ..ChecksPanel::default()
@@ -2959,12 +2977,12 @@ mod tests {
     }
 
     #[test]
-    fn zenith_checks_render_before_and_after_modes() {
+    fn denim_checks_render_before_and_after_modes() {
         let before = rendered_checks_panel(CheckMode::Before);
         let after = rendered_checks_panel(CheckMode::After);
 
-        assert!(before.contains("Zenith Checks (before)"));
-        assert!(after.contains("Zenith Checks (after)"));
+        assert!(before.contains("Denim Checks (before)"));
+        assert!(after.contains("Denim Checks (after)"));
         assert!(before.contains("BaseTime implementation"));
         assert!(after.contains("BaseTime update tx"));
         assert!(after.contains("BaseTime update receipt"));
@@ -2975,9 +2993,9 @@ mod tests {
     }
 
     #[test]
-    fn zenith_rows_keep_basetime_together_and_headers_last() {
+    fn denim_rows_keep_basetime_together_and_headers_last() {
         assert_eq!(
-            &checks_for("Zenith")[..9].iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+            &checks_for("Denim")[..9].iter().map(|(name, _)| *name).collect::<Vec<_>>(),
             &[
                 "proxy_code_hash",
                 "proxy_admin",
@@ -2991,7 +3009,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            &checks_for("Zenith")[ZENITH_CHECKS.len() - 4..]
+            &checks_for("Denim")[DENIM_CHECKS.len() - 4..]
                 .iter()
                 .map(|(name, _)| *name)
                 .collect::<Vec<_>>(),
@@ -3022,11 +3040,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unavailable_zenith_checker_marks_all_rows_indeterminate() {
+    async fn unavailable_denim_checker_marks_all_rows_indeterminate() {
         let (tx, mut rx) = mpsc::channel(64);
 
-        run_zenith_checks_streaming("http://localhost:7545".to_string(), None, None, None, tx)
-            .await;
+        run_denim_checks_streaming("http://localhost:7545".to_string(), None, None, None, tx).await;
 
         let mut started = Vec::new();
         let mut completed = Vec::new();
@@ -3038,8 +3055,8 @@ mod tests {
             }
         }
 
-        assert!(ZENITH_CHECKS.iter().all(|(name, _)| started.iter().any(|seen| seen == name)));
-        assert_eq!(completed.len(), ZENITH_CHECKS.len());
+        assert!(DENIM_CHECKS.iter().all(|(name, _)| started.iter().any(|seen| seen == name)));
+        assert_eq!(completed.len(), DENIM_CHECKS.len());
         assert_eq!(completed[0].1.passed, None);
         assert_eq!(completed[0].1.detail, "consensus node RPC is not configured");
         assert!(completed.iter().all(|(_, result)| result.passed.is_none()));
