@@ -247,6 +247,12 @@ pub struct MockAggregateVerifier {
 
 #[async_trait]
 impl AggregateVerifierClient for MockAggregateVerifier {
+    async fn proof_protocol_descriptor(
+        &self,
+        _: Address,
+    ) -> Result<base_proof_contracts::ProofProtocolDescriptor, ContractError> {
+        unimplemented!("unused in proposer tests")
+    }
     async fn game_info(&self, _: Address) -> Result<GameInfo, ContractError> {
         unimplemented!("unused in proposer tests")
     }

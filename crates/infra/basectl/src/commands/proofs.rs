@@ -5,8 +5,12 @@ use std::{
     io::{self, Write},
 };
 
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256};
 use anyhow::Result;
+use base_proof_contracts::{
+    AggregateVerifierClient, AggregateVerifierContractClient, DisputeGameFactoryClient,
+    DisputeGameFactoryContractClient, ProofProtocolDescriptor, ProofScheduleKind,
+};
 use base_prover_service_protocol::{
     GetProofResponse, ListProofsRequest, ProofResult, ProofStatus, ProofSummary, ProofType,
     TeeKind, ZkVm,
@@ -38,6 +42,35 @@ pub enum ProofsCommands {
     Status(ProofsStatusArgs),
     /// List submitted proof requests.
     List(ProofsListArgs),
+    /// Print the proof capability fingerprint of historical dispute games.
+    ///
+    /// Reads the immutable commitments each game proxy exposes and derives the fingerprint the
+    /// challenger routes on, so `--proof-protocol-version <fingerprint>=<version>` mappings can be
+    /// written from observed state rather than guessed. Read-only.
+    Protocol(ProofsProtocolArgs),
+}
+
+/// Flags for `basectl proofs protocol`.
+#[derive(Debug, Args)]
+pub struct ProofsProtocolArgs {
+    /// L1 RPC endpoint used to read game state.
+    #[arg(long = "l1-rpc", env = "BASECTL_L1_RPC", value_name = "URL")]
+    pub l1_rpc: Url,
+    /// `DisputeGameFactory` address to enumerate games from.
+    #[arg(long = "factory", value_name = "ADDRESS", required_unless_present = "game")]
+    pub factory: Option<Address>,
+    /// First factory index to read. Defaults to 0.
+    #[arg(long = "from", value_name = "INDEX", default_value_t = 0)]
+    pub from: u64,
+    /// Last factory index to read. Defaults to the newest game.
+    #[arg(long = "to", value_name = "INDEX")]
+    pub to: Option<u64>,
+    /// Explicit game proxy address. Repeatable; skips factory enumeration.
+    #[arg(long = "game", value_name = "ADDRESS")]
+    pub game: Vec<Address>,
+    /// Emit JSON instead of a table.
+    #[arg(long = "json")]
+    pub json: bool,
 }
 
 /// Flags for `basectl proofs finalize`.
@@ -152,6 +185,7 @@ impl ProofsCommand {
             ProofsCommands::Finalize(args) => run_finalize(config, args).await,
             ProofsCommands::Status(args) => run_status(config, args).await,
             ProofsCommands::List(args) => run_list(config, args).await,
+            ProofsCommands::Protocol(args) => run_protocol(args).await,
         }
     }
 }
@@ -273,6 +307,123 @@ async fn run_status(config: MonitoringConfig, args: ProofsStatusArgs) -> Result<
         print_status_pretty_to(&mut io::stdout().lock(), &status)?;
     }
     Ok(CommandOutcome::Success)
+}
+
+/// One game's capability descriptor, flattened for display.
+#[derive(Debug, Serialize)]
+struct GameProtocolRow {
+    /// Factory index, absent when the game was named explicitly.
+    index: Option<u64>,
+    /// Game proxy address.
+    game: Address,
+    /// Journal schedule era.
+    era: &'static str,
+    /// Rollup configuration hash committed by both journal types.
+    config_hash: B256,
+    /// Nitro enclave image hash committed by TEE journals.
+    tee_image_hash: B256,
+    /// SP1 range verification key committed by ZK journals.
+    zk_range_hash: B256,
+    /// SP1 aggregation verification key used by the ZK verifier.
+    zk_aggregate_hash: B256,
+    /// Canonical fingerprint the challenger maps to a routing version.
+    fingerprint: B256,
+}
+
+impl GameProtocolRow {
+    fn new(index: Option<u64>, game: Address, descriptor: &ProofProtocolDescriptor) -> Self {
+        Self {
+            index,
+            game,
+            era: match descriptor.schedule_kind {
+                ProofScheduleKind::None => "no-schedule",
+                ProofScheduleKind::Full => "full-schedule",
+                ProofScheduleKind::Activated => "activated-prefix",
+            },
+            config_hash: descriptor.config_hash,
+            tee_image_hash: descriptor.tee_image_hash,
+            zk_range_hash: descriptor.zk_range_hash,
+            zk_aggregate_hash: descriptor.zk_aggregate_hash,
+            fingerprint: descriptor.fingerprint(),
+        }
+    }
+}
+
+async fn run_protocol(args: ProofsProtocolArgs) -> Result<CommandOutcome> {
+    let ProofsProtocolArgs { l1_rpc, factory, from, to, game, json } = args;
+    let verifier = AggregateVerifierContractClient::new(l1_rpc.clone())?;
+
+    let targets: Vec<(Option<u64>, Address)> = if game.is_empty() {
+        let factory_address =
+            factory.ok_or_else(|| anyhow::anyhow!("--factory or --game is required"))?;
+        let factory_client = DisputeGameFactoryContractClient::new(factory_address, l1_rpc)?;
+        let count = factory_client.game_count().await?;
+        let end = to.unwrap_or_else(|| count.saturating_sub(1));
+        info!(factory = %factory_address, from, end, count, "enumerating dispute games");
+
+        let mut targets = Vec::new();
+        for index in from..=end.min(count.saturating_sub(1)) {
+            targets.push((Some(index), factory_client.game_at_index(index).await?.proxy));
+        }
+        targets
+    } else {
+        game.into_iter().map(|address| (None, address)).collect()
+    };
+
+    let mut rows = Vec::with_capacity(targets.len());
+    for (index, address) in targets {
+        // One unreadable game must not hide the rest: an era this build cannot classify is
+        // exactly what the operator needs to see.
+        match verifier.proof_protocol_descriptor(address).await {
+            Ok(descriptor) => rows.push(GameProtocolRow::new(index, address, &descriptor)),
+            Err(e) => info!(game = %address, error = %e, "skipping unreadable game"),
+        }
+    }
+
+    if json {
+        JsonOutput::print(&rows)?;
+    } else {
+        print_protocol_pretty_to(&mut io::stdout().lock(), &rows)?;
+    }
+
+    Ok(CommandOutcome::Success)
+}
+
+fn print_protocol_pretty_to(out: &mut impl Write, rows: &[GameProtocolRow]) -> io::Result<()> {
+    for row in rows {
+        let mut table = KeyValueTable::new();
+        if let Some(index) = row.index {
+            table.row("Index", index.to_string());
+        }
+        table.row("Game", row.game.to_string());
+        table.row("Era", row.era.to_owned());
+        table.row("Config hash", row.config_hash.to_string());
+        table.row("TEE image hash", row.tee_image_hash.to_string());
+        table.row("ZK range hash", row.zk_range_hash.to_string());
+        table.row("ZK aggregate hash", row.zk_aggregate_hash.to_string());
+        table.row("Fingerprint", row.fingerprint.to_string());
+        table.render(out)?;
+        writeln!(out)?;
+    }
+
+    // The mapping is per distinct fingerprint, not per game, so collapse before printing the
+    // lines an operator pastes into --proof-protocol-version.
+    let mut distinct: Vec<B256> = rows.iter().map(|row| row.fingerprint).collect();
+    distinct.sort_unstable();
+    distinct.dedup();
+
+    writeln!(
+        out,
+        "{} game(s), {} distinct capability fingerprint(s):",
+        rows.len(),
+        distinct.len()
+    )?;
+    for fingerprint in distinct {
+        let games = rows.iter().filter(|row| row.fingerprint == fingerprint).count();
+        writeln!(out, "  {fingerprint}  ({games} game(s))  -> assign a version")?;
+    }
+
+    Ok(())
 }
 
 async fn run_list(config: MonitoringConfig, args: ProofsListArgs) -> Result<CommandOutcome> {
@@ -731,6 +882,41 @@ fn print_list_pretty_to<W: Write>(writer: &mut W, list: &ProofsListJson) -> Resu
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::{Address, B256};
+    use base_proof_contracts::{ProofProtocolDescriptor, ProofScheduleKind};
+
+    use super::{GameProtocolRow, print_protocol_pretty_to};
+
+    fn descriptor(tee_image_hash: u8) -> ProofProtocolDescriptor {
+        ProofProtocolDescriptor {
+            schedule_kind: ProofScheduleKind::Activated,
+            schedule_id: B256::ZERO,
+            config_hash: B256::repeat_byte(1),
+            tee_image_hash: B256::repeat_byte(tee_image_hash),
+            zk_range_hash: B256::repeat_byte(3),
+            zk_aggregate_hash: B256::repeat_byte(4),
+        }
+    }
+
+    /// Games sharing a capability collapse to one mapping line; a differing commitment does not.
+    #[test]
+    fn protocol_summary_groups_games_by_fingerprint() {
+        let rows = vec![
+            GameProtocolRow::new(Some(0), Address::repeat_byte(0xa1), &descriptor(2)),
+            GameProtocolRow::new(Some(1), Address::repeat_byte(0xa2), &descriptor(2)),
+            GameProtocolRow::new(Some(2), Address::repeat_byte(0xa3), &descriptor(9)),
+        ];
+
+        let mut out = Vec::new();
+        print_protocol_pretty_to(&mut out, &rows).expect("summary should render");
+        let rendered = String::from_utf8(out).expect("summary should be utf8");
+
+        assert!(rendered.contains("3 game(s), 2 distinct capability fingerprint(s)"));
+        assert!(rendered.contains("(2 game(s))"), "shared capability should group");
+        assert!(rendered.contains("(1 game(s))"), "differing capability must stay separate");
+        assert!(rendered.contains("activated-prefix"));
+    }
+
     use base_prover_service_protocol::{
         GetProofResponse, ProofResult, ProofStatus, ProofSummary, ProofType, SnarkPlonkProofResult,
         ZkProofResult, ZkVm,

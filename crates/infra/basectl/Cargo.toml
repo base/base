@@ -26,6 +26,7 @@ base-consensus-peers = { workspace = true }
 alloy-transport-http = { workspace = true }
 base-consensus-gossip = { workspace = true }
 alloy-rpc-types-txpool = { workspace = true }
+base-proof-contracts = { workspace = true }
 base-common-precompiles = { workspace = true }
 base-common-flashblocks = { workspace = true }
 base-prover-service-client = { workspace = true }
