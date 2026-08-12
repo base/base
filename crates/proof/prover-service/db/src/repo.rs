@@ -2299,22 +2299,10 @@ fn comparable_request_payload(
     if let Some(map) = zk_backend_path.and_then(|path| value.pointer_mut(path)?.as_object_mut()) {
         map.entry("zk_backend").or_insert_with(|| serde_json::Value::String("cluster".to_owned()));
     }
-    remove_legacy_image_hash(&mut value);
     if mode == RequestMismatchMode::AllowL1HeadReplacement {
         remove_l1_head_fields(&mut value);
     }
     value
-}
-
-/// Drops `image_hash`, persisted by requests written before the field was
-/// removed from `ProofRequest`. Without this, replaying such a session wedges
-/// on `IdCollision { field: "request_payload" }`.
-fn remove_legacy_image_hash(value: &mut serde_json::Value) {
-    if let Some(map) =
-        value.pointer_mut("/request/payload/proof").and_then(serde_json::Value::as_object_mut)
-    {
-        map.remove("image_hash");
-    }
 }
 
 fn remove_l1_head_fields(value: &mut serde_json::Value) {
@@ -2466,18 +2454,6 @@ mod tests {
             serde_json::from_value(prepared.request_payload).expect("payload should deserialize");
         assert_eq!(protocol_request.session_id, "tee-session");
         assert!(matches!(protocol_request.request, ProofRequestKind::Tee(_)));
-    }
-
-    #[test]
-    fn legacy_tee_payload_with_image_hash_still_replays() {
-        let incoming = prepared_payload(tee_protocol_request("tee-session"));
-        let mut stored = incoming.clone();
-
-        // A row written before `image_hash` was removed from `ProofRequest`.
-        stored["request"]["payload"]["proof"]["image_hash"] = serde_json::json!(ZERO_HASH);
-        assert_ne!(stored, incoming, "stored payload must actually differ");
-
-        assert!(request_payload_matches(&stored, &incoming, RequestMismatchMode::Strict));
     }
 
     #[test]
