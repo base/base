@@ -82,7 +82,7 @@ pub enum TelemetryApiError {
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum TelemetryClientError {
-    /// The telemetry service rejected the supplied enode.
+    /// The telemetry service rejected the supplied reachability target.
     #[error("telemetry service rejected the reachability request as invalid")]
     InvalidRequest,
     /// The telemetry service rejected the request body as too large.
@@ -140,7 +140,8 @@ impl TelemetryClient {
         self.check_reachability(EL_REACHABILITY_PATH, &json!({ "enode": enode })).await
     }
 
-    /// Requests an external consensus-layer reachability check for `enr`.
+    /// Requests an external consensus-layer reachability check for an `enr:`
+    /// record or a public `IPv4` `/ip4/.../tcp/.../p2p/<peer-id>` multiaddr.
     pub async fn check_cl_reachability(
         &self,
         enr: &str,

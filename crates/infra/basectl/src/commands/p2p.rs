@@ -32,8 +32,9 @@ pub enum P2pCommands {
     Info(P2pArgs),
     /// Ask the Base telemetry service to probe an execution or consensus peer endpoint.
     Reachability {
-        /// Peer endpoint to probe: an execution-layer `enode://` URL or a
-        /// consensus-layer `enr:` record.
+        /// Peer endpoint to probe: an execution-layer `enode://` URL, a
+        /// consensus-layer `enr:` record, or a public `IPv4`
+        /// `/ip4/.../tcp/.../p2p/<peer-id>` multiaddr.
         #[arg(value_name = "TARGET")]
         target: String,
         /// Emit the telemetry response as JSON.
@@ -138,7 +139,8 @@ impl P2pCommand {
 
 /// Runs `basectl p2p reachability`, exiting non-zero when the probe completed
 /// but the node was not reachable. `enode://` targets route to the
-/// execution-layer endpoint and `enr:` targets route to the consensus layer.
+/// execution-layer endpoint; `enr:` records and `/ip4/.../tcp/.../p2p/<peer-id>`
+/// multiaddrs route to the consensus layer.
 async fn run_reachability(
     config: &MonitoringConfig,
     target: &str,
@@ -148,14 +150,24 @@ async fn run_reachability(
     if target.is_empty() {
         return Err(P2pTargetError::EmptyTarget.into());
     }
-    if !target.starts_with("enode://") && !target.starts_with("enr:") {
+    let is_el = target.starts_with("enode://");
+    let is_cl_multiaddr = target.starts_with("/ip4/");
+    if is_cl_multiaddr {
+        if !target.contains("/p2p/") {
+            return Err(
+                P2pTargetError::MultiaddrMissingPeerId { target: target.to_string() }.into()
+            );
+        }
+    } else if is_el || target.starts_with("enr:") {
+        BootNode::parse_bootnode(target).map_err(|error| P2pTargetError::InvalidBootnode {
+            target: target.to_string(),
+            message: error.to_string(),
+        })?;
+    } else {
         return Err(
             P2pTargetError::ReachabilityTargetUnsupported { target: target.to_string() }.into()
         );
     }
-    let bootnode = BootNode::parse_bootnode(target).map_err(|error| {
-        P2pTargetError::InvalidBootnode { target: target.to_string(), message: error.to_string() }
-    })?;
     let chain_id = fetch_l2_chain_id(&config.rpc).await.with_context(|| {
         format!("could not detect network from selected config RPC {}", config.rpc)
     })?;
@@ -165,9 +177,10 @@ async fn run_reachability(
         )
     })?;
     let client = TelemetryClient::new(telemetry_url)?;
-    let response = match bootnode {
-        BootNode::Enode(_) => client.check_el_reachability(target).await?,
-        BootNode::Enr(_) => client.check_cl_reachability(target).await?,
+    let response = if is_el {
+        client.check_el_reachability(target).await?
+    } else {
+        client.check_cl_reachability(target).await?
     };
     print_reachability(&response, json)?;
     Ok(CommandOutcome::from_failures(response.outcome != ReachabilityOutcome::Reachable))
@@ -945,6 +958,32 @@ mod tests {
             reachability_target_error("enr:!!!").await,
             P2pTargetError::InvalidBootnode { target, .. } if target == "enr:!!!"
         ));
+    }
+
+    #[tokio::test]
+    async fn reachability_rejects_multiaddr_without_peer_id() {
+        assert!(matches!(
+            reachability_target_error("/ip4/8.8.8.8/tcp/9222").await,
+            P2pTargetError::MultiaddrMissingPeerId { target }
+                if target == "/ip4/8.8.8.8/tcp/9222"
+        ));
+    }
+
+    #[tokio::test]
+    async fn reachability_accepts_ip4_multiaddr() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let mut config = test_config(None);
+        config.rpc = Url::parse(&format!("http://{address}")).unwrap();
+
+        let error = run_reachability(&config, "/ip4/8.8.8.8/tcp/9222/p2p/16Uiu2HAmExample", false)
+            .await
+            .unwrap_err();
+
+        assert!(
+            format!("{error:#}").starts_with("could not detect network from selected config RPC")
+        );
     }
 
     #[test]

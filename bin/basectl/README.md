@@ -122,8 +122,9 @@ consensus layers.
 - `basectl p2p reachability <TARGET>` asks the Base telemetry service to open
   an independent connection to a node's advertised p2p endpoint.
   `enode://...` probes the execution layer (TCP, encrypted identity handshake,
-  and devp2p Hello exchange); `enr:...` probes the consensus layer (TCP, Noise
-  handshake against the ENR identity, and libp2p identify).
+  and devp2p Hello exchange); `enr:...` or `/ip4/.../tcp/.../p2p/<peer-id>`
+  probes the consensus layer (TCP, Noise handshake against the advertised
+  identity, and libp2p identify).
 - `basectl p2p add-peer <TARGET>` connects one peer. `enode://...` routes to
   the execution layer; `enr:...` or `/.../p2p/<peer-id>` routes to the
   consensus layer.
@@ -472,6 +473,9 @@ basectl -c sepolia p2p peers --json | jq '{el: .el | length, cl: .cl | length}'
 
 # Probe an explicit EL enode from the telemetry service's network
 basectl -c sepolia p2p reachability enode://<node-id>@203.0.113.10:30303 --json
+
+# Probe a consensus peer by public-IPv4 libp2p multiaddr
+basectl -c sepolia p2p reachability /ip4/203.0.113.10/tcp/9222/p2p/16Uiu2HAm... --json
 
 # Add an execution-layer peer after confirmation
 basectl -c sepolia p2p add-peer enode://<node-id>@203.0.113.10:30303 --el-rpc https://your-el.example/
