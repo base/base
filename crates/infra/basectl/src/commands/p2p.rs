@@ -8,11 +8,11 @@ use serde::Serialize;
 use url::Url;
 
 use crate::{
-    CommandOutcome, Confirm, ElReachabilityOutcome, JsonOutput, KeyValueTable, MonitoringConfig,
-    P2pCommandError, P2pInfoJson, P2pInfoTable, P2pTargetError, PeerListReport, PeerSummary,
-    TelemetryClient, add_peer, ban_el_peer, ban_peer, connect_peer, disconnect_peer,
-    el_peer_is_trusted, fetch_connected_peers, fetch_info, fetch_l2_chain_id, fetch_raw_info,
-    fetch_raw_peers, list_banned_peers, remove_peer, unban_el_peer, unban_peer,
+    CommandOutcome, Confirm, JsonOutput, KeyValueTable, MonitoringConfig, P2pCommandError,
+    P2pInfoJson, P2pInfoTable, P2pTargetError, PeerListReport, PeerSummary, ReachabilityOutcome,
+    ReachabilityResponse, TelemetryClient, add_peer, ban_el_peer, ban_peer, connect_peer,
+    disconnect_peer, el_peer_is_trusted, fetch_connected_peers, fetch_info, fetch_l2_chain_id,
+    fetch_raw_info, fetch_raw_peers, list_banned_peers, remove_peer, unban_el_peer, unban_peer,
 };
 
 /// Inspect p2p peers and advertised endpoints.
@@ -30,11 +30,12 @@ pub enum P2pCommands {
     Peers(P2pArgs),
     /// Show advertised endpoints and peer-count summary per layer.
     Info(P2pArgs),
-    /// Ask the Base telemetry service to probe an execution-layer enode.
+    /// Ask the Base telemetry service to probe an execution or consensus peer endpoint.
     Reachability {
-        /// Execution-layer `enode://` URL to probe.
-        #[arg(value_name = "ENODE")]
-        enode: String,
+        /// Peer endpoint to probe: an execution-layer `enode://` URL or a
+        /// consensus-layer `enr:` record.
+        #[arg(value_name = "TARGET")]
+        target: String,
         /// Emit the telemetry response as JSON.
         #[arg(long)]
         json: bool,
@@ -117,8 +118,8 @@ impl P2pCommand {
     pub async fn run(self, config: MonitoringConfig) -> Result<CommandOutcome> {
         let success = CommandOutcome::Success;
         match self.command {
-            P2pCommands::Reachability { enode, json } => {
-                run_reachability(&config, &enode, json).await
+            P2pCommands::Reachability { target, json } => {
+                run_reachability(&config, &target, json).await
             }
             P2pCommands::UnbanAll(args) => run_unban_all(config, args).await,
             P2pCommands::Peers(args) => run_peers(config, args).await.map(|()| success),
@@ -136,12 +137,25 @@ impl P2pCommand {
 }
 
 /// Runs `basectl p2p reachability`, exiting non-zero when the probe completed
-/// but the node was not reachable.
+/// but the node was not reachable. `enode://` targets route to the
+/// execution-layer endpoint and `enr:` targets route to the consensus layer.
 async fn run_reachability(
     config: &MonitoringConfig,
-    enode: &str,
+    target: &str,
     json: bool,
 ) -> Result<CommandOutcome> {
+    let target = target.trim();
+    if target.is_empty() {
+        return Err(P2pTargetError::EmptyTarget.into());
+    }
+    if !target.starts_with("enode://") && !target.starts_with("enr:") {
+        return Err(
+            P2pTargetError::ReachabilityTargetUnsupported { target: target.to_string() }.into()
+        );
+    }
+    let bootnode = BootNode::parse_bootnode(target).map_err(|error| {
+        P2pTargetError::InvalidBootnode { target: target.to_string(), message: error.to_string() }
+    })?;
     let chain_id = fetch_l2_chain_id(&config.rpc).await.with_context(|| {
         format!("could not detect network from selected config RPC {}", config.rpc)
     })?;
@@ -150,10 +164,19 @@ async fn run_reachability(
             "hosted reachability checks are unavailable for chain ID {chain_id}; supported chain IDs are 8453 (Base mainnet) and 84532 (Base Sepolia)"
         )
     })?;
-    let response = TelemetryClient::new(telemetry_url)?.check_el_reachability(enode).await?;
-    let reachable = response.outcome == ElReachabilityOutcome::Reachable;
+    let client = TelemetryClient::new(telemetry_url)?;
+    let response = match bootnode {
+        BootNode::Enode(_) => client.check_el_reachability(target).await?,
+        BootNode::Enr(_) => client.check_cl_reachability(target).await?,
+    };
+    print_reachability(&response, json)?;
+    Ok(CommandOutcome::from_failures(response.outcome != ReachabilityOutcome::Reachable))
+}
+
+/// Prints one telemetry reachability response as JSON or a key-value table.
+fn print_reachability(response: &ReachabilityResponse, json: bool) -> Result<()> {
     if json {
-        JsonOutput::print(&response)?;
+        JsonOutput::print(response)?;
     } else {
         let mut table = KeyValueTable::new();
         table
@@ -161,12 +184,12 @@ async fn run_reachability(
             .row("stage", response.stage.as_str())
             .row("observed address", response.observed_address.to_string())
             .row("elapsed", format!("{} ms", response.elapsed_ms));
-        if let Some(client_version) = response.client_version {
+        if let Some(client_version) = response.client_version.as_deref() {
             table.row("client version", client_version);
         }
         table.print()?;
     }
-    Ok(CommandOutcome::from_failures(!reachable))
+    Ok(())
 }
 
 async fn run_peers(config: MonitoringConfig, args: P2pArgs) -> Result<()> {
@@ -884,6 +907,44 @@ mod tests {
         assert!(
             format!("{error:#}").starts_with("could not detect network from selected config RPC")
         );
+    }
+
+    /// Runs `run_reachability` against an unused config and returns the
+    /// `P2pTargetError` produced before any network access.
+    async fn reachability_target_error(target: &str) -> P2pTargetError {
+        let error = run_reachability(&test_config(None), target, false).await.unwrap_err();
+        error.downcast::<P2pTargetError>().expect("expected a target validation error")
+    }
+
+    #[tokio::test]
+    async fn reachability_rejects_unsupported_scheme() {
+        assert!(matches!(
+            reachability_target_error("16Uiu2HAkxp9nAsXsCthNWPkkpm4yG1eW7L4ENpVyzDZM8HE1yr12")
+                .await,
+            P2pTargetError::ReachabilityTargetUnsupported { target }
+                if target == "16Uiu2HAkxp9nAsXsCthNWPkkpm4yG1eW7L4ENpVyzDZM8HE1yr12"
+        ));
+    }
+
+    #[tokio::test]
+    async fn reachability_rejects_empty_target() {
+        assert!(matches!(reachability_target_error("  ").await, P2pTargetError::EmptyTarget));
+    }
+
+    #[tokio::test]
+    async fn reachability_rejects_malformed_enode() {
+        assert!(matches!(
+            reachability_target_error("enode://nope").await,
+            P2pTargetError::InvalidBootnode { target, .. } if target == "enode://nope"
+        ));
+    }
+
+    #[tokio::test]
+    async fn reachability_rejects_malformed_enr() {
+        assert!(matches!(
+            reachability_target_error("enr:!!!").await,
+            P2pTargetError::InvalidBootnode { target, .. } if target == "enr:!!!"
+        ));
     }
 
     #[test]

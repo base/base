@@ -119,9 +119,11 @@ consensus layers.
 - `basectl p2p info` shows the advertised endpoint per layer plus peer counts,
   and the CL max peer count when the consensus RPC reports it.
 - `basectl p2p peers` shows the connected peer list per layer.
-- `basectl p2p reachability <ENODE>` asks the Base telemetry service to open an
-  independent TCP connection, encrypted identity handshake, and devp2p Hello
-  exchange with an execution-layer node.
+- `basectl p2p reachability <TARGET>` asks the Base telemetry service to open
+  an independent connection to a node's advertised p2p endpoint.
+  `enode://...` probes the execution layer (TCP, encrypted identity handshake,
+  and devp2p Hello exchange); `enr:...` probes the consensus layer (TCP, Noise
+  handshake against the ENR identity, and libp2p identify).
 - `basectl p2p add-peer <TARGET>` connects one peer. `enode://...` routes to
   the execution layer; `enr:...` or `/.../p2p/<peer-id>` routes to the
   consensus layer.
@@ -326,12 +328,13 @@ different node.
 
 Checks include declared network vs. live chain ID, p2p endpoint context,
 canonical bootnode config context, advertised endpoint sanity,
-telemetry-backed external EL reachability, EL/CL peer counts, EL head vs. public
-tip, safe-head recency, optional `reth.toml` headers/bodies limits,
+telemetry-backed external EL and CL reachability, EL/CL peer counts, EL head
+vs. public tip, safe-head recency, optional `reth.toml` headers/bodies limits,
 consensus-node RPC presence, and L1 RPC reachability. Doctor does not mutate
 node state. The effective `--el-rpc` chain ID selects the hosted Base mainnet or
-Base Sepolia telemetry service; the check is skipped when detection fails or
-the chain is unsupported.
+Base Sepolia telemetry service; the reachability checks are skipped when
+detection fails or the chain is unsupported. The external CL check also needs
+`--cl-rpc` so the advertised ENR can be read from `opp2p_self`.
 
 | Flag                                  | Description                                                                                                                                      |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |

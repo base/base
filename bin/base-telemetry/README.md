@@ -17,8 +17,8 @@ from the `X-Forwarded-For` header only when the direct peer is inside a CIDR
 listed in `BASE_TELEMETRY_TRUSTED_PROXY_CIDRS` (default empty); otherwise the
 peer socket address is used.
 
-The service exposes health routes and an on-demand execution-layer
-reachability check:
+The service exposes health routes and on-demand execution-layer and
+consensus-layer reachability checks:
 
 ```sh
 curl https://telemetry.example/v1/p2p/reachability/el \
@@ -32,6 +32,20 @@ The `enode://` URL is printed on node startup and returned by
 `admin_nodeInfo`. Replace `YOUR_NODE_IP` with the node's advertised literal
 public `IPv4` address. The caller may be the node, an operator, or a monitoring
 system; the service probes the IP and TCP port in the supplied enode.
+
+```sh
+curl https://telemetry.example/v1/p2p/reachability/cl \
+  --header 'content-type: application/json' \
+  --data '{
+    "enr": "enr:-J64QBw..."
+  }'
+```
+
+The signed ENR is returned by the consensus node's `opp2p_self` RPC. It must
+advertise a public literal `IPv4` address and a nonzero TCP port; the service
+probes that address over TCP + Noise + Yamux and verifies the peer identity
+derived from the ENR's secp256k1 key. Both endpoints share the same per-IP
+rate limit and global probe capacity.
 
 ## Deployment boundary
 
