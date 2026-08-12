@@ -15,7 +15,10 @@ use base_common_consensus::{BaseBlock, Predeploys};
 use base_common_genesis::{RollupConfig, SystemConfig};
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_consensus_upgrades::{Upgrade, Upgrades};
-use base_protocol::{BaseTimeUpdateTx, Deposits, L1BlockInfoTx, L2BlockInfo, to_system_config};
+use base_protocol::{
+    BaseTimeUpdateTx, BatchValidationProvider, Deposits, L1BlockInfoTx, L2BlockInfo,
+    to_system_config,
+};
 use tracing::warn;
 
 use crate::{
@@ -94,6 +97,7 @@ impl<L1P, L2P> AttributesBuilder for StatefulAttributesBuilder<L1P, L2P>
 where
     L1P: ChainProvider + Debug + Send,
     L2P: L2ChainProvider + Debug + Send,
+    <L2P as BatchValidationProvider>::Error: Into<PipelineErrorKind>,
 {
     async fn prepare_payload_attributes(
         &mut self,
@@ -110,19 +114,33 @@ where
         // The parent block's system config: decoded from the parent itself, either seeded in
         // memory when the parent was inserted (see [`AttributesBuilder::seed_system_config`]) or
         // read from the L2 EL on a miss (startup, reset, reorg, or a parent built elsewhere).
-        // ponytail: the miss path fetches by number, not hash, matching the pre-cache behavior;
-        // switch the provider to a by-hash read if non-canonical parents ever need exactness.
+        // The fetched block's hash is verified against the parent hash so that a read racing a
+        // reorg can never cache another block's config under this parent.
         let mut sys_config = match self.cached_system_config(&l2_parent.block_info.hash) {
             Some(config) => config,
             None => {
-                let config = self
+                let block = self
                     .config_fetcher
-                    .system_config_by_number(
-                        l2_parent.block_info.number,
-                        Arc::clone(&self.rollup_cfg),
-                    )
+                    .block_by_number(l2_parent.block_info.number)
                     .await
                     .map_err(Into::into)?;
+                let block_hash = block.header.hash_slow();
+                if block_hash != l2_parent.block_info.hash {
+                    return Err(PipelineErrorKind::Reset(
+                        BuilderError::BlockMismatch(
+                            BlockNumHash {
+                                number: l2_parent.block_info.number,
+                                hash: l2_parent.block_info.hash,
+                            },
+                            BlockNumHash { number: block.header.number, hash: block_hash },
+                        )
+                        .into(),
+                    ));
+                }
+                let config = to_system_config(&block, &self.rollup_cfg).map_err(|err| {
+                    warn!(target: "attributes", error = ?err, number = block.header.number, "Failed to decode system config from parent block");
+                    PipelineError::Provider("system config conversion failed".to_string()).temp()
+                })?;
                 self.cache_system_config(l2_parent.block_info.hash, config);
                 config
             }
@@ -458,7 +476,8 @@ mod tests {
         let l1_cfg = Arc::new(Sepolia::l1_config());
         let l2_number = 1;
         let mut fetcher = TestSystemConfigL2Fetcher::default();
-        fetcher.insert(l2_number, SystemConfig::default());
+        let l2_parent_hash =
+            fallback_parent(&mut fetcher, Header { number: l2_number, ..Default::default() });
         let mut provider = TestChainProvider::default();
         let header = Header::default();
         let hash = header.hash_slow();
@@ -467,7 +486,7 @@ mod tests {
             StatefulAttributesBuilder::new(Arc::clone(&cfg), l1_cfg, fetcher, provider);
         let epoch = BlockNumHash { hash, number: l2_number };
         let l2_parent = L2BlockInfo {
-            block_info: BlockInfo { hash: B256::ZERO, number: l2_number, ..Default::default() },
+            block_info: BlockInfo { hash: l2_parent_hash, number: l2_number, ..Default::default() },
             l1_origin: BlockNumHash { hash: B256::left_padding_from(&[0xFF]), number: 2 },
             seq_num: 0,
         };
@@ -485,7 +504,8 @@ mod tests {
         let l1_cfg = Arc::new(Sepolia::l1_config());
         let l2_number = 1;
         let mut fetcher = TestSystemConfigL2Fetcher::default();
-        fetcher.insert(l2_number, SystemConfig::default());
+        let l2_parent_hash =
+            fallback_parent(&mut fetcher, Header { number: l2_number, ..Default::default() });
         let mut provider = TestChainProvider::default();
         let header = Header::default();
         let hash = header.hash_slow();
@@ -494,7 +514,7 @@ mod tests {
             StatefulAttributesBuilder::new(Arc::clone(&cfg), l1_cfg, fetcher, provider);
         let epoch = BlockNumHash { hash, number: l2_number };
         let l2_parent = L2BlockInfo {
-            block_info: BlockInfo { hash: B256::ZERO, number: l2_number, ..Default::default() },
+            block_info: BlockInfo { hash: l2_parent_hash, number: l2_number, ..Default::default() },
             l1_origin: BlockNumHash { hash: B256::ZERO, number: l2_number },
             seq_num: 0,
         };
@@ -513,7 +533,8 @@ mod tests {
         let l1_cfg = Arc::new(Sepolia::l1_config());
         let l2_number = 1;
         let mut fetcher = TestSystemConfigL2Fetcher::default();
-        fetcher.insert(l2_number, SystemConfig::default());
+        let l2_parent_hash =
+            fallback_parent(&mut fetcher, Header { number: l2_number, ..Default::default() });
         let mut provider = TestChainProvider::default();
         let header = Header { timestamp, ..Default::default() };
         let hash = header.hash_slow();
@@ -522,7 +543,7 @@ mod tests {
             StatefulAttributesBuilder::new(Arc::clone(&cfg), l1_cfg, fetcher, provider);
         let epoch = BlockNumHash { hash, number: l2_number };
         let l2_parent = L2BlockInfo {
-            block_info: BlockInfo { hash: B256::ZERO, number: l2_number, ..Default::default() },
+            block_info: BlockInfo { hash: l2_parent_hash, number: l2_number, ..Default::default() },
             l1_origin: BlockNumHash { hash, number: l2_number },
             seq_num: 0,
         };
@@ -553,7 +574,8 @@ mod tests {
         let l1_cfg = Arc::new(Sepolia::l1_config());
         let l2_number = 1;
         let mut fetcher = TestSystemConfigL2Fetcher::default();
-        fetcher.insert(l2_number, SystemConfig::default());
+        let l2_parent_hash =
+            fallback_parent(&mut fetcher, Header { number: l2_number, ..Default::default() });
         let mut provider = TestChainProvider::default();
         let header = Header { timestamp, ..Default::default() };
         let prev_randao = header.mix_hash;
@@ -564,7 +586,7 @@ mod tests {
         let epoch = BlockNumHash { hash, number: l2_number };
         let l2_parent = L2BlockInfo {
             block_info: BlockInfo {
-                hash: B256::ZERO,
+                hash: l2_parent_hash,
                 number: l2_number,
                 timestamp,
                 parent_hash: hash,
@@ -618,7 +640,8 @@ mod tests {
         let l1_cfg = Arc::new(Sepolia::l1_config());
         let l2_number = 1;
         let mut fetcher = TestSystemConfigL2Fetcher::default();
-        fetcher.insert(l2_number, SystemConfig::default());
+        let l2_parent_hash =
+            fallback_parent(&mut fetcher, Header { number: l2_number, ..Default::default() });
         let mut provider = TestChainProvider::default();
         let header = Header { timestamp, ..Default::default() };
         let hash = header.hash_slow();
@@ -628,7 +651,7 @@ mod tests {
         let epoch = BlockNumHash { hash, number: l2_number };
         let l2_parent = L2BlockInfo {
             block_info: BlockInfo {
-                hash: B256::ZERO,
+                hash: l2_parent_hash,
                 number: l2_number,
                 timestamp,
                 parent_hash: hash,
@@ -678,7 +701,8 @@ mod tests {
         let l1_cfg = Arc::new(Sepolia::l1_config());
         let l2_number = 2;
         let mut fetcher = TestSystemConfigL2Fetcher::default();
-        fetcher.insert(l2_number, SystemConfig::default());
+        let l2_parent_hash =
+            fallback_parent(&mut fetcher, Header { number: l2_number, ..Default::default() });
         let mut provider = TestChainProvider::default();
         let header = Header { timestamp, ..Default::default() };
         let hash = header.hash_slow();
@@ -688,7 +712,7 @@ mod tests {
         let epoch = BlockNumHash { hash, number: l2_number };
         let l2_parent = L2BlockInfo {
             block_info: BlockInfo {
-                hash: B256::ZERO,
+                hash: l2_parent_hash,
                 number: l2_number,
                 timestamp: 102,
                 parent_hash: hash,
@@ -730,7 +754,8 @@ mod tests {
         let l1_cfg = Arc::new(Sepolia::l1_config());
         let l2_number = 1;
         let mut fetcher = TestSystemConfigL2Fetcher::default();
-        fetcher.insert(l2_number, SystemConfig::default());
+        let l2_parent_hash =
+            fallback_parent(&mut fetcher, Header { number: l2_number, ..Default::default() });
         let mut provider = TestChainProvider::default();
         let header = Header { timestamp, ..Default::default() };
         let prev_randao = header.mix_hash;
@@ -741,7 +766,7 @@ mod tests {
         let epoch = BlockNumHash { hash, number: l2_number };
         let l2_parent = L2BlockInfo {
             block_info: BlockInfo {
-                hash: B256::ZERO,
+                hash: l2_parent_hash,
                 number: l2_number,
                 timestamp,
                 parent_hash: hash,
@@ -789,7 +814,8 @@ mod tests {
         let l1_cfg = Arc::new(Sepolia::l1_config());
         let l2_number = 1;
         let mut fetcher = TestSystemConfigL2Fetcher::default();
-        fetcher.insert(l2_number, SystemConfig::default());
+        let l2_parent_hash =
+            fallback_parent(&mut fetcher, Header { number: l2_number, ..Default::default() });
         let mut provider = TestChainProvider::default();
         let header = Header { timestamp, ..Default::default() };
         let parent_beacon_block_root = Some(header.parent_beacon_block_root.unwrap_or_default());
@@ -801,7 +827,7 @@ mod tests {
         let epoch = BlockNumHash { hash, number: l2_number };
         let l2_parent = L2BlockInfo {
             block_info: BlockInfo {
-                hash: B256::ZERO,
+                hash: l2_parent_hash,
                 number: l2_number,
                 timestamp,
                 parent_hash: hash,
@@ -849,7 +875,8 @@ mod tests {
         let l1_cfg = Arc::new(Sepolia::l1_config());
         let l2_number = 1;
         let mut fetcher = TestSystemConfigL2Fetcher::default();
-        fetcher.insert(l2_number, SystemConfig::default());
+        let l2_parent_hash =
+            fallback_parent(&mut fetcher, Header { number: l2_number, ..Default::default() });
         let mut provider = TestChainProvider::default();
         let header = Header { timestamp, ..Default::default() };
         let prev_randao = header.mix_hash;
@@ -860,7 +887,7 @@ mod tests {
         let epoch = BlockNumHash { hash, number: l2_number };
         let l2_parent = L2BlockInfo {
             block_info: BlockInfo {
-                hash: B256::ZERO,
+                hash: l2_parent_hash,
                 number: l2_number,
                 timestamp,
                 parent_hash: hash,
@@ -904,7 +931,8 @@ mod tests {
         let l1_cfg = Arc::new(Sepolia::l1_config());
         let l2_number = 1;
         let mut fetcher = TestSystemConfigL2Fetcher::default();
-        fetcher.insert(l2_number, SystemConfig::default());
+        let l2_parent_hash =
+            fallback_parent(&mut fetcher, Header { number: l2_number, ..Default::default() });
         let mut provider = TestChainProvider::default();
 
         // The epoch header's parent_hash must match l2_parent.l1_origin.hash.
@@ -931,7 +959,7 @@ mod tests {
             StatefulAttributesBuilder::new(Arc::clone(&cfg), l1_cfg, fetcher, provider);
         let epoch = BlockNumHash { hash: epoch_hash, number: l2_number + 1 };
         let l2_parent = L2BlockInfo {
-            block_info: BlockInfo { hash: B256::ZERO, number: l2_number, ..Default::default() },
+            block_info: BlockInfo { hash: l2_parent_hash, number: l2_number, ..Default::default() },
             l1_origin: BlockNumHash { hash: origin_hash, number: l2_number },
             seq_num: 0,
         };
@@ -965,7 +993,8 @@ mod tests {
         let cfg = cache_test_cfg(block_time, timestamp);
         let l1_cfg = Arc::new(Sepolia::l1_config());
         let mut fetcher = TestSystemConfigL2Fetcher::default();
-        fetcher.insert(1, SystemConfig::default());
+        let l2_parent_hash =
+            fallback_parent(&mut fetcher, Header { number: 1, timestamp, ..Default::default() });
         let mut provider = TestChainProvider::default();
         let parent_header = Header { number: 1, timestamp, ..Default::default() };
         let parent_hash = parent_header.hash_slow();
@@ -976,27 +1005,11 @@ mod tests {
         provider.insert_receipts(epoch_hash, vec![]);
         let builder = StatefulAttributesBuilder::new(cfg, l1_cfg, fetcher, provider);
         let l2_parent = L2BlockInfo {
-            block_info: BlockInfo { hash: B256::ZERO, number: 1, timestamp, parent_hash },
+            block_info: BlockInfo { hash: l2_parent_hash, number: 1, timestamp, parent_hash },
             l1_origin: BlockNumHash { hash: parent_hash, number: 1 },
             seq_num: 0,
         };
         (builder, BlockNumHash { hash: epoch_hash, number: 2 }, l2_parent)
-    }
-
-    /// Advances to the next L2 parent within the same L1 origin, giving each block a distinct
-    /// hash.
-    fn next_l2_parent(prev: &L2BlockInfo, cfg: &RollupConfig, epoch: BlockNumHash) -> L2BlockInfo {
-        let number = prev.block_info.number + 1;
-        L2BlockInfo {
-            block_info: BlockInfo {
-                hash: B256::with_last_byte(number as u8),
-                number,
-                timestamp: cfg.l2_block_timestamp(number),
-                parent_hash: prev.block_info.hash,
-            },
-            l1_origin: epoch,
-            seq_num: prev.seq_num + 1,
-        }
     }
 
     /// Builds a minimal decodable L2 block: `to_system_config` requires an L1 info deposit as
@@ -1014,6 +1027,16 @@ mod tests {
         }
     }
 
+    /// Installs a decodable block built from `header` into the fetcher and returns its hash:
+    /// the EL fallback verifies the fetched block's hash against the parent hash, so tests
+    /// exercising it need the parent hash to be a real block hash.
+    fn fallback_parent(fetcher: &mut TestSystemConfigL2Fetcher, header: Header) -> B256 {
+        let block = seedable_block(header);
+        let hash = block.header.hash_slow();
+        fetcher.insert_block(block.header.number, block);
+        hash
+    }
+
     #[tokio::test]
     async fn test_seeded_parent_config_skips_el_read() {
         let (mut builder, epoch, l2_parent) = transition_setup();
@@ -1023,7 +1046,7 @@ mod tests {
         builder.cache_system_config(l2_parent.block_info.hash, SystemConfig::default());
         builder.config_fetcher.clear();
         builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
-        assert!(builder.config_fetcher.system_config_calls.is_empty());
+        assert!(builder.config_fetcher.block_calls.is_empty());
     }
 
     #[tokio::test]
@@ -1032,29 +1055,61 @@ mod tests {
 
         // An unseeded parent (startup, reset, or a block built elsewhere) is read from the EL.
         builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
-        assert_eq!(builder.config_fetcher.system_config_calls, vec![1]);
+        assert_eq!(builder.config_fetcher.block_calls, vec![1]);
 
         // A rebuild on the same parent is served from the cache even when the EL can no longer
         // serve it.
         builder.config_fetcher.clear();
         builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
-        assert_eq!(builder.config_fetcher.system_config_calls, vec![1]);
+        assert_eq!(builder.config_fetcher.block_calls, vec![1]);
     }
 
     #[tokio::test]
     async fn test_same_origin_different_parent_misses_cache() {
         let (mut builder, epoch, l2_parent) = transition_setup();
         builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
-        assert_eq!(builder.config_fetcher.system_config_calls, vec![1]);
+        assert_eq!(builder.config_fetcher.block_calls, vec![1]);
 
         // The next parent shares the L1 origin but is a different L2 block: entries are keyed
         // by block hash, so without a seed its config is read from the EL rather than reusing
         // the previous parent's entry.
         let cfg = Arc::clone(&builder.rollup_cfg);
-        let l2_parent = next_l2_parent(&l2_parent, &cfg, epoch);
-        builder.config_fetcher.insert(2, SystemConfig::default());
+        let timestamp = cfg.l2_block_timestamp(2);
+        let hash = fallback_parent(
+            &mut builder.config_fetcher,
+            Header { number: 2, timestamp, ..Default::default() },
+        );
+        let l2_parent = L2BlockInfo {
+            block_info: BlockInfo {
+                hash,
+                number: 2,
+                timestamp,
+                parent_hash: l2_parent.block_info.hash,
+            },
+            l1_origin: epoch,
+            seq_num: 1,
+        };
         builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
-        assert_eq!(builder.config_fetcher.system_config_calls, vec![1, 2]);
+        assert_eq!(builder.config_fetcher.block_calls, vec![1, 2]);
+    }
+
+    /// A fallback read that returns a different block than the parent being built on (e.g. the
+    /// EL reorged between the parent being chosen and the read) must reset instead of caching
+    /// another block's config under the parent hash.
+    #[tokio::test]
+    async fn test_fallback_block_hash_mismatch_resets() {
+        let (mut builder, epoch, mut l2_parent) = transition_setup();
+        l2_parent.block_info.hash = B256::left_padding_from(&[0xAA]);
+        let err = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap_err();
+        assert!(matches!(
+            err,
+            PipelineErrorKind::Reset(ResetError::AttributesBuilder(BuilderError::BlockMismatch(
+                _,
+                _
+            )))
+        ));
+        // Nothing was cached under the mismatched parent hash.
+        assert!(builder.cached_system_config(&l2_parent.block_info.hash).is_none());
     }
 
     #[tokio::test]
@@ -1074,7 +1129,7 @@ mod tests {
             payload.gas_limit,
             Some(u64::from_be_bytes(alloy_primitives::U64::from(seeded_gas_limit).to_be_bytes()))
         );
-        assert!(builder.config_fetcher.system_config_calls.is_empty());
+        assert!(builder.config_fetcher.block_calls.is_empty());
     }
 
     #[test]
@@ -1187,6 +1242,6 @@ mod tests {
             payload.eip_1559_params,
             Some(B64::from_slice(&[250_u32.to_be_bytes(), 6_u32.to_be_bytes()].concat()))
         );
-        assert!(builder.config_fetcher.system_config_calls.is_empty());
+        assert!(builder.config_fetcher.block_calls.is_empty());
     }
 }
