@@ -317,6 +317,9 @@ impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
                 next: block.hash,
             });
         }
+        if block.receipts.is_none() {
+            return Ok(NextSlot::Idle);
+        }
         Ok(NextSlot::Ready { block: Box::new(block), chain_view })
     }
 
@@ -395,9 +398,6 @@ pub enum L1OriginSelectorError {
         /// Hash of its canonical-height successor.
         next: B256,
     },
-    /// The block header exists but its receipts are not available yet.
-    #[error("receipts unavailable for L1 origin: {0}")]
-    ReceiptsUnavailable(B256),
 }
 
 #[cfg(test)]
@@ -419,6 +419,7 @@ mod tests {
         chain_view: Arc<Mutex<Option<B256>>>,
         chain_view_after_number_fetch: Arc<Mutex<Option<B256>>>,
         failed_number_fetches: HashSet<u64>,
+        missing_receipts: Arc<Mutex<HashSet<u64>>>,
         number_delay: Arc<Mutex<Duration>>,
     }
 
@@ -460,6 +461,16 @@ mod tests {
         /// Fails lookups for the given L1 block number.
         fn fail_block_number(&mut self, number: u64) {
             self.failed_number_fetches.insert(number);
+        }
+
+        /// Omits receipts from lookups for the given L1 block number.
+        fn omit_receipts(&self, number: u64) {
+            self.missing_receipts.lock().expect("missing receipts lock poisoned").insert(number);
+        }
+
+        /// Restores receipts for lookups at the given L1 block number.
+        fn restore_receipts(&self, number: u64) {
+            self.missing_receipts.lock().expect("missing receipts lock poisoned").remove(&number);
         }
 
         /// Delays lookups by number.
@@ -512,7 +523,18 @@ mod tests {
             {
                 self.set_chain_view(chain_view);
             }
-            Ok(block.map(prepared))
+            Ok(block.map(|block| {
+                let mut prepared = prepared(block);
+                if self
+                    .missing_receipts
+                    .lock()
+                    .expect("missing receipts lock poisoned")
+                    .contains(&number)
+                {
+                    prepared.receipts = None;
+                }
+                prepared
+            }))
         }
     }
 
@@ -1188,6 +1210,131 @@ mod tests {
             key.key().name() == "base_node.sequencer_l1_origin_orphans_total"
                 && value == &DebugValue::Counter(1)
         }));
+    }
+
+    #[tokio::test]
+    async fn test_wrong_parent_without_receipts_still_reports_orphan() {
+        let cfg = Arc::new(RollupConfig {
+            block_time: 2,
+            max_sequencer_drift: 600,
+            ..Default::default()
+        });
+        let current = BlockInfo { hash: B256::with_last_byte(1), number: 4, ..Default::default() };
+        let orphaning_successor = BlockInfo {
+            hash: B256::with_last_byte(2),
+            parent_hash: B256::with_last_byte(99),
+            number: 5,
+            timestamp: 2,
+        };
+        let provider = MockOriginSelectorProvider::default();
+        provider.with_block(current);
+        provider.with_block(orphaning_successor);
+        provider.omit_receipts(orphaning_successor.number);
+        provider.set_chain_view(B256::with_last_byte(10));
+        let mut selector = L1OriginSelector::new(cfg, provider);
+        let selected_rx = selector.subscribe();
+        let unsafe_head = L2BlockInfo {
+            l1_origin: NumHash { number: current.number, hash: current.hash },
+            ..Default::default()
+        };
+
+        assert_eq!(selector.next_l1_origin(unsafe_head).await.unwrap(), current);
+        selector.wait_for_inflight_completion().await;
+        let error = selector.next_l1_origin(unsafe_head).await.unwrap_err();
+
+        assert!(matches!(
+            error,
+            L1OriginSelectorError::NextL1OriginOrphaned { current: hash, next }
+                if hash == current.hash && next == orphaning_successor.hash
+        ));
+        assert!(selected_rx.borrow().is_none());
+        assert!(selector.next().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_same_height_current_origin_reorg_is_detected_by_canonical_successor() {
+        let cfg = Arc::new(RollupConfig {
+            block_time: 2,
+            max_sequencer_drift: 600,
+            ..Default::default()
+        });
+        let current = BlockInfo { hash: B256::with_last_byte(1), number: 4, ..Default::default() };
+        let replacement = BlockInfo {
+            hash: B256::with_last_byte(2),
+            parent_hash: current.parent_hash,
+            ..current
+        };
+        let canonical_successor = BlockInfo {
+            hash: B256::with_last_byte(3),
+            parent_hash: replacement.hash,
+            number: 5,
+            timestamp: 2,
+        };
+        let provider = MockOriginSelectorProvider::default();
+        provider.with_block(current);
+        let mut selector = L1OriginSelector::new(cfg, provider);
+        let unsafe_head = L2BlockInfo {
+            l1_origin: NumHash { number: current.number, hash: current.hash },
+            ..Default::default()
+        };
+
+        assert_eq!(selector.next_l1_origin(unsafe_head).await.unwrap(), current);
+        selector.await_inflight().await;
+
+        selector.l1.replace_block(replacement);
+        selector.l1.set_chain_view(replacement.hash);
+        assert_eq!(
+            selector.next_l1_origin(unsafe_head).await.unwrap(),
+            current,
+            "without a canonical successor, sequencing may continue on the accepted origin"
+        );
+
+        selector.l1.with_block(canonical_successor);
+        assert_eq!(selector.next_l1_origin(unsafe_head).await.unwrap(), current);
+        selector.wait_for_inflight_completion().await;
+        let error = selector.next_l1_origin(unsafe_head).await.unwrap_err();
+
+        assert!(matches!(
+            error,
+            L1OriginSelectorError::NextL1OriginOrphaned { current: hash, next }
+                if hash == current.hash && next == canonical_successor.hash
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_successor_without_receipts_is_not_adopted() {
+        let cfg = Arc::new(RollupConfig {
+            block_time: 2,
+            max_sequencer_drift: 600,
+            ..Default::default()
+        });
+        let current = BlockInfo { hash: B256::with_last_byte(1), number: 4, ..Default::default() };
+        let successor = BlockInfo {
+            hash: B256::with_last_byte(2),
+            parent_hash: current.hash,
+            number: 5,
+            timestamp: 2,
+        };
+        let provider = MockOriginSelectorProvider::default();
+        provider.with_block(current);
+        provider.with_block(successor);
+        provider.omit_receipts(successor.number);
+        provider.set_chain_view(B256::with_last_byte(10));
+        let mut selector = L1OriginSelector::new(cfg, provider);
+        let unsafe_head = L2BlockInfo {
+            l1_origin: NumHash { number: current.number, hash: current.hash },
+            ..Default::default()
+        };
+
+        assert_eq!(selector.next_l1_origin(unsafe_head).await.unwrap(), current);
+        selector.wait_for_inflight_completion().await;
+        assert_eq!(selector.next_l1_origin(unsafe_head).await.unwrap(), current);
+        assert!(selector.next().is_none());
+
+        selector.l1.restore_receipts(successor.number);
+        selector.wait_for_inflight_completion().await;
+        assert_eq!(selector.next_l1_origin(unsafe_head).await.unwrap(), successor);
+        assert_eq!(selector.next(), Some(successor));
     }
 
     #[tokio::test]

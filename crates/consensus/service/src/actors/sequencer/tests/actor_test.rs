@@ -534,16 +534,21 @@ async fn test_try_seal_handle_non_fatal_seal_error_returns_none() {
 }
 
 #[rstest]
-#[case::awaiting_l1_origin(false)]
-#[case::provider_error(true)]
+#[case::awaiting_l1_origin(false, false)]
+#[case::provider_error(true, false)]
+#[case::repeated_orphan_resets(false, true)]
 #[tokio::test(start_paused = true)]
-async fn test_build_retries_are_paced_after_immediate_budget(#[case] provider_error: bool) {
+async fn test_build_retries_are_paced_after_immediate_budget(
+    #[case] provider_error: bool,
+    #[case] orphaned: bool,
+) {
     let attempts_before_delay = usize::from(ScheduledTicker::MAX_IMMEDIATE_L1_ORIGIN_RETRIES) + 1;
     let expected_attempts = attempts_before_delay + 1;
     let (attempt_tx, mut attempt_rx) = mpsc::unbounded_channel();
 
     let mut client = MockSequencerEngineClient::new();
-    client.expect_reset_engine_forkchoice().times(1).return_once(|_| Ok(()));
+    let expected_resets = if orphaned { expected_attempts + 1 } else { 1 };
+    client.expect_reset_engine_forkchoice().times(expected_resets).returning(|_| Ok(()));
     client
         .expect_get_unsafe_head()
         .times(expected_attempts)
@@ -553,7 +558,12 @@ async fn test_build_retries_are_paced_after_immediate_budget(#[case] provider_er
     let mut origin_selector = MockOriginSelector::new();
     origin_selector.expect_next_l1_origin().times(expected_attempts).returning(move |_| {
         attempt_tx.send(()).unwrap();
-        if provider_error {
+        if orphaned {
+            Err(L1OriginSelectorError::NextL1OriginOrphaned {
+                current: B256::with_last_byte(1),
+                next: B256::with_last_byte(2),
+            })
+        } else if provider_error {
             Err(L1OriginSelectorError::Provider(TransportErrorKind::custom_str(
                 "mock L1 provider failure",
             )))
@@ -619,6 +629,37 @@ async fn test_orphaned_l1_origin_resets_once_without_starting_block_build() {
     actor.builder.engine_client = Arc::new(client);
 
     assert!(matches!(actor.builder.build().await.unwrap(), crate::BuildOutcome::Deferred));
+}
+
+#[tokio::test]
+async fn test_orphaned_l1_origin_propagates_engine_reset_failure() {
+    let unsafe_head = L2BlockInfo::default();
+    let mut client = MockSequencerEngineClient::new();
+    client.expect_get_unsafe_head().times(1).return_once(move || Ok(unsafe_head));
+    client
+        .expect_reset_engine_forkchoice()
+        .with(mockall::predicate::eq(ResetReason::L1OriginOrphaned))
+        .times(1)
+        .return_once(|_| Err(EngineClientError::ResetForkchoiceError("mock reset failure".into())));
+    client.expect_start_build_block().times(0);
+
+    let mut origin_selector = MockOriginSelector::new();
+    origin_selector.expect_next_l1_origin().times(1).return_once(|_| {
+        Err(L1OriginSelectorError::NextL1OriginOrphaned {
+            current: B256::with_last_byte(1),
+            next: B256::with_last_byte(2),
+        })
+    });
+
+    let mut actor = test_actor();
+    actor.builder.origin_selector = origin_selector;
+    actor.builder.engine_client = Arc::new(client);
+
+    assert!(matches!(
+        actor.builder.build().await,
+        Err(SequencerActorError::EngineError(EngineClientError::ResetForkchoiceError(error)))
+            if error == "mock reset failure"
+    ));
 }
 
 #[rstest]
