@@ -81,7 +81,7 @@ fn prepared_from(block: L1Block) -> PreparedL1Origin {
     PreparedL1Origin {
         hash: block.hash(),
         header: block.header,
-        receipts: Arc::new(block.receipts),
+        receipts: Some(Arc::new(block.receipts)),
     }
 }
 

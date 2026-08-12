@@ -6,15 +6,15 @@ use alloy_consensus::{Header, Receipt};
 use alloy_primitives::B256;
 use base_protocol::BlockInfo;
 
-/// An L1 origin with the header and receipts needed to build payload attributes.
+/// An L1 origin with a verified header and any receipts available during preparation.
 #[derive(Debug, Clone)]
 pub struct PreparedL1Origin {
     /// The verified origin block hash.
     pub hash: B256,
     /// The full L1 block header.
     pub header: Header,
-    /// The L1 block receipts.
-    pub receipts: Arc<Vec<Receipt>>,
+    /// The L1 block receipts, if they were available during preparation.
+    pub receipts: Option<Arc<Vec<Receipt>>>,
 }
 
 impl PreparedL1Origin {

@@ -96,8 +96,9 @@ impl<P: L1OriginSelectorProvider + Send + Sync> OriginSelector for L1OriginSelec
     ) -> Result<BlockInfo, L1OriginSelectorError> {
         self.select_origins(&unsafe_head).await?;
         let selected = self.choose_origin(&unsafe_head)?;
-        self.selected_tx.send_replace(Some(selected.clone()));
-        Ok(selected.block_info())
+        let block_info = selected.block_info();
+        self.selected_tx.send_replace(Some(selected));
+        Ok(block_info)
     }
 }
 
@@ -483,7 +484,7 @@ mod tests {
                 timestamp: block.timestamp,
                 ..Default::default()
             },
-            receipts: Arc::new(Vec::new()),
+            receipts: Some(Arc::new(Vec::new())),
         }
     }
 
@@ -1119,7 +1120,7 @@ mod tests {
         assert_eq!(selector.next_l1_origin(unsafe_head, false).await.unwrap(), current);
         let published = selected_rx.borrow().clone().expect("selected origin published");
         assert_eq!(published.block_info(), current);
-        assert!(published.receipts.is_empty());
+        assert!(published.receipts.as_ref().is_some_and(|receipts| receipts.is_empty()));
     }
 
     #[tokio::test]

@@ -1,6 +1,6 @@
 //! L1 provider interfaces and implementations for origin selection.
 
-use std::{fmt::Debug, time::Instant};
+use std::{fmt::Debug, sync::Arc, time::Instant};
 
 use alloy_consensus::{Header, Receipt};
 use alloy_primitives::B256;
@@ -141,10 +141,8 @@ impl L1OriginSelectorProvider for DelayedL1OriginSelectorProvider {
             warn!(target: "l1_origin_selector", requested = %hash, returned = %returned_hash, "L1 RPC returned a mismatched header hash");
             return Ok(None);
         }
-        let Some(receipts) = self.receipts_by_hash(hash).await? else {
-            return Err(L1OriginSelectorError::ReceiptsUnavailable(hash));
-        };
-        Ok(Some(PreparedL1Origin { hash, header, receipts: receipts.into() }))
+        let receipts = self.receipts_by_hash(hash).await?.map(Arc::new);
+        Ok(Some(PreparedL1Origin { hash, header, receipts }))
     }
 
     async fn prepared_by_number(
@@ -179,7 +177,7 @@ impl L1OriginSelectorProvider for DelayedL1OriginSelectorProvider {
             let Some(receipts) = self.receipts_by_hash(hash).await? else {
                 return Err(L1OriginSelectorError::ReceiptsUnavailable(hash));
             };
-            Ok(Some(PreparedL1Origin { hash, header, receipts: receipts.into() }))
+            Ok(Some(PreparedL1Origin { hash, header, receipts: Some(receipts.into()) }))
         } else {
             Ok(None)
         }
@@ -191,6 +189,7 @@ mod tests {
     use std::time::Duration;
 
     use alloy_rpc_client::RpcClient;
+    use alloy_rpc_types_eth::{Block as RpcBlock, Header as RpcHeader};
     use httpmock::prelude::*;
     use metrics_util::{
         CompositeKey, MetricKind,
@@ -202,6 +201,13 @@ mod tests {
 
     type SnapshotEntry =
         (CompositeKey, Option<metrics::Unit>, Option<metrics::SharedString>, DebugValue);
+
+    #[derive(serde::Serialize)]
+    struct JsonRpcResponse<T> {
+        jsonrpc: &'static str,
+        id: u64,
+        result: T,
+    }
 
     const REQUEST_TIMEOUT: Duration = Duration::from_millis(25);
     const RESPONSE_DELAY: Duration = Duration::from_millis(250);
@@ -268,6 +274,83 @@ mod tests {
             }
             value => panic!("expected one duration observation, got {value:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn current_origin_can_be_prepared_without_receipts() {
+        let server = MockServer::start_async().await;
+        let header = Header::default();
+        let hash = header.hash_slow();
+        let block: RpcBlock = RpcBlock::empty(RpcHeader::new(header.clone()));
+        let block_mock = server
+            .mock_async(move |when, then| {
+                when.method(POST)
+                    .path("/")
+                    .json_body_includes(r#"{"method":"eth_getBlockByHash"}"#);
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .json_body_obj(&JsonRpcResponse { jsonrpc: "2.0", id: 0, result: block });
+            })
+            .await;
+        let receipts_mock = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path("/")
+                    .json_body_includes(r#"{"method":"eth_getBlockReceipts"}"#);
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .body(r#"{"jsonrpc":"2.0","id":1,"result":null}"#);
+            })
+            .await;
+        let provider = test_provider(&server, None);
+
+        let prepared = provider
+            .prepared_by_hash(hash)
+            .await
+            .unwrap()
+            .expect("header should prepare the current origin");
+
+        assert_eq!(prepared.header, header);
+        assert!(prepared.receipts.is_none());
+        block_mock.assert_calls_async(1).await;
+        receipts_mock.assert_calls_async(1).await;
+    }
+
+    #[tokio::test]
+    async fn successor_is_not_prepared_without_receipts() {
+        let server = MockServer::start_async().await;
+        let header = Header { number: 7, ..Default::default() };
+        let hash = header.hash_slow();
+        let block: RpcBlock = RpcBlock::empty(RpcHeader::new(header));
+        let block_mock = server
+            .mock_async(move |when, then| {
+                when.method(POST)
+                    .path("/")
+                    .json_body_includes(r#"{"method":"eth_getBlockByNumber"}"#);
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .json_body_obj(&JsonRpcResponse { jsonrpc: "2.0", id: 0, result: block });
+            })
+            .await;
+        let receipts_mock = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path("/")
+                    .json_body_includes(r#"{"method":"eth_getBlockReceipts"}"#);
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .body(r#"{"jsonrpc":"2.0","id":1,"result":null}"#);
+            })
+            .await;
+        let provider = test_provider(&server, Some(BlockInfo { number: 7, ..Default::default() }));
+
+        let error = provider.prepared_by_number(7).await.unwrap_err();
+
+        assert!(
+            matches!(error, L1OriginSelectorError::ReceiptsUnavailable(value) if value == hash)
+        );
+        block_mock.assert_calls_async(1).await;
+        receipts_mock.assert_calls_async(1).await;
     }
 
     #[test]
