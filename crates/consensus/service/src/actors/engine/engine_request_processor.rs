@@ -1730,6 +1730,7 @@ mod tests {
                 system_config: Some(SystemConfig::default()),
                 ..Default::default()
             },
+            seq_window_size: 1,
             ..Default::default()
         });
 

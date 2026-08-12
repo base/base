@@ -153,14 +153,11 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
                 self.engine_client.reset_engine_forkchoice(ResetReason::L1OriginOrphaned).await?;
                 return Ok(BuildOutcome::Deferred);
             }
-            Err(
-                err @ (L1OriginSelectorError::NotEnoughData(_)
-                | L1OriginSelectorError::ChainViewUnavailable),
-            ) => {
+            Err(err @ L1OriginSelectorError::NotEnoughData(_)) => {
                 warn!(
                     target: "sequencer",
                     ?err,
-                    "L1 state is not ready for origin selection; deferring block build"
+                    "Next L1 origin is not ready after sequencer drift; deferring block build"
                 );
                 return Ok(BuildOutcome::AwaitingL1Origin);
             }
