@@ -13,9 +13,9 @@ workspace = true
 
 [dependencies]
 tokio-util.workspace = true
+tokio = { workspace = true, features = ["net"] }
 anyhow = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
-tokio = { workspace = true, features = ["net", "rt"] }
 axum = { workspace = true, features = ["tokio", "http1"] }
 base-health = { workspace = true, features = ["axum-server"] }
 clap = { workspace = true, features = ["derive", "env", "std"] }

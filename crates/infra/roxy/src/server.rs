@@ -40,19 +40,14 @@ impl Server {
 
         info!(%listen_addr, "roxy server started");
 
-        let shutdown = cancel.clone();
-        let join = tokio::spawn(async move {
-            axum::serve(listener, app)
-                .with_graceful_shutdown(async move { shutdown.cancelled().await })
-                .await
-        });
-
-        // Let the accept loop be scheduled before advertising readiness.
-        tokio::task::yield_now().await;
+        // Marked ready before `serve` is first polled. The listener is already bound, so the
+        // kernel accept backlog queues any connections that arrive in the gap; they are served
+        // as soon as the accept loop runs. Callers see added latency, never a refused connection.
         ready.store(true, Ordering::SeqCst);
 
-        join.await
-            .context("roxy server task join failed")?
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async move { cancel.cancelled().await })
+            .await
             .context("roxy server exited with error")?;
 
         info!("roxy server stopped");
