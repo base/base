@@ -442,14 +442,15 @@ where
 
                 if let Some(sealer) = self.sealer.take() {
                     Metrics::sequencer_seal_pipeline_duration().record(sealer.started_at.elapsed());
-                    // Seed the attributes builder with the just-inserted block so the next build
-                    // on top of it reuses the block's SystemConfig without an EL read.
+                    // Keep the inserted payload so the next build can decode SystemConfig from it
+                    // instead of reading the execution layer.
                     match sealer.envelope.try_into_block() {
                         Ok(block) => {
-                            self.builder.attributes_builder.seed_system_config(&block);
+                            self.builder.last_inserted_block = Some(block);
                         }
                         Err(err) => {
-                            warn!(target: "sequencer", error = ?err, "Failed to decode inserted payload for system config seeding");
+                            warn!(target: "sequencer", error = ?err, "Failed to decode inserted payload as parent block");
+                            self.builder.last_inserted_block = None;
                         }
                     }
                 }

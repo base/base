@@ -31,9 +31,10 @@ pub(super) fn test_actor() -> SequencerActor<
     SequencerActor {
         admin_api_rx,
         builder: PayloadBuilder {
-            attributes_builder: TestAttributesBuilder { attributes: vec![], ..Default::default() },
+            attributes_builder: TestAttributesBuilder { attributes: vec![] },
             engine_client: Arc::clone(&engine_client),
             origin_selector: MockOriginSelector::new(),
+            last_inserted_block: None,
             recovery_mode: recovery_mode.clone(),
             rollup_config: Arc::clone(&rollup_config),
         },

@@ -115,7 +115,8 @@ where
 
         // Prepare the payload attributes
         let tx_count = batch.transactions.len();
-        let mut attributes = self.builder.prepare_payload_attributes(parent, batch.epoch()).await?;
+        let mut attributes =
+            self.builder.prepare_payload_attributes(parent, batch.epoch(), None).await?;
         attributes.no_tx_pool = Some(true);
         match attributes.transactions {
             Some(ref mut txs) => txs.extend(batch.transactions),
@@ -246,7 +247,7 @@ mod tests {
     ) -> AttributesQueue<TestAttributesProvider, TestAttributesBuilder> {
         let cfg = cfg.unwrap_or_default();
         let mock_batch_queue = new_test_attributes_provider(origin, batches);
-        let mock_attributes_builder = TestAttributesBuilder { attributes, ..Default::default() };
+        let mock_attributes_builder = TestAttributesBuilder { attributes };
         AttributesQueue::new(Arc::new(cfg), mock_batch_queue, mock_attributes_builder)
     }
 
@@ -329,10 +330,8 @@ mod tests {
         let cfg = RollupConfig::default();
         let mock = new_test_attributes_provider(None, vec![]);
         let mut payload_attributes = default_payload_attributes();
-        let mock_builder = TestAttributesBuilder {
-            attributes: vec![Ok(payload_attributes.clone())],
-            ..Default::default()
-        };
+        let mock_builder =
+            TestAttributesBuilder { attributes: vec![Ok(payload_attributes.clone())] };
         let mut aq = AttributesQueue::new(Arc::new(cfg), mock, mock_builder);
         let parent = L2BlockInfo::default();
         let txs = vec![Bytes::default(), Bytes::default()];
@@ -361,8 +360,7 @@ mod tests {
         let mock =
             new_test_attributes_provider(Some(Default::default()), vec![Ok(Default::default())]);
         let mut pa = default_payload_attributes();
-        let mock_builder =
-            TestAttributesBuilder { attributes: vec![Ok(pa.clone())], ..Default::default() };
+        let mock_builder = TestAttributesBuilder { attributes: vec![Ok(pa.clone())] };
         let mut aq = AttributesQueue::new(Arc::new(cfg), mock, mock_builder);
         // If we load the batch, we should get the last in span.
         // But it won't take it so it will be available in the next_attributes call.

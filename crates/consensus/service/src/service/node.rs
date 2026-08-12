@@ -607,6 +607,7 @@ impl RollupNode {
                         attributes_builder,
                         engine_client: Arc::clone(&engine_client),
                         origin_selector: delayed_origin_selector,
+                        last_inserted_block: None,
                         recovery_mode: recovery_mode.clone(),
                         rollup_config: Arc::clone(&self.config),
                     },

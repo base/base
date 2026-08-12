@@ -8,6 +8,7 @@
 use std::{sync::Arc, time::Instant};
 
 use alloy_rpc_types_engine::PayloadId;
+use base_common_consensus::BaseBlock;
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::{AttributesBuilder, PipelineErrorKind};
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
@@ -66,6 +67,9 @@ pub struct PayloadBuilder<A: AttributesBuilder, O: OriginSelector, E: SequencerE
     pub engine_client: Arc<E>,
     /// The origin selector.
     pub origin_selector: O,
+    /// Last L2 block this sequencer inserted, passed into the next
+    /// [`AttributesBuilder::prepare_payload_attributes`] as the parent payload.
+    pub last_inserted_block: Option<BaseBlock>,
     /// Shared recovery mode flag.
     pub recovery_mode: RecoveryModeGuard,
     /// The rollup configuration.
@@ -199,7 +203,11 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
     ) -> Result<Option<AttributesWithParent>, SequencerActorError> {
         let mut attributes = match self
             .attributes_builder
-            .prepare_payload_attributes(unsafe_head, l1_origin.id())
+            .prepare_payload_attributes(
+                unsafe_head,
+                l1_origin.id(),
+                self.last_inserted_block.as_ref(),
+            )
             .await
         {
             Ok(attrs) => attrs,

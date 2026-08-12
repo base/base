@@ -3,7 +3,6 @@
 use alloc::{boxed::Box, vec::Vec};
 
 use alloy_eips::BlockNumHash;
-use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_common_consensus::BaseBlock;
 use base_common_genesis::SystemConfig;
@@ -21,8 +20,6 @@ use crate::{
 pub struct TestAttributesBuilder {
     /// The attributes to return.
     pub attributes: Vec<Result<BasePayloadAttributes, PipelineErrorKind>>,
-    /// Hashes of the blocks passed to [`AttributesBuilder::seed_system_config`], in call order.
-    pub seeded: Vec<B256>,
 }
 
 #[async_trait]
@@ -32,6 +29,7 @@ impl AttributesBuilder for TestAttributesBuilder {
         &mut self,
         _l2_parent: L2BlockInfo,
         _epoch: BlockNumHash,
+        _parent_block: Option<&BaseBlock>,
     ) -> PipelineResult<BasePayloadAttributes> {
         match self.attributes.pop() {
             Some(Ok(attrs)) => Ok(attrs),
@@ -40,10 +38,6 @@ impl AttributesBuilder for TestAttributesBuilder {
                 "Unexpected call to TestAttributesBuilder::prepare_payload_attributes. Configure the mocked result to return to avoid this error."
             ),
         }
-    }
-
-    fn seed_system_config(&mut self, block: &BaseBlock) {
-        self.seeded.push(block.header.hash_slow());
     }
 }
 

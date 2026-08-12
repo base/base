@@ -45,16 +45,16 @@ pub trait AttributesBuilder: Debug + Send {
     /// and no sequencer transactions. The caller has to modify the template to add transactions.
     /// This can be done by either setting the `no_tx_pool` to false as sequencer, or by appending
     /// batch transactions as the verifier.
+    ///
+    /// `parent_block` is the L2 parent payload when the caller already has it (the sequencer
+    /// just built it). When its hash matches `l2_parent`, the parent [`SystemConfig`] is decoded
+    /// from it instead of reading the execution layer.
+    ///
+    /// [`SystemConfig`]: base_common_genesis::SystemConfig
     async fn prepare_payload_attributes(
         &mut self,
         l2_parent: L2BlockInfo,
         epoch: BlockNumHash,
+        parent_block: Option<&BaseBlock>,
     ) -> PipelineResult<BasePayloadAttributes>;
-
-    /// Records a just-inserted L2 block so subsequent attribute builds on top of it can reuse
-    /// its [`SystemConfig`] without consulting the execution layer. Implementations without a
-    /// config cache ignore this.
-    ///
-    /// [`SystemConfig`]: base_common_genesis::SystemConfig
-    fn seed_system_config(&mut self, _block: &BaseBlock) {}
 }

@@ -263,6 +263,7 @@ impl<E: SequencerEngineBackend> L2Sequencer<E> {
             attributes_builder: attrs_builder,
             engine_client: Arc::clone(&engine_client),
             origin_selector,
+            last_inserted_block: None,
             recovery_mode: RecoveryModeGuard::new(false),
             rollup_config: Arc::clone(&self.rollup_config),
         };

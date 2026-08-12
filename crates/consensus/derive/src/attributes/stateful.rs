@@ -1,8 +1,6 @@
 //! The [`AttributesBuilder`] and it's default implementation.
 
-use alloc::{
-    boxed::Box, collections::VecDeque, fmt::Debug, string::ToString, sync::Arc, vec, vec::Vec,
-};
+use alloc::{boxed::Box, fmt::Debug, string::ToString, sync::Arc, vec, vec::Vec};
 
 use alloy_consensus::{Eip658Value, Receipt};
 use alloy_eips::{BlockNumHash, eip2718::Encodable2718};
@@ -12,7 +10,7 @@ use alloy_rlp::Encodable;
 use alloy_rpc_types_engine::PayloadAttributes;
 use async_trait::async_trait;
 use base_common_consensus::{BaseBlock, Predeploys};
-use base_common_genesis::{RollupConfig, SystemConfig};
+use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_consensus_upgrades::{Upgrade, Upgrades};
 use base_protocol::{
@@ -25,9 +23,6 @@ use crate::{
     AttributesBuilder, BuilderError, ChainProvider, L2ChainProvider, PipelineEncodingError,
     PipelineError, PipelineErrorKind, PipelineResult,
 };
-
-/// The maximum number of [`SystemConfig`]s cached by L2 block hash.
-const MAX_SYSTEM_CONFIG_CACHE_ENTRIES: usize = 8;
 
 /// A stateful implementation of the [`AttributesBuilder`].
 #[derive(Debug, Default)]
@@ -44,10 +39,6 @@ where
     config_fetcher: L2P,
     /// The L1 receipts fetcher.
     receipts_fetcher: L1P,
-    /// Cache of [`SystemConfig`]s keyed by the L2 block hash they were decoded from, most
-    /// recently used first. An entry is a pure function of its block, so it can never go stale:
-    /// forks, resets, and reorgs need no invalidation.
-    system_configs: VecDeque<(B256, SystemConfig)>,
 }
 
 impl<L1P, L2P> StatefulAttributesBuilder<L1P, L2P>
@@ -67,28 +58,7 @@ where
             l1_cfg,
             config_fetcher: sys_cfg_fetcher,
             receipts_fetcher: receipts,
-            system_configs: VecDeque::new(),
         }
-    }
-
-    /// Returns the cached [`SystemConfig`] for the given L2 block hash, promoting it to most
-    /// recently used.
-    fn cached_system_config(&mut self, block_hash: &B256) -> Option<SystemConfig> {
-        let index = self.system_configs.iter().position(|(hash, _)| hash == block_hash)?;
-        let entry = self.system_configs.remove(index)?;
-        let config = entry.1;
-        self.system_configs.push_front(entry);
-        Some(config)
-    }
-
-    /// Caches the [`SystemConfig`] for the given L2 block hash, evicting the least recently used
-    /// entries beyond [`MAX_SYSTEM_CONFIG_CACHE_ENTRIES`].
-    fn cache_system_config(&mut self, block_hash: B256, config: SystemConfig) {
-        if let Some(index) = self.system_configs.iter().position(|(hash, _)| hash == &block_hash) {
-            self.system_configs.remove(index);
-        }
-        self.system_configs.push_front((block_hash, config));
-        self.system_configs.truncate(MAX_SYSTEM_CONFIG_CACHE_ENTRIES);
     }
 }
 
@@ -103,6 +73,7 @@ where
         &mut self,
         l2_parent: L2BlockInfo,
         epoch: BlockNumHash,
+        parent_block: Option<&BaseBlock>,
     ) -> PipelineResult<BasePayloadAttributes> {
         let l1_header;
         let deposit_transactions: Vec<Bytes>;
@@ -111,12 +82,23 @@ where
         let (next_l2_time, next_l2_timestamp_millis_part) =
             self.rollup_cfg.l2_block_timestamp_parts(next_l2_block_number);
 
-        // The parent block's system config: decoded from the parent itself, either seeded in
-        // memory when the parent was inserted (see [`AttributesBuilder::seed_system_config`]) or
-        // read from the L2 EL on a miss (startup, reset, reorg, or a parent built elsewhere).
-        // The fetched block's hash is verified against the parent hash so that a read racing a
-        // reorg can never cache another block's config under this parent.
-        let mut sys_config = match self.cached_system_config(&l2_parent.block_info.hash) {
+        // Prefer the parent payload the caller already has (the sequencer just built it).
+        // Hash must match so a stashed block from before a reorg cannot be used. Decode
+        // failure falls through to the EL.
+        let mut sys_config = match parent_block
+            .filter(|block| block.header.hash_slow() == l2_parent.block_info.hash)
+            .and_then(|block| match to_system_config(block, &self.rollup_cfg) {
+                Ok(config) => Some(config),
+                Err(err) => {
+                    warn!(
+                        target: "attributes",
+                        error = ?err,
+                        number = block.header.number,
+                        "Failed to decode system config from parent payload"
+                    );
+                    None
+                }
+            }) {
             Some(config) => config,
             None => {
                 let block = self
@@ -137,12 +119,10 @@ where
                         .into(),
                     ));
                 }
-                let config = to_system_config(&block, &self.rollup_cfg).map_err(|err| {
+                to_system_config(&block, &self.rollup_cfg).map_err(|err| {
                     warn!(target: "attributes", error = ?err, number = block.header.number, "Failed to decode system config from parent block");
                     PipelineError::Provider("system config conversion failed".to_string()).temp()
-                })?;
-                self.cache_system_config(l2_parent.block_info.hash, config);
-                config
+                })?
             }
         };
 
@@ -305,17 +285,6 @@ where
                                                                         * set at Jovian */
         })
     }
-
-    fn seed_system_config(&mut self, block: &BaseBlock) {
-        match to_system_config(block, &self.rollup_cfg) {
-            Ok(config) => self.cache_system_config(block.header.hash_slow(), config),
-            // A block that cannot be decoded is simply not seeded: the next build on it falls
-            // back to the EL read.
-            Err(err) => {
-                warn!(target: "attributes", error = ?err, number = block.header.number, "Failed to decode system config from inserted block");
-            }
-        }
-    }
 }
 
 /// Derive deposits as `Vec<Bytes>` for transaction receipts.
@@ -362,9 +331,7 @@ mod tests {
     use base_common_genesis::{
         BaseUpgradeConfig, ChainGenesis, SystemConfig, SystemConfigUpdate, UpgradeConfig,
     };
-    use base_protocol::{
-        BlockInfo, DepositDecodeError, test_utils::RAW_BEDROCK_INFO_TX,
-    };
+    use base_protocol::{BlockInfo, DepositDecodeError, test_utils::RAW_BEDROCK_INFO_TX};
 
     use super::*;
     use crate::{
@@ -494,7 +461,7 @@ mod tests {
         // hash. Here we use the default header whose hash will not equal the custom `l2_hash`.
         let expected =
             BuilderError::BlockMismatchEpochReset(epoch, l2_parent.l1_origin, B256::default());
-        let err = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap_err();
+        let err = builder.prepare_payload_attributes(l2_parent, epoch, None).await.unwrap_err();
         assert_eq!(err, PipelineErrorKind::Reset(expected.into()));
     }
 
@@ -521,7 +488,7 @@ mod tests {
         // This should error because the l2 parent's l1_origin.hash should equal the epoch hash
         // Here the default header is used whose hash will not equal the custom `l2_hash` above.
         let expected = BuilderError::BlockMismatch(epoch, l2_parent.l1_origin);
-        let err = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap_err();
+        let err = builder.prepare_payload_attributes(l2_parent, epoch, None).await.unwrap_err();
         assert_eq!(err, PipelineErrorKind::Reset(ResetError::AttributesBuilder(expected)));
     }
 
@@ -555,7 +522,7 @@ mod tests {
             block_id,
             timestamp,
         );
-        let err = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap_err();
+        let err = builder.prepare_payload_attributes(l2_parent, epoch, None).await.unwrap_err();
         assert_eq!(err, PipelineErrorKind::Reset(ResetError::AttributesBuilder(expected)));
     }
 
@@ -595,7 +562,7 @@ mod tests {
             seq_num: 0,
         };
         let next_l2_time = cfg.l2_block_timestamp(l2_parent.block_info.number + 1);
-        let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
+        let payload = builder.prepare_payload_attributes(l2_parent, epoch, None).await.unwrap();
         let expected = BasePayloadAttributes {
             payload_attributes: PayloadAttributes {
                 timestamp: next_l2_time,
@@ -662,7 +629,7 @@ mod tests {
 
         let next_l2_block_number = l2_parent.block_info.number + 1;
         let (_, expected_millis_part) = cfg.l2_block_timestamp_parts(next_l2_block_number);
-        let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
+        let payload = builder.prepare_payload_attributes(l2_parent, epoch, None).await.unwrap();
         assert_eq!(
             payload.payload_attributes.timestamp,
             cfg.l2_block_timestamp(next_l2_block_number)
@@ -726,7 +693,7 @@ mod tests {
             cfg.l2_block_timestamp_parts(next_l2_block_number);
         assert_eq!(expected_millis_part, 200);
 
-        let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
+        let payload = builder.prepare_payload_attributes(l2_parent, epoch, None).await.unwrap();
         assert_eq!(payload.payload_attributes.timestamp, expected_timestamp);
         let transactions = payload.transactions.unwrap();
         assert_eq!(transactions.len(), 2);
@@ -775,7 +742,7 @@ mod tests {
             seq_num: 0,
         };
         let next_l2_time = cfg.l2_block_timestamp(l2_parent.block_info.number + 1);
-        let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
+        let payload = builder.prepare_payload_attributes(l2_parent, epoch, None).await.unwrap();
         let expected = BasePayloadAttributes {
             payload_attributes: PayloadAttributes {
                 timestamp: next_l2_time,
@@ -836,7 +803,7 @@ mod tests {
             seq_num: 0,
         };
         let next_l2_time = cfg.l2_block_timestamp(l2_parent.block_info.number + 1);
-        let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
+        let payload = builder.prepare_payload_attributes(l2_parent, epoch, None).await.unwrap();
         let expected = BasePayloadAttributes {
             payload_attributes: PayloadAttributes {
                 timestamp: next_l2_time,
@@ -896,7 +863,7 @@ mod tests {
             seq_num: 0,
         };
         let next_l2_time = cfg.l2_block_timestamp(l2_parent.block_info.number + 1);
-        let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
+        let payload = builder.prepare_payload_attributes(l2_parent, epoch, None).await.unwrap();
         let expected = BasePayloadAttributes {
             payload_attributes: PayloadAttributes {
                 timestamp: next_l2_time,
@@ -965,7 +932,7 @@ mod tests {
         };
 
         // Should succeed despite the malformed system config receipt.
-        assert!(builder.prepare_payload_attributes(l2_parent, epoch).await.is_ok());
+        assert!(builder.prepare_payload_attributes(l2_parent, epoch, None).await.is_ok());
     }
 
     /// Builds a rollup config with the requested block time and no scheduled upgrades.
@@ -1038,69 +1005,38 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_seeded_parent_config_skips_el_read() {
-        let (mut builder, epoch, l2_parent) = transition_setup();
-
-        // The parent's config was seeded when it was inserted; the EL can no longer serve any
-        // config, so a cache miss would fail the build.
-        builder.cache_system_config(l2_parent.block_info.hash, SystemConfig::default());
+    async fn test_parent_block_skips_el_read() {
+        let (mut builder, epoch, mut l2_parent) = transition_setup();
+        let parent = seedable_block(Header { number: 1, timestamp: 100, ..Default::default() });
+        l2_parent.block_info.hash = parent.header.hash_slow();
         builder.config_fetcher.clear();
-        builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
+        builder.prepare_payload_attributes(l2_parent, epoch, Some(&parent)).await.unwrap();
         assert!(builder.config_fetcher.block_calls.is_empty());
     }
 
     #[tokio::test]
-    async fn test_unknown_parent_falls_back_to_el_and_caches() {
+    async fn test_missing_parent_block_falls_back_to_el() {
         let (mut builder, epoch, l2_parent) = transition_setup();
-
-        // An unseeded parent (startup, reset, or a block built elsewhere) is read from the EL.
-        builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
-        assert_eq!(builder.config_fetcher.block_calls, vec![1]);
-
-        // A rebuild on the same parent is served from the cache even when the EL can no longer
-        // serve it.
-        builder.config_fetcher.clear();
-        builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
+        builder.prepare_payload_attributes(l2_parent, epoch, None).await.unwrap();
         assert_eq!(builder.config_fetcher.block_calls, vec![1]);
     }
 
     #[tokio::test]
-    async fn test_same_origin_different_parent_misses_cache() {
+    async fn test_parent_block_hash_mismatch_falls_back_to_el() {
         let (mut builder, epoch, l2_parent) = transition_setup();
-        builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
+        let other = seedable_block(Header { number: 99, ..Default::default() });
+        builder.prepare_payload_attributes(l2_parent, epoch, Some(&other)).await.unwrap();
         assert_eq!(builder.config_fetcher.block_calls, vec![1]);
-
-        // The next parent shares the L1 origin but is a different L2 block: entries are keyed
-        // by block hash, so without a seed its config is read from the EL rather than reusing
-        // the previous parent's entry.
-        let cfg = Arc::clone(&builder.rollup_cfg);
-        let timestamp = cfg.l2_block_timestamp(2);
-        let hash = fallback_parent(
-            &mut builder.config_fetcher,
-            Header { number: 2, timestamp, ..Default::default() },
-        );
-        let l2_parent = L2BlockInfo {
-            block_info: BlockInfo {
-                hash,
-                number: 2,
-                timestamp,
-                parent_hash: l2_parent.block_info.hash,
-            },
-            l1_origin: epoch,
-            seq_num: 1,
-        };
-        builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
-        assert_eq!(builder.config_fetcher.block_calls, vec![1, 2]);
     }
 
     /// A fallback read that returns a different block than the parent being built on (e.g. the
-    /// EL reorged between the parent being chosen and the read) must reset instead of caching
-    /// another block's config under the parent hash.
+    /// EL reorged between the parent being chosen and the read) must reset instead of using
+    /// another block's config.
     #[tokio::test]
     async fn test_fallback_block_hash_mismatch_resets() {
         let (mut builder, epoch, mut l2_parent) = transition_setup();
         l2_parent.block_info.hash = B256::left_padding_from(&[0xAA]);
-        let err = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap_err();
+        let err = builder.prepare_payload_attributes(l2_parent, epoch, None).await.unwrap_err();
         assert!(matches!(
             err,
             PipelineErrorKind::Reset(ResetError::AttributesBuilder(BuilderError::BlockMismatch(
@@ -1108,92 +1044,43 @@ mod tests {
                 _
             )))
         ));
-        // Nothing was cached under the mismatched parent hash.
-        assert!(builder.cached_system_config(&l2_parent.block_info.hash).is_none());
     }
 
     #[tokio::test]
-    async fn test_seeded_config_wins_over_el_value() {
-        let (mut builder, epoch, l2_parent) = transition_setup();
-
-        // The seeded entry differs from what the EL reports for the same block number (e.g.
-        // after an L1 reorg changed the canonical block at that height): the exact-hash seed
-        // must win.
-        let seeded_gas_limit = SystemConfig::default().gas_limit + 1;
-        builder.cache_system_config(
-            l2_parent.block_info.hash,
-            SystemConfig { gas_limit: seeded_gas_limit, ..Default::default() },
-        );
-        let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
-        assert_eq!(
-            payload.gas_limit,
-            Some(u64::from_be_bytes(alloy_primitives::U64::from(seeded_gas_limit).to_be_bytes()))
-        );
+    async fn test_parent_block_wins_over_el_value() {
+        let (mut builder, epoch, mut l2_parent) = transition_setup();
+        let parent = seedable_block(Header {
+            number: 1,
+            timestamp: 100,
+            gas_limit: 40_000_000,
+            ..Default::default()
+        });
+        l2_parent.block_info.hash = parent.header.hash_slow();
+        let payload =
+            builder.prepare_payload_attributes(l2_parent, epoch, Some(&parent)).await.unwrap();
+        assert_eq!(payload.gas_limit, Some(40_000_000));
         assert!(builder.config_fetcher.block_calls.is_empty());
     }
 
-    #[test]
-    fn test_system_config_cache_evicts_least_recently_used() {
-        let mut builder = StatefulAttributesBuilder::new(
-            Arc::new(RollupConfig::default()),
-            Arc::new(Sepolia::l1_config()),
-            TestSystemConfigL2Fetcher::default(),
-            TestChainProvider::default(),
-        );
-        let hashes: Vec<B256> = (0..10).map(|i| B256::from([i as u8; 32])).collect();
-        for &hash in &hashes {
-            builder.cache_system_config(hash, SystemConfig::default());
-        }
-        assert_eq!(builder.system_configs.len(), MAX_SYSTEM_CONFIG_CACHE_ENTRIES);
-        assert!(builder.cached_system_config(&hashes[0]).is_none());
-        assert!(builder.cached_system_config(&hashes[9]).is_some());
-
-        // A hit promotes the entry, evicting the next-oldest on the following insert.
-        assert!(builder.cached_system_config(&hashes[2]).is_some());
-        builder.cache_system_config(B256::from([10_u8; 32]), SystemConfig::default());
-        assert!(builder.cached_system_config(&hashes[2]).is_some());
-        assert!(builder.cached_system_config(&hashes[3]).is_none());
-    }
-
-    #[test]
-    fn test_seed_system_config_caches_inserted_block() {
-        let mut builder = StatefulAttributesBuilder::new(
-            Arc::new(RollupConfig::default()),
-            Arc::new(Sepolia::l1_config()),
-            TestSystemConfigL2Fetcher::default(),
-            TestChainProvider::default(),
-        );
-        let block =
-            seedable_block(Header { number: 5, gas_limit: 40_000_000, ..Default::default() });
-        builder.seed_system_config(&block);
-        let expected = to_system_config(&block, &builder.rollup_cfg).unwrap();
-        assert_eq!(builder.cached_system_config(&block.header.hash_slow()), Some(expected));
-    }
-
-    #[test]
-    fn test_seed_system_config_undecodable_block_is_skipped() {
-        let mut builder = StatefulAttributesBuilder::new(
-            Arc::new(RollupConfig::default()),
-            Arc::new(Sepolia::l1_config()),
-            TestSystemConfigL2Fetcher::default(),
-            TestChainProvider::default(),
-        );
-        // No transactions: `to_system_config` fails, so nothing is cached and the next build on
-        // this block takes the EL fallback.
-        let block = BaseBlock {
-            header: Header { number: 5, ..Default::default() },
+    #[tokio::test]
+    async fn test_undecodable_parent_block_falls_back_to_el() {
+        let (mut builder, epoch, l2_parent) = transition_setup();
+        // Same header hash as the parent, but no L1 info tx, so `to_system_config` fails.
+        let undecodable = BaseBlock {
+            header: Header { number: 1, timestamp: 100, ..Default::default() },
             body: BlockBody::default(),
         };
-        builder.seed_system_config(&block);
-        assert!(builder.system_configs.is_empty());
+        assert_eq!(undecodable.header.hash_slow(), l2_parent.block_info.hash);
+        builder.prepare_payload_attributes(l2_parent, epoch, Some(&undecodable)).await.unwrap();
+        assert_eq!(builder.config_fetcher.block_calls, vec![1]);
     }
 
     /// Crossing a fork that changes the system config encoding (here Holocene, which moves the
     /// EIP-1559 parameters into the header's `extra_data`) needs no EL read: the first
-    /// post-fork block is seeded from its own payload after insertion, so the next build
-    /// decodes the new fields directly from the seed.
+    /// post-fork block is passed in as the parent payload, so the next build decodes the new
+    /// fields directly from it.
     #[tokio::test]
-    async fn test_fork_transition_seeded_parent_skips_el_read() {
+    async fn test_fork_transition_parent_block_skips_el_read() {
         let block_time = 2_u64;
         // Blocks: 1 -> ts 100 (pre-Holocene), 2 -> ts 102 (first Holocene), 3 -> ts 104.
         let cfg = Arc::new(RollupConfig {
@@ -1216,17 +1103,16 @@ mod tests {
         let epoch = BlockNumHash { hash: origin_hash, number: 1 };
 
         // The sequencer inserted block 2 (the first Holocene block), whose `extra_data`
-        // persists denominator 250 and elasticity 6, and seeded it.
+        // persists denominator 250 and elasticity 6.
         let inserted = seedable_block(Header {
             number: 2,
             timestamp: 102,
             extra_data: bytes!("00000000fa00000006"),
             ..Default::default()
         });
-        builder.seed_system_config(&inserted);
 
-        // Build block 3 on the seeded post-fork parent: the persisted parameters come from the
-        // seed and the EL is never consulted.
+        // Build block 3 on the post-fork parent payload: the persisted parameters come from
+        // the payload and the EL is never consulted.
         let l2_parent = L2BlockInfo {
             block_info: BlockInfo {
                 hash: inserted.header.hash_slow(),
@@ -1237,7 +1123,8 @@ mod tests {
             l1_origin: epoch,
             seq_num: 1,
         };
-        let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
+        let payload =
+            builder.prepare_payload_attributes(l2_parent, epoch, Some(&inserted)).await.unwrap();
         assert_eq!(
             payload.eip_1559_params,
             Some(B64::from_slice(&[250_u32.to_be_bytes(), 6_u32.to_be_bytes()].concat()))
