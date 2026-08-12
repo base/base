@@ -22,6 +22,11 @@ use super::{config::ForwarderConfig, metrics::ForwarderMetrics, request::Forward
 /// Internal buffer cap used when RPC batch size is configured as unlimited.
 const UNLIMITED_BATCH_BUFFER_LIMIT: usize = 1024;
 
+/// How long to wait before re-checking a buffer whose every request is still awaiting a metering
+/// result. Without this the rate limit is open, the buffer is non-empty, and no flush can send
+/// anything, so the loop would spin on one core.
+const METERING_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
+
 /// Sliding window rate limiter that tracks request timestamps.
 ///
 /// Maintains a bounded deque of send timestamps within a 1-second window.
@@ -142,21 +147,16 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
         loop {
             match self.limiter.check_rate_limit() {
                 None if !self.buffer.is_empty() => {
-                    self.flush_buffer().await;
+                    // A flush that sends nothing means every buffered request is still waiting on
+                    // metering, so retrying immediately would spin without ever awaiting.
+                    if !self.flush_buffer().await && self.wait_or_recv(METERING_POLL_INTERVAL).await
+                    {
+                        break;
+                    }
                     continue;
                 }
                 Some(wait) => {
-                    if self.buffer.len() >= self.buffer_limit {
-                        time::sleep(wait).await;
-                        continue;
-                    }
-                    let closed = tokio::select! {
-                        _ = time::sleep(wait) => { continue; }
-                        transaction = self.receiver.recv() => {
-                            self.handle_recv(transaction)
-                        }
-                    };
-                    if closed {
+                    if self.wait_or_recv(wait).await {
                         break;
                     }
                     continue;
@@ -197,18 +197,29 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
         }
     }
 
-    async fn flush_remaining(&mut self) {
-        while !self.buffer.is_empty() {
-            let before = self.buffer.len();
-            self.flush_buffer().await;
-            if self.buffer.len() == before {
-                // Still waiting on metering; stop draining on shutdown.
-                break;
+    /// Waits out `wait`, still accepting requests unless the buffer is already at its limit.
+    ///
+    /// Returns `true` if the destination queue closed and the forwarder should shut down.
+    async fn wait_or_recv(&mut self, wait: std::time::Duration) -> bool {
+        if self.buffer.len() >= self.buffer_limit {
+            time::sleep(wait).await;
+            return false;
+        }
+        tokio::select! {
+            _ = time::sleep(wait) => false,
+            transaction = self.receiver.recv() => {
+                self.handle_recv(transaction)
             }
         }
     }
 
-    async fn flush_buffer(&mut self) {
+    async fn flush_remaining(&mut self) {
+        // A flush that sends nothing is still waiting on metering; stop draining on shutdown.
+        while !self.buffer.is_empty() && self.flush_buffer().await {}
+    }
+
+    /// Returns `true` if a batch was sent.
+    async fn flush_buffer(&mut self) -> bool {
         let (ready, waiting) = self.split_ready_for_forward();
         self.buffer = waiting;
         ForwarderMetrics::buffer_size(Arc::clone(&self.url_label)).set(self.buffer.len() as f64);
@@ -219,7 +230,7 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
             ready.len().min(self.config.max_batch_size)
         };
         if batch_size == 0 {
-            return;
+            return false;
         }
 
         let mut ready = ready;
@@ -236,6 +247,7 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
 
         self.send_with_retries(ready).await;
         self.limiter.record_send();
+        true
     }
 
     /// Splits buffered requests into those ready to send and those still waiting on metering.
@@ -445,6 +457,7 @@ mod tests {
     use std::{net::SocketAddr, sync::Mutex, time::Duration};
 
     use alloy_primitives::{Address, B256, Bytes};
+    use base_bundles::{InlineMetering, MeterBundleResponse};
     use base_execution_txpool::{NoExtensions, ValidatedTransaction};
     use jsonrpsee::{
         RpcModule, core::params::ArrayParams, http_client::HttpClientBuilder, server::Server,
@@ -522,7 +535,28 @@ mod tests {
             max_retries: 0,
             retry_backoff: Duration::ZERO,
             request_timeout: Duration::from_secs(1),
+            inline_metering: None,
+            require_metering: false,
         })
+    }
+
+    /// Metering whose result only lands at `ready_at`, counting how often it was polled.
+    ///
+    /// Hand-rolled rather than `automock`: the count has to be readable while calls are still in
+    /// flight, and the response flips on wall-clock time rather than on a scripted sequence.
+    #[derive(Debug)]
+    struct PendingMetering {
+        polls: Arc<Mutex<usize>>,
+        ready_at: Instant,
+    }
+
+    impl InlineMetering for PendingMetering {
+        fn get(&self, _tx_hash: &TxHash) -> Option<MeterBundleResponse> {
+            *self.polls.lock().unwrap() += 1;
+            (Instant::now() >= self.ready_at).then(MeterBundleResponse::default)
+        }
+
+        fn submit(&self, _tx_hash: TxHash, _raw: Bytes) {}
     }
 
     /// Records `(method, params)` for every call, in arrival order.
@@ -657,6 +691,47 @@ mod tests {
 
         tokio::time::timeout(Duration::from_secs(4), task).await.unwrap().unwrap();
         assert_eq!(received.lock().unwrap().len(), 5);
+    }
+
+    /// A buffer whose every request still lacks a metering result must not be re-polled in a tight
+    /// loop: the rate limit is open and no flush can send anything, so nothing in the loop awaits
+    /// and the task pegs a core of the runtime that also builds payloads.
+    ///
+    /// Multi-threaded so a regression fails the assertion below instead of starving this test's own
+    /// timer on a single worker.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn waiting_on_metering_backs_off_instead_of_spinning() {
+        let (url, received, _server) = rpc_server().await;
+        let (sender, receiver) = mpsc::channel(4);
+        let polls = Arc::new(Mutex::new(0));
+        let metering: SharedInlineMetering = Arc::new(PendingMetering {
+            polls: Arc::clone(&polls),
+            ready_at: Instant::now() + Duration::from_millis(150),
+        });
+        let config = Arc::new(ForwarderConfig {
+            require_metering: true,
+            inline_metering: Some(metering),
+            ..(*config(0, 0)).clone()
+        });
+        sender.send(transaction::<NoExtensions>(0)).await.unwrap();
+
+        let task = tokio::spawn(forwarder(url, receiver, config).run());
+        // Covers the 150ms the result is withheld, over which a spin runs up thousands of polls.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let polls = *polls.lock().unwrap();
+        assert!(
+            polls <= 10,
+            "expected roughly one poll per 50ms backoff while metering was pending, got {polls}",
+        );
+        assert_eq!(
+            received.lock().unwrap().len(),
+            1,
+            "the transaction must be forwarded once its metering result lands",
+        );
+
+        drop(sender);
+        tokio::time::timeout(Duration::from_secs(1), task).await.unwrap().unwrap();
     }
 
     /// A producer may mix request kinds on one destination queue and rely on submission order.
