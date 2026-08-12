@@ -571,10 +571,13 @@ impl IntrinsicGas {
                 }
                 cost
             }
-            // Environment ops (IncrementLocalEpoch / Lock / Unlock) carry no
-            // per-actor slot writes; their gas is set when their apply handlers
-            // are enshrined.
-            ChangeType::IncrementLocalEpoch | ChangeType::Lock | ChangeType::Unlock => 0,
+            // IncrementLocalEpoch carries no per-actor slot writes; it rewrites
+            // the packed account-state slot the config change's sequence advance
+            // already touched, priced as a warm dirty SSTORE.
+            ChangeType::IncrementLocalEpoch => Eip8130GasSchedule::INCREMENT_LOCAL_EPOCH_COST,
+            // Lock / Unlock apply handlers are not yet enshrined; priced when
+            // wired in.
+            ChangeType::Lock | ChangeType::Unlock => 0,
         }
     }
 
@@ -939,6 +942,35 @@ mod tests {
             auth_cost
                 + Eip8130GasSchedule::CONFIG_CHANGE_STATE_COST
                 + Eip8130GasSchedule::ACTOR_SLOT_SET_COST * 3
+        );
+    }
+
+    #[test]
+    fn config_change_increment_local_epoch_charges_warm_state_bump() {
+        // A batch carrying a single IncrementLocalEpoch op (empty payload) pays the
+        // auth + first-state cost plus the marginal warm dirty-SSTORE for rewriting
+        // the packed account-state slot, and no per-actor slot writes.
+        let cc = SignedAccountChanges {
+            channel: AccountChangeChannel::Multichain,
+            sequence: 0,
+            changes: vec![SignedChange {
+                change_type: ChangeType::IncrementLocalEpoch,
+                payload: Bytes::new(),
+            }],
+            signature: Bytes::from(configured_auth(K1)),
+        };
+        let tx = TxEip8130 {
+            sender: Some(ACCOUNT),
+            account_changes: vec![AccountChange::ConfigChange(cc)],
+            ..Default::default()
+        };
+        let gas = intrinsic(&signed(tx, configured_auth(K1), vec![]), &EXISTING_KEY);
+        let auth_cost = Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD;
+        assert_eq!(
+            gas.account_changes,
+            auth_cost
+                + Eip8130GasSchedule::CONFIG_CHANGE_STATE_COST
+                + Eip8130GasSchedule::INCREMENT_LOCAL_EPOCH_COST
         );
     }
 

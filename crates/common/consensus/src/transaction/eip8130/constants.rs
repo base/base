@@ -123,8 +123,8 @@ impl Eip8130Constants {
     /// `ChangeType` op byte: revoke an actor. Payload is `abi.encode(bytes32 actorId)`.
     pub const CHANGE_TYPE_REVOKE_ACTOR: u8 = 0x01;
 
-    /// `ChangeType` op byte: increment the local epoch (Local channel only;
-    /// empty payload). Invalidates every unlanded local signature at a prior epoch.
+    /// `ChangeType` op byte: increment the local epoch (either channel; empty
+    /// payload). Invalidates every unlanded local signature at a prior epoch.
     pub const CHANGE_TYPE_INCREMENT_LOCAL_EPOCH: u8 = 0x02;
 
     /// `ChangeType` op byte: lock the account (Local channel only; standalone;
