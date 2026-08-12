@@ -103,6 +103,13 @@ pub struct ProofsFinalizeArgs {
     /// Intermediate output root interval passed to the prover.
     #[arg(long = "intermediate-root-interval", value_name = "N")]
     pub intermediate_root_interval: Option<u64>,
+    /// Prover-service routing version required by this proof job.
+    #[arg(
+        long = "proof-protocol-version",
+        env = "BASECTL_PROOF_PROTOCOL_VERSION",
+        value_name = "VERSION"
+    )]
+    pub protocol_version: u32,
     /// Poll the prover service until the proof succeeds or fails.
     ///
     /// Exits non-zero when the proof fails or does not complete in time.
@@ -212,6 +219,7 @@ async fn run_finalize(
         l1_head,
         sequence_window,
         intermediate_root_interval,
+        protocol_version,
         wait,
         prover_rpc,
         yes,
@@ -225,6 +233,7 @@ async fn run_finalize(
         l1_head,
         sequence_window,
         intermediate_root_interval,
+        protocol_version,
     };
     let request = request.to_prove_request(&config.name);
     let end_block = start_block.saturating_add(num_blocks.saturating_sub(1));

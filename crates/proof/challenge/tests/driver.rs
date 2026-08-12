@@ -14,10 +14,13 @@ use base_challenger::{
         DEFAULT_L1_HEAD, DEFAULT_TEE_PROVER, MockAggregateVerifier, MockDisputeGameFactory,
         MockGameState, MockL1, MockL2Provider, MockTxManager, MockZkProofProvider,
         MockZkProofState, addr, build_test_header_and_account, factory_game, mock_anchor_registry,
-        mock_state, mock_state_with_tee, receipt_with_status,
+        mock_proof_protocol, mock_protocol_versions, mock_state, mock_state_with_tee,
+        receipt_with_status,
     },
 };
-use base_proof_contracts::{AggregateVerifierClient, DisputeGameFactoryClient, GameStatus};
+use base_proof_contracts::{
+    AggregateVerifierClient, DisputeGameFactoryClient, GameStatus, ProofScheduleKind,
+};
 use base_proof_primitives::Proposal;
 use base_proof_rpc::L1Provider;
 use base_proof_submission::test_utils::SnarkReceiptFixture;
@@ -83,6 +86,7 @@ fn test_driver_with_l1_provider(
         Arc::clone(&factory),
         Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
         Arc::clone(&anchor_registry),
+        mock_protocol_versions(),
     );
     let validator = OutputValidator::new(Arc::clone(&l2_provider));
     let submitter = ChallengeSubmitter::new(tx_manager);
@@ -165,6 +169,7 @@ fn default_ready_proof(intent: DisputeIntent) -> PendingProof {
         B256::repeat_byte(0xEE),
         request,
         intent,
+        1,
     )
 }
 
@@ -434,6 +439,11 @@ async fn test_step_proof_retry_reuses_deterministic_session_id() {
             expected_session_id.as_str(),
             "challenger must use game-address/invalid-index session_id on initiation",
         );
+        assert_eq!(log[0].proof.protocol_version, 1);
+        let ProofRequestKind::SnarkPlonk(request) = &log[0].proof.request else {
+            panic!("expected SNARK proof request");
+        };
+        assert_eq!(request.proof.schedule_l2_block_number, Some(20));
     }
 
     // Step 2: poll observes Failed → NeedsRetry → handle_proof_retry must
@@ -447,6 +457,7 @@ async fn test_step_proof_retry_reuses_deterministic_session_id() {
             expected_session_id.as_str(),
             "retry must reuse the deterministic session_id so the service can requeue",
         );
+        assert_eq!(log[1].proof.protocol_version, 1);
     }
 
     let entry = driver
@@ -478,6 +489,105 @@ async fn test_step_proof_retry_reuses_deterministic_session_id() {
         !driver.proof_manager.pending_proofs().contains_key(&addr(0)),
         "entry should be removed after successful retry submission",
     );
+}
+
+#[tokio::test]
+async fn test_legacy_game_requests_legacy_prover_protocol() {
+    let (l2, factory, root_15, _root_20) = base_game_mocks();
+    let verifier = single_game_verifier(MockGameState {
+        tee_prover: DEFAULT_TEE_PROVER,
+        proof_protocol: mock_proof_protocol(ProofScheduleKind::None),
+        intermediate_output_roots: vec![root_15, BOGUS_ROOT],
+        ..game_state(20)
+    });
+    let zk = default_zk_prover();
+    let mut driver = test_driver(factory, verifier, l2, Arc::clone(&zk), default_tx_manager());
+
+    driver.step().await.unwrap();
+
+    let state = zk.state.lock().unwrap();
+    let request = state.prove_block_range_log.first().expect("legacy proof should be requested");
+    assert_eq!(request.proof.protocol_version, 0);
+    let ProofRequestKind::SnarkPlonk(request) = &request.proof.request else {
+        panic!("expected SNARK proof request");
+    };
+    assert_eq!(request.proof.schedule_l2_block_number, None);
+}
+
+/// Builds L2 provider, factory, and output roots for a schedule-aware game
+/// spanning blocks 10–30 with interval 5 (checkpoints at 15, 20, 25, 30).
+/// The root at index 1 (block 20) is bogus, so the challenger proves a
+/// *subrange* (blocks 15–20) while the game's ending L2 block is 30.
+fn subrange_game_mocks()
+-> (Arc<MockL2Provider>, Arc<MockDisputeGameFactory>, Arc<MockAggregateVerifier>) {
+    let (header_15, account_15) = build_test_header_and_account(15, STORAGE_HASH);
+    let root_15 =
+        OutputRoot::from_parts(header_15.state_root, STORAGE_HASH, header_15.hash_slow()).hash();
+    let (header_20, account_20) = build_test_header_and_account(20, STORAGE_HASH);
+    let (header_25, account_25) = build_test_header_and_account(25, STORAGE_HASH);
+    let root_25 =
+        OutputRoot::from_parts(header_25.state_root, STORAGE_HASH, header_25.hash_slow()).hash();
+    let (header_30, account_30) = build_test_header_and_account(30, STORAGE_HASH);
+    let root_30 =
+        OutputRoot::from_parts(header_30.state_root, STORAGE_HASH, header_30.hash_slow()).hash();
+
+    let mut l2 = MockL2Provider::default();
+    l2.insert_block(15, header_15, account_15);
+    l2.insert_block(20, header_20, account_20);
+    l2.insert_block(25, header_25, account_25);
+    l2.insert_block(30, header_30, account_30);
+    let l2 = Arc::new(l2);
+
+    let factory = single_game_factory();
+
+    let verifier = single_game_verifier(MockGameState {
+        tee_prover: DEFAULT_TEE_PROVER,
+        intermediate_output_roots: vec![root_15, BOGUS_ROOT, root_25, root_30],
+        ..game_state(30)
+    });
+
+    (l2, factory, verifier)
+}
+
+#[tokio::test]
+async fn test_schedule_aware_game_requests_current_prover_protocol() {
+    let (l2, factory, verifier) = invalid_game_mocks();
+
+    let zk = default_zk_prover();
+    let mut driver = test_driver(factory, verifier, l2, Arc::clone(&zk), default_tx_manager());
+
+    driver.step().await.unwrap();
+
+    let state = zk.state.lock().unwrap();
+    let request = state.prove_block_range_log.first().expect("proof should be requested");
+    assert_eq!(request.proof.protocol_version, 1);
+    let ProofRequestKind::SnarkPlonk(request) = &request.proof.request else {
+        panic!("expected SNARK proof request");
+    };
+    // schedule_l2_block_number must equal the game's ending L2 block (20).
+    assert_eq!(request.proof.schedule_l2_block_number, Some(20));
+}
+
+#[tokio::test]
+async fn test_schedule_aware_subrange_pins_game_ending_l2_block() {
+    let (l2, factory, verifier) = subrange_game_mocks();
+
+    let zk = default_zk_prover();
+    let mut driver = test_driver(factory, verifier, l2, Arc::clone(&zk), default_tx_manager());
+
+    driver.step().await.unwrap();
+
+    let state = zk.state.lock().unwrap();
+    let request = state.prove_block_range_log.first().expect("proof should be requested");
+    assert_eq!(request.proof.protocol_version, 1);
+    let ProofRequestKind::SnarkPlonk(request) = &request.proof.request else {
+        panic!("expected SNARK proof request");
+    };
+    // The challenger proves a subrange (blocks 15–20) but the schedule must
+    // pin the game's ending L2 block (30), not the subrange end (20).
+    assert_eq!(request.proof.start_block_number, 15);
+    assert_eq!(request.proof.number_of_blocks_to_prove, 5);
+    assert_eq!(request.proof.schedule_l2_block_number, Some(30));
 }
 
 #[tokio::test]
@@ -811,6 +921,7 @@ async fn test_successful_nullify_does_not_track_anchor_update() {
             retry_count: 0,
             tee_submit_retry_count: 0,
             intent: DisputeIntent::Nullify,
+            protocol_version: 1,
         },
     );
 

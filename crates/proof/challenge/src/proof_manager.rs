@@ -12,7 +12,7 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256};
-use base_proof_contracts::{AggregateVerifierClient, GameStatus};
+use base_proof_contracts::{AggregateVerifierClient, GameStatus, ProofScheduleKind};
 use base_proof_primitives::ProofRequest as TeeProofRequest;
 use base_proof_rpc::{L1Provider, L2Provider};
 use base_proof_submission::KnownRevert;
@@ -181,6 +181,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
                         game_address,
                         invalid_index,
                         tee_request,
+                        candidate.protocol_version,
                     );
                     match self.proof_requester.prove_block_range(request).await {
                         Ok(response) => {
@@ -197,6 +198,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
                                     invalid_index,
                                     expected_root,
                                     zk_fallback,
+                                    candidate.protocol_version,
                                 ),
                             );
                             return Ok(());
@@ -241,6 +243,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
             game_address,
             invalid_index,
             proof_request.clone(),
+            candidate.protocol_version,
         );
 
         let prove_response = self.proof_requester.prove_block_range(request).await?;
@@ -259,6 +262,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
                 expected_root,
                 proof_request,
                 intent,
+                candidate.protocol_version,
             ),
         );
 
@@ -296,7 +300,11 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
             proposer,
             intermediate_block_interval: candidate.intermediate_block_interval,
             l1_head_number,
-            schedule_l2_block_number: Some(candidate.info.l2_block_number),
+            // `image_hash` is deliberately not set here. `ProofRequest` has no such field on main
+            // (#4321 removed it), and restoring it belongs with the Nitro image-selection change
+            // that reads it. `CandidateGame.tee_image_hash` already carries the value.
+            schedule_l2_block_number: (candidate.schedule_kind == ProofScheduleKind::Activated)
+                .then_some(candidate.info.l2_block_number),
         })
     }
 
@@ -315,7 +323,8 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
                 sequence_window: None,
                 l1_head: Some(candidate.l1_head),
                 intermediate_root_interval: Some(candidate.intermediate_block_interval),
-                schedule_l2_block_number: Some(candidate.info.l2_block_number),
+                schedule_l2_block_number: (candidate.schedule_kind == ProofScheduleKind::Activated)
+                    .then_some(candidate.info.l2_block_number),
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             },
@@ -541,6 +550,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
 
         let retry_count = pending.retry_count;
         let invalid_index = pending.invalid_index;
+        let protocol_version = pending.protocol_version;
 
         if retry_count > Self::MAX_PROOF_RETRIES {
             warn!(
@@ -585,6 +595,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
             game_address,
             invalid_index,
             request,
+            protocol_version,
         );
 
         match self.proof_requester.prove_block_range(prove_request).await {
@@ -689,6 +700,7 @@ mod tests {
                 B256::repeat_byte(0x22),
                 proof_request(),
                 DisputeIntent::Challenge,
+                1,
             ),
         );
     }
@@ -707,6 +719,7 @@ mod tests {
                 retry_count: 0,
                 tee_submit_retry_count: 0,
                 intent: DisputeIntent::Nullify,
+                protocol_version: 1,
             },
         );
     }

@@ -20,9 +20,9 @@ use base_prover_service_db::{
 };
 use base_prover_service_protocol::{
     GetNextProofRequest, HeartbeatRequest, ProofJobStatus, ProofRequest as ProtocolProofRequest,
-    ProofRequestKind, ProofResult, ProofType, ProverRequesterApiServer, ProverWorkerApiClient,
-    ProverWorkerApiServer, WorkerSubmitProofRequest, ZkBackend, ZkProofRequest, ZkProofResult,
-    ZkVm,
+    ProofRequestKind, ProofResult, ProofType, ProveBlockRangeRequest, ProverRequesterApiClient,
+    ProverRequesterApiServer, ProverWorkerApiClient, ProverWorkerApiServer,
+    WorkerSubmitProofRequest, ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
 };
 use jsonrpsee::{
     core::client::Error as ClientError,
@@ -103,6 +103,7 @@ impl RunningServer {
 async fn drain_claimable_compressed_jobs(repo: &ProofRequestRepo) {
     let drain = ClaimProofJob {
         worker_id: "worker-api-e2e-drain".to_owned(),
+        protocol_versions: vec![0, 1],
         api_proof_type: ApiProofType::Compressed,
         tee_kinds: Vec::new(),
         zk_vms: vec![ZkVmKind::Sp1],
@@ -122,6 +123,7 @@ async fn drain_claimable_compressed_jobs(repo: &ProofRequestRepo) {
 fn compressed_request(session_id: &str, start_block_number: u64) -> CreateProofRequest {
     CreateProofRequest::new(ProtocolProofRequest {
         session_id: session_id.to_owned(),
+        protocol_version: 1,
         request: ProofRequestKind::Compressed(ZkProofRequest {
             start_block_number,
             number_of_blocks_to_prove: 1,
@@ -144,6 +146,7 @@ fn worker_claim(worker_id: &str) -> GetNextProofRequest {
         zk_vms: vec![ZkVm::Sp1],
         // Omitted by legacy workers; the server defaults this capability to cluster.
         zk_backends: Vec::new(),
+        protocol_versions: vec![1],
         lock_duration_seconds: 60,
     }
 }
@@ -246,6 +249,121 @@ async fn worker_submit_unknown_session_is_not_found() {
         .await
         .expect_err("submitting against an unknown session should fail");
     assert_rpc_error_code(&err, ERROR_NOT_FOUND);
+
+    server.shutdown().await;
+}
+
+fn legacy_prove_request(session_id: &str, start_block_number: u64) -> ProveBlockRangeRequest {
+    ProveBlockRangeRequest {
+        proof: ProtocolProofRequest {
+            session_id: session_id.to_owned(),
+            protocol_version: 0,
+            request: ProofRequestKind::Compressed(ZkProofRequest {
+                start_block_number,
+                number_of_blocks_to_prove: 1,
+                sequence_window: None,
+                l1_head: None,
+                intermediate_root_interval: None,
+                schedule_l2_block_number: None,
+                zk_vm: ZkVm::Sp1,
+                zk_backend: ZkBackend::Cluster,
+            }),
+        },
+    }
+}
+
+fn current_prove_request(session_id: &str, start_block_number: u64) -> ProveBlockRangeRequest {
+    ProveBlockRangeRequest {
+        proof: ProtocolProofRequest {
+            session_id: session_id.to_owned(),
+            protocol_version: 1,
+            request: ProofRequestKind::Compressed(ZkProofRequest {
+                start_block_number,
+                number_of_blocks_to_prove: 1,
+                sequence_window: None,
+                l1_head: None,
+                intermediate_root_interval: None,
+                schedule_l2_block_number: Some(start_block_number),
+                zk_vm: ZkVm::Sp1,
+                zk_backend: ZkBackend::Cluster,
+            }),
+        },
+    }
+}
+
+fn legacy_worker_claim(worker_id: &str) -> GetNextProofRequest {
+    let mut claim = worker_claim(worker_id);
+    claim.protocol_versions = vec![0];
+    claim
+}
+
+/// Protocol v0/v1 isolation across the full requester → HTTP → server → DB →
+/// worker boundary.
+///
+/// A v0 request must only be claimable by a worker claiming protocol version
+/// 0, and a v1 request only by a worker claiming the current protocol
+/// version. Neither protocol can see or claim the other's jobs.
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL)"]
+async fn protocol_version_isolates_request_and_worker_claim() {
+    let repo = test_repo().await;
+    drain_claimable_compressed_jobs(&repo).await;
+
+    let server = RunningServer::spawn(repo.clone()).await;
+
+    let v0_session = Uuid::new_v4().to_string();
+    server
+        .client
+        .prove_block_range(legacy_prove_request(&v0_session, 10))
+        .await
+        .expect("legacy prove_block_range should succeed");
+
+    assert!(
+        server
+            .client
+            .get_next_proof(worker_claim("worker-v1"))
+            .await
+            .expect("get_next_proof should not error")
+            .job
+            .is_none(),
+        "a v1 worker must not claim a v0 request"
+    );
+
+    let v0_job = server
+        .client
+        .get_next_proof(legacy_worker_claim("worker-v0"))
+        .await
+        .expect("legacy get_next_proof should succeed")
+        .job
+        .expect("a v0 worker should claim the v0 request");
+    assert_eq!(v0_job.session_id, v0_session);
+
+    let v1_session = Uuid::new_v4().to_string();
+    server
+        .client
+        .prove_block_range(current_prove_request(&v1_session, 20))
+        .await
+        .expect("v1 prove_block_range should succeed");
+
+    assert!(
+        server
+            .client
+            .get_next_proof(legacy_worker_claim("worker-v0"))
+            .await
+            .expect("legacy get_next_proof should not error")
+            .job
+            .is_none(),
+        "a v0 worker must not claim a v1 request"
+    );
+
+    let v1_job = server
+        .client
+        .get_next_proof(worker_claim("worker-v1"))
+        .await
+        .expect("get_next_proof should succeed")
+        .job
+        .expect("a v1 worker should claim the v1 request");
+    assert_eq!(v1_job.session_id, v1_session);
 
     server.shutdown().await;
 }

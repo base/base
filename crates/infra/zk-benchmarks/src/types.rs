@@ -36,6 +36,8 @@ pub struct ZkBenchConfig {
     pub rollup_rpc_url: Url,
     /// ZK prover RPC URL.
     pub prover_url: Url,
+    /// Prover-service routing version required by proof jobs.
+    pub protocol_version: u32,
 }
 
 /// The single L2 block selected for proof.
