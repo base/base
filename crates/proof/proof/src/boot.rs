@@ -275,9 +275,10 @@ impl BootInfo {
         // Fixed built-in chains must execute with their compiled static derivation parameters. Only
         // contract-backed activation timestamps may come from the node, because ScheduleId commits
         // them separately. The local devnet is mutable, so its live node-served config is required.
-        let trusted_chain_config = base_common_chains::ChainConfig::by_chain_id(chain_id).filter(
-            |chain_config| chain_config.chain_id != base_common_chains::ChainConfig::DEVNET.chain_id,
-        );
+        let trusted_chain_config =
+            base_common_chains::ChainConfig::by_chain_id(chain_id).filter(|chain_config| {
+                chain_config.chain_id != base_common_chains::ChainConfig::DEVNET.chain_id
+            });
         let mut rollup_config = if let Some(chain_config) = trusted_chain_config {
             let mut trusted_rollup_config = chain_config.rollup_config();
             for upgrade in BaseUpgrade::CONTRACT_VARIANTS {
