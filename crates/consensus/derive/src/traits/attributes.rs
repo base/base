@@ -5,6 +5,7 @@ use core::fmt::Debug;
 
 use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
+use base_common_consensus::BaseBlock;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_protocol::{AttributesWithParent, L2BlockInfo, SingleBatch};
 
@@ -49,4 +50,11 @@ pub trait AttributesBuilder: Debug + Send {
         l2_parent: L2BlockInfo,
         epoch: BlockNumHash,
     ) -> PipelineResult<BasePayloadAttributes>;
+
+    /// Records a just-inserted L2 block so subsequent attribute builds on top of it can reuse
+    /// its [`SystemConfig`] without consulting the execution layer. Implementations without a
+    /// config cache ignore this.
+    ///
+    /// [`SystemConfig`]: base_common_genesis::SystemConfig
+    fn seed_system_config(&mut self, _block: &BaseBlock) {}
 }

@@ -425,7 +425,7 @@ where
     }
 
     /// Handles the outcome of one seal pipeline step.
-    async fn handle_seal_step_result(
+    pub(super) async fn handle_seal_step_result(
         &mut self,
         pipeline: &mut BuildPipelineState,
         shadow: &mut Option<ShadowSequencingState>,
@@ -442,6 +442,16 @@ where
 
                 if let Some(sealer) = self.sealer.take() {
                     Metrics::sequencer_seal_pipeline_duration().record(sealer.started_at.elapsed());
+                    // Seed the attributes builder with the just-inserted block so the next build
+                    // on top of it reuses the block's SystemConfig without an EL read.
+                    match sealer.envelope.try_into_block() {
+                        Ok(block) => {
+                            self.builder.attributes_builder.seed_system_config(&block);
+                        }
+                        Err(err) => {
+                            warn!(target: "sequencer", error = ?err, "Failed to decode inserted payload for system config seeding");
+                        }
+                    }
                 }
 
                 if reconcile {

@@ -6,7 +6,11 @@
 use alloc::vec::Vec;
 
 use alloy_consensus::{Block, BlockHeader, Sealable, Transaction};
-use alloy_eips::{Encodable2718, eip4895::Withdrawal, eip7685::Requests};
+use alloy_eips::{
+    Decodable2718, Encodable2718, Typed2718,
+    eip4895::Withdrawal,
+    eip7685::{EMPTY_REQUESTS_HASH, Requests},
+};
 use alloy_primitives::{B256, Bytes, Signature, keccak256};
 use alloy_rpc_types_engine::{
     CancunPayloadFields, ExecutionPayloadInputV2, ExecutionPayloadV3, PraguePayloadFields,
@@ -43,6 +47,30 @@ impl BaseExecutionPayloadEnvelope {
         use ssz::Encode;
         let ssz_bytes = self.as_ssz_bytes();
         crate::PayloadHash::from(ssz_bytes.as_slice())
+    }
+
+    /// Converts the envelope into a [`Block`], supplying the sidecar fields carried by the
+    /// envelope (the parent beacon block root) for V3/V4 payloads.
+    pub fn try_into_block<T: Decodable2718 + Typed2718>(
+        self,
+    ) -> Result<Block<T>, crate::BasePayloadError> {
+        let parent_beacon_block_root = self.parent_beacon_block_root.unwrap_or_default();
+        match self.execution_payload {
+            payload @ (BaseExecutionPayload::V1(_) | BaseExecutionPayload::V2(_)) => {
+                payload.try_into_block()
+            }
+            payload @ BaseExecutionPayload::V3(_) => {
+                payload.try_into_block_with_sidecar(&BaseExecutionPayloadSidecar::v3(
+                    CancunPayloadFields::new(parent_beacon_block_root, Vec::new()),
+                ))
+            }
+            payload @ BaseExecutionPayload::V4(_) => {
+                payload.try_into_block_with_sidecar(&BaseExecutionPayloadSidecar::v4(
+                    CancunPayloadFields::new(parent_beacon_block_root, Vec::new()),
+                    PraguePayloadFields::new(EMPTY_REQUESTS_HASH),
+                ))
+            }
+        }
     }
 }
 

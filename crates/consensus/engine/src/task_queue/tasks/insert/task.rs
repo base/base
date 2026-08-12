@@ -2,16 +2,11 @@
 
 use std::{sync::Arc, time::Instant};
 
-use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
-use alloy_rpc_types_engine::{
-    CancunPayloadFields, ExecutionPayloadInputV2, PayloadStatusEnum, PraguePayloadFields,
-};
+use alloy_rpc_types_engine::{ExecutionPayloadInputV2, PayloadStatusEnum};
 use async_trait::async_trait;
 use base_common_consensus::BaseBlock;
 use base_common_genesis::RollupConfig;
-use base_common_rpc_types_engine::{
-    BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadSidecar,
-};
+use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
 use base_protocol::L2BlockInfo;
 use tokio::sync::mpsc;
 
@@ -226,25 +221,8 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
         // Form a block ref before insertion so stale unsafe payloads can be dropped before import.
         let parent_beacon_block_root = self.envelope.parent_beacon_block_root.unwrap_or_default();
         let execution_payload = self.envelope.execution_payload.clone();
-        let block: BaseBlock = match &execution_payload {
-            BaseExecutionPayload::V1(payload) => BaseExecutionPayload::V1(payload.clone())
-                .try_into_block()
-                .map_err(InsertTaskError::FromBlockError)?,
-            BaseExecutionPayload::V2(payload) => BaseExecutionPayload::V2(payload.clone())
-                .try_into_block()
-                .map_err(InsertTaskError::FromBlockError)?,
-            BaseExecutionPayload::V3(payload) => BaseExecutionPayload::V3(payload.clone())
-                .try_into_block_with_sidecar(&BaseExecutionPayloadSidecar::v3(
-                    CancunPayloadFields::new(parent_beacon_block_root, vec![]),
-                ))
-                .map_err(InsertTaskError::FromBlockError)?,
-            BaseExecutionPayload::V4(payload) => BaseExecutionPayload::V4(payload.clone())
-                .try_into_block_with_sidecar(&BaseExecutionPayloadSidecar::v4(
-                    CancunPayloadFields::new(parent_beacon_block_root, vec![]),
-                    PraguePayloadFields::new(EMPTY_REQUESTS_HASH),
-                ))
-                .map_err(InsertTaskError::FromBlockError)?,
-        };
+        let block: BaseBlock =
+            self.envelope.clone().try_into_block().map_err(InsertTaskError::FromBlockError)?;
 
         let new_block_ref =
             L2BlockInfo::from_block_and_genesis(&block, &self.rollup_config.genesis)
