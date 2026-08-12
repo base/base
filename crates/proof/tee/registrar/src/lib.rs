@@ -20,7 +20,7 @@ mod error;
 pub use error::{HintError, HintResult, PlannerError, PlannerResult, RegistrarError, Result};
 
 mod hints;
-pub use hints::{P384HintCollector, P384Hints};
+pub use hints::P384Hints;
 
 mod metrics;
 pub use metrics::RegistrarMetrics;

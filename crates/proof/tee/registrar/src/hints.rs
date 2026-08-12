@@ -32,9 +32,11 @@ const UNCOMPRESSED_P384_LEN: usize = 97;
 /// Low 256 bits set — splits a P-384 scalar into the verifier's high/low limbs.
 const MASK_256: U384 = U384::MAX.shr_vartime(128);
 
-/// Entry points for Agora-compatible P-384 inverse-hint generation.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct P384Hints;
+/// Agora-compatible P-384 inverse-hint generation and mutable transcript collector.
+#[derive(Debug, Default)]
+pub struct P384Hints {
+    inverses: Vec<[u8; P384_SCALAR_BYTES]>,
+}
 
 impl P384Hints {
     /// Verifies a P-384 signature while recording inverses in onchain order.
@@ -65,29 +67,29 @@ impl P384Hints {
             )));
         }
 
-        let mut collector = P384HintCollector::default();
-        let r = P384HintCollector::scalar_canonical(&signature[..P384_SCALAR_BYTES])?;
-        let s = P384HintCollector::scalar_canonical(&signature[P384_SCALAR_BYTES..])?;
+        let mut hints = Self::default();
+        let r = Self::scalar_canonical(&signature[..P384_SCALAR_BYTES])?;
+        let s = Self::scalar_canonical(&signature[P384_SCALAR_BYTES..])?;
         if bool::from(r.is_zero()) || bool::from(s.is_zero()) {
             return Err(HintError::Rejected("signature rejected by scalar bounds".into()));
         }
 
-        let pub_point = P384HintCollector::affine_from_xy(pub_key)?;
+        let pub_point = Self::affine_from_xy(pub_key)?;
         let mut hash_be = [0u8; P384_SCALAR_BYTES];
         hash_be[P384_SCALAR_BYTES - hash.len()..].copy_from_slice(hash);
         let h = Scalar::reduce(U384::from_be_slice(&hash_be));
 
         // Solidity records `s⁻¹` twice (once per scalar division).
-        let scalar1 = h * collector.record_scalar_inv(&s)?;
-        let scalar2 = r * collector.record_scalar_inv(&s)?;
+        let scalar1 = h * hints.record_scalar_inv(&s)?;
+        let scalar2 = r * hints.record_scalar_inv(&s)?;
 
-        let points = collector.precompute_table(&pub_point)?;
-        let result = collector.double_scalar_mul(&points, &scalar1, &scalar2)?;
-        let (x, _) = P384HintCollector::affine_xy(&result)?;
+        let points = hints.precompute_table(&pub_point)?;
+        let result = hints.double_scalar_mul(&points, &scalar1, &scalar2)?;
+        let (x, _) = Self::affine_xy(&result)?;
         if Scalar::reduce(U384::from_be_byte_array(x.to_repr())) != r {
             return Err(HintError::Rejected("signature verification failed".into()));
         }
-        Ok(collector.into_packed())
+        Ok(hints.into_packed())
     }
 
     /// Collects hints for a certificate signature under `parent_pub_key` (`x‖y`).
@@ -154,7 +156,7 @@ impl P384Hints {
             )));
         }
         let pub_key = pk[1..].to_vec();
-        let _ = P384HintCollector::affine_from_xy(&pub_key)?;
+        let _ = Self::affine_from_xy(&pub_key)?;
         Ok(pub_key)
     }
 
@@ -192,15 +194,9 @@ impl P384Hints {
     }
 }
 
-/// Mutable inverse transcript for the onchain P-384 ECDSA affine schedule.
-#[derive(Debug, Default)]
-pub struct P384HintCollector {
-    inverses: Vec<[u8; P384_SCALAR_BYTES]>,
-}
-
-impl P384HintCollector {
+impl P384Hints {
     /// Packs recorded inverses as concatenated 48-byte big-endian limbs.
-    pub fn into_packed(self) -> Vec<u8> {
+    fn into_packed(self) -> Vec<u8> {
         self.inverses.concat()
     }
 
