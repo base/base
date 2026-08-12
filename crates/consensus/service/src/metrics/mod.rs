@@ -70,7 +70,7 @@ base_metrics::define_metrics! {
         ]
     )]
     engine_reset_unsafe_rewind_depth_blocks: histogram,
-    #[describe("Wall-clock duration of a logical engine reset request")]
+    #[describe("Wall-clock duration of one engine reset request handling attempt")]
     #[label(
         name = "reason",
         default = [
@@ -135,7 +135,7 @@ base_metrics::define_metrics! {
 }
 
 impl Metrics {
-    /// Records one terminal logical engine reset request and any resulting unsafe-head rewind.
+    /// Records one engine reset handling attempt and any resulting unsafe-head rewind.
     pub fn record_engine_reset(
         origin: ResetOrigin,
         reason: ResetReason,

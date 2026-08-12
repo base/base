@@ -218,7 +218,9 @@ where
                                 if let ResetError::ReorgDetected(expected, new) = e {
                                     warn!(
                                         target: "derivation",
-                                        "L1 reorg detected! Expected: {expected} | New: {new}"
+                                        %expected,
+                                        %new,
+                                        "L1 reorg detected"
                                     );
 
                                     Metrics::l1_reorg_count().increment(1);

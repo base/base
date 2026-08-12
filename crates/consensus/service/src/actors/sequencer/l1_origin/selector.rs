@@ -48,14 +48,12 @@ pub trait OriginSelector: Debug + Send + Sync {
     ///
     /// # Arguments
     /// * `unsafe_head` - The current unsafe head of the L2 chain
-    /// * `is_recovery_mode` - Whether the sequencer is in recovery mode
     ///
     /// # Returns
     /// The selected L1 origin block information, or an error if selection failed.
     async fn next_l1_origin(
         &mut self,
         unsafe_head: L2BlockInfo,
-        is_recovery_mode: bool,
     ) -> Result<BlockInfo, L1OriginSelectorError>;
 }
 
@@ -66,7 +64,9 @@ pub trait OriginSelector: Debug + Send + Sync {
 /// extend the current origin under the same observed L1 chain view. While sequencer drift permits,
 /// an unfinished lookup does not prevent building on the current origin. Once drift is exceeded,
 /// selection returns [`L1OriginSelectorError::NotEnoughData`] until the lookup is ready rather than
-/// awaiting speculative work on the build path.
+/// awaiting speculative work on the build path. An L1 reorg that orphans the current origin is
+/// therefore detected when the background successor lookup completes its parent check, after which
+/// the sequencer requests an engine reset to rewind any affected unsafe L2 blocks.
 #[derive(Debug)]
 pub struct L1OriginSelector<P: L1OriginSelectorProvider> {
     /// The [`RollupConfig`].
@@ -93,7 +93,6 @@ impl<P: L1OriginSelectorProvider + Send + Sync> OriginSelector for L1OriginSelec
     async fn next_l1_origin(
         &mut self,
         unsafe_head: L2BlockInfo,
-        _is_recovery_mode: bool,
     ) -> Result<BlockInfo, L1OriginSelectorError> {
         if let Err(error) = self.select_origins(&unsafe_head).await {
             self.selected_tx.send_replace(None);
@@ -574,10 +573,10 @@ mod tests {
                 },
                 seq_num: 0,
             };
-            let _ = selector.next_l1_origin(unsafe_head, false).await;
+            let _ = selector.next_l1_origin(unsafe_head).await;
             selector.await_inflight().await;
             assert!(selector.next().is_some(), "next origin not ready at L2 block {i}");
-            let next = selector.next_l1_origin(unsafe_head, false).await.unwrap();
+            let next = selector.next_l1_origin(unsafe_head).await.unwrap();
 
             // The expected L1 origin block is the one corresponding to the epoch of the current L2
             // block.
@@ -616,7 +615,7 @@ mod tests {
             seq_num: 0,
         };
 
-        let err = selector.next_l1_origin(unsafe_head, false).await.unwrap_err();
+        let err = selector.next_l1_origin(unsafe_head).await.unwrap_err();
         assert!(
             matches!(err, L1OriginSelectorError::OriginNotFound(h) if h == B256::with_last_byte(42))
         );
@@ -654,7 +653,7 @@ mod tests {
             seq_num: 0,
         };
 
-        let selected = selector.next_l1_origin(unsafe_head, false).await.unwrap();
+        let selected = selector.next_l1_origin(unsafe_head).await.unwrap();
         assert_eq!(selected, current);
         selector.await_inflight().await;
         assert_eq!(selector.next(), Some(next_a));
@@ -664,10 +663,10 @@ mod tests {
         unsafe_head.block_info.number = 5;
         unsafe_head.block_info.timestamp = 10;
 
-        let selected = selector.next_l1_origin(unsafe_head, false).await.unwrap();
+        let selected = selector.next_l1_origin(unsafe_head).await.unwrap();
         assert_eq!(selected, current);
         selector.await_inflight().await;
-        let selected = selector.next_l1_origin(unsafe_head, false).await.unwrap();
+        let selected = selector.next_l1_origin(unsafe_head).await.unwrap();
         assert_eq!(selected, next_b);
         assert_eq!(selector.next(), Some(next_b));
     }
@@ -702,15 +701,15 @@ mod tests {
             seq_num: 0,
         };
 
-        let selected = selector.next_l1_origin(unsafe_head, false).await.unwrap();
+        let selected = selector.next_l1_origin(unsafe_head).await.unwrap();
         assert_eq!(selected, current);
         assert_eq!(selector.next(), None);
 
         selector.l1.set_chain_view(B256::with_last_byte(10));
-        let selected = selector.next_l1_origin(unsafe_head, false).await.unwrap();
+        let selected = selector.next_l1_origin(unsafe_head).await.unwrap();
         assert_eq!(selected, current);
         selector.await_inflight().await;
-        let selected = selector.next_l1_origin(unsafe_head, false).await.unwrap();
+        let selected = selector.next_l1_origin(unsafe_head).await.unwrap();
         assert_eq!(selected, next);
         assert_eq!(selector.next(), Some(next));
     }
@@ -754,17 +753,17 @@ mod tests {
             seq_num: 0,
         };
 
-        let selected = selector.next_l1_origin(unsafe_head, false).await.unwrap();
+        let selected = selector.next_l1_origin(unsafe_head).await.unwrap();
         assert_eq!(selected, current);
         selector.await_inflight().await;
         assert_eq!(selector.next(), None);
 
         selector.l1.replace_block(next_b);
         selector.l1.change_chain_view_after_number_fetch(None);
-        let selected = selector.next_l1_origin(unsafe_head, false).await.unwrap();
+        let selected = selector.next_l1_origin(unsafe_head).await.unwrap();
         assert_eq!(selected, current);
         selector.await_inflight().await;
-        let selected = selector.next_l1_origin(unsafe_head, false).await.unwrap();
+        let selected = selector.next_l1_origin(unsafe_head).await.unwrap();
         assert_eq!(selected, next_b);
         assert_eq!(selector.next(), Some(next_b));
 
@@ -825,9 +824,9 @@ mod tests {
             },
             seq_num: 0,
         };
-        let _ = selector.next_l1_origin(unsafe_head, false).await;
+        let _ = selector.next_l1_origin(unsafe_head).await;
         selector.await_inflight().await;
-        let next = selector.next_l1_origin(unsafe_head, false).await.unwrap();
+        let next = selector.next_l1_origin(unsafe_head).await.unwrap();
 
         // The expected L1 origin block is the one corresponding to the epoch of the current L2
         // block. Assuming the next L1 origin block is not available from the eyes of the
@@ -867,42 +866,7 @@ mod tests {
             seq_num: 0,
         };
 
-        let next = selector.next_l1_origin(unsafe_head, false).await.unwrap();
-
-        assert_eq!(next, current);
-        assert_eq!(selector.current(), Some(current));
-        assert_eq!(selector.next(), None);
-    }
-
-    #[tokio::test]
-    async fn test_recovery_mode_reuses_current_on_next_fetch_error_before_seq_drift() {
-        const L2_BLOCK_TIME: u64 = 2;
-        const MAX_SEQUENCER_DRIFT: u64 = 30 * 60;
-
-        let cfg = Arc::new(RollupConfig {
-            block_time: L2_BLOCK_TIME,
-            max_sequencer_drift: MAX_SEQUENCER_DRIFT,
-            ..Default::default()
-        });
-
-        let current =
-            BlockInfo { parent_hash: B256::ZERO, hash: B256::ZERO, number: 0, timestamp: 0 };
-        let mut provider = MockOriginSelectorProvider::default();
-        provider.with_block(current);
-        provider.fail_block_number(current.number + 1);
-
-        let mut selector = L1OriginSelector::new(Arc::clone(&cfg), provider);
-        let unsafe_head = L2BlockInfo {
-            block_info: BlockInfo {
-                number: (MAX_SEQUENCER_DRIFT - cfg.block_time) / cfg.block_time,
-                timestamp: MAX_SEQUENCER_DRIFT - cfg.block_time,
-                ..Default::default()
-            },
-            l1_origin: NumHash { number: current.number, hash: current.hash },
-            seq_num: 0,
-        };
-
-        let next = selector.next_l1_origin(unsafe_head, true).await.unwrap();
+        let next = selector.next_l1_origin(unsafe_head).await.unwrap();
 
         assert_eq!(next, current);
         assert_eq!(selector.current(), Some(current));
@@ -937,7 +901,7 @@ mod tests {
             seq_num: 0,
         };
 
-        let err = selector.next_l1_origin(unsafe_head, false).await.unwrap_err();
+        let err = selector.next_l1_origin(unsafe_head).await.unwrap_err();
 
         assert!(matches!(err, L1OriginSelectorError::NotEnoughData(block) if block == current));
         assert_eq!(selector.current(), Some(current));
@@ -1004,9 +968,9 @@ mod tests {
         };
 
         if next_available {
-            let _ = selector.next_l1_origin(unsafe_head, false).await;
+            let _ = selector.next_l1_origin(unsafe_head).await;
             selector.await_inflight().await;
-            let next = selector.next_l1_origin(unsafe_head, false).await.unwrap();
+            let next = selector.next_l1_origin(unsafe_head).await.unwrap();
             if next_ahead_of_unsafe {
                 // If the next L1 origin is available and ahead of the unsafe head, the L1 origin
                 // should not change.
@@ -1022,7 +986,7 @@ mod tests {
             // If we're past the sequencer drift, and the next L1 block is not available, a
             // `NotEnoughData` error should be returned signifying that we cannot
             // proceed with the next L1 origin until the block is present.
-            let next_err = selector.next_l1_origin(unsafe_head, false).await.unwrap_err();
+            let next_err = selector.next_l1_origin(unsafe_head).await.unwrap_err();
             assert!(matches!(next_err, L1OriginSelectorError::NotEnoughData(_)));
         }
     }
@@ -1056,11 +1020,10 @@ mod tests {
             ..Default::default()
         };
 
-        let selected =
-            timeout(Duration::from_millis(20), selector.next_l1_origin(unsafe_head, false))
-                .await
-                .expect("background lookup must not block selection")
-                .unwrap();
+        let selected = timeout(Duration::from_millis(20), selector.next_l1_origin(unsafe_head))
+            .await
+            .expect("background lookup must not block selection")
+            .unwrap();
         assert_eq!(selected, current);
 
         selector.await_inflight().await;
@@ -1098,20 +1061,20 @@ mod tests {
             ..Default::default()
         };
 
-        let selected = selector.next_l1_origin(unsafe_head, false).await.unwrap();
+        let selected = selector.next_l1_origin(unsafe_head).await.unwrap();
         assert_eq!(selected, current);
 
         selector.l1.replace_block(next_b);
         selector.l1.set_chain_view(B256::with_last_byte(11));
         selector.l1.set_number_delay(Duration::ZERO);
-        let selected = selector.next_l1_origin(unsafe_head, false).await.unwrap();
+        let selected = selector.next_l1_origin(unsafe_head).await.unwrap();
         assert_eq!(selected, current);
         selector.await_inflight().await;
         assert_eq!(selector.next(), Some(next_b));
     }
 
     #[tokio::test]
-    async fn test_recovery_mode_adopts_completed_fetch() {
+    async fn test_adopts_completed_fetch() {
         let cfg = Arc::new(RollupConfig {
             block_time: 2,
             max_sequencer_drift: 600,
@@ -1138,9 +1101,9 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(selector.next_l1_origin(unsafe_head, true).await.unwrap(), current);
+        assert_eq!(selector.next_l1_origin(unsafe_head).await.unwrap(), current);
         selector.wait_for_inflight_completion().await;
-        assert_eq!(selector.next_l1_origin(unsafe_head, true).await.unwrap(), next);
+        assert_eq!(selector.next_l1_origin(unsafe_head).await.unwrap(), next);
         assert_eq!(selector.next(), Some(next));
     }
 
@@ -1166,7 +1129,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(selector.next_l1_origin(unsafe_head, false).await.unwrap(), current);
+        assert_eq!(selector.next_l1_origin(unsafe_head).await.unwrap(), current);
         let published = selected_rx.borrow().clone().expect("selected origin published");
         assert_eq!(published.block_info(), current);
         assert!(published.receipts.as_ref().is_some_and(|receipts| receipts.is_empty()));
@@ -1204,9 +1167,9 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(selector.next_l1_origin(unsafe_head, false).await.unwrap(), current);
+        assert_eq!(selector.next_l1_origin(unsafe_head).await.unwrap(), current);
         selector.wait_for_inflight_completion().await;
-        let error = selector.next_l1_origin(unsafe_head, false).await.unwrap_err();
+        let error = selector.next_l1_origin(unsafe_head).await.unwrap_err();
 
         assert!(matches!(
             error,
@@ -1223,7 +1186,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_recovery_mode_reuses_prepared_current() {
+    async fn test_reuses_prepared_current_when_provider_loses_current() {
         let cfg = Arc::new(RollupConfig {
             block_time: 2,
             max_sequencer_drift: 600,
@@ -1243,20 +1206,15 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(selector.next_l1_origin(unsafe_head, false).await.unwrap(), current);
+        assert_eq!(selector.next_l1_origin(unsafe_head).await.unwrap(), current);
         selector.l1.remove_block(current.hash);
 
-        assert_eq!(selector.next_l1_origin(unsafe_head, true).await.unwrap(), current);
+        assert_eq!(selector.next_l1_origin(unsafe_head).await.unwrap(), current);
         assert_eq!(selector.current(), Some(current));
     }
 
     #[tokio::test]
-    #[rstest]
-    #[case::normal(false)]
-    #[case::recovery(true)]
-    async fn test_accepted_head_promotes_ready_origin_after_chain_view_advances(
-        #[case] recovery_mode: bool,
-    ) {
+    async fn test_accepted_head_promotes_ready_origin_after_chain_view_advances() {
         let cfg = Arc::new(RollupConfig {
             block_time: 2,
             max_sequencer_drift: 600,
@@ -1283,7 +1241,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(selector.next_l1_origin(current_head, false).await.unwrap(), current);
+        assert_eq!(selector.next_l1_origin(current_head).await.unwrap(), current);
         selector.await_inflight().await;
         assert_eq!(selector.next(), Some(next));
 
@@ -1297,7 +1255,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(selector.next_l1_origin(accepted_head, recovery_mode).await.unwrap(), next);
+        assert_eq!(selector.next_l1_origin(accepted_head).await.unwrap(), next);
         assert_eq!(selector.current(), Some(next));
     }
 
@@ -1332,9 +1290,9 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(selector.next_l1_origin(unsafe_head, false).await.unwrap(), current);
+        assert_eq!(selector.next_l1_origin(unsafe_head).await.unwrap(), current);
         selector.wait_for_inflight_completion().await;
-        assert_eq!(selector.next_l1_origin(unsafe_head, false).await.unwrap(), current);
+        assert_eq!(selector.next_l1_origin(unsafe_head).await.unwrap(), current);
         assert!(matches!(
             &selector.next,
             NextSlot::InFlight { chain_view, .. } if *chain_view == latest_view
@@ -1342,6 +1300,6 @@ mod tests {
 
         selector.l1.change_chain_view_after_number_fetch(None);
         selector.wait_for_inflight_completion().await;
-        assert_eq!(selector.next_l1_origin(unsafe_head, false).await.unwrap(), next);
+        assert_eq!(selector.next_l1_origin(unsafe_head).await.unwrap(), next);
     }
 }

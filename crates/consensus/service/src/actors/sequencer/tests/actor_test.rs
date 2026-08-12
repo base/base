@@ -164,7 +164,7 @@ async fn test_on_time_or_late_insert_starts_child_build_immediately(#[case] seco
     client.expect_insert_unsafe_payload().times(1).return_once(move |_| Ok(inserted_head));
 
     let mut origin_selector = MockOriginSelector::new();
-    origin_selector.expect_next_l1_origin().times(2).returning(|_, _| Ok(BlockInfo::default()));
+    origin_selector.expect_next_l1_origin().times(2).returning(|_| Ok(BlockInfo::default()));
 
     let mut gossip = MockUnsafePayloadGossipClient::new();
     gossip.expect_schedule_execution_payload_gossip().times(1).return_once(|_| Ok(()));
@@ -234,7 +234,7 @@ async fn test_early_insert_defers_child_build_until_parent_timestamp() {
     });
 
     let mut origin_selector = MockOriginSelector::new();
-    origin_selector.expect_next_l1_origin().times(2).returning(|_, _| Ok(BlockInfo::default()));
+    origin_selector.expect_next_l1_origin().times(2).returning(|_| Ok(BlockInfo::default()));
 
     let mut gossip = MockUnsafePayloadGossipClient::new();
     gossip.expect_schedule_execution_payload_gossip().times(1).return_once(|_| Ok(()));
@@ -326,7 +326,7 @@ async fn test_stop_discards_queued_parent_and_restart_builds_immediately_on_fres
     });
 
     let mut origin_selector = MockOriginSelector::new();
-    origin_selector.expect_next_l1_origin().times(2).returning(|_, _| Ok(BlockInfo::default()));
+    origin_selector.expect_next_l1_origin().times(2).returning(|_| Ok(BlockInfo::default()));
 
     let mut gossip = MockUnsafePayloadGossipClient::new();
     gossip.expect_schedule_execution_payload_gossip().times(1).return_once(|_| Ok(()));
@@ -551,7 +551,7 @@ async fn test_build_retries_are_paced_after_immediate_budget(#[case] provider_er
     client.expect_start_build_block().times(0);
 
     let mut origin_selector = MockOriginSelector::new();
-    origin_selector.expect_next_l1_origin().times(expected_attempts).returning(move |_, _| {
+    origin_selector.expect_next_l1_origin().times(expected_attempts).returning(move |_| {
         attempt_tx.send(()).unwrap();
         if provider_error {
             Err(L1OriginSelectorError::Provider(TransportErrorKind::custom_str(
@@ -607,7 +607,7 @@ async fn test_orphaned_l1_origin_resets_once_without_starting_block_build() {
     client.expect_start_build_block().times(0);
 
     let mut origin_selector = MockOriginSelector::new();
-    origin_selector.expect_next_l1_origin().times(1).return_once(|_, _| {
+    origin_selector.expect_next_l1_origin().times(1).return_once(|_| {
         Err(L1OriginSelectorError::NextL1OriginOrphaned {
             current: B256::with_last_byte(1),
             next: B256::with_last_byte(2),
@@ -641,7 +641,7 @@ async fn test_build_unsealed_payload_prepare_payload_attributes_error(
 
     let l1_origin = BlockInfo::default();
     let mut origin_selector = MockOriginSelector::new();
-    origin_selector.expect_next_l1_origin().times(1).return_once(move |_, _| Ok(l1_origin));
+    origin_selector.expect_next_l1_origin().times(1).return_once(move |_| Ok(l1_origin));
 
     let attributes_builder = TestAttributesBuilder { attributes: vec![Err(forced_error)] };
 

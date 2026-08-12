@@ -131,11 +131,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
         &mut self,
         unsafe_head: L2BlockInfo,
     ) -> Result<BuildOutcome<BlockInfo>, SequencerActorError> {
-        let l1_origin = match self
-            .origin_selector
-            .next_l1_origin(unsafe_head, self.recovery_mode.get())
-            .await
-        {
+        let l1_origin = match self.origin_selector.next_l1_origin(unsafe_head).await {
             Ok(l1_origin) => l1_origin,
             Err(L1OriginSelectorError::OriginNotFound(hash)) => {
                 warn!(

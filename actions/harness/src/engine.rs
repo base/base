@@ -30,7 +30,9 @@ use base_common_rpc_types_engine::{
     BasePayloadAttributes,
 };
 use base_consensus_engine::{EngineClient, EngineClientError};
-use base_consensus_node::{EngineClientError as NodeEngineClientError, SequencerEngineClient};
+use base_consensus_node::{
+    EngineClientError as NodeEngineClientError, ResetReason, SequencerEngineClient,
+};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{
@@ -925,7 +927,10 @@ impl BaseEngineApi for ActionEngineClient {
 
 #[async_trait]
 impl SequencerEngineClient for ActionEngineClient {
-    async fn reset_engine_forkchoice(&self) -> Result<(), NodeEngineClientError> {
+    async fn reset_engine_forkchoice(
+        &self,
+        _reason: ResetReason,
+    ) -> Result<(), NodeEngineClientError> {
         // No-op in action tests — FCU to current head is the default.
         Ok(())
     }

@@ -34,6 +34,9 @@ pub enum SyncStartError {
     /// Finalized block mismatch
     #[error("Finalized block mismatch. Expected {0}, Got {1}")]
     MismatchedFinalizedBlock(B256, B256),
+    /// A reset would have to reorg the finalized L2 block because its L1 origin is noncanonical.
+    #[error("Cannot reorg finalized L2 block {0} with a noncanonical L1 origin")]
+    FinalizedL1OriginNotCanonical(B256),
     /// L1 origin mismatch.
     #[error("L1 origin mismatch")]
     L1OriginMismatch,

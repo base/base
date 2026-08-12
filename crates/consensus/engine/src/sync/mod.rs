@@ -71,6 +71,15 @@ pub async fn find_starting_forkchoice_with_checkpoint_reader<
     let mut unsafe_walked_blocks = 0_u64;
     let unsafe_walk_result = async {
         loop {
+            if current_fc.un_safe.block_info.number <= current_fc.finalized.block_info.number
+                && current_fc.un_safe.block_info.hash != current_fc.finalized.block_info.hash
+            {
+                break Err(SyncStartError::MismatchedFinalizedBlock(
+                    current_fc.finalized.block_info.hash,
+                    current_fc.un_safe.block_info.hash,
+                ));
+            }
+
             let origin = current_fc.un_safe.l1_origin;
             let canonical_l1 =
                 engine_client.get_l1_block(BlockNumberOrTag::Number(origin.number).into()).await?;
@@ -102,6 +111,12 @@ pub async fn find_starting_forkchoice_with_checkpoint_reader<
                     "Found L2 unsafe block with canonical L1 origin"
                 );
                 break Ok::<(), SyncStartError>(());
+            }
+
+            if current_fc.un_safe.block_info.number <= current_fc.finalized.block_info.number {
+                break Err(SyncStartError::FinalizedL1OriginNotCanonical(
+                    current_fc.finalized.block_info.hash,
+                ));
             }
 
             let l2_parent_hash = current_fc.un_safe.block_info.parent_hash.into();
@@ -422,6 +437,53 @@ mod tests {
                 "base_node_engine_reset_forkchoice_walk_duration_seconds_count{phase=\"safe\"} 1"
             ));
         }
+    }
+
+    #[tokio::test]
+    async fn reset_does_not_rewind_below_finalized_with_orphaned_l1_origin() {
+        let genesis_hash =
+            b256!("2020202020202020202020202020202020202020202020202020202020202020");
+        let genesis_origin = BlockNumHash {
+            number: 10,
+            hash: b256!("1010101010101010101010101010101010101010101010101010101010101010"),
+        };
+        let orphan_origin = BlockNumHash {
+            number: 11,
+            hash: b256!("1111111111111111111111111111111111111111111111111111111111111111"),
+        };
+        let rollup_config = base_common_genesis::RollupConfig {
+            genesis: ChainGenesis {
+                l1: genesis_origin,
+                l2: BlockNumHash { number: 0, hash: genesis_hash },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let finalized = l2_block_with_l1_info(1, genesis_hash, orphan_origin);
+        let finalized_hash = finalized.clone().into_consensus().hash_slow();
+        let unsafe_head = l2_block_with_l1_info(2, finalized_hash, orphan_origin);
+        let mut canonical_l1 = RpcBlock::<EthTransaction>::default();
+        canonical_l1.header.hash =
+            b256!("1212121212121212121212121212121212121212121212121212121212121212");
+        canonical_l1.header.inner.number = orphan_origin.number;
+
+        let client = test_engine_client_builder()
+            .with_l2_block(BlockNumberOrTag::Latest.into(), unsafe_head)
+            .with_l2_block(BlockNumberOrTag::Finalized.into(), finalized.clone())
+            .with_l2_block(finalized_hash.into(), finalized)
+            .with_l1_block(BlockNumberOrTag::Number(orphan_origin.number).into(), canonical_l1)
+            .build();
+
+        let error = super::find_starting_forkchoice(&rollup_config, &client)
+            .await
+            .expect_err("reset must not walk below the finalized L2 head");
+
+        assert!(matches!(
+            error,
+            super::SyncStartError::FinalizedL1OriginNotCanonical(hash)
+                if hash == finalized_hash
+        ));
     }
 
     #[tokio::test]
