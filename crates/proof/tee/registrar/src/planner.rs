@@ -40,6 +40,9 @@ impl AttestationPlanner {
     /// derived from attestation `public_key` (Base semantics), never from `user_data`.
     pub fn prepare_registration_plan(attestation: &[u8]) -> PlannerResult<RegistrationPlan> {
         let cose = NitroCose::parse_sign1(attestation)?;
+        // Intentional overlap with `AttestationVerifier::validate_attestation_content` below:
+        // raw CBOR rejects duplicates/trailing bytes that deserialization would collapse or
+        // miss; the shared verifier then re-checks cabundle/PCR/size limits on the decoded doc.
         NitroCose::validate_payload_structure(&cose.payload)?;
 
         let doc: AttestationDocument = ciborium::de::from_reader(cose.payload.as_slice())
@@ -202,7 +205,12 @@ impl CertManagerKeys {
         Ok(())
     }
 
-    /// Strips the DER tag and length from a TLV, returning content octets.
+    /// Strips the DER tag and length from an exact-fit TLV, returning content octets.
+    ///
+    /// # Preconditions
+    ///
+    /// `tlv` must be exactly one DER TLV: the decoded header+content length must equal
+    /// `tlv.len()`. Concatenated TLVs or trailing bytes return `DER TLV length mismatch`.
     pub fn der_content_octets(tlv: &[u8]) -> PlannerResult<&[u8]> {
         if tlv.len() < 2 {
             return Err(Self::cert_error("DER TLV too short"));

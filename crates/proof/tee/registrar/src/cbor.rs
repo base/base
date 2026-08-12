@@ -2,6 +2,8 @@
 //!
 //! Preserves raw protected/payload byte-string TLVs for attestation TBS construction
 //! and rejects trailing bytes / non-empty unprotected headers that `ciborium` accepts.
+//!
+//! Callers should use [`NitroCose`]; [`CborItem`] is a low-level detail of that parser.
 
 use std::collections::BTreeSet;
 
@@ -45,10 +47,15 @@ pub struct ParsedCoseSign1 {
 }
 
 /// `NitroValidator`-aligned `COSE_Sign1` / payload structure parser.
+///
+/// This is the supported entry point for strict COSE/payload checks. Prefer
+/// [`Self::parse_sign1`] and [`Self::validate_payload_structure`].
 #[derive(Debug, Default)]
 pub struct NitroCose;
 
-/// One decoded CBOR item with byte-range metadata in the source buffer.
+/// Low-level CBOR item cursor used by [`NitroCose`].
+///
+/// Not a general-purpose CBOR API — prefer [`NitroCose`] for attestation parsing.
 #[derive(Clone, Copy, Debug)]
 pub struct CborItem {
     /// CBOR major type.
@@ -388,7 +395,7 @@ impl NitroCose {
     }
 
     /// Validates the `pcrs` map for duplicates, index bounds, and contiguous keys.
-    pub fn validate_pcrs(payload: &[u8], pcrs: CborItem) -> PlannerResult<()> {
+    fn validate_pcrs(payload: &[u8], pcrs: CborItem) -> PlannerResult<()> {
         let pcrs = pcrs.require_major(CBOR_MAJOR_MAP, "pcrs")?;
         if pcrs.indefinite {
             return Err(PlannerError::Cose("pcrs map must be definite-length".into()));
@@ -432,7 +439,7 @@ impl NitroCose {
     }
 
     /// Validates cabundle length and per-certificate size limits.
-    pub fn validate_cabundle(payload: &[u8], cabundle: CborItem) -> PlannerResult<()> {
+    fn validate_cabundle(payload: &[u8], cabundle: CborItem) -> PlannerResult<()> {
         let cabundle = cabundle.require_major(CBOR_MAJOR_ARRAY, "cabundle")?;
         if cabundle.indefinite {
             return Err(PlannerError::Cose("cabundle must be definite-length".into()));
@@ -457,5 +464,136 @@ impl NitroCose {
             offset = item.end;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Minimal definite `COSE_Sign1`: ES384 protected, empty unprotected, 1-byte payload, 96-byte sig.
+    fn minimal_cose(payload: &[u8], signature: &[u8; 96]) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.push(0x84); // array(4)
+        out.extend_from_slice(NITRO_PROTECTED_HEADER_TLV);
+        out.push(0xa0); // empty unprotected map
+        // payload bstr
+        assert!(payload.len() < 24);
+        out.push(0x40 | payload.len() as u8);
+        out.extend_from_slice(payload);
+        out.push(0x58); // bstr, 1-byte length
+        out.push(96);
+        out.extend_from_slice(signature);
+        out
+    }
+
+    fn fixture_attestation() -> Vec<u8> {
+        hex::decode(include_str!("testdata/nitro_attestation.hex").trim()).unwrap()
+    }
+
+    #[test]
+    fn parse_sign1_accepts_fixture_and_rejects_trailing() {
+        let mut attestation = fixture_attestation();
+        assert!(NitroCose::parse_sign1(&attestation).is_ok());
+        attestation.push(0x00);
+        assert!(matches!(NitroCose::parse_sign1(&attestation), Err(PlannerError::Cose(_))));
+    }
+
+    #[test]
+    fn parse_sign1_rejects_non_empty_unprotected_and_bad_headers() {
+        let sig = [0u8; 96];
+        let good = minimal_cose(&[0xa0], &sig);
+        assert!(NitroCose::parse_sign1(&good).is_ok());
+
+        // Non-empty unprotected map `{1: 1}` between protected and payload.
+        let mut bad = Vec::new();
+        bad.push(0x84);
+        bad.extend_from_slice(NITRO_PROTECTED_HEADER_TLV);
+        bad.extend_from_slice(&[0xa1, 0x01, 0x01]); // map(1): 1 => 1
+        bad.extend_from_slice(&[0x41, 0xa0]); // payload
+        bad.push(0x58);
+        bad.push(96);
+        bad.extend_from_slice(&sig);
+        assert!(NitroCose::parse_sign1(&bad).is_err());
+
+        // Wrong array length.
+        let mut wrong_len = Vec::new();
+        wrong_len.push(0x83); // array(3)
+        wrong_len.extend_from_slice(NITRO_PROTECTED_HEADER_TLV);
+        wrong_len.push(0xa0);
+        wrong_len.extend_from_slice(&[0x41, 0xa0]);
+        assert!(NitroCose::parse_sign1(&wrong_len).is_err());
+
+        // Non-ES384 protected header content.
+        let mut bad_protected = Vec::new();
+        bad_protected.push(0x84);
+        bad_protected.extend_from_slice(&[0x41, 0x00]); // bstr(1) = 0x00
+        bad_protected.push(0xa0);
+        bad_protected.extend_from_slice(&[0x41, 0xa0]);
+        bad_protected.push(0x58);
+        bad_protected.push(96);
+        bad_protected.extend_from_slice(&sig);
+        assert!(NitroCose::parse_sign1(&bad_protected).is_err());
+
+        // Unexpected CBOR tag.
+        let mut tagged = vec![0xd8, 0x63]; // tag(99)
+        tagged.extend_from_slice(&good);
+        assert!(NitroCose::parse_sign1(&tagged).is_err());
+
+        // Indefinite-length array is rejected (even with an immediate break).
+        assert!(NitroCose::parse_sign1(&[0x9f, 0xff]).is_err());
+
+        // Wrong signature length (1 byte instead of 96).
+        let mut short_sig = Vec::new();
+        short_sig.push(0x84);
+        short_sig.extend_from_slice(NITRO_PROTECTED_HEADER_TLV);
+        short_sig.push(0xa0);
+        short_sig.extend_from_slice(&[0x41, 0xa0]);
+        short_sig.extend_from_slice(&[0x41, 0x00]); // bstr(1)
+        assert!(NitroCose::parse_sign1(&short_sig).is_err());
+    }
+
+    #[test]
+    fn cbor_item_rejects_truncated_header_oversize_and_deep_nesting() {
+        assert!(CborItem::read(&[0x18], 0).is_err()); // uint8 AI missing byte
+        assert!(CborItem::read(&[0x45, 0x00, 0x00], 0).is_err()); // bstr len 5, only 2 bytes
+
+        // Nest array(1) deeper than MAX_CBOR_NESTING_DEPTH.
+        let mut nested = vec![0x81u8; MAX_CBOR_NESTING_DEPTH + 2];
+        nested.push(0x00);
+        assert!(CborItem::read(&nested, 0).is_err());
+    }
+
+    #[test]
+    fn validate_payload_structure_rejects_pcr_and_cabundle_faults() {
+        // Trailing byte after empty map.
+        assert!(NitroCose::validate_payload_structure(&[0xa0, 0x00]).is_err());
+
+        // pcrs with duplicate key 0.
+        // {"pcrs": {0: h'00', 0: h'00'}}
+        let dup_pcrs =
+            [0xa1, 0x64, b'p', b'c', b'r', b's', 0xa2, 0x00, 0x41, 0x00, 0x00, 0x41, 0x00];
+        assert!(NitroCose::validate_payload_structure(&dup_pcrs).is_err());
+
+        // pcrs with non-contiguous key (only key 1).
+        // {"pcrs": {1: h'00'}}
+        let sparse = [0xa1, 0x64, b'p', b'c', b'r', b's', 0xa1, 0x01, 0x41, 0x00];
+        assert!(NitroCose::validate_payload_structure(&sparse).is_err());
+
+        // cabundle with empty cert bytes.
+        // {"cabundle": [h'']}
+        let empty_cert = [0xa1, 0x68, b'c', b'a', b'b', b'u', b'n', b'd', b'l', b'e', 0x81, 0x40];
+        assert!(NitroCose::validate_payload_structure(&empty_cert).is_err());
+
+        // cabundle with zero certificates.
+        // {"cabundle": []}
+        let empty_bundle = [0xa1, 0x68, b'c', b'a', b'b', b'u', b'n', b'd', b'l', b'e', 0x80];
+        assert!(NitroCose::validate_payload_structure(&empty_bundle).is_err());
+    }
+
+    #[test]
+    fn validate_payload_structure_accepts_fixture_payload() {
+        let cose = NitroCose::parse_sign1(&fixture_attestation()).unwrap();
+        assert!(NitroCose::validate_payload_structure(&cose.payload).is_ok());
     }
 }
