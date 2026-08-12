@@ -92,9 +92,9 @@ impl<P: L1OriginSelectorProvider + Send + Sync> OriginSelector for L1OriginSelec
     async fn next_l1_origin(
         &mut self,
         unsafe_head: L2BlockInfo,
-        is_recovery_mode: bool,
+        _is_recovery_mode: bool,
     ) -> Result<BlockInfo, L1OriginSelectorError> {
-        self.select_origins(&unsafe_head, is_recovery_mode).await?;
+        self.select_origins(&unsafe_head).await?;
         let selected = self.choose_origin(&unsafe_head)?;
         self.selected_tx.send_replace(Some(selected.clone()));
         Ok(selected.block_info())
@@ -193,43 +193,26 @@ impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
     async fn select_origins(
         &mut self,
         unsafe_head: &L2BlockInfo,
-        in_recovery_mode: bool,
     ) -> Result<(), L1OriginSelectorError> {
         let origin_hash = unsafe_head.l1_origin.hash;
 
-        if in_recovery_mode {
-            self.invalidate_next(origin_hash);
-            self.current = self.l1.prepared_by_hash(origin_hash).await?;
+        if self.current.as_ref().is_some_and(|current| current.hash == origin_hash) {
+            // The next L2 block remains in the current sequencing epoch.
+        } else if let Some(promoted) = self.take_ready_if(origin_hash) {
+            // The accepted unsafe head confirms that the prepared successor was used. Promote it
+            // before applying speculative chain-view invalidation so a normal L1 head advance
+            // cannot discard the exact origin required by the accepted L2 parent.
+            self.current = Some(promoted);
         } else {
-            self.invalidate_next_if_chain_view_changed();
-            if self.current.as_ref().is_some_and(|current| current.hash == origin_hash) {
-                // The next L2 block remains in the current sequencing epoch.
-            } else if let Some(promoted) = self.take_ready_if(origin_hash) {
-                self.current = Some(promoted);
-            } else {
-                // Cold start, multi-epoch jump, or reorg: resolve the required current origin.
-                self.next = NextSlot::Idle;
-                self.current = self.l1.prepared_by_hash(origin_hash).await?;
-            }
+            // Cold start, multi-epoch jump, or reorg: resolve the required current origin.
+            self.next = NextSlot::Idle;
+            self.current = self.l1.prepared_by_hash(origin_hash).await?;
         }
 
         if let Some(current) = self.current.as_ref() {
             self.poll_next(current.hash, current.header.number).await;
         }
         Ok(())
-    }
-
-    /// Drops speculative state that cannot extend `parent_hash` in the live L1 chain view.
-    fn invalidate_next(&mut self, parent_hash: B256) {
-        self.invalidate_next_if_chain_view_changed();
-        let stored_parent = match &self.next {
-            NextSlot::InFlight { parent_hash, .. } => *parent_hash,
-            NextSlot::Ready { block, .. } => block.header.parent_hash,
-            NextSlot::Idle => return,
-        };
-        if stored_parent != parent_hash {
-            self.next = NextSlot::Idle;
-        }
     }
 
     /// Takes a ready successor if it matches `hash`.
@@ -241,20 +224,6 @@ impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
             }
         } else {
             None
-        }
-    }
-
-    /// Drops speculative state when its observed L1 chain view is no longer current.
-    fn invalidate_next_if_chain_view_changed(&mut self) {
-        let live_view = self.l1.chain_view();
-        let stored_view = match &self.next {
-            NextSlot::InFlight { chain_view, .. } | NextSlot::Ready { chain_view, .. } => {
-                *chain_view
-            }
-            NextSlot::Idle => return,
-        };
-        if Some(stored_view) != live_view {
-            self.next = NextSlot::Idle;
         }
     }
 
@@ -1154,7 +1123,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_recovery_mode_does_not_use_ready_next_when_current_is_missing() {
+    async fn test_recovery_mode_reuses_prepared_current() {
+        let cfg = Arc::new(RollupConfig {
+            block_time: 2,
+            max_sequencer_drift: 600,
+            ..Default::default()
+        });
+        let current = BlockInfo {
+            hash: B256::with_last_byte(1),
+            number: 0,
+            timestamp: 0,
+            ..Default::default()
+        };
+        let provider = MockOriginSelectorProvider::default();
+        provider.with_block(current);
+        let mut selector = L1OriginSelector::new(cfg, provider);
+        let unsafe_head = L2BlockInfo {
+            l1_origin: NumHash { number: current.number, hash: current.hash },
+            ..Default::default()
+        };
+
+        assert_eq!(selector.next_l1_origin(unsafe_head, false).await.unwrap(), current);
+        selector.l1.remove_block(current.hash);
+
+        assert_eq!(selector.next_l1_origin(unsafe_head, true).await.unwrap(), current);
+        assert_eq!(selector.current(), Some(current));
+    }
+
+    #[tokio::test]
+    #[rstest]
+    #[case::normal(false)]
+    #[case::recovery(true)]
+    async fn test_accepted_head_promotes_ready_origin_after_chain_view_advances(
+        #[case] recovery_mode: bool,
+    ) {
         let cfg = Arc::new(RollupConfig {
             block_time: 2,
             max_sequencer_drift: 600,
@@ -1176,20 +1178,27 @@ mod tests {
         provider.with_block(current);
         provider.with_block(next);
         let mut selector = L1OriginSelector::new(cfg, provider);
-        let unsafe_head = L2BlockInfo {
+        let current_head = L2BlockInfo {
             l1_origin: NumHash { number: current.number, hash: current.hash },
             ..Default::default()
         };
 
-        assert_eq!(selector.next_l1_origin(unsafe_head, false).await.unwrap(), current);
+        assert_eq!(selector.next_l1_origin(current_head, false).await.unwrap(), current);
         selector.await_inflight().await;
         assert_eq!(selector.next(), Some(next));
-        selector.l1.remove_block(current.hash);
 
-        let error = selector.next_l1_origin(unsafe_head, true).await.unwrap_err();
-        assert!(
-            matches!(error, L1OriginSelectorError::OriginNotFound(hash) if hash == current.hash)
-        );
+        // Simulate the next origin being selected and accepted, followed by an ordinary L1 head
+        // advance and an L1 RPC outage before the child build starts.
+        selector.l1.set_chain_view(B256::with_last_byte(3));
+        selector.l1.remove_block(next.hash);
+        let accepted_head = L2BlockInfo {
+            block_info: BlockInfo { number: 1, timestamp: 2, ..Default::default() },
+            l1_origin: NumHash { number: next.number, hash: next.hash },
+            ..Default::default()
+        };
+
+        assert_eq!(selector.next_l1_origin(accepted_head, recovery_mode).await.unwrap(), next);
+        assert_eq!(selector.current(), Some(next));
     }
 
     #[tokio::test]

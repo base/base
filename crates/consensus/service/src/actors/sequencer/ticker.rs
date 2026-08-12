@@ -86,12 +86,12 @@ impl ScheduledTicker {
         }
     }
 
-    /// Resets the immediate retry budget after origin selection advances past the drift wait.
+    /// Resets the immediate retry budget after a build succeeds.
     pub const fn reset_l1_origin_retry_budget(&mut self) {
         self.immediate_l1_origin_retries = 0;
     }
 
-    /// Schedules a build retry while drift requires a next L1 origin that is not ready yet.
+    /// Schedules a retry after a non-fatal build deferral.
     ///
     /// A short burst handles races where the background fetch is about to complete. Once the
     /// budget is exhausted, subsequent retries are spaced by [`Self::L1_ORIGIN_RETRY_DELAY`] so

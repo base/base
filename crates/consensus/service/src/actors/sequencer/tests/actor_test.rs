@@ -9,6 +9,7 @@ use std::{
 
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::ExecutionPayloadV1;
+use alloy_transport::TransportErrorKind;
 use base_common_genesis::{ChainGenesis, RollupConfig};
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BasePayloadAttributes,
@@ -532,8 +533,11 @@ async fn test_try_seal_handle_non_fatal_seal_error_returns_none() {
     assert!(!actor.cancellation_token.is_cancelled());
 }
 
+#[rstest]
+#[case::awaiting_l1_origin(false)]
+#[case::provider_error(true)]
 #[tokio::test(start_paused = true)]
-async fn test_l1_origin_retries_are_paced_after_immediate_budget() {
+async fn test_build_retries_are_paced_after_immediate_budget(#[case] provider_error: bool) {
     let attempts_before_delay = usize::from(ScheduledTicker::MAX_IMMEDIATE_L1_ORIGIN_RETRIES) + 1;
     let expected_attempts = attempts_before_delay + 1;
     let (attempt_tx, mut attempt_rx) = mpsc::unbounded_channel();
@@ -549,7 +553,13 @@ async fn test_l1_origin_retries_are_paced_after_immediate_budget() {
     let mut origin_selector = MockOriginSelector::new();
     origin_selector.expect_next_l1_origin().times(expected_attempts).returning(move |_, _| {
         attempt_tx.send(()).unwrap();
-        Err(L1OriginSelectorError::NotEnoughData(BlockInfo::default()))
+        if provider_error {
+            Err(L1OriginSelectorError::Provider(TransportErrorKind::custom_str(
+                "mock L1 provider failure",
+            )))
+        } else {
+            Err(L1OriginSelectorError::NotEnoughData(BlockInfo::default()))
+        }
     });
 
     let engine_client = Arc::new(client);
