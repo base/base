@@ -37,13 +37,13 @@ pub struct ProxyState {
     /// Configured backend name (for logs).
     backend_name: Arc<str>,
     /// URL used for forwarding (first URL of the backend for now).
-    backend_url: Url,
+    backend_url: Arc<Url>,
 }
 
 impl ProxyState {
     /// Builds proxy state from a validated backend.
     pub fn from_backend(backend: &Backend) -> Self {
-        let backend_url = backend.urls[0].clone();
+        let backend_url = Arc::new(backend.urls[0].clone());
         let client = Client::builder()
             .connect_timeout(BACKEND_CONNECT_TIMEOUT)
             .timeout(BACKEND_REQUEST_TIMEOUT)
@@ -110,7 +110,7 @@ impl ProxyState {
     async fn forward(&self, body: &Bytes) -> Result<Bytes, ForwardError> {
         let mut response = self
             .client
-            .post(self.backend_url.clone())
+            .post(self.backend_url.as_ref().clone())
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .body(body.clone())
             .send()

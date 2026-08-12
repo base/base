@@ -31,6 +31,14 @@ impl Backend {
             }
             let url = Url::parse(part)
                 .map_err(|error| format!("invalid --backend URL '{part}' in '{raw}': {error}"))?;
+            match url.scheme() {
+                "http" | "https" => {}
+                scheme => {
+                    return Err(format!(
+                        "invalid --backend URL '{part}' in '{raw}': unsupported scheme '{scheme}' (expected http or https)"
+                    ));
+                }
+            }
             urls.push(url);
         }
 
@@ -74,5 +82,14 @@ mod tests {
     fn parse_rejects_empty_urls() {
         let error = Backend::parse("rpcs=").expect_err("empty urls");
         assert!(error.contains("at least one URL"), "error={error}");
+    }
+
+    #[test]
+    fn parse_rejects_non_http_schemes() {
+        let error = Backend::parse("rpcs=file:///tmp/rpc").expect_err("file scheme");
+        assert!(error.contains("unsupported scheme 'file'"), "error={error}");
+
+        let error = Backend::parse("rpcs=ftp://example.com/rpc").expect_err("ftp scheme");
+        assert!(error.contains("unsupported scheme 'ftp'"), "error={error}");
     }
 }
