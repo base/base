@@ -5,7 +5,7 @@ set -e
 # Downloads release binaries from GitHub releases and installs them locally.
 
 # NOTE: If you change this script, increment the version below.
-BASEUP_INSTALLER_VERSION="0.1.8"
+BASEUP_INSTALLER_VERSION="0.1.10"
 
 BASEUP_REPO="${BASEUP_REPO:-base/base}"
 BASEUP_REPO_REF="${BASEUP_REPO_REF:-main}"
@@ -32,6 +32,21 @@ UPDATE_TMP_FILE=""
 MAIN_TMP_DIR=""
 UPDATE_CHECK_CACHE_FILE="$BASEUP_HOME/baseup-update-check"
 UPDATE_CHECK_TTL_SECONDS="${BASEUP_UPDATE_CHECK_TTL_SECONDS:-86400}"
+
+# --- PROTOTYPE: Base-aware Foundry toolchain (base-anvil) -------------------
+# The Foundry tools live in a DIFFERENT repo (base/base-anvil) and ship as a
+# single bundle archive (forge/cast/anvil/chisel) verified via GitHub artifact
+# attestation, rather than the GPG-signed, per-binary archives baseup uses for
+# the node stack. They are installed as base-forge/base-cast/base-anvil/
+# base-chisel wrappers so they coexist with a user's stock Foundry, with Base
+# precompiles ON by default. See install_foundry() below. Enable with
+# `baseup --bin foundry` (optionally `--foundry-version <tag>`).
+BASE_ANVIL_REPO="${BASE_ANVIL_REPO:-base/base-anvil}"
+FOUNDRY_TOOLS=("forge" "cast" "anvil" "chisel")
+FOUNDRY_VERSIONS_DIR="${FOUNDRY_VERSIONS_DIR:-$BASEUP_HOME/foundry}"
+FOUNDRY_VERSION=""
+INSTALL_FOUNDRY=0
+# ---------------------------------------------------------------------------
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -876,6 +891,168 @@ verify_published_release_artifacts() {
     info "Verified $verified_count published release archives"
 }
 
+# === PROTOTYPE: Base-aware Foundry install path ===========================
+# Everything below is the additive surface needed to deliver the base-anvil
+# Foundry tools through baseup. It deliberately does NOT touch the node-binary
+# path; it only adds a parallel install routine for the foundry bundle.
+
+# Map the detected platform+arch to base-anvil's release asset suffix.
+# base-anvil names assets foundry_<tag>_<platform>_<arch>.tar.gz, with platform
+# in {linux,darwin,alpine,win32} and arch in {amd64,arm64}. Unlike the node
+# stack, base-anvil DOES publish Intel macOS (darwin_amd64), so this path
+# supports a target baseup's detect_target() otherwise rejects.
+detect_foundry_suffix() {
+    local platform="$1"
+    local arch="$2"
+    case "$platform" in
+        linux) printf 'linux_%s\n' "$arch" ;;
+        darwin) printf 'darwin_%s\n' "$arch" ;;
+        *) error "Unsupported platform for Foundry tools: $platform" ;;
+    esac
+}
+
+# The Foundry tools are versioned independently of the node (a base-anvil
+# release tag like v1.1.0-rc.19), so they resolve "latest" from base-anvil, not
+# base/base. NOTE: a production version of this should resolve the base-anvil
+# build that reproduces the SAME base/base commit the node is pinned to (via the
+# nightly-base-<sha> label tag), so `forge test` matches the chain you run.
+get_latest_foundry_version() {
+    local api_url="https://api.github.com/repos/${BASE_ANVIL_REPO}/releases/latest"
+    local response version
+    response="$(fetch_github_api "$api_url" 2>/dev/null || true)"
+    [[ -n "$response" ]] || error "Failed to fetch latest base-anvil release. Try --foundry-version <tag>."
+    if command -v jq >/dev/null 2>&1; then
+        version="$(printf '%s\n' "$response" | jq -r '.tag_name // empty')"
+    else
+        version="$(printf '%s\n' "$response" | grep '"tag_name":' | head -n 1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')"
+    fi
+    [[ -n "$version" ]] || error "Failed to determine latest base-anvil release."
+    echo "$version"
+}
+
+download_foundry_file() {
+    local tag="$1"
+    local filename="$2"
+    local output_dir="$3"
+    local url="https://github.com/${BASE_ANVIL_REPO}/releases/download/${tag}/${filename}"
+
+    info "Downloading $filename..."
+    if ! download_url "$url" "$output_dir/$filename"; then
+        error "Failed to download $filename from $url"
+    fi
+}
+
+# base-anvil does NOT use GPG .asc signatures (the node stack) or a tarball-level
+# SLSA attestation. It publishes a GitHub build-provenance attestation over each
+# INDIVIDUAL binary (forge/cast/anvil/chisel), pointed to by a sidecar
+# foundry_<...>.attestation.txt. So provenance is verified per-binary, AFTER
+# extraction, via `gh attestation verify <binary> --repo base/base-anvil`
+# (verifying the tarball 404s, since the tarball digest is not an attested
+# subject). If gh is present+authed and verification fails -> hard error; if gh
+# is missing/unauthed we warn and continue, matching baseup's optional-SLSA
+# posture and base-foundryup's behavior.
+# NOTE: this is a different (and arguably weaker UX) trust path than the node
+# stack's mandatory GPG signature check. A production version probably wants
+# base-anvil to also publish GPG-signed sha256 sidecars so this path can be as
+# strict and gh-independent as the node path.
+verify_foundry_binary() {
+    local name="$1"
+    local path="$2"
+
+    if [[ "$UNSAFE_SKIP_VERIFY" -eq 1 ]]; then
+        warn "Skipping attestation verification for $name (--unsafe-skip-verify)."
+        return
+    fi
+
+    if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+        if gh attestation verify "$path" --repo "$BASE_ANVIL_REPO" >/dev/null 2>&1; then
+            info "Attestation verified for $name"
+        else
+            error "Attestation verification failed for $name (base-anvil $BASE_ANVIL_REPO)."
+        fi
+    elif command -v gh >/dev/null 2>&1; then
+        warn "gh is not authenticated; skipping attestation verification for $name (run 'gh auth login')."
+    else
+        warn "gh not found; skipping attestation verification for $name."
+    fi
+}
+
+# Install base-forge/base-cast/base-anvil/base-chisel wrappers that run the Base
+# build with precompiles ON by default (FOUNDRY_BASE=true; --base for anvil), so
+# they coexist with a user's stock Foundry. The real binaries live in a
+# versioned dir; only the base-* wrappers go on PATH. Mirrors base-foundryup's
+# use().
+install_foundry() {
+    local version="$1"
+    local platform arch suffix
+    local archive_name attest_name archive_path extract_dir version_dir
+
+    platform="$(detect_platform)"
+    arch="$(detect_arch)"
+    suffix="$(detect_foundry_suffix "$platform" "$arch")"
+    info "Detected Foundry target: $suffix"
+
+    if [[ -z "$version" ]]; then
+        info "Fetching the latest base-anvil release..."
+        version="$(get_latest_foundry_version)"
+    fi
+    # Reject tags that could escape the release-download URL path. base-anvil
+    # tags are of the form v1.1.0-rc.19 / nightly-<sha> / nightly-base-<sha>;
+    # none contain slashes, dots-dots, or spaces.
+    if [[ ! "$version" =~ ^[A-Za-z0-9._-]+$ ]]; then
+        error "Invalid Foundry version tag: '$version'"
+    fi
+
+    info "Installing Base-aware Foundry tools ($version)"
+
+    archive_name="foundry_${version}_${suffix}.tar.gz"
+    archive_path="$MAIN_TMP_DIR/$archive_name"
+
+    download_foundry_file "$version" "$archive_name" "$MAIN_TMP_DIR"
+
+    extract_dir="$MAIN_TMP_DIR/foundry-extract"
+    mkdir -p "$extract_dir"
+    extract_archive "$archive_path" "$extract_dir"
+
+    version_dir="$FOUNDRY_VERSIONS_DIR/$version"
+    ensure_dir "$version_dir" "FOUNDRY_VERSIONS_DIR"
+
+    local tool real_bin dest
+    for tool in "${FOUNDRY_TOOLS[@]}"; do
+        real_bin="$(find "$extract_dir" -name "$tool" -type f -not -type l | head -n 1)"
+        [[ -n "$real_bin" ]] || error "Could not find $tool in $archive_name"
+        verify_foundry_binary "$tool" "$real_bin"
+        cp "$real_bin" "$version_dir/$tool" && chmod 755 "$version_dir/$tool"
+
+        dest="$BIN_DIR/base-$tool"
+        ensure_writable_destination "$dest"
+        # Generate the wrapper with the Base flag as a literal, quoted token
+        # (anvil takes --base on the CLI; forge/cast/chisel read FOUNDRY_BASE).
+        # Branching the heredoc avoids an unquoted variable expansion in the
+        # generated script.
+        if [[ "$tool" == "anvil" ]]; then
+            cat > "$dest" <<WRAP
+#!/usr/bin/env bash
+# Auto-generated by baseup. Runs the Base build of anvil with Base precompiles
+# enabled by default. Your stock 'anvil' is left untouched.
+exec env FOUNDRY_BASE=true "$version_dir/anvil" --base "\$@"
+WRAP
+        else
+            cat > "$dest" <<WRAP
+#!/usr/bin/env bash
+# Auto-generated by baseup. Runs the Base build of $tool with Base precompiles
+# enabled by default. Your stock '$tool' is left untouched.
+exec env FOUNDRY_BASE=true "$version_dir/$tool" "\$@"
+WRAP
+        fi
+        chmod 755 "$dest"
+        info "Installed base-$tool -> $version_dir/$tool"
+    done
+
+    info "Base Foundry tools installed: base-forge base-cast base-anvil base-chisel"
+}
+# === END PROTOTYPE ========================================================
+
 usage() {
     cat <<'EOF'
 Usage:
@@ -885,7 +1062,13 @@ Usage:
 Options:
   -v, --version         Print the baseup installer version
   -i, --install <VER>   Install a specific release tag (for example: v0.6.0)
-  -b, --bin <NAME>      Install only one binary (base, base-reth-node, base-consensus, basectl, all)
+  -b, --bin <NAME>      Install only one binary (base, base-reth-node, base-consensus, basectl, foundry, all)
+                        'foundry' installs the Base-aware Foundry toolchain as
+                        base-forge/base-cast/base-anvil/base-chisel (PROTOTYPE).
+                        'all' selects all NODE binaries only; it does not include
+                        'foundry' (add '--bin foundry' as well to get both).
+      --foundry-version <TAG>
+                        base-anvil release tag for the Foundry tools (default: latest)
   -t, --target <TRIPLE> Verify a release target triple (verify-release only; repeatable; default: all published targets)
   -U, --update          Update baseup itself
       --unsafe-skip-verify
@@ -898,6 +1081,9 @@ Examples:
   baseup --bin base
   baseup --bin base-reth-node
   baseup --bin basectl
+  baseup --bin foundry
+  baseup --bin foundry --foundry-version v1.1.0-rc.19
+  baseup --bin base --bin foundry
   baseup verify-release
   baseup verify-release -i v1.0.0 --target x86_64-unknown-linux-gnu
   baseup --update
@@ -927,7 +1113,21 @@ while [[ $# -gt 0 ]]; do
             ;;
         -b | --bin)
             [[ $# -ge 2 ]] || error "Missing value for $1"
-            add_selected_bin "$2"
+            # PROTOTYPE: 'foundry' selects the Base-aware Foundry toolchain,
+            # which lives in base/base-anvil and installs differently from the
+            # node binaries; route it to its own flag instead of the node
+            # bin-name validator.
+            if [[ "$2" == "foundry" ]]; then
+                INSTALL_FOUNDRY=1
+            else
+                add_selected_bin "$2"
+            fi
+            shift 2
+            ;;
+        --foundry-version)
+            [[ $# -ge 2 ]] || error "Missing value for $1"
+            FOUNDRY_VERSION="$2"
+            INSTALL_FOUNDRY=1
             shift 2
             ;;
         -t | --target)
@@ -964,6 +1164,18 @@ main() {
         check_installer_up_to_date
     fi
 
+    # PROTOTYPE: verify-release covers node artifacts only.
+    if [[ "$COMMAND" == "verify-release" && "$INSTALL_FOUNDRY" -eq 1 ]]; then
+        error "verify-release does not support Foundry tools in this prototype."
+    fi
+
+    # PROTOTYPE: when only `--bin foundry` is requested, skip the node stack
+    # entirely instead of falling back to the default node bins.
+    local do_node=1
+    if [[ "$COMMAND" == "install" && "$INSTALL_FOUNDRY" -eq 1 && ${#SELECTED_BINS[@]} -eq 0 ]]; then
+        do_node=0
+    fi
+
     if [[ "$COMMAND" == "verify-release" ]]; then
         info "Verifying Base release artifacts..."
     else
@@ -974,66 +1186,70 @@ main() {
         ensure_dir "$BIN_DIR" "BASE_BIN_DIR"
     fi
 
-    resolve_selected_bins
-
-    if [[ "$COMMAND" == "verify-release" ]]; then
-        if [[ ${#SELECTED_TARGETS[@]} -eq 0 ]]; then
-            SELECTED_TARGETS=("${SUPPORTED_TARGETS[@]}")
-        fi
-    else
-        local platform
-        local arch
-        local target
-
-        platform="$(detect_platform)"
-        arch="$(detect_arch)"
-        target="$(detect_target "$platform" "$arch")"
-        info "Detected platform: $platform ($arch)"
-        SELECTED_TARGETS=("$target")
-    fi
-
-    if [[ -z "$VERSION" ]]; then
-        info "Fetching the latest release version..."
-        VERSION="$(get_latest_version)"
-    fi
-
-    if [[ "$COMMAND" == "verify-release" ]]; then
-        info "Verifying release $VERSION"
-    else
-        info "Installing release $VERSION"
-    fi
-
     MAIN_TMP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t baseup)"
 
-    if [[ "$COMMAND" == "verify-release" ]]; then
-        verify_published_release_artifacts "$VERSION"
-    else
-        local binary_name
-        local selected_target
-        for selected_target in "${SELECTED_TARGETS[@]}"; do
-            for binary_name in "${SELECTED_BINS[@]}"; do
-                local archive_name
-                local archive_path
-                local extract_dir
-                local binary_path
+    # --- Node binaries (unchanged path) ---
+    if [[ "$do_node" -eq 1 ]]; then
+        resolve_selected_bins
 
-                verify_release_artifact "$binary_name" "$VERSION" "$selected_target"
+        if [[ "$COMMAND" == "verify-release" ]]; then
+            if [[ ${#SELECTED_TARGETS[@]} -eq 0 ]]; then
+                SELECTED_TARGETS=("${SUPPORTED_TARGETS[@]}")
+            fi
+        else
+            local platform
+            local arch
+            local target
 
-                archive_name="${binary_name}-${VERSION}-${selected_target}.tar.gz"
-                archive_path="$MAIN_TMP_DIR/$archive_name"
-                extract_dir="$MAIN_TMP_DIR/${binary_name}-extract"
+            platform="$(detect_platform)"
+            arch="$(detect_arch)"
+            target="$(detect_target "$platform" "$arch")"
+            info "Detected platform: $platform ($arch)"
+            SELECTED_TARGETS=("$target")
+        fi
 
-                mkdir -p "$extract_dir"
-                extract_archive "$archive_path" "$extract_dir"
-                binary_path="$(find "$extract_dir" -name "$binary_name" -type f -not -type l | head -n 1)"
+        if [[ -z "$VERSION" ]]; then
+            info "Fetching the latest release version..."
+            VERSION="$(get_latest_version)"
+        fi
 
-                if [[ -z "$binary_path" ]]; then
-                    error "Could not find $binary_name in $archive_name"
-                fi
+        if [[ "$COMMAND" == "verify-release" ]]; then
+            info "Verifying release $VERSION"
+            verify_published_release_artifacts "$VERSION"
+        else
+            info "Installing release $VERSION"
+            local binary_name
+            local selected_target
+            for selected_target in "${SELECTED_TARGETS[@]}"; do
+                for binary_name in "${SELECTED_BINS[@]}"; do
+                    local archive_name
+                    local archive_path
+                    local extract_dir
+                    local binary_path
 
-                install_binary "$binary_path" "$binary_name"
+                    verify_release_artifact "$binary_name" "$VERSION" "$selected_target"
+
+                    archive_name="${binary_name}-${VERSION}-${selected_target}.tar.gz"
+                    archive_path="$MAIN_TMP_DIR/$archive_name"
+                    extract_dir="$MAIN_TMP_DIR/${binary_name}-extract"
+
+                    mkdir -p "$extract_dir"
+                    extract_archive "$archive_path" "$extract_dir"
+                    binary_path="$(find "$extract_dir" -name "$binary_name" -type f -not -type l | head -n 1)"
+
+                    if [[ -z "$binary_path" ]]; then
+                        error "Could not find $binary_name in $archive_name"
+                    fi
+
+                    install_binary "$binary_path" "$binary_name"
+                done
             done
-        done
+        fi
+    fi
+
+    # --- PROTOTYPE: Base-aware Foundry toolchain (base/base-anvil) ---
+    if [[ "$COMMAND" == "install" && "$INSTALL_FOUNDRY" -eq 1 ]]; then
+        install_foundry "$FOUNDRY_VERSION"
     fi
 
     if [[ "$COMMAND" == "verify-release" ]]; then
@@ -1043,7 +1259,7 @@ main() {
     fi
 
     echo ""
-    info "Installed release $VERSION successfully"
+    info "Install complete"
     echo ""
 
     if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
@@ -1056,6 +1272,9 @@ main() {
         for installed_binary in "${SELECTED_BINS[@]}"; do
             info "Run '$installed_binary --help' to verify the install"
         done
+        if [[ "$INSTALL_FOUNDRY" -eq 1 ]]; then
+            info "Run 'base-forge --version' / 'base-anvil --version' to verify the Foundry tools"
+        fi
     fi
 }
 
