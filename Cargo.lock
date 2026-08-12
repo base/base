@@ -6274,9 +6274,12 @@ dependencies = [
  "base-health",
  "clap",
  "reqwest 0.13.4",
+ "serde_json",
  "tokio",
  "tokio-util",
  "tracing",
+ "url",
+ "wiremock",
 ]
 
 [[package]]

@@ -12,14 +12,18 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+url.workspace = true
 tokio-util.workspace = true
 tokio = { workspace = true, features = ["net"] }
 anyhow = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
-axum = { workspace = true, features = ["tokio", "http1"] }
+reqwest = { workspace = true, features = ["json"] }
+serde_json = { workspace = true, features = ["std"] }
+axum = { workspace = true, features = ["tokio", "http1", "json"] }
 base-health = { workspace = true, features = ["axum-server"] }
 clap = { workspace = true, features = ["derive", "env", "std"] }
 
 [dev-dependencies]
+wiremock.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
