@@ -136,8 +136,6 @@ where
             request.claim.lock_id.clone(),
             request.claim.worker_id.clone(),
             proof,
-            request.proof.proposer,
-            request.proof.image_hash,
         )
         .map_err(|source| ProofGeneratorError::BuildSubmission {
             session_id: request.claim.session_id.clone(),

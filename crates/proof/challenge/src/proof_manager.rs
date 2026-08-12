@@ -297,7 +297,6 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
             intermediate_block_interval: candidate.intermediate_block_interval,
             l1_head_number,
             schedule_l2_block_number: Some(candidate.info.l2_block_number),
-            ..Default::default()
         })
     }
 
