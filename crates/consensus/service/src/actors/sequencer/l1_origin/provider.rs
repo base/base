@@ -42,13 +42,18 @@ pub trait L1OriginSelectorProvider: Debug + Send + Sync + 'static {
     ///
     /// This lookup verifies that the returned header hashes to `hash`, but does not establish that
     /// the block is canonical. Successor canonicality is established separately by a by-number
-    /// lookup tied to [`Self::chain_view`].
+    /// lookup tied to [`Self::chain_view`]. Missing receipts do not make an exact-hash current
+    /// origin unavailable; the returned origin may omit them so the attributes provider can use
+    /// its RPC fallback.
     async fn prepared_by_hash(
         &self,
         hash: B256,
     ) -> Result<Option<PreparedL1Origin>, L1OriginSelectorError>;
 
-    /// Returns a prepared origin by its number.
+    /// Returns a canonical successor prepared by its number.
+    ///
+    /// Unlike [`Self::prepared_by_hash`], this speculative lookup requires receipts before the
+    /// successor can be adopted.
     async fn prepared_by_number(
         &self,
         number: u64,
