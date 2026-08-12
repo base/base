@@ -1075,11 +1075,8 @@ mod tests {
         crate::RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Azul, 21);
         let cfg = RollupConfig { l2_chain_id: Chain::from_id(chain_id), ..Default::default() };
         {
-            let _activation = crate::RuntimeUpgradeRegistry::activate_upgrade_for_testing(
-                chain_id,
-                BaseUpgrade::Zenith,
-                42,
-            );
+            let _activation =
+                crate::RuntimeUpgradeRegistry::activate_zenith_for_testing(chain_id, 42);
 
             assert!(!cfg.is_zenith_active(41));
             assert!(cfg.is_zenith_active(42));
@@ -1090,11 +1087,8 @@ mod tests {
                 22,
             );
             {
-                let _nested = crate::RuntimeUpgradeRegistry::activate_upgrade_for_testing(
-                    chain_id,
-                    BaseUpgrade::Zenith,
-                    84,
-                );
+                let _nested =
+                    crate::RuntimeUpgradeRegistry::activate_zenith_for_testing(chain_id, 84);
                 assert!(!cfg.is_zenith_active(83));
                 assert!(cfg.is_zenith_active(84));
             }

@@ -285,8 +285,7 @@ mod tests {
     use base_common_chains::Sepolia;
     use base_common_consensus::{BaseTxEnvelope, SystemAddresses};
     use base_common_genesis::{
-        BaseUpgrade, ChainGenesis, RuntimeUpgradeRegistry, SystemConfig, SystemConfigUpdate,
-        UpgradeConfig,
+        BaseUpgradeConfig, ChainGenesis, SystemConfig, SystemConfigUpdate, UpgradeConfig,
     };
     use base_protocol::{BlockInfo, DepositDecodeError};
 
@@ -543,8 +542,6 @@ mod tests {
         let block_time = 2_u64;
         let timestamp = 100_u64;
         let chain_id = 9_100_004;
-        let _activation =
-            RuntimeUpgradeRegistry::activate_upgrade_for_testing(chain_id, BaseUpgrade::Denim, 102);
         let cfg = Arc::new(RollupConfig {
             block_time,
             genesis: ChainGenesis {
@@ -552,7 +549,11 @@ mod tests {
                 ..Default::default()
             },
             l2_chain_id: chain_id.into(),
-            upgrades: UpgradeConfig { ecotone_time: Some(102), ..Default::default() },
+            upgrades: UpgradeConfig {
+                ecotone_time: Some(102),
+                base: BaseUpgradeConfig { denim: Some(102), ..Default::default() },
+                ..Default::default()
+            },
             ..Default::default()
         });
         let l1_cfg = Arc::new(Sepolia::l1_config());
@@ -601,8 +602,6 @@ mod tests {
         let block_time = 2_u64;
         let timestamp = 100_u64;
         let chain_id = 9_100_005;
-        let _activation =
-            RuntimeUpgradeRegistry::activate_upgrade_for_testing(chain_id, BaseUpgrade::Denim, 102);
         let cfg = Arc::new(RollupConfig {
             block_time,
             genesis: ChainGenesis {
@@ -610,7 +609,11 @@ mod tests {
                 ..Default::default()
             },
             l2_chain_id: chain_id.into(),
-            upgrades: UpgradeConfig { ecotone_time: Some(102), ..Default::default() },
+            upgrades: UpgradeConfig {
+                ecotone_time: Some(102),
+                base: BaseUpgradeConfig { denim: Some(102), ..Default::default() },
+                ..Default::default()
+            },
             ..Default::default()
         });
         let l1_cfg = Arc::new(Sepolia::l1_config());

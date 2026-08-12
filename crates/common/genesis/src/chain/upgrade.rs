@@ -475,31 +475,25 @@ impl RuntimeUpgradeRegistry {
         Self::set_activation(chain_id, upgrade_id, UpgradeActivation::Timestamp(timestamp))
     }
 
-    /// Activates an upgrade for a chain via the runtime registry, bypassing the normal
-    /// override block (e.g. for the genesis-only Zenith gate), for the lifetime of the
-    /// returned test guard.
+    /// Activates Zenith for a chain via the runtime registry, bypassing the normal
+    /// override block, for the lifetime of the returned test guard.
     #[cfg(any(test, feature = "test-utils"))]
     #[must_use = "the guard must be held for the duration of the test activation"]
-    pub fn activate_upgrade_for_testing(
-        chain_id: u64,
-        upgrade_id: BaseUpgrade,
-        timestamp: u64,
-    ) -> impl Drop {
-        struct UpgradeActivationGuard {
+    pub fn activate_zenith_for_testing(chain_id: u64, timestamp: u64) -> impl Drop {
+        struct ZenithActivationGuard {
             chain_id: u64,
-            upgrade_id: BaseUpgrade,
             previous: Option<UpgradeActivation>,
             remove_chain_if_empty: bool,
         }
 
-        impl Drop for UpgradeActivationGuard {
+        impl Drop for ZenithActivationGuard {
             fn drop(&mut self) {
                 let mut registry = RuntimeUpgradeRegistry::write_registry();
                 let overrides = registry.entry(self.chain_id).or_default();
                 if let Some(previous) = self.previous {
-                    overrides.activations.insert(self.upgrade_id, previous);
+                    overrides.activations.insert(BaseUpgrade::Zenith, previous);
                 } else {
-                    overrides.activations.remove(&self.upgrade_id);
+                    overrides.activations.remove(&BaseUpgrade::Zenith);
                 }
                 if self.remove_chain_if_empty && overrides.is_empty() {
                     registry.remove(&self.chain_id);
@@ -510,9 +504,9 @@ impl RuntimeUpgradeRegistry {
         let mut registry = Self::write_registry();
         let remove_chain_if_empty = !registry.contains_key(&chain_id);
         let overrides = registry.entry(chain_id).or_default();
-        let previous = overrides.activation(upgrade_id);
-        overrides.activations.insert(upgrade_id, UpgradeActivation::Timestamp(timestamp));
-        UpgradeActivationGuard { chain_id, upgrade_id, previous, remove_chain_if_empty }
+        let previous = overrides.activation(BaseUpgrade::Zenith);
+        overrides.activations.insert(BaseUpgrade::Zenith, UpgradeActivation::Timestamp(timestamp));
+        ZenithActivationGuard { chain_id, previous, remove_chain_if_empty }
     }
 
     /// Sets one runtime override that clears a chain upgrade activation.
