@@ -285,4 +285,47 @@ mod tests {
 
         cancel.cancel();
     }
+
+    #[tokio::test]
+    async fn forwards_backend_error_body_on_non_success_status() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(429).set_body_json(json!({
+                "jsonrpc": "2.0",
+                "id": 9,
+                "error": { "code": -32005, "message": "rate limited" }
+            })))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let backend = Backend::parse(&format!("rpcs={}", mock.uri())).expect("parse backend");
+        let ready = Arc::new(AtomicBool::new(true));
+        let (addr, _handle, cancel) =
+            start_test_server(ready, ProxyState::from_backend(&backend)).await;
+
+        let response = reqwest::Client::new()
+            .post(format!("http://{addr}/"))
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "method": "eth_sendRawTransaction",
+                "params": ["0xdead"],
+                "id": 9
+            }))
+            .send()
+            .await
+            .expect("proxy request");
+
+        assert_eq!(response.status().as_u16(), 200, "client still sees HTTP 200");
+        let body: serde_json::Value = response.json().await.expect("response json");
+        assert_eq!(body["id"], json!(9), "id must match backend payload");
+        assert_eq!(body["error"]["code"], json!(-32005), "backend error code must be preserved");
+        assert_eq!(
+            body["error"]["message"],
+            json!("rate limited"),
+            "backend error message must be preserved"
+        );
+
+        cancel.cancel();
+    }
 }

@@ -1,6 +1,6 @@
 //! JSON-RPC reverse-proxy handlers.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use axum::{
     Json, Router,
@@ -23,6 +23,12 @@ pub(crate) const MAX_REQUEST_BODY_BYTES: usize = 2 * 1024 * 1024;
 /// Maximum accepted backend response body size (`2 MiB`).
 pub(crate) const MAX_RESPONSE_BODY_BYTES: usize = 2 * 1024 * 1024;
 
+/// TCP connect timeout for backend requests.
+const BACKEND_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Overall timeout for a backend request (connect + headers + body).
+const BACKEND_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Shared state for JSON-RPC proxy routes.
 #[derive(Debug, Clone)]
 pub struct ProxyState {
@@ -38,7 +44,12 @@ impl ProxyState {
     /// Builds proxy state from a validated backend.
     pub fn from_backend(backend: &Backend) -> Self {
         let backend_url = backend.urls[0].clone();
-        Self { client: Client::new(), backend_name: Arc::from(backend.name.as_str()), backend_url }
+        let client = Client::builder()
+            .connect_timeout(BACKEND_CONNECT_TIMEOUT)
+            .timeout(BACKEND_REQUEST_TIMEOUT)
+            .build()
+            .expect("failed to build reqwest client");
+        Self { client, backend_name: Arc::from(backend.name.as_str()), backend_url }
     }
 
     /// Returns the JSON-RPC proxy router (`POST /`).
@@ -104,9 +115,18 @@ impl ProxyState {
             .body(body.clone())
             .send()
             .await
-            .map_err(ForwardError::Transport)?
-            .error_for_status()
             .map_err(ForwardError::Transport)?;
+
+        let status = response.status();
+        if !status.is_success() {
+            // Keep the body: some backends put JSON-RPC errors on non-2xx HTTP statuses.
+            warn!(
+                backend = %self.backend_name,
+                url = %self.backend_url,
+                status = %status.as_u16(),
+                "backend returned non-success HTTP status"
+            );
+        }
 
         if let Some(content_length) = response.content_length()
             && content_length > MAX_RESPONSE_BODY_BYTES as u64
