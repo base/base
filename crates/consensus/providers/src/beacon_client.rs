@@ -177,14 +177,17 @@ impl OnlineBeaconClient {
         slot: u64,
         blob_hashes: &[B256],
     ) -> Result<Vec<BoxedBlob>, BeaconClientError> {
-        let params = blob_hashes.iter().map(|hash| hash.to_string()).collect::<Vec<_>>();
-        let url = format!(
-            "{}/{}/{}?versioned_hashes={}",
-            self.base,
-            BLOBS_METHOD_PREFIX,
-            slot,
-            params.join(",")
-        );
+        // The beacon API expects `versioned_hashes` as a REPEATED query parameter, not a
+        // comma-joined list. Comma-joining makes conformant clients parse the whole string as a
+        // single hash and reject it, e.g. Grandine 2.0.4 answers 400 with
+        // "versioned_hashes[0]: invalid length 399, expected ... 32 bytes", which stalls
+        // derivation permanently because a 400 is retried rather than surfaced.
+        let query = blob_hashes
+            .iter()
+            .map(|hash| format!("versioned_hashes={}", hash))
+            .collect::<Vec<_>>()
+            .join("&");
+        let url = format!("{}/{}/{}?{}", self.base, BLOBS_METHOD_PREFIX, slot, query);
         let response = self.inner.get(url).send().await?;
 
         // A 404 means the beacon slot was missed or orphaned. Blobs for such slots will never
