@@ -192,6 +192,7 @@ base-execution-eip8130-rpc-node = { path = "crates/execution/eip8130-rpc-node" }
 base-execution-eip8130 = { path = "crates/execution/eip8130", default-features = false }
 
 # Infra
+roxy = { path = "crates/infra/roxy" }
 basectl-cli = { path = "crates/infra/basectl" }
 base-sidecrush = { path = "crates/infra/sidecrush" }
 audit-archiver-lib = { path = "crates/infra/audit" }
