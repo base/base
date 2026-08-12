@@ -1,5 +1,5 @@
 //! Base payload builder implementation.
-use std::{marker::PhantomData, sync::Arc};
+use std::{marker::PhantomData, sync::Arc, time::Instant};
 
 use alloy_consensus::{BlockHeader, Transaction, Typed2718};
 use alloy_evm::Evm as AlloyEvm;
@@ -11,6 +11,7 @@ use base_common_consensus::{BaseTransaction, Predeploys};
 use base_common_evm::L1BlockInfo;
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_txpool::{BasePooledTx, GuardMetrics, estimated_da_size::DataAvailabilitySized};
+use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
 use reth_basic_payload_builder::{
     BuildArguments, BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour, PayloadBuilder,
     PayloadConfig, is_better_payload,
@@ -41,7 +42,8 @@ use tracing::{debug, debug_span, instrument, trace, warn};
 
 use crate::{
     Attributes, BasePayloadBuilderAttributes, PayloadPrimitives, config::BaseBuilderConfig,
-    error::BasePayloadBuilderError, payload::BaseBuiltPayload,
+    error::BasePayloadBuilderError, metrics::PayloadBuilderMetrics, payload::BaseBuiltPayload,
+    timing::TxCutoff,
 };
 
 /// Base payload builder
@@ -204,13 +206,16 @@ where
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
         let state = StateProviderDatabase::new(&state_provider);
 
-        if ctx.attributes().no_tx_pool() {
+        let build_started_at = Instant::now();
+        let outcome = if ctx.attributes().no_tx_pool() {
             builder.build(state, &state_provider, ctx)
         } else {
             // sequencer mode we can reuse cachedreads from previous runs
             builder.build(cached_reads.as_db_mut(state), &state_provider, ctx)
         }
-        .map(|out| out.with_cached_reads(cached_reads))
+        .map(|out| out.with_cached_reads(cached_reads));
+        PayloadBuilderMetrics::build_duration().record(build_started_at.elapsed().as_secs_f64());
+        outcome
     }
 
     /// Computes the witness for the payload.
@@ -277,8 +282,11 @@ where
         MissingPayloadBehaviour::AwaitInProgress
     }
 
-    // NOTE: this should only be used for testing purposes because this doesn't have access to L1
-    // system txs, hence on_missing_payload we return [MissingPayloadBehaviour::AwaitInProgress].
+    // Builds a production-valid empty block: the payload attributes' sequencer
+    // transactions (L1 info, deposits, `BaseTime` metadata) execute and a real
+    // state root is computed; only pool transactions are omitted. Not a hot
+    // path: `on_missing_payload` awaits the in-progress build instead, so this
+    // exists for trait correctness.
     fn build_empty_payload(
         &self,
         config: PayloadConfig<Self::Attributes, N::BlockHeader>,
@@ -415,10 +423,15 @@ impl<Txs> Builder<'_, Txs> {
             block_access_list.map(|bal| alloy_rlp::encode(bal).into()),
         );
 
-        if no_tx_pool {
+        if no_tx_pool || ctx.is_zenith_active() {
             // if `no_tx_pool` is set only transactions from the payload attributes will be included
             // in the payload. In other words, the payload is deterministic and we can
             // freeze it once we've successfully built it.
+            //
+            // Zenith-active builds freeze by policy: exactly one build iteration
+            // per 200ms slot, truncated by the wall-clock pool-tx cutoff, instead
+            // of reth's iterative-improvement loop. Frozen only means "stop
+            // rebuilding"; resolve returns this payload immediately.
             Ok(BuildOutcomeKind::Freeze(payload))
         } else {
             Ok(BuildOutcomeKind::Better { payload })
@@ -602,6 +615,47 @@ where
         &self.config.attributes
     }
 
+    /// Returns `true` if Zenith is active at this payload's timestamp.
+    pub fn is_zenith_active(&self) -> bool {
+        self.chain_spec.is_zenith_active_at_timestamp(self.attributes().timestamp())
+    }
+
+    /// Derives the wall-clock pool-transaction cutoff for this build.
+    ///
+    /// Returns `None` when Zenith is not active at the payload timestamp:
+    /// pre-Zenith builds iterate under reth's improvement loop and have no
+    /// cutoff. Zenith-active builds derive `slot_start + seal_offset` from the
+    /// millisecond timestamp committed in the `BaseTime` metadata deposit at
+    /// `tx[1]` of the payload attributes; a missing or invalid deposit is a
+    /// build error because engine validation would reject the block anyway.
+    pub fn tx_cutoff(&self) -> Result<Option<TxCutoff>, PayloadBuilderError> {
+        if !self.is_zenith_active() {
+            return Ok(None);
+        }
+
+        let block_number = self.parent().number().saturating_add(1);
+        let metadata_error =
+            |err| PayloadBuilderError::other(BasePayloadBuilderError::BaseTimeMetadata(err));
+        let transaction = self
+            .attributes()
+            .sequencer_transactions()
+            .get(1)
+            .ok_or_else(|| metadata_error(BaseTimeMetadataError::Missing))?;
+        let deposit = transaction
+            .value()
+            .as_deposit()
+            .ok_or_else(|| metadata_error(BaseTimeMetadataError::NotDeposit))?;
+        let base_time =
+            BaseTimeUpdateTx::validate_deposit(deposit, block_number).map_err(metadata_error)?;
+
+        let block_timestamp_ms = self
+            .attributes()
+            .timestamp()
+            .saturating_mul(1_000)
+            .saturating_add(u64::from(base_time.timestamp_millis_part()));
+        Ok(Some(TxCutoff::new(block_timestamp_ms, self.builder_config.seal_offset)))
+    }
+
     /// Returns the current fee settings for transactions from the mempool
     pub fn best_transaction_attributes(&self, block_env: impl Block) -> BestTransactionsAttributes {
         BestTransactionsAttributes::new(
@@ -725,8 +779,40 @@ where
         let tx_da_limit = self.builder_config.da_config.max_da_tx_size();
         let base_fee = builder.evm_mut().block().basefee();
 
+        // Wall-clock pool-transaction cutoff for one-shot Zenith builds. A
+        // build that starts past its cutoff (its window was consumed by the
+        // previous block's overrun) ships an empty runover block: attribute
+        // and sequencer transactions only.
+        let tx_cutoff = self.tx_cutoff()?;
+        if let Some(cutoff) = tx_cutoff
+            && cutoff.is_past()
+        {
+            debug!(
+                target: "payload_builder",
+                cutoff_unix_ms = cutoff.unix_millis(),
+                "build started past pool-tx cutoff, building empty runover block"
+            );
+            PayloadBuilderMetrics::zero_pool_tx_builds().increment(1);
+            return Ok(None);
+        }
+
         let block_timestamp = self.attributes().timestamp();
         while let Some(tx) = best_txs.next(()) {
+            // Cooperative truncation, not abort: stop pulling pool
+            // transactions and proceed to the normal finish (state root,
+            // freeze) so the block seals on time.
+            if let Some(cutoff) = tx_cutoff
+                && cutoff.is_past()
+            {
+                debug!(
+                    target: "payload_builder",
+                    cutoff_unix_ms = cutoff.unix_millis(),
+                    "pool-tx cutoff reached, truncating block"
+                );
+                PayloadBuilderMetrics::cutoff_truncated_builds().increment(1);
+                break;
+            }
+
             if self.builder_config.manifest_precheck_enabled
                 && let Some(manifest) = tx.watch_manifest()
                 && let Err(stale) = manifest.revalidate(builder.evm_mut().db_mut(), block_timestamp)
@@ -846,7 +932,16 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::ExecutionInfo;
+    use alloy_consensus::{Header, Sealable};
+    use base_common_chains::BaseUpgrade;
+    use base_common_consensus::{BaseTxEnvelope, TxDeposit};
+    use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
+    use base_execution_evm::BaseEvmConfig;
+    use reth_ethereum_forks::ForkCondition;
+    use reth_primitives_traits::{SealedHeader, WithEncoded};
+
+    use super::*;
+    use crate::payload::EthPayloadBuilderAttributes;
 
     /// The block gas reservation must include EIP-8130 `payer_auth` on top of the
     /// declared `gas_limit`: a transaction that fits on `gas_limit` alone is still
@@ -862,5 +957,85 @@ mod tests {
 
         // payer_auth metered on top (reserved = 21_000 + 2_100) pushes over the block limit.
         assert!(info.is_tx_over_limits(0, block_gas_limit, None, None, 21_000 + 2_100, None));
+    }
+
+    const ZENITH_TIMESTAMP: u64 = 1_800_000_001;
+    const PARENT_NUMBER: u64 = 8;
+
+    /// A ctx over base mainnet with Zenith activating at [`ZENITH_TIMESTAMP`],
+    /// building block [`PARENT_NUMBER`]` + 1` with the given payload timestamp
+    /// and sequencer transactions.
+    fn ctx(
+        timestamp: u64,
+        transactions: Vec<WithEncoded<BaseTxEnvelope>>,
+    ) -> BasePayloadBuilderCtx<BaseEvmConfig, BaseChainSpec> {
+        let chain_spec = Arc::new(
+            BaseChainSpecBuilder::base_mainnet()
+                .with_fork(BaseUpgrade::Zenith, ForkCondition::Timestamp(ZENITH_TIMESTAMP))
+                .build(),
+        );
+        let attributes = BasePayloadBuilderAttributes::<BaseTxEnvelope> {
+            payload_attributes: EthPayloadBuilderAttributes { timestamp, ..Default::default() },
+            transactions,
+            ..Default::default()
+        };
+        let payload_id = attributes.payload_attributes.id;
+        let parent =
+            SealedHeader::seal_slow(Header { number: PARENT_NUMBER, ..Default::default() });
+        BasePayloadBuilderCtx {
+            evm_config: BaseEvmConfig::base(Arc::clone(&chain_spec)),
+            builder_config: BaseBuilderConfig::default(),
+            chain_spec,
+            config: PayloadConfig::new(Arc::new(parent), attributes, payload_id),
+            cancel: CancelOnDrop::default(),
+            best_payload: None,
+        }
+    }
+
+    /// Sequencer transactions with a valid `BaseTime` metadata deposit at
+    /// index 1, mirroring production attribute ordering (L1 info at index 0).
+    fn sequencer_txs_with_base_time(
+        block_number: u64,
+        millis_part: u16,
+    ) -> Vec<WithEncoded<BaseTxEnvelope>> {
+        let metadata =
+            BaseTimeUpdateTx::new(millis_part).expect("valid millis").into_deposit_tx(block_number);
+        vec![
+            WithEncoded::from_2718_encodable(TxDeposit::default().seal_slow().into()),
+            WithEncoded::from_2718_encodable(metadata.into()),
+        ]
+    }
+
+    #[test]
+    fn pre_zenith_has_no_tx_cutoff() {
+        let ctx = ctx(ZENITH_TIMESTAMP - 2, vec![]);
+        assert!(!ctx.is_zenith_active());
+        assert_eq!(ctx.tx_cutoff().expect("pre-Zenith cutoff is not an error"), None);
+    }
+
+    #[test]
+    fn zenith_tx_cutoff_is_slot_start_plus_seal_offset() {
+        let ctx = ctx(ZENITH_TIMESTAMP, sequencer_txs_with_base_time(PARENT_NUMBER + 1, 200));
+        assert!(ctx.is_zenith_active());
+
+        // Block timestamp 1_800_000_001.200s; slot starts 200ms earlier at
+        // ..._001_000ms; default seal offset 150ms puts the cutoff at ..._001_150ms.
+        let cutoff = ctx.tx_cutoff().expect("valid metadata").expect("Zenith active");
+        assert_eq!(cutoff.unix_millis(), ZENITH_TIMESTAMP * 1_000 + 200 - 200 + 150);
+    }
+
+    #[test]
+    fn zenith_missing_base_time_metadata_is_a_build_error() {
+        let ctx = ctx(ZENITH_TIMESTAMP, vec![]);
+        let err = ctx.tx_cutoff().expect_err("missing metadata must fail the build");
+        assert!(err.to_string().contains("invalid BaseTime metadata"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn zenith_invalid_base_time_metadata_is_a_build_error() {
+        // Deposit committed for the wrong block number fails source-hash validation.
+        let ctx = ctx(ZENITH_TIMESTAMP, sequencer_txs_with_base_time(PARENT_NUMBER + 2, 200));
+        let err = ctx.tx_cutoff().expect_err("invalid metadata must fail the build");
+        assert!(err.to_string().contains("invalid BaseTime metadata"), "unexpected error: {err}");
     }
 }
