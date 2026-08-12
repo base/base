@@ -869,7 +869,8 @@ async fn run_finalize(
     // refuse to pay for a proof when it resolved or gained a ZK proof in the
     // meantime.
     games_client.ensure_accepts_zk_proof(game).await?;
-    client.submit(prove_request).await?;
+    // Wait on the server-accepted session id, as run_propose does.
+    let session_id = client.submit(prove_request).await?;
     info!(
         session_id = %session_id,
         "proof request accepted; waiting for completion (re-run finalize to resume on timeout)"

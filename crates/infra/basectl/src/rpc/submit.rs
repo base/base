@@ -223,6 +223,10 @@ impl ProposalProofSubmitter {
         })
     }
 
+    /// Replaces transport errors with a static message for command output.
+    ///
+    /// The transaction manager already sanitizes these errors before logging;
+    /// this wrapper provides defense in depth for the returned error.
     fn sanitize_tx_manager_error(error: TxManagerError) -> TxManagerError {
         match error {
             TxManagerError::Rpc(_) => {

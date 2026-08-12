@@ -8,7 +8,7 @@ use base_runtime::{Runtime, RuntimeTimeout, TokioRuntime};
 use tokio::sync::{Mutex, OwnedMutexGuard};
 use tracing::{debug, info, warn};
 
-use crate::TxManagerError;
+use crate::{RpcErrorClassifier, TxManagerError};
 
 /// Internal state tracked by [`NonceManager`].
 ///
@@ -169,11 +169,13 @@ where
                     TxManagerError::Rpc("nonce fetch timed out".into())
                 })?
                 .map_err(|e| {
+                    // Classify first to keep credential-bearing URLs out of logs.
+                    let err = RpcErrorClassifier::classify_rpc_error(&e);
                     warn!(
-                        error = %e, address = %self.address,
+                        error = %err, address = %self.address,
                         "failed to fetch nonce from chain",
                     );
-                    TxManagerError::Rpc(e.to_string())
+                    err
                 })?;
 
             // Phase 3: re-acquire the lock and populate only if still
