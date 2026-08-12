@@ -1,5 +1,7 @@
 //! Sync start algorithm for the Base rollup node.
 
+use std::time::Instant;
+
 use alloy_eips::BlockNumberOrTag;
 use base_common_genesis::RollupConfig;
 use base_protocol::L2BlockInfo;
@@ -17,7 +19,7 @@ pub use checkpoint::{
     NoopForkchoiceCheckpointReader,
 };
 
-use crate::EngineClient;
+use crate::{EngineClient, Metrics};
 
 /// Searches for the latest [`L2ForkchoiceState`] that we can use to start the sync process with.
 ///
@@ -65,106 +67,129 @@ pub async fn find_starting_forkchoice_with_checkpoint_reader<
     );
 
     // Search for the highest `unsafe` block, relative to the initial `unsafe` block's L1 origin.
-    loop {
-        let origin = current_fc.un_safe.l1_origin;
-        let canonical_l1 =
-            engine_client.get_l1_block(BlockNumberOrTag::Number(origin.number).into()).await?;
-        info!(
-            target: "sync_start",
-            l1_origin = origin.number,
-            l2_unsafe = %current_fc.un_safe.block_info.number,
-            "Searching for L2 unsafe block with canonical L1 origin"
-        );
-
-        let origin_is_plausible = match canonical_l1 {
-            Some(block) => block.header.hash == origin.hash,
-            None => {
-                // A missing block by number is only plausible when the L2 origin is ahead of the
-                // L1 view. A missing block at or below the visible L1 head is noncanonical.
-                let l1_head = engine_client
-                    .get_l1_block(BlockNumberOrTag::Latest.into())
-                    .await?
-                    .ok_or(SyncStartError::BlockNotFound(BlockNumberOrTag::Latest.into()))?;
-                origin.number > l1_head.header.number
-            }
-        };
-
-        if origin_is_plausible {
+    let unsafe_walk_started = Instant::now();
+    let mut unsafe_walked_blocks = 0_u64;
+    let unsafe_walk_result = async {
+        loop {
+            let origin = current_fc.un_safe.l1_origin;
+            let canonical_l1 =
+                engine_client.get_l1_block(BlockNumberOrTag::Number(origin.number).into()).await?;
             info!(
                 target: "sync_start",
+                l1_origin = origin.number,
                 l2_unsafe = %current_fc.un_safe.block_info.number,
-                "Found L2 unsafe block with canonical L1 origin"
+                "Searching for L2 unsafe block with canonical L1 origin"
             );
-            break;
+
+            let origin_is_plausible = match canonical_l1 {
+                Some(block) => block.header.hash == origin.hash,
+                None => {
+                    // A missing block by number is only plausible when the L2 origin is ahead of
+                    // the L1 view. A missing block at or below the visible L1 head is
+                    // noncanonical.
+                    let l1_head = engine_client
+                        .get_l1_block(BlockNumberOrTag::Latest.into())
+                        .await?
+                        .ok_or(SyncStartError::BlockNotFound(BlockNumberOrTag::Latest.into()))?;
+                    origin.number > l1_head.header.number
+                }
+            };
+
+            if origin_is_plausible {
+                info!(
+                    target: "sync_start",
+                    l2_unsafe = %current_fc.un_safe.block_info.number,
+                    "Found L2 unsafe block with canonical L1 origin"
+                );
+                break Ok::<(), SyncStartError>(());
+            }
+
+            let l2_parent_hash = current_fc.un_safe.block_info.parent_hash.into();
+            let l2_parent = engine_client
+                .get_l2_block(l2_parent_hash)
+                .full()
+                .await?
+                .ok_or(SyncStartError::BlockNotFound(l2_parent_hash))?;
+
+            current_fc.un_safe = L2BlockInfo::from_block_and_genesis(
+                &l2_parent
+                    .map_header(|header| header.into_inner())
+                    .into_consensus()
+                    .map_transactions(|tx| tx.inner.inner.into_inner()),
+                &cfg.genesis,
+            )?;
+            unsafe_walked_blocks = unsafe_walked_blocks.saturating_add(1);
         }
-
-        let l2_parent_hash = current_fc.un_safe.block_info.parent_hash.into();
-        let l2_parent = engine_client
-            .get_l2_block(l2_parent_hash)
-            .full()
-            .await?
-            .ok_or(SyncStartError::BlockNotFound(l2_parent_hash))?;
-
-        current_fc.un_safe = L2BlockInfo::from_block_and_genesis(
-            &l2_parent
-                .map_header(|header| header.into_inner())
-                .into_consensus()
-                .map_transactions(|tx| tx.inner.inner.into_inner()),
-            &cfg.genesis,
-        )?;
     }
+    .await;
+    Metrics::engine_reset_forkchoice_walked_blocks("unsafe").record(unsafe_walked_blocks as f64);
+    Metrics::engine_reset_forkchoice_walk_duration_seconds("unsafe")
+        .record(unsafe_walk_started.elapsed());
+    unsafe_walk_result?;
 
     // Search for the highest `safe` block that's L1 origin is at least older than the sequencing
     // window, relative to the L1 origin of the `unsafe` block.
     let mut safe_cursor = current_fc.un_safe;
-    loop {
-        info!(
-            target: "sync_start",
-            l1_origin = %safe_cursor.l1_origin.number,
-            l2_safe = %safe_cursor.block_info.number,
-            "Searching for L2 safe block beyond sequencing window"
-        );
-
-        let is_behind_sequence_window =
-            current_fc.un_safe.l1_origin.number.saturating_sub(cfg.seq_window_size)
-                > safe_cursor.l1_origin.number;
-        let is_labeled_safe = safe_cursor.block_info.hash == current_fc.safe.block_info.hash;
-        let is_finalized = safe_cursor.block_info.hash == current_fc.finalized.block_info.hash;
-        let is_genesis = safe_cursor.block_info.hash == cfg.genesis.l2.hash;
-        if is_behind_sequence_window || is_labeled_safe || is_finalized || is_genesis {
+    let safe_walk_started = Instant::now();
+    let mut safe_walked_blocks = 0_u64;
+    let safe_walk_result = async {
+        loop {
             info!(
                 target: "sync_start",
+                l1_origin = %safe_cursor.l1_origin.number,
                 l2_safe = %safe_cursor.block_info.number,
-                is_behind_sequence_window,
-                is_labeled_safe,
-                is_finalized,
-                is_genesis,
-                "Found suitable L2 safe block"
+                "Searching for L2 safe block beyond sequencing window"
             );
-            current_fc.safe = safe_cursor;
-            break;
+
+            let is_behind_sequence_window =
+                current_fc.un_safe.l1_origin.number.saturating_sub(cfg.seq_window_size)
+                    > safe_cursor.l1_origin.number;
+            let is_labeled_safe = safe_cursor.block_info.hash == current_fc.safe.block_info.hash;
+            let is_finalized = safe_cursor.block_info.hash == current_fc.finalized.block_info.hash;
+            let is_genesis = safe_cursor.block_info.hash == cfg.genesis.l2.hash;
+            if is_behind_sequence_window || is_labeled_safe || is_finalized || is_genesis {
+                info!(
+                    target: "sync_start",
+                    l2_safe = %safe_cursor.block_info.number,
+                    is_behind_sequence_window,
+                    is_labeled_safe,
+                    is_finalized,
+                    is_genesis,
+                    "Found suitable L2 safe block"
+                );
+                current_fc.safe = safe_cursor;
+                break Ok::<(), SyncStartError>(());
+            }
+            if safe_cursor.block_info.parent_hash == current_fc.safe.block_info.hash {
+                safe_cursor = current_fc.safe;
+                safe_walked_blocks = safe_walked_blocks.saturating_add(1);
+                continue;
+            }
+            if safe_cursor.block_info.parent_hash == current_fc.finalized.block_info.hash {
+                safe_cursor = current_fc.finalized;
+                safe_walked_blocks = safe_walked_blocks.saturating_add(1);
+                continue;
+            }
+            let block = engine_client
+                .get_l2_block(safe_cursor.block_info.parent_hash.into())
+                .full()
+                .await?
+                .ok_or(SyncStartError::BlockNotFound(safe_cursor.block_info.parent_hash.into()))?;
+            safe_cursor = L2BlockInfo::from_block_and_genesis(
+                &block
+                    .map_header(|header| header.into_inner())
+                    .into_consensus()
+                    .map_transactions(|tx| tx.inner.inner.into_inner()),
+                &cfg.genesis,
+            )?;
+            safe_walked_blocks = safe_walked_blocks.saturating_add(1);
         }
-        if safe_cursor.block_info.parent_hash == current_fc.safe.block_info.hash {
-            safe_cursor = current_fc.safe;
-            continue;
-        }
-        if safe_cursor.block_info.parent_hash == current_fc.finalized.block_info.hash {
-            safe_cursor = current_fc.finalized;
-            continue;
-        }
-        let block = engine_client
-            .get_l2_block(safe_cursor.block_info.parent_hash.into())
-            .full()
-            .await?
-            .ok_or(SyncStartError::BlockNotFound(safe_cursor.block_info.parent_hash.into()))?;
-        safe_cursor = L2BlockInfo::from_block_and_genesis(
-            &block
-                .map_header(|header| header.into_inner())
-                .into_consensus()
-                .map_transactions(|tx| tx.inner.inner.into_inner()),
-            &cfg.genesis,
-        )?;
     }
+    .await;
+    Metrics::engine_reset_forkchoice_walked_blocks("safe").record(safe_walked_blocks as f64);
+    Metrics::engine_reset_forkchoice_walk_duration_seconds("safe")
+        .record(safe_walk_started.elapsed());
+    safe_walk_result?;
 
     // Leave the finalized block as-is, and return the current forkchoice.
     Ok(current_fc)
@@ -184,6 +209,8 @@ mod tests {
     use base_common_network::Base;
     use base_common_rpc_types::Transaction as BaseTransaction;
     use base_protocol::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
+    #[cfg(feature = "metrics")]
+    use metrics_exporter_prometheus::PrometheusBuilder;
 
     use crate::{EngineClient, test_utils::test_engine_client_builder};
 
@@ -305,6 +332,13 @@ mod tests {
 
     #[tokio::test]
     async fn reset_rewinds_orphaned_l1_origin_and_preserves_finalized() {
+        #[cfg(feature = "metrics")]
+        let recorder = PrometheusBuilder::new().build_recorder();
+        #[cfg(feature = "metrics")]
+        let metrics_handle = recorder.handle();
+        #[cfg(feature = "metrics")]
+        let _metrics_guard = metrics::set_default_local_recorder(&recorder);
+
         let canonical_parent_origin = BlockNumHash {
             number: 10,
             hash: b256!("1010101010101010101010101010101010101010101010101010101010101010"),
@@ -369,6 +403,25 @@ mod tests {
         assert_eq!(forkchoice.safe.block_info.hash, parent_hash);
         assert_eq!(forkchoice.finalized.block_info.hash, parent_hash);
         assert_eq!(forkchoice.safe, forkchoice.finalized);
+
+        #[cfg(feature = "metrics")]
+        {
+            let rendered = metrics_handle.render();
+            assert!(rendered.contains(
+                "base_node_engine_reset_forkchoice_walked_blocks_sum{phase=\"unsafe\"} 1"
+            ));
+            assert!(
+                rendered.contains(
+                    "base_node_engine_reset_forkchoice_walked_blocks_sum{phase=\"safe\"} 0"
+                )
+            );
+            assert!(rendered.contains(
+                "base_node_engine_reset_forkchoice_walk_duration_seconds_count{phase=\"unsafe\"} 1"
+            ));
+            assert!(rendered.contains(
+                "base_node_engine_reset_forkchoice_walk_duration_seconds_count{phase=\"safe\"} 1"
+            ));
+        }
     }
 
     #[tokio::test]

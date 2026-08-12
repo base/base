@@ -18,8 +18,8 @@ pub use engine::{
     BuildRequest, EngineActor, EngineActorRequest, EngineClientError, EngineClientResult,
     EngineConfig, EngineDerivationClient, EngineError, EngineProcessor, EngineRequestReceiver,
     EngineRpcProcessor, EngineRpcRequest, GetPayloadRequest, InsertUnsafePayloadRequest,
-    QueuedEngineDerivationClient, ReconcileShadowRequest, ResetOrigin, ResetOutcome, ResetRequest,
-    ValidatorEngineRequestHandler,
+    QueuedEngineDerivationClient, ReconcileShadowRequest, ResetOrigin, ResetOutcome, ResetReason,
+    ResetRequest, ResetRequestOutcome, ValidatorEngineRequestHandler,
 };
 
 mod rpc;

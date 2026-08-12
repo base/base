@@ -42,13 +42,13 @@ pub use actors::{
     QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
     QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient,
     QueuedSequencerEngineClient, QueuedUnsafePayloadGossipClient, ReconcileShadowRequest,
-    RecoveryModeGuard, ResetOrigin, ResetOutcome, ResetRequest, RpcActor, RpcActorError,
-    RpcContext, ScheduledTicker, SealState, SealStepError, SealStepOutcome, SequencerActor,
-    SequencerActorError, SequencerAdminQuery, SequencerConfig, SequencerEngineClient,
-    SequencerEngineRequestCoordinator, SequencerEngineState, ShadowCycle, ShadowReconciliationGate,
-    ShadowReconciliationTask, ShadowSequencingState, UnsafePayloadGossipClient,
-    UnsafePayloadGossipClientError, UnsealedPayloadHandle, UpgradeSignalMetricsActor,
-    UpgradeSignalNodeConfig, ValidatorEngineRequestHandler,
+    RecoveryModeGuard, ResetOrigin, ResetOutcome, ResetReason, ResetRequest, ResetRequestOutcome,
+    RpcActor, RpcActorError, RpcContext, ScheduledTicker, SealState, SealStepError,
+    SealStepOutcome, SequencerActor, SequencerActorError, SequencerAdminQuery, SequencerConfig,
+    SequencerEngineClient, SequencerEngineRequestCoordinator, SequencerEngineState, ShadowCycle,
+    ShadowReconciliationGate, ShadowReconciliationTask, ShadowSequencingState,
+    UnsafePayloadGossipClient, UnsafePayloadGossipClientError, UnsealedPayloadHandle,
+    UpgradeSignalMetricsActor, UpgradeSignalNodeConfig, ValidatorEngineRequestHandler,
 };
 
 mod metrics;

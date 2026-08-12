@@ -11,6 +11,7 @@ use tokio::sync::watch;
 use tokio_util::task::AbortOnDropHandle;
 
 use super::{L1OriginSelectorProvider, PreparedL1Origin};
+use crate::Metrics;
 
 /// The speculative successor to `current` and any in-flight work to obtain it.
 #[derive(Debug, Default)]
@@ -306,6 +307,7 @@ impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
             return Ok(NextSlot::Idle);
         }
         if block.header.parent_hash != current_hash {
+            Metrics::sequencer_l1_origin_orphans_total().increment(1);
             return Err(L1OriginSelectorError::NextL1OriginOrphaned {
                 current: current_hash,
                 next: block.hash,
@@ -399,6 +401,8 @@ mod tests {
     use std::{collections::HashSet, sync::Mutex, time::Duration};
 
     use alloy_eips::NumHash;
+    #[cfg(feature = "metrics")]
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
     use rstest::rstest;
     use tokio::time::timeout;
 
@@ -713,6 +717,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_next_l1_origin_discards_result_when_chain_view_changes_during_fetch() {
+        #[cfg(feature = "metrics")]
+        let recorder = DebuggingRecorder::new();
+        #[cfg(feature = "metrics")]
+        let snapshotter = recorder.snapshotter();
+        #[cfg(feature = "metrics")]
+        let _metrics_guard = metrics::set_default_local_recorder(&recorder);
+
         let cfg = Arc::new(RollupConfig {
             block_time: 2,
             max_sequencer_drift: 600,
@@ -756,6 +767,11 @@ mod tests {
         let selected = selector.next_l1_origin(unsafe_head, false).await.unwrap();
         assert_eq!(selected, next_b);
         assert_eq!(selector.next(), Some(next_b));
+
+        #[cfg(feature = "metrics")]
+        assert!(snapshotter.snapshot().into_vec().iter().all(|(key, _, _, _)| {
+            key.key().name() != "base_node.sequencer_l1_origin_orphans_total"
+        }));
     }
 
     #[tokio::test]
@@ -1158,6 +1174,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_canonical_successor_with_wrong_parent_reports_orphan_and_clears_selection() {
+        #[cfg(feature = "metrics")]
+        let recorder = DebuggingRecorder::new();
+        #[cfg(feature = "metrics")]
+        let snapshotter = recorder.snapshotter();
+        #[cfg(feature = "metrics")]
+        let _metrics_guard = metrics::set_default_local_recorder(&recorder);
+
         let cfg = Arc::new(RollupConfig {
             block_time: 2,
             max_sequencer_drift: 600,
@@ -1192,6 +1215,11 @@ mod tests {
         ));
         assert!(selected_rx.borrow().is_none());
         assert!(selector.next().is_none());
+        #[cfg(feature = "metrics")]
+        assert!(snapshotter.snapshot().into_vec().iter().any(|(key, _, _, value)| {
+            key.key().name() == "base_node.sequencer_l1_origin_orphans_total"
+                && value == &DebugValue::Counter(1)
+        }));
     }
 
     #[tokio::test]

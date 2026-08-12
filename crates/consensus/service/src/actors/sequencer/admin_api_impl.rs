@@ -4,7 +4,10 @@ use base_consensus_rpc::SequencerAdminAPIError;
 use tokio::sync::oneshot;
 
 use super::{SequencerActor, build::UnsealedPayloadHandle};
-use crate::{Conductor, Metrics, OriginSelector, SequencerEngineClient, UnsafePayloadGossipClient};
+use crate::{
+    Conductor, Metrics, OriginSelector, ResetReason, SequencerEngineClient,
+    UnsafePayloadGossipClient,
+};
 
 /// The query types to the sequencer actor for the admin api.
 #[derive(Debug)]
@@ -258,9 +261,9 @@ where
     pub(super) async fn reset_derivation_pipeline(&self) -> Result<(), SequencerAdminAPIError> {
         info!(target: "sequencer", "Resetting derivation pipeline");
         let result = if self.is_shadow_sequencer() {
-            self.engine_client.reset_engine_forkchoice_coordinated().await
+            self.engine_client.reset_engine_forkchoice_coordinated(ResetReason::Admin).await
         } else {
-            self.engine_client.reset_engine_forkchoice().await
+            self.engine_client.reset_engine_forkchoice(ResetReason::Admin).await
         };
         result.map_err(|e| {
             error!(target: "sequencer", err=?e, "Failed to reset engine forkchoice");

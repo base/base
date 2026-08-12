@@ -1043,6 +1043,7 @@ mod tests {
             .send(EngineActorRequest::ResetRequest(Box::new(ResetRequest {
                 result_tx,
                 origin: crate::ResetOrigin::Derivation,
+                reason: crate::ResetReason::DerivationPipeline,
             })))
             .await
             .expect("failed to send reset request");
@@ -1276,6 +1277,7 @@ mod tests {
             .send(EngineActorRequest::ResetRequest(Box::new(ResetRequest {
                 result_tx,
                 origin: crate::ResetOrigin::Derivation,
+                reason: crate::ResetReason::DerivationPipeline,
             })))
             .await
             .expect("failed to send reset during private build");
@@ -1812,6 +1814,7 @@ mod tests {
             .send(EngineActorRequest::ResetRequest(Box::new(ResetRequest {
                 result_tx,
                 origin: crate::ResetOrigin::Derivation,
+                reason: crate::ResetReason::DerivationPipeline,
             })))
             .await
             .expect("failed to send reset request");

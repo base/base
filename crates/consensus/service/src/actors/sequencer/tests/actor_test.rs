@@ -22,9 +22,9 @@ use rstest::rstest;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
-    ConductorError, L1OriginSelectorError, NodeActor, ScheduledTicker, SealState, SealStepError,
-    SealStepOutcome, SequencerActorError, SequencerAdminQuery, UnsafePayloadGossipClientError,
-    UnsealedPayloadHandle,
+    ConductorError, L1OriginSelectorError, NodeActor, ResetReason, ScheduledTicker, SealState,
+    SealStepError, SealStepOutcome, SequencerActorError, SequencerAdminQuery,
+    UnsafePayloadGossipClientError, UnsealedPayloadHandle,
     actors::{
         MockConductor, MockOriginSelector, MockSequencerEngineClient,
         MockUnsafePayloadGossipClient,
@@ -154,7 +154,7 @@ async fn test_on_time_or_late_insert_starts_child_build_immediately(#[case] seco
     let (build_tx, mut build_rx) = mpsc::unbounded_channel();
 
     let mut client = MockSequencerEngineClient::new();
-    client.expect_reset_engine_forkchoice().times(1).return_once(|| Ok(()));
+    client.expect_reset_engine_forkchoice().times(1).return_once(|_| Ok(()));
     client.expect_get_unsafe_head().times(2).returning(move || Ok(initial_head));
     client.expect_start_build_block().times(2).returning(move |attributes| {
         build_tx.send(attributes.parent().block_info.number).unwrap();
@@ -221,7 +221,7 @@ async fn test_early_insert_defers_child_build_until_parent_timestamp() {
     let (insert_tx, mut insert_rx) = mpsc::unbounded_channel();
 
     let mut client = MockSequencerEngineClient::new();
-    client.expect_reset_engine_forkchoice().times(1).return_once(|| Ok(()));
+    client.expect_reset_engine_forkchoice().times(1).return_once(|_| Ok(()));
     client.expect_get_unsafe_head().times(2).returning(move || Ok(initial_head));
     client.expect_start_build_block().times(2).returning(move |attributes| {
         build_tx.send(attributes.parent().block_info.number).unwrap();
@@ -303,7 +303,7 @@ async fn test_stop_discards_queued_parent_and_restart_builds_immediately_on_fres
     let get_head_calls = Arc::new(AtomicUsize::new(0));
 
     let mut client = MockSequencerEngineClient::new();
-    client.expect_reset_engine_forkchoice().times(1).return_once(|| Ok(()));
+    client.expect_reset_engine_forkchoice().times(1).return_once(|_| Ok(()));
     client.expect_get_unsafe_head().times(5).returning({
         let get_head_calls = Arc::clone(&get_head_calls);
         move || {
@@ -399,7 +399,7 @@ async fn shadow_cycle_reconciles_after_configured_private_block_count() {
     let cancellation_token = tokio_util::sync::CancellationToken::new();
     let cancel_after_reconciliation = cancellation_token.clone();
     let mut client = MockSequencerEngineClient::new();
-    client.expect_reset_engine_forkchoice_coordinated().times(1).return_once(|| Ok(()));
+    client.expect_reset_engine_forkchoice_coordinated().times(1).return_once(|_| Ok(()));
     client.expect_get_unsafe_head().times(1).return_once(move || Ok(cycle_start));
     client.expect_insert_unsafe_payload().times(1).return_once(move |_| Ok(private_head));
     client
@@ -543,7 +543,7 @@ async fn test_build_retries_are_paced_after_immediate_budget(#[case] provider_er
     let (attempt_tx, mut attempt_rx) = mpsc::unbounded_channel();
 
     let mut client = MockSequencerEngineClient::new();
-    client.expect_reset_engine_forkchoice().times(1).return_once(|| Ok(()));
+    client.expect_reset_engine_forkchoice().times(1).return_once(|_| Ok(()));
     client
         .expect_get_unsafe_head()
         .times(expected_attempts)
@@ -599,7 +599,11 @@ async fn test_orphaned_l1_origin_resets_once_without_starting_block_build() {
     let unsafe_head = L2BlockInfo::default();
     let mut client = MockSequencerEngineClient::new();
     client.expect_get_unsafe_head().times(1).return_once(move || Ok(unsafe_head));
-    client.expect_reset_engine_forkchoice().times(1).return_once(|| Ok(()));
+    client
+        .expect_reset_engine_forkchoice()
+        .with(mockall::predicate::eq(ResetReason::L1OriginOrphaned))
+        .times(1)
+        .return_once(|_| Ok(()));
     client.expect_start_build_block().times(0);
 
     let mut origin_selector = MockOriginSelector::new();

@@ -21,7 +21,8 @@ use tokio::{
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 
 use crate::{
-    CancellableContext, Metrics, NodeActor, SequencerAdminQuery, UnsafePayloadGossipClient,
+    CancellableContext, Metrics, NodeActor, ResetReason, SequencerAdminQuery,
+    UnsafePayloadGossipClient,
     actors::{
         SequencerEngineClient,
         engine::{EngineClientError, EngineClientResult},
@@ -225,9 +226,13 @@ where
                 }
                 result = async {
                     if shadow_cycle_coordinated {
-                        engine_client.reset_engine_forkchoice_coordinated().await
+                        engine_client
+                            .reset_engine_forkchoice_coordinated(ResetReason::ShadowCycle)
+                            .await
                     } else {
-                        engine_client.reset_engine_forkchoice().await
+                        engine_client
+                            .reset_engine_forkchoice(ResetReason::SequencerStartup)
+                            .await
                     }
                 } => match result {
                     Ok(()) => return Ok(()),
