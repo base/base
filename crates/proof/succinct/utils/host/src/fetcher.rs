@@ -812,6 +812,8 @@ impl OPSuccinctDataFetcher {
             l1_head_number,
             // We don't need to set the proposer for the range proof zk program
             proposer: Address::ZERO,
+            // ZK range proofs are not enclave-signed, so there is no image to pin.
+            image_hash: B256::ZERO,
             schedule_l2_block_number,
         };
 

@@ -164,6 +164,14 @@ struct WorkerArgs {
     #[arg(long, env = "PROVER_SERVICE_ENDPOINT")]
     prover_service_endpoint: String,
 
+    /// Proof protocol versions claimed by this worker deployment.
+    ///
+    /// Repeatable or comma-separated. A fleet serves every version its enclaves' registered image
+    /// satisfies, which is usually more than one: the challenger fingerprint mixes TEE and ZK
+    /// commitments, so a ZK-only program rotation mints a new version for an unchanged enclave.
+    #[arg(long, env = "PROVER_PROTOCOL_VERSION", value_delimiter = ',', num_args = 1..)]
+    protocol_version: Vec<u32>,
+
     /// Prover-service JSON-RPC request timeout in seconds.
     #[arg(long, env = "PROVER_SERVICE_REQUEST_TIMEOUT_SECS", default_value_t = 60)]
     prover_service_request_timeout_secs: u64,
@@ -360,6 +368,7 @@ async fn run_worker(
     );
     let worker_id = format!("nitro-host-{}", Uuid::new_v4());
     let host = NitroHost::new(client, Arc::new(pool), worker_id.clone(), heartbeat)
+        .with_protocol_versions(worker.protocol_version.clone())
         .with_poll_interval(Duration::from_millis(worker.job_discovery_poll_interval_ms))
         .with_lock_duration_seconds(worker.job_discovery_lock_duration_seconds)
         .with_max_concurrent_jobs(worker.job_discovery_max_concurrent_jobs);
@@ -381,6 +390,7 @@ async fn run_worker(
         WorkerTransportMode::Vsock => {
             info!(
                 worker_id = %worker_id,
+                protocol_versions = ?worker.protocol_version,
                 prover_service_endpoint = %worker.prover_service_endpoint,
                 enclave_count,
                 "starting nitro prover host worker"
@@ -390,6 +400,7 @@ async fn run_worker(
         WorkerTransportMode::Local => {
             info!(
                 worker_id = %worker_id,
+                protocol_versions = ?worker.protocol_version,
                 prover_service_endpoint = %worker.prover_service_endpoint,
                 enclave_count,
                 "starting nitro prover host worker (local mode)"

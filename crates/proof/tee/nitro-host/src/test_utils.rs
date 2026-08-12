@@ -8,7 +8,7 @@ use std::{
     },
 };
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use base_proof_contracts::TEEProverRegistryClient;
 use jsonrpsee::core::async_trait;
 
@@ -23,6 +23,8 @@ pub struct MockRegistry {
     pub call_count: Arc<AtomicUsize>,
     /// When `true`, `is_valid_signer` returns a [`ContractError::Validation`] error.
     pub should_fail: Arc<AtomicBool>,
+    /// Image hash reported by `signer_image_hash` for every signer.
+    pub image_hash: Arc<Mutex<B256>>,
 }
 
 impl MockRegistry {
@@ -32,7 +34,14 @@ impl MockRegistry {
             valid: Arc::new(AtomicBool::new(valid)),
             call_count: Arc::new(AtomicUsize::new(0)),
             should_fail: Arc::new(AtomicBool::new(false)),
+            image_hash: Arc::new(Mutex::new(B256::ZERO)),
         }
+    }
+
+    /// Sets the image hash reported for every signer.
+    pub fn with_image_hash(self, image_hash: B256) -> Self {
+        *self.image_hash.lock().expect("image_hash lock poisoned") = image_hash;
+        self
     }
 }
 
@@ -51,9 +60,16 @@ impl TEEProverRegistryClient for MockRegistry {
 
     async fn is_registered_signer(
         &self,
-        _signer: Address,
+        signer: Address,
     ) -> Result<bool, base_proof_contracts::ContractError> {
-        unimplemented!()
+        self.is_valid_signer(signer).await
+    }
+
+    async fn signer_image_hash(
+        &self,
+        _signer: Address,
+    ) -> Result<B256, base_proof_contracts::ContractError> {
+        Ok(*self.image_hash.lock().expect("image_hash lock poisoned"))
     }
 
     async fn get_registered_signers(
@@ -107,9 +123,16 @@ impl TEEProverRegistryClient for AddressBasedMockRegistry {
 
     async fn is_registered_signer(
         &self,
-        _signer: Address,
+        signer: Address,
     ) -> Result<bool, base_proof_contracts::ContractError> {
-        unimplemented!()
+        self.is_valid_signer(signer).await
+    }
+
+    async fn signer_image_hash(
+        &self,
+        _signer: Address,
+    ) -> Result<B256, base_proof_contracts::ContractError> {
+        Ok(B256::ZERO)
     }
 
     async fn get_registered_signers(

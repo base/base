@@ -2,6 +2,7 @@
 
 use std::{fmt, sync::Arc};
 
+use alloy_primitives::B256;
 use base_proof_host::{ProverConfig, ProverError, ProverService};
 use base_proof_primitives::{ProofRequest, ProofResult};
 use thiserror::Error;
@@ -105,7 +106,7 @@ impl NitroEnclavePool {
     /// Proves one request using the busy-enclave policy.
     pub async fn prove(&self, request: ProofRequest) -> Result<ProofResult, NitroEnclavePoolError> {
         let l2_block = request.claimed_l2_block_number;
-        let (enclave, _permit) = self.acquire_enclave(l2_block).await?;
+        let (enclave, _permit) = self.acquire_enclave(l2_block, request.image_hash).await?;
 
         enclave.service.prove_block(request).await.map_err(NitroEnclavePoolError::Prover)
     }
@@ -113,10 +114,11 @@ impl NitroEnclavePool {
     async fn acquire_enclave(
         &self,
         l2_block: u64,
+        image_hash: B256,
     ) -> Result<(&EnclaveService, OwnedSemaphorePermit), NitroEnclavePoolError> {
         let candidate_indices: Vec<usize> = match &self.checker {
             Some(checker) => checker
-                .select_all_valid_enclaves()
+                .select_enclaves_for_image(image_hash)
                 .await
                 .map_err(NitroEnclavePoolError::Registration)?
                 .into_iter()
@@ -256,7 +258,7 @@ mod tests {
     async fn prove_permit_is_released_when_handle_dropped() {
         let pool = test_pool();
 
-        let (_enclave, permit) = pool.acquire_enclave(0).await.unwrap();
+        let (_enclave, permit) = pool.acquire_enclave(0, B256::ZERO).await.unwrap();
         assert_eq!(pool.enclaves[0].prove_permit.available_permits(), 0);
 
         drop(permit);
@@ -311,7 +313,8 @@ mod tests {
 
         let _held = Arc::clone(&pool.enclaves[0].prove_permit).try_acquire_owned().unwrap();
 
-        let (enclave, _permit) = pool.acquire_enclave(0).await.expect("fall-through to enclave[1]");
+        let (enclave, _permit) =
+            pool.acquire_enclave(0, B256::ZERO).await.expect("fall-through to enclave[1]");
         assert!(
             Arc::ptr_eq(&enclave.transport, &pool.enclaves[1].transport),
             "expected enclave[1] selected via fall-through"
@@ -332,7 +335,8 @@ mod tests {
 
         let _held = Arc::clone(&pool.enclaves[0].prove_permit).try_acquire_owned().unwrap();
 
-        let (enclave, _permit) = pool.acquire_enclave(0).await.expect("fall-through to enclave[1]");
+        let (enclave, _permit) =
+            pool.acquire_enclave(0, B256::ZERO).await.expect("fall-through to enclave[1]");
         assert!(
             Arc::ptr_eq(&enclave.transport, &pool.enclaves[1].transport),
             "expected enclave[1] selected via fall-through without registration checker"

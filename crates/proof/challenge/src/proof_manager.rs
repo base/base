@@ -300,9 +300,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
             proposer,
             intermediate_block_interval: candidate.intermediate_block_interval,
             l1_head_number,
-            // `image_hash` is deliberately not set here. `ProofRequest` has no such field on main
-            // (#4321 removed it), and restoring it belongs with the Nitro image-selection change
-            // that reads it. `CandidateGame.tee_image_hash` already carries the value.
+            image_hash: candidate.tee_image_hash,
             schedule_l2_block_number: (candidate.schedule_kind == ProofScheduleKind::Activated)
                 .then_some(candidate.info.l2_block_number),
         })

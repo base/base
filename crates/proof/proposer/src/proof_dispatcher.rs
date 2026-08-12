@@ -111,6 +111,10 @@ impl ProofDispatcher {
             proposer: self.config.proposer_address,
             intermediate_block_interval: self.config.intermediate_block_interval,
             l1_head_number: l1_header.number,
+            // Proposals are always created at the current image, so they pin none: any registered
+            // enclave can serve them. Only the challenger, which disputes games created under
+            // possibly-retired images, names one.
+            image_hash: B256::ZERO,
             schedule_l2_block_number: None,
         })
     }

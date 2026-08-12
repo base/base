@@ -18,7 +18,7 @@
 
 use std::{sync::Arc, time::Duration};
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use base_proof_contracts::{TEEProverRegistryClient, TEEProverRegistryContractClient};
 use thiserror::Error;
 use tokio::sync::OnceCell;
@@ -60,6 +60,14 @@ pub enum RegistrationError {
     #[error("no valid signer found among: {signers:?}")]
     NoValidSigner {
         /// The signer addresses that were checked.
+        signers: Vec<Address>,
+    },
+    /// No registered enclave signer matches the proof request's image hash.
+    #[error("no registered signer for image {image_hash} found among: {signers:?}")]
+    NoMatchingImage {
+        /// Image hash required by the proof request.
+        image_hash: B256,
+        /// Enclave signer addresses that were inspected.
         signers: Vec<Address>,
     },
 }
@@ -145,6 +153,89 @@ impl RegistrationChecker {
         }
     }
 
+    /// Returns whether `signer` is registered, independent of the current factory image.
+    pub async fn is_registered_signer(&self, signer: Address) -> Result<bool, RegistrationError> {
+        match tokio::time::timeout(CHECK_TIMEOUT, self.registry.is_registered_signer(signer)).await
+        {
+            Ok(Ok(registered)) => Ok(registered),
+            Ok(Err(e)) => Err(RegistrationError::Rpc { signer, reason: e.to_string() }),
+            Err(_) => Err(RegistrationError::Rpc { signer, reason: "request timed out".into() }),
+        }
+    }
+
+    /// Returns the Nitro image hash recorded for `signer`.
+    pub async fn signer_image_hash(&self, signer: Address) -> Result<B256, RegistrationError> {
+        match tokio::time::timeout(CHECK_TIMEOUT, self.registry.signer_image_hash(signer)).await {
+            Ok(Ok(image_hash)) => Ok(image_hash),
+            Ok(Err(e)) => Err(RegistrationError::Rpc { signer, reason: e.to_string() }),
+            Err(_) => Err(RegistrationError::Rpc { signer, reason: "request timed out".into() }),
+        }
+    }
+
+    /// Returns whether at least one configured enclave signer is registered.
+    pub async fn has_registered_enclave(&self) -> Result<bool, RegistrationError> {
+        for transport in &self.transports {
+            let signer = Self::signer_address(transport).await?;
+            if self.is_registered_signer(signer).await? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Returns every registered enclave whose attested image matches `image_hash`.
+    ///
+    /// `B256::ZERO` means the request states no expectation and any registered enclave will do.
+    /// Proposal proofs take that path: the proposer creates games at the current image, so it has
+    /// nothing historical to pin. Only the challenger, which disputes games created under images
+    /// that may since have been retired, names one.
+    pub async fn select_enclaves_for_image(
+        &self,
+        image_hash: B256,
+    ) -> Result<Vec<ValidSigner>, RegistrationError> {
+        let mut valid = Vec::new();
+        let mut discovered = Vec::new();
+        let mut first_rpc_error = None;
+
+        for (index, transport) in self.transports.iter().enumerate() {
+            let signer = match Self::signer_address(transport).await {
+                Ok(signer) => signer,
+                Err(error) => {
+                    warn!(error = %error, index, "skipping transport: key fetch failed");
+                    continue;
+                }
+            };
+            discovered.push(signer);
+
+            let matches = async {
+                Ok::<_, RegistrationError>(
+                    self.is_registered_signer(signer).await?
+                        && (image_hash.is_zero()
+                            || self.signer_image_hash(signer).await? == image_hash),
+                )
+            }
+            .await;
+            match matches {
+                Ok(true) => valid.push(ValidSigner { index, signer }),
+                Ok(false) => {
+                    warn!(signer = %signer, index, %image_hash, "signer does not match proof image");
+                }
+                Err(error) => {
+                    warn!(error = %error, signer = %signer, index, "signer image lookup failed");
+                    first_rpc_error.get_or_insert(error);
+                }
+            }
+        }
+
+        if !valid.is_empty() {
+            Ok(valid)
+        } else if let Some(error) = first_rpc_error {
+            Err(error)
+        } else {
+            Err(RegistrationError::NoMatchingImage { image_hash, signers: discovered })
+        }
+    }
+
     async fn fetch_validity(&self) -> Result<bool, RegistrationError> {
         let mut first_rpc_error = None;
 
@@ -157,10 +248,10 @@ impl RegistrationChecker {
                 }
             };
 
-            match self.is_valid_signer(signer).await {
+            match self.is_registered_signer(signer).await {
                 Ok(true) => return Ok(true),
                 Ok(false) => {
-                    warn!(signer = %signer, index, "signer not valid in TEEProverRegistry");
+                    warn!(signer = %signer, index, "signer not registered in TEEProverRegistry");
                 }
                 Err(e) => {
                     first_rpc_error.get_or_insert(e);
@@ -315,6 +406,31 @@ mod tests {
     async fn health_returns_false_when_not_valid() {
         let checker = test_checker_with_mock(MockRegistry::new(false));
         assert!(!checker.check_health().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn image_selection_matches_registered_signer_image() {
+        let image = B256::repeat_byte(7);
+        let checker = test_checker_with_mock(MockRegistry::new(true).with_image_hash(image));
+
+        assert_eq!(checker.select_enclaves_for_image(image).await.unwrap().len(), 1);
+        assert!(
+            matches!(
+                checker.select_enclaves_for_image(B256::repeat_byte(1)).await.unwrap_err(),
+                RegistrationError::NoMatchingImage { .. }
+            ),
+            "an enclave attested under a different image must not serve the request"
+        );
+    }
+
+    /// A zero image hash states no expectation, so any registered enclave serves it. This is the
+    /// proposal-proof path, which pins no historical image.
+    #[tokio::test]
+    async fn image_selection_treats_zero_as_unconstrained() {
+        let checker =
+            test_checker_with_mock(MockRegistry::new(true).with_image_hash(B256::repeat_byte(7)));
+
+        assert_eq!(checker.select_enclaves_for_image(B256::ZERO).await.unwrap().len(), 1);
     }
 
     #[tokio::test]

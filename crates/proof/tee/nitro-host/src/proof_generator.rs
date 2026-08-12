@@ -276,13 +276,14 @@ where
             return true;
         };
 
-        match checker.select_all_valid_enclaves().await {
-            Ok(valid) => {
-                debug!(
-                    valid_signer_count = valid.len(),
-                    "registration gate passed for nitro job claim"
-                );
+        match checker.has_registered_enclave().await {
+            Ok(true) => {
+                debug!("registration gate passed for nitro job claim");
                 true
+            }
+            Ok(false) => {
+                warn!("no registered enclave signer; skipping nitro job claim");
+                false
             }
             Err(error) => {
                 warn!(

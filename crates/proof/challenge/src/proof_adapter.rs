@@ -242,6 +242,7 @@ mod tests {
             proposer: Address::repeat_byte(0x04),
             intermediate_block_interval: 300,
             l1_head_number: 1200,
+            image_hash: B256::repeat_byte(0x06),
             schedule_l2_block_number: None,
         };
         let session_id = ChallengerProofAdapter::tee_session_id(game_address, invalid_index);
@@ -272,6 +273,7 @@ mod tests {
             proposer: Address::repeat_byte(0x05),
             intermediate_block_interval: 300,
             l1_head_number: 1200,
+            image_hash: B256::repeat_byte(0x06),
             schedule_l2_block_number: Some(600),
         };
 

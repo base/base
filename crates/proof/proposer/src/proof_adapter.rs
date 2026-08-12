@@ -97,6 +97,7 @@ mod tests {
             proposer: Address::repeat_byte(0x04),
             intermediate_block_interval: 300,
             l1_head_number: 1200,
+            image_hash: B256::ZERO,
             schedule_l2_block_number: None,
         }
     }

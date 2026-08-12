@@ -661,6 +661,7 @@ mod tests {
                 proposer: address!("0000000000000000000000000000000000000006"),
                 intermediate_block_interval: 7,
                 l1_head_number: 8,
+                image_hash: B256::repeat_byte(9),
                 schedule_l2_block_number: None,
             },
             tee_kind: TeeKind::AwsNitro,
@@ -680,6 +681,7 @@ mod tests {
                     "proposer": "0x0000000000000000000000000000000000000006",
                     "intermediate_block_interval": 7,
                     "l1_head_number": 8,
+                    "image_hash": format!("{:#x}", B256::repeat_byte(9)),
                 },
                 "tee_kind": "aws_nitro",
             })
@@ -822,6 +824,7 @@ mod tests {
             proposer: address!("0000000000000000000000000000000000000006"),
             intermediate_block_interval: 7,
             l1_head_number: 8,
+            image_hash: B256::repeat_byte(9),
             schedule_l2_block_number: None,
         };
 
@@ -838,6 +841,7 @@ mod tests {
                 "proposer": "0x0000000000000000000000000000000000000006",
                 "intermediate_block_interval": 7,
                 "l1_head_number": 8,
+                "image_hash": format!("{:#x}", B256::repeat_byte(9)),
             })
         );
     }
