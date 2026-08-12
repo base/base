@@ -23,7 +23,7 @@ pub enum BasePayloadBuilderError {
     #[error("blob transaction included in sequencer block")]
     BlobTransactionRejected,
     /// Thrown when the `BaseTime` metadata deposit at `tx[1]` of a
-    /// Zenith-active payload is missing or invalid.
+    /// Denim-active payload is missing or invalid.
     #[error("invalid BaseTime metadata deposit: {0}")]
     BaseTimeMetadata(#[from] BaseTimeMetadataError),
 }

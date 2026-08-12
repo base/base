@@ -1,11 +1,11 @@
-//! Wall-clock timing for one-shot Zenith sequencer builds.
+//! Wall-clock timing for one-shot Denim sequencer builds.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base_protocol::BaseTimeUpdateTx;
 
 /// Absolute wall-clock deadline (unix milliseconds) for pulling pool
-/// transactions into a Zenith-active block.
+/// transactions into a Denim-active block.
 ///
 /// The slot for a block with millisecond timestamp `T_N` starts at
 /// `T_{N-1} = T_N - BLOCK_INTERVAL_MILLIS`; the CL calls `engine_getPayload`

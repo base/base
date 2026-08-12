@@ -426,12 +426,12 @@ impl<Txs> Builder<'_, Txs> {
             block_access_list.map(|bal| alloy_rlp::encode(bal).into()),
         );
 
-        if no_tx_pool || ctx.is_zenith_active() {
+        if no_tx_pool || ctx.is_denim_active() {
             // if `no_tx_pool` is set only transactions from the payload attributes will be included
             // in the payload. In other words, the payload is deterministic and we can
             // freeze it once we've successfully built it.
             //
-            // Zenith-active builds freeze by policy: exactly one build iteration
+            // Denim-active builds freeze by policy: exactly one build iteration
             // per 200ms slot, truncated by the wall-clock pool-tx cutoff, instead
             // of reth's iterative-improvement loop. Frozen only means "stop
             // rebuilding"; resolve returns this payload immediately.
@@ -618,21 +618,21 @@ where
         &self.config.attributes
     }
 
-    /// Returns `true` if Zenith is active at this payload's timestamp.
-    pub fn is_zenith_active(&self) -> bool {
-        self.chain_spec.is_zenith_active_at_timestamp(self.attributes().timestamp())
+    /// Returns `true` if Denim is active at this payload's timestamp.
+    pub fn is_denim_active(&self) -> bool {
+        self.chain_spec.is_denim_active_at_timestamp(self.attributes().timestamp())
     }
 
     /// Derives the wall-clock pool-transaction cutoff for this build.
     ///
-    /// Returns `None` when Zenith is not active at the payload timestamp:
-    /// pre-Zenith builds iterate under reth's improvement loop and have no
-    /// cutoff. Zenith-active builds derive `slot_start + seal_offset` from the
+    /// Returns `None` when Denim is not active at the payload timestamp:
+    /// pre-Denim builds iterate under reth's improvement loop and have no
+    /// cutoff. Denim-active builds derive `slot_start + seal_offset` from the
     /// millisecond timestamp committed in the `BaseTime` metadata deposit at
     /// `tx[1]` of the payload attributes; a missing or invalid deposit is a
     /// build error because engine validation would reject the block anyway.
     pub fn tx_cutoff(&self) -> Result<Option<TxCutoff>, PayloadBuilderError> {
-        if !self.is_zenith_active() {
+        if !self.is_denim_active() {
             return Ok(None);
         }
 
@@ -782,7 +782,7 @@ where
         let tx_da_limit = self.builder_config.da_config.max_da_tx_size();
         let base_fee = builder.evm_mut().block().basefee();
 
-        // Wall-clock pool-transaction cutoff for one-shot Zenith builds. A
+        // Wall-clock pool-transaction cutoff for one-shot Denim builds. A
         // build that starts past its cutoff (its window was consumed by the
         // previous block's overrun) ships an empty runover block: attribute
         // and sequencer transactions only.
@@ -962,10 +962,10 @@ mod tests {
         assert!(info.is_tx_over_limits(0, block_gas_limit, None, None, 21_000 + 2_100, None));
     }
 
-    const ZENITH_TIMESTAMP: u64 = 1_800_000_001;
+    const DENIM_TIMESTAMP: u64 = 1_800_000_001;
     const PARENT_NUMBER: u64 = 8;
 
-    /// A ctx over base mainnet with Zenith activating at [`ZENITH_TIMESTAMP`],
+    /// A ctx over base mainnet with Denim activating at [`DENIM_TIMESTAMP`],
     /// building block [`PARENT_NUMBER`]` + 1` with the given payload timestamp
     /// and sequencer transactions.
     fn ctx(
@@ -974,7 +974,7 @@ mod tests {
     ) -> BasePayloadBuilderCtx<BaseEvmConfig, BaseChainSpec> {
         let chain_spec = Arc::new(
             BaseChainSpecBuilder::base_mainnet()
-                .with_fork(BaseUpgrade::Zenith, ForkCondition::Timestamp(ZENITH_TIMESTAMP))
+                .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(DENIM_TIMESTAMP))
                 .build(),
         );
         let attributes = BasePayloadBuilderAttributes::<BaseTxEnvelope> {
@@ -1010,34 +1010,34 @@ mod tests {
     }
 
     #[test]
-    fn pre_zenith_has_no_tx_cutoff() {
-        let ctx = ctx(ZENITH_TIMESTAMP - 2, vec![]);
-        assert!(!ctx.is_zenith_active());
-        assert_eq!(ctx.tx_cutoff().expect("pre-Zenith cutoff is not an error"), None);
+    fn pre_denim_has_no_tx_cutoff() {
+        let ctx = ctx(DENIM_TIMESTAMP - 2, vec![]);
+        assert!(!ctx.is_denim_active());
+        assert_eq!(ctx.tx_cutoff().expect("pre-Denim cutoff is not an error"), None);
     }
 
     #[test]
-    fn zenith_tx_cutoff_is_slot_start_plus_seal_offset() {
-        let ctx = ctx(ZENITH_TIMESTAMP, sequencer_txs_with_base_time(PARENT_NUMBER + 1, 200));
-        assert!(ctx.is_zenith_active());
+    fn denim_tx_cutoff_is_slot_start_plus_seal_offset() {
+        let ctx = ctx(DENIM_TIMESTAMP, sequencer_txs_with_base_time(PARENT_NUMBER + 1, 200));
+        assert!(ctx.is_denim_active());
 
         // Block timestamp 1_800_000_001.200s; slot starts 200ms earlier at
         // ..._001_000ms; default seal offset 150ms puts the cutoff at ..._001_150ms.
-        let cutoff = ctx.tx_cutoff().expect("valid metadata").expect("Zenith active");
-        assert_eq!(cutoff.unix_millis(), ZENITH_TIMESTAMP * 1_000 + 200 - 200 + 150);
+        let cutoff = ctx.tx_cutoff().expect("valid metadata").expect("Denim active");
+        assert_eq!(cutoff.unix_millis(), DENIM_TIMESTAMP * 1_000 + 200 - 200 + 150);
     }
 
     #[test]
-    fn zenith_missing_base_time_metadata_is_a_build_error() {
-        let ctx = ctx(ZENITH_TIMESTAMP, vec![]);
+    fn denim_missing_base_time_metadata_is_a_build_error() {
+        let ctx = ctx(DENIM_TIMESTAMP, vec![]);
         let err = ctx.tx_cutoff().expect_err("missing metadata must fail the build");
         assert!(err.to_string().contains("invalid BaseTime metadata"), "unexpected error: {err}");
     }
 
     #[test]
-    fn zenith_invalid_base_time_metadata_is_a_build_error() {
+    fn denim_invalid_base_time_metadata_is_a_build_error() {
         // Deposit committed for the wrong block number fails source-hash validation.
-        let ctx = ctx(ZENITH_TIMESTAMP, sequencer_txs_with_base_time(PARENT_NUMBER + 2, 200));
+        let ctx = ctx(DENIM_TIMESTAMP, sequencer_txs_with_base_time(PARENT_NUMBER + 2, 200));
         let err = ctx.tx_cutoff().expect_err("invalid metadata must fail the build");
         assert!(err.to_string().contains("invalid BaseTime metadata"), "unexpected error: {err}");
     }

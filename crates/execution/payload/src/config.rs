@@ -23,7 +23,7 @@ pub struct BaseBuilderConfig {
     /// captured authorization manifest before execution.
     pub manifest_precheck_enabled: bool,
     /// Offset into the 200ms slot at which the sequencer CL calls
-    /// `engine_getPayload`. Zenith-active builds stop pulling pool
+    /// `engine_getPayload`. Denim-active builds stop pulling pool
     /// transactions at `slot_start + seal_offset` (wall clock).
     ///
     /// Defaults to [`RollupConfig::DEFAULT_SEAL_OFFSET_MILLIS`], the constant

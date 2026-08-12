@@ -1,4 +1,4 @@
-//! Composition root for the one-shot (Zenith) sequencer payload build path.
+//! Composition root for the one-shot (Denim) sequencer payload build path.
 
 use std::time::Duration;
 
@@ -40,7 +40,7 @@ impl Default for BasePayloadServiceConfig {
 /// and instantiates reth's [`BasicPayloadJobGenerator`] around it. It
 /// deliberately does not reimplement any job lifecycle: the generator, job,
 /// deadline, and resolve semantics stay upstream-owned. The rebuild interval
-/// is irrelevant because Zenith-active builds freeze after one iteration.
+/// is irrelevant because Denim-active builds freeze after one iteration.
 #[derive(Debug, Clone)]
 pub struct BasePayloadServiceBuilder {
     /// Configuration for the sequencer build path.
