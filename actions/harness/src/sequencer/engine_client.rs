@@ -4,7 +4,7 @@ use alloy_rpc_types_engine::PayloadId;
 use async_trait::async_trait;
 use base_common_consensus::BaseBlock;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
-use base_consensus_node::SequencerEngineClient;
+use base_consensus_node::{ResetReason, SequencerEngineClient};
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 use tokio::sync::mpsc;
 
@@ -40,8 +40,11 @@ impl ActionSequencerEngineClient {
 
 #[async_trait]
 impl SequencerEngineClient for ActionSequencerEngineClient {
-    async fn reset_engine_forkchoice(&self) -> Result<(), base_consensus_node::EngineClientError> {
-        self.inner.reset_engine_forkchoice().await
+    async fn reset_engine_forkchoice(
+        &self,
+        reason: ResetReason,
+    ) -> Result<(), base_consensus_node::EngineClientError> {
+        self.inner.reset_engine_forkchoice(reason).await
     }
 
     async fn start_build_block(
