@@ -38,7 +38,7 @@ impl ShadowIndexerExEx {
                         block_hash = ?new.tip().hash(),
                         "Committed chain notification received"
                     );
-                    self.handle_chain_committed(new).await?
+                    self.emit_canonical_blocks(new).await?
                 }
                 ExExNotification::ChainReorged { old, new } => {
                     info!(
@@ -86,30 +86,33 @@ impl ShadowIndexerExEx {
         Ok(())
     }
 
-    fn build_row(
+    fn build_row<N>(
         &self,
-        header: &impl AlloyBlockHeader,
-        block_hash: String,
-        transactions: Vec<ShadowTransaction>,
+        block: &RecoveredBlock<N::Block>,
+        receipts: &[N::Receipt],
         reorged_out: bool,
         canonical_hash: Option<String>,
-    ) -> Result<ShadowBlockRow> {
+    ) -> Result<ShadowBlockRow>
+    where
+        N: NodePrimitives,
+        N::SignedTx: SignedTransaction,
+        N::Receipt: TxReceipt,
+    {
+        let header = block.header();
+        let transactions = Self::build_transactions::<N>(block, receipts)?;
+
         let number = i64::try_from(header.number()).map_err(|error| {
             eyre::eyre!("block number overflow for shadow indexer row: {error}")
         })?;
-        let timestamp = i64::try_from(header.timestamp())
-            .map_err(|error| eyre::eyre!("timestamp overflow for shadow indexer row: {error}"))?;
-        let tx_count = i32::try_from(transactions.len()).map_err(|error| {
+        let tx_count = u32::try_from(transactions.len()).map_err(|error| {
             eyre::eyre!("transaction count overflow for shadow indexer row: {error}")
         })?;
-        let gas_used = i64::try_from(header.gas_used())
-            .map_err(|error| eyre::eyre!("gas used overflow for shadow indexer row: {error}"))?;
 
         let payload = ShadowBlockPayload {
             parent_hash: header.parent_hash().to_string(),
-            timestamp,
+            timestamp: header.timestamp(),
             tx_count,
-            gas_used,
+            gas_used: header.gas_used(),
             state_root: header.state_root().to_string(),
             // The writer injects the configured builder version before persistence.
             builder_version: String::new(),
@@ -118,7 +121,7 @@ impl ShadowIndexerExEx {
 
         Ok(ShadowBlockRow {
             number,
-            hash: block_hash,
+            hash: block.hash().to_string(),
             reorged_out,
             canonical_hash,
             created_at: Utc::now(),
@@ -137,10 +140,6 @@ impl ShadowIndexerExEx {
     {
         let header = block.header();
         let base_fee = header.base_fee_per_gas();
-        let base_fee_per_gas = base_fee
-            .map(i64::try_from)
-            .transpose()
-            .map_err(|error| eyre::eyre!("base fee overflow for shadow indexer tx row: {error}"))?;
 
         let transactions = block.body().transactions();
         let senders = block.senders();
@@ -149,14 +148,11 @@ impl ShadowIndexerExEx {
 
         for (index, (transaction, receipt)) in transactions.iter().zip(receipts.iter()).enumerate()
         {
-            let tx_index = i32::try_from(index).map_err(|error| {
+            let tx_index = u32::try_from(index).map_err(|error| {
                 eyre::eyre!("transaction index overflow for shadow indexer tx row: {error}")
             })?;
             let cumulative_gas = receipt.cumulative_gas_used();
-            let gas_used = i64::try_from(cumulative_gas.saturating_sub(previous_cumulative_gas))
-                .map_err(|error| {
-                    eyre::eyre!("gas used overflow for shadow indexer tx row: {error}")
-                })?;
+            let gas_used = cumulative_gas.saturating_sub(previous_cumulative_gas);
             previous_cumulative_gas = cumulative_gas;
 
             let effective_gas_price = transaction.effective_gas_price(base_fee);
@@ -170,10 +166,10 @@ impl ShadowIndexerExEx {
                 tx_index,
                 tx_hash: transaction.tx_hash().to_string(),
                 sender: senders.get(index).map(|sender| sender.to_string()),
-                tx_type: i16::from(transaction.ty()),
+                tx_type: transaction.ty(),
                 effective_priority_fee_per_gas: effective_priority_fee_per_gas
                     .map(|fee| fee.to_string()),
-                base_fee_per_gas,
+                base_fee_per_gas: base_fee,
                 gas_used,
             });
         }
@@ -191,21 +187,14 @@ impl ShadowIndexerExEx {
             .or(max_priority_fee_per_gas)
     }
 
-    async fn handle_chain_committed<N>(&self, chain: &Chain<N>) -> Result<bool>
+    async fn emit_canonical_blocks<N>(&self, chain: &Chain<N>) -> Result<bool>
     where
         N: NodePrimitives,
         N::SignedTx: SignedTransaction,
         N::Receipt: TxReceipt,
     {
         for (block, receipts) in chain.blocks_and_receipts() {
-            let transactions = Self::build_transactions::<N>(block, receipts)?;
-            let row = self.build_row(
-                block.header(),
-                block.hash().to_string(),
-                transactions,
-                false,
-                None,
-            )?;
+            let row = self.build_row::<N>(block, receipts, false, None)?;
 
             if !self.send_row(row).await? {
                 return Ok(false);
@@ -239,36 +228,14 @@ impl ShadowIndexerExEx {
                 );
             }
 
-            let transactions = Self::build_transactions::<N>(block, receipts)?;
-            let row = self.build_row(
-                header,
-                block.hash().to_string(),
-                transactions,
-                true,
-                canonical_hash,
-            )?;
+            let row = self.build_row::<N>(block, receipts, true, canonical_hash)?;
 
             if !self.send_row(row).await? {
                 return Ok(false);
             }
         }
 
-        for (block, receipts) in new.blocks_and_receipts() {
-            let transactions = Self::build_transactions::<N>(block, receipts)?;
-            let row = self.build_row(
-                block.header(),
-                block.hash().to_string(),
-                transactions,
-                false,
-                None,
-            )?;
-
-            if !self.send_row(row).await? {
-                return Ok(false);
-            }
-        }
-
-        Ok(true)
+        self.emit_canonical_blocks(new).await
     }
 
     async fn send_row(&self, row: ShadowBlockRow) -> Result<bool> {
@@ -284,14 +251,6 @@ impl ShadowIndexerExEx {
             }
         }
     }
-}
-
-/// Runs the shadow indexer `ExEx` loop.
-pub async fn run_exex<Node>(ctx: ExExContext<Node>, tx: mpsc::Sender<ShadowBlockRow>) -> Result<()>
-where
-    Node: FullNodeComponents,
-{
-    ShadowIndexerExEx::new(tx).run(ctx).await
 }
 
 #[cfg(test)]
@@ -351,7 +310,7 @@ mod tests {
         let exex = ShadowIndexerExEx::new(tx);
 
         let processed =
-            exex.handle_chain_committed(&mk_chain(1, 3, 0)).await.expect("handle committed");
+            exex.emit_canonical_blocks(&mk_chain(1, 3, 0)).await.expect("handle committed");
         assert!(processed);
 
         let rows = drain(rx);

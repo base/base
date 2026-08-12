@@ -30,11 +30,11 @@ pub struct ShadowBlockPayload {
     /// Parent block hash.
     pub parent_hash: String,
     /// Block timestamp.
-    pub timestamp: i64,
+    pub timestamp: u64,
     /// Number of transactions in the block.
-    pub tx_count: i32,
+    pub tx_count: u32,
     /// Total gas used.
-    pub gas_used: i64,
+    pub gas_used: u64,
     /// State root hash.
     pub state_root: String,
     /// Builder version string.
@@ -47,17 +47,17 @@ pub struct ShadowBlockPayload {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ShadowTransaction {
     /// Zero-based position of the transaction within the block.
-    pub tx_index: i32,
+    pub tx_index: u32,
     /// Transaction hash.
     pub tx_hash: String,
     /// Recovered sender address, when signature recovery succeeds.
     pub sender: Option<String>,
     /// EIP-2718 transaction type byte (0x7e denotes an OP deposit).
-    pub tx_type: i16,
+    pub tx_type: u8,
     /// Effective priority fee per gas (tip) in wei, as a base-10 string to preserve full u128 range.
     pub effective_priority_fee_per_gas: Option<String>,
     /// Block base fee per gas in wei.
-    pub base_fee_per_gas: Option<i64>,
+    pub base_fee_per_gas: Option<u64>,
     /// Gas consumed by this transaction.
-    pub gas_used: i64,
+    pub gas_used: u64,
 }

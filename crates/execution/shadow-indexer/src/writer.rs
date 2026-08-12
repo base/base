@@ -143,16 +143,6 @@ impl ShadowWriter {
     }
 }
 
-/// Spawns the shadow indexer writer task.
-pub fn spawn_writer(
-    executor: TaskExecutor,
-    rx: mpsc::Receiver<ShadowBlockRow>,
-    db_config: ShadowDbConfig,
-    builder_version: String,
-) {
-    ShadowWriter::spawn(executor, rx, db_config, builder_version);
-}
-
 #[cfg(test)]
 mod tests {
     use std::time::Duration;

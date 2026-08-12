@@ -2,7 +2,7 @@ use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use base_shadow_indexer_db::ShadowDbConfig;
 use tokio::sync::mpsc;
 
-use crate::{run_exex, spawn_writer};
+use crate::{ShadowIndexerExEx, ShadowWriter};
 
 /// Configuration for the shadow indexer extension.
 #[derive(Clone, Debug)]
@@ -41,9 +41,11 @@ impl BaseNodeExtension for ShadowIndexerExtension {
 
         hooks
             .add_node_started_hook(move |node| {
-                spawn_writer(node.task_executor, rx, db, builder_version);
+                ShadowWriter::spawn(node.task_executor, rx, db, builder_version);
                 Ok(())
             })
-            .install_exex("shadow-indexer", move |ctx| async move { Ok(run_exex(ctx, tx)) })
+            .install_exex("shadow-indexer", move |ctx| async move {
+                Ok(ShadowIndexerExEx::new(tx).run(ctx))
+            })
     }
 }
