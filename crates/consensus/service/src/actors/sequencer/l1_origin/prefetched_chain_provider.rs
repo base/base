@@ -14,6 +14,9 @@ use super::PreparedL1Origin;
 use crate::Metrics;
 
 /// Serves matching header and receipt requests from the selected prepared origin.
+///
+/// Requests that do not match the buffered origin fall back to L1 RPC. This preserves cold-start,
+/// stale-buffer, and missing-receipts behavior without making RPC the normal block-building path.
 #[derive(Debug)]
 pub struct PrefetchedChainProvider {
     origin: watch::Receiver<Option<PreparedL1Origin>>,
@@ -21,7 +24,7 @@ pub struct PrefetchedChainProvider {
 }
 
 impl PrefetchedChainProvider {
-    /// Creates a provider with an RPC fallback.
+    /// Creates a provider with an RPC fallback for requests the buffered origin cannot serve.
     pub const fn new(
         origin: watch::Receiver<Option<PreparedL1Origin>>,
         fallback: AlloyChainProvider,

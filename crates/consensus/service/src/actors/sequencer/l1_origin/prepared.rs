@@ -6,10 +6,13 @@ use alloy_consensus::{Header, Receipt};
 use alloy_primitives::B256;
 use base_protocol::BlockInfo;
 
-/// An L1 origin with a verified header and any receipts available during preparation.
+/// A hash-addressed L1 origin and any receipts available during preparation.
+///
+/// The header is checked against [`Self::hash`], but exact-hash preparation alone does not prove
+/// the origin is canonical.
 #[derive(Debug, Clone)]
 pub struct PreparedL1Origin {
-    /// The verified origin block hash.
+    /// The exact origin block hash.
     pub hash: B256,
     /// The full L1 block header.
     pub header: Header,

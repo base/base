@@ -69,6 +69,7 @@ pub async fn find_starting_forkchoice_with_checkpoint_reader<
     // Search for the highest `unsafe` block, relative to the initial `unsafe` block's L1 origin.
     let unsafe_walk_started = Instant::now();
     let mut unsafe_walked_blocks = 0_u64;
+    let mut visible_l1_head_number = None;
     let unsafe_walk_result = async {
         loop {
             if current_fc.un_safe.block_info.number <= current_fc.finalized.block_info.number
@@ -95,12 +96,24 @@ pub async fn find_starting_forkchoice_with_checkpoint_reader<
                 None => {
                     // A missing block by number is only plausible when the L2 origin is ahead of
                     // the L1 view. A missing block at or below the visible L1 head is
-                    // noncanonical.
-                    let l1_head = engine_client
-                        .get_l1_block(BlockNumberOrTag::Latest.into())
-                        .await?
-                        .ok_or(SyncStartError::BlockNotFound(BlockNumberOrTag::Latest.into()))?;
-                    origin.number > l1_head.header.number
+                    // noncanonical. Keep one head snapshot for a coherent reset walk and to avoid
+                    // repeating the same latest-head RPC for each missing origin.
+                    let l1_head_number = match visible_l1_head_number {
+                        Some(number) => number,
+                        None => {
+                            let number = engine_client
+                                .get_l1_block(BlockNumberOrTag::Latest.into())
+                                .await?
+                                .ok_or(SyncStartError::BlockNotFound(
+                                    BlockNumberOrTag::Latest.into(),
+                                ))?
+                                .header
+                                .number;
+                            visible_l1_head_number = Some(number);
+                            number
+                        }
+                    };
+                    origin.number > l1_head_number
                 }
             };
 
@@ -521,5 +534,61 @@ mod tests {
 
         assert_eq!(forkchoice.un_safe.block_info.hash, unsafe_hash);
         assert_eq!(forkchoice.un_safe.l1_origin, ahead_origin);
+    }
+
+    #[tokio::test]
+    async fn reset_fetches_visible_l1_head_once_while_walking_missing_origins() {
+        let genesis_origin = BlockNumHash {
+            number: 10,
+            hash: b256!("1010101010101010101010101010101010101010101010101010101010101010"),
+        };
+        let parent_origin = BlockNumHash {
+            number: 11,
+            hash: b256!("1111111111111111111111111111111111111111111111111111111111111111"),
+        };
+        let unsafe_origin = BlockNumHash {
+            number: 12,
+            hash: b256!("1212121212121212121212121212121212121212121212121212121212121212"),
+        };
+
+        let genesis = l2_block_with_l1_info(0, B256::ZERO, genesis_origin);
+        let genesis_hash = genesis.clone().into_consensus().hash_slow();
+        let parent = l2_block_with_l1_info(1, genesis_hash, parent_origin);
+        let parent_hash = parent.clone().into_consensus().hash_slow();
+        let unsafe_head = l2_block_with_l1_info(2, parent_hash, unsafe_origin);
+        let rollup_config = base_common_genesis::RollupConfig {
+            genesis: ChainGenesis {
+                l1: genesis_origin,
+                l2: BlockNumHash { number: 0, hash: genesis_hash },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let mut canonical_genesis_l1 = RpcBlock::<EthTransaction>::default();
+        canonical_genesis_l1.header.hash = genesis_origin.hash;
+        canonical_genesis_l1.header.inner.number = genesis_origin.number;
+        let mut visible_l1_head = RpcBlock::<EthTransaction>::default();
+        visible_l1_head.header.inner.number = unsafe_origin.number;
+
+        let client = test_engine_client_builder()
+            .with_l2_block(BlockNumberOrTag::Latest.into(), unsafe_head)
+            .with_l2_block(parent_hash.into(), parent)
+            .with_l2_block(genesis_hash.into(), genesis)
+            .with_l1_block(
+                BlockNumberOrTag::Number(genesis_origin.number).into(),
+                canonical_genesis_l1,
+            )
+            .with_l1_block(BlockNumberOrTag::Latest.into(), visible_l1_head)
+            .build();
+
+        let forkchoice = super::find_starting_forkchoice(&rollup_config, &client)
+            .await
+            .expect("reset should walk both missing origins to the canonical genesis origin");
+
+        assert_eq!(forkchoice.un_safe.block_info.hash, genesis_hash);
+        let storage = client.storage();
+        let storage = storage.read().await;
+        assert_eq!(storage.l1_block_calls_by_id.get("number:latest"), Some(&1));
     }
 }

@@ -38,7 +38,11 @@ pub trait L1OriginSelectorProvider: Debug + Send + Sync + 'static {
     /// Returns the latest observed L1 head hash, used to identify the canonical chain view.
     fn chain_view(&self) -> Option<B256>;
 
-    /// Returns a prepared origin by its hash.
+    /// Returns the origin addressed by the exact `hash`, if available.
+    ///
+    /// This lookup verifies that the returned header hashes to `hash`, but does not establish that
+    /// the block is canonical. Successor canonicality is established separately by a by-number
+    /// lookup tied to [`Self::chain_view`].
     async fn prepared_by_hash(
         &self,
         hash: B256,
