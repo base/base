@@ -101,17 +101,45 @@ impl Eip8130Constants {
     /// `account_changes` entry type byte: account creation.
     pub const ACCOUNT_CHANGE_TYPE_CREATE: u8 = 0x00;
 
-    /// `account_changes` entry type byte: actor config change.
+    /// `account_changes` entry type byte: a signed account-change batch
+    /// (`SignedAccountChanges`, applied via `applySignedAccountChanges`).
     pub const ACCOUNT_CHANGE_TYPE_CONFIG: u8 = 0x01;
 
     /// `account_changes` entry type byte: code delegation.
     pub const ACCOUNT_CHANGE_TYPE_DELEGATION: u8 = 0x02;
 
-    /// `actor_change` operation byte: authorize a new actor.
-    pub const ACTOR_CHANGE_AUTHORIZE: u8 = 0x01;
+    /// `SignedAccountChanges.channel` byte: the Local channel (binds
+    /// `block.chainid`; carries epoch + sequence and the unsequenced JIT mode).
+    pub const CHANNEL_LOCAL: u8 = 0x00;
 
-    /// `actor_change` operation byte: revoke an existing actor.
-    pub const ACTOR_CHANGE_REVOKE: u8 = 0x02;
+    /// `SignedAccountChanges.channel` byte: the Multichain channel (binds
+    /// `chain_id == 0`; a plain monotonic counter with no epoch or JIT mode).
+    pub const CHANNEL_MULTICHAIN: u8 = 0x01;
+
+    /// `ChangeType` op byte: authorize (upsert) an actor. Payload is
+    /// `abi.encode(bytes32 actorId, ActorConfig cfg, bytes policyData)`.
+    pub const CHANGE_TYPE_AUTHORIZE_ACTOR: u8 = 0x00;
+
+    /// `ChangeType` op byte: revoke an actor. Payload is `abi.encode(bytes32 actorId)`.
+    pub const CHANGE_TYPE_REVOKE_ACTOR: u8 = 0x01;
+
+    /// `ChangeType` op byte: increment the local epoch (Local channel only;
+    /// empty payload). Invalidates every unlanded local signature at a prior epoch.
+    pub const CHANGE_TYPE_INCREMENT_LOCAL_EPOCH: u8 = 0x02;
+
+    /// `ChangeType` op byte: lock the account (Local channel only; standalone;
+    /// payload is `abi.encode(uint16 unlockDelay)`).
+    pub const CHANGE_TYPE_LOCK: u8 = 0x03;
+
+    /// `ChangeType` op byte: unlock the account (Local channel only; standalone;
+    /// empty payload).
+    pub const CHANGE_TYPE_UNLOCK: u8 = 0x04;
+
+    /// Local-channel sequence low-half sentinel (`type(uint32).max`) marking an
+    /// unsequenced (JIT) batch: it consumes no sequence and stays replayable
+    /// until the local epoch moves. Sequenced batches may run up to
+    /// `UNSEQUENCED - 2`.
+    pub const UNSEQUENCED: u32 = u32::MAX;
 
     /// The single canonical secp256k1 ("k1") authenticator, fixed at
     /// `address(1)`. Native `ecrecover`: the protocol recovers from the `data`

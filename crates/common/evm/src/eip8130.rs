@@ -1612,8 +1612,9 @@ impl Eip8130Executor {
                     AccountChangeApplier::apply_config_change(
                         &mut acc_mut,
                         sender,
-                        &cc.actor_changes,
-                        cc.chain_id,
+                        &cc.changes,
+                        cc.channel,
+                        cc.sequence,
                     )
                     .map_err(BaseTransactionError::eip8130)?;
                 }
@@ -1718,8 +1719,8 @@ mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256, address, bytes, keccak256};
     use alloy_sol_types::{SolEvent, SolValue, sol};
     use base_common_consensus::{
-        AccountChange, ActorChange, ActorChangeType, BaseTxEnvelope, Call, ConfigChange,
-        CreateEntry, Eip8130Signed, InitialActor, Predeploys, TxEip8130,
+        AccountChange, AccountChangeChannel, BaseTxEnvelope, Call, ChangeType, CreateEntry,
+        Eip8130Signed, InitialActor, Predeploys, SignedAccountChanges, SignedChange, TxEip8130,
     };
     use base_common_precompiles::INonceManager;
     use base_execution_eip8130::{AccountChangeApplier, DelegationApplied};
@@ -2397,9 +2398,11 @@ mod tests {
         }
     }
 
-    /// ABI-encodes `abi.encode(ActorConfig, bytes policyData)` for an authorize
-    /// change (mirrors `AccountChangeApplier`'s decode shape).
+    /// ABI-encodes `abi.encode(bytes32 actorId, ActorConfig, bytes policyData)`
+    /// for an `AuthorizeActor` op payload (mirrors `AccountChangeApplier`'s
+    /// decode shape).
     fn authorize_change_data(
+        actor_id: B256,
         authenticator: Address,
         scope: u16,
         expiry: u64,
@@ -2410,7 +2413,7 @@ mod tests {
             expiry: alloy_primitives::aliases::U48::from(expiry),
             scope,
         };
-        Bytes::from((abi, Bytes::copy_from_slice(policy_data)).abi_encode_params())
+        Bytes::from((actor_id, abi, Bytes::copy_from_slice(policy_data)).abi_encode_params())
     }
 
     #[test]
@@ -2435,13 +2438,13 @@ mod tests {
 
         let mut tx = base_tx();
         tx.sender = Some(account);
-        tx.account_changes = vec![AccountChange::ConfigChange(ConfigChange {
-            chain_id: CHAIN_ID,
+        tx.account_changes = vec![AccountChange::ConfigChange(SignedAccountChanges {
+            channel: AccountChangeChannel::Local,
             sequence: 0,
-            actor_changes: vec![ActorChange {
-                change_type: ActorChangeType::Authorize,
-                actor_id: session_actor,
-                data: authorize_change_data(
+            changes: vec![SignedChange {
+                change_type: ChangeType::AuthorizeActor,
+                payload: authorize_change_data(
+                    session_actor,
                     Eip8130Constants::K1_AUTHENTICATOR,
                     Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_POLICY,
                     0,
@@ -2449,7 +2452,7 @@ mod tests {
                 ),
             }],
             // Simulate's apply path does not verify config auth.
-            auth: Bytes::new(),
+            signature: Bytes::new(),
         })];
         tx.calls = vec![vec![Call { to: allowed, data: Bytes::new() }]];
         let signed = configured_signed(tx, &owner);

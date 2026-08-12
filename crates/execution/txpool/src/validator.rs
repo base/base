@@ -14,8 +14,8 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, LogData, U256, map::AddressSet};
 use base_common_chains::Upgrades;
 use base_common_consensus::{
-    AccountChange, ActorChange, ActorChangeType, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
-    Eip8130TimestampError, InitialActor,
+    AccountChange, ChangeType, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
+    Eip8130TimestampError, InitialActor, SignedChange,
 };
 use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_common_genesis::DaFootprintGasScalarUpdate;
@@ -1498,8 +1498,9 @@ where
             TxAuthError::Scope { .. } => "actor scope insufficient",
             TxAuthError::AccountLocked => "account is locked",
             TxAuthError::DelegationUnauthorized => "delegation requires admin actor",
-            TxAuthError::ConfigChainId { .. } => "config change targets a foreign chain",
             TxAuthError::ConfigSequence { .. } => "config change sequence mismatch",
+            TxAuthError::StaleEpoch { .. } => "config change local epoch is stale",
+            TxAuthError::SequenceSaturated => "config change channel sequence is saturated",
             TxAuthError::Apply(apply) => Self::map_apply_error(apply),
         };
         Self::eip8130_error(reason)
@@ -1515,6 +1516,8 @@ where
         match error {
             ApplyError::Storage(_) => "EIP-8130 state access failed",
             ApplyError::MalformedAuthorizeData => "actor change authorize data is malformed",
+            ApplyError::MalformedRevokeData => "actor change revoke data is malformed",
+            ApplyError::UnsupportedChangeType => "unsupported account-change op",
             ApplyError::InvalidAuthenticator => "actor authenticator is not canonical",
             ApplyError::MalformedPolicyData => "actor policy data is malformed",
             ApplyError::NotAnActor { .. } => "revoked actor is not authorized",
@@ -1537,6 +1540,7 @@ where
                 "delegation target is an empty-code keystore-established account"
             }
             ApplyError::SequenceOverflow => "config change sequence overflow",
+            ApplyError::EmptyChangeSet => "signed account-change batch is empty",
         }
     }
 
@@ -1767,8 +1771,14 @@ where
     /// this gate.
     fn validate_account_changes(
         signed: &Eip8130Signed,
-        local_chain_id: u64,
+        _local_chain_id: u64,
     ) -> Result<(), InvalidPoolTransactionError> {
+        // `_local_chain_id` is retained for call-site symmetry with the other
+        // validation entrypoints (and their tests); it is no longer consulted
+        // here because chain binding is enforced implicitly by the signed digest
+        // (`AccountChangeChannel` selects `block.chainid` vs `0`), not by a
+        // structural per-entry chain check.
+        //
         // Conservative admission cap on the number of account changes a single
         // transaction may carry while the interleaved authorize-and-apply flow
         // beds in. Keeps the per-transaction admission work (and the overlay it
@@ -1776,24 +1786,27 @@ where
         if signed.tx().account_changes.len() > Eip8130Constants::MAX_ACCOUNT_CHANGES_PER_TX {
             return Err(InvalidTransactionError::TxTypeNotSupported.into());
         }
-        Self::validate_account_change_entries(signed, local_chain_id)
+        Self::validate_account_change_entries(signed)
     }
 
     /// Walks `account_changes` and enforces the per-entry structural invariants:
     /// at most one `Create` (and only as the first entry), at most one
     /// `Delegation`, `ConfigChange` count capped at
-    /// [`Eip8130Constants::MAX_CONFIG_CHANGES_PER_TX`], chain-binding on
-    /// config changes, and per-entry well-formedness. Authenticator-address bounds
-    /// and actor-id uniqueness are enforced on both `Create.initial_actors`
-    /// and `ConfigChange.actor_changes` via [`Self::validate_initial_actors`]
-    /// and [`Self::validate_actor_changes`] respectively.
+    /// [`Eip8130Constants::MAX_CONFIG_CHANGES_PER_TX`], and per-entry
+    /// well-formedness. Chain binding is not checked here — it is enforced
+    /// implicitly by the signed digest (`AccountChangeChannel` selects
+    /// `block.chainid` vs `0`). Authenticator-address bounds are enforced on both
+    /// `Create.initial_actors` and `ConfigChange.changes` via
+    /// [`Self::validate_initial_actors`] and [`Self::validate_actor_changes`]
+    /// respectively; actor-id *uniqueness* is required only for
+    /// `Create.initial_actors` (strictly ascending), not for a signed change
+    /// batch, whose ops the contract applies sequentially.
     ///
     /// This is the structural walk independent of the interim total cap applied
     /// by [`Self::validate_account_changes`], so the per-type caps it enforces
     /// remain meaningful (and testable) if that interim cap is later raised.
     fn validate_account_change_entries(
         signed: &Eip8130Signed,
-        local_chain_id: u64,
     ) -> Result<(), InvalidPoolTransactionError> {
         let mut create_count = 0usize;
         let mut delegation_count = 0usize;
@@ -1823,22 +1836,24 @@ where
                     if config_count > Eip8130Constants::MAX_CONFIG_CHANGES_PER_TX {
                         return Err(InvalidTransactionError::TxTypeNotSupported.into());
                     }
-                    if cfg.chain_id != 0 && cfg.chain_id != local_chain_id {
-                        return Err(InvalidTransactionError::ChainIdMismatch.into());
-                    }
-                    if cfg.auth.len() < 20 {
+                    // A signed batch must carry at least one op (mirrors the
+                    // contract's `EmptyChangeSet` rejection).
+                    if cfg.changes.is_empty() {
                         return Err(InvalidTransactionError::TxTypeNotSupported.into());
                     }
-                    let cfg_authenticator = Address::from_slice(&cfg.auth[..20]);
+                    if cfg.signature.len() < 20 {
+                        return Err(InvalidTransactionError::TxTypeNotSupported.into());
+                    }
+                    let cfg_authenticator = Address::from_slice(&cfg.signature[..20]);
                     if !Self::authenticator_allowed_for_tx_path(&cfg_authenticator)
                         || !Self::authenticator_payload_well_formed(
                             &cfg_authenticator,
-                            &cfg.auth[20..],
+                            &cfg.signature[20..],
                         )
                     {
                         return Err(InvalidTransactionError::TxTypeNotSupported.into());
                     }
-                    Self::validate_actor_changes(&cfg.actor_changes)?;
+                    Self::validate_actor_changes(&cfg.changes)?;
                 }
                 AccountChange::Delegation(_) => {
                     delegation_count += 1;
@@ -1886,55 +1901,65 @@ where
         Ok(())
     }
 
-    /// Validates `ConfigChange.actor_changes`: the slice is bounded by
+    /// Validates a signed batch's `changes`: the slice is bounded by
     /// [`Eip8130Constants::MAX_ACTOR_CHANGES_PER_CONFIG`], plus the
     /// reserved-window authenticator bound for the *new* actor of each
-    /// `Authorize`. The authenticator lives in the ABI-encoded `data`
-    /// (`abi.encode(ActorConfig, bytes)`), where `ActorConfig.authenticator` is
-    /// the right-aligned address in the first 32-byte word, so it is read from
-    /// `data[12..32]` without a full decode (the leading 12 padding bytes must be
-    /// zero, matching ABI encoding); the remaining structure is validated where
-    /// the change is applied. A `Revoke` carries empty `data` and names no
-    /// authenticator, so only the cap applies.
+    /// `AuthorizeActor` op. Repeated `actorId` targets are *not* rejected here:
+    /// unlike `Create.initial_actors`, the contract and the enshrined apply path
+    /// process a batch's ops sequentially (authorize upserts, revoke clears), so
+    /// a duplicate is protocol-valid (last write wins) and admitting it keeps the
+    /// pool in step with consensus.
     ///
-    /// Per EIP-8130 a config change MAY authorize a non-canonical authenticator
-    /// (for in-EVM use such as recovery keys); only the reserved window
-    /// (`< K1_AUTHENTICATOR`, i.e. the `address(0)` empty sentinel) is rejected
-    /// here, matching the bound applied to the other auth surfaces. A `Revoke`
-    /// names no authenticator and MUST carry empty `data`; a non-empty `data` is
-    /// malformed and rejected at the gate.
-    fn validate_actor_changes(changes: &[ActorChange]) -> Result<(), InvalidPoolTransactionError> {
+    /// - `AuthorizeActor`: `payload = abi.encode(bytes32 actorId, ActorConfig,
+    ///   bytes)`; `ActorConfig.authenticator` is the right-aligned address in the
+    ///   *second* word, so it is read from `payload[44..64]` (the leading 12
+    ///   bytes of that word must be zero padding). Per EIP-8130 a config change
+    ///   MAY authorize a non-canonical authenticator (for in-EVM use such as
+    ///   recovery keys); only the reserved window (`< K1_AUTHENTICATOR`, i.e. the
+    ///   `address(0)` empty sentinel) is rejected here.
+    /// - `RevokeActor`: `payload = abi.encode(bytes32 actorId)` — exactly the
+    ///   32-byte target and nothing more.
+    /// - Environment ops (`IncrementLocalEpoch` / `Lock` / `Unlock`): their apply
+    ///   handlers are not yet enshrined, so a batch carrying one is rejected here
+    ///   rather than admitted and failed later.
+    fn validate_actor_changes(changes: &[SignedChange]) -> Result<(), InvalidPoolTransactionError> {
         if changes.len() > Eip8130Constants::MAX_ACTOR_CHANGES_PER_CONFIG {
             return Err(InvalidTransactionError::TxTypeNotSupported.into());
         }
-        let mut seen = BTreeSet::new();
         for change in changes {
+            // Per-op structural well-formedness only. Repeated `actorId` targets
+            // are intentionally NOT rejected: Keystore and the enshrined apply
+            // path process a batch's ops in order (`AuthorizeActor` is an upsert,
+            // `RevokeActor` clears), so a repeated target is valid on-chain (the
+            // last write wins). Rejecting it here would drop a protocol-valid
+            // batch, so the pool matches consensus and admits it.
             match change.change_type {
-                ActorChangeType::Authorize => {
-                    // `data` = `abi.encode(ActorConfig, bytes)`; the new actor's
-                    // authenticator is the right-aligned address in the first word.
-                    if change.data.len() < 32 {
+                ChangeType::AuthorizeActor => {
+                    // `payload` = `abi.encode(bytes32 actorId, ActorConfig, bytes)`;
+                    // the new actor's authenticator is the right-aligned address
+                    // in the second word.
+                    if change.payload.len() < 64 {
                         return Err(InvalidTransactionError::TxTypeNotSupported.into());
                     }
-                    // The first word is an ABI-encoded `address`: the leading 12
-                    // bytes are zero padding. Reject dirty upper bits so the gate
-                    // and a strict ABI decoder downstream agree on validity.
-                    if change.data[..12].iter().any(|&b| b != 0) {
+                    // The authenticator word is an ABI-encoded `address`: its
+                    // leading 12 bytes are zero padding. Reject dirty upper bits so
+                    // the gate and a strict ABI decoder downstream agree.
+                    if change.payload[32..44].iter().any(|&b| b != 0) {
                         return Err(InvalidTransactionError::TxTypeNotSupported.into());
                     }
-                    let authenticator = Address::from_slice(&change.data[12..32]);
+                    let authenticator = Address::from_slice(&change.payload[44..64]);
                     if Self::authenticator_out_of_range(&authenticator) {
                         return Err(InvalidTransactionError::TxTypeNotSupported.into());
                     }
                 }
-                ActorChangeType::Revoke => {
-                    if !change.data.is_empty() {
+                ChangeType::RevokeActor => {
+                    if change.payload.len() != 32 {
                         return Err(InvalidTransactionError::TxTypeNotSupported.into());
                     }
                 }
-            }
-            if !seen.insert(change.actor_id) {
-                return Err(InvalidTransactionError::TxTypeNotSupported.into());
+                ChangeType::IncrementLocalEpoch | ChangeType::Lock | ChangeType::Unlock => {
+                    return Err(InvalidTransactionError::TxTypeNotSupported.into());
+                }
             }
         }
         Ok(())
@@ -2065,9 +2090,9 @@ mod tests {
     use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
-        AccountChange, ActorChange, ActorChangeType, BasePrimitives, BaseTransactionSigned,
-        BaseTxEnvelope, ConfigChange, CreateEntry, Delegation, Eip8130Constants, Eip8130Signed,
-        InitialActor, TxDeposit, TxEip8130,
+        AccountChange, AccountChangeChannel, BasePrimitives, BaseTransactionSigned, BaseTxEnvelope,
+        ChangeType, CreateEntry, Delegation, Eip8130Constants, Eip8130Signed, InitialActor,
+        SignedAccountChanges, SignedChange, TxDeposit, TxEip8130,
     };
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_eip8130::{AccountChangeApplier, ConfigChangeAuthorizer};
@@ -2652,19 +2677,28 @@ mod tests {
         InitialActor::owner(B256::repeat_byte(actor_id_byte), ok_authenticator())
     }
 
-    /// Builds an `Authorize` actor-change whose ABI-encoded `data` carries
-    /// `authenticator` in the first word (`ActorConfig.authenticator`), matching
-    /// the layout the validator reads from `data[12..32]`.
-    fn make_authorize_change(actor_id: B256, authenticator: Address) -> ActorChange {
-        let mut data = vec![0u8; 160];
-        data[12..32].copy_from_slice(authenticator.as_slice());
-        ActorChange { change_type: ActorChangeType::Authorize, actor_id, data: Bytes::from(data) }
+    /// Builds an `AuthorizeActor` op whose payload is a valid
+    /// `abi.encode(bytes32 actorId, ActorConfig{authenticator, expiry:0,
+    /// scope:0}, bytes policyData="")`. `actorId` is the first word and
+    /// `ActorConfig.authenticator` the second (`payload[44..64]`), matching both
+    /// the shallow validator read and a strict ABI decode in the apply path.
+    fn make_authorize_change(actor_id: B256, authenticator: Address) -> SignedChange {
+        let mut payload = vec![0u8; 192];
+        payload[..32].copy_from_slice(actor_id.as_slice());
+        payload[44..64].copy_from_slice(authenticator.as_slice());
+        // word4: offset to the `bytes policyData` tail (5 words = 160 = 0xA0).
+        payload[159] = 0xA0;
+        // word5: policyData length = 0 (already zero).
+        SignedChange { change_type: ChangeType::AuthorizeActor, payload: Bytes::from(payload) }
     }
 
-    /// Builds a `Revoke` actor-change. Per EIP-8130 a revoke names no
-    /// authenticator and carries empty `data`.
-    fn make_revoke_change(actor_id: B256) -> ActorChange {
-        ActorChange { change_type: ActorChangeType::Revoke, actor_id, data: Bytes::new() }
+    /// Builds a `RevokeActor` op whose payload is `abi.encode(actorId)` — exactly
+    /// the 32-byte target.
+    fn make_revoke_change(actor_id: B256) -> SignedChange {
+        SignedChange {
+            change_type: ChangeType::RevokeActor,
+            payload: Bytes::from(actor_id.as_slice().to_vec()),
+        }
     }
 
     fn make_valid_create_entry() -> CreateEntry {
@@ -2840,38 +2874,22 @@ mod tests {
         );
     }
 
-    fn make_valid_config_change() -> ConfigChange {
+    fn make_valid_config_change() -> SignedAccountChanges {
         let mut auth = Eip8130Constants::K1_AUTHENTICATOR.to_vec();
         auth.extend_from_slice(&[0u8; 65]);
-        ConfigChange {
-            chain_id: 0,
+        SignedAccountChanges {
+            channel: AccountChangeChannel::Multichain,
             sequence: 0,
-            actor_changes: Vec::new(),
-            auth: Bytes::from(auth),
+            // A batch must carry at least one op to be valid; a revoke is the
+            // simplest well-formed op.
+            changes: vec![make_revoke_change(B256::repeat_byte(0x01))],
+            signature: Bytes::from(auth),
         }
     }
 
     #[test]
-    fn rejects_eip8130_config_change_with_foreign_chain_id() {
-        let cfg = ConfigChange { chain_id: test_chain_id() + 1, ..make_valid_config_change() };
-        let tx = TxEip8130 {
-            account_changes: vec![AccountChange::ConfigChange(cfg)],
-            ..minimal_valid_eoa_tx()
-        };
-        let result =
-            TestValidator::validate_account_changes(&sign_eoa_eip8130(tx), test_chain_id());
-        match result {
-            Err(InvalidPoolTransactionError::Consensus(
-                InvalidTransactionError::ChainIdMismatch,
-            )) => {}
-            other => panic!("expected ChainIdMismatch, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn rejects_eip8130_config_change_with_short_auth() {
-        let cfg =
-            ConfigChange { auth: Bytes::from_static(&[0u8; 5]), ..make_valid_config_change() };
+    fn rejects_eip8130_config_change_with_empty_change_set() {
+        let cfg = SignedAccountChanges { changes: Vec::new(), ..make_valid_config_change() };
         let tx = TxEip8130 {
             account_changes: vec![AccountChange::ConfigChange(cfg)],
             ..minimal_valid_eoa_tx()
@@ -2883,81 +2901,13 @@ mod tests {
     }
 
     #[test]
-    fn rejects_eip8130_config_change_with_duplicate_actor_ids() {
-        let dup_id = B256::repeat_byte(0x07);
-        let cfg = ConfigChange {
-            actor_changes: vec![
-                make_authorize_change(dup_id, ok_authenticator()),
-                make_authorize_change(dup_id, ok_authenticator()),
-            ],
-            ..make_valid_config_change()
-        };
-        let tx = TxEip8130 {
-            account_changes: vec![AccountChange::ConfigChange(cfg)],
-            ..minimal_valid_eoa_tx()
-        };
-        assert_unsupported(TestValidator::validate_account_changes(
-            &sign_eoa_eip8130(tx),
-            test_chain_id(),
-        ));
-    }
-
-    #[test]
-    fn accepts_eip8130_config_change_with_exactly_max_actor_changes() {
-        let actor_changes = (0..Eip8130Constants::MAX_ACTOR_CHANGES_PER_CONFIG)
-            .map(|i| make_authorize_change(B256::repeat_byte(i as u8), ok_authenticator()))
-            .collect();
-        let cfg = ConfigChange { actor_changes, ..make_valid_config_change() };
-        let tx = TxEip8130 {
-            account_changes: vec![AccountChange::ConfigChange(cfg)],
-            ..minimal_valid_eoa_tx()
-        };
-        assert!(
-            TestValidator::validate_account_changes(&sign_eoa_eip8130(tx), test_chain_id()).is_ok()
-        );
-    }
-
-    #[test]
-    fn rejects_eip8130_config_change_with_too_many_actor_changes() {
-        let actor_changes = (0..(Eip8130Constants::MAX_ACTOR_CHANGES_PER_CONFIG + 1))
-            .map(|i| make_authorize_change(B256::repeat_byte(i as u8), ok_authenticator()))
-            .collect();
-        let cfg = ConfigChange { actor_changes, ..make_valid_config_change() };
-        let tx = TxEip8130 {
-            account_changes: vec![AccountChange::ConfigChange(cfg)],
-            ..minimal_valid_eoa_tx()
-        };
-        assert_unsupported(TestValidator::validate_account_changes(
-            &sign_eoa_eip8130(tx),
-            test_chain_id(),
-        ));
-    }
-
-    // A `Revoke` carries empty `data` and names no authenticator, so it must
-    // pass `validate_actor_changes` (no authenticator bound is applied).
-    #[test]
-    fn accepts_eip8130_config_change_with_valid_revoke() {
-        let cfg = ConfigChange {
-            actor_changes: vec![make_revoke_change(B256::repeat_byte(0x01))],
-            ..make_valid_config_change()
-        };
-        let tx = TxEip8130 {
-            account_changes: vec![AccountChange::ConfigChange(cfg)],
-            ..minimal_valid_eoa_tx()
-        };
-        assert!(
-            TestValidator::validate_account_changes(&sign_eoa_eip8130(tx), test_chain_id()).is_ok()
-        );
-    }
-
-    // A `Revoke` with non-empty `data` is malformed and rejected at the gate.
-    #[test]
-    fn rejects_eip8130_config_change_with_nonempty_revoke_data() {
-        let cfg = ConfigChange {
-            actor_changes: vec![ActorChange {
-                change_type: ActorChangeType::Revoke,
-                actor_id: B256::repeat_byte(0x01),
-                data: Bytes::from_static(&[0xaa]),
+    fn rejects_eip8130_config_change_with_env_op() {
+        // Environment ops (IncrementLocalEpoch / Lock / Unlock) are not yet
+        // enshrined in the apply path, so a batch carrying one is rejected.
+        let cfg = SignedAccountChanges {
+            changes: vec![SignedChange {
+                change_type: ChangeType::IncrementLocalEpoch,
+                payload: Bytes::new(),
             }],
             ..make_valid_config_change()
         };
@@ -2971,34 +2921,10 @@ mod tests {
         ));
     }
 
-    // The first `data` word is an ABI-encoded `address`; non-zero padding in the
-    // leading 12 bytes is malformed and rejected at the gate.
     #[test]
-    fn rejects_eip8130_config_change_with_dirty_authenticator_padding() {
-        let mut change = make_authorize_change(B256::repeat_byte(0x01), ok_authenticator());
-        let mut data = change.data.to_vec();
-        data[0] = 0x01;
-        change.data = Bytes::from(data);
-        let cfg = ConfigChange { actor_changes: vec![change], ..make_valid_config_change() };
-        let tx = TxEip8130 {
-            account_changes: vec![AccountChange::ConfigChange(cfg)],
-            ..minimal_valid_eoa_tx()
-        };
-        assert_unsupported(TestValidator::validate_account_changes(
-            &sign_eoa_eip8130(tx),
-            test_chain_id(),
-        ));
-    }
-
-    // Duplicate `actor_id` detection spans mixed `Authorize`/`Revoke` entries.
-    #[test]
-    fn rejects_eip8130_config_change_with_duplicate_actor_ids_mixed() {
-        let dup_id = B256::repeat_byte(0x07);
-        let cfg = ConfigChange {
-            actor_changes: vec![
-                make_authorize_change(dup_id, ok_authenticator()),
-                make_revoke_change(dup_id),
-            ],
+    fn rejects_eip8130_config_change_with_short_auth() {
+        let cfg = SignedAccountChanges {
+            signature: Bytes::from_static(&[0u8; 5]),
             ..make_valid_config_change()
         };
         let tx = TxEip8130 {
@@ -3011,6 +2937,143 @@ mod tests {
         ));
     }
 
+    // Repeated `actor_id` targets within one batch are admitted: Keystore and the
+    // enshrined apply path process a batch's ops in order (`AuthorizeActor` is an
+    // upsert, so the last write wins), so a duplicate is protocol-valid and the
+    // pool must not reject it.
+    #[test]
+    fn accepts_eip8130_config_change_with_duplicate_actor_ids() {
+        let dup_id = B256::repeat_byte(0x07);
+        let cfg = SignedAccountChanges {
+            changes: vec![
+                make_authorize_change(dup_id, ok_authenticator()),
+                make_authorize_change(dup_id, ok_authenticator()),
+            ],
+            ..make_valid_config_change()
+        };
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChange::ConfigChange(cfg)],
+            ..minimal_valid_eoa_tx()
+        };
+        assert!(
+            TestValidator::validate_account_changes(&sign_eoa_eip8130(tx), test_chain_id()).is_ok()
+        );
+    }
+
+    #[test]
+    fn accepts_eip8130_config_change_with_exactly_max_actor_changes() {
+        let changes = (0..Eip8130Constants::MAX_ACTOR_CHANGES_PER_CONFIG)
+            .map(|i| make_authorize_change(B256::repeat_byte(i as u8), ok_authenticator()))
+            .collect();
+        let cfg = SignedAccountChanges { changes, ..make_valid_config_change() };
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChange::ConfigChange(cfg)],
+            ..minimal_valid_eoa_tx()
+        };
+        assert!(
+            TestValidator::validate_account_changes(&sign_eoa_eip8130(tx), test_chain_id()).is_ok()
+        );
+    }
+
+    #[test]
+    fn rejects_eip8130_config_change_with_too_many_actor_changes() {
+        let changes = (0..(Eip8130Constants::MAX_ACTOR_CHANGES_PER_CONFIG + 1))
+            .map(|i| make_authorize_change(B256::repeat_byte(i as u8), ok_authenticator()))
+            .collect();
+        let cfg = SignedAccountChanges { changes, ..make_valid_config_change() };
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChange::ConfigChange(cfg)],
+            ..minimal_valid_eoa_tx()
+        };
+        assert_unsupported(TestValidator::validate_account_changes(
+            &sign_eoa_eip8130(tx),
+            test_chain_id(),
+        ));
+    }
+
+    // A `RevokeActor` op carries only its 32-byte target and names no
+    // authenticator, so it passes `validate_actor_changes` (no authenticator
+    // bound is applied).
+    #[test]
+    fn accepts_eip8130_config_change_with_valid_revoke() {
+        let cfg = SignedAccountChanges {
+            changes: vec![make_revoke_change(B256::repeat_byte(0x01))],
+            ..make_valid_config_change()
+        };
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChange::ConfigChange(cfg)],
+            ..minimal_valid_eoa_tx()
+        };
+        assert!(
+            TestValidator::validate_account_changes(&sign_eoa_eip8130(tx), test_chain_id()).is_ok()
+        );
+    }
+
+    // A `RevokeActor` op whose payload is not exactly the 32-byte target is
+    // malformed and rejected at the gate.
+    #[test]
+    fn rejects_eip8130_config_change_with_nonempty_revoke_data() {
+        let mut payload = B256::repeat_byte(0x01).as_slice().to_vec();
+        payload.push(0xaa);
+        let cfg = SignedAccountChanges {
+            changes: vec![SignedChange {
+                change_type: ChangeType::RevokeActor,
+                payload: Bytes::from(payload),
+            }],
+            ..make_valid_config_change()
+        };
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChange::ConfigChange(cfg)],
+            ..minimal_valid_eoa_tx()
+        };
+        assert_unsupported(TestValidator::validate_account_changes(
+            &sign_eoa_eip8130(tx),
+            test_chain_id(),
+        ));
+    }
+
+    // The authenticator word (`payload[32..64]`) is an ABI-encoded `address`;
+    // non-zero padding in its leading 12 bytes (`payload[32..44]`) is malformed
+    // and rejected at the gate.
+    #[test]
+    fn rejects_eip8130_config_change_with_dirty_authenticator_padding() {
+        let mut change = make_authorize_change(B256::repeat_byte(0x01), ok_authenticator());
+        let mut payload = change.payload.to_vec();
+        payload[32] = 0x01;
+        change.payload = Bytes::from(payload);
+        let cfg = SignedAccountChanges { changes: vec![change], ..make_valid_config_change() };
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChange::ConfigChange(cfg)],
+            ..minimal_valid_eoa_tx()
+        };
+        assert_unsupported(TestValidator::validate_account_changes(
+            &sign_eoa_eip8130(tx),
+            test_chain_id(),
+        ));
+    }
+
+    // A batch may target the same `actor_id` across mixed `Authorize`/`Revoke`
+    // ops (e.g. re-key in place); the contract applies them sequentially, so the
+    // pool admits the batch rather than rejecting the repeated target.
+    #[test]
+    fn accepts_eip8130_config_change_with_duplicate_actor_ids_mixed() {
+        let dup_id = B256::repeat_byte(0x07);
+        let cfg = SignedAccountChanges {
+            changes: vec![
+                make_authorize_change(dup_id, ok_authenticator()),
+                make_revoke_change(dup_id),
+            ],
+            ..make_valid_config_change()
+        };
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChange::ConfigChange(cfg)],
+            ..minimal_valid_eoa_tx()
+        };
+        assert!(
+            TestValidator::validate_account_changes(&sign_eoa_eip8130(tx), test_chain_id()).is_ok()
+        );
+    }
+
     #[test]
     fn rejects_eip8130_too_many_config_changes() {
         // The interim total-account-changes cap currently sits below
@@ -3021,10 +3084,7 @@ mod tests {
         let account_changes =
             (0..count).map(|_| AccountChange::ConfigChange(make_valid_config_change())).collect();
         let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
-        assert_unsupported(TestValidator::validate_account_change_entries(
-            &sign_eoa_eip8130(tx),
-            test_chain_id(),
-        ));
+        assert_unsupported(TestValidator::validate_account_change_entries(&sign_eoa_eip8130(tx)));
     }
 
     #[test]
@@ -3036,10 +3096,7 @@ mod tests {
         let account_changes =
             (0..count).map(|_| AccountChange::ConfigChange(make_valid_config_change())).collect();
         let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
-        assert!(
-            TestValidator::validate_account_change_entries(&sign_eoa_eip8130(tx), test_chain_id())
-                .is_ok()
-        );
+        assert!(TestValidator::validate_account_change_entries(&sign_eoa_eip8130(tx)).is_ok());
     }
 
     #[test]
@@ -3423,14 +3480,15 @@ mod tests {
         // Multichain (chain_id == 0) config change at the channel's first
         // sequence, signed by the create's initial owner and bound to the
         // counterfactual address.
-        let mut config = ConfigChange {
-            chain_id: 0,
+        let mut config = SignedAccountChanges {
+            channel: AccountChangeChannel::Multichain,
             sequence: 0,
-            actor_changes: Vec::new(),
-            auth: Bytes::new(),
+            changes: vec![make_authorize_change(B256::repeat_byte(0x01), ok_authenticator())],
+            signature: Bytes::new(),
         };
-        let config_digest = ConfigChangeAuthorizer::signed_actor_changes_digest(derived, &config);
-        config.auth = k1_auth_blob(&signer, config_digest);
+        let config_digest =
+            ConfigChangeAuthorizer::changes_digest(derived, test_chain_id(), &config);
+        config.signature = k1_auth_blob(&signer, config_digest);
 
         let tx = TxEip8130 {
             chain_id: test_chain_id(),

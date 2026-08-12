@@ -473,8 +473,8 @@ mod tests {
     use alloy_consensus::{Signed, TxEip1559, TxEip2930, TxEip7702, TxEnvelope, TxLegacy};
     use alloy_primitives::{B256, Signature, TxKind, address};
     use base_common_consensus::{
-        AccountChange, ActorChange, ActorChangeType, Call, ConfigChange, CreateEntry, Delegation,
-        Eip8130Signed, InitialActor, TxEip8130,
+        AccountChange, AccountChangeChannel, Call, ChangeType, CreateEntry, Delegation,
+        Eip8130Signed, InitialActor, SignedAccountChanges, SignedChange, TxEip8130,
     };
 
     use super::*;
@@ -679,22 +679,20 @@ mod tests {
                         address!("00000000000000000000000000000000000000cc"),
                     )],
                 }),
-                AccountChange::ConfigChange(ConfigChange {
-                    chain_id: EIP8130_CHAIN_ID,
+                AccountChange::ConfigChange(SignedAccountChanges {
+                    channel: AccountChangeChannel::Local,
                     sequence: 1,
-                    actor_changes: vec![
-                        ActorChange {
-                            change_type: ActorChangeType::Authorize,
-                            actor_id: B256::repeat_byte(0x03),
-                            data: bytes!("aabbcc"),
+                    changes: vec![
+                        SignedChange {
+                            change_type: ChangeType::AuthorizeActor,
+                            payload: bytes!("aabbcc"),
                         },
-                        ActorChange {
-                            change_type: ActorChangeType::Revoke,
-                            actor_id: B256::repeat_byte(0x04),
-                            data: Bytes::new(),
+                        SignedChange {
+                            change_type: ChangeType::RevokeActor,
+                            payload: Bytes::new(),
                         },
                     ],
-                    auth: bytes!("c0ffee"),
+                    signature: bytes!("c0ffee"),
                 }),
                 AccountChange::Delegation(Delegation {
                     target: address!("00000000000000000000000000000000000000ee"),
