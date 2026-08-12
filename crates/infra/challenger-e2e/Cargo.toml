@@ -1,0 +1,29 @@
+[package]
+name = "base-challenger-e2e"
+description = "Behavioural end-to-end test of the challenger against an ephemeral L1 fork"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+eyre.workspace = true
+url.workspace = true
+tracing.workspace = true
+reqwest.workspace = true
+humantime.workspace = true
+alloy-provider.workspace = true
+alloy-primitives.workspace = true
+alloy-signer-local.workspace = true
+alloy-node-bindings.workspace = true
+base-proof-rpc.workspace = true
+base-proof-contracts.workspace = true
+base-zk-fork-dispute.workspace = true
+base-prover-service-protocol.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

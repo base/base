@@ -3481,6 +3481,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-challenger-e2e"
+version = "0.0.0"
+dependencies = [
+ "alloy-node-bindings 2.2.0",
+ "alloy-primitives",
+ "alloy-provider 2.2.0",
+ "alloy-signer-local 2.2.0",
+ "base-proof-contracts",
+ "base-proof-rpc",
+ "base-prover-service-protocol",
+ "base-zk-fork-dispute",
+ "clap",
+ "eyre",
+ "humantime",
+ "reqwest 0.13.4",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "base-challenger-e2e-bin"
+version = "0.0.0"
+dependencies = [
+ "base-challenger-e2e",
+ "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.23",
+]
+
+[[package]]
 name = "base-cli-utils"
 version = "0.0.0"
 dependencies = [

@@ -1,0 +1,22 @@
+[package]
+name = "base-challenger-e2e-bin"
+description = "Standalone challenger E2E binary for K8s CronJob execution"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "base-challenger-e2e"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+tracing = { workspace = true }
+base-challenger-e2e = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+tracing-subscriber = { workspace = true, features = ["fmt", "json", "env-filter"] }
