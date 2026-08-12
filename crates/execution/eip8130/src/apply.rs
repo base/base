@@ -92,6 +92,12 @@ pub enum ApplyError {
     #[error("signed account-change batch is empty")]
     EmptyChangeSet,
 
+    /// The target `actor_id` is `bytes32(0)`, which is reserved for the "no
+    /// actor" sentinel and can never be authorized. Mirrors `_authorizeActor`'s
+    /// `revert InvalidActorId()`.
+    #[error("actor id bytes32(0) is reserved and cannot be authorized")]
+    InvalidActorId,
+
     /// The new actor's authenticator is `address(0)`, below the valid
     /// authenticator namespace. Mirrors `require(config.authenticator >= K1)`.
     #[error("authenticator address(0) is not a valid selector")]
@@ -618,6 +624,14 @@ impl AccountChangeApplier {
         config: ActorConfig,
         policy_data: &[u8],
     ) -> Result<(), ApplyError> {
+        // Zero is reserved for the "no actor" sentinel. Mirrors `_authorizeActor`'s
+        // `revert InvalidActorId()`. A zero `actor_id` only ever reaches the
+        // non-self path (the self id is derived from a nonzero account address),
+        // so guarding here covers every `AuthorizeActor`; the create path already
+        // rejects it earlier via the strictly-ascending `initial_actors` check.
+        if actor_id.is_zero() {
+            return Err(ApplyError::InvalidActorId);
+        }
         if config.authenticator.is_zero() {
             return Err(ApplyError::InvalidAuthenticator);
         }
@@ -1069,6 +1083,26 @@ mod tests {
             )
             .unwrap();
             assert_eq!(acc.actor_config_slot(ACCOUNT, NON_SELF).unwrap(), unauthorized);
+        });
+    }
+
+    #[test]
+    fn authorize_rejects_zero_actor_id() {
+        // `bytes32(0)` is the reserved "no actor" sentinel; authorizing it must
+        // revert `InvalidActorId`, mirroring the contract's `_authorizeActor`.
+        with_storage(|acc| {
+            let zero =
+                [authorize_op(B256::ZERO, &ungated(K1, Eip8130Constants::SCOPE_SENDER), &[])];
+            let err = AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &zero,
+                AccountChangeChannel::Local,
+                0,
+                0,
+            )
+            .unwrap_err();
+            assert!(matches!(err, ApplyError::InvalidActorId));
         });
     }
 
