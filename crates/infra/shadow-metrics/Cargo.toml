@@ -1,0 +1,16 @@
+[package]
+name = "base-shadow-metrics"
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "migrate", "macros", "tls-native-tls"] }

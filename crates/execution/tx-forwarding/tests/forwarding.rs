@@ -10,10 +10,11 @@ use alloy_provider::Provider;
 use alloy_signer::SignerSync;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_txpool::ValidatedTransaction;
+use base_execution_txpool::{TransactionValidity, ValidatedTransaction};
 use base_node_runner::test_utils::TestHarness;
 use base_test_utils::{Account, DEVNET_CHAIN_ID, build_test_genesis};
 use base_tx_forwarding::{TxForwardingConfig, TxForwardingExtension};
+use base_txpool_rpc::{SendRawTransactionValidityExtension, SendRawTransactionValidityRequest};
 use eyre::{Result, WrapErr};
 use jsonrpsee::{
     RpcModule,
@@ -35,7 +36,7 @@ struct MockBuilder {
 
 impl MockBuilder {
     async fn spawn(
-        received: mpsc::UnboundedSender<ValidatedTransaction>,
+        received: mpsc::UnboundedSender<ValidatedTransaction<TransactionValidity>>,
         entered: Option<Arc<Barrier>>,
         release: Option<Arc<Notify>>,
     ) -> Result<Self> {
@@ -45,7 +46,7 @@ impl MockBuilder {
         module.register_async_method(
             "base_insertValidatedTransaction",
             |params, context, _| async move {
-                let transaction: ValidatedTransaction = params.one()?;
+                let transaction: ValidatedTransaction<TransactionValidity> = params.one()?;
                 context.0.send(transaction).expect("test receiver should remain open");
 
                 if let (Some(entered), Some(release)) = (&context.1, &context.2) {
@@ -123,6 +124,7 @@ async fn forwards_to_healthy_destination_while_another_destination_is_blocked() 
         .ok_or_else(|| eyre::eyre!("healthy destination channel closed"))?;
     assert_eq!(healthy_forwarded.sender, Account::Alice.address());
     assert_eq!(healthy_forwarded.raw, raw);
+    assert!(healthy_forwarded.extensions.validity.is_empty());
 
     slow_release.notify_one();
     let slow_forwarded = timeout(WAIT_TIMEOUT, slow_rx.recv())
@@ -131,6 +133,7 @@ async fn forwards_to_healthy_destination_while_another_destination_is_blocked() 
         .ok_or_else(|| eyre::eyre!("slow destination channel closed"))?;
     assert_eq!(slow_forwarded.sender, Account::Alice.address());
     assert_eq!(slow_forwarded.raw, raw);
+    assert!(slow_forwarded.extensions.validity.is_empty());
 
     assert!(timeout(Duration::from_millis(100), healthy_rx.recv()).await.is_err());
     assert!(timeout(Duration::from_millis(100), slow_rx.recv()).await.is_err());
@@ -138,5 +141,62 @@ async fn forwards_to_healthy_destination_while_another_destination_is_blocked() 
     drop(harness);
     healthy.shutdown().await?;
     slow.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn forwards_validity_to_every_builder() -> Result<()> {
+    let (first_tx, mut first_rx) = mpsc::unbounded_channel();
+    let first = MockBuilder::spawn(first_tx, None, None).await?;
+    let (second_tx, mut second_rx) = mpsc::unbounded_channel();
+    let second = MockBuilder::spawn(second_tx, None, None).await?;
+    let config = TxForwardingConfig::new(vec![first.url.clone(), second.url.clone()]);
+    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis()));
+    let harness = TestHarness::builder()
+        .with_ext::<SendRawTransactionValidityExtension>(())
+        .with_ext::<TxForwardingExtension>(config)
+        .with_chain_spec(chain_spec)
+        .build()
+        .await?;
+    let raw = signed_eip1559_transaction();
+    let validity = serde_json::from_value(serde_json::json!({
+        "type": "storage",
+        "params": {
+            "address": Account::Bob.address(),
+            "slot": "0x1",
+            "op": "=",
+            "value": "0x2"
+        }
+    }))?;
+    let expected = vec![validity];
+    let client = harness.rpc_client()?;
+    let _: alloy_primitives::TxHash = client
+        .request(
+            "base_sendRawTransactionValidity",
+            (SendRawTransactionValidityRequest { tx: raw.clone(), validity: expected.clone() },),
+        )
+        .await?;
+
+    let first_forwarded = timeout(WAIT_TIMEOUT, first_rx.recv())
+        .await
+        .wrap_err("first builder was not called")?
+        .ok_or_else(|| eyre::eyre!("first builder channel closed"))?;
+    let second_forwarded = timeout(WAIT_TIMEOUT, second_rx.recv())
+        .await
+        .wrap_err("second builder was not called")?
+        .ok_or_else(|| eyre::eyre!("second builder channel closed"))?;
+    for forwarded in [&first_forwarded, &second_forwarded] {
+        assert_eq!(forwarded.sender, Account::Alice.address());
+        assert_eq!(forwarded.raw, raw);
+        assert_eq!(forwarded.extensions.validity, expected);
+    }
+    assert_eq!(first_forwarded.sender, second_forwarded.sender);
+    assert_eq!(first_forwarded.raw, second_forwarded.raw);
+    assert!(timeout(Duration::from_millis(100), first_rx.recv()).await.is_err());
+    assert!(timeout(Duration::from_millis(100), second_rx.recv()).await.is_err());
+
+    drop(harness);
+    first.shutdown().await?;
+    second.shutdown().await?;
     Ok(())
 }

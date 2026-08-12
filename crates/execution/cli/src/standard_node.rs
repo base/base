@@ -18,7 +18,7 @@ use base_tx_forwarding::{
     DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS, DEFAULT_RESEND_AFTER_MS, TxForwardingConfig,
     TxForwardingExtension,
 };
-use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
+use base_txpool_rpc::{SendRawTransactionValidityExtension, TxPoolRpcConfig, TxPoolRpcExtension};
 use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
 use base_upgrade_signal::UpgradeSignalStartupMode;
 use tracing::warn;
@@ -93,6 +93,12 @@ pub struct StandardNodeArgs {
         requires = "builder_rpc_urls"
     )]
     pub enable_tx_forwarding: bool,
+
+    /// Enable the experimental validity transaction RPC.
+    ///
+    /// Validity predicates are forwarded to builders but are not yet enforced.
+    #[arg(long = "enable-experimental-validity-transactions", requires = "enable_tx_forwarding")]
+    pub enable_experimental_validity_transactions: bool,
 
     /// Builder RPC endpoints for transaction forwarding (one forwarder per URL), used by mempool nodes
     #[arg(
@@ -209,6 +215,7 @@ impl From<RpcStandardNodeArgs> for StandardNodeArgs {
             rpc: args,
             metering: MeteringArgs::default(),
             enable_tx_forwarding: false,
+            enable_experimental_validity_transactions: false,
             builder_rpc_urls: Vec::new(),
             tx_forwarding_resend_after_ms: DEFAULT_RESEND_AFTER_MS,
             tx_forwarding_batch_size: DEFAULT_MAX_BATCH_SIZE,
@@ -424,7 +431,16 @@ impl StandardBaseRethNode {
         };
         runner.install_ext::<MeteringExtension>(metering_config);
         runner.install_ext::<BundleExtension>(());
-        runner.install_ext::<TxForwardingExtension>((&args).into());
+        let tx_forwarding_config: TxForwardingConfig = (&args).into();
+        if args.enable_experimental_validity_transactions {
+            if !tx_forwarding_config.enabled || tx_forwarding_config.builder_urls.is_empty() {
+                eyre::bail!(
+                    "experimental validity transactions require enabled transaction forwarding"
+                );
+            }
+            runner.install_ext::<SendRawTransactionValidityExtension>(());
+        }
+        runner.install_ext::<TxForwardingExtension>(tx_forwarding_config);
         runner.install_ext::<ProofsHistoryExtension>(rollup_args.clone());
         Self::install_upgrade_signal_runtime_extension(&mut runner, &rollup_args)?;
         let eip8130_rpc_mode = if flashblocks_config.is_some() {
@@ -709,8 +725,49 @@ mod tests {
         let config = TxForwardingConfig::from(&standard_args);
 
         assert_eq!(standard_args.rpc.rollup_args.sequencer, None);
+        assert!(!standard_args.enable_experimental_validity_transactions);
         assert!(!config.enabled);
         assert!(config.builder_urls.is_empty());
+    }
+
+    #[test]
+    fn experimental_validity_transactions_require_forwarding() {
+        let error = CommandParser::<StandardNodeArgs>::try_parse_from([
+            "base-reth",
+            "--enable-experimental-validity-transactions",
+        ])
+        .expect_err("validity transactions should require forwarding");
+
+        assert!(error.to_string().contains("--enable-tx-forwarding"));
+    }
+
+    #[test]
+    fn experimental_validity_transactions_parse_with_forwarding() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
+            "base-reth",
+            "--enable-tx-forwarding",
+            "--builder-rpc-urls",
+            "http://localhost:8545",
+            "--enable-experimental-validity-transactions",
+        ])
+        .args;
+
+        assert!(args.enable_tx_forwarding);
+        assert!(args.enable_experimental_validity_transactions);
+        assert_eq!(args.builder_rpc_urls.len(), 1);
+    }
+
+    #[test]
+    fn programmatic_validity_config_requires_forwarding() {
+        let mut args = StandardNodeArgs::from(default_rpc_standard_node_args());
+        args.enable_experimental_validity_transactions = true;
+
+        let error = match StandardBaseRethNode::runner(args) {
+            Ok(_) => panic!("invalid programmatic validity config should fail"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("require enabled transaction forwarding"));
     }
 
     #[test]

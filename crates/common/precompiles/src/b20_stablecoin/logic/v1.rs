@@ -28,6 +28,12 @@ const VERSION: &[u8] = b"1";
 pub struct StablecoinV1;
 
 impl StablecoinV1 {
+    const PAUSABLE_FEATURES: &[IB20::PausableFeature] = &[
+        IB20::PausableFeature::TRANSFER,
+        IB20::PausableFeature::MINT,
+        IB20::PausableFeature::BURN,
+    ];
+
     /// Balance-moving core of `transfer`/`transferFrom`, without the pause check.
     fn transfer_inner<S: StablecoinAccounting, A: PolicyAccounting>(
         &self,
@@ -310,7 +316,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
         privileged: bool,
     ) -> Result<()> {
         for feature in &features {
-            B20PausableFeature::ensure_valid(*feature)?;
+            B20PausableFeature::ensure_one_of(*feature, Self::PAUSABLE_FEATURES)?;
         }
         if !privileged {
             B20Guards::ensure_token_role(token, caller, B20TokenRole::Pause)?;
@@ -336,7 +342,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
         privileged: bool,
     ) -> Result<()> {
         for feature in &features {
-            B20PausableFeature::ensure_valid(*feature)?;
+            B20PausableFeature::ensure_one_of(*feature, Self::PAUSABLE_FEATURES)?;
         }
         if !privileged {
             B20Guards::ensure_token_role(token, caller, B20TokenRole::Unpause)?;
@@ -602,7 +608,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
         token: &B20StablecoinToken<S, A>,
         feature: IB20::PausableFeature,
     ) -> Result<bool> {
-        B20PausableFeature::ensure_valid(feature)?;
+        B20PausableFeature::ensure_one_of(feature, Self::PAUSABLE_FEATURES)?;
         Ok((token.accounting().paused()? & B20PausableFeature::mask(feature)) != U256::ZERO)
     }
 
@@ -1239,6 +1245,23 @@ mod tests {
         assert!(!LOGIC.is_paused(&tok, IB20::PausableFeature::TRANSFER).unwrap());
         LOGIC.unpause(&mut tok, ADMIN, vec![IB20::PausableFeature::MINT], true).unwrap();
         assert!(!LOGIC.is_paused(&tok, IB20::PausableFeature::MINT).unwrap());
+    }
+
+    /// `SEIZE` is Cobalt-only. The Beryl wire rejects it at decode; this pins the matching
+    /// logic-layer allowlist so V1 does not accept it via direct logic calls either.
+    #[test]
+    fn pause_unpause_and_is_paused_reject_seize() {
+        let mut tok = token();
+        let expected = BasePrecompileError::enum_conversion_error();
+        assert_eq!(
+            LOGIC.pause(&mut tok, ADMIN, vec![IB20::PausableFeature::SEIZE], true).unwrap_err(),
+            expected
+        );
+        assert_eq!(
+            LOGIC.unpause(&mut tok, ADMIN, vec![IB20::PausableFeature::SEIZE], true).unwrap_err(),
+            expected
+        );
+        assert_eq!(LOGIC.is_paused(&tok, IB20::PausableFeature::SEIZE).unwrap_err(), expected);
     }
 
     #[test]

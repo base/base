@@ -184,6 +184,11 @@ impl RegistrationChecker {
     }
 
     /// Returns every registered enclave whose attested image matches `image_hash`.
+    ///
+    /// `B256::ZERO` means the request states no expectation and any registered enclave will do.
+    /// Proposal proofs take that path: the proposer creates games at the current image, so it has
+    /// nothing historical to pin. Only the challenger, which disputes games created under images
+    /// that may since have been retired, names one.
     pub async fn select_enclaves_for_image(
         &self,
         image_hash: B256,
@@ -205,7 +210,8 @@ impl RegistrationChecker {
             let matches = async {
                 Ok::<_, RegistrationError>(
                     self.is_registered_signer(signer).await?
-                        && self.signer_image_hash(signer).await? == image_hash,
+                        && (image_hash.is_zero()
+                            || self.signer_image_hash(signer).await? == image_hash),
                 )
             }
             .await;
@@ -404,13 +410,27 @@ mod tests {
 
     #[tokio::test]
     async fn image_selection_matches_registered_signer_image() {
-        let checker = test_checker_with_mock(MockRegistry::new(true));
+        let image = B256::repeat_byte(7);
+        let checker = test_checker_with_mock(MockRegistry::new(true).with_image_hash(image));
+
+        assert_eq!(checker.select_enclaves_for_image(image).await.unwrap().len(), 1);
+        assert!(
+            matches!(
+                checker.select_enclaves_for_image(B256::repeat_byte(1)).await.unwrap_err(),
+                RegistrationError::NoMatchingImage { .. }
+            ),
+            "an enclave attested under a different image must not serve the request"
+        );
+    }
+
+    /// A zero image hash states no expectation, so any registered enclave serves it. This is the
+    /// proposal-proof path, which pins no historical image.
+    #[tokio::test]
+    async fn image_selection_treats_zero_as_unconstrained() {
+        let checker =
+            test_checker_with_mock(MockRegistry::new(true).with_image_hash(B256::repeat_byte(7)));
 
         assert_eq!(checker.select_enclaves_for_image(B256::ZERO).await.unwrap().len(), 1);
-        assert!(matches!(
-            checker.select_enclaves_for_image(B256::repeat_byte(1)).await.unwrap_err(),
-            RegistrationError::NoMatchingImage { .. }
-        ));
     }
 
     #[tokio::test]

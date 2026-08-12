@@ -49,7 +49,7 @@ base-node-core.workspace = true
 base-builder-core = { workspace = true, features = ["test-utils"] }
 base-test-utils.workspace = true
 base-tx-manager.workspace = true
-base-batcher-core.workspace = true
+base-batcher-core = { workspace = true, features = ["test-utils"] }
 base-common-chains.workspace = true
 base-execution-evm.workspace = true
 base-consensus-rpc.workspace = true

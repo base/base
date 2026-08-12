@@ -29,7 +29,7 @@ fn test_source_exhaustion_shuts_down_driver_gracefully() {
         let recorded = Arc::new(Mutex::new(Recorded::default()));
         let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
 
-        let driver = BatchDriver::new(
+        let driver = BatchDriver::new_without_derivation_status(
             ctx.clone(),
             pipeline,
             InMemoryBlockSource::new(), // empty → Exhausted immediately
@@ -67,7 +67,7 @@ fn test_flush_event_calls_force_close_channel() {
         let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
         let (source, source_tx) = ChannelBlockSource::new();
 
-        let driver = BatchDriver::new(
+        let driver = BatchDriver::new_without_derivation_status(
             ctx.clone(),
             pipeline,
             source,

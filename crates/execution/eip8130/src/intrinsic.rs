@@ -574,10 +574,12 @@ impl IntrinsicGas {
     }
 
     /// Whether an authorize's ABI-encoded `(ActorConfig, bytes)` `data` carries
-    /// `SCOPE_POLICY`. `ActorConfig` is `(address, uint8 scope, uint48 expiry)`,
-    /// so scope is the second 32-byte word.
+    /// `SCOPE_POLICY`. `ActorConfig` is `(address authenticator, uint48 expiry,
+    /// uint16 scope)`, so scope is the third 32-byte word, right-aligned in its
+    /// low 2 bytes.
     fn authorize_has_policy(data: &[u8]) -> bool {
-        data.len() >= 64 && data[63] & Eip8130Constants::SCOPE_POLICY != 0
+        data.len() >= 96
+            && u16::from_be_bytes([data[94], data[95]]) & Eip8130Constants::SCOPE_POLICY != 0
     }
 }
 
@@ -665,8 +667,8 @@ mod tests {
         // pin the byte offset `authorize_has_policy` reads.
         struct ActorConfigAbi {
             address authenticator;
-            uint8 scope;
             uint48 expiry;
+            uint16 scope;
         }
     }
 
@@ -675,7 +677,8 @@ mod tests {
         use alloy_sol_types::SolValue;
 
         // Drift tripwire: `authorize_has_policy` reads SCOPE_POLICY from the low
-        // byte of the second ABI word.
+        // 2 bytes of the third ABI word (ActorConfig is now `(authenticator,
+        // expiry, scope)`, so scope is the last of the three words).
         let gated = (
             ActorConfigAbi {
                 authenticator: Address::ZERO,
@@ -697,7 +700,7 @@ mod tests {
 
         assert!(IntrinsicGas::authorize_has_policy(&gated));
         assert!(!IntrinsicGas::authorize_has_policy(&ungated));
-        assert_eq!(gated[63], Eip8130Constants::SCOPE_POLICY);
+        assert_eq!(u16::from_be_bytes([gated[94], gated[95]]), Eip8130Constants::SCOPE_POLICY);
     }
 
     #[test]
@@ -879,8 +882,9 @@ mod tests {
             + Eip8130GasSchedule::ACTOR_REVOKE_COST;
         assert_eq!(gas.account_changes, expected);
 
-        // With SCOPE_POLICY, the authorize also writes the two policy slots.
-        authorize_data[63] = Eip8130Constants::SCOPE_POLICY;
+        // With SCOPE_POLICY, the authorize also writes the two policy slots. Scope
+        // is the third ABI word's low 2 bytes (bytes 94..96).
+        authorize_data[94..96].copy_from_slice(&Eip8130Constants::SCOPE_POLICY.to_be_bytes());
         let cc = ConfigChange {
             chain_id: 0,
             sequence: 0,
@@ -993,7 +997,7 @@ mod tests {
         // actor_config slot empty), each empty slot is repriced from a reset to a
         // cold zero-to-zero no-op.
         let mut bytes = [0u8; 32];
-        bytes[..20].copy_from_slice(ACCOUNT.as_slice());
+        bytes[12..].copy_from_slice(ACCOUNT.as_slice());
         let self_id = alloy_primitives::B256::from(bytes);
         let cc = || ConfigChange {
             chain_id: 0,
@@ -1043,7 +1047,7 @@ mod tests {
     )]
     fn excess_revoke_discount_slots_trips_debug_assertion() {
         let mut bytes = [0u8; 32];
-        bytes[..20].copy_from_slice(ACCOUNT.as_slice());
+        bytes[12..].copy_from_slice(ACCOUNT.as_slice());
         let self_id = alloy_primitives::B256::from(bytes);
         let cc = ConfigChange {
             chain_id: 0,
@@ -1086,7 +1090,7 @@ mod tests {
         // same as a non-self change — there is no separate dual-home bump (an
         // earlier over-conservative addition that double-charged account_state).
         let mut bytes = [0u8; 32];
-        bytes[..20].copy_from_slice(ACCOUNT.as_slice());
+        bytes[12..].copy_from_slice(ACCOUNT.as_slice());
         let self_id = alloy_primitives::B256::from(bytes);
         let other_id = alloy_primitives::B256::repeat_byte(0x07);
 

@@ -2,7 +2,7 @@
 
 use std::{net::SocketAddr, time::Duration};
 
-use alloy_primitives::{Address, B256};
+use alloy_primitives::Address;
 use base_cli_utils::{LogConfig, MetricsConfig};
 use base_retry::RetryConfig;
 use eyre::{Result, WrapErr};
@@ -31,8 +31,6 @@ pub struct ProposerConfig {
     pub game_type: u32,
     /// Prover-service routing version required by newly proposed games.
     pub proof_protocol_version: u32,
-    /// Keccak256 hash of the TEE image PCR0.
-    pub tee_image_hash: B256,
     /// Polling interval for new blocks.
     pub poll_interval: Duration,
     /// RPC request timeout.
@@ -128,7 +126,6 @@ impl ProposerConfig {
             dispute_game_factory_addr: proposer.dispute_game_factory_addr,
             game_type: proposer.game_type,
             proof_protocol_version: proposer.proof_protocol_version,
-            tee_image_hash: proposer.tee_image_hash,
             poll_interval: proposer.poll_interval,
             rpc_timeout: proposer.rpc_timeout,
             rollup_rpc: proposer.rollup_rpc,
@@ -177,8 +174,6 @@ mod tests {
             "1",
             "--proof-protocol-version",
             "1",
-            "--tee-image-hash",
-            "0x0000000000000000000000000000000000000000000000000000000000000001",
             "--rollup-rpc",
             "http://localhost:7545",
             "--private-key",

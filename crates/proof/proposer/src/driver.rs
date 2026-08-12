@@ -48,10 +48,6 @@ pub struct DriverConfig {
     /// Address of the proposer that submits proof transactions onchain.
     /// Included in the proof journal so the enclave signs over the correct `msg.sender`.
     pub proposer_address: Address,
-    /// Keccak256 hash of the expected enclave PCR0 measurement.
-    /// Passed to the prover in each proof request so multi-enclave provers
-    /// can select the correct enclave.
-    pub tee_image_hash: B256,
     /// Address of the `AnchorStateRegistry` contract on L1.
     /// Used as the "no parent" sentinel when creating the first game from anchor state.
     pub anchor_state_registry_address: Address,
@@ -68,7 +64,6 @@ impl Default for DriverConfig {
             game_type: 0,
             proof_protocol_version: 0,
             proposer_address: Address::ZERO,
-            tee_image_hash: B256::ZERO,
             anchor_state_registry_address: Address::ZERO,
         }
     }

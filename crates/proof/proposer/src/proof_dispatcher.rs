@@ -29,8 +29,6 @@ pub struct ProofDispatcherConfig {
     pub proposer_address: Address,
     /// Number of L2 blocks between intermediate output root checkpoints.
     pub intermediate_block_interval: u64,
-    /// Expected TEE enclave image hash.
-    pub tee_image_hash: B256,
 }
 
 impl From<&DriverConfig> for ProofDispatcherConfig {
@@ -40,7 +38,6 @@ impl From<&DriverConfig> for ProofDispatcherConfig {
             protocol_version: config.proof_protocol_version,
             proposer_address: config.proposer_address,
             intermediate_block_interval: config.intermediate_block_interval,
-            tee_image_hash: config.tee_image_hash,
         }
     }
 }
@@ -114,7 +111,10 @@ impl ProofDispatcher {
             proposer: self.config.proposer_address,
             intermediate_block_interval: self.config.intermediate_block_interval,
             l1_head_number: l1_header.number,
-            image_hash: self.config.tee_image_hash,
+            // Proposals are always created at the current image, so they pin none: any registered
+            // enclave can serve them. Only the challenger, which disputes games created under
+            // possibly-retired images, names one.
+            image_hash: B256::ZERO,
             schedule_l2_block_number: None,
         })
     }
@@ -317,7 +317,6 @@ mod tests {
                 protocol_version: 1,
                 proposer_address: Address::repeat_byte(0x04),
                 intermediate_block_interval: 300,
-                tee_image_hash: B256::repeat_byte(0x05),
             },
         );
         let recovered = RecoveredState {

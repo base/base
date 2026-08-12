@@ -16,9 +16,11 @@ use alloy_signer_local::PrivateKeySigner;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_txpool::{NoExtensions, ValidatedTransaction};
 use base_system_tests::{
-    ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, ANVIL_ACCOUNT_3, ANVIL_ACCOUNT_4, SystemTestStackBuilder,
+    ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, ANVIL_ACCOUNT_3, ANVIL_ACCOUNT_4, SystemTestProviderExt,
+    SystemTestStackBuilder,
 };
 use base_tx_forwarding::TxForwardingConfig;
+use base_txpool_rpc::SendRawTransactionValidityRequest;
 use eyre::{Result, WrapErr};
 use tokio::time::{sleep, timeout};
 
@@ -248,6 +250,65 @@ async fn test_tx_forwarding_pipeline_system() -> Result<()> {
 
     Ok(())
 }
+
+/// Tests validity-bearing transaction ingress through the production forwarding pipeline.
+#[tokio::test]
+async fn test_validity_tx_forwarding_pipeline_system() -> Result<()> {
+    let system = SystemTestStackBuilder::new()
+        .with_l1_chain_id(L1_CHAIN_ID)
+        .with_l2_chain_id(L2_CHAIN_ID)
+        .with_tx_forwarding(
+            TxForwardingConfig::new(vec![]).with_resend_after_ms(2000).with_max_batch_size(100),
+        )
+        .with_experimental_validity_transactions()
+        .build()
+        .await?;
+
+    let builder_provider = system.l2_builder_provider()?;
+    let client_provider = system.l2_client_provider()?;
+    builder_provider.wait_for_block(3, Duration::from_secs(15)).await?;
+    client_provider.wait_for_block(3, Duration::from_secs(15)).await?;
+
+    let private_key_hex = format!("0x{}", hex::encode(ANVIL_ACCOUNT_1.private_key.as_slice()));
+    let signer: PrivateKeySigner = private_key_hex.parse()?;
+    let sender = signer.address();
+    client_provider.wait_for_balance(sender, Duration::from_secs(15)).await?;
+
+    let nonce = client_provider.get_transaction_count(sender).await?;
+    let recipient: Address = "0x000000000000000000000000000000000000dEaD".parse()?;
+    let (_, raw_tx, expected_tx_hash) =
+        create_signed_eip1559_tx(&signer, L2_CHAIN_ID, nonce, recipient)?;
+    let validity = serde_json::from_value(serde_json::json!({
+        "type": "storage",
+        "params": {
+            "address": recipient,
+            "slot": "0x1",
+            "op": "=",
+            "value": "0x2"
+        }
+    }))?;
+    let rpc_client = RpcClient::builder().http(system.l2_client_rpc_url()?);
+
+    let tx_hash: alloy_primitives::B256 = rpc_client
+        .request(
+            "base_sendRawTransactionValidity",
+            (SendRawTransactionValidityRequest { tx: raw_tx, validity: vec![validity] },),
+        )
+        .await?;
+
+    assert_eq!(tx_hash, expected_tx_hash, "Transaction hash mismatch");
+
+    // TODO: Update this "transaction landed" assertion when validity transactions are split out
+    // of the builder's regular txpool; the dedicated validity pool will need its own observable.
+    let receipt = builder_provider.wait_for_receipt(expected_tx_hash, TX_RECEIPT_TIMEOUT).await?;
+    assert_eq!(receipt.inner.transaction_hash, expected_tx_hash);
+    assert!(receipt.inner.block_number.is_some(), "Receipt should have block number");
+    assert_eq!(receipt.inner.from, sender);
+    assert_eq!(receipt.inner.to, Some(recipient));
+
+    Ok(())
+}
+
 /// Tests that the forwarding pipeline handles high transaction load under rate limiting.
 ///
 /// Uses all 4 available test accounts (`ANVIL_ACCOUNT_1` through `ANVIL_ACCOUNT_4`) to send

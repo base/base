@@ -29,6 +29,13 @@ const VERSION: &[u8] = b"1";
 pub struct StablecoinV2;
 
 impl StablecoinV2 {
+    const PAUSABLE_FEATURES: &[IB20::PausableFeature] = &[
+        IB20::PausableFeature::TRANSFER,
+        IB20::PausableFeature::MINT,
+        IB20::PausableFeature::BURN,
+        IB20::PausableFeature::SEIZE,
+    ];
+
     /// Balance-moving core of `transfer`/`transferFrom`, without the pause check.
     ///
     /// `policies` carries the sender/receiver ids pre-read from their shared slot by the caller;
@@ -353,8 +360,15 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
     ) -> Result<()> {
         B20Guards::ensure_not_paused(token, IB20::PausableFeature::SEIZE)?;
         B20Guards::ensure_token_role(token, caller, B20TokenRole::Seize)?;
-        // `to != 0` guards against a disguised burn; `from` is not zero-checked (burn-blocked family).
+        // `to != 0` guards against a disguised burn; `from != 0` guards against a disguised mint
+        // (`Transfer(0x0, to, ...)`), matching `transfer_inner`.
         if to == Address::ZERO {
+            return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
+        }
+        if from == Address::ZERO {
+            return Err(BasePrecompileError::revert(IB20::InvalidSender { sender: from }));
+        }
+        if from == to {
             return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
         }
         B20Guards::ensure_seizable(token, from)?;
@@ -377,7 +391,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
         privileged: bool,
     ) -> Result<()> {
         for feature in &features {
-            B20PausableFeature::ensure_valid(*feature)?;
+            B20PausableFeature::ensure_one_of(*feature, Self::PAUSABLE_FEATURES)?;
         }
         if !privileged {
             B20Guards::ensure_token_role(token, caller, B20TokenRole::Pause)?;
@@ -403,7 +417,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
         privileged: bool,
     ) -> Result<()> {
         for feature in &features {
-            B20PausableFeature::ensure_valid(*feature)?;
+            B20PausableFeature::ensure_one_of(*feature, Self::PAUSABLE_FEATURES)?;
         }
         if !privileged {
             B20Guards::ensure_token_role(token, caller, B20TokenRole::Unpause)?;
@@ -669,7 +683,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
         token: &B20StablecoinToken<S, A>,
         feature: IB20::PausableFeature,
     ) -> Result<bool> {
-        B20PausableFeature::ensure_valid(feature)?;
+        B20PausableFeature::ensure_one_of(feature, Self::PAUSABLE_FEATURES)?;
         Ok((token.accounting().paused()? & B20PausableFeature::mask(feature)) != U256::ZERO)
     }
 
@@ -1355,6 +1369,49 @@ mod tests {
         assert_eq!(
             err,
             BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO })
+        );
+    }
+
+    #[test]
+    fn seize_reverts_on_zero_from() {
+        let mut tok = token();
+        // A non-default `SeizeHolder` (here ALWAYS_BLOCK via `make_seizable`) treats the zero
+        // address as seizable, so without the `from != 0` guard a zero-amount seize from the zero
+        // address would emit a misleading `Transfer(0x0, to, 0)` that indexers read as a mint.
+        make_seizable(&mut tok);
+        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
+
+        let err = LOGIC
+            .seize_with_memo(&mut tok, ADMIN, Address::ZERO, BOB, U256::ZERO, MEMO)
+            .unwrap_err();
+
+        assert_eq!(err, BasePrecompileError::revert(IB20::InvalidSender { sender: Address::ZERO }));
+        assert!(
+            event_sigs(&tok).is_empty(),
+            "no misleading Transfer/Memo/Seized on a rejected zero-from seize"
+        );
+    }
+
+    #[test]
+    fn seize_reverts_on_self_seize() {
+        let mut tok = token();
+        fund(&mut tok, ALICE, U256::from(100u64));
+        make_seizable(&mut tok);
+        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
+
+        let err = LOGIC
+            .seize_with_memo(&mut tok, ADMIN, ALICE, ALICE, U256::from(1u64), MEMO)
+            .unwrap_err();
+
+        assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver: ALICE }));
+        assert_eq!(
+            tok.accounting().balance_of(ALICE).unwrap(),
+            U256::from(100u64),
+            "balance unchanged"
+        );
+        assert!(
+            event_sigs(&tok).is_empty(),
+            "no misleading Transfer/Memo/Seized on a rejected self-seize"
         );
     }
 

@@ -15,8 +15,6 @@ pub enum CompressorError {
 }
 
 /// The type of compressor to use.
-///
-/// Matches the reference batcher's compressor variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompressorType {
     /// The ratio compression.

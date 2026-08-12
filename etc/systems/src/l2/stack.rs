@@ -73,6 +73,8 @@ pub struct L2StackConfig {
     /// Optional transaction forwarding configuration for the client node.
     /// When set, the client will forward transactions to builder RPC endpoints.
     pub tx_forwarding_config: Option<TxForwardingConfig>,
+    /// Whether both L2 nodes enable experimental validity transaction transport.
+    pub enable_experimental_validity_transactions: bool,
     /// Number of L1 blocks to keep distance from the L1 head for the client (validator)
     /// consensus node's derivation pipeline.
     pub verifier_l1_confs: u64,
@@ -195,6 +197,8 @@ impl L2Stack {
             auth_port: container_config.and_then(|c| c.builder_auth_port),
             p2p_port: container_config.and_then(|c| c.builder_p2p_port),
             flashblocks_port: container_config.and_then(|c| c.builder_flashblocks_port),
+            enable_experimental_validity_transactions: config
+                .enable_experimental_validity_transactions,
             extra_extensions: config.extra_builder_extensions,
         };
         let builder = InProcessBuilder::start(builder_config)
@@ -273,6 +277,8 @@ impl L2Stack {
             auth_port: container_config.and_then(|c| c.client_auth_port),
             p2p_port: container_config.and_then(|c| c.client_p2p_port),
             tx_forwarding_config,
+            enable_experimental_validity_transactions: config
+                .enable_experimental_validity_transactions,
             upgrade_signal: config.execution_upgrade_signal.clone(),
             extra_extensions: config.extra_client_extensions,
         };

@@ -4,6 +4,7 @@ use alloy_consensus::BlockHeader;
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use base_common_chains::Upgrades;
 use base_common_network::Base;
+use base_common_rpc_types::EIP8130_PRE_COBALT_RPC_ERROR;
 use jsonrpsee_types::{
     ErrorObjectOwned,
     error::{INTERNAL_ERROR_CODE, INVALID_PARAMS_CODE},
@@ -43,7 +44,7 @@ impl Eip8130CobaltGate {
         if !provider.chain_spec().is_cobalt_active_at_timestamp(timestamp) {
             return Err(ErrorObjectOwned::owned(
                 INVALID_PARAMS_CODE,
-                "EIP-8130 RPC features are not active before the Cobalt hard fork; the `nonce_key` parameter is not supported at this block",
+                EIP8130_PRE_COBALT_RPC_ERROR,
                 None::<()>,
             ));
         }

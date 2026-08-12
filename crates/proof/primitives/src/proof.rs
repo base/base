@@ -26,6 +26,9 @@ pub enum ProofResult {
         aggregate_proposal: Proposal,
         /// The individual per-block proposals that were aggregated.
         proposals: Vec<Proposal>,
+        /// Stamped by the enclave at signing time, so the signer and the proof
+        /// are returned atomically.
+        tee_signer: Address,
     },
     /// Result from a ZK backend.
     Zk {
@@ -69,11 +72,18 @@ pub struct ProofRequest {
     /// L1 head block number without an extra lookup.
     #[cfg_attr(feature = "serde", serde(default))]
     pub l1_head_number: u64,
-    /// Keccak256 hash of the expected enclave PCR0 measurement.
+    /// Keccak256 hash of the enclave PCR0 measurement this proof must be signed under.
     ///
-    /// Used by multi-enclave provers to select the enclave whose PCR0
-    /// matches the on-chain `TEE_IMAGE_HASH`. Single-enclave provers
-    /// accept and ignore this field.
+    /// Set from the disputed game's own `TEE_IMAGE_HASH`, so it names the image that game will
+    /// accept rather than whichever image is current. `NitroEnclavePool` selects a registered
+    /// enclave whose on-chain `signerImageHash` matches, and fails the job when none does.
+    ///
+    /// This mirrors `TEEVerifier.verify`, which compares `signerImageHash(signer)` against the
+    /// calling game's `TEE_IMAGE_HASH`: without it, a host holding enclaves of more than one image
+    /// can spend a full proof run before the mismatch surfaces as an on-chain revert.
+    ///
+    /// Zero means "no expectation", which is what proposal proofs send — the proposer creates
+    /// games at the current image, so any registered enclave that can serve them is correct.
     #[cfg_attr(feature = "serde", serde(default))]
     pub image_hash: B256,
     /// L2 block used to pin the upgrade schedule; defaults to the claimed block.

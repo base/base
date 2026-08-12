@@ -31,7 +31,7 @@ pub enum TxAuthError {
         /// The operation whose scope requirement was not met.
         operation: Operation,
         /// The resolved actor's scope bitfield.
-        scope: u8,
+        scope: u16,
     },
 
     /// A config change or delegation targets a locked account. Both operations
@@ -40,9 +40,9 @@ pub enum TxAuthError {
     #[error("account is locked")]
     AccountLocked,
 
-    /// A delegation was not authorized by the account's native secp256k1 admin
-    /// self actor.
-    #[error("delegation requires the native-k1 admin self actor")]
+    /// A delegation was not authorized by an admin (unrestricted) actor on the
+    /// unlocked account.
+    #[error("delegation requires an admin actor")]
     DelegationUnauthorized,
 
     /// A config change is bound to a chain other than `0` (multichain) or the

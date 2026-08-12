@@ -70,7 +70,7 @@ pub struct L1Config {
     pub trust_rpc: bool,
     /// The L1 beacon API client.
     pub beacon_client: OnlineBeaconClient,
-    /// The L1 execution JSON-RPC provider.
+    /// The general L1 execution JSON-RPC provider.
     pub engine_provider: RootProvider,
     /// How frequently to poll L1 for a new finalized block.
     ///
@@ -112,6 +112,8 @@ pub struct RollupNode {
     pub config: Arc<RollupConfig>,
     /// The L1 configuration.
     pub l1_config: L1Config,
+    /// L1 execution JSON-RPC provider dedicated to the sequencer block-production hot path.
+    pub sequencer_l1_provider: RootProvider,
     /// The L2 EL provider.
     pub l2_provider: RootProvider<Base>,
     /// Whether to trust the L2 RPC.
@@ -207,7 +209,7 @@ impl RollupNode {
         &self,
     ) -> StatefulAttributesBuilder<AlloyChainProvider, AlloyL2ChainProvider> {
         let l1_derivation_provider = AlloyChainProvider::new_with_trust(
-            self.l1_config.engine_provider.clone(),
+            self.sequencer_l1_provider.clone(),
             DERIVATION_PROVIDER_CACHE_SIZE,
             self.l1_config.trust_rpc,
         );
@@ -525,7 +527,7 @@ impl RollupNode {
 
         let (l1_head_updates_tx, l1_head_updates_rx) = watch::channel(None);
         let delayed_l1_provider = DelayedL1OriginSelectorProvider::new(
-            self.l1_config.engine_provider.clone(),
+            self.sequencer_l1_provider.clone(),
             l1_head_updates_rx,
             self.sequencer_config.l1_conf_delay,
         );
