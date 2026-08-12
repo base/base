@@ -45,7 +45,8 @@ L2_BASE_DENIM_BLOCK= just devnet up
 ```
 
 Zenith is the permanently unscheduled, genesis-only gate for future hardfork feature testing.
-To additionally activate it at block 23, start with:
+To additionally activate it at block 50 (after Denim, so it does not conflict with earlier
+activations), start with:
 
 ```bash
 just devnet up zenith

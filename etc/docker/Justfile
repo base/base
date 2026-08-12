@@ -181,7 +181,7 @@ _up-devnet compose_profile mode:
       default) export L2_BASE_DENIM_BLOCK="${L2_BASE_DENIM_BLOCK-23}" ;;
       zenith)
         export L2_BASE_DENIM_BLOCK="${L2_BASE_DENIM_BLOCK-23}"
-        export L2_BASE_ZENITH_BLOCK="${L2_BASE_ZENITH_BLOCK:-23}"
+        export L2_BASE_ZENITH_BLOCK="${L2_BASE_ZENITH_BLOCK:-50}"
         ;;
       *)
         echo "ERROR: mode must be 'default' or 'zenith' (got '${devnet_mode}')" >&2
