@@ -35,7 +35,7 @@ base_metrics::define_metrics! {
     sequencer_l1_origin_rpc_duration_seconds: histogram,
     #[describe("Canonical L1 successors that do not extend the accepted sequencer origin")]
     sequencer_l1_origin_orphans_total: counter,
-    #[describe("Terminal engine reset requests by caller, cause, and outcome")]
+    #[describe("Engine reset handling attempts by caller, cause, and outcome")]
     #[label(
         name = "origin",
         default = ["derivation", "sequencer", "shadow_cycle_coordinated"]
@@ -53,7 +53,16 @@ base_metrics::define_metrics! {
             "shadow_cycle"
         ]
     )]
-    #[label(name = "outcome", default = ["unchanged", "rewound", "deferred", "failed"])]
+    #[label(
+        name = "outcome",
+        default = [
+            "unchanged",
+            "rewound",
+            "deferred",
+            "derivation_notification_failed",
+            "failed"
+        ]
+    )]
     engine_reset_outcomes_total: counter,
     #[describe("Unsafe L2 head rewind depth caused by an engine reset")]
     #[label(
@@ -84,7 +93,16 @@ base_metrics::define_metrics! {
             "shadow_cycle"
         ]
     )]
-    #[label(name = "outcome", default = ["unchanged", "rewound", "deferred", "failed"])]
+    #[label(
+        name = "outcome",
+        default = [
+            "unchanged",
+            "rewound",
+            "deferred",
+            "derivation_notification_failed",
+            "failed"
+        ]
+    )]
     engine_reset_duration_seconds: histogram,
     #[describe("Duration of the sequencer attributes builder")]
     sequencer_attributes_build_duration: histogram,
@@ -244,15 +262,29 @@ mod tests {
             Metrics::record_engine_reset(
                 ResetOrigin::Sequencer,
                 ResetReason::L1OriginOrphaned,
-                ResetRequestOutcome::Failed,
+                ResetRequestOutcome::DerivationNotificationFailed,
                 Duration::from_millis(5),
+                head(10, 1),
+                head(8, 2),
+            );
+            Metrics::record_engine_reset(
+                ResetOrigin::Sequencer,
+                ResetReason::L1OriginOrphaned,
+                ResetRequestOutcome::Failed,
+                Duration::from_millis(6),
                 head(10, 1),
                 head(10, 1),
             );
         });
 
         let snapshot = snapshotter.snapshot().into_vec();
-        for (outcome, count) in [("unchanged", 1), ("rewound", 2), ("deferred", 1), ("failed", 1)] {
+        for (outcome, count) in [
+            ("unchanged", 1),
+            ("rewound", 2),
+            ("deferred", 1),
+            ("derivation_notification_failed", 1),
+            ("failed", 1),
+        ] {
             assert_eq!(
                 metric(
                     &snapshot,
@@ -277,13 +309,15 @@ mod tests {
             Some(DebugValue::Histogram(values)) => {
                 assert_eq!(
                     values.iter().map(|value| value.into_inner()).collect::<Vec<_>>(),
-                    [3.0, 0.0]
+                    [3.0, 0.0, 2.0]
                 );
             }
             value => panic!("expected rewind-depth observations, got {value:?}"),
         }
 
-        for outcome in ["unchanged", "rewound", "deferred", "failed"] {
+        for outcome in
+            ["unchanged", "rewound", "deferred", "derivation_notification_failed", "failed"]
+        {
             assert!(matches!(
                 metric(
                     &snapshot,

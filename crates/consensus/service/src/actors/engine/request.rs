@@ -184,7 +184,7 @@ impl ResetReason {
     }
 }
 
-/// Terminal outcome of a logical engine reset request.
+/// Outcome of one engine reset request handling attempt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResetRequestOutcome {
     /// The reset completed without changing the unsafe L2 head.
@@ -193,7 +193,9 @@ pub enum ResetRequestOutcome {
     Rewound,
     /// The reset was deferred until engine synchronization completes.
     Deferred,
-    /// The reset failed.
+    /// The engine reset completed, but derivation could not be notified.
+    DerivationNotificationFailed,
+    /// The engine reset did not complete.
     Failed,
 }
 
@@ -215,6 +217,7 @@ impl ResetRequestOutcome {
             Self::Unchanged => "unchanged",
             Self::Rewound => "rewound",
             Self::Deferred => "deferred",
+            Self::DerivationNotificationFailed => "derivation_notification_failed",
             Self::Failed => "failed",
         }
     }

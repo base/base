@@ -195,7 +195,7 @@ where
                                         unsafe_after,
                                     )
                                 } else {
-                                    ResetRequestOutcome::Failed
+                                    ResetRequestOutcome::DerivationNotificationFailed
                                 };
                                 Metrics::record_engine_reset(
                                     origin,

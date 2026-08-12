@@ -594,7 +594,7 @@ where
                                 Metrics::record_engine_reset(
                                     origin,
                                     reason,
-                                    ResetRequestOutcome::Failed,
+                                    ResetRequestOutcome::DerivationNotificationFailed,
                                     reset_started.elapsed(),
                                     unsafe_before,
                                     self.processor.engine_state().sync_state.unsafe_head(),
