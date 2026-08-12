@@ -94,7 +94,9 @@ impl UpgradeSignalRuntimeApplier {
         }
 
         summary.committed = staged_sink.finalize()?;
-        *sink = staged_sink;
+        if summary.committed {
+            *sink = staged_sink;
+        }
 
         Ok(summary)
     }
