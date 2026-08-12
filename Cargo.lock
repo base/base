@@ -19890,6 +19890,34 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "afab94fb28594581f62d981211a9a4d53cc8130bbcbbb89a0440d9b8e81a7746"
 
 [[package]]
+name = "roxy"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "axum 0.8.9",
+ "base-health",
+ "clap",
+ "reqwest 0.13.4",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "roxy-bin"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "base-cli-utils",
+ "clap",
+ "dotenvy",
+ "roxy",
+ "serde",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "rrs-lib"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
