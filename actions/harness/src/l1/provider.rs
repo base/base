@@ -4,7 +4,7 @@ use alloy_consensus::{Header, Receipt};
 use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_consensus_derive::{ChainProvider, PipelineError, PipelineErrorKind};
-use base_consensus_node::{L1OriginSelectorError, L1OriginSelectorProvider};
+use base_consensus_node::{L1OriginSelectorError, L1OriginSelectorProvider, PreparedL1Origin};
 use base_protocol::BlockInfo;
 
 use crate::{L1Block, block_info_from};
@@ -62,18 +62,26 @@ impl L1OriginSelectorProvider for SharedL1Chain {
         self.tip().map(|block| block.hash())
     }
 
-    async fn get_block_by_hash(
+    async fn prepared_by_hash(
         &self,
         hash: B256,
-    ) -> Result<Option<BlockInfo>, L1OriginSelectorError> {
-        Ok(self.block_by_hash(hash).map(|b| block_info_from(&b)))
+    ) -> Result<Option<PreparedL1Origin>, L1OriginSelectorError> {
+        Ok(self.block_by_hash(hash).map(prepared_from))
     }
 
-    async fn get_block_by_number(
+    async fn prepared_by_number(
         &self,
         number: u64,
-    ) -> Result<Option<BlockInfo>, L1OriginSelectorError> {
-        Ok(self.get_block(number).map(|b| block_info_from(&b)))
+    ) -> Result<Option<PreparedL1Origin>, L1OriginSelectorError> {
+        Ok(self.get_block(number).map(prepared_from))
+    }
+}
+
+fn prepared_from(block: L1Block) -> PreparedL1Origin {
+    PreparedL1Origin {
+        hash: block.hash(),
+        header: block.header,
+        receipts: Some(Arc::new(block.receipts)),
     }
 }
 

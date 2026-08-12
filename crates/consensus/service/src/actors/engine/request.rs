@@ -121,6 +121,8 @@ pub struct ResetRequest {
     pub result_tx: mpsc::Sender<EngineClientResult<()>>,
     /// The subsystem and coordination path that requested the reset.
     pub origin: ResetOrigin,
+    /// The condition that caused the reset request.
+    pub reason: ResetReason,
 }
 
 /// Identifies the state owner coordinating an engine reset.
@@ -132,6 +134,93 @@ pub enum ResetOrigin {
     Sequencer,
     /// The shadow sequencer coordinated initial activation or its private-cycle reset.
     ShadowCycleCoordinated,
+}
+
+impl ResetOrigin {
+    /// Returns the bounded metrics label for this reset origin.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Derivation => "derivation",
+            Self::Sequencer => "sequencer",
+            Self::ShadowCycleCoordinated => "shadow_cycle_coordinated",
+        }
+    }
+}
+
+/// Identifies the condition that caused an engine reset request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResetReason {
+    /// The derivation pipeline encountered a generic reset condition.
+    DerivationPipeline,
+    /// Derivation detected an L1 reorganization.
+    DerivationL1Reorg,
+    /// The accepted L1 origin could not be fetched.
+    L1OriginUnavailable,
+    /// The canonical L1 successor does not extend the accepted origin.
+    L1OriginOrphaned,
+    /// The selected L1 origin is inconsistent with the unsafe L2 head.
+    L1OriginInconsistent,
+    /// The sequencer is performing its initial engine reset.
+    SequencerStartup,
+    /// An administrator explicitly requested a reset.
+    Admin,
+    /// A shadow sequencer is beginning a new private production cycle.
+    ShadowCycle,
+}
+
+impl ResetReason {
+    /// Returns the bounded metrics label for this reset reason.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::DerivationPipeline => "derivation_pipeline",
+            Self::DerivationL1Reorg => "derivation_l1_reorg",
+            Self::L1OriginUnavailable => "l1_origin_unavailable",
+            Self::L1OriginOrphaned => "l1_origin_orphaned",
+            Self::L1OriginInconsistent => "l1_origin_inconsistent",
+            Self::SequencerStartup => "sequencer_startup",
+            Self::Admin => "admin",
+            Self::ShadowCycle => "shadow_cycle",
+        }
+    }
+}
+
+/// Outcome of one engine reset request handling attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResetRequestOutcome {
+    /// The reset completed without changing the unsafe L2 head.
+    Unchanged,
+    /// The reset changed the unsafe L2 head.
+    Rewound,
+    /// The reset was deferred until engine synchronization completes.
+    Deferred,
+    /// The engine reset completed, but derivation could not be notified.
+    DerivationNotificationFailed,
+    /// The engine reset did not complete.
+    Failed,
+}
+
+impl ResetRequestOutcome {
+    /// Classifies a successful reset from its unsafe heads before and after processing.
+    pub fn from_unsafe_heads(before: L2BlockInfo, after: L2BlockInfo) -> Self {
+        if before.block_info.number == after.block_info.number
+            && before.block_info.hash == after.block_info.hash
+        {
+            Self::Unchanged
+        } else {
+            Self::Rewound
+        }
+    }
+
+    /// Returns the bounded metrics label for this reset outcome.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Unchanged => "unchanged",
+            Self::Rewound => "rewound",
+            Self::Deferred => "deferred",
+            Self::DerivationNotificationFailed => "derivation_notification_failed",
+            Self::Failed => "failed",
+        }
+    }
 }
 
 /// A request to insert a local unsafe payload.

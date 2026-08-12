@@ -21,7 +21,8 @@ use tokio::{
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 
 use crate::{
-    CancellableContext, Metrics, NodeActor, SequencerAdminQuery, UnsafePayloadGossipClient,
+    CancellableContext, Metrics, NodeActor, ResetReason, SequencerAdminQuery,
+    UnsafePayloadGossipClient,
     actors::{
         SequencerEngineClient,
         engine::{EngineClientError, EngineClientResult},
@@ -225,9 +226,13 @@ where
                 }
                 result = async {
                     if shadow_cycle_coordinated {
-                        engine_client.reset_engine_forkchoice_coordinated().await
+                        engine_client
+                            .reset_engine_forkchoice_coordinated(ResetReason::ShadowCycle)
+                            .await
                     } else {
-                        engine_client.reset_engine_forkchoice().await
+                        engine_client
+                            .reset_engine_forkchoice(ResetReason::SequencerStartup)
+                            .await
                     }
                 } => match result {
                     Ok(()) => return Ok(()),
@@ -491,12 +496,7 @@ where
                 build_ticker.reset_l1_origin_retry_budget();
                 pipeline.next_payload_to_seal = Some(payload);
             }
-            BuildOutcome::Deferred => {
-                build_ticker.reset_l1_origin_retry_budget();
-                pipeline.next_payload_to_seal = None;
-                build_ticker.reset_immediately();
-            }
-            BuildOutcome::AwaitingL1Origin => {
+            BuildOutcome::Deferred | BuildOutcome::AwaitingL1Origin => {
                 pipeline.next_payload_to_seal = None;
                 build_ticker.schedule_l1_origin_retry();
             }
@@ -518,12 +518,7 @@ where
                 pipeline.next_payload_to_seal = Some(payload);
                 build_ticker.schedule_after_build(Some(target));
             }
-            BuildOutcome::Deferred => {
-                build_ticker.reset_l1_origin_retry_budget();
-                pipeline.next_payload_to_seal = None;
-                build_ticker.schedule_after_build(None);
-            }
-            BuildOutcome::AwaitingL1Origin => {
+            BuildOutcome::Deferred | BuildOutcome::AwaitingL1Origin => {
                 pipeline.next_payload_to_seal = None;
                 build_ticker.schedule_l1_origin_retry();
             }

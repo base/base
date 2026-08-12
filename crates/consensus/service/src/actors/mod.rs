@@ -18,8 +18,8 @@ pub use engine::{
     BuildRequest, EngineActor, EngineActorRequest, EngineClientError, EngineClientResult,
     EngineConfig, EngineDerivationClient, EngineError, EngineProcessor, EngineRequestReceiver,
     EngineRpcProcessor, EngineRpcRequest, GetPayloadRequest, InsertUnsafePayloadRequest,
-    QueuedEngineDerivationClient, ReconcileShadowRequest, ResetOrigin, ResetOutcome, ResetRequest,
-    ValidatorEngineRequestHandler,
+    QueuedEngineDerivationClient, ReconcileShadowRequest, ResetOrigin, ResetOutcome, ResetReason,
+    ResetRequest, ResetRequestOutcome, ValidatorEngineRequestHandler,
 };
 
 mod rpc;
@@ -62,11 +62,12 @@ pub use sequencer::{
     BuildOutcome, BuildPipelineState, CanonicalReconciliationInputs, CanonicalUnsafeCatchup,
     Conductor, ConductorClient, ConductorError, DelayedL1OriginSelectorProvider, L1OriginSelector,
     L1OriginSelectorError, L1OriginSelectorProvider, OriginSelector, PayloadBuilder, PayloadSealer,
-    PendingStopSender, PoolActivation, QueuedSequencerEngineClient, RecoveryModeGuard,
-    ScheduledTicker, SealState, SealStepError, SealStepOutcome, SequencerActor,
-    SequencerActorError, SequencerAdminQuery, SequencerConfig, SequencerEngineClient,
-    SequencerEngineRequestCoordinator, SequencerEngineState, ShadowCycle, ShadowReconciliationGate,
-    ShadowReconciliationTask, ShadowSequencingState, UnsealedPayloadHandle,
+    PendingStopSender, PoolActivation, PrefetchedChainProvider, PrefetchedChainProviderError,
+    PreparedL1Origin, QueuedSequencerEngineClient, RecoveryModeGuard, ScheduledTicker, SealState,
+    SealStepError, SealStepOutcome, SequencerActor, SequencerActorError, SequencerAdminQuery,
+    SequencerConfig, SequencerEngineClient, SequencerEngineRequestCoordinator,
+    SequencerEngineState, ShadowCycle, ShadowReconciliationGate, ShadowReconciliationTask,
+    ShadowSequencingState, UnsealedPayloadHandle,
 };
 #[cfg(test)]
 pub use sequencer::{MockConductor, MockOriginSelector, MockSequencerEngineClient};
