@@ -192,12 +192,20 @@ impl CertManagerKeys {
     }
 
     /// Requires explicit context-tagged version present with value 2 (X.509 v3).
+    ///
+    /// The INTEGER child must consume the entire `[0] EXPLICIT` wrapper, matching
+    /// `CertManager._parseTbs` (e.g. `a0050201020500` is rejected).
     pub fn require_v3_layout(tbs_tlv: &[u8], version: X509Version) -> PlannerResult<()> {
         let tbs_content = Self::der_content_octets(tbs_tlv)?;
         if tbs_content.first().copied() != Some(0xa0) {
             return Err(Self::cert_error(
                 "TBSCertificate missing explicit version context tag (0xa0)",
             ));
+        }
+        let (wrapper_content, _) = Self::der_tlv_at(tbs_content, 0)?;
+        let (_, version_child_end) = Self::der_tlv_at(wrapper_content, 0)?;
+        if version_child_end != wrapper_content.len() {
+            return Err(Self::cert_error("TBSCertificate version wrapper has trailing data"));
         }
         if version != X509Version::V3 {
             return Err(Self::cert_error("certificate version must be v3"));
@@ -212,30 +220,41 @@ impl CertManagerKeys {
     /// `tlv` must be exactly one DER TLV: the decoded header+content length must equal
     /// `tlv.len()`. Concatenated TLVs or trailing bytes return `DER TLV length mismatch`.
     pub fn der_content_octets(tlv: &[u8]) -> PlannerResult<&[u8]> {
-        if tlv.len() < 2 {
+        let (content, end) = Self::der_tlv_at(tlv, 0)?;
+        if end != tlv.len() {
+            return Err(Self::cert_error("DER TLV length mismatch"));
+        }
+        Ok(content)
+    }
+
+    /// Parses one DER TLV at `start`. Returns `(content, end)` where `end` may leave siblings.
+    pub fn der_tlv_at(bytes: &[u8], start: usize) -> PlannerResult<(&[u8], usize)> {
+        if bytes.len().saturating_sub(start) < 2 {
             return Err(Self::cert_error("DER TLV too short"));
         }
-        let first = tlv[1];
+        let first = bytes[start + 1];
         let (header_len, content_len) = if first & 0x80 == 0 {
             (2usize, first as usize)
         } else {
             let nbytes = (first & 0x7f) as usize;
-            if nbytes == 0 || nbytes > 4 || tlv.len() < 2 + nbytes {
+            if nbytes == 0 || nbytes > 4 || bytes.len() < start + 2 + nbytes {
                 return Err(Self::cert_error("invalid DER length"));
             }
             let mut len = 0usize;
-            for b in &tlv[2..2 + nbytes] {
+            for b in &bytes[start + 2..start + 2 + nbytes] {
                 len = (len << 8) | usize::from(*b);
             }
             (2 + nbytes, len)
         };
-        let end = header_len
+        let content_start =
+            start.checked_add(header_len).ok_or_else(|| Self::cert_error("DER length overflow"))?;
+        let end = content_start
             .checked_add(content_len)
             .ok_or_else(|| Self::cert_error("DER length overflow"))?;
-        if end != tlv.len() {
+        if end > bytes.len() {
             return Err(Self::cert_error("DER TLV length mismatch"));
         }
-        Ok(&tlv[header_len..end])
+        Ok((&bytes[content_start..end], end))
     }
 
     /// Builds a `PlannerError::Certificate` from a static message.
@@ -249,6 +268,7 @@ mod tests {
     use alloy_primitives::{address, b256};
 
     use super::*;
+    use crate::cbor::NitroCose;
 
     /// Uncompressed secp256k1 `public_key` embedded in the Base `NitroValidator` fixture.
     const FIXTURE_PUBLIC_KEY: [u8; 65] = hex_literal::hex!(
@@ -316,5 +336,59 @@ mod tests {
         let mut trailing_der = leaf.cert.clone();
         trailing_der.push(0x00);
         assert!(CertManagerKeys::keys(&trailing_der).is_err());
+    }
+
+    #[test]
+    fn require_v3_layout_rejects_trailing_bytes_in_version_wrapper() {
+        // SEQUENCE { [0] EXPLICIT { INTEGER 2, leftover } } == a0050201020500 inside TBS.
+        let trailing_wrapper = [0x30, 0x07, 0xa0, 0x05, 0x02, 0x01, 0x02, 0x05, 0x00];
+        assert!(CertManagerKeys::require_v3_layout(&trailing_wrapper, X509Version::V3).is_err());
+
+        let exact_wrapper = [0x30, 0x05, 0xa0, 0x03, 0x02, 0x01, 0x02];
+        assert!(CertManagerKeys::require_v3_layout(&exact_wrapper, X509Version::V3).is_ok());
+    }
+
+    /// Deterministic nonce substituted into the Base fixture payload (`nonce: h'01020304'`).
+    const FIXTURE_NONCE: [u8; 4] = [0x01, 0x02, 0x03, 0x04];
+
+    fn base_fixture_with_nonce(nonce: &[u8]) -> Vec<u8> {
+        let attestation = base_fixture_attestation();
+        let cose = NitroCose::parse_sign1(&attestation).unwrap();
+        let needle = [0x65, b'n', b'o', b'n', b'c', b'e', 0xf6];
+        let pos = cose
+            .payload
+            .windows(needle.len())
+            .position(|w| w == needle)
+            .expect("fixture encodes nonce: null");
+        assert!(nonce.len() < 24);
+        let mut payload = cose.payload[..pos + 6].to_vec();
+        payload.push(0x40 | nonce.len() as u8);
+        payload.extend_from_slice(nonce);
+        payload.extend_from_slice(&cose.payload[pos + 7..]);
+
+        let mut out = vec![0x84, 0x44, 0xa1, 0x01, 0x38, 0x22, 0xa0];
+        let len = payload.len();
+        if len < 24 {
+            out.push(0x40 | len as u8);
+        } else if len < 256 {
+            out.push(0x58);
+            out.push(len as u8);
+        } else {
+            out.push(0x59);
+            out.extend_from_slice(&(len as u16).to_be_bytes());
+        }
+        out.extend_from_slice(&payload);
+        out.push(0x58);
+        out.push(96);
+        out.extend_from_slice(&cose.signature);
+        out
+    }
+
+    #[test]
+    fn prepare_registration_plan_pins_non_null_nonce_bytes() {
+        let attestation = base_fixture_with_nonce(&FIXTURE_NONCE);
+        let plan = AttestationPlanner::prepare_registration_plan(&attestation).unwrap();
+        assert_eq!(plan.nonce.as_deref(), Some(FIXTURE_NONCE.as_slice()));
+        assert_eq!(plan.signer, FIXTURE_SIGNER);
     }
 }
