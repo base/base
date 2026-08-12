@@ -28,6 +28,8 @@ type FieldBytes = EcFieldBytes<NistP384>;
 
 const P384_SCALAR_BYTES: usize = 48;
 const P384_SIGNATURE_BYTES: usize = 96;
+/// Fixed-width affine pubkey encoding (`x‖y`), same width as `r‖s` but distinct semantically.
+const P384_PUBKEY_BYTES: usize = 96;
 const UNCOMPRESSED_P384_LEN: usize = 97;
 /// Low 256 bits set — splits a P-384 scalar into the verifier's high/low limbs.
 const MASK_256: U384 = U384::MAX.shr_vartime(128);
@@ -54,9 +56,9 @@ impl P384Hints {
                 signature.len()
             )));
         }
-        if pub_key.len() != P384_SIGNATURE_BYTES {
+        if pub_key.len() != P384_PUBKEY_BYTES {
             return Err(HintError::Rejected(format!(
-                "pubkey must be {P384_SIGNATURE_BYTES} bytes, got {}",
+                "pubkey must be {P384_PUBKEY_BYTES} bytes, got {}",
                 pub_key.len()
             )));
         }
@@ -79,9 +81,11 @@ impl P384Hints {
         hash_be[P384_SCALAR_BYTES - hash.len()..].copy_from_slice(hash);
         let h = Scalar::reduce(U384::from_be_slice(&hash_be));
 
-        // Solidity records `s⁻¹` twice (once per scalar division).
-        let scalar1 = h * hints.record_scalar_inv(&s)?;
-        let scalar2 = r * hints.record_scalar_inv(&s)?;
+        // Solidity records `s⁻¹` twice (once per scalar division); invert once, append twice.
+        let s_inv = hints.record_scalar_inv(&s)?;
+        hints.inverses.push(s_inv.to_repr().as_slice().try_into().unwrap());
+        let scalar1 = h * s_inv;
+        let scalar2 = r * s_inv;
 
         let points = hints.precompute_table(&pub_point)?;
         let result = hints.double_scalar_mul(&points, &scalar1, &scalar2)?;
@@ -425,7 +429,7 @@ mod tests {
             s[..P384_SCALAR_BYTES].copy_from_slice(NistP384::ORDER.to_be_byte_array().as_slice());
             s
         };
-        let pub_key = [0u8; P384_SIGNATURE_BYTES];
+        let pub_key = [0u8; P384_PUBKEY_BYTES];
         for (name, hash, signature, key, want) in [
             (
                 "bad signature length",
