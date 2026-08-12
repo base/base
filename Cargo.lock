@@ -4373,10 +4373,12 @@ dependencies = [
  "http 1.5.0",
  "http-body 1.1.0",
  "http-body-util",
+ "httpmock",
  "jsonrpsee",
  "libp2p",
  "libp2p-stream",
  "metrics",
+ "metrics-util",
  "mockall",
  "opentelemetry 0.32.0",
  "rand 0.9.5",
@@ -5922,7 +5924,6 @@ dependencies = [
  "alloy-genesis 2.3.0",
  "alloy-primitives",
  "alloy-signer 2.3.0",
- "alloy-signer-local 2.3.0",
  "async-trait",
  "base-common-genesis",
  "base-health",
@@ -6371,6 +6372,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-shadow-metrics"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "sqlx",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "base-shadow-metrics-bin"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "axum 0.8.9",
+ "base-cli-utils",
+ "base-shadow-metrics",
+ "clap",
+ "dotenvy",
+ "serde",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "base-sidecrush"
 version = "0.0.0"
 dependencies = [
@@ -6579,8 +6604,12 @@ dependencies = [
  "base-health",
  "base-trusted-proxy",
  "clap",
+ "discv5 0.10.4 (registry+https://github.com/rust-lang/crates.io-index)",
+ "futures",
  "governor",
  "ipnet",
+ "libp2p",
+ "libp2p-identity",
  "mockall",
  "reqwest 0.13.4",
  "reth-ecies",
@@ -6642,6 +6671,7 @@ dependencies = [
  "base-node-runner",
  "base-observability-events",
  "base-test-utils",
+ "base-txpool-rpc",
  "eyre",
  "futures",
  "jsonrpsee",
@@ -6697,10 +6727,12 @@ name = "base-txpool-rpc"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
+ "base-execution-txpool",
  "base-node-runner",
  "eyre",
  "httpmock",
  "jsonrpsee",
+ "reth-rpc-eth-types",
  "reth-rpc-server-types",
  "reth-transaction-pool",
  "serde",
@@ -23665,6 +23697,7 @@ dependencies = [
  "futures-core",
  "futures-io",
  "futures-sink",
+ "futures-util",
  "libc",
  "pin-project-lite",
  "slab",
