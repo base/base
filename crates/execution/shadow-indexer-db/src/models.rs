@@ -1,12 +1,32 @@
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 /// Row representation for a shadow indexer block.
+///
+/// Only the columns required for identity, reorg bookkeeping, and range scans are
+/// materialized as real columns. All descriptive block and transaction metadata
+/// lives in a single JSONB `payload`, so downstream consumers can evolve the shape
+/// they read without a database migration.
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct ShadowBlockRow {
     /// Block number.
     pub number: i64,
     /// Block hash.
     pub hash: String,
+    /// Whether the block was reorged out.
+    pub reorged_out: bool,
+    /// Canonical block hash at the same height after reorg.
+    pub canonical_hash: Option<String>,
+    /// Row creation time.
+    pub created_at: DateTime<Utc>,
+    /// Flexible block and transaction metadata persisted as JSONB.
+    #[sqlx(json)]
+    pub payload: ShadowBlockPayload,
+}
+
+/// Flexible block-level metadata persisted in the block payload.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ShadowBlockPayload {
     /// Parent block hash.
     pub parent_hash: String,
     /// Block timestamp.
@@ -17,23 +37,15 @@ pub struct ShadowBlockRow {
     pub gas_used: i64,
     /// State root hash.
     pub state_root: String,
-    /// Whether the block was reorged out.
-    pub reorged_out: bool,
-    /// Canonical block hash at the same height after reorg.
-    pub canonical_hash: Option<String>,
     /// Builder version string.
     pub builder_version: String,
-    /// Row creation time.
-    pub created_at: DateTime<Utc>,
+    /// Per-transaction metadata for the block.
+    pub transactions: Vec<ShadowTransaction>,
 }
 
-/// Row representation for a single transaction within a shadow indexer block.
-#[derive(Clone, Debug, sqlx::FromRow)]
-pub struct ShadowBlockTransactionRow {
-    /// Block number the transaction was included in.
-    pub block_number: i64,
-    /// Hash of the block the transaction was included in.
-    pub block_hash: String,
+/// Flexible per-transaction metadata persisted within a block payload.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ShadowTransaction {
     /// Zero-based position of the transaction within the block.
     pub tx_index: i32,
     /// Transaction hash.
@@ -48,8 +60,4 @@ pub struct ShadowBlockTransactionRow {
     pub base_fee_per_gas: Option<i64>,
     /// Gas consumed by this transaction.
     pub gas_used: i64,
-    /// Whether the containing block was reorged out.
-    pub reorged_out: bool,
-    /// Row creation time.
-    pub created_at: DateTime<Utc>,
 }

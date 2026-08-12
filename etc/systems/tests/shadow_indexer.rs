@@ -76,10 +76,10 @@ async fn shadow_indexer_persists_committed_blocks() -> Result<()> {
 
     for row in &rows {
         ensure!(
-            row.builder_version == "e2e-test",
+            row.payload.builder_version == "e2e-test",
             "unexpected builder version: number={}, builder_version={}, target_height={target}",
             row.number,
-            row.builder_version
+            row.payload.builder_version
         );
         ensure!(
             !row.hash.is_empty(),
@@ -87,7 +87,7 @@ async fn shadow_indexer_persists_committed_blocks() -> Result<()> {
             row.number
         );
         ensure!(
-            !row.parent_hash.is_empty(),
+            !row.payload.parent_hash.is_empty(),
             "missing parent_hash for shadow row: number={}, target_height={target}",
             row.number
         );

@@ -1,5 +1,5 @@
 use alloy_consensus::{Transaction, TxReceipt, Typed2718, transaction::TxHashRef};
-use base_shadow_indexer_db::{ShadowBlockRow, ShadowBlockTransactionRow};
+use base_shadow_indexer_db::{ShadowBlockPayload, ShadowBlockRow, ShadowTransaction};
 use chrono::Utc;
 use eyre::Result;
 use futures::TryStreamExt;
@@ -12,24 +12,15 @@ use reth_primitives_traits::{
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
-/// A committed block plus the transactions captured for it.
-#[derive(Debug)]
-pub struct ShadowBlockRecord {
-    /// Block-level shadow indexer row.
-    pub block: ShadowBlockRow,
-    /// Per-transaction rows for the block.
-    pub transactions: Vec<ShadowBlockTransactionRow>,
-}
-
 /// Shadow indexer `ExEx` handler.
 #[derive(Debug)]
 pub struct ShadowIndexerExEx {
-    tx: mpsc::Sender<ShadowBlockRecord>,
+    tx: mpsc::Sender<ShadowBlockRow>,
 }
 
 impl ShadowIndexerExEx {
     /// Create a new shadow indexer `ExEx` handler.
-    pub const fn new(tx: mpsc::Sender<ShadowBlockRecord>) -> Self {
+    pub const fn new(tx: mpsc::Sender<ShadowBlockRow>) -> Self {
         Self { tx }
     }
 
@@ -95,11 +86,11 @@ impl ShadowIndexerExEx {
         Ok(())
     }
 
-    fn build_row_from_header(
+    fn build_row(
         &self,
         header: &impl AlloyBlockHeader,
         block_hash: String,
-        tx_count: usize,
+        transactions: Vec<ShadowTransaction>,
         reorged_out: bool,
         canonical_hash: Option<String>,
     ) -> Result<ShadowBlockRow> {
@@ -108,34 +99,37 @@ impl ShadowIndexerExEx {
         })?;
         let timestamp = i64::try_from(header.timestamp())
             .map_err(|error| eyre::eyre!("timestamp overflow for shadow indexer row: {error}"))?;
-        let tx_count = i32::try_from(tx_count).map_err(|error| {
+        let tx_count = i32::try_from(transactions.len()).map_err(|error| {
             eyre::eyre!("transaction count overflow for shadow indexer row: {error}")
         })?;
         let gas_used = i64::try_from(header.gas_used())
             .map_err(|error| eyre::eyre!("gas used overflow for shadow indexer row: {error}"))?;
-        let created_at = Utc::now();
 
-        Ok(ShadowBlockRow {
-            number,
-            hash: block_hash,
+        let payload = ShadowBlockPayload {
             parent_hash: header.parent_hash().to_string(),
             timestamp,
             tx_count,
             gas_used,
             state_root: header.state_root().to_string(),
-            reorged_out,
-            canonical_hash,
             // The writer injects the configured builder version before persistence.
             builder_version: String::new(),
-            created_at,
+            transactions,
+        };
+
+        Ok(ShadowBlockRow {
+            number,
+            hash: block_hash,
+            reorged_out,
+            canonical_hash,
+            created_at: Utc::now(),
+            payload,
         })
     }
 
-    fn build_transaction_rows<N>(
+    fn build_transactions<N>(
         block: &RecoveredBlock<N::Block>,
         receipts: &[N::Receipt],
-        reorged_out: bool,
-    ) -> Result<Vec<ShadowBlockTransactionRow>>
+    ) -> Result<Vec<ShadowTransaction>>
     where
         N: NodePrimitives,
         N::SignedTx: SignedTransaction,
@@ -147,11 +141,6 @@ impl ShadowIndexerExEx {
             .map(i64::try_from)
             .transpose()
             .map_err(|error| eyre::eyre!("base fee overflow for shadow indexer tx row: {error}"))?;
-        let block_number = i64::try_from(header.number()).map_err(|error| {
-            eyre::eyre!("block number overflow for shadow indexer tx row: {error}")
-        })?;
-        let block_hash = block.hash().to_string();
-        let created_at = Utc::now();
 
         let transactions = block.body().transactions();
         let senders = block.senders();
@@ -177,9 +166,7 @@ impl ShadowIndexerExEx {
                 transaction.max_priority_fee_per_gas(),
             );
 
-            rows.push(ShadowBlockTransactionRow {
-                block_number,
-                block_hash: block_hash.clone(),
+            rows.push(ShadowTransaction {
                 tx_index,
                 tx_hash: transaction.tx_hash().to_string(),
                 sender: senders.get(index).map(|sender| sender.to_string()),
@@ -188,8 +175,6 @@ impl ShadowIndexerExEx {
                     .map(|fee| fee.to_string()),
                 base_fee_per_gas,
                 gas_used,
-                reorged_out,
-                created_at,
             });
         }
 
@@ -213,17 +198,16 @@ impl ShadowIndexerExEx {
         N::Receipt: TxReceipt,
     {
         for (block, receipts) in chain.blocks_and_receipts() {
-            let header = block.header();
-            let block_row = self.build_row_from_header(
-                header,
+            let transactions = Self::build_transactions::<N>(block, receipts)?;
+            let row = self.build_row(
+                block.header(),
                 block.hash().to_string(),
-                receipts.len(),
+                transactions,
                 false,
                 None,
             )?;
-            let transactions = Self::build_transaction_rows::<N>(block, receipts, false)?;
 
-            if !self.send_record(ShadowBlockRecord { block: block_row, transactions }).await? {
+            if !self.send_row(row).await? {
                 return Ok(false);
             }
         }
@@ -255,32 +239,31 @@ impl ShadowIndexerExEx {
                 );
             }
 
-            let block_row = self.build_row_from_header(
+            let transactions = Self::build_transactions::<N>(block, receipts)?;
+            let row = self.build_row(
                 header,
                 block.hash().to_string(),
-                receipts.len(),
+                transactions,
                 true,
                 canonical_hash,
             )?;
-            let transactions = Self::build_transaction_rows::<N>(block, receipts, true)?;
 
-            if !self.send_record(ShadowBlockRecord { block: block_row, transactions }).await? {
+            if !self.send_row(row).await? {
                 return Ok(false);
             }
         }
 
         for (block, receipts) in new.blocks_and_receipts() {
-            let header = block.header();
-            let block_row = self.build_row_from_header(
-                header,
+            let transactions = Self::build_transactions::<N>(block, receipts)?;
+            let row = self.build_row(
+                block.header(),
                 block.hash().to_string(),
-                receipts.len(),
+                transactions,
                 false,
                 None,
             )?;
-            let transactions = Self::build_transaction_rows::<N>(block, receipts, false)?;
 
-            if !self.send_record(ShadowBlockRecord { block: block_row, transactions }).await? {
+            if !self.send_row(row).await? {
                 return Ok(false);
             }
         }
@@ -288,8 +271,8 @@ impl ShadowIndexerExEx {
         Ok(true)
     }
 
-    async fn send_record(&self, record: ShadowBlockRecord) -> Result<bool> {
-        match self.tx.send(record).await {
+    async fn send_row(&self, row: ShadowBlockRow) -> Result<bool> {
+        match self.tx.send(row).await {
             Ok(()) => Ok(true),
             Err(error) => {
                 info!(
@@ -304,10 +287,7 @@ impl ShadowIndexerExEx {
 }
 
 /// Runs the shadow indexer `ExEx` loop.
-pub async fn run_exex<Node>(
-    ctx: ExExContext<Node>,
-    tx: mpsc::Sender<ShadowBlockRecord>,
-) -> Result<()>
+pub async fn run_exex<Node>(ctx: ExExContext<Node>, tx: mpsc::Sender<ShadowBlockRow>) -> Result<()>
 where
     Node: FullNodeComponents,
 {
@@ -357,10 +337,10 @@ mod tests {
         Chain::new(blocks, execution_outcome, Default::default())
     }
 
-    fn drain(mut rx: mpsc::Receiver<ShadowBlockRecord>) -> Vec<ShadowBlockRow> {
+    fn drain(mut rx: mpsc::Receiver<ShadowBlockRow>) -> Vec<ShadowBlockRow> {
         let mut rows = Vec::new();
-        while let Ok(record) = rx.try_recv() {
-            rows.push(record.block);
+        while let Ok(row) = rx.try_recv() {
+            rows.push(row);
         }
         rows
     }
@@ -379,7 +359,11 @@ mod tests {
         for row in &rows {
             assert!(!row.reorged_out, "committed rows must not be reorged out");
             assert_eq!(row.canonical_hash, None, "committed rows carry no canonical hash");
-            assert_eq!(row.tx_count, 1, "one receipt per block => tx_count == 1");
+            assert_eq!(
+                row.payload.tx_count as usize,
+                row.payload.transactions.len(),
+                "tx_count matches the embedded transactions array"
+            );
             assert_eq!(row.hash, block_hash(row.number as u64, 0).to_string());
         }
     }
