@@ -594,6 +594,29 @@ async fn test_build_retries_are_paced_after_immediate_budget(#[case] provider_er
 
 // --- build tests ---
 
+#[tokio::test]
+async fn test_orphaned_l1_origin_resets_once_without_starting_block_build() {
+    let unsafe_head = L2BlockInfo::default();
+    let mut client = MockSequencerEngineClient::new();
+    client.expect_get_unsafe_head().times(1).return_once(move || Ok(unsafe_head));
+    client.expect_reset_engine_forkchoice().times(1).return_once(|| Ok(()));
+    client.expect_start_build_block().times(0);
+
+    let mut origin_selector = MockOriginSelector::new();
+    origin_selector.expect_next_l1_origin().times(1).return_once(|_, _| {
+        Err(L1OriginSelectorError::NextL1OriginOrphaned {
+            current: B256::with_last_byte(1),
+            next: B256::with_last_byte(2),
+        })
+    });
+
+    let mut actor = test_actor();
+    actor.builder.origin_selector = origin_selector;
+    actor.builder.engine_client = Arc::new(client);
+
+    assert!(matches!(actor.builder.build().await.unwrap(), crate::BuildOutcome::Deferred));
+}
+
 #[rstest]
 #[case::temp(PipelineErrorKind::Temporary(BuilderError::Custom(String::new()).into()), false)]
 #[case::reset(PipelineErrorKind::Reset(BuilderError::Custom(String::new()).into()), false)]

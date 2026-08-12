@@ -1,5 +1,6 @@
 //! Sync start algorithm for the Base rollup node.
 
+use alloy_eips::BlockNumberOrTag;
 use base_common_genesis::RollupConfig;
 use base_protocol::L2BlockInfo;
 
@@ -63,44 +64,54 @@ pub async fn find_starting_forkchoice_with_checkpoint_reader<
         "Loaded current L2 EL forkchoice state"
     );
 
-    // Search for the highest `unsafe` block, relative to the initial `unsafe` block's L1 origin,
+    // Search for the highest `unsafe` block, relative to the initial `unsafe` block's L1 origin.
     loop {
-        let l1_origin =
-            engine_client.get_l1_block(current_fc.un_safe.l1_origin.hash.into()).await?;
+        let origin = current_fc.un_safe.l1_origin;
+        let canonical_l1 =
+            engine_client.get_l1_block(BlockNumberOrTag::Number(origin.number).into()).await?;
         info!(
             target: "sync_start",
-            l1_origin = %current_fc.un_safe.l1_origin.number,
+            l1_origin = origin.number,
             l2_unsafe = %current_fc.un_safe.block_info.number,
             "Searching for L2 unsafe block with canonical L1 origin"
         );
 
-        match l1_origin {
-            Some(_) => {
-                // Unsafe block has existing L1 origin. Continue with this head.
-                info!(
-                    target: "sync_start",
-                    l2_unsafe = %current_fc.un_safe.block_info.number,
-                    "Found L2 unsafe block with canonical L1 origin"
-                );
-                break;
-            }
+        let origin_is_plausible = match canonical_l1 {
+            Some(block) => block.header.hash == origin.hash,
             None => {
-                let l2_parent_hash = current_fc.un_safe.block_info.parent_hash.into();
-                let l2_parent = engine_client
-                    .get_l2_block(l2_parent_hash)
-                    .full()
+                // A missing block by number is only plausible when the L2 origin is ahead of the
+                // L1 view. A missing block at or below the visible L1 head is noncanonical.
+                let l1_head = engine_client
+                    .get_l1_block(BlockNumberOrTag::Latest.into())
                     .await?
-                    .ok_or(SyncStartError::BlockNotFound(l2_parent_hash))?;
-
-                current_fc.un_safe = L2BlockInfo::from_block_and_genesis(
-                    &l2_parent
-                        .map_header(|header| header.into_inner())
-                        .into_consensus()
-                        .map_transactions(|tx| tx.inner.inner.into_inner()),
-                    &cfg.genesis,
-                )?;
+                    .ok_or(SyncStartError::BlockNotFound(BlockNumberOrTag::Latest.into()))?;
+                origin.number > l1_head.header.number
             }
+        };
+
+        if origin_is_plausible {
+            info!(
+                target: "sync_start",
+                l2_unsafe = %current_fc.un_safe.block_info.number,
+                "Found L2 unsafe block with canonical L1 origin"
+            );
+            break;
         }
+
+        let l2_parent_hash = current_fc.un_safe.block_info.parent_hash.into();
+        let l2_parent = engine_client
+            .get_l2_block(l2_parent_hash)
+            .full()
+            .await?
+            .ok_or(SyncStartError::BlockNotFound(l2_parent_hash))?;
+
+        current_fc.un_safe = L2BlockInfo::from_block_and_genesis(
+            &l2_parent
+                .map_header(|header| header.into_inner())
+                .into_consensus()
+                .map_transactions(|tx| tx.inner.inner.into_inner()),
+            &cfg.genesis,
+        )?;
     }
 
     // Search for the highest `safe` block that's L1 origin is at least older than the sequencing
@@ -174,7 +185,7 @@ mod tests {
     use base_common_rpc_types::Transaction as BaseTransaction;
     use base_protocol::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
 
-    use crate::test_utils::test_engine_client_builder;
+    use crate::{EngineClient, test_utils::test_engine_client_builder};
 
     const BASE_SEPOLIA_GENESIS_HASH: B256 =
         b256!("0dcc9e089e30b90ddfc55be9a37dd15bc551aeee999d2e2b51414c54eaf934e4");
@@ -205,10 +216,14 @@ mod tests {
         assert_eq!(rpc_reported_hash, l2_block_info.block_info.hash);
     }
 
-    fn l1_info_rpc_transaction(block_number: u64) -> BaseTransaction {
+    fn l1_info_rpc_transaction(origin: BlockNumHash, block_number: u64) -> BaseTransaction {
         let envelope = BaseTxEnvelope::Deposit(Sealed::new_unchecked(
             TxDeposit {
-                input: L1BlockInfoBedrock::default().encode_calldata(),
+                input: L1BlockInfoBedrock::new_from_number_and_block_hash(
+                    origin.number,
+                    origin.hash,
+                )
+                .encode_calldata(),
                 ..Default::default()
             },
             B256::ZERO,
@@ -227,12 +242,16 @@ mod tests {
         }
     }
 
-    fn l2_block_with_l1_info(number: u64, parent_hash: B256) -> RpcBlock<BaseTransaction> {
+    fn l2_block_with_l1_info(
+        number: u64,
+        parent_hash: B256,
+        origin: BlockNumHash,
+    ) -> RpcBlock<BaseTransaction> {
         let mut block = RpcBlock::<BaseTransaction>::default();
         block.header.inner.number = number;
         block.header.inner.parent_hash = parent_hash;
         block.header.inner.timestamp = number;
-        block.transactions = BlockTransactions::Full(vec![l1_info_rpc_transaction(number)]);
+        block.transactions = BlockTransactions::Full(vec![l1_info_rpc_transaction(origin, number)]);
         block
     }
 
@@ -253,11 +272,15 @@ mod tests {
             },
             ..Default::default()
         };
-        let latest = l2_block_with_l1_info(1, rollup_config.genesis.l2.hash);
+        let latest =
+            l2_block_with_l1_info(1, rollup_config.genesis.l2.hash, BlockNumHash::default());
         let latest_hash = latest.clone().into_consensus().hash_slow();
         let client = test_engine_client_builder()
             .with_l2_block(BlockId::Number(BlockNumberOrTag::Latest), latest)
-            .with_l1_block(BlockId::from(B256::ZERO), RpcBlock::<EthTransaction>::default())
+            .with_l1_block(
+                BlockId::Number(BlockNumberOrTag::Number(0)),
+                RpcBlock::<EthTransaction>::default(),
+            )
             .build();
 
         let forkchoice = super::find_starting_forkchoice(&rollup_config, &client)
@@ -278,5 +301,110 @@ mod tests {
         assert_eq!(forkchoice.un_safe.block_info.hash, latest_hash);
         assert_eq!(forkchoice.safe, expected_genesis);
         assert_eq!(forkchoice.finalized, expected_genesis);
+    }
+
+    #[tokio::test]
+    async fn reset_rewinds_orphaned_l1_origin_and_preserves_finalized() {
+        let canonical_parent_origin = BlockNumHash {
+            number: 10,
+            hash: b256!("1010101010101010101010101010101010101010101010101010101010101010"),
+        };
+        let orphan_origin = BlockNumHash {
+            number: 11,
+            hash: b256!("1111111111111111111111111111111111111111111111111111111111111111"),
+        };
+        let canonical_origin_hash =
+            b256!("1212121212121212121212121212121212121212121212121212121212121212");
+        let genesis_hash =
+            b256!("2020202020202020202020202020202020202020202020202020202020202020");
+        let rollup_config = base_common_genesis::RollupConfig {
+            genesis: ChainGenesis {
+                l1: canonical_parent_origin,
+                l2: BlockNumHash { number: 0, hash: genesis_hash },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let parent = l2_block_with_l1_info(1, genesis_hash, canonical_parent_origin);
+        let parent_hash = parent.clone().into_consensus().hash_slow();
+        let unsafe_head = l2_block_with_l1_info(2, parent_hash, orphan_origin);
+
+        let mut canonical_parent_l1 = RpcBlock::<EthTransaction>::default();
+        canonical_parent_l1.header.hash = canonical_parent_origin.hash;
+        canonical_parent_l1.header.inner.number = canonical_parent_origin.number;
+        let mut canonical_l1 = RpcBlock::<EthTransaction>::default();
+        canonical_l1.header.hash = canonical_origin_hash;
+        canonical_l1.header.inner.number = orphan_origin.number;
+        let mut orphan_l1 = RpcBlock::<EthTransaction>::default();
+        orphan_l1.header.hash = orphan_origin.hash;
+        orphan_l1.header.inner.number = orphan_origin.number;
+
+        let client = test_engine_client_builder()
+            .with_l2_block(BlockNumberOrTag::Latest.into(), unsafe_head)
+            .with_l2_block(BlockNumberOrTag::Safe.into(), parent.clone())
+            .with_l2_block(BlockNumberOrTag::Finalized.into(), parent.clone())
+            .with_l2_block(parent_hash.into(), parent)
+            .with_l1_block(BlockNumberOrTag::Number(10).into(), canonical_parent_l1)
+            .with_l1_block(BlockNumberOrTag::Number(11).into(), canonical_l1)
+            // The orphan remains available by hash, as is common after an L1 reorg.
+            .with_l1_block(orphan_origin.hash.into(), orphan_l1)
+            .build();
+
+        assert!(
+            client
+                .get_l1_block(orphan_origin.hash.into())
+                .await
+                .expect("orphan lookup should succeed")
+                .is_some(),
+            "orphan must remain retrievable by hash"
+        );
+
+        let forkchoice = super::find_starting_forkchoice(&rollup_config, &client)
+            .await
+            .expect("reset should find the canonical parent");
+
+        assert_eq!(forkchoice.un_safe.block_info.hash, parent_hash);
+        assert_eq!(forkchoice.un_safe.l1_origin, canonical_parent_origin);
+        assert_eq!(forkchoice.safe.block_info.hash, parent_hash);
+        assert_eq!(forkchoice.finalized.block_info.hash, parent_hash);
+        assert_eq!(forkchoice.safe, forkchoice.finalized);
+    }
+
+    #[tokio::test]
+    async fn reset_preserves_unsafe_origin_ahead_of_visible_l1() {
+        let genesis_hash =
+            b256!("2020202020202020202020202020202020202020202020202020202020202020");
+        let ahead_origin = BlockNumHash {
+            number: 12,
+            hash: b256!("1212121212121212121212121212121212121212121212121212121212121212"),
+        };
+        let rollup_config = base_common_genesis::RollupConfig {
+            genesis: ChainGenesis {
+                l1: BlockNumHash {
+                    number: 10,
+                    hash: b256!("1010101010101010101010101010101010101010101010101010101010101010"),
+                },
+                l2: BlockNumHash { number: 0, hash: genesis_hash },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let unsafe_head = l2_block_with_l1_info(1, genesis_hash, ahead_origin);
+        let unsafe_hash = unsafe_head.clone().into_consensus().hash_slow();
+        let mut visible_l1_head = RpcBlock::<EthTransaction>::default();
+        visible_l1_head.header.inner.number = 11;
+
+        let client = test_engine_client_builder()
+            .with_l2_block(BlockNumberOrTag::Latest.into(), unsafe_head)
+            .with_l1_block(BlockNumberOrTag::Latest.into(), visible_l1_head)
+            .build();
+
+        let forkchoice = super::find_starting_forkchoice(&rollup_config, &client)
+            .await
+            .expect("an origin ahead of the visible L1 head should remain plausible");
+
+        assert_eq!(forkchoice.un_safe.block_info.hash, unsafe_hash);
+        assert_eq!(forkchoice.un_safe.l1_origin, ahead_origin);
     }
 }

@@ -94,8 +94,17 @@ impl<P: L1OriginSelectorProvider + Send + Sync> OriginSelector for L1OriginSelec
         unsafe_head: L2BlockInfo,
         _is_recovery_mode: bool,
     ) -> Result<BlockInfo, L1OriginSelectorError> {
-        self.select_origins(&unsafe_head).await?;
-        let selected = self.choose_origin(&unsafe_head)?;
+        if let Err(error) = self.select_origins(&unsafe_head).await {
+            self.selected_tx.send_replace(None);
+            return Err(error);
+        }
+        let selected = match self.choose_origin(&unsafe_head) {
+            Ok(selected) => selected,
+            Err(error) => {
+                self.selected_tx.send_replace(None);
+                return Err(error);
+            }
+        };
         let block_info = selected.block_info();
         self.selected_tx.send_replace(Some(selected));
         Ok(block_info)
@@ -211,7 +220,7 @@ impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
         }
 
         if let Some(current) = self.current.as_ref() {
-            self.poll_next(current.hash, current.header.number).await;
+            self.poll_next(current.hash, current.header.number).await?;
         }
         Ok(())
     }
@@ -229,10 +238,14 @@ impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
     }
 
     /// Advances the next-origin state machine without awaiting an unfinished fetch.
-    async fn poll_next(&mut self, current_hash: B256, current_number: u64) {
+    async fn poll_next(
+        &mut self,
+        current_hash: B256,
+        current_number: u64,
+    ) -> Result<(), L1OriginSelectorError> {
         let Some(chain_view) = self.l1.chain_view() else {
             self.next = NextSlot::Idle;
-            return;
+            return Ok(());
         };
 
         self.next = match std::mem::take(&mut self.next) {
@@ -258,7 +271,7 @@ impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
                         None
                     }
                 };
-                match self.adopt_next(current_hash, chain_view, fetched) {
+                match self.adopt_next(current_hash, chain_view, fetched)? {
                     NextSlot::Idle => self.l1.chain_view().map_or(NextSlot::Idle, |live_view| {
                         self.spawn_next(current_hash, current_number, live_view)
                     }),
@@ -274,6 +287,7 @@ impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
                 self.spawn_next(current_hash, current_number, chain_view)
             }
         };
+        Ok(())
     }
 
     /// Adopts a fetched successor only if its parent and observed chain view are still current.
@@ -282,12 +296,22 @@ impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
         current_hash: B256,
         chain_view: B256,
         fetched: Option<PreparedL1Origin>,
-    ) -> NextSlot {
-        fetched
-            .filter(|next| {
-                next.header.parent_hash == current_hash && self.l1.chain_view() == Some(chain_view)
-            })
-            .map_or(NextSlot::Idle, |block| NextSlot::Ready { block: Box::new(block), chain_view })
+    ) -> Result<NextSlot, L1OriginSelectorError> {
+        let Some(block) = fetched else {
+            return Ok(NextSlot::Idle);
+        };
+        // A result fetched against an obsolete observed head says nothing about the live canonical
+        // successor. Discard it before checking ancestry so it cannot be mistaken for a reorg.
+        if self.l1.chain_view() != Some(chain_view) {
+            return Ok(NextSlot::Idle);
+        }
+        if block.header.parent_hash != current_hash {
+            return Err(L1OriginSelectorError::NextL1OriginOrphaned {
+                current: current_hash,
+                next: block.hash,
+            });
+        }
+        Ok(NextSlot::Ready { block: Box::new(block), chain_view })
     }
 
     /// Starts a background lookup for the origin following `current_number`.
@@ -321,6 +345,7 @@ impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
             NextSlot::InFlight { chain_view, handle, .. } => {
                 let fetched = handle.await.ok().flatten();
                 self.adopt_next(current_hash, chain_view, fetched)
+                    .expect("test fetch must extend the current origin")
             }
             slot => slot,
         };
@@ -356,6 +381,14 @@ pub enum L1OriginSelectorError {
     /// The L1 origin block was not found by its hash, e.g. during an L1 reorg or sync lag.
     #[error("L1 origin block not found by hash: {0}")]
     OriginNotFound(B256),
+    /// The canonical successor no longer extends the accepted current L1 origin.
+    #[error("next L1 origin {next} does not extend current L1 origin {current}")]
+    NextL1OriginOrphaned {
+        /// Hash of the accepted current L1 origin.
+        current: B256,
+        /// Hash of its canonical-height successor.
+        next: B256,
+    },
     /// The block header exists but its receipts are not available yet.
     #[error("receipts unavailable for L1 origin: {0}")]
     ReceiptsUnavailable(B256),
@@ -1121,6 +1154,44 @@ mod tests {
         let published = selected_rx.borrow().clone().expect("selected origin published");
         assert_eq!(published.block_info(), current);
         assert!(published.receipts.as_ref().is_some_and(|receipts| receipts.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn test_canonical_successor_with_wrong_parent_reports_orphan_and_clears_selection() {
+        let cfg = Arc::new(RollupConfig {
+            block_time: 2,
+            max_sequencer_drift: 600,
+            ..Default::default()
+        });
+        let current = BlockInfo { hash: B256::with_last_byte(1), number: 4, ..Default::default() };
+        let orphaning_successor = BlockInfo {
+            hash: B256::with_last_byte(2),
+            parent_hash: B256::with_last_byte(99),
+            number: 5,
+            timestamp: 2,
+        };
+        let provider = MockOriginSelectorProvider::default();
+        provider.with_block(current);
+        provider.with_block(orphaning_successor);
+        provider.set_chain_view(B256::with_last_byte(10));
+        let mut selector = L1OriginSelector::new(cfg, provider);
+        let selected_rx = selector.subscribe();
+        let unsafe_head = L2BlockInfo {
+            l1_origin: NumHash { number: current.number, hash: current.hash },
+            ..Default::default()
+        };
+
+        assert_eq!(selector.next_l1_origin(unsafe_head, false).await.unwrap(), current);
+        selector.wait_for_inflight_completion().await;
+        let error = selector.next_l1_origin(unsafe_head, false).await.unwrap_err();
+
+        assert!(matches!(
+            error,
+            L1OriginSelectorError::NextL1OriginOrphaned { current: hash, next }
+                if hash == current.hash && next == orphaning_successor.hash
+        ));
+        assert!(selected_rx.borrow().is_none());
+        assert!(selector.next().is_none());
     }
 
     #[tokio::test]
