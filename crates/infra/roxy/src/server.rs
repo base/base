@@ -245,4 +245,44 @@ mod tests {
 
         cancel.cancel();
     }
+
+    #[tokio::test]
+    async fn returns_jsonrpc_error_when_backend_response_too_large() {
+        let mock = MockServer::start().await;
+        let oversized = vec![b'x'; crate::proxy::MAX_RESPONSE_BODY_BYTES + 1];
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(oversized))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let backend = Backend::parse(&format!("rpcs={}", mock.uri())).expect("parse backend");
+        let ready = Arc::new(AtomicBool::new(true));
+        let (addr, _handle, cancel) =
+            start_test_server(ready, ProxyState::from_backend(&backend)).await;
+
+        let response = reqwest::Client::new()
+            .post(format!("http://{addr}/"))
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "method": "eth_chainId",
+                "params": [],
+                "id": 3
+            }))
+            .send()
+            .await
+            .expect("proxy request");
+
+        assert_eq!(response.status().as_u16(), 200, "JSON-RPC errors use HTTP 200");
+        let body: serde_json::Value = response.json().await.expect("response json");
+        assert_eq!(body["id"], json!(3), "id must be preserved");
+        assert_eq!(body["error"]["code"], json!(-32000), "server error code");
+        assert_eq!(
+            body["error"]["message"],
+            json!("backend response too large"),
+            "oversized backend responses must be rejected"
+        );
+
+        cancel.cancel();
+    }
 }

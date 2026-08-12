@@ -1,8 +1,8 @@
 //! CLI / env configuration for the Roxy HTTP server.
 
-use std::{collections::HashSet, net::SocketAddr};
+use std::net::SocketAddr;
 
-use anyhow::{bail, ensure};
+use anyhow::ensure;
 use clap::Args;
 
 use crate::Backend;
@@ -36,13 +36,6 @@ impl Config {
             "exactly one --backend is required for now, found {}",
             self.backends.len()
         );
-
-        let mut seen = HashSet::new();
-        for backend in &self.backends {
-            if !seen.insert(backend.name.as_str()) {
-                bail!("duplicate backend name '{}'", backend.name);
-            }
-        }
 
         Ok(&self.backends[0])
     }

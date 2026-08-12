@@ -5,7 +5,7 @@ use std::sync::Arc;
 use axum::{
     Json, Router,
     body::Bytes,
-    extract::State,
+    extract::{DefaultBodyLimit, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::post,
@@ -16,6 +16,12 @@ use tracing::{error, warn};
 use url::Url;
 
 use crate::Backend;
+
+/// Maximum accepted inbound JSON-RPC request body size (`2 MiB`).
+pub(crate) const MAX_REQUEST_BODY_BYTES: usize = 2 * 1024 * 1024;
+
+/// Maximum accepted backend response body size (`2 MiB`).
+pub(crate) const MAX_RESPONSE_BODY_BYTES: usize = 2 * 1024 * 1024;
 
 /// Shared state for JSON-RPC proxy routes.
 #[derive(Debug, Clone)]
@@ -37,7 +43,10 @@ impl ProxyState {
 
     /// Returns the JSON-RPC proxy router (`POST /`).
     pub fn router(self) -> Router {
-        Router::new().route("/", post(Self::handle_rpc)).with_state(self)
+        Router::new()
+            .route("/", post(Self::handle_rpc))
+            .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
+            .with_state(self)
     }
 
     async fn handle_rpc(State(state): State<Self>, body: Bytes) -> Response {
@@ -66,7 +75,16 @@ impl ProxyState {
                 response_body,
             )
                 .into_response(),
-            Err(error) => {
+            Err(ForwardError::ResponseTooLarge) => {
+                warn!(
+                    backend = %state.backend_name,
+                    url = %state.backend_url,
+                    max_bytes = MAX_RESPONSE_BODY_BYTES,
+                    "backend response exceeded size limit"
+                );
+                jsonrpc_error(id, -32000, "backend response too large")
+            }
+            Err(ForwardError::Transport(error)) => {
                 error!(
                     error = %error,
                     backend = %state.backend_name,
@@ -78,18 +96,44 @@ impl ProxyState {
         }
     }
 
-    async fn forward(&self, body: &Bytes) -> Result<Bytes, reqwest::Error> {
-        let response = self
+    async fn forward(&self, body: &Bytes) -> Result<Bytes, ForwardError> {
+        let mut response = self
             .client
             .post(self.backend_url.clone())
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .body(body.clone())
             .send()
-            .await?
-            .error_for_status()?;
-        let bytes = response.bytes().await?;
-        Ok(bytes)
+            .await
+            .map_err(ForwardError::Transport)?
+            .error_for_status()
+            .map_err(ForwardError::Transport)?;
+
+        if let Some(content_length) = response.content_length()
+            && content_length > MAX_RESPONSE_BODY_BYTES as u64
+        {
+            return Err(ForwardError::ResponseTooLarge);
+        }
+
+        let mut buf = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(ForwardError::Transport)? {
+            let next_len = buf.len().saturating_add(chunk.len());
+            if next_len > MAX_RESPONSE_BODY_BYTES {
+                return Err(ForwardError::ResponseTooLarge);
+            }
+            buf.extend_from_slice(&chunk);
+        }
+
+        Ok(Bytes::from(buf))
     }
+}
+
+/// Failure while forwarding a request to a backend.
+#[derive(Debug)]
+enum ForwardError {
+    /// HTTP client / transport failure.
+    Transport(reqwest::Error),
+    /// Backend response exceeded [`MAX_RESPONSE_BODY_BYTES`].
+    ResponseTooLarge,
 }
 
 fn jsonrpc_error(id: Value, code: i64, message: &str) -> Response {
