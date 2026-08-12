@@ -171,7 +171,7 @@ impl UpgradeSignalConfig {
                 activation_timestamp = signal.activation_timestamp,
                 minimum_protocol_version = %signal.protocol_version,
                 node_protocol_version = %self.node_protocol_version,
-                l1_block_number = signal.l1_block_number,
+                l1_block_number = schedule.l1_block_number,
                 "read dynamic upgrade signal"
             );
         }
@@ -221,12 +221,7 @@ mod tests {
     }
 
     fn signal(protocol_version: U256) -> UpgradeSignal {
-        UpgradeSignal {
-            upgrade_id: BaseUpgrade::Azul,
-            activation_timestamp: 42,
-            protocol_version,
-            l1_block_number: 1,
-        }
+        UpgradeSignal { upgrade_id: BaseUpgrade::Azul, activation_timestamp: 42, protocol_version }
     }
 
     #[test]
@@ -260,15 +255,17 @@ mod tests {
     }
 
     fn malformed_schedule(config: &UpgradeSignalConfig) -> UpgradeSignalSchedule {
-        UpgradeSignalSchedule::new(vec![
-            signal(config.node_protocol_version),
-            UpgradeSignal {
-                upgrade_id: BaseUpgrade::Beryl,
-                activation_timestamp: 5,
-                protocol_version: U256::ZERO,
-                l1_block_number: 1,
-            },
-        ])
+        UpgradeSignalSchedule::new(
+            1,
+            vec![
+                signal(config.node_protocol_version),
+                UpgradeSignal {
+                    upgrade_id: BaseUpgrade::Beryl,
+                    activation_timestamp: 5,
+                    protocol_version: U256::ZERO,
+                },
+            ],
+        )
     }
 
     #[test]
@@ -286,20 +283,21 @@ mod tests {
     fn schedule_validation_rejects_unsupported_protocol_version() {
         let config = supported_config();
 
-        let schedule = UpgradeSignalSchedule::new(vec![
-            UpgradeSignal {
-                upgrade_id: BaseUpgrade::Azul,
-                activation_timestamp: 42,
-                protocol_version: config.node_protocol_version,
-                l1_block_number: 1,
-            },
-            UpgradeSignal {
-                upgrade_id: BaseUpgrade::Beryl,
-                activation_timestamp: 42,
-                protocol_version: config.node_protocol_version + U256::from(1),
-                l1_block_number: 1,
-            },
-        ]);
+        let schedule = UpgradeSignalSchedule::new(
+            1,
+            vec![
+                UpgradeSignal {
+                    upgrade_id: BaseUpgrade::Azul,
+                    activation_timestamp: 42,
+                    protocol_version: config.node_protocol_version,
+                },
+                UpgradeSignal {
+                    upgrade_id: BaseUpgrade::Beryl,
+                    activation_timestamp: 42,
+                    protocol_version: config.node_protocol_version + U256::from(1),
+                },
+            ],
+        );
 
         assert!(matches!(
             config.validate_schedule_protocol_versions(&schedule).unwrap_err(),
@@ -314,12 +312,14 @@ mod tests {
         #[case] upgrade_id: &str,
     ) {
         let config = UpgradeSignalConfig::new(address!("0000000000000000000000000000000000000001"));
-        let schedule = UpgradeSignalSchedule::new(vec![UpgradeSignal {
-            upgrade_id: upgrade(upgrade_id),
-            activation_timestamp: 0,
-            protocol_version: config.node_protocol_version + U256::from(1),
-            l1_block_number: 1,
-        }]);
+        let schedule = UpgradeSignalSchedule::new(
+            1,
+            vec![UpgradeSignal {
+                upgrade_id: upgrade(upgrade_id),
+                activation_timestamp: 0,
+                protocol_version: config.node_protocol_version + U256::from(1),
+            }],
+        );
 
         assert!(config.validate_schedule_protocol_versions(&schedule).is_ok());
     }

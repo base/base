@@ -223,23 +223,25 @@ mod tests {
         upgrade_id: BaseUpgrade,
         activation_timestamp: u64,
     ) -> UpgradeSignalSchedule {
-        UpgradeSignalSchedule::new(vec![base_upgrade_signal::UpgradeSignal {
-            upgrade_id,
-            activation_timestamp,
-            protocol_version: UpgradeSignalDefaults::node_protocol_version(),
-            l1_block_number: 1,
-        }])
+        UpgradeSignalSchedule::new(
+            1,
+            vec![base_upgrade_signal::UpgradeSignal {
+                upgrade_id,
+                activation_timestamp,
+                protocol_version: UpgradeSignalDefaults::node_protocol_version(),
+            }],
+        )
     }
 
     fn schedule(signals: &[(BaseUpgrade, u64)]) -> UpgradeSignalSchedule {
         UpgradeSignalSchedule::new(
+            1,
             signals
                 .iter()
                 .map(|(upgrade_id, activation_timestamp)| base_upgrade_signal::UpgradeSignal {
                     upgrade_id: *upgrade_id,
                     activation_timestamp: *activation_timestamp,
                     protocol_version: Default::default(),
-                    l1_block_number: 1,
                 })
                 .collect(),
         )

@@ -1,5 +1,4 @@
 use alloy_provider::RootProvider;
-use tracing::info;
 
 use super::{UpgradeSignalApplySummary, UpgradeSignalRuntimeApplier};
 use crate::{
@@ -42,16 +41,7 @@ impl UpgradeSignalRefresher {
     ) -> Result<UpgradeSignalApplySummary, UpgradeSignalError> {
         self.config.validate_schedule_protocol_versions(schedule)?;
         let summary = UpgradeSignalRuntimeApplier::apply_schedule(self.chain_id, schedule);
-        info!(
-            target: "upgrade_signal",
-            chain_id = summary.chain_id,
-            l1_block_number = ?summary.l1_block_number,
-            applied_upgrades = summary.applied_upgrades,
-            cleared_upgrades = summary.cleared_upgrades,
-            ignored_upgrades = summary.ignored_upgrades,
-            configured_upgrades = summary.configured_upgrades,
-            "applied runtime upgrade signal schedule"
-        );
+        summary.log("runtime registry");
 
         Ok(summary)
     }
@@ -92,12 +82,10 @@ mod tests {
         activation_timestamp: u64,
         protocol_version: U256,
     ) -> UpgradeSignalSchedule {
-        UpgradeSignalSchedule::new(vec![UpgradeSignal {
-            upgrade_id,
-            activation_timestamp,
-            protocol_version,
-            l1_block_number: 1,
-        }])
+        UpgradeSignalSchedule::new(
+            1,
+            vec![UpgradeSignal { upgrade_id, activation_timestamp, protocol_version }],
+        )
     }
 
     #[test]
