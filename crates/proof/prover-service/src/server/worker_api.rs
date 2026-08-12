@@ -67,9 +67,12 @@ impl ProverServiceServer {
         request: GetNextProofRequest,
     ) -> RpcResult<GetNextProofResponse> {
         let start = std::time::Instant::now();
-        let worker_id = request.worker_id.clone();
         let result = self.get_next_proof_inner(request).await;
-        record_worker_rpc_result("GetNextProof", start, &result, &worker_id);
+        // Deliberately unlabelled by worker. Worker ids are per-process UUIDs, and this is the
+        // highest-frequency worker RPC: labelling it mints a metric series per pod restart that
+        // never retires. Per-version claim behaviour is observable from
+        // `prover_service.pending_jobs{protocol_version}` instead.
+        record_rpc_result("GetNextProof", start, &result);
 
         result
     }

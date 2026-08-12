@@ -2106,7 +2106,7 @@ const PROOF_JOB_RETURNING_COLUMNS: &str = "id, COALESCE(session_id, id::text) AS
 /// ZK-only program rotation mints a new version for an otherwise unchanged TEE image, and exact
 /// match would force a whole new Nitro fleet (and a fresh enclave registration) to serve it.
 ///
-// ponytail: single-element arrays keep the `idx_proof_requests_*_job_claim` index scan; multi-
+// ponytail: single-element arrays keep the `idx_proof_requests_*_by_version` index scan; multi-
 // element arrays may add a sort for `ORDER BY start_block_number`. Queue depth is small enough
 // that this is not worth optimizing. If it ever is, split into a per-version `UNION ALL` with
 // `LIMIT 1` per branch and take the minimum.

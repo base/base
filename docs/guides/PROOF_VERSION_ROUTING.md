@@ -153,6 +153,22 @@ both expose it and both may return zero. Historical activated-prefix games expos
 immutables such as `L2_BLOCK_TIME`, `L2_GENESIS_BLOCK_NUMBER`, and `L2_GENESIS_TIMESTAMP`. Probe
 those only for legacy classification; add an explicit protocol identifier for future contracts.
 
+### Full-schedule games are classified but not proven
+
+The scanner recognises the full-schedule era and then **skips those games**, incrementing
+`base_challenger_unsupported_schedule_games_total`. Recognising the era is what makes the routing
+correct; proving it is a separate capability this phase does not have.
+
+A proof request carries only `schedule_l2_block_number`, which reproduces an activated prefix. It
+cannot express a `scheduleId` snapshotted at L1 game initialization — that needs the historical
+rollup-config snapshot listed in the table above, plumbed through the request and understood by the
+worker. Routing a full-schedule game without it would send a request that looks like a no-schedule
+job, produce a journal committing the wrong schedule, and fail on-chain after a full proof run.
+
+Skipping is therefore the honest failure: the game is unchallenged either way, and this way the
+counter says so instead of a prover job burning and a submission reverting. Closing the gap means
+adding the snapshot to the request contract, not changing the routing.
+
 ## Can the expected hashes be recovered?
 
 Yes. No new getters are required to recover the current three eras' proof commitments.

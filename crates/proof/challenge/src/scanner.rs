@@ -210,12 +210,16 @@ impl GameScanner {
                 .await;
 
         let mut candidates = Vec::new();
+        let mut evaluated_every_index = true;
 
         for (i, result) in results {
             match result {
                 Ok(Some(candidate)) => candidates.push(candidate),
                 Ok(None) => {}
-                Err(e) => warn!(error = %e, index = i, "game query failed"),
+                Err(e) => {
+                    evaluated_every_index = false;
+                    warn!(error = %e, index = i, "game query failed");
+                }
             }
         }
 
@@ -224,11 +228,18 @@ impl GameScanner {
         // Drop cached intervals for games that fell behind the anchor. Keyed by game proxy, the
         // cache would otherwise grow for the life of the process; live games are re-cached by the
         // next scan's `evaluate_game`.
-        let live: HashSet<Address> = candidates.iter().map(|c| c.factory.proxy).collect();
-        self.interval_cache
-            .lock()
-            .expect("interval_cache lock poisoned")
-            .retain(|a, _| live.contains(a));
+        //
+        // Only a scan that evaluated every index knows the full live set. A game that hit a
+        // transient RPC error is absent from `candidates` despite still being live, so evicting
+        // after a partial scan would discard its interval and re-fetch it next tick. Deferring
+        // eviction to the next clean scan keeps growth bounded without that churn.
+        if evaluated_every_index {
+            let live: HashSet<Address> = candidates.iter().map(|c| c.factory.proxy).collect();
+            self.interval_cache
+                .lock()
+                .expect("interval_cache lock poisoned")
+                .retain(|a, _| live.contains(a));
+        }
 
         let mut open_games: HashMap<u32, usize> =
             self.protocol_versions.values().map(|&version| (version, 0)).collect();
@@ -431,6 +442,22 @@ impl GameScanner {
                 },
                 self.resolve_intermediate_block_interval(factory.proxy),
             )?;
+
+        // A full-schedule game commits the whole `ProtocolVersions.scheduleId()` snapshotted at
+        // game creation, which needs the historical rollup-config snapshot that reproduces that
+        // exact value. Nothing here can supply it: both request builders only carry
+        // `schedule_l2_block_number`, so a full-schedule game would be sent as if it pinned
+        // nothing, and the resulting journal would be rejected on-chain. Fail closed instead of
+        // burning a prover job on a proof that cannot verify.
+        if proof_protocol.schedule_kind == ProofScheduleKind::Full {
+            ChallengerMetrics::unsupported_schedule_games_total().increment(1);
+            error!(
+                index = index,
+                "full-schedule game cannot be proven; challenger only supports the \
+                 no-schedule and activated-prefix eras"
+            );
+            return Err(eyre::eyre!("game {index} uses the unsupported full-schedule era"));
+        }
 
         let fingerprint = proof_protocol.fingerprint();
         let protocol_version = self.protocol_versions.get(&fingerprint).copied().ok_or_else(|| {
@@ -928,6 +955,22 @@ mod tests {
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].schedule_kind, ProofScheduleKind::None);
         assert_eq!(candidates[0].protocol_version, 0);
+    }
+
+    /// A full-schedule game is skipped even though `mock_protocol_versions` maps its fingerprint,
+    /// because the challenger cannot reproduce the snapshotted `scheduleId` its journal commits.
+    #[tokio::test]
+    async fn test_scan_skips_full_schedule_games() {
+        let factory = Arc::new(MockDisputeGameFactory::new(vec![factory_game(0, 1)]));
+        let mut state = mock_state(GameStatus::InProgress, Address::ZERO, 100);
+        state.proof_protocol = crate::test_utils::mock_proof_protocol(ProofScheduleKind::Full);
+        let verifier = Arc::new(MockAggregateVerifier::new(HashMap::from([(addr(0), state)])));
+        let mut scanner = test_scanner(factory, verifier, mock_anchor_registry(Address::ZERO));
+
+        assert!(
+            scanner.scan().await.unwrap().is_empty(),
+            "full-schedule games must not be routed to a prover"
+        );
     }
 
     /// Error at the first index (0) skips that game, rest still returned.

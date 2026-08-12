@@ -415,6 +415,27 @@ impl AggregateVerifierContractClient {
         let provider = RootProvider::new_http(l1_rpc_url);
         Ok(Self { provider })
     }
+
+    /// Reports whether a call failed because the contract does not implement the selector.
+    ///
+    /// Calling an absent function on a game proxy reverts with no revert data. Alloy has no typed
+    /// variant for that, so this pairs the structural check (empty revert data) with the message
+    /// match that separates it from other transport failures. Deliberately narrow: an unrecognized
+    /// phrasing falls through to the caller's error arm, which skips the game and retries on the
+    /// next scan, rather than silently misclassifying its proof era.
+    ///
+    /// `Error::ZeroData` is not treated as a missing getter. An empty successful response means the
+    /// address is not a contract or the node is serving a stale state, which is a real error rather
+    /// than evidence about which era the game belongs to.
+    fn is_missing_getter(error: &alloy_contract::Error) -> bool {
+        let alloy_contract::Error::TransportError(error) = error else {
+            return false;
+        };
+        error.as_error_resp().is_some_and(|payload| {
+            payload.message.to_ascii_lowercase().contains("execution reverted")
+                && payload.as_revert_data().is_none_or(|data| data.is_empty())
+        })
+    }
 }
 
 #[async_trait]
@@ -456,39 +477,45 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
         let contract =
             IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
 
-        let (config_hash, tee_image_hash, zk_range_hash, zk_aggregate_hash) = futures::try_join!(
-            async { contract_call!(contract.CONFIG_HASH().call(), "CONFIG_HASH failed") },
-            async { contract_call!(contract.TEE_IMAGE_HASH().call(), "TEE_IMAGE_HASH failed") },
-            async { contract_call!(contract.ZK_RANGE_HASH().call(), "ZK_RANGE_HASH failed") },
+        // All six getters are immutable and independent, so they go out in one round rather than
+        // gating the two era probes behind the hashes. `L2_BLOCK_TIME` is speculative: it is only
+        // read when `scheduleId` succeeds, and the wasted call on a no-schedule game is one
+        // concurrent revert.
+        let (hashes, schedule_id, l2_block_time) = futures::join!(
             async {
-                contract_call!(contract.ZK_AGGREGATE_HASH().call(), "ZK_AGGREGATE_HASH failed")
+                futures::try_join!(
+                    async { contract_call!(contract.CONFIG_HASH().call(), "CONFIG_HASH failed") },
+                    async {
+                        contract_call!(contract.TEE_IMAGE_HASH().call(), "TEE_IMAGE_HASH failed")
+                    },
+                    async {
+                        contract_call!(contract.ZK_RANGE_HASH().call(), "ZK_RANGE_HASH failed")
+                    },
+                    async {
+                        contract_call!(
+                            contract.ZK_AGGREGATE_HASH().call(),
+                            "ZK_AGGREGATE_HASH failed"
+                        )
+                    },
+                )
             },
-        )?;
+            async { contract.scheduleId().call().await },
+            async { contract.L2_BLOCK_TIME().call().await },
+        );
+        let (config_hash, tee_image_hash, zk_range_hash, zk_aggregate_hash) = hashes?;
 
-        let (schedule_kind, schedule_id) = match contract.scheduleId().call().await {
-            Ok(schedule_id) => match contract.L2_BLOCK_TIME().call().await {
+        let (schedule_kind, schedule_id) = match schedule_id {
+            // Both schedule-aware eras expose `scheduleId`; only the activated-prefix era also
+            // exposes the L2 timestamp anchors it needs. Classify on which getters exist, never
+            // on the returned value: zero is valid for both.
+            Ok(schedule_id) => match l2_block_time {
                 Ok(_) => (ProofScheduleKind::Activated, B256::ZERO),
-                Err(alloy_contract::Error::TransportError(error))
-                    if error.as_error_resp().is_some_and(|payload| {
-                        payload.message.to_ascii_lowercase().contains("execution reverted")
-                            && payload.as_revert_data().is_none_or(|data| data.is_empty())
-                    }) =>
-                {
+                Err(error) if Self::is_missing_getter(&error) => {
                     (ProofScheduleKind::Full, schedule_id)
                 }
                 Err(error) => return Err(ContractError::call("L2_BLOCK_TIME failed", error)),
             },
-            Err(error @ alloy_contract::Error::ZeroData(_, _)) => {
-                return Err(ContractError::call("scheduleId failed", error));
-            }
-            Err(alloy_contract::Error::TransportError(error))
-                if error.as_error_resp().is_some_and(|payload| {
-                    payload.message.to_ascii_lowercase().contains("execution reverted")
-                        && payload.as_revert_data().is_none_or(|data| data.is_empty())
-                }) =>
-            {
-                (ProofScheduleKind::None, B256::ZERO)
-            }
+            Err(error) if Self::is_missing_getter(&error) => (ProofScheduleKind::None, B256::ZERO),
             Err(error) => return Err(ContractError::call("scheduleId failed", error)),
         };
 
