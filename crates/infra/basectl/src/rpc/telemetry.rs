@@ -144,9 +144,14 @@ impl TelemetryClient {
     /// record or a public `IPv4` `/ip4/.../tcp/.../p2p/<peer-id>` multiaddr.
     pub async fn check_cl_reachability(
         &self,
-        enr: &str,
+        target: &str,
     ) -> Result<ReachabilityResponse, TelemetryClientError> {
-        self.check_reachability(CL_REACHABILITY_PATH, &json!({ "enr": enr })).await
+        let body = if target.starts_with('/') {
+            json!({ "multiaddr": target })
+        } else {
+            json!({ "enr": target })
+        };
+        self.check_reachability(CL_REACHABILITY_PATH, &body).await
     }
 
     /// Posts one reachability request and decodes the typed response or error.
@@ -298,6 +303,31 @@ mod tests {
                 client_version: Some("op-node/v1.0.0".to_string()),
             }
         );
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn sends_multiaddr_json_key_for_slash_target() {
+        async fn cl_reachable(Json(request): Json<Value>) -> Json<Value> {
+            assert_eq!(request["multiaddr"], "/ip4/203.0.113.10/tcp/9222/p2p/16Uiu2HAmExample");
+            assert!(request.get("enr").is_none());
+            Json(json!({
+                "outcome": "reachable",
+                "stage": "identify",
+                "observedAddress": "203.0.113.10:9222",
+                "elapsedMs": 42,
+            }))
+        }
+        let router = Router::new().route(CL_REACHABILITY_PATH, post(cl_reachable));
+        let (base_url, handle) = start_server(router).await;
+        let client = TelemetryClient::new(base_url).unwrap();
+
+        let response = client
+            .check_cl_reachability("/ip4/203.0.113.10/tcp/9222/p2p/16Uiu2HAmExample")
+            .await
+            .unwrap();
+
+        assert_eq!(response.outcome, ReachabilityOutcome::Reachable);
         handle.abort();
     }
 
