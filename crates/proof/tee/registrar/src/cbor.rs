@@ -1,7 +1,7 @@
 //! Minimal CBOR walker for Solidity/`NitroValidator`-aligned `COSE_Sign1` parsing.
 //!
 //! Preserves raw protected/payload byte-string TLVs for attestation TBS construction
-//! and rejects trailing bytes / non-map unprotected headers that `ciborium` accepts.
+//! and rejects trailing bytes / non-empty unprotected headers that `ciborium` accepts.
 
 use std::collections::BTreeSet;
 
@@ -94,7 +94,10 @@ impl CborItem {
                         "unsupported indefinite CBOR byte/text string".into(),
                     ));
                 }
-                let Some(content_end) = content_start.checked_add(value as usize) else {
+                let len = usize::try_from(value).map_err(|_| {
+                    PlannerError::Cose("CBOR item length exceeds platform address space".into())
+                })?;
+                let Some(content_end) = content_start.checked_add(len) else {
                     return Err(PlannerError::Cose("CBOR item length out of bounds".into()));
                 };
                 if content_end > bytes.len() {
@@ -264,9 +267,12 @@ impl NitroCose {
         }
         let array = CborItem::read(attestation, array_start)?
             .require_major(CBOR_MAJOR_ARRAY, "COSE_Sign1")?;
-        if array.indefinite || array.value != 4 {
+        if array.indefinite {
+            return Err(PlannerError::Cose("COSE_Sign1 must be a definite-length array".into()));
+        }
+        if array.value != 4 {
             return Err(PlannerError::Cose(format!(
-                "COSE_Sign1 must be a definite-length array of 4 items, got {}",
+                "COSE_Sign1 must be an array of 4 items, got {}",
                 array.value
             )));
         }
@@ -275,6 +281,11 @@ impl NitroCose {
             .require_major(CBOR_MAJOR_BYTE_STRING, "protected header")?;
         let unprotected = CborItem::read(attestation, protected.end)?
             .require_major(CBOR_MAJOR_MAP, "unprotected header")?;
+        if unprotected.indefinite || unprotected.value != 0 {
+            return Err(PlannerError::Cose(
+                "COSE_Sign1 unprotected header must be an empty map".into(),
+            ));
+        }
         let payload = CborItem::read(attestation, unprotected.end)?
             .require_major(CBOR_MAJOR_BYTE_STRING, "payload")?;
         let signature = CborItem::read(attestation, payload.end)?
