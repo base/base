@@ -2,6 +2,7 @@
 
 use alloy_primitives::{Address, U256};
 use reth_transaction_pool::ValidPoolTransaction;
+use revm::Database;
 
 use crate::{BasePooledTransaction, ExtensionError, ValidatedTransactionExtensions};
 
@@ -87,6 +88,24 @@ impl ValidityPredicate {
     pub const fn default_mask() -> U256 {
         U256::MAX
     }
+
+    /// Returns whether this predicate holds against the current database state.
+    ///
+    /// An absent account has a zero balance. Storage values are masked before
+    /// comparison. Callers must treat database errors as an inability to verify
+    /// the predicate rather than as a successful match.
+    pub fn matches_state<DB: Database>(&self, db: &mut DB) -> Result<bool, DB::Error> {
+        match self {
+            Self::Balance { address, op, value } => {
+                let balance = db.basic(*address)?.map_or(U256::ZERO, |account| account.balance);
+                Ok(op.matches(balance, *value))
+            }
+            Self::Storage { address, slot, mask, op, value } => {
+                let storage = db.storage(*address, *slot)? & *mask;
+                Ok(op.matches(storage, *value))
+            }
+        }
+    }
 }
 
 /// Experimental validity predicates carried with a validated transaction.
@@ -126,6 +145,7 @@ mod tests {
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::TxKind;
     use base_common_consensus::{BaseTransactionSigned, TxDeposit};
+    use revm::{database::InMemoryDB, state::AccountInfo};
     use serde_json::json;
 
     use super::*;
@@ -224,6 +244,45 @@ mod tests {
         ] {
             assert_eq!(op.matches(U256::from(10), U256::from(11)), expected);
         }
+    }
+
+    #[test]
+    fn predicates_match_current_state() {
+        let address = Address::repeat_byte(0x11);
+        let slot = U256::from(7);
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(
+            address,
+            AccountInfo { balance: U256::from(10), ..Default::default() },
+        );
+        db.insert_account_storage(address, slot, U256::from(0xabcd)).unwrap();
+
+        let balance = ValidityPredicate::Balance {
+            address,
+            op: ValidityOperator::GreaterThan,
+            value: U256::from(9),
+        };
+        let storage = ValidityPredicate::Storage {
+            address,
+            slot,
+            mask: U256::from(0xff),
+            op: ValidityOperator::Equal,
+            value: U256::from(0xcd),
+        };
+
+        assert!(balance.matches_state(&mut db).unwrap());
+        assert!(storage.matches_state(&mut db).unwrap());
+    }
+
+    #[test]
+    fn absent_accounts_have_zero_balance() {
+        let predicate = ValidityPredicate::Balance {
+            address: Address::repeat_byte(0x11),
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
+
+        assert!(predicate.matches_state(&mut InMemoryDB::default()).unwrap());
     }
 
     #[test]
