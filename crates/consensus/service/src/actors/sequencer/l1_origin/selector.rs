@@ -64,9 +64,11 @@ pub trait OriginSelector: Debug + Send + Sync {
 /// extend the current origin under the same observed L1 chain view. While sequencer drift permits,
 /// an unfinished lookup does not prevent building on the current origin. Once drift is exceeded,
 /// selection returns [`L1OriginSelectorError::NotEnoughData`] until the lookup is ready rather than
-/// awaiting speculative work on the build path. An L1 reorg that orphans the current origin is
-/// therefore detected when the background successor lookup completes its parent check, after which
-/// the sequencer requests an engine reset to rewind any affected unsafe L2 blocks.
+/// awaiting speculative work on the build path. Selection remains disabled until an observed L1
+/// head is available because successor canonicality cannot otherwise be established. An L1 reorg
+/// that orphans the current origin is therefore detected when the background successor lookup
+/// completes its parent check, after which the sequencer requests an engine reset to rewind any
+/// affected unsafe L2 blocks.
 #[derive(Debug)]
 pub struct L1OriginSelector<P: L1OriginSelectorProvider> {
     /// The [`RollupConfig`].
@@ -245,7 +247,7 @@ impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
     ) -> Result<(), L1OriginSelectorError> {
         let Some(chain_view) = self.l1.chain_view() else {
             self.next = NextSlot::Idle;
-            return Ok(());
+            return Err(L1OriginSelectorError::ChainViewUnavailable);
         };
 
         // Taking the slot first intentionally leaves it idle if successor adoption proves the
@@ -382,6 +384,9 @@ pub enum L1OriginSelectorError {
         "Waiting for more L1 data to be available to select the next L1 origin block. Current L1 origin: {0:?}"
     )]
     NotEnoughData(BlockInfo),
+    /// No observed L1 head is available to establish successor canonicality.
+    #[error("L1 chain view unavailable")]
+    ChainViewUnavailable,
     /// The L1 origin block was not found by its hash, e.g. during an L1 reorg or sync lag.
     #[error("L1 origin block not found by hash: {0}")]
     OriginNotFound(B256),
@@ -675,7 +680,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_next_l1_origin_waits_for_chain_view() {
+    async fn test_next_l1_origin_refuses_to_build_without_chain_view() {
         let cfg = Arc::new(RollupConfig {
             block_time: 2,
             max_sequencer_drift: 600,
@@ -704,8 +709,8 @@ mod tests {
             seq_num: 0,
         };
 
-        let selected = selector.next_l1_origin(unsafe_head).await.unwrap();
-        assert_eq!(selected, current);
+        let error = selector.next_l1_origin(unsafe_head).await.unwrap_err();
+        assert!(matches!(error, L1OriginSelectorError::ChainViewUnavailable));
         assert_eq!(selector.next(), None);
 
         selector.l1.set_chain_view(B256::with_last_byte(10));

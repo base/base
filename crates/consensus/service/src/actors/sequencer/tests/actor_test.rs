@@ -621,6 +621,27 @@ async fn test_orphaned_l1_origin_resets_once_without_starting_block_build() {
     assert!(matches!(actor.builder.build().await.unwrap(), crate::BuildOutcome::Deferred));
 }
 
+#[tokio::test]
+async fn test_missing_l1_chain_view_defers_without_starting_block_build() {
+    let unsafe_head = L2BlockInfo::default();
+    let mut client = MockSequencerEngineClient::new();
+    client.expect_get_unsafe_head().times(1).return_once(move || Ok(unsafe_head));
+    client.expect_reset_engine_forkchoice().times(0);
+    client.expect_start_build_block().times(0);
+
+    let mut origin_selector = MockOriginSelector::new();
+    origin_selector
+        .expect_next_l1_origin()
+        .times(1)
+        .return_once(|_| Err(L1OriginSelectorError::ChainViewUnavailable));
+
+    let mut actor = test_actor();
+    actor.builder.origin_selector = origin_selector;
+    actor.builder.engine_client = Arc::new(client);
+
+    assert!(matches!(actor.builder.build().await.unwrap(), crate::BuildOutcome::AwaitingL1Origin));
+}
+
 #[rstest]
 #[case::temp(PipelineErrorKind::Temporary(BuilderError::Custom(String::new()).into()), false)]
 #[case::reset(PipelineErrorKind::Reset(BuilderError::Custom(String::new()).into()), false)]

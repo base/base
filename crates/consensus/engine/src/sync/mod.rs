@@ -67,6 +67,9 @@ pub async fn find_starting_forkchoice_with_checkpoint_reader<
     );
 
     // Search for the highest `unsafe` block, relative to the initial `unsafe` block's L1 origin.
+    // The finalized L2 head is the correctness boundary for this walk. Do not impose a smaller
+    // iteration cap: a reset must be able to recover every unfinalized block invalidated by a
+    // legitimate deep L1 reorg, and failing at a fixed depth would retry from the same unsafe head.
     let unsafe_walk_started = Instant::now();
     let mut unsafe_walked_blocks = 0_u64;
     let mut visible_l1_head_number = None;
