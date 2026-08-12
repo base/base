@@ -21,6 +21,9 @@ pub use checkpoint::{
 
 use crate::{EngineClient, Metrics};
 
+/// Maximum supported L1 reorg depth, expressed as sequencing windows to match op-node.
+const MAX_REORG_SEQ_WINDOWS: u64 = 5;
+
 /// Searches for the latest [`L2ForkchoiceState`] that we can use to start the sync process with.
 ///
 ///   - The *unsafe L2 block*: This is the highest L2 block whose L1 origin is a *plausible*
@@ -67,9 +70,10 @@ pub async fn find_starting_forkchoice_with_checkpoint_reader<
     );
 
     // Search for the highest `unsafe` block, relative to the initial `unsafe` block's L1 origin.
-    // The finalized L2 head is the correctness boundary for this walk. Do not impose a smaller
-    // iteration cap: a reset must be able to recover every unfinalized block invalidated by a
-    // legitimate deep L1 reorg, and failing at a fixed depth would retry from the same unsafe head.
+    // Finalized is the lower correctness boundary. The L1-origin depth guard matches op-node's
+    // operational bound without imposing an arbitrary L2-block limit inside a sequencing epoch.
+    let previous_unsafe_origin = current_fc.un_safe.l1_origin.number;
+    let max_reorg_depth = cfg.seq_window_size.saturating_mul(MAX_REORG_SEQ_WINDOWS);
     let unsafe_walk_started = Instant::now();
     let mut unsafe_walked_blocks = 0_u64;
     let mut visible_l1_head_number = None;
@@ -85,6 +89,12 @@ pub async fn find_starting_forkchoice_with_checkpoint_reader<
             }
 
             let origin = current_fc.un_safe.l1_origin;
+            if origin.number.saturating_add(max_reorg_depth) < previous_unsafe_origin {
+                break Err(SyncStartError::TooDeepReorg {
+                    previous_unsafe_origin,
+                    walked_origin: origin.number,
+                });
+            }
             let canonical_l1 =
                 engine_client.get_l1_block(BlockNumberOrTag::Number(origin.number).into()).await?;
             info!(
@@ -388,6 +398,7 @@ mod tests {
                 l2: BlockNumHash { number: 0, hash: genesis_hash },
                 ..Default::default()
             },
+            seq_window_size: 1,
             ..Default::default()
         };
 
@@ -503,6 +514,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn reset_rejects_reorg_deeper_than_five_sequencing_windows() {
+        let canonical_origin = BlockNumHash {
+            number: 10,
+            hash: b256!("1010101010101010101010101010101010101010101010101010101010101010"),
+        };
+        let orphan_origin = BlockNumHash {
+            number: 16,
+            hash: b256!("1616161616161616161616161616161616161616161616161616161616161616"),
+        };
+        let genesis_hash =
+            b256!("2020202020202020202020202020202020202020202020202020202020202020");
+        let rollup_config = base_common_genesis::RollupConfig {
+            genesis: ChainGenesis {
+                l1: canonical_origin,
+                l2: BlockNumHash { number: 0, hash: genesis_hash },
+                ..Default::default()
+            },
+            seq_window_size: 1,
+            ..Default::default()
+        };
+
+        let parent = l2_block_with_l1_info(1, genesis_hash, canonical_origin);
+        let parent_hash = parent.clone().into_consensus().hash_slow();
+        let unsafe_head = l2_block_with_l1_info(2, parent_hash, orphan_origin);
+        let mut canonical_parent_l1 = RpcBlock::<EthTransaction>::default();
+        canonical_parent_l1.header.hash = canonical_origin.hash;
+        canonical_parent_l1.header.inner.number = canonical_origin.number;
+        let mut replacement_l1 = RpcBlock::<EthTransaction>::default();
+        replacement_l1.header.hash = B256::with_last_byte(17);
+        replacement_l1.header.inner.number = orphan_origin.number;
+
+        let client = test_engine_client_builder()
+            .with_l2_block(BlockNumberOrTag::Latest.into(), unsafe_head)
+            .with_l2_block(BlockNumberOrTag::Safe.into(), parent.clone())
+            .with_l2_block(BlockNumberOrTag::Finalized.into(), parent.clone())
+            .with_l2_block(parent_hash.into(), parent)
+            .with_l1_block(BlockNumberOrTag::Number(10).into(), canonical_parent_l1)
+            .with_l1_block(BlockNumberOrTag::Number(16).into(), replacement_l1)
+            .build();
+
+        let error = super::find_starting_forkchoice(&rollup_config, &client)
+            .await
+            .expect_err("reset must reject a reorg deeper than five sequencing windows");
+
+        assert!(matches!(
+            error,
+            super::SyncStartError::TooDeepReorg { previous_unsafe_origin: 16, walked_origin: 10 }
+        ));
+        let storage = client.storage();
+        let storage = storage.read().await;
+        assert_eq!(storage.l1_block_calls_by_id.get("number:10"), None);
+    }
+
+    #[tokio::test]
     async fn reset_preserves_unsafe_origin_ahead_of_visible_l1() {
         let genesis_hash =
             b256!("2020202020202020202020202020202020202020202020202020202020202020");
@@ -565,6 +630,7 @@ mod tests {
                 l2: BlockNumHash { number: 0, hash: genesis_hash },
                 ..Default::default()
             },
+            seq_window_size: 1,
             ..Default::default()
         };
 
