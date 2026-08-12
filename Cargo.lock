@@ -5837,7 +5837,6 @@ dependencies = [
  "alloy-genesis 2.2.0",
  "alloy-primitives",
  "alloy-signer 2.2.0",
- "alloy-signer-local 2.2.0",
  "async-trait",
  "base-common-genesis",
  "base-health",
@@ -6274,6 +6273,33 @@ name = "base-ring-buffer"
 version = "0.0.0"
 
 [[package]]
+name = "base-roxy"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "axum 0.8.9",
+ "base-health",
+ "clap",
+ "reqwest 0.13.4",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "base-roxy-bin"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "base-cli-utils",
+ "base-roxy",
+ "clap",
+ "dotenvy",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "base-runtime"
 version = "0.0.0"
 dependencies = [
@@ -6518,8 +6544,12 @@ dependencies = [
  "base-health",
  "base-trusted-proxy",
  "clap",
+ "discv5 0.10.4 (registry+https://github.com/rust-lang/crates.io-index)",
+ "futures",
  "governor",
  "ipnet",
+ "libp2p",
+ "libp2p-identity",
  "mockall",
  "reqwest 0.13.4",
  "reth-ecies",

@@ -49,9 +49,10 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
             BaseUpgrade::Jovian => Self::jovian(),
             BaseUpgrade::Azul => Self::azul(),
             BaseUpgrade::Beryl => Self::beryl(),
-            // Zenith is a placeholder that never activates; it tracks the latest precompile set so
-            // it evolves with the newest hardfork (keep it grouped with the latest arm).
-            BaseUpgrade::Cobalt | BaseUpgrade::Zenith => Self::cobalt(),
+            // Denim is unscheduled and Zenith is a placeholder that never activates; both track
+            // the latest precompile set so they evolve with the newest hardfork (keep them
+            // grouped with the latest arm).
+            BaseUpgrade::Cobalt | BaseUpgrade::Denim | BaseUpgrade::Zenith => Self::cobalt(),
             upgrade => panic!("unsupported Base precompile upgrade: {upgrade}"),
         };
 

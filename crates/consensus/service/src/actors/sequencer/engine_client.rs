@@ -12,7 +12,7 @@ use crate::{
     EngineClientError, EngineClientResult,
     actors::engine::{
         BuildRequest, EngineActorRequest, GetPayloadRequest, InsertUnsafePayloadRequest,
-        ReconcileShadowRequest, ResetOrigin, ResetRequest,
+        ReconcileShadowRequest, ResetOrigin, ResetReason, ResetRequest,
     },
 };
 
@@ -23,14 +23,17 @@ use crate::{
 pub trait SequencerEngineClient: Debug + Send + Sync {
     /// Resets the engine's forkchoice, awaiting confirmation that it succeeded or returning the
     /// error in performing the reset.
-    async fn reset_engine_forkchoice(&self) -> EngineClientResult<()>;
+    async fn reset_engine_forkchoice(&self, reason: ResetReason) -> EngineClientResult<()>;
 
     /// Coordinates the engine boundary for a shadow cycle that the caller will explicitly rebuild.
     ///
     /// During initial catch-up, success activates shadow production after catch-up has already
     /// advanced the engine. Once shadow production is active, this performs an actual reset.
-    async fn reset_engine_forkchoice_coordinated(&self) -> EngineClientResult<()> {
-        self.reset_engine_forkchoice().await
+    async fn reset_engine_forkchoice_coordinated(
+        &self,
+        reason: ResetReason,
+    ) -> EngineClientResult<()> {
+        self.reset_engine_forkchoice(reason).await
     }
 
     /// Starts building a block with the provided attributes.
@@ -79,12 +82,15 @@ pub trait SequencerEngineClient: Debug + Send + Sync {
 /// methods without any additional wrapping.
 #[async_trait]
 impl<T: SequencerEngineClient> SequencerEngineClient for Arc<T> {
-    async fn reset_engine_forkchoice(&self) -> EngineClientResult<()> {
-        (**self).reset_engine_forkchoice().await
+    async fn reset_engine_forkchoice(&self, reason: ResetReason) -> EngineClientResult<()> {
+        (**self).reset_engine_forkchoice(reason).await
     }
 
-    async fn reset_engine_forkchoice_coordinated(&self) -> EngineClientResult<()> {
-        (**self).reset_engine_forkchoice_coordinated().await
+    async fn reset_engine_forkchoice_coordinated(
+        &self,
+        reason: ResetReason,
+    ) -> EngineClientResult<()> {
+        (**self).reset_engine_forkchoice_coordinated(reason).await
     }
 
     async fn start_build_block(
@@ -138,12 +144,16 @@ pub struct QueuedSequencerEngineClient {
 }
 
 impl QueuedSequencerEngineClient {
-    async fn send_reset(&self, origin: ResetOrigin) -> EngineClientResult<()> {
+    async fn send_reset(&self, origin: ResetOrigin, reason: ResetReason) -> EngineClientResult<()> {
         let (result_tx, mut result_rx) = mpsc::channel(1);
 
         info!(target: "sequencer", "Sending reset request to engine.");
         self.engine_actor_request_tx
-            .send(EngineActorRequest::ResetRequest(Box::new(ResetRequest { result_tx, origin })))
+            .send(EngineActorRequest::ResetRequest(Box::new(ResetRequest {
+                result_tx,
+                origin,
+                reason,
+            })))
             .await
             .map_err(|_| EngineClientError::RequestError("request channel closed.".to_string()))?;
 
@@ -185,12 +195,15 @@ impl SequencerEngineClient for QueuedSequencerEngineClient {
         })?
     }
 
-    async fn reset_engine_forkchoice(&self) -> EngineClientResult<()> {
-        self.send_reset(ResetOrigin::Sequencer).await
+    async fn reset_engine_forkchoice(&self, reason: ResetReason) -> EngineClientResult<()> {
+        self.send_reset(ResetOrigin::Sequencer, reason).await
     }
 
-    async fn reset_engine_forkchoice_coordinated(&self) -> EngineClientResult<()> {
-        self.send_reset(ResetOrigin::ShadowCycleCoordinated).await
+    async fn reset_engine_forkchoice_coordinated(
+        &self,
+        reason: ResetReason,
+    ) -> EngineClientResult<()> {
+        self.send_reset(ResetOrigin::ShadowCycleCoordinated, reason).await
     }
 
     async fn start_build_block(

@@ -1653,6 +1653,20 @@ impl Eip8130Executor {
             .with_account_info(sender, |info| Ok(info.is_empty_code_hash()))
             .map_err(BaseTransactionError::eip8130)?;
         if is_codeless {
+            // Same guard as an explicit delegation's `DelegationEffect::install`:
+            // empty code on a keystore-established account (e.g. an imported
+            // account whose delegation was later cleared, or an EIP-6780
+            // same-transaction `SELFDESTRUCT`) is not proof of a key-backed EOA,
+            // so it must not be auto-delegated to `DEFAULT_ACCOUNT` as if it were
+            // one. Fail closed, mirroring `ApplyError::ContractEstablishedCodeless`.
+            let contract_established = AccountConfigurationStorage::new(sctx)
+                .is_contract_established(sender)
+                .map_err(BaseTransactionError::eip8130)?;
+            if contract_established {
+                return Err(BaseTransactionError::eip8130(
+                    ApplyError::ContractEstablishedCodeless { account: sender },
+                ));
+            }
             let target = Eip8130Contracts::DEFAULT_ACCOUNT;
             sctx.set_code(sender, Bytecode::new_eip7702(target))
                 .map_err(BaseTransactionError::eip8130)?;
@@ -1709,6 +1723,7 @@ mod tests {
     };
     use base_common_precompiles::INonceManager;
     use base_execution_eip8130::{AccountChangeApplier, DelegationApplied};
+    use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
     use k256::ecdsa::SigningKey;
     use revm::{
         Database,
@@ -1869,6 +1884,36 @@ mod tests {
         // Fees were routed: base fee to the vault, priority tip to the beneficiary.
         assert!(outcome.state.contains_key(&Predeploys::BASE_FEE_VAULT));
         assert!(outcome.state.contains_key(&BENEFICIARY));
+    }
+
+    #[test]
+    fn auto_delegate_skips_contract_established_codeless_sender() {
+        // Auto-delegation carries the same `FLAG_CONTRACT_ESTABLISHED` guard as an
+        // explicit `DelegationEffect::install`: a plain codeless EOA is delegated
+        // to `DEFAULT_ACCOUNT`, but a keystore-established codeless account (e.g.
+        // an imported account whose delegation was cleared) must fail closed.
+        let plain = address!("0x00000000000000000000000000000000000000c1");
+        let established = address!("0x00000000000000000000000000000000000000c2");
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        StorageCtx::enter(&mut provider, |ctx| {
+            // A non-established codeless sender is auto-delegated.
+            assert!(
+                Eip8130Executor::auto_delegate_codeless_sender(ctx, plain).unwrap(),
+                "plain codeless EOA must be auto-delegated"
+            );
+
+            // Mark a codeless account keystore-established: auto-delegation must
+            // reject it rather than resurrect it as a DEFAULT_ACCOUNT delegate.
+            let mut acc = AccountConfigurationStorage::new(ctx);
+            let mut state = acc.get_account_state(established).unwrap();
+            state.flags = Eip8130Constants::FLAG_CONTRACT_ESTABLISHED;
+            acc.set_account_state(established, state).unwrap();
+            let err = Eip8130Executor::auto_delegate_codeless_sender(ctx, established).unwrap_err();
+            assert!(
+                err.to_string().contains("contract-established"),
+                "expected ContractEstablishedCodeless, got: {err}"
+            );
+        });
     }
 
     #[test]

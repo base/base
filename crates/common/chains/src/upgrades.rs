@@ -79,9 +79,17 @@ pub trait Upgrades: EthereumHardforks {
         self.fork_condition(BaseUpgrade::Cobalt).active_at_timestamp(timestamp)
     }
 
+    /// Returns `true` if [`Denim`](BaseUpgrade::Denim) is active at given block timestamp.
+    /// Denim is unscheduled by default, so this returns `false` until an activation time is
+    /// configured via genesis or the L1 upgrade signal.
+    fn is_denim_active_at_timestamp(&self, timestamp: u64) -> bool {
+        self.fork_condition(BaseUpgrade::Denim).active_at_timestamp(timestamp)
+    }
+
     /// Returns `true` if the [`Zenith`](BaseUpgrade::Zenith) gate is active at the given block
-    /// timestamp. Zenith is a permanently-off gate, so this always returns `false`; use it to
-    /// keep not-yet-ready features disabled behind a fork check like any other upgrade.
+    /// timestamp. Zenith is the permanently unscheduled gate for future hardfork feature
+    /// testing: it is never contract-backed, so it can only be activated through genesis
+    /// config (e.g. on a devnet); on real chains this returns `false`.
     fn is_zenith_active_at_timestamp(&self, timestamp: u64) -> bool {
         self.fork_condition(BaseUpgrade::Zenith).active_at_timestamp(timestamp)
     }
@@ -135,8 +143,19 @@ impl Upgrades for RollupConfig {
                 .upgrade_activation_timestamp(BaseUpgrade::Cobalt)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
-            // Contract-only upgrades (Delta, PectraBlobSchedule), the permanently-off Zenith gate,
-            // and any future variants are absent from the execution fork ladder.
+            BaseUpgrade::Denim => self
+                .upgrade_activation_timestamp(BaseUpgrade::Denim)
+                .map(ForkCondition::Timestamp)
+                .unwrap_or(ForkCondition::Never),
+            // Zenith is the genesis-only gate for future hardfork feature testing: the runtime
+            // registry drops Zenith writes, so only a genesis-configured timestamp can appear
+            // here.
+            BaseUpgrade::Zenith => self
+                .upgrade_activation_timestamp(BaseUpgrade::Zenith)
+                .map(ForkCondition::Timestamp)
+                .unwrap_or(ForkCondition::Never),
+            // Contract-only upgrades (Delta, PectraBlobSchedule) and any future variants are
+            // absent from the execution fork ladder.
             _ => ForkCondition::Never,
         }
     }
@@ -163,6 +182,7 @@ mod tests {
         assert_eq!(cfg.fork_condition(BaseUpgrade::Azul), ForkCondition::Never);
         assert_eq!(cfg.fork_condition(BaseUpgrade::Beryl), ForkCondition::Never);
         assert_eq!(cfg.fork_condition(BaseUpgrade::Cobalt), ForkCondition::Never);
+        assert_eq!(cfg.fork_condition(BaseUpgrade::Denim), ForkCondition::Never);
         assert_eq!(cfg.fork_condition(BaseUpgrade::Zenith), ForkCondition::Never);
     }
 
@@ -185,6 +205,12 @@ mod tests {
             BaseUpgrade::Cobalt,
             ACTIVATION + 1,
         );
+        // Denim is contract-backed, so a runtime override can activate it on a live chain.
+        RuntimeUpgradeRegistry::set_activation_timestamp(
+            CHAIN_ID,
+            BaseUpgrade::Denim,
+            ACTIVATION + 2,
+        );
         // Even a runtime override cannot activate the permanently-off Zenith gate.
         RuntimeUpgradeRegistry::set_activation_timestamp(CHAIN_ID, BaseUpgrade::Zenith, u64::MAX);
 
@@ -193,8 +219,25 @@ mod tests {
             cfg.fork_condition(BaseUpgrade::Cobalt),
             ForkCondition::Timestamp(ACTIVATION + 1)
         );
+        assert_eq!(
+            cfg.fork_condition(BaseUpgrade::Denim),
+            ForkCondition::Timestamp(ACTIVATION + 2)
+        );
         assert_eq!(cfg.fork_condition(BaseUpgrade::Zenith), ForkCondition::Never);
 
         RuntimeUpgradeRegistry::clear_chain(CHAIN_ID);
+    }
+
+    #[test]
+    fn rollup_config_zenith_activates_via_genesis_config_only() {
+        const ACTIVATION: u64 = 42;
+
+        // Genesis config is the only way to schedule the Zenith testing gate.
+        let mut cfg = RollupConfig::default();
+        cfg.upgrades.base.zenith = Some(ACTIVATION);
+
+        assert_eq!(cfg.fork_condition(BaseUpgrade::Zenith), ForkCondition::Timestamp(ACTIVATION));
+        assert!(!cfg.is_zenith_active_at_timestamp(ACTIVATION - 1));
+        assert!(cfg.is_zenith_active_at_timestamp(ACTIVATION));
     }
 }

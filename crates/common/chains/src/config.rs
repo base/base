@@ -57,6 +57,8 @@ pub struct ChainConfig {
     pub beryl_timestamp: Option<u64>,
     /// Cobalt activation timestamp (optional).
     pub cobalt_timestamp: Option<u64>,
+    /// Denim activation timestamp (optional).
+    pub denim_timestamp: Option<u64>,
 
     // Genesis
     /// L1 genesis block hash.
@@ -325,6 +327,7 @@ impl ChainConfig {
                 azul: self.azul_timestamp,
                 beryl: self.beryl_timestamp,
                 cobalt: self.cobalt_timestamp,
+                denim: self.denim_timestamp,
                 zenith: None,
             },
         }
@@ -422,6 +425,7 @@ const MAINNET: ChainConfig = ChainConfig {
     azul_timestamp: Some(1_779_991_200),
     beryl_timestamp: Some(1_782_410_400),
     cobalt_timestamp: None,
+    denim_timestamp: None,
 
     genesis_l1_hash: b256!("5c13d307623a926cd31415036c8b7fa14572f9dac64528e857a470511fc30771"),
     genesis_l1_number: 17_481_768,
@@ -495,6 +499,7 @@ const SEPOLIA: ChainConfig = ChainConfig {
     azul_timestamp: Some(1_776_708_000),
     beryl_timestamp: Some(1_781_805_600),
     cobalt_timestamp: None,
+    denim_timestamp: None,
 
     genesis_l1_hash: b256!("cac9a83291d4dec146d6f7f69ab2304f23f5be87b1789119a0c5b1e4482444ed"),
     genesis_l1_number: 4_370_868,
@@ -559,6 +564,7 @@ const DEVNET: ChainConfig = ChainConfig {
     azul_timestamp: Some(0),
     beryl_timestamp: None,
     cobalt_timestamp: None,
+    denim_timestamp: None,
 
     genesis_l1_hash: B256::ZERO,
     genesis_l1_number: 0,
@@ -612,6 +618,7 @@ const ZERONET: ChainConfig = ChainConfig {
     azul_timestamp: Some(1_782_348_888),
     beryl_timestamp: Some(1_782_349_188),
     cobalt_timestamp: None,
+    denim_timestamp: None,
 
     genesis_l1_hash: b256!("acb2c60e3887888b5111b05c8d8f32e2761c7d4a0f10562d199253ab072c3a71"),
     genesis_l1_number: 3_083_762,

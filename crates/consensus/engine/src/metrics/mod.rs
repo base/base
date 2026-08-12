@@ -45,6 +45,12 @@ base_metrics::define_metrics! {
     engine_method_request_duration: histogram,
     #[describe("Engine reset count")]
     engine_reset_count: counter,
+    #[describe("L2 blocks walked backward while discovering reset forkchoice")]
+    #[label(name = "phase", default = ["unsafe", "safe"])]
+    engine_reset_forkchoice_walked_blocks: histogram,
+    #[describe("Wall-clock duration of reset forkchoice discovery walks")]
+    #[label(name = "phase", default = ["unsafe", "safe"])]
+    engine_reset_forkchoice_walk_duration_seconds: histogram,
     #[describe("Payloads dropped because unsafe head changed between build and seal")]
     sequencer_unsafe_head_changed_total: counter,
     #[describe("Total duration of the finalize task in seconds")]

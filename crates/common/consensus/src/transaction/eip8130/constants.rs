@@ -148,6 +148,19 @@ impl Eip8130Constants {
     /// meaningful when [`Self::FLAG_LOCKED`] is set.
     pub const FLAG_UNLOCK_INITIATED: u8 = 0x04;
 
+    /// `AccountState.flags` bit (spec `CONTRACT_ESTABLISHED`): set on every
+    /// account the keystore establishes — `createAccount` (mirrored by the
+    /// node's create path) and `importAccount` — marking it
+    /// "keystore-established, not a proven address key."
+    ///
+    /// Permanent once set and never consulted during authentication. The protocol
+    /// reads it for code-delegation gating: an account may have **empty code yet
+    /// retain EIP-8130 state** (e.g. an EIP-6780 same-transaction `SELFDESTRUCT`),
+    /// so empty code alone must never be read as proof of a known EOA key. The
+    /// node therefore rejects a delegation onto an empty-code account that carries
+    /// this flag (it is not a proven-key EOA and must not be re-delegated as one).
+    pub const FLAG_CONTRACT_ESTABLISHED: u8 = 0x08;
+
     /// Exact byte length of a policy-bearing actor's `policyData`:
     /// `manager (20) || commitment (32)`. Required when `scope & SCOPE_POLICY`
     /// is set; `policyData` MUST be empty otherwise.

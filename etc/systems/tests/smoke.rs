@@ -24,13 +24,15 @@ const TX_RECEIPT_TIMEOUT: Duration = Duration::from_secs(60);
 static SMOKE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[tokio::test]
-async fn zenith_activation_matches_el_and_cl_configs() -> Result<()> {
-    const ZENITH_ACTIVATION_BLOCK: u64 = 23;
+async fn denim_and_zenith_activation_matches_el_and_cl_configs() -> Result<()> {
+    const DENIM_ACTIVATION_BLOCK: u64 = 23;
+    const ZENITH_ACTIVATION_BLOCK: u64 = 25;
 
     let _guard = SMOKE_TEST_LOCK.lock().await;
     let system = SystemTestStackBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
         .with_l2_chain_id(L2_CHAIN_ID)
+        .with_base_denim_activation_block(DENIM_ACTIVATION_BLOCK)
         .with_base_zenith_activation_block(ZENITH_ACTIVATION_BLOCK)
         .build()
         .await?;
@@ -38,11 +40,18 @@ async fn zenith_activation_matches_el_and_cl_configs() -> Result<()> {
     let genesis: serde_json::Value = serde_json::from_str(&system.l2_deployment().read_genesis()?)?;
     let rollup: serde_json::Value =
         serde_json::from_str(&system.l2_deployment().read_rollup_config()?)?;
-    let expected = rollup["genesis"]["l2_time"].as_u64().unwrap()
-        + rollup["block_time"].as_u64().unwrap() * ZENITH_ACTIVATION_BLOCK;
+    let l2_time = rollup["genesis"]["l2_time"].as_u64().unwrap();
+    let block_time = rollup["block_time"].as_u64().unwrap();
+    let expected_denim = l2_time + block_time * DENIM_ACTIVATION_BLOCK;
+    let expected_zenith = l2_time + block_time * ZENITH_ACTIVATION_BLOCK;
 
-    assert_eq!(rollup["base"]["zenith"].as_u64(), Some(expected));
-    assert_eq!(genesis["config"]["base"]["zenith"].as_u64(), Some(expected));
+    assert_eq!(rollup["base"]["denim"].as_u64(), Some(expected_denim));
+    assert_eq!(genesis["config"]["base"]["denim"].as_u64(), Some(expected_denim));
+
+    // Zenith is the genesis-only gate for future hardfork feature testing; the devnet setup
+    // must be able to schedule it through genesis config.
+    assert_eq!(rollup["base"]["zenith"].as_u64(), Some(expected_zenith));
+    assert_eq!(genesis["config"]["base"]["zenith"].as_u64(), Some(expected_zenith));
 
     Ok(())
 }

@@ -193,6 +193,7 @@ base-execution-eip8130 = { path = "crates/execution/eip8130", default-features =
 
 # Infra
 basectl-cli = { path = "crates/infra/basectl" }
+base-roxy = { path = "crates/infra/roxy" }
 base-sidecrush = { path = "crates/infra/sidecrush" }
 audit-archiver-lib = { path = "crates/infra/audit" }
 base-snark-e2e = { path = "crates/infra/snark-e2e" }
