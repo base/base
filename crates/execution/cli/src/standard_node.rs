@@ -12,7 +12,6 @@ use base_metering::{
     MeteringResourceLimits,
 };
 use base_node_core::{HasRollupArgs, RollupArgs};
-
 use base_node_runner::{BaseNodeBuilder, BaseNodeRunner, LaunchedBaseNode, PayloadServiceBuilder};
 use base_observability_events::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY,

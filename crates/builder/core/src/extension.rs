@@ -53,19 +53,21 @@ impl BaseNodeExtension for BuilderApiExtension {
         let metering =
             self.metering.map(|m| Arc::new(MeteringSinkAdapter(m)) as SharedMeteringResponseSink);
         builder.add_rpc_module(move |ctx: &mut BaseRpcContext<'_>| {
-            let api = match metering.as_ref() {
-                Some(sink) => {
+            let api = metering.as_ref().map_or_else(
+                || {
+                    BuilderApiImpl::<_, TransactionValidity>::with_extensions(
+                        ctx.pool().clone(),
+                        accept_validity,
+                    )
+                },
+                |sink| {
                     BuilderApiImpl::<_, TransactionValidity>::with_extensions_and_metering(
                         ctx.pool().clone(),
                         accept_validity,
                         Arc::clone(sink),
                     )
-                }
-                None => BuilderApiImpl::<_, TransactionValidity>::with_extensions(
-                    ctx.pool().clone(),
-                    accept_validity,
-                ),
-            };
+                },
+            );
             ctx.modules.merge_configured(api.into_rpc())?;
             Ok(())
         })

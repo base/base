@@ -191,6 +191,7 @@ mod tests {
             max_block_number: None,
             min_timestamp: None,
             max_timestamp: Some(7),
+            meter_bundle_response: None,
             extensions: TransactionValidity::default(),
         };
 
@@ -213,6 +214,7 @@ mod tests {
             max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            meter_bundle_response: None,
             extensions: TransactionValidity { validity: vec![predicate.clone()] },
         };
 

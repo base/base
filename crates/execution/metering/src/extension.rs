@@ -75,8 +75,7 @@ pub struct MeteringExtension {
     /// Max in-process meterBundle workers for mempool transaction metering.
     pub metering_max_processes: usize,
     /// Cell shared with `EthApi` / tx-forwarding for the inline metering handle.
-    pub inline_metering_cell:
-        Option<Arc<OnceLock<SharedInlineMetering>>>,
+    pub inline_metering_cell: Option<Arc<OnceLock<SharedInlineMetering>>>,
 }
 
 impl Default for MeteringExtension {
@@ -120,10 +119,7 @@ impl MeteringExtension {
     }
 
     /// Sets the shared cell used to publish the inline metering handle.
-    pub fn with_inline_metering_cell(
-        mut self,
-        cell: Arc<OnceLock<SharedInlineMetering>>,
-    ) -> Self {
+    pub fn with_inline_metering_cell(mut self, cell: Arc<OnceLock<SharedInlineMetering>>) -> Self {
         self.inline_metering_cell = Some(cell);
         self
     }
@@ -276,13 +272,9 @@ impl BaseNodeExtension for MeteringExtension {
                 let metering_api = Arc::new(metering_api.clone());
                 let inline_service =
                     Arc::new(InlineMeteringService::new(metering_api, metering_max_processes));
-                let inline_handle: SharedInlineMetering =
-                    Arc::clone(&inline_service) as _;
+                let inline_handle: SharedInlineMetering = Arc::clone(&inline_service) as _;
 
-                info!(
-                    max_processes = metering_max_processes,
-                    "mempool metering service started"
-                );
+                info!(max_processes = metering_max_processes, "mempool metering service started");
 
                 ctx.registry.eth_api().set_inline_metering(Arc::clone(&inline_handle));
                 let _ = cell.set(inline_handle);
@@ -322,8 +314,7 @@ pub struct MeteringConfig {
     /// Max in-process meterBundle workers for mempool transaction metering.
     pub metering_max_processes: usize,
     /// Cell shared with `EthApi` / tx-forwarding for the inline metering handle.
-    pub inline_metering_cell:
-        Option<Arc<OnceLock<SharedInlineMetering>>>,
+    pub inline_metering_cell: Option<Arc<OnceLock<SharedInlineMetering>>>,
 }
 
 impl MeteringConfig {
@@ -408,10 +399,7 @@ impl MeteringConfig {
     }
 
     /// Sets the shared cell used to publish the inline metering handle.
-    pub fn with_inline_metering_cell(
-        mut self,
-        cell: Arc<OnceLock<SharedInlineMetering>>,
-    ) -> Self {
+    pub fn with_inline_metering_cell(mut self, cell: Arc<OnceLock<SharedInlineMetering>>) -> Self {
         self.inline_metering_cell = Some(cell);
         self
     }
