@@ -44,6 +44,10 @@ impl ShadowWriter {
         builder_version: String,
     ) {
         let writer = Self { rx, db_config, builder_version };
+        // Spawned as a critical task on purpose: this runs only on shadow canary nodes, where an
+        // unrecoverable writer failure (pool init panic, or the task ending) should fail-fast and
+        // take the node down rather than let it run without shadow indexing. On normal nodes the
+        // extension is disabled and this is never spawned.
         executor.spawn_critical_task("shadow-indexer-writer", async move {
             writer.run().await;
         });

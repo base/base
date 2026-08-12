@@ -56,30 +56,33 @@ impl ShadowIndexerExEx {
                         target: "base::shadow-indexer",
                         old_block_number = old.tip().header().number(),
                         old_block_hash = ?old.tip().hash(),
-                        "ChainReverted notification ignored for S1 MVP"
+                        "ChainReverted notification received"
                     );
-                    true
+                    self.handle_chain_reverted(old).await?
                 }
             };
 
+            // `fully_processed` is only false when the writer channel has closed, which is
+            // terminal: every subsequent send would fail identically. Stop consuming instead
+            // of looping, otherwise we never emit `FinishedHeight` again and the ExEx manager's
+            // notification buffer grows unbounded (and `send_row` logs on every block).
+            if !fully_processed {
+                warn!(
+                    target: "base::shadow-indexer",
+                    "Shadow indexer writer channel closed; stopping ExEx"
+                );
+                break;
+            }
+
             if let Some(committed_chain) = notification.committed_chain() {
                 let tip = committed_chain.tip().num_hash();
-                if fully_processed {
-                    debug!(
-                        target: "base::shadow-indexer",
-                        block_number = tip.number,
-                        block_hash = ?tip.hash,
-                        "Sending FinishedHeight event"
-                    );
-                    ctx.events.send(ExExEvent::FinishedHeight(tip))?;
-                } else {
-                    warn!(
-                        target: "base::shadow-indexer",
-                        block_number = tip.number,
-                        block_hash = ?tip.hash,
-                        "Skipping FinishedHeight event after partial processing"
-                    );
-                }
+                debug!(
+                    target: "base::shadow-indexer",
+                    block_number = tip.number,
+                    block_hash = ?tip.hash,
+                    "Sending FinishedHeight event"
+                );
+                ctx.events.send(ExExEvent::FinishedHeight(tip))?;
             }
         }
 
@@ -238,6 +241,30 @@ impl ShadowIndexerExEx {
         self.emit_canonical_blocks(new).await
     }
 
+    /// Marks every block in a reverted chain as reorged out.
+    ///
+    /// `ChainReverted` carries only the unwound blocks with no replacement chain, so there is no
+    /// canonical hash at these heights (they may be re-synced later, arriving as `ChainCommitted`).
+    /// reth emits it exclusively from the execution stage on a pipeline unwind (deep reorg
+    /// requiring backfill, or a manual/consistency unwind); the live-sync engine path only ever
+    /// produces `ChainCommitted`/`ChainReorged`.
+    async fn handle_chain_reverted<N>(&self, old: &Chain<N>) -> Result<bool>
+    where
+        N: NodePrimitives,
+        N::SignedTx: SignedTransaction,
+        N::Receipt: TxReceipt,
+    {
+        for (block, receipts) in old.blocks_and_receipts() {
+            let row = self.build_row::<N>(block, receipts, true, None)?;
+
+            if !self.send_row(row).await? {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
+    }
+
     async fn send_row(&self, row: ShadowBlockRow) -> Result<bool> {
         match self.tx.send(row).await {
             Ok(()) => Ok(true),
@@ -380,6 +407,26 @@ mod tests {
             .find(|row| row.number == 6 && row.reorged_out)
             .expect("old block 6 reorged out");
         assert_eq!(present.canonical_hash, Some(block_hash(6, NEW_CHAIN_VARIANT).to_string()));
+    }
+
+    #[tokio::test]
+    async fn chain_reverted_marks_all_rows_reorged_out_without_canonical_hash() {
+        let (tx, rx) = mpsc::channel(16);
+        let exex = ShadowIndexerExEx::new(tx);
+
+        let processed =
+            exex.handle_chain_reverted(&mk_chain(4, 6, 0)).await.expect("handle reverted");
+        assert!(processed);
+
+        let rows = drain(rx);
+        assert_eq!(rows.iter().map(|row| row.number).collect::<Vec<_>>(), vec![4, 5, 6]);
+        for row in &rows {
+            assert!(row.reorged_out, "reverted rows are marked reorged out");
+            assert_eq!(
+                row.canonical_hash, None,
+                "reverted rows have no replacement canonical hash"
+            );
+        }
     }
 
     #[test]

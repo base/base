@@ -13,10 +13,9 @@ workspace = true
 
 [dependencies]
 # database
-sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "json", "migrate", "macros", "tls-native-tls", "sqlite"] }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "json", "migrate", "macros", "tls-native-tls"] }
 
 # serialization
-serde_json.workspace = true
 serde.workspace = true
 chrono.workspace = true
 
