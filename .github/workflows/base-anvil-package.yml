@@ -146,10 +146,12 @@ jobs:
 
           cd "$BASE_ANVIL_DIR"
           rustup show active-toolchain
+          bash "$GITHUB_WORKSPACE/etc/scripts/ci/prepare-base-anvil-lock.sh" \
+            "$BASE_ANVIL_DIR" "$GITHUB_WORKSPACE"
           cargo \
             --config "patch.\"https://github.com/base/base.git\".base-common-precompiles.path=\"$GITHUB_WORKSPACE/crates/common/precompiles\"" \
             --config "patch.\"https://github.com/base/base.git\".base-common-chains.path=\"$GITHUB_WORKSPACE/crates/common/chains\"" \
-            build --release --no-default-features --features anvil/cli -p anvil -p forge
+            build --locked --release --no-default-features --features anvil/cli -p anvil -p forge
 
           "$BASE_ANVIL_DIR/target/release/anvil" --version
           "$BASE_ANVIL_DIR/target/release/forge" --version

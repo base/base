@@ -32,11 +32,11 @@ jobs:
           # recorded in the result artifact and PR comment.
           - fork: Beryl
             key: beryl
-            base_anvil_ref: e739b7267318515c6b624d9b08d27d9e44657359
+            base_anvil_ref: 6d744e03224977edd42a36699ba9ff42be25e8cb
             base_std_ref: v1.0.0
           - fork: Cobalt
             key: cobalt
-            base_anvil_ref: 077b5a412570cdeaa55b8f0235af4eff231391e0
+            base_anvil_ref: ae7557c4f8602caa1da0be33143bb2504c85b0c8
             base_std_ref: 3f8990095f3316ed9b331a39f5c21a1bb5059c5f
     env:
       FORK_NAME: ${{ matrix.fork }}
@@ -109,10 +109,12 @@ jobs:
 
           cd "$BASE_ANVIL_DIR"
           rustup show active-toolchain
+          bash "$GITHUB_WORKSPACE/etc/scripts/ci/prepare-base-anvil-lock.sh" \
+            "$BASE_ANVIL_DIR" "$GITHUB_WORKSPACE"
           cargo \
             --config "patch.\"https://github.com/base/base.git\".base-common-precompiles.path=\"$GITHUB_WORKSPACE/crates/common/precompiles\"" \
             --config "patch.\"https://github.com/base/base.git\".base-common-chains.path=\"$GITHUB_WORKSPACE/crates/common/chains\"" \
-            build --release --no-default-features --features anvil/cli -p anvil -p forge
+            build --locked --release --no-default-features --features anvil/cli -p anvil -p forge
 
           "$BASE_ANVIL_DIR/target/release/anvil" --version
           "$BASE_ANVIL_DIR/target/release/forge" --version
