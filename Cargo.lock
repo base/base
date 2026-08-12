@@ -6448,6 +6448,7 @@ dependencies = [
  "alloy-signer-local 2.2.0",
  "alloy-sol-types",
  "async-trait",
+ "axum 0.8.9",
  "base-batcher-encoder",
  "base-batcher-service",
  "base-builder-core",
@@ -6501,6 +6502,7 @@ dependencies = [
  "reth-node-builder",
  "reth-node-core",
  "reth-provider",
+ "reth-rpc-layer",
  "reth-tasks",
  "serde",
  "serde_json",
@@ -6508,6 +6510,7 @@ dependencies = [
  "testcontainers",
  "tokio",
  "tokio-util",
+ "tower 0.5.3",
  "tracing",
  "url",
 ]
