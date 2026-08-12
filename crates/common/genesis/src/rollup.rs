@@ -376,6 +376,19 @@ impl RollupConfig {
         Some(denim_timestamp.saturating_sub(self.genesis.l2_time).div_ceil(self.block_time))
     }
 
+    /// Returns the L2 block number at which the genesis-only Zenith testing gate activates.
+    ///
+    /// If Zenith is not configured, returns [`None`].
+    pub fn zenith_activation_block_number(&self) -> Option<u64> {
+        let zenith_timestamp = self.upgrade_activation_timestamp(BaseUpgrade::Zenith)?;
+
+        if self.block_time == 0 {
+            panic!("rollup config: block time cannot be 0");
+        }
+
+        Some(zenith_timestamp.saturating_sub(self.genesis.l2_time).div_ceil(self.block_time))
+    }
+
     /// Returns the deterministic timestamp of an L2 block in milliseconds.
     ///
     /// Before Denim activation, this matches the legacy whole-second schedule exactly.
@@ -1196,6 +1209,37 @@ mod tests {
     #[should_panic(expected = "rollup config: block time cannot be 0")]
     fn denim_activation_block_number_rejects_zero_block_time() {
         rollup_config_with_denim(100, 0, Some(101)).denim_activation_block_number();
+    }
+
+    fn rollup_config_with_zenith(
+        genesis_l2_time: u64,
+        block_time: u64,
+        zenith_time: Option<u64>,
+    ) -> RollupConfig {
+        RollupConfig {
+            genesis: ChainGenesis { l2_time: genesis_l2_time, ..Default::default() },
+            block_time,
+            upgrades: UpgradeConfig {
+                base: BaseUpgradeConfig { zenith: zenith_time, ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn zenith_activation_block_number_derives_from_genesis_config() {
+        assert_eq!(
+            rollup_config_with_zenith(10, 2, Some(15)).zenith_activation_block_number(),
+            Some(3)
+        );
+        assert_eq!(rollup_config_with_zenith(10, 2, None).zenith_activation_block_number(), None);
+    }
+
+    #[test]
+    #[should_panic(expected = "rollup config: block time cannot be 0")]
+    fn zenith_activation_block_number_rejects_zero_block_time() {
+        rollup_config_with_zenith(100, 0, Some(101)).zenith_activation_block_number();
     }
 
     #[test]
