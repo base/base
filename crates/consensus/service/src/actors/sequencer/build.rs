@@ -153,6 +153,15 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
                 self.engine_client.reset_engine_forkchoice(ResetReason::L1OriginOrphaned).await?;
                 return Ok(BuildOutcome::Deferred);
             }
+            Err(err @ L1OriginSelectorError::NextL1OriginOrphaned { .. }) => {
+                warn!(
+                    target: "sequencer",
+                    ?err,
+                    "Next L1 origin orphaned the accepted current origin, triggering engine reset"
+                );
+                self.engine_client.reset_engine_forkchoice().await?;
+                return Ok(BuildOutcome::Deferred);
+            }
             Err(err @ L1OriginSelectorError::NotEnoughData(_)) => {
                 warn!(
                     target: "sequencer",
