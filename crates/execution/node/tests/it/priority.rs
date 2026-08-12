@@ -93,15 +93,13 @@ fn build_components<Node>(
 where
     Node: FullNodeTypes<Types: BaseNodeTypes>,
 {
-    let RollupArgs { disable_txpool_gossip, compute_pending_block, discovery_v4, .. } =
-        RollupArgs::default();
+    let RollupArgs { disable_txpool_gossip, discovery_v4, .. } = RollupArgs::default();
     ComponentsBuilder::default()
         .node_types::<Node>()
         .pool(BasePoolBuilder::default())
         .executor(BaseExecutorBuilder::default())
         .payload(BasicPayloadServiceBuilder::new(
-            BasePayloadBuilder::new(compute_pending_block)
-                .with_transactions(CustomTxPriority { chain_id }),
+            BasePayloadBuilder::new().with_transactions(CustomTxPriority { chain_id }),
         ))
         .network(BaseNetworkBuilder::new(disable_txpool_gossip, !discovery_v4))
         .consensus(BaseConsensusBuilder::default())

@@ -53,8 +53,6 @@ pub struct BasePayloadBuilder<
     Txs = (),
     Attrs = BasePayloadBuilderAttributes<TxTy<<Evm as ConfigureEvm>::Primitives>>,
 > {
-    /// The rollup's compute pending block configuration option.
-    pub compute_pending_block: bool,
     /// The type responsible for creating the evm.
     pub evm_config: Evm,
     /// Transaction pool.
@@ -84,7 +82,6 @@ where
             client: self.client.clone(),
             config: self.config.clone(),
             best_transactions: self.best_transactions.clone(),
-            compute_pending_block: self.compute_pending_block,
             _pd: PhantomData,
         }
     }
@@ -105,51 +102,25 @@ impl<Pool, Client, Evm, Attrs> BasePayloadBuilder<Pool, Client, Evm, (), Attrs> 
         evm_config: Evm,
         config: BaseBuilderConfig,
     ) -> Self {
-        Self {
-            pool,
-            client,
-            compute_pending_block: true,
-            evm_config,
-            config,
-            best_transactions: (),
-            _pd: PhantomData,
-        }
+        Self { pool, client, evm_config, config, best_transactions: (), _pd: PhantomData }
     }
 }
 
 impl<Pool, Client, Evm, Txs, Attrs> BasePayloadBuilder<Pool, Client, Evm, Txs, Attrs> {
-    /// Sets the rollup's compute pending block configuration option.
-    pub const fn set_compute_pending_block(mut self, compute_pending_block: bool) -> Self {
-        self.compute_pending_block = compute_pending_block;
-        self
-    }
-
     /// Configures the type responsible for yielding the transactions that should be included in the
     /// payload.
     pub fn with_transactions<T>(
         self,
         best_transactions: T,
     ) -> BasePayloadBuilder<Pool, Client, Evm, T, Attrs> {
-        let Self { pool, client, compute_pending_block, evm_config, config, .. } = self;
         BasePayloadBuilder {
-            pool,
-            client,
-            compute_pending_block,
-            evm_config,
+            pool: self.pool,
+            client: self.client,
+            evm_config: self.evm_config,
             best_transactions,
-            config,
+            config: self.config,
             _pd: PhantomData,
         }
-    }
-
-    /// Enables the rollup's compute pending block configuration option.
-    pub const fn compute_pending_block(self) -> Self {
-        self.set_compute_pending_block(true)
-    }
-
-    /// Returns the rollup's compute pending block configuration option.
-    pub const fn is_compute_pending_block(&self) -> bool {
-        self.compute_pending_block
     }
 }
 

@@ -349,17 +349,6 @@ pub struct RollupArgs {
     #[arg(long = "rollup.disable-tx-pool-gossip")]
     pub disable_txpool_gossip: bool,
 
-    /// By default the pending block equals the latest block
-    /// to save resources and not leak txs from the tx-pool,
-    /// this flag enables computing of the pending block
-    /// from the tx-pool instead.
-    ///
-    /// If `compute_pending_block` is not enabled, the payload builder
-    /// will use the payload attributes from the latest block. Note
-    /// that this flag is not yet functional.
-    #[arg(long = "rollup.compute-pending-block")]
-    pub compute_pending_block: bool,
-
     /// enables discovery v4 if provided
     #[arg(long = "rollup.discovery.v4", default_value = "false")]
     pub discovery_v4: bool,
@@ -517,7 +506,6 @@ impl Default for RollupArgs {
         Self {
             sequencer: None,
             disable_txpool_gossip: false,
-            compute_pending_block: false,
             discovery_v4: false,
             sequencer_headers: Vec::new(),
             min_suggested_priority_fee: 1_000_000,
@@ -568,15 +556,6 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_rollup_compute_pending_block_args() {
-        let expected_args = RollupArgs { compute_pending_block: true, ..Default::default() };
-        let args =
-            CommandParser::<RollupArgs>::parse_from(["reth", "--rollup.compute-pending-block"])
-                .args;
-        assert_eq!(args, expected_args);
-    }
-
-    #[test]
     fn test_parse_rollup_discovery_v4_args() {
         let expected_args = RollupArgs { discovery_v4: true, ..Default::default() };
         let args = CommandParser::<RollupArgs>::parse_from(["reth", "--rollup.discovery.v4"]).args;
@@ -609,14 +588,12 @@ mod tests {
     fn test_parse_rollup_many_args() {
         let expected_args = RollupArgs {
             disable_txpool_gossip: true,
-            compute_pending_block: true,
             sequencer: Some("http://host:port".into()),
             ..Default::default()
         };
         let args = CommandParser::<RollupArgs>::parse_from([
             "reth",
             "--rollup.disable-tx-pool-gossip",
-            "--rollup.compute-pending-block",
             "--rollup.sequencer-http",
             "http://host:port",
         ])
