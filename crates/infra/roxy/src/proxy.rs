@@ -18,10 +18,10 @@ use url::Url;
 use crate::Backend;
 
 /// Maximum accepted inbound JSON-RPC request body size (`2 MiB`).
-pub(crate) const MAX_REQUEST_BODY_BYTES: usize = 2 * 1024 * 1024;
+pub const MAX_REQUEST_BODY_BYTES: usize = 2 * 1024 * 1024;
 
 /// Maximum accepted backend response body size (`2 MiB`).
-pub(crate) const MAX_RESPONSE_BODY_BYTES: usize = 2 * 1024 * 1024;
+pub const MAX_RESPONSE_BODY_BYTES: usize = 2 * 1024 * 1024;
 
 /// TCP connect timeout for backend requests.
 const BACKEND_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -110,7 +110,7 @@ impl ProxyState {
     async fn forward(&self, body: &Bytes) -> Result<Bytes, ForwardError> {
         let mut response = self
             .client
-            .post(self.backend_url.as_ref().clone())
+            .post(self.backend_url.as_str())
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .body(body.clone())
             .send()
@@ -128,13 +128,14 @@ impl ProxyState {
             );
         }
 
-        if let Some(content_length) = response.content_length()
+        let content_length = response.content_length();
+        if let Some(content_length) = content_length
             && content_length > MAX_RESPONSE_BODY_BYTES as u64
         {
             return Err(ForwardError::ResponseTooLarge);
         }
 
-        let mut buf = Vec::new();
+        let mut buf = content_length.map_or_else(Vec::new, |len| Vec::with_capacity(len as usize));
         while let Some(chunk) = response.chunk().await.map_err(ForwardError::Transport)? {
             let next_len = buf.len().saturating_add(chunk.len());
             if next_len > MAX_RESPONSE_BODY_BYTES {

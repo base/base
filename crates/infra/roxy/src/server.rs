@@ -249,7 +249,7 @@ mod tests {
     #[tokio::test]
     async fn returns_jsonrpc_error_when_backend_response_too_large() {
         let mock = MockServer::start().await;
-        let oversized = vec![b'x'; crate::proxy::MAX_RESPONSE_BODY_BYTES + 1];
+        let oversized = vec![b'x'; crate::MAX_RESPONSE_BODY_BYTES + 1];
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(200).set_body_bytes(oversized))
             .expect(1)

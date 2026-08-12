@@ -7,7 +7,7 @@ mod config;
 pub use config::Config;
 
 mod proxy;
-pub use proxy::ProxyState;
+pub use proxy::{MAX_REQUEST_BODY_BYTES, MAX_RESPONSE_BODY_BYTES, ProxyState};
 
 mod server;
 pub use server::Server;
