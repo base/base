@@ -671,11 +671,39 @@ pub(super) mod serde_bincode_compat {
         Sealed, Signed,
         transaction::serde_bincode_compat::{TxEip1559, TxEip2930, TxEip7702, TxLegacy},
     };
+    use alloy_eips::eip2718::{Decodable2718, Encodable2718};
     use alloy_primitives::{B256, Signature};
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use serde_with::{DeserializeAs, SerializeAs};
 
     use crate::{serde_bincode_compat::TxDeposit, transaction::Eip8130Signed};
+
+    /// Bincode-safe projection of an [`Eip8130Signed`].
+    ///
+    /// The transaction's `account_changes` payload contains
+    /// [`AccountChange`](crate::AccountChange), an internally-tagged `serde`
+    /// enum (`#[serde(tag = "type")]`). `serde` deserializes that shape via
+    /// `deserialize_any`, which non-self-describing formats such as bincode do
+    /// not support (they surface `AnyNotSupported`). Projecting the transaction
+    /// to its self-contained EIP-2718 byte stream sidesteps that path entirely
+    /// while leaving the human-readable JSON/RPC representation untouched.
+    #[derive(Debug)]
+    pub struct Eip8130Bincode(pub Eip8130Signed);
+
+    impl Serialize for Eip8130Bincode {
+        fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            self.0.encoded_2718().serialize(serializer)
+        }
+    }
+
+    impl<'de> Deserialize<'de> for Eip8130Bincode {
+        fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            let bytes = <Vec<u8>>::deserialize(deserializer)?;
+            let signed = Eip8130Signed::decode_2718(&mut bytes.as_slice())
+                .map_err(serde::de::Error::custom)?;
+            Ok(Self(signed))
+        }
+    }
 
     /// Bincode-compatible representation of an [`BaseTxEnvelope`].
     #[derive(Debug, Serialize, Deserialize)]
@@ -717,13 +745,10 @@ pub(super) mod serde_bincode_compat {
         },
         /// EIP-8130 Account Abstraction variant.
         Eip8130 {
-            /// Owned [`Eip8130Signed`] envelope.
-            ///
-            /// The [`Eip8130Signed`] payload includes variable-length `calls`,
-            /// `account_changes`, and authentication buffers, so we serialize
-            /// it directly instead of borrowing a flattened bincode-friendly
-            /// projection.
-            transaction: Eip8130Signed,
+            /// [`Eip8130Signed`] envelope, projected to its EIP-2718 byte
+            /// stream so the internally-tagged `account_changes` payload stays
+            /// bincode-safe (see [`Eip8130Bincode`]).
+            transaction: Eip8130Bincode,
         },
     }
 
@@ -747,7 +772,7 @@ pub(super) mod serde_bincode_compat {
                     transaction: signed_7702.tx().into(),
                 },
                 super::BaseTxEnvelope::Eip8130(eip8130_signed) => {
-                    Self::Eip8130 { transaction: eip8130_signed.clone() }
+                    Self::Eip8130 { transaction: Eip8130Bincode(eip8130_signed.clone()) }
                 }
                 super::BaseTxEnvelope::Deposit(sealed_deposit) => Self::Deposit {
                     hash: sealed_deposit.seal(),
@@ -772,7 +797,7 @@ pub(super) mod serde_bincode_compat {
                 BaseTxEnvelope::Eip7702 { signature, transaction } => {
                     Self::Eip7702(Signed::new_unhashed(transaction.into(), signature))
                 }
-                BaseTxEnvelope::Eip8130 { transaction } => Self::Eip8130(transaction),
+                BaseTxEnvelope::Eip8130 { transaction } => Self::Eip8130(transaction.0),
                 BaseTxEnvelope::Deposit { hash, transaction } => {
                     Self::Deposit(Sealed::new_unchecked(transaction.into(), hash))
                 }
