@@ -214,7 +214,10 @@ where
             builder.build(cached_reads.as_db_mut(state), &state_provider, ctx)
         }
         .map(|out| out.with_cached_reads(cached_reads));
-        PayloadBuilderMetrics::build_duration().record(build_started_at.elapsed().as_secs_f64());
+        if outcome.is_ok() {
+            PayloadBuilderMetrics::build_duration()
+                .record(build_started_at.elapsed().as_secs_f64());
+        }
         outcome
     }
 
