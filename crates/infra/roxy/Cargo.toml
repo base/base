@@ -1,5 +1,5 @@
 [package]
-name = "roxy"
+name = "base-roxy"
 description = "JSON-RPC reverse proxy for Base infrastructure"
 version.workspace = true
 edition.workspace = true
@@ -15,10 +15,11 @@ workspace = true
 tokio-util.workspace = true
 anyhow = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["net", "rt"] }
+axum = { workspace = true, features = ["tokio", "http1"] }
 base-health = { workspace = true, features = ["axum-server"] }
 clap = { workspace = true, features = ["derive", "env", "std"] }
-axum = { workspace = true, features = ["tokio", "http1"] }
-tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread"] }
 
 [dev-dependencies]
 reqwest = { workspace = true, features = ["json"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

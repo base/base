@@ -38,12 +38,21 @@ impl Server {
             .with_context(|| format!("failed to bind roxy server to {listen_addr}"))?;
         let listen_addr = listener.local_addr().context("failed to read roxy listen address")?;
 
-        ready.store(true, Ordering::SeqCst);
         info!(%listen_addr, "roxy server started");
 
-        axum::serve(listener, app)
-            .with_graceful_shutdown(async move { cancel.cancelled().await })
-            .await
+        let shutdown = cancel.clone();
+        let join = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async move { shutdown.cancelled().await })
+                .await
+        });
+
+        // Let the accept loop be scheduled before advertising readiness.
+        tokio::task::yield_now().await;
+        ready.store(true, Ordering::SeqCst);
+
+        join.await
+            .context("roxy server task join failed")?
             .context("roxy server exited with error")?;
 
         info!("roxy server stopped");

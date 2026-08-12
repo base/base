@@ -1,5 +1,5 @@
 [package]
-name = "roxy-bin"
+name = "base-roxy-bin"
 description = "Roxy JSON-RPC reverse proxy binary"
 version.workspace = true
 edition.workspace = true
@@ -16,9 +16,8 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-roxy.workspace = true
-serde.workspace = true
 dotenvy.workspace = true
+base-roxy.workspace = true
 tokio-util.workspace = true
 base-cli-utils.workspace = true
 anyhow = { workspace = true, features = ["std"] }

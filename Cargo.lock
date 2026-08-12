@@ -6266,6 +6266,33 @@ name = "base-ring-buffer"
 version = "0.0.0"
 
 [[package]]
+name = "base-roxy"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "axum 0.8.9",
+ "base-health",
+ "clap",
+ "reqwest 0.13.4",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "base-roxy-bin"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "base-cli-utils",
+ "base-roxy",
+ "clap",
+ "dotenvy",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "base-runtime"
 version = "0.0.0"
 dependencies = [
@@ -19888,34 +19915,6 @@ name = "route-recognizer"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "afab94fb28594581f62d981211a9a4d53cc8130bbcbbb89a0440d9b8e81a7746"
-
-[[package]]
-name = "roxy"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "axum 0.8.9",
- "base-health",
- "clap",
- "reqwest 0.13.4",
- "tokio",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
-name = "roxy-bin"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "base-cli-utils",
- "clap",
- "dotenvy",
- "roxy",
- "serde",
- "tokio",
- "tokio-util",
-]
 
 [[package]]
 name = "rrs-lib"
