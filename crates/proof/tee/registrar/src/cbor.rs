@@ -128,6 +128,13 @@ impl CborItem {
                         end = item.end;
                     }
                 } else {
+                    // Each array item is at least one byte.
+                    let remaining = bytes.len().saturating_sub(end) as u64;
+                    if value > remaining {
+                        return Err(PlannerError::Cose(
+                            "CBOR array claims more items than remaining bytes".into(),
+                        ));
+                    }
                     for _ in 0..value {
                         let item = Self::read_at(bytes, end, depth + 1)?;
                         end = item.end;
@@ -151,6 +158,13 @@ impl CborItem {
                         end = map_value.end;
                     }
                 } else {
+                    // Each map entry is at least a 1-byte key and 1-byte value.
+                    let remaining = bytes.len().saturating_sub(end) as u64;
+                    if value > remaining / 2 {
+                        return Err(PlannerError::Cose(
+                            "CBOR map claims more items than remaining bytes".into(),
+                        ));
+                    }
                     for _ in 0..value {
                         let key = Self::read_at(bytes, end, depth + 1)?;
                         let map_value = Self::read_at(bytes, key.end, depth + 1)?;
@@ -340,6 +354,7 @@ impl NitroCose {
 
         let mut offset = root.content_start;
         let mut item_count = 0u64;
+        let mut seen_keys = BTreeSet::new();
         loop {
             if !root.indefinite && item_count == root.value {
                 break;
@@ -361,6 +376,11 @@ impl NitroCose {
             let value_end = value.end;
             let key_text = std::str::from_utf8(&payload[key.content_start..key.end])
                 .map_err(|_| PlannerError::Cose("attestation payload key is not UTF-8".into()))?;
+            if !seen_keys.insert(key_text) {
+                return Err(PlannerError::Cose(format!(
+                    "duplicate attestation payload key: {key_text}"
+                )));
+            }
 
             match key_text {
                 "pcrs" => Self::validate_pcrs(payload, value)?,
@@ -575,6 +595,13 @@ mod tests {
             [0xa1, 0x64, b'p', b'c', b'r', b's', 0xa2, 0x00, 0x41, 0x00, 0x00, 0x41, 0x00];
         assert!(NitroCose::validate_payload_structure(&dup_pcrs).is_err());
 
+        // Duplicate top-level key: {"pcrs": {0: h'00'}, "pcrs": {0: h'00'}}.
+        let dup_top = [
+            0xa2, 0x64, b'p', b'c', b'r', b's', 0xa1, 0x00, 0x41, 0x00, 0x64, b'p', b'c', b'r',
+            b's', 0xa1, 0x00, 0x41, 0x00,
+        ];
+        assert!(NitroCose::validate_payload_structure(&dup_top).is_err());
+
         // pcrs with non-contiguous key (only key 1).
         // {"pcrs": {1: h'00'}}
         let sparse = [0xa1, 0x64, b'p', b'c', b'r', b's', 0xa1, 0x01, 0x41, 0x00];
@@ -589,6 +616,14 @@ mod tests {
         // {"cabundle": []}
         let empty_bundle = [0xa1, 0x68, b'c', b'a', b'b', b'u', b'n', b'd', b'l', b'e', 0x80];
         assert!(NitroCose::validate_payload_structure(&empty_bundle).is_err());
+    }
+
+    #[test]
+    fn cbor_item_rejects_impossible_container_counts() {
+        // Definite array claiming more items than remaining bytes.
+        assert!(CborItem::read(&[0x82], 0).is_err()); // array(2), 0 bytes left
+        // Definite map claiming more entries than remaining bytes allow.
+        assert!(CborItem::read(&[0xa2, 0x00], 0).is_err()); // map(2), only 1 byte left
     }
 
     #[test]
