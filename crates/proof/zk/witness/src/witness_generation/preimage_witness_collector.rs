@@ -5,7 +5,7 @@ use base_proof_preimage::{
     CommsClient, FlushableCache, HintWriterClient, PreimageKey, PreimageOracleClient,
     errors::{PreimageOracleError, PreimageOracleResult},
 };
-use base_proof_succinct_client_utils::witness::preimage_store::PreimageStore;
+use base_proof_zk_utils::witness::preimage_store::PreimageStore;
 
 /// Wraps a preimage oracle and records all fetched preimages for witness generation.
 #[derive(Clone, Debug)]

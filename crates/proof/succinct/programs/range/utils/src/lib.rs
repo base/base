@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use base_proof_succinct_client_utils::{
+use base_proof_zk_utils::{
     BlobStore,
     boot::BootInfoStruct,
     witness::{WitnessExecutor, executor::get_inputs_for_pipeline, preimage_store::PreimageStore},

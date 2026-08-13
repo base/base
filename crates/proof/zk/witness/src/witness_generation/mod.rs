@@ -10,5 +10,5 @@ pub use online_blob_store::OnlineBlobStore;
 
 /// Preimage oracle wrapper that collects witness data.
 pub mod preimage_witness_collector;
-pub use base_proof_succinct_client_utils::witness::DefaultWitnessData;
+pub use base_proof_zk_utils::witness::DefaultWitnessData;
 pub use preimage_witness_collector::PreimageWitnessCollector;

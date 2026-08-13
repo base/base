@@ -60,11 +60,6 @@ impl SuccinctHost {
         Self { fetcher, witness_generator: Arc::new(WitnessGenerator::new()) }
     }
 
-    /// Return a reference to the witness generator.
-    pub fn witness_generator(&self) -> &WitnessGenerator {
-        &self.witness_generator
-    }
-
     /// Fetch the host arguments.
     ///
     /// Parameters:

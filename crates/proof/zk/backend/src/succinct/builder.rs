@@ -2,8 +2,8 @@
 
 use std::{collections::HashMap, error::Error, fmt, future::Future, sync::Arc, time::Duration};
 
-use base_proof_succinct_host_utils::fetcher::{OPSuccinctDataFetcher, RPCConfig};
 use base_proof_zk_host::{ZkBackend, ZkProver};
+use base_proof_zk_witness::fetcher::{OPSuccinctDataFetcher, RPCConfig};
 use thiserror::Error;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;

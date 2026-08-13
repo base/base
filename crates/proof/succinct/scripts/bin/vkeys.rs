@@ -2,8 +2,8 @@
 
 use alloy_primitives::B256;
 use anyhow::Result;
-use base_proof_succinct_client_utils::types::u32_to_u8;
 use base_proof_succinct_proof_utils::cluster_setup_vkeys;
+use base_proof_zk_utils::types::u32_to_u8;
 use sp1_sdk::HashableKey;
 
 #[tokio::main]
