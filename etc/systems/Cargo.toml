@@ -75,7 +75,10 @@ tokio-util.workspace = true
 tokio = { workspace = true, features = ["full", "rt-multi-thread", "macros"] }
 
 # rpc
+axum = { workspace = true, features = ["http1", "tokio"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }
+reth-rpc-layer.workspace = true
+tower.workspace = true
 
 # p2p
 k256.workspace = true

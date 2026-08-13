@@ -21,4 +21,7 @@ pub struct L1ContainerConfig {
     /// overlayfs on docker-in-docker CI runners) reject; tmpfs supports it. No effect where the
     /// storage already supports mmap.
     pub tmpfs_datadir: bool,
+    /// If true, supervise Reth so system tests can stop the node process, mutate its database, and
+    /// restart it without replacing the container.
+    pub enable_reorg_control: bool,
 }
