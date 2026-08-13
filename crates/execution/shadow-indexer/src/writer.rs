@@ -179,13 +179,9 @@ mod tests {
             canonical_hash: None,
             created_at,
             payload: ShadowBlockPayload {
-                parent_hash: "parent".to_string(),
-                timestamp: 0,
-                tx_count: 0,
-                gas_used: 0,
-                state_root: "state".to_string(),
                 builder_version: String::new(),
-                transactions: Vec::new(),
+                block: serde_json::Value::Null,
+                receipts: serde_json::Value::Null,
             },
         }
     }

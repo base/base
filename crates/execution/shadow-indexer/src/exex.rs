@@ -1,14 +1,12 @@
-use alloy_consensus::{Transaction, TxReceipt, Typed2718, transaction::TxHashRef};
-use base_shadow_indexer_db::{ShadowBlockPayload, ShadowBlockRow, ShadowTransaction};
+use base_shadow_indexer_db::{ShadowBlockPayload, ShadowBlockRow};
 use chrono::Utc;
 use eyre::Result;
 use futures::TryStreamExt;
 use reth_execution_types::Chain;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification};
-use reth_node_api::FullNodeComponents;
-use reth_primitives_traits::{
-    AlloyBlockHeader, BlockBody, NodePrimitives, RecoveredBlock, SignedTransaction,
-};
+use reth_node_api::{BlockTy, FullNodeComponents, ReceiptTy};
+use reth_primitives_traits::{AlloyBlockHeader, NodePrimitives, RecoveredBlock};
+use serde::Serialize;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
@@ -28,6 +26,8 @@ impl ShadowIndexerExEx {
     pub async fn run<Node>(self, mut ctx: ExExContext<Node>) -> Result<()>
     where
         Node: FullNodeComponents,
+        RecoveredBlock<BlockTy<Node::Types>>: Serialize,
+        ReceiptTy<Node::Types>: Serialize,
     {
         while let Some(notification) = ctx.notifications.try_next().await? {
             let fully_processed = match &notification {
@@ -98,28 +98,18 @@ impl ShadowIndexerExEx {
     ) -> Result<ShadowBlockRow>
     where
         N: NodePrimitives,
-        N::SignedTx: SignedTransaction,
-        N::Receipt: TxReceipt,
+        RecoveredBlock<N::Block>: Serialize,
+        N::Receipt: Serialize,
     {
-        let header = block.header();
-        let transactions = Self::build_transactions::<N>(block, receipts)?;
-
-        let number = i64::try_from(header.number()).map_err(|error| {
+        let number = i64::try_from(block.header().number()).map_err(|error| {
             eyre::eyre!("block number overflow for shadow indexer row: {error}")
-        })?;
-        let tx_count = u32::try_from(transactions.len()).map_err(|error| {
-            eyre::eyre!("transaction count overflow for shadow indexer row: {error}")
         })?;
 
         let payload = ShadowBlockPayload {
-            parent_hash: header.parent_hash().to_string(),
-            timestamp: header.timestamp(),
-            tx_count,
-            gas_used: header.gas_used(),
-            state_root: header.state_root().to_string(),
             // The writer injects the configured builder version before persistence.
             builder_version: String::new(),
-            transactions,
+            block: serde_json::to_value(block)?,
+            receipts: serde_json::to_value(receipts)?,
         };
 
         Ok(ShadowBlockRow {
@@ -132,69 +122,11 @@ impl ShadowIndexerExEx {
         })
     }
 
-    fn build_transactions<N>(
-        block: &RecoveredBlock<N::Block>,
-        receipts: &[N::Receipt],
-    ) -> Result<Vec<ShadowTransaction>>
-    where
-        N: NodePrimitives,
-        N::SignedTx: SignedTransaction,
-        N::Receipt: TxReceipt,
-    {
-        let header = block.header();
-        let base_fee = header.base_fee_per_gas();
-
-        let transactions = block.body().transactions();
-        let senders = block.senders();
-        let mut rows = Vec::with_capacity(transactions.len());
-        let mut previous_cumulative_gas = 0u64;
-
-        for (index, (transaction, receipt)) in transactions.iter().zip(receipts.iter()).enumerate()
-        {
-            let tx_index = u32::try_from(index).map_err(|error| {
-                eyre::eyre!("transaction index overflow for shadow indexer tx row: {error}")
-            })?;
-            let cumulative_gas = receipt.cumulative_gas_used();
-            let gas_used = cumulative_gas.saturating_sub(previous_cumulative_gas);
-            previous_cumulative_gas = cumulative_gas;
-
-            let effective_gas_price = transaction.effective_gas_price(base_fee);
-            let effective_priority_fee_per_gas = Self::effective_priority_fee_per_gas(
-                base_fee,
-                effective_gas_price,
-                transaction.max_priority_fee_per_gas(),
-            );
-
-            rows.push(ShadowTransaction {
-                tx_index,
-                tx_hash: transaction.tx_hash().to_string(),
-                sender: senders.get(index).map(|sender| sender.to_string()),
-                tx_type: transaction.ty(),
-                effective_priority_fee_per_gas: effective_priority_fee_per_gas
-                    .map(|fee| fee.to_string()),
-                base_fee_per_gas: base_fee,
-                gas_used,
-            });
-        }
-
-        Ok(rows)
-    }
-
-    fn effective_priority_fee_per_gas(
-        base_fee_per_gas: Option<u64>,
-        effective_gas_price: u128,
-        max_priority_fee_per_gas: Option<u128>,
-    ) -> Option<u128> {
-        base_fee_per_gas
-            .map(|base_fee| effective_gas_price.saturating_sub(u128::from(base_fee)))
-            .or(max_priority_fee_per_gas)
-    }
-
     async fn emit_canonical_blocks<N>(&self, chain: &Chain<N>) -> Result<bool>
     where
         N: NodePrimitives,
-        N::SignedTx: SignedTransaction,
-        N::Receipt: TxReceipt,
+        RecoveredBlock<N::Block>: Serialize,
+        N::Receipt: Serialize,
     {
         for (block, receipts) in chain.blocks_and_receipts() {
             let row = self.build_row::<N>(block, receipts, false, None)?;
@@ -210,8 +142,8 @@ impl ShadowIndexerExEx {
     async fn handle_chain_reorged<N>(&self, old: &Chain<N>, new: &Chain<N>) -> Result<bool>
     where
         N: NodePrimitives,
-        N::SignedTx: SignedTransaction,
-        N::Receipt: TxReceipt,
+        RecoveredBlock<N::Block>: Serialize,
+        N::Receipt: Serialize,
     {
         for (block, receipts) in old.blocks_and_receipts() {
             let header = block.header();
@@ -251,8 +183,8 @@ impl ShadowIndexerExEx {
     async fn handle_chain_reverted<N>(&self, old: &Chain<N>) -> Result<bool>
     where
         N: NodePrimitives,
-        N::SignedTx: SignedTransaction,
-        N::Receipt: TxReceipt,
+        RecoveredBlock<N::Block>: Serialize,
+        N::Receipt: Serialize,
     {
         for (block, receipts) in old.blocks_and_receipts() {
             let row = self.build_row::<N>(block, receipts, true, None)?;
@@ -345,11 +277,8 @@ mod tests {
         for row in &rows {
             assert!(!row.reorged_out, "committed rows must not be reorged out");
             assert_eq!(row.canonical_hash, None, "committed rows carry no canonical hash");
-            assert_eq!(
-                row.payload.tx_count as usize,
-                row.payload.transactions.len(),
-                "tx_count matches the embedded transactions array"
-            );
+            assert!(row.payload.block.is_object(), "block is serialized as a JSON object");
+            assert!(row.payload.receipts.is_array(), "receipts are serialized as a JSON array");
             assert_eq!(row.hash, block_hash(row.number as u64, 0).to_string());
         }
     }
@@ -427,23 +356,5 @@ mod tests {
                 "reverted rows have no replacement canonical hash"
             );
         }
-    }
-
-    #[test]
-    fn effective_priority_fee_uses_base_fee_when_present() {
-        let fee = ShadowIndexerExEx::effective_priority_fee_per_gas(Some(7), 20, Some(100));
-        assert_eq!(fee, Some(13), "tip = effective_gas_price - base_fee");
-    }
-
-    #[test]
-    fn effective_priority_fee_saturates_below_base_fee() {
-        let fee = ShadowIndexerExEx::effective_priority_fee_per_gas(Some(50), 20, Some(100));
-        assert_eq!(fee, Some(0), "effective price below base fee saturates to zero");
-    }
-
-    #[test]
-    fn effective_priority_fee_falls_back_to_max_priority_without_base_fee() {
-        let fee = ShadowIndexerExEx::effective_priority_fee_per_gas(None, 20, Some(100));
-        assert_eq!(fee, Some(100), "without base fee, fall back to max priority fee");
     }
 }

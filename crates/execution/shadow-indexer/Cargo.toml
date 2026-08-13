@@ -20,11 +20,8 @@ base-shadow-indexer-db = { path = "../shadow-indexer-db" }
 reth-exex.workspace = true
 reth-execution-types.workspace = true
 reth-node-api.workspace = true
-reth-primitives-traits.workspace = true
+reth-primitives-traits = { workspace = true, features = ["serde"] }
 reth-tasks.workspace = true
-
-# alloy
-alloy-consensus.workspace = true
 
 # tokio
 tokio.workspace = true
@@ -38,9 +35,11 @@ async-trait.workspace = true
 chrono.workspace = true
 eyre.workspace = true
 futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 mockall.workspace = true
 alloy-primitives.workspace = true
-reth-primitives-traits = { workspace = true, features = ["test-utils"] }
-reth-ethereum-primitives = { workspace = true, features = ["test-utils"] }
+reth-primitives-traits = { workspace = true, features = ["test-utils", "serde"] }
+reth-ethereum-primitives = { workspace = true, features = ["test-utils", "serde"] }

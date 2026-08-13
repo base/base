@@ -7,4 +7,4 @@ mod repo;
 pub use repo::ShadowBlockRepo;
 
 mod models;
-pub use models::{ShadowBlockPayload, ShadowBlockRow, ShadowTransaction};
+pub use models::{ShadowBlockPayload, ShadowBlockRow};

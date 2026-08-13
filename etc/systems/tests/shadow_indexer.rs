@@ -87,8 +87,8 @@ async fn shadow_indexer_persists_committed_blocks() -> Result<()> {
             row.number
         );
         ensure!(
-            !row.payload.parent_hash.is_empty(),
-            "missing parent_hash for shadow row: number={}, target_height={target}",
+            row.payload.block.is_object(),
+            "missing serialized block for shadow row: number={}, target_height={target}",
             row.number
         );
     }

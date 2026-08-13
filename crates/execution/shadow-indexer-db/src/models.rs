@@ -1,12 +1,13 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Row representation for a shadow indexer block.
 ///
 /// Only the columns required for identity, reorg bookkeeping, and range scans are
-/// materialized as real columns. All descriptive block and transaction metadata
-/// lives in a single JSONB `payload`, so downstream consumers can evolve the shape
-/// they read without a database migration.
+/// materialized as real columns. The full executed block and its receipts live in a
+/// single JSONB `payload`, so downstream consumers can evolve the shape they read
+/// without a database migration.
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct ShadowBlockRow {
     /// Block number.
@@ -19,45 +20,22 @@ pub struct ShadowBlockRow {
     pub canonical_hash: Option<String>,
     /// Row creation time.
     pub created_at: DateTime<Utc>,
-    /// Flexible block and transaction metadata persisted as JSONB.
+    /// Full executed block and receipts persisted as JSONB.
     #[sqlx(json)]
     pub payload: ShadowBlockPayload,
 }
 
-/// Flexible block-level metadata persisted in the block payload.
+/// Block payload persisted as JSONB.
+///
+/// `block` and `receipts` are captured verbatim from the node's consensus types as opaque
+/// JSON, so fields the node already produces become available downstream without a schema
+/// migration or a bespoke per-field type in this crate.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ShadowBlockPayload {
-    /// Parent block hash.
-    pub parent_hash: String,
-    /// Block timestamp.
-    pub timestamp: u64,
-    /// Number of transactions in the block.
-    pub tx_count: u32,
-    /// Total gas used.
-    pub gas_used: u64,
-    /// State root hash.
-    pub state_root: String,
-    /// Builder version string.
+    /// Builder version string, injected by the writer before persistence.
     pub builder_version: String,
-    /// Per-transaction metadata for the block.
-    pub transactions: Vec<ShadowTransaction>,
-}
-
-/// Flexible per-transaction metadata persisted within a block payload.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ShadowTransaction {
-    /// Zero-based position of the transaction within the block.
-    pub tx_index: u32,
-    /// Transaction hash.
-    pub tx_hash: String,
-    /// Recovered sender address, when signature recovery succeeds.
-    pub sender: Option<String>,
-    /// EIP-2718 transaction type byte (0x7e denotes an OP deposit).
-    pub tx_type: u8,
-    /// Effective priority fee per gas (tip) in wei, as a base-10 string to preserve full u128 range.
-    pub effective_priority_fee_per_gas: Option<String>,
-    /// Block base fee per gas in wei.
-    pub base_fee_per_gas: Option<u64>,
-    /// Gas consumed by this transaction.
-    pub gas_used: u64,
+    /// Recovered block (sealed header, body, and recovered senders) as serialized by the node.
+    pub block: Value,
+    /// Execution receipts for the block, in transaction order.
+    pub receipts: Value,
 }
