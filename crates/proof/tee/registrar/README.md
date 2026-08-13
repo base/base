@@ -23,6 +23,7 @@ longer TTLs protect against flakes but delay real cleanup.
 - **`service`** — [`RegistrarConfig`] runtime config and lifecycle runner.
 - **`error`** — [`RegistrarError`] enum covering all failure modes.
 - **`prover`** — [`ProverClient`] JSON-RPC client for polling prover readiness and signer endpoints.
-- **`signer_manager`** — [`SignerManager`] lifecycle management for signer proof tasks and registration execution.
-- **`traits`** — [`InstanceDiscovery`] and attestation proof provider trait usage.
+- **`backend`** — Temporary Boundless [`RegistrationBackend`] cutover seam (removed with Boundless in CHAIN-4833).
+- **`signer_manager`** — [`SignerManager`] lifecycle management for signer proof tasks and orphan cleanup.
+- **`traits`** — [`InstanceDiscovery`], [`EnclaveEndpointClient`], and temporary [`RegistrationBackend`].
 - **`types`** — Core domain types: [`ProverInstance`].

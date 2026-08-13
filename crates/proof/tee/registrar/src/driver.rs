@@ -13,7 +13,6 @@ use std::{
 
 use alloy_primitives::Address;
 use base_proof_contracts::TEEProverRegistryClient;
-use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
 use base_tx_manager::TxManager;
 use futures::stream::StreamExt;
 use tokio_util::sync::CancellationToken;
@@ -21,7 +20,7 @@ use tracing::{Instrument, debug, info, warn};
 
 use crate::{
     CertManager, EnclaveEndpointClient, InstanceDiscovery, InstanceHealthStatus, ProofTaskSet,
-    ProverClient, ProverInstance, RegistrarMetrics, Result, SignerManager,
+    ProverClient, ProverInstance, RegistrarMetrics, RegistrationBackend, Result, SignerManager,
 };
 
 /// Default maximum number of instances processed concurrently.
@@ -85,17 +84,17 @@ pub struct DiscoveryResolution {
 ///
 /// Generic over discovery and RPC backends.
 #[derive(Debug)]
-pub struct RegistrationDriver<D, S, P, R, T> {
+pub struct RegistrationDriver<D, S, B, R, T> {
     discovery: D,
     signer_client: S,
     config: DriverConfig,
     /// Certificate revocation manager.
     cert_manager: Option<CertManager<T>>,
     /// Signer lifecycle manager for registration tasks and orphan cleanup.
-    signer_manager: Arc<SignerManager<P, R, T>>,
+    signer_manager: Arc<SignerManager<B, R, T>>,
 }
 
-impl<D, S, P, R, T> RegistrationDriver<D, S, P, R, T> {
+impl<D, S, B, R, T> RegistrationDriver<D, S, B, R, T> {
     /// Creates a new registration driver.
     ///
     /// Accepts a pre-built certificate manager so CRL client construction and
@@ -105,13 +104,13 @@ impl<D, S, P, R, T> RegistrationDriver<D, S, P, R, T> {
         signer_client: S,
         config: DriverConfig,
         cert_manager: Option<CertManager<T>>,
-        signer_manager: Arc<SignerManager<P, R, T>>,
+        signer_manager: Arc<SignerManager<B, R, T>>,
     ) -> Self {
         Self { discovery, signer_client, config, cert_manager, signer_manager }
     }
 }
 
-impl<D, S, P, R, T> RegistrationDriver<D, S, P, R, T>
+impl<D, S, B, R, T> RegistrationDriver<D, S, B, R, T>
 where
     D: InstanceDiscovery,
     S: EnclaveEndpointClient,
@@ -122,7 +121,7 @@ where
     where
         D: 'static,
         S: 'static,
-        P: AttestationProofProvider + 'static,
+        B: RegistrationBackend + 'static,
         R: TEEProverRegistryClient + 'static,
         T: 'static,
     {
@@ -472,8 +471,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS, EnclaveEndpointClient,
-        InstanceHealthStatus, RegistrarError, Result, SignerManagerConfig,
+        EnclaveEndpointClient, InstanceHealthStatus, NoopRegistrationBackend, RegistrarError,
+        Result, SignerManagerConfig,
         test_utils::{
             EP1, EP2, EP3, HARDHAT_KEY_0, HARDHAT_KEY_1, HARDHAT_KEY_2, NoopTxManager,
             TEST_REGISTRY_ADDRESS, healthy_prover_instance, prover_instance,
@@ -565,12 +564,10 @@ mod tests {
     type TestDriver = RegistrationDriver<
         Vec<ProverInstance>,
         MockEnclaveEndpointClient,
-        MockEnclaveEndpointClient,
+        NoopRegistrationBackend,
         (),
         NoopTxManager,
     >;
-
-    const TEST_MAX_ATTESTATION_AGE: Duration = Duration::from_secs(3300);
 
     fn endpoint_url(host_port: &str) -> Url {
         Url::parse(&format!("http://{host_port}")).unwrap()
@@ -596,16 +593,10 @@ mod tests {
         instance_cache_ttl_cycles: u32,
     ) -> TestDriver {
         let signer_manager = Arc::new(SignerManager::new(
-            signer_client.clone(),
+            NoopRegistrationBackend,
             (),
             NoopTxManager,
-            SignerManagerConfig {
-                registry_address: TEST_REGISTRY_ADDRESS,
-                max_concurrency: DEFAULT_MAX_CONCURRENCY,
-                max_tx_retries: DEFAULT_MAX_TX_RETRIES,
-                tx_retry_delay: Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
-                max_attestation_age: TEST_MAX_ATTESTATION_AGE,
-            },
+            SignerManagerConfig { registry_address: TEST_REGISTRY_ADDRESS },
         ));
 
         RegistrationDriver::new(
@@ -704,13 +695,13 @@ mod tests {
 
         assert_eq!(resolution.registerable.len(), 2);
         let nonce_a =
-            SignerManager::<MockEnclaveEndpointClient, (), NoopTxManager>::attestation_nonce_for(
+            SignerManager::<NoopRegistrationBackend, (), NoopTxManager>::attestation_nonce_for(
                 TEST_REGISTRY_ADDRESS,
                 signer_a,
             )
             .to_vec();
         let nonce_b =
-            SignerManager::<MockEnclaveEndpointClient, (), NoopTxManager>::attestation_nonce_for(
+            SignerManager::<NoopRegistrationBackend, (), NoopTxManager>::attestation_nonce_for(
                 TEST_REGISTRY_ADDRESS,
                 signer_b,
             )

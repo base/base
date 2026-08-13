@@ -2,9 +2,27 @@
 
 use std::future::Future;
 
+use alloy_primitives::Address;
+use tokio_util::sync::CancellationToken;
 use url::Url;
 
 use crate::{ProverInstance, Result};
+
+/// Temporary registration workflow seam for the Boundless→hinted cutover.
+///
+/// Boundless is the only production backend until hinted orchestration and
+/// backend selection land. This trait is cutover scaffolding and is removed
+/// with Boundless in CHAIN-4833.
+pub trait RegistrationBackend: Send + Sync {
+    /// Registers a signer using this backend's registration workflow.
+    fn register_signer<'a>(
+        &'a self,
+        instance_id: &'a str,
+        signer_address: Address,
+        attestation_bytes: &'a [u8],
+        cancel: &'a CancellationToken,
+    ) -> impl Future<Output = Result<()>> + Send + 'a;
+}
 
 /// Discovers active prover instances from the infrastructure layer.
 ///

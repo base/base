@@ -23,8 +23,9 @@ use tracing::{info, warn};
 use url::Url;
 
 use crate::{
-    AwsTargetGroupDiscovery, CertManager, DriverConfig, ProverClient, RegistrarError,
-    RegistrarMetrics, RegistrationDriver, Result, SignerManager, SignerManagerConfig,
+    AwsTargetGroupDiscovery, BoundlessRegistrationBackend, BoundlessRegistrationBackendConfig,
+    CertManager, DriverConfig, ProverClient, RegistrarError, RegistrarMetrics, RegistrationDriver,
+    Result, SignerManager, SignerManagerConfig,
 };
 
 const CRL_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
@@ -206,23 +207,34 @@ impl RegistrarConfig {
             self.tee_prover_registry_address,
             self.l1_rpc_url.clone(),
         );
+        // Separate client for orphan dereg; contract client is not Clone.
+        let orphan_registry = TEEProverRegistryContractClient::new(
+            self.tee_prover_registry_address,
+            self.l1_rpc_url.clone(),
+        );
 
         let ready = Arc::new(AtomicBool::new(false));
         let health_handle =
             tokio::spawn(HealthServer::serve(self.health_addr, Arc::clone(&ready), cancel.clone()));
 
         let max_attestation_age = self.boundless_prover.max_attestation_age;
-        let signer_manager = Arc::new(SignerManager::new(
+        let registration_backend = BoundlessRegistrationBackend::new(
             self.boundless_prover,
             registry,
             tx_manager.clone(),
-            SignerManagerConfig {
+            BoundlessRegistrationBackendConfig {
                 registry_address: self.tee_prover_registry_address,
                 max_concurrency: self.max_concurrency,
                 max_tx_retries: self.max_tx_retries,
                 tx_retry_delay: self.tx_retry_delay,
                 max_attestation_age,
             },
+        );
+        let signer_manager = Arc::new(SignerManager::new(
+            registration_backend,
+            orphan_registry,
+            tx_manager.clone(),
+            SignerManagerConfig { registry_address: self.tee_prover_registry_address },
         ));
         let cert_manager = if let Some(nitro_verifier_address) = self.crl_nitro_verifier_address {
             Some(CertManager::new(

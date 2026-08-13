@@ -1,6 +1,12 @@
 #![doc = include_str!("../README.md")]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
+mod backend;
+pub use backend::{
+    BoundlessRegistrationBackend, BoundlessRegistrationBackendConfig, DEFAULT_MAX_TX_RETRIES,
+    DEFAULT_TX_RETRY_DELAY_SECS, NoopRegistrationBackend,
+};
+
 mod cert_manager;
 pub use cert_manager::CertManager;
 
@@ -27,15 +33,14 @@ pub use prover::ProverClient;
 
 mod signer_manager;
 pub use signer_manager::{
-    DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS, PendingRegistration, ProofTaskSet,
-    SignerManager, SignerManagerConfig,
+    AttestationNonce, PendingRegistration, ProofTaskSet, SignerManager, SignerManagerConfig,
 };
 
 mod service;
 pub use service::RegistrarConfig;
 
 mod traits;
-pub use traits::{EnclaveEndpointClient, InstanceDiscovery};
+pub use traits::{EnclaveEndpointClient, InstanceDiscovery, RegistrationBackend};
 
 mod types;
 pub use types::{InstanceHealthStatus, ProverInstance};
