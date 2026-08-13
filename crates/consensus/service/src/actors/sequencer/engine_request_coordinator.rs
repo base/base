@@ -487,7 +487,9 @@ where
                                         None,
                                         false,
                                     );
-                                    self.processor.drain().await?;
+                                    if self.processor.drain().await? == ResetOutcome::Reset {
+                                        *catchup = CanonicalUnsafeCatchup::default();
+                                    }
                                 } else {
                                     catchup.buffer_payload(*envelope);
                                 }
