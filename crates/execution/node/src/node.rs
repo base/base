@@ -1136,12 +1136,12 @@ where
                 ctx.provider().clone(),
                 evm_config,
                 BaseBuilderConfig {
-                    da_config: self.da_config.clone(),
-                    gas_limit_config: self.gas_limit_config.clone(),
+                    da_config: self.da_config,
+                    gas_limit_config: self.gas_limit_config,
                     manifest_precheck_enabled: self.manifest_precheck_enabled,
                 },
             )
-            .with_transactions(self.best_transactions.clone());
+            .with_transactions(self.best_transactions);
         Ok(payload_builder)
     }
 }
