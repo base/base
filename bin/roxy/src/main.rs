@@ -20,6 +20,7 @@ async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
 
     let cli = Cli::parse();
+    cli.config.validate()?;
 
     LogConfig::default().init_tracing_subscriber().expect("failed to initialize tracing");
 

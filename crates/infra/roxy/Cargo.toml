@@ -12,6 +12,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+url.workspace = true
 tokio-util.workspace = true
 tokio = { workspace = true, features = ["net"] }
 anyhow = { workspace = true, features = ["std"] }
