@@ -486,14 +486,6 @@ impl RollupConfig {
     /// The fixed cadence once subsecond blocks activates.
     pub const NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS: u64 = 200;
 
-    /// Default offset into the [`Self::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS`]
-    /// slot at which the sequencer CL calls `engine_getPayload`.
-    ///
-    /// Shared by the CL's seal scheduling and the EL payload builder's
-    /// pool-transaction cutoff (`slot_start + seal_offset`) so both processes
-    /// derive their timing from one value.
-    pub const DEFAULT_SEAL_OFFSET_MILLIS: u64 = 150;
-
     /// Helper method for deserializing a default granite channel timeout.
     #[cfg(feature = "serde")]
     pub const fn default_granite_channel_timeout() -> u64 {

@@ -1,16 +1,6 @@
 //! Additional configuration for the Base payload builder.
 
-use std::{
-    sync::{Arc, atomic::AtomicU64},
-    time::Duration,
-};
-
-use base_common_genesis::RollupConfig;
-
-/// Default seal offset as a [`Duration`], from the constant shared with the
-/// CL's seal scheduling ([`RollupConfig::DEFAULT_SEAL_OFFSET_MILLIS`]).
-const DEFAULT_SEAL_OFFSET: Duration =
-    Duration::from_millis(RollupConfig::DEFAULT_SEAL_OFFSET_MILLIS);
+use std::sync::{Arc, atomic::AtomicU64};
 
 /// Settings for the Base payload builder.
 #[derive(Debug, Clone)]
@@ -22,13 +12,6 @@ pub struct BaseBuilderConfig {
     /// Whether to drop positively stale EIP-8130 transactions using their
     /// captured authorization manifest before execution.
     pub manifest_precheck_enabled: bool,
-    /// Offset into the 200ms slot at which the sequencer CL calls
-    /// `engine_getPayload`. Denim-active builds stop pulling pool
-    /// transactions at `slot_start + seal_offset` (wall clock).
-    ///
-    /// Defaults to [`RollupConfig::DEFAULT_SEAL_OFFSET_MILLIS`], the constant
-    /// shared with the CL's seal scheduling.
-    pub seal_offset: Duration,
 }
 
 impl Default for BaseBuilderConfig {
@@ -37,7 +20,6 @@ impl Default for BaseBuilderConfig {
             da_config: BaseDAConfig::default(),
             gas_limit_config: GasLimitConfig::default(),
             manifest_precheck_enabled: true,
-            seal_offset: DEFAULT_SEAL_OFFSET,
         }
     }
 }
@@ -49,12 +31,7 @@ impl BaseBuilderConfig {
         gas_limit_config: GasLimitConfig,
         manifest_precheck_enabled: bool,
     ) -> Self {
-        Self {
-            da_config,
-            gas_limit_config,
-            manifest_precheck_enabled,
-            seal_offset: DEFAULT_SEAL_OFFSET,
-        }
+        Self { da_config, gas_limit_config, manifest_precheck_enabled }
     }
 
     /// Returns the data availability configuration for the Base payload builder, if it has

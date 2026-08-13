@@ -1,7 +1,5 @@
 //! Error type
 
-use base_protocol::BaseTimeMetadataError;
-
 /// Base-specific payload building errors.
 #[derive(Debug, thiserror::Error)]
 pub enum BasePayloadBuilderError {
@@ -22,8 +20,4 @@ pub enum BasePayloadBuilderError {
     /// Thrown when a blob transaction is included in a sequencer's block.
     #[error("blob transaction included in sequencer block")]
     BlobTransactionRejected,
-    /// Thrown when the `BaseTime` metadata deposit at `tx[1]` of a
-    /// Denim-active payload is missing or invalid.
-    #[error("invalid BaseTime metadata deposit: {0}")]
-    BaseTimeMetadata(#[from] BaseTimeMetadataError),
 }

@@ -20,8 +20,7 @@ pub const DEFAULT_JOB_DEADLINE: Duration = Duration::from_secs(1);
 /// from one struct.
 #[derive(Debug, Clone)]
 pub struct BasePayloadServiceConfig {
-    /// Limits and timing for the payload builder itself: DA and gas limits,
-    /// manifest precheck, and the seal offset driving the pool-tx cutoff.
+    /// Limits and policy for the payload builder itself.
     pub builder: BaseBuilderConfig,
     /// Payload job lifetime; abandoned-job GC only. Defaults to
     /// [`DEFAULT_JOB_DEADLINE`].
@@ -96,17 +95,11 @@ impl BasePayloadServiceBuilder {
 
 #[cfg(test)]
 mod tests {
-    use base_common_genesis::RollupConfig;
-
     use super::*;
 
     #[test]
-    fn default_config_uses_shared_seal_offset_and_gc_deadline() {
+    fn default_config_uses_gc_deadline() {
         let config = BasePayloadServiceConfig::default();
-        assert_eq!(
-            config.builder.seal_offset,
-            Duration::from_millis(RollupConfig::DEFAULT_SEAL_OFFSET_MILLIS)
-        );
         assert_eq!(config.job_deadline, DEFAULT_JOB_DEADLINE);
     }
 }

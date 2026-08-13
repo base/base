@@ -19,8 +19,6 @@ pub mod payload;
 pub use payload::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 mod service;
 pub use service::{BasePayloadServiceBuilder, BasePayloadServiceConfig, DEFAULT_JOB_DEADLINE};
-mod timing;
-pub use timing::TxCutoff;
 mod traits;
 pub use traits::*;
 mod types;
