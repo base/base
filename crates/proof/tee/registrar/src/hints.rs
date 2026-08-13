@@ -3,7 +3,6 @@
 //! Walks the onchain verifier's affine schedule, records each modular inverse as
 //! a 48-byte BE hint, and delegates point add/double to [`p384`].
 
-use base_proof_tee_nitro_verifier::AttestationReport;
 use p384::{
     AffinePoint, FieldElement, NistP384, ProjectivePoint, Scalar, U384,
     ecdsa::Signature,
@@ -102,34 +101,9 @@ impl P384Hints {
         Self::collect_verify_hints(&hash, &signature, parent_pub_key)
     }
 
-    /// Hint streams for every non-root CA, the leaf, and the attestation signature.
-    pub fn for_attestation_report(report: &AttestationReport) -> HintResult<RegistrationHints> {
-        if report.doc.cabundle.len() < 2 {
-            return Err(HintError::Rejected(
-                "attestation cabundle must include root plus at least one non-root CA".into(),
-            ));
-        }
-        let certs = report
-            .doc
-            .cabundle
-            .iter()
-            .skip(1)
-            .map(|c| c.as_ref())
-            .chain(std::iter::once(report.doc.certificate.as_ref()));
-        Self::hints_for_chain(report.doc.cabundle[0].as_ref(), certs, |leaf_pub| {
-            let tbs = report
-                .cose
-                .sig_structure()
-                .map_err(|e| HintError::Rejected(format!("COSE Sig_structure: {e}")))?;
-            Self::collect_verify_hints(
-                Sha384::digest(&tbs).as_slice(),
-                &report.cose.signature,
-                leaf_pub,
-            )
-        })
-    }
-
     /// Hint streams for a registration plan using `root_cert` as trust anchor.
+    ///
+    /// Attestation hints hash `plan.attestation_tbs` (raw COSE `Sig_structure` TLVs).
     pub fn for_registration_plan(
         root_cert: &[u8],
         plan: &RegistrationPlan,
@@ -265,10 +239,10 @@ impl P384Hints {
     }
 
     fn twice_affine(&mut self, point: &AffinePoint) -> HintResult<AffinePoint> {
-        if bool::from(point.is_identity()) {
+        // Onchain sentinel: `x == 0` is infinity (not only `AffinePoint::IDENTITY`).
+        let Some((_, y)) = Self::affine_finite_xy(point)? else {
             return Ok(AffinePoint::IDENTITY);
-        }
-        let (_, y) = Self::affine_xy(point)?;
+        };
         if bool::from(y.is_zero()) {
             return Ok(AffinePoint::IDENTITY);
         }
@@ -283,23 +257,34 @@ impl P384Hints {
     }
 
     fn add_affine(&mut self, a: &AffinePoint, b: &AffinePoint) -> HintResult<AffinePoint> {
-        if bool::from(a.is_identity()) {
-            return Ok(*b);
+        match (Self::affine_finite_xy(a)?, Self::affine_finite_xy(b)?) {
+            (None, None) => return Ok(AffinePoint::IDENTITY),
+            (None, Some(_)) => return Ok(*b),
+            (Some(_), None) => return Ok(*a),
+            (Some((x1, y1)), Some((x2, y2))) => {
+                if bool::from(x1.ct_eq(&x2)) {
+                    return if bool::from(y1.ct_eq(&y2)) {
+                        self.twice_affine(a)
+                    } else {
+                        Ok(AffinePoint::IDENTITY)
+                    };
+                }
+                self.record_field_inv(&(x1 - x2))?;
+                Ok((ProjectivePoint::from(*a) + ProjectivePoint::from(*b)).to_affine())
+            }
         }
-        if bool::from(b.is_identity()) {
-            return Ok(*a);
+    }
+
+    /// Finite affine coords, or `None` for onchain infinity (`IDENTITY` or `x == 0`).
+    fn affine_finite_xy(point: &AffinePoint) -> HintResult<Option<(FieldElement, FieldElement)>> {
+        if bool::from(point.is_identity()) {
+            return Ok(None);
         }
-        let (x1, y1) = Self::affine_xy(a)?;
-        let (x2, y2) = Self::affine_xy(b)?;
-        if bool::from(x1.ct_eq(&x2)) {
-            return if bool::from(y1.ct_eq(&y2)) {
-                self.twice_affine(a)
-            } else {
-                Ok(AffinePoint::IDENTITY)
-            };
+        let (x, y) = Self::affine_xy(point)?;
+        if bool::from(x.is_zero()) {
+            return Ok(None);
         }
-        self.record_field_inv(&(x1 - x2))?;
-        Ok((ProjectivePoint::from(*a) + ProjectivePoint::from(*b)).to_affine())
+        Ok(Some((x, y)))
     }
 
     fn record_field_inv(&mut self, value: &FieldElement) -> HintResult<()> {
@@ -384,8 +369,7 @@ mod tests {
     fn fixture_hints() -> RegistrationHints {
         let attestation =
             hex::decode(include_str!("testdata/nitro_attestation.hex").trim()).unwrap();
-        let report = AttestationReport::parse(&attestation).unwrap();
-        P384Hints::for_attestation_report(&report).unwrap()
+        crate::AttestationPlanner::prepare_hinted_registration_plan(&attestation).unwrap().hints
     }
 
     #[test]
@@ -409,6 +393,37 @@ mod tests {
             "0x6086b00c3a29f1170bc436fabe95b95557d3f134d4adb56324761cd81998808e"
         );
         assert_eq!(hints, fixture_hints());
+    }
+
+    /// On-curve P-384 point with `x == 0` (`y² = b`). Solidity treats this as infinity.
+    fn on_curve_x_zero_point() -> AffinePoint {
+        let y = hex::decode(
+            "c306610fb0ae5a159cf45c06069f22a6c5eb3641c602d42dea2c4b4f75550793406d80d2b91ad54f9048bd487af1ade1",
+        )
+        .unwrap();
+        let mut enc = [0u8; UNCOMPRESSED_P384_LEN];
+        enc[0] = 0x04;
+        enc[1 + P384_SCALAR_BYTES..].copy_from_slice(&y);
+        let encoded = p384::EncodedPoint::from_bytes(enc).unwrap();
+        Option::from(AffinePoint::from_encoded_point(&encoded)).unwrap()
+    }
+
+    #[test]
+    fn affine_helpers_treat_x_zero_as_infinity() {
+        let x0 = on_curve_x_zero_point();
+        assert!(!bool::from(x0.is_identity()));
+        assert!(P384Hints::affine_finite_xy(&x0).unwrap().is_none());
+        assert!(P384Hints::affine_finite_xy(&AffinePoint::IDENTITY).unwrap().is_none());
+        assert!(P384Hints::affine_finite_xy(&AffinePoint::GENERATOR).unwrap().is_some());
+
+        let mut hints = P384Hints::default();
+        assert_eq!(hints.twice_affine(&x0).unwrap(), AffinePoint::IDENTITY);
+        assert!(hints.inverses.is_empty());
+
+        assert_eq!(hints.add_affine(&x0, &AffinePoint::GENERATOR).unwrap(), AffinePoint::GENERATOR);
+        assert_eq!(hints.add_affine(&AffinePoint::GENERATOR, &x0).unwrap(), AffinePoint::GENERATOR);
+        assert_eq!(hints.add_affine(&x0, &x0).unwrap(), AffinePoint::IDENTITY);
+        assert!(hints.inverses.is_empty());
     }
 
     #[test]
