@@ -737,7 +737,13 @@ where
         // A genesis EL that reports sync complete still needs an FCU probe to confirm the engine
         // transition and mark sequencer EL sync finished.
         let update = if active_sequencer {
-            let Some(update) = self.active_sequencer_probe_update(head).await else { return };
+            let Some(update) = self.active_sequencer_probe_update(head).await else {
+                self.engine.seed_state(EngineSyncStateUpdate {
+                    unsafe_head: Some(head),
+                    ..Default::default()
+                });
+                return;
+            };
             update
         } else {
             EngineSyncStateUpdate { unsafe_head: Some(head), ..Default::default() }

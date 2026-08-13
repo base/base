@@ -252,11 +252,14 @@ where
                 }
             }
 
-            let mut el_sync_probe_interval = time::interval_at(
-                TokioInstant::now() + SEQUENCER_EL_SYNC_PROBE_INTERVAL,
-                SEQUENCER_EL_SYNC_PROBE_INTERVAL,
-            );
-            el_sync_probe_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+            let mut el_sync_probe_interval = self.sequencer_sync_mode.is_el().then(|| {
+                let mut interval = time::interval_at(
+                    TokioInstant::now() + SEQUENCER_EL_SYNC_PROBE_INTERVAL,
+                    SEQUENCER_EL_SYNC_PROBE_INTERVAL,
+                );
+                interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+                interval
+            });
 
             loop {
                 // Full processor iteration window: drain + recv wait + request handling.
@@ -319,7 +322,10 @@ where
                 {
                     tokio::select! {
                         request = request_channel.recv() => request,
-                        _ = el_sync_probe_interval.tick() => {
+                        _ = el_sync_probe_interval
+                            .as_mut()
+                            .expect("EL sync mode initializes probe interval")
+                            .tick() => {
                             drop(recv_wait_timer);
                             let active_sequencer =
                                 self.resolve_bootstrap_role().await == BootstrapRole::ActiveSequencer;
