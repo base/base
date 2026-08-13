@@ -174,6 +174,7 @@ impl RegistrationChecker {
 
     /// Returns whether at least one configured enclave signer is registered.
     pub async fn has_registered_enclave(&self) -> Result<bool, RegistrationError> {
+        let mut first_rpc_error = None;
         for (index, transport) in self.transports.iter().enumerate() {
             let signer = match Self::signer_address(transport).await {
                 Ok(signer) => signer,
@@ -182,11 +183,16 @@ impl RegistrationChecker {
                     continue;
                 }
             };
-            if self.is_registered_signer(signer).await? {
-                return Ok(true);
+            match self.is_registered_signer(signer).await {
+                Ok(true) => return Ok(true),
+                Ok(false) => {}
+                Err(error) => {
+                    warn!(error = %error, signer = %signer, index, "registration check failed");
+                    first_rpc_error.get_or_insert(error);
+                }
             }
         }
-        Ok(false)
+        first_rpc_error.map_or(Ok(false), Err)
     }
 
     /// Returns every registered enclave whose attested image matches `image_hash`.
@@ -224,7 +230,12 @@ impl RegistrationChecker {
             match matches {
                 Ok(true) => valid.push(ValidSigner { index, signer }),
                 Ok(false) => {
-                    warn!(signer = %signer, index, %image_hash, "signer does not match proof image");
+                    warn!(
+                        signer = %signer,
+                        index,
+                        %image_hash,
+                        "signer is unregistered or does not match proof image"
+                    );
                 }
                 Err(error) => {
                     warn!(error = %error, signer = %signer, index, "signer image lookup failed");
@@ -425,6 +436,17 @@ mod tests {
                 .await
                 .unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn claim_gate_continues_after_one_registry_error() {
+        let registry = AddressBasedMockRegistry::new(HashMap::new());
+        let checker = two_transport_checker(registry.clone());
+        let (first, second) = two_transport_signers(&checker).await;
+        registry.validity_map.lock().expect("validity map poisoned").insert(second, true);
+        registry.fail_signers.lock().expect("fail signers poisoned").insert(first);
+
+        assert!(checker.has_registered_enclave().await.unwrap());
     }
 
     #[tokio::test]
