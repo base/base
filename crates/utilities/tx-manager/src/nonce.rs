@@ -168,12 +168,11 @@ where
                     );
                     TxManagerError::Rpc("nonce fetch timed out".into())
                 })?
-                .map_err(|e| {
-                    warn!(
-                        error = %e, address = %self.address,
-                        "failed to fetch nonce from chain",
-                    );
-                    TxManagerError::Rpc(e.to_string())
+                .map_err(|_| {
+                    // The raw transport error may embed credential-bearing
+                    // RPC URLs, so neither log nor propagate it.
+                    warn!(address = %self.address, "failed to fetch nonce from chain");
+                    TxManagerError::Rpc("nonce fetch failed".into())
                 })?;
 
             // Phase 3: re-acquire the lock and populate only if still

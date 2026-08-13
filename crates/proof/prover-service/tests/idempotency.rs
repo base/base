@@ -27,6 +27,7 @@ fn compressed_request(session_id: &str, start_block_number: u64) -> ProveBlockRa
                 zk_backend: ZkBackend::Cluster,
             }),
         },
+        retry_failed: true,
     }
 }
 

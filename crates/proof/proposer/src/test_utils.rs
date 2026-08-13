@@ -250,6 +250,9 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     async fn game_info(&self, _: Address) -> Result<GameInfo, ContractError> {
         unimplemented!("unused in proposer tests")
     }
+    async fn game_type(&self, _: Address) -> Result<u32, ContractError> {
+        unimplemented!("unused in proposer tests")
+    }
     async fn status(&self, _: Address) -> Result<GameStatus, ContractError> {
         unimplemented!("unused in proposer tests")
     }
