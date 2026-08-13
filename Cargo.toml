@@ -358,6 +358,7 @@ reth-eth-wire-types = { git = "https://github.com/paradigmxyz/reth", rev = "2382
 reth-payload-builder = { git = "https://github.com/paradigmxyz/reth", rev = "2382a2b05a0f15ab5469ea1db152c944f3736f6c" }
 reth-execution-types = { git = "https://github.com/paradigmxyz/reth", rev = "2382a2b05a0f15ab5469ea1db152c944f3736f6c" }
 reth-execution-cache = { git = "https://github.com/paradigmxyz/reth", rev = "2382a2b05a0f15ab5469ea1db152c944f3736f6c" }
+reth-trie-parallel = { git = "https://github.com/paradigmxyz/reth", rev = "2382a2b05a0f15ab5469ea1db152c944f3736f6c" }
 reth-exex-test-utils = { git = "https://github.com/paradigmxyz/reth", rev = "2382a2b05a0f15ab5469ea1db152c944f3736f6c" }
 reth-rpc-server-types = { git = "https://github.com/paradigmxyz/reth", rev = "2382a2b05a0f15ab5469ea1db152c944f3736f6c" }
 reth-transaction-pool = { git = "https://github.com/paradigmxyz/reth", rev = "2382a2b05a0f15ab5469ea1db152c944f3736f6c" }
