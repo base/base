@@ -6,6 +6,8 @@ CONDUCTOR1_URL="${CONDUCTOR1_URL:-http://op-conductor-1:6546}"
 CONDUCTOR2_URL="${CONDUCTOR2_URL:-http://op-conductor-2:6547}"
 CONDUCTOR1_RAFT_ADDR="${CONDUCTOR1_RAFT_ADDR:-op-conductor-1:5051}"
 CONDUCTOR2_RAFT_ADDR="${CONDUCTOR2_RAFT_ADDR:-op-conductor-2:5052}"
+BUILDER_EL_URL="${BUILDER_EL_URL:-http://base-builder:7545}"
+BUILDER_CL_URL="${BUILDER_CL_URL:-http://base-builder:7549}"
 
 echo "=== Conductor Cluster Setup ==="
 
@@ -50,6 +52,36 @@ echo "=== Verifying cluster membership ==="
 curl -s -X POST "$CONDUCTOR0_URL" \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","method":"conductor_clusterMembership","params":[],"id":1}' | jq .
+
+echo ""
+echo "=== Starting initial raft leader sequencer ==="
+for attempt in $(seq 1 120); do
+  unsafe_head=$(curl -fsS -X POST "$BUILDER_EL_URL" \
+    -H 'Content-Type: application/json' \
+    -d '{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest",false],"id":1}' \
+    | jq -er '.result.hash')
+  response=$(curl -fsS -X POST "$BUILDER_CL_URL" \
+    -H 'Content-Type: application/json' \
+    -d "{\"jsonrpc\":\"2.0\",\"method\":\"admin_startSequencer\",\"params\":[\"$unsafe_head\"],\"id\":1}")
+  if echo "$response" | jq -e '.error == null' >/dev/null; then
+    break
+  fi
+  if [ "$attempt" -eq 120 ]; then
+    echo "$response" | jq -r '.error.message // "unknown admin_startSequencer error"' >&2
+    exit 1
+  fi
+  sleep 0.5
+done
+
+echo ""
+echo "=== Resuming initial raft leader conductor ==="
+response=$(curl -fsS -X POST "$CONDUCTOR0_URL" \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","method":"conductor_resume","params":[],"id":1}')
+if ! echo "$response" | jq -e '.error == null' >/dev/null; then
+  echo "$response" | jq -r '.error.message // "unknown conductor_resume error"' >&2
+  exit 1
+fi
 
 echo ""
 echo "=== Conductor cluster setup complete ==="

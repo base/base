@@ -46,6 +46,7 @@ services:
       - BASE_CHAIN_L1_CHAIN_ID=${L1_CHAIN_ID}
       - BASE_CHAIN_L2_CHAIN_ID=${L2_CHAIN_ID}
       - BASE_NODE_CONDUCTOR_RPC=http://op-conductor-0:${CONDUCTOR0_RPC_PORT}
+      - BASE_NODE_SEQUENCER_STOPPED=true
       - NODE_HEALTHCHECK_HTTP_PORT=${L2_BUILDER_HTTP_PORT}
       - NODE_HEALTHCHECK_CL_RPC_PORT=${L2_BUILDER_CL_RPC_PORT}
       - OTEL_SERVICE_NAME=base-builder
@@ -427,4 +428,6 @@ services:
       - CONDUCTOR2_URL=http://op-conductor-2:${CONDUCTOR2_RPC_PORT}
       - CONDUCTOR1_RAFT_ADDR=op-conductor-1:${CONDUCTOR1_RAFT_PORT}
       - CONDUCTOR2_RAFT_ADDR=op-conductor-2:${CONDUCTOR2_RAFT_PORT}
+      - BUILDER_EL_URL=http://base-builder:${L2_BUILDER_HTTP_PORT}
+      - BUILDER_CL_URL=http://base-builder:${L2_BUILDER_CL_RPC_PORT}
     entrypoint: ["/usr/local/bin/setup-conductor.sh"]
