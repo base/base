@@ -11,6 +11,7 @@ use axum::{
     routing::post,
 };
 use reqwest::Client;
+use serde::{Deserialize, de::IgnoredAny};
 use serde_json::{Value, json};
 use tracing::{error, warn};
 use url::Url;
@@ -61,23 +62,20 @@ impl ProxyState {
     }
 
     async fn handle_rpc(State(state): State<Self>, body: Bytes) -> Response {
-        let parsed: Value = match serde_json::from_slice(&body) {
-            Ok(value) => value,
-            Err(error) => {
-                warn!(error = %error, "invalid JSON-RPC request body");
-                return jsonrpc_error(Value::Null, -32700, "parse error");
+        // Avoid full `Value` materialization (heap amplification on crafted payloads).
+        match first_non_whitespace(&body) {
+            Some(b'[') => {
+                return jsonrpc_error(Value::Null, -32600, "batch requests are not supported");
             }
-        };
-
-        if parsed.is_array() {
-            return jsonrpc_error(Value::Null, -32600, "batch requests are not supported");
+            Some(b'{') => {}
+            Some(_) | None => return jsonrpc_error(Value::Null, -32600, "invalid request"),
         }
 
-        if !parsed.is_object() {
-            return jsonrpc_error(Value::Null, -32600, "invalid request");
+        // Validate JSON without building a `Value` tree; unused fields are skipped.
+        if let Err(error) = serde_json::from_slice::<IgnoredAny>(&body) {
+            warn!(error = %error, "invalid JSON-RPC request body");
+            return jsonrpc_error(Value::Null, -32700, "parse error");
         }
-
-        let id = parsed.get("id").cloned().unwrap_or(Value::Null);
 
         match state.forward(&body).await {
             Ok(response_body) => (
@@ -93,7 +91,7 @@ impl ProxyState {
                     max_bytes = MAX_RESPONSE_BODY_BYTES,
                     "backend response exceeded size limit"
                 );
-                jsonrpc_error(id, -32000, "backend response too large")
+                jsonrpc_error(request_id(&body), -32000, "backend response too large")
             }
             Err(ForwardError::Transport(error)) => {
                 error!(
@@ -102,7 +100,7 @@ impl ProxyState {
                     url = %state.backend_url,
                     "backend request failed"
                 );
-                jsonrpc_error(id, -32000, "backend request failed")
+                jsonrpc_error(request_id(&body), -32000, "backend request failed")
             }
         }
     }
@@ -157,6 +155,27 @@ enum ForwardError {
     ResponseTooLarge,
 }
 
+/// Minimal request view used only when building proxy-generated JSON-RPC errors.
+#[derive(Debug, Deserialize)]
+struct IdOnly {
+    /// JSON-RPC request id, if present.
+    #[serde(default)]
+    id: Option<Value>,
+}
+
+/// Returns the first non-ASCII-whitespace byte in `body`, if any.
+fn first_non_whitespace(body: &[u8]) -> Option<u8> {
+    body.iter().copied().find(|byte| !byte.is_ascii_whitespace())
+}
+
+/// Extracts `id` without materializing the rest of the request as a [`Value`] tree.
+fn request_id(body: &[u8]) -> Value {
+    serde_json::from_slice::<IdOnly>(body)
+        .ok()
+        .and_then(|request| request.id)
+        .unwrap_or(Value::Null)
+}
+
 fn jsonrpc_error(id: Value, code: i64, message: &str) -> Response {
     let body = json!({
         "jsonrpc": "2.0",
@@ -167,4 +186,25 @@ fn jsonrpc_error(id: Value, code: i64, message: &str) -> Response {
         }
     });
     (StatusCode::OK, Json(body)).into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn first_non_whitespace_skips_leading_space() {
+        assert_eq!(first_non_whitespace(b"  \n{"), Some(b'{'));
+        assert_eq!(first_non_whitespace(b"\t["), Some(b'['));
+        assert_eq!(first_non_whitespace(b"   "), None);
+    }
+
+    #[test]
+    fn request_id_reads_only_id_field() {
+        let body = br#"{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":42}"#;
+        assert_eq!(request_id(body), json!(42));
+
+        let body = br#"{"jsonrpc":"2.0","method":"eth_chainId"}"#;
+        assert_eq!(request_id(body), Value::Null);
+    }
 }

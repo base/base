@@ -17,11 +17,12 @@ tokio-util.workspace = true
 tokio = { workspace = true, features = ["net"] }
 anyhow = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
-reqwest = { workspace = true, features = ["json", "stream"] }
+serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["std"] }
-axum = { workspace = true, features = ["tokio", "http1", "json"] }
+reqwest = { workspace = true, features = ["json", "stream"] }
 base-health = { workspace = true, features = ["axum-server"] }
 clap = { workspace = true, features = ["derive", "env", "std"] }
+axum = { workspace = true, features = ["tokio", "http1", "json"] }
 
 [dev-dependencies]
 wiremock.workspace = true
