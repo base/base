@@ -246,14 +246,50 @@ impl P384Hints {
         if bool::from(y.is_zero()) {
             return Ok(AffinePoint::IDENTITY);
         }
+        self.double_affine_recording(point, &y)
+    }
+
+    /// Triple-double matching Solidity `_twice3Affine`: `x == 0` only on entry.
+    ///
+    /// Intermediate points with finite `x == 0` keep going (only `y == 0` / identity aborts).
+    fn twice3_affine(&mut self, point: &AffinePoint) -> HintResult<AffinePoint> {
+        let Some((_, y0)) = Self::affine_finite_xy(point)? else {
+            return Ok(AffinePoint::IDENTITY);
+        };
+        if bool::from(y0.is_zero()) {
+            return Ok(AffinePoint::IDENTITY);
+        }
+
+        let p1 = self.double_affine_recording(point, &y0)?;
+        let Some(y1) = Self::affine_y_if_continuable(&p1)? else {
+            return Ok(AffinePoint::IDENTITY);
+        };
+        let p2 = self.double_affine_recording(&p1, &y1)?;
+        let Some(y2) = Self::affine_y_if_continuable(&p2)? else {
+            return Ok(AffinePoint::IDENTITY);
+        };
+        self.double_affine_recording(&p2, &y2)
+    }
+
+    fn double_affine_recording(
+        &mut self,
+        point: &AffinePoint,
+        y: &FieldElement,
+    ) -> HintResult<AffinePoint> {
         self.record_field_inv(&(y + y))?;
         Ok(ProjectivePoint::from(*point).double().to_affine())
     }
 
-    fn twice3_affine(&mut self, point: &AffinePoint) -> HintResult<AffinePoint> {
-        let p = self.twice_affine(point)?;
-        let p = self.twice_affine(&p)?;
-        self.twice_affine(&p)
+    /// Intermediate `_twice3Affine` gate: abort only on identity / `y == 0`, not `x == 0`.
+    fn affine_y_if_continuable(point: &AffinePoint) -> HintResult<Option<FieldElement>> {
+        if bool::from(point.is_identity()) {
+            return Ok(None);
+        }
+        let (_, y) = Self::affine_xy(point)?;
+        if bool::from(y.is_zero()) {
+            return Ok(None);
+        }
+        Ok(Some(y))
     }
 
     fn add_affine(&mut self, a: &AffinePoint, b: &AffinePoint) -> HintResult<AffinePoint> {
@@ -425,6 +461,30 @@ mod tests {
         assert_eq!(hints.add_affine(&AffinePoint::GENERATOR, &x0).unwrap(), AffinePoint::GENERATOR);
         assert_eq!(hints.add_affine(&x0, &x0).unwrap(), AffinePoint::IDENTITY);
         assert!(hints.inverses.is_empty());
+    }
+
+    #[test]
+    fn twice3_continues_through_intermediate_x_zero() {
+        // P = Q/2 where Q is on-curve with x==0, so the first double lands on x==0.
+        let q = on_curve_x_zero_point();
+        let half = Option::<Scalar>::from(Scalar::from(2u64).invert()).unwrap();
+        let p = (ProjectivePoint::from(q) * half).to_affine();
+        let (x_mid, _) = P384Hints::affine_xy(&ProjectivePoint::from(p).double().to_affine()).unwrap();
+        assert!(bool::from(x_mid.is_zero()), "precondition: 2P must have x == 0");
+
+        // Reusing twice_affine would treat that midpoint as infinity and stop after one inverse.
+        let mut composed = P384Hints::default();
+        let a = composed.twice_affine(&p).unwrap();
+        let b = composed.twice_affine(&a).unwrap();
+        let _ = composed.twice_affine(&b).unwrap();
+        assert_eq!(composed.inverses.len(), 1);
+        assert_eq!(b, AffinePoint::IDENTITY);
+
+        // Solidity `_twice3Affine` only applies the x==0 sentinel on entry.
+        let mut hints = P384Hints::default();
+        let out = hints.twice3_affine(&p).unwrap();
+        assert_eq!(hints.inverses.len(), 3);
+        assert_eq!(out, ProjectivePoint::from(p).double().double().double().to_affine());
     }
 
     #[test]
