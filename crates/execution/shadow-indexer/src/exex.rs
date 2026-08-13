@@ -1,12 +1,12 @@
+use base_common_consensus::{BaseBlock, BasePrimitives, BaseReceipt};
 use base_shadow_indexer_db::{ShadowBlockPayload, ShadowBlockRow};
 use chrono::Utc;
 use eyre::Result;
 use futures::TryStreamExt;
 use reth_execution_types::Chain;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification};
-use reth_node_api::{BlockTy, FullNodeComponents, ReceiptTy};
-use reth_primitives_traits::{AlloyBlockHeader, NodePrimitives, RecoveredBlock};
-use serde::Serialize;
+use reth_node_api::{FullNodeComponents, NodeTypes};
+use reth_primitives_traits::{AlloyBlockHeader, RecoveredBlock};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
@@ -26,8 +26,7 @@ impl ShadowIndexerExEx {
     pub async fn run<Node>(self, mut ctx: ExExContext<Node>) -> Result<()>
     where
         Node: FullNodeComponents,
-        RecoveredBlock<BlockTy<Node::Types>>: Serialize,
-        ReceiptTy<Node::Types>: Serialize,
+        Node::Types: NodeTypes<Primitives = BasePrimitives>,
     {
         while let Some(notification) = ctx.notifications.try_next().await? {
             let fully_processed = match &notification {
@@ -89,18 +88,13 @@ impl ShadowIndexerExEx {
         Ok(())
     }
 
-    fn build_row<N>(
+    fn build_row(
         &self,
-        block: &RecoveredBlock<N::Block>,
-        receipts: &[N::Receipt],
+        block: &RecoveredBlock<BaseBlock>,
+        receipts: &[BaseReceipt],
         reorged_out: bool,
         canonical_hash: Option<Vec<u8>>,
-    ) -> Result<ShadowBlockRow>
-    where
-        N: NodePrimitives,
-        RecoveredBlock<N::Block>: Serialize,
-        N::Receipt: Serialize,
-    {
+    ) -> Result<ShadowBlockRow> {
         let number = i64::try_from(block.header().number()).map_err(|error| {
             eyre::eyre!("block number overflow for shadow indexer row: {error}")
         })?;
@@ -108,8 +102,8 @@ impl ShadowIndexerExEx {
         let payload = ShadowBlockPayload {
             // The writer injects the configured builder version before persistence.
             builder_version: String::new(),
-            block: serde_json::to_value(block)?,
-            receipts: serde_json::to_value(receipts)?,
+            block: block.clone(),
+            receipts: receipts.to_vec(),
         };
 
         Ok(ShadowBlockRow {
@@ -122,14 +116,9 @@ impl ShadowIndexerExEx {
         })
     }
 
-    async fn emit_canonical_blocks<N>(&self, chain: &Chain<N>) -> Result<bool>
-    where
-        N: NodePrimitives,
-        RecoveredBlock<N::Block>: Serialize,
-        N::Receipt: Serialize,
-    {
+    async fn emit_canonical_blocks(&self, chain: &Chain<BasePrimitives>) -> Result<bool> {
         for (block, receipts) in chain.blocks_and_receipts() {
-            let row = self.build_row::<N>(block, receipts, false, None)?;
+            let row = self.build_row(block, receipts, false, None)?;
 
             if !self.send_row(row).await? {
                 return Ok(false);
@@ -139,12 +128,11 @@ impl ShadowIndexerExEx {
         Ok(true)
     }
 
-    async fn handle_chain_reorged<N>(&self, old: &Chain<N>, new: &Chain<N>) -> Result<bool>
-    where
-        N: NodePrimitives,
-        RecoveredBlock<N::Block>: Serialize,
-        N::Receipt: Serialize,
-    {
+    async fn handle_chain_reorged(
+        &self,
+        old: &Chain<BasePrimitives>,
+        new: &Chain<BasePrimitives>,
+    ) -> Result<bool> {
         for (block, receipts) in old.blocks_and_receipts() {
             let header = block.header();
             let canonical_hash = new
@@ -163,7 +151,7 @@ impl ShadowIndexerExEx {
                 );
             }
 
-            let row = self.build_row::<N>(block, receipts, true, canonical_hash)?;
+            let row = self.build_row(block, receipts, true, canonical_hash)?;
 
             if !self.send_row(row).await? {
                 return Ok(false);
@@ -180,14 +168,9 @@ impl ShadowIndexerExEx {
     /// reth emits it exclusively from the execution stage on a pipeline unwind (deep reorg
     /// requiring backfill, or a manual/consistency unwind); the live-sync engine path only ever
     /// produces `ChainCommitted`/`ChainReorged`.
-    async fn handle_chain_reverted<N>(&self, old: &Chain<N>) -> Result<bool>
-    where
-        N: NodePrimitives,
-        RecoveredBlock<N::Block>: Serialize,
-        N::Receipt: Serialize,
-    {
+    async fn handle_chain_reverted(&self, old: &Chain<BasePrimitives>) -> Result<bool> {
         for (block, receipts) in old.blocks_and_receipts() {
-            let row = self.build_row::<N>(block, receipts, true, None)?;
+            let row = self.build_row(block, receipts, true, None)?;
 
             if !self.send_row(row).await? {
                 return Ok(false);
@@ -214,10 +197,9 @@ impl ShadowIndexerExEx {
 
 #[cfg(test)]
 mod tests {
+    use alloy_consensus::Receipt;
     use alloy_primitives::B256;
-    use reth_ethereum_primitives::{Block, EthPrimitives, Receipt};
     use reth_execution_types::{Chain, ExecutionOutcome};
-    use reth_primitives_traits::RecoveredBlock;
     use tokio::sync::mpsc;
 
     use super::*;
@@ -231,22 +213,22 @@ mod tests {
         B256::new(bytes)
     }
 
-    fn mk_block(number: u64, variant: u8) -> RecoveredBlock<Block> {
-        let mut block: RecoveredBlock<Block> = Default::default();
+    fn mk_block(number: u64, variant: u8) -> RecoveredBlock<BaseBlock> {
+        let mut block: RecoveredBlock<BaseBlock> = Default::default();
         block.set_block_number(number);
         block.set_hash(block_hash(number, variant));
         block.set_parent_hash(block_hash(number.saturating_sub(1), variant));
         block
     }
 
-    fn mk_chain(from: u64, to: u64, variant: u8) -> Chain<EthPrimitives> {
+    fn mk_chain(from: u64, to: u64, variant: u8) -> Chain<BasePrimitives> {
         let mut blocks = Vec::new();
-        let mut receipts: Vec<Vec<Receipt>> = Vec::new();
+        let mut receipts: Vec<Vec<BaseReceipt>> = Vec::new();
         for number in from..=to {
             blocks.push(mk_block(number, variant));
-            receipts.push(vec![Receipt::default()]);
+            receipts.push(vec![BaseReceipt::Eip1559(Receipt::default())]);
         }
-        let execution_outcome: ExecutionOutcome<Receipt> = ExecutionOutcome {
+        let execution_outcome: ExecutionOutcome<BaseReceipt> = ExecutionOutcome {
             bundle: Default::default(),
             receipts,
             requests: Vec::new(),
@@ -277,8 +259,12 @@ mod tests {
         for row in &rows {
             assert!(!row.reorged_out, "committed rows must not be reorged out");
             assert_eq!(row.canonical_hash, None, "committed rows carry no canonical hash");
-            assert!(row.payload.block.is_object(), "block is serialized as a JSON object");
-            assert!(row.payload.receipts.is_array(), "receipts are serialized as a JSON array");
+            assert_eq!(
+                row.payload.block.header().number(),
+                row.number as u64,
+                "payload block number matches the row"
+            );
+            assert_eq!(row.payload.receipts.len(), 1, "one receipt per block in the fixture");
             assert_eq!(row.hash.as_slice(), block_hash(row.number as u64, 0).as_slice());
         }
     }

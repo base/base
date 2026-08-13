@@ -105,6 +105,7 @@ impl ShadowBlockRepo {
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
+    use reth_primitives_traits::RecoveredBlock;
 
     use super::*;
     use crate::ShadowBlockPayload;
@@ -118,8 +119,8 @@ mod tests {
             created_at: Utc::now(),
             payload: ShadowBlockPayload {
                 builder_version: String::new(),
-                block: serde_json::Value::Null,
-                receipts: serde_json::Value::Null,
+                block: RecoveredBlock::default(),
+                receipts: Vec::new(),
             },
         }
     }

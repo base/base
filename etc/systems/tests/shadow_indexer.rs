@@ -87,8 +87,8 @@ async fn shadow_indexer_persists_committed_blocks() -> Result<()> {
             row.number
         );
         ensure!(
-            row.payload.block.is_object(),
-            "missing serialized block for shadow row: number={}, target_height={target}",
+            row.payload.block.hash().as_slice() == row.hash.as_slice(),
+            "payload block hash does not match row hash: number={}, target_height={target}",
             row.number
         );
     }

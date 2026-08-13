@@ -146,6 +146,7 @@ mod tests {
     use anyhow::anyhow;
     use base_shadow_indexer_db::{ShadowBlockPayload, ShadowBlockRow, ShadowDbConfig};
     use chrono::{DateTime, Utc};
+    use reth_primitives_traits::RecoveredBlock;
     use tokio::sync::mpsc;
 
     use super::{MAX_FLUSH_ATTEMPTS, MockBlockInserter, ShadowWriter};
@@ -172,8 +173,8 @@ mod tests {
             created_at,
             payload: ShadowBlockPayload {
                 builder_version: String::new(),
-                block: serde_json::Value::Null,
-                receipts: serde_json::Value::Null,
+                block: RecoveredBlock::default(),
+                receipts: Vec::new(),
             },
         }
     }

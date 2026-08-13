@@ -6284,23 +6284,22 @@ dependencies = [
 name = "base-shadow-indexer"
 version = "0.0.0"
 dependencies = [
+ "alloy-consensus 2.2.0",
  "alloy-primitives",
  "anyhow",
  "async-trait",
+ "base-common-consensus",
  "base-node-runner",
  "base-shadow-indexer-db",
  "chrono",
  "eyre",
  "futures",
  "mockall",
- "reth-ethereum-primitives",
  "reth-execution-types",
  "reth-exex",
  "reth-node-api",
  "reth-primitives-traits",
  "reth-tasks",
- "serde",
- "serde_json",
  "tokio",
  "tracing",
 ]
@@ -6310,9 +6309,10 @@ name = "base-shadow-indexer-db"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "base-common-consensus",
  "chrono",
+ "reth-primitives-traits",
  "serde",
- "serde_json",
  "sqlx",
  "tokio",
  "tracing",

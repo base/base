@@ -1,6 +1,7 @@
+use base_common_consensus::{BaseBlock, BaseReceipt};
 use chrono::{DateTime, Utc};
+use reth_primitives_traits::RecoveredBlock;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 /// Row representation for a shadow indexer block.
 ///
@@ -27,15 +28,15 @@ pub struct ShadowBlockRow {
 
 /// Block payload persisted as JSONB.
 ///
-/// `block` and `receipts` are captured verbatim from the node's consensus types as opaque
-/// JSON, so fields the node already produces become available downstream without a schema
-/// migration or a bespoke per-field type in this crate.
+/// The recovered block and its receipts are stored as the node's own consensus types, so
+/// downstream consumers read fully typed values while the underlying column stays a single
+/// JSONB blob that evolves with the types without a schema migration.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ShadowBlockPayload {
     /// Builder version string, injected by the writer before persistence.
     pub builder_version: String,
-    /// Recovered block (sealed header, body, and recovered senders) as serialized by the node.
-    pub block: Value,
+    /// Recovered block: sealed header, body, and recovered senders.
+    pub block: RecoveredBlock<BaseBlock>,
     /// Execution receipts for the block, in transaction order.
-    pub receipts: Value,
+    pub receipts: Vec<BaseReceipt>,
 }
