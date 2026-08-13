@@ -430,11 +430,12 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         PruneMinedOutcome { removed }
     }
 
-    /// Removes nonce-free transactions whose signed expiry is due at `now`.
+    /// Removes nonce-free transactions whose validity window has elapsed at
+    /// `now` (Unix **milliseconds**, i.e. `block.timestamp * 1000`).
     ///
-    /// A nonce-free transaction is invalid when `expiry <= now`, matching its
-    /// structural validation rule. Finite channels are unaffected; their
-    /// optional expiry is handled by normal transaction validation until the
+    /// A nonce-free transaction is invalid when `valid_before <= now`, matching
+    /// its structural validation rule. Finite channels are unaffected; their
+    /// optional window is handled by normal transaction validation until the
     /// state-keyed expiry index is introduced.
     pub(crate) fn remove_expired_nonce_free(
         &mut self,
@@ -445,7 +446,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             .values()
             .filter_map(|transaction| {
                 let signed = transaction.transaction.as_eip8130()?;
-                (signed.tx().expiry <= now).then_some(*transaction.hash())
+                (signed.tx().valid_before <= now).then_some(*transaction.hash())
             })
             .collect();
         self.remove_transactions(&expired)
@@ -680,7 +681,7 @@ mod tests {
         signer: &PrivateKeySigner,
         nonce_key: U256,
         nonce_sequence: u64,
-        expiry: u64,
+        valid_before: u64,
         max_priority_fee_per_gas: u128,
         max_fee_per_gas: u128,
     ) -> BasePooledTransaction {
@@ -689,7 +690,8 @@ mod tests {
             sender: None,
             nonce_key,
             nonce_sequence,
-            expiry,
+            valid_after: 0,
+            valid_before,
             max_priority_fee_per_gas,
             max_fee_per_gas,
             gas_limit: 50_000,
@@ -707,7 +709,7 @@ mod tests {
 
     fn signed_nonce_free_tx(
         signer: &PrivateKeySigner,
-        expiry: u64,
+        valid_before: u64,
         max_priority_fee_per_gas: u128,
         max_fee_per_gas: u128,
     ) -> BasePooledTransaction {
@@ -715,7 +717,7 @@ mod tests {
             signer,
             Eip8130Constants::NONCE_KEY_MAX,
             0,
-            expiry,
+            valid_before,
             max_priority_fee_per_gas,
             max_fee_per_gas,
         )

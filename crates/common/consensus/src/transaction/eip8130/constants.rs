@@ -40,7 +40,7 @@ impl Eip8130Constants {
     /// Sentinel `nonce_key` value selecting nonce-free mode (`NONCE_KEY_MAX`).
     ///
     /// When `nonce_key == NONCE_KEY_MAX`, no nonce state is read or written
-    /// and replay protection relies on `expiry` (which must be non-zero).
+    /// and replay protection relies on `valid_before` (which must be non-zero).
     pub const NONCE_KEY_MAX: U256 = U256::MAX;
 
     /// Actor scope bit: ungated `sender_auth` validation context; may originate
@@ -224,35 +224,37 @@ impl Eip8130Constants {
     /// delegation) if the intent is for the total cap to stay the binding limit.
     pub const MAX_ACCOUNT_CHANGES_PER_TX: usize = 3;
 
-    /// Maximum `expiry` window (in seconds beyond the current reference time)
-    /// the mempool accepts for nonce-free-mode transactions
-    /// (`nonce_key == NONCE_KEY_MAX`). Per the spec ("Nodes SHOULD reject
-    /// `NONCE_KEY_MAX` transactions whose `expiry` exceeds a short window"),
-    /// a tight window bounds the replay surface in the absence of nonce state.
+    /// Maximum validity-window span (in **milliseconds** beyond the current
+    /// reference time, i.e. `valid_before - now`) the mempool accepts for
+    /// nonce-free-mode transactions (`nonce_key == NONCE_KEY_MAX`). Per the spec
+    /// ("Nodes SHOULD reject `NONCE_KEY_MAX` transactions whose validity window
+    /// exceeds a short window"), a tight window bounds the replay surface in the
+    /// absence of nonce state.
     ///
-    /// Sized at 20 seconds (~10 Base block times at 2s) so a single `expiry`
-    /// picked by a client stays inside the window on every node despite the
-    /// spread between each node's head-block timestamp and wall-clock time
-    /// (followers lag the sequencer), while still keeping the nonce-free replay
-    /// surface small.
+    /// Sized at 20 seconds (20,000 ms, ~10 Base block times at 2s) so a single
+    /// `valid_before` picked by a client stays inside the window on every node
+    /// despite the spread between each node's head-block timestamp and
+    /// wall-clock time (followers lag the sequencer), while still keeping the
+    /// nonce-free replay surface small.
     ///
     /// # Invariant: must stay `<=` the on-chain inclusion window
     ///
     /// This is only the mempool *pre-filter*; the authoritative, consensus-critical
-    /// window is `NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW` (currently **30s**),
-    /// enforced against the block timestamp when the nonce-free replay entry is
-    /// recorded at inclusion. This value MUST remain `<=` that on-chain window so the
-    /// pool never admits a transaction whose `expiry` the block-inclusion check would
-    /// reject (which would waste block space on transactions that can never land). The
-    /// gap between the two (20 vs 30) is deliberate headroom that also absorbs the
-    /// skew between the pool's reference clock and the inclusion block timestamp.
+    /// window is `NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW` (currently
+    /// **30,000 ms**), enforced against the block timestamp when the nonce-free
+    /// replay entry is recorded at inclusion. This value MUST remain `<=` that
+    /// on-chain window so the pool never admits a transaction whose `valid_before`
+    /// the block-inclusion check would reject (which would waste block space on
+    /// transactions that can never land). The gap between the two (20,000 vs
+    /// 30,000 ms) is deliberate headroom that also absorbs the skew between the
+    /// pool's reference clock and the inclusion block timestamp.
     ///
     /// Raising this at or beyond the on-chain window is a coordinated **consensus /
     /// fork-level** change: the on-chain `NONCE_FREE_EXPIRY_WINDOW` must be raised
     /// too, and `NonceManagerStorage::REPLAY_BUFFER_CAPACITY` resized to keep
     /// `peak nonce-free throughput x window` within capacity (see the buffer-sizing
     /// invariant test in `base-common-precompiles`).
-    pub const NONCE_FREE_MAX_EXPIRY_WINDOW: u64 = 20;
+    pub const NONCE_FREE_MAX_EXPIRY_WINDOW: u64 = 20_000;
 
     /// Maximum number of actor entries the mempool accepts in a single
     /// `Create.initial_actors` slice. Bounds per-transaction memory and CPU

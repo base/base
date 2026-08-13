@@ -63,7 +63,8 @@ async fn nonce_key_zero_returns_protocol_nonce() -> eyre::Result<()> {
 
 /// `nonce_key == NONCE_KEY_MAX` must return `INVALID_PARAMS` because the
 /// expiring-nonce sentinel has no per-channel counter; replay protection
-/// there relies on `expiry`, not a sequence number.
+/// there relies on the `valid_before` validity-window bound, not a sequence
+/// number.
 #[tokio::test]
 async fn nonce_key_max_returns_invalid_params() -> eyre::Result<()> {
     let (_harness, client) = setup().await?;

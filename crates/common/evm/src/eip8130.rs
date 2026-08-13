@@ -905,7 +905,29 @@ impl Eip8130Executor {
         let gas_limit = tx.gas_limit;
         let max_fee = tx.max_fee_per_gas;
         let max_priority = tx.max_priority_fee_per_gas;
-        let expiry = tx.expiry;
+        // The nonce-free replay ring records the transaction's upper validity
+        // bound (`valid_before`, Unix milliseconds); the ring compares it against
+        // `block.timestamp * 1000` internally.
+        let valid_before = tx.valid_before;
+
+        // Consensus-level validity window. The transaction is includable only
+        // within the inclusive interval `[valid_after, valid_before]` on the
+        // millisecond axis (`block.timestamp * 1000`). Per the EIP a transaction
+        // is still valid at `now_ms == valid_before`, so the upper bound is
+        // inclusive: reject only once `now_ms` is strictly past `valid_before`.
+        // Enforced here so a block that includes a transaction outside its window
+        // is invalid at execution, not merely filtered by the mempool; both bounds
+        // apply to nonce-free and nonce-bearing transactions alike (`0` disables
+        // the respective bound). The nonce-free replay ring separately enforces
+        // its own admission window (`valid_before > now_ms`) when it records the
+        // nonce, so a nonce-free transaction at the boundary still fails there.
+        let now_ms = now.saturating_mul(1_000);
+        if tx.valid_after != 0 && now_ms < tx.valid_after {
+            return Err(BaseTransactionError::eip8130("transaction is not yet valid"));
+        }
+        if valid_before != 0 && now_ms > valid_before {
+            return Err(BaseTransactionError::eip8130("transaction validity window has expired"));
+        }
 
         let internals = EvmInternals::from_context(ctx);
         let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
@@ -962,6 +984,9 @@ impl Eip8130Executor {
             let protocol_nonce = sctx
                 .with_account_info(sender, |info| Ok(info.nonce))
                 .map_err(BaseTransactionError::eip8130)?;
+            // The nonce-free replay lookup works in milliseconds (`now_ms`,
+            // `block.timestamp * 1000`), matching the validity window and the
+            // ring buffer; the sequence-channel branches ignore this argument.
             let (nonce_key_first_use, bump_protocol_nonce) =
                 if nonce_key == Eip8130Constants::NONCE_KEY_MAX {
                     NonceValidator::validate(
@@ -970,12 +995,12 @@ impl Eip8130Executor {
                         protocol_nonce,
                         &nonce_mgr,
                         NonceMode::Inclusion,
-                        now,
+                        now_ms,
                     )
                     .map_err(BaseTransactionError::eip8130)?;
                     let replay = NonceValidator::replay_hash(tx, sender);
                     nonce_mgr
-                        .check_and_mark_expiring_nonce(replay, expiry)
+                        .check_and_mark_expiring_nonce(replay, valid_before)
                         .map_err(BaseTransactionError::eip8130)?;
                     (false, false)
                 } else if nonce_key == U256::ZERO {
@@ -985,7 +1010,7 @@ impl Eip8130Executor {
                         protocol_nonce,
                         &nonce_mgr,
                         NonceMode::Inclusion,
-                        now,
+                        now_ms,
                     )
                     .map_err(BaseTransactionError::eip8130)?;
                     (protocol_nonce == 0, true)
@@ -1771,7 +1796,8 @@ mod tests {
             sender: None,
             nonce_key: U256::ZERO,
             nonce_sequence: 0,
-            expiry: 0,
+            valid_after: 0,
+            valid_before: 0,
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 5_000_000_000,
             gas_limit: 1_000_000,
@@ -2733,12 +2759,12 @@ mod tests {
         // Tx 1 already bumped the protocol nonce (0 -> 1) and delegated the sender
         // (both committed above), so tx 2 is a second-use transaction:
         // base AA_BASE_COST 15_000
-        // payload EIP-2028 DA over the tx 1_684
+        // payload EIP-2028 DA over the tx 1_700
         // nonce_key existing channel 0: COLD_SLOAD 2_100 + SSTORE_RESET 2_900 5_000
         // auto_delegation sender already delegated 0
         // sender_auth ECRECOVER 3_000 + cold SLOAD 2_100 5_100
         // call PUSH1 (3) + COLD SLOAD (2_100) + STOP 2_103
-        // total 28_887
+        // total 28_903
         let mut load_tx = base_tx();
         load_tx.nonce_sequence = 1;
         load_tx.calls = vec![vec![Call { to: loader, data: Bytes::new() }]];
@@ -2749,7 +2775,7 @@ mod tests {
 
         assert_eq!(
             load_outcome.result.gas().tx_gas_used(),
-            28_887,
+            28_903,
             "loader SLOAD must be COLD (2_100); a warm read (100) would be 2_000 \
              less, meaning tx 1's warmth leaked across the transaction boundary",
         );
@@ -2787,16 +2813,16 @@ mod tests {
 
         // First-use, single-tx, two phases each calling `loader`:
         // base AA_BASE_COST 15_000
-        // payload EIP-2028 DA over the two-phase tx 1_840
+        // payload EIP-2028 DA over the two-phase tx 1_856
         // nonce_key first use of channel 0: COLD_SLOAD 2_100 + SSTORE_SET 20_000 22_100
         // auto_delegation codeless EOA -> DEFAULT_ACCOUNT 4_600
         // sender_auth ECRECOVER 3_000 + cold SLOAD 2_100 5_100
         // call phase 0 PUSH1 (3) + COLD SLOAD (2_100) + STOP 2_103
         // call phase 1 PUSH1 (3) + WARM SLOAD (100) + STOP 103
-        // total 50_846
+        // total 50_862
         assert_eq!(
             outcome.result.gas().tx_gas_used(),
-            50_846,
+            50_862,
             "phase 1's SLOAD must be WARM (100): committed phase 0 warmed \
              (loader, slot 0). A cold read (2_100) would be 2_000 more, meaning \
              the committed phase's warmth failed to carry across phases",
@@ -2839,17 +2865,17 @@ mod tests {
         // `loader` (PUSH1 0, SLOAD, STOP). Its gas splits into the EIP-8130
         // sender-intrinsic charge (48_484) plus the dispatched call (2_103):
         // base AA_BASE_COST 15_000
-        // payload EIP-2028 DA over the 121-byte tx 1_684
+        // payload EIP-2028 DA over the 122-byte tx 1_688
         // nonce_key first use of channel 0: COLD_SLOAD 2_100 + SSTORE_SET 20_000 22_100
         // auto_delegation codeless EOA -> DEFAULT_ACCOUNT (200 x 23-byte indicator) 4_600
         // sender_auth ECRECOVER 3_000 + cold SLOAD 2_100 5_100
         // call PUSH1 (3) + SLOAD + STOP (0) 2_103
-        // total 50_587
+        // total 50_591
         assert_eq!(
             load_outcome.result.gas().tx_gas_used(),
-            50_587,
+            50_591,
             "loader SLOAD must be COLD (2_100); a warm read (100) would total \
-             48_587, meaning the discarded invalid tx leaked warmth",
+             48_591, meaning the discarded invalid tx leaked warmth",
         );
     }
 
