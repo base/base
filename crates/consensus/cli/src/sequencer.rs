@@ -81,6 +81,7 @@ pub struct SequencerArgs {
 
     /// Source used to complete the sequencer's initial sync.
     #[arg(
+        id = "sequencer_sync_mode",
         long = "sequencer.sync-mode",
         default_value_t = SequencerSyncMode::default(),
         env = "BASE_NODE_SEQUENCER_SYNC_MODE"
