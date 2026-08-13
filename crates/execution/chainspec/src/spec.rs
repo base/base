@@ -696,7 +696,7 @@ mod tests {
     };
     use reth_ethereum_forks::{EthereumHardfork, ForkCondition, ForkHash, ForkId, Head};
 
-    use crate::{BaseChainSpec, BaseChainSpecBuilder, BaseChainSpecError};
+    use crate::{BaseChainSpec, BaseChainSpecBuilder, BaseChainSpecError, GenesisInfo};
 
     #[test]
     fn test_storage_root_consistency() {
@@ -1164,6 +1164,52 @@ mod tests {
             genesis.hash_slow(),
             b256!("0x572a15dd7e69df35913f7f2217376609fc20d59276169977de92c01684637162")
         );
+    }
+
+    #[test]
+    fn embedded_genesis_matches_genesis_active_upgrade_conditions() {
+        for config in [ChainConfig::mainnet(), ChainConfig::sepolia(), ChainConfig::zeronet()] {
+            let genesis: Genesis = serde_json::from_str(config.genesis_json).unwrap();
+            for (actual, expected) in [
+                (genesis.config.shanghai_time, config.canyon_timestamp),
+                (genesis.config.cancun_time, config.ecotone_timestamp),
+                (genesis.config.prague_time, config.isthmus_timestamp),
+            ] {
+                if let Some(actual) = actual {
+                    assert_eq!(
+                        actual, expected,
+                        "Ethereum fork timestamp drift for chain {}",
+                        config.chain_id
+                    );
+                }
+            }
+
+            let genesis_info = GenesisInfo::extract_from(&genesis)
+                .base_chain_info
+                .genesis_info
+                .unwrap_or_default();
+            let configured = BaseChainSpec::try_from(config).unwrap();
+            for (upgrade, actual) in [
+                (BaseUpgrade::Regolith, genesis_info.regolith_time),
+                (BaseUpgrade::Canyon, genesis_info.canyon_time),
+                (BaseUpgrade::Ecotone, genesis_info.ecotone_time),
+                (BaseUpgrade::Fjord, genesis_info.fjord_time),
+                (BaseUpgrade::Granite, genesis_info.granite_time),
+                (BaseUpgrade::Holocene, genesis_info.holocene_time),
+                (BaseUpgrade::Isthmus, genesis_info.isthmus_time),
+                (BaseUpgrade::Jovian, genesis_info.jovian_time),
+            ] {
+                let expected = configured.fork(upgrade);
+                if expected == ForkCondition::Timestamp(config.genesis_l2_time) {
+                    assert_eq!(
+                        actual.map(ForkCondition::Timestamp).unwrap_or(ForkCondition::Never),
+                        expected,
+                        "genesis-active {upgrade} timestamp drift for chain {}",
+                        config.chain_id
+                    );
+                }
+            }
+        }
     }
 
     #[test]
