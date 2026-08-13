@@ -174,8 +174,14 @@ impl RegistrationChecker {
 
     /// Returns whether at least one configured enclave signer is registered.
     pub async fn has_registered_enclave(&self) -> Result<bool, RegistrationError> {
-        for transport in &self.transports {
-            let signer = Self::signer_address(transport).await?;
+        for (index, transport) in self.transports.iter().enumerate() {
+            let signer = match Self::signer_address(transport).await {
+                Ok(signer) => signer,
+                Err(error) => {
+                    warn!(error = %error, index, "skipping transport: key fetch failed");
+                    continue;
+                }
+            };
             if self.is_registered_signer(signer).await? {
                 return Ok(true);
             }
@@ -406,6 +412,19 @@ mod tests {
     async fn health_returns_false_when_not_valid() {
         let checker = test_checker_with_mock(MockRegistry::new(false));
         assert!(!checker.check_health().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn claim_gate_requires_a_registered_enclave() {
+        assert!(
+            test_checker_with_mock(MockRegistry::new(true)).has_registered_enclave().await.unwrap()
+        );
+        assert!(
+            !test_checker_with_mock(MockRegistry::new(false))
+                .has_registered_enclave()
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
