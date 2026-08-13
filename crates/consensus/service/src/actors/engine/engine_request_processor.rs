@@ -690,11 +690,11 @@ where
     async fn active_sequencer_probe_update(
         &self,
         head: L2BlockInfo,
-        fallback_to_default: bool,
+        use_default_on_error: bool,
     ) -> Option<EngineSyncStateUpdate> {
         let safe = match self.client.l2_block_info_by_label(BlockNumberOrTag::Safe).await {
             Ok(safe) => safe.unwrap_or_default(),
-            Err(err) if fallback_to_default => {
+            Err(err) if use_default_on_error => {
                 warn!(target: "engine", error = %err, "Sequencer EL sync probe failed to query safe head, using default");
                 L2BlockInfo::default()
             }
@@ -706,7 +706,7 @@ where
         let finalized = match self.client.l2_block_info_by_label(BlockNumberOrTag::Finalized).await
         {
             Ok(finalized) => finalized.unwrap_or_default(),
-            Err(err) if fallback_to_default => {
+            Err(err) if use_default_on_error => {
                 warn!(target: "engine", error = %err, "Sequencer EL sync probe failed to query finalized head, using default");
                 L2BlockInfo::default()
             }
