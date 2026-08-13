@@ -1,5 +1,3 @@
-use alloy_provider::RootProvider;
-
 use super::{UpgradeSignalApplySummary, UpgradeSignalRuntimeApplier};
 use crate::{
     AlloyUpgradeSignalReader, UpgradeSignalConfig, UpgradeSignalError, UpgradeSignalMetricLayer,
@@ -23,11 +21,10 @@ impl UpgradeSignalRefresher {
     /// Creates a runtime upgrade signal refresher.
     pub const fn new(
         config: UpgradeSignalConfig,
-        l1_provider: RootProvider,
+        reader: AlloyUpgradeSignalReader,
         chain_id: u64,
         metrics_layer: UpgradeSignalMetricLayer,
     ) -> Self {
-        let reader = config.reader(l1_provider);
         Self { config, reader, chain_id, metrics_layer }
     }
 
@@ -69,12 +66,9 @@ mod tests {
     use crate::{UpgradeSignal, UpgradeSignalDefaults};
 
     fn refresher(chain_id: u64) -> UpgradeSignalRefresher {
-        UpgradeSignalRefresher::new(
-            UpgradeSignalConfig::new(Address::ZERO),
-            RootProvider::new_http("http://127.0.0.1:1".parse().unwrap()),
-            chain_id,
-            UpgradeSignalMetricLayer::Consensus,
-        )
+        let config = UpgradeSignalConfig::new(Address::ZERO);
+        let reader = config.reader("http://127.0.0.1:1".parse().unwrap()).unwrap();
+        UpgradeSignalRefresher::new(config, reader, chain_id, UpgradeSignalMetricLayer::Consensus)
     }
 
     fn schedule(

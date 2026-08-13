@@ -13,29 +13,33 @@ workspace = true
 
 [dependencies]
 # workspace
+base-retry.workspace = true
 base-metrics.workspace = true
 base-common-genesis = { workspace = true, features = ["std"] }
 
 # alloy
-alloy-provider.workspace = true
 alloy-sol-types = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
-alloy-rpc-types-eth = { workspace = true, features = ["std"] }
+alloy-rpc-types-eth = { workspace = true, features = ["serde", "std"] }
 
 # general
 url.workspace = true
 eyre.workspace = true
+backon.workspace = true
 tracing.workspace = true
 futures.workspace = true
 metrics = { workspace = true, optional = true }
-tokio = { workspace = true, features = ["time"] }
 thiserror = { workspace = true, features = ["std"] }
 clap = { workspace = true, features = ["derive", "env"] }
 serde = { workspace = true, features = ["derive", "std"] }
+jsonrpsee = { workspace = true, features = ["http-client"] }
+
+[dev-dependencies]
+rstest.workspace = true
+httpmock.workspace = true
+tokio = { workspace = true, features = ["macros"] }
+serde_json = { workspace = true, features = ["std"] }
 
 [features]
 default = []
 metrics = [ "base-metrics/metrics", "dep:metrics" ]
-
-[dev-dependencies]
-rstest.workspace = true

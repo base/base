@@ -121,6 +121,7 @@ impl UpgradeSignalStackOptions {
             mode,
             l1_block_tag: UpgradeSignalBlockTag::Latest,
             node_protocol_version: UpgradeSignalDefaults::node_protocol_version(),
+            request_timeout: UpgradeSignalDefaults::REQUEST_TIMEOUT,
         }
     }
 }
