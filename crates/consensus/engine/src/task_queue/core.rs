@@ -556,12 +556,14 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         Ok(self.state.el_sync_finished)
     }
 
-    /// Clears the task queue.
-    pub fn clear(&mut self) {
+    /// Clears the task queue and returns the number of removed tasks.
+    pub fn clear(&mut self) -> usize {
+        let cleared = self.tasks.len();
         self.tasks.clear();
         self.next_task_sequence = 0;
         self.task_queue_length.send_replace(0);
         Metrics::engine_task_queue_depth().set(0.0);
+        cleared
     }
 
     /// Attempts to drain the queue by executing all [`EngineTask`]s in-order. If any task returns
@@ -733,7 +735,7 @@ mod tests {
         ))));
         assert_eq!(*queue_rx.borrow(), 1);
 
-        engine.clear();
+        assert_eq!(engine.clear(), 1);
 
         assert_eq!(*queue_rx.borrow(), 0);
     }

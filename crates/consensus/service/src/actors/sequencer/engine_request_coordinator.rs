@@ -276,7 +276,10 @@ where
                     // Derivation and gossip may enqueue tasks while reth is snap syncing. Those
                     // tasks carry stale forkchoice state and must not be drained: a reset-severity
                     // failure would issue an FCU that can abort snap sync.
-                    self.processor.engine_mut().clear();
+                    let cleared = self.processor.engine_mut().clear();
+                    if cleared > 0 {
+                        debug!(target: "engine", cleared, "Cleared stale engine tasks during EL sync");
+                    }
                     ResetOutcome::NotReset
                 } else {
                     base_metrics::time!(
