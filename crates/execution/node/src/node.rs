@@ -247,7 +247,6 @@ impl BaseNode {
     {
         let RollupArgs {
             disable_txpool_gossip,
-            compute_pending_block,
             discovery_v4,
             txpool_ordering,
             max_inflight_delegated_slots,
@@ -275,7 +274,7 @@ impl BaseNode {
                     ),
             )
             .payload(BasicPayloadServiceBuilder::new(
-                BasePayloadBuilder::new(compute_pending_block)
+                BasePayloadBuilder::new()
                     .with_da_config(self.da_config.clone())
                     .with_gas_limit_config(self.gas_limit_config.clone()),
             ))
@@ -1029,15 +1028,6 @@ where
 /// A basic Base payload service builder
 #[derive(Debug, Clone)]
 pub struct BasePayloadBuilder<Txs = ()> {
-    /// By default the pending block equals the latest block
-    /// to save resources and not leak txs from the tx-pool,
-    /// this flag enables computing of the pending block
-    /// from the tx-pool instead.
-    ///
-    /// If `compute_pending_block` is not enabled, the payload builder
-    /// will use the payload attributes from the latest block. Note
-    /// that this flag is not yet functional.
-    pub compute_pending_block: bool,
     /// The type responsible for yielding the best transactions for the payload if mempool
     /// transactions are allowed.
     pub best_transactions: Txs,
@@ -1055,7 +1045,6 @@ pub struct BasePayloadBuilder<Txs = ()> {
 impl<Txs: Default> Default for BasePayloadBuilder<Txs> {
     fn default() -> Self {
         Self {
-            compute_pending_block: false,
             best_transactions: Txs::default(),
             da_config: BaseDAConfig::default(),
             gas_limit_config: GasLimitConfig::default(),
@@ -1065,11 +1054,9 @@ impl<Txs: Default> Default for BasePayloadBuilder<Txs> {
 }
 
 impl BasePayloadBuilder {
-    /// Create a new instance with the given `compute_pending_block` flag and data availability
-    /// config.
-    pub fn new(compute_pending_block: bool) -> Self {
+    /// Create a new instance with the default configuration.
+    pub fn new() -> Self {
         Self {
-            compute_pending_block,
             best_transactions: (),
             da_config: BaseDAConfig::default(),
             gas_limit_config: GasLimitConfig::default(),
@@ -1100,19 +1087,11 @@ impl<Txs> BasePayloadBuilder<Txs> {
     /// Configures the type responsible for yielding the transactions that should be included in the
     /// payload.
     pub fn with_transactions<T>(self, best_transactions: T) -> BasePayloadBuilder<T> {
-        let Self {
-            compute_pending_block,
-            da_config,
-            gas_limit_config,
-            manifest_precheck_enabled,
-            ..
-        } = self;
         BasePayloadBuilder {
-            compute_pending_block,
             best_transactions,
-            da_config,
-            gas_limit_config,
-            manifest_precheck_enabled,
+            da_config: self.da_config,
+            gas_limit_config: self.gas_limit_config,
+            manifest_precheck_enabled: self.manifest_precheck_enabled,
         }
     }
 }
@@ -1157,13 +1136,12 @@ where
                 ctx.provider().clone(),
                 evm_config,
                 BaseBuilderConfig {
-                    da_config: self.da_config.clone(),
-                    gas_limit_config: self.gas_limit_config.clone(),
+                    da_config: self.da_config,
+                    gas_limit_config: self.gas_limit_config,
                     manifest_precheck_enabled: self.manifest_precheck_enabled,
                 },
             )
-            .with_transactions(self.best_transactions.clone())
-            .set_compute_pending_block(self.compute_pending_block);
+            .with_transactions(self.best_transactions);
         Ok(payload_builder)
     }
 }
@@ -1459,9 +1437,8 @@ mod tests {
 
     #[test]
     fn payload_builder_preserves_manifest_precheck_setting() {
-        let builder = BasePayloadBuilder::new(false)
-            .with_manifest_precheck_enabled(false)
-            .with_transactions(());
+        let builder =
+            BasePayloadBuilder::new().with_manifest_precheck_enabled(false).with_transactions(());
 
         assert!(!builder.manifest_precheck_enabled);
         assert!(BasePayloadBuilder::<()>::default().manifest_precheck_enabled);
