@@ -153,6 +153,13 @@ pub const SEPOLIA_BERYL_ACTIVATION_ADMIN_ADDRESS: Address =
 pub const ZERONET_BERYL_ACTIVATION_ADMIN_ADDRESS: Address =
     address!("F5969A85a555671EeD766C4ff0C61426AA626b11");
 
+/// Local Docker devnet activation registry admin used by Beryl before Cobalt state-backed storage.
+///
+/// Matches `L2_ACTIVATION_ADMIN_ADDR` in `etc/scripts/devnet/setup-l2.sh`, which defaults to the
+/// deterministic devnet sequencer address.
+pub const DEVNET_BERYL_ACTIVATION_ADMIN_ADDRESS: Address =
+    address!("9965507D1a55bcC2695C58ba16FB37d819B0A4dc");
+
 impl ChainConfig {
     /// CLI chain name for Base Mainnet.
     pub const MAINNET_NAME: &'static str = "base";
@@ -249,7 +256,7 @@ impl ChainConfig {
         match id {
             8453 => Some(&MAINNET),
             84532 => Some(&SEPOLIA),
-            1337 => Some(&DEVNET),
+            84538453 => Some(&DEVNET),
             763360 => Some(&ZERONET),
             _ => None,
         }
@@ -282,6 +289,7 @@ impl ChainConfig {
             8453 => Some(MAINNET_BERYL_ACTIVATION_ADMIN_ADDRESS),
             84532 => Some(SEPOLIA_BERYL_ACTIVATION_ADMIN_ADDRESS),
             763360 => Some(ZERONET_BERYL_ACTIVATION_ADMIN_ADDRESS),
+            84538453 => Some(DEVNET_BERYL_ACTIVATION_ADMIN_ADDRESS),
             _ => None,
         }
     }
@@ -542,8 +550,8 @@ const SEPOLIA: ChainConfig = ChainConfig {
 };
 
 const DEVNET: ChainConfig = ChainConfig {
-    chain_id: 1337,
-    l1_chain_id: 900,
+    chain_id: 84538453,
+    l1_chain_id: 1337,
 
     block_time: 2,
     seq_window_size: 3600,
@@ -754,6 +762,10 @@ mod tests {
         assert_eq!(
             ChainConfig::activation_admin_address_for_upgrade_by_chain_id(84532, BaseUpgrade::Azul),
             None
+        );
+        assert_eq!(
+            ChainConfig::beryl_activation_admin_address_by_chain_id(84538453),
+            Some(DEVNET_BERYL_ACTIVATION_ADMIN_ADDRESS)
         );
     }
 }
