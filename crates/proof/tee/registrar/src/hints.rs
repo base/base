@@ -258,19 +258,20 @@ impl P384Hints {
 
     fn add_affine(&mut self, a: &AffinePoint, b: &AffinePoint) -> HintResult<AffinePoint> {
         match (Self::affine_finite_xy(a)?, Self::affine_finite_xy(b)?) {
-            (None, None) => return Ok(AffinePoint::IDENTITY),
-            (None, Some(_)) => return Ok(*b),
-            (Some(_), None) => return Ok(*a),
+            (None, None) => Ok(AffinePoint::IDENTITY),
+            (None, Some(_)) => Ok(*b),
+            (Some(_), None) => Ok(*a),
             (Some((x1, y1)), Some((x2, y2))) => {
                 if bool::from(x1.ct_eq(&x2)) {
-                    return if bool::from(y1.ct_eq(&y2)) {
+                    if bool::from(y1.ct_eq(&y2)) {
                         self.twice_affine(a)
                     } else {
                         Ok(AffinePoint::IDENTITY)
-                    };
+                    }
+                } else {
+                    self.record_field_inv(&(x1 - x2))?;
+                    Ok((ProjectivePoint::from(*a) + ProjectivePoint::from(*b)).to_affine())
                 }
-                self.record_field_inv(&(x1 - x2))?;
-                Ok((ProjectivePoint::from(*a) + ProjectivePoint::from(*b)).to_affine())
             }
         }
     }
