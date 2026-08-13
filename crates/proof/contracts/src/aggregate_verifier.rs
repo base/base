@@ -240,7 +240,13 @@ impl ProofProtocolDescriptor {
         let mut bytes = Vec::with_capacity(DOMAIN.len() + 1 + 32 * 5);
         bytes.extend_from_slice(DOMAIN);
         bytes.push(self.schedule_kind as u8);
-        bytes.extend_from_slice(self.schedule_id.as_slice());
+        bytes.extend_from_slice(
+            match self.schedule_kind {
+                ProofScheduleKind::Full => self.schedule_id,
+                ProofScheduleKind::None | ProofScheduleKind::Activated => B256::ZERO,
+            }
+            .as_slice(),
+        );
         bytes.extend_from_slice(self.config_hash.as_slice());
         bytes.extend_from_slice(self.tee_image_hash.as_slice());
         bytes.extend_from_slice(self.zk_range_hash.as_slice());
@@ -985,6 +991,18 @@ mod tests {
             descriptor.fingerprint(),
             ProofProtocolDescriptor { schedule_kind: ProofScheduleKind::Full, ..descriptor }
                 .fingerprint()
+        );
+        assert_eq!(
+            descriptor.fingerprint(),
+            ProofProtocolDescriptor { schedule_id: B256::repeat_byte(9), ..descriptor }
+                .fingerprint(),
+            "activated-prefix fingerprints do not commit the unused full-schedule snapshot"
+        );
+        let full = ProofProtocolDescriptor { schedule_kind: ProofScheduleKind::Full, ..descriptor };
+        assert_ne!(
+            full.fingerprint(),
+            ProofProtocolDescriptor { schedule_id: B256::repeat_byte(9), ..full }.fingerprint(),
+            "full-schedule fingerprints commit the snapshot"
         );
     }
 }
