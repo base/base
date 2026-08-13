@@ -21,7 +21,7 @@ use tokio::{
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 
 use crate::{
-    CancellableContext, Metrics, NodeActor, ResetReason, SequencerAdminQuery,
+    CancellableContext, Metrics, NodeActor, ResetReason, SequencerAdminQuery, SequencerSyncMode,
     UnsafePayloadGossipClient,
     actors::{
         SequencerEngineClient,
@@ -71,6 +71,8 @@ pub struct SequencerActor<
     pub engine_client: Arc<SequencerEngineClient_>,
     /// Whether the sequencer is active.
     pub is_active: bool,
+    /// How the sequencer completes startup sync.
+    pub sequencer_sync_mode: SequencerSyncMode,
     /// Number of private blocks to build per shadow sequencing cycle.
     pub shadow_blocks_per_cycle: Option<NonZeroU64>,
     /// Optional account funding injected into the first private block of every shadow cycle.

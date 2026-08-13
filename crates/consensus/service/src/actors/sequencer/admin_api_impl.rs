@@ -176,10 +176,12 @@ where
             )));
         }
 
-        if !self.engine_client.el_sync_finished().await.map_err(|e| {
-            error!(target: "sequencer", error = %e, "Failed to fetch engine EL sync state");
-            SequencerAdminAPIError::RequestError(e.to_string())
-        })? {
+        if self.sequencer_sync_mode.is_el()
+            && !self.engine_client.el_sync_finished().await.map_err(|e| {
+                error!(target: "sequencer", error = %e, "Failed to fetch engine EL sync state");
+                SequencerAdminAPIError::RequestError(e.to_string())
+            })?
+        {
             Metrics::sequencer_start_rejected_total("el_syncing").increment(1);
             return Err(SequencerAdminAPIError::RequestError(
                 "EL sync in progress; cannot safely start sequencer".to_string(),

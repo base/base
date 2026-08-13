@@ -377,7 +377,6 @@ async fn test_stop_discards_queued_parent_and_restart_builds_immediately_on_fres
 
     let mut client = MockSequencerEngineClient::new();
     client.expect_reset_engine_forkchoice().times(1).return_once(|_| Ok(()));
-    client.expect_el_sync_finished().returning(|| Ok(true));
     client.expect_get_unsafe_head().times(5).returning({
         let get_head_calls = Arc::clone(&get_head_calls);
         move || {

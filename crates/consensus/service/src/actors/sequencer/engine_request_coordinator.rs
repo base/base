@@ -233,24 +233,22 @@ where
             }
             match bootstrap_role {
                 BootstrapRole::ConductorFollower => {
-                    if self.sequencer_sync_mode.is_el() {
-                        self.processor.bootstrap_conductor_follower(opt_head, at_genesis).await;
-                    } else {
-                        self.processor.bootstrap_validator(opt_head).await;
-                    }
+                    self.processor
+                        .bootstrap_conductor_follower(
+                            opt_head,
+                            at_genesis,
+                            self.sequencer_sync_mode.is_el(),
+                        )
+                        .await;
                 }
                 BootstrapRole::ActiveSequencer => {
-                    if at_genesis || self.sequencer_sync_mode.is_el() {
-                        self.processor
-                            .bootstrap_active_sequencer(
-                                opt_head,
-                                at_genesis,
-                                self.sequencer_sync_mode.is_el(),
-                            )
-                            .await;
-                    } else {
-                        self.processor.bootstrap_validator(opt_head).await;
-                    }
+                    self.processor
+                        .bootstrap_active_sequencer(
+                            opt_head,
+                            at_genesis,
+                            self.sequencer_sync_mode.is_el(),
+                        )
+                        .await;
                 }
             }
 
@@ -269,14 +267,24 @@ where
 
                 // Attempt to drain all outstanding tasks from the engine queue before adding new
                 // ones.
-                let drain_outcome = base_metrics::time!(
-                    EngineMetrics::engine_processor_drain_duration_seconds(),
-                    {
-                        self.processor.drain().await.inspect_err(
-                            |err| error!(target: "engine", ?err, "Failed to drain engine tasks"),
-                        )
-                    }
-                )?;
+                let el_sync_pending = self.sequencer_sync_mode.is_el()
+                    && !self.processor.engine_state().el_sync_finished;
+                let drain_outcome = if el_sync_pending {
+                    // Derivation and gossip may enqueue tasks while reth is snap syncing. Those
+                    // tasks carry stale forkchoice state and must not be drained: a reset-severity
+                    // failure would issue an FCU that can abort snap sync.
+                    self.processor.engine_mut().clear();
+                    ResetOutcome::NotReset
+                } else {
+                    base_metrics::time!(
+                        EngineMetrics::engine_processor_drain_duration_seconds(),
+                        {
+                            self.processor.drain().await.inspect_err(
+                                |err| error!(target: "engine", ?err, "Failed to drain engine tasks"),
+                            )
+                        }
+                    )?
+                };
                 // A genuine drain reset invalidates shadow reconciliation state and is fatal. The
                 // one-time `InitialELSyncReset` (a cold-start bootstrap reset) is deliberately
                 // tolerated: it carries no reconciliation state and cannot recur.
