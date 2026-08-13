@@ -45,9 +45,10 @@ pub enum ProofsCommands {
     List(ProofsListArgs),
     /// Print the proof capability fingerprint of historical dispute games.
     ///
-    /// Reads the immutable commitments each game proxy exposes and derives the fingerprint the
-    /// challenger routes on, so `--proof-protocol-version <fingerprint>=<version>` mappings can be
-    /// written from observed state rather than guessed. Read-only.
+    /// Reads each game proxy and fingerprints the prover artifact hashes
+    /// (`TEE_IMAGE_HASH`, `ZK_RANGE_HASH`, `ZK_AGGREGATE_HASH`) so
+    /// `--proof-protocol-version <fingerprint>=<version>` mappings can be written from observed
+    /// state. Read-only.
     Protocol(ProofsProtocolArgs),
 }
 

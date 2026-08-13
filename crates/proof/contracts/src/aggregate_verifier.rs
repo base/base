@@ -234,20 +234,15 @@ pub struct ProofProtocolDescriptor {
 
 impl ProofProtocolDescriptor {
     /// Returns the canonical offchain capability fingerprint for routing configuration.
+    ///
+    /// Only prover artifact hashes are committed. Schedule ID is derived by the guest from the
+    /// CL oracle, and `CONFIG_HASH` is chain identity already fixed by deploying one
+    /// prover-service per network.
     #[must_use]
     pub fn fingerprint(&self) -> B256 {
         const DOMAIN: &[u8] = b"base-proof-protocol-v1";
-        let mut bytes = Vec::with_capacity(DOMAIN.len() + 1 + 32 * 5);
+        let mut bytes = Vec::with_capacity(DOMAIN.len() + 32 * 3);
         bytes.extend_from_slice(DOMAIN);
-        bytes.push(self.schedule_kind as u8);
-        bytes.extend_from_slice(
-            match self.schedule_kind {
-                ProofScheduleKind::Full => self.schedule_id,
-                ProofScheduleKind::None | ProofScheduleKind::Activated => B256::ZERO,
-            }
-            .as_slice(),
-        );
-        bytes.extend_from_slice(self.config_hash.as_slice());
         bytes.extend_from_slice(self.tee_image_hash.as_slice());
         bytes.extend_from_slice(self.zk_range_hash.as_slice());
         bytes.extend_from_slice(self.zk_aggregate_hash.as_slice());
@@ -972,7 +967,7 @@ mod tests {
     }
 
     #[test]
-    fn proof_protocol_fingerprint_commits_schedule_kind_and_artifacts() {
+    fn proof_protocol_fingerprint_commits_only_prover_artifacts() {
         let descriptor = ProofProtocolDescriptor {
             schedule_kind: ProofScheduleKind::Activated,
             schedule_id: B256::ZERO,
@@ -989,20 +984,24 @@ mod tests {
         );
         assert_ne!(
             descriptor.fingerprint(),
-            ProofProtocolDescriptor { schedule_kind: ProofScheduleKind::Full, ..descriptor }
+            ProofProtocolDescriptor { zk_range_hash: B256::repeat_byte(6), ..descriptor }
+                .fingerprint()
+        );
+        assert_ne!(
+            descriptor.fingerprint(),
+            ProofProtocolDescriptor { zk_aggregate_hash: B256::repeat_byte(7), ..descriptor }
                 .fingerprint()
         );
         assert_eq!(
             descriptor.fingerprint(),
-            ProofProtocolDescriptor { schedule_id: B256::repeat_byte(9), ..descriptor }
-                .fingerprint(),
-            "activated-prefix fingerprints do not commit the unused full-schedule snapshot"
-        );
-        let full = ProofProtocolDescriptor { schedule_kind: ProofScheduleKind::Full, ..descriptor };
-        assert_ne!(
-            full.fingerprint(),
-            ProofProtocolDescriptor { schedule_id: B256::repeat_byte(9), ..full }.fingerprint(),
-            "full-schedule fingerprints commit the snapshot"
+            ProofProtocolDescriptor {
+                schedule_kind: ProofScheduleKind::Full,
+                schedule_id: B256::repeat_byte(9),
+                config_hash: B256::repeat_byte(8),
+                ..descriptor
+            }
+            .fingerprint(),
+            "schedule and config are not routing keys"
         );
     }
 }
