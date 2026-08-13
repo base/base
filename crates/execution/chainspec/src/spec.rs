@@ -477,9 +477,9 @@ impl UpgradeActivationSink for BaseChainSpec {
         }
     }
 
-    fn finalize(&mut self) -> Result<(), Self::Error> {
+    fn finalize(&mut self) -> Result<bool, Self::Error> {
         self.refresh_genesis_header();
-        Ok(())
+        Ok(true)
     }
 }
 

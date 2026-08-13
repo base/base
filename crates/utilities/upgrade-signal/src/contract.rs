@@ -158,11 +158,10 @@ impl AlloyUpgradeSignalReader {
                 upgrade_id: *upgrade_id,
                 activation_timestamp: *activation_timestamp,
                 protocol_version: minimum_protocol_version,
-                l1_block_number,
             })
             .collect();
 
-        UpgradeSignalSchedule::new(signals)
+        UpgradeSignalSchedule::new(l1_block_number, signals)
     }
 
     /// Reads the full contract-backed upgrade signal schedule.
@@ -227,21 +226,21 @@ impl AlloyUpgradeSignalReader {
 
     /// Reads the schedule, tolerating read failures.
     ///
-    /// Records `l1_read_errors_total` and returns an empty schedule when the read fails. Intended
-    /// for the live metrics poller, which must not abort the node because a schedule read failed.
+    /// Records `l1_read_errors_total` and returns `None` when the read fails. Intended for the live
+    /// metrics poller, which must not abort the node because a schedule read failed.
     pub async fn read_schedule_tolerant(
         &self,
         metrics_layers: &[UpgradeSignalMetricLayer],
-    ) -> UpgradeSignalSchedule {
+    ) -> Option<UpgradeSignalSchedule> {
         match self.read_schedule(metrics_layers).await {
-            Ok(schedule) => schedule,
+            Ok(schedule) => Some(schedule),
             Err(error) => {
                 warn!(
                     target: "upgrade_signal",
                     error = %error,
                     "failed to read live L1 upgrade signal schedule"
                 );
-                UpgradeSignalSchedule::default()
+                None
             }
         }
     }
@@ -267,13 +266,8 @@ mod tests {
             signals(&schedule),
             vec![(BaseUpgrade::Regolith, 10), (BaseUpgrade::Canyon, 20), (BaseUpgrade::Delta, 0)]
         );
-        assert!(
-            schedule
-                .signals
-                .iter()
-                .all(|signal| signal.protocol_version == U256::from(7)
-                    && signal.l1_block_number == 99)
-        );
+        assert!(schedule.signals.iter().all(|signal| signal.protocol_version == U256::from(7)));
+        assert_eq!(schedule.l1_block_number, 99);
     }
 
     #[test]
