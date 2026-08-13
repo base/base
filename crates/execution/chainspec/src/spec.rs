@@ -1,7 +1,7 @@
 use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
 
 use alloy_chains::Chain;
-use alloy_consensus::{BlockHeader, Header, proofs::storage_root_unhashed};
+use alloy_consensus::{BlockHeader, EMPTY_ROOT_HASH, Header, proofs::storage_root_unhashed};
 use alloy_eips::eip7840::BlobParams;
 use alloy_genesis::Genesis;
 use alloy_hardforks::Hardfork;
@@ -11,6 +11,7 @@ use base_common_consensus::Predeploys;
 use base_common_genesis::{
     BaseUpgrade, RuntimeUpgradeRegistry, UpgradeActivation, UpgradeActivationSink,
 };
+use base_protocol::OutputRoot;
 use derive_more::{Constructor, Deref, Into};
 use reth_chainspec::{
     BaseFeeParams, BaseFeeParamsKind, ChainSpec, DepositContract, DisplayHardforks, EthChainSpec,
@@ -266,16 +267,38 @@ impl BaseChainSpec {
         let mut header = reth_chainspec::make_genesis_header(genesis, upgrades);
 
         if upgrades.fork(BaseUpgrade::Isthmus).active_at_timestamp(header.timestamp)
-            && let Some(predeploy) = genesis.alloc.get(&Predeploys::L2_TO_L1_MESSAGE_PASSER)
-            && let Some(storage) = &predeploy.storage
+            && let Some(storage_root) = Self::l2_to_l1_message_passer_storage_root(genesis)
         {
-            header.withdrawals_root =
-                Some(storage_root_unhashed(storage.iter().filter_map(|(k, v)| {
-                    if v.is_zero() { None } else { Some((*k, (*v).into())) }
-                })));
+            header.withdrawals_root = Some(storage_root);
         }
 
         header
+    }
+
+    /// Computes the storage root of the genesis `L2ToL1MessagePasser`, if configured.
+    pub fn l2_to_l1_message_passer_storage_root(genesis: &Genesis) -> Option<B256> {
+        genesis
+            .alloc
+            .get(&Predeploys::L2_TO_L1_MESSAGE_PASSER)
+            .and_then(|account| account.storage.as_ref())
+            .map(|storage| {
+                storage_root_unhashed(storage.iter().filter_map(|(key, value)| {
+                    if value.is_zero() { None } else { Some((*key, (*value).into())) }
+                }))
+            })
+    }
+
+    /// Computes the V0 output root for this chain's genesis block.
+    pub fn genesis_output_root(&self) -> B256 {
+        let bridge_storage_root =
+            Self::l2_to_l1_message_passer_storage_root(&self.genesis).unwrap_or(EMPTY_ROOT_HASH);
+
+        OutputRoot::from_parts(
+            self.genesis_header().state_root,
+            bridge_storage_root,
+            self.genesis_hash(),
+        )
+        .hash()
     }
 
     /// Parses a chain name into an [`BaseChainSpec`], if recognized.
@@ -709,6 +732,14 @@ mod tests {
         assert_ne!(root_origin, root_fix);
         assert_eq!(root_origin, origin_root);
         assert_eq!(root_fix, expected_root);
+    }
+
+    #[test]
+    fn devnet_genesis_output_root() {
+        assert_eq!(
+            BaseChainSpec::devnet().genesis_output_root(),
+            b256!("14dabde8a7b90e1c258c03b239c69567baf19bad7eccf4e59c6c720e6787e7fe")
+        );
     }
 
     #[test]

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{
     chainspec::BaseChainSpecParser,
-    commands::{init_state, p2p},
+    commands::{GenesisOutputRootCommand, init_state, p2p},
 };
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseExecutorProvider;
@@ -44,6 +44,9 @@ pub(crate) enum RethSubcommand {
     /// Dump genesis block JSON configuration to stdout.
     #[command(name = "dump-genesis")]
     DumpGenesis(dump_genesis::DumpGenesisCommand<BaseChainSpecParser>),
+    /// Print the OP Stack output root for an L2 genesis configuration.
+    #[command(name = "genesis-output-root")]
+    GenesisOutputRoot(GenesisOutputRootCommand),
     /// Manipulate individual stages.
     #[command(name = "stage")]
     Stage(Box<stage::Command<BaseChainSpecParser>>),
@@ -81,6 +84,10 @@ impl RethSubcommand {
             Self::DumpGenesis(command) => {
                 let runner = CliRunner::try_default_runtime()?;
                 runner.run_blocking_until_ctrl_c(command.execute())
+            }
+            Self::GenesisOutputRoot(command) => {
+                command.execute();
+                Ok(())
             }
             Self::Stage(command) => {
                 let runner = CliRunner::try_default_runtime()?;

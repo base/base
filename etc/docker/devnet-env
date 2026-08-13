@@ -143,6 +143,7 @@ SEQ2_P2P_KEY=47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a
 L1_RPC_URL=http://localhost:4545
 L1_WS_URL=ws://localhost:4546
 L1_BEACON_URL=http://localhost:4052
+L1_CONTAINER_BEACON_URL=http://l1-cl:4052
 L2_BUILDER_RPC_URL=http://localhost:7545
 L2_BUILDER_WS_URL=ws://localhost:7546
 L2_BUILDER_OP_RPC_URL=http://localhost:7549

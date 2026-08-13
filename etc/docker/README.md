@@ -37,6 +37,38 @@ just devnet logs   # Stream logs from all containers
 just devnet status # Check block numbers and sync status
 ```
 
+### Single-Anvil L1 no-Nitro proving
+
+The optional single-Anvil variant replaces the Reth execution node and both
+Lighthouse processes with one Base-Anvil process. It keeps the L2 and batcher
+unchanged, and uses the same Anvil endpoint for L1 execution, Beacon blob
+fetching, proof inputs, and proof contracts.
+
+First build the latest Base-Anvil default branch, then start the complete stack:
+
+```bash
+just devnet build-anvil-image
+just devnet up-anvil-no-nitro
+```
+
+The second command generates the L2 genesis, computes its output root offline,
+then clones the latest base/contracts default branch and deploys the development
+no-Nitro contracts before any L2 node starts. The Base nodes and proof verifier
+therefore use the same real `ProtocolVersions` contract from genesis; this path
+does not deploy the normal devnet's mock upgrade-signal contract. It then starts
+a fresh prover database, registers and starts two Nitro workers in local mode,
+and starts the proposer. Inspect or stop it with:
+
+```bash
+just anvil-no-nitro status
+just anvil-no-nitro logs
+just devnet down-anvil
+```
+
+Anvil mines one block every four seconds. Do not use timestamp-warp RPCs in
+this variant: Base derives Beacon slots from L1 timestamps, so arbitrary time
+jumps would break the one-slot-per-execution-block mapping used to fetch blobs.
+
 Denim is activated at block 23 by default, switching the sequencer to its 200ms cadence. To
 start a pre-Denim devnet, set `L2_BASE_DENIM_BLOCK` to an empty value:
 
