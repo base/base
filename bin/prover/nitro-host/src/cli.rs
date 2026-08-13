@@ -167,8 +167,8 @@ struct WorkerArgs {
     /// Proof protocol versions claimed by this worker deployment.
     ///
     /// Repeatable or comma-separated. A fleet serves every version its enclaves' registered image
-    /// satisfies, which is usually more than one: the challenger fingerprint mixes TEE and ZK
-    /// commitments, so a ZK-only program rotation mints a new version for an unchanged enclave.
+    /// satisfies. The fingerprint still mixes TEE and ZK hashes, so a ZK-only program rotation
+    /// mints a new version for an unchanged enclave.
     #[arg(long, env = "PROVER_PROTOCOL_VERSION", value_delimiter = ',', num_args = 1..)]
     protocol_version: Vec<u32>,
 
