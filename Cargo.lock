@@ -5829,6 +5829,7 @@ dependencies = [
  "base-proof-tee-nitro-attestation-prover",
  "base-proof-tee-nitro-verifier",
  "base-tx-manager",
+ "ciborium",
  "futures",
  "hex",
  "hex-literal 1.1.0",

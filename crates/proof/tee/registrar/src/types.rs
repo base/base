@@ -1,3 +1,4 @@
+use alloy_primitives::{Address, B256};
 use url::Url;
 
 /// A prover instance discovered from the infrastructure layer.
@@ -22,4 +23,57 @@ pub enum InstanceHealthStatus {
     Unhealthy,
     /// ALB is draining connections from this instance.
     Draining,
+}
+
+/// Identifies which `CertManager` cache helper a certificate requires.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CertKind {
+    /// Intermediate / non-root CA certificate.
+    Ca,
+    /// Attestation document leaf (client) certificate.
+    Leaf,
+}
+
+/// One certificate-cache step in dependency order.
+///
+/// `cert_hash` is the `CertManager` cache key: full-DER keccak for the pinned root
+/// (used only as `parent_cert_hash` of the first CA) and `TBSCertificate` keccak for
+/// every non-root certificate. `revocation_id` is `computeCertId` for the cert.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CertPlan {
+    /// Cache helper kind.
+    pub kind: CertKind,
+    /// Human-readable role label (regional CA, leaf, …).
+    pub label: String,
+    /// DER-encoded certificate bytes.
+    pub cert: Vec<u8>,
+    /// `CertManager` cache key for this certificate.
+    pub cert_hash: B256,
+    /// `CertManager` cache key of the parent certificate.
+    pub parent_cert_hash: B256,
+    /// Issuer/serial revocation identity (`CertManager.computeCertId`).
+    pub revocation_id: B256,
+}
+
+/// Complete registration plan for one Nitro attestation (no signature hints).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RegistrationPlan {
+    /// Signer address derived from attestation `public_key`.
+    pub signer: Address,
+    /// PCR0 measurement bytes.
+    pub pcr0: Vec<u8>,
+    /// Attestation timestamp (Unix milliseconds).
+    pub timestamp: u64,
+    /// Optional nonce from the attestation document.
+    pub nonce: Option<Vec<u8>>,
+    /// Pinned root certificate cache key (`keccak256(full DER)`).
+    pub root_cert_hash: B256,
+    /// Leaf certificate cache key (`keccak256(TBSCertificate TLV)`).
+    pub leaf_cert_hash: B256,
+    /// COSE `Sig_structure` bytes (attestation TBS).
+    pub attestation_tbs: Vec<u8>,
+    /// 96-byte P-384 signature (`r || s`).
+    pub signature: Vec<u8>,
+    /// Non-root CAs (parent-first) followed by the leaf certificate.
+    pub certs: Vec<CertPlan>,
 }
