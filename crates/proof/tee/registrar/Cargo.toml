@@ -28,6 +28,9 @@ k256 = { workspace = true, features = ["ecdsa"] }
 # X.509 / CRL
 x509-parser.workspace = true
 
+# CBOR (attestation document decode after strict COSE parse)
+ciborium.workspace = true
+
 # HTTP (CRL fetching)
 reqwest.workspace = true
 
