@@ -693,7 +693,12 @@ where
         use_default_on_error: bool,
     ) -> Option<EngineSyncStateUpdate> {
         let safe = match self.client.l2_block_info_by_label(BlockNumberOrTag::Safe).await {
-            Ok(safe) => safe.unwrap_or_default(),
+            Ok(Some(safe)) => safe,
+            Ok(None) if use_default_on_error => L2BlockInfo::default(),
+            Ok(None) => {
+                debug!(target: "engine", "Sequencer EL sync probe skipped: safe head unavailable");
+                return None;
+            }
             Err(err) if use_default_on_error => {
                 warn!(target: "engine", error = %err, "Sequencer EL sync probe failed to query safe head, using default");
                 L2BlockInfo::default()
@@ -705,7 +710,12 @@ where
         };
         let finalized = match self.client.l2_block_info_by_label(BlockNumberOrTag::Finalized).await
         {
-            Ok(finalized) => finalized.unwrap_or_default(),
+            Ok(Some(finalized)) => finalized,
+            Ok(None) if use_default_on_error => L2BlockInfo::default(),
+            Ok(None) => {
+                debug!(target: "engine", "Sequencer EL sync probe skipped: finalized head unavailable");
+                return None;
+            }
             Err(err) if use_default_on_error => {
                 warn!(target: "engine", error = %err, "Sequencer EL sync probe failed to query finalized head, using default");
                 L2BlockInfo::default()
@@ -1335,6 +1345,36 @@ mod tests {
 
         drop(req_tx);
         let _ = handle.await;
+    }
+
+    #[tokio::test]
+    async fn active_sequencer_probe_waits_for_safe_label() {
+        let head = test_block_info(100);
+        let finalized = test_block_info(80);
+        let client = Arc::new(
+            test_engine_client_builder()
+                .with_block_info_by_tag(BlockNumberOrTag::Latest, head)
+                .with_block_info_by_tag(BlockNumberOrTag::Finalized, finalized)
+                .with_fork_choice_updated_v3_response(valid_fcu())
+                .build(),
+        );
+        let (state_tx, _) = watch::channel(EngineState::default());
+        let (queue_tx, _) = watch::channel(0usize);
+        let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
+        let mut processor = EngineProcessor::new(
+            client,
+            Arc::new(RollupConfig::default()),
+            MockEngineDerivationClient::new(),
+            engine,
+        );
+
+        processor.probe_sequencer_el_sync(true).await;
+
+        assert_eq!(processor.engine_state().sync_state.unsafe_head(), head);
+        assert!(
+            !processor.engine_state().el_sync_finished,
+            "the active probe must wait until reth exposes a safe label"
+        );
     }
 
     /// Verifies that a conductor follower sequencer (conductor reports `leader() = false`)
