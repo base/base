@@ -5,12 +5,10 @@ use std::sync::{Arc, Mutex};
 use anyhow::Result;
 use base_proof::{CachingOracle, OracleBlobProvider};
 use base_proof_preimage::{HintWriter, NativeChannel, OracleReader};
-use base_proof_succinct_client_utils::witness::{
+use base_proof_zk_utils::witness::{
     BlobData, DefaultWitnessData, WitnessData, WitnessExecutor, executor::get_inputs_for_pipeline,
     preimage_store::PreimageStore,
 };
-use rkyv::to_bytes;
-use sp1_sdk::SP1Stdin;
 
 use crate::witness_generation::{OnlineBlobStore, PreimageWitnessCollector};
 
@@ -72,17 +70,5 @@ impl WitnessGenerator {
             preimage_witness_store.lock().unwrap().clone(),
             blob_data.lock().unwrap().clone(),
         ))
-    }
-
-    /// Build SP1 stdin from the collected witness data.
-    ///
-    /// The intermediate root sampling interval is sourced from `BootInfo` inside the zkVM
-    /// (preimage key 9) — the same channel the TEE enclave reads — so it is intentionally not
-    /// passed through stdin.
-    pub fn get_sp1_stdin(&self, witness: DefaultWitnessData) -> Result<SP1Stdin> {
-        let mut stdin = SP1Stdin::default();
-        let buffer = to_bytes::<rkyv::rancor::Error>(&witness)?;
-        stdin.write_slice(&buffer);
-        Ok(stdin)
     }
 }

@@ -1,11 +1,10 @@
 use std::fmt;
 
-use base_proof_succinct_client_utils::precompiles::cycle_tracker::keys;
+use base_proof_zk_utils::precompiles::cycle_tracker::keys;
+use base_proof_zk_witness::fetcher::BlockInfo;
 use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
 use sp1_sdk::ExecutionReport;
-
-use crate::fetcher::BlockInfo;
 
 /// Statistics for the range execution.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

@@ -11,7 +11,7 @@ repository.workspace = true
 
 # local
 base-proof-succinct-elfs.workspace = true
-base-proof-succinct-host-utils.workspace = true
+base-proof-zk-witness.workspace = true
 
 # sp1
 sp1-sdk = { workspace = true, features = ["blocking", "profiling", "network"] }

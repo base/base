@@ -17,11 +17,12 @@ base-l1-head.workspace = true
 base-metrics.workspace = true
 base-proof-host.workspace = true
 base-proof-zk-host.workspace = true
+base-proof-zk-utils.workspace = true
+base-proof-zk-witness.workspace = true
 base-proof-succinct-elfs.workspace = true
 base-prover-service-protocol.workspace = true
 base-proof-succinct-host-utils.workspace = true
 base-proof-succinct-proof-utils.workspace = true
-base-proof-succinct-client-utils.workspace = true
 
 # network
 url.workspace = true

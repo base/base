@@ -1,4 +1,4 @@
-//! Succinct zkVM client utilities for Base proof generation.
+#![doc = include_str!("../README.md")]
 
 pub mod boot;
 

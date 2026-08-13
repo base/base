@@ -1,5 +1,6 @@
 [package]
-name = "base-proof-succinct-client-utils"
+name = "base-proof-zk-utils"
+description = "Guest-side STF helpers shared by zkVM range programs."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

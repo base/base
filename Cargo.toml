@@ -27,9 +27,9 @@ members = [
   "crates/proof/sub*",
   "crates/proof/[u-y]*",
   "crates/proof/prover-service/[a-r]*",
+  "crates/proof/tee/*",
   "crates/proof/succinct/scripts",
   "crates/proof/succinct/utils/*",
-  "crates/proof/tee/*",
   "crates/proof/zk/*",
   "crates/utilities/*",
   "etc/tools/*",
@@ -212,9 +212,11 @@ base-proposer = { path = "crates/proof/proposer" }
 base-proof-worker = { path = "crates/proof/worker" }
 base-challenger = { path = "crates/proof/challenge" }
 base-proof-zk-host = { path = "crates/proof/zk/host" }
+base-proof-zk-utils = { path = "crates/proof/zk/utils" }
 base-proof-contracts = { path = "crates/proof/contracts" }
 base-proof-submission = { path = "crates/proof/submission" }
 base-proof-zk-backend = { path = "crates/proof/zk/backend" }
+base-proof-zk-witness = { path = "crates/proof/zk/witness" }
 base-prover-service = { path = "crates/proof/prover-service" }
 base-proof-tee-registrar = { path = "crates/proof/tee/registrar" }
 base-prover-service-db = { path = "crates/proof/prover-service/db" }
@@ -237,7 +239,6 @@ base-proof-tee-nitro-attestation-prover = { path = "crates/proof/tee/nitro-attes
 base-proof-succinct-elfs = { path = "crates/proof/succinct/utils/elfs" }
 base-proof-succinct-host-utils = { path = "crates/proof/succinct/utils/host" }
 base-proof-succinct-proof-utils = { path = "crates/proof/succinct/utils/proof" }
-base-proof-succinct-client-utils = { path = "crates/proof/succinct/utils/client" }
 
 # Batcher
 base-blobs = { path = "crates/batcher/blobs" }

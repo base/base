@@ -28,7 +28,7 @@ alloy-primitives.workspace = true
 # local
 base-proof-succinct-elfs.workspace = true
 base-proof-succinct-proof-utils.workspace = true
-base-proof-succinct-client-utils.workspace = true
+base-proof-zk-utils.workspace = true
 
 # sp1
 sp1-sdk = { workspace = true, features = ["blocking"] }

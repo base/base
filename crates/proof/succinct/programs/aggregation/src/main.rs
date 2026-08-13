@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use alloy_consensus::Header;
 use alloy_primitives::{B256, Bytes, keccak256};
 use alloy_sol_types::SolValue;
-use base_proof_succinct_client_utils::{
+use base_proof_zk_utils::{
     boot::BootInfoStruct,
     types::{AggregationInputs, AggregationOutputs, u32_to_u8},
 };
