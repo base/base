@@ -56,13 +56,27 @@ curl -s -X POST "$CONDUCTOR0_URL" \
 echo ""
 echo "=== Starting initial raft leader sequencer ==="
 for attempt in $(seq 1 120); do
-  unsafe_head=$(curl -fsS -X POST "$BUILDER_EL_URL" \
+  if ! unsafe_head=$(curl -fsS -X POST "$BUILDER_EL_URL" \
     -H 'Content-Type: application/json' \
     -d '{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest",false],"id":1}' \
-    | jq -er '.result.hash')
-  response=$(curl -fsS -X POST "$BUILDER_CL_URL" \
+    | jq -er '.result.hash'); then
+    if [ "$attempt" -eq 120 ]; then
+      echo "ERROR: builder execution RPC not ready after $attempt attempts" >&2
+      exit 1
+    fi
+    sleep 0.5
+    continue
+  fi
+  if ! response=$(curl -fsS -X POST "$BUILDER_CL_URL" \
     -H 'Content-Type: application/json' \
-    -d "{\"jsonrpc\":\"2.0\",\"method\":\"admin_startSequencer\",\"params\":[\"$unsafe_head\"],\"id\":1}")
+    -d "{\"jsonrpc\":\"2.0\",\"method\":\"admin_startSequencer\",\"params\":[\"$unsafe_head\"],\"id\":1}"); then
+    if [ "$attempt" -eq 120 ]; then
+      echo "ERROR: builder consensus RPC not ready after $attempt attempts" >&2
+      exit 1
+    fi
+    sleep 0.5
+    continue
+  fi
   if echo "$response" | jq -e '.error == null' >/dev/null; then
     break
   fi

@@ -471,17 +471,25 @@ where
                     EngineActorRequest::ProcessUnsafeL2BlockRequest(envelope) => {
                         match &mut self.sequencer_state {
                             SequencerEngineState::CatchingUp { catchup, .. } => {
-                                catchup.buffer_payload((*envelope).clone());
                                 if self.sequencer_sync_mode.is_el()
                                     && !self.processor.engine_state().el_sync_finished
                                 {
                                     // A restarting follower may be missing the payload's parent.
                                     // newPayload plus FCU gives reth the canonical target needed
                                     // to fetch that gap while catch-up retains the payload for
-                                    // ordered reconciliation after EL sync.
-                                    self.processor
-                                        .enqueue_unsafe_payload_insert(*envelope, None, false);
+                                    // ordered reconciliation after EL sync. The deep clone is
+                                    // limited to this startup window and consumed by the immediate
+                                    // drain; steady-state catch-up retains the original allocation.
+                                    let sync_target = (*envelope).clone();
+                                    catchup.buffer_payload(*envelope);
+                                    self.processor.enqueue_unsafe_payload_insert(
+                                        sync_target,
+                                        None,
+                                        false,
+                                    );
                                     self.processor.drain().await?;
+                                } else {
+                                    catchup.buffer_payload(*envelope);
                                 }
                             }
                             SequencerEngineState::ShadowActive(gate) => {

@@ -724,7 +724,9 @@ where
         })
     }
 
-    /// Re-probes the execution layer while a sequencer is waiting for EL sync to complete.
+    /// Re-probes the execution layer while an EL-mode sequencer is waiting for sync to complete.
+    ///
+    /// This is called only by the coordinator's EL sync probe interval.
     pub async fn probe_sequencer_el_sync(&mut self, active_sequencer: bool) {
         if self.engine.state().el_sync_finished {
             return;
