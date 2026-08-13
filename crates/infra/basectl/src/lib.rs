@@ -11,12 +11,12 @@ pub use commands::{
     OptionalValue, P2pArgs, P2pCommand, P2pCommands, PausedSummaryJson, PeerAction, PeerActionJson,
     PeerBulkAction, PeerBulkActionResultJson, PeerLayer, PeerTarget, PeersJson, ProofOutputStatus,
     ProofResultJson, ProofStatusFilter, ProofSummaryJson, ProofsCommand, ProofsCommands,
-    ProofsFinalizeArgs, ProofsFinalizeJson, ProofsListArgs, ProofsListJson, ProofsStatusArgs,
-    ProofsStatusJson, SequencerAction, SequencerActionJson, SequencerCommand, SequencerCommands,
-    SequencerNodeActionArgs, SequencerNodeJson, SequencerRole, SequencerStartArgs,
-    SequencerStatusArgs, SequencerStatusJson, SyncStatusCommand, SyncStatusJson, TipReferenceJson,
-    TipStatus, TxpoolClearArgs, TxpoolClearJson, TxpoolCommand, TxpoolCommands, TxpoolReadArgs,
-    TxpoolReadJson, UnsafeHeadSource,
+    ProofsFinalizeArgs, ProofsFinalizeJson, ProofsListArgs, ProofsListJson, ProofsProtocolArgs,
+    ProofsStatusArgs, ProofsStatusJson, SequencerAction, SequencerActionJson, SequencerCommand,
+    SequencerCommands, SequencerNodeActionArgs, SequencerNodeJson, SequencerRole,
+    SequencerStartArgs, SequencerStatusArgs, SequencerStatusJson, SyncStatusCommand,
+    SyncStatusJson, TipReferenceJson, TipStatus, TxpoolClearArgs, TxpoolClearJson, TxpoolCommand,
+    TxpoolCommands, TxpoolReadArgs, TxpoolReadJson, UnsafeHeadSource,
 };
 
 mod denim;

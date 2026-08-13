@@ -6920,6 +6920,7 @@ dependencies = [
  "base-consensus-gossip",
  "base-consensus-peers",
  "base-consensus-rpc",
+ "base-proof-contracts",
  "base-protocol",
  "base-prover-service-client",
  "base-prover-service-protocol",

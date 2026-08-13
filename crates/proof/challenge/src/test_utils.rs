@@ -299,6 +299,12 @@ impl MockAggregateVerifier {
 
 #[async_trait]
 impl AggregateVerifierClient for MockAggregateVerifier {
+    async fn proof_protocol_descriptor(
+        &self,
+        _: Address,
+    ) -> Result<base_proof_contracts::ProofProtocolDescriptor, ContractError> {
+        unimplemented!("unused in challenger tests")
+    }
     async fn game_info(&self, game_address: Address) -> Result<GameInfo, ContractError> {
         self.game_info_reads.lock().unwrap().push(game_address);
         self.get(game_address, |s| s.game_info)
