@@ -6,12 +6,12 @@ use axum::{
     Json, Router,
     body::Bytes,
     extract::{DefaultBodyLimit, State},
-    http::StatusCode,
+    http::{HeaderValue, StatusCode, header::CONTENT_TYPE},
     response::{IntoResponse, Response},
     routing::post,
 };
 use reqwest::Client;
-use serde::{Deserialize, de::IgnoredAny};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use tracing::{error, warn};
 use url::Url;
@@ -62,7 +62,7 @@ impl ProxyState {
     }
 
     async fn handle_rpc(State(state): State<Self>, body: Bytes) -> Response {
-        // Avoid full `Value` materialization (heap amplification on crafted payloads).
+        // Only classify the envelope here; the backend owns full JSON-RPC validation.
         match first_non_whitespace(&body) {
             Some(b'[') => {
                 return jsonrpc_error(Value::Null, -32600, "batch requests are not supported");
@@ -71,19 +71,8 @@ impl ProxyState {
             Some(_) | None => return jsonrpc_error(Value::Null, -32600, "invalid request"),
         }
 
-        // Validate JSON without building a `Value` tree; unused fields are skipped.
-        if let Err(error) = serde_json::from_slice::<IgnoredAny>(&body) {
-            warn!(error = %error, "invalid JSON-RPC request body");
-            return jsonrpc_error(Value::Null, -32700, "parse error");
-        }
-
         match state.forward(&body).await {
-            Ok(response_body) => (
-                StatusCode::OK,
-                [(axum::http::header::CONTENT_TYPE, "application/json")],
-                response_body,
-            )
-                .into_response(),
+            Ok(upstream) => upstream.into_client_response(),
             Err(ForwardError::ResponseTooLarge) => {
                 warn!(
                     backend = %state.backend_name,
@@ -105,27 +94,28 @@ impl ProxyState {
         }
     }
 
-    async fn forward(&self, body: &Bytes) -> Result<Bytes, ForwardError> {
+    async fn forward(&self, body: &Bytes) -> Result<UpstreamResponse, ForwardError> {
         let mut response = self
             .client
             .post(self.backend_url.as_str())
-            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .header(CONTENT_TYPE, "application/json")
             .body(body.clone())
             .send()
             .await
             .map_err(ForwardError::Transport)?;
 
-        let status = response.status();
-        if !status.is_success() {
-            // Keep the body: some backends put JSON-RPC errors on non-2xx HTTP statuses.
+        // Forward body regardless of HTTP status (e.g. 429 with a JSON-RPC error).
+        // Client still gets HTTP 200; only body + Content-Type are preserved.
+        if !response.status().is_success() {
             warn!(
                 backend = %self.backend_name,
                 url = %self.backend_url,
-                status = %status.as_u16(),
+                status = %response.status().as_u16(),
                 "backend returned non-success HTTP status"
             );
         }
 
+        let content_type = response.headers().get(CONTENT_TYPE).cloned();
         let content_length = response.content_length();
         if let Some(content_length) = content_length
             && content_length > MAX_RESPONSE_BODY_BYTES as u64
@@ -142,7 +132,27 @@ impl ProxyState {
             buf.extend_from_slice(&chunk);
         }
 
-        Ok(Bytes::from(buf))
+        Ok(UpstreamResponse { content_type, body: Bytes::from(buf) })
+    }
+}
+
+/// Proxied backend response body fields preserved for the client.
+#[derive(Debug)]
+struct UpstreamResponse {
+    /// Upstream `Content-Type`, if present.
+    content_type: Option<HeaderValue>,
+    /// Upstream response body.
+    body: Bytes,
+}
+
+impl UpstreamResponse {
+    /// Builds the client response: HTTP 200 with upstream body and Content-Type.
+    fn into_client_response(self) -> Response {
+        let mut response = (StatusCode::OK, self.body).into_response();
+        if let Some(content_type) = self.content_type {
+            response.headers_mut().insert(CONTENT_TYPE, content_type);
+        }
+        response
     }
 }
 

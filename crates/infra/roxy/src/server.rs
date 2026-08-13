@@ -10,7 +10,7 @@ use axum::Router;
 use base_health::HealthServer;
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::{Config, ProxyState};
 
@@ -27,8 +27,22 @@ impl Server {
     /// Starts the Roxy HTTP server with the provided configuration.
     pub async fn serve(config: Config, cancel: CancellationToken) -> anyhow::Result<()> {
         let backends = config.backends()?;
-        let backend = backends[0].clone();
-        let proxy = ProxyState::from_backend(&backend);
+        if backends.len() > 1 {
+            warn!(
+                backend_count = backends.len(),
+                active_backend = %backends[0].name,
+                "multiple backends configured; only the first is used until routing lands"
+            );
+        }
+        if backends[0].urls.len() > 1 {
+            warn!(
+                backend = %backends[0].name,
+                url_count = backends[0].urls.len(),
+                active_url = %backends[0].urls[0],
+                "multiple URLs configured for backend; only the first is used until pooling lands"
+            );
+        }
+        let proxy = ProxyState::from_backend(&backends[0]);
 
         let listen_addr = config.listen_addr;
         let ready = Arc::new(AtomicBool::new(false));
@@ -41,9 +55,9 @@ impl Server {
 
         info!(
             %listen_addr,
-            backend = %backend.name,
-            url = %backend.urls[0],
-            url_count = backend.urls.len(),
+            backend = %backends[0].name,
+            url = %backends[0].urls[0],
+            url_count = backends[0].urls.len(),
             "roxy server started"
         );
 
@@ -325,6 +339,44 @@ mod tests {
             body["error"]["message"],
             json!("rate limited"),
             "backend error message must be preserved"
+        );
+
+        cancel.cancel();
+    }
+
+    #[tokio::test]
+    async fn preserves_backend_content_type() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(502).set_body_raw("<html>bad gateway</html>", "text/html"),
+            )
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let backend = Backend::parse(&format!("rpcs={}", mock.uri())).expect("parse backend");
+        let ready = Arc::new(AtomicBool::new(true));
+        let (addr, _handle, cancel) =
+            start_test_server(ready, ProxyState::from_backend(&backend)).await;
+
+        let response = reqwest::Client::new()
+            .post(format!("http://{addr}/"))
+            .body(r#"{"jsonrpc":"2.0","method":"eth_chainId","id":1}"#)
+            .send()
+            .await
+            .expect("proxy request");
+
+        assert_eq!(response.status().as_u16(), 200, "client still sees HTTP 200");
+        assert_eq!(
+            response.headers().get(reqwest::header::CONTENT_TYPE),
+            Some(&reqwest::header::HeaderValue::from_static("text/html")),
+            "backend content type must be preserved"
+        );
+        assert_eq!(
+            response.text().await.expect("response body"),
+            "<html>bad gateway</html>",
+            "backend body must be preserved"
         );
 
         cancel.cancel();

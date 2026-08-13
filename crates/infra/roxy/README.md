@@ -18,8 +18,9 @@ At least one `--backend` is required (names must be unique). Traffic currently
 uses the first URL of the first backend; multi-backend routing comes later.
 
 `POST /` accepts a single JSON-RPC request object and forwards it to the
-backend. Batch arrays are rejected. `GET /healthz` is liveness; `GET /readyz`
-is readiness.
+backend. Batch arrays are rejected. Upstream response body and `Content-Type`
+are preserved; the client always receives HTTP 200 for forwarded responses.
+`GET /healthz` is liveness; `GET /readyz` is readiness.
 
 Run `roxy --help` for the full flag list. Every flag also accepts an env var
 (see `--help`).
