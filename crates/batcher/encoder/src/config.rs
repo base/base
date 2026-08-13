@@ -4,7 +4,7 @@ use base_common_genesis::RollupConfig;
 pub use base_comp::CompressionAlgo;
 use base_protocol::{
     BLOB_DERIVATION_PREFIX_SIZE as PROTOCOL_BLOB_DERIVATION_PREFIX_SIZE,
-    BLOB_MAX_DATA_SIZE as PROTOCOL_BLOB_MAX_DATA_SIZE, BatchType,
+    BLOB_MAX_DATA_SIZE as PROTOCOL_BLOB_MAX_DATA_SIZE, BatchType, Frame,
     MAX_BLOB_FRAME_SIZE as PROTOCOL_MAX_BLOB_FRAME_SIZE,
 };
 
@@ -153,20 +153,37 @@ impl EncoderConfig {
                 max_channel_duration: self.max_channel_duration,
             });
         }
+
+        // Every frame must carry at least one compressed byte in addition to
+        // its metadata and the optional Brotli channel-version byte.
+        let channel_version_size =
+            if matches!(self.compression_algo, CompressionAlgo::Zlib) { 0 } else { 1 };
+        let min_frame_size = Frame::ENCODED_OVERHEAD + channel_version_size + 1;
+
+        if self.max_frame_size < min_frame_size {
+            return Err(EncoderConfigError::FrameSizeTooSmall {
+                max_frame_size: self.max_frame_size,
+                min_frame_size,
+            });
+        }
+
         if matches!(self.da_type, DaType::Calldata) && self.target_num_frames != 1 {
             return Err(EncoderConfigError::CalldataRequiresSingleFrame {
                 target_num_frames: self.target_num_frames,
             });
         }
+
         if matches!(self.max_blocks_per_span_batch, Some(0 | 1)) {
             return Err(EncoderConfigError::InvalidMaxBlocksPerSpanBatch);
         }
+
         if matches!(self.da_type, DaType::Blob) && self.max_frame_size > Self::MAX_BLOB_FRAME_SIZE {
             return Err(EncoderConfigError::BlobFrameSizeTooLarge {
                 max_frame_size: self.max_frame_size,
                 max_blob_frame_size: Self::MAX_BLOB_FRAME_SIZE,
             });
         }
+
         if matches!(self.da_type, DaType::Blob)
             && self.target_frame_size > Self::MAX_BLOB_FRAME_SIZE
         {
@@ -175,11 +192,13 @@ impl EncoderConfig {
                 max_blob_frame_size: Self::MAX_BLOB_FRAME_SIZE,
             });
         }
+
         if self.approx_compr_ratio <= 0.0 || self.approx_compr_ratio > 1.0 {
             return Err(EncoderConfigError::InvalidApproxComprRatio {
                 approx_compr_ratio: self.approx_compr_ratio,
             });
         }
+
         Ok(())
     }
 
@@ -205,6 +224,7 @@ impl EncoderConfig {
                 },
             );
         }
+
         if !matches!(self.compression_algo, CompressionAlgo::Zlib)
             && !rollup_config.is_fjord_active(next_l2_timestamp)
         {
@@ -232,6 +252,17 @@ pub enum EncoderConfigError {
         sub_safety_margin: u64,
         /// The configured maximum channel duration.
         max_channel_duration: u64,
+    },
+    /// `max_frame_size` cannot carry one compressed byte and any required channel version.
+    #[error(
+        "max_frame_size ({max_frame_size}) must be at least {min_frame_size} bytes \
+         to carry frame metadata and payload"
+    )]
+    FrameSizeTooSmall {
+        /// The configured maximum frame size.
+        max_frame_size: usize,
+        /// The minimum frame size for the configured compression algorithm.
+        min_frame_size: usize,
     },
     /// `da_type == DaType::Calldata` but `target_num_frames != 1`.
     ///
@@ -362,6 +393,39 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains(&sub_safety_margin.to_string()));
         assert!(msg.contains(&max_channel_duration.to_string()));
+    }
+
+    #[rstest]
+    #[case(CompressionAlgo::Zlib, Frame::ENCODED_OVERHEAD, Frame::ENCODED_OVERHEAD + 1)]
+    #[case(CompressionAlgo::Brotli10, Frame::ENCODED_OVERHEAD + 1, Frame::ENCODED_OVERHEAD + 2)]
+    fn validate_rejects_frame_without_payload_capacity(
+        #[case] compression_algo: CompressionAlgo,
+        #[case] max_frame_size: usize,
+        #[case] min_frame_size: usize,
+    ) {
+        let cfg = EncoderConfig { compression_algo, max_frame_size, ..EncoderConfig::default() };
+
+        let err = cfg.validate().unwrap_err();
+
+        assert!(matches!(
+            err,
+            EncoderConfigError::FrameSizeTooSmall {
+                max_frame_size: actual,
+                min_frame_size: minimum,
+            } if actual == max_frame_size && minimum == min_frame_size
+        ));
+    }
+
+    #[rstest]
+    #[case(CompressionAlgo::Zlib, Frame::ENCODED_OVERHEAD + 1)]
+    #[case(CompressionAlgo::Brotli10, Frame::ENCODED_OVERHEAD + 2)]
+    fn validate_accepts_frame_with_payload_capacity(
+        #[case] compression_algo: CompressionAlgo,
+        #[case] max_frame_size: usize,
+    ) {
+        let cfg = EncoderConfig { compression_algo, max_frame_size, ..EncoderConfig::default() };
+
+        assert!(cfg.validate().is_ok());
     }
 
     #[test]

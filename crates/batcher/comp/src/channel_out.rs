@@ -9,9 +9,6 @@ use rand::{RngCore, SeedableRng, rngs::SmallRng};
 
 use crate::{ChannelCompressor, CompressorError};
 
-/// The frame overhead.
-const FRAME_V0_OVERHEAD: usize = 23;
-
 /// An error returned by the [`ChannelOut`] when adding single batches.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ChannelOutError {
@@ -135,13 +132,11 @@ where
     /// Call this repeatedly until [`ready_bytes`] returns 0 to drain all
     /// compressed data into frames. Only the final frame (when no data
     /// remains and the channel is closed) will have `is_last = true`.
+    /// `max_size` must leave room for at least one compressed byte after
+    /// frame metadata and the optional channel-version byte.
     ///
     /// [`ready_bytes`]: ChannelOut::ready_bytes
     pub fn output_frame(&mut self, max_size: usize) -> Result<Frame, ChannelOutError> {
-        if max_size < FRAME_V0_OVERHEAD {
-            return Err(ChannelOutError::MaxFrameSizeTooSmall);
-        }
-
         // The first frame carries the channel version prefix (if any) so that
         // the reader can identify the compression format.  For brotli this is
         // `0x01`; zlib data is self-identifying and needs no prefix.
@@ -149,15 +144,20 @@ where
             if self.frame_number == 0 { self.compressor.channel_version_byte() } else { None };
         let prefix_len = usize::from(version_byte.is_some());
 
-        let max_size = (max_size - FRAME_V0_OVERHEAD - prefix_len).min(self.ready_bytes());
+        let overhead = Frame::ENCODED_OVERHEAD + prefix_len;
+        if max_size <= overhead {
+            return Err(ChannelOutError::MaxFrameSizeTooSmall);
+        }
 
-        let mut data = Vec::with_capacity(prefix_len + max_size);
+        let payload_capacity = max_size - overhead;
+        let payload_size = payload_capacity.min(self.ready_bytes());
+
+        let mut data = Vec::with_capacity(prefix_len + payload_size);
         if let Some(v) = version_byte {
             data.push(v);
         }
 
-        // Read `max_size` bytes from the compressed data.
-        let mut buf = vec![0u8; max_size];
+        let mut buf = vec![0u8; payload_size];
         self.compressor.read(&mut buf).map_err(ChannelOutError::Compression)?;
         data.extend_from_slice(&buf);
 
@@ -184,20 +184,57 @@ mod tests {
 
     #[test]
     fn test_output_frame_max_size_too_small() {
-        let config = RollupConfig::default();
+        let compressor =
+            MockCompressor { compressed: Some(Bytes::from_static(b"x")), ..Default::default() };
         let mut channel =
-            ChannelOut::new(ChannelId::default(), Arc::new(config), MockCompressor::default());
-        assert_eq!(channel.output_frame(0), Err(ChannelOutError::MaxFrameSizeTooSmall));
+            ChannelOut::new(ChannelId::default(), Arc::new(RollupConfig::default()), compressor);
+        channel.close();
+
+        assert_eq!(
+            channel.output_frame(Frame::ENCODED_OVERHEAD),
+            Err(ChannelOutError::MaxFrameSizeTooSmall)
+        );
+
+        let frame =
+            channel.output_frame(Frame::ENCODED_OVERHEAD + 1).expect("one payload byte should fit");
+        assert_eq!(frame.data, Bytes::from_static(b"x"));
     }
 
     #[test]
-    fn test_channel_out_output_frame_no_data() {
+    fn test_output_frame_reserves_channel_version_byte() {
+        let compressor = MockCompressor {
+            compressed: Some(Bytes::from_static(b"x")),
+            version_byte: Some(1),
+            ..Default::default()
+        };
+        let mut channel =
+            ChannelOut::new(ChannelId::default(), Arc::new(RollupConfig::default()), compressor);
+        channel.close();
+
+        assert_eq!(
+            channel.output_frame(Frame::ENCODED_OVERHEAD + 1),
+            Err(ChannelOutError::MaxFrameSizeTooSmall)
+        );
+
+        let frame = channel
+            .output_frame(Frame::ENCODED_OVERHEAD + 2)
+            .expect("version and payload bytes should fit");
+        assert_eq!(frame.data, Bytes::from_static(b"\x01x"));
+    }
+
+    #[test]
+    fn test_output_frame_propagates_compressor_error() {
         let mut channel = ChannelOut::new(
             ChannelId::default(),
             Arc::new(RollupConfig::default()),
-            MockCompressor { read_error: true, compressed: Some(Default::default()) },
+            MockCompressor {
+                compressed: Some(Bytes::from_static(b"x")),
+                read_error: true,
+                ..Default::default()
+            },
         );
-        let err = channel.output_frame(FRAME_V0_OVERHEAD).unwrap_err();
+
+        let err = channel.output_frame(Frame::ENCODED_OVERHEAD + 1).unwrap_err();
         assert_eq!(err, ChannelOutError::Compression(CompressorError::Full));
     }
 
@@ -208,7 +245,7 @@ mod tests {
             Arc::new(RollupConfig::default()),
             MockCompressor { compressed: Some(Default::default()), ..Default::default() },
         );
-        let frame = channel.output_frame(FRAME_V0_OVERHEAD).unwrap();
+        let frame = channel.output_frame(Frame::ENCODED_OVERHEAD + 1).unwrap();
         assert_eq!(frame.id, ChannelId::default());
         assert_eq!(frame.number, 0);
         assert!(!frame.is_last);
