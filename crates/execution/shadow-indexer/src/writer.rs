@@ -56,17 +56,9 @@ impl ShadowWriter {
     async fn run(mut self) {
         info!(target: "base::shadow-indexer", "Starting shadow indexer writer");
 
-        let pool = match self.db_config.init_pool().await {
-            Ok(pool) => pool,
-            Err(error) => {
-                error!(
-                    target: "base::shadow-indexer",
-                    error = ?error,
-                    "Failed to initialize shadow indexer database pool"
-                );
-                panic!("failed to initialize shadow indexer database pool: {error:?}");
-            }
-        };
+        let pool = self.db_config.init_pool().await.unwrap_or_else(|error| {
+            panic!("failed to initialize shadow indexer database pool: {error:?}")
+        });
         let repo = ShadowBlockRepo::new(pool);
         let mut interval = interval(FLUSH_INTERVAL);
         interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -174,7 +166,7 @@ mod tests {
     fn sample_row(number: i64, created_at: DateTime<Utc>) -> ShadowBlockRow {
         ShadowBlockRow {
             number,
-            hash: "hash".to_string(),
+            hash: b"hash".to_vec(),
             reorged_out: false,
             canonical_hash: None,
             created_at,

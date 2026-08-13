@@ -1,10 +1,10 @@
-CREATE TABLE shadow_blocks(
+CREATE TABLE IF NOT EXISTS shadow_blocks(
   number BIGINT NOT NULL,
-  hash TEXT NOT NULL,
+  hash BYTEA NOT NULL,
   reorged_out BOOL NOT NULL DEFAULT false,
-  canonical_hash TEXT,
+  canonical_hash BYTEA,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   payload JSONB NOT NULL,
   PRIMARY KEY(number, hash)
 );
-CREATE INDEX idx_shadow_blocks_number ON shadow_blocks(number DESC);
+CREATE INDEX IF NOT EXISTS idx_shadow_blocks_number ON shadow_blocks(number DESC);

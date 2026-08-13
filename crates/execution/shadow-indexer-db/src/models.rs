@@ -12,12 +12,12 @@ use serde_json::Value;
 pub struct ShadowBlockRow {
     /// Block number.
     pub number: i64,
-    /// Block hash.
-    pub hash: String,
+    /// Block hash, stored as its raw 32 bytes.
+    pub hash: Vec<u8>,
     /// Whether the block was reorged out.
     pub reorged_out: bool,
-    /// Canonical block hash at the same height after reorg.
-    pub canonical_hash: Option<String>,
+    /// Canonical block hash at the same height after reorg, stored as its raw 32 bytes.
+    pub canonical_hash: Option<Vec<u8>>,
     /// Row creation time.
     pub created_at: DateTime<Utc>,
     /// Full executed block and receipts persisted as JSONB.

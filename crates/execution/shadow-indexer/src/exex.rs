@@ -94,7 +94,7 @@ impl ShadowIndexerExEx {
         block: &RecoveredBlock<N::Block>,
         receipts: &[N::Receipt],
         reorged_out: bool,
-        canonical_hash: Option<String>,
+        canonical_hash: Option<Vec<u8>>,
     ) -> Result<ShadowBlockRow>
     where
         N: NodePrimitives,
@@ -114,7 +114,7 @@ impl ShadowIndexerExEx {
 
         Ok(ShadowBlockRow {
             number,
-            hash: block.hash().to_string(),
+            hash: block.hash().as_slice().to_vec(),
             reorged_out,
             canonical_hash,
             created_at: Utc::now(),
@@ -150,7 +150,7 @@ impl ShadowIndexerExEx {
             let canonical_hash = new
                 .blocks()
                 .get(&header.number())
-                .map(|canonical_block| canonical_block.hash().to_string());
+                .map(|canonical_block| canonical_block.hash().as_slice().to_vec());
 
             if canonical_hash.is_none() {
                 warn!(
@@ -279,7 +279,7 @@ mod tests {
             assert_eq!(row.canonical_hash, None, "committed rows carry no canonical hash");
             assert!(row.payload.block.is_object(), "block is serialized as a JSON object");
             assert!(row.payload.receipts.is_array(), "receipts are serialized as a JSON array");
-            assert_eq!(row.hash, block_hash(row.number as u64, 0).to_string());
+            assert_eq!(row.hash.as_slice(), block_hash(row.number as u64, 0).as_slice());
         }
     }
 
@@ -302,10 +302,10 @@ mod tests {
         assert_eq!(canonical.len(), 4, "new blocks 6..=9 recorded as canonical");
 
         for row in &reorged {
-            assert_eq!(row.hash, block_hash(row.number as u64, 0).to_string());
+            assert_eq!(row.hash.as_slice(), block_hash(row.number as u64, 0).as_slice());
             assert_eq!(
                 row.canonical_hash,
-                Some(block_hash(row.number as u64, NEW_CHAIN_VARIANT).to_string()),
+                Some(block_hash(row.number as u64, NEW_CHAIN_VARIANT).as_slice().to_vec()),
                 "reorged-out row points at the new canonical hash at its height"
             );
         }
@@ -335,7 +335,10 @@ mod tests {
             .iter()
             .find(|row| row.number == 6 && row.reorged_out)
             .expect("old block 6 reorged out");
-        assert_eq!(present.canonical_hash, Some(block_hash(6, NEW_CHAIN_VARIANT).to_string()));
+        assert_eq!(
+            present.canonical_hash,
+            Some(block_hash(6, NEW_CHAIN_VARIANT).as_slice().to_vec())
+        );
     }
 
     #[tokio::test]

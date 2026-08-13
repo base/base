@@ -76,9 +76,9 @@ impl ShadowBlockRepo {
     }
 
     fn dedupe_last_write_wins(rows: &[ShadowBlockRow]) -> Vec<&ShadowBlockRow> {
-        let mut by_key: HashMap<(i64, &str), &ShadowBlockRow> = HashMap::with_capacity(rows.len());
+        let mut by_key: HashMap<(i64, &[u8]), &ShadowBlockRow> = HashMap::with_capacity(rows.len());
         for row in rows {
-            by_key.insert((row.number, row.hash.as_str()), row);
+            by_key.insert((row.number, row.hash.as_slice()), row);
         }
         by_key.into_values().collect()
     }
@@ -109,10 +109,10 @@ mod tests {
     use super::*;
     use crate::ShadowBlockPayload;
 
-    fn sample_row(number: i64, hash: &str, reorged_out: bool) -> ShadowBlockRow {
+    fn sample_row(number: i64, hash: &[u8], reorged_out: bool) -> ShadowBlockRow {
         ShadowBlockRow {
             number,
-            hash: hash.to_string(),
+            hash: hash.to_vec(),
             reorged_out,
             canonical_hash: None,
             created_at: Utc::now(),
@@ -127,9 +127,9 @@ mod tests {
     #[test]
     fn dedupe_collapses_duplicate_number_hash_to_last_write() {
         let rows = vec![
-            sample_row(1, "0xaa", false),
-            sample_row(2, "0xbb", false),
-            sample_row(1, "0xaa", true),
+            sample_row(1, &[0xaa], false),
+            sample_row(2, &[0xbb], false),
+            sample_row(1, &[0xaa], true),
         ];
 
         let deduped = ShadowBlockRepo::dedupe_last_write_wins(&rows);
@@ -137,14 +137,14 @@ mod tests {
         assert_eq!(deduped.len(), 2);
         let kept = deduped
             .iter()
-            .find(|row| row.number == 1 && row.hash == "0xaa")
+            .find(|row| row.number == 1 && row.hash == [0xaa])
             .expect("duplicated key survives");
         assert!(kept.reorged_out, "duplicate key keeps the last write");
     }
 
     #[test]
     fn dedupe_keeps_same_number_with_distinct_hash() {
-        let rows = vec![sample_row(1, "0xaa", true), sample_row(1, "0xbb", false)];
+        let rows = vec![sample_row(1, &[0xaa], true), sample_row(1, &[0xbb], false)];
 
         let deduped = ShadowBlockRepo::dedupe_last_write_wins(&rows);
 
