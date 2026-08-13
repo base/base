@@ -3136,15 +3136,7 @@ mod tests {
                 1_000,
                 1_200,
             ),
-            PoolState::v2_like(
-                addr(0x33),
-                Protocol::UniswapV2,
-                token,
-                addr(0x01),
-                1,
-                0,
-                1_000,
-            ),
+            PoolState::v2_like(addr(0x33), Protocol::UniswapV2, token, addr(0x01), 1, 0, 1_000),
             PoolState::v2_like(
                 addr(0x34),
                 Protocol::UniswapV2,
@@ -3248,12 +3240,8 @@ mod tests {
         };
 
         let two_leg = run_frame(&pools, &dirty, &base, NoActionGuard);
-        let three_leg = run_frame(
-            &pools,
-            &dirty,
-            &DryRunConfig { max_cycle_legs: 3, ..base },
-            NoActionGuard,
-        );
+        let three_leg =
+            run_frame(&pools, &dirty, &DryRunConfig { max_cycle_legs: 3, ..base }, NoActionGuard);
 
         assert!(two_leg.candidates.is_empty());
         assert_eq!(two_leg.health, "ok");
