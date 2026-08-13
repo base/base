@@ -14,7 +14,7 @@ use base_node_core::{
     args::RollupArgs,
     node::{
         BaseConsensusBuilder, BaseExecutorBuilder, BaseNetworkBuilder, BaseNodeComponentBuilder,
-        BaseNodeTypes, BasePayloadBuilder, BasePoolBuilder,
+        BaseNodeTypes, BasePayloadBuilder, BasePayloadServiceBuilder, BasePoolBuilder,
     },
     utils::payload_attributes,
 };
@@ -25,8 +25,7 @@ use reth_e2e_test_utils::{
 };
 use reth_node_api::FullNodeTypes;
 use reth_node_builder::{
-    EngineNodeLauncher, Node, NodeBuilder, NodeConfig,
-    components::{BasicPayloadServiceBuilder, ComponentsBuilder},
+    EngineNodeLauncher, Node, NodeBuilder, NodeConfig, components::ComponentsBuilder,
 };
 use reth_node_core::args::DatadirArgs;
 use reth_payload_util::{
@@ -98,7 +97,7 @@ where
         .node_types::<Node>()
         .pool(BasePoolBuilder::default())
         .executor(BaseExecutorBuilder::default())
-        .payload(BasicPayloadServiceBuilder::new(
+        .payload(BasePayloadServiceBuilder::new(
             BasePayloadBuilder::new().with_transactions(CustomTxPriority { chain_id }),
         ))
         .network(BaseNetworkBuilder::new(disable_txpool_gossip, !discovery_v4))

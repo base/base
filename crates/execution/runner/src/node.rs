@@ -10,11 +10,11 @@ use base_node_core::{
     BaseNetworkBuilder, BaseNodeComponentBuilder, BaseNodeTypes, BasePayloadValidatorBuilder,
     BaseStorage,
     args::RollupArgs,
-    node::{BasePayloadBuilder, BasePoolBuilder},
+    node::{BasePayloadBuilder, BasePayloadServiceBuilder, BasePoolBuilder},
 };
 use reth_node_builder::{
     Node, NodeAdapter, NodeComponentsBuilder,
-    components::{BasicPayloadServiceBuilder, ComponentsBuilder},
+    components::ComponentsBuilder,
     node::{FullNodeTypes, NodeTypes},
     rpc::BasicEngineValidatorBuilder,
 };
@@ -107,7 +107,7 @@ impl BaseNode {
                     ),
             )
             .executor(BaseExecutorBuilder::default())
-            .payload(BasicPayloadServiceBuilder::new(
+            .payload(BasePayloadServiceBuilder::new(
                 BasePayloadBuilder::new()
                     .with_da_config(self.da_config.clone())
                     .with_gas_limit_config(self.gas_limit_config.clone())
@@ -185,7 +185,7 @@ where
     type ComponentsBuilder = ComponentsBuilder<
         N,
         BasePoolBuilder,
-        BasicPayloadServiceBuilder<BasePayloadBuilder>,
+        BasePayloadServiceBuilder,
         BaseNetworkBuilder,
         BaseExecutorBuilder,
         BaseConsensusBuilder,
