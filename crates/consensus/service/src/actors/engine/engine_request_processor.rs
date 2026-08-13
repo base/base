@@ -793,7 +793,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{sync::Arc, time::Duration};
 
     use alloy_consensus::transaction::Recovered;
     use alloy_eips::{BlockId, BlockNumHash, BlockNumberOrTag, NumHash, eip2718::Encodable2718};
@@ -1273,6 +1273,65 @@ mod tests {
             matches!(response, Err(EngineClientError::ELSyncing)),
             "expected ELSyncing while snap-sync is in progress, got {response:?}"
         );
+
+        drop(req_tx);
+        let _ = handle.await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn periodic_probe_completes_sequencer_el_sync() {
+        let head = test_block_info(100);
+        let safe = test_block_info(90);
+        let finalized = test_block_info(80);
+        let client = Arc::new(
+            test_engine_client_builder()
+                .with_block_info_by_tag(BlockNumberOrTag::Latest, head)
+                .with_block_info_by_tag(BlockNumberOrTag::Safe, safe)
+                .with_block_info_by_tag(BlockNumberOrTag::Finalized, finalized)
+                .with_fork_choice_updated_v3_response(syncing_fcu())
+                .build(),
+        );
+
+        let mut mock_derivation = MockEngineDerivationClient::new();
+        mock_derivation.expect_send_new_engine_safe_head().once().returning(|_| Ok(()));
+        mock_derivation.expect_notify_sync_completed().once().returning(|_| Ok(()));
+
+        let (state_tx, state_rx) = watch::channel(EngineState::default());
+        let (queue_tx, _) = watch::channel(0usize);
+        let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
+        let processor = EngineProcessor::new(
+            Arc::clone(&client),
+            Arc::new(RollupConfig::default()),
+            mock_derivation,
+            engine,
+        );
+        let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
+        let (req_tx, req_rx) = mpsc::channel(8);
+        let handle = SequencerEngineRequestCoordinator::new(
+            processor,
+            false,
+            None,
+            false,
+            SequencerSyncMode::El,
+            unsafe_head_tx,
+        )
+        .start(req_rx);
+
+        state_rx
+            .clone()
+            .wait_for(|state| state.sync_state.unsafe_head() == head)
+            .await
+            .expect("bootstrap did not publish the unsafe head");
+        assert!(!state_rx.borrow().el_sync_finished);
+
+        client.storage().write().await.fork_choice_updated_v3_response = Some(valid_fcu());
+        tokio::time::advance(Duration::from_secs(5)).await;
+        state_rx
+            .clone()
+            .wait_for(|state| state.el_sync_finished)
+            .await
+            .expect("periodic probe did not complete EL sync");
+        tokio::task::yield_now().await;
 
         drop(req_tx);
         let _ = handle.await;
