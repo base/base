@@ -781,6 +781,12 @@ where
                 unsafe_head: Some(head),
                 ..Default::default()
             });
+        } else {
+            info!(
+                target: "engine",
+                unsafe_head = %head.block_info.number,
+                "Sequencer EL sync probe confirmed sync complete"
+            );
         }
     }
 }
