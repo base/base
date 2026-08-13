@@ -1,7 +1,10 @@
 //! Flashblocks builder types.
 
 mod best_txs;
-pub use best_txs::{BestFlashblocksTxs, FlashblocksNonceLane};
+pub use best_txs::{
+    BestFlashblocksTxs, ParkableBestPayloadTransactions, ParkablePayloadTransactions,
+    PayloadTransactionInvalidated,
+};
 
 mod deadline;
 pub use deadline::PayloadJobDeadline;

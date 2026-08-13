@@ -40,7 +40,13 @@ pub use transaction::{
 };
 
 mod ordering;
-pub use ordering::{BaseOrdering, TimestampOrdering};
+pub use ordering::{BaseOrdering, BestTransactionPriority, TimestampOrdering};
+
+mod parking;
+pub use parking::{
+    BestTransactionLane, BestTransactionLaneState, ParkableBestTransactions,
+    ParkableTransactionPool, ParkedBestTransactions,
+};
 
 mod pool;
 pub use pool::{AccountStateDiff, BaseTransactionPool};

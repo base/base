@@ -35,7 +35,6 @@ use reth_execution_cache::{CachedStateMetrics, CachedStateMetricsSource, CachedS
 use reth_execution_types::ChangedAccount;
 use reth_node_api::{Block, BuiltPayloadExecutedBlock, PayloadBuilderError};
 use reth_payload_primitives::PayloadAttributes;
-use reth_payload_util::BestPayloadTransactions;
 use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{
     BlockExecutionOutput, BlockExecutionResult, HashedPostStateProvider, ProviderError,
@@ -54,10 +53,11 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
 
 use crate::{
-    BuilderConfig, BuilderMetrics, CandidateSource, DefaultCandidateSource, ExecutionInfo,
-    PayloadBuilder, ResourceLimits,
+    BuilderConfig, BuilderMetrics, ExecutionInfo, PayloadBuilder, ResourceLimits,
     flashblocks::{
-        FlashblocksExtraCtx, best_txs::BestFlashblocksTxs, context::BasePayloadBuilderCtx,
+        FlashblocksExtraCtx,
+        best_txs::{BestFlashblocksTxs, ParkableBestPayloadTransactions},
+        context::BasePayloadBuilderCtx,
         generator::BuildArguments,
     },
     traits::{ClientBounds, PoolBounds},
@@ -71,15 +71,7 @@ use crate::{
 
 type NextBestFlashblocksTxs<Pool> = BestFlashblocksTxs<
     <Pool as TransactionPool>::Transaction,
-    Box<
-        dyn reth_transaction_pool::BestTransactions<
-                Item = Arc<
-                    reth_transaction_pool::ValidPoolTransaction<
-                        <Pool as TransactionPool>::Transaction,
-                    >,
-                >,
-            >,
-    >,
+    ParkableBestPayloadTransactions<<Pool as TransactionPool>::Transaction>,
 >;
 
 #[derive(Debug, Default)]
@@ -120,7 +112,7 @@ pub(super) struct BuilderOutputs {
 
 /// Base payload builder
 #[derive(Debug, Clone)]
-pub(super) struct BasePayloadBuilder<Pool, Client, S = DefaultCandidateSource> {
+pub(super) struct BasePayloadBuilder<Pool, Client> {
     /// The type responsible for creating the evm.
     pub evm_config: BaseEvmConfig,
     /// The transaction pool
@@ -134,11 +126,9 @@ pub(super) struct BasePayloadBuilder<Pool, Client, S = DefaultCandidateSource> {
     pub outputs: BuilderOutputs,
     /// Last flashblock emitted by this builder instance.
     last_emitted_flashblock_id: Arc<LastEmittedFlashblockId>,
-    /// Transforms the candidate transaction stream drained by the build loop.
-    candidate_source: S,
 }
 
-impl<Pool, Client, S> BasePayloadBuilder<Pool, Client, S> {
+impl<Pool, Client> BasePayloadBuilder<Pool, Client> {
     /// `BasePayloadBuilder` constructor.
     pub(super) fn new(
         evm_config: BaseEvmConfig,
@@ -146,7 +136,6 @@ impl<Pool, Client, S> BasePayloadBuilder<Pool, Client, S> {
         client: Client,
         config: BuilderConfig,
         outputs: BuilderOutputs,
-        candidate_source: S,
     ) -> Self {
         Self {
             evm_config,
@@ -155,7 +144,6 @@ impl<Pool, Client, S> BasePayloadBuilder<Pool, Client, S> {
             config,
             outputs,
             last_emitted_flashblock_id: Arc::default(),
-            candidate_source,
         }
     }
 
@@ -168,12 +156,10 @@ impl<Pool, Client, S> BasePayloadBuilder<Pool, Client, S> {
     }
 }
 
-impl<Pool, Client, S> reth_basic_payload_builder::PayloadBuilder
-    for BasePayloadBuilder<Pool, Client, S>
+impl<Pool, Client> reth_basic_payload_builder::PayloadBuilder for BasePayloadBuilder<Pool, Client>
 where
     Pool: Clone + Send + Sync,
     Client: Clone + Send + Sync,
-    S: Clone + Send + Sync,
 {
     type Attributes = BasePayloadBuilderAttributes<BaseTransactionSigned>;
     type BuiltPayload = BaseBuiltPayload;
@@ -200,11 +186,10 @@ where
     }
 }
 
-impl<Pool, Client, S> BasePayloadBuilder<Pool, Client, S>
+impl<Pool, Client> BasePayloadBuilder<Pool, Client>
 where
     Pool: PoolBounds,
     Client: ClientBounds,
-    S: CandidateSource<Pool::Transaction>,
 {
     fn get_base_payload_builder_ctx(
         &self,
@@ -441,10 +426,9 @@ where
         // Create best_transaction iterator
         let best_txs_attributes = ctx.best_transaction_attributes();
         let mut best_txs = BestFlashblocksTxs::new(
-            BestPayloadTransactions::new(self.candidate_source.best_transactions(
-                self.pool.best_transactions_with_attributes(best_txs_attributes),
-                best_txs_attributes,
-            )),
+            ParkableBestPayloadTransactions::new(
+                self.pool.best_transactions_with_attributes_and_parking(best_txs_attributes),
+            ),
             self.config.rejection_cache.clone(),
         );
         let interval = self.config.flashblocks_interval;
@@ -643,11 +627,8 @@ where
 
         let best_txs_start_time = Instant::now();
         let best_txs_attributes = ctx.best_transaction_attributes();
-        best_txs.refresh_iterator(BestPayloadTransactions::new(
-            self.candidate_source.best_transactions(
-                self.pool.best_transactions_with_attributes(best_txs_attributes),
-                best_txs_attributes,
-            ),
+        best_txs.refresh_iterator(ParkableBestPayloadTransactions::new(
+            self.pool.best_transactions_with_attributes_and_parking(best_txs_attributes),
         ));
         let transaction_pool_fetch_time = best_txs_start_time.elapsed();
         BuilderMetrics::transaction_pool_fetch_duration().record(transaction_pool_fetch_time);
@@ -1083,11 +1064,10 @@ where
 }
 
 #[async_trait::async_trait]
-impl<Pool, Client, S> PayloadBuilder for BasePayloadBuilder<Pool, Client, S>
+impl<Pool, Client> PayloadBuilder for BasePayloadBuilder<Pool, Client>
 where
     Pool: PoolBounds,
     Client: ClientBounds,
-    S: CandidateSource<Pool::Transaction> + Clone + Unpin + 'static,
 {
     type Attributes = BasePayloadBuilderAttributes<BaseTransactionSigned>;
     type BuiltPayload = BaseBuiltPayload;
