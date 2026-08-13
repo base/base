@@ -77,3 +77,27 @@ pub struct RegistrationPlan {
     /// Non-root CAs (parent-first) followed by the leaf certificate.
     pub certs: Vec<CertPlan>,
 }
+
+/// Packed P-384 inverse-hint streams for one registration plan.
+///
+/// Each stream is `inverse_0 ‖ … ‖ inverse_{k-1}` with 48-byte big-endian limbs
+/// in the exact order consumed by onchain `P384Verifier`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RegistrationHints {
+    /// Hint stream for each entry in [`RegistrationPlan::certs`] (same order).
+    pub cert_signature_hints: Vec<Vec<u8>>,
+    /// Hint stream for the attestation COSE signature.
+    pub attestation_hints: Vec<u8>,
+}
+
+/// Registration plan plus `CertManager` / attestation inverse-hint streams.
+///
+/// Produced by [`crate::AttestationPlanner::prepare_hinted_registration_plan`].
+/// Not consumed by the running Boundless registrar path until orchestration lands.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HintedRegistrationPlan {
+    /// Certificate / signer plan (no hints).
+    pub plan: RegistrationPlan,
+    /// Packed inverse hints for CA/leaf cert signatures and the attestation sig.
+    pub hints: RegistrationHints,
+}
