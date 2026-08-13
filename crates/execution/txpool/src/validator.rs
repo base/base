@@ -1554,6 +1554,7 @@ where
             ApplyError::InvalidChangePayload => "account-change op payload must be empty",
             ApplyError::EpochSaturated => "local epoch is saturated",
             ApplyError::UnsupportedChangeType => "unsupported account-change op",
+            ApplyError::InvalidActorId => "actor id bytes32(0) is reserved",
             ApplyError::InvalidAuthenticator => "actor authenticator is not canonical",
             ApplyError::MalformedPolicyData => "actor policy data is malformed",
             ApplyError::NotAnActor { .. } => "revoked actor is not authorized",
@@ -1985,6 +1986,13 @@ where
                     // the new actor's authenticator is the right-aligned address
                     // in the second word.
                     if change.payload.len() < 64 {
+                        return Err(InvalidTransactionError::TxTypeNotSupported.into());
+                    }
+                    // The target `actorId` is `payload[0..32]`. `bytes32(0)` is the
+                    // reserved "no actor" sentinel and can never be authorized;
+                    // reject it up front to match `_authorizeActor`'s
+                    // `InvalidActorId` (the enshrined apply path rejects it too).
+                    if change.payload[..32].iter().all(|&b| b == 0) {
                         return Err(InvalidTransactionError::TxTypeNotSupported.into());
                     }
                     // The authenticator word is an ABI-encoded `address`: its
@@ -3086,10 +3094,30 @@ mod tests {
         );
     }
 
+    // `bytes32(0)` is the reserved "no actor" sentinel; an `AuthorizeActor`
+    // targeting it is rejected at the gate, matching `_authorizeActor`'s
+    // `InvalidActorId` (and the enshrined apply path).
+    #[test]
+    fn rejects_eip8130_config_change_authorizing_zero_actor_id() {
+        let cfg = SignedAccountChanges {
+            changes: vec![make_authorize_change(B256::ZERO, ok_authenticator())],
+            ..make_valid_config_change()
+        };
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChange::ConfigChange(cfg)],
+            ..minimal_valid_eoa_tx()
+        };
+        assert_unsupported(TestValidator::validate_account_changes(
+            &sign_eoa_eip8130(tx),
+            test_chain_id(),
+        ));
+    }
+
     #[test]
     fn accepts_eip8130_config_change_with_exactly_max_actor_changes() {
+        // Ids start at 1: `bytes32(0)` is the reserved sentinel and rejected.
         let changes = (0..Eip8130Constants::MAX_ACTOR_CHANGES_PER_CONFIG)
-            .map(|i| make_authorize_change(B256::repeat_byte(i as u8), ok_authenticator()))
+            .map(|i| make_authorize_change(B256::repeat_byte(i as u8 + 1), ok_authenticator()))
             .collect();
         let cfg = SignedAccountChanges { changes, ..make_valid_config_change() };
         let tx = TxEip8130 {
@@ -3104,7 +3132,7 @@ mod tests {
     #[test]
     fn rejects_eip8130_config_change_with_too_many_actor_changes() {
         let changes = (0..(Eip8130Constants::MAX_ACTOR_CHANGES_PER_CONFIG + 1))
-            .map(|i| make_authorize_change(B256::repeat_byte(i as u8), ok_authenticator()))
+            .map(|i| make_authorize_change(B256::repeat_byte(i as u8 + 1), ok_authenticator()))
             .collect();
         let cfg = SignedAccountChanges { changes, ..make_valid_config_change() };
         let tx = TxEip8130 {

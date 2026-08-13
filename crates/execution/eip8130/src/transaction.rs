@@ -149,6 +149,12 @@ impl TransactionAuthorizer {
                         &state,
                     )?;
                     config_changes.push(resolved);
+                    // `apply_config_change_with_account_state` silently skips an
+                    // already-expired grant on the replayable unsequenced (JIT)
+                    // Local path (per change, so live siblings still apply);
+                    // sequenced and multichain batches retain such a grant and
+                    // install it inert. Nothing reverts on expiry. `now` (block
+                    // seconds) drives that skip.
                     revoke_discount_slots = revoke_discount_slots.saturating_add(
                         AccountChangeApplier::apply_config_change_with_account_state(
                             storage,
@@ -157,6 +163,7 @@ impl TransactionAuthorizer {
                             cc.channel,
                             cc.sequence,
                             &mut state,
+                            now,
                         )?,
                     );
                     storage

@@ -408,24 +408,41 @@ impl Eip8130Executor {
 
         let ctx = evm.ctx_mut();
         let from = ctx.tx().base.caller;
-        // Estimation prices the happy path: it skips authorization, so it does not
-        // enforce expiry, and the EIP-8130 intrinsic schedule does not depend on
-        // the block timestamp — so no timestamp is read here (unlike `execute`).
+        // Estimation skips authorization (no signature is verified), but it must
+        // still apply account changes exactly as consensus would so the post-change
+        // state the `calls` run against matches inclusion. That includes the
+        // per-change JIT expiry skip, which depends on the block timestamp, so read
+        // it here (in Unix seconds, the same clock as `ActorConfig::expiry`) and
+        // thread it into `apply_account_changes`. Using the estimation block's
+        // timestamp can only over-price a grant that expires before inclusion
+        // (time moves forward, so a grant skipped now stays skipped) — it never
+        // under-estimates.
+        let now: u64 = ctx
+            .block()
+            .timestamp()
+            .try_into()
+            .map_err(|_| BaseTransactionError::eip8130("block timestamp exceeds u64"))?;
         let base_fee: u128 = u128::from(ctx.block().basefee());
         let encoded =
             ctx.tx().enveloped_tx().cloned().ok_or_else(|| {
                 BaseTransactionError::eip8130("missing enveloped transaction bytes")
             })?;
 
-        let outcome =
-            match Self::simulate_resolve(ctx, &signed, &encoded, from, base_fee, acting_actor_hint)
-            {
-                Ok(outcome) => outcome,
-                Err(err) => {
-                    Self::discard_transaction_state(evm);
-                    return Err(err.into());
-                }
-            };
+        let outcome = match Self::simulate_resolve(
+            ctx,
+            &signed,
+            &encoded,
+            from,
+            base_fee,
+            acting_actor_hint,
+            now,
+        ) {
+            Ok(outcome) => outcome,
+            Err(err) => {
+                Self::discard_transaction_state(evm);
+                return Err(err.into());
+            }
+        };
 
         // Dispatch `calls` from the resolved sender so `tx.origin` reads correctly
         // (mirrors `prepay`'s caller overwrite on the execution path).
@@ -727,6 +744,7 @@ impl Eip8130Executor {
         sender: Address,
         base_fee: u128,
         acting_actor_hint: Option<B256>,
+        now: u64,
     ) -> Result<Eip8130Outcome, BaseTransactionError>
     where
         DB: AlloyDatabase,
@@ -772,7 +790,7 @@ impl Eip8130Executor {
             //    calls run against post-change code and create/delegation gas is
             //    priced. Must precede actor/policy resolution so an actor
             //    authorized in this same estimate request is visible.
-            let has_explicit_delegation = Self::apply_account_changes(signed, sctx, sender)?;
+            let has_explicit_delegation = Self::apply_account_changes(signed, sctx, sender, now)?;
 
             // 3. Resolve the acting actor's real policy gate. No signature
             //    recovery: the optional RPC hint names the intended actor (e.g. a
@@ -1611,6 +1629,7 @@ impl Eip8130Executor {
         signed: &base_common_consensus::Eip8130Signed,
         sctx: StorageCtx<'_>,
         sender: Address,
+        now: u64,
     ) -> Result<bool, BaseTransactionError> {
         let mut acc_mut = AccountConfigurationStorage::new(sctx);
         let mut created_effect: Option<(Address, Bytes)> = None;
@@ -1633,13 +1652,18 @@ impl Eip8130Executor {
                 AccountChange::ConfigChange(cc) => {
                     // Estimation prices revokes at the worst-case three-reset cost
                     // (a zero revoke discount is pinned), so the resolved
-                    // empty-slot count is applied but not needed here.
+                    // empty-slot count is applied but not needed here. `now` is the
+                    // block timestamp (Unix seconds) so the JIT expiry skip matches
+                    // consensus: a lapsed unsequenced grant is dropped in both the
+                    // estimate and at inclusion, keeping the post-change state (and
+                    // therefore the simulated `calls`) aligned.
                     AccountChangeApplier::apply_config_change(
                         &mut acc_mut,
                         sender,
                         &cc.changes,
                         cc.channel,
                         cc.sequence,
+                        now,
                     )
                     .map_err(BaseTransactionError::eip8130)?;
                 }
