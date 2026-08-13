@@ -50,6 +50,8 @@ const FLASHBLOCKS_PING_INTERVAL: Duration = Duration::from_secs(5);
 const PRECONF_ENV: &str = "MEV_EMITTER_PRECONF";
 /// Explicit opt-in for in-node arbitrage dry-run observations.
 const ARB_DRYRUN_ENV: &str = crate::arb_dryrun::ARB_DRYRUN_ENV;
+/// Optional maximum cycle length, counted in graph legs.
+const ARB_DRYRUN_MAX_CYCLE_LEGS_ENV: &str = "MEV_EMITTER_MAX_CYCLE_LEGS";
 /// Off-by-default provider refresh for dry-run candidate member reserves.
 const ARB_DRYRUN_LIVE_RESERVE_ENV: &str = "MEV_EMITTER_ARB_DRYRUN_LIVE_RESERVE";
 /// Optional per-frame dirty pool cap for dry-run work.
@@ -197,6 +199,9 @@ fn arb_dryrun_live_reserve_enabled_from_values(
 
 fn arb_dryrun_config_from_env() -> crate::arb_dryrun::DryRunConfig {
     let mut config = crate::arb_dryrun::DryRunConfig::default();
+    config.max_cycle_legs = arb_dryrun_max_cycle_legs_from_value(
+        std::env::var_os(ARB_DRYRUN_MAX_CYCLE_LEGS_ENV).as_deref(),
+    );
     if let Some(value) = parse_env_usize(ARB_DRYRUN_MAX_POOLS_ENV) {
         config.max_pools_per_frame = value;
     }
@@ -212,6 +217,19 @@ fn arb_dryrun_config_from_env() -> crate::arb_dryrun::DryRunConfig {
     config.net_cost = arb_dryrun_net_cost_config_from_env();
     config.clamped()
 }
+
+fn arb_dryrun_max_cycle_legs_from_value(value: Option<&OsStr>) -> usize {
+    let Some(max_cycle_legs) =
+        value.and_then(OsStr::to_str).and_then(|raw| raw.trim().parse::<usize>().ok())
+    else {
+        return crate::arb_dryrun::MAX_CYCLE_LEGS_DEFAULT;
+    };
+
+    crate::arb_dryrun::DryRunConfig { max_cycle_legs, ..crate::arb_dryrun::DryRunConfig::default() }
+        .clamped()
+        .max_cycle_legs
+}
+
 fn arb_dryrun_net_cost_config_from_env() -> Option<crate::arb_dryrun::DryRunNetCostConfig> {
     Some(crate::arb_dryrun::DryRunNetCostConfig {
         l2_gas_cost_wei: parse_env_u128(ARB_DRYRUN_L2_GAS_COST_WEI_ENV)?,
@@ -1534,7 +1552,13 @@ mod arb_overlay_tests {
     use crate::PoolSlotDiffEvent;
     use crate::arb_dryrun::{Protocol, slot_key};
     use revm::state::{AccountInfo, Bytecode};
+    #[cfg(unix)]
+    use std::{ffi::OsString, os::unix::ffi::OsStringExt};
     use std::{fs, path::PathBuf};
+
+    const MAX_CYCLE_LEGS_CHILD_ENV: &str = "BASE_MEV_EMITTER_MAX_CYCLE_LEGS_CHILD";
+    const MAX_CYCLE_LEGS_CHILD_TEST: &str =
+        "exex::arb_overlay_tests::max_cycle_legs_env_wiring_is_process_isolated";
 
     fn addr(byte: u8) -> Address {
         Address::from([byte; 20])
@@ -1560,6 +1584,59 @@ mod arb_overlay_tests {
     fn temp_baseline_path(name: &str) -> PathBuf {
         std::env::temp_dir()
             .join(format!("base-mev-core-arb-hook-{name}-{}.json", std::process::id()))
+    }
+
+    #[test]
+    fn max_cycle_legs_value_parser_is_total_and_clamped() {
+        let cases = [
+            (None, crate::arb_dryrun::MAX_CYCLE_LEGS_DEFAULT),
+            (Some(""), crate::arb_dryrun::MAX_CYCLE_LEGS_DEFAULT),
+            (Some(" \t\n"), crate::arb_dryrun::MAX_CYCLE_LEGS_DEFAULT),
+            (Some("two"), crate::arb_dryrun::MAX_CYCLE_LEGS_DEFAULT),
+            (Some("-1"), crate::arb_dryrun::MAX_CYCLE_LEGS_DEFAULT),
+            (Some("184467440737095516160"), crate::arb_dryrun::MAX_CYCLE_LEGS_DEFAULT),
+            (Some("0"), crate::arb_dryrun::MAX_CYCLE_LEGS_DEFAULT),
+            (Some("1"), crate::arb_dryrun::MAX_CYCLE_LEGS_DEFAULT),
+            (Some("2"), 2),
+            (Some("+3"), 3),
+            (Some(" \t+3\n"), 3),
+            (Some("3"), 3),
+            (Some("4"), crate::arb_dryrun::HARD_MAX_CYCLE_LEGS),
+            (Some("5"), crate::arb_dryrun::HARD_MAX_CYCLE_LEGS),
+        ];
+
+        for (raw, expected) in cases {
+            assert_eq!(
+                arb_dryrun_max_cycle_legs_from_value(raw.map(OsStr::new)),
+                expected,
+                "unexpected max cycle legs for {raw:?}"
+            );
+        }
+
+        #[cfg(unix)]
+        {
+            let non_unicode = OsString::from_vec(vec![0xff]);
+            assert_eq!(
+                arb_dryrun_max_cycle_legs_from_value(Some(non_unicode.as_os_str())),
+                crate::arb_dryrun::MAX_CYCLE_LEGS_DEFAULT
+            );
+        }
+    }
+
+    #[test]
+    fn max_cycle_legs_env_wiring_is_process_isolated() {
+        if std::env::var_os(MAX_CYCLE_LEGS_CHILD_ENV).is_some() {
+            assert_eq!(arb_dryrun_config_from_env().max_cycle_legs, 3);
+            return;
+        }
+
+        let status = std::process::Command::new(std::env::current_exe().expect("test executable"))
+            .args(["--exact", MAX_CYCLE_LEGS_CHILD_TEST, "--nocapture"])
+            .env(MAX_CYCLE_LEGS_CHILD_ENV, "1")
+            .env(ARB_DRYRUN_MAX_CYCLE_LEGS_ENV, " \t+3\n")
+            .status()
+            .expect("run isolated max-cycle-legs wiring child");
+        assert!(status.success(), "isolated max-cycle-legs wiring child failed");
     }
 
     #[test]

@@ -30,6 +30,10 @@ pub const HARD_MAX_POOLS_PER_FRAME: usize = 512;
 pub const HARD_MAX_CANDIDATES_PER_FRAME: usize = 64;
 /// Hard ceiling for env-provided per-frame wall-clock budgets.
 pub const HARD_MAX_TIME_BUDGET_MICROS: u64 = 20_000;
+/// Default maximum number of edges in a closed arbitrage cycle.
+pub const MAX_CYCLE_LEGS_DEFAULT: usize = 2;
+/// Hard ceiling for operator-provided closed-cycle edge limits.
+pub const HARD_MAX_CYCLE_LEGS: usize = 4;
 /// Maximum token-adjacency hops added around dirty pools before frame cap truncation.
 const DIRTY_CONNECTED_HOPS: usize = 3;
 const FRAME_CAP_EARLY_EXIT_CAVEAT: &str = "frame-cap-early-exit";
@@ -65,6 +69,8 @@ pub struct DryRunConfig {
     pub max_pools_per_frame: usize,
     /// Maximum candidate loops emitted for one frame.
     pub max_candidates_per_frame: usize,
+    /// Maximum number of edges in a closed arbitrage cycle.
+    pub max_cycle_legs: usize,
     /// Maximum wall-clock time spent per frame.
     pub time_budget: Duration,
     /// Input amount used for gross path estimation.
@@ -121,6 +127,7 @@ impl Default for DryRunConfig {
         Self {
             max_pools_per_frame: DEFAULT_MAX_POOLS_PER_FRAME,
             max_candidates_per_frame: DEFAULT_MAX_CANDIDATES_PER_FRAME,
+            max_cycle_legs: MAX_CYCLE_LEGS_DEFAULT,
             time_budget: Duration::from_micros(DEFAULT_TIME_BUDGET_MICROS),
             amount_in_wei: 1_000_000_000_000_000_000u128,
             net_cost: None,
@@ -134,6 +141,8 @@ impl DryRunConfig {
         self.max_pools_per_frame = self.max_pools_per_frame.clamp(1, HARD_MAX_POOLS_PER_FRAME);
         self.max_candidates_per_frame =
             self.max_candidates_per_frame.clamp(1, HARD_MAX_CANDIDATES_PER_FRAME);
+        self.max_cycle_legs =
+            self.max_cycle_legs.clamp(MAX_CYCLE_LEGS_DEFAULT, HARD_MAX_CYCLE_LEGS);
         let micros = u64::try_from(self.time_budget.as_micros()).unwrap_or(u64::MAX);
         self.time_budget = Duration::from_micros(micros.clamp(1, HARD_MAX_TIME_BUDGET_MICROS));
         self
@@ -1255,6 +1264,7 @@ fn run_frame_internal(
     overlay_enabled: bool,
 ) -> DryRunFrame {
     let started = Instant::now();
+    let max_cycle_legs = config.max_cycle_legs.clamp(MAX_CYCLE_LEGS_DEFAULT, HARD_MAX_CYCLE_LEGS);
     let reverse = candidate_index_reverse_map(pools);
     let mut all_dirty = dirty_pools.clone();
     all_dirty.extend(dirty_state.keys().copied());
@@ -1287,6 +1297,7 @@ fn run_frame_internal(
             &all_dirty,
             &reverse,
             config.max_pools_per_frame,
+            max_cycle_legs,
             started,
             config.time_budget,
         );
@@ -1332,6 +1343,7 @@ fn run_frame_internal(
         started,
         config.time_budget,
         config.max_candidates_per_frame + 1,
+        max_cycle_legs,
     );
     if !all_dirty.is_empty() {
         candidates.retain(|candidate| candidate.pools.iter().any(|pool| all_dirty.contains(pool)));
@@ -1374,6 +1386,7 @@ fn select_frame_indexes(
     dirty_pools: &BTreeSet<Address>,
     reverse: &HashMap<Address, Vec<usize>>,
     max_pools_per_frame: usize,
+    max_cycle_legs: usize,
     started: Instant,
     time_budget: Duration,
 ) -> (Vec<usize>, usize, bool, bool) {
@@ -1388,8 +1401,8 @@ fn select_frame_indexes(
         }
     }
 
-    let mut selected = dirty_indexes.iter().copied().collect::<Vec<_>>();
-    let mut selected_set = dirty_indexes.clone();
+    let selected = dirty_indexes.iter().copied().collect::<Vec<_>>();
+    let selected_set = dirty_indexes.clone();
     let dirty_len = selected.len();
     if dirty_len > max_pools_per_frame {
         return (selected, dirty_len, true, false);
@@ -1398,10 +1411,96 @@ fn select_frame_indexes(
         return (selected, dirty_len, false, true);
     }
 
+    let max_cycle_legs = max_cycle_legs.clamp(MAX_CYCLE_LEGS_DEFAULT, HARD_MAX_CYCLE_LEGS);
+    if max_cycle_legs == MAX_CYCLE_LEGS_DEFAULT {
+        return select_two_leg_counterparties(
+            pools,
+            &dirty_indexes,
+            selected,
+            selected_set,
+            dirty_len,
+            max_pools_per_frame,
+            started,
+            time_budget,
+        );
+    }
+
+    let connected_hops = if max_cycle_legs == HARD_MAX_CYCLE_LEGS {
+        DIRTY_CONNECTED_HOPS
+    } else {
+        max_cycle_legs - 1
+    };
+    select_connected_frame_indexes(
+        pools,
+        &dirty_indexes,
+        selected,
+        selected_set,
+        dirty_len,
+        max_pools_per_frame,
+        connected_hops,
+        started,
+        time_budget,
+    )
+}
+
+fn select_two_leg_counterparties(
+    pools: &[PoolState],
+    dirty_indexes: &BTreeSet<usize>,
+    mut selected: Vec<usize>,
+    mut selected_set: BTreeSet<usize>,
+    dirty_len: usize,
+    max_pools_per_frame: usize,
+    started: Instant,
+    time_budget: Duration,
+) -> (Vec<usize>, usize, bool, bool) {
+    let graph = build_graph(pools);
+    let dirty_addresses = dirty_indexes
+        .iter()
+        .filter_map(|index| pools.get(*index).map(|pool| pool.pool))
+        .collect::<BTreeSet<_>>();
+    let dirty_edges =
+        graph.edges.iter().filter(|edge| dirty_addresses.contains(&edge.pool)).collect::<Vec<_>>();
+
+    for (index, pool) in pools.iter().enumerate() {
+        if started.elapsed() > time_budget {
+            return (selected, dirty_len, false, true);
+        }
+        if selected_set.contains(&index) {
+            continue;
+        }
+        let graph_admissible = dirty_edges.iter().any(|dirty_edge| {
+            graph.edges.iter().any(|edge| {
+                edge.pool == pool.pool && edge.from == dirty_edge.to && edge.to == dirty_edge.from
+            })
+        });
+        if !graph_admissible {
+            continue;
+        }
+        if selected.len() >= max_pools_per_frame {
+            return (selected, dirty_len, true, false);
+        }
+        selected_set.insert(index);
+        selected.push(index);
+    }
+
+    (selected, dirty_len, false, false)
+}
+
+fn select_connected_frame_indexes(
+    pools: &[PoolState],
+    dirty_indexes: &BTreeSet<usize>,
+    mut selected: Vec<usize>,
+    mut selected_set: BTreeSet<usize>,
+    dirty_len: usize,
+    max_pools_per_frame: usize,
+    connected_hops: usize,
+    started: Instant,
+    time_budget: Duration,
+) -> (Vec<usize>, usize, bool, bool) {
     let mut distances = vec![None; pools.len()];
     let mut frontier = BTreeSet::new();
     let mut dirty_pairs = BTreeSet::new();
-    for index in &dirty_indexes {
+    for index in dirty_indexes {
         if *index < distances.len() {
             distances[*index] = Some(0usize);
             frontier.insert(*index);
@@ -1428,7 +1527,7 @@ fn select_frame_indexes(
             let Some(distance) = distances.get(*index).and_then(|distance| *distance) else {
                 continue;
             };
-            if distance >= DIRTY_CONNECTED_HOPS {
+            if distance >= connected_hops {
                 continue;
             }
             let Some(pool) = pools.get(*index) else {
@@ -1516,6 +1615,7 @@ pub fn find_negative_cycle_candidates(pools: &[PoolState], amount_in: u128) -> V
         Instant::now(),
         Duration::from_secs(u64::MAX / 2),
         usize::MAX,
+        MAX_CYCLE_LEGS_DEFAULT,
     )
     .0
 }
@@ -1527,9 +1627,11 @@ fn find_negative_cycle_candidates_bounded(
     started: Instant,
     budget: Duration,
     max_candidates: usize,
+    max_cycle_legs: usize,
 ) -> (Vec<CycleCandidate>, bool) {
     let graph = build_graph(pools);
-    let (cycles, mut timed_out) = find_negative_cycles(&graph, started, budget, max_candidates);
+    let (cycles, mut timed_out) =
+        find_negative_cycles(&graph, started, budget, max_candidates, max_cycle_legs);
     let mut out = Vec::new();
     for cycle in cycles {
         if started.elapsed() >= budget {
@@ -1645,6 +1747,7 @@ fn find_negative_cycles(
     started: Instant,
     budget: Duration,
     max_cycles: usize,
+    max_cycle_legs: usize,
 ) -> (Vec<Vec<Edge>>, bool) {
     let mut cycles = Vec::new();
     let mut timed_out = false;
@@ -1660,7 +1763,7 @@ fn find_negative_cycles(
             &mut Vec::new(),
             &mut HashSet::new(),
             &mut cycles,
-            4,
+            max_cycle_legs.clamp(MAX_CYCLE_LEGS_DEFAULT, HARD_MAX_CYCLE_LEGS),
             started,
             budget,
             max_cycles,
@@ -2263,6 +2366,7 @@ mod tests {
             Instant::now(),
             Duration::from_secs(1),
             usize::MAX,
+            MAX_CYCLE_LEGS_DEFAULT,
         )
         .0;
         assert!(negative[0].estimated_net_wei.is_some_and(|net| net < I256::ZERO));
@@ -2283,6 +2387,7 @@ mod tests {
                 Instant::now(),
                 Duration::from_secs(1),
                 usize::MAX,
+                MAX_CYCLE_LEGS_DEFAULT,
             )
             .0[0]
                 .estimated_net_wei,
@@ -2481,6 +2586,7 @@ mod tests {
         let config = DryRunConfig {
             max_pools_per_frame: 1,
             max_candidates_per_frame: 1,
+            max_cycle_legs: MAX_CYCLE_LEGS_DEFAULT,
             time_budget: Duration::from_secs(1),
             amount_in_wei: 1_000,
             net_cost: None,
@@ -2516,6 +2622,7 @@ mod tests {
         let config = DryRunConfig {
             max_pools_per_frame: 2,
             max_candidates_per_frame: 1,
+            max_cycle_legs: MAX_CYCLE_LEGS_DEFAULT,
             time_budget: Duration::ZERO,
             amount_in_wei: 1_000,
             net_cost: None,
@@ -2768,7 +2875,7 @@ mod tests {
     }
 
     #[test]
-    fn run_frame_prioritizes_dirty_pair_counterparty_in_weth_hub_under_frame_cap() {
+    fn four_leg_mode_preserves_legacy_hub_selection_order_health_and_truncation() {
         let dirty_token = addr(0x01);
         let spoke_token = addr(0x02);
         let dirty_pool = addr(0xc1);
@@ -2808,6 +2915,7 @@ mod tests {
         ));
         let config = DryRunConfig {
             max_pools_per_frame: 64,
+            max_cycle_legs: HARD_MAX_CYCLE_LEGS,
             amount_in_wei: 10,
             time_budget: Duration::from_micros(HARD_MAX_TIME_BUDGET_MICROS),
             ..DryRunConfig::default()
@@ -2820,6 +2928,7 @@ mod tests {
             &dirty,
             &reverse,
             config.max_pools_per_frame,
+            config.max_cycle_legs,
             Instant::now(),
             config.time_budget,
         );
@@ -2944,5 +3053,211 @@ mod tests {
         assert_eq!(pools.len(), 1);
         assert_eq!(pools[0].protocol, Protocol::UniswapV2);
         assert_eq!(pools[0].decimals1, 6);
+    }
+
+    #[test]
+    fn cycle_leg_config_defaults_and_clamps_to_sealed_bounds() {
+        assert_eq!(DryRunConfig::default().max_cycle_legs, MAX_CYCLE_LEGS_DEFAULT);
+        assert_eq!(
+            DryRunConfig { max_cycle_legs: 0, ..DryRunConfig::default() }.clamped().max_cycle_legs,
+            MAX_CYCLE_LEGS_DEFAULT
+        );
+        assert_eq!(
+            DryRunConfig { max_cycle_legs: usize::MAX, ..DryRunConfig::default() }
+                .clamped()
+                .max_cycle_legs,
+            HARD_MAX_CYCLE_LEGS
+        );
+    }
+
+    #[test]
+    fn dfs_closed_cycle_leg_count_is_exact_and_has_no_unnamed_limit() {
+        let tokens = [addr(0x11), addr(0x12), addr(0x13), addr(0x14)];
+        let edges = (0..HARD_MAX_CYCLE_LEGS)
+            .map(|index| Edge {
+                from: tokens[index],
+                to: tokens[(index + 1) % HARD_MAX_CYCLE_LEGS],
+                pool: addr(u8::try_from(0x40 + index).unwrap()),
+                protocol: Protocol::UniswapV2,
+                rate: 1.1,
+                approximation: false,
+            })
+            .collect::<Vec<_>>();
+        let graph = Graph { tokens: tokens.to_vec(), edges };
+
+        for max_hops in [MAX_CYCLE_LEGS_DEFAULT, 3] {
+            let mut cycles = Vec::new();
+            assert!(!dfs_cycles(
+                &graph,
+                tokens[0],
+                tokens[0],
+                &mut Vec::new(),
+                &mut HashSet::new(),
+                &mut cycles,
+                max_hops,
+                Instant::now(),
+                Duration::from_secs(1),
+                usize::MAX,
+            ));
+            assert!(cycles.is_empty());
+        }
+
+        let mut cycles = Vec::new();
+        assert!(!dfs_cycles(
+            &graph,
+            tokens[0],
+            tokens[0],
+            &mut Vec::new(),
+            &mut HashSet::new(),
+            &mut cycles,
+            HARD_MAX_CYCLE_LEGS,
+            Instant::now(),
+            Duration::from_secs(1),
+            usize::MAX,
+        ));
+        assert_eq!(cycles.len(), 1);
+        assert_eq!(cycles[0].len(), HARD_MAX_CYCLE_LEGS);
+        assert!(!include_str!("arb_dryrun.rs").contains("&mut cycles,\n            4,\n"));
+    }
+
+    #[test]
+    fn two_leg_selector_uses_direct_graph_admissible_unordered_pair_only() {
+        let dirty_pool = addr(0x31);
+        let counterparty = addr(0x32);
+        let token = addr(0x02);
+        let pools = vec![
+            PoolState::v2_like(dirty_pool, Protocol::UniswapV2, addr(0x01), token, 1, 1_000, 1_200),
+            PoolState::v2_like(
+                counterparty,
+                Protocol::UniswapV2,
+                token,
+                addr(0x01),
+                1,
+                1_000,
+                1_200,
+            ),
+            PoolState::v2_like(
+                addr(0x33),
+                Protocol::UniswapV2,
+                token,
+                addr(0x01),
+                1,
+                0,
+                1_000,
+            ),
+            PoolState::v2_like(
+                addr(0x34),
+                Protocol::UniswapV2,
+                addr(0x01),
+                addr(0x03),
+                1,
+                1_000,
+                1_000,
+            ),
+        ];
+        let dirty = BTreeSet::from([dirty_pool]);
+        let reverse = candidate_index_reverse_map(&pools);
+
+        let (selected, dirty_len, cap_early_exit, elapsed) = select_frame_indexes(
+            &pools,
+            &dirty,
+            &reverse,
+            DEFAULT_MAX_POOLS_PER_FRAME,
+            MAX_CYCLE_LEGS_DEFAULT,
+            Instant::now(),
+            Duration::from_secs(1),
+        );
+
+        assert_eq!(dirty_len, 1);
+        assert_eq!(selected, vec![0, 1]);
+        assert!(!cap_early_exit);
+        assert!(!elapsed);
+    }
+
+    #[test]
+    fn two_leg_zero_counterparty_is_ok_zero() {
+        let dirty_pool = addr(0x41);
+        let pools = vec![
+            PoolState::v2_like(
+                dirty_pool,
+                Protocol::UniswapV2,
+                addr(0x01),
+                addr(0x02),
+                1,
+                1_000,
+                1_000,
+            ),
+            PoolState::v2_like(
+                addr(0x42),
+                Protocol::UniswapV2,
+                addr(0x01),
+                addr(0x03),
+                1,
+                1_000,
+                1_000,
+            ),
+        ];
+        let config =
+            DryRunConfig { time_budget: Duration::from_secs(1), ..DryRunConfig::default() };
+
+        let frame = run_frame(&pools, &BTreeSet::from([dirty_pool]), &config, NoActionGuard);
+
+        assert_eq!(frame.health, "ok");
+        assert!(!frame.truncated);
+        assert!(frame.candidates.is_empty());
+        assert_eq!(frame.caveat.as_deref(), Some("no-candidates-for-dirty-pools"));
+    }
+
+    #[test]
+    fn three_leg_mode_expands_selector_and_cycle_search() {
+        let dirty_pool = addr(0x51);
+        let pools = vec![
+            PoolState::v2_like(
+                dirty_pool,
+                Protocol::UniswapV2,
+                addr(0x01),
+                addr(0x02),
+                0,
+                1_000,
+                2_000,
+            ),
+            PoolState::v2_like(
+                addr(0x52),
+                Protocol::UniswapV2,
+                addr(0x02),
+                addr(0x03),
+                0,
+                1_000,
+                2_000,
+            ),
+            PoolState::v2_like(
+                addr(0x53),
+                Protocol::UniswapV2,
+                addr(0x03),
+                addr(0x01),
+                0,
+                1_000,
+                400,
+            ),
+        ];
+        let dirty = BTreeSet::from([dirty_pool]);
+        let base = DryRunConfig {
+            amount_in_wei: 10,
+            time_budget: Duration::from_secs(1),
+            ..DryRunConfig::default()
+        };
+
+        let two_leg = run_frame(&pools, &dirty, &base, NoActionGuard);
+        let three_leg = run_frame(
+            &pools,
+            &dirty,
+            &DryRunConfig { max_cycle_legs: 3, ..base },
+            NoActionGuard,
+        );
+
+        assert!(two_leg.candidates.is_empty());
+        assert_eq!(two_leg.health, "ok");
+        assert!(three_leg.candidates.iter().any(|candidate| candidate.pools.len() == 3));
+        assert_eq!(three_leg.health, "ok");
     }
 }
