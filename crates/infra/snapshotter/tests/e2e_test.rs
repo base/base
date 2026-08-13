@@ -479,7 +479,6 @@ fn seeded_snapshot(
     std::fs::write(output_dir.join("manifest.json"), serde_json::to_string_pretty(&manifest)?)?;
     std::fs::write(output_dir.join("state.tar.zst"), b"state-data")?;
     std::fs::write(output_dir.join("rocksdb_indices.tar.zst"), b"rocksdb-data")?;
-    std::fs::write(output_dir.join("proofs.tar.zst"), b"proofs-data")?;
 
     let num_chunks = block.div_ceil(blocks_per_file);
     for &component in components {
@@ -845,8 +844,7 @@ async fn generate_and_upload_proofs_to_minio() -> Result<()> {
     let proofs_body = get_object_bytes(s3, bucket, "proofs-gen/1700000000/proofs.tar.zst").await?;
     assert!(!proofs_body.is_empty(), "uploaded proofs archive should not be empty");
 
-    let manifest_body =
-        get_object_bytes(s3, bucket, "proofs-gen/1700000000/manifest.json").await?;
+    let manifest_body = get_object_bytes(s3, bucket, "proofs-gen/1700000000/manifest.json").await?;
     let manifest: serde_json::Value = serde_json::from_slice(&manifest_body)?;
     assert_eq!(
         manifest["components"]["proofs"]["file"], "proofs.tar.zst",
@@ -857,11 +855,9 @@ async fn generate_and_upload_proofs_to_minio() -> Result<()> {
         "state should still use the relative run-dir path"
     );
     assert!(
-        manifest["components"]["proofs"]["output_files"]
-            .as_array()
-            .is_some_and(|files| files.iter().all(|f| {
-                f["path"].as_str().is_some_and(|p| p.starts_with("proofs/"))
-            })),
+        manifest["components"]["proofs"]["output_files"].as_array().is_some_and(|files| files
+            .iter()
+            .all(|f| { f["path"].as_str().is_some_and(|p| p.starts_with("proofs/")) })),
         "proofs output_files paths should all be under proofs/"
     );
     assert_eq!(

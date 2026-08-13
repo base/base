@@ -1000,10 +1000,8 @@ mod tests {
         let manifest_content =
             std::fs::read_to_string(output.path().join("manifest.json")).unwrap();
         let manifest: SnapshotManifest = serde_json::from_str(&manifest_content).unwrap();
-        let ComponentManifest::Single(proofs) = manifest
-            .components
-            .get("proofs")
-            .expect("manifest should include proofs component")
+        let ComponentManifest::Single(proofs) =
+            manifest.components.get("proofs").expect("manifest should include proofs component")
         else {
             panic!("proofs component should be a Single archive");
         };

@@ -1117,18 +1117,20 @@ mod tests {
             components,
         };
 
-        let published = build_published_manifest(&local, Some("https://example.com/static_files"), 1_700_000_000)
-            .unwrap();
+        let published = build_published_manifest(
+            &local,
+            Some("https://example.com/static_files"),
+            1_700_000_000,
+        )
+        .unwrap();
         let manifest: serde_json::Value = serde_json::from_slice(&published).unwrap();
 
         assert_eq!(
-            manifest["components"]["state"]["file"],
-            "../1700000000/state.tar.zst",
+            manifest["components"]["state"]["file"], "../1700000000/state.tar.zst",
             "state should be rewritten relative to static_files base_url"
         );
         assert_eq!(
-            manifest["components"]["proofs"]["file"],
-            "proofs.tar.zst",
+            manifest["components"]["proofs"]["file"], "proofs.tar.zst",
             "proofs must remain a sibling of manifest.json for ProofsDownloader"
         );
     }
