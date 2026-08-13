@@ -957,7 +957,7 @@ mod tests {
         assert_eq!(candidates[0].protocol_version, 0);
     }
 
-    /// A full-schedule game is skipped even though `mock_protocol_versions` maps its fingerprint,
+    /// A full-schedule game is skipped even though its prover hashes share the mapped fingerprint,
     /// because the challenger cannot reproduce the snapshotted `scheduleId` its journal commits.
     #[tokio::test]
     async fn test_scan_skips_full_schedule_games() {

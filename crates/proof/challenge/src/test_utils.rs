@@ -50,12 +50,9 @@ pub fn mock_proof_protocol(schedule_kind: ProofScheduleKind) -> ProofProtocolDes
     }
 }
 
-/// Returns routing mappings for every historical schedule mode used in tests.
+/// Returns a routing mapping for the mock prover artifacts.
 pub fn mock_protocol_versions() -> HashMap<B256, u32> {
-    [(ProofScheduleKind::None, 0), (ProofScheduleKind::Full, 2), (ProofScheduleKind::Activated, 1)]
-        .map(|(kind, version)| (mock_proof_protocol(kind).fingerprint(), version))
-        .into_iter()
-        .collect()
+    HashMap::from([(mock_proof_protocol(ProofScheduleKind::None).fingerprint(), 0)])
 }
 
 /// Per-game state for the mock verifier.

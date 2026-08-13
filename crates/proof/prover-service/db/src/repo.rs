@@ -2100,10 +2100,9 @@ const PROOF_JOB_RETURNING_COLUMNS: &str = "id, COALESCE(session_id, id::text) AS
 /// so no caller-derived string can ever reach the SQL as a column name. The only
 /// interpolated token is the fixed [`PROOF_JOB_RETURNING_COLUMNS`] constant.
 ///
-/// `request_protocol_version = ANY(...)` lets one worker fleet serve several protocol versions,
-/// which matters because the challenger's capability fingerprint mixes TEE and ZK commitments: a
-/// ZK-only program rotation mints a new version for an otherwise unchanged TEE image, and exact
-/// match would force a whole new Nitro fleet (and a fresh enclave registration) to serve it.
+/// `request_protocol_version = ANY(...)` lets one worker fleet serve several protocol versions.
+/// The fingerprint still mixes TEE and ZK hashes, so a ZK-only program rotation mints a new
+/// version for an otherwise unchanged TEE image; exact match would force a new Nitro fleet.
 ///
 // ponytail: single-element arrays keep the `idx_proof_requests_*_by_version` index scan; multi-
 // element arrays may add a sort for `ORDER BY start_block_number`. Queue depth is small enough

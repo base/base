@@ -396,10 +396,9 @@ pub struct GetNextProofRequest {
     pub zk_backends: Vec<ZkBackend>,
     /// Worker protocol versions used to gate incompatible jobs.
     ///
-    /// A worker announces every version it can serve, because one artifact set is usually valid
-    /// for more than one: the challenger's capability fingerprint mixes TEE and ZK commitments, so
-    /// a ZK-only program rotation mints a new version even when the TEE image is unchanged.
-    /// Omission or an empty list means `[0]`, matching pre-versioning workers.
+    /// A worker announces every version it can serve. The fingerprint still mixes TEE and ZK
+    /// hashes, so a ZK-only program rotation mints a new version even when the TEE image is
+    /// unchanged. Omission or an empty list means `[0]`, matching pre-versioning workers.
     #[serde(default)]
     pub protocol_versions: Vec<u32>,
     /// Requested lock duration in seconds. Zero uses the server default.

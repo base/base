@@ -439,7 +439,7 @@ async fn test_step_proof_retry_reuses_deterministic_session_id() {
             expected_session_id.as_str(),
             "challenger must use game-address/invalid-index session_id on initiation",
         );
-        assert_eq!(log[0].proof.protocol_version, 1);
+        assert_eq!(log[0].proof.protocol_version, 0);
         let ProofRequestKind::SnarkPlonk(request) = &log[0].proof.request else {
             panic!("expected SNARK proof request");
         };
@@ -457,7 +457,7 @@ async fn test_step_proof_retry_reuses_deterministic_session_id() {
             expected_session_id.as_str(),
             "retry must reuse the deterministic session_id so the service can requeue",
         );
-        assert_eq!(log[1].proof.protocol_version, 1);
+        assert_eq!(log[1].proof.protocol_version, 0);
     }
 
     let entry = driver
@@ -560,7 +560,7 @@ async fn test_schedule_aware_game_requests_current_prover_protocol() {
 
     let state = zk.state.lock().unwrap();
     let request = state.prove_block_range_log.first().expect("proof should be requested");
-    assert_eq!(request.proof.protocol_version, 1);
+    assert_eq!(request.proof.protocol_version, 0);
     let ProofRequestKind::SnarkPlonk(request) = &request.proof.request else {
         panic!("expected SNARK proof request");
     };
@@ -579,7 +579,7 @@ async fn test_schedule_aware_subrange_pins_game_ending_l2_block() {
 
     let state = zk.state.lock().unwrap();
     let request = state.prove_block_range_log.first().expect("proof should be requested");
-    assert_eq!(request.proof.protocol_version, 1);
+    assert_eq!(request.proof.protocol_version, 0);
     let ProofRequestKind::SnarkPlonk(request) = &request.proof.request else {
         panic!("expected SNARK proof request");
     };
