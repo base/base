@@ -34,7 +34,7 @@ mod proofs;
 pub use proofs::{
     ProofOutputStatus, ProofResultJson, ProofStatusFilter, ProofSummaryJson, ProofsCommand,
     ProofsCommands, ProofsFinalizeArgs, ProofsFinalizeJson, ProofsListArgs, ProofsListJson,
-    ProofsStatusArgs, ProofsStatusJson,
+    ProofsProtocolArgs, ProofsStatusArgs, ProofsStatusJson,
 };
 
 mod sequencer;
