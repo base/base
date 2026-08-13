@@ -1,10 +1,43 @@
 //! Custom ordering for transactions based on timestamp.
 
-use std::marker::PhantomData;
+use std::{cmp::Reverse, marker::PhantomData, sync::Arc, time::Instant};
 
-use reth_transaction_pool::{CoinbaseTipOrdering, PoolTransaction, Priority, TransactionOrdering};
+use alloy_primitives::TxHash;
+use reth_transaction_pool::{
+    CoinbaseTipOrdering, PoolTransaction, Priority, TransactionOrdering, ValidPoolTransaction,
+};
 
 use crate::{BasePooledTransaction, TimestampedTransaction};
+
+/// Complete priority key used when merging best-transaction sources.
+///
+/// Higher ordering priority wins. Transactions with the same ordering priority are ordered by
+/// arrival time and then transaction hash, matching the existing merged iterator semantics.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct BestTransactionPriority<P: Ord + Clone> {
+    priority: Priority<P>,
+    timestamp: Reverse<Instant>,
+    hash: TxHash,
+}
+
+impl<P: Ord + Clone> BestTransactionPriority<P> {
+    /// Computes a complete priority key for a validated pool transaction.
+    pub fn new<T, O>(
+        ordering: &O,
+        transaction: &Arc<ValidPoolTransaction<T>>,
+        base_fee: u64,
+    ) -> Self
+    where
+        T: PoolTransaction,
+        O: TransactionOrdering<Transaction = T, PriorityValue = P>,
+    {
+        Self {
+            priority: ordering.priority(&transaction.transaction, base_fee),
+            timestamp: Reverse(transaction.timestamp),
+            hash: *transaction.hash(),
+        }
+    }
+}
 
 /// Transaction ordering strategy for the pool.
 ///

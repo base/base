@@ -26,7 +26,8 @@ use tracing::debug;
 
 use crate::{
     Admission, BasePooledTx, BaseTransactionValidator, GuardLimits, GuardMetrics,
-    InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard, StateDiffInvalidation,
+    InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard, ParkableBestTransactions,
+    ParkableTransactionPool, ParkedBestTransactions, StateDiffInvalidation,
     best::MergeBestTransactions,
     two_d_nonce_pool::{InsertOutcome, TwoDNoncePool},
 };
@@ -1336,6 +1337,30 @@ where
 
     fn blob_store(&self) -> Box<dyn BlobStore> {
         Box::new(self.protocol_pool.blob_store().clone())
+    }
+}
+
+impl<Client, S, Evm, T, O> ParkableTransactionPool for BaseTransactionPool<Client, S, Evm, T, O>
+where
+    Client: 'static,
+    Evm: 'static,
+    BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
+    T: BasePooledTx + reth_transaction_pool::EthPoolTransaction + 'static,
+    O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
+    S: BlobStore + Clone,
+{
+    fn best_transactions_with_attributes_and_parking(
+        &self,
+        attributes: BestTransactionsAttributes,
+    ) -> Box<dyn ParkableBestTransactions<Self::Transaction>> {
+        let base_fee = attributes.basefee;
+        let merged = MergeBestTransactions::new(
+            self.protocol_pool.best_transactions_with_attributes(attributes),
+            Box::new(self.nonce_pool.read().best_transactions(self.ordering.clone(), base_fee)),
+            self.ordering.clone(),
+            base_fee,
+        );
+        Box::new(ParkedBestTransactions::new(merged, self.ordering.clone(), base_fee))
     }
 }
 

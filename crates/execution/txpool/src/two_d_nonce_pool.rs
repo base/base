@@ -1,7 +1,6 @@
 //! Sidecar storage and iteration for channelized and nonce-free EIP-8130 transactions.
 
 use std::{
-    cmp::Reverse,
     collections::{BTreeMap, HashMap, HashSet},
     sync::Arc,
 };
@@ -10,14 +9,14 @@ use alloy_primitives::{Address, B256, TxHash, U256};
 use base_common_consensus::Eip8130Constants;
 use reth_primitives_traits::transaction::error::InvalidTransactionError;
 use reth_transaction_pool::{
-    AddedTransactionOutcome, BestTransactions, PoolResult, PriceBumpConfig, Priority,
-    TransactionOrdering, ValidPoolTransaction,
+    AddedTransactionOutcome, BestTransactions, PoolResult, PriceBumpConfig, TransactionOrdering,
+    ValidPoolTransaction,
     error::{InvalidPoolTransactionError, PoolError, PoolErrorKind},
     identifier::{SenderIdentifiers, TransactionId},
     pool::{AddedTransactionState, QueuedReason},
 };
 
-use crate::BasePooledTx;
+use crate::{BasePooledTx, BestTransactionPriority};
 
 type LaneId = (Address, U256);
 
@@ -572,12 +571,8 @@ where
     fn priority_key(
         &self,
         transaction: &Arc<ValidPoolTransaction<T>>,
-    ) -> (Priority<O::PriorityValue>, Reverse<std::time::Instant>, TxHash) {
-        (
-            self.ordering.priority(&transaction.transaction, self.base_fee),
-            Reverse(transaction.timestamp),
-            *transaction.hash(),
-        )
+    ) -> BestTransactionPriority<O::PriorityValue> {
+        BestTransactionPriority::new(&self.ordering, transaction, self.base_fee)
     }
 }
 

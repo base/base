@@ -110,6 +110,8 @@ base_metrics::define_metrics! {
     rejection_cache_hits: counter,
     #[describe("Number of entries in the rejection cache")]
     rejection_cache_size: gauge,
+    #[describe("Duration of rescanning parked transaction validity predicates in seconds")]
+    validity_predicate_rescan_duration: histogram,
     #[describe("Transactions skipped because metering data has not yet arrived")]
     metering_data_pending_skip: counter,
     #[describe("Transactions rejected by per-tx DA size limit")]

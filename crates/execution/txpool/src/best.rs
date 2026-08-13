@@ -1,12 +1,12 @@
 //! Merged best-transaction iteration across the protocol pool and 2D nonce sidecar.
 
-use std::{cmp::Reverse, sync::Arc};
+use std::sync::Arc;
 
 use reth_transaction_pool::{
     BestTransactions, TransactionOrdering, ValidPoolTransaction, error::InvalidPoolTransactionError,
 };
 
-use crate::BasePooledTx;
+use crate::{BasePooledTx, BestTransactionPriority};
 
 /// Merges best-transaction iterators from the protocol pool and the 2D nonce sidecar.
 pub(crate) struct MergeBestTransactions<T: BasePooledTx, O>
@@ -40,16 +40,9 @@ where
         protocol: &Arc<ValidPoolTransaction<T>>,
         sidecar: &Arc<ValidPoolTransaction<T>>,
     ) -> bool {
-        let protocol_priority = (
-            self.ordering.priority(&protocol.transaction, self.base_fee),
-            Reverse(protocol.timestamp),
-            *protocol.hash(),
-        );
-        let sidecar_priority = (
-            self.ordering.priority(&sidecar.transaction, self.base_fee),
-            Reverse(sidecar.timestamp),
-            *sidecar.hash(),
-        );
+        let protocol_priority =
+            BestTransactionPriority::new(&self.ordering, protocol, self.base_fee);
+        let sidecar_priority = BestTransactionPriority::new(&self.ordering, sidecar, self.base_fee);
         protocol_priority >= sidecar_priority
     }
 
