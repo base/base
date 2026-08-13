@@ -27,10 +27,11 @@ pub use rpc::{
 
 mod metrics;
 pub use metrics::{
-    BlockLoadMetrics, BlockRange, ConfigSummary, FlashblocksLatencyMetrics, GasMetrics,
-    LatencyMetrics, MetricsAggregator, MetricsCollector, MetricsSummary, PacingCycleObservation,
-    PacingCycleSource, PacingMetrics, ReceiptCoverage, RollingWindow, SubmissionStats,
-    ThroughputMetrics, ThroughputPercentiles, ThroughputSample, TransactionMetrics,
+    BlockLoadMetrics, BlockRange, CohortMetrics, ConfigSummary, FlashblocksLatencyMetrics,
+    GasMetrics, LatencyMetrics, MetricsAggregator, MetricsCollector, MetricsSummary,
+    PacingCycleObservation, PacingCycleSource, PacingMetrics, ReceiptCoverage, RollingWindow,
+    SubmissionStats, SubmitCohortLabel, ThroughputMetrics, ThroughputPercentiles, ThroughputSample,
+    TransactionMetrics,
 };
 
 mod workload;

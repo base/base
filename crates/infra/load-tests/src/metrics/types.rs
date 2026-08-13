@@ -19,6 +19,17 @@ pub struct SubmissionStats<'a> {
     pub failure_reasons: &'a HashMap<String, u64>,
 }
 
+/// Submission cohort a transaction was routed through, in serialized output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SubmitCohortLabel {
+    /// Plain `eth_sendRawTransaction` submission carrying no predicates.
+    #[default]
+    Plain,
+    /// Validity submission carrying resolved predicates.
+    ValidityPass,
+}
+
 /// Metrics for a single transaction.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionMetrics {
@@ -37,6 +48,9 @@ pub struct TransactionMetrics {
     pub block_number: Option<u64>,
     /// Whether the transaction reverted during execution.
     pub reverted: bool,
+    /// Submission cohort this transaction was routed through.
+    #[serde(default)]
+    pub cohort: SubmitCohortLabel,
     /// When canonical inclusion was observed (used by the rolling window).
     #[serde(skip)]
     pub confirmed_at: Option<Instant>,
@@ -60,6 +74,7 @@ impl TransactionMetrics {
             gas_price,
             block_number,
             reverted: false,
+            cohort: SubmitCohortLabel::Plain,
             confirmed_at: None,
         }
     }
@@ -85,6 +100,21 @@ pub struct LatencyMetrics {
     pub p95: Duration,
     /// 99th percentile latency.
     pub p99: Duration,
+}
+
+/// Confirmed-transaction metrics broken down for a single submission cohort.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CohortMetrics {
+    /// Cohort these metrics summarize.
+    pub cohort: SubmitCohortLabel,
+    /// Confirmed transactions in this cohort.
+    pub confirmed: u64,
+    /// Confirmed transactions in this cohort that reverted during execution.
+    pub reverted: u64,
+    /// Total gas used by confirmed transactions in this cohort.
+    pub total_gas: u64,
+    /// Block landing latency for this cohort's confirmed transactions.
+    pub block_latency: LatencyMetrics,
 }
 
 /// Aggregated throughput metrics.

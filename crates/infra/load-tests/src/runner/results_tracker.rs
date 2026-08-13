@@ -10,7 +10,7 @@ use alloy_primitives::{Address, TxHash};
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
 
-use super::InclusionPulse;
+use super::{InclusionPulse, SubmitCohort};
 use crate::metrics::TransactionMetrics;
 
 /// Maximum flashblock entries retained from recent stream events.
@@ -29,6 +29,8 @@ pub struct SentTransaction {
     pub estimated_gas: u64,
     /// Whether this transaction belongs to the measured cohort.
     pub measured: bool,
+    /// Submission cohort this transaction was routed through.
+    pub cohort: SubmitCohort,
 }
 
 /// A block observed by the block watcher.
@@ -117,6 +119,7 @@ struct PendingTransaction {
     in_flight_released: bool,
     measured: bool,
     estimated_gas: u64,
+    cohort: SubmitCohort,
 }
 
 #[derive(Debug)]
@@ -211,6 +214,7 @@ impl ResultsTracker {
                     in_flight_released: flashblock_observed_at.is_some(),
                     measured,
                     estimated_gas: transaction.estimated_gas,
+                    cohort: transaction.cohort,
                 },
             );
             inner
@@ -551,6 +555,7 @@ impl ResultsTrackerInner {
             0,
             Some(block.number),
         );
+        metrics.cohort = pending.cohort.to_metric_label();
         metrics.confirmed_at = Some(block.observed_at);
         self.unreported_confirmations.push_back(metrics);
 
@@ -594,7 +599,13 @@ mod tests {
     }
 
     fn sent(tx_hash: TxHash, from: Address, measured: bool) -> SentTransaction {
-        SentTransaction { tx_hash, from, estimated_gas: 21_000, measured }
+        SentTransaction {
+            tx_hash,
+            from,
+            estimated_gas: 21_000,
+            measured,
+            cohort: SubmitCohort::Plain,
+        }
     }
 
     #[test]
