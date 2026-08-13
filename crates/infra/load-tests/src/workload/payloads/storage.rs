@@ -2,6 +2,7 @@ use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_rpc_types::TransactionRequest;
 use alloy_sol_types::{SolCall, sol};
+use async_trait::async_trait;
 
 use super::Payload;
 use crate::workload::SeededRng;
@@ -41,6 +42,7 @@ impl StoragePayload {
     }
 }
 
+#[async_trait]
 impl Payload for StoragePayload {
     fn name(&self) -> &'static str {
         "storage"

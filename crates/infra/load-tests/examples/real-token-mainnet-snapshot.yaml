@@ -17,9 +17,9 @@ flashblocks_ws: "ws://127.0.0.1:7111"
 chain_id: 8453
 sender_count: 10
 target_gps: 20000000
+block_time: "2s"
 in_flight_per_sender: 64
 batch_size: 20
-batch_timeout: "10ms"
 duration: "60s"
 seed: 654789
 

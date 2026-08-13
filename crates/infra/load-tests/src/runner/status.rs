@@ -1,9 +1,42 @@
-use std::time::Duration;
+use std::{
+    io::{self, IsTerminal},
+    time::Duration,
+};
 
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use tracing::level_filters::LevelFilter;
+use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use tracing_indicatif::{IndicatifWriter, writer::Stderr};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
+
+use crate::{BaselineError, Result};
+
+/// Bounded lifecycle stage shown in progress output.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum LoadTestStage {
+    /// Preparing accounts and chain state.
+    Setup,
+    /// Filling the initial transaction inventory.
+    Prefill,
+    /// Submitting measured load.
+    #[default]
+    Submitting,
+    /// Waiting for canonical confirmations after submission stops.
+    DrainingConfirmations,
+    /// Recovering funds and payload state.
+    Cleanup,
+}
+
+impl LoadTestStage {
+    /// Stable label used by the footer and structured logs.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Setup => "setup",
+            Self::Prefill => "prefill",
+            Self::Submitting => "submitting",
+            Self::DrainingConfirmations => "draining_confirmations",
+            Self::Cleanup => "cleanup",
+        }
+    }
+}
 
 /// Snapshot of live metrics for the status display.
 #[derive(Debug, Clone, Default)]
@@ -12,6 +45,8 @@ pub struct DisplaySnapshot {
     pub elapsed: Duration,
     /// Total run duration (`None` = continuous).
     pub duration: Option<Duration>,
+    /// Current bounded lifecycle stage.
+    pub stage: LoadTestStage,
     /// Total transactions submitted.
     pub submitted: u64,
     /// Total transactions confirmed.
@@ -28,6 +63,8 @@ pub struct DisplaySnapshot {
     pub rolling_tps: f64,
     /// Rolling 30s GPS.
     pub rolling_gps: f64,
+    /// Configured target GPS (`None` means unbounded).
+    pub target_gps: Option<u64>,
     /// Rolling 30s p50 block landing latency.
     pub p50_latency: Duration,
     /// Rolling 30s p99 block landing latency.
@@ -38,16 +75,6 @@ pub struct DisplaySnapshot {
     pub flashblocks_p99_latency: Duration,
     /// Current gas price in gwei.
     pub gas_price_gwei: f64,
-    /// Total ETH across all sender accounts (formatted).
-    pub total_eth: Option<String>,
-    /// Minimum ETH in any single sender account (formatted).
-    pub min_eth: Option<String>,
-    /// Whether any account is below the low-balance threshold.
-    pub funds_low: bool,
-    /// Checksummed address of the funder wallet (set after `fund_accounts` runs).
-    pub funder_address: Option<String>,
-    /// Checksummed addresses of all sender accounts.
-    pub sender_addresses: Vec<String>,
 }
 
 /// Live progress-bar display for a running load test.
@@ -56,11 +83,11 @@ pub struct DisplaySnapshot {
 /// an `IndicatifWriter` that calls `MultiProgress::suspend()` around each
 /// write, preventing log lines from corrupting the progress bar display.
 pub struct LoadTestDisplay {
+    multi_progress: MultiProgress,
     header: ProgressBar,
     txs: ProgressBar,
     rate: ProgressBar,
     flight: ProgressBar,
-    funding: ProgressBar,
     gas_lat: ProgressBar,
     flashblocks_lat: ProgressBar,
     duration: Option<Duration>,
@@ -72,21 +99,38 @@ impl LoadTestDisplay {
     ///
     /// Returns the `MultiProgress` that manages the progress bars. Pass it to
     /// [`LoadTestDisplay::new`] after the run duration is known.
-    pub fn init_tracing() -> MultiProgress {
-        let mp = MultiProgress::new();
-        // IndicatifWriter wraps `mp` and calls `mp.suspend()` around every
-        // tracing log write, so log lines never corrupt the rendered bars.
-        let writer: IndicatifWriter<Stderr> = IndicatifWriter::new(mp.clone());
+    pub fn init_tracing() -> Result<Option<MultiProgress>> {
+        let filter = EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| EnvFilter::new("warn,base_load_tests=info,base_load_tester=info"));
+        let interactive = Self::terminal_supported(io::stderr().is_terminal());
+        let multi_progress = interactive
+            .then(|| MultiProgress::with_draw_target(ProgressDrawTarget::stderr_with_hz(10)));
 
-        let filter =
-            EnvFilter::builder().with_default_directive(LevelFilter::WARN.into()).from_env_lossy();
+        if let Some(mp) = &multi_progress {
+            let writer: IndicatifWriter<Stderr> = IndicatifWriter::new(mp.clone());
+            tracing_subscriber::registry()
+                .with(tracing_subscriber::fmt::layer().with_writer(writer).with_ansi(true))
+                .with(filter)
+                .try_init()
+                .map_err(|error| {
+                    BaselineError::Config(format!("failed to initialize tracing: {error}"))
+                })?;
+        } else {
+            tracing_subscriber::registry()
+                .with(tracing_subscriber::fmt::layer().with_ansi(false))
+                .with(filter)
+                .try_init()
+                .map_err(|error| {
+                    BaselineError::Config(format!("failed to initialize tracing: {error}"))
+                })?;
+        }
 
-        let _ = tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(writer).with_ansi(true))
-            .with(filter)
-            .try_init();
+        Ok(multi_progress)
+    }
 
-        mp
+    /// Returns whether an attended terminal can render the live footer.
+    pub const fn terminal_supported(stderr_is_terminal: bool) -> bool {
+        stderr_is_terminal
     }
 
     /// Creates a new display and attaches its bars to `mp`.
@@ -126,11 +170,11 @@ impl LoadTestDisplay {
         };
 
         Self {
+            multi_progress: mp.clone(),
             header,
             txs: make_stat(mp),
             rate: make_stat(mp),
             flight: make_stat(mp),
-            funding: make_stat(mp),
             gas_lat: make_stat(mp),
             flashblocks_lat: make_stat(mp),
             duration,
@@ -142,11 +186,42 @@ impl LoadTestDisplay {
         !self.header.is_hidden()
     }
 
+    /// Updates the header for a bounded lifecycle stage.
+    pub fn set_stage(&self, stage: LoadTestStage) {
+        let style = if stage == LoadTestStage::Submitting {
+            self.duration.map_or_else(
+                || {
+                    ProgressStyle::with_template("{spinner:.cyan} {msg}")
+                        .expect("template is valid")
+                },
+                |_| {
+                    ProgressStyle::with_template(
+                        "{spinner:.cyan} {msg}  [{bar:40.cyan/blue}] {percent}%",
+                    )
+                    .expect("template is valid")
+                    .progress_chars("█░")
+                },
+            )
+        } else {
+            ProgressStyle::with_template("{spinner:.cyan} {msg}").expect("template is valid")
+        };
+        self.header.set_style(style);
+        self.header.set_message(format!("Base Load Test  {}", stage.as_str()));
+
+        if stage == LoadTestStage::Cleanup {
+            for bar in [&self.txs, &self.rate, &self.flight, &self.gas_lat, &self.flashblocks_lat] {
+                bar.finish_and_clear();
+            }
+        }
+    }
+
     /// Updates all bars with the latest snapshot.
     pub fn update(&self, snap: &DisplaySnapshot) {
         let elapsed_str = fmt_hms(snap.elapsed);
 
-        if let Some(d) = self.duration {
+        if snap.stage != LoadTestStage::Submitting {
+            self.header.set_message(format!("Base Load Test  {}", snap.stage.as_str()));
+        } else if let Some(d) = self.duration {
             self.header.set_position(snap.elapsed.as_secs().min(d.as_secs()));
             self.header.set_message(format!(
                 "Base Load Test  elapsed {}   remaining {}",
@@ -170,10 +245,11 @@ impl LoadTestDisplay {
             100.0
         };
         self.rate.set_message(format!(
-            "rate    {:.2}% success   tps {:.1}   gps {}   (30s window)",
+            "rate    {:.2}% success   tps {:.1}   gps {} / {}   (30s window)",
             success_rate,
             snap.rolling_tps,
             fmt_num(snap.rolling_gps as u64),
+            snap.target_gps.map_or_else(|| "unbounded".to_string(), fmt_num),
         ));
 
         let all_blocked = snap.total_senders > 0 && snap.senders_blocked >= snap.total_senders;
@@ -191,16 +267,6 @@ impl LoadTestDisplay {
                 snap.senders_blocked,
                 snap.total_senders,
             )
-        });
-
-        self.funding.set_message(match (&snap.total_eth, &snap.min_eth) {
-            (Some(total), Some(min)) if snap.funds_low => {
-                format!("funding !! total {total} ETH   min/acct {min} ETH   LOW !!")
-            }
-            (Some(total), Some(min)) => {
-                format!("funding total {total} ETH   min/acct {min} ETH")
-            }
-            _ => "funding fetching...".to_string(),
         });
 
         self.gas_lat.set_message(format!(
@@ -226,20 +292,27 @@ impl LoadTestDisplay {
 
     /// Finishes all bars and clears the stat rows.
     pub fn finish(&self) {
-        if let Some(d) = self.duration {
-            self.header.set_position(d.as_secs());
-        }
-        self.header.finish_with_message("Base Load Test  complete");
-        for bar in [
-            &self.txs,
-            &self.rate,
-            &self.flight,
-            &self.funding,
-            &self.gas_lat,
-            &self.flashblocks_lat,
-        ] {
+        self.header.finish_and_clear();
+        for bar in [&self.txs, &self.rate, &self.flight, &self.gas_lat, &self.flashblocks_lat] {
             bar.finish_and_clear();
         }
+    }
+
+    /// Temporarily clears the footer while another output stream writes.
+    pub fn suspend<T>(&self, operation: impl FnOnce() -> T) -> T {
+        self.multi_progress.suspend(operation)
+    }
+
+    /// Creates a setup progress bar managed by the same footer as tracing output.
+    pub fn progress_bar(&self, total: u64, prefix: &str) -> ProgressBar {
+        let progress = self.multi_progress.insert_before(&self.header, ProgressBar::new(total));
+        progress.set_style(
+            ProgressStyle::with_template("{prefix} [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
+                .expect("valid template")
+                .progress_chars("█▓░"),
+        );
+        progress.set_prefix(prefix.to_string());
+        progress
     }
 }
 
@@ -280,4 +353,15 @@ fn fmt_num(n: u64) -> String {
         result.push(c);
     }
     result.into_iter().rev().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LoadTestDisplay;
+
+    #[test]
+    fn terminal_support_requires_a_real_terminal() {
+        assert!(LoadTestDisplay::terminal_supported(true));
+        assert!(!LoadTestDisplay::terminal_supported(false));
+    }
 }

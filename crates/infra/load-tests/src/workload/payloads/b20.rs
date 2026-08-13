@@ -1,13 +1,19 @@
 //! B-20 precompile token transfer payload for load testing.
 
+use std::sync::{Arc, OnceLock};
+
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_rpc_types::TransactionRequest;
 use alloy_sol_types::SolCall;
+use async_trait::async_trait;
 use base_common_precompiles::{B20Variant, IB20};
 
 use super::Payload;
-use crate::workload::SeededRng;
+use crate::{
+    BaselineError, Result,
+    workload::{SeededRng, chain_prep::ChainPrepContext},
+};
 
 /// Derives the deterministic B-20 token salt for a sender within a single run.
 ///
@@ -41,11 +47,12 @@ pub(crate) fn b20_token_for(sender: Address, run_salt: B256) -> Address {
 /// sustained load.
 ///
 /// The token is derived per sender from the run's salt rather than stored, so a single payload
-/// instance serves every sender's own token without a sender→token map.
+/// instance serves every sender's own token without a sender→token map. The salt is set during
+/// [`Payload::prepare`].
 #[derive(Debug, Clone)]
 pub struct B20TransferPayload {
     /// Per-run salt seed used to derive each sender's own token address.
-    pub run_salt: B256,
+    run_salt: Arc<OnceLock<B256>>,
     /// Minimum transfer amount.
     pub min_amount: U256,
     /// Maximum transfer amount.
@@ -53,12 +60,32 @@ pub struct B20TransferPayload {
 }
 
 impl B20TransferPayload {
-    /// Creates a new B-20 transfer payload bound to a run's token salt.
-    pub const fn new(run_salt: B256, min_amount: U256, max_amount: U256) -> Self {
-        Self { run_salt, min_amount, max_amount }
+    /// Creates a B-20 transfer payload with a known run salt (tests / post-prepare use).
+    pub fn new(run_salt: B256, min_amount: U256, max_amount: U256) -> Self {
+        let cell = OnceLock::new();
+        let _ = cell.set(run_salt);
+        Self { run_salt: Arc::new(cell), min_amount, max_amount }
+    }
+
+    /// Creates a B-20 payload whose run salt is filled during [`Payload::prepare`].
+    pub fn pending(min_amount: U256, max_amount: U256) -> Self {
+        Self { run_salt: Arc::new(OnceLock::new()), min_amount, max_amount }
+    }
+
+    /// Returns the per-run salt once prepare (or [`Self::new`]) has set it.
+    pub fn run_salt(&self) -> Option<B256> {
+        self.run_salt.get().copied()
+    }
+
+    /// Records the per-run salt during chain preparation.
+    pub fn set_run_salt(&self, run_salt: B256) -> Result<()> {
+        self.run_salt
+            .set(run_salt)
+            .map_err(|_| BaselineError::Config("b20 run salt already set".into()))
     }
 }
 
+#[async_trait]
 impl Payload for B20TransferPayload {
     fn name(&self) -> &'static str {
         "b20"
@@ -69,6 +96,9 @@ impl Payload for B20TransferPayload {
     }
 
     fn generate(&self, rng: &mut SeededRng, from: Address, to: Address) -> TransactionRequest {
+        let run_salt =
+            self.run_salt().expect("b20 run salt must be set by prepare before generate");
+
         let amount = if self.min_amount == self.max_amount {
             self.min_amount
         } else {
@@ -79,13 +109,21 @@ impl Payload for B20TransferPayload {
 
         // Each sender transfers its OWN token; derive the token from the sender, not a fixed
         // address, so any sender produces a valid transfer against the token it minted at setup.
-        let token = b20_token_for(from, self.run_salt);
+        let token = b20_token_for(from, run_salt);
         let call = IB20::transferCall { to, amount };
 
         TransactionRequest::default()
             .with_to(token)
             .with_input(Bytes::from(call.abi_encode()))
             .with_gas_limit(100_000)
+    }
+
+    async fn prepare(&self, ctx: &mut ChainPrepContext<'_>) -> Result<()> {
+        super::b20_lifecycle::prepare(self, ctx).await
+    }
+
+    async fn teardown(&self, ctx: &ChainPrepContext<'_>) -> Result<()> {
+        super::b20_lifecycle::teardown(self, ctx).await
     }
 }
 
@@ -153,5 +191,21 @@ mod tests {
             expected.abi_encode().as_slice(),
             "calldata must be a transfer of the chosen amount to the recipient"
         );
+    }
+
+    #[test]
+    fn pending_payload_has_no_salt_until_set() {
+        let payload = B20TransferPayload::pending(U256::from(1), U256::from(1));
+        assert!(payload.run_salt().is_none());
+        assert!(payload.run_salt().is_none());
+    }
+
+    #[test]
+    fn prepare_writes_salt_into_context_outputs() {
+        // Pure unit check: setting the OnceLock mirrors what lifecycle prepare does before RPC.
+        let payload = B20TransferPayload::pending(U256::from(1), U256::from(1));
+        let salt = B256::repeat_byte(0xab);
+        payload.run_salt.set(salt).expect("unset");
+        assert_eq!(payload.run_salt(), Some(salt));
     }
 }

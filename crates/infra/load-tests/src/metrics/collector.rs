@@ -7,8 +7,9 @@ use alloy_primitives::TxHash;
 use tracing::{debug, warn};
 
 use super::{
-    ConfigSummary, MetricsAggregator, MetricsSummary, ReceiptCoverage, RollingWindow,
-    SubmissionStats, ThroughputSample, TransactionMetrics,
+    ConfigSummary, LatencyMetrics, MetricsAggregator, MetricsSummary, PacingCycleObservation,
+    PacingCycleSource, PacingMetrics, ReceiptCoverage, RollingWindow, SubmissionStats,
+    ThroughputSample, TransactionMetrics,
 };
 use crate::runner::BlockReceipt;
 
@@ -30,6 +31,11 @@ pub struct MetricsCollector {
     /// Coverage of the end-of-run receipt pass, populated by [`Self::apply_receipts`].
     /// Signals whether the final gas/revert metrics are complete or partial.
     receipt_coverage: ReceiptCoverage,
+    pacing_cycles: Vec<PacingCycleObservation>,
+    completed_refill_lags: Vec<Duration>,
+    pacing_duration: Option<Duration>,
+    undrained_transactions: u64,
+    undrained_gas: u128,
 }
 
 impl MetricsCollector {
@@ -46,6 +52,11 @@ impl MetricsCollector {
             throughput_samples: Vec::new(),
             estimated_gas: 0,
             receipt_coverage: ReceiptCoverage::default(),
+            pacing_cycles: Vec::new(),
+            completed_refill_lags: Vec::new(),
+            pacing_duration: None,
+            undrained_transactions: 0,
+            undrained_gas: 0,
         }
     }
 
@@ -64,11 +75,6 @@ impl MetricsCollector {
     /// Gas and revert status are unknown at landing time and stay at their defaults
     /// until [`Self::apply_receipts`] backfills them from the end-of-run receipt pass.
     pub fn record_confirmed(&mut self, metrics: TransactionMetrics) {
-        debug!(
-            tx_hash = %metrics.tx_hash,
-            block_latency_ms = ?metrics.block_latency.map(|d| d.as_millis()),
-            "tx landed"
-        );
         let at = metrics.confirmed_at.unwrap_or_else(Instant::now);
         // Canonical gas is backfilled later by the receipt pass, so a freshly landed
         // tx reports gas_used == 0. Use the estimate for the live rolling window
@@ -169,6 +175,27 @@ impl MetricsCollector {
         self.failed_count
     }
 
+    /// Records one block-aligned refill cycle.
+    pub fn record_pacing_cycle(&mut self, observation: PacingCycleObservation) {
+        self.pacing_cycles.push(observation);
+    }
+
+    /// Records a refill acknowledgement that completed after the synchronous cycle budget.
+    pub fn record_completed_refill_lag(&mut self, lag: Duration) {
+        self.completed_refill_lags.push(lag);
+    }
+
+    /// Records the exact duration of the measured pacing window.
+    pub const fn set_pacing_duration(&mut self, duration: Duration) {
+        self.pacing_duration = Some(duration);
+    }
+
+    /// Records expected submitted inventory remaining at the measurement cutoff.
+    pub const fn record_undrained_inventory(&mut self, transactions: u64, gas: u128) {
+        self.undrained_transactions = transactions;
+        self.undrained_gas = gas;
+    }
+
     /// Returns the number of confirmed transactions that reverted.
     pub const fn reverted_count(&self) -> u64 {
         self.reverted_count
@@ -193,8 +220,12 @@ impl MetricsCollector {
         config: Option<ConfigSummary>,
         fresh_recipient_count: Option<u64>,
     ) -> MetricsSummary {
+        let pacing_duration = self
+            .pacing_duration
+            .or_else(|| self.pacing_cycles.iter().map(|cycle| cycle.elapsed).max())
+            .unwrap_or(wall_clock_duration);
         let aggregator = MetricsAggregator::new(&self.transactions);
-        aggregator.summarize(
+        let mut summary = aggregator.summarize(
             wall_clock_duration,
             SubmissionStats {
                 submitted: self.submitted_count,
@@ -205,7 +236,9 @@ impl MetricsCollector {
             config,
             self.receipt_coverage,
             fresh_recipient_count,
-        )
+        );
+        summary.pacing = self.summarize_pacing(pacing_duration);
+        summary
     }
 
     /// Resets the collector for reuse.
@@ -220,6 +253,154 @@ impl MetricsCollector {
         self.throughput_samples.clear();
         self.estimated_gas = 0;
         self.receipt_coverage = ReceiptCoverage::default();
+        self.pacing_cycles.clear();
+        self.completed_refill_lags.clear();
+        self.pacing_duration = None;
+        self.undrained_transactions = 0;
+        self.undrained_gas = 0;
+    }
+
+    fn summarize_pacing(&self, duration: Duration) -> PacingMetrics {
+        let offered_gas = self
+            .pacing_cycles
+            .iter()
+            .fold(0u128, |total, cycle| total.saturating_add(cycle.offered_gas));
+        let block_cycles: Vec<_> =
+            self.pacing_cycles.iter().filter(|cycle| cycle.block_observed).collect();
+        let blocks_observed = block_cycles.len() as u64;
+        let block_fill_total = block_cycles.iter().fold(0.0, |total, cycle| {
+            if cycle.block_gas_limit == 0 {
+                total
+            } else {
+                total + cycle.block_gas_used as f64 / cycle.block_gas_limit as f64
+            }
+        });
+        let our_block_total = block_cycles.iter().fold(0.0, |total, cycle| {
+            if cycle.block_gas_limit == 0 {
+                total
+            } else {
+                total + cycle.our_included_gas as f64 / cycle.block_gas_limit as f64
+            }
+        });
+        let availability: Vec<_> =
+            block_cycles.iter().filter_map(|cycle| cycle.availability_lag).collect();
+        let plan_time: Vec<_> = self.pacing_cycles.iter().map(|cycle| cycle.plan_time).collect();
+        let submit_time: Vec<_> =
+            self.pacing_cycles.iter().filter_map(|cycle| cycle.submit_time).collect();
+        let refill: Vec<_> = self
+            .pacing_cycles
+            .iter()
+            .filter_map(|cycle| cycle.refill_lag)
+            .chain(self.completed_refill_lags.iter().copied())
+            .collect();
+
+        PacingMetrics {
+            offered_gas,
+            offered_gps: if duration.is_zero() {
+                0.0
+            } else {
+                offered_gas as f64 / duration.as_secs_f64()
+            },
+            blocks_observed,
+            canonical_cycles: self
+                .pacing_cycles
+                .iter()
+                .filter(|cycle| cycle.source == PacingCycleSource::Canonical)
+                .count() as u64,
+            flashblock_cycles: self
+                .pacing_cycles
+                .iter()
+                .filter(|cycle| cycle.source == PacingCycleSource::Flashblock)
+                .count() as u64,
+            safety_cycles: self
+                .pacing_cycles
+                .iter()
+                .filter(|cycle| cycle.source == PacingCycleSource::Safety)
+                .count() as u64,
+            blocks_under_floor: block_cycles
+                .iter()
+                .filter(|cycle| cycle.pre_refill_depth_gas < cycle.floor_gas)
+                .count() as u64,
+            capacity_limited_cycles: self
+                .pacing_cycles
+                .iter()
+                .filter(|cycle| cycle.capacity_limited)
+                .count() as u64,
+            presign_starved_cycles: self
+                .pacing_cycles
+                .iter()
+                .filter(|cycle| cycle.presign_starved)
+                .count() as u64,
+            rpc_bound_cycles: self
+                .pacing_cycles
+                .iter()
+                .filter(|cycle| {
+                    cycle.offered_gas > 0
+                        && cycle.refill_lag.is_none_or(|lag| lag >= Duration::from_millis(100))
+                })
+                .count() as u64,
+            chain_bound_cycles: self.pacing_cycles.iter().filter(|cycle| cycle.chain_bound).count()
+                as u64,
+            max_depth_gas: self
+                .pacing_cycles
+                .iter()
+                .map(|cycle| cycle.post_refill_depth_gas)
+                .max()
+                .unwrap_or_default(),
+            max_queued_gas: self
+                .pacing_cycles
+                .iter()
+                .map(|cycle| cycle.queued_gas)
+                .max()
+                .unwrap_or_default(),
+            mean_depth_to_floor_ratio: if blocks_observed == 0 {
+                0.0
+            } else {
+                block_cycles.iter().fold(0.0, |total, cycle| {
+                    if cycle.floor_gas == 0 {
+                        total
+                    } else {
+                        total + cycle.post_refill_depth_gas as f64 / cycle.floor_gas as f64
+                    }
+                }) / blocks_observed as f64
+            },
+            mean_block_fill_ratio: if blocks_observed == 0 {
+                0.0
+            } else {
+                block_fill_total / blocks_observed as f64
+            },
+            mean_our_block_ratio: if blocks_observed == 0 {
+                0.0
+            } else {
+                our_block_total / blocks_observed as f64
+            },
+            availability_lag: Self::latency_summary(availability),
+            plan_time: Self::latency_summary(plan_time),
+            submit_time: Self::latency_summary(submit_time),
+            refill_lag: Self::latency_summary(refill),
+            undrained_transactions: self.undrained_transactions,
+            undrained_gas: self.undrained_gas,
+        }
+    }
+
+    fn latency_summary(mut samples: Vec<Duration>) -> LatencyMetrics {
+        if samples.is_empty() {
+            return LatencyMetrics::default();
+        }
+        samples.sort_unstable();
+        let total = samples.iter().fold(Duration::ZERO, |total, sample| total + *sample);
+        let percentile = |pct: usize| {
+            let rank = (samples.len() * pct).div_ceil(100);
+            samples[rank.saturating_sub(1).min(samples.len() - 1)]
+        };
+        LatencyMetrics {
+            min: samples[0],
+            max: samples[samples.len() - 1],
+            mean: total / u32::try_from(samples.len()).unwrap_or(u32::MAX),
+            p50: percentile(50),
+            p95: percentile(95),
+            p99: percentile(99),
+        }
     }
 
     /// Snapshots the current rolling TPS and GPS with elapsed time for timeseries output.
@@ -390,5 +571,60 @@ mod tests {
 
         assert_eq!(collector.rolling_gps(), 0.0, "no estimate set → GPS stays 0");
         assert_eq!(collector.avg_gas_used(), None, "no estimate and no real gas → None");
+    }
+
+    #[test]
+    fn pacing_offered_gps_uses_exact_measurement_duration() {
+        let mut collector = MetricsCollector::new();
+        collector.record_pacing_cycle(PacingCycleObservation {
+            offered_gas: 1_000_000,
+            ..Default::default()
+        });
+        collector.set_pacing_duration(Duration::from_millis(200));
+
+        let summary = collector.summarize(Duration::from_secs(10), None);
+
+        assert_eq!(summary.pacing.offered_gps, 5_000_000.0);
+        assert_eq!(summary.pacing.canonical_cycles, 1);
+        assert_eq!(summary.pacing.flashblock_cycles, 0);
+    }
+
+    #[test]
+    fn pacing_counts_refill_sources() {
+        let mut collector = MetricsCollector::new();
+        collector.record_pacing_cycle(PacingCycleObservation {
+            source: PacingCycleSource::Flashblock,
+            ..Default::default()
+        });
+        collector.record_pacing_cycle(PacingCycleObservation {
+            source: PacingCycleSource::Safety,
+            ..Default::default()
+        });
+
+        let summary = collector.summarize(Duration::from_secs(1), None);
+
+        assert_eq!(summary.pacing.canonical_cycles, 0);
+        assert_eq!(summary.pacing.flashblock_cycles, 1);
+        assert_eq!(summary.pacing.safety_cycles, 1);
+    }
+
+    #[test]
+    fn pacing_only_counts_late_acknowledgements_for_offered_refills() {
+        let mut collector = MetricsCollector::new();
+        collector.record_pacing_cycle(PacingCycleObservation::default());
+        collector.record_pacing_cycle(PacingCycleObservation {
+            offered_gas: 1,
+            refill_lag: None,
+            ..Default::default()
+        });
+        collector.record_pacing_cycle(PacingCycleObservation {
+            offered_gas: 1,
+            refill_lag: Some(Duration::from_millis(50)),
+            ..Default::default()
+        });
+
+        let summary = collector.summarize(Duration::from_secs(1), None);
+
+        assert_eq!(summary.pacing.rpc_bound_cycles, 1);
     }
 }

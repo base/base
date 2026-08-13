@@ -1,6 +1,7 @@
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_rpc_types::TransactionRequest;
+use async_trait::async_trait;
 
 use super::Payload;
 use crate::workload::SeededRng;
@@ -32,6 +33,7 @@ impl Erc20Payload {
     }
 }
 
+#[async_trait]
 impl Payload for Erc20Payload {
     fn name(&self) -> &'static str {
         "erc20"

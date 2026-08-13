@@ -1,6 +1,7 @@
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, Bytes};
 use alloy_rpc_types::TransactionRequest;
+use async_trait::async_trait;
 use revm::precompile::{PrecompileId, PrecompileSpecId};
 
 use super::Payload;
@@ -180,6 +181,7 @@ impl PrecompilePayload {
     }
 }
 
+#[async_trait]
 impl Payload for PrecompilePayload {
     fn name(&self) -> &'static str {
         "precompile"

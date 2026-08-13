@@ -7,7 +7,9 @@ use alloy_provider::{
     fillers::{ChainIdFiller, FillProvider, JoinFill, WalletFiller},
 };
 use base_common_network::Base;
-use tracing::{debug, instrument, warn};
+use futures::future::join_all;
+use tokio::sync::Semaphore;
+use tracing::{instrument, warn};
 use url::Url;
 
 use crate::utils::{BaselineError, Result};
@@ -108,13 +110,46 @@ impl TxpoolAdminClient {
     }
 
     /// Drops all pending transactions from the given sender address.
-    #[instrument(skip(self), fields(address = %address, url = %self.url))]
+    #[instrument(skip(self), fields(address = %address))]
     pub async fn drop_sender_transactions(&self, address: Address) -> Result<Vec<TxHash>> {
         self.provider
             .client()
             .request("admin_dropSenderTransactions", (address,))
             .await
             .rpc("drop sender transactions")
+    }
+
+    /// Returns pending and queued transaction nonces for a sender, respectively.
+    pub async fn sender_transaction_nonces(
+        &self,
+        address: Address,
+    ) -> Result<(Vec<u64>, Vec<u64>)> {
+        let content: serde_json::Value = self
+            .provider
+            .client()
+            .request("txpool_contentFrom", (address,))
+            .await
+            .rpc("get sender txpool content")?;
+        let parse_section = |section: &str| -> Result<Vec<u64>> {
+            let mut nonces = Vec::new();
+            let Some(transactions) = content.get(section).and_then(serde_json::Value::as_object)
+            else {
+                return Ok(nonces);
+            };
+            for nonce in transactions.keys() {
+                let parsed = nonce
+                    .strip_prefix("0x")
+                    .map_or_else(|| nonce.parse(), |hex| u64::from_str_radix(hex, 16))
+                    .map_err(|e| {
+                        BaselineError::Rpc(format!(
+                            "invalid nonce {nonce} in sender txpool content: {e}"
+                        ))
+                    })?;
+                nonces.push(parsed);
+            }
+            Ok(nonces)
+        };
+        Ok((parse_section("pending")?, parse_section("queued")?))
     }
 
     /// Returns the RPC endpoint URL.
@@ -134,7 +169,7 @@ impl std::fmt::Debug for TxpoolAdminClient {
 /// Public RPC endpoints (e.g. Sepolia) often reject or return non-JSON error
 /// responses for very large batches. Keeping batches small avoids rate-limit
 /// and gateway errors.
-const MAX_BATCH_RPC_SIZE: usize = 100;
+pub const MAX_BATCH_RPC_SIZE: usize = 100;
 
 /// Client for JSON-RPC batch requests.
 ///
@@ -145,6 +180,7 @@ const MAX_BATCH_RPC_SIZE: usize = 100;
 pub struct BatchRpcClient {
     client: reqwest::Client,
     url: Url,
+    batch_size: usize,
 }
 
 /// Result of a single request within a JSON-RPC batch response.
@@ -166,33 +202,52 @@ impl BatchRpcClient {
             .tcp_nodelay(true)
             .build()
             .expect("failed to build reqwest client");
-        Self { client, url }
+        Self { client, url, batch_size: MAX_BATCH_RPC_SIZE }
+    }
+
+    /// Sets the maximum number of JSON-RPC calls in each HTTP request.
+    pub const fn with_batch_size(mut self, batch_size: usize) -> Self {
+        self.batch_size = if batch_size == 0 { 1 } else { batch_size };
+        self
     }
 
     /// Sends multiple pre-signed raw transactions via JSON-RPC batch requests.
     /// Returns one [`BatchSendResult`] per input, preserving order.
     ///
-    /// Large requests are automatically split into sub-batches of
-    /// [`MAX_BATCH_RPC_SIZE`] and sent concurrently.
+    /// Large requests are automatically split into configured sub-batches and
+    /// sent concurrently. When supplied, `request_limiter` bounds concurrency
+    /// across all batches and sender workers.
+    ///
+    /// `request_limiter`, when set, bounds the number of these sub-batch HTTP
+    /// requests that may be outstanding concurrently across all callers
+    /// sharing the semaphore, independent of how many sender workers exist or
+    /// how many transactions are unconfirmed.
     ///
     /// Each element in `raw_txs` must be the EIP-2718 encoded signed
     /// transaction bytes (as produced by `Encodable2718::encoded_2718`).
-    pub async fn send_raw_transactions(&self, raw_txs: &[Bytes]) -> Result<Vec<BatchSendResult>> {
+    pub async fn send_raw_transactions(
+        &self,
+        raw_txs: &[Bytes],
+        request_limiter: Option<&Semaphore>,
+    ) -> Result<Vec<BatchSendResult>> {
         if raw_txs.is_empty() {
             return Ok(Vec::new());
         }
 
-        let chunk_futures: Vec<_> =
-            raw_txs.chunks(MAX_BATCH_RPC_SIZE).map(|chunk| self.send_raw_chunk(chunk)).collect();
+        let chunk_requests = raw_txs.chunks(self.batch_size).map(|chunk| async move {
+            let _permit = match request_limiter {
+                Some(limiter) => Some(limiter.acquire().await.expect("semaphore never closed")),
+                None => None,
+            };
+            self.send_raw_chunk(chunk).await
+        });
+        let chunk_results = join_all(chunk_requests).await;
 
-        let chunk_results = futures::future::join_all(chunk_futures).await;
-
-        let mut all_results: Vec<BatchSendResult> = Vec::with_capacity(raw_txs.len());
+        let mut all_results = Vec::with_capacity(raw_txs.len());
         for result in chunk_results {
             all_results.extend(result?);
         }
 
-        debug!(count = raw_txs.len(), "batch send complete");
         Ok(all_results)
     }
 
@@ -210,17 +265,24 @@ impl BatchRpcClient {
             })
             .collect();
 
-        let response = self
-            .client
-            .post(self.url.as_str())
-            .json(&batch)
-            .send()
-            .await
-            .map_err(|e| BaselineError::Rpc(format!("batch send request failed: {e}")))?;
+        let response =
+            self.client.post(self.url.as_str()).json(&batch).send().await.map_err(|error| {
+                let error_kind = if error.is_timeout() {
+                    "timeout"
+                } else if error.is_connect() {
+                    "connection"
+                } else if error.is_request() {
+                    "request"
+                } else {
+                    "transport"
+                };
+                BaselineError::Rpc(format!("batch send request failed ({error_kind})"))
+            })?;
 
         let status = response.status();
-        let body_text = response.text().await.map_err(|e| {
-            BaselineError::Rpc(format!("failed to read batch send response body: {e}"))
+        let body_text = response.text().await.map_err(|error| {
+            let error_kind = if error.is_timeout() { "timeout" } else { "transport" };
+            BaselineError::Rpc(format!("failed to read batch send response body ({error_kind})"))
         })?;
 
         if !status.is_success() {
@@ -267,4 +329,42 @@ impl BatchRpcClient {
 fn truncate_for_log(s: &str) -> &str {
     let max = 256;
     if s.len() <= max { s } else { &s[..s.floor_char_boundary(max)] }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::TcpListener;
+
+    use alloy_primitives::Bytes;
+    use url::Url;
+
+    use super::BatchRpcClient;
+
+    #[tokio::test]
+    async fn batch_transport_error_omits_endpoint_credentials() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test endpoint");
+        let address = listener.local_addr().expect("read test endpoint");
+        drop(listener);
+        let url =
+            Url::parse(&format!("http://user:secret@{address}")).expect("valid credentialed URL");
+        let client = BatchRpcClient::new(url);
+
+        let error = client
+            .send_raw_transactions(&[Bytes::from(vec![1])], None)
+            .await
+            .expect_err("closed endpoint should reject request")
+            .to_string();
+
+        assert!(error.contains("batch send request failed"));
+        assert!(!error.contains("user"));
+        assert!(!error.contains("secret"));
+        assert!(!error.contains(&address.to_string()));
+    }
+
+    #[test]
+    fn batch_size_is_configurable() {
+        let url = Url::parse("http://localhost:8545").unwrap();
+
+        assert_eq!(BatchRpcClient::new(url).with_batch_size(25).batch_size, 25);
+    }
 }

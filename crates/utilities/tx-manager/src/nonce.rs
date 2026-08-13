@@ -6,7 +6,7 @@ use alloy_primitives::Address;
 use alloy_provider::Provider;
 use base_runtime::{Runtime, RuntimeTimeout, TokioRuntime};
 use tokio::sync::{Mutex, OwnedMutexGuard};
-use tracing::{debug, info, warn};
+use tracing::{debug, trace, warn};
 
 use crate::TxManagerError;
 
@@ -297,7 +297,7 @@ where
         guard.generation = guard.generation.wrapping_add(1);
         // `returned_nonces` is intentionally NOT cleared — these nonces
         // were never published and must persist for reuse.
-        info!(address = %self.address, "nonce cache reset");
+        trace!(address = %self.address, "nonce cache reset");
     }
 
     /// Returns a previously reserved nonce for reuse.

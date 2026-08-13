@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     BlockLoadMetrics, BlockRange, ConfigSummary, FlashblocksLatencyMetrics, GasMetrics,
-    LatencyMetrics, SubmissionStats, ThroughputMetrics, ThroughputPercentiles, ThroughputSample,
-    TransactionMetrics,
+    LatencyMetrics, PacingMetrics, SubmissionStats, ThroughputMetrics, ThroughputPercentiles,
+    ThroughputSample, TransactionMetrics,
 };
 
 /// Aggregates raw transaction metrics into summary statistics.
@@ -36,14 +36,19 @@ impl<'a> MetricsAggregator<'a> {
     ) -> MetricsSummary {
         let mut top_failure_reasons: Vec<(String, u64)> =
             submission.failure_reasons.iter().map(|(k, v)| (k.clone(), *v)).collect();
-        top_failure_reasons.sort_by_key(|reason| std::cmp::Reverse(reason.1));
+        top_failure_reasons.sort_by_key(|entry| std::cmp::Reverse(entry.1));
         top_failure_reasons.truncate(3);
 
         let tps_values: Vec<f64> = throughput_samples.iter().map(|s| s.tps).collect();
         let gps_values: Vec<f64> = throughput_samples.iter().map(|s| s.gps).collect();
 
         let block_range = Self::compute_block_range(self.transactions);
-        let throughput_duration = block_range.block_time_duration().unwrap_or(wall_clock_duration);
+        let block_time = config
+            .as_ref()
+            .and_then(|config| humantime::parse_duration(&config.block_time).ok())
+            .unwrap_or(Duration::from_secs(2));
+        let throughput_duration =
+            block_range.block_time_duration(block_time).unwrap_or(wall_clock_duration);
 
         MetricsSummary {
             config,
@@ -58,6 +63,7 @@ impl<'a> MetricsAggregator<'a> {
             ),
             throughput_percentiles: Self::compute_throughput_percentiles(&tps_values, &gps_values),
             throughput_timeseries: throughput_samples.to_vec(),
+            pacing: PacingMetrics::default(),
             gas: Self::compute_gas(self.transactions),
             block_range,
             fullest_block: Self::compute_fullest_block(self.transactions),
@@ -259,6 +265,8 @@ pub struct MetricsSummary {
     pub throughput_percentiles: ThroughputPercentiles,
     /// Throughput samples over time for graphing.
     pub throughput_timeseries: Vec<ThroughputSample>,
+    /// Block-aligned mempool pacing health.
+    pub pacing: PacingMetrics,
     /// Gas usage statistics.
     pub gas: GasMetrics,
     /// Range of blocks containing confirmed test transactions.
