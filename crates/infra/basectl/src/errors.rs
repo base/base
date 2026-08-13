@@ -524,13 +524,13 @@ pub enum SequencerCommandError {
     },
     /// The target EL is still syncing.
     #[error(
-        "execution layer for {node} is still syncing at block {el_block:?}; required unsafe L2 block is {required_l2_block}"
+        "execution layer for {node} is still syncing at block {el_block}; required unsafe L2 block is {required_l2_block}"
     )]
     ExecutionLayerSyncing {
         /// The target node name.
         node: String,
-        /// The latest observed EL block, if available.
-        el_block: Option<u64>,
+        /// The latest observed EL block.
+        el_block: u64,
         /// The unsafe L2 block that the EL must contain before sequencing.
         required_l2_block: u64,
     },

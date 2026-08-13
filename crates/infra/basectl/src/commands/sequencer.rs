@@ -204,13 +204,17 @@ async fn run_start(
         return Err(error.into());
     }
     if node.el_rpc.is_some() {
-        let required_l2_block =
-            status.and_then(|status| status.unsafe_l2_block).ok_or_else(|| {
-                SequencerCommandError::ExecutionLayerStatusUnavailable {
-                    node: node.name.clone(),
-                    field: "unsafe_l2_block",
-                }
+        let status =
+            status.ok_or_else(|| SequencerCommandError::ExecutionLayerStatusUnavailable {
+                node: node.name.clone(),
+                field: "status",
             })?;
+        let required_l2_block = status.unsafe_l2_block.ok_or_else(|| {
+            SequencerCommandError::ExecutionLayerStatusUnavailable {
+                node: node.name.clone(),
+                field: "unsafe_l2_block",
+            }
+        })?;
         if let Err(error) = ensure_el_ready_for_sequencing(status, &node.name, required_l2_block) {
             warn!(
                 error = %error,
@@ -431,20 +435,21 @@ fn ensure_start_request_matches_observed_head(
 }
 
 fn ensure_el_ready_for_sequencing(
-    status: Option<&ConductorNodeStatus>,
+    status: &ConductorNodeStatus,
     node: &str,
     required_l2_block: u64,
 ) -> Result<(), SequencerCommandError> {
-    let status = status.ok_or_else(|| SequencerCommandError::ExecutionLayerStatusUnavailable {
-        node: node.to_string(),
-        field: "el_syncing",
-    })?;
+    let el_block =
+        status.el_block.ok_or_else(|| SequencerCommandError::ExecutionLayerStatusUnavailable {
+            node: node.to_string(),
+            field: "el_block",
+        })?;
     match status.el_syncing {
         Some(false) => {}
         Some(true) => {
             return Err(SequencerCommandError::ExecutionLayerSyncing {
                 node: node.to_string(),
-                el_block: status.el_block,
+                el_block,
                 required_l2_block,
             });
         }
@@ -456,11 +461,6 @@ fn ensure_el_ready_for_sequencing(
         }
     }
 
-    let el_block =
-        status.el_block.ok_or_else(|| SequencerCommandError::ExecutionLayerStatusUnavailable {
-            node: node.to_string(),
-            field: "el_block",
-        })?;
     if el_block < required_l2_block {
         return Err(SequencerCommandError::ExecutionLayerBehind {
             node: node.to_string(),
@@ -1039,7 +1039,7 @@ mod tests {
         observed.el_syncing = Some(true);
         observed.el_block = Some(9);
 
-        let err = ensure_el_ready_for_sequencing(Some(&observed), "op-conductor-0", 10)
+        let err = ensure_el_ready_for_sequencing(&observed, "op-conductor-0", 10)
             .expect_err("syncing EL should block start");
 
         assert!(matches!(
@@ -1049,7 +1049,7 @@ mod tests {
                 el_block,
                 required_l2_block,
             } if node == "op-conductor-0"
-                && el_block == Some(9)
+                && el_block == 9
                 && required_l2_block == 10
         ));
     }
@@ -1059,7 +1059,7 @@ mod tests {
         let mut observed = status("op-conductor-0", true, false);
         observed.el_syncing = None;
 
-        let err = ensure_el_ready_for_sequencing(Some(&observed), "op-conductor-0", 10)
+        let err = ensure_el_ready_for_sequencing(&observed, "op-conductor-0", 10)
             .expect_err("missing EL sync status should block start");
 
         assert!(matches!(
@@ -1074,7 +1074,7 @@ mod tests {
         let mut observed = status("op-conductor-0", true, false);
         observed.el_block = None;
 
-        let err = ensure_el_ready_for_sequencing(Some(&observed), "op-conductor-0", 10)
+        let err = ensure_el_ready_for_sequencing(&observed, "op-conductor-0", 10)
             .expect_err("missing EL block should block start");
 
         assert!(matches!(
@@ -1089,7 +1089,7 @@ mod tests {
         let mut observed = status("op-conductor-0", true, false);
         observed.el_block = Some(9);
 
-        let err = ensure_el_ready_for_sequencing(Some(&observed), "op-conductor-0", 10)
+        let err = ensure_el_ready_for_sequencing(&observed, "op-conductor-0", 10)
             .expect_err("EL behind unsafe head should block start");
 
         assert!(matches!(
@@ -1106,7 +1106,7 @@ mod tests {
     fn start_el_readiness_allows_caught_up_el() {
         let observed = status("op-conductor-0", true, false);
 
-        ensure_el_ready_for_sequencing(Some(&observed), "op-conductor-0", 10)
+        ensure_el_ready_for_sequencing(&observed, "op-conductor-0", 10)
             .expect("caught-up EL should allow start");
     }
 
@@ -1116,7 +1116,7 @@ mod tests {
         observed.unsafe_l2_block = Some(0);
         observed.el_block = Some(0);
 
-        ensure_el_ready_for_sequencing(Some(&observed), "op-conductor-0", 0)
+        ensure_el_ready_for_sequencing(&observed, "op-conductor-0", 0)
             .expect("genesis block should be a valid start point");
     }
 
