@@ -56,12 +56,14 @@ fn predicates(
 
 fn transaction(
     index: usize,
+    sender_index: usize,
+    nonce: u64,
     predicate_count: usize,
     unique_predicate_state: bool,
 ) -> Arc<ValidPoolTransaction<BasePooledTransaction>> {
     let tx = TxEip1559 {
         chain_id: 1,
-        nonce: 0,
+        nonce,
         gas_limit: 21_000,
         max_fee_per_gas: 100,
         max_priority_fee_per_gas: 1,
@@ -73,13 +75,13 @@ fn transaction(
     let envelope = BaseTxEnvelope::Eip1559(tx.into_signed(Signature::test_signature()));
     let encoded_length = envelope.encode_2718_len();
     let transaction = BasePooledTransaction::new(
-        Recovered::new_unchecked(BaseTransactionSigned::from(envelope), address(index)),
+        Recovered::new_unchecked(BaseTransactionSigned::from(envelope), address(sender_index)),
         encoded_length,
     )
     .with_validity_predicates(predicates(index, predicate_count, unique_predicate_state));
 
     Arc::new(ValidPoolTransaction {
-        transaction_id: TransactionId::new((index as u64).into(), 0),
+        transaction_id: TransactionId::new((sender_index as u64).into(), nonce),
         transaction,
         propagate: true,
         timestamp: Instant::now(),
@@ -90,15 +92,26 @@ fn transaction(
 
 fn pool(
     transaction_count: usize,
+    sender_count: usize,
     predicate_transactions: usize,
     predicates_per_transaction: usize,
     unique_predicate_state: bool,
 ) -> Pool {
     let mut pool = PendingPool::new(Ordering::coinbase_tip());
     for index in 0..transaction_count {
+        let sender_index = index % sender_count;
         let predicate_count =
             usize::from(index < predicate_transactions) * predicates_per_transaction;
-        pool.add_transaction(transaction(index, predicate_count, unique_predicate_state), 0);
+        pool.add_transaction(
+            transaction(
+                index,
+                sender_index,
+                (index / sender_count) as u64,
+                predicate_count,
+                unique_predicate_state,
+            ),
+            0,
+        );
     }
     pool
 }
@@ -117,10 +130,10 @@ fn selection_benches(c: &mut Criterion) {
     let mut plain = c.benchmark_group("tx_selection/best_transactions");
     plain.sample_size(10);
     for &transaction_count in TRANSACTION_COUNTS {
-        let pool = pool(transaction_count, 0, 0, false);
+        let pool = pool(transaction_count, transaction_count, 0, 0, false);
         plain.throughput(Throughput::Elements(transaction_count as u64));
         plain.bench_with_input(
-            BenchmarkId::new("transactions", transaction_count),
+            BenchmarkId::new("end_to_end", transaction_count),
             &transaction_count,
             |b, _| {
                 b.iter(|| {
@@ -135,13 +148,61 @@ fn selection_benches(c: &mut Criterion) {
                 });
             },
         );
+        plain.bench_with_input(
+            BenchmarkId::new("snapshot", transaction_count),
+            &transaction_count,
+            |b, _| {
+                b.iter(|| {
+                    let mut best = pool.best();
+                    best.no_updates();
+                    black_box(best);
+                });
+            },
+        );
+        plain.bench_with_input(
+            BenchmarkId::new("iterate", transaction_count),
+            &transaction_count,
+            |b, _| {
+                b.iter_batched(
+                    || {
+                        let mut best = pool.best();
+                        best.no_updates();
+                        best
+                    },
+                    |best| {
+                        let mut selected = 0;
+                        for transaction in best {
+                            black_box(transaction);
+                            selected += 1;
+                        }
+                        assert_eq!(selected, transaction_count);
+                    },
+                    BatchSize::SmallInput,
+                );
+            },
+        );
     }
     plain.finish();
+
+    let mut chained = c.benchmark_group("tx_selection/best_transactions_chained");
+    chained.sample_size(10);
+    chained.throughput(Throughput::Elements(100_000));
+    for sender_count in [1, 1_000] {
+        let pool = pool(100_000, sender_count, 0, 0, false);
+        chained.bench_function(format!("{sender_count}_senders/100000"), |b| {
+            b.iter(|| {
+                let mut best = pool.best();
+                best.no_updates();
+                assert_eq!(best.by_ref().map(black_box).count(), 100_000);
+            });
+        });
+    }
+    chained.finish();
 
     let mut parking = c.benchmark_group("tx_selection/parkable_payload");
     parking.sample_size(10);
     for &transaction_count in TRANSACTION_COUNTS {
-        let pool = pool(transaction_count, 0, 0, false);
+        let pool = pool(transaction_count, transaction_count, 0, 0, false);
         parking.throughput(Throughput::Elements(transaction_count as u64));
         parking.bench_with_input(
             BenchmarkId::new("transactions", transaction_count),
@@ -210,6 +271,7 @@ fn predicate_benches(c: &mut Criterion) {
         (100, 8, true),
     ] {
         let pool = pool(
+            PREDICATE_TRANSACTION_COUNT,
             PREDICATE_TRANSACTION_COUNT,
             predicate_transactions,
             predicates_per_transaction,
