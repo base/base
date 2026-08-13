@@ -63,14 +63,15 @@ These limits do not apply to the health routes.
 ## Consensus-layer reachability
 
 The consensus-layer endpoint works the same way for the libp2p network. A
-caller sends the node's signed `enr:` record (as returned by `opp2p_self`),
-then the service opens a separate connection to the public `IPv4` address and
-TCP port advertised by that ENR. The expected libp2p peer identity is derived
-from the ENR's secp256k1 public key. A node is reported as `reachable` only
-after TCP, the Noise handshake against that identity, and stream multiplexer
-negotiation all complete. A node that hangs up right after the connection is
-established (for example because it is at peer capacity) is still `reachable`;
-its response omits `clientVersion`.
+caller sends the node's signed `enr:` record (as returned by `opp2p_self`) or
+a public-IPv4 `/ip4/.../tcp/.../p2p/<peer-id>` multiaddr, then the service
+opens a separate connection to that public `IPv4` address and TCP port. The
+expected libp2p peer identity is derived from the ENR's secp256k1 public key,
+or taken from the multiaddr's `/p2p/<peer-id>` component. A node is reported
+as `reachable` only after TCP, the Noise handshake against that identity, and
+stream multiplexer negotiation all complete. A node that hangs up right after
+the connection is established (for example because it is at peer capacity) is
+still `reachable`; its response omits `clientVersion`.
 
 Request:
 
@@ -80,6 +81,15 @@ Content-Type: application/json
 
 {
   "enr": "enr:-J64QBbwPjPLZ..."
+}
+```
+
+```http
+POST /v1/p2p/reachability/cl
+Content-Type: application/json
+
+{
+  "multiaddr": "/ip4/YOUR_NODE_IP/tcp/9222/p2p/16Uiu2HAm..."
 }
 ```
 
@@ -103,7 +113,8 @@ execution-layer endpoint:
 - `identify`: exchanging libp2p identify information.
 
 Validation, limits, and error responses match the execution-layer endpoint:
-the ENR must advertise a public literal `IPv4` address and a nonzero TCP port.
+the ENR or multiaddr must advertise a public literal `IPv4` address and a
+nonzero TCP port. Multiaddrs must be exactly `/ip4/<addr>/tcp/<port>/p2p/<peer-id>`.
 
 ## Rate limiting
 
@@ -125,6 +136,6 @@ never rate limited.
 ## Target selection
 
 The service probes the exact literal public `IPv4` socket address advertised by
-the enode. `IPv6` and non-public `IPv4` addresses (loopback, private, link-local,
-carrier-grade NAT, multicast, unspecified, and other IANA special-purpose
-ranges) are rejected with `400`.
+the enode, ENR, or multiaddr. `IPv6` and non-public `IPv4` addresses (loopback,
+private, link-local, carrier-grade NAT, multicast, unspecified, and other IANA
+special-purpose ranges) are rejected with `400`.

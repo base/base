@@ -112,9 +112,10 @@ pub enum P2pTargetError {
         /// The target supplied by the caller.
         target: String,
     },
-    /// A reachability target was neither an `enode://` URL nor an `enr:` record.
+    /// A reachability target was not an `enode://` URL, `enr:` record, or
+    /// public `IPv4` `/ip4/.../tcp/.../p2p/<peer-id>` multiaddr.
     #[error(
-        "reachability target `{target}` must be an execution-layer `enode://` URL or a consensus-layer `enr:` record"
+        "reachability target `{target}` must be an execution-layer `enode://` URL, a consensus-layer `enr:` record, or a public-IPv4 `/ip4/.../tcp/.../p2p/<peer-id>` multiaddr"
     )]
     ReachabilityTargetUnsupported {
         /// The target supplied by the caller.
