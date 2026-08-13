@@ -775,8 +775,8 @@ impl BasePayloadBuilderCtx {
             let mut predicate_read_failed = false;
             let blocking_predicate = {
                 let db = evm.db_mut();
-                tx.validity_predicates().iter().find_map(|predicate| {
-                    match predicate.matches_state(db) {
+                ValidityPredicateKey::hash_rotated_scan(tx.validity_predicates(), tx_hash).find_map(
+                    |predicate| match predicate.matches_state(db) {
                         Ok(true) => None,
                         Ok(false) => Some(ValidityPredicateKey::for_predicate(predicate)),
                         Err(error) => {
@@ -790,8 +790,8 @@ impl BasePayloadBuilderCtx {
                             predicate_read_failed = true;
                             Some(ValidityPredicateKey::for_predicate(predicate))
                         }
-                    }
-                })
+                    },
+                )
             };
             if let Some(blocking_predicate) = blocking_predicate {
                 num_txs_considered += 1;
@@ -1342,8 +1342,12 @@ impl BasePayloadBuilderCtx {
                     continue;
                 };
                 let blocking_predicate =
-                    parked_transaction.validity_predicates().iter().find_map(|predicate| {
-                        match predicate.matches_state(evm.db_mut()) {
+                    ValidityPredicateKey::hash_rotated_scan(
+                        parked_transaction.validity_predicates(),
+                        *parked_hash,
+                    )
+                    .find_map(
+                        |predicate| match predicate.matches_state(evm.db_mut()) {
                             Ok(true) => None,
                             Ok(false) => Some(ValidityPredicateKey::for_predicate(predicate)),
                             Err(error) => {
@@ -1357,8 +1361,8 @@ impl BasePayloadBuilderCtx {
                                 predicate_read_failed = true;
                                 Some(ValidityPredicateKey::for_predicate(predicate))
                             }
-                        }
-                    });
+                        },
+                    );
                 if predicate_read_failed {
                     predicate_index.remove(*parked_hash);
                     best_txs.discard_parked(*parked_hash);

@@ -24,6 +24,26 @@ impl ValidityPredicateKey {
             ValidityPredicate::Storage { address, slot, .. } => Self::Storage(*address, *slot),
         }
     }
+
+    /// Iterates predicates circularly from an offset derived from the transaction hash.
+    ///
+    /// This deterministically spreads parked transactions across their unsatisfied state keys when
+    /// predicate lists share the same ordering.
+    pub fn hash_rotated_scan(
+        predicates: &[ValidityPredicate],
+        transaction_hash: TxHash,
+    ) -> impl Iterator<Item = &ValidityPredicate> {
+        let start = if predicates.is_empty() {
+            0
+        } else {
+            let hash = transaction_hash.as_slice();
+            u64::from_be_bytes([
+                hash[24], hash[25], hash[26], hash[27], hash[28], hash[29], hash[30], hash[31],
+            ]) as usize
+                % predicates.len()
+        };
+        predicates[start..].iter().chain(predicates[..start].iter())
+    }
 }
 
 /// Predicate-parked transactions indexed by one currently unsatisfied state location.
@@ -134,9 +154,63 @@ impl<T> ParkedPredicateIndex<T> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256};
+    use base_execution_txpool::{ValidityOperator, ValidityPredicate};
     use revm::state::{Account, EvmState, EvmStorageSlot};
 
     use super::{ParkedPredicateIndex, ValidityPredicateKey};
+
+    fn balance_predicate(index: u8) -> ValidityPredicate {
+        ValidityPredicate::Balance {
+            address: Address::with_last_byte(index),
+            op: ValidityOperator::GreaterThan,
+            value: U256::ZERO,
+        }
+    }
+
+    #[test]
+    fn hash_rotated_scan_is_deterministic_and_wraps() {
+        let predicates = [balance_predicate(0), balance_predicate(1), balance_predicate(2)];
+        let transaction_hash = B256::with_last_byte(2);
+
+        let scan = || {
+            ValidityPredicateKey::hash_rotated_scan(&predicates, transaction_hash)
+                .map(ValidityPredicateKey::for_predicate)
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            scan(),
+            vec![
+                ValidityPredicateKey::Balance(Address::with_last_byte(2)),
+                ValidityPredicateKey::Balance(Address::with_last_byte(0)),
+                ValidityPredicateKey::Balance(Address::with_last_byte(1)),
+            ]
+        );
+        assert_eq!(scan(), scan());
+    }
+
+    #[test]
+    fn hash_rotated_scan_distributes_starting_predicates() {
+        let predicates = [balance_predicate(0), balance_predicate(1), balance_predicate(2)];
+
+        let starts = (0..3)
+            .map(|index| {
+                ValidityPredicateKey::hash_rotated_scan(&predicates, B256::with_last_byte(index))
+                    .next()
+                    .map(ValidityPredicateKey::for_predicate)
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            starts,
+            vec![
+                Some(ValidityPredicateKey::Balance(Address::with_last_byte(0))),
+                Some(ValidityPredicateKey::Balance(Address::with_last_byte(1))),
+                Some(ValidityPredicateKey::Balance(Address::with_last_byte(2))),
+            ]
+        );
+        assert_eq!(ValidityPredicateKey::hash_rotated_scan(&[], B256::ZERO).next(), None);
+    }
 
     #[test]
     fn indexes_only_transactions_affected_by_changed_state() {

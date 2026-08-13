@@ -64,8 +64,7 @@ fn transaction(
     index: usize,
     sender_index: usize,
     nonce: u64,
-    predicate_count: usize,
-    unique_predicate_state: bool,
+    validity_predicates: Vec<ValidityPredicate>,
 ) -> Arc<ValidPoolTransaction<BasePooledTransaction>> {
     let tx = TxEip1559 {
         chain_id: 1,
@@ -84,7 +83,7 @@ fn transaction(
         Recovered::new_unchecked(BaseTransactionSigned::from(envelope), address(sender_index)),
         encoded_length,
     )
-    .with_validity_predicates(predicates(index, predicate_count, unique_predicate_state));
+    .with_validity_predicates(validity_predicates);
 
     Arc::new(ValidPoolTransaction {
         transaction_id: TransactionId::new((sender_index as u64).into(), nonce),
@@ -113,9 +112,37 @@ fn pool(
                 index,
                 sender_index,
                 (index / sender_count) as u64,
-                predicate_count,
-                unique_predicate_state,
+                predicates(index, predicate_count, unique_predicate_state),
             ),
+            0,
+        );
+    }
+    pool
+}
+
+fn skewed_predicates(transaction_index: usize, count: usize) -> Vec<ValidityPredicate> {
+    (0..count)
+        .map(|predicate_index| ValidityPredicate::Balance {
+            address: if predicate_index == 0 {
+                Address::ZERO
+            } else {
+                address(
+                    TRANSACTION_COUNTS[TRANSACTION_COUNTS.len() - 1]
+                        + transaction_index * count
+                        + predicate_index,
+                )
+            },
+            op: ValidityOperator::Equal,
+            value: U256::ONE,
+        })
+        .collect()
+}
+
+fn skewed_pool(transaction_count: usize, predicates_per_transaction: usize) -> Pool {
+    let mut pool = PendingPool::new(Ordering::coinbase_tip());
+    for index in 0..transaction_count {
+        pool.add_transaction(
+            transaction(index, index, 0, skewed_predicates(index, predicates_per_transaction)),
             0,
         );
     }
@@ -236,11 +263,12 @@ fn run_predicate_selection(pool: &Pool, db: &mut InMemoryDB) -> usize {
     let mut selected = 0;
 
     while let Some(transaction) = best.next(()) {
-        let blocking_predicate = transaction
-            .validity_predicates()
-            .iter()
-            .find(|predicate| !predicate.matches_state(db).expect("in-memory reads cannot fail"))
-            .map(ValidityPredicateKey::for_predicate);
+        let blocking_predicate = ValidityPredicateKey::hash_rotated_scan(
+            transaction.validity_predicates(),
+            *transaction.hash(),
+        )
+        .find(|predicate| !predicate.matches_state(db).expect("in-memory reads cannot fail"))
+        .map(ValidityPredicateKey::for_predicate);
         if let Some(blocking_predicate) = blocking_predicate {
             let transaction_hash = *transaction.hash();
             assert!(best.park_current());
@@ -296,6 +324,57 @@ fn predicate_benches(c: &mut Criterion) {
     group.finish();
 }
 
+fn predicate_skew_benches(c: &mut Criterion) {
+    let mut group = c.benchmark_group("tx_selection/predicate_skew");
+    group.sample_size(10);
+
+    for (transaction_count, predicates_per_transaction) in
+        [(10_000, 2), (10_000, 8), (10_000, 64), (100_000, 2), (100_000, 8)]
+    {
+        group.throughput(Throughput::Elements(transaction_count as u64));
+        let pool = skewed_pool(transaction_count, predicates_per_transaction);
+        group.bench_function(
+            format!(
+                "park/transactions={transaction_count}/predicates={predicates_per_transaction}"
+            ),
+            |b| {
+                b.iter_batched(
+                    InMemoryDB::default,
+                    |mut db| {
+                        assert_eq!(run_predicate_selection(&pool, &mut db), 0);
+                    },
+                    BatchSize::SmallInput,
+                );
+            },
+        );
+    }
+    group.finish();
+}
+
+fn skewed_predicate_index(
+    parked_transactions: usize,
+    predicates_per_transaction: usize,
+    hash_rotated: bool,
+) -> ParkedPredicateIndex<()> {
+    let mut index = ParkedPredicateIndex::default();
+    for transaction_index in 0..parked_transactions {
+        let transaction_hash: B256 = U256::from(transaction_index).into();
+        let predicate_index =
+            if hash_rotated { transaction_index % predicates_per_transaction } else { 0 };
+        let blocker = if predicate_index == 0 {
+            ValidityPredicateKey::Balance(Address::ZERO)
+        } else {
+            ValidityPredicateKey::Balance(address(
+                TRANSACTION_COUNTS[TRANSACTION_COUNTS.len() - 1]
+                    + transaction_index * predicates_per_transaction
+                    + predicate_index,
+            ))
+        };
+        index.park(transaction_hash, (), blocker);
+    }
+    index
+}
+
 fn predicate_index_benches(c: &mut Criterion) {
     let mut group = c.benchmark_group("tx_selection/predicate_index");
     group.sample_size(10);
@@ -326,8 +405,42 @@ fn predicate_index_benches(c: &mut Criterion) {
             );
         }
     }
+
+    let mut hot_state = EvmState::default();
+    let mut hot_account = Account::default();
+    hot_account.info.balance = U256::ONE;
+    hot_state.insert(Address::ZERO, hot_account);
+    for parked_transactions in [10_000, 100_000] {
+        for predicates_per_transaction in [2, 8, 64] {
+            for (policy, hash_rotated) in [("first", false), ("hash_rotated", true)] {
+                let index = skewed_predicate_index(
+                    parked_transactions,
+                    predicates_per_transaction,
+                    hash_rotated,
+                );
+                let expected_affected = if hash_rotated {
+                    parked_transactions.div_ceil(predicates_per_transaction)
+                } else {
+                    parked_transactions
+                };
+                assert_eq!(index.affected_by_state(&hot_state).len(), expected_affected);
+                group.bench_function(
+                    format!(
+                        "skew/parked={parked_transactions}/predicates={predicates_per_transaction}/policy={policy}"
+                    ),
+                    |b| b.iter(|| black_box(index.affected_by_state(&hot_state))),
+                );
+            }
+        }
+    }
     group.finish();
 }
 
-criterion_group!(benches, selection_benches, predicate_benches, predicate_index_benches);
+criterion_group!(
+    benches,
+    selection_benches,
+    predicate_benches,
+    predicate_skew_benches,
+    predicate_index_benches
+);
 criterion_main!(benches);
