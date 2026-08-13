@@ -16,6 +16,7 @@ use base_prover_service_protocol::{
     TeeKind, ZkVm,
 };
 use clap::{Args, Subcommand, ValueEnum};
+use futures::{StreamExt, TryStreamExt, stream};
 use serde::{Serialize, Serializer};
 use tracing::{info, warn};
 use url::Url;
@@ -362,6 +363,8 @@ impl GameProtocolRow {
 }
 
 async fn run_protocol(args: ProofsProtocolArgs) -> Result<CommandOutcome> {
+    const CONCURRENCY: usize = 32;
+
     let ProofsProtocolArgs { l1_rpc, factory, from, to, game, json } = args;
     let verifier = AggregateVerifierContractClient::new(l1_rpc.clone())?;
 
@@ -373,28 +376,50 @@ async fn run_protocol(args: ProofsProtocolArgs) -> Result<CommandOutcome> {
         let end = to.unwrap_or_else(|| count.saturating_sub(1));
         info!(factory = %factory_address, from, end, count, "enumerating dispute games");
 
-        let mut targets = Vec::new();
-        if count > 0 {
-            for index in from..=end.min(count - 1) {
-                targets.push((Some(index), factory_client.game_at_index(index).await?.proxy));
-            }
-        }
+        let mut targets: Vec<_> = if count == 0 {
+            Vec::new()
+        } else {
+            stream::iter(from..=end.min(count - 1))
+                .map(|index| {
+                    let factory_client = &factory_client;
+                    async move {
+                        Ok::<_, anyhow::Error>((
+                            Some(index),
+                            factory_client.game_at_index(index).await?.proxy,
+                        ))
+                    }
+                })
+                .buffer_unordered(CONCURRENCY)
+                .try_collect()
+                .await?
+        };
+        targets.sort_unstable_by_key(|(index, _)| *index);
         targets
     } else {
         game.into_iter().map(|address| (None, address)).collect()
     };
 
-    let mut rows = Vec::with_capacity(targets.len());
+    let results: Vec<_> = stream::iter(targets)
+        .map(|(index, address)| {
+            let verifier = &verifier;
+            async move {
+                let result = futures::try_join!(
+                    verifier.status(address),
+                    verifier.proof_protocol_descriptor(address)
+                );
+                (index, address, result)
+            }
+        })
+        .buffer_unordered(CONCURRENCY)
+        .collect()
+        .await;
+
+    let mut rows = Vec::with_capacity(results.len());
     let mut unreadable = 0;
-    for (index, address) in targets {
-        // One unreadable game must not hide the rest: an era this build cannot classify is
-        // exactly what the operator needs to see.
-        match futures::try_join!(
-            verifier.status(address),
-            verifier.proof_protocol_descriptor(address)
-        ) {
+    for (index, address, result) in results {
+        match result {
             Ok((status, descriptor)) => {
-                rows.push(GameProtocolRow::new(index, address, status, &descriptor));
+                rows.push(GameProtocolRow::new(index, address, status, &descriptor))
             }
             Err(error) => {
                 unreadable += 1;
@@ -402,6 +427,7 @@ async fn run_protocol(args: ProofsProtocolArgs) -> Result<CommandOutcome> {
             }
         }
     }
+    rows.sort_unstable_by_key(|row| row.index);
 
     if json {
         JsonOutput::print(&rows)?;
