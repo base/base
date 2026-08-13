@@ -324,7 +324,7 @@ services:
       - --l1-eth-rpc
       - http://l1-el:${L1_HTTP_PORT}
       - --l1-beacon
-      - http://l1-cl:${L1_CL_HTTP_PORT}
+      - ${L1_CONTAINER_BEACON_URL}
       - --l2-config-file
       - /genesis/l2/rollup.json
       - --l1-config-file
@@ -483,7 +483,7 @@ services:
       - --l1-eth-rpc
       - http://l1-el:${L1_HTTP_PORT}
       - --l1-beacon
-      - http://l1-cl:${L1_CL_HTTP_PORT}
+      - ${L1_CONTAINER_BEACON_URL}
       - --l2-config-file
       - /genesis/l2/rollup.json
       - --l1-config-file
@@ -583,7 +583,7 @@ services:
       - --l1-eth-rpc
       - http://l1-el:${L1_HTTP_PORT}
       - --l1-beacon
-      - http://l1-cl:${L1_CL_HTTP_PORT}
+      - ${L1_CONTAINER_BEACON_URL}
       - --l2-config-file
       - /genesis/l2/rollup.json
       - --l1-config-file

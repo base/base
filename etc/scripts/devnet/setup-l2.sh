@@ -20,6 +20,11 @@ L2_EL_BOOTNODE_ENODE="${L2_EL_BOOTNODE_ENODE:-enode://4f355bdcb7cc0af728ef3cceb9
 L2_CL_BOOTNODE_P2P_KEY="${L2_CL_BOOTNODE_P2P_KEY:-2222222222222222222222222222222222222222222222222222222222222222}"
 L2_CL_BOOTNODE_ENR_PATH="${L2_CL_BOOTNODE_ENR_PATH:-/bootnodes/cl-bootnode.enr}"
 
+if [ "${SETUP_L2_SKIP_IF_CONFIGURED:-}" = "true" ] && [ -f "$OUTPUT_DIR/.setup-complete" ]; then
+  echo "L2 configuration already generated; reusing $OUTPUT_DIR"
+  exit 0
+fi
+
 replace_output_file() {
   local source_file="$1"
   local destination_file="$2"
@@ -468,6 +473,9 @@ echo "Sequencer-2 P2P key written to $OUTPUT_DIR/sequencer-2-p2p-key.txt"
 
 # Cleanup
 rm -rf "$OP_DEPLOYER_WORKDIR"
+if [ "${SETUP_L2_SKIP_IF_CONFIGURED:-}" = "true" ]; then
+  touch "$OUTPUT_DIR/.setup-complete"
+fi
 
 echo ""
 echo "=== L2 Genesis Generation Complete ==="

@@ -30,6 +30,7 @@ alloy-hardforks.workspace = true
 alloy-primitives.workspace = true
 
 # op
+base-protocol.workspace = true
 base-common-rpc-types.workspace = true
 base-common-genesis = { workspace = true, features = ["std"] }
 
@@ -56,6 +57,7 @@ std = [
 	"base-common-consensus/std",
 	"base-common-genesis/std",
 	"base-common-rpc-types/std",
+	"base-protocol/std",
 	"derive_more/std",
 	"reth-chainspec/std",
 	"reth-ethereum-forks/std",

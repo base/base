@@ -4460,6 +4460,7 @@ dependencies = [
  "base-common-consensus",
  "base-common-genesis",
  "base-common-rpc-types",
+ "base-protocol",
  "derive_more 2.1.1",
  "reth-chainspec",
  "reth-ethereum-forks",
