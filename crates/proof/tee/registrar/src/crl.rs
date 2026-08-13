@@ -14,6 +14,8 @@ use x509_parser::{
     revocation_list::CertificateRevocationList,
 };
 
+use crate::CertManagerKeys;
+
 const MAX_CRL_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
 const ALLOWED_CRL_HOST_SUFFIX: &str = ".amazonaws.com";
 const ALLOWED_CRL_HOST_KEYWORD: &str = "nitro-enclave";
@@ -28,11 +30,23 @@ pub struct CertCrlInfo {
     /// CRL distribution point URL, if present in the certificate.
     pub crl_url: Option<String>,
     /// Accumulated path digest for this certificate position (for onchain
-    /// `revokeCert` calls).
+    /// legacy `NitroEnclaveVerifier.revokeCert` calls).
     pub path_digest: B256,
+    /// DER bytes retained for lazy final `CertManager` identity derivation.
+    cert_der: Vec<u8>,
 }
 
 impl CertCrlInfo {
+    /// Returns the issuer/serial identity for final `CertManager.revokeCert` calls.
+    ///
+    /// This remains lazy so final `CertManager` parsing requirements cannot change
+    /// the legacy path-digest CRL path before the hinted backend is selected.
+    pub fn revocation_id(&self) -> Result<B256, CrlError> {
+        CertManagerKeys::revocation_id(&self.cert_der).map_err(|e| {
+            CrlError(format!("certificate identity error: certificate {}: {e}", self.index))
+        })
+    }
+
     /// Extracts CRL-relevant information from a DER-encoded chain's intermediate certificates.
     ///
     /// The certificates must be in chain order: root → intermediates → leaf.
@@ -66,7 +80,7 @@ impl CertCrlInfo {
             let serial_number = cert.tbs_certificate.serial.to_bytes_be();
             let crl_url = extract_crl_distribution_point(&cert);
 
-            infos.push(Self { index, serial_number, crl_url, path_digest });
+            infos.push(Self { index, serial_number, crl_url, path_digest, cert_der: der.to_vec() });
         }
 
         Ok(infos)
@@ -230,6 +244,7 @@ pub struct CrlError(
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::b256;
     use hex_literal::hex;
 
     use super::*;
@@ -296,6 +311,36 @@ mod tests {
                 "cb286a4a4a09207f8b0c14950dcd6861",
                 "c8925d382506d820d93d2c704a7523c4ba2ddfaa",
             ]
+        );
+        for info in &infos {
+            assert_eq!(
+                info.revocation_id().unwrap(),
+                CertManagerKeys::revocation_id(refs[info.index]).unwrap()
+            );
+            assert_ne!(info.revocation_id().unwrap(), info.path_digest);
+        }
+    }
+
+    #[test]
+    fn crl_identities_match_registration_plan_and_preserve_legacy_digests() {
+        use base_proof_tee_nitro_verifier::AttestationReport;
+
+        use crate::AttestationPlanner;
+
+        let attestation =
+            hex::decode(include_str!("testdata/nitro_attestation.hex").trim()).unwrap();
+        let report = AttestationReport::parse(&attestation).unwrap();
+        let infos = CertCrlInfo::from_chain(&report.cert_chain_der()).unwrap();
+        let plan = AttestationPlanner::prepare_registration_plan(&attestation).unwrap();
+
+        assert_eq!(infos.len(), plan.certs.len() - 1);
+        for (info, cert) in infos.iter().zip(&plan.certs) {
+            assert_eq!(info.revocation_id().unwrap(), cert.revocation_id);
+            assert_ne!(info.path_digest, info.revocation_id().unwrap());
+        }
+        assert_eq!(
+            infos[0].revocation_id().unwrap(),
+            b256!("0xd985a3a751ddd841816eb3d64041272eed9b695a2d61a46408a1950c0bae28e7")
         );
     }
 
