@@ -751,7 +751,7 @@ where
 
         let confirmed = match self
             .engine
-            .probe_el_sync_forced(Arc::clone(&self.client), Arc::clone(&self.rollup), update)
+            .probe_el_sync(Arc::clone(&self.client), Arc::clone(&self.rollup), update)
             .await
         {
             Ok(confirmed) => confirmed,
