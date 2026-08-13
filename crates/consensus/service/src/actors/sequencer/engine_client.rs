@@ -3,6 +3,7 @@ use std::{fmt::Debug, sync::Arc};
 use alloy_rpc_types_engine::PayloadId;
 use async_trait::async_trait;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
+use base_consensus_engine::EngineState;
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 use derive_more::Constructor;
 use tokio::sync::{mpsc, watch};
@@ -11,7 +12,7 @@ use crate::{
     EngineClientError, EngineClientResult,
     actors::engine::{
         BuildRequest, EngineActorRequest, GetPayloadRequest, InsertUnsafePayloadRequest,
-        ReconcileShadowRequest, ResetRequest,
+        ReconcileShadowRequest, ResetOrigin, ResetReason, ResetRequest,
     },
 };
 
@@ -22,11 +23,17 @@ use crate::{
 pub trait SequencerEngineClient: Debug + Send + Sync {
     /// Resets the engine's forkchoice, awaiting confirmation that it succeeded or returning the
     /// error in performing the reset.
-    async fn reset_engine_forkchoice(&self) -> EngineClientResult<()>;
+    async fn reset_engine_forkchoice(&self, reason: ResetReason) -> EngineClientResult<()>;
 
-    /// Resets forkchoice as part of a shadow cycle that the caller will explicitly rebuild.
-    async fn reset_engine_forkchoice_coordinated(&self) -> EngineClientResult<()> {
-        self.reset_engine_forkchoice().await
+    /// Coordinates the engine boundary for a shadow cycle that the caller will explicitly rebuild.
+    ///
+    /// During initial catch-up, success activates shadow production after catch-up has already
+    /// advanced the engine. Once shadow production is active, this performs an actual reset.
+    async fn reset_engine_forkchoice_coordinated(
+        &self,
+        reason: ResetReason,
+    ) -> EngineClientResult<()> {
+        self.reset_engine_forkchoice(reason).await
     }
 
     /// Starts building a block with the provided attributes.
@@ -63,6 +70,9 @@ pub trait SequencerEngineClient: Debug + Send + Sync {
         let _ = shadow_head;
         Err(EngineClientError::ShadowReconciliationDisabled)
     }
+
+    /// Returns whether the engine has completed execution-layer sync.
+    async fn el_sync_finished(&self) -> EngineClientResult<bool>;
 }
 
 /// Blanket implementation so [`Arc<T>`] can be used wherever `T: SequencerEngineClient`.
@@ -72,12 +82,15 @@ pub trait SequencerEngineClient: Debug + Send + Sync {
 /// methods without any additional wrapping.
 #[async_trait]
 impl<T: SequencerEngineClient> SequencerEngineClient for Arc<T> {
-    async fn reset_engine_forkchoice(&self) -> EngineClientResult<()> {
-        (**self).reset_engine_forkchoice().await
+    async fn reset_engine_forkchoice(&self, reason: ResetReason) -> EngineClientResult<()> {
+        (**self).reset_engine_forkchoice(reason).await
     }
 
-    async fn reset_engine_forkchoice_coordinated(&self) -> EngineClientResult<()> {
-        (**self).reset_engine_forkchoice_coordinated().await
+    async fn reset_engine_forkchoice_coordinated(
+        &self,
+        reason: ResetReason,
+    ) -> EngineClientResult<()> {
+        (**self).reset_engine_forkchoice_coordinated(reason).await
     }
 
     async fn start_build_block(
@@ -112,6 +125,10 @@ impl<T: SequencerEngineClient> SequencerEngineClient for Arc<T> {
     ) -> EngineClientResult<Option<L2BlockInfo>> {
         (**self).reconcile_shadow(shadow_head).await
     }
+
+    async fn el_sync_finished(&self) -> EngineClientResult<bool> {
+        (**self).el_sync_finished().await
+    }
 }
 
 /// Queue-based implementation of the [`SequencerEngineClient`] trait. This handles all
@@ -122,17 +139,20 @@ pub struct QueuedSequencerEngineClient {
     pub engine_actor_request_tx: mpsc::Sender<EngineActorRequest>,
     /// A channel to receive the latest unsafe head [`L2BlockInfo`].
     pub unsafe_head_rx: watch::Receiver<L2BlockInfo>,
+    /// A channel to receive the latest engine state.
+    pub engine_state_rx: watch::Receiver<EngineState>,
 }
 
 impl QueuedSequencerEngineClient {
-    async fn send_reset(&self, shadow_cycle_coordinated: bool) -> EngineClientResult<()> {
+    async fn send_reset(&self, origin: ResetOrigin, reason: ResetReason) -> EngineClientResult<()> {
         let (result_tx, mut result_rx) = mpsc::channel(1);
 
         info!(target: "sequencer", "Sending reset request to engine.");
         self.engine_actor_request_tx
             .send(EngineActorRequest::ResetRequest(Box::new(ResetRequest {
                 result_tx,
-                shadow_cycle_coordinated,
+                origin,
+                reason,
             })))
             .await
             .map_err(|_| EngineClientError::RequestError("request channel closed.".to_string()))?;
@@ -154,6 +174,10 @@ impl SequencerEngineClient for QueuedSequencerEngineClient {
         Ok(*self.unsafe_head_rx.borrow())
     }
 
+    async fn el_sync_finished(&self) -> EngineClientResult<bool> {
+        Ok(self.engine_state_rx.borrow().el_sync_finished)
+    }
+
     async fn reconcile_shadow(
         &self,
         shadow_head: L2BlockInfo,
@@ -171,12 +195,15 @@ impl SequencerEngineClient for QueuedSequencerEngineClient {
         })?
     }
 
-    async fn reset_engine_forkchoice(&self) -> EngineClientResult<()> {
-        self.send_reset(false).await
+    async fn reset_engine_forkchoice(&self, reason: ResetReason) -> EngineClientResult<()> {
+        self.send_reset(ResetOrigin::Sequencer, reason).await
     }
 
-    async fn reset_engine_forkchoice_coordinated(&self) -> EngineClientResult<()> {
-        self.send_reset(true).await
+    async fn reset_engine_forkchoice_coordinated(
+        &self,
+        reason: ResetReason,
+    ) -> EngineClientResult<()> {
+        self.send_reset(ResetOrigin::ShadowCycleCoordinated, reason).await
     }
 
     async fn start_build_block(
@@ -297,6 +324,7 @@ mod tests {
     use alloy_primitives::{Address, B256, Bloom, U256};
     use alloy_rpc_types_engine::ExecutionPayloadV1;
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
+    use base_consensus_engine::EngineState;
     use base_protocol::{BlockInfo, L2BlockInfo};
     use tokio::sync::{mpsc, watch};
 
@@ -333,11 +361,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn el_sync_finished_tracks_engine_state() {
+        let (request_tx, _request_rx) = mpsc::channel(1);
+        let (_, unsafe_head_rx) = watch::channel(L2BlockInfo::default());
+        let (engine_state_tx, engine_state_rx) = watch::channel(EngineState::default());
+        let client = QueuedSequencerEngineClient::new(request_tx, unsafe_head_rx, engine_state_rx);
+
+        assert!(!client.el_sync_finished().await.expect("read engine state"));
+
+        engine_state_tx.send_replace(EngineState { el_sync_finished: true, ..Default::default() });
+
+        assert!(client.el_sync_finished().await.expect("read updated engine state"));
+    }
+
+    #[tokio::test]
     async fn insert_unsafe_payload_returns_engine_ack() {
         let (request_tx, mut request_rx) = mpsc::channel(1);
         let (_, unsafe_head_rx) = watch::channel(L2BlockInfo::default());
+        let (_, engine_state_rx) = watch::channel(EngineState::default());
         let inserted_head = l2_head(1);
-        let client = QueuedSequencerEngineClient::new(request_tx, unsafe_head_rx);
+        let client = QueuedSequencerEngineClient::new(request_tx, unsafe_head_rx, engine_state_rx);
 
         let insert_handle =
             tokio::spawn(async move { client.insert_unsafe_payload(dummy_envelope()).await });
@@ -358,9 +401,10 @@ mod tests {
     async fn reconcile_shadow_returns_engine_ack() {
         let (request_tx, mut request_rx) = mpsc::channel(1);
         let (_, unsafe_head_rx) = watch::channel(L2BlockInfo::default());
+        let (_, engine_state_rx) = watch::channel(EngineState::default());
         let shadow_head = l2_head(12);
         let reconciled_head = l2_head(12);
-        let client = QueuedSequencerEngineClient::new(request_tx, unsafe_head_rx);
+        let client = QueuedSequencerEngineClient::new(request_tx, unsafe_head_rx, engine_state_rx);
 
         let reconcile_handle =
             tokio::spawn(async move { client.reconcile_shadow(shadow_head).await });

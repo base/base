@@ -47,6 +47,7 @@ alloy-consensus.workspace = true
 
 # workspace
 base-test-utils.workspace = true
+base-txpool-rpc.workspace = true
 base-common-consensus.workspace = true
 base-common-rpc-types.workspace = true
 base-execution-chainspec.workspace = true

@@ -25,13 +25,10 @@ mod parity_normalizer;
 pub use parity_normalizer::{ParityComparator, ParityNormalizer};
 
 mod recent_txs;
-pub use recent_txs::{MAX_CHECK_RECENT_TXS_DEPTH, RecentTxScanner, SCAN_FETCH_CONCURRENCY};
+pub use recent_txs::{MAX_CHECK_RECENT_TXS_DEPTH, RecentTxSyncTarget};
 
 mod source;
 pub use source::RpcPollingSource;
-
-mod subscription;
-pub use subscription::{NullSubscription, WsBlockSubscription};
 
 mod l1_source;
 pub use l1_source::{NullL1HeadSubscription, RpcL1HeadPollingSource, WsL1HeadSubscription};
@@ -45,8 +42,8 @@ pub use l2_block_parity::{
 mod throttle;
 pub use throttle::RpcThrottleClient;
 
-mod safe_head_poller;
-pub use safe_head_poller::{SafeHeadPoller, SafeHeadProvider};
+mod derivation_status_poller;
+pub use derivation_status_poller::{DerivationStatusPoller, DerivationStatusProvider};
 
 mod shadow_parity;
 pub use shadow_parity::{

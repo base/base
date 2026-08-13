@@ -2,36 +2,77 @@
 
 use std::{collections::HashSet, sync::Arc};
 
-use alloy_primitives::{Address, TxHash};
+use alloy_primitives::{Address, TxHash, U256};
+use base_execution_txpool::BasePooledTx;
 use reth_payload_util::PayloadTransactions;
-use reth_transaction_pool::{PoolTransaction, ValidPoolTransaction};
+use reth_transaction_pool::ValidPoolTransaction;
 
 use crate::{BuilderMetrics, RejectionCache};
+
+/// A nonce lane whose transactions must be ordered together during a flashblock build.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FlashblocksNonceLane {
+    /// The regular account-nonce lane for a sender.
+    Account(Address),
+    /// A finite EIP-8130 nonce channel for a sender.
+    Channel {
+        /// Sender that owns the channel.
+        sender: Address,
+        /// EIP-8130 nonce key that identifies the channel.
+        nonce_key: U256,
+    },
+    /// An independent nonce-free EIP-8130 transaction.
+    NonceFree(TxHash),
+}
+
+impl FlashblocksNonceLane {
+    /// Derives the nonce lane used to schedule `transaction`.
+    #[must_use]
+    pub fn from_transaction<T: BasePooledTx>(transaction: &T) -> Self {
+        transaction.eip8130_nonce_channel_key().map_or_else(
+            || {
+                if transaction.eip8130_replay_id().is_some() {
+                    Self::NonceFree(*transaction.hash())
+                } else {
+                    Self::Account(transaction.sender())
+                }
+            },
+            |nonce_key| Self::Channel { sender: transaction.sender(), nonce_key },
+        )
+    }
+}
 
 /// An adapter over `BestPayloadTransactions` that allows to skip transactions that were already
 /// committed to the state. It also allows to refresh inner iterator on each flashblock building, to
 /// update priority boundaries.
 pub struct BestFlashblocksTxs<T, I>
 where
-    T: PoolTransaction,
+    T: BasePooledTx,
     I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
 {
     inner: reth_payload_util::BestPayloadTransactions<T, I>,
     // Transactions that were already committed to the state. Using them again would cause NonceTooLow
     // so we skip them
     committed_transactions: HashSet<TxHash>,
+    // Nonce lanes blocked by a state-dependent build-time check. They are reconsidered after the
+    // next iterator refresh.
+    blocked_lanes: HashSet<FlashblocksNonceLane>,
+    // Lane of the most recently yielded transaction. This lets build-time validation block the
+    // exact EIP-8130 lane without reducing it to a sender address.
+    current_lane: Option<FlashblocksNonceLane>,
     // Shared cross-block rejection cache (survives across blocks, TTL-bounded)
     rejection_cache: RejectionCache,
 }
 
 impl<T, I> std::fmt::Debug for BestFlashblocksTxs<T, I>
 where
-    T: PoolTransaction,
+    T: BasePooledTx,
     I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BestFlashblocksTxs")
             .field("committed_transactions", &self.committed_transactions)
+            .field("blocked_lanes", &self.blocked_lanes)
             .field("rejection_cache_size", &self.rejection_cache.entry_count())
             .finish_non_exhaustive()
     }
@@ -39,7 +80,7 @@ where
 
 impl<T, I> BestFlashblocksTxs<T, I>
 where
-    T: PoolTransaction,
+    T: BasePooledTx,
     I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
 {
     /// Creates a new [`BestFlashblocksTxs`] wrapping the given payload transaction iterator.
@@ -47,13 +88,21 @@ where
         inner: reth_payload_util::BestPayloadTransactions<T, I>,
         rejection_cache: RejectionCache,
     ) -> Self {
-        Self { inner, committed_transactions: Default::default(), rejection_cache }
+        Self {
+            inner,
+            committed_transactions: Default::default(),
+            blocked_lanes: Default::default(),
+            current_lane: None,
+            rejection_cache,
+        }
     }
 
     /// Replaces current iterator with new one. We use it on new flashblock building, to refresh
     /// priority boundaries
     pub fn refresh_iterator(&mut self, inner: reth_payload_util::BestPayloadTransactions<T, I>) {
         self.inner = inner;
+        self.blocked_lanes.clear();
+        self.current_lane = None;
     }
 
     /// Remove transaction from next iteration since it is already in the state
@@ -75,7 +124,7 @@ where
 
 impl<T, I> PayloadTransactions for BestFlashblocksTxs<T, I>
 where
-    T: PoolTransaction,
+    T: BasePooledTx,
     I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
 {
     type Transaction = T;
@@ -89,52 +138,148 @@ where
                 continue;
             }
 
+            let lane = FlashblocksNonceLane::from_transaction(&tx);
+            if self.blocked_lanes.contains(&lane) {
+                continue;
+            }
+
             if self.rejection_cache.contains_key(&hash) {
                 BuilderMetrics::rejection_cache_hits().increment(1);
                 continue;
             }
 
+            self.current_lane = Some(lane);
             return Some(tx);
         }
     }
 
-    /// Proxy to inner iterator
-    fn mark_invalid(&mut self, sender: Address, nonce: u64) {
-        self.inner.mark_invalid(sender, nonce);
+    /// Blocks the current Base nonce lane for the remainder of this flashblock.
+    ///
+    /// The wrapped Reth adapter invalidates all transactions from a sender. This adapter retains
+    /// the EIP-8130 nonce-key identity instead, and clears the lane on the next flashblock refresh.
+    fn mark_invalid(&mut self, _sender: Address, _nonce: u64) {
+        debug_assert!(
+            self.current_lane.is_some(),
+            "mark_invalid must follow a transaction returned by next"
+        );
+        if let Some(lane) = self.current_lane.take() {
+            self.blocked_lanes.insert(lane);
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::Arc, time::Duration};
-
-    use alloy_consensus::Transaction;
-    use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
-    use reth_payload_util::{BestPayloadTransactions, PayloadTransactions};
-    use reth_transaction_pool::{
-        CoinbaseTipOrdering, PoolTransaction,
-        pool::PendingPool,
-        test_utils::{MockTransaction, MockTransactionFactory},
+    use std::{
+        sync::Arc,
+        time::{Duration, Instant},
     };
 
-    use crate::{RejectionCache, flashblocks::best_txs::BestFlashblocksTxs};
+    use alloy_consensus::{SignableTransaction, Transaction, TxEip1559, transaction::Recovered};
+    use alloy_eips::{eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718};
+    use alloy_primitives::{Address, Bytes, TxKind, U256};
+    use alloy_signer::SignerSync;
+    use alloy_signer_local::PrivateKeySigner;
+    use base_common_chains::ChainConfig;
+    use base_common_consensus::{
+        BasePooledTransaction as ConsensusPooledTransaction, BaseTxEnvelope, Eip8130Signed,
+        TxEip8130,
+    };
+    use base_execution_txpool::BasePooledTransaction;
+    use reth_payload_util::{BestPayloadTransactions, PayloadTransactions};
+    use reth_primitives_traits::SignerRecoverable;
+    use reth_transaction_pool::{
+        CoinbaseTipOrdering, PoolTransaction, TransactionOrigin, ValidPoolTransaction,
+        identifier::TransactionId, pool::PendingPool, test_utils::MockTransaction,
+    };
+
+    use crate::{
+        RejectionCache,
+        flashblocks::best_txs::{BestFlashblocksTxs, FlashblocksNonceLane},
+    };
 
     fn test_rejection_cache() -> RejectionCache {
         RejectionCache::new(1000, Duration::from_secs(60))
     }
 
+    fn channelized_transaction(
+        signer: &PrivateKeySigner,
+        nonce_key: U256,
+    ) -> BasePooledTransaction {
+        let transaction = TxEip8130 {
+            chain_id: ChainConfig::mainnet().chain_id,
+            sender: None,
+            nonce_key,
+            nonce_sequence: 0,
+            valid_after: 0,
+            valid_before: 0,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 1_000,
+            gas_limit: 50_000,
+            account_changes: Vec::new(),
+            calls: Vec::new(),
+            metadata: Bytes::new(),
+            payer: None,
+        };
+        let signature = signer.sign_hash_sync(&transaction.sender_signature_hash()).unwrap();
+        let signed = Eip8130Signed::new(
+            transaction,
+            Bytes::from(signature.as_bytes().to_vec()),
+            Bytes::new(),
+        );
+        let pooled = ConsensusPooledTransaction::Eip8130(signed);
+        BasePooledTransaction::from_pooled(Recovered::new_unchecked(pooled, signer.address()))
+    }
+
+    fn regular_transaction(
+        signer: &PrivateKeySigner,
+        nonce: u64,
+        priority_fee: u128,
+        max_fee: u128,
+    ) -> BasePooledTransaction {
+        let transaction = TxEip1559 {
+            chain_id: ChainConfig::mainnet().chain_id,
+            nonce,
+            gas_limit: 50_000,
+            max_fee_per_gas: max_fee,
+            max_priority_fee_per_gas: priority_fee,
+            to: TxKind::Call(Address::repeat_byte(0xee)),
+            value: U256::ZERO,
+            access_list: Default::default(),
+            input: Bytes::new(),
+        };
+        let signature = signer.sign_hash_sync(&transaction.signature_hash()).unwrap();
+        let envelope = BaseTxEnvelope::Eip1559(transaction.into_signed(signature));
+        let encoded_length = envelope.encode_2718_len();
+        let recovered = envelope.try_into_recovered().unwrap();
+        BasePooledTransaction::new(recovered, encoded_length)
+    }
+
+    fn valid_pool_transaction(
+        transaction: BasePooledTransaction,
+        sender_id: u64,
+    ) -> Arc<ValidPoolTransaction<BasePooledTransaction>> {
+        Arc::new(ValidPoolTransaction {
+            transaction_id: TransactionId::new(sender_id.into(), transaction.nonce()),
+            transaction,
+            propagate: true,
+            timestamp: Instant::now(),
+            origin: TransactionOrigin::External,
+            authority_ids: None,
+        })
+    }
+
     #[test]
     fn test_simple_case() {
-        let mut pool = PendingPool::new(CoinbaseTipOrdering::<MockTransaction>::default());
-        let mut f = MockTransactionFactory::default();
+        let mut pool = PendingPool::new(CoinbaseTipOrdering::<BasePooledTransaction>::default());
 
         // Add 3 regular transaction
-        let tx_1 = f.create_eip1559();
-        let tx_2 = f.create_eip1559();
-        let tx_3 = f.create_eip1559();
-        pool.add_transaction(Arc::new(tx_1), 0);
-        pool.add_transaction(Arc::new(tx_2), 0);
-        pool.add_transaction(Arc::new(tx_3), 0);
+        let tx_1 = regular_transaction(&PrivateKeySigner::random(), 0, 3, 1_000);
+        let tx_2 = regular_transaction(&PrivateKeySigner::random(), 0, 2, 1_000);
+        let tx_3 = regular_transaction(&PrivateKeySigner::random(), 0, 1, 1_000);
+        pool.add_transaction(valid_pool_transaction(tx_1, 0), 0);
+        pool.add_transaction(valid_pool_transaction(tx_2, 1), 0);
+        pool.add_transaction(valid_pool_transaction(tx_3, 2), 0);
 
         // Create iterator
         let mut iterator = BestFlashblocksTxs::new(
@@ -193,33 +338,17 @@ mod tests {
     /// and verifies that `TX_B` (100 gwei) is correctly ordered before `TX_C` (10 gwei).
     #[test]
     fn test_nonce_chain_gating_bug_across_flashblocks() {
-        use alloy_primitives::Address;
+        let mut pool = PendingPool::new(CoinbaseTipOrdering::<BasePooledTransaction>::default());
+        let signer_a = PrivateKeySigner::random();
+        let signer_b = PrivateKeySigner::random();
+        let sender_a = signer_a.address();
+        let sender_b = signer_b.address();
 
-        let mut pool = PendingPool::new(CoinbaseTipOrdering::<MockTransaction>::default());
-        let mut f = MockTransactionFactory::default();
+        let tx_a = regular_transaction(&signer_a, 0, 1_000_000_000, 100_000_000_000);
+        let tx_b = regular_transaction(&signer_a, 1, 100_000_000_000, 200_000_000_000);
+        let tx_c = regular_transaction(&signer_b, 0, 10_000_000_000, 100_000_000_000);
 
-        let sender_a = Address::random();
-        let sender_b = Address::random();
-
-        let tx_a = MockTransaction::eip1559()
-            .with_sender(sender_a)
-            .with_nonce(0)
-            .with_priority_fee(1_000_000_000) // 1 gwei - LOW
-            .with_max_fee(100_000_000_000);
-
-        let tx_b = MockTransaction::eip1559()
-            .with_sender(sender_a)
-            .with_nonce(1)
-            .with_priority_fee(100_000_000_000) // 100 gwei - HIGH (depends on TX_A)
-            .with_max_fee(200_000_000_000);
-
-        let tx_c = MockTransaction::eip1559()
-            .with_sender(sender_b)
-            .with_nonce(0)
-            .with_priority_fee(10_000_000_000) // 10 gwei - MEDIUM
-            .with_max_fee(100_000_000_000);
-
-        pool.add_transaction(Arc::new(f.validated(tx_a.clone())), 0);
+        pool.add_transaction(valid_pool_transaction(tx_a.clone(), 0), 0);
 
         // === FLASHBLOCK 1 ===
         let mut iterator = BestFlashblocksTxs::new(
@@ -234,16 +363,16 @@ mod tests {
 
         // TX_B and TX_C arrive late, but we have already yielded lower-priority transactions
         // from the iterator, so these do not immediately get added to the best txns
-        pool.add_transaction(Arc::new(f.validated(tx_b.clone())), 0);
-        pool.add_transaction(Arc::new(f.validated(tx_c.clone())), 0);
-        assert_eq!(iterator.next(()), None);
+        pool.add_transaction(valid_pool_transaction(tx_b.clone(), 0), 0);
+        pool.add_transaction(valid_pool_transaction(tx_c.clone(), 1), 0);
+        assert!(iterator.next(()).is_none());
 
         // Simulate: flashblock 1 is complete after TX_A was executed
         iterator.mark_committed(&[*tx_a.hash()]);
         // Simulate pool.prune_transactions by recreating the pool without TX_A
-        let mut pool = PendingPool::new(CoinbaseTipOrdering::<MockTransaction>::default());
-        pool.add_transaction(Arc::new(f.validated(tx_b)), 0);
-        pool.add_transaction(Arc::new(f.validated(tx_c)), 0);
+        let mut pool = PendingPool::new(CoinbaseTipOrdering::<BasePooledTransaction>::default());
+        pool.add_transaction(valid_pool_transaction(tx_b, 0), 0);
+        pool.add_transaction(valid_pool_transaction(tx_c, 1), 0);
 
         // === FLASHBLOCK 2 ===
         // We refresh the iterator with the latest best transactions
@@ -343,16 +472,15 @@ mod tests {
     /// Rejected transactions are skipped across flashblock boundaries within the same block.
     #[test]
     fn test_rejected_txs_persist_across_refresh() {
-        let mut pool = PendingPool::new(CoinbaseTipOrdering::<MockTransaction>::default());
-        let mut f = MockTransactionFactory::default();
+        let mut pool = PendingPool::new(CoinbaseTipOrdering::<BasePooledTransaction>::default());
 
-        let tx_1 = f.create_eip1559();
-        let tx_2 = f.create_eip1559();
-        let tx_3 = f.create_eip1559();
+        let tx_1 = regular_transaction(&PrivateKeySigner::random(), 0, 3, 1_000);
+        let tx_2 = regular_transaction(&PrivateKeySigner::random(), 0, 2, 1_000);
+        let tx_3 = regular_transaction(&PrivateKeySigner::random(), 0, 1, 1_000);
         let tx_2_hash = *tx_2.hash();
-        pool.add_transaction(Arc::new(tx_1), 0);
-        pool.add_transaction(Arc::new(tx_2), 0);
-        pool.add_transaction(Arc::new(tx_3), 0);
+        pool.add_transaction(valid_pool_transaction(tx_1, 0), 0);
+        pool.add_transaction(valid_pool_transaction(tx_2, 1), 0);
+        pool.add_transaction(valid_pool_transaction(tx_3, 2), 0);
 
         let mut iterator = BestFlashblocksTxs::new(
             BestPayloadTransactions::new(pool.best()),
@@ -376,18 +504,71 @@ mod tests {
         assert_eq!(seen_hashes.len(), 2, "only non-rejected txs should appear");
     }
 
+    #[test]
+    fn invalidating_one_eip8130_lane_keeps_other_lanes_eligible() {
+        let signer = PrivateKeySigner::random();
+        let first_transaction =
+            valid_pool_transaction(channelized_transaction(&signer, U256::from(1)), 0);
+        let second_transaction =
+            valid_pool_transaction(channelized_transaction(&signer, U256::from(2)), 0);
+        let first_hash = *first_transaction.hash();
+
+        let mut iterator = BestFlashblocksTxs::new(
+            BestPayloadTransactions::new(
+                vec![Arc::clone(&first_transaction), Arc::clone(&second_transaction)].into_iter(),
+            ),
+            test_rejection_cache(),
+        );
+
+        let first = iterator.next(()).unwrap();
+        let first_lane = FlashblocksNonceLane::from_transaction(&first);
+        iterator.mark_invalid(first.sender(), first.nonce());
+
+        let second = iterator.next(()).expect("other EIP-8130 lane remains eligible");
+        assert_eq!(first.sender(), second.sender());
+        assert_ne!(FlashblocksNonceLane::from_transaction(&second), first_lane);
+        assert!(iterator.next(()).is_none());
+
+        iterator.refresh_iterator(BestPayloadTransactions::new(
+            vec![first_transaction, second_transaction].into_iter(),
+        ));
+        assert_eq!(*iterator.next(()).unwrap().hash(), first_hash);
+    }
+
+    #[test]
+    fn invalidating_account_lane_keeps_eip8130_channel_eligible() {
+        let signer = PrivateKeySigner::random();
+        let account_transaction =
+            valid_pool_transaction(regular_transaction(&signer, 0, 2, 1_000), 0);
+        let channel_transaction =
+            valid_pool_transaction(channelized_transaction(&signer, U256::from(1)), 0);
+        let channel_hash = *channel_transaction.hash();
+
+        let mut iterator = BestFlashblocksTxs::new(
+            BestPayloadTransactions::new(
+                vec![Arc::clone(&account_transaction), channel_transaction].into_iter(),
+            ),
+            test_rejection_cache(),
+        );
+
+        let account = iterator.next(()).unwrap();
+        assert_eq!(*account.hash(), *account_transaction.hash());
+        iterator.mark_invalid(account.sender(), account.nonce());
+
+        assert_eq!(*iterator.next(()).unwrap().hash(), channel_hash);
+    }
+
     /// Rejected transactions in the shared cache are skipped by a new iterator instance
     /// (simulating cross-block persistence).
     #[test]
     fn test_rejection_cache_persists_across_blocks() {
-        let mut pool = PendingPool::new(CoinbaseTipOrdering::<MockTransaction>::default());
-        let mut f = MockTransactionFactory::default();
+        let mut pool = PendingPool::new(CoinbaseTipOrdering::<BasePooledTransaction>::default());
 
-        let tx_1 = f.create_eip1559();
-        let tx_2 = f.create_eip1559();
+        let tx_1 = regular_transaction(&PrivateKeySigner::random(), 0, 2, 1_000);
+        let tx_2 = regular_transaction(&PrivateKeySigner::random(), 0, 1, 1_000);
         let tx_2_hash = *tx_2.hash();
-        pool.add_transaction(Arc::new(tx_1), 0);
-        pool.add_transaction(Arc::new(tx_2), 0);
+        pool.add_transaction(valid_pool_transaction(tx_1, 0), 0);
+        pool.add_transaction(valid_pool_transaction(tx_2, 1), 0);
 
         let cache = test_rejection_cache();
 
@@ -414,14 +595,13 @@ mod tests {
     /// A rejected transaction becomes eligible again after the cache TTL expires.
     #[test]
     fn test_rejected_tx_eligible_after_ttl_expiry() {
-        let mut pool = PendingPool::new(CoinbaseTipOrdering::<MockTransaction>::default());
-        let mut f = MockTransactionFactory::default();
+        let mut pool = PendingPool::new(CoinbaseTipOrdering::<BasePooledTransaction>::default());
 
-        let tx_1 = f.create_eip1559();
-        let tx_2 = f.create_eip1559();
+        let tx_1 = regular_transaction(&PrivateKeySigner::random(), 0, 2, 1_000);
+        let tx_2 = regular_transaction(&PrivateKeySigner::random(), 0, 1, 1_000);
         let tx_2_hash = *tx_2.hash();
-        pool.add_transaction(Arc::new(tx_1), 0);
-        pool.add_transaction(Arc::new(tx_2), 0);
+        pool.add_transaction(valid_pool_transaction(tx_1, 0), 0);
+        pool.add_transaction(valid_pool_transaction(tx_2, 1), 0);
 
         // TTL is short, 1ms
         let cache = RejectionCache::new(1000, Duration::from_millis(1));

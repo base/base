@@ -182,7 +182,6 @@ impl PayloadAttributesBuilder<BasePayloadBuilderAttributes<BaseTxEnvelope>>
             gas_limit,
             eip_1559_params,
             min_base_fee: Some(0),
-            timestamp_millis_part: None,
         };
 
         BasePayloadBuilderAttributes::try_new(parent.hash(), attributes, 3)

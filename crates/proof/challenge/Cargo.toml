@@ -32,7 +32,7 @@ base-balance-monitor.workspace = true
 base-proof-rpc.workspace = true
 base-proof-contracts.workspace = true
 base-proof-primitives.workspace = true
-base-proof-submission.workspace = true
+base-proof-submission = { workspace = true, features = ["snark-receipt"] }
 base-prover-service-client.workspace = true
 base-prover-service-protocol.workspace = true
 
@@ -75,9 +75,7 @@ base-health = { workspace = true, features = ["axum-server"] }
 
 # Misc
 url.workspace = true
-sp1-sdk.workspace = true
 humantime.workspace = true
-bincode = { workspace = true, features = ["serde"] }
 
 # Test utilities (optional)
 serde_json = { workspace = true, optional = true }
@@ -87,6 +85,7 @@ rstest.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 base-challenger = { path = ".", features = ["test-utils"] }
 metrics-util = { workspace = true, features = ["debugging"] }
+base-proof-submission = { workspace = true, features = ["test-utils"] }
 
 [features]
 metrics = [ "base-metrics/metrics", "base-tx-manager/metrics", "dep:metrics" ]

@@ -17,7 +17,14 @@ mod genesis;
 pub use genesis::{ChainInfo, FeeInfo, GenesisInfo, UpgradeInfo};
 
 mod receipt;
-pub use receipt::{BaseTransactionReceipt, L1BlockInfo, TransactionReceiptFields};
+pub use receipt::{
+    BaseTransactionReceipt, Eip8130ReceiptFields, L1BlockInfo, TransactionReceiptFields,
+};
+
+#[cfg(feature = "eip8130")]
+mod eip8130;
+#[cfg(feature = "eip8130")]
+pub use eip8130::{EIP8130_PRE_COBALT_RPC_ERROR, Eip8130Nonce};
 
 mod transaction;
 pub use transaction::{

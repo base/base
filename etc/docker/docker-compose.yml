@@ -5,13 +5,6 @@ x-rust-service-build: &rust-service-build
     PROFILE: "${CARGO_PROFILE:-dev}"
     BASE_SUCCINCT_ELF_REQUIRE: "${BASE_SUCCINCT_ELF_REQUIRE:-0}"
 
-x-zk-host-build: &zk-host-build
-  context: ../..
-  dockerfile: etc/docker/Dockerfile.rust-services
-  args:
-    PROFILE: "${ZK_HOST_PROFILE:-release}"
-    BASE_SUCCINCT_ELF_REQUIRE: "${BASE_SUCCINCT_ELF_REQUIRE:-1}"
-
 x-node-healthcheck: &node-healthcheck
   test: ["CMD-SHELL", "curl -sf -H 'Content-Type: application/json' --data '{\"jsonrpc\":\"2.0\",\"method\":\"eth_chainId\",\"params\":[],\"id\":1}' \"http://localhost:$${NODE_HEALTHCHECK_HTTP_PORT}/\" >/dev/null && curl -sf \"http://localhost:$${NODE_HEALTHCHECK_CL_RPC_PORT}/healthz\" >/dev/null"]
   interval: 250ms
@@ -169,6 +162,7 @@ services:
       - L2_BASE_AZUL_BLOCK=${L2_BASE_AZUL_BLOCK-}
       - L2_BASE_BERYL_BLOCK=${L2_BASE_BERYL_BLOCK-}
       - L2_BASE_COBALT_BLOCK=${L2_BASE_COBALT_BLOCK-}
+      - L2_BASE_DENIM_BLOCK=${L2_BASE_DENIM_BLOCK-}
       - L2_BASE_ZENITH_BLOCK=${L2_BASE_ZENITH_BLOCK-}
       - OUTPUT_DIR=/devnet/l2/configs
       - L2_DATA_DIR=/data
@@ -617,94 +611,6 @@ services:
     networks:
       default:
         ipv4_address: ${L2_BASE_RPC_ADVERTISE_IP}
-    restart: unless-stopped
-
-  prover-service-postgres:
-    image: postgres:17-alpine
-    container_name: prover-service-postgres
-    ports:
-      - "${PROVER_SERVICE_POSTGRES_PORT}:5432"
-    environment:
-      - POSTGRES_DB=prover
-      - POSTGRES_USER=prover
-      - POSTGRES_PASSWORD=prover
-    volumes:
-      - ../../.devnet/prover-service/postgres:/var/lib/postgresql/data
-      - ../../crates/proof/prover-service/db/migrations:/docker-entrypoint-initdb.d:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U prover -d prover"]
-      interval: 250ms
-      timeout: 1s
-      retries: 240
-      start_period: 250ms
-    restart: unless-stopped
-
-  base-prover-service:
-    image: base-prover-service:local
-    build:
-      <<: *rust-service-build
-      target: prover-service
-    container_name: base-prover-service
-    depends_on:
-      prover-service-postgres:
-        condition: service_healthy
-    ports:
-      - "${PROVER_SERVICE_RPC_PORT}:9000"
-    environment:
-      - RPC_LISTEN_ADDR=0.0.0.0:9000
-      - WORKER_RPC_LISTEN_ADDR=0.0.0.0:9001
-      - RUST_LOG=${RUST_LOG:-}
-      - POSTGRES_HOST=prover-service-postgres
-      - POSTGRES_PORT=5432
-      - POSTGRES_DB=prover
-      - POSTGRES_USER=prover
-      - POSTGRES_PASSWORD=prover
-      - POSTGRES_SSLMODE=disable
-      - OTEL_SERVICE_NAME=base-prover-service
-    healthcheck:
-      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/9000"]
-      interval: 250ms
-      timeout: 1s
-      retries: 240
-      start_period: 250ms
-    restart: unless-stopped
-
-  base-prover-zk-host:
-    image: base-prover-zk-host:local
-    build:
-      <<: *zk-host-build
-      target: zk-host
-    container_name: base-prover-zk-host
-    depends_on:
-      l1-el:
-        condition: service_healthy
-      l1-cl:
-        condition: service_healthy
-      base-rpc:
-        condition: service_healthy
-      base-prover-service:
-        condition: service_healthy
-    volumes:
-      - ../../.devnet/l1/configs/el/chain-config.json:/app/configs/L1/${L1_CHAIN_ID}.json:ro
-    environment:
-      - PROVER_SERVICE_ENDPOINT=http://base-prover-service:9001
-      - PROVER_WORKER_ID=devnet-zk-host
-      - SP1_CLUSTER_API_ENDPOINT=${SP1_CLUSTER_API_ENDPOINT:-}
-      - SP1_CLUSTER_TIMEOUT_HOURS=${SP1_CLUSTER_TIMEOUT_HOURS:-24}
-      - CLI_S3_BUCKET=${CLI_S3_BUCKET:-}
-      - CLI_S3_REGION=${CLI_S3_REGION:-us-east-1}
-      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-1}
-      - AWS_ENDPOINT_URL=${AWS_ENDPOINT_URL:-}
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
-      - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN:-}
-      - RUST_LOG=${RUST_LOG:-}
-      - BASE_CONSENSUS_ADDRESS=http://base-rpc:${L2_BASE_RPC_CL_RPC_PORT}
-      - L1_NODE_ADDRESS=http://l1-el:${L1_HTTP_PORT}
-      - L1_BEACON_ADDRESS=http://l1-cl:${L1_CL_HTTP_PORT}
-      - L2_NODE_ADDRESS=http://base-rpc:${L2_BASE_RPC_HTTP_PORT}
-      - DEFAULT_SEQUENCE_WINDOW=${DEFAULT_SEQUENCE_WINDOW:-50}
-      - OTEL_SERVICE_NAME=base-prover-zk-host
     restart: unless-stopped
 
   jaeger:

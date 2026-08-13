@@ -30,6 +30,9 @@ pub use config::BatchDriverConfig;
 mod event;
 pub use event::DriverEvent;
 
+mod derivation_status;
+pub use derivation_status::DerivationStatus;
+
 mod admin;
 pub use admin::{
     ADMIN_CHANNEL_CAPACITY, AdminCommand, AdminError, AdminHandle, AdminResult, BatcherStatus,

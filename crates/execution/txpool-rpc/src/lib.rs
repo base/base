@@ -9,9 +9,10 @@
 
 mod rpc;
 pub use rpc::{
-    AdminTxPoolApiImpl, AdminTxPoolApiServer, Status, TransactionStatusApiImpl,
-    TransactionStatusApiServer, TransactionStatusResponse,
+    AdminTxPoolApiImpl, AdminTxPoolApiServer, SendRawTransactionValidityApiImpl,
+    SendRawTransactionValidityApiServer, SendRawTransactionValidityRequest, Status,
+    TransactionStatusApiImpl, TransactionStatusApiServer, TransactionStatusResponse,
 };
 
 mod extension;
-pub use extension::{TxPoolRpcConfig, TxPoolRpcExtension};
+pub use extension::{SendRawTransactionValidityExtension, TxPoolRpcConfig, TxPoolRpcExtension};

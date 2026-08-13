@@ -19,10 +19,14 @@ use base_proof_tee_nitro_enclave::Server as EnclaveServer;
 use base_proof_tee_nitro_enclave::VSOCK_PORT;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_proof_tee_nitro_host::{
+    DEFAULT_PROOF_GENERATOR_HEARTBEAT_LOCK_DURATION_SECONDS,
+    DEFAULT_PROOF_GENERATOR_MAX_CONSECUTIVE_HEARTBEAT_FAILURES, NitroEnclavePool, NitroHost,
+    NitroProverServer, NitroTransport, ProofGeneratorHeartbeatConfig, RegistrationChecker,
+    RegistrationHealthConfig,
+};
+#[cfg(any(target_os = "linux", feature = "local"))]
+use base_proof_worker::{
     DEFAULT_JOB_DISCOVERY_LOCK_DURATION_SECONDS, DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS,
-    DEFAULT_PROOF_GENERATOR_HEARTBEAT_LOCK_DURATION_SECONDS, JobDiscovery, JobDiscoveryConfig,
-    NitroEnclavePool, NitroProverServer, NitroTransport, ProofGenerator,
-    ProofGeneratorHeartbeatConfig, ProofSubmitter, RegistrationChecker, RegistrationHealthConfig,
 };
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_prover_service_client::{ProverServiceClientConfig, ProverWorkerClient};
@@ -195,6 +199,14 @@ struct WorkerArgs {
         default_value_t = DEFAULT_PROOF_GENERATOR_HEARTBEAT_LOCK_DURATION_SECONDS
     )]
     proof_generator_heartbeat_lock_duration_seconds: u32,
+
+    /// Maximum consecutive retryable heartbeat failures before aborting generation.
+    #[arg(
+        long,
+        env = "PROOF_GENERATOR_MAX_CONSECUTIVE_HEARTBEAT_FAILURES",
+        default_value_t = DEFAULT_PROOF_GENERATOR_MAX_CONSECUTIVE_HEARTBEAT_FAILURES
+    )]
+    proof_generator_max_consecutive_heartbeat_failures: u32,
 }
 
 impl Cli {
@@ -341,18 +353,16 @@ async fn run_worker(
         .with_request_timeout(Duration::from_secs(worker.prover_service_request_timeout_secs));
 
     let client = ProverWorkerClient::connect(&prover_service)?;
-    let submitter = ProofSubmitter::new(client.clone());
-    let heartbeat = ProofGeneratorHeartbeatConfig::new(
+    let heartbeat = ProofGeneratorHeartbeatConfig::with_max_consecutive_failures(
         Duration::from_secs(worker.proof_generator_heartbeat_interval_secs),
         worker.proof_generator_heartbeat_lock_duration_seconds,
+        worker.proof_generator_max_consecutive_heartbeat_failures,
     );
-    let proof_generator = Arc::new(ProofGenerator::new(Arc::new(pool), submitter, heartbeat));
     let worker_id = format!("nitro-host-{}", Uuid::new_v4());
-    let discovery_config = JobDiscoveryConfig::new(worker_id.clone())
+    let host = NitroHost::new(client, Arc::new(pool), worker_id.clone(), heartbeat)
         .with_poll_interval(Duration::from_millis(worker.job_discovery_poll_interval_ms))
         .with_lock_duration_seconds(worker.job_discovery_lock_duration_seconds)
         .with_max_concurrent_jobs(worker.job_discovery_max_concurrent_jobs);
-    let discovery = JobDiscovery::new(client, proof_generator, discovery_config);
     let registrar_handle = if let Some(addr) = registrar_listen_addr {
         Some(
             NitroProverServer::run_registrar_rpc_server(
@@ -386,7 +396,7 @@ async fn run_worker(
             );
         }
     }
-    discovery.run_until_cancelled(cancel).await;
+    host.run_until_cancelled(cancel).await;
     if let Some(handle) = registrar_handle {
         let _ = handle.stop();
         handle.stopped().await;

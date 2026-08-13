@@ -3,7 +3,7 @@
 //! their authorization, then authenticates the final sender/payer signatures
 //! against the resulting post-apply state.
 
-use base_common_consensus::{AccountChange, Delegation, Eip8130Constants, Eip8130Signed};
+use base_common_consensus::{AccountChange, Delegation, Eip8130Signed};
 
 use crate::{
     AccountChangeApplier, AccountConfigurationStorage, ActorTxVerifier, AppliedAccountChanges,
@@ -69,7 +69,8 @@ impl TransactionAuthorizer {
     ///    state. A transaction that revokes its own authenticating actor in an
     ///    earlier change therefore fails the final sender check, exactly as the
     ///    contract would revert. A recorded delegation then requires that final
-    ///    sender to be the unlocked account's native-k1 admin self actor.
+    ///    sender to be an admin (unrestricted) actor on the unlocked account,
+    ///    via any canonical authenticator.
     ///
     /// Returns the [`AppliedTransaction`] (with every `AccountConfiguration`
     /// storage transition already written to `storage`), or the first
@@ -148,13 +149,21 @@ impl TransactionAuthorizer {
                         &state,
                     )?;
                     config_changes.push(resolved);
+                    // `apply_config_change_with_account_state` silently skips an
+                    // already-expired grant on the replayable unsequenced (JIT)
+                    // Local path (per change, so live siblings still apply);
+                    // sequenced and multichain batches retain such a grant and
+                    // install it inert. Nothing reverts on expiry. `now` (block
+                    // seconds) drives that skip.
                     revoke_discount_slots = revoke_discount_slots.saturating_add(
                         AccountChangeApplier::apply_config_change_with_account_state(
                             storage,
                             sender_account,
-                            &cc.actor_changes,
-                            cc.chain_id,
+                            &cc.changes,
+                            cc.channel,
+                            cc.sequence,
                             &mut state,
+                            now,
                         )?,
                     );
                     storage
@@ -179,16 +188,42 @@ impl TransactionAuthorizer {
             ActorTxVerifier::verify_with_recovered_sender(signed, storage, now, recovered_sender)?;
 
         if applied.delegation.is_some() {
-            Self::authorize_delegation(signed, storage, now, &actors.sender)?;
+            Self::authorize_delegation(storage, now, &actors.sender)?;
         }
 
         Ok(AppliedTransaction { actors, config_changes, applied, revoke_discount_slots })
     }
 
-    /// Requires a delegation's final sender to be the unlocked account's native
-    /// secp256k1, unrestricted self actor.
+    /// Requires a delegation's final sender to be an admin (unrestricted) actor
+    /// on the unlocked account.
+    ///
+    /// The authorizing actor may use **any** canonical authenticator (secp256k1,
+    /// P-256, `WebAuthn`, or a delegate contract): it does not need to be the
+    /// account's native-k1 self actor, nor a secp256k1 actor at all. Any bound
+    /// admin (`scope == 0`) actor may set the account's delegation, consistent
+    /// with the admin role that already governs every other config mutation
+    /// (authorize/revoke actors, including revoking the root key). The
+    /// account-unlocked guard remains.
+    ///
+    /// This gate does **not** inspect the account's code. Delegation is
+    /// independently constrained to accounts that are *currently an EOA* — no
+    /// code, or an existing EIP-7702 delegation indicator — by
+    /// [`DelegationEffect::can_replace_code`], enforced when
+    /// [`DelegationEffect::install`] runs in both the mempool overlay and block
+    /// execution (ordinary contract code is rejected with
+    /// [`ApplyError::NonDelegatableCode`]). `install` additionally rejects a
+    /// delegation onto an **empty-code, keystore-established** account
+    /// (`FLAG_CONTRACT_ESTABLISHED`) with
+    /// [`ApplyError::ContractEstablishedCodeless`]: empty code there is a
+    /// self-destructed CREATE2 account, not a proven-key EOA, so it must not be
+    /// re-delegated. Allowing any admin actor here is therefore safe: an admin key
+    /// can only (re)delegate a genuinely EOA-shaped account, never repoint a
+    /// deployed smart account's code nor resurrect a keystore-established one.
+    ///
+    /// [`DelegationEffect::can_replace_code`]: crate::DelegationEffect::can_replace_code
+    /// [`DelegationEffect::install`]: crate::DelegationEffect::install
+    /// [`ApplyError::NonDelegatableCode`]: crate::ApplyError::NonDelegatableCode
     fn authorize_delegation(
-        signed: &Eip8130Signed,
         storage: &AccountConfigurationStorage<'_>,
         now: u64,
         sender: &AuthorizedActor,
@@ -197,11 +232,7 @@ impl TransactionAuthorizer {
             return Err(TxAuthError::AccountLocked);
         }
 
-        let used_native_k1 = signed.explicit_sender().is_none()
-            || signed.sender_auth().starts_with(Eip8130Constants::K1_AUTHENTICATOR.as_slice());
-        let is_self =
-            sender.resolved.actor_id == AccountConfigurationStorage::self_actor_id(sender.account);
-        if !used_native_k1 || !is_self || !sender.resolved.is_admin() {
+        if !sender.resolved.is_admin() {
             return Err(TxAuthError::DelegationUnauthorized);
         }
 
@@ -212,12 +243,36 @@ impl TransactionAuthorizer {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256, address, keccak256};
+    use alloy_sol_types::{SolValue, sol};
     use base_common_consensus::{
-        ActorChange, ConfigChange, CreateEntry, Delegation, Eip8130Constants, Eip8130Contracts,
-        InitialActor, TxEip8130,
+        AccountChangeChannel, ChangeType, CreateEntry, Delegation, Eip8130Constants, InitialActor,
+        SignedAccountChanges, SignedChange, TxEip8130,
     };
     use base_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
     use k256::ecdsa::SigningKey as K256SigningKey;
+
+    sol! {
+        /// ABI shape of `AuthorizeActor`'s `ActorConfig` payload field, used only
+        /// to synthesize a benign change for sequence/auth tests.
+        struct TestActorConfigAbi {
+            address authenticator;
+            uint48 expiry;
+            uint16 scope;
+        }
+    }
+
+    /// A minimal, always-appliable `AuthorizeActor` change (upsert of a throwaway
+    /// actor). Sequence/auth tests use it so a batch is never empty — the apply
+    /// path rejects an empty batch with `EmptyChangeSet`, mirroring the contract.
+    fn benign_change() -> SignedChange {
+        let abi = TestActorConfigAbi {
+            authenticator: K1,
+            expiry: alloy_primitives::aliases::U48::ZERO,
+            scope: Eip8130Constants::SCOPE_SENDER,
+        };
+        let payload = (B256::repeat_byte(0xEE), abi, Bytes::new()).abi_encode_params();
+        SignedChange { change_type: ChangeType::AuthorizeActor, payload: Bytes::from(payload) }
+    }
 
     use super::*;
     use crate::{
@@ -258,41 +313,51 @@ mod tests {
         Bytes::from(out)
     }
 
-    /// Canonical Solidity packing of `ActorConfig`.
-    fn pack(authenticator: Address, scope: u8, expiry: u64) -> U256 {
+    /// Canonical Solidity packing of `ActorConfig` (authenticator 0..160, expiry
+    /// 160..208, scope 208..224).
+    fn pack(authenticator: Address, scope: u16, expiry: u64) -> U256 {
         U256::from_be_slice(authenticator.as_slice())
-            | (U256::from(scope) << 160)
-            | (U256::from(expiry) << 168)
+            | (U256::from(expiry) << 160)
+            | (U256::from(scope) << 208)
     }
 
     /// Canonical Solidity packing of `AccountState` (`multichain`, `local`
-    /// sequences, `flags`, and the `lock_union`).
+    /// sequences, `flags`, and the `lock_union`; `local` is the low uint32
+    /// local-channel sequence, local epoch left zero).
     fn pack_state(multichain: u64, local: u64, flags: u8, lock_union: u64) -> U256 {
         let mut b = [0u8; 32];
         b[24..32].copy_from_slice(&multichain.to_be_bytes());
-        b[16..24].copy_from_slice(&local.to_be_bytes());
+        b[20..24].copy_from_slice(&local.to_be_bytes()[4..]); // uint32 localSequence
         b[15] = flags;
-        b[10..15].copy_from_slice(&lock_union.to_be_bytes()[3..]);
+        b[9..15].copy_from_slice(&lock_union.to_be_bytes()[2..]); // uint48 lockUnion
         U256::from_be_bytes(b)
     }
 
-    /// Packs the inline secp256k1 self actor's `default_eoa_scope`.
-    fn pack_default_eoa_scope(scope: u8) -> U256 {
-        U256::from(scope) << 176
+    /// Packs the inline secp256k1 self actor's `default_eoa_scope` (bits
+    /// 232..248).
+    fn pack_default_eoa_scope(scope: u16) -> U256 {
+        U256::from(scope) << 232
     }
 
-    /// A [`ConfigChange`] whose `auth` is a fresh signature over its own digest.
+    /// A [`SignedAccountChanges`] batch whose `signature` is a fresh signature
+    /// over its own digest.
     fn signed_change(
         account: Address,
         authenticator: Address,
         signer: &K256SigningKey,
-        chain_id: u64,
+        channel: AccountChangeChannel,
         sequence: u64,
-        actor_changes: Vec<ActorChange>,
-    ) -> ConfigChange {
-        let mut change = ConfigChange { chain_id, sequence, actor_changes, auth: Bytes::new() };
-        let digest = ConfigChangeAuthorizer::signed_actor_changes_digest(account, &change);
-        change.auth = auth_blob(authenticator, &sig(signer, digest));
+        changes: Vec<SignedChange>,
+    ) -> SignedAccountChanges {
+        // These tests probe sequence gating and authenticator resolution, not
+        // change content, so callers pass an empty vec. The apply path now
+        // rejects an empty batch (`EmptyChangeSet`), so substitute a benign,
+        // always-appliable change to keep the batch non-empty.
+        let changes = if changes.is_empty() { vec![benign_change()] } else { changes };
+        let mut change =
+            SignedAccountChanges { channel, sequence, changes, signature: Bytes::new() };
+        let digest = ConfigChangeAuthorizer::changes_digest(account, LOCAL, &change);
+        change.signature = auth_blob(authenticator, &sig(signer, digest));
         change
     }
 
@@ -306,7 +371,8 @@ mod tests {
             sender,
             nonce_key: U256::ZERO,
             nonce_sequence: 0,
-            expiry: 0,
+            valid_after: 0,
+            valid_before: 0,
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 5_000_000_000,
             gas_limit: 250_000,
@@ -349,8 +415,8 @@ mod tests {
         // Two multichain entries with empty actor changes (each still advances
         // the channel): the first applies and the second is then authorized
         // against the advanced live sequence (1).
-        let cc0 = signed_change(account, K1, &k, 0, 0, vec![]);
-        let cc1 = signed_change(account, K1, &k, 0, 1, vec![]);
+        let cc0 = signed_change(account, K1, &k, AccountChangeChannel::Multichain, 0, vec![]);
+        let cc1 = signed_change(account, K1, &k, AccountChangeChannel::Multichain, 1, vec![]);
         let signed = eoa_signed(
             tx_with(
                 None,
@@ -376,8 +442,8 @@ mod tests {
         let account = addr(&k);
         // Both entries claim sequence 0; the second must fail once the first has
         // applied and advanced the channel to 1.
-        let cc0 = signed_change(account, K1, &k, 0, 0, vec![]);
-        let stale = signed_change(account, K1, &k, 0, 0, vec![]);
+        let cc0 = signed_change(account, K1, &k, AccountChangeChannel::Multichain, 0, vec![]);
+        let stale = signed_change(account, K1, &k, AccountChangeChannel::Multichain, 0, vec![]);
         let signed = eoa_signed(
             tx_with(
                 None,
@@ -399,9 +465,9 @@ mod tests {
         let k = key(0x11);
         let account = addr(&k);
         // multichain#0, local#0, multichain#1 — each channel advances separately.
-        let m0 = signed_change(account, K1, &k, 0, 0, vec![]);
-        let l0 = signed_change(account, K1, &k, LOCAL, 0, vec![]);
-        let m1 = signed_change(account, K1, &k, 0, 1, vec![]);
+        let m0 = signed_change(account, K1, &k, AccountChangeChannel::Multichain, 0, vec![]);
+        let l0 = signed_change(account, K1, &k, AccountChangeChannel::Local, 0, vec![]);
+        let m1 = signed_change(account, K1, &k, AccountChangeChannel::Multichain, 1, vec![]);
         let signed = eoa_signed(
             tx_with(
                 None,
@@ -422,45 +488,40 @@ mod tests {
     }
 
     #[test]
-    fn foreign_chain_config_change_is_rejected_without_advancing_a_channel() {
+    fn stale_local_epoch_config_change_is_rejected() {
         let k = key(0x11);
         let account = addr(&k);
-        // A valid multichain entry followed by one bound to a foreign chain
-        // (neither 0 nor LOCAL). The orchestrator rejects the foreign entry at
-        // its chain-binding check, surfacing `ConfigChainId`.
-        const FOREIGN: u64 = LOCAL + 1;
-        let m0 = signed_change(account, K1, &k, 0, 0, vec![]);
-        let foreign = signed_change(account, K1, &k, FOREIGN, 0, vec![]);
-        let signed = eoa_signed(
-            tx_with(
-                None,
-                None,
-                vec![AccountChange::ConfigChange(m0), AccountChange::ConfigChange(foreign)],
-            ),
-            &k,
-        );
+        // A Local-channel batch committing local epoch 0 against an account whose
+        // local epoch has advanced to 1: rejected at the epoch gate.
+        let change = signed_change(account, K1, &k, AccountChangeChannel::Local, 0, vec![]);
+        let signed = eoa_signed(tx_with(None, None, vec![AccountChange::ConfigChange(change)]), &k);
         with_storage(|acc| {
+            // localEpoch = 1 (uint32 at bytes 16..20 of the packed slot).
+            let mut b = [0u8; 32];
+            b[16..20].copy_from_slice(&1u32.to_be_bytes());
+            acc.account_state.at_mut(&account).write(U256::from_be_bytes(b)).unwrap();
             assert_eq!(
                 TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW),
-                Err(TxAuthError::ConfigChainId { expected: LOCAL, got: FOREIGN }),
+                Err(TxAuthError::StaleEpoch { expected: 1, got: 0 }),
             );
         });
     }
 
     #[test]
-    fn channel_sequence_overflow_is_rejected_not_wrapped() {
+    fn channel_sequence_saturation_is_rejected_not_wrapped() {
         let k = key(0x11);
         let account = addr(&k);
-        // The entry sits at the channel's max sequence; applying it would advance
-        // the channel past u64::MAX, which must be rejected rather than wrapping
-        // back to a duplicate-accepting state.
-        let at_max = signed_change(account, K1, &k, 0, u64::MAX, vec![]);
+        // The batch sits at the multichain channel's max sequence; advancing it
+        // would overflow, so the gate rejects it rather than wrapping back to a
+        // duplicate-accepting state.
+        let at_max =
+            signed_change(account, K1, &k, AccountChangeChannel::Multichain, u64::MAX, vec![]);
         let signed = eoa_signed(tx_with(None, None, vec![AccountChange::ConfigChange(at_max)]), &k);
         with_storage(|acc| {
             acc.account_state.at_mut(&account).write(pack_state(u64::MAX, 0, 0, 0)).unwrap();
             assert_eq!(
                 TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW),
-                Err(TxAuthError::Apply(ApplyError::SequenceOverflow)),
+                Err(TxAuthError::SequenceSaturated),
             );
         });
     }
@@ -475,13 +536,13 @@ mod tests {
 
         let ordinary_tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
-            expiry: NOW + 1,
+            valid_before: NOW + 1,
             ..tx_with(Some(account), Some(payer_account), vec![])
         };
         let ordinary = configured_signed(ordinary_tx, &sender, Some(&payer));
         let delegation_tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
-            expiry: NOW + 1,
+            valid_before: NOW + 1,
             ..tx_with(
                 Some(account),
                 Some(payer_account),
@@ -507,7 +568,10 @@ mod tests {
     }
 
     #[test]
-    fn delegation_authorization_rejects_non_self_native_k1_admin_actor() {
+    fn delegation_authorization_accepts_non_self_native_k1_admin_actor() {
+        // A bound admin (unrestricted) actor that is *not* the account's native
+        // self actor may now set the delegation, as long as it authenticates via
+        // native secp256k1 and the account is unlocked.
         let signer = key(0x33);
         let account = address!("0x00000000000000000000000000000000000000aa");
         let signer_id = actor_id(addr(&signer));
@@ -523,6 +587,55 @@ mod tests {
                 .at_mut(&signer_id)
                 .at_mut(&account)
                 .write(pack(K1, Eip8130Constants::SCOPE_UNRESTRICTED, 0))
+                .unwrap();
+            let out = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW).unwrap();
+            assert_eq!(out.actors.sender.account, account);
+            assert_eq!(out.actors.sender.resolved.actor_id, signer_id);
+            assert_ne!(
+                out.actors.sender.resolved.actor_id,
+                AccountConfigurationStorage::self_actor_id(account),
+                "delegating actor is intentionally not the native self actor",
+            );
+            assert_eq!(out.applied.delegation, Some(DelegationEffect::new(account, target)));
+        });
+    }
+
+    #[test]
+    fn delegation_authorization_rejects_scoped_non_self_native_k1_actor() {
+        // Broadening delegation to admin actors must not leak to merely-scoped
+        // (non-admin) actors. A sponsor payer covers gas and the nonce-free key
+        // lets a SENDER-scoped actor pass the sender check, so authorization
+        // reaches the delegation gate — which still rejects it because the
+        // sender's scope is not unrestricted.
+        let signer = key(0x37);
+        let account = address!("0x00000000000000000000000000000000000000ab");
+        let signer_id = actor_id(addr(&signer));
+        let payer = key(0x38);
+        let payer_account = address!("0x00000000000000000000000000000000000000ac");
+        let payer_id = actor_id(addr(&payer));
+        let target = address!("0x00000000000000000000000000000000000000dd");
+
+        let tx = TxEip8130 {
+            nonce_key: Eip8130Constants::NONCE_KEY_MAX,
+            valid_before: NOW + 1,
+            ..tx_with(
+                Some(account),
+                Some(payer_account),
+                vec![AccountChange::Delegation(Delegation { target })],
+            )
+        };
+        let signed = configured_signed(tx, &signer, Some(&payer));
+
+        with_storage(|acc| {
+            acc.actor_config
+                .at_mut(&signer_id)
+                .at_mut(&account)
+                .write(pack(K1, Eip8130Constants::SCOPE_SENDER, 0))
+                .unwrap();
+            acc.actor_config
+                .at_mut(&payer_id)
+                .at_mut(&payer_account)
+                .write(pack(K1, Eip8130Constants::SCOPE_SPONSOR_PAYER, 0))
                 .unwrap();
             assert_eq!(
                 TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW),
@@ -596,22 +709,37 @@ mod tests {
     }
 
     #[test]
-    fn delegation_authorization_rejects_non_native_k1_admin_self_actor() {
+    fn delegation_authorization_accepts_non_native_k1_admin_actor() {
+        // Any canonical authenticator may authorize a delegation as long as the
+        // resolved sender is an admin (unrestricted) actor: a non-secp256k1
+        // (e.g. P-256) admin actor is now accepted.
         let account = address!("0x00000000000000000000000000000000000000aa");
-        let target = address!("0x00000000000000000000000000000000000000dd");
-        let tx =
-            tx_with(Some(account), None, vec![AccountChange::Delegation(Delegation { target })]);
-        let signed = Eip8130Signed::new(
-            tx,
-            auth_blob(Eip8130Contracts::P256_AUTHENTICATOR, &[]),
-            Bytes::new(),
-        );
         let sender =
             AuthorizedActor { account, resolved: ResolvedActor::unrestricted(actor_id(account)) };
 
         with_storage(|acc| {
+            assert_eq!(TransactionAuthorizer::authorize_delegation(acc, NOW, &sender), Ok(()));
+        });
+    }
+
+    #[test]
+    fn delegation_authorization_rejects_scoped_actor() {
+        // The admin gate still holds: a merely-scoped (non-admin) sender cannot
+        // authorize a delegation regardless of authenticator.
+        let account = address!("0x00000000000000000000000000000000000000aa");
+        let sender = AuthorizedActor {
+            account,
+            resolved: ResolvedActor {
+                actor_id: actor_id(account),
+                scope: Eip8130Constants::SCOPE_SENDER,
+                policy_target: Address::ZERO,
+                expiry: 0,
+            },
+        };
+
+        with_storage(|acc| {
             assert_eq!(
-                TransactionAuthorizer::authorize_delegation(&signed, acc, NOW, &sender),
+                TransactionAuthorizer::authorize_delegation(acc, NOW, &sender),
                 Err(TxAuthError::DelegationUnauthorized),
             );
         });
@@ -628,7 +756,7 @@ mod tests {
         let signer_addr = addr(&k);
         let actor_id_k = B256::from_slice(&{
             let mut id = [0u8; 32];
-            id[..20].copy_from_slice(signer_addr.as_slice());
+            id[12..].copy_from_slice(signer_addr.as_slice());
             id
         });
         let initial_actors = vec![InitialActor::owner(actor_id_k, K1)];
@@ -650,7 +778,8 @@ mod tests {
             sender: Some(derived),
             nonce_key: U256::ZERO,
             nonce_sequence: 0,
-            expiry: 0,
+            valid_after: 0,
+            valid_before: 0,
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 5_000_000_000,
             gas_limit: 250_000,
@@ -682,7 +811,7 @@ mod tests {
         let signer_addr = addr(&k);
         let actor_id_k = B256::from_slice(&{
             let mut id = [0u8; 32];
-            id[..20].copy_from_slice(signer_addr.as_slice());
+            id[12..].copy_from_slice(signer_addr.as_slice());
             id
         });
         let initial_actors = vec![InitialActor::owner(actor_id_k, K1)];
@@ -704,7 +833,8 @@ mod tests {
             sender: Some(derived),
             nonce_key: U256::ZERO,
             nonce_sequence: 0,
-            expiry: 0,
+            valid_after: 0,
+            valid_before: 0,
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 5_000_000_000,
             gas_limit: 250_000,
@@ -734,7 +864,7 @@ mod tests {
         let sk = key(0x22);
         let account = address!("0x00000000000000000000000000000000000000aa");
         let sid = actor_id(addr(&sk));
-        let cc = signed_change(account, K1, &sk, 0, 0, vec![]);
+        let cc = signed_change(account, K1, &sk, AccountChangeChannel::Multichain, 0, vec![]);
         let tx = tx_with(Some(account), None, vec![AccountChange::ConfigChange(cc)]);
         let hash = tx.sender_signature_hash();
         let signed = Eip8130Signed::new(tx, auth_blob(K1, &sig(&sk, hash)), Bytes::new());
@@ -761,7 +891,8 @@ mod tests {
         let ck = key(0x44);
         let cid = actor_id(addr(&ck));
 
-        let cc = signed_change(sender_account, K1, &ck, 0, 0, vec![]);
+        let cc =
+            signed_change(sender_account, K1, &ck, AccountChangeChannel::Multichain, 0, vec![]);
         let tx = tx_with(
             Some(sender_account),
             Some(payer_account),
@@ -812,7 +943,7 @@ mod tests {
         let signer_addr = addr(signer);
         let actor_id_val = B256::from_slice(&{
             let mut id = [0u8; 32];
-            id[..20].copy_from_slice(signer_addr.as_slice());
+            id[12..].copy_from_slice(signer_addr.as_slice());
             id
         });
         let initial_actors = vec![InitialActor::owner(actor_id_val, K1)];
@@ -839,7 +970,8 @@ mod tests {
             sender: Some(derived),
             nonce_key: U256::ZERO,
             nonce_sequence: 0,
-            expiry: 0,
+            valid_after: 0,
+            valid_before: 0,
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 5_000_000_000,
             gas_limit: 250_000,
@@ -883,13 +1015,16 @@ mod tests {
         let signer_addr = addr(&k);
         let actor_id_val = B256::from_slice(&{
             let mut id = [0u8; 32];
-            id[..20].copy_from_slice(signer_addr.as_slice());
+            id[12..].copy_from_slice(signer_addr.as_slice());
             id
         });
         let initial_actors = vec![InitialActor::owner(actor_id_val, K1)];
+        // Non-empty code: codeless creates are rejected by the structural
+        // validator before this path, and `apply_create` now enforces the same
+        // `EmptyBytecode` invariant.
         let create = CreateEntry {
             user_salt: B256::ZERO,
-            code: Bytes::new(),
+            code: Bytes::from_static(&[0x60, 0x00]),
             initial_actors: initial_actors.clone(),
         };
         let derived = AccountChangeApplier::compute_address(
@@ -901,13 +1036,14 @@ mod tests {
 
         // Config change signed by the initial actor, bound to the derived account
         // at the multichain channel's first sequence.
-        let cc = signed_change(derived, K1, &k, 0, 0, vec![]);
+        let cc = signed_change(derived, K1, &k, AccountChangeChannel::Multichain, 0, vec![]);
         let tx = TxEip8130 {
             chain_id: LOCAL,
             sender: Some(derived),
             nonce_key: U256::ZERO,
             nonce_sequence: 0,
-            expiry: 0,
+            valid_after: 0,
+            valid_before: 0,
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 5_000_000_000,
             gas_limit: 250_000,
@@ -940,13 +1076,13 @@ mod tests {
         let attacker_addr = addr(&attacker);
         let actor_id_val = B256::from_slice(&{
             let mut id = [0u8; 32];
-            id[..20].copy_from_slice(attacker_addr.as_slice());
+            id[12..].copy_from_slice(attacker_addr.as_slice());
             id
         });
         let initial_actors = vec![InitialActor::owner(actor_id_val, K1)];
         let create = CreateEntry {
             user_salt: B256::ZERO,
-            code: Bytes::new(),
+            code: Bytes::from_static(&[0x60, 0x00]),
             initial_actors: initial_actors.clone(),
         };
         let derived = AccountChangeApplier::compute_address(
@@ -962,7 +1098,8 @@ mod tests {
             sender: Some(derived),
             nonce_key: U256::ZERO,
             nonce_sequence: 0,
-            expiry: 0,
+            valid_after: 0,
+            valid_before: 0,
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 5_000_000_000,
             gas_limit: 250_000,
@@ -993,17 +1130,22 @@ mod tests {
         let signer_addr = addr(&k);
         let actor_id_val = B256::from_slice(&{
             let mut id = [0u8; 32];
-            id[..20].copy_from_slice(signer_addr.as_slice());
+            id[12..].copy_from_slice(signer_addr.as_slice());
             id
         });
         let initial_actors = vec![InitialActor::owner(actor_id_val, K1)];
-        let create = CreateEntry { user_salt: B256::ZERO, code: Bytes::new(), initial_actors };
+        let create = CreateEntry {
+            user_salt: B256::ZERO,
+            code: Bytes::from_static(&[0x60, 0x00]),
+            initial_actors,
+        };
         let tx = TxEip8130 {
             chain_id: LOCAL,
             sender: None, // missing explicit sender
             nonce_key: U256::ZERO,
             nonce_sequence: 0,
-            expiry: 0,
+            valid_after: 0,
+            valid_before: 0,
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 5_000_000_000,
             gas_limit: 250_000,

@@ -18,15 +18,17 @@ use crate::transaction::eip8130::constants::Eip8130Constants;
 
 /// Bitmask describing the contexts in which an actor is valid.
 ///
-/// On the wire, `Scope` is encoded as a single RLP-encoded byte (matching the
-/// EIP-8130 `uint8` spec), not as a one-element list. The derived RLP impls
-/// from `alloy_rlp` would wrap the inner byte in a list header, so the
-/// `Encodable`/`Decodable` impls are written by hand.
+/// On the wire, `Scope` is encoded as a minimal RLP-encoded integer (matching
+/// the EIP-8130 `uint16` spec), not as a one-element list. The derived RLP impls
+/// from `alloy_rlp` would wrap the inner value in a list header, so the
+/// `Encodable`/`Decodable` impls are written by hand. RLP integers are
+/// minimal-big-endian, so values `<= 0xff` encode identically to the earlier
+/// `uint8` form.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
-pub struct Scope(pub u8);
+pub struct Scope(pub u16);
 
 impl Encodable for Scope {
     fn encode(&self, out: &mut dyn BufMut) {
@@ -40,7 +42,7 @@ impl Encodable for Scope {
 
 impl Decodable for Scope {
     fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
-        u8::decode(buf).map(Self)
+        u16::decode(buf).map(Self)
     }
 }
 
@@ -49,7 +51,7 @@ impl Scope {
     pub const UNRESTRICTED: Self = Self(Eip8130Constants::SCOPE_UNRESTRICTED);
 
     /// Returns the raw bitmask.
-    pub const fn bits(&self) -> u8 {
+    pub const fn bits(&self) -> u16 {
         self.0
     }
 
@@ -90,8 +92,9 @@ impl Scope {
 /// (initial actors are always non-expiring, committed as `0`) and a
 /// self-referential `manager = account` (the account address is not known at
 /// commitment time). The field order matches the wire encoding and the
-/// address-derivation commitment (`actorId || authenticator || scope ||
-/// policyData`).
+/// per-actor leaf hashed into the address-derivation commitment
+/// (`keccak256(actorId || authenticator || scope || policyData)`, then the
+/// commitment is `keccak256` over the packed leaves).
 ///
 /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
 #[derive(Debug, Clone, PartialEq, Eq, Hash, RlpEncodable, RlpDecodable)]
@@ -103,8 +106,8 @@ pub struct InitialActor {
     pub actor_id: B256,
     /// Address of the authenticator contract (e.g. an ERC-1271 authenticator).
     pub authenticator: Address,
-    /// Scope byte (`0x00` = unrestricted admin), stored verbatim.
-    pub scope: u8,
+    /// Scope bitfield (`uint16`; `0x0000` = unrestricted admin), stored verbatim.
+    pub scope: u16,
     /// Policy data: empty unless `scope` sets `POLICY`, otherwise exactly
     /// `manager (20) || commitment (32)`. Committed to the derived address.
     pub policy_data: Bytes,
@@ -118,74 +121,136 @@ impl InitialActor {
     }
 }
 
-/// Operation performed by an [`ActorChange`] inside a [`ConfigChange`].
+/// The type of a single [`SignedChange`] op inside a [`SignedAccountChanges`]
+/// batch.
+///
+/// Mirrors the finalized `Keystore.ChangeType` enum. Authority ops
+/// ([`Self::AuthorizeActor`], [`Self::RevokeActor`]) mutate who can act;
+/// environment ops ([`Self::IncrementLocalEpoch`], [`Self::Lock`],
+/// [`Self::Unlock`]) mutate the rules ops are checked against.
+/// [`Self::IncrementLocalEpoch`] is valid on either channel (a Multichain batch
+/// may bump the local epoch); [`Self::Lock`]/[`Self::Unlock`] are valid only on
+/// the [`AccountChangeChannel::Local`] channel and must be the batch's only op.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum ActorChangeType {
-    /// Authorize a new actor (op byte `0x01`).
-    Authorize,
-    /// Revoke an existing actor (op byte `0x02`).
-    Revoke,
+pub enum ChangeType {
+    /// Authorize (upsert) an actor. Payload: `abi.encode(actorId, ActorConfig, policyData)`.
+    AuthorizeActor,
+    /// Revoke an actor. Payload: `abi.encode(actorId)`.
+    RevokeActor,
+    /// Increment the local epoch (either channel; empty payload).
+    IncrementLocalEpoch,
+    /// Lock the account (Local only; standalone; payload: `abi.encode(uint16 unlockDelay)`).
+    Lock,
+    /// Unlock the account (Local only; standalone; empty payload).
+    Unlock,
 }
 
-impl ActorChangeType {
-    /// Returns the on-wire op byte.
+impl ChangeType {
+    /// Returns the on-wire op byte (matching the Solidity enum discriminant).
     pub const fn op_byte(&self) -> u8 {
         match self {
-            Self::Authorize => Eip8130Constants::ACTOR_CHANGE_AUTHORIZE,
-            Self::Revoke => Eip8130Constants::ACTOR_CHANGE_REVOKE,
+            Self::AuthorizeActor => Eip8130Constants::CHANGE_TYPE_AUTHORIZE_ACTOR,
+            Self::RevokeActor => Eip8130Constants::CHANGE_TYPE_REVOKE_ACTOR,
+            Self::IncrementLocalEpoch => Eip8130Constants::CHANGE_TYPE_INCREMENT_LOCAL_EPOCH,
+            Self::Lock => Eip8130Constants::CHANGE_TYPE_LOCK,
+            Self::Unlock => Eip8130Constants::CHANGE_TYPE_UNLOCK,
         }
     }
 
     /// Parses a wire op byte.
     pub const fn from_op_byte(byte: u8) -> Option<Self> {
         match byte {
-            Eip8130Constants::ACTOR_CHANGE_AUTHORIZE => Some(Self::Authorize),
-            Eip8130Constants::ACTOR_CHANGE_REVOKE => Some(Self::Revoke),
+            Eip8130Constants::CHANGE_TYPE_AUTHORIZE_ACTOR => Some(Self::AuthorizeActor),
+            Eip8130Constants::CHANGE_TYPE_REVOKE_ACTOR => Some(Self::RevokeActor),
+            Eip8130Constants::CHANGE_TYPE_INCREMENT_LOCAL_EPOCH => Some(Self::IncrementLocalEpoch),
+            Eip8130Constants::CHANGE_TYPE_LOCK => Some(Self::Lock),
+            Eip8130Constants::CHANGE_TYPE_UNLOCK => Some(Self::Unlock),
             _ => None,
         }
     }
 }
 
-/// A single actor authorization or revocation inside a [`ConfigChange`].
+/// The replay domain a [`SignedAccountChanges`] batch is bound to.
 ///
-/// Per [EIP-8130], `data` is the operation-specific, contract-ABI-encoded blob:
-/// `abi.encode(ActorConfig, bytes policyData)` for an `Authorize` (carrying the
-/// new actor's authenticator, scope, expiry, and policy data), and
-/// empty for a `Revoke`. It is opaque at this layer — decoded only where the
-/// change is applied (native authorization or `applySignedActorChanges`) — and
-/// is the value hashed (`keccak256(data)`) in the config-change signature
-/// payload, so the same blob is interpreted identically on every path.
+/// Mirrors `Keystore.AccountChangeChannel`. [`Self::Local`] binds
+/// `block.chainid` and carries the epoch + sequence machinery (including the
+/// unsequenced JIT mode); [`Self::Multichain`] binds `chain_id == 0` and keeps a
+/// plain monotonic counter with no epoch and no JIT mode.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum AccountChangeChannel {
+    /// Local channel: binds `block.chainid`; epoch + sequence + JIT mode.
+    #[default]
+    Local,
+    /// Multichain channel: binds `chain_id == 0`; plain monotonic counter.
+    Multichain,
+}
+
+impl AccountChangeChannel {
+    /// Returns the on-wire channel byte.
+    pub const fn byte(&self) -> u8 {
+        match self {
+            Self::Local => Eip8130Constants::CHANNEL_LOCAL,
+            Self::Multichain => Eip8130Constants::CHANNEL_MULTICHAIN,
+        }
+    }
+
+    /// Parses a wire channel byte.
+    pub const fn from_byte(byte: u8) -> Option<Self> {
+        match byte {
+            Eip8130Constants::CHANNEL_LOCAL => Some(Self::Local),
+            Eip8130Constants::CHANNEL_MULTICHAIN => Some(Self::Multichain),
+            _ => None,
+        }
+    }
+
+    /// `true` for the [`Self::Local`] channel.
+    pub const fn is_local(&self) -> bool {
+        matches!(self, Self::Local)
+    }
+}
+
+/// A single operation within a [`SignedAccountChanges`] batch: its type and an
+/// operation-specific, contract-ABI-encoded payload.
+///
+/// Mirrors `Keystore.AccountChange`. The `payload` is opaque at this layer —
+/// decoded only where the change is applied — and is hashed
+/// (`keccak256(payload)`) into the batch's signature digest, so the same blob is
+/// interpreted identically on every path. Per [EIP-8130] the payload is:
+/// `abi.encode(bytes32 actorId, ActorConfig cfg, bytes policyData)` for
+/// [`ChangeType::AuthorizeActor`], `abi.encode(bytes32 actorId)` for
+/// [`ChangeType::RevokeActor`], `abi.encode(uint16 unlockDelay)` for
+/// [`ChangeType::Lock`], and empty for [`ChangeType::IncrementLocalEpoch`] /
+/// [`ChangeType::Unlock`].
 ///
 /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
-pub struct ActorChange {
-    /// Operation (authorize / revoke).
-    pub change_type: ActorChangeType,
-    /// Actor identifier.
-    pub actor_id: B256,
-    /// Operation-specific ABI-encoded data (opaque at this layer).
-    pub data: Bytes,
+pub struct SignedChange {
+    /// Operation type.
+    pub change_type: ChangeType,
+    /// Operation-specific ABI-encoded payload (opaque at this layer).
+    pub payload: Bytes,
 }
 
-impl ActorChange {
+impl SignedChange {
     fn rlp_fields_len(&self) -> usize {
-        self.change_type.op_byte().length() + self.actor_id.length() + self.data.length()
+        self.change_type.op_byte().length() + self.payload.length()
     }
 }
 
-impl Encodable for ActorChange {
+impl Encodable for SignedChange {
     fn encode(&self, out: &mut dyn BufMut) {
         let fields_len = self.rlp_fields_len();
         let header = Header { list: true, payload_length: fields_len };
         header.encode(out);
         self.change_type.op_byte().encode(out);
-        self.actor_id.encode(out);
-        self.data.encode(out);
+        self.payload.encode(out);
     }
 
     fn length(&self) -> usize {
@@ -194,7 +259,7 @@ impl Encodable for ActorChange {
     }
 }
 
-impl Decodable for ActorChange {
+impl Decodable for SignedChange {
     fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
         let header = Header::decode(buf)?;
         if !header.list {
@@ -202,10 +267,9 @@ impl Decodable for ActorChange {
         }
         let started_len = buf.len();
         let op = u8::decode(buf)?;
-        let change_type = ActorChangeType::from_op_byte(op)
-            .ok_or(alloy_rlp::Error::Custom("invalid ActorChange op byte"))?;
-        let actor_id = B256::decode(buf)?;
-        let data = Bytes::decode(buf)?;
+        let change_type = ChangeType::from_op_byte(op)
+            .ok_or(alloy_rlp::Error::Custom("invalid SignedChange op byte"))?;
+        let payload = Bytes::decode(buf)?;
         let consumed = started_len - buf.len();
         if consumed != header.payload_length {
             return Err(alloy_rlp::Error::ListLengthMismatch {
@@ -213,7 +277,7 @@ impl Decodable for ActorChange {
                 got: consumed,
             });
         }
-        Ok(Self { change_type, actor_id, data })
+        Ok(Self { change_type, payload })
     }
 }
 
@@ -235,24 +299,31 @@ pub struct CreateEntry {
     pub initial_actors: Vec<InitialActor>,
 }
 
-/// Body of an [`AccountChange::ConfigChange`] entry.
+/// Body of an [`AccountChange::ConfigChange`] entry: an ordered, atomic batch
+/// of account changes with its replay binding and signature.
 ///
-/// This struct has no standalone RLP codec: on the wire a config-change entry is
-/// a single flat list `rlp([type_byte, chain_id, sequence, actor_changes, auth])`,
-/// encoded by [`AccountChange`]. See that type for the wire format.
+/// Mirrors `Keystore.SignedAccountChanges` and is applied via
+/// `applySignedAccountChanges`. This struct has no standalone RLP codec: on the
+/// wire a signed-changes entry is a single flat list
+/// `rlp([type_byte, channel, sequence, changes, signature])`, encoded by
+/// [`AccountChange`]. See that type for the wire format.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
-pub struct ConfigChange {
-    /// Chain ID this config change is bound to (replay protection).
-    pub chain_id: u64,
-    /// Per-account config-change sequence number.
+pub struct SignedAccountChanges {
+    /// The replay channel (Local binds `block.chainid`; Multichain binds `0`).
+    pub channel: AccountChangeChannel,
+    /// The channel sequence word. Interpreted per `channel`: on Local it is
+    /// `localEpoch(32, high) || localSequence(32, low)` (low half
+    /// [`Eip8130Constants::UNSEQUENCED`] marks an unsequenced JIT batch); on
+    /// Multichain it is a plain monotonic `u64` counter.
     pub sequence: u64,
-    /// Actor authorize/revoke operations applied in order.
-    pub actor_changes: Vec<ActorChange>,
-    /// Authorization payload validated against an admin actor (`scope == 0`).
-    pub auth: Bytes,
+    /// The ordered ops, applied all-or-nothing.
+    pub changes: Vec<SignedChange>,
+    /// The authenticator blob authenticating the (admin) signer over the batch
+    /// digest.
+    pub signature: Bytes,
 }
 
 /// Body of an [`AccountChange::Delegation`] entry.
@@ -274,14 +345,14 @@ pub struct Delegation {
 /// On the wire each entry is a single RLP list whose first element is the type
 /// byte, followed by the body fields inline (per [EIP-8130]):
 /// - `rlp([0x00, user_salt, code, initial_actors])` -> [`AccountChange::Create`]
-/// - `rlp([0x01, chain_id, sequence, actor_changes, auth])` -> [`AccountChange::ConfigChange`]
+/// - `rlp([0x01, channel, sequence, changes, signature])` -> [`AccountChange::ConfigChange`]
 /// - `rlp([0x02, target])` -> [`AccountChange::Delegation`]
 ///
 /// The type byte is a genuine list element (not an EIP-2718-style `type_byte ||
 /// rlp(...)` prefix), so each entry is one self-contained RLP item and the
 /// surrounding `account_changes` list frames as one item per entry. This mirrors
-/// the sibling [`ActorChange`] codec, which likewise carries its discriminant as
-/// the first list element.
+/// the sibling [`SignedChange`] codec, which likewise carries its discriminant
+/// as the first list element.
 ///
 /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -291,8 +362,8 @@ pub struct Delegation {
 pub enum AccountChange {
     /// Create a new account.
     Create(CreateEntry),
-    /// Change an existing account's actor set.
-    ConfigChange(ConfigChange),
+    /// Apply a signed batch of account changes (`applySignedAccountChanges`).
+    ConfigChange(SignedAccountChanges),
     /// Set or clear an [EIP-7702]-style delegation.
     ///
     /// [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702
@@ -326,9 +397,9 @@ impl AccountChange {
                         .sum::<usize>()
             }
             Self::ConfigChange(entry) => {
-                entry.auth.len()
-                    + entry.actor_changes.capacity().saturating_mul(mem::size_of::<ActorChange>())
-                    + entry.actor_changes.iter().map(|change| change.data.len()).sum::<usize>()
+                entry.signature.len()
+                    + entry.changes.capacity().saturating_mul(mem::size_of::<SignedChange>())
+                    + entry.changes.iter().map(|change| change.payload.len()).sum::<usize>()
             }
             Self::Delegation(_) => 0,
         }
@@ -341,10 +412,10 @@ impl AccountChange {
         let fields_len = match self {
             Self::Create(b) => b.user_salt.length() + b.code.length() + b.initial_actors.length(),
             Self::ConfigChange(b) => {
-                b.chain_id.length()
+                b.channel.byte().length()
                     + b.sequence.length()
-                    + b.actor_changes.length()
-                    + b.auth.length()
+                    + b.changes.length()
+                    + b.signature.length()
             }
             Self::Delegation(b) => b.target.length(),
         };
@@ -364,10 +435,10 @@ impl Encodable for AccountChange {
                 b.initial_actors.encode(out);
             }
             Self::ConfigChange(b) => {
-                b.chain_id.encode(out);
+                b.channel.byte().encode(out);
                 b.sequence.encode(out);
-                b.actor_changes.encode(out);
-                b.auth.encode(out);
+                b.changes.encode(out);
+                b.signature.encode(out);
             }
             Self::Delegation(b) => {
                 b.target.encode(out);
@@ -395,12 +466,17 @@ impl Decodable for AccountChange {
                 code: Bytes::decode(buf)?,
                 initial_actors: Vec::<InitialActor>::decode(buf)?,
             }),
-            Eip8130Constants::ACCOUNT_CHANGE_TYPE_CONFIG => Self::ConfigChange(ConfigChange {
-                chain_id: u64::decode(buf)?,
-                sequence: u64::decode(buf)?,
-                actor_changes: Vec::<ActorChange>::decode(buf)?,
-                auth: Bytes::decode(buf)?,
-            }),
+            Eip8130Constants::ACCOUNT_CHANGE_TYPE_CONFIG => {
+                let channel_byte = u8::decode(buf)?;
+                let channel = AccountChangeChannel::from_byte(channel_byte)
+                    .ok_or(alloy_rlp::Error::Custom("invalid SignedAccountChanges channel byte"))?;
+                Self::ConfigChange(SignedAccountChanges {
+                    channel,
+                    sequence: u64::decode(buf)?,
+                    changes: Vec::<SignedChange>::decode(buf)?,
+                    signature: Bytes::decode(buf)?,
+                })
+            }
             Eip8130Constants::ACCOUNT_CHANGE_TYPE_DELEGATION => {
                 Self::Delegation(Delegation { target: Address::decode(buf)? })
             }
@@ -441,25 +517,38 @@ mod tests {
     }
 
     #[test]
-    fn actor_change_type_roundtrip() {
-        for ct in [ActorChangeType::Authorize, ActorChangeType::Revoke] {
-            assert_eq!(ActorChangeType::from_op_byte(ct.op_byte()), Some(ct));
+    fn change_type_roundtrip() {
+        for ct in [
+            ChangeType::AuthorizeActor,
+            ChangeType::RevokeActor,
+            ChangeType::IncrementLocalEpoch,
+            ChangeType::Lock,
+            ChangeType::Unlock,
+        ] {
+            assert_eq!(ChangeType::from_op_byte(ct.op_byte()), Some(ct));
         }
-        assert_eq!(ActorChangeType::from_op_byte(0x00), None);
-        assert_eq!(ActorChangeType::from_op_byte(0xff), None);
+        assert_eq!(ChangeType::from_op_byte(0x05), None);
+        assert_eq!(ChangeType::from_op_byte(0xff), None);
     }
 
     #[test]
-    fn actor_change_rlp_roundtrip() {
-        let oc = ActorChange {
-            change_type: ActorChangeType::Authorize,
-            actor_id: b256!("0x1111111111111111111111111111111111111111111111111111111111111111"),
-            data: bytes!("00000000000000000000000000000000000000000000000000000000000000aa"),
+    fn account_change_channel_roundtrip() {
+        for ch in [AccountChangeChannel::Local, AccountChangeChannel::Multichain] {
+            assert_eq!(AccountChangeChannel::from_byte(ch.byte()), Some(ch));
+        }
+        assert_eq!(AccountChangeChannel::from_byte(0x02), None);
+    }
+
+    #[test]
+    fn signed_change_rlp_roundtrip() {
+        let oc = SignedChange {
+            change_type: ChangeType::AuthorizeActor,
+            payload: bytes!("00000000000000000000000000000000000000000000000000000000000000aa"),
         };
         let mut buf = Vec::new();
         oc.encode(&mut buf);
         assert_eq!(buf.len(), oc.length());
-        let decoded = ActorChange::decode(&mut buf.as_slice()).unwrap();
+        let decoded = SignedChange::decode(&mut buf.as_slice()).unwrap();
         assert_eq!(oc, decoded);
     }
 
@@ -492,17 +581,14 @@ mod tests {
 
     #[test]
     fn account_change_config_roundtrip() {
-        let ac = AccountChange::ConfigChange(ConfigChange {
-            chain_id: 8453,
+        let ac = AccountChange::ConfigChange(SignedAccountChanges {
+            channel: AccountChangeChannel::Local,
             sequence: 7,
-            actor_changes: vec![ActorChange {
-                change_type: ActorChangeType::Revoke,
-                actor_id: b256!(
-                    "0x4444444444444444444444444444444444444444444444444444444444444444"
-                ),
-                data: Bytes::new(),
+            changes: vec![SignedChange {
+                change_type: ChangeType::RevokeActor,
+                payload: bytes!("0000000000000000000000000000000000000000000000000000000000000044"),
             }],
-            auth: bytes!("aabbcc"),
+            signature: bytes!("aabbcc"),
         });
         let mut buf = Vec::new();
         ac.encode(&mut buf);
@@ -577,11 +663,11 @@ mod tests {
         // rlp(body)` encoding a generic RLP walk would see two items per entry.
         let entries = vec![
             AccountChange::Delegation(Delegation { target: Address::ZERO }),
-            AccountChange::ConfigChange(ConfigChange {
-                chain_id: 1,
+            AccountChange::ConfigChange(SignedAccountChanges {
+                channel: AccountChangeChannel::Multichain,
                 sequence: 0,
-                actor_changes: Vec::new(),
-                auth: Bytes::new(),
+                changes: Vec::new(),
+                signature: Bytes::new(),
             }),
             AccountChange::Create(CreateEntry {
                 user_salt: b256!(

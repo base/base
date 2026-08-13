@@ -31,8 +31,9 @@ sol! {
         error NoPendingAdmin();
 
         /// Introduced in V2 (Cobalt). A composite policy was created or updated with a child-policy
-        /// count outside the permitted `[min, max]` range.
-        error ChildPoliciesOutsideOfRange(uint256 min, uint256 max);
+        /// count outside the permitted range. A composite must reference between
+        /// `MIN_COMPOSITE_CHILD_POLICIES` and `MAX_COMPOSITE_CHILD_POLICIES` simple policies, inclusive.
+        error ChildPoliciesOutsideOfRange();
         /// Introduced in V2 (Cobalt). A composite child must be an existing ALLOWLIST or BLOCKLIST
         /// policy — never a built-in sentinel or another composite.
         error InvalidChildPolicy(uint64 childPolicyId);
@@ -51,7 +52,7 @@ sol! {
         function createPolicyWithAccounts(address admin, PolicyType policyType, address[] calldata accounts) external returns (uint64);
         /// Introduced in V2 (Cobalt). Creates a composite policy combining existing simple policies
         /// under a UNION or INTERSECT gate. Children must be simple policies; the child count must
-        /// be in `[2, 4]`.
+        /// be in `[MIN_COMPOSITE_CHILD_POLICIES, MAX_COMPOSITE_CHILD_POLICIES]`.
         function createCompositePolicy(address admin, PolicyType policyType, uint64[] calldata childPolicyIds) external returns (uint64);
         /// Introduced in V2 (Cobalt). Replaces a composite policy's child set in full, re-validated
         /// exactly as at creation. The gate is fixed in the ID and cannot change.
@@ -63,6 +64,12 @@ sol! {
         function updateAllowlist(uint64 policyId, bool allowed, address[] calldata accounts) external;
         function updateBlocklist(uint64 policyId, bool blocked, address[] calldata accounts) external;
         function isAuthorized(uint64 policyId, address account) external view returns (bool);
+        /// Introduced in V2 (Cobalt). Minimum number of child policies a composite must
+        /// reference, inclusive. Never reverts.
+        function MIN_COMPOSITE_CHILD_POLICIES() external view returns (uint256);
+        /// Introduced in V2 (Cobalt). Maximum number of child policies a composite may
+        /// reference, inclusive. Never reverts.
+        function MAX_COMPOSITE_CHILD_POLICIES() external view returns (uint256);
         function policyExists(uint64 policyId) external view returns (bool);
         function policyAdmin(uint64 policyId) external view returns (address);
         function pendingPolicyAdmin(uint64 policyId) external view returns (address);
@@ -116,6 +123,8 @@ mod tests {
             IPolicyRegistry::updateAllowlistCall::SELECTOR,
             IPolicyRegistry::updateBlocklistCall::SELECTOR,
             IPolicyRegistry::isAuthorizedCall::SELECTOR,
+            IPolicyRegistry::MIN_COMPOSITE_CHILD_POLICIESCall::SELECTOR,
+            IPolicyRegistry::MAX_COMPOSITE_CHILD_POLICIESCall::SELECTOR,
             IPolicyRegistry::policyExistsCall::SELECTOR,
             IPolicyRegistry::policyAdminCall::SELECTOR,
             IPolicyRegistry::pendingPolicyAdminCall::SELECTOR,
@@ -123,7 +132,7 @@ mod tests {
         ];
         expected.sort_unstable();
 
-        assert_eq!(selectors.len(), 14);
+        assert_eq!(selectors.len(), 16);
         assert_eq!(selectors, expected);
     }
 }

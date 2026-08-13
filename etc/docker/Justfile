@@ -4,19 +4,18 @@ set working-directory := '../..'
 _ha := "-f etc/docker/docker-compose.yml -f etc/docker/docker-compose.ha.yml"
 _base := "-f etc/docker/docker-compose.yml"
 _env := "--env-file etc/docker/devnet-env"
-_yaml_to_env := "etc/scripts/yaml-to-compose-env.py"
 
 # Show devnet commands
 default:
     @just --justfile {{source_file()}} --list
 
 # Stops devnet, deletes data, and starts fresh (3-node HA conductor cluster)
-up mode='default' zk='dry-run':
-    just --justfile {{ source_file() }} _up-devnet "ha" {{ quote(mode) }} {{ quote(zk) }}
+up mode='default':
+    just --justfile {{ source_file() }} _up-devnet "ha" {{ quote(mode) }}
 
 # Stops devnet, deletes data, and starts fresh with a single sequencer (no conductor)
-up-single mode='default' zk='dry-run':
-    just --justfile {{ source_file() }} _up-devnet "base" {{ quote(mode) }} {{ quote(zk) }}
+up-single mode='default':
+    just --justfile {{ source_file() }} _up-devnet "base" {{ quote(mode) }}
 
 # Stops devnet, deletes data, and starts fresh with profiling (Pyroscope + optimized builds)
 profiling: down _build-setup-image (_build-rust-images "devnet" "profiling")
@@ -74,15 +73,6 @@ logs *containers:
 # Stream logs from the primary unified sequencer
 sequencer-logs:
     docker compose {{ _env }} {{ _ha }} logs -f base-builder
-
-# Stream logs from the devnet ZK prover services
-zk-logs *containers:
-    docker compose {{ _env }} {{ _ha }} logs -f {{ if containers == "" { "base-prover-service base-prover-zk-host prover-service-postgres" } else { containers } }}
-
-# Stop only the devnet ZK prover services, leaving the rest of devnet running
-zk-down:
-    -docker compose {{ _env }} {{ _ha }} stop base-prover-zk-host base-prover-service prover-service-postgres
-    -docker compose {{ _env }} {{ _ha }} rm -f base-prover-zk-host base-prover-service prover-service-postgres
 
 # Follow the active raft leader's unified sequencer logs, switching automatically on failover
 follow-leader:
@@ -179,23 +169,20 @@ _build-rust-images group profile='dev':
     PROFILE="{{ profile }}" ZK_HOST_PROFILE=release BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" PLATFORM_PAIR="${platform_pair}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ group }}" --load
 
 [private]
-_up-devnet compose_profile mode zk:
+_up-devnet compose_profile mode:
     #!/usr/bin/env bash
     set -euo pipefail
     compose_profile={{ quote(compose_profile) }}
     devnet_mode={{ quote(mode) }}
-    zk_mode={{ quote(zk) }}
-    zk_mode="${zk_mode#zk=}"
 
-    # Preserve existing `just devnet up zk=cluster` usage.
-    if [[ "$devnet_mode" == zk=* || "$devnet_mode" == "dry-run" || "$devnet_mode" == "cluster" ]]; then
-      zk_mode="${devnet_mode#zk=}"
-      devnet_mode=default
-    fi
-
+    # Denim is activated by default. The zenith mode additionally schedules the genesis-only
+    # Zenith gate used for future hardfork feature testing.
     case "$devnet_mode" in
-      default) ;;
-      zenith) export L2_BASE_ZENITH_BLOCK="${L2_BASE_ZENITH_BLOCK:-23}" ;;
+      default) export L2_BASE_DENIM_BLOCK="${L2_BASE_DENIM_BLOCK-23}" ;;
+      zenith)
+        export L2_BASE_DENIM_BLOCK="${L2_BASE_DENIM_BLOCK-23}"
+        export L2_BASE_ZENITH_BLOCK="${L2_BASE_ZENITH_BLOCK:-50}"
+        ;;
       *)
         echo "ERROR: mode must be 'default' or 'zenith' (got '${devnet_mode}')" >&2
         exit 1
@@ -212,12 +199,9 @@ _up-devnet compose_profile mode zk:
     esac
 
     # Starts L1 + setup, deploys the upgrade-signal contract, then starts the rest.
-    # Extra arguments are passed to `docker compose` (e.g. `--env-file`).
     start_devnet_with_upgrade_signal() {
       local setup_l2_status
-      local compose_cmd=(docker compose {{ _env }} "$@")
-      local upgrade_signal_env_files="${UPGRADE_SIGNAL_ENV_FILES:-}"
-      compose_cmd+=("${compose_files[@]}")
+      local compose_cmd=(docker compose {{ _env }} "${compose_files[@]}")
 
       "${compose_cmd[@]}" up -d --no-build --remove-orphans setup-l1 l1-el l1-cl l1-vc
       mkdir -p .devnet/l2/configs
@@ -228,73 +212,14 @@ _up-devnet compose_profile mode zk:
         exit "$setup_l2_status"
       fi
 
-      if [ -n "$upgrade_signal_env_files" ]; then
-        UPGRADE_SIGNAL_ENV_FILES="$upgrade_signal_env_files" ./etc/scripts/devnet/upgrade-signal.sh setup
-      else
-        ./etc/scripts/devnet/upgrade-signal.sh setup
-      fi
+      ./etc/scripts/devnet/upgrade-signal.sh setup
       "${compose_cmd[@]}" up -d --no-build --remove-orphans
     }
 
-    case "$zk_mode" in
-      dry-run)
-        just --justfile {{ source_file() }} down
-        just --justfile {{ source_file() }} _build-setup-image
-        just --justfile {{ source_file() }} _build-rust-images "devnet" "dev"
-        start_devnet_with_upgrade_signal
-        ;;
-      cluster)
-        if [ -z "${AWS_ACCESS_KEY_ID:-}" ] || [ -z "${AWS_SECRET_ACCESS_KEY:-}" ]; then
-          echo "ERROR: zk=cluster requires AWS credentials in the caller environment." >&2
-          echo "Run your role/session setup first, then retry: just devnet up zk=cluster" >&2
-          exit 1
-        fi
-        cluster_config="${ZK_CLUSTER_CONFIG:-${BASE_CLUSTER_CONFIG_DIR:-$HOME/.config/base/clusters}/devnet.yaml}"
-        if [ ! -f "$cluster_config" ]; then
-          echo "ERROR: ZK cluster YAML not found: $cluster_config" >&2
-          echo "Create it with non-secret cluster settings, then retry:" >&2
-          echo "  mkdir -p \"$(dirname "$cluster_config")\"" >&2
-          echo "  cat > \"$cluster_config\" <<'EOF'" >&2
-          echo "sp1:" >&2
-          echo "  cluster_api_endpoint: https://your-sp1-cluster.example" >&2
-          echo "  cluster_timeout_hours: 24" >&2
-          echo "artifact:" >&2
-          echo "  s3_bucket: your-devnet-zk-artifact-bucket" >&2
-          echo "  s3_region: us-east-1" >&2
-          echo "aws:" >&2
-          echo "  default_region: us-east-1" >&2
-          echo "EOF" >&2
-          exit 1
-        fi
-        cluster_env="$(mktemp)"
-        trap 'rm -f "$cluster_env"' EXIT
-        python3 {{ _yaml_to_env }} "$cluster_config" "$cluster_env" \
-          --map sp1.cluster_api_endpoint=SP1_CLUSTER_API_ENDPOINT \
-          --map sp1.cluster_timeout_hours=SP1_CLUSTER_TIMEOUT_HOURS \
-          --map artifact.s3_bucket=CLI_S3_BUCKET \
-          --map artifact.s3_region=CLI_S3_REGION \
-          --map aws.endpoint_url=AWS_ENDPOINT_URL \
-          --map aws.default_region=AWS_DEFAULT_REGION \
-          --map prover.default_sequence_window=DEFAULT_SEQUENCE_WINDOW \
-          --map logging.rust_log=RUST_LOG \
-          --default SP1_CLUSTER_TIMEOUT_HOURS=24 \
-          --default CLI_S3_REGION=us-east-1 \
-          --default AWS_DEFAULT_REGION=us-east-1 \
-          --require SP1_CLUSTER_API_ENDPOINT \
-          --require CLI_S3_BUCKET \
-          --deny aws.access_key_id \
-          --deny aws.secret_access_key \
-          --deny aws.session_token
-        just --justfile {{ source_file() }} down
-        just --justfile {{ source_file() }} _build-setup-image
-        just --justfile {{ source_file() }} _build-rust-images "devnet" "dev"
-        UPGRADE_SIGNAL_ENV_FILES="$cluster_env" start_devnet_with_upgrade_signal --env-file "$cluster_env"
-        ;;
-      *)
-        echo "ERROR: zk must be 'dry-run' or 'cluster' (got '${zk_mode}')" >&2
-        exit 1
-        ;;
-    esac
+    just --justfile {{ source_file() }} down
+    just --justfile {{ source_file() }} _build-setup-image
+    just --justfile {{ source_file() }} _build-rust-images "devnet" "dev"
+    start_devnet_with_upgrade_signal
 
 [private]
 _build-contracts:

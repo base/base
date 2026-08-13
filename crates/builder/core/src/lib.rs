@@ -46,7 +46,8 @@ mod flashblocks;
 pub use flashblocks::{
     BasePayloadBuilderCtx, BestFlashblocksTxs, BlockPayloadJob, BlockPayloadJobGenerator,
     BuildArguments, FlashblockDiagnostics, FlashblockSelectionOutcome, FlashblocksExtraCtx,
-    FlashblocksServiceBuilder, PayloadBuilder, PayloadHandler, PayloadJobDeadline, ResolvePayload,
+    FlashblocksNonceLane, FlashblocksServiceBuilder, PayloadBuilder, PayloadHandler,
+    PayloadJobDeadline, ResolvePayload,
 };
 
 mod extension;

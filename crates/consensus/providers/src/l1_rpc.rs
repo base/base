@@ -7,10 +7,10 @@ use alloy_rpc_client::RpcClient;
 use reqwest::Client;
 use url::Url;
 
-/// Maximum duration for every HTTP request made by a consensus L1 client.
+/// Default request timeout for consensus L1 HTTP clients.
 ///
-/// This deadline is shared by L1 execution JSON-RPC and Beacon API requests. It is intentionally
-/// not operation-specific: all standard consensus L1 clients use the same transport deadline.
+/// General L1 execution JSON-RPC and Beacon API requests use this deadline unless their caller
+/// supplies an explicit timeout.
 pub const L1_RPC_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Constructs standard consensus L1 HTTP providers.
@@ -18,12 +18,13 @@ pub const L1_RPC_TIMEOUT: Duration = Duration::from_secs(15);
 pub struct L1RpcProvider;
 
 impl L1RpcProvider {
-    /// Creates an L1 execution JSON-RPC provider with the shared request deadline.
+    /// Creates an L1 execution JSON-RPC provider with the default request deadline.
     pub fn new_http(url: Url) -> RootProvider {
-        Self::with_timeout(url, L1_RPC_TIMEOUT)
+        Self::new_http_with_timeout(url, L1_RPC_TIMEOUT)
     }
 
-    fn with_timeout(url: Url, timeout: Duration) -> RootProvider {
+    /// Creates an L1 execution JSON-RPC provider with the provided request deadline.
+    pub fn new_http_with_timeout(url: Url, timeout: Duration) -> RootProvider {
         let client =
             Client::builder().timeout(timeout).build().expect("failed to build L1 RPC HTTP client");
 
@@ -64,7 +65,7 @@ mod tests {
                 then.status(200).delay(TEST_RESPONSE_DELAY);
             })
             .await;
-        let provider = L1RpcProvider::with_timeout(
+        let provider = L1RpcProvider::new_http_with_timeout(
             server.url("/").parse().expect("mock server URL must parse"),
             TEST_REQUEST_TIMEOUT,
         );
@@ -82,6 +83,33 @@ mod tests {
             is_reqwest_timeout(&requests.1),
             "eth_getBlockByNumber should fail with a request timeout"
         );
+        mock.assert_calls_async(2).await;
+    }
+
+    #[tokio::test]
+    async fn execution_providers_can_use_independent_request_timeouts() {
+        let server = MockServer::start_async().await;
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(POST).path("/");
+                then.status(200).delay(TEST_RESPONSE_DELAY).json_body(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 0,
+                    "result": "0x1"
+                }));
+            })
+            .await;
+        let url: Url = server.url("/").parse().expect("mock server URL must parse");
+        let short_timeout_provider =
+            L1RpcProvider::new_http_with_timeout(url.clone(), TEST_REQUEST_TIMEOUT);
+        let long_timeout_provider =
+            L1RpcProvider::new_http_with_timeout(url, Duration::from_millis(500));
+
+        let short_result = short_timeout_provider.get_block_number().await;
+        let long_result = long_timeout_provider.get_block_number().await;
+
+        assert!(is_reqwest_timeout(&short_result));
+        assert_eq!(long_result.unwrap(), 1);
         mock.assert_calls_async(2).await;
     }
 }

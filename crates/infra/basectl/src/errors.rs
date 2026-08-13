@@ -112,6 +112,15 @@ pub enum P2pTargetError {
         /// The target supplied by the caller.
         target: String,
     },
+    /// A reachability target was not an `enode://` URL, `enr:` record, or
+    /// public `IPv4` `/ip4/.../tcp/.../p2p/<peer-id>` multiaddr.
+    #[error(
+        "reachability target `{target}` must be an execution-layer `enode://` URL, a consensus-layer `enr:` record, or a public-IPv4 `/ip4/.../tcp/.../p2p/<peer-id>` multiaddr"
+    )]
+    ReachabilityTargetUnsupported {
+        /// The target supplied by the caller.
+        target: String,
+    },
     /// The CL peer ID was too short to plausibly be a libp2p peer ID.
     #[error(
         "CL peer ID `{target}` looks too short to be a valid libp2p peer ID; expected a base58-encoded string (e.g. 16Uiu2HAm...)"

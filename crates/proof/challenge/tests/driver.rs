@@ -20,13 +20,13 @@ use base_challenger::{
 use base_proof_contracts::{AggregateVerifierClient, DisputeGameFactoryClient, GameStatus};
 use base_proof_primitives::Proposal;
 use base_proof_rpc::L1Provider;
+use base_proof_submission::test_utils::SnarkReceiptFixture;
 use base_protocol::OutputRoot;
 use base_prover_service_protocol::{
     ProofRequestKind, ProofResult as ApiProofResult, ProofStatus, SnarkPlonkProofRequest, TeeKind,
     TeeProofResult, ZkBackend, ZkProofRequest, ZkVm,
 };
 use base_tx_manager::TxManagerError;
-use sp1_sdk::{SP1Proof, SP1ProofWithPublicValues, SP1PublicValues};
 use tokio_util::sync::CancellationToken;
 
 const STORAGE_HASH: B256 = B256::repeat_byte(0xBB);
@@ -152,6 +152,7 @@ fn default_ready_proof(intent: DisputeIntent) -> PendingProof {
             sequence_window: None,
             l1_head: Some(DEFAULT_L1_HEAD),
             intermediate_root_interval: None,
+            schedule_l2_block_number: None,
             zk_vm: ZkVm::Sp1,
             zk_backend: ZkBackend::Cluster,
         },
@@ -169,20 +170,7 @@ fn default_ready_proof(intent: DisputeIntent) -> PendingProof {
 
 /// Bincode SNARK receipt fixture (matches prover-service download payloads).
 fn snark_receipt_bytes() -> Vec<u8> {
-    let mut plonk_vkey_hash = [0u8; 32];
-    plonk_vkey_hash[..4].copy_from_slice(&[0x5a, 0x09, 0x3a, 0x2f]);
-    let mut receipt = SP1ProofWithPublicValues {
-        proof: SP1Proof::Plonk(Default::default()),
-        public_values: SP1PublicValues::new(),
-        sp1_version: "test".to_owned(),
-        tee_proof: None,
-    };
-    let SP1Proof::Plonk(plonk) = &mut receipt.proof else {
-        unreachable!();
-    };
-    plonk.encoded_proof = "dead".to_owned();
-    plonk.plonk_vkey_hash = plonk_vkey_hash;
-    bincode::serde::encode_to_vec(&receipt, bincode::config::standard()).expect("bincode")
+    SnarkReceiptFixture::plonk_receipt_bytes([0x5a, 0x09, 0x3a, 0x2f], "dead")
 }
 
 fn succeeded_zk_prover() -> Arc<MockZkProofProvider> {

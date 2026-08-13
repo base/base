@@ -20,6 +20,8 @@ mod check 'etc/just/check.just'
 mod build 'etc/just/build.just'
 # SP1 / succinct ELF builds and proving helpers
 mod succinct 'etc/just/succinct.just'
+# Standalone user-funded prover stack (user RPCs + Succinct Network key)
+mod prover 'etc/just/prover.just'
 # Prover-service JSON-RPC request helpers
 mod zk-prover 'etc/just/zk-prover.just'
 # Challenge / dispute helpers

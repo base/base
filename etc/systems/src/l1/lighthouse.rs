@@ -69,6 +69,12 @@ impl LighthouseBeaconContainer {
             .with_mount(Mount::bind_mount(path_for_mount(jwt_path.as_ref()), LIGHTHOUSE_JWT_PATH))
             .with_cmd(command);
 
+        if config.tmpfs_datadir {
+            // Back the beacon datadir with tmpfs so its mmap-backed database works on hosts where
+            // the container's overlayfs upper layer rejects writable mmap (e.g. docker-in-docker CI).
+            container_builder = container_builder.with_mount(Mount::tmpfs_mount("/data"));
+        }
+
         if let Some(port) = config.beacon_http_port {
             container_builder =
                 container_builder.with_mapped_port(port, LIGHTHOUSE_HTTP_PORT.tcp());
@@ -90,15 +96,18 @@ impl LighthouseBeaconContainer {
     pub fn internal_beacon_url(&self) -> String {
         format!("http://{}:{}", self.name, L1_BEACON_HTTP_PORT)
     }
+
+    /// Stops the beacon node so it cannot overwrite a test-controlled execution forkchoice.
+    pub async fn stop(&self) -> Result<()> {
+        self.container.stop().await?;
+        Ok(())
+    }
 }
 
 /// Lighthouse validator client container wrapper.
 #[derive(Debug)]
 pub struct LighthouseValidatorContainer {
-    #[allow(dead_code)]
     container: ContainerAsync<GenericImage>,
-    #[allow(dead_code)]
-    name: String,
 }
 
 impl LighthouseValidatorContainer {
@@ -142,7 +151,13 @@ impl LighthouseValidatorContainer {
             .start()
             .await?;
 
-        Ok(Self { container, name })
+        Ok(Self { container })
+    }
+
+    /// Stops the validator before its beacon node is stopped for fault injection.
+    pub async fn stop(&self) -> Result<()> {
+        self.container.stop().await?;
+        Ok(())
     }
 }
 

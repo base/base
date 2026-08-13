@@ -11,7 +11,7 @@ use base_common_genesis::RollupConfig;
 use base_consensus_derive::StatefulAttributesBuilder;
 use base_consensus_node::{
     Conductor, L1OriginSelector, NodeActor, PayloadBuilder, RecoveryModeGuard, SequencerActor,
-    SequencerActorError, SequencerAdminQuery,
+    SequencerActorError, SequencerAdminQuery, SequencerEngineClient,
 };
 use base_consensus_rpc::SequencerAdminAPIError;
 use base_protocol::{BlockInfo, L2BlockInfo};
@@ -24,7 +24,7 @@ use tokio_util::sync::CancellationToken;
 use super::{
     ActionConductor, ActionOriginSelector, ActionSequencerAttributesBuilder,
     ActionSequencerEngineClient, ActionUnsafePayloadGossipClient, ExecutionPayloadConverter,
-    L2SequencerError,
+    L2SequencerError, SequencerEngineBackend,
 };
 use crate::{
     ActionEngineClient, ActionL1ChainProvider, ActionL2ChainProvider, SharedBlockHashRegistry,
@@ -32,10 +32,14 @@ use crate::{
 };
 
 /// Builds real [`BaseBlock`]s for use in action tests using the production sequencer actor.
+///
+/// Generic over the engine backend `E`, defaulting to the in-memory [`ActionEngineClient`]. Use the
+/// default for deterministic protocol tests; use [`BuilderBackedEngineClient`](crate::BuilderBackedEngineClient)
+/// to drive the production Flashblocks builder.
 #[derive(Debug)]
-pub struct L2Sequencer {
+pub struct L2Sequencer<E: SequencerEngineBackend = ActionEngineClient> {
     head: L2BlockInfo,
-    engine_client: Arc<ActionEngineClient>,
+    engine_client: Arc<E>,
     rollup_config: Arc<RollupConfig>,
     l1_chain_config: Arc<ChainConfig>,
     l1_chain: SharedL1Chain,
@@ -53,11 +57,11 @@ pub struct L2Sequencer {
     actor_task: Option<JoinHandle<Result<(), SequencerActorError>>>,
 }
 
-impl L2Sequencer {
+impl<E: SequencerEngineBackend> L2Sequencer<E> {
     /// Create a new sequencer using the production [`SequencerActor`].
     pub fn new(
         head: L2BlockInfo,
-        engine_client: Arc<ActionEngineClient>,
+        engine_client: Arc<E>,
         rollup_config: Arc<RollupConfig>,
         l1_chain_config: Arc<ChainConfig>,
         l1_chain: SharedL1Chain,
@@ -102,24 +106,9 @@ impl L2Sequencer {
         self.block_hashes.clone()
     }
 
-    /// Return a clone of the sequencer's engine client.
-    pub fn engine_client(&self) -> Arc<ActionEngineClient> {
+    /// Return a clone of the sequencer's engine client backend.
+    pub fn engine_client(&self) -> Arc<E> {
         Arc::clone(&self.engine_client)
-    }
-
-    /// Read a storage value from the latest committed state via the engine client.
-    pub fn storage_at(&self, address: Address, slot: U256) -> U256 {
-        self.engine_client.storage_at(address, slot)
-    }
-
-    /// Check whether an account has non-empty code deployed via the engine client.
-    pub fn has_code(&self, address: Address) -> bool {
-        self.engine_client.has_code(address)
-    }
-
-    /// Return receipts for an executed block number.
-    pub fn receipts_at(&self, block_number: u64) -> Option<Vec<BaseReceipt>> {
-        self.engine_client.receipts_at(block_number)
     }
 
     /// Pin the L1 origin to the given block, bypassing automatic epoch advance.
@@ -208,7 +197,17 @@ impl L2Sequencer {
         }
 
         self.ensure_actor_started().await?;
-        self.queue_user_txs(user_txs)?;
+        // In pool mode (production builder), route the harness transactions through the real
+        // mempool and leave the forced-attributes batch empty; otherwise force-include them.
+        if self.engine_client.uses_transaction_pool() {
+            self.engine_client
+                .inject_pool_transactions(user_txs)
+                .await
+                .map_err(|e| L2SequencerError::Engine(e.to_string()))?;
+            self.queue_user_txs(Vec::new())?;
+        } else {
+            self.queue_user_txs(user_txs)?;
+        }
         if let Err(err) = self.start_sequencer().await {
             self.clear_queued_user_txs();
             return Err(err);
@@ -247,18 +246,19 @@ impl L2Sequencer {
             self.l2_provider.clone(),
             ActionL1ChainProvider::new(self.l1_chain.clone()),
         );
-        let attrs_builder =
-            ActionSequencerAttributesBuilder::new(attrs_builder, Arc::clone(&self.user_txs));
+        let attrs_builder = ActionSequencerAttributesBuilder::new(
+            attrs_builder,
+            Arc::clone(&self.user_txs),
+            !self.engine_client.uses_transaction_pool(),
+        );
         let origin_selector =
             L1OriginSelector::new(Arc::clone(&self.rollup_config), self.l1_chain.clone());
         let origin_selector =
             ActionOriginSelector::new(origin_selector, Arc::clone(&self.l1_origin_pin));
 
         let (inserted_tx, inserted_rx) = mpsc::channel(8);
-        let engine_client = Arc::new(ActionSequencerEngineClient::new(
-            Arc::clone(&self.engine_client),
-            inserted_tx,
-        ));
+        let backend: Arc<dyn SequencerEngineClient> = Arc::clone(&self.engine_client) as _;
+        let engine_client = Arc::new(ActionSequencerEngineClient::new(backend, inserted_tx));
         let builder = PayloadBuilder {
             attributes_builder: attrs_builder,
             engine_client: Arc::clone(&engine_client),
@@ -407,7 +407,29 @@ impl L2Sequencer {
     }
 }
 
-impl Drop for L2Sequencer {
+/// Synchronous state-reader helpers backed by the in-memory [`ActionEngineClient`].
+///
+/// These are only available for the default (Light) backend, which serves state from in-process
+/// maps. Production-builder-backed sequencers read state via the builder node's async provider
+/// instead (see [`BuilderBackedEngineClient`](crate::BuilderBackedEngineClient)).
+impl L2Sequencer<ActionEngineClient> {
+    /// Read a storage value from the latest committed state via the engine client.
+    pub fn storage_at(&self, address: Address, slot: U256) -> U256 {
+        self.engine_client.storage_at(address, slot)
+    }
+
+    /// Check whether an account has non-empty code deployed via the engine client.
+    pub fn has_code(&self, address: Address) -> bool {
+        self.engine_client.has_code(address)
+    }
+
+    /// Return receipts for an executed block number.
+    pub fn receipts_at(&self, block_number: u64) -> Option<Vec<BaseReceipt>> {
+        self.engine_client.receipts_at(block_number)
+    }
+}
+
+impl<E: SequencerEngineBackend> Drop for L2Sequencer<E> {
     fn drop(&mut self) {
         if let Some(cancellation_token) = &self.cancellation_token {
             cancellation_token.cancel();

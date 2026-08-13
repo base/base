@@ -53,8 +53,20 @@ pub struct TxEip8130 {
     pub nonce_key: U256,
     /// Sequence number within the nonce key.
     pub nonce_sequence: u64,
-    /// Unix-seconds expiry timestamp; `0` means no expiry.
-    pub expiry: u64,
+    /// Lower bound of the validity window: a Unix timestamp in **milliseconds**.
+    /// The transaction is invalid when `block.timestamp * 1000 < valid_after`;
+    /// `0` means no lower bound.
+    pub valid_after: u64,
+    /// Upper bound of the validity window: a Unix timestamp in **milliseconds**.
+    /// The bound is inclusive — the transaction is still valid at
+    /// `block.timestamp * 1000 == valid_before` and invalid only once
+    /// `block.timestamp * 1000 > valid_before`; `0` means no expiry. It MUST be
+    /// non-zero for nonce-free (`nonce_key == NONCE_KEY_MAX`) transactions, which
+    /// additionally require `valid_before` to be strictly in the future when the
+    /// nonce is recorded: the nonce-manager replay ring's admission window is
+    /// `(now, now + NONCE_FREE_MAX_EXPIRY_WINDOW]`, so a nonce-free transaction
+    /// cannot actually be included exactly at `valid_before`.
+    pub valid_before: u64,
     /// Max priority fee per gas (tip) the sender is willing to pay.
     #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
     pub max_priority_fee_per_gas: u128,
@@ -152,7 +164,8 @@ impl TxEip8130 {
             + Self::address_opt_encoded_length(sender)
             + self.nonce_key.length()
             + self.nonce_sequence.length()
-            + self.expiry.length()
+            + self.valid_after.length()
+            + self.valid_before.length()
             + self.max_priority_fee_per_gas.length()
             + self.max_fee_per_gas.length()
             + self.gas_limit.length()
@@ -169,7 +182,8 @@ impl TxEip8130 {
         Self::encode_address_opt(sender, out);
         self.nonce_key.encode(out);
         self.nonce_sequence.encode(out);
-        self.expiry.encode(out);
+        self.valid_after.encode(out);
+        self.valid_before.encode(out);
         self.max_priority_fee_per_gas.encode(out);
         self.max_fee_per_gas.encode(out);
         self.gas_limit.encode(out);
@@ -196,7 +210,8 @@ impl TxEip8130 {
             sender: Self::decode_address_opt(buf)?,
             nonce_key: Decodable::decode(buf)?,
             nonce_sequence: Decodable::decode(buf)?,
-            expiry: Decodable::decode(buf)?,
+            valid_after: Decodable::decode(buf)?,
+            valid_before: Decodable::decode(buf)?,
             max_priority_fee_per_gas: Decodable::decode(buf)?,
             max_fee_per_gas: Decodable::decode(buf)?,
             gas_limit: Decodable::decode(buf)?,
@@ -297,13 +312,14 @@ impl TxEip8130 {
     /// always carry `(NONCE_KEY_MAX, 0)`; `nonce_key`/`nonce_sequence` therefore
     /// carry no entropy and are omitted from the preimage. The resolved sender is
     /// encoded in place of the nullable wire sender:
-    /// `keccak256(REPLAY_ID_TYPE || rlp([chain_id, resolved_sender, expiry,
-    /// account_changes, calls, metadata, payer]))`.
+    /// `keccak256(REPLAY_ID_TYPE || rlp([chain_id, resolved_sender, valid_after,
+    /// valid_before, account_changes, calls, metadata, payer]))`.
     #[must_use]
     pub fn replay_id(&self, resolved_sender: Address) -> B256 {
         let payload_length = self.chain_id.length()
             + resolved_sender.length()
-            + self.expiry.length()
+            + self.valid_after.length()
+            + self.valid_before.length()
             + self.account_changes.length()
             + Self::calls_encoded_length(&self.calls)
             + self.metadata.length()
@@ -317,7 +333,8 @@ impl TxEip8130 {
         Header { list: true, payload_length }.encode(&mut buf);
         self.chain_id.encode(&mut buf);
         resolved_sender.encode(&mut buf);
-        self.expiry.encode(&mut buf);
+        self.valid_after.encode(&mut buf);
+        self.valid_before.encode(&mut buf);
         self.account_changes.encode(&mut buf);
         Self::encode_calls(&self.calls, &mut buf);
         self.metadata.encode(&mut buf);
@@ -399,7 +416,8 @@ struct CompactTxEip8130Head {
     sender: Option<Address>,
     nonce_key: U256,
     nonce_sequence: u64,
-    expiry: u64,
+    valid_after: u64,
+    valid_before: u64,
     max_priority_fee_per_gas: u128,
     max_fee_per_gas: u128,
     gas_limit: u64,
@@ -419,7 +437,8 @@ impl Compact for TxEip8130 {
             sender: self.sender,
             nonce_key: self.nonce_key,
             nonce_sequence: self.nonce_sequence,
-            expiry: self.expiry,
+            valid_after: self.valid_after,
+            valid_before: self.valid_before,
             max_priority_fee_per_gas: self.max_priority_fee_per_gas,
             max_fee_per_gas: self.max_fee_per_gas,
             gas_limit: self.gas_limit,
@@ -439,7 +458,8 @@ impl Compact for TxEip8130 {
             sender,
             nonce_key,
             nonce_sequence,
-            expiry,
+            valid_after,
+            valid_before,
             max_priority_fee_per_gas,
             max_fee_per_gas,
             gas_limit,
@@ -461,7 +481,8 @@ impl Compact for TxEip8130 {
                 sender,
                 nonce_key,
                 nonce_sequence,
-                expiry,
+                valid_after,
+                valid_before,
                 max_priority_fee_per_gas,
                 max_fee_per_gas,
                 gas_limit,
@@ -596,7 +617,8 @@ mod tests {
             sender: Some(address!("0x00000000000000000000000000000000000000aa")),
             nonce_key: U256::from(0x1234u64),
             nonce_sequence: 7,
-            expiry: 0,
+            valid_after: 0,
+            valid_before: 0,
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 5_000_000_000,
             gas_limit: 200_000,
@@ -754,7 +776,7 @@ mod tests {
     }
 
     #[test]
-    fn replay_id_commits_to_payer_calls_and_expiry() {
+    fn replay_id_commits_to_payer_calls_and_validity_window() {
         let tx = sample_tx();
         let sender = tx.sender.unwrap();
 
@@ -767,7 +789,11 @@ mod tests {
         assert_ne!(tx.replay_id(sender), changed.replay_id(sender));
 
         changed = tx.clone();
-        changed.expiry = 1;
+        changed.valid_after = 1;
+        assert_ne!(tx.replay_id(sender), changed.replay_id(sender));
+
+        changed = tx.clone();
+        changed.valid_before = 1;
         assert_ne!(tx.replay_id(sender), changed.replay_id(sender));
     }
 
@@ -884,7 +910,8 @@ mod tests {
                 "sender": null,
                 "nonceKey": "0x0",
                 "nonceSequence": 1,
-                "expiry": 0,
+                "validAfter": 0,
+                "validBefore": 0,
                 "maxPriorityFeePerGas": "0x3b9aca00",
                 "maxFeePerGas": "0x3b9aca00",
                 "gasLimit": 21000,
@@ -943,39 +970,37 @@ mod tests {
     #[test]
     fn size_counts_account_change_nested_heap() {
         use crate::transaction::eip8130::account_changes::{
-            ActorChange, ActorChangeType, ConfigChange,
+            AccountChangeChannel, ChangeType, SignedAccountChanges, SignedChange,
         };
 
         let bare = TxEip8130 {
-            account_changes: vec![AccountChange::ConfigChange(ConfigChange {
-                chain_id: 1,
+            account_changes: vec![AccountChange::ConfigChange(SignedAccountChanges {
+                channel: AccountChangeChannel::Local,
                 sequence: 0,
-                actor_changes: vec![ActorChange {
-                    change_type: ActorChangeType::Revoke,
-                    actor_id: B256::ZERO,
-                    data: Bytes::new(),
+                changes: vec![SignedChange {
+                    change_type: ChangeType::RevokeActor,
+                    payload: Bytes::new(),
                 }],
-                auth: Bytes::new(),
+                signature: Bytes::new(),
             })],
             ..Default::default()
         };
         let with_auth = TxEip8130 {
-            account_changes: vec![AccountChange::ConfigChange(ConfigChange {
-                chain_id: 1,
+            account_changes: vec![AccountChange::ConfigChange(SignedAccountChanges {
+                channel: AccountChangeChannel::Local,
                 sequence: 0,
-                actor_changes: vec![ActorChange {
-                    change_type: ActorChangeType::Revoke,
-                    actor_id: B256::ZERO,
-                    data: Bytes::new(),
+                changes: vec![SignedChange {
+                    change_type: ChangeType::RevokeActor,
+                    payload: Bytes::new(),
                 }],
-                auth: Bytes::from(vec![0xcd; 2_048]),
+                signature: Bytes::from(vec![0xcd; 2_048]),
             })],
             ..Default::default()
         };
 
         assert!(
             with_auth.size() >= bare.size() + 2_048,
-            "config-change auth heap must be counted: bare={}, with_auth={}",
+            "config-change signature heap must be counted: bare={}, with_auth={}",
             bare.size(),
             with_auth.size()
         );

@@ -3,7 +3,7 @@
 use alloc::vec::Vec;
 use core::cell::{Cell, RefCell};
 
-use miniz_oxide::inflate::DecompressError;
+use miniz_oxide::inflate::{DecompressError, decompress_to_vec_zlib};
 
 use crate::{ChannelCompressor, CompressorResult, CompressorWriter};
 
@@ -31,22 +31,29 @@ pub struct ZlibCompressor {
     /// Set to `true` when `buffer` has been extended since the last
     /// compression run.
     dirty: Cell<bool>,
+    /// Offset of the next unread compressed byte.
+    read_offset: Cell<usize>,
 }
 
 impl ZlibCompressor {
     /// Create a new ZLIB compressor.
     pub const fn new() -> Self {
-        Self { buffer: Vec::new(), compressed: RefCell::new(Vec::new()), dirty: Cell::new(false) }
+        Self {
+            buffer: Vec::new(),
+            compressed: RefCell::new(Vec::new()),
+            dirty: Cell::new(false),
+            read_offset: Cell::new(0),
+        }
     }
 
     /// Compress `data` using ZLIB deflate.
     pub fn compress(data: &[u8]) -> Vec<u8> {
-        miniz_oxide::deflate::compress_to_vec(data, BEST_ZLIB_COMPRESSION)
+        miniz_oxide::deflate::compress_to_vec_zlib(data, BEST_ZLIB_COMPRESSION)
     }
 
     /// Decompress ZLIB-deflated `data`.
     pub fn decompress(data: &[u8]) -> Result<Vec<u8>, DecompressError> {
-        miniz_oxide::inflate::decompress_to_vec(data)
+        decompress_to_vec_zlib(data)
     }
 
     /// Compresses `buffer` into `compressed` if the dirty flag is set, then
@@ -55,6 +62,7 @@ impl ZlibCompressor {
         if self.dirty.get() {
             *self.compressed.borrow_mut() = Self::compress(&self.buffer);
             self.dirty.set(false);
+            self.read_offset.set(0);
         }
     }
 }
@@ -66,6 +74,7 @@ impl CompressorWriter for ZlibCompressor {
         self.buffer.extend_from_slice(data);
         self.compressed.borrow_mut().clear();
         self.dirty.set(true);
+        self.read_offset.set(0);
         Ok(data.len())
     }
 
@@ -81,18 +90,21 @@ impl CompressorWriter for ZlibCompressor {
         self.buffer.clear();
         self.compressed.borrow_mut().clear();
         self.dirty.set(false);
+        self.read_offset.set(0);
     }
 
     fn len(&self) -> usize {
         self.ensure_compressed();
-        self.compressed.borrow().len()
+        self.compressed.borrow().len().saturating_sub(self.read_offset.get())
     }
 
     fn read(&mut self, buf: &mut [u8]) -> CompressorResult<usize> {
         self.ensure_compressed();
         let compressed = self.compressed.borrow();
-        let len = compressed.len().min(buf.len());
-        buf[..len].copy_from_slice(&compressed[..len]);
+        let offset = self.read_offset.get();
+        let len = compressed.len().saturating_sub(offset).min(buf.len());
+        buf[..len].copy_from_slice(&compressed[offset..offset + len]);
+        self.read_offset.set(offset + len);
         Ok(len)
     }
 }
@@ -100,6 +112,31 @@ impl CompressorWriter for ZlibCompressor {
 impl ChannelCompressor for ZlibCompressor {
     fn get_compressed(&self) -> Vec<u8> {
         self.ensure_compressed();
-        self.compressed.borrow().clone()
+        self.compressed.borrow()[self.read_offset.get()..].to_vec()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::vec;
+
+    use super::*;
+
+    #[test]
+    fn test_read_drains_zlib_stream() {
+        let input = b"batch channel data";
+        let mut compressor = ZlibCompressor::new();
+        compressor.write(input).unwrap();
+
+        let mut compressed = Vec::new();
+        while compressor.len() > 0 {
+            let mut chunk = vec![0; 3];
+            let read = compressor.read(&mut chunk).unwrap();
+            compressed.extend_from_slice(&chunk[..read]);
+        }
+
+        assert_eq!(compressor.read(&mut [0; 1]).unwrap(), 0);
+        assert!(compressor.get_compressed().is_empty());
+        assert_eq!(ZlibCompressor::decompress(&compressed).unwrap(), input);
     }
 }

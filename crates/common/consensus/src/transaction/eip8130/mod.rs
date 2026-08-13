@@ -17,14 +17,12 @@ pub use call::Call;
 
 mod account_changes;
 pub use account_changes::{
-    AccountChange, ActorChange, ActorChangeType, ConfigChange, CreateEntry, Delegation,
-    InitialActor, Scope,
+    AccountChange, AccountChangeChannel, ChangeType, CreateEntry, Delegation, InitialActor, Scope,
+    SignedAccountChanges, SignedChange,
 };
 
 mod tx;
 pub use tx::TxEip8130;
 
 mod signed;
-pub use signed::Eip8130Signed;
-#[cfg(feature = "reth")]
-pub use signed::Eip8130TimestampError;
+pub use signed::{Eip8130Signed, Eip8130StaticError, Eip8130TimestampError};

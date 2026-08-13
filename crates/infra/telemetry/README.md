@@ -7,6 +7,7 @@ Axum backend for Base telemetry services.
 - `GET /healthz`
 - `GET /readyz`
 - `POST /v1/p2p/reachability/el`
+- `POST /v1/p2p/reachability/cl`
 
 ## Execution-layer reachability
 
@@ -55,9 +56,65 @@ Completed probes return HTTP `200` with an outcome of `reachable`,
 
 Invalid requests return `400`, bodies over 1 `KiB` return `413`, and exhausted
 probe capacity returns `429`. Probes have a 10-second deadline. Global probe
-concurrency defaults to 32, configurable with `--p2p-max-concurrent-probes` or
-`BASE_TELEMETRY_P2P_MAX_CONCURRENT_PROBES`. These limits do not apply to the
-health routes.
+concurrency defaults to 32, shared across both layers, configurable with
+`--p2p-max-concurrent-probes` or `BASE_TELEMETRY_P2P_MAX_CONCURRENT_PROBES`.
+These limits do not apply to the health routes.
+
+## Consensus-layer reachability
+
+The consensus-layer endpoint works the same way for the libp2p network. A
+caller sends the node's signed `enr:` record (as returned by `opp2p_self`) or
+a public-IPv4 `/ip4/.../tcp/.../p2p/<peer-id>` multiaddr, then the service
+opens a separate connection to that public `IPv4` address and TCP port. The
+expected libp2p peer identity is derived from the ENR's secp256k1 public key,
+or taken from the multiaddr's `/p2p/<peer-id>` component. A node is reported
+as `reachable` only after TCP, the Noise handshake against that identity, and
+stream multiplexer negotiation all complete. A node that hangs up right after
+the connection is established (for example because it is at peer capacity) is
+still `reachable`; its response omits `clientVersion`.
+
+Request:
+
+```http
+POST /v1/p2p/reachability/cl
+Content-Type: application/json
+
+{
+  "enr": "enr:-J64QBbwPjPLZ..."
+}
+```
+
+```http
+POST /v1/p2p/reachability/cl
+Content-Type: application/json
+
+{
+  "multiaddr": "/ip4/YOUR_NODE_IP/tcp/9222/p2p/16Uiu2HAm..."
+}
+```
+
+Completed probes return HTTP `200` with the same outcome set as the
+execution-layer endpoint:
+
+```json
+{
+  "outcome": "reachable",
+  "stage": "identify",
+  "observedAddress": "YOUR_NODE_IP:9222",
+  "elapsedMs": 42,
+  "clientVersion": "op-node/v1.0.0"
+}
+```
+
+`stage` identifies where the probe stopped:
+
+- `tcp_connect`: opening the advertised TCP address.
+- `security_handshake`: authenticating the Noise transport and negotiating the multiplexer.
+- `identify`: exchanging libp2p identify information.
+
+Validation, limits, and error responses match the execution-layer endpoint:
+the ENR or multiaddr must advertise a public literal `IPv4` address and a
+nonzero TCP port. Multiaddrs must be exactly `/ip4/<addr>/tcp/<port>/p2p/<peer-id>`.
 
 ## Rate limiting
 
@@ -79,6 +136,6 @@ never rate limited.
 ## Target selection
 
 The service probes the exact literal public `IPv4` socket address advertised by
-the enode. `IPv6` and non-public `IPv4` addresses (loopback, private, link-local,
-carrier-grade NAT, multicast, unspecified, and other IANA special-purpose
-ranges) are rejected with `400`.
+the enode, ENR, or multiaddr. `IPv6` and non-public `IPv4` addresses (loopback,
+private, link-local, carrier-grade NAT, multicast, unspecified, and other IANA
+special-purpose ranges) are rejected with `400`.

@@ -57,7 +57,7 @@ impl AlloyChainProvider {
 
     /// Creates a new [`AlloyChainProvider`] from the provided [`url::Url`].
     ///
-    /// The underlying HTTP provider uses the shared [`crate::L1_RPC_TIMEOUT`] deadline.
+    /// The underlying HTTP provider uses the default [`crate::L1_RPC_TIMEOUT`] deadline.
     pub fn new_http(url: url::Url, cache_size: usize) -> Self {
         let inner = L1RpcProvider::new_http(url);
         Self::new(inner, cache_size)

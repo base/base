@@ -1,6 +1,4 @@
 //! Contains the shadow compressor for Base.
-//!
-//! This is a port of the reference batcher's shadow compressor.
 
 use alloc::vec::Vec;
 

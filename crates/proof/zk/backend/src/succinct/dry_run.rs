@@ -172,7 +172,7 @@ impl DryRunZkProver {
         );
 
         let witness_start = std::time::Instant::now();
-        let stdin = self
+        let stdin = match self
             .provider
             .generate_witness(WitnessParams {
                 start_block,
@@ -186,29 +186,33 @@ impl DryRunZkProver {
                     L1HeadSource::Pinned,
                 ),
                 intermediate_root_interval,
+                schedule_l2_block_number: request.schedule_l2_block_number,
             })
             .await
-            .map_err(|e| {
+        {
+            Ok(stdin) => stdin,
+            Err(e) => {
                 error!(
                     start_block = start_block,
                     end_block = end_block,
                     error = %e,
                     "dry-run witness generation failed"
                 );
-                backend_error!("witness generation failed: {e}")
-            })?;
+                return Err(backend_error!("witness generation failed: {e}"));
+            }
+        };
         let witness_generation_ms =
             u64::try_from(witness_start.elapsed().as_millis()).unwrap_or(u64::MAX);
 
         let mut execution_stats =
             Self::execute_range_program(stdin, self.range_cycle_limit).await?;
+        // Histogram latency is recorded in the provider; this field keeps the dry-run API contract.
         execution_stats.witness_generation_ms = witness_generation_ms;
 
         info!(
             request_session_id = %request_session_id,
             total_instruction_cycles = execution_stats.total_instruction_cycles,
             total_sp1_gas = execution_stats.total_sp1_gas,
-            witness_generation_ms = witness_generation_ms,
             execution_ms = execution_stats.execution_ms,
             tracked_sections = execution_stats.cycle_tracker.len(),
             "dry-run SP1 execution completed"

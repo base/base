@@ -256,6 +256,13 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
                 }
             }
 
+            fn transfer_policy_ids(
+                &self,
+            ) -> ::base_precompile_storage::Result<crate::TransferPolicyIds> {
+                // Single SLOAD of the shared transfer-policy slot, extracting all three lanes.
+                self.b20.transfer_policy_ids()
+            }
+
             fn set_policy_id(
                 &mut self,
                 policy_scope: ::alloy_primitives::B256,

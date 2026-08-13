@@ -20,7 +20,7 @@ use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 use crate::{
     CancellableContext, DerivationActorRequest, DerivationEngineClient, DerivationState,
     DerivationStateMachine, DerivationStateTransitionError, DerivationStateUpdate, Metrics,
-    NodeActor, actors::derivation::L2Finalizer,
+    NodeActor, ResetReason, actors::derivation::L2Finalizer,
 };
 
 /// The [`NodeActor`] for the derivation sub-routine.
@@ -210,18 +210,28 @@ where
                                     )
                                     .await?;
                             } else {
+                                let reason = if matches!(&e, ResetError::ReorgDetected(..)) {
+                                    ResetReason::DerivationL1Reorg
+                                } else {
+                                    ResetReason::DerivationPipeline
+                                };
                                 if let ResetError::ReorgDetected(expected, new) = e {
                                     warn!(
                                         target: "derivation",
-                                        "L1 reorg detected! Expected: {expected} | New: {new}"
+                                        %expected,
+                                        %new,
+                                        "L1 reorg detected"
                                     );
 
                                     Metrics::l1_reorg_count().increment(1);
                                 }
-                                self.engine_client.reset_engine_forkchoice().await.map_err(|e| {
-                                    error!(target: "derivation", ?e, "Failed to send reset request");
-                                    DerivationError::Sender(Box::new(e))
-                                })?;
+                                self.engine_client
+                                    .reset_engine_forkchoice(reason)
+                                    .await
+                                    .map_err(|e| {
+                                        error!(target: "derivation", ?e, "Failed to send reset request");
+                                        DerivationError::Sender(Box::new(e))
+                                    })?;
                                 self.derivation_state_machine
                                     .update(&DerivationStateUpdate::SignalNeeded)?;
                                 return Err(DerivationError::Yield);

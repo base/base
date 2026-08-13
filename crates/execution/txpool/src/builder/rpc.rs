@@ -12,7 +12,7 @@ use jsonrpsee::{
     proc_macros::rpc,
     types::{ErrorCode, ErrorObjectOwned},
 };
-use reth_transaction_pool::TransactionPool;
+use reth_transaction_pool::{TransactionOrigin, TransactionPool};
 use serde_json::{Map, json};
 use tracing::debug;
 
@@ -46,6 +46,7 @@ pub trait BuilderApi<E> {
 #[derive(Debug)]
 pub struct BuilderApiImpl<P, E = NoExtensions> {
     pool: P,
+    accept_extensions: bool,
     _extensions: PhantomData<E>,
 }
 
@@ -58,16 +59,17 @@ impl<P> BuilderApiImpl<P, NoExtensions> {
     /// call site (`E0282`), because type-parameter defaults do not participate
     /// in inference for associated-function calls.
     pub const fn new(pool: P) -> Self {
-        Self { pool, _extensions: PhantomData }
+        Self { pool, accept_extensions: false, _extensions: PhantomData }
     }
 }
 
 impl<P, E> BuilderApiImpl<P, E> {
     /// Creates a new handler carrying the wire extension payload `E`.
     ///
-    /// Use as `BuilderApiImpl::<_, MyExtensions>::with_extensions(pool)`.
-    pub const fn with_extensions(pool: P) -> Self {
-        Self { pool, _extensions: PhantomData }
+    /// Non-empty extension payloads are rejected unless `accept_extensions` is
+    /// explicitly enabled.
+    pub const fn with_extensions(pool: P, accept_extensions: bool) -> Self {
+        Self { pool, accept_extensions, _extensions: PhantomData }
     }
 }
 
@@ -83,6 +85,16 @@ where
             "rpc::insert_validated_transaction"
         );
         let sender = tx.sender;
+        let has_extensions = !tx.extensions.is_empty();
+
+        if has_extensions && !self.accept_extensions {
+            BuilderApiMetrics::extension_errors().increment(1);
+            return Err(ErrorObjectOwned::owned(
+                ErrorCode::InvalidParams.code(),
+                "transaction extensions are disabled",
+                None::<()>,
+            ));
+        }
 
         // Decode the EIP-2718 transaction bytes
         let consensus_tx =
@@ -112,9 +124,14 @@ where
             ErrorObjectOwned::owned(ErrorCode::InvalidParams.code(), e.to_string(), None::<()>)
         })?;
 
-        // Insert into the pool
+        // Extension-bearing transactions remain private so normal P2P gossip
+        // cannot propagate the raw transaction without its extension metadata.
         let start = Instant::now();
-        let result = self.pool.add_external_transaction(pool_tx).await;
+        let result = if has_extensions {
+            self.pool.add_transaction(TransactionOrigin::Private, pool_tx).await
+        } else {
+            self.pool.add_external_transaction(pool_tx).await
+        };
         BuilderApiMetrics::insert_duration().record(start.elapsed().as_secs_f64());
 
         match result {
@@ -258,6 +275,10 @@ mod tests {
     }
 
     impl ValidatedTransactionExtensions<BasePooledTransaction> for TestExtensions {
+        fn is_empty(&self) -> bool {
+            self.reject.is_none()
+        }
+
         fn extract(
             _tx: &reth_transaction_pool::ValidPoolTransaction<BasePooledTransaction>,
         ) -> Self {
@@ -275,16 +296,18 @@ mod tests {
         }
     }
 
-    fn extension_handler()
-    -> BuilderApiImpl<NoopTransactionPool<BasePooledTransaction>, TestExtensions> {
-        BuilderApiImpl::<_, TestExtensions>::with_extensions(NoopTransactionPool::<
-            BasePooledTransaction,
-        >::new())
+    fn extension_handler(
+        accept_extensions: bool,
+    ) -> BuilderApiImpl<NoopTransactionPool<BasePooledTransaction>, TestExtensions> {
+        BuilderApiImpl::<_, TestExtensions>::with_extensions(
+            NoopTransactionPool::<BasePooledTransaction>::new(),
+            accept_extensions,
+        )
     }
 
     #[tokio::test]
     async fn extension_apply_failure_returns_invalid_params() {
-        let handler = extension_handler();
+        let handler = extension_handler(true);
         let (sender, raw) = create_eip1559_tx();
 
         let tx = validated_transaction(sender, raw, TestExtensions { reject: Some(true) });
@@ -304,7 +327,7 @@ mod tests {
 
     #[tokio::test]
     async fn extension_apply_success_reaches_the_pool() {
-        let handler = extension_handler();
+        let handler = extension_handler(true);
         let (sender, raw) = create_eip1559_tx();
 
         let tx = validated_transaction(sender, raw, TestExtensions { reject: None });
@@ -319,12 +342,35 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn disabled_extensions_reject_non_empty_payloads() {
+        let handler = extension_handler(false);
+        let (sender, raw) = create_eip1559_tx();
+        let tx = validated_transaction(sender, raw, TestExtensions { reject: Some(false) });
+
+        let err = handler.insert_validated_transaction(tx).await.unwrap_err();
+
+        assert_eq!(err.code(), ErrorCode::InvalidParams.code());
+        assert_eq!(err.message(), "transaction extensions are disabled");
+    }
+
+    #[tokio::test]
+    async fn disabled_extensions_allow_empty_payloads() {
+        let handler = extension_handler(false);
+        let (sender, raw) = create_eip1559_tx();
+        let tx = validated_transaction(sender, raw, TestExtensions::default());
+
+        let err = handler.insert_validated_transaction(tx).await.unwrap_err();
+
+        assert_eq!(err.code(), ErrorCode::InternalError.code());
+    }
+
     #[test]
     fn both_monomorphizations_build_rpc_modules() {
         // The stock call-site shape must keep working untouched...
         let _stock = handler().into_rpc();
         // ...and a custom extension payload must also produce a module.
-        let _custom = extension_handler().into_rpc();
+        let _custom = extension_handler(true).into_rpc();
     }
 
     // ==========================================================================

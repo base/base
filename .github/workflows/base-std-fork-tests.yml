@@ -37,7 +37,7 @@ jobs:
           - fork: Cobalt
             key: cobalt
             base_anvil_ref: ae7557c4f8602caa1da0be33143bb2504c85b0c8
-            base_std_ref: 8f88bf3e59dcf7a7396e3e80f6eb02166a46573a
+            base_std_ref: 3f8990095f3316ed9b331a39f5c21a1bb5059c5f
     env:
       FORK_NAME: ${{ matrix.fork }}
       FORK_KEY: ${{ matrix.key }}
@@ -262,8 +262,12 @@ jobs:
           cat "$body" >> "$GITHUB_STEP_SUMMARY"
           echo "overall=$overall" >> "$GITHUB_OUTPUT"
 
+      # Skip commenting on forked PRs — we don't have permission to comment on them.
       - name: Comment fork-test results on PR
-        if: github.event_name == 'pull_request' && steps.aggregate.outcome == 'success'
+        if: >
+          github.event_name == 'pull_request' &&
+          steps.aggregate.outcome == 'success' &&
+          github.event.pull_request.head.repo.full_name == github.repository
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

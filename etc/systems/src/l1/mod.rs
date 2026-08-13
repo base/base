@@ -8,9 +8,17 @@ pub use config::L1ContainerConfig;
 mod lighthouse;
 pub use lighthouse::{LighthouseBeaconContainer, LighthouseValidatorContainer};
 
+/// Controllable L1 JSON-RPC proxy for fault injection.
+mod rpc_proxy;
+pub use rpc_proxy::L1RpcProxy;
+
 /// Reth execution layer container.
 mod reth;
 pub use reth::RethContainer;
+
+/// Authenticated Engine API driver for replacement L1 branches.
+mod reorg;
+pub use reorg::{L1ReorgDriver, L1ReplacementBranch};
 
 /// L1 stack orchestration.
 mod stack;

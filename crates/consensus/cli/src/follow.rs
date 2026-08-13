@@ -188,11 +188,15 @@ impl ConsensusFollowNodeArgs {
             l2_url: l2_engine_rpc,
             l2_jwt_secret: jwt_secret,
             l1_url: self.config.l1_rpc_args.l1_eth_rpc.clone(),
+            l1_rpc_timeout: self.config.l1_rpc_args.l1_rpc_timeout,
             mode: NodeMode::Validator,
         };
         let engine_client =
             Arc::new(engine_config.build_engine_client().await.map_err(|e| eyre::eyre!(e))?);
-        let l1_provider = L1RpcProvider::new_http(self.config.l1_rpc_args.l1_eth_rpc.clone());
+        let l1_provider = L1RpcProvider::new_http_with_timeout(
+            self.config.l1_rpc_args.l1_eth_rpc.clone(),
+            self.config.l1_rpc_args.l1_rpc_timeout,
+        );
         let l2_source = RemoteL2Client::new(self.config.source_l2_rpc.clone());
         let rpc_builder = Option::<RpcBuilder>::from(self.config.rpc_flags.clone());
 
@@ -267,7 +271,10 @@ impl ConsensusFollowNodeArgs {
             chain_config: Arc::new(l1_chain_config),
             trust_rpc: self.config.l1_rpc_args.l1_trust_rpc,
             beacon_client: l1_beacon,
-            engine_provider: L1RpcProvider::new_http(self.config.l1_rpc_args.l1_eth_rpc.clone()),
+            engine_provider: L1RpcProvider::new_http_with_timeout(
+                self.config.l1_rpc_args.l1_eth_rpc.clone(),
+                self.config.l1_rpc_args.l1_rpc_timeout,
+            ),
             finalized_poll_interval: L1Config::default_finalized_poll_interval(cfg.l1_chain_id),
             verifier_l1_confs: self.config.l1_rpc_args.l1_verifier_confs,
             da_batcher_sender_override: self.config.l1_rpc_args.l1_da_batcher_sender_override,

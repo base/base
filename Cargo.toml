@@ -193,6 +193,7 @@ base-execution-eip8130 = { path = "crates/execution/eip8130", default-features =
 
 # Infra
 basectl-cli = { path = "crates/infra/basectl" }
+base-roxy = { path = "crates/infra/roxy" }
 base-sidecrush = { path = "crates/infra/sidecrush" }
 audit-archiver-lib = { path = "crates/infra/audit" }
 base-snark-e2e = { path = "crates/infra/snark-e2e" }
@@ -201,6 +202,7 @@ ingress-rpc-lib = { path = "crates/infra/ingress-rpc" }
 base-snapshotter = { path = "crates/infra/snapshotter" }
 websocket-proxy = { path = "crates/infra/websocket-proxy" }
 base-telemetry-service = { path = "crates/infra/telemetry" }
+base-shadow-metrics = { path = "crates/infra/shadow-metrics" }
 base-zk-benchmarks = { path = "crates/infra/zk-benchmarks" }
 base-zk-fork-dispute = { path = "crates/infra/zk-fork-dispute" }
 
@@ -355,6 +357,7 @@ reth-e2e-test-utils = { git = "https://github.com/paradigmxyz/reth", rev = "2382
 reth-eth-wire-types = { git = "https://github.com/paradigmxyz/reth", rev = "2382a2b05a0f15ab5469ea1db152c944f3736f6c" }
 reth-payload-builder = { git = "https://github.com/paradigmxyz/reth", rev = "2382a2b05a0f15ab5469ea1db152c944f3736f6c" }
 reth-execution-types = { git = "https://github.com/paradigmxyz/reth", rev = "2382a2b05a0f15ab5469ea1db152c944f3736f6c" }
+reth-execution-cache = { git = "https://github.com/paradigmxyz/reth", rev = "2382a2b05a0f15ab5469ea1db152c944f3736f6c" }
 reth-exex-test-utils = { git = "https://github.com/paradigmxyz/reth", rev = "2382a2b05a0f15ab5469ea1db152c944f3736f6c" }
 reth-rpc-server-types = { git = "https://github.com/paradigmxyz/reth", rev = "2382a2b05a0f15ab5469ea1db152c944f3736f6c" }
 reth-transaction-pool = { git = "https://github.com/paradigmxyz/reth", rev = "2382a2b05a0f15ab5469ea1db152c944f3736f6c" }

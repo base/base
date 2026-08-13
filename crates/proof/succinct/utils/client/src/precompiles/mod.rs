@@ -461,6 +461,7 @@ mod tests {
             (BaseUpgrade::Azul, false),
             (BaseUpgrade::Beryl, true),
             (BaseUpgrade::Cobalt, true),
+            (BaseUpgrade::Denim, true),
             (BaseUpgrade::Zenith, true),
         ] {
             let spec = BaseSpecId::new(upgrade);

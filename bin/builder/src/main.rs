@@ -37,6 +37,7 @@ fn main() {
             transaction_events_enabled.then(|| builder_args.transaction_events.writer_config()),
         )?;
 
+        let accept_validity_transactions = builder_args.enable_experimental_validity_transactions;
         let builder_config = builder_args
             .into_builder_config(Arc::clone(&metering_provider))
             .expect("Failed to convert rollup args to builder config");
@@ -51,7 +52,7 @@ fn main() {
             .with_service_builder(FlashblocksServiceBuilder::new(builder_config));
         runner.install_ext::<MeteringStoreExtension>(metering_provider);
         runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig::default());
-        runner.install_ext::<BuilderApiExtension>(());
+        runner.install_ext::<BuilderApiExtension>(accept_validity_transactions);
         StandardBaseRethNode::install_upgrade_signal_runtime_extension(&mut runner, &rollup_args)?;
         runner.add_started_callback(|| {
             base_cli_utils::register_version_metrics!();

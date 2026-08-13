@@ -5,14 +5,17 @@ use base_consensus_engine::ConsolidateInput;
 use derive_more::Constructor;
 use tokio::sync::mpsc;
 
-use crate::{EngineActorRequest, EngineClientError, EngineClientResult, ResetRequest};
+use crate::{
+    EngineActorRequest, EngineClientError, EngineClientResult, ResetOrigin, ResetReason,
+    ResetRequest,
+};
 
 /// Client to use to interact with the engine.
 #[cfg_attr(test, mockall::automock(type SafeL2Signal = AttributesWithParent;))]
 #[async_trait]
 pub trait DerivationEngineClient: Debug + Send + Sync {
     /// Resets the engine's forkchoice.
-    async fn reset_engine_forkchoice(&self) -> EngineClientResult<()>;
+    async fn reset_engine_forkchoice(&self, reason: ResetReason) -> EngineClientResult<()>;
 
     /// Sends a request to finalize the L2 block at the provided block number.
     /// Note: This does not wait for the engine to process it.
@@ -37,14 +40,15 @@ pub struct QueuedDerivationEngineClient {
 
 #[async_trait]
 impl DerivationEngineClient for QueuedDerivationEngineClient {
-    async fn reset_engine_forkchoice(&self) -> EngineClientResult<()> {
+    async fn reset_engine_forkchoice(&self, reason: ResetReason) -> EngineClientResult<()> {
         let (result_tx, mut result_rx) = mpsc::channel(1);
 
         info!(target: "derivation", "Sending reset request to engine.");
         self.engine_actor_request_tx
             .send(EngineActorRequest::ResetRequest(Box::new(ResetRequest {
                 result_tx,
-                shadow_cycle_coordinated: false,
+                origin: ResetOrigin::Derivation,
+                reason,
             })))
             .await
             .map_err(|_| EngineClientError::RequestError("request channel closed.".to_string()))?;

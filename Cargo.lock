@@ -3270,6 +3270,7 @@ dependencies = [
  "base-batcher-encoder",
  "base-batcher-source",
  "base-blobs",
+ "base-builder-core",
  "base-common-chains",
  "base-common-consensus",
  "base-common-genesis",
@@ -3292,6 +3293,7 @@ dependencies = [
  "base-runtime",
  "base-test-utils",
  "base-tx-manager",
+ "eyre",
  "reth-basic-payload-builder",
  "reth-db",
  "reth-db-common",
@@ -3302,6 +3304,7 @@ dependencies = [
  "reth-provider",
  "reth-revm",
  "reth-transaction-pool",
+ "reth-trie-common",
  "serde_json",
  "tempfile",
  "thiserror 2.0.19",
@@ -3454,6 +3457,7 @@ dependencies = [
  "base-runtime",
  "derive_more 2.1.1",
  "futures",
+ "mockall",
  "thiserror 2.0.19",
  "tokio",
  "tracing",
@@ -3585,6 +3589,7 @@ dependencies = [
  "reth-cli-util",
  "reth-db",
  "reth-evm",
+ "reth-execution-cache",
  "reth-execution-types",
  "reth-ipc",
  "reth-network-peers",
@@ -3725,7 +3730,6 @@ dependencies = [
  "base-prover-service-protocol",
  "base-runtime",
  "base-tx-manager",
- "bincode 2.0.1",
  "clap",
  "eyre",
  "futures",
@@ -3736,7 +3740,6 @@ dependencies = [
  "rustls 0.23.43",
  "serde",
  "serde_json",
- "sp1-sdk",
  "thiserror 2.0.19",
  "tokio",
  "tokio-util",
@@ -4051,6 +4054,7 @@ dependencies = [
  "alloy-rpc-types-engine",
  "alloy-signer 2.2.0",
  "alloy-signer-local 2.2.0",
+ "backon",
  "base-cli-utils",
  "base-common-chains",
  "base-common-genesis",
@@ -4064,11 +4068,13 @@ dependencies = [
  "base-consensus-rpc",
  "base-consensus-sources",
  "base-jwt",
+ "base-retry",
  "base-upgrade-signal",
  "clap",
  "dirs 6.0.0",
  "discv5 0.10.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "eyre",
+ "httpmock",
  "libp2p",
  "metrics",
  "reqwest 0.13.4",
@@ -4274,10 +4280,12 @@ dependencies = [
  "http 1.4.2",
  "http-body 1.1.0",
  "http-body-util",
+ "httpmock",
  "jsonrpsee",
  "libp2p",
  "libp2p-stream",
  "metrics",
+ "metrics-util",
  "mockall",
  "opentelemetry 0.32.0",
  "rand 0.9.5",
@@ -5625,7 +5633,10 @@ dependencies = [
  "alloy-primitives",
  "alloy-rpc-types-eth 2.2.0",
  "base-proof-contracts",
+ "base-proof-primitives",
  "base-tx-manager",
+ "bincode 2.0.1",
+ "sp1-sdk",
  "thiserror 2.0.19",
  "tokio",
 ]
@@ -5820,7 +5831,6 @@ dependencies = [
  "alloy-genesis 2.2.0",
  "alloy-primitives",
  "alloy-signer 2.2.0",
- "alloy-signer-local 2.2.0",
  "async-trait",
  "base-common-genesis",
  "base-health",
@@ -5829,6 +5839,7 @@ dependencies = [
  "base-proof-preimage",
  "base-proof-primitives",
  "base-proof-tee-nitro-enclave",
+ "base-proof-worker",
  "base-prover-service-client",
  "base-prover-service-protocol",
  "chrono",
@@ -5885,6 +5896,7 @@ dependencies = [
  "base-proof-tee-nitro-attestation-prover",
  "base-proof-tee-nitro-verifier",
  "base-tx-manager",
+ "ciborium",
  "futures",
  "hex",
  "hex-literal 1.1.0",
@@ -5944,6 +5956,8 @@ dependencies = [
  "async-trait",
  "backoff",
  "base-l1-head",
+ "base-metrics",
+ "base-proof-host",
  "base-proof-succinct-client-utils",
  "base-proof-succinct-elfs",
  "base-proof-succinct-host-utils",
@@ -5976,6 +5990,7 @@ dependencies = [
  "base-proof-worker",
  "base-prover-service-client",
  "base-prover-service-protocol",
+ "chrono",
  "thiserror 2.0.19",
  "tokio",
  "tokio-util",
@@ -6108,6 +6123,7 @@ dependencies = [
  "base-proof-host",
  "base-proof-tee-nitro-enclave",
  "base-proof-tee-nitro-host",
+ "base-proof-worker",
  "base-prover-service-client",
  "clap",
  "eyre",
@@ -6226,6 +6242,7 @@ version = "0.0.0"
 dependencies = [
  "reth-cli-commands",
  "reth-node-core",
+ "reth-prune-types",
 ]
 
 [[package]]
@@ -6251,6 +6268,33 @@ name = "base-ring-buffer"
 version = "0.0.0"
 
 [[package]]
+name = "base-roxy"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "axum 0.8.9",
+ "base-health",
+ "clap",
+ "reqwest 0.13.4",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "base-roxy-bin"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "base-cli-utils",
+ "base-roxy",
+ "clap",
+ "dotenvy",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "base-runtime"
 version = "0.0.0"
 dependencies = [
@@ -6260,6 +6304,30 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tokio-util",
+]
+
+[[package]]
+name = "base-shadow-metrics"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "sqlx",
+ "thiserror 2.0.19",
+]
+
+[[package]]
+name = "base-shadow-metrics-bin"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "axum 0.8.9",
+ "base-cli-utils",
+ "base-shadow-metrics",
+ "clap",
+ "dotenvy",
+ "serde",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -6382,6 +6450,8 @@ dependencies = [
  "alloy-signer-local 2.2.0",
  "alloy-sol-types",
  "async-trait",
+ "axum 0.8.9",
+ "base-batcher-encoder",
  "base-batcher-service",
  "base-builder-core",
  "base-bundle-extension",
@@ -6434,6 +6504,7 @@ dependencies = [
  "reth-node-builder",
  "reth-node-core",
  "reth-provider",
+ "reth-rpc-layer",
  "reth-tasks",
  "serde",
  "serde_json",
@@ -6441,6 +6512,7 @@ dependencies = [
  "testcontainers",
  "tokio",
  "tokio-util",
+ "tower 0.5.3",
  "tracing",
  "url",
 ]
@@ -6470,8 +6542,12 @@ dependencies = [
  "base-health",
  "base-trusted-proxy",
  "clap",
+ "discv5 0.10.4 (registry+https://github.com/rust-lang/crates.io-index)",
+ "futures",
  "governor",
  "ipnet",
+ "libp2p",
+ "libp2p-identity",
  "mockall",
  "reqwest 0.13.4",
  "reth-ecies",
@@ -6533,6 +6609,7 @@ dependencies = [
  "base-node-runner",
  "base-observability-events",
  "base-test-utils",
+ "base-txpool-rpc",
  "eyre",
  "futures",
  "jsonrpsee",
@@ -6588,10 +6665,12 @@ name = "base-txpool-rpc"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
+ "base-execution-txpool",
  "base-node-runner",
  "eyre",
  "httpmock",
  "jsonrpsee",
+ "reth-rpc-eth-types",
  "reth-rpc-server-types",
  "reth-transaction-pool",
  "serde",
@@ -6833,6 +6912,7 @@ dependencies = [
  "axum 0.8.9",
  "base-common-chains",
  "base-common-consensus",
+ "base-common-evm",
  "base-common-flashblocks",
  "base-common-genesis",
  "base-common-network",
@@ -23361,6 +23441,7 @@ dependencies = [
  "futures-core",
  "futures-io",
  "futures-sink",
+ "futures-util",
  "libc",
  "pin-project-lite",
  "slab",

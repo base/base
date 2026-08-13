@@ -29,17 +29,36 @@ use crate::{
     AlloyL1BlockFetcher, CheckpointActor, CheckpointClient, CheckpointDB, CheckpointWriter,
     Conductor, ConductorClient, DelayedL1OriginSelectorProvider, DelegateDerivationActor,
     DerivationActor, DerivationDelegateClient, DerivationError, EngineActor, EngineActorRequest,
-    EngineConfig, EngineProcessor, EngineProcessorOptions, EngineRequestHandler,
-    EngineRpcProcessor, L1OriginSelector, L1WatcherActor, L1WatcherQueryProcessor, NetworkActor,
-    NetworkBuilder, NetworkConfig, NodeActor, NodeMode, PayloadBuilder,
+    EngineConfig, EngineProcessor, EngineRequestReceiver, EngineRpcProcessor, L1OriginSelector,
+    L1WatcherActor, L1WatcherQueryProcessor, NetworkActor, NetworkBuilder, NetworkConfig,
+    NodeActor, NodeMode, PayloadBuilder, PrefetchedChainProvider, PreparedL1Origin,
     QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
     QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient,
     QueuedSequencerEngineClient, RecoveryModeGuard, RpcActor, RpcContext, SequencerActor,
-    SequencerConfig, ShadowReconciliationGate, UpgradeSignalNodeConfig,
+    SequencerConfig, SequencerEngineRequestCoordinator, UpgradeSignalNodeConfig,
+    ValidatorEngineRequestHandler,
     actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
 };
 
 const DERIVATION_PROVIDER_CACHE_SIZE: usize = 1024;
+
+#[derive(Debug)]
+enum ConfiguredEngineReceiver<E: EngineClient + 'static> {
+    Validator(ValidatorEngineRequestHandler<E, QueuedEngineDerivationClient>),
+    Sequencer(SequencerEngineRequestCoordinator<E, QueuedEngineDerivationClient>),
+}
+
+impl<E: EngineClient + 'static> EngineRequestReceiver for ConfiguredEngineReceiver<E> {
+    fn start(
+        self,
+        request_channel: mpsc::Receiver<EngineActorRequest>,
+    ) -> tokio::task::JoinHandle<Result<(), crate::EngineError>> {
+        match self {
+            Self::Validator(receiver) => receiver.start(request_channel),
+            Self::Sequencer(receiver) => receiver.start(request_channel),
+        }
+    }
+}
 /// Poll interval in seconds for the head block stream.
 pub const HEAD_STREAM_POLL_INTERVAL: u64 = 4;
 
@@ -52,7 +71,7 @@ pub struct L1Config {
     pub trust_rpc: bool,
     /// The L1 beacon API client.
     pub beacon_client: OnlineBeaconClient,
-    /// The L1 execution JSON-RPC provider.
+    /// The general L1 execution JSON-RPC provider.
     pub engine_provider: RootProvider,
     /// How frequently to poll L1 for a new finalized block.
     ///
@@ -94,6 +113,8 @@ pub struct RollupNode {
     pub config: Arc<RollupConfig>,
     /// The L1 configuration.
     pub l1_config: L1Config,
+    /// L1 execution JSON-RPC provider dedicated to the sequencer block-production hot path.
+    pub sequencer_l1_provider: RootProvider,
     /// The L2 EL provider.
     pub l2_provider: RootProvider<Base>,
     /// Whether to trust the L2 RPC.
@@ -184,15 +205,17 @@ impl RollupNode {
         self.rpc_builder.clone()
     }
 
-    /// Returns the sequencer builder for the node.
+    /// Returns the sequencer attributes builder for the node.
     fn create_attributes_builder(
         &self,
-    ) -> StatefulAttributesBuilder<AlloyChainProvider, AlloyL2ChainProvider> {
-        let l1_derivation_provider = AlloyChainProvider::new_with_trust(
-            self.l1_config.engine_provider.clone(),
+        origin_rx: watch::Receiver<Option<PreparedL1Origin>>,
+    ) -> StatefulAttributesBuilder<PrefetchedChainProvider, AlloyL2ChainProvider> {
+        let l1_fallback_provider = AlloyChainProvider::new_with_trust(
+            self.sequencer_l1_provider.clone(),
             DERIVATION_PROVIDER_CACHE_SIZE,
             self.l1_config.trust_rpc,
         );
+        let l1_derivation_provider = PrefetchedChainProvider::new(origin_rx, l1_fallback_provider);
         let l2_derivation_provider = AlloyL2ChainProvider::new_with_trust(
             self.l2_provider.clone(),
             Arc::clone(&self.config),
@@ -247,10 +270,14 @@ impl RollupNode {
         unsafe_head_tx: watch::Sender<L2BlockInfo>,
         conductor: Option<Arc<dyn Conductor>>,
         checkpoint_client: CheckpointClient,
-    ) -> (EngineActor<EngineRequestHandler<E, QueuedEngineDerivationClient>>, EngineRpcProcessor<E>)
-    {
+    ) -> (
+        EngineActor<ConfiguredEngineReceiver<E>>,
+        EngineRpcProcessor<E>,
+        watch::Receiver<EngineState>,
+    ) {
         let engine_state = EngineState::default();
         let (engine_state_tx, engine_state_rx) = watch::channel(engine_state);
+        let sequencer_engine_state_rx = engine_state_rx.clone();
         let (engine_queue_length_tx, engine_queue_length_rx) = watch::channel(0);
         let engine = Engine::new(engine_state, engine_state_tx, engine_queue_length_tx);
 
@@ -259,19 +286,11 @@ impl RollupNode {
             Arc::new(checkpoint_client.clone());
         let checkpoint_writer: Arc<dyn CheckpointWriter> = Arc::new(checkpoint_client);
         let shadow_sequencer = mode.is_sequencer() && self.sequencer_config.is_shadow_sequencer();
-        let shadow_gate = shadow_sequencer
-            .then(|| ShadowReconciliationGate::new(engine.state().sync_state.unsafe_head()));
         let engine_processor = EngineProcessor::new_with_checkpoint(
             Arc::clone(&engine_client),
             Arc::clone(&self.config),
             derivation_client,
             engine,
-            EngineProcessorOptions {
-                node_mode: mode,
-                unsafe_head_tx: if mode.is_sequencer() { Some(unsafe_head_tx) } else { None },
-                conductor,
-                sequencer_stopped: self.sequencer_config.sequencer_stopped,
-            },
             checkpoint_reader,
             checkpoint_writer,
         );
@@ -283,10 +302,22 @@ impl RollupNode {
             engine_queue_length_rx,
         );
 
-        let engine_handler = EngineRequestHandler::new(engine_processor, shadow_gate);
+        let engine_handler = if mode.is_validator() {
+            ConfiguredEngineReceiver::Validator(ValidatorEngineRequestHandler::new(
+                engine_processor,
+            ))
+        } else {
+            ConfiguredEngineReceiver::Sequencer(SequencerEngineRequestCoordinator::new(
+                engine_processor,
+                shadow_sequencer,
+                conductor,
+                self.sequencer_config.sequencer_stopped,
+                unsafe_head_tx,
+            ))
+        };
         let engine_actor = EngineActor::new(cancellation_token, engine_request_rx, engine_handler);
 
-        (engine_actor, engine_rpc_processor)
+        (engine_actor, engine_rpc_processor, sequencer_engine_state_rx)
     }
 
     /// Starts the rollup node service.
@@ -437,15 +468,16 @@ impl RollupNode {
         let engine_conductor: Option<Arc<dyn Conductor>> =
             conductor.clone().map(|c| Arc::new(c) as Arc<dyn Conductor>);
 
-        let (engine_actor, engine_rpc_processor) = self.create_engine_actor(
-            engine_client,
-            cancellation.clone(),
-            engine_actor_request_rx,
-            QueuedEngineDerivationClient::new(derivation_actor_request_tx.clone()),
-            unsafe_head_tx,
-            engine_conductor,
-            checkpoint_client,
-        );
+        let (engine_actor, engine_rpc_processor, sequencer_engine_state_rx) = self
+            .create_engine_actor(
+                engine_client,
+                cancellation.clone(),
+                engine_actor_request_rx,
+                QueuedEngineDerivationClient::new(derivation_actor_request_tx.clone()),
+                unsafe_head_tx,
+                engine_conductor,
+                checkpoint_client,
+            );
 
         // Select the concrete derivation actor implementation based on
         // RollupNode configuration.
@@ -497,14 +529,6 @@ impl RollupNode {
         .map_err(|e| format!("Failed to start network actor: {e}"))?;
 
         let (l1_head_updates_tx, l1_head_updates_rx) = watch::channel(None);
-        let delayed_l1_provider = DelayedL1OriginSelectorProvider::new(
-            self.l1_config.engine_provider.clone(),
-            l1_head_updates_rx,
-            self.sequencer_config.l1_conf_delay,
-        );
-
-        let delayed_origin_selector =
-            L1OriginSelector::new(Arc::clone(&self.config), delayed_l1_provider);
 
         // Create the L1 Watcher actor
 
@@ -553,9 +577,19 @@ impl RollupNode {
         let node_mode = self.mode();
         // Create the sequencer if needed
         let (sequencer_actor, sequencer_admin_client) = if node_mode.is_sequencer() {
+            let delayed_l1_provider = DelayedL1OriginSelectorProvider::new(
+                self.sequencer_l1_provider.clone(),
+                l1_head_updates_rx,
+                self.sequencer_config.l1_conf_delay,
+            );
+            let delayed_origin_selector =
+                L1OriginSelector::new(Arc::clone(&self.config), delayed_l1_provider);
+            let attributes_builder =
+                self.create_attributes_builder(delayed_origin_selector.subscribe());
             let sequencer_engine_client = QueuedSequencerEngineClient {
                 engine_actor_request_tx: engine_actor_request_tx.clone(),
                 unsafe_head_rx,
+                engine_state_rx: sequencer_engine_state_rx,
             };
 
             // Create the admin API channel
@@ -570,7 +604,7 @@ impl RollupNode {
                 Some(SequencerActor {
                     admin_api_rx: sequencer_admin_api_rx,
                     builder: PayloadBuilder {
-                        attributes_builder: self.create_attributes_builder(),
+                        attributes_builder,
                         engine_client: Arc::clone(&engine_client),
                         origin_selector: delayed_origin_selector,
                         recovery_mode: recovery_mode.clone(),

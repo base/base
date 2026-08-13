@@ -13,8 +13,9 @@ use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo};
 
 use crate::{
     ActionBlobProvider, ActionEngineClient, ActionL1ChainProvider, ActionL2ChainProvider,
-    ActionL2Source, ActionPipeline, Batcher, BatcherConfig, L1Miner, L1MinerConfig, L2Sequencer,
-    SharedL1Chain, TestGossipTransport, TestRollupNode, VerifierPipeline, block_info_from,
+    ActionL2Source, ActionPipeline, Batcher, BatcherConfig, BuilderBackedEngineClient, L1Miner,
+    L1MinerConfig, L2Sequencer, SequencerEngineBackend, SharedL1Chain, TestGossipTransport,
+    TestRollupNode, VerifierPipeline, block_info_from,
 };
 
 /// Top-level test harness that owns all actors for a single action test.
@@ -122,7 +123,10 @@ impl ActionTestHarness {
     /// a `TestRollupNode` or polled directly in single-node tests.
     ///
     /// [`SupervisedP2P`]: crate::SupervisedP2P
-    pub fn create_supervised_p2p(&self, sequencer: &mut L2Sequencer) -> TestGossipTransport {
+    pub fn create_supervised_p2p<E: SequencerEngineBackend>(
+        &self,
+        sequencer: &mut L2Sequencer<E>,
+    ) -> TestGossipTransport {
         let (p2p, transport) = TestGossipTransport::channel();
         sequencer.set_supervised_p2p(p2p);
         transport
@@ -147,9 +151,9 @@ impl ActionTestHarness {
     /// [`initialize`]: TestRollupNode::initialize
     /// [`step`]: TestRollupNode::step
     /// [`run_until_idle`]: TestRollupNode::run_until_idle
-    pub fn create_test_rollup_node(
+    pub fn create_test_rollup_node<E: SequencerEngineBackend>(
         &self,
-        sequencer: &L2Sequencer,
+        sequencer: &L2Sequencer<E>,
         l1_chain: SharedL1Chain,
         p2p: TestGossipTransport,
     ) -> TestRollupNode<VerifierPipeline> {
@@ -161,9 +165,9 @@ impl ActionTestHarness {
     }
 
     /// Build a [`TestRollupNode`] for any data-availability source.
-    fn build_node_inner<D>(
+    fn build_node_inner<E: SequencerEngineBackend, D>(
         &self,
-        sequencer: &L2Sequencer,
+        sequencer: &L2Sequencer<E>,
         l1_chain: SharedL1Chain,
         p2p: TestGossipTransport,
         dap_source: D,
@@ -218,9 +222,9 @@ impl ActionTestHarness {
     ///
     /// Wires `sequencer` to a fresh [`TestGossipTransport`] channel and builds the
     /// production-mode DA derivation pipeline.
-    pub fn create_test_rollup_node_from_sequencer(
+    pub fn create_test_rollup_node_from_sequencer<E: SequencerEngineBackend>(
         &self,
-        sequencer: &mut L2Sequencer,
+        sequencer: &mut L2Sequencer<E>,
         l1_chain: SharedL1Chain,
     ) -> (TestRollupNode<VerifierPipeline>, SharedL1Chain) {
         let transport = self.create_supervised_p2p(sequencer);
@@ -290,6 +294,37 @@ impl ActionTestHarness {
             l1_chain,
             l2_provider,
         )
+    }
+
+    /// Create an [`L2Sequencer`] backed by the production Flashblocks builder.
+    ///
+    /// Identical wiring to [`create_l2_sequencer`](Self::create_l2_sequencer), but block production
+    /// runs through an in-process [`BuilderBackedEngineClient`] (real `FlashblocksServiceBuilder` +
+    /// transaction pool) driven by the production `SequencerActor` over the Engine API. Async
+    /// because launching the in-process builder node is async.
+    ///
+    /// The chain must have Jovian active at genesis (the builder emits Jovian payload attributes).
+    pub async fn create_l2_sequencer_with_builder(
+        &self,
+        l1_chain: SharedL1Chain,
+    ) -> eyre::Result<L2Sequencer<BuilderBackedEngineClient>> {
+        let rollup_config = Arc::new(self.rollup_config.clone());
+        let l1_chain_config = Arc::new(ChainConfig::default());
+        let genesis_head = self.l2_genesis();
+        let l2_provider = ActionL2ChainProvider::from_genesis(&self.rollup_config);
+
+        let engine_client = Arc::new(
+            BuilderBackedEngineClient::new(Arc::clone(&rollup_config), genesis_head).await?,
+        );
+
+        Ok(L2Sequencer::new(
+            genesis_head,
+            engine_client,
+            rollup_config,
+            l1_chain_config,
+            l1_chain,
+            l2_provider,
+        ))
     }
 
     /// Decode the [`L1BlockInfoTx`] from the first deposit transaction of an

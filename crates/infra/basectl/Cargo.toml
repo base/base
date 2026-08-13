@@ -18,6 +18,7 @@ crossterm = { workspace = true }
 serde_yaml = { workspace = true }
 alloy-contract = { workspace = true }
 alloy-transport = { workspace = true }
+base-common-evm = { workspace = true }
 alloy-rpc-client = { workspace = true }
 base-common-chains = { workspace = true }
 base-common-network = { workspace = true }

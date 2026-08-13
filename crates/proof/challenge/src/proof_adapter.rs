@@ -2,12 +2,12 @@
 
 use alloy_primitives::{Address, B256, Bytes};
 use base_proof_primitives::{ProofEncoder, ProofRequest as PrimitiveProofRequest};
+use base_proof_submission::SnarkReceiptEncoder;
 use base_prover_service_protocol::{
     ProofRequest, ProofRequestKind, ProofResult, ProofSessionId, ProveBlockRangeRequest,
     SnarkPlonkProofRequest, TeeKind, TeeProofRequest,
 };
 use eyre::{Result, WrapErr, bail};
-use sp1_sdk::SP1ProofWithPublicValues;
 
 /// Conversion helpers for challenger proof requests and dispute proof bytes.
 #[derive(Debug)]
@@ -15,7 +15,7 @@ pub struct ChallengerProofAdapter;
 
 impl ChallengerProofAdapter {
     /// Namespace used to derive challenger proof session IDs.
-    const SESSION_NAMESPACE: &'static [u8] = b"base/challenger/proof-session/v1";
+    const SESSION_NAMESPACE: &'static [u8] = b"base/challenger/proof-session/v2";
 
     /// Derives an idempotent challenger SNARK proof session ID.
     pub fn snark_plonk_session_id(game_address: Address, invalid_index: u64) -> String {
@@ -79,10 +79,8 @@ impl ChallengerProofAdapter {
             }
         };
 
-        let (receipt, _): (SP1ProofWithPublicValues, _) =
-            bincode::serde::decode_from_slice(&receipt_bytes, bincode::config::standard())
-                .wrap_err("failed to decode SNARK proof as SP1ProofWithPublicValues")?;
-        Ok(ProofEncoder::encode_zk_dispute_proof_bytes(Bytes::from(receipt.bytes())))
+        SnarkReceiptEncoder::encode_onchain_zk_proof(&receipt_bytes)
+            .wrap_err("failed to encode SP1 PLONK receipt into dispute proof bytes")
     }
 
     /// Converts a prover-service TEE result into bytes accepted by `submit_dispute`.
@@ -113,11 +111,11 @@ impl ChallengerProofAdapter {
 mod tests {
     use alloy_primitives::{Address, B256, Bytes};
     use base_proof_primitives::{PROOF_TYPE_TEE, PROOF_TYPE_ZK, ProofRequest, Proposal};
+    use base_proof_submission::test_utils::SnarkReceiptFixture;
     use base_prover_service_protocol::{
         ProofRequestKind, ProofResult, SnarkPlonkProofRequest, SnarkPlonkProofResult, TeeKind,
         TeeProofRequest, TeeProofResult, ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
     };
-    use sp1_sdk::{SP1Proof, SP1ProofWithPublicValues, SP1PublicValues};
 
     use super::ChallengerProofAdapter;
 
@@ -179,6 +177,7 @@ mod tests {
             sequence_window: Some(10),
             l1_head: Some(l1_head),
             intermediate_root_interval: Some(150),
+            schedule_l2_block_number: None,
             zk_vm: ZkVm::Sp1,
             zk_backend: ZkBackend::Cluster,
         };
@@ -208,7 +207,7 @@ mod tests {
             proposer: Address::repeat_byte(0x04),
             intermediate_block_interval: 300,
             l1_head_number: 1200,
-            image_hash: B256::repeat_byte(0x05),
+            schedule_l2_block_number: None,
         };
         let session_id = ChallengerProofAdapter::tee_session_id(game_address, invalid_index);
 
@@ -227,22 +226,7 @@ mod tests {
 
     #[test]
     fn snark_plonk_dispute_proof_bytes_decodes_receipt_to_onchain_seal() {
-        let mut plonk_vkey_hash = [0u8; 32];
-        plonk_vkey_hash[..4].copy_from_slice(&[0x5a, 0x09, 0x3a, 0x2f]);
-        let mut receipt = SP1ProofWithPublicValues {
-            proof: SP1Proof::Plonk(Default::default()),
-            public_values: SP1PublicValues::new(),
-            sp1_version: "test".to_owned(),
-            tee_proof: None,
-        };
-        let SP1Proof::Plonk(plonk) = &mut receipt.proof else {
-            unreachable!();
-        };
-        plonk.encoded_proof = "abcd".to_owned();
-        plonk.plonk_vkey_hash = plonk_vkey_hash;
-
-        let encoded =
-            bincode::serde::encode_to_vec(&receipt, bincode::config::standard()).expect("bincode");
+        let encoded = SnarkReceiptFixture::plonk_receipt_bytes([0x5a, 0x09, 0x3a, 0x2f], "abcd");
         let result = ProofResult::SnarkPlonk(SnarkPlonkProofResult {
             proof: ZkProofResult {
                 zk_vm: ZkVm::Sp1,

@@ -55,7 +55,8 @@ pub trait Eip8130EthApiOverride {
     /// Estimates gas for a transaction.
     ///
     /// A request carrying EIP-8130 fields (account changes, calls, `nonce_key`,
-    /// expiry, or metadata) is estimated via a single read-only EIP-8130
+    /// `valid_after`/`valid_before`, or metadata) is estimated via a single
+    /// read-only EIP-8130
     /// simulation against the block state (gated on the Cobalt fork). The
     /// EIP-8130 pipeline charges deterministic, signature-independent gas, so no
     /// gas-limit binary search is needed. A plain request falls through to the

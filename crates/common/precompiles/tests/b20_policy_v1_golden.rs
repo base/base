@@ -391,6 +391,35 @@ fn golden_composite_child_ids_selector_unknown_in_v1() {
     assert_eq!(bytes, Bytes::from(IPolicyRegistry::compositePolicyChildIdsCall::SELECTOR.as_ref()));
 }
 
+#[test]
+fn golden_min_max_composite_child_policies_selector_unknown_in_v1() {
+    // MIN_COMPOSITE_CHILD_POLICIES/MAX_COMPOSITE_CHILD_POLICIES are V2-only getters — composite
+    // policies do not exist at Beryl, so their selectors must stay unknown, same as the other
+    // composite selectors above.
+    let mut s = fresh();
+    let (min_rev, min_bytes) = call_policy(
+        &mut s,
+        ADMIN,
+        IPolicyRegistry::MIN_COMPOSITE_CHILD_POLICIESCall {}.abi_encode(),
+    );
+    assert!(min_rev);
+    assert_eq!(
+        min_bytes,
+        Bytes::from(IPolicyRegistry::MIN_COMPOSITE_CHILD_POLICIESCall::SELECTOR.as_ref())
+    );
+
+    let (max_rev, max_bytes) = call_policy(
+        &mut s,
+        ADMIN,
+        IPolicyRegistry::MAX_COMPOSITE_CHILD_POLICIESCall {}.abi_encode(),
+    );
+    assert!(max_rev);
+    assert_eq!(
+        max_bytes,
+        Bytes::from(IPolicyRegistry::MAX_COMPOSITE_CHILD_POLICIESCall::SELECTOR.as_ref())
+    );
+}
+
 fn frozen_v1_abi_decode_failure(calldata: &[u8]) -> Bytes {
     let selector = calldata.first_chunk::<4>().copied().expect("calldata must carry a selector");
     let Err(error) = IPolicyRegistryV1::IPolicyRegistryCalls::abi_decode_validate(calldata) else {
@@ -1022,6 +1051,9 @@ fn v1_op_coverage_checklist(call: IPolicyRegistry::IPolicyRegistryCalls) {
         C::updateComposite(_) => covered(&[golden_update_composite_selector_unknown_in_v1]),
         C::compositePolicyChildIds(_) => {
             covered(&[golden_composite_child_ids_selector_unknown_in_v1])
+        }
+        C::MIN_COMPOSITE_CHILD_POLICIES(_) | C::MAX_COMPOSITE_CHILD_POLICIES(_) => {
+            covered(&[golden_min_max_composite_child_policies_selector_unknown_in_v1])
         }
     }
 }

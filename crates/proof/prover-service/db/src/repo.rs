@@ -1909,7 +1909,6 @@ impl ProtocolRequestPayloadParams<'_> {
                                 .intermediate_root_interval
                                 .unwrap_or_default(),
                             "l1_head_number": 0,
-                            "image_hash": ZERO_HASH,
                         },
                         "tee_kind": self.tee_kind.unwrap_or(TeeKind::AwsNitro).as_str(),
                     },
@@ -2340,6 +2339,7 @@ mod tests {
                 sequence_window: Some(50),
                 l1_head: None,
                 intermediate_root_interval: Some(5),
+                schedule_l2_block_number: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             }),
@@ -2376,6 +2376,7 @@ mod tests {
                 sequence_window: None,
                 l1_head: None,
                 intermediate_root_interval: None,
+                schedule_l2_block_number: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             }),
@@ -2392,6 +2393,7 @@ mod tests {
         assert!(!payload.contains_key("sequence_window"));
         assert!(!payload.contains_key("l1_head"));
         assert!(!payload.contains_key("intermediate_root_interval"));
+        assert!(!payload.contains_key("schedule_l2_block_number"));
     }
 
     #[test]
@@ -2458,7 +2460,7 @@ mod tests {
     fn failed_requeue_payload_match_allows_only_l1_head_fields() {
         let mut old = tee_protocol_request("tee-session");
         let mut new_l1_head = tee_protocol_request("tee-session");
-        let mut new_image_hash = tee_protocol_request("tee-session");
+        let mut new_proposer = tee_protocol_request("tee-session");
 
         let ProofRequestKind::Tee(request) = &mut old.request else {
             panic!("expected TEE request");
@@ -2474,15 +2476,14 @@ mod tests {
             "0x0202020202020202020202020202020202020202020202020202020202020202".parse().unwrap();
         request.proof.l1_head_number = 2;
 
-        let ProofRequestKind::Tee(request) = &mut new_image_hash.request else {
+        let ProofRequestKind::Tee(request) = &mut new_proposer.request else {
             panic!("expected TEE request");
         };
-        request.proof.image_hash =
-            "0x0303030303030303030303030303030303030303030303030303030303030303".parse().unwrap();
+        request.proof.proposer = "0x0303030303030303030303030303030303030303".parse().unwrap();
 
         let old = prepared_payload(old);
         let new_l1_head = prepared_payload(new_l1_head);
-        let new_image_hash = prepared_payload(new_image_hash);
+        let new_proposer = prepared_payload(new_proposer);
         let mut old_unrelated_l1_head = old.clone();
         let mut new_unrelated_l1_head = new_l1_head.clone();
 
@@ -2499,7 +2500,7 @@ mod tests {
         assert!(!request_payload_matches(&old, &new_l1_head, RequestMismatchMode::Strict,));
         assert!(!request_payload_matches(
             &old,
-            &new_image_hash,
+            &new_proposer,
             RequestMismatchMode::AllowL1HeadReplacement,
         ));
         assert!(!request_payload_matches(
@@ -2589,6 +2590,7 @@ mod tests {
                 sequence_window: None,
                 l1_head: None,
                 intermediate_root_interval: None,
+                schedule_l2_block_number: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             }),

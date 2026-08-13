@@ -769,6 +769,72 @@ impl BasePayloadBuilderCtx {
                 continue;
             }
 
+            let tx_hash = *tx.hash();
+            let mut predicate_read_failed = false;
+            let predicates_match = {
+                let db = evm.db_mut();
+                tx.validity_predicates().iter().all(|predicate| {
+                    predicate.matches_state(db).unwrap_or_else(|error| {
+                        trace!(
+                            target: "payload_builder",
+                            tx_hash = ?tx_hash,
+                            predicate = ?predicate,
+                            error = ?error,
+                            "failed to read validity predicate state"
+                        );
+                        predicate_read_failed = true;
+                        false
+                    })
+                })
+            };
+            if !predicates_match {
+                num_txs_considered += 1;
+                let ordering_position = num_txs_considered;
+                let (rejection_reason, rejection_detail) = if predicate_read_failed {
+                    (
+                        "validity_predicate_read_failed",
+                        "failed to read state required by a validity predicate",
+                    )
+                } else {
+                    (
+                        "validity_predicate_not_satisfied",
+                        "a validity predicate is not satisfied by the current build state",
+                    )
+                };
+                trace!(
+                    target: "payload_builder",
+                    tx_hash = ?tx_hash,
+                    rejection_reason,
+                    "skipping transaction with unsatisfied validity predicate"
+                );
+                self.emit_builder_decision_event(
+                    &payload_id,
+                    TransactionEventType::BuilderConsidered,
+                    tx_hash,
+                    Some(ordering_position),
+                    || BuilderConsideredEventData::new(info, limits, None),
+                );
+                self.emit_builder_decision_event(
+                    &payload_id,
+                    TransactionEventType::BuilderRejected,
+                    tx_hash,
+                    Some(ordering_position),
+                    || {
+                        BuilderRejectedEventData::new(
+                            rejection_reason,
+                            rejection_detail,
+                            false,
+                            info,
+                            limits,
+                            None,
+                        )
+                    },
+                );
+                diag.txs_rejected_other += 1;
+                best_txs.mark_invalid(tx.sender(), tx.nonce());
+                continue;
+            }
+
             if self.builder_config.manifest_precheck_enabled
                 && let Some(manifest) = tx.watch_manifest()
                 && let Err(stale) = manifest.revalidate(evm.db_mut(), block_timestamp)
@@ -807,13 +873,7 @@ impl BasePayloadBuilderCtx {
                     },
                 );
                 diag.txs_rejected_other += 1;
-                // Nonce-free replay-ID entries are independent. The upstream
-                // payload adapter invalidates by sender (not by replay ID), so
-                // marking one would suppress unrelated entries from this sender.
-                // This transaction has already been consumed from the iterator.
-                if tx.eip8130_replay_id().is_none() {
-                    best_txs.mark_invalid(tx.sender(), tx.nonce());
-                }
+                best_txs.mark_invalid(tx.sender(), tx.nonce());
                 continue;
             }
 
@@ -834,11 +894,7 @@ impl BasePayloadBuilderCtx {
                             tx_hash = ?tx.hash(),
                             "skipping EIP-8130 transaction with unschedulable payer authenticator"
                         );
-                        // Mirror the manifest pre-check above: a nonce-free replay-ID entry is
-                        // independent, so invalidating by sender would suppress unrelated entries.
-                        if tx.eip8130_replay_id().is_none() {
-                            best_txs.mark_invalid(tx.sender(), tx.nonce());
-                        }
+                        best_txs.mark_invalid(tx.sender(), tx.nonce());
                         continue;
                     }
                 },

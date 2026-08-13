@@ -15,23 +15,25 @@ use base_protocol::L2BlockInfo;
 use tokio::{
     select,
     sync::{mpsc, oneshot},
+    task::JoinError,
+    time::Interval,
 };
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 
 use crate::{
-    CancellableContext, Metrics, NodeActor, SequencerAdminQuery, UnsafePayloadGossipClient,
+    CancellableContext, Metrics, NodeActor, ResetReason, SequencerAdminQuery,
+    UnsafePayloadGossipClient,
     actors::{
         SequencerEngineClient,
-        engine::EngineClientError,
+        engine::{EngineClientError, EngineClientResult},
         sequencer::{
-            ScheduledTicker,
-            build::{PayloadBuilder, UnsealedPayloadHandle},
+            BuildPipelineState, ScheduledTicker, ShadowSequencingState,
+            build::{BuildOutcome, PayloadBuilder, UnsealedPayloadHandle},
             conductor::Conductor,
             error::SequencerActorError,
-            origin_selector::OriginSelector,
+            l1_origin::OriginSelector,
             recovery::RecoveryModeGuard,
-            seal::{PayloadSealer, SealStepOutcome},
-            shadow_cycle::{ShadowCycle, ShadowReconciliationTask},
+            seal::{PayloadSealer, SealStepError, SealStepOutcome},
         },
     },
 };
@@ -203,9 +205,9 @@ where
 
     /// Schedules the initial engine reset request and waits for the unsafe head to be updated.
     ///
-    /// If the EL is still syncing (snap sync in progress), the engine will defer the reset and
-    /// return [`EngineClientError::ELSyncing`]. In that case we wait one block time and retry,
-    /// so we never send a `forkchoice_updated` that would abort reth's in-progress EL sync.
+    /// If EL sync or canonical catch-up is still in progress, the engine will defer the reset and
+    /// return [`EngineClientError::ELSyncing`]. In that case we wait one block time and retry. This
+    /// avoids aborting reth's in-progress EL sync and activating before canonical catch-up.
     ///
     /// Admin API queries are serviced throughout — both during reset attempts and during the
     /// backoff sleep — so that control can reach the sequencer while EL sync is in progress.
@@ -224,14 +226,18 @@ where
                 }
                 result = async {
                     if shadow_cycle_coordinated {
-                        engine_client.reset_engine_forkchoice_coordinated().await
+                        engine_client
+                            .reset_engine_forkchoice_coordinated(ResetReason::ShadowCycle)
+                            .await
                     } else {
-                        engine_client.reset_engine_forkchoice().await
+                        engine_client
+                            .reset_engine_forkchoice(ResetReason::SequencerStartup)
+                            .await
                     }
                 } => match result {
                     Ok(()) => return Ok(()),
                     Err(EngineClientError::ELSyncing) => {
-                        info!(target: "sequencer", "EL sync in progress; deferring initial engine reset");
+                        info!(target: "sequencer", "EL sync or canonical catch-up in progress; deferring initial engine reset");
                     }
                     Err(err) => {
                         error!(target: "sequencer", error = ?err, "Failed to send reset request to engine");
@@ -261,46 +267,49 @@ where
     /// reconciliation attempt, or actor-side cycle state from before the reset is stale.
     async fn reset_shadow_cycle_after_admin(
         &mut self,
-        shadow_cycle: &mut Option<ShadowCycle>,
-        reconciliation_task: &mut Option<ShadowReconciliationTask>,
-        next_payload_to_seal: &mut Option<UnsealedPayloadHandle>,
-        pending_build_parent: &mut Option<L2BlockInfo>,
+        shadow: &mut Option<ShadowSequencingState>,
+        pipeline: &mut BuildPipelineState,
         build_ticker: &mut ScheduledTicker,
     ) -> Result<(), SequencerActorError> {
-        if let Some(task) = reconciliation_task.take() {
-            task.abort();
+        // A reset discards the in-flight seal outright, so resolve any pending stop response
+        // now rather than leaving it stranded until actor teardown.
+        if let Some(tx) = self.pending_stop.take() {
+            let result = self.resolve_stop_head().await;
+            if tx.send(result).is_err() {
+                warn!(target: "sequencer", "Failed to send deferred stop_sequencer response");
+            }
+        }
+        if let Some(shadow_state) = shadow.as_mut() {
+            shadow_state.abort_reconciliation();
         }
         self.sealer = None;
-        pending_build_parent.take();
+        pipeline.pending_build_parent = None;
         let canonical_head = self.engine_client.get_unsafe_head().await?;
-        *shadow_cycle = Some(ShadowCycle::building(canonical_head)?);
-        *next_payload_to_seal =
-            if self.is_active { self.builder.build_on(canonical_head).await? } else { None };
-        if self.is_active && next_payload_to_seal.is_none() {
-            build_ticker.reset_immediately();
+        *shadow = Some(ShadowSequencingState::new(canonical_head)?);
+        if self.is_active {
+            let outcome = self.builder.build_on(canonical_head).await?;
+            Self::apply_eager_build_outcome(outcome, pipeline, build_ticker);
+        } else {
+            pipeline.next_payload_to_seal = None;
         }
         Ok(())
     }
 
-    /// Validates a private insertion acknowledgement, cancelling the node on cycle corruption.
-    fn validate_shadow_insertion(
+    /// Validates and records a private insertion acknowledgement against the current shadow
+    /// cycle, cancelling the node on cycle corruption. Returns whether the cycle has reached its
+    /// private block limit and reconciliation should start.
+    fn on_shadow_insertion(
         &self,
-        cycle: ShadowCycle,
-        inserted_head: L2BlockInfo,
-    ) -> Result<(), EngineClientError> {
-        let sealer = self.sealer.as_ref().expect("inserted payload must have an active sealer");
-        cycle
-            .validate_insertion(sealer, inserted_head)
-            .inspect_err(|_| self.cancellation_token.cancel())
-    }
-
-    /// Advances a private cycle, cancelling the node if its expected progression is violated.
-    fn record_shadow_insertion(
-        &self,
-        cycle: &mut ShadowCycle,
+        shadow_state: &mut ShadowSequencingState,
         inserted_head: L2BlockInfo,
     ) -> Result<bool, EngineClientError> {
-        cycle
+        let sealer = self.sealer.as_ref().expect("inserted payload must have an active sealer");
+        shadow_state
+            .cycle
+            .validate_insertion(sealer, inserted_head)
+            .inspect_err(|_| self.cancellation_token.cancel())?;
+        shadow_state
+            .cycle
             .record_insertion(
                 inserted_head,
                 self.shadow_blocks_per_cycle.expect("shadow mode checked").get(),
@@ -323,7 +332,7 @@ where
             + Duration::from_millis(self.rollup_config.l2_block_timestamp_millis(block_number));
         let block_interval = if self
             .rollup_config
-            .is_zenith_active(self.rollup_config.l2_block_timestamp(block_number))
+            .is_denim_active(self.rollup_config.l2_block_timestamp(block_number))
         {
             Duration::from_millis(RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS)
         } else {
@@ -339,6 +348,252 @@ where
         last_seal_duration: Duration,
     ) -> SystemTime {
         self.block_seal_target(block_number.saturating_add(1), last_seal_duration)
+    }
+
+    /// Handles one admin API query received while the main loop is running, applying any
+    /// resulting shadow-cycle reset and active-state bookkeeping.
+    async fn handle_admin_query_tick(
+        &mut self,
+        pipeline: &mut BuildPipelineState,
+        shadow: &mut Option<ShadowSequencingState>,
+        build_ticker: &mut ScheduledTicker,
+        query: SequencerAdminQuery,
+    ) -> Result<(), SequencerActorError> {
+        let active_before = self.is_active;
+
+        let reset_requested =
+            self.handle_admin_query(&mut pipeline.next_payload_to_seal, query).await;
+
+        if reset_requested && self.is_shadow_sequencer() {
+            self.reset_shadow_cycle_after_admin(shadow, pipeline, build_ticker).await?;
+        }
+
+        if active_before && !self.is_active {
+            pipeline.pending_build_parent = None;
+        }
+
+        if !active_before && self.is_active {
+            // Clear the previous completion timestamp so the first block after a stop->start
+            // cycle does not record the entire idle period as sequencer_block_to_block_duration.
+            pipeline.clear_for_active_transition();
+            build_ticker.reset_l1_origin_retry_budget();
+            build_ticker.reset_immediately();
+        }
+
+        Ok(())
+    }
+
+    /// Handles the outcome of a completed reconciliation attempt.
+    async fn handle_reconciliation_result(
+        &mut self,
+        pipeline: &mut BuildPipelineState,
+        shadow: &mut Option<ShadowSequencingState>,
+        reconciliation_ticker: &mut Interval,
+        build_ticker: &mut ScheduledTicker,
+        task_result: Result<EngineClientResult<Option<L2BlockInfo>>, JoinError>,
+    ) -> Result<(), SequencerActorError> {
+        if let Some(shadow_state) = shadow.as_mut() {
+            shadow_state.reconciliation_task = None;
+        }
+        let result = task_result.map_err(|error| {
+            self.cancellation_token.cancel();
+            EngineClientError::ResponseError(format!("shadow reconciliation task failed: {error}"))
+        })?;
+        match result {
+            Ok(Some(head)) => {
+                shadow
+                    .as_mut()
+                    .expect("shadow reconciliation requires cycle state")
+                    .cycle
+                    .reconcile(head)?;
+                if self.is_active {
+                    let outcome = self.builder.build_on(head).await?;
+                    Self::apply_eager_build_outcome(outcome, pipeline, build_ticker);
+                }
+            }
+            // The gate is not ready until every canonical P2P payload has arrived. Back off one
+            // block interval instead of hot-looping reconciliation RPCs.
+            Ok(None) => reconciliation_ticker
+                .reset_after(Duration::from_secs(self.rollup_config.block_time)),
+            Err(err) => {
+                error!(target: "sequencer", error = ?err, "Shadow reconciliation failed");
+                self.cancellation_token.cancel();
+                return Err(err.into());
+            }
+        }
+        Ok(())
+    }
+
+    /// Handles the outcome of one seal pipeline step.
+    async fn handle_seal_step_result(
+        &mut self,
+        pipeline: &mut BuildPipelineState,
+        shadow: &mut Option<ShadowSequencingState>,
+        reconciliation_ticker: &mut Interval,
+        build_ticker: &mut ScheduledTicker,
+        result: Result<SealStepOutcome, SealStepError>,
+    ) -> Result<(), SequencerActorError> {
+        match result {
+            Ok(SealStepOutcome::Inserted(inserted_head)) => {
+                let reconcile = match shadow.as_mut() {
+                    Some(shadow_state) => self.on_shadow_insertion(shadow_state, inserted_head)?,
+                    None => false,
+                };
+
+                if let Some(sealer) = self.sealer.take() {
+                    Metrics::sequencer_seal_pipeline_duration().record(sealer.started_at.elapsed());
+                }
+
+                if reconcile {
+                    pipeline.next_payload_to_seal = None;
+                    reconciliation_ticker.reset_immediately();
+                }
+
+                if let Some(elapsed) = pipeline.record_block_complete() {
+                    Metrics::sequencer_block_to_block_duration().record(elapsed);
+                }
+
+                // Respond to a pending stop_sequencer request now that the in-flight seal is
+                // complete.
+                if let Some(tx) = self.pending_stop.take() {
+                    let result = self.resolve_stop_head().await;
+                    if tx.send(result).is_err() {
+                        warn!(target: "sequencer", "Failed to send deferred stop_sequencer response");
+                    }
+                }
+
+                let awaiting_reconciliation =
+                    shadow.as_ref().is_some_and(ShadowSequencingState::is_awaiting_reconciliation);
+                if self.is_active && !awaiting_reconciliation {
+                    // Queue the acknowledged parent instead of starting its child build here. Its
+                    // timestamp is a hard lower bound for the steady-state child build because
+                    // variable getPayload durations can make insertion complete early.
+                    let parent_millis = self
+                        .rollup_config
+                        .l2_block_timestamp_millis(inserted_head.block_info.number);
+                    pipeline.pending_build_parent = Some(inserted_head);
+                    build_ticker.reset_at(UNIX_EPOCH + Duration::from_millis(parent_millis));
+                }
+            }
+            Ok(SealStepOutcome::Pending) => {}
+            Err(err) => {
+                let step = self.sealer.as_ref().map(|s| s.state.label()).unwrap_or("unknown");
+                warn!(target: "sequencer", error = ?err, step, "Seal step failed, will retry");
+            }
+        }
+        Ok(())
+    }
+
+    /// Stores a build started outside the normal ticker path, scheduling only outcomes that need
+    /// another attempt. A ready payload keeps the ticker target already owned by the caller.
+    fn apply_eager_build_outcome(
+        outcome: BuildOutcome<UnsealedPayloadHandle>,
+        pipeline: &mut BuildPipelineState,
+        build_ticker: &mut ScheduledTicker,
+    ) {
+        match outcome {
+            BuildOutcome::Ready(payload) => {
+                build_ticker.reset_l1_origin_retry_budget();
+                pipeline.next_payload_to_seal = Some(payload);
+            }
+            BuildOutcome::Deferred | BuildOutcome::AwaitingL1Origin => {
+                pipeline.next_payload_to_seal = None;
+                build_ticker.schedule_l1_origin_retry();
+            }
+        }
+    }
+
+    /// Stores and schedules the result of a ticker-driven build attempt.
+    fn schedule_build_outcome(
+        &self,
+        outcome: BuildOutcome<UnsealedPayloadHandle>,
+        pipeline: &mut BuildPipelineState,
+        build_ticker: &mut ScheduledTicker,
+    ) {
+        match outcome {
+            BuildOutcome::Ready(payload) => {
+                let target =
+                    self.block_seal_target(payload.block_number(), pipeline.last_seal_duration);
+                build_ticker.reset_l1_origin_retry_budget();
+                pipeline.next_payload_to_seal = Some(payload);
+                build_ticker.schedule_after_build(Some(target));
+            }
+            BuildOutcome::Deferred | BuildOutcome::AwaitingL1Origin => {
+                pipeline.next_payload_to_seal = None;
+                build_ticker.schedule_l1_origin_retry();
+            }
+        }
+    }
+
+    /// Starts building the queued child on its acknowledged parent. Does not start this build
+    /// before its inserted parent's timestamp: if it is already past, the ticker is immediately
+    /// runnable.
+    async fn start_pending_child_build(
+        &mut self,
+        pipeline: &mut BuildPipelineState,
+        build_ticker: &mut ScheduledTicker,
+    ) -> Result<(), SequencerActorError> {
+        let parent = pipeline.pending_build_parent.take().expect("caller checked Some");
+        let outcome = self.builder.build_on(parent).await?;
+        self.schedule_build_outcome(outcome, pipeline, build_ticker);
+        Ok(())
+    }
+
+    /// Advances the in-flight pre-built payload through sealing, or rebuilds on the current
+    /// unsafe head if the seal attempt discarded it as stale.
+    async fn advance_seal_or_rebuild(
+        &mut self,
+        pipeline: &mut BuildPipelineState,
+        build_ticker: &mut ScheduledTicker,
+    ) -> Result<(), SequencerActorError> {
+        let handle = pipeline.next_payload_to_seal.take().expect("caller checked Some");
+        let handle_block_number = handle.block_number();
+        match self.try_seal_handle(handle).await? {
+            Some((new_sealer, dur)) => {
+                pipeline.last_seal_duration = dur;
+                self.sealer = Some(new_sealer);
+                let target =
+                    self.next_block_seal_target(handle_block_number, pipeline.last_seal_duration);
+                // Do not call build() here. The next payload is built after the engine
+                // acknowledges insertion of the sealed payload.
+                build_ticker.reset_at(target);
+            }
+            None => {
+                // Stale build or non-fatal seal error: rebuild immediately on the current unsafe
+                // head.
+                let outcome = self.builder.build().await?;
+                self.schedule_build_outcome(outcome, pipeline, build_ticker);
+            }
+        }
+        Ok(())
+    }
+
+    /// Builds fresh on the current unsafe head.
+    async fn build_fresh(
+        &mut self,
+        pipeline: &mut BuildPipelineState,
+        build_ticker: &mut ScheduledTicker,
+    ) -> Result<(), SequencerActorError> {
+        let outcome = self.builder.build().await?;
+        self.schedule_build_outcome(outcome, pipeline, build_ticker);
+        Ok(())
+    }
+
+    /// Dispatches one build-ticker tick to whichever of the three build states is active:
+    /// a queued child build gated on its parent's timestamp, an in-flight payload ready to seal,
+    /// or neither, in which case a fresh build is started on the current unsafe head.
+    async fn handle_build_tick(
+        &mut self,
+        pipeline: &mut BuildPipelineState,
+        build_ticker: &mut ScheduledTicker,
+    ) -> Result<(), SequencerActorError> {
+        if pipeline.pending_build_parent.is_some() {
+            self.start_pending_child_build(pipeline, build_ticker).await
+        } else if pipeline.next_payload_to_seal.is_some() {
+            self.advance_seal_or_rebuild(pipeline, build_ticker).await
+        } else {
+            self.build_fresh(pipeline, build_ticker).await
+        }
     }
 }
 
@@ -373,108 +628,53 @@ where
 
         self.update_metrics();
 
-        let mut next_payload_to_seal: Option<UnsealedPayloadHandle> = None;
-        // Acknowledged parent whose child build is gated on the parent's timestamp.
-        let mut pending_build_parent = None;
+        let mut pipeline = BuildPipelineState::default();
 
         // Reset the engine state prior to beginning block building.
         // Admin API queries are serviced during this phase (see schedule_initial_reset).
-        self.schedule_initial_reset(&mut next_payload_to_seal).await?;
-        let mut shadow_cycle = if self.is_shadow_sequencer() {
-            Some(ShadowCycle::building(self.engine_client.get_unsafe_head().await?)?)
+        self.schedule_initial_reset(&mut pipeline.next_payload_to_seal).await?;
+        let mut shadow: Option<ShadowSequencingState> = if self.is_shadow_sequencer() {
+            Some(ShadowSequencingState::new(self.engine_client.get_unsafe_head().await?)?)
         } else {
             None
         };
-        let mut reconciliation_task: Option<ShadowReconciliationTask> = None;
         // Reconciliation readiness is polled at block cadence. Skipping missed ticks avoids a
         // retry burst after the actor is delayed by sealing or engine work.
         let mut reconciliation_ticker =
             tokio::time::interval(Duration::from_secs(self.rollup_config.block_time));
         reconciliation_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        let mut last_seal_duration = Duration::from_secs(0);
-
-        let mut last_block_complete_at: Option<Instant> = None;
 
         loop {
             select! {
                 biased;
                 _ = self.cancellation_token.cancelled() => {
-                    if let Some(task) = reconciliation_task.take() {
-                        task.abort();
+                    if let Some(shadow_state) = shadow.as_mut() {
+                        shadow_state.abort_reconciliation();
                     }
                     info!(target: "sequencer", "Received shutdown signal. Exiting sequencer task.");
                     return Ok(());
                 }
                 Some(query) = self.admin_api_rx.recv() => {
-                    let active_before = self.is_active;
-
-                    let reset_requested = self
-                        .handle_admin_query(&mut next_payload_to_seal, query)
-                        .await;
-
-                    if reset_requested && self.is_shadow_sequencer() {
-                        self.reset_shadow_cycle_after_admin(
-                            &mut shadow_cycle,
-                            &mut reconciliation_task,
-                            &mut next_payload_to_seal,
-                            &mut pending_build_parent,
-                            &mut build_ticker,
-                        ).await?;
-                    }
-
-                    if active_before && !self.is_active {
-                        pending_build_parent.take();
-                    }
-
-                    if !active_before && self.is_active {
-                        pending_build_parent.take();
-                        // Clear the previous completion timestamp so the first block
-                        // after a stop->start cycle does not record the entire idle
-                        // period as sequencer_block_to_block_duration.
-                        last_block_complete_at = None;
-                        build_ticker.reset_immediately();
-                    }
+                    self.handle_admin_query_tick(&mut pipeline, &mut shadow, &mut build_ticker, query).await?;
                 }
-                _ = reconciliation_ticker.tick(), if shadow_cycle.and_then(ShadowCycle::reconciliation_target).is_some() && reconciliation_task.is_none() && self.sealer.is_none() => {
-                    reconciliation_task = Some(
-                        shadow_cycle
-                            .expect("reconciliation target checked")
-                            .start_reconciliation(Arc::clone(&self.engine_client))?,
-                    );
+                _ = reconciliation_ticker.tick(), if shadow.as_ref().is_some_and(|s| s.is_awaiting_reconciliation() && s.reconciliation_task.is_none()) && self.sealer.is_none() => {
+                    let shadow_state = shadow.as_mut().expect("reconciliation target checked");
+                    shadow_state.reconciliation_task =
+                        Some(shadow_state.cycle.start_reconciliation(Arc::clone(&self.engine_client))?);
                 }
                 task_result = async {
-                    match reconciliation_task.as_mut() {
+                    match shadow.as_mut().and_then(|s| s.reconciliation_task.as_mut()) {
                         Some(task) => task.await,
                         None => std::future::pending().await,
                     }
                 } => {
-                    reconciliation_task = None;
-                    let result = task_result.map_err(|error| {
-                        self.cancellation_token.cancel();
-                        EngineClientError::ResponseError(format!(
-                            "shadow reconciliation task failed: {error}"
-                        ))
-                    })?;
-                    match result {
-                        Ok(Some(head)) => {
-                            shadow_cycle.as_mut().expect("shadow reconciliation requires cycle state").reconcile(head)?;
-                            if self.is_active {
-                                next_payload_to_seal = self.builder.build_on(head).await?;
-                                if next_payload_to_seal.is_none() {
-                                    build_ticker.reset_immediately();
-                                }
-                            }
-                        }
-                        // The gate is not ready until every canonical P2P payload has arrived.
-                        // Back off one block interval instead of hot-looping reconciliation RPCs.
-                        Ok(None) => reconciliation_ticker
-                            .reset_after(Duration::from_secs(self.rollup_config.block_time)),
-                        Err(err) => {
-                            error!(target: "sequencer", error = ?err, "Shadow reconciliation failed");
-                            self.cancellation_token.cancel();
-                            return Err(err.into());
-                        }
-                    }
+                    self.handle_reconciliation_result(
+                        &mut pipeline,
+                        &mut shadow,
+                        &mut reconciliation_ticker,
+                        &mut build_ticker,
+                        task_result,
+                    ).await?;
                 }
                 // Drive the seal pipeline (commit → gossip → insert) one step per iteration.
                 // The ticker arm is gated on `sealer.is_none()` so the two are mutually
@@ -489,61 +689,13 @@ where
                         None => std::future::pending().await,
                     }
                 } => {
-                    match result {
-                        Ok(SealStepOutcome::Inserted(inserted_head)) => {
-                            if self.is_shadow_sequencer() {
-                                let cycle = shadow_cycle.expect("shadow mode has cycle state");
-                                self.validate_shadow_insertion(cycle, inserted_head)?;
-                            }
-                            if let Some(sealer) = self.sealer.take() {
-                                Metrics::sequencer_seal_pipeline_duration()
-                                    .record(sealer.started_at.elapsed());
-                            }
-                            if self.is_shadow_sequencer() {
-                                let cycle = shadow_cycle.as_mut().expect("shadow mode has cycle state");
-                                let reconcile = self.record_shadow_insertion(cycle, inserted_head)?;
-                                if reconcile {
-                                    next_payload_to_seal = None;
-                                    reconciliation_ticker.reset_immediately();
-                                }
-                            }
-
-                            let now = Instant::now();
-                            if let Some(prev) = last_block_complete_at {
-                                Metrics::sequencer_block_to_block_duration()
-                                    .record(now.duration_since(prev));
-                            }
-                            last_block_complete_at = Some(now);
-
-                            // Respond to a pending stop_sequencer request now that the
-                            // in-flight seal is complete.
-                            if let Some(tx) = self.pending_stop.take() {
-                                let result = self.resolve_stop_head().await;
-                                if tx.send(result).is_err() {
-                                    warn!(target: "sequencer", "Failed to send deferred stop_sequencer response");
-                                }
-                            }
-                            if self.is_active
-                                && shadow_cycle
-                                    .and_then(ShadowCycle::reconciliation_target)
-                                    .is_none()
-                            {
-                                // Queue the acknowledged parent instead of starting its child
-                                // here. Its timestamp is a hard lower bound for the steady-state
-                                // child build because variable getPayload durations can make
-                                // insertion complete early.
-                                let parent_millis =
-                                    self.rollup_config.l2_block_timestamp_millis(inserted_head.block_info.number);
-                                pending_build_parent = Some(inserted_head);
-                                build_ticker.reset_at(UNIX_EPOCH + Duration::from_millis(parent_millis));
-                            }
-                        }
-                        Ok(SealStepOutcome::Pending) => {}
-                        Err(err) => {
-                            let step = self.sealer.as_ref().map(|s| s.state.label()).unwrap_or("unknown");
-                            warn!(target: "sequencer", error = ?err, step, "Seal step failed, will retry");
-                        }
-                    }
+                    self.handle_seal_step_result(
+                        &mut pipeline,
+                        &mut shadow,
+                        &mut reconciliation_ticker,
+                        &mut build_ticker,
+                        result,
+                    ).await?;
                 }
                 // Tick is gated on `self.sealer.is_none()` to make the ticker and sealer arms
                 // mutually exclusive. In catch-up mode reset_immediately() fires every tick,
@@ -551,78 +703,8 @@ where
                 // is Poll::Pending. Disabling the ticker while a seal is in-flight lets the
                 // sealer arm complete all three steps (commit → gossip → insert) before the
                 // next block starts, so the canonical head actually advances.
-                _ = build_ticker.tick(), if self.is_active && self.sealer.is_none() && shadow_cycle.and_then(ShadowCycle::reconciliation_target).is_none() => {
-                    if let Some(parent) = pending_build_parent.take() {
-                        // Do not start a steady-state child build before its inserted parent's
-                        // timestamp. If it is already past, the ticker is immediately runnable.
-                        next_payload_to_seal = self.builder.build_on(parent).await?;
-                        if let Some(ref payload) = next_payload_to_seal {
-                            let next_block_number = payload
-                                .attributes_with_parent
-                                .parent()
-                                .block_info
-                                .number
-                                .saturating_add(1);
-                            let next_block_time =
-                                self.block_seal_target(next_block_number, last_seal_duration);
-                            build_ticker.reset_at(next_block_time);
-                        } else {
-                            // Retry through build() so the next attempt refreshes the unsafe head
-                            // instead of retaining a parent that may have become stale.
-                            build_ticker.reset_immediately();
-                        }
-                    } else if let Some(handle) = next_payload_to_seal.take() {
-                        let handle_block_number = handle
-                            .attributes_with_parent
-                            .parent()
-                            .block_info
-                            .number
-                            .saturating_add(1);
-                        match self.try_seal_handle(handle).await? {
-                            Some((new_sealer, dur)) => {
-                                last_seal_duration = dur;
-                                self.sealer = Some(new_sealer);
-                                let next_block_time =
-                                    self.next_block_seal_target(handle_block_number, last_seal_duration);
-                                build_ticker.reset_at(next_block_time);
-                                // Do not call build() here. The next payload is built after the
-                                // engine acknowledges insertion of the sealed payload.
-                            }
-                            None => {
-                                // Stale build or non-fatal seal error: rebuild immediately on
-                                // the current unsafe head.
-                                next_payload_to_seal = self.builder.build().await?;
-                                if let Some(ref payload) = next_payload_to_seal {
-                                    let next_block_number = payload
-                                        .attributes_with_parent
-                                        .parent()
-                                        .block_info
-                                        .number
-                                        .saturating_add(1);
-                                    let next_block_time =
-                                        self.block_seal_target(next_block_number, last_seal_duration);
-                                    build_ticker.reset_at(next_block_time);
-                                } else {
-                                    build_ticker.reset_immediately();
-                                }
-                            }
-                        }
-                    } else {
-                        next_payload_to_seal = self.builder.build().await?;
-                        if let Some(ref payload) = next_payload_to_seal {
-                            let next_block_number = payload
-                                .attributes_with_parent
-                                .parent()
-                                .block_info
-                                .number
-                                .saturating_add(1);
-                            let next_block_time =
-                                self.block_seal_target(next_block_number, last_seal_duration);
-                            build_ticker.reset_at(next_block_time);
-                        } else {
-                            build_ticker.reset_immediately();
-                        }
-                    }
+                _ = build_ticker.tick(), if self.is_active && self.sealer.is_none() && shadow.as_ref().is_none_or(|s| !s.is_awaiting_reconciliation()) => {
+                    self.handle_build_tick(&mut pipeline, &mut build_ticker).await?;
                 }
             }
         }

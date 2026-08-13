@@ -37,7 +37,9 @@ pub struct ProofFinalizeRequest {
 
 impl ProofFinalizeRequest {
     /// Session ID namespace for proofs requested via basectl.
-    const SESSION_NAMESPACE: &'static [u8] = b"basectl";
+    ///
+    /// v2 prevents reuse of prover-service or SP1 journals created before schedule pinning.
+    const SESSION_NAMESPACE: &'static [u8] = b"basectl/v2";
 
     /// Session ID proof subtype for compressed SP1 proofs.
     const SESSION_SUBTYPE: &'static str = "zk/sp1/compressed";
@@ -74,6 +76,7 @@ impl ProofFinalizeRequest {
                     sequence_window: self.sequence_window,
                     l1_head: self.l1_head,
                     intermediate_root_interval: self.intermediate_root_interval,
+                    schedule_l2_block_number: None,
                     zk_vm: ZkVm::Sp1,
                     zk_backend: ZkBackend::Cluster,
                 }),

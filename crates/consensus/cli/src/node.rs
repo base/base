@@ -455,6 +455,7 @@ impl ConsensusNodeArgs {
             trust_rpc: self.config.l1_rpc_args.l1_trust_rpc,
             beacon: self.config.l1_rpc_args.l1_beacon.clone(),
             rpc_url: self.config.l1_rpc_args.l1_eth_rpc.clone(),
+            rpc_timeout: self.config.l1_rpc_args.l1_rpc_timeout,
             slot_duration_override: self.config.l1_rpc_args.l1_slot_duration_override,
             verifier_l1_confs: self.config.l1_rpc_args.l1_verifier_confs,
             da_batcher_sender_override: self.config.l1_rpc_args.l1_da_batcher_sender_override,
@@ -480,6 +481,7 @@ impl ConsensusNodeArgs {
                 &cfg,
                 self.chain.l2_chain_id.into(),
                 Some(self.config.l1_rpc_args.l1_eth_rpc.clone()),
+                self.config.l1_rpc_args.l1_rpc_timeout,
                 genesis_signer,
             )
             .await?;
@@ -490,6 +492,7 @@ impl ConsensusNodeArgs {
             l2_url: l2_engine_rpc,
             l2_jwt_secret: jwt_secret,
             l1_url: self.config.l1_rpc_args.l1_eth_rpc.clone(),
+            l1_rpc_timeout: self.config.l1_rpc_args.l1_rpc_timeout,
             mode: self.config.node_mode,
         };
 
@@ -524,8 +527,9 @@ impl ConsensusNodeArgs {
         signal_config: &UpgradeSignalConfig,
         upgrade_signal_l1_rpc: Option<&Url>,
     ) -> eyre::Result<()> {
-        let reader = signal_config.reader(L1RpcProvider::new_http(
+        let reader = signal_config.reader(L1RpcProvider::new_http_with_timeout(
             self.resolved_upgrade_signal_l1_rpc(upgrade_signal_l1_rpc),
+            self.config.l1_rpc_args.l1_rpc_timeout,
         ));
         let schedule = signal_config
             .read_validated_schedule(
@@ -722,13 +726,13 @@ mod tests {
 
     fn upgrade_schedule(signals: &[(BaseUpgrade, u64)]) -> UpgradeSignalSchedule {
         UpgradeSignalSchedule::new(
+            1,
             signals
                 .iter()
                 .map(|(upgrade_id, activation_timestamp)| base_upgrade_signal::UpgradeSignal {
                     upgrade_id: *upgrade_id,
                     activation_timestamp: *activation_timestamp,
                     protocol_version: U256::from(7),
-                    l1_block_number: 1,
                 })
                 .collect(),
         )

@@ -116,7 +116,10 @@ mod tests {
         __packing_b20_asset_extension_storage, B20AssetExtensionStorage, B20AssetInit,
         B20AssetStorage, slots,
     };
-    use crate::{AssetAccounting, B20CoreStorage, B20TokenRole, TokenAccounting};
+    use crate::{
+        AssetAccounting, B20CoreStorage, B20PolicyType, B20TokenRole, TokenAccounting,
+        TransferPolicyIds,
+    };
 
     const TOKEN: Address = address!("000000000000000000000000000000000000b021");
     const B20_ROOT: U256 =
@@ -231,6 +234,31 @@ mod tests {
                 "clear_pending_multiplier_and_effective_at must write the shared slot exactly once"
             );
             assert_eq!(ctx.sload(TOKEN, pending_slot).unwrap(), reserved);
+        });
+    }
+
+    #[test]
+    fn transfer_policy_ids_reads_shared_slot_once() {
+        let (mut storage, _) = setup_storage();
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut token = B20AssetStorage::from_address(TOKEN, ctx);
+            // Distinct id per lane so a mis-extraction can't accidentally pass.
+            TokenAccounting::set_policy_id(&mut token, B20PolicyType::TransferSender.id(), 11)
+                .unwrap();
+            TokenAccounting::set_policy_id(&mut token, B20PolicyType::TransferReceiver.id(), 22)
+                .unwrap();
+            TokenAccounting::set_policy_id(&mut token, B20PolicyType::TransferExecutor.id(), 33)
+                .unwrap();
+
+            let before = ctx.counter_sload();
+            let ids = TokenAccounting::transfer_policy_ids(&token).unwrap();
+            assert_eq!(
+                ctx.counter_sload() - before,
+                1,
+                "all three transfer policy ids must be fetched in a single SLOAD"
+            );
+            assert_eq!(ids, TransferPolicyIds { sender: 11, receiver: 22, executor: 33 });
         });
     }
 

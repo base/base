@@ -1,0 +1,83 @@
+# Standalone user-funded prover stack.
+#
+# Runs only the prover trio (Postgres, prover-service, zk-host) against
+# user-provided RPC endpoints and a funded Succinct Network requester key,
+# with no devnet chain.
+#
+# Required environment (validated by `just prover up <network>`):
+#   PROVER_NETWORK, L1_NODE_ADDRESS, L1_BEACON_ADDRESS, L2_NODE_ADDRESS,
+#   BASE_CONSENSUS_ADDRESS, NETWORK_PRIVATE_KEY
+#
+# Host-local RPCs must be addressed as http://host.docker.internal:<port>,
+# not localhost.
+
+services:
+  prover-service-postgres:
+    image: postgres:17-alpine
+    environment:
+      - POSTGRES_DB=prover
+      - POSTGRES_USER=prover
+      - POSTGRES_PASSWORD=prover
+    volumes:
+      # Persisted across restarts; never touched by `just devnet down`.
+      - ../../.zk-prover/${PROVER_NETWORK:?PROVER_NETWORK must be set}/postgres:/var/lib/postgresql/data
+      - ../../crates/proof/prover-service/db/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prover -d prover"]
+      interval: 250ms
+      timeout: 1s
+      retries: 240
+      start_period: 250ms
+    restart: unless-stopped
+
+  base-prover-service:
+    image: base-prover-service:local
+    depends_on:
+      prover-service-postgres:
+        condition: service_healthy
+    ports:
+      # Requester RPC. The worker RPC (9001) and Postgres stay internal.
+      - "${PROVER_SERVICE_RPC_PORT:-9000}:9000"
+    environment:
+      - RPC_LISTEN_ADDR=0.0.0.0:9000
+      - WORKER_RPC_LISTEN_ADDR=0.0.0.0:9001
+      - RUST_LOG=${RUST_LOG:-}
+      - POSTGRES_HOST=prover-service-postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=prover
+      - POSTGRES_USER=prover
+      - POSTGRES_PASSWORD=prover
+      - POSTGRES_SSLMODE=disable
+      - OTEL_SERVICE_NAME=base-prover-service
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/9000"]
+      interval: 250ms
+      timeout: 1s
+      retries: 240
+      start_period: 250ms
+    restart: unless-stopped
+
+  base-prover-zk-host:
+    image: base-prover-zk-host:local
+    depends_on:
+      base-prover-service:
+        condition: service_healthy
+    extra_hosts:
+      # Let the worker reach RPCs served from the Docker host.
+      - "host.docker.internal:host-gateway"
+    environment:
+      - PROVER_SERVICE_ENDPOINT=http://base-prover-service:9001
+      - PROVER_WORKER_ID=${PROVER_NETWORK:?PROVER_NETWORK must be set}-zk-host
+      # User-provided RPC endpoints and requester key.
+      - L1_NODE_ADDRESS=${L1_NODE_ADDRESS:-}
+      - L1_BEACON_ADDRESS=${L1_BEACON_ADDRESS:-}
+      - L2_NODE_ADDRESS=${L2_NODE_ADDRESS:-}
+      - BASE_CONSENSUS_ADDRESS=${BASE_CONSENSUS_ADDRESS:-}
+      - NETWORK_PRIVATE_KEY=${NETWORK_PRIVATE_KEY:-}
+      - USE_KMS_REQUESTER=${USE_KMS_REQUESTER:-false}
+      - SP1_NETWORK_TIMEOUT_HOURS=${SP1_NETWORK_TIMEOUT_HOURS:-24}
+      # Base mainnet/Sepolia sequencing window (L1 blocks); devnet uses 50.
+      - DEFAULT_SEQUENCE_WINDOW=${DEFAULT_SEQUENCE_WINDOW:-3600}
+      - RUST_LOG=${RUST_LOG:-}
+      - OTEL_SERVICE_NAME=base-prover-zk-host
+    restart: unless-stopped

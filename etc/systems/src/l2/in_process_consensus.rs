@@ -192,6 +192,7 @@ impl InProcessConsensus {
             trust_rpc: true,
             beacon: config.l1_beacon_url,
             rpc_url: config.l1_rpc_url.clone(),
+            rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,
             slot_duration_override: config.l1_slot_duration_override,
             verifier_l1_confs: config.verifier_l1_confs,
             da_batcher_sender_override: None,
@@ -202,6 +203,7 @@ impl InProcessConsensus {
             l2_url: config.l2_engine_url,
             l2_jwt_secret: config.jwt_secret,
             l1_url: config.l1_rpc_url,
+            l1_rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,
             mode: config.mode,
         };
 
@@ -241,6 +243,7 @@ impl InProcessConsensus {
             builder = builder.with_sequencer_config(SequencerConfig {
                 sequencer_stopped: config.sequencer_stopped,
                 shadow_blocks_per_cycle: config.shadow_blocks_per_cycle,
+                l1_rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,
                 ..Default::default()
             });
         }

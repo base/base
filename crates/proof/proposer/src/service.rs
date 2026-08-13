@@ -63,7 +63,6 @@ impl ProposerService {
             anchor_state_registry = %config.anchor_state_registry_addr,
             dispute_game_factory = %config.dispute_game_factory_addr,
             game_type = config.game_type,
-            tee_image_hash = %config.tee_image_hash,
             prover_timeout = ?config.prover_timeout,
             poll_interval = ?config.poll_interval,
             rpc_timeout = ?config.rpc_timeout,
@@ -224,7 +223,6 @@ impl ProposerService {
             intermediate_block_interval,
             game_type: config.game_type,
             proposer_address: proposer_address.unwrap_or_default(),
-            tee_image_hash: config.tee_image_hash,
             anchor_state_registry_address: config.anchor_state_registry_addr,
         };
         let proof_dispatcher = ProofDispatcher::new(

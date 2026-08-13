@@ -12,6 +12,8 @@ workspace = true
 
 [dependencies]
 ipnet.workspace = true
+discv5.workspace = true
+futures.workspace = true
 governor.workspace = true
 tokio-util.workspace = true
 async-trait.workspace = true
@@ -27,7 +29,9 @@ serde = { workspace = true, features = ["derive", "std"] }
 base-health = { workspace = true, features = ["axum-server"] }
 clap = { workspace = true, features = ["derive", "env", "std"] }
 axum = { workspace = true, features = ["tokio", "http1", "json"] }
+libp2p-identity = { workspace = true, features = ["secp256k1"] }
 reth-network-peers = { workspace = true, features = ["secp256k1"] }
+libp2p = { workspace = true, features = ["tokio", "tcp", "noise", "yamux", "identify"] }
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 
 [dev-dependencies]

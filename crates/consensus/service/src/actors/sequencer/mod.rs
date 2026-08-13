@@ -1,17 +1,18 @@
 //! The `SequencerActor` and its components.
 
 mod build;
-pub use build::{PayloadBuilder, UnsealedPayloadHandle};
+pub use build::{BuildOutcome, PayloadBuilder, UnsealedPayloadHandle};
 
 mod config;
 pub use config::SequencerConfig;
 
-mod origin_selector;
+mod l1_origin;
 #[cfg(test)]
-pub use origin_selector::MockOriginSelector;
-pub use origin_selector::{
+pub use l1_origin::MockOriginSelector;
+pub use l1_origin::{
     DelayedL1OriginSelectorProvider, L1OriginSelector, L1OriginSelectorError,
-    L1OriginSelectorProvider, OriginSelector,
+    L1OriginSelectorProvider, OriginSelector, PrefetchedChainProvider,
+    PrefetchedChainProviderError, PreparedL1Origin,
 };
 
 mod recovery;
@@ -23,11 +24,26 @@ pub use seal::{PayloadSealer, SealState, SealStepError, SealStepOutcome};
 mod shadow_cycle;
 pub use shadow_cycle::{ShadowCycle, ShadowReconciliationTask};
 
+mod engine_request_coordinator;
+pub use engine_request_coordinator::SequencerEngineRequestCoordinator;
+
+mod shadow_reconciliation;
+pub use shadow_reconciliation::{
+    CanonicalReconciliationInputs, CanonicalUnsafeCatchup, SequencerEngineState,
+    ShadowReconciliationGate,
+};
+
 mod ticker;
 pub use ticker::ScheduledTicker;
 
 mod pool;
 pub use pool::PoolActivation;
+
+mod pipeline_state;
+pub use pipeline_state::BuildPipelineState;
+
+mod shadow_state;
+pub use shadow_state::ShadowSequencingState;
 
 mod actor;
 pub use actor::{PendingStopSender, SequencerActor};

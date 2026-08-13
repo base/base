@@ -82,6 +82,7 @@ impl SuccinctHost {
         l1_head_hash: Option<B256>,
         intermediate_block_interval: u64,
         safe_db_fallback: bool,
+        schedule_l2_block_number: Option<u64>,
     ) -> Result<HostConfig> {
         let l1_head_hash = match l1_head_hash {
             Some(hash) => hash,
@@ -89,7 +90,13 @@ impl SuccinctHost {
         };
 
         self.fetcher
-            .get_host_args(l2_start_block, l2_end_block, l1_head_hash, intermediate_block_interval)
+            .get_host_args(
+                l2_start_block,
+                l2_end_block,
+                l1_head_hash,
+                intermediate_block_interval,
+                schedule_l2_block_number,
+            )
             .await
     }
 

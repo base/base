@@ -57,6 +57,8 @@ impl NonceManagerStorage<'_> {
     /// readers (e.g. RPC) can derive `nonces[account][nonce_key]` slots
     /// without instantiating the precompile. Pair with [`Self::nonce_slot`].
     pub const NONCES_BASE_SLOT: U256 = slots::NONCES;
+    /// Base storage slot of the nonce-free replay mapping.
+    pub const EXPIRING_NONCE_SEEN_BASE_SLOT: U256 = slots::EXPIRING_NONCE_SEEN;
 
     /// Fixed capacity of the nonce-free `replay_id` ring buffer
     /// (`REPLAY_BUFFER_CAPACITY` in the EIP-8130 constant table).
@@ -68,13 +70,16 @@ impl NonceManagerStorage<'_> {
     /// wraps back to a slot, the entry it holds has expired and can be reclaimed.
     pub const REPLAY_BUFFER_CAPACITY: u32 = 300_000;
 
-    /// Maximum `expiry` window accepted for a nonce-free transaction, in seconds
-    /// (`NONCE_FREE_EXPIRY_WINDOW` in the EIP-8130 constant table).
+    /// Maximum validity-window span accepted for a nonce-free transaction, in
+    /// **milliseconds** (`NONCE_FREE_EXPIRY_WINDOW` in the EIP-8130 constant
+    /// table).
     ///
     /// A consensus chain parameter (not a per-node choice), sized together with
-    /// [`Self::REPLAY_BUFFER_CAPACITY`]. A transaction's `valid_before` must fall
-    /// in `(now, now + this]`.
-    pub const NONCE_FREE_EXPIRY_WINDOW: u64 = 30;
+    /// [`Self::REPLAY_BUFFER_CAPACITY`]. A transaction's `valid_before` (Unix
+    /// milliseconds) must fall in `(now, now + this]`, where `now` is
+    /// `block.timestamp * 1000`. 30,000 ms == 30 s, so the buffer sizing below is
+    /// unchanged by the seconds→milliseconds move.
+    pub const NONCE_FREE_EXPIRY_WINDOW: u64 = 30_000;
 
     /// Nonce key reserved for the protocol nonce, which is held in account state.
     const PROTOCOL_NONCE_KEY: U256 = U256::ZERO;
@@ -109,6 +114,11 @@ impl NonceManagerStorage<'_> {
             return Err(BasePrecompileError::revert(INonceManager::ProtocolNonceNotSupported {}));
         }
         Ok(nonce_key.mapping_slot(account.mapping_slot(Self::NONCES_BASE_SLOT)))
+    }
+
+    /// Returns the storage slot holding the expiry recorded for `replay_id`.
+    pub fn expiring_nonce_seen_slot(replay_id: B256) -> U256 {
+        U256::from_be_bytes(replay_id.0).mapping_slot(Self::EXPIRING_NONCE_SEEN_BASE_SLOT)
     }
 
     /// Increments the 2D nonce for `account` at `nonce_key`, returning the new
@@ -169,14 +179,14 @@ impl NonceManagerStorage<'_> {
     }
 
     /// Returns whether `hash` has been recorded and has not yet expired relative
-    /// to `now` (Unix seconds).
+    /// to `now` (Unix **milliseconds**).
     ///
     /// Intended for transaction-pool replay checks. `now` is a caller-supplied
-    /// timestamp because the mempool has no block context and uses wall-clock
-    /// time, whereas [`Self::check_and_mark_expiring_nonce`] reads the block
-    /// timestamp internally at inclusion. The two clocks can disagree near an
-    /// entry's expiry boundary; this getter is an advisory pre-filter and the
-    /// block-timestamp check at inclusion is authoritative.
+    /// timestamp (in milliseconds) because the mempool has no block context and
+    /// uses wall-clock time, whereas [`Self::check_and_mark_expiring_nonce`] reads
+    /// the block timestamp internally at inclusion. The two clocks can disagree
+    /// near an entry's expiry boundary; this getter is an advisory pre-filter and
+    /// the block-timestamp check at inclusion is authoritative.
     pub fn is_expiring_nonce_seen(&self, hash: B256, now: u64) -> Result<bool> {
         let expiry = self.expiring_nonce_seen.at(&hash).read()?;
         Ok(expiry != 0 && expiry > now)
@@ -186,14 +196,15 @@ impl NonceManagerStorage<'_> {
     /// protection for nonce-free EIP-8130 transactions.
     ///
     /// `expiring_nonce_hash` is the canonical `TxEip8130::replay_id`:
-    /// `keccak256(REPLAY_ID_TYPE || rlp([chain_id, resolved_sender, expiry,
-    /// account_changes, calls, metadata, payer]))`. Fees, nonce fields, and
-    /// authentication blobs are omitted, so fee-bumped or re-signed variants of
-    /// one logical transaction collapse to a single entry.
+    /// `keccak256(REPLAY_ID_TYPE || rlp([chain_id, resolved_sender, valid_after,
+    /// valid_before, account_changes, calls, metadata, payer]))`. Fees, nonce
+    /// fields, and authentication blobs are omitted, so fee-bumped or re-signed
+    /// variants of one logical transaction collapse to a single entry.
     /// The hash is recorded in a circular buffer that reclaims expired slots as
     /// the write pointer advances.
     ///
-    /// `now` is read from the block timestamp, so this is the authoritative
+    /// `valid_before` and the internal `now` are both Unix **milliseconds**;
+    /// `now` is `block.timestamp * 1000`, so this is the authoritative
     /// inclusion-time replay check (cf. the advisory, wall-clock-based
     /// [`Self::is_expiring_nonce_seen`] used by the mempool).
     ///
@@ -211,9 +222,11 @@ impl NonceManagerStorage<'_> {
         expiring_nonce_hash: B256,
         valid_before: u64,
     ) -> Result<()> {
-        let now: u64 = self.storage.timestamp().saturating_to();
+        // Both `valid_before` and this `now` are Unix milliseconds; the EIP
+        // evaluates the window against `block.timestamp * 1000`.
+        let now: u64 = self.storage.timestamp().saturating_to::<u64>().saturating_mul(1_000);
 
-        // 1. Validate the expiry window: must be in (now, now + MAX_EXPIRY_SECS].
+        // 1. Validate the expiry window: must be in (now, now + MAX_EXPIRY_MS].
         if valid_before <= now || valid_before > now.saturating_add(Self::NONCE_FREE_EXPIRY_WINDOW)
         {
             return Err(BasePrecompileError::revert(INonceManager::InvalidExpiringNonceExpiry {}));
@@ -363,6 +376,7 @@ mod tests {
     fn expiring_nonce_rejects_when_ring_slot_is_live() {
         let mut storage = HashMapStorageProvider::new(1);
         let now = 1_000u64;
+        let now_ms = now * 1_000;
         storage.set_timestamp(U256::from(now));
         StorageCtx::enter(&mut storage, |ctx| {
             let mut mgr = NonceManagerStorage::new(ctx);
@@ -371,10 +385,11 @@ mod tests {
             let occupant = B256::repeat_byte(0xAB);
             let ptr = mgr.expiring_nonce_ring_ptr.read().unwrap();
             mgr.expiring_nonce_ring.at_mut(&ptr).write(occupant).unwrap();
-            mgr.expiring_nonce_seen.at_mut(&occupant).write(now + 20).unwrap();
+            mgr.expiring_nonce_seen.at_mut(&occupant).write(now_ms + 20_000).unwrap();
 
-            let err =
-                mgr.check_and_mark_expiring_nonce(B256::repeat_byte(0xCD), now + 20).unwrap_err();
+            let err = mgr
+                .check_and_mark_expiring_nonce(B256::repeat_byte(0xCD), now_ms + 20_000)
+                .unwrap_err();
             assert_eq!(err, BasePrecompileError::revert(INonceManager::ExpiringNonceSetFull {}));
         });
     }
@@ -403,12 +418,13 @@ mod tests {
     fn expiring_nonce_rejects_replay_within_window() {
         let mut storage = HashMapStorageProvider::new(1);
         let now = 1_000u64;
+        let now_ms = now * 1_000;
         storage.set_timestamp(U256::from(now));
         StorageCtx::enter(&mut storage, |ctx| {
             let mut mgr = NonceManagerStorage::new(ctx);
             let hash = B256::repeat_byte(0x11);
-            mgr.check_and_mark_expiring_nonce(hash, now + 20).unwrap();
-            let err = mgr.check_and_mark_expiring_nonce(hash, now + 20).unwrap_err();
+            mgr.check_and_mark_expiring_nonce(hash, now_ms + 20_000).unwrap();
+            let err = mgr.check_and_mark_expiring_nonce(hash, now_ms + 20_000).unwrap_err();
             assert_eq!(err, BasePrecompileError::revert(INonceManager::ExpiringNonceReplay {}));
         });
     }
@@ -418,18 +434,21 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         let now = 1_000u64;
         storage.set_timestamp(U256::from(now));
+        // The inclusion-time check compares `valid_before` (ms) against
+        // `block.timestamp * 1000`, so build the window relative to `now_ms`.
+        let now_ms = now * 1_000;
         StorageCtx::enter(&mut storage, |ctx| {
             let mut mgr = NonceManagerStorage::new(ctx);
             let hash = B256::repeat_byte(0x22);
             let invalid = BasePrecompileError::revert(INonceManager::InvalidExpiringNonceExpiry {});
 
             // In the past, exactly now, and beyond the max window all fail.
-            assert_eq!(mgr.check_and_mark_expiring_nonce(hash, now - 1).unwrap_err(), invalid);
-            assert_eq!(mgr.check_and_mark_expiring_nonce(hash, now).unwrap_err(), invalid);
+            assert_eq!(mgr.check_and_mark_expiring_nonce(hash, now_ms - 1).unwrap_err(), invalid);
+            assert_eq!(mgr.check_and_mark_expiring_nonce(hash, now_ms).unwrap_err(), invalid);
             assert_eq!(
                 mgr.check_and_mark_expiring_nonce(
                     hash,
-                    now + NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW + 1
+                    now_ms + NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW + 1
                 )
                 .unwrap_err(),
                 invalid
@@ -438,7 +457,7 @@ mod tests {
             // Exactly at the max window succeeds.
             mgr.check_and_mark_expiring_nonce(
                 hash,
-                now + NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW,
+                now_ms + NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW,
             )
             .unwrap();
         });
@@ -448,13 +467,14 @@ mod tests {
     fn expiring_nonce_seen_clears_after_expiry() {
         let mut storage = HashMapStorageProvider::new(1);
         let now = 1_000u64;
-        let valid_before = now + 20;
+        let now_ms = now * 1_000;
+        let valid_before = now_ms + 20_000;
         storage.set_timestamp(U256::from(now));
         StorageCtx::enter(&mut storage, |ctx| {
             let mut mgr = NonceManagerStorage::new(ctx);
             let hash = B256::repeat_byte(0x33);
             mgr.check_and_mark_expiring_nonce(hash, valid_before).unwrap();
-            assert!(mgr.is_expiring_nonce_seen(hash, now).unwrap());
+            assert!(mgr.is_expiring_nonce_seen(hash, now_ms).unwrap());
             assert!(!mgr.is_expiring_nonce_seen(hash, valid_before + 1).unwrap());
         });
     }
@@ -463,7 +483,7 @@ mod tests {
     fn expiring_nonce_ring_pointer_wraps_at_capacity() {
         let mut storage = HashMapStorageProvider::new(1);
         let now = 1_000u64;
-        let valid_before = now + 20;
+        let valid_before = now * 1_000 + 20_000;
         storage.set_timestamp(U256::from(now));
         StorageCtx::enter(&mut storage, |ctx| {
             let mut mgr = NonceManagerStorage::new(ctx);
@@ -557,19 +577,20 @@ mod tests {
         const MIN_TX_GAS: u64 = 30_000;
 
         let max_txs_per_block = BLOCK_GAS_LIMIT / MIN_TX_GAS;
+        // NONCE_FREE_EXPIRY_WINDOW is in milliseconds; the block cadence is in
+        // seconds, so convert the window before dividing.
+        let window_secs = NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW / 1_000;
         // Round the window up to whole blocks so we never under-count.
-        let blocks_per_window =
-            NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW.div_ceil(BLOCK_TIME_SECS);
+        let blocks_per_window = window_secs.div_ceil(BLOCK_TIME_SECS);
         let max_live_entries = max_txs_per_block * blocks_per_window;
 
         assert!(
             u64::from(NonceManagerStorage::REPLAY_BUFFER_CAPACITY) >= max_live_entries,
             "replay buffer capacity {} cannot hold peak live entries {max_live_entries} \
              (block_gas_limit={BLOCK_GAS_LIMIT}, min_tx_gas={MIN_TX_GAS}, \
-             window={}s, block_time={BLOCK_TIME_SECS}s): grow REPLAY_BUFFER_CAPACITY \
+             window={window_secs}s, block_time={BLOCK_TIME_SECS}s): grow REPLAY_BUFFER_CAPACITY \
              or lower NONCE_FREE_EXPIRY_WINDOW",
             NonceManagerStorage::REPLAY_BUFFER_CAPACITY,
-            NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW,
         );
     }
 }

@@ -31,6 +31,7 @@ use tokio::{sync::mpsc, task::JoinHandle};
 use url::Url;
 
 use crate::{
+    DenimCheck, DenimCheckCursor, DenimCheckStatus, DenimCheckTarget, DenimChecker,
     app::{Action, Resources, View},
     output::COLOR_BASE_BLUE,
     tui::Keybinding,
@@ -106,6 +107,8 @@ impl ChainUpgrades {
         self.set_timestamp(BaseUpgrade::Azul, upgrades.base.azul);
         self.set_timestamp(BaseUpgrade::Beryl, upgrades.base.beryl);
         self.set_timestamp(BaseUpgrade::Cobalt, upgrades.base.cobalt);
+        self.set_timestamp(BaseUpgrade::Denim, upgrades.base.denim);
+        self.set_timestamp(BaseUpgrade::Zenith, upgrades.base.zenith);
     }
 
     fn next_scheduled_spec(&self, now: u64) -> Option<&UpgradeSpec> {
@@ -189,6 +192,8 @@ fn specs_from_config(cfg: &ChainConfig) -> Vec<UpgradeSpec> {
             name: "Cobalt",
             timestamp: cfg.cobalt_timestamp,
         },
+        UpgradeSpec { upgrade: BaseUpgrade::Denim, name: "Denim", timestamp: None },
+        UpgradeSpec { upgrade: BaseUpgrade::Zenith, name: "Zenith", timestamp: None },
     ]
 }
 
@@ -254,28 +259,70 @@ fn loaded_name_is_devnet_alias(loaded_name: &str) -> bool {
 
 // ── Check types ───────────────────────────────────────────────────────────────
 
-/// Expected check names for Azul, in execution order.
-const AZUL_CHECK_NAMES: &[&str] = &[
-    "CLZ zero",
-    "CLZ one",
-    "CLZ high-bit",
-    "CLZ four-bits",
-    "MODEXP size limit",
-    "MODEXP min gas",
-    "P256VERIFY gas",
-    "eth_config",
+/// Expected Azul checks, in execution order.
+const AZUL_CHECKS: &[(&str, &str)] = &[
+    ("CLZ zero", "CLZ zero"),
+    ("CLZ one", "CLZ one"),
+    ("CLZ high-bit", "CLZ high-bit"),
+    ("CLZ four-bits", "CLZ four-bits"),
+    ("MODEXP size limit", "MODEXP size limit"),
+    ("MODEXP min gas", "MODEXP min gas"),
+    ("P256VERIFY gas", "P256VERIFY gas"),
+    ("eth_config", "eth_config"),
 ];
 
-/// Expected check names for Jovian, in execution order.
-const JOVIAN_CHECK_NAMES: &[&str] = &["bn256Pairing limit", "extra data v1", "GPO implementation"];
+/// Expected Jovian checks, in execution order.
+const JOVIAN_CHECKS: &[(&str, &str)] = &[
+    ("bn256Pairing limit", "bn256Pairing limit"),
+    ("extra data v1", "extra data v1"),
+    ("GPO implementation", "GPO implementation"),
+];
 
-/// Expected check names for Beryl, in execution order.
-const BERYL_CHECK_NAMES: &[&str] = &[
-    "registry precompile",
-    "registry admin",
-    "policy registry feature",
-    "B-20 stablecoin feature",
-    "B-20 asset feature",
+/// Expected Beryl checks, in execution order.
+const BERYL_CHECKS: &[(&str, &str)] = &[
+    ("registry precompile", "registry precompile"),
+    ("registry admin", "registry admin"),
+    ("policy registry feature", "policy registry feature"),
+    ("B-20 stablecoin feature", "B-20 stablecoin feature"),
+    ("B-20 asset feature", "B-20 asset feature"),
+];
+
+/// Expected Denim checks and visible labels, in report order.
+const DENIM_CHECKS: &[(&str, &str)] = &[
+    ("proxy_code_hash", "BaseTime proxy code"),
+    ("proxy_admin", "BaseTime proxy admin"),
+    ("implementation", "BaseTime implementation"),
+    ("metadata", "BaseTime update tx"),
+    ("metadata_receipt", "BaseTime update receipt"),
+    ("storage_millis_part", "BaseTime millis storage"),
+    ("getter_millis_part", "BaseTime millis getter"),
+    ("getter_timestamp_ms", "BaseTime timestamp getter"),
+    ("cadence_200ms", "BaseTime 200ms cadence"),
+    ("rpc_eth_getBlockByHash_timestampMs", "eth_getBlockByHash timestampMs"),
+    ("rpc_eth_getBlockByNumber_timestampMs", "eth_getBlockByNumber timestampMs"),
+    ("rpc_eth_getTransactionByHash_blockTimestampMs", "eth_getTransactionByHash"),
+    (
+        "rpc_eth_getTransactionByBlockHashAndIndex_blockTimestampMs",
+        "eth_getTransactionByBlockHashAndIndex",
+    ),
+    (
+        "rpc_eth_getTransactionByBlockNumberAndIndex_blockTimestampMs",
+        "eth_getTransactionByBlockNumberAndIndex",
+    ),
+    ("rpc_eth_getLogs_blockTimestampMs", "eth_getLogs"),
+    ("rpc_eth_getFilterChanges_blockTimestampMs", "eth_getFilterChanges"),
+    ("rpc_eth_getFilterLogs_blockTimestampMs", "eth_getFilterLogs"),
+    ("rpc_eth_subscribe_logs_blockTimestampMs", "eth_subscribe(logs)"),
+    ("rpc_eth_getTransactionReceipt_logs_blockTimestampMs", "eth_getTransactionReceipt logs"),
+    ("rpc_eth_getBlockReceipts_logs_blockTimestampMs", "eth_getBlockReceipts logs"),
+    (
+        "rpc_eth_subscribe_transactionReceipts_logs_blockTimestampMs",
+        "eth_subscribe(transactionReceipts) logs",
+    ),
+    ("header_timestamp_ms", "header timestampMs"),
+    ("rpc_eth_getHeaderByHash_timestampMs", "eth_getHeaderByHash timestampMs"),
+    ("rpc_eth_getHeaderByNumber_timestampMs", "eth_getHeaderByNumber timestampMs"),
+    ("rpc_eth_subscribe_newHeads_timestampMs", "eth_subscribe(newHeads)"),
 ];
 
 const BERYL_FEATURE_CHECKS: &[(&str, ActivationFeature)] = &[
@@ -284,17 +331,18 @@ const BERYL_FEATURE_CHECKS: &[(&str, ActivationFeature)] = &[
     ("B-20 asset feature", ActivationFeature::B20Asset),
 ];
 
-fn check_names_for(upgrade: &str) -> &'static [&'static str] {
+fn checks_for(upgrade: &str) -> &'static [(&'static str, &'static str)] {
     match upgrade {
-        "Beryl" => BERYL_CHECK_NAMES,
-        "Azul" => AZUL_CHECK_NAMES,
-        "Jovian" => JOVIAN_CHECK_NAMES,
+        "Denim" => DENIM_CHECKS,
+        "Beryl" => BERYL_CHECKS,
+        "Azul" => AZUL_CHECKS,
+        "Jovian" => JOVIAN_CHECKS,
         _ => &[],
     }
 }
 
 fn has_checks(upgrade: &str) -> bool {
-    !check_names_for(upgrade).is_empty()
+    !checks_for(upgrade).is_empty()
 }
 
 fn checkable_specs_display(chain: &ChainUpgrades) -> Vec<&UpgradeSpec> {
@@ -343,7 +391,11 @@ enum CheckUpdate {
     /// A check is about to run.
     Starting(String),
     /// A check completed.
-    Completed { name: String, result: CheckResult },
+    Completed {
+        name: String,
+        result: CheckResult,
+    },
+    Cursor(DenimCheckCursor),
 }
 
 /// State for the checks panel. Tracks streaming results per chain.
@@ -366,10 +418,19 @@ struct ChecksPanel {
     /// auto-refresh so we don't re-issue checks faster than the configured
     /// cadence even if the previous run finished quickly.
     last_run_at: Option<Instant>,
+    cursor: Option<DenimCheckCursor>,
+    scroll: usize,
 }
 
 impl ChecksPanel {
-    fn start(&mut self, chain_idx: usize, rpc_url: String, upgrade: &'static str, mode: CheckMode) {
+    fn start(
+        &mut self,
+        chain_idx: usize,
+        endpoints: (String, Option<Url>, Option<Url>),
+        upgrade: &'static str,
+        mode: CheckMode,
+    ) {
+        let (rpc_url, consensus_rpc, el_ws_rpc) = endpoints;
         if let Some(h) = self.handle.take() {
             h.abort();
         }
@@ -387,11 +448,21 @@ impl ChecksPanel {
         // target context actually changed.
         if chain_changed || upgrade_changed || mode_changed {
             self.results.clear();
+            self.scroll = 0;
+        }
+        if chain_changed || upgrade_changed {
+            self.cursor = None;
         }
         self.running = true;
         self.rx = Some(rx);
         self.last_run_at = Some(Instant::now());
-        self.handle = Some(tokio::spawn(run_checks_streaming(upgrade, rpc_url, mode, tx)));
+        self.handle = Some(tokio::spawn(run_checks_streaming(
+            upgrade,
+            (rpc_url, consensus_rpc, el_ws_rpc),
+            mode,
+            tx,
+            self.cursor,
+        )));
     }
 
     fn reset(&mut self) {
@@ -407,6 +478,8 @@ impl ChecksPanel {
         self.running = false;
         self.rx = None;
         self.last_run_at = None;
+        self.cursor = None;
+        self.scroll = 0;
     }
 
     fn poll(&mut self) {
@@ -422,9 +495,20 @@ impl ChecksPanel {
                     self.current = Some(name);
                 }
                 Ok(CheckUpdate::Completed { name, result }) => {
+                    if result.passed != Some(true)
+                        && self.results.values().all(|result| result.passed == Some(true))
+                    {
+                        self.scroll = self
+                            .upgrade
+                            .and_then(|upgrade| {
+                                checks_for(upgrade).iter().position(|(check, _)| *check == name)
+                            })
+                            .unwrap_or(0);
+                    }
                     self.results.insert(name, result);
                     self.current = None;
                 }
+                Ok(CheckUpdate::Cursor(cursor)) => self.cursor = Some(cursor),
                 Err(mpsc::error::TryRecvError::Empty) => break,
                 Err(mpsc::error::TryRecvError::Disconnected) => {
                     self.running = false;
@@ -670,6 +754,7 @@ fn fmt_progress_percent(tenths: u16) -> String {
 const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "←/→", description: "Switch chain" },
     Keybinding { key: "↑/↓", description: "Select checks upgrade" },
+    Keybinding { key: "PgUp/PgDn", description: "Scroll checks" },
     Keybinding { key: "1-4", description: "Jump to chain" },
     Keybinding { key: "r", description: "Run checks now" },
     Keybinding { key: "a", description: "Toggle auto-refresh" },
@@ -720,6 +805,8 @@ impl UpgradesView {
                 rx: None,
                 handle: None,
                 last_run_at: None,
+                cursor: None,
+                scroll: 0,
             },
             admin_activity: std::array::from_fn(|_| AdminActivityChainState::default()),
             admin_activity_watcher: AdminActivityWatcher::default(),
@@ -742,7 +829,11 @@ impl UpgradesView {
         };
         let Some(rpc) = self.rpc_for_selected(resources) else { return };
         let mode = if ts > now { CheckMode::Before } else { CheckMode::After };
-        self.checks.start(self.selected_chain, rpc, upgrade, mode);
+        let chain = &self.chains[self.selected_chain];
+        let loaded = chain_name_matches_loaded(chain.display_name, &resources.config.name);
+        let consensus_rpc = loaded.then(|| resources.config.consensus_node_rpc.clone()).flatten();
+        let el_ws_rpc = loaded.then(|| resources.config.el_ws_rpc.clone()).flatten();
+        self.checks.start(self.selected_chain, (rpc, consensus_rpc, el_ws_rpc), upgrade, mode);
     }
 
     fn selected_check_spec(&self, now: u64) -> Option<&UpgradeSpec> {
@@ -846,6 +937,14 @@ impl View for UpgradesView {
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 self.move_selected_check_upgrade(1);
+            }
+            KeyCode::PageUp => self.checks.scroll = self.checks.scroll.saturating_sub(5),
+            KeyCode::PageDown => {
+                let row_count = self
+                    .selected_check_upgrade(now_unix())
+                    .map_or(0, |upgrade| checks_for(upgrade).len());
+                self.checks.scroll =
+                    self.checks.scroll.saturating_add(5).min(row_count.saturating_sub(1));
             }
             KeyCode::Char(c @ '1'..='4')
                 if (c as usize) - ('1' as usize) < self.chains.len()
@@ -1249,7 +1348,8 @@ fn render_checks_panel(
             );
             return;
         }
-        let check_list = check_names_for(hf_name).join(" · ");
+        let check_list =
+            checks_for(hf_name).iter().map(|(_, label)| *label).collect::<Vec<_>>().join(" · ");
         let hint = if auto_refresh {
             format!("Auto-refreshing {hf_name} checks every 2s · ↑/↓ to change · [a] to disable")
         } else {
@@ -1275,7 +1375,7 @@ fn render_checks_panel(
     }
 
     let hf = panel.upgrade.unwrap_or("?");
-    let check_names = check_names_for(hf);
+    let checks = checks_for(hf);
 
     let mode_str = match panel.mode {
         Some(CheckMode::Before) => "before",
@@ -1285,33 +1385,52 @@ fn render_checks_panel(
 
     let passed = panel.results.values().filter(|r| r.passed == Some(true)).count();
     let failed = panel.results.values().filter(|r| r.passed == Some(false)).count();
+    let indeterminate = panel.results.values().filter(|r| r.passed.is_none()).count();
 
+    let refresh_tag = if panel.running {
+        format!("  {} refreshing", spinner[(tick / 2) as usize % spinner.len()])
+    } else {
+        String::new()
+    };
     let auto_tag = if auto_refresh { "  · auto" } else { "" };
-    let (title, border_color) = if panel.running {
+    let (title, border_color) = if failed > 0 {
+        (
+            format!(
+                " {hf} Checks ({mode_str})  FAIL {failed}  UNKNOWN {indeterminate}  PASS {passed}{refresh_tag}{auto_tag} "
+            ),
+            Color::Red,
+        )
+    } else if indeterminate > 0 {
+        (
+            format!(
+                " {hf} Checks ({mode_str})  UNKNOWN {indeterminate}  PASS {passed}{refresh_tag}{auto_tag} "
+            ),
+            Color::Yellow,
+        )
+    } else if panel.running {
         let spin = spinner[(tick / 2) as usize % spinner.len()];
         (format!(" {hf} Checks ({mode_str})  {spin} running…{auto_tag} "), Color::Yellow)
-    } else if failed > 0 {
-        (format!(" {hf} Checks ({mode_str})  ✓ {passed}  ✗ {failed}{auto_tag} "), Color::Red)
     } else {
         (format!(" {hf} Checks ({mode_str})  ✓ {passed} passed{auto_tag} "), Color::LightGreen)
     };
 
-    let rows: Vec<Row<'static>> = check_names
+    let rows: Vec<Row<'static>> = checks
         .iter()
-        .map(|&name| {
+        .skip(panel.scroll)
+        .map(|&(name, display_name)| {
             panel.results.get(name).map_or_else(
                 || {
                     if panel.current.as_deref() == Some(name) {
                         let spin = spinner[(tick / 2) as usize % spinner.len()];
                         Row::new([
-                            Cell::from(name).style(Style::default().fg(Color::White)),
+                            Cell::from(display_name).style(Style::default().fg(Color::White)),
                             Cell::from(spin.to_string()).style(Style::default().fg(Color::Yellow)),
                             Cell::from("").style(Style::default()),
                         ])
                     } else {
                         // Not yet started.
                         Row::new([
-                            Cell::from(name).style(Style::default().fg(Color::DarkGray)),
+                            Cell::from(display_name).style(Style::default().fg(Color::DarkGray)),
                             Cell::from(""),
                             Cell::from(""),
                         ])
@@ -1319,12 +1438,12 @@ fn render_checks_panel(
                 },
                 |result| {
                     let (status_str, status_color) = match result.passed {
-                        None => ("SKIP".to_string(), Color::DarkGray),
+                        None => ("UNKNOWN".to_string(), Color::Yellow),
                         Some(true) => ("PASS".to_string(), Color::LightGreen),
                         Some(false) => ("FAIL".to_string(), Color::Red),
                     };
                     Row::new([
-                        Cell::from(name).style(Style::default().fg(Color::White)),
+                        Cell::from(display_name).style(Style::default().fg(Color::White)),
                         Cell::from(status_str)
                             .style(Style::default().fg(status_color).add_modifier(Modifier::BOLD)),
                         Cell::from(result.detail.clone())
@@ -1338,7 +1457,7 @@ fn render_checks_panel(
     let header = Row::new(["CHECK", "", "DETAIL"])
         .style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD));
 
-    let widths = [Constraint::Length(24), Constraint::Length(5), Constraint::Min(8)];
+    let widths = [Constraint::Length(49), Constraint::Length(7), Constraint::Min(8)];
 
     let block = Block::default()
         .title(title)
@@ -1936,15 +2055,110 @@ async fn run_admin_activity_streaming(
 /// Route to the correct upgrade's streaming check function.
 async fn run_checks_streaming(
     upgrade: &'static str,
-    rpc_url: String,
+    endpoints: (String, Option<Url>, Option<Url>),
     mode: CheckMode,
     tx: mpsc::Sender<CheckUpdate>,
+    cursor: Option<DenimCheckCursor>,
 ) {
+    let (rpc_url, consensus_rpc, el_ws_rpc) = endpoints;
     match upgrade {
+        "Denim" => run_denim_checks_streaming(rpc_url, consensus_rpc, el_ws_rpc, cursor, tx).await,
         "Beryl" => run_beryl_checks_streaming(rpc_url, mode, tx).await,
         "Azul" => run_azul_checks_streaming(rpc_url, tx).await,
         "Jovian" => run_jovian_checks_streaming(rpc_url, mode, tx).await,
         _ => {}
+    }
+}
+
+fn denim_check_result(check: DenimCheck) -> CheckResult {
+    let passed = match check.status {
+        DenimCheckStatus::Pass => Some(true),
+        DenimCheckStatus::Fail => Some(false),
+        DenimCheckStatus::Indeterminate => None,
+    };
+    let shorten = |value: String| {
+        if value.starts_with("0x") { truncate_hex(value, 14) } else { value }
+    };
+    let expected = shorten(check.expected);
+    let observed = match (check.name.as_str(), check.observed.as_str()) {
+        ("implementation", "LinkedInitial") => "canonical initial implementation".to_string(),
+        ("implementation", "LinkedOther") => "governance-selected implementation".to_string(),
+        ("implementation", "Dormant") => "implementation not linked".to_string(),
+        ("implementation", "Missing") => "implementation missing".to_string(),
+        ("implementation", "Inconsistent") => "inconsistent implementation".to_string(),
+        _ => shorten(check.observed),
+    };
+    CheckResult {
+        passed,
+        detail: match check.status {
+            DenimCheckStatus::Pass | DenimCheckStatus::Indeterminate => observed,
+            DenimCheckStatus::Fail => format!("expected {expected}; got {observed}"),
+        },
+    }
+}
+
+async fn run_denim_checks_streaming(
+    rpc_url: String,
+    consensus_rpc: Option<Url>,
+    el_ws_rpc: Option<Url>,
+    cursor: Option<DenimCheckCursor>,
+    tx: mpsc::Sender<CheckUpdate>,
+) {
+    let report = match (Url::parse(&rpc_url), consensus_rpc) {
+        (Ok(el_rpc), Some(cl_rpc)) => {
+            DenimChecker
+                .check(&el_rpc, &cl_rpc, el_ws_rpc.as_ref(), DenimCheckTarget::Latest, cursor)
+                .await
+        }
+        (Err(error), _) => Err(anyhow::anyhow!("invalid execution RPC URL: {error}")),
+        (_, None) => Err(anyhow::anyhow!("consensus node RPC is not configured")),
+    };
+
+    match report {
+        Ok(report) => {
+            let cursor = report.cursor;
+            let mut checks: HashMap<_, _> =
+                report.checks.into_iter().map(|check| (check.name.clone(), check)).collect();
+            for &(name, _) in DENIM_CHECKS {
+                if tx.send(CheckUpdate::Starting(name.to_string())).await.is_err() {
+                    return;
+                }
+                let result = checks.remove(name).map_or_else(
+                    || CheckResult {
+                        passed: None,
+                        detail: format!("not applicable for {:?} snapshot", report.schedule),
+                    },
+                    denim_check_result,
+                );
+                if tx.send(CheckUpdate::Completed { name: name.to_string(), result }).await.is_err()
+                {
+                    return;
+                }
+            }
+            debug_assert!(checks.is_empty(), "unexpected Denim checks: {checks:?}");
+            if let Some(cursor) = cursor {
+                let _ = tx.send(CheckUpdate::Cursor(cursor)).await;
+            }
+        }
+        Err(error) => {
+            for (index, &(name, _)) in DENIM_CHECKS.iter().enumerate() {
+                if tx.send(CheckUpdate::Starting(name.to_string())).await.is_err() {
+                    return;
+                }
+                let result = CheckResult {
+                    passed: None,
+                    detail: if index == 0 {
+                        format!("{error:#}")
+                    } else {
+                        "checker unavailable".to_string()
+                    },
+                };
+                if tx.send(CheckUpdate::Completed { name: name.to_string(), result }).await.is_err()
+                {
+                    return;
+                }
+            }
+        }
     }
 }
 
@@ -2120,7 +2334,7 @@ async fn run_beryl_checks_streaming(
                 detail: format!("cannot build client for {rpc_url}: {e}"),
             };
             send_result!("registry precompile", conn_result);
-            for &name in &BERYL_CHECK_NAMES[1..] {
+            for &(name, _) in &BERYL_CHECKS[1..] {
                 send_result!(
                     name,
                     CheckResult { passed: None, detail: "skipped (no connection)".into() }
@@ -2136,7 +2350,7 @@ async fn run_beryl_checks_streaming(
             let conn_result =
                 CheckResult { passed: Some(false), detail: format!("cannot reach {rpc_url}: {e}") };
             send_result!("registry precompile", conn_result);
-            for &name in &BERYL_CHECK_NAMES[1..] {
+            for &(name, _) in &BERYL_CHECKS[1..] {
                 send_result!(
                     name,
                     CheckResult { passed: None, detail: "skipped (no connection)".into() }
@@ -2222,7 +2436,7 @@ async fn run_jovian_checks_streaming(
                 detail: format!("cannot build client for {rpc_url}: {e}"),
             };
             send_result!("bn256Pairing limit", conn_result);
-            for &name in &JOVIAN_CHECK_NAMES[1..] {
+            for &(name, _) in &JOVIAN_CHECKS[1..] {
                 send_result!(
                     name,
                     CheckResult { passed: None, detail: "skipped (no connection)".into() }
@@ -2238,7 +2452,7 @@ async fn run_jovian_checks_streaming(
             let conn_result =
                 CheckResult { passed: Some(false), detail: format!("cannot reach {rpc_url}: {e}") };
             send_result!("bn256Pairing limit", conn_result);
-            for &name in &JOVIAN_CHECK_NAMES[1..] {
+            for &(name, _) in &JOVIAN_CHECKS[1..] {
                 send_result!(
                     name,
                     CheckResult { passed: None, detail: "skipped (no connection)".into() }
@@ -2481,7 +2695,7 @@ async fn run_azul_checks_streaming(rpc_url: String, tx: mpsc::Sender<CheckUpdate
                 detail: format!("cannot build client for {rpc_url}: {e}"),
             };
             send_result!("CLZ zero", conn_result);
-            for &name in &AZUL_CHECK_NAMES[1..] {
+            for &(name, _) in &AZUL_CHECKS[1..] {
                 send_result!(
                     name,
                     CheckResult { passed: None, detail: "skipped (no connection)".into() }
@@ -2498,7 +2712,7 @@ async fn run_azul_checks_streaming(rpc_url: String, tx: mpsc::Sender<CheckUpdate
             let conn_result =
                 CheckResult { passed: Some(false), detail: format!("cannot reach {rpc_url}: {e}") };
             send_result!("CLZ zero", conn_result);
-            for &name in &AZUL_CHECK_NAMES[1..] {
+            for &(name, _) in &AZUL_CHECKS[1..] {
                 send_result!(
                     name,
                     CheckResult { passed: None, detail: "skipped (no connection)".into() }
@@ -2579,6 +2793,7 @@ mod tests {
     use alloy_sol_types::SolEvent;
     use base_common_genesis::BaseUpgradeConfig;
     use crossterm::event::KeyModifiers;
+    use ratatui::{Terminal, backend::TestBackend};
 
     use super::*;
     use crate::config::MonitoringConfig;
@@ -2594,7 +2809,13 @@ mod tests {
         assert_eq!(target_upgrade(&chain, 100), Some("Beryl"));
 
         chain.apply_upgrades(&UpgradeConfig {
-            base: BaseUpgradeConfig { azul: Some(10), beryl: Some(12), cobalt: None, zenith: None },
+            base: BaseUpgradeConfig {
+                azul: Some(10),
+                beryl: Some(12),
+                cobalt: None,
+                denim: None,
+                zenith: None,
+            },
             ..UpgradeConfig::default()
         });
 
@@ -2613,12 +2834,38 @@ mod tests {
         };
         chain.apply_upgrades(&UpgradeConfig {
             jovian_time: Some(10),
-            base: BaseUpgradeConfig { azul: Some(20), beryl: None, cobalt: None, zenith: None },
+            base: BaseUpgradeConfig {
+                azul: Some(20),
+                beryl: None,
+                cobalt: None,
+                denim: None,
+                zenith: None,
+            },
             ..UpgradeConfig::default()
         });
 
         assert_eq!(target_upgrade(&chain, 15), Some("Azul"));
         assert_eq!(target_upgrade(&chain, 21), Some("Beryl"));
+    }
+
+    #[test]
+    fn live_rollup_config_schedules_denim() {
+        let mut chain = ChainUpgrades {
+            display_name: "Devnet",
+            chain_id: ChainConfig::devnet().chain_id,
+            rpc: None,
+            specs: specs_from_config(ChainConfig::devnet()),
+        };
+
+        chain.apply_upgrades(&UpgradeConfig {
+            base: BaseUpgradeConfig { denim: Some(30), ..BaseUpgradeConfig::default() },
+            ..UpgradeConfig::default()
+        });
+
+        let denim = chain.specs.iter().find(|spec| spec.name == "Denim").unwrap();
+        assert_eq!(denim.timestamp, Some(30));
+        assert_eq!(target_upgrade(&chain, 29), Some("Denim"));
+        assert_eq!(target_upgrade(&chain, 30), Some("Denim"));
     }
 
     #[test]
@@ -2632,7 +2879,13 @@ mod tests {
         let delta = chain.specs.iter().find(|spec| spec.name == "Delta").unwrap().timestamp;
 
         chain.apply_upgrades(&UpgradeConfig {
-            base: BaseUpgradeConfig { azul: Some(20), beryl: None, cobalt: None, zenith: None },
+            base: BaseUpgradeConfig {
+                azul: Some(20),
+                beryl: None,
+                cobalt: None,
+                denim: None,
+                zenith: None,
+            },
             ..UpgradeConfig::default()
         });
 
@@ -2663,7 +2916,150 @@ mod tests {
         let names: Vec<_> =
             checkable_specs_display(&chain).into_iter().map(|spec| spec.name).collect();
 
-        assert_eq!(names, vec!["Beryl", "Azul", "Jovian"]);
+        assert_eq!(names, vec!["Denim", "Beryl", "Azul", "Jovian"]);
+    }
+
+    #[test]
+    fn denim_report_checks_map_to_existing_rows() {
+        let (tx, rx) = mpsc::channel(2);
+        let check = DenimCheck {
+            name: "proxy_code_hash".to_string(),
+            status: DenimCheckStatus::Fail,
+            expected: B256::repeat_byte(0xaa).to_string(),
+            observed: B256::repeat_byte(0xbb).to_string(),
+        };
+        let result = denim_check_result(check);
+        tx.try_send(CheckUpdate::Starting("proxy_code_hash".to_string())).unwrap();
+        tx.try_send(CheckUpdate::Completed { name: "proxy_code_hash".to_string(), result })
+            .unwrap();
+        drop(tx);
+        let mut panel = ChecksPanel { rx: Some(rx), running: true, ..ChecksPanel::default() };
+
+        panel.poll();
+
+        let result = panel.results.get("proxy_code_hash").unwrap();
+        assert_eq!(result.passed, Some(false));
+        assert_eq!(result.detail, "expected 0xaaaaaaaaaaaa..aaaa; got 0xbbbbbbbbbbbb..bbbb");
+        assert!(!result.detail.contains("http://el"));
+        assert!(!result.detail.contains("block 42"));
+        assert!(!panel.running);
+    }
+
+    #[test]
+    fn denim_initial_implementation_has_operator_friendly_detail() {
+        let result = denim_check_result(DenimCheck {
+            name: "implementation".to_string(),
+            status: DenimCheckStatus::Pass,
+            expected: "a linked implementation with deployed code".to_string(),
+            observed: "LinkedInitial".to_string(),
+        });
+
+        assert_eq!(result.detail, "canonical initial implementation");
+    }
+
+    fn rendered_checks_panel(mode: CheckMode) -> String {
+        let backend = TestBackend::new(160, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let panel = ChecksPanel {
+            chain_idx: Some(0),
+            upgrade: Some("Denim"),
+            mode: Some(mode),
+            rpc_url: "http://localhost:7545".to_string(),
+            ..ChecksPanel::default()
+        };
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                render_checks_panel(frame, area, &panel, 0, None, false);
+            })
+            .unwrap();
+        terminal.backend().buffer().content().iter().map(|cell| cell.symbol()).collect()
+    }
+
+    #[test]
+    fn denim_checks_render_before_and_after_modes() {
+        let before = rendered_checks_panel(CheckMode::Before);
+        let after = rendered_checks_panel(CheckMode::After);
+
+        assert!(before.contains("Denim Checks (before)"));
+        assert!(after.contains("Denim Checks (after)"));
+        assert!(before.contains("BaseTime implementation"));
+        assert!(after.contains("BaseTime update tx"));
+        assert!(after.contains("BaseTime update receipt"));
+        assert!(after.contains("BaseTime millis getter"));
+        assert!(after.contains("BaseTime timestamp getter"));
+        assert!(!after.contains("el_syncing"));
+        assert!(!after.contains("snapshot_consistency"));
+    }
+
+    #[test]
+    fn denim_rows_keep_basetime_together_and_headers_last() {
+        assert_eq!(
+            &checks_for("Denim")[..9].iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+            &[
+                "proxy_code_hash",
+                "proxy_admin",
+                "implementation",
+                "metadata",
+                "metadata_receipt",
+                "storage_millis_part",
+                "getter_millis_part",
+                "getter_timestamp_ms",
+                "cadence_200ms",
+            ]
+        );
+        assert_eq!(
+            &checks_for("Denim")[DENIM_CHECKS.len() - 4..]
+                .iter()
+                .map(|(name, _)| *name)
+                .collect::<Vec<_>>(),
+            &[
+                "header_timestamp_ms",
+                "rpc_eth_getHeaderByHash_timestampMs",
+                "rpc_eth_getHeaderByNumber_timestampMs",
+                "rpc_eth_subscribe_newHeads_timestampMs",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn starting_checks_cancels_the_previous_task() {
+        let previous = tokio::spawn(std::future::pending::<()>());
+        let previous_abort = previous.abort_handle();
+        let mut panel = ChecksPanel { handle: Some(previous), ..ChecksPanel::default() };
+
+        panel.start(
+            0,
+            ("http://localhost:7545".to_string(), None, None),
+            "unknown",
+            CheckMode::Before,
+        );
+        tokio::task::yield_now().await;
+
+        assert!(previous_abort.is_finished());
+    }
+
+    #[tokio::test]
+    async fn unavailable_denim_checker_marks_all_rows_indeterminate() {
+        let (tx, mut rx) = mpsc::channel(64);
+
+        run_denim_checks_streaming("http://localhost:7545".to_string(), None, None, None, tx).await;
+
+        let mut started = Vec::new();
+        let mut completed = Vec::new();
+        while let Some(update) = rx.recv().await {
+            match update {
+                CheckUpdate::Starting(name) => started.push(name),
+                CheckUpdate::Completed { name, result } => completed.push((name, result)),
+                CheckUpdate::Cursor(_) => {}
+            }
+        }
+
+        assert!(DENIM_CHECKS.iter().all(|(name, _)| started.iter().any(|seen| seen == name)));
+        assert_eq!(completed.len(), DENIM_CHECKS.len());
+        assert_eq!(completed[0].1.passed, None);
+        assert_eq!(completed[0].1.detail, "consensus node RPC is not configured");
+        assert!(completed.iter().all(|(_, result)| result.passed.is_none()));
     }
 
     #[test]

@@ -182,7 +182,7 @@ where
         let mut encoded_l1_info_tx = Vec::with_capacity(l1_info_tx_envelope.length());
         l1_info_tx_envelope.encode_2718(&mut encoded_l1_info_tx);
 
-        let base_time_active = self.rollup_cfg.is_zenith_active(next_l2_time);
+        let base_time_active = self.rollup_cfg.is_denim_active(next_l2_time);
         let mut txs = Vec::with_capacity(
             1 + usize::from(base_time_active)
                 + deposit_transactions.len()
@@ -190,7 +190,7 @@ where
         );
         txs.push(encoded_l1_info_tx.into());
 
-        let payload_timestamp_millis_part = if base_time_active {
+        if base_time_active {
             let base_time = BaseTimeUpdateTx::new(next_l2_timestamp_millis_part).map_err(|e| {
                 PipelineError::AttributesBuilder(BuilderError::BaseTimeUpdate(e)).crit()
             })?;
@@ -198,10 +198,7 @@ where
             let mut encoded = Vec::with_capacity(envelope.length());
             envelope.encode_2718(&mut encoded);
             txs.push(encoded.into());
-            Some(next_l2_timestamp_millis_part)
-        } else {
-            None
-        };
+        }
 
         txs.extend(deposit_transactions);
         txs.extend(upgrade_transactions);
@@ -242,7 +239,6 @@ where
                 .is_jovian_active(next_l2_time)
                 .then(|| sys_config.min_base_fee.unwrap_or_default()), /* Default to zero if not
                                                                         * set at Jovian */
-            timestamp_millis_part: payload_timestamp_millis_part,
         })
     }
 }
@@ -288,7 +284,9 @@ mod tests {
     use alloy_primitives::{B256, Log, LogData, U64, U256, address};
     use base_common_chains::Sepolia;
     use base_common_consensus::{BaseTxEnvelope, SystemAddresses};
-    use base_common_genesis::{ChainGenesis, SystemConfig, SystemConfigUpdate, UpgradeConfig};
+    use base_common_genesis::{
+        BaseUpgradeConfig, ChainGenesis, SystemConfig, SystemConfigUpdate, UpgradeConfig,
+    };
     use base_protocol::{BlockInfo, DepositDecodeError};
 
     use super::*;
@@ -534,7 +532,6 @@ mod tests {
             )),
             eip_1559_params: None,
             min_base_fee: None,
-            timestamp_millis_part: None,
         };
         assert_eq!(payload, expected);
         assert_eq!(payload.transactions.unwrap().len(), 1);
@@ -545,8 +542,6 @@ mod tests {
         let block_time = 2_u64;
         let timestamp = 100_u64;
         let chain_id = 9_100_004;
-        let _activation =
-            base_common_genesis::RuntimeUpgradeRegistry::activate_zenith_for_testing(chain_id, 102);
         let cfg = Arc::new(RollupConfig {
             block_time,
             genesis: ChainGenesis {
@@ -554,7 +549,11 @@ mod tests {
                 ..Default::default()
             },
             l2_chain_id: chain_id.into(),
-            upgrades: UpgradeConfig { ecotone_time: Some(102), ..Default::default() },
+            upgrades: UpgradeConfig {
+                ecotone_time: Some(102),
+                base: BaseUpgradeConfig { denim: Some(102), ..Default::default() },
+                ..Default::default()
+            },
             ..Default::default()
         });
         let l1_cfg = Arc::new(Sepolia::l1_config());
@@ -586,7 +585,6 @@ mod tests {
             payload.payload_attributes.timestamp,
             cfg.l2_block_timestamp(next_l2_block_number)
         );
-        assert_eq!(payload.timestamp_millis_part, Some(expected_millis_part));
         let transactions = payload.transactions.unwrap();
         assert_eq!(transactions.len(), 8);
         let envelope = BaseTxEnvelope::decode_2718_exact(&transactions[1]).unwrap();
@@ -600,12 +598,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_prepare_payload_uses_zenith_formula_for_subsequent_block() {
+    async fn test_prepare_payload_uses_denim_formula_for_subsequent_block() {
         let block_time = 2_u64;
         let timestamp = 100_u64;
         let chain_id = 9_100_005;
-        let _activation =
-            base_common_genesis::RuntimeUpgradeRegistry::activate_zenith_for_testing(chain_id, 102);
         let cfg = Arc::new(RollupConfig {
             block_time,
             genesis: ChainGenesis {
@@ -613,7 +609,11 @@ mod tests {
                 ..Default::default()
             },
             l2_chain_id: chain_id.into(),
-            upgrades: UpgradeConfig { ecotone_time: Some(102), ..Default::default() },
+            upgrades: UpgradeConfig {
+                ecotone_time: Some(102),
+                base: BaseUpgradeConfig { denim: Some(102), ..Default::default() },
+                ..Default::default()
+            },
             ..Default::default()
         });
         let l1_cfg = Arc::new(Sepolia::l1_config());
@@ -645,8 +645,6 @@ mod tests {
 
         let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
         assert_eq!(payload.payload_attributes.timestamp, expected_timestamp);
-        assert_eq!(payload.timestamp_millis_part, Some(expected_millis_part));
-
         let transactions = payload.transactions.unwrap();
         assert_eq!(transactions.len(), 2);
         let envelope = BaseTxEnvelope::decode_2718_exact(&transactions[1]).unwrap();
@@ -711,7 +709,6 @@ mod tests {
             )),
             eip_1559_params: None,
             min_base_fee: None,
-            timestamp_millis_part: None,
         };
         assert_eq!(payload, expected);
         assert_eq!(payload.transactions.unwrap().len(), 1);
@@ -772,7 +769,6 @@ mod tests {
             )),
             eip_1559_params: None,
             min_base_fee: None,
-            timestamp_millis_part: None,
         };
         assert_eq!(payload, expected);
         assert_eq!(payload.transactions.unwrap().len(), 7);
@@ -832,7 +828,6 @@ mod tests {
             )),
             eip_1559_params: None,
             min_base_fee: None,
-            timestamp_millis_part: None,
         };
         assert_eq!(payload.transactions.as_ref().unwrap().len(), 10);
         assert_eq!(payload, expected);

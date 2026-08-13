@@ -12,7 +12,7 @@ use crate::{
     PackedPolicy, PolicyAccounting, PolicyRegistryStorage,
     b20_asset::{AssetAccounting, B20AssetStorage},
     b20_stablecoin::{B20StablecoinToken, StablecoinAccounting},
-    common::{B20_MAX_SUPPLY_CAP, TokenAccounting},
+    common::{B20_MAX_SUPPLY_CAP, TokenAccounting, TransferPolicyIds},
 };
 
 /// Convenience alias: [`B20StablecoinToken`] wired with both in-memory fakes.
@@ -236,6 +236,10 @@ impl TokenAccounting for InMemoryTokenAccounting {
     fn set_policy_id(&mut self, policy_scope: B256, policy_id: u64) -> Result<()> {
         self.policy_ids.insert(policy_scope, policy_id);
         Ok(())
+    }
+
+    fn transfer_policy_ids(&self) -> Result<TransferPolicyIds> {
+        TransferPolicyIds::read_individually(self)
     }
 
     fn emit_event(&mut self, log: LogData) -> Result<()> {

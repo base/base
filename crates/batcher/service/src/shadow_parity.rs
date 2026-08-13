@@ -33,9 +33,9 @@ pub const MAX_PENDING_BATCH_QUEUE_LEN: usize = 4096;
 /// Runtime configuration for the shadow parity monitor.
 #[derive(Debug, Clone)]
 pub struct ShadowParityMonitorConfig {
-    /// Canonical rollup batch inbox used by the op-batcher.
+    /// Canonical rollup batch inbox.
     pub canonical_inbox: Address,
-    /// Canonical op-batcher sender, if available from the rollup config.
+    /// Canonical batcher sender, if available from the rollup config.
     pub canonical_batcher: Option<Address>,
     /// Shadow batch inbox used by this base-batcher instance.
     pub shadow_inbox: Address,
@@ -69,7 +69,7 @@ pub struct ShadowParityMonitor {
 /// Side of the parity comparison.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParitySide {
-    /// Canonical op-batcher submissions to the rollup-config inbox.
+    /// Canonical batcher submissions to the rollup-config inbox.
     Canonical,
     /// Shadow base-batcher submissions to the override inbox.
     Shadow,

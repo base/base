@@ -21,8 +21,8 @@ use super::{
 };
 use crate::{
     DerivationActor, DerivationActorRequest, DerivationState, EngineActorRequest, EngineProcessor,
-    EngineProcessorOptions, EngineRequestHandler, EngineRequestReceiver, NodeActor, NodeMode,
-    QueuedDerivationEngineClient, QueuedEngineDerivationClient,
+    EngineRequestReceiver, NodeActor, NodeMode, QueuedDerivationEngineClient,
+    QueuedEngineDerivationClient, SequencerEngineRequestCoordinator, ValidatorEngineRequestHandler,
 };
 
 /// Live actor-system harness assembled by [`HarnessBuilder`].
@@ -258,20 +258,33 @@ impl HarnessBuilder {
             Arc::clone(&config),
             QueuedEngineDerivationClient::new(derivation_actor_request_tx.clone()),
             engine,
-            EngineProcessorOptions {
-                node_mode: self.role,
-                unsafe_head_tx: None,
-                conductor: None,
-                sequencer_stopped: false,
-            },
         );
+        let role = self.role;
         let engine_handle = tokio::spawn(async move {
             // Same rationale as the derivation actor above: panic on `Err` so
             // engine-side failures fail tests fast with the real error instead
             // of hanging until the tick budget expires and reporting a
             // misleading `ProgressTimeout`.
-            let engine_handler = EngineRequestHandler::new(engine_processor, None);
-            if let Err(error) = engine_handler.start(engine_actor_request_rx).await {
+            let result = match role {
+                NodeMode::Validator => {
+                    ValidatorEngineRequestHandler::new(engine_processor)
+                        .start(engine_actor_request_rx)
+                        .await
+                }
+                NodeMode::Sequencer => {
+                    let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
+                    SequencerEngineRequestCoordinator::new(
+                        engine_processor,
+                        false,
+                        None,
+                        false,
+                        unsafe_head_tx,
+                    )
+                    .start(engine_actor_request_rx)
+                    .await
+                }
+            };
+            if let Err(error) = result {
                 panic!("engine actor exited with error: {error:?}");
             }
         });

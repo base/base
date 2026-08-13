@@ -25,8 +25,8 @@ pub use l1::{
 mod sequencer;
 pub use sequencer::{
     ActionConductor, ActionOriginSelector, ActionSequencerAttributesBuilder,
-    ActionSequencerEngineClient, ActionUnsafePayloadGossipClient, ExecutionPayloadConverter,
-    L2Sequencer, L2SequencerError,
+    ActionSequencerEngineClient, ActionUnsafePayloadGossipClient, BuilderBackedEngineClient,
+    ExecutionPayloadConverter, L2Sequencer, L2SequencerError, SequencerEngineBackend,
 };
 
 mod harness;

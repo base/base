@@ -14,8 +14,10 @@ workspace = true
 [dependencies]
 # workspace
 base-node-runner.workspace = true
+base-execution-txpool.workspace = true
 
 # reth
+reth-rpc-eth-types.workspace = true
 reth-rpc-server-types.workspace = true
 reth-transaction-pool.workspace = true
 

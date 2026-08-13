@@ -4,6 +4,7 @@ use alloy_primitives::B256;
 use futures::{Future, FutureExt};
 use parking_lot::Mutex;
 use reth_basic_payload_builder::{HeaderForPayload, PayloadConfig, PrecachedState};
+use reth_execution_cache::SavedCache;
 use reth_node_api::{NodePrimitives, PayloadKind};
 use reth_payload_builder::{
     BuildNewPayload, KeepPayloadJobAlive, PayloadBuilderError, PayloadId, PayloadJob,
@@ -129,6 +130,7 @@ where
 
         // Extract hash before moving parent_header into Arc to avoid cloning
         let parent_hash = parent_header.hash();
+        let execution_cache = input.cache;
         let config = PayloadConfig::new(Arc::new(parent_header), input.attributes, id);
 
         // Create shared mutex for synchronizing cancellation with payload publishing
@@ -144,6 +146,7 @@ where
             publish_guard,
             deadline,
             cached_reads: self.maybe_pre_cached(parent_hash),
+            execution_cache,
         };
 
         job.spawn_build_job();
@@ -214,6 +217,8 @@ where
     /// This is used to avoid reading the same state over and over again when new attempts are
     /// triggered, because during the building process we'll repeatedly execute the transactions.
     pub(crate) cached_reads: Option<CachedReads>,
+    /// Optional execution cache shared with the engine.
+    pub(crate) execution_cache: Option<SavedCache>,
 }
 
 impl<Builder> std::fmt::Debug for BlockPayloadJob<Builder>
@@ -267,6 +272,8 @@ where
 pub struct BuildArguments<Attributes, Payload: BuiltPayload> {
     /// Previously cached disk reads
     pub cached_reads: CachedReads,
+    /// Optional execution cache shared with the engine.
+    pub execution_cache: Option<SavedCache>,
     /// How to configure the payload.
     pub config: PayloadConfig<Attributes, HeaderTy<Payload::Primitives>>,
     /// A marker that can be used to cancel the job.
@@ -293,9 +300,15 @@ where
         let (watch_tx, watch_rx) = watch::channel(None);
         self.payload_rx = Some(watch_rx);
         let cached_reads = self.cached_reads.take().unwrap_or_default();
+        let execution_cache = self.execution_cache.take();
         self.executor.spawn_blocking_task(Box::pin(async move {
-            let args =
-                BuildArguments { cached_reads, config: payload_config, cancel, publish_guard };
+            let args = BuildArguments {
+                cached_reads,
+                execution_cache,
+                config: payload_config,
+                cancel,
+                publish_guard,
+            };
             if let Err(e) = builder.try_build(args, &watch_tx).await {
                 warn!(error = %e, "Payload build task failed");
                 *build_error.lock() = Some(e.to_string());
@@ -392,6 +405,7 @@ mod tests {
     use base_common_consensus::BasePrimitives;
     use base_execution_payload_builder::{BasePayloadBuilderAttributes, PayloadPrimitives};
     use rand::rng;
+    use reth_execution_cache::{ExecutionCache, SavedCache};
     use reth_node_api::{BuiltPayloadExecutedBlock, NodePrimitives};
     use reth_primitives_traits::SealedBlock;
     use reth_provider::test_utils::MockEthProvider;
@@ -455,7 +469,7 @@ mod tests {
 
     #[derive(Debug, PartialEq, Clone)]
     enum BlockEvent {
-        Started,
+        Started(Option<B256>),
         Cancelled,
     }
 
@@ -472,7 +486,9 @@ mod tests {
             args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
             _payload_tx: &watch::Sender<Option<Self::BuiltPayload>>,
         ) -> Result<(), PayloadBuilderError> {
-            self.new_event(BlockEvent::Started);
+            self.new_event(BlockEvent::Started(
+                args.execution_cache.as_ref().map(SavedCache::executed_block_hash),
+            ));
 
             loop {
                 if args.cancel.is_cancelled() {
@@ -530,16 +546,17 @@ mod tests {
             tokio::time::sleep(Duration::from_secs(1)).await;
 
             let events = builder.get_events();
-            assert_eq!(events, vec![BlockEvent::Started, BlockEvent::Cancelled]);
+            assert_eq!(events, vec![BlockEvent::Started(None), BlockEvent::Cancelled]);
         }
 
         {
             // job resolve triggers cancellations from the build task
             let parent_hash = attr.payload_attributes.parent;
+            let cache = SavedCache::new(parent_hash, ExecutionCache::new(1_000));
             let input = BuildNewPayload {
                 attributes: attr.clone(),
                 parent_hash,
-                cache: None,
+                cache: Some(cache.clone()),
                 state_root_handle: None,
             };
             let mut job = generator.new_payload_job(input, attr.payload_id(&parent_hash))?;
@@ -549,7 +566,8 @@ mod tests {
             tokio::time::sleep(Duration::from_secs(1)).await;
 
             let events = builder.get_events();
-            assert_eq!(events, vec![BlockEvent::Started, BlockEvent::Cancelled]);
+            assert_eq!(events, vec![BlockEvent::Started(Some(parent_hash)), BlockEvent::Cancelled]);
+            assert!(cache.is_available(), "builder must release the execution cache after exit");
         }
 
         Ok(())

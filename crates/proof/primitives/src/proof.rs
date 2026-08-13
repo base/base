@@ -26,6 +26,9 @@ pub enum ProofResult {
         aggregate_proposal: Proposal,
         /// The individual per-block proposals that were aggregated.
         proposals: Vec<Proposal>,
+        /// Stamped by the enclave at signing time, so the signer and the proof
+        /// are returned atomically.
+        tee_signer: Address,
     },
     /// Result from a ZK backend.
     Zk {
@@ -69,13 +72,9 @@ pub struct ProofRequest {
     /// L1 head block number without an extra lookup.
     #[cfg_attr(feature = "serde", serde(default))]
     pub l1_head_number: u64,
-    /// Keccak256 hash of the expected enclave PCR0 measurement.
-    ///
-    /// Used by multi-enclave provers to select the enclave whose PCR0
-    /// matches the on-chain `TEE_IMAGE_HASH`. Single-enclave provers
-    /// accept and ignore this field.
-    #[cfg_attr(feature = "serde", serde(default))]
-    pub image_hash: B256,
+    /// L2 block used to pin the upgrade schedule; defaults to the claimed block.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub schedule_l2_block_number: Option<u64>,
 }
 
 /// A proof request bundled with the witness data needed to fulfill it.
