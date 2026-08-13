@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, QueryBuilder, query_as, types::Json};
 
-use crate::ShadowBlockRow;
+use crate::{ShadowBlockCursor, ShadowBlockRawRow, ShadowBlockRow};
 
 /// Repository for shadow indexer block persistence.
 #[derive(Debug)]
@@ -101,11 +102,65 @@ impl ShadowBlockRepo {
 
         Ok(rows)
     }
+
+    /// Lists rows reorged out of the canonical chain, ordered by the composite
+    /// cursor, strictly after `after`.
+    ///
+    /// Returns both shadow candidates (`canonical_hash IS NOT NULL`) and pipeline
+    /// unwinds (`canonical_hash IS NULL`); the caller partitions them. Filtering
+    /// unwinds out in SQL would make them uncountable, and the cursor would never
+    /// advance past them.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the query fails.
+    pub async fn list_reorged_since(
+        &self,
+        after: &ShadowBlockCursor,
+        limit: i64,
+    ) -> Result<Vec<ShadowBlockRawRow>> {
+        let rows = query_as::<_, ShadowBlockRawRow>(
+            "SELECT number, hash, reorged_out, canonical_hash, created_at, updated_at, payload \
+             FROM shadow_blocks \
+             WHERE reorged_out = true \
+               AND (updated_at, number, hash) > ($1, $2, $3) \
+             ORDER BY updated_at, number, hash \
+             LIMIT $4",
+        )
+        .bind(after.updated_at)
+        .bind(after.number)
+        .bind(&after.hash)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .context("failed to list reorged shadow blocks since cursor")?;
+
+        Ok(rows)
+    }
+
+    /// Newest cursor position present, for first-boot initialization.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the query fails.
+    pub async fn max_cursor(&self) -> Result<Option<ShadowBlockCursor>> {
+        // Deliberately scan all rows: filtering to reorged rows could replay
+        // un-reconciled rows when a fresh reader starts behind them.
+        let row = query_as::<_, (DateTime<Utc>, i64, Vec<u8>)>(
+            "SELECT updated_at, number, hash FROM shadow_blocks \
+             ORDER BY updated_at DESC, number DESC, hash DESC \
+             LIMIT 1",
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .context("failed to load newest shadow block cursor")?;
+
+        Ok(row.map(|(updated_at, number, hash)| ShadowBlockCursor { updated_at, number, hash }))
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use chrono::Utc;
     use reth_primitives_traits::RecoveredBlock;
 
     use super::*;

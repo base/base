@@ -3,8 +3,11 @@
 mod config;
 pub use config::ShadowDbConfig;
 
+mod cursor;
+pub use cursor::{ShadowBlockCursor, ShadowMetricsCursorRepo};
+
 mod repo;
 pub use repo::ShadowBlockRepo;
 
 mod models;
-pub use models::{ShadowBlockPayload, ShadowBlockRow};
+pub use models::{ShadowBlockPayload, ShadowBlockRawRow, ShadowBlockRow};

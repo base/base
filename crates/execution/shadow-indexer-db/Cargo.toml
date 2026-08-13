@@ -20,8 +20,9 @@ reth-primitives-traits = { workspace = true, features = ["serde"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 
 # serialization
-serde.workspace = true
+serde_json = { workspace = true, features = ["std"] }
 chrono.workspace = true
+serde.workspace = true
 
 # async
 tokio.workspace = true
