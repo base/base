@@ -3,8 +3,7 @@ use base_prover_service_db::{
     canonical_session_id,
 };
 use base_prover_service_protocol::{
-    ProofRequest, ProofRequestIdCollisionMessage, ProofRequestKind, ProveBlockRangeRequest,
-    ProveBlockRangeResponse,
+    ProofRequestIdCollisionMessage, ProveBlockRangeRequest, ProveBlockRangeResponse,
 };
 use jsonrpsee::core::RpcResult;
 use tracing::{info, warn};
@@ -32,7 +31,6 @@ impl ProverServiceServer {
         request: ProveBlockRangeRequest,
     ) -> RpcResult<ProveBlockRangeResponse> {
         let mut proof_request = request.proof;
-        validate_protocol_version(&proof_request)?;
         let session_id = parse_session_id(&proof_request.session_id)?;
         proof_request.session_id = session_id.clone();
 
@@ -120,23 +118,6 @@ fn parse_session_id(session_id: &str) -> RpcResult<String> {
     canonical_session_id(session_id).map_err(|e| invalid_argument(format!("{e}")))
 }
 
-/// Rejects schedule-pinned requests mislabeled as legacy jobs.
-fn validate_protocol_version(request: &ProofRequest) -> RpcResult<()> {
-    let protocol_version = request.protocol_version;
-    let schedule_l2_block_number = match &request.request {
-        ProofRequestKind::Compressed(request) => request.schedule_l2_block_number,
-        ProofRequestKind::SnarkPlonk(request) => request.proof.schedule_l2_block_number,
-        ProofRequestKind::Tee(request) => request.proof.schedule_l2_block_number,
-    };
-    if schedule_l2_block_number.is_some() && protocol_version == 0 {
-        return Err(invalid_argument(
-            "schedule_l2_block_number requires a non-zero protocol_version",
-        ));
-    }
-
-    Ok(())
-}
-
 fn validate_intermediate_root_interval(
     api_proof_type: ApiProofType,
     number_of_blocks_to_prove: u64,
@@ -166,13 +147,9 @@ fn validate_intermediate_root_interval(
 #[cfg(test)]
 mod tests {
     use base_prover_service_db::{ApiProofType, ProofType};
-    use base_prover_service_protocol::{
-        ProofRequest, ProofRequestKind, SnarkPlonkProofRequest, TeeKind, TeeProofRequest,
-        ZkBackend, ZkProofRequest, ZkVm,
-    };
     use uuid::Uuid;
 
-    use super::{parse_session_id, validate_intermediate_root_interval, validate_protocol_version};
+    use super::{parse_session_id, validate_intermediate_root_interval};
     use crate::metrics;
 
     #[test]
@@ -207,39 +184,6 @@ mod tests {
     }
 
     #[test]
-    fn validate_protocol_version_accepts_arbitrary_versions() {
-        for version in [0, 1, 7, u32::MAX] {
-            assert!(validate_protocol_version(&proof_request(version, None)).is_ok());
-        }
-    }
-
-    #[test]
-    fn schedule_pinning_requires_current_protocol_version() {
-        let mut tee_request =
-            TeeProofRequest { proof: Default::default(), tee_kind: TeeKind::AwsNitro };
-        tee_request.proof.schedule_l2_block_number = Some(42);
-        let requests = [
-            ProofRequestKind::Compressed(zk_request(Some(42))),
-            ProofRequestKind::SnarkPlonk(SnarkPlonkProofRequest {
-                proof: zk_request(Some(42)),
-                prover_address: Default::default(),
-            }),
-            ProofRequestKind::Tee(tee_request),
-        ];
-
-        for request in requests {
-            let mut proof_request =
-                ProofRequest { session_id: "session".to_owned(), protocol_version: 0, request };
-            let err = validate_protocol_version(&proof_request)
-                .expect_err("legacy protocol must reject schedule pinning");
-            assert!(err.message().contains("schedule_l2_block_number requires"));
-
-            proof_request.protocol_version = 7;
-            assert!(validate_protocol_version(&proof_request).is_ok());
-        }
-    }
-
-    #[test]
     fn parse_session_id_accepts_uppercase_uuid() {
         let id = Uuid::new_v4();
         let parsed = parse_session_id(&id.to_string().to_uppercase()).unwrap();
@@ -267,26 +211,5 @@ mod tests {
         let result = validate_intermediate_root_interval(ApiProofType::Tee, 1, Some(30));
 
         assert!(result.is_ok());
-    }
-
-    fn proof_request(protocol_version: u32, schedule_l2_block_number: Option<u64>) -> ProofRequest {
-        ProofRequest {
-            session_id: "session".to_owned(),
-            protocol_version,
-            request: ProofRequestKind::Compressed(zk_request(schedule_l2_block_number)),
-        }
-    }
-
-    fn zk_request(schedule_l2_block_number: Option<u64>) -> ZkProofRequest {
-        ZkProofRequest {
-            start_block_number: 1,
-            number_of_blocks_to_prove: 1,
-            sequence_window: None,
-            l1_head: None,
-            intermediate_root_interval: None,
-            schedule_l2_block_number,
-            zk_vm: ZkVm::Sp1,
-            zk_backend: ZkBackend::Cluster,
-        }
     }
 }

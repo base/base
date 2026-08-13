@@ -153,7 +153,7 @@ pub struct DeleteProofsByTeeSignerRequest {
 pub struct ProofRequest {
     /// Client-provided idempotency key.
     pub session_id: String,
-    /// Prover protocol required to fulfill this request. Omission defaults to legacy version `0`.
+    /// Opaque prover routing version. Omission defaults to compatibility route `0`.
     #[serde(default)]
     pub protocol_version: u32,
     /// Proof request details.

@@ -2,7 +2,7 @@ ALTER TABLE proof_requests
 ADD COLUMN IF NOT EXISTS request_protocol_version BIGINT NOT NULL DEFAULT 0;
 
 COMMENT ON COLUMN proof_requests.request_protocol_version IS
-'Prover protocol required by this job; version 0 is the legacy journal without schedule pinning.';
+'Opaque prover routing version required by this job; 0 is the compatibility default.';
 
 -- Claim queries now match request_protocol_version. Without it in the index, unclaimable rows of
 -- the other protocol sort ahead of claimable ones (ORDER BY start_block_number ASC) and are
