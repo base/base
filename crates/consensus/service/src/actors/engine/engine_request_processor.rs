@@ -624,8 +624,8 @@ where
                 }
             }
         } else if let Some(head) = head {
-            // Preserve CL mode's historical zero-head fallback because it has no periodic probe.
-            // EL mode retries transient label failures on its probe interval instead.
+            // Preserve CL mode's historical behavior of silently defaulting failed label queries
+            // to zeroed heads because it has no periodic probe. EL mode retries instead.
             let Some(probe_update) = self.active_sequencer_probe_update(head, !el_sync_mode).await
             else {
                 self.engine.seed_state(EngineSyncStateUpdate {
