@@ -106,12 +106,15 @@ impl ShadowIndexerExEx {
             receipts: receipts.to_vec(),
         };
 
+        let now = Utc::now();
+
         Ok(ShadowBlockRow {
             number,
             hash: block.hash().as_slice().to_vec(),
             reorged_out,
             canonical_hash,
-            created_at: Utc::now(),
+            created_at: now,
+            updated_at: now,
             payload,
         })
     }

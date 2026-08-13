@@ -60,7 +60,8 @@ impl ShadowBlockRepo {
                 " ON CONFLICT (number, hash) DO UPDATE SET \
                  reorged_out = EXCLUDED.reorged_out, \
                  canonical_hash = EXCLUDED.canonical_hash, \
-                 payload = EXCLUDED.payload",
+                 payload = EXCLUDED.payload, \
+                 updated_at = now()",
             );
 
             let result = query_builder
@@ -117,6 +118,7 @@ mod tests {
             reorged_out,
             canonical_hash: None,
             created_at: Utc::now(),
+            updated_at: Utc::now(),
             payload: ShadowBlockPayload {
                 builder_version: String::new(),
                 block: RecoveredBlock::default(),

@@ -21,6 +21,10 @@ pub struct ShadowBlockRow {
     pub canonical_hash: Option<Vec<u8>>,
     /// Row creation time.
     pub created_at: DateTime<Utc>,
+    /// Last write time, maintained entirely by the database: `DEFAULT now()` on first
+    /// insert and refreshed to `now()` by the conflict clause of `insert_batch`. Values
+    /// set on the write path are ignored.
+    pub updated_at: DateTime<Utc>,
     /// Full executed block and receipts persisted as JSONB.
     #[sqlx(json)]
     pub payload: ShadowBlockPayload,
