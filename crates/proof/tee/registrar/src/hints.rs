@@ -469,7 +469,8 @@ mod tests {
         let q = on_curve_x_zero_point();
         let half = Option::<Scalar>::from(Scalar::from(2u64).invert()).unwrap();
         let p = (ProjectivePoint::from(q) * half).to_affine();
-        let (x_mid, _) = P384Hints::affine_xy(&ProjectivePoint::from(p).double().to_affine()).unwrap();
+        let (x_mid, _) =
+            P384Hints::affine_xy(&ProjectivePoint::from(p).double().to_affine()).unwrap();
         assert!(bool::from(x_mid.is_zero()), "precondition: 2P must have x == 0");
 
         // Reusing twice_affine would treat that midpoint as infinity and stop after one inverse.
