@@ -282,6 +282,9 @@ fn ensure_transfer_leader_el_readiness(
     else {
         return Ok(());
     };
+    if target == Some(leader_status.name.as_str()) {
+        return Ok(());
+    }
     let required_l2_block = leader_status.unsafe_l2_block.ok_or_else(|| {
         ConductorCommandError::ExecutionLayerStatusUnavailable {
             node: leader_status.name.clone(),
@@ -290,15 +293,17 @@ fn ensure_transfer_leader_el_readiness(
     })?;
 
     if let Some(target) = target {
-        if target == leader_status.name {
-            return Ok(());
-        }
         let target_node = ConductorNodeConfig::find(&snapshot.nodes, target)
             .map_err(ConductorCommandError::from)?;
         if target_node.el_rpc.is_none() {
             return Ok(());
         }
-        let target_status = snapshot_node_status(snapshot, target);
+        let target_status = snapshot_node_status(snapshot, target).ok_or_else(|| {
+            ConductorCommandError::ExecutionLayerStatusUnavailable {
+                node: target.to_string(),
+                field: "status",
+            }
+        })?;
         return ensure_node_el_ready_for_leadership_transfer(
             target_status,
             target,
@@ -312,26 +317,32 @@ fn ensure_transfer_leader_el_readiness(
         .filter(|node| node.name != leader_status.name && node.el_rpc.is_some())
     {
         let status = snapshot_node_status(snapshot, &node.name);
+        let status =
+            status.ok_or_else(|| ConductorCommandError::ExecutionLayerStatusUnavailable {
+                node: node.name.clone(),
+                field: "status",
+            })?;
         ensure_node_el_ready_for_leadership_transfer(status, &node.name, required_l2_block)?;
     }
     Ok(())
 }
 
 fn ensure_node_el_ready_for_leadership_transfer(
-    status: Option<&ConductorNodeStatus>,
+    status: &ConductorNodeStatus,
     node: &str,
     required_l2_block: u64,
 ) -> Result<(), ConductorCommandError> {
-    let status = status.ok_or_else(|| ConductorCommandError::ExecutionLayerStatusUnavailable {
-        node: node.to_string(),
-        field: "el_syncing",
-    })?;
+    let el_block =
+        status.el_block.ok_or_else(|| ConductorCommandError::ExecutionLayerStatusUnavailable {
+            node: node.to_string(),
+            field: "el_block",
+        })?;
     match status.el_syncing {
         Some(false) => {}
         Some(true) => {
             return Err(ConductorCommandError::ExecutionLayerSyncing {
                 node: node.to_string(),
-                el_block: status.el_block,
+                el_block,
                 required_l2_block,
             });
         }
@@ -343,11 +354,6 @@ fn ensure_node_el_ready_for_leadership_transfer(
         }
     }
 
-    let el_block =
-        status.el_block.ok_or_else(|| ConductorCommandError::ExecutionLayerStatusUnavailable {
-            node: node.to_string(),
-            field: "el_block",
-        })?;
     if el_block < required_l2_block {
         return Err(ConductorCommandError::ExecutionLayerBehind {
             node: node.to_string(),
@@ -882,7 +888,7 @@ mod tests {
                 el_block,
                 required_l2_block,
             } if node == "op-conductor-1"
-                && el_block == Some(9)
+                && el_block == 9
                 && required_l2_block == 10
         ));
     }
@@ -929,6 +935,23 @@ mod tests {
     }
 
     #[test]
+    fn transfer_leader_rejects_missing_target_status_record() {
+        let snapshot = snapshot(
+            vec![node_with_el_rpc("op-conductor-0"), node_with_el_rpc("op-conductor-1")],
+            vec![status("op-conductor-0", true, false)],
+        );
+
+        let err = ensure_transfer_leader_el_readiness(&snapshot, Some("op-conductor-1"))
+            .expect_err("missing target status record should block leadership transfer");
+
+        assert!(matches!(
+            err,
+            ConductorCommandError::ExecutionLayerStatusUnavailable { node, field }
+                if node == "op-conductor-1" && field == "status"
+        ));
+    }
+
+    #[test]
     fn transfer_leader_allows_caught_up_target_el() {
         let snapshot = snapshot(
             vec![node_with_el_rpc("op-conductor-0"), node_with_el_rpc("op-conductor-1")],
@@ -959,6 +982,7 @@ mod tests {
         let mut leader_status = status("op-conductor-0", true, false);
         leader_status.el_syncing = Some(true);
         leader_status.el_block = Some(0);
+        leader_status.unsafe_l2_block = None;
         let snapshot = snapshot(
             vec![node_with_el_rpc("op-conductor-0"), node_with_el_rpc("op-conductor-1")],
             vec![leader_status, status("op-conductor-1", false, false)],
