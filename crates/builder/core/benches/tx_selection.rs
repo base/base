@@ -2,14 +2,17 @@
 //!
 //! Transaction construction and EVM execution are excluded. The benchmarks cover the production
 //! non-parking pending-pool iterator, the lane-aware parking adapter used by flashblocks, and the
-//! validity-predicate park/commit/rescan cycle.
+//! validity-predicate parking and state-index wakeup cycle.
 
 use std::{hint::black_box, sync::Arc, time::Instant};
 
 use alloy_consensus::{SignableTransaction, TxEip1559};
 use alloy_eips::eip2718::Encodable2718;
-use alloy_primitives::{Address, Bytes, Signature, TxKind, U256};
-use base_builder_core::{ParkableBestPayloadTransactions, ParkablePayloadTransactions};
+use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
+use base_builder_core::{
+    ParkableBestPayloadTransactions, ParkablePayloadTransactions, ParkedPredicateIndex,
+    ValidityPredicateKey,
+};
 use base_common_consensus::{BaseTransactionSigned, BaseTxEnvelope};
 use base_execution_txpool::{
     BaseOrdering, BasePooledTransaction, ParkedBestTransactions, ValidityOperator,
@@ -19,10 +22,13 @@ use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, 
 use reth_payload_util::PayloadTransactions;
 use reth_primitives_traits::Recovered;
 use reth_transaction_pool::{
-    BestTransactions, TransactionOrigin, ValidPoolTransaction, identifier::TransactionId,
-    pool::PendingPool,
+    BestTransactions, PoolTransaction, TransactionOrigin, ValidPoolTransaction,
+    identifier::TransactionId, pool::PendingPool,
 };
-use revm::database::InMemoryDB;
+use revm::{
+    database::InMemoryDB,
+    state::{Account, EvmState},
+};
 
 type Ordering = BaseOrdering<BasePooledTransaction>;
 type Pool = PendingPool<Ordering>;
@@ -226,31 +232,26 @@ fn selection_benches(c: &mut Criterion) {
 
 fn run_predicate_selection(pool: &Pool, db: &mut InMemoryDB) -> usize {
     let mut best = parkable(pool);
+    let mut predicate_index = ParkedPredicateIndex::default();
     let mut selected = 0;
 
     while let Some(transaction) = best.next(()) {
-        let predicates_match = transaction
+        let blocking_predicate = transaction
             .validity_predicates()
             .iter()
-            .all(|predicate| predicate.matches_state(db).expect("in-memory reads cannot fail"));
-        if !predicates_match {
+            .find(|predicate| !predicate.matches_state(db).expect("in-memory reads cannot fail"))
+            .map(ValidityPredicateKey::for_predicate);
+        if let Some(blocking_predicate) = blocking_predicate {
+            let transaction_hash = *transaction.hash();
             assert!(best.park_current());
+            predicate_index.park(transaction_hash, transaction, blocking_predicate);
             continue;
         }
 
         black_box(&transaction);
         best.mark_current_committed();
         selected += 1;
-
-        for parked in best.parked_transactions() {
-            let matches =
-                parked.transaction.validity_predicates().iter().all(|predicate| {
-                    predicate.matches_state(db).expect("in-memory reads cannot fail")
-                });
-            if matches {
-                assert!(best.promote(*parked.hash()));
-            }
-        }
+        assert!(predicate_index.affected_by_state(&EvmState::default()).is_empty());
     }
 
     selected
@@ -295,5 +296,38 @@ fn predicate_benches(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, selection_benches, predicate_benches);
+fn predicate_index_benches(c: &mut Criterion) {
+    let mut group = c.benchmark_group("tx_selection/predicate_index");
+    group.sample_size(10);
+
+    for parked_transactions in [1_000, 10_000, 100_000] {
+        for shared_state in [false, true] {
+            let shared_address = address(TRANSACTION_COUNTS[TRANSACTION_COUNTS.len() - 1]);
+            let mut index = ParkedPredicateIndex::default();
+            for transaction_index in 0..parked_transactions {
+                let transaction_hash: B256 = U256::from(transaction_index + 1).into();
+                let predicate_address =
+                    if shared_state { shared_address } else { address(transaction_index) };
+                index.park(transaction_hash, (), ValidityPredicateKey::Balance(predicate_address));
+            }
+
+            let changed_address = if shared_state { shared_address } else { address(0) };
+            let mut changed_state = EvmState::default();
+            let mut changed_account = Account::default();
+            changed_account.info.balance = U256::ONE;
+            changed_state.insert(changed_address, changed_account);
+
+            group.bench_function(
+                format!(
+                    "parked={parked_transactions}/state={}",
+                    if shared_state { "shared" } else { "unique" }
+                ),
+                |b| b.iter(|| black_box(index.affected_by_state(&changed_state))),
+            );
+        }
+    }
+    group.finish();
+}
+
+criterion_group!(benches, selection_benches, predicate_benches, predicate_index_benches);
 criterion_main!(benches);

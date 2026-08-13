@@ -6,6 +6,9 @@ pub use best_txs::{
     PayloadTransactionInvalidated,
 };
 
+mod predicate_index;
+pub use predicate_index::{ParkedPredicateIndex, ValidityPredicateKey};
+
 mod deadline;
 pub use deadline::PayloadJobDeadline;
 
