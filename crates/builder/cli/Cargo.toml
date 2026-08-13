@@ -15,6 +15,7 @@ workspace = true
 # workspace
 base-node-core.workspace = true
 base-builder-core.workspace = true
+base-execution-cli.workspace = true
 base-builder-metering.workspace = true
 base-observability-events.workspace = true
 
