@@ -2,11 +2,11 @@
 //! [`ConfigChangeAuthorizer`] deliberately defers, plus account creation and
 //! delegation, mirroring `AccountConfiguration`'s write semantics.
 //!
-//! [`ConfigChangeAuthorizer`] authenticates a config change and gates it on
-//! admin scope (`scope == 0`), but does not decode each [`ActorChange`]'s `data` or mutate
-//! `actor_config`; that is this module's job. It is the native mirror of
-//! `AccountConfiguration.applySignedActorChanges`'s mutation tail
-//! (`_authorizeActor` / `_revokeActor` / `_slicePolicy`), of `createAccount` /
+//! [`ConfigChangeAuthorizer`] authenticates a signed batch and gates it on
+//! admin scope (`scope == 0`), but does not decode each [`SignedChange`]'s
+//! `payload` or mutate `actor_config`; that is this module's job. It is the
+//! native mirror of `Keystore.applySignedAccountChanges`'s mutation tail
+//! (`_applyAuthorize` / `_applyRevoke` / `_slicePolicy`), of `createAccount` /
 //! `_initializeAccount`, and of the deterministic CREATE2 address derivation.
 //!
 //! Two effects of an account change touch the *account's code* rather than the
@@ -21,14 +21,15 @@
 //! (the enshrined path has no EVM LOG opcodes of its own).
 //!
 //! [`ConfigChangeAuthorizer`]: crate::ConfigChangeAuthorizer
-//! [`ActorChange`]: base_common_consensus::ActorChange
+//! [`SignedChange`]: base_common_consensus::SignedChange
 //! [`AccountConfigurationEvents`]: crate::AccountConfigurationEvents
 //! [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702
 
 use alloy_primitives::{Address, B256, Bytes, keccak256};
 use alloy_sol_types::{SolValue, sol};
 use base_common_consensus::{
-    ActorChange, ActorChangeType, CreateEntry, Eip8130Constants, Eip8130Contracts, InitialActor,
+    AccountChangeChannel, ChangeType, CreateEntry, Eip8130Constants, Eip8130Contracts,
+    InitialActor, SignedChange,
 };
 use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::state::Bytecode;
@@ -36,9 +37,9 @@ use revm::state::Bytecode;
 use crate::{AccountConfigurationEvents, AccountConfigurationStorage, AccountState, ActorConfig};
 
 sol! {
-    /// ABI shape of the per-actor config carried in an `Authorize` change's
-    /// `data` (`abi.encode(ActorConfig, bytes policyData)`), matching
-    /// `AccountConfiguration.ActorConfig`. Field order and widths are positional
+    /// ABI shape of the per-actor config carried in an `AuthorizeActor` op's
+    /// `payload` (`abi.encode(bytes32 actorId, ActorConfig, bytes policyData)`),
+    /// matching `Keystore.ActorConfig`. Field order and widths are positional
     /// for ABI decoding.
     struct ActorConfigAbi {
         address authenticator;
@@ -57,10 +58,45 @@ pub enum ApplyError {
     #[error("EIP-8130 state access failed: {0}")]
     Storage(#[from] BasePrecompileError),
 
-    /// An `Authorize` change's `data` did not ABI-decode to
-    /// `(ActorConfig, bytes policyData)`. Mirrors the `abi.decode` revert.
+    /// An `AuthorizeActor` op's `payload` did not ABI-decode to
+    /// `(bytes32 actorId, ActorConfig, bytes policyData)`. Mirrors the
+    /// `abi.decode` revert.
     #[error("malformed actor-change authorize data")]
     MalformedAuthorizeData,
+
+    /// A `RevokeActor` op's `payload` did not ABI-decode to `(bytes32 actorId)`.
+    #[error("malformed actor-change revoke data")]
+    MalformedRevokeData,
+
+    /// An op that requires an empty `payload` (currently `IncrementLocalEpoch`)
+    /// carried a non-empty one. Mirrors `Keystore.InvalidChangePayload`.
+    #[error("account-change op payload must be empty")]
+    InvalidChangePayload,
+
+    /// An `IncrementLocalEpoch` op could not advance because the local epoch is
+    /// at its terminal `u32::MAX` value. Mirrors `Keystore.EpochSaturated`.
+    #[error("local epoch is saturated and cannot be incremented")]
+    EpochSaturated,
+
+    /// A signed batch carried an environment op (`Lock` or `Unlock`) whose apply
+    /// handler is not yet enshrined. These ops are wired into the apply path by a
+    /// subsequent change; until then a batch carrying one is rejected rather than
+    /// silently ignored.
+    #[error("unsupported account-change op in the enshrined apply path")]
+    UnsupportedChangeType,
+
+    /// A signed batch carried no changes. Mirrors `applySignedAccountChanges`'s
+    /// `revert EmptyChangeSet()`: an empty batch would otherwise consume (advance)
+    /// a channel's sequence without altering any configuration. Rejected before
+    /// the sequence is advanced.
+    #[error("signed account-change batch is empty")]
+    EmptyChangeSet,
+
+    /// The target `actor_id` is `bytes32(0)`, which is reserved for the "no
+    /// actor" sentinel and can never be authorized. Mirrors `_authorizeActor`'s
+    /// `revert InvalidActorId()`.
+    #[error("actor id bytes32(0) is reserved and cannot be authorized")]
+    InvalidActorId,
 
     /// The new actor's authenticator is `address(0)`, below the valid
     /// authenticator namespace. Mirrors `require(config.authenticator >= K1)`.
@@ -296,89 +332,205 @@ pub struct AppliedAccountChanges {
 pub struct AccountChangeApplier;
 
 impl AccountChangeApplier {
-    /// Applies one authorized config change's actor changes against `account`,
-    /// advancing the change-sequence channel selected by `chain_id` (`0` =
-    /// multichain, else local). Mirrors the mutation tail of
-    /// `applySignedActorChanges`.
+    /// Applies one authorized signed batch's ops against `account`, advancing the
+    /// channel's sequence counter. Mirrors the mutation tail of
+    /// `applySignedAccountChanges`.
     /// Returns the number of empty zero-to-zero revoke slots discounted (see
     /// [`Self::revoke_actor_with_account_state`]), for intrinsic-gas discounting.
+    ///
+    /// `now` is the block timestamp in Unix seconds (the same clock as
+    /// [`ActorConfig::expiry`]), used to skip lapsed replayable JIT grants; see
+    /// [`Self::apply_config_change_with_account_state`]. The read-only estimation
+    /// pipeline passes `0` to price every change without filtering.
     pub fn apply_config_change(
         storage: &mut AccountConfigurationStorage<'_>,
         account: Address,
-        actor_changes: &[ActorChange],
-        chain_id: u64,
+        changes: &[SignedChange],
+        channel: AccountChangeChannel,
+        sequence: u64,
+        now: u64,
     ) -> Result<u32, ApplyError> {
         let mut state = storage.get_account_state(account)?;
         let revoke_discount_slots = Self::apply_config_change_with_account_state(
-            storage,
-            account,
-            actor_changes,
-            chain_id,
-            &mut state,
+            storage, account, changes, channel, sequence, &mut state, now,
         )?;
         storage.set_account_state(account, state)?;
         Ok(revoke_discount_slots)
     }
 
-    /// Applies one config change while carrying an already-loaded account state
+    /// Applies one signed batch while carrying an already-loaded account state
     /// through sequence advancement and any inline-self actor mutations.
     ///
     /// The caller owns persistence of `state`, allowing the transaction
     /// orchestrator to perform one final packed-state write after all relevant
-    /// mutations in this change.
+    /// mutations in this batch.
+    ///
+    /// Mirrors Keystore `_applyAuthorize`'s per-change skip of an already-expired
+    /// grant on the replayable unsequenced (JIT) path: a JIT batch — a
+    /// [`AccountChangeChannel::Local`] batch whose low sequence half is
+    /// [`Eip8130Constants::UNSEQUENCED`] — consumes no counter and is replayable
+    /// (last-write-wins on its slot until the epoch is incremented), so an
+    /// `AuthorizeActor` grant whose non-zero expiry is not strictly in the future
+    /// is silently **skipped** (dropped): a lapsed replayable grant can never
+    /// re-land and clobber its slot, and whether a signed change applies never
+    /// depends on onchain time. The skip is per-change — live siblings in the same
+    /// batch still apply — and nothing reverts on expiry. Sequenced batches (local
+    /// sequenced or any multichain) are single-consume and cannot be replayed, so
+    /// an already-expired grant is retained and installs inert — present but dead
+    /// on arrival at authentication — consuming its slot; multichain relies on this
+    /// for cross-chain catch-up. A zero expiry is the "no expiry" sentinel and is
+    /// always applied.
+    ///
+    /// `now` is the block timestamp in Unix seconds (the same clock as
+    /// [`ActorConfig::expiry`]). Both the verifying and read-only estimation
+    /// pipelines pass the real block timestamp so the JIT expiry skip is applied
+    /// identically — the estimate's post-change state matches inclusion. Passing
+    /// `0` disables the skip entirely (`expiry != 0 && expiry <= 0` is never
+    /// true, so every grant is retained); callers that must price every change
+    /// unconditionally, regardless of expiry, can opt into that with a `0` clock.
     ///
     /// Returns the number of empty zero-to-zero revoke slots discounted (see
     /// [`Self::revoke_actor_with_account_state`]), for intrinsic-gas discounting.
     pub fn apply_config_change_with_account_state(
         storage: &mut AccountConfigurationStorage<'_>,
         account: Address,
-        actor_changes: &[ActorChange],
-        chain_id: u64,
+        changes: &[SignedChange],
+        channel: AccountChangeChannel,
+        sequence: u64,
         state: &mut AccountState,
+        now: u64,
     ) -> Result<u32, ApplyError> {
-        // Advance the channel sequence (post-increment in the contract; the
-        // authenticated digest committed to the pre-increment value).
-        if chain_id == 0 {
-            state.multichain_sequence =
-                state.multichain_sequence.checked_add(1).ok_or(ApplyError::SequenceOverflow)?;
-        } else {
-            // `local_sequence` is a `uint32` in storage (unlike the full-width
-            // `uint64` `multichain_sequence`), so guard the storage ceiling, not
-            // just the `u64` arithmetic one — otherwise `to_word` would silently
-            // truncate the high bytes in release builds.
-            if state.local_sequence >= u64::from(u32::MAX) {
-                return Err(ApplyError::SequenceOverflow);
-            }
-            state.local_sequence += 1;
+        // Reject an empty batch before advancing the sequence. A no-op batch would
+        // otherwise consume the channel's sequence (or initialize a fresh account)
+        // without changing any configuration. Mirrors `applySignedAccountChanges`'s
+        // `revert EmptyChangeSet()`, which fires before the sequence gate; the
+        // txpool rejects the same case up front (`cfg.changes.is_empty()`).
+        if changes.is_empty() {
+            return Err(ApplyError::EmptyChangeSet);
         }
 
+        Self::advance_channel_sequence(channel, sequence, state)?;
+
+        // A JIT batch (unsequenced Local) is replayable, so a lapsed grant is
+        // skipped rather than installed; every other batch is single-consume and
+        // retains an expired grant inert. Computed once for the whole batch.
+        let is_unsequenced = matches!(channel, AccountChangeChannel::Local)
+            && sequence as u32 == Eip8130Constants::UNSEQUENCED;
+
         let mut revoke_discount_slots = 0u32;
-        for change in actor_changes {
+        for change in changes {
             match change.change_type {
-                ActorChangeType::Authorize => {
-                    let (config, policy_data) = Self::decode_authorize(&change.data)?;
+                ChangeType::AuthorizeActor => {
+                    let (actor_id, config, policy_data) = Self::decode_authorize(&change.payload)?;
+                    // Skip an already-lapsed grant on the replayable JIT path
+                    // (per-change; live siblings still apply). A `0` clock disables
+                    // the skip via the `expiry != 0 && expiry <= 0` guard; both the
+                    // verifying and estimation pipelines pass the real block
+                    // timestamp so the skip is applied identically.
+                    if is_unsequenced && config.expiry != 0 && config.expiry <= now {
+                        continue;
+                    }
                     Self::authorize_actor_with_account_state(
                         storage,
                         account,
-                        change.actor_id,
+                        actor_id,
                         config,
                         &policy_data,
                         state,
                     )?;
                 }
-                ActorChangeType::Revoke => {
+                ChangeType::RevokeActor => {
+                    let actor_id = Self::decode_revoke(&change.payload)?;
                     revoke_discount_slots = revoke_discount_slots.saturating_add(
-                        Self::revoke_actor_with_account_state(
-                            storage,
-                            account,
-                            change.actor_id,
-                            state,
-                        )?,
+                        Self::revoke_actor_with_account_state(storage, account, actor_id, state)?,
                     );
+                }
+                ChangeType::IncrementLocalEpoch => {
+                    Self::apply_increment_local_epoch(&change.payload, state)?;
+                }
+                // Lock / Unlock apply handlers are not yet enshrined.
+                ChangeType::Lock | ChangeType::Unlock => {
+                    return Err(ApplyError::UnsupportedChangeType);
                 }
             }
         }
         Ok(revoke_discount_slots)
+    }
+
+    /// Advances the channel's replay counter for an applied batch, mirroring the
+    /// epoch/sequence advance at the top of `applySignedAccountChanges`.
+    ///
+    /// - [`AccountChangeChannel::Local`]: a sequenced batch (low half !=
+    ///   [`Eip8130Constants::UNSEQUENCED`]) advances `local_sequence` to
+    ///   `seq + 1`. An unsequenced (JIT) batch consumes no counter, but a *first*
+    ///   unsequenced batch marks a fresh account initialized (`local_sequence =
+    ///   1`), invalidating outstanding sequence-0 signatures.
+    /// - [`AccountChangeChannel::Multichain`]: advances `multichain_sequence` to
+    ///   `sequence + 1`.
+    fn advance_channel_sequence(
+        channel: AccountChangeChannel,
+        sequence: u64,
+        state: &mut AccountState,
+    ) -> Result<(), ApplyError> {
+        match channel {
+            AccountChangeChannel::Local => {
+                // Defense-in-depth: a Local sequence word is `epoch(hi 32) ||
+                // localSeq(lo 32)`, and the authorizer has already validated the
+                // epoch high-half against `state.local_epoch` before apply. Assert
+                // it here so a future direct caller of the `pub` apply entrypoints
+                // cannot advance the sequence against a stale epoch — the low-half
+                // advance below intentionally ignores the epoch bits.
+                debug_assert_eq!(
+                    (sequence >> 32) as u32,
+                    state.local_epoch as u32,
+                    "local sequence word epoch must match the account's local epoch",
+                );
+                let seq = sequence as u32;
+                if seq != Eip8130Constants::UNSEQUENCED {
+                    state.local_sequence =
+                        u64::from(seq).checked_add(1).ok_or(ApplyError::SequenceOverflow)?;
+                } else if !state.is_initialized() {
+                    state.local_sequence = 1;
+                }
+            }
+            AccountChangeChannel::Multichain => {
+                // Symmetric to the Local branch: the authorizer already validated
+                // `sequence` against the account's current multichain sequence
+                // before apply. Assert it here so a future direct caller of the
+                // `pub` apply entrypoints cannot advance against a mismatched
+                // sequence.
+                debug_assert_eq!(
+                    sequence, state.multichain_sequence,
+                    "multichain sequence must match the account's current multichain sequence",
+                );
+                state.multichain_sequence =
+                    state.multichain_sequence.checked_add(1).ok_or(ApplyError::SequenceOverflow)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Applies an `IncrementLocalEpoch` op, mirroring `_applyIncrementLocalEpoch`:
+    /// a strict `local_epoch += 1` (rejecting the terminal `u32::MAX`) that also
+    /// resets `local_sequence` to 0, retiring every unlanded local signature (each
+    /// commits the full 64-bit `localEpoch ‖ localSequence` word). Allowed on
+    /// either channel — a Multichain batch may bump the local epoch without a
+    /// separate Local batch. The payload MUST be empty.
+    fn apply_increment_local_epoch(
+        payload: &[u8],
+        state: &mut AccountState,
+    ) -> Result<(), ApplyError> {
+        if !payload.is_empty() {
+            return Err(ApplyError::InvalidChangePayload);
+        }
+        // `local_epoch` stores a `uint32`; only the terminal value cannot advance
+        // (the epoch half has no reserved sentinel).
+        if state.local_epoch == u64::from(u32::MAX) {
+            return Err(ApplyError::EpochSaturated);
+        }
+        state.local_epoch += 1;
+        state.local_sequence = 0;
+        Ok(())
     }
 
     /// Authorizes (writes) one actor against `account`. Mirrors `_authorizeActor`,
@@ -472,6 +624,14 @@ impl AccountChangeApplier {
         config: ActorConfig,
         policy_data: &[u8],
     ) -> Result<(), ApplyError> {
+        // Zero is reserved for the "no actor" sentinel. Mirrors `_authorizeActor`'s
+        // `revert InvalidActorId()`. A zero `actor_id` only ever reaches the
+        // non-self path (the self id is derived from a nonzero account address),
+        // so guarding here covers every `AuthorizeActor`; the create path already
+        // rejects it earlier via the strictly-ascending `initial_actors` check.
+        if actor_id.is_zero() {
+            return Err(ApplyError::InvalidActorId);
+        }
         if config.authenticator.is_zero() {
             return Err(ApplyError::InvalidAuthenticator);
         }
@@ -690,16 +850,34 @@ impl AccountChangeApplier {
         Ok(())
     }
 
-    /// Decodes an `Authorize` change's `data` into `(ActorConfig, policyData)`.
-    fn decode_authorize(data: &[u8]) -> Result<(ActorConfig, Bytes), ApplyError> {
-        let (abi, policy_data) = <(ActorConfigAbi, Bytes)>::abi_decode_params(data)
-            .map_err(|_| ApplyError::MalformedAuthorizeData)?;
+    /// Decodes an `AuthorizeActor` op's `payload` into
+    /// `(actorId, ActorConfig, policyData)`. Mirrors
+    /// `abi.decode(payload, (bytes32, ActorConfig, bytes))`.
+    ///
+    /// Uses the *validating* decoder so dirty padding in the sub-256-bit
+    /// `ActorConfig` fields (`scope` is `uint16`, `expiry` is `uint48`) is
+    /// rejected rather than silently truncated. Solidity's `abi.decode` reverts
+    /// on non-zero padding, so the lenient decoder would otherwise let the native
+    /// path accept a signed payload the contract rejects — a consensus divergence.
+    fn decode_authorize(payload: &[u8]) -> Result<(B256, ActorConfig, Bytes), ApplyError> {
+        let (actor_id, abi, policy_data) =
+            <(B256, ActorConfigAbi, Bytes)>::abi_decode_params_validate(payload)
+                .map_err(|_| ApplyError::MalformedAuthorizeData)?;
         let config = ActorConfig {
             authenticator: abi.authenticator,
             scope: abi.scope,
             expiry: abi.expiry.to::<u64>(),
         };
-        Ok((config, policy_data))
+        Ok((actor_id, config, policy_data))
+    }
+
+    /// Decodes a `RevokeActor` op's `payload` into its `actorId`. Mirrors
+    /// `abi.decode(payload, (bytes32))`. Uses the validating decoder for parity
+    /// with Solidity `abi.decode` (rejects trailing/misaligned bytes).
+    fn decode_revoke(payload: &[u8]) -> Result<B256, ApplyError> {
+        <(B256,)>::abi_decode_params_validate(payload)
+            .map(|(actor_id,)| actor_id)
+            .map_err(|_| ApplyError::MalformedRevokeData)
     }
 
     /// Validates `policy_data` against `scope`, returning `(manager,
@@ -837,18 +1015,194 @@ mod tests {
         provider.get_events(AccountConfigurationStorage::ADDRESS).clone()
     }
 
-    /// `abi.encode(ActorConfig, bytes policyData)` for an authorize change.
-    fn authorize_data(config: &ActorConfig, policy_data: &[u8]) -> Bytes {
+    /// `abi.encode(bytes32 actorId, ActorConfig, bytes policyData)` for an
+    /// `AuthorizeActor` op payload.
+    fn authorize_payload(actor_id: B256, config: &ActorConfig, policy_data: &[u8]) -> Bytes {
         let abi = ActorConfigAbi {
             authenticator: config.authenticator,
             scope: config.scope,
             expiry: alloy_primitives::aliases::U48::from(config.expiry),
         };
-        Bytes::from((abi, Bytes::copy_from_slice(policy_data)).abi_encode_params())
+        Bytes::from((actor_id, abi, Bytes::copy_from_slice(policy_data)).abi_encode_params())
+    }
+
+    /// An `AuthorizeActor` [`SignedChange`] op.
+    fn authorize_op(actor_id: B256, config: &ActorConfig, policy_data: &[u8]) -> SignedChange {
+        SignedChange {
+            change_type: ChangeType::AuthorizeActor,
+            payload: authorize_payload(actor_id, config, policy_data),
+        }
+    }
+
+    /// A `RevokeActor` [`SignedChange`] op (payload `abi.encode(bytes32 actorId)`).
+    fn revoke_op(actor_id: B256) -> SignedChange {
+        SignedChange {
+            change_type: ChangeType::RevokeActor,
+            payload: Bytes::from((actor_id,).abi_encode_params()),
+        }
     }
 
     fn ungated(authenticator: Address, scope: u16) -> ActorConfig {
         ActorConfig { authenticator, scope, expiry: 0 }
+    }
+
+    fn expiring(expiry: u64) -> ActorConfig {
+        ActorConfig { authenticator: AUTHENTICATOR, scope: 0, expiry }
+    }
+
+    #[test]
+    fn apply_skips_lapsed_jit_grant() {
+        let now = 1_000u64;
+        let jit = u64::from(Eip8130Constants::UNSEQUENCED);
+        let unauthorized = ActorConfig { authenticator: Address::ZERO, scope: 0, expiry: 0 };
+        // A strictly-past expiry on the replayable JIT path is skipped (dropped),
+        // not reverted: the grant never lands in its slot.
+        with_storage(|acc| {
+            let past = [authorize_op(NON_SELF, &expiring(now - 1), &[])];
+            AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &past,
+                AccountChangeChannel::Local,
+                jit,
+                now,
+            )
+            .unwrap();
+            assert_eq!(acc.actor_config_slot(ACCOUNT, NON_SELF).unwrap(), unauthorized);
+        });
+        // `expiry == now` is not strictly in the future, so it is skipped too.
+        with_storage(|acc| {
+            let at_now = [authorize_op(NON_SELF, &expiring(now), &[])];
+            AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &at_now,
+                AccountChangeChannel::Local,
+                jit,
+                now,
+            )
+            .unwrap();
+            assert_eq!(acc.actor_config_slot(ACCOUNT, NON_SELF).unwrap(), unauthorized);
+        });
+    }
+
+    #[test]
+    fn authorize_rejects_zero_actor_id() {
+        // `bytes32(0)` is the reserved "no actor" sentinel; authorizing it must
+        // revert `InvalidActorId`, mirroring the contract's `_authorizeActor`.
+        with_storage(|acc| {
+            let zero =
+                [authorize_op(B256::ZERO, &ungated(K1, Eip8130Constants::SCOPE_SENDER), &[])];
+            let err = AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &zero,
+                AccountChangeChannel::Local,
+                0,
+                0,
+            )
+            .unwrap_err();
+            assert!(matches!(err, ApplyError::InvalidActorId));
+        });
+    }
+
+    #[test]
+    fn apply_keeps_future_and_zero_expiry_jit_grant() {
+        let now = 1_000u64;
+        let jit = u64::from(Eip8130Constants::UNSEQUENCED);
+        // Strictly-future expiry lands verbatim on the JIT path.
+        with_storage(|acc| {
+            let config = expiring(now + 1);
+            let future = [authorize_op(NON_SELF, &config, &[])];
+            AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &future,
+                AccountChangeChannel::Local,
+                jit,
+                now,
+            )
+            .unwrap();
+            assert_eq!(acc.actor_config_slot(ACCOUNT, NON_SELF).unwrap(), config);
+        });
+        // Zero expiry is the "no expiry" sentinel and always lands.
+        with_storage(|acc| {
+            let config = ungated(AUTHENTICATOR, 0);
+            let never = [authorize_op(NON_SELF, &config, &[])];
+            AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &never,
+                AccountChangeChannel::Local,
+                jit,
+                now,
+            )
+            .unwrap();
+            assert_eq!(acc.actor_config_slot(ACCOUNT, NON_SELF).unwrap(), config);
+        });
+    }
+
+    #[test]
+    fn apply_jit_applies_live_siblings_only() {
+        let now = 1_000u64;
+        let jit = u64::from(Eip8130Constants::UNSEQUENCED);
+        let other: B256 =
+            b256!("0x00000000000000000000000000000000000000ee000000000000000000000000");
+        let unauthorized = ActorConfig { authenticator: Address::ZERO, scope: 0, expiry: 0 };
+        // A mixed JIT batch: the lapsed grant is skipped per-change; the live
+        // sibling in the same batch still applies.
+        with_storage(|acc| {
+            let live = expiring(now + 1);
+            let batch =
+                [authorize_op(NON_SELF, &expiring(now - 1), &[]), authorize_op(other, &live, &[])];
+            AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &batch,
+                AccountChangeChannel::Local,
+                jit,
+                now,
+            )
+            .unwrap();
+            assert_eq!(acc.actor_config_slot(ACCOUNT, NON_SELF).unwrap(), unauthorized);
+            assert_eq!(acc.actor_config_slot(ACCOUNT, other).unwrap(), live);
+        });
+    }
+
+    #[test]
+    fn apply_retains_expired_grant_when_not_jit() {
+        let now = 1_000u64;
+        let config = expiring(now - 1);
+        // Sequenced Local batch (low half != UNSEQUENCED): single-consume, so an
+        // expired grant is retained and installs inert rather than being skipped.
+        with_storage(|acc| {
+            let expired = [authorize_op(NON_SELF, &config, &[])];
+            AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &expired,
+                AccountChangeChannel::Local,
+                5,
+                now,
+            )
+            .unwrap();
+            assert_eq!(acc.actor_config_slot(ACCOUNT, NON_SELF).unwrap(), config);
+        });
+        // Multichain is never JIT (needed for cross-chain catch-up), so an expired
+        // grant likewise installs inert instead of being skipped.
+        with_storage(|acc| {
+            let expired = [authorize_op(NON_SELF, &config, &[])];
+            AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &expired,
+                AccountChangeChannel::Multichain,
+                0,
+                now,
+            )
+            .unwrap();
+            assert_eq!(acc.actor_config_slot(ACCOUNT, NON_SELF).unwrap(), config);
+        });
     }
 
     #[test]
@@ -1017,13 +1371,16 @@ mod tests {
 
             // Revoking the live *ungated* inline k1 self (empty actor_config + both
             // empty policy slots) discounts all three conservatively-reset slots.
-            let revoke_self = vec![ActorChange {
-                change_type: ActorChangeType::Revoke,
-                actor_id: self_id,
-                data: Default::default(),
-            }];
-            let count =
-                AccountChangeApplier::apply_config_change(acc, ACCOUNT, &revoke_self, 0).unwrap();
+            let revoke_self = vec![revoke_op(self_id)];
+            let count = AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &revoke_self,
+                AccountChangeChannel::Multichain,
+                0,
+                0,
+            )
+            .unwrap();
             assert_eq!(count, 3);
         });
 
@@ -1038,13 +1395,16 @@ mod tests {
             policy.extend_from_slice(MANAGER.as_slice());
             policy.extend_from_slice(COMMITMENT.as_slice());
             AccountChangeApplier::authorize_actor(acc, ACCOUNT, self_id, gated, &policy).unwrap();
-            let revoke_self = vec![ActorChange {
-                change_type: ActorChangeType::Revoke,
-                actor_id: self_id,
-                data: Default::default(),
-            }];
-            let count =
-                AccountChangeApplier::apply_config_change(acc, ACCOUNT, &revoke_self, 0).unwrap();
+            let revoke_self = vec![revoke_op(self_id)];
+            let count = AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &revoke_self,
+                AccountChangeChannel::Multichain,
+                0,
+                0,
+            )
+            .unwrap();
             assert_eq!(count, 1);
         });
 
@@ -1058,13 +1418,16 @@ mod tests {
                 ActorConfig { authenticator: K1, scope: Eip8130Constants::SCOPE_POLICY, expiry: 0 };
             AccountChangeApplier::authorize_actor(acc, ACCOUNT, self_id, gated, &[0u8; 52])
                 .unwrap();
-            let revoke_self = vec![ActorChange {
-                change_type: ActorChangeType::Revoke,
-                actor_id: self_id,
-                data: Default::default(),
-            }];
-            let count =
-                AccountChangeApplier::apply_config_change(acc, ACCOUNT, &revoke_self, 0).unwrap();
+            let revoke_self = vec![revoke_op(self_id)];
+            let count = AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &revoke_self,
+                AccountChangeChannel::Multichain,
+                0,
+                0,
+            )
+            .unwrap();
             assert_eq!(count, 3);
         });
 
@@ -1079,13 +1442,16 @@ mod tests {
             policy.extend_from_slice(MANAGER.as_slice());
             policy.extend_from_slice(B256::ZERO.as_slice());
             AccountChangeApplier::authorize_actor(acc, ACCOUNT, self_id, gated, &policy).unwrap();
-            let revoke_self = vec![ActorChange {
-                change_type: ActorChangeType::Revoke,
-                actor_id: self_id,
-                data: Default::default(),
-            }];
-            let count =
-                AccountChangeApplier::apply_config_change(acc, ACCOUNT, &revoke_self, 0).unwrap();
+            let revoke_self = vec![revoke_op(self_id)];
+            let count = AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &revoke_self,
+                AccountChangeChannel::Multichain,
+                0,
+                0,
+            )
+            .unwrap();
             assert_eq!(count, 2);
         });
 
@@ -1095,13 +1461,16 @@ mod tests {
             // populated actor_config home, so it is not the discounted shape.
             let config = ungated(AUTHENTICATOR, 0);
             AccountChangeApplier::authorize_actor(acc, ACCOUNT, self_id, config, &[]).unwrap();
-            let revoke_self = vec![ActorChange {
-                change_type: ActorChangeType::Revoke,
-                actor_id: self_id,
-                data: Default::default(),
-            }];
-            let count =
-                AccountChangeApplier::apply_config_change(acc, ACCOUNT, &revoke_self, 0).unwrap();
+            let revoke_self = vec![revoke_op(self_id)];
+            let count = AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &revoke_self,
+                AccountChangeChannel::Multichain,
+                0,
+                0,
+            )
+            .unwrap();
             assert_eq!(count, 0);
         });
 
@@ -1109,13 +1478,16 @@ mod tests {
             // Revoking a non-self actor is never the inline-self shape.
             let config = ungated(AUTHENTICATOR, Eip8130Constants::SCOPE_SENDER);
             AccountChangeApplier::authorize_actor(acc, ACCOUNT, NON_SELF, config, &[]).unwrap();
-            let revoke_other = vec![ActorChange {
-                change_type: ActorChangeType::Revoke,
-                actor_id: NON_SELF,
-                data: Default::default(),
-            }];
-            let count =
-                AccountChangeApplier::apply_config_change(acc, ACCOUNT, &revoke_other, 0).unwrap();
+            let revoke_other = vec![revoke_op(NON_SELF)];
+            let count = AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &revoke_other,
+                AccountChangeChannel::Multichain,
+                0,
+                0,
+            )
+            .unwrap();
             assert_eq!(count, 0);
         });
     }
@@ -1123,21 +1495,109 @@ mod tests {
     #[test]
     fn config_change_advances_sequence_and_applies() {
         with_storage(|acc| {
-            // Authorize then revoke a non-self actor in one multichain change.
+            // Authorize a non-self actor in one multichain batch.
             let config = ungated(AUTHENTICATOR, Eip8130Constants::SCOPE_SENDER);
-            let changes = vec![ActorChange {
-                change_type: ActorChangeType::Authorize,
-                actor_id: NON_SELF,
-                data: authorize_data(&config, &[]),
-            }];
-            AccountChangeApplier::apply_config_change(acc, ACCOUNT, &changes, 0).unwrap();
+            let changes = vec![authorize_op(NON_SELF, &config, &[])];
+            AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &changes,
+                AccountChangeChannel::Multichain,
+                0,
+                0,
+            )
+            .unwrap();
             assert_eq!(acc.get_change_sequences(ACCOUNT).unwrap(), (1, 0));
             assert!(acc.is_actor(ACCOUNT, NON_SELF).unwrap());
 
-            // A local-channel change advances the local sequence instead.
-            AccountChangeApplier::apply_config_change(acc, ACCOUNT, &[], 8453).unwrap();
+            // A local-channel batch advances the local sequence instead. The
+            // batch must be non-empty (the apply path rejects `EmptyChangeSet`),
+            // so it carries a benign upsert whose actor set is not asserted here.
+            let local_changes =
+                vec![authorize_op(NON_SELF, &ungated(K1, Eip8130Constants::SCOPE_SENDER), &[])];
+            AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &local_changes,
+                AccountChangeChannel::Local,
+                0,
+                0,
+            )
+            .unwrap();
             assert_eq!(acc.get_change_sequences(ACCOUNT).unwrap(), (1, 1));
         });
+    }
+
+    /// An `IncrementLocalEpoch` op (empty payload).
+    fn increment_epoch_op() -> SignedChange {
+        SignedChange { change_type: ChangeType::IncrementLocalEpoch, payload: Bytes::new() }
+    }
+
+    #[test]
+    fn increment_local_epoch_bumps_epoch_and_resets_sequence() {
+        with_storage(|acc| {
+            // Seed a local sequence of 4; a Local sequenced batch at seq 4 advances
+            // it to 5, and the trailing IncrementLocalEpoch resets it to 0 while
+            // bumping the epoch to 1.
+            let mut state = acc.get_account_state(ACCOUNT).unwrap();
+            state.local_sequence = 4;
+            acc.set_account_state(ACCOUNT, state).unwrap();
+
+            AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &[increment_epoch_op()],
+                AccountChangeChannel::Local,
+                4,
+                0,
+            )
+            .unwrap();
+
+            let state = acc.get_account_state(ACCOUNT).unwrap();
+            assert_eq!(state.local_epoch, 1);
+            assert_eq!(state.local_sequence, 0);
+        });
+    }
+
+    #[test]
+    fn increment_local_epoch_on_multichain_channel_bumps_epoch() {
+        with_storage(|acc| {
+            // A Multichain batch may bump the local epoch; its own counter advances
+            // independently.
+            AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &[increment_epoch_op()],
+                AccountChangeChannel::Multichain,
+                0,
+                0,
+            )
+            .unwrap();
+
+            let state = acc.get_account_state(ACCOUNT).unwrap();
+            assert_eq!(state.local_epoch, 1);
+            assert_eq!(state.multichain_sequence, 1);
+            assert_eq!(state.local_sequence, 0);
+        });
+    }
+
+    #[test]
+    fn increment_local_epoch_rejects_nonempty_payload() {
+        let mut state = AccountState::from_word(alloy_primitives::U256::ZERO);
+        assert_eq!(
+            AccountChangeApplier::apply_increment_local_epoch(&[0xaa], &mut state),
+            Err(ApplyError::InvalidChangePayload),
+        );
+    }
+
+    #[test]
+    fn increment_local_epoch_rejects_saturated_epoch() {
+        let mut state = AccountState::from_word(alloy_primitives::U256::ZERO);
+        state.local_epoch = u64::from(u32::MAX);
+        assert_eq!(
+            AccountChangeApplier::apply_increment_local_epoch(&[], &mut state),
+            Err(ApplyError::EpochSaturated),
+        );
     }
 
     #[test]
@@ -1145,20 +1605,17 @@ mod tests {
         with_storage(|acc| {
             let self_id = AccountConfigurationStorage::self_actor_id(ACCOUNT);
             let scoped = ungated(K1, Eip8130Constants::SCOPE_SENDER);
-            let changes = vec![
-                ActorChange {
-                    change_type: ActorChangeType::Authorize,
-                    actor_id: self_id,
-                    data: authorize_data(&scoped, &[]),
-                },
-                ActorChange {
-                    change_type: ActorChangeType::Revoke,
-                    actor_id: self_id,
-                    data: Bytes::new(),
-                },
-            ];
+            let changes = vec![authorize_op(self_id, &scoped, &[]), revoke_op(self_id)];
 
-            AccountChangeApplier::apply_config_change(acc, ACCOUNT, &changes, 0).unwrap();
+            AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &changes,
+                AccountChangeChannel::Multichain,
+                0,
+                0,
+            )
+            .unwrap();
 
             let state = acc.get_account_state(ACCOUNT).unwrap();
             assert_eq!(state.multichain_sequence, 1);

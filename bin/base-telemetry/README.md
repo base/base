@@ -41,11 +41,22 @@ curl https://telemetry.example/v1/p2p/reachability/cl \
   }'
 ```
 
-The signed ENR is returned by the consensus node's `opp2p_self` RPC. It must
-advertise a public literal `IPv4` address and a nonzero TCP port; the service
-probes that address over TCP + Noise + Yamux and verifies the peer identity
-derived from the ENR's secp256k1 key. Both endpoints share the same per-IP
-rate limit and global probe capacity.
+The same endpoint also accepts a public-IPv4 libp2p multiaddr:
+
+```sh
+curl https://telemetry.example/v1/p2p/reachability/cl \
+  --header 'content-type: application/json' \
+  --data '{
+    "multiaddr": "/ip4/YOUR_NODE_IP/tcp/9222/p2p/16Uiu2HAm..."
+  }'
+```
+
+The signed ENR is returned by the consensus node's `opp2p_self` RPC. Either
+form must advertise a public literal `IPv4` address, a nonzero TCP port, and a
+peer identity — derived from the ENR's secp256k1 key, or taken from the
+`/p2p/<peer-id>` component. The service probes that address over TCP + Noise +
+Yamux. Both endpoints share the same per-IP rate limit and global probe
+capacity.
 
 ## Deployment boundary
 

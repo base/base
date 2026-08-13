@@ -100,11 +100,10 @@ pub struct DisputeGameFactoryContractClient {
 }
 
 impl DisputeGameFactoryContractClient {
-    /// Creates a new client for the given contract address and L1 RPC URL.
-    pub fn new(address: Address, l1_rpc_url: url::Url) -> Result<Self, ContractError> {
-        let provider = RootProvider::new_http(l1_rpc_url);
+    /// Creates a new client for the given contract address and L1 provider.
+    pub const fn new(address: Address, provider: RootProvider) -> Self {
         let contract = IDisputeGameFactory::IDisputeGameFactoryInstance::new(address, provider);
-        Ok(Self { contract })
+        Self { contract }
     }
 }
 
@@ -301,6 +300,33 @@ pub fn encode_create_calldata(
     Bytes::from(call.abi_encode())
 }
 
+/// Game-identifying fields decoded from `createWithInitData()` calldata.
+///
+/// Together with the factory address these uniquely identify the created
+/// game via `DisputeGameFactory.games(gameType, rootClaim, extraData)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreateCalldata {
+    /// The game type ID.
+    pub game_type: u32,
+    /// The root claim of the created game.
+    pub root_claim: B256,
+    /// The ABI-encoded extra data of the created game.
+    pub extra_data: Bytes,
+}
+
+/// Decodes `DisputeGameFactory.createWithInitData()` calldata.
+///
+/// Returns `None` when the input is not a well-formed
+/// `createWithInitData` call.
+pub fn decode_create_calldata(input: &[u8]) -> Option<CreateCalldata> {
+    let call = IDisputeGameFactory::createWithInitDataCall::abi_decode(input).ok()?;
+    Some(CreateCalldata {
+        game_type: call.gameType,
+        root_claim: call.rootClaim,
+        extra_data: call.extraData,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -344,6 +370,33 @@ mod tests {
             Bytes::from(vec![0u8; 130]),
         );
         assert_eq!(&calldata[..4], &IDisputeGameFactory::createWithInitDataCall::SELECTOR);
+    }
+
+    #[test]
+    fn test_decode_create_calldata_round_trip() {
+        let extra_data = Bytes::from(vec![0xAB; 52]);
+        let calldata = encode_create_calldata(
+            7,
+            B256::repeat_byte(0x11),
+            extra_data.clone(),
+            Bytes::from(vec![0xCD; 130]),
+        );
+
+        let decoded = decode_create_calldata(&calldata).unwrap();
+        assert_eq!(
+            decoded,
+            CreateCalldata { game_type: 7, root_claim: B256::repeat_byte(0x11), extra_data }
+        );
+    }
+
+    #[test]
+    fn test_decode_create_calldata_rejects_malformed_input() {
+        assert_eq!(decode_create_calldata(&[]), None);
+        assert_eq!(decode_create_calldata(&[0x12, 0x34, 0x56, 0x78]), None);
+
+        // Correct selector but truncated arguments.
+        let selector = IDisputeGameFactory::createWithInitDataCall::SELECTOR;
+        assert_eq!(decode_create_calldata(&selector), None);
     }
 
     #[test]

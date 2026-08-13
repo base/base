@@ -28,14 +28,32 @@ pub use anchor_state_registry::{
 
 mod dispute_game_factory;
 pub use dispute_game_factory::{
-    DisputeGameFactoryClient, DisputeGameFactoryContractClient, GameAtIndex, GameLookupError,
-    GameLookupKey, encode_create_calldata, encode_extra_data, game_already_exists_selector,
-    game_lookup_blocks, game_lookup_count, game_lookup_key,
+    CreateCalldata, DisputeGameFactoryClient, DisputeGameFactoryContractClient, GameAtIndex,
+    GameLookupError, GameLookupKey, decode_create_calldata, encode_create_calldata,
+    encode_extra_data, game_already_exists_selector, game_lookup_blocks, game_lookup_count,
+    game_lookup_key,
 };
 
 mod tee_prover_registry;
 pub use tee_prover_registry::{
     ITEEProverRegistry, TEEProverRegistryClient, TEEProverRegistryContractClient,
+};
+
+mod hinted_tee_prover_registry;
+pub use hinted_tee_prover_registry::{
+    HintedTEEProverRegistryClient, HintedTEEProverRegistryContractClient, IHintedTEEProverRegistry,
+    encode_hinted_register_signer_calldata,
+};
+
+mod nitro_validator;
+pub use nitro_validator::{INitroValidator, NitroValidatorClient, NitroValidatorContractClient};
+
+mod cert_manager;
+pub use cert_manager::{
+    CertManagerAuthorizationError, CertManagerClient, CertManagerContractClient, ICertManager,
+    VerifiedCert, cert_manager_not_owner_selector, cert_manager_not_revoker_selector,
+    decode_cert_manager_authorization_error, encode_revoke_cert_calldata,
+    encode_verify_ca_cert_with_hints_calldata, encode_verify_client_cert_with_hints_calldata,
 };
 
 mod nitro_enclave_verifier;

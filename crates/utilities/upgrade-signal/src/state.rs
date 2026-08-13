@@ -17,8 +17,6 @@ pub struct UpgradeSignal {
     pub activation_timestamp: u64,
     /// Minimum node protocol version announced on L1.
     pub protocol_version: U256,
-    /// L1 block number used for the contract read.
-    pub l1_block_number: u64,
 }
 
 impl UpgradeSignal {
@@ -36,16 +34,18 @@ impl UpgradeSignal {
 }
 
 /// L1 upgrade signal values for a configured upgrade schedule.
-#[derive(Debug, Clone, Default, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct UpgradeSignalSchedule {
+    /// L1 block number used to read the complete schedule.
+    pub l1_block_number: u64,
     /// Signals read from L1.
     pub signals: Vec<UpgradeSignal>,
 }
 
 impl UpgradeSignalSchedule {
     /// Creates a new upgrade signal schedule.
-    pub const fn new(signals: Vec<UpgradeSignal>) -> Self {
-        Self { signals }
+    pub const fn new(l1_block_number: u64, signals: Vec<UpgradeSignal>) -> Self {
+        Self { l1_block_number, signals }
     }
 }
 
@@ -132,7 +132,7 @@ impl UpgradeSignalMonitor {
         reader: &AlloyUpgradeSignalReader,
     ) -> Option<UpgradeSignalSchedule> {
         let metrics_layers = [self.metrics_layer];
-        let schedule = reader.read_schedule_tolerant(&metrics_layers).await;
+        let schedule = reader.read_schedule_tolerant(&metrics_layers).await?;
         let updated_signals = self
             .update_schedule(schedule.clone())
             .iter()
@@ -155,13 +155,21 @@ impl UpgradeSignalMonitor {
         &mut self,
         schedule: UpgradeSignalSchedule,
     ) -> Vec<UpgradeSignalStateUpdate> {
-        schedule.signals.into_iter().map(|signal| self.update_signal(signal)).collect()
+        schedule
+            .signals
+            .into_iter()
+            .map(|signal| self.update_signal(schedule.l1_block_number, signal))
+            .collect()
     }
 
     /// Applies one signal read from L1 and records corresponding live metrics.
-    fn update_signal(&mut self, signal: UpgradeSignal) -> UpgradeSignalStateUpdate {
+    fn update_signal(
+        &mut self,
+        l1_block_number: u64,
+        signal: UpgradeSignal,
+    ) -> UpgradeSignalStateUpdate {
         let upgrade_id = signal.upgrade_id;
-        UpgradeSignalMetrics::record_signal(self.metrics_layer, &signal);
+        UpgradeSignalMetrics::record_signal(self.metrics_layer, l1_block_number, &signal);
 
         let update = self.states.entry(upgrade_id).or_default().update_signal(signal);
         if matches!(update, UpgradeSignalStateUpdate::Changed) {
@@ -183,7 +191,6 @@ mod tests {
             upgrade_id: BaseUpgrade::Azul,
             activation_timestamp: timestamp,
             protocol_version: U256::from(7),
-            l1_block_number: 1,
         }
     }
 
@@ -214,23 +221,12 @@ mod tests {
         assert_eq!(state.update_signal(signal(12)), UpgradeSignalStateUpdate::Changed);
     }
 
-    #[test]
-    fn l1_block_update_does_not_count_as_contract_value_change() {
-        let mut state = UpgradeSignalState::new();
-        let mut updated_signal = signal(10);
-
-        state.update_signal(signal(10));
-        updated_signal.l1_block_number = 2;
-
-        assert_eq!(state.update_signal(updated_signal), UpgradeSignalStateUpdate::Unchanged);
-    }
-
     fn monitor() -> UpgradeSignalMonitor {
         UpgradeSignalMonitor::new(UpgradeSignalMetricLayer::Consensus)
     }
 
     fn schedule(timestamp: u64) -> UpgradeSignalSchedule {
-        UpgradeSignalSchedule::new(vec![signal(timestamp)])
+        UpgradeSignalSchedule::new(1, vec![signal(timestamp)])
     }
 
     #[test]
@@ -257,6 +253,19 @@ mod tests {
 
         assert_eq!(
             monitor.update_schedule(schedule(10)),
+            vec![UpgradeSignalStateUpdate::Unchanged]
+        );
+    }
+
+    #[test]
+    fn monitor_ignores_l1_block_update_with_unchanged_contract_values() {
+        let mut monitor = monitor();
+
+        monitor.update_schedule(schedule(10));
+        let updated_schedule = UpgradeSignalSchedule::new(2, vec![signal(10)]);
+
+        assert_eq!(
+            monitor.update_schedule(updated_schedule),
             vec![UpgradeSignalStateUpdate::Unchanged]
         );
     }

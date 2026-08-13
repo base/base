@@ -65,11 +65,13 @@ impl ProofRequestRepo {
         Ok(prepared.id)
     }
 
-    /// Atomically create or replay a proof request for the worker API queue.
+    /// Atomically create or replay a proof request, requeueing a failed row
+    /// only when `retry_failed` explicitly allows it.
     pub async fn create_for_worker_queue(
         &self,
         req: CreateProofRequest,
         max_retries: i32,
+        retry_failed: bool,
     ) -> std::result::Result<CreateProofRequestOutcome, CreateProofRequestError> {
         let prepared = PreparedProofRequest::try_from(req)?;
         let mut tx = self.pool.begin().await?;
@@ -174,6 +176,11 @@ impl ProofRequestRepo {
                 Ok(CreateProofRequestOutcome::Replayed(existing_id))
             }
             ProofStatus::Failed => {
+                if !retry_failed {
+                    tx.rollback().await?;
+                    return Ok(CreateProofRequestOutcome::RetryNotAllowed(existing_id));
+                }
+
                 let retry_count: i32 = row.get("retry_count");
                 if retry_count >= max_retries {
                     tx.rollback().await?;

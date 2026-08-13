@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::UpgradeSignalSchedule;
 
@@ -35,6 +35,8 @@ pub struct UpgradeSignalApplyChange {
 pub struct UpgradeSignalApplySummary {
     /// L2 chain ID whose runtime upgrade view was updated.
     pub chain_id: u64,
+    /// Whether the destination committed the schedule.
+    pub committed: bool,
     /// L1 block number used for the contract read.
     pub l1_block_number: Option<u64>,
     /// Number of configured upgrade signals read from L1.
@@ -51,10 +53,11 @@ pub struct UpgradeSignalApplySummary {
 
 impl UpgradeSignalApplySummary {
     /// Creates an empty runtime application summary.
-    pub fn new(chain_id: u64, schedule: &UpgradeSignalSchedule) -> Self {
+    pub const fn new(chain_id: u64, schedule: &UpgradeSignalSchedule) -> Self {
         Self {
             chain_id,
-            l1_block_number: schedule.signals.iter().map(|signal| signal.l1_block_number).max(),
+            committed: true,
+            l1_block_number: Some(schedule.l1_block_number),
             configured_upgrades: schedule.signals.len(),
             applied_upgrades: 0,
             cleared_upgrades: 0,
@@ -67,6 +70,17 @@ impl UpgradeSignalApplySummary {
     ///
     /// `target` names the destination the schedule was applied to (e.g. "rollup config").
     pub fn log(&self, target: &'static str) {
+        if !self.committed {
+            warn!(
+                target: "upgrade_signal",
+                destination = target,
+                chain_id = self.chain_id,
+                l1_block_number = ?self.l1_block_number,
+                "ignored stale upgrade signal schedule"
+            );
+            return;
+        }
+
         for change in &self.changes {
             match change.action {
                 UpgradeSignalApplyAction::Applied => info!(

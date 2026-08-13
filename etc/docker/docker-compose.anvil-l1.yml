@@ -1,0 +1,33 @@
+services:
+  # Reuse the l1-el service name so setup-l2 keeps its existing dependency and
+  # all execution RPC callers share one endpoint. This Anvil also serves the
+  # Beacon REST API used for blob derivation.
+  l1-el:
+    image: ${BASE_ANVIL_IMAGE:-base-anvil:prover-single-l1}
+    entrypoint: ["/usr/local/bin/anvil"]
+    command:
+      - --host=0.0.0.0
+      - --port=${L1_HTTP_PORT}
+      - --init=/genesis/el/genesis.json
+      - --no-mining
+      - --slots-in-an-epoch=1
+    ports: !override
+      - "${L1_HTTP_PORT}:${L1_HTTP_PORT}"
+      - "${L1_WS_PORT}:${L1_HTTP_PORT}"
+      - "${L1_CL_HTTP_PORT}:${L1_HTTP_PORT}"
+    volumes: !override
+      - ../../.devnet/l1/configs:/genesis:ro
+
+  # These services remain available in the normal devnet but are omitted from
+  # the single-Anvil variant unless explicitly enabled.
+  l1-cl:
+    profiles: ["lighthouse-l1"]
+
+  l1-vc:
+    profiles: ["lighthouse-l1"]
+
+  # Compose starts completed dependencies again when the remaining services
+  # come up. Keep the genesis used by pre-L2 no-Nitro contract deployment.
+  setup-l2:
+    environment:
+      - SETUP_L2_SKIP_IF_CONFIGURED=true

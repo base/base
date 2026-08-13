@@ -40,7 +40,7 @@ impl Eip8130Constants {
     /// Sentinel `nonce_key` value selecting nonce-free mode (`NONCE_KEY_MAX`).
     ///
     /// When `nonce_key == NONCE_KEY_MAX`, no nonce state is read or written
-    /// and replay protection relies on `expiry` (which must be non-zero).
+    /// and replay protection relies on `valid_before` (which must be non-zero).
     pub const NONCE_KEY_MAX: U256 = U256::MAX;
 
     /// Actor scope bit: ungated `sender_auth` validation context; may originate
@@ -101,17 +101,45 @@ impl Eip8130Constants {
     /// `account_changes` entry type byte: account creation.
     pub const ACCOUNT_CHANGE_TYPE_CREATE: u8 = 0x00;
 
-    /// `account_changes` entry type byte: actor config change.
+    /// `account_changes` entry type byte: a signed account-change batch
+    /// (`SignedAccountChanges`, applied via `applySignedAccountChanges`).
     pub const ACCOUNT_CHANGE_TYPE_CONFIG: u8 = 0x01;
 
     /// `account_changes` entry type byte: code delegation.
     pub const ACCOUNT_CHANGE_TYPE_DELEGATION: u8 = 0x02;
 
-    /// `actor_change` operation byte: authorize a new actor.
-    pub const ACTOR_CHANGE_AUTHORIZE: u8 = 0x01;
+    /// `SignedAccountChanges.channel` byte: the Local channel (binds
+    /// `block.chainid`; carries epoch + sequence and the unsequenced JIT mode).
+    pub const CHANNEL_LOCAL: u8 = 0x00;
 
-    /// `actor_change` operation byte: revoke an existing actor.
-    pub const ACTOR_CHANGE_REVOKE: u8 = 0x02;
+    /// `SignedAccountChanges.channel` byte: the Multichain channel (binds
+    /// `chain_id == 0`; a plain monotonic counter with no epoch or JIT mode).
+    pub const CHANNEL_MULTICHAIN: u8 = 0x01;
+
+    /// `ChangeType` op byte: authorize (upsert) an actor. Payload is
+    /// `abi.encode(bytes32 actorId, ActorConfig cfg, bytes policyData)`.
+    pub const CHANGE_TYPE_AUTHORIZE_ACTOR: u8 = 0x00;
+
+    /// `ChangeType` op byte: revoke an actor. Payload is `abi.encode(bytes32 actorId)`.
+    pub const CHANGE_TYPE_REVOKE_ACTOR: u8 = 0x01;
+
+    /// `ChangeType` op byte: increment the local epoch (either channel; empty
+    /// payload). Invalidates every unlanded local signature at a prior epoch.
+    pub const CHANGE_TYPE_INCREMENT_LOCAL_EPOCH: u8 = 0x02;
+
+    /// `ChangeType` op byte: lock the account (Local channel only; standalone;
+    /// payload is `abi.encode(uint16 unlockDelay)`).
+    pub const CHANGE_TYPE_LOCK: u8 = 0x03;
+
+    /// `ChangeType` op byte: unlock the account (Local channel only; standalone;
+    /// empty payload).
+    pub const CHANGE_TYPE_UNLOCK: u8 = 0x04;
+
+    /// Local-channel sequence low-half sentinel (`type(uint32).max`) marking an
+    /// unsequenced (JIT) batch: it consumes no sequence and stays replayable
+    /// until the local epoch moves. Sequenced batches may run up to
+    /// `UNSEQUENCED - 2`.
+    pub const UNSEQUENCED: u32 = u32::MAX;
 
     /// The single canonical secp256k1 ("k1") authenticator, fixed at
     /// `address(1)`. Native `ecrecover`: the protocol recovers from the `data`
@@ -124,30 +152,6 @@ impl Eip8130Constants {
     /// is never a valid authenticator selector; addresses below this are reserved.
     pub const K1_AUTHENTICATOR: Address = address!("0x0000000000000000000000000000000000000001");
 
-    /// `AccountState.flags` bit that disables the implicit default-EOA path.
-    ///
-    /// The implicit default EOA is a [`Self::K1_AUTHENTICATOR`] signature whose
-    /// recovered signer equals the account; with no explicit `actor_config` it
-    /// resolves to a full owner, gated solely on this flag. Set by
-    /// `createAccount`/`importAccount` (disabled by default), and by authorizing
-    /// or revoking the self-actor; once set it is never cleared (monotonic), so
-    /// an explicit self-actor entry always implies the flag is set.
-    pub const DEFAULT_EOA_REVOKED: u8 = 0x01;
-
-    /// `AccountState.flags` bit (spec `LOCKED`): when set, actor configuration is
-    /// frozen — every config change and delegation is rejected on both the native
-    /// and EVM paths. The only permitted operation is `applySignedLockChanges`'s
-    /// unlock op. Set/cleared exclusively through the EVM `applySignedLockChanges`
-    /// entry point.
-    pub const FLAG_LOCKED: u8 = 0x02;
-
-    /// `AccountState.flags` bit (spec `UNLOCK_INITIATED`): selects how the packed
-    /// `lock_union` field is interpreted. While clear, `lock_union` holds the
-    /// configured `unlock_delay` (seconds, `uint16` range); while set, it holds
-    /// `unlocks_at` (the timestamp at which the pending unlock takes effect). Only
-    /// meaningful when [`Self::FLAG_LOCKED`] is set.
-    pub const FLAG_UNLOCK_INITIATED: u8 = 0x04;
-
     /// `AccountState.flags` bit (spec `CONTRACT_ESTABLISHED`): set on every
     /// account the keystore establishes — `createAccount` (mirrored by the
     /// node's create path) and `importAccount` — marking it
@@ -159,7 +163,31 @@ impl Eip8130Constants {
     /// so empty code alone must never be read as proof of a known EOA key. The
     /// node therefore rejects a delegation onto an empty-code account that carries
     /// this flag (it is not a proven-key EOA and must not be re-delegated as one).
-    pub const FLAG_CONTRACT_ESTABLISHED: u8 = 0x08;
+    pub const FLAG_CONTRACT_ESTABLISHED: u8 = 0x01;
+
+    /// `AccountState.flags` bit that disables the implicit default-EOA path.
+    ///
+    /// The implicit default EOA is a [`Self::K1_AUTHENTICATOR`] signature whose
+    /// recovered signer equals the account; with no explicit `actor_config` it
+    /// resolves to a full owner, gated solely on this flag. Set by
+    /// `createAccount`/`importAccount` (disabled by default), and by authorizing
+    /// or revoking the self-actor; once set it is never cleared (monotonic), so
+    /// an explicit self-actor entry always implies the flag is set.
+    pub const DEFAULT_EOA_REVOKED: u8 = 0x02;
+
+    /// `AccountState.flags` bit (spec `LOCKED`): when set, actor configuration is
+    /// frozen — every config change and delegation is rejected on both the native
+    /// and EVM paths. The only permitted operation is `applySignedLockChanges`'s
+    /// unlock op. Set/cleared exclusively through the EVM `applySignedLockChanges`
+    /// entry point.
+    pub const FLAG_LOCKED: u8 = 0x04;
+
+    /// `AccountState.flags` bit (spec `UNLOCK_INITIATED`): selects how the packed
+    /// `lock_union` field is interpreted. While clear, `lock_union` holds the
+    /// configured `unlock_delay` (seconds, `uint16` range); while set, it holds
+    /// `unlocks_at` (the timestamp at which the pending unlock takes effect). Only
+    /// meaningful when [`Self::FLAG_LOCKED`] is set.
+    pub const FLAG_UNLOCK_INITIATED: u8 = 0x08;
 
     /// Exact byte length of a policy-bearing actor's `policyData`:
     /// `manager (20) || commitment (32)`. Required when `scope & SCOPE_POLICY`
@@ -196,35 +224,37 @@ impl Eip8130Constants {
     /// delegation) if the intent is for the total cap to stay the binding limit.
     pub const MAX_ACCOUNT_CHANGES_PER_TX: usize = 3;
 
-    /// Maximum `expiry` window (in seconds beyond the current reference time)
-    /// the mempool accepts for nonce-free-mode transactions
-    /// (`nonce_key == NONCE_KEY_MAX`). Per the spec ("Nodes SHOULD reject
-    /// `NONCE_KEY_MAX` transactions whose `expiry` exceeds a short window"),
-    /// a tight window bounds the replay surface in the absence of nonce state.
+    /// Maximum validity-window span (in **milliseconds** beyond the current
+    /// reference time, i.e. `valid_before - now`) the mempool accepts for
+    /// nonce-free-mode transactions (`nonce_key == NONCE_KEY_MAX`). Per the spec
+    /// ("Nodes SHOULD reject `NONCE_KEY_MAX` transactions whose validity window
+    /// exceeds a short window"), a tight window bounds the replay surface in the
+    /// absence of nonce state.
     ///
-    /// Sized at 20 seconds (~10 Base block times at 2s) so a single `expiry`
-    /// picked by a client stays inside the window on every node despite the
-    /// spread between each node's head-block timestamp and wall-clock time
-    /// (followers lag the sequencer), while still keeping the nonce-free replay
-    /// surface small.
+    /// Sized at 20 seconds (20,000 ms, ~10 Base block times at 2s) so a single
+    /// `valid_before` picked by a client stays inside the window on every node
+    /// despite the spread between each node's head-block timestamp and
+    /// wall-clock time (followers lag the sequencer), while still keeping the
+    /// nonce-free replay surface small.
     ///
     /// # Invariant: must stay `<=` the on-chain inclusion window
     ///
     /// This is only the mempool *pre-filter*; the authoritative, consensus-critical
-    /// window is `NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW` (currently **30s**),
-    /// enforced against the block timestamp when the nonce-free replay entry is
-    /// recorded at inclusion. This value MUST remain `<=` that on-chain window so the
-    /// pool never admits a transaction whose `expiry` the block-inclusion check would
-    /// reject (which would waste block space on transactions that can never land). The
-    /// gap between the two (20 vs 30) is deliberate headroom that also absorbs the
-    /// skew between the pool's reference clock and the inclusion block timestamp.
+    /// window is `NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW` (currently
+    /// **30,000 ms**), enforced against the block timestamp when the nonce-free
+    /// replay entry is recorded at inclusion. This value MUST remain `<=` that
+    /// on-chain window so the pool never admits a transaction whose `valid_before`
+    /// the block-inclusion check would reject (which would waste block space on
+    /// transactions that can never land). The gap between the two (20,000 vs
+    /// 30,000 ms) is deliberate headroom that also absorbs the skew between the
+    /// pool's reference clock and the inclusion block timestamp.
     ///
     /// Raising this at or beyond the on-chain window is a coordinated **consensus /
     /// fork-level** change: the on-chain `NONCE_FREE_EXPIRY_WINDOW` must be raised
     /// too, and `NonceManagerStorage::REPLAY_BUFFER_CAPACITY` resized to keep
     /// `peak nonce-free throughput x window` within capacity (see the buffer-sizing
     /// invariant test in `base-common-precompiles`).
-    pub const NONCE_FREE_MAX_EXPIRY_WINDOW: u64 = 20;
+    pub const NONCE_FREE_MAX_EXPIRY_WINDOW: u64 = 20_000;
 
     /// Maximum number of actor entries the mempool accepts in a single
     /// `Create.initial_actors` slice. Bounds per-transaction memory and CPU

@@ -7,6 +7,9 @@ use alloc::{
 
 use alloy_eips::eip7840::BlobParams;
 
+mod devnet;
+pub use devnet::Devnet;
+
 mod mainnet;
 pub use mainnet::Mainnet;
 

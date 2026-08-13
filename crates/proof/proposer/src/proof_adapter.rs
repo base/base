@@ -42,6 +42,7 @@ impl ProposerProofAdapter {
                     tee_kind: TeeKind::AwsNitro,
                 }),
             },
+            retry_failed: true,
         }
     }
 

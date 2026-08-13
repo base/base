@@ -50,10 +50,11 @@ pub trait L1OriginSelectorProvider: Debug + Send + Sync + 'static {
         hash: B256,
     ) -> Result<Option<PreparedL1Origin>, L1OriginSelectorError>;
 
-    /// Returns a canonical successor prepared by its number.
+    /// Returns a canonical successor candidate prepared by its number.
     ///
-    /// Unlike [`Self::prepared_by_hash`], this speculative lookup requires receipts before the
-    /// successor can be adopted.
+    /// The candidate may omit receipts when their RPC is unavailable. This lets the selector
+    /// validate successor ancestry immediately, but it must not adopt the successor until receipts
+    /// are present.
     async fn prepared_by_number(
         &self,
         number: u64,
@@ -183,10 +184,19 @@ impl L1OriginSelectorProvider for DelayedL1OriginSelectorProvider {
                 )));
             }
             let hash = header.hash_slow();
-            let Some(receipts) = self.receipts_by_hash(hash).await? else {
-                return Err(L1OriginSelectorError::ReceiptsUnavailable(hash));
+            let receipts = match self.receipts_by_hash(hash).await {
+                Ok(receipts) => receipts.map(Arc::new),
+                Err(error) => {
+                    warn!(
+                        target: "l1_origin_selector",
+                        error = %error,
+                        l1_origin = %hash,
+                        "L1 receipts unavailable while preparing successor origin"
+                    );
+                    None
+                }
             };
-            Ok(Some(PreparedL1Origin { hash, header, receipts: Some(receipts.into()) }))
+            Ok(Some(PreparedL1Origin { hash, header, receipts }))
         } else {
             Ok(None)
         }
@@ -197,8 +207,11 @@ impl L1OriginSelectorProvider for DelayedL1OriginSelectorProvider {
 mod tests {
     use std::time::Duration;
 
+    use alloy_eips::NumHash;
     use alloy_rpc_client::RpcClient;
     use alloy_rpc_types_eth::{Block as RpcBlock, Header as RpcHeader};
+    use base_common_genesis::RollupConfig;
+    use base_protocol::L2BlockInfo;
     use httpmock::prelude::*;
     use metrics_util::{
         CompositeKey, MetricKind,
@@ -207,6 +220,7 @@ mod tests {
     use reqwest::Client;
 
     use super::*;
+    use crate::{L1OriginSelector, OriginSelector};
 
     type SnapshotEntry =
         (CompositeKey, Option<metrics::Unit>, Option<metrics::SharedString>, DebugValue);
@@ -326,7 +340,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn successor_is_not_prepared_without_receipts() {
+    async fn successor_header_is_prepared_without_receipts() {
         let server = MockServer::start_async().await;
         let header = Header { number: 7, ..Default::default() };
         let hash = header.hash_slow();
@@ -353,13 +367,178 @@ mod tests {
             .await;
         let provider = test_provider(&server, Some(BlockInfo { number: 7, ..Default::default() }));
 
-        let error = provider.prepared_by_number(7).await.unwrap_err();
+        let prepared = provider
+            .prepared_by_number(7)
+            .await
+            .unwrap()
+            .expect("successor header should remain available for ancestry validation");
 
-        assert!(
-            matches!(error, L1OriginSelectorError::ReceiptsUnavailable(value) if value == hash)
-        );
+        assert_eq!(prepared.hash, hash);
+        assert!(prepared.receipts.is_none());
         block_mock.assert_calls_async(1).await;
         receipts_mock.assert_calls_async(1).await;
+    }
+
+    #[tokio::test]
+    async fn current_origin_receipt_timeout_is_propagated() {
+        let server = MockServer::start_async().await;
+        let header = Header::default();
+        let hash = header.hash_slow();
+        let block: RpcBlock = RpcBlock::empty(RpcHeader::new(header));
+        let block_mock = server
+            .mock_async(move |when, then| {
+                when.method(POST)
+                    .path("/")
+                    .json_body_includes(r#"{"method":"eth_getBlockByHash"}"#);
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .json_body_obj(&JsonRpcResponse { jsonrpc: "2.0", id: 0, result: block });
+            })
+            .await;
+        let receipts_mock = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path("/")
+                    .json_body_includes(r#"{"method":"eth_getBlockReceipts"}"#);
+                then.status(200).delay(RESPONSE_DELAY);
+            })
+            .await;
+        let provider = test_provider(&server, None);
+
+        let result = provider.prepared_by_hash(hash).await;
+
+        assert!(result.is_err());
+        block_mock.assert_calls_async(1).await;
+        receipts_mock.assert_calls_async(1).await;
+    }
+
+    #[tokio::test]
+    async fn successor_header_is_prepared_when_receipts_time_out() {
+        let server = MockServer::start_async().await;
+        let header = Header { number: 7, ..Default::default() };
+        let hash = header.hash_slow();
+        let block: RpcBlock = RpcBlock::empty(RpcHeader::new(header));
+        let block_mock = server
+            .mock_async(move |when, then| {
+                when.method(POST)
+                    .path("/")
+                    .json_body_includes(r#"{"method":"eth_getBlockByNumber"}"#);
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .json_body_obj(&JsonRpcResponse { jsonrpc: "2.0", id: 0, result: block });
+            })
+            .await;
+        let receipts_mock = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path("/")
+                    .json_body_includes(r#"{"method":"eth_getBlockReceipts"}"#);
+                then.status(200).delay(RESPONSE_DELAY);
+            })
+            .await;
+        let provider = test_provider(&server, Some(BlockInfo { number: 7, ..Default::default() }));
+
+        let prepared =
+            provider.prepared_by_number(7).await.unwrap().expect(
+                "receipt timeout must preserve the successor header for ancestry validation",
+            );
+
+        assert_eq!(prepared.hash, hash);
+        assert!(prepared.receipts.is_none());
+        block_mock.assert_calls_async(1).await;
+        receipts_mock.assert_calls_async(1).await;
+    }
+
+    #[tokio::test]
+    async fn selector_detects_orphan_when_successor_receipts_time_out() {
+        let server = MockServer::start_async().await;
+        let current_header = Header { number: 4, ..Default::default() };
+        let current_hash = current_header.hash_slow();
+        let successor_header = Header {
+            parent_hash: B256::with_last_byte(99),
+            number: 5,
+            timestamp: 2,
+            ..Default::default()
+        };
+        let successor_hash = successor_header.hash_slow();
+        let current_block: RpcBlock = RpcBlock::empty(RpcHeader::new(current_header.clone()));
+        let successor_block: RpcBlock = RpcBlock::empty(RpcHeader::new(successor_header));
+        server
+            .mock_async(move |when, then| {
+                when.method(POST)
+                    .path("/")
+                    .json_body_includes(r#"{"method":"eth_getBlockByHash"}"#);
+                then.status(200).header("content-type", "application/json").json_body_obj(
+                    &JsonRpcResponse { jsonrpc: "2.0", id: 0, result: current_block },
+                );
+            })
+            .await;
+        server
+            .mock_async(move |when, then| {
+                when.method(POST)
+                    .path("/")
+                    .json_body_includes(r#"{"method":"eth_getBlockByNumber"}"#);
+                then.status(200).header("content-type", "application/json").json_body_obj(
+                    &JsonRpcResponse { jsonrpc: "2.0", id: 0, result: successor_block },
+                );
+            })
+            .await;
+        let current_receipts_mock = server
+            .mock_async(move |when, then| {
+                when.method(POST)
+                    .path("/")
+                    .json_body_includes(r#"{"method":"eth_getBlockReceipts"}"#)
+                    .body_includes(current_hash.to_string());
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .body(r#"{"jsonrpc":"2.0","id":1,"result":[]}"#);
+            })
+            .await;
+        let successor_receipts_mock = server
+            .mock_async(move |when, then| {
+                when.method(POST)
+                    .path("/")
+                    .json_body_includes(r#"{"method":"eth_getBlockReceipts"}"#)
+                    .body_includes(successor_hash.to_string());
+                then.status(200).delay(RESPONSE_DELAY);
+            })
+            .await;
+        let provider = test_provider(
+            &server,
+            Some(BlockInfo { hash: B256::with_last_byte(10), number: 10, ..Default::default() }),
+        );
+        let mut selector = L1OriginSelector::new(
+            Arc::new(RollupConfig {
+                block_time: 2,
+                max_sequencer_drift: 600,
+                ..Default::default()
+            }),
+            provider,
+        );
+        let unsafe_head = L2BlockInfo {
+            l1_origin: NumHash { number: current_header.number, hash: current_hash },
+            ..Default::default()
+        };
+
+        assert_eq!(selector.next_l1_origin(unsafe_head).await.unwrap().hash, current_hash);
+        let error = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                match selector.next_l1_origin(unsafe_head).await {
+                    Ok(_) => tokio::task::yield_now().await,
+                    Err(error) => break error,
+                }
+            }
+        })
+        .await
+        .expect("selector should detect the orphan after the receipt request times out");
+
+        assert!(matches!(
+            error,
+            L1OriginSelectorError::NextL1OriginOrphaned { current, next }
+                if current == current_hash && next == successor_hash
+        ));
+        current_receipts_mock.assert_calls_async(1).await;
+        successor_receipts_mock.assert_calls_async(1).await;
     }
 
     #[test]

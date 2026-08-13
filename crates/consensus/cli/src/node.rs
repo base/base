@@ -726,13 +726,13 @@ mod tests {
 
     fn upgrade_schedule(signals: &[(BaseUpgrade, u64)]) -> UpgradeSignalSchedule {
         UpgradeSignalSchedule::new(
+            1,
             signals
                 .iter()
                 .map(|(upgrade_id, activation_timestamp)| base_upgrade_signal::UpgradeSignal {
                     upgrade_id: *upgrade_id,
                     activation_timestamp: *activation_timestamp,
                     protocol_version: U256::from(7),
-                    l1_block_number: 1,
                 })
                 .collect(),
         )

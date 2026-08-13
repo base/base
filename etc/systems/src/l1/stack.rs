@@ -27,7 +27,6 @@ pub struct L1StackConfig {
 pub struct L1Stack {
     reth: RethContainer,
     beacon: LighthouseBeaconContainer,
-    #[allow(dead_code)]
     validator: LighthouseValidatorContainer,
     #[allow(dead_code)]
     jwt_path: PathBuf,
@@ -96,5 +95,12 @@ impl L1Stack {
     /// Returns the public URL of the Lighthouse beacon container.
     pub async fn beacon_url(&self) -> Result<String> {
         self.beacon.beacon_url().await
+    }
+
+    /// Stops the L1 validator and beacon node, leaving the execution layer under test control.
+    pub async fn stop_consensus(&self) -> Result<()> {
+        self.validator.stop().await.wrap_err("Failed to stop L1 validator")?;
+        self.beacon.stop().await.wrap_err("Failed to stop L1 beacon node")?;
+        Ok(())
     }
 }

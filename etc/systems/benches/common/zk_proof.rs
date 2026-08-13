@@ -130,6 +130,7 @@ impl ZkProofBench {
                         zk_backend: ZkBackend::DryRun,
                     }),
                 },
+                retry_failed: true,
             })
             .await?;
 

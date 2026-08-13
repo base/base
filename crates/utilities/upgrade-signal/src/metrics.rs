@@ -53,7 +53,7 @@ impl UpgradeSignalMetrics {
     pub fn record_schedule(layer: UpgradeSignalMetricLayer, schedule: &UpgradeSignalSchedule) {
         Self::init();
         for signal in &schedule.signals {
-            Self::record_signal(layer, signal);
+            Self::record_signal(layer, schedule.l1_block_number, signal);
         }
     }
 
@@ -69,7 +69,11 @@ impl UpgradeSignalMetrics {
     }
 
     /// Records all metrics derived from a successfully read signal.
-    pub fn record_signal(layer: UpgradeSignalMetricLayer, signal: &UpgradeSignal) {
+    pub fn record_signal(
+        layer: UpgradeSignalMetricLayer,
+        l1_block_number: u64,
+        signal: &UpgradeSignal,
+    ) {
         Self::init();
         let layer = layer.label();
         let upgrade_id = signal.upgrade_id.contract_id().to_string();
@@ -78,7 +82,7 @@ impl UpgradeSignalMetrics {
             .set(signal.activation_timestamp as f64);
         Self::expected_protocol_version(layer, upgrade_id.clone())
             .set(Self::protocol_version_to_f64(signal.protocol_version));
-        Self::last_l1_read_block(layer, upgrade_id).set(signal.l1_block_number as f64);
+        Self::last_l1_read_block(layer, upgrade_id).set(l1_block_number as f64);
     }
 
     /// Records failed L1 reads for all contract-backed upgrades.

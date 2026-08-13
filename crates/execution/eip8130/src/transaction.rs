@@ -149,13 +149,21 @@ impl TransactionAuthorizer {
                         &state,
                     )?;
                     config_changes.push(resolved);
+                    // `apply_config_change_with_account_state` silently skips an
+                    // already-expired grant on the replayable unsequenced (JIT)
+                    // Local path (per change, so live siblings still apply);
+                    // sequenced and multichain batches retain such a grant and
+                    // install it inert. Nothing reverts on expiry. `now` (block
+                    // seconds) drives that skip.
                     revoke_discount_slots = revoke_discount_slots.saturating_add(
                         AccountChangeApplier::apply_config_change_with_account_state(
                             storage,
                             sender_account,
-                            &cc.actor_changes,
-                            cc.chain_id,
+                            &cc.changes,
+                            cc.channel,
+                            cc.sequence,
                             &mut state,
+                            now,
                         )?,
                     );
                     storage
@@ -235,12 +243,36 @@ impl TransactionAuthorizer {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256, address, keccak256};
+    use alloy_sol_types::{SolValue, sol};
     use base_common_consensus::{
-        ActorChange, ConfigChange, CreateEntry, Delegation, Eip8130Constants, InitialActor,
-        TxEip8130,
+        AccountChangeChannel, ChangeType, CreateEntry, Delegation, Eip8130Constants, InitialActor,
+        SignedAccountChanges, SignedChange, TxEip8130,
     };
     use base_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
     use k256::ecdsa::SigningKey as K256SigningKey;
+
+    sol! {
+        /// ABI shape of `AuthorizeActor`'s `ActorConfig` payload field, used only
+        /// to synthesize a benign change for sequence/auth tests.
+        struct TestActorConfigAbi {
+            address authenticator;
+            uint48 expiry;
+            uint16 scope;
+        }
+    }
+
+    /// A minimal, always-appliable `AuthorizeActor` change (upsert of a throwaway
+    /// actor). Sequence/auth tests use it so a batch is never empty — the apply
+    /// path rejects an empty batch with `EmptyChangeSet`, mirroring the contract.
+    fn benign_change() -> SignedChange {
+        let abi = TestActorConfigAbi {
+            authenticator: K1,
+            expiry: alloy_primitives::aliases::U48::ZERO,
+            scope: Eip8130Constants::SCOPE_SENDER,
+        };
+        let payload = (B256::repeat_byte(0xEE), abi, Bytes::new()).abi_encode_params();
+        SignedChange { change_type: ChangeType::AuthorizeActor, payload: Bytes::from(payload) }
+    }
 
     use super::*;
     use crate::{
@@ -307,18 +339,25 @@ mod tests {
         U256::from(scope) << 232
     }
 
-    /// A [`ConfigChange`] whose `auth` is a fresh signature over its own digest.
+    /// A [`SignedAccountChanges`] batch whose `signature` is a fresh signature
+    /// over its own digest.
     fn signed_change(
         account: Address,
         authenticator: Address,
         signer: &K256SigningKey,
-        chain_id: u64,
+        channel: AccountChangeChannel,
         sequence: u64,
-        actor_changes: Vec<ActorChange>,
-    ) -> ConfigChange {
-        let mut change = ConfigChange { chain_id, sequence, actor_changes, auth: Bytes::new() };
-        let digest = ConfigChangeAuthorizer::signed_actor_changes_digest(account, &change);
-        change.auth = auth_blob(authenticator, &sig(signer, digest));
+        changes: Vec<SignedChange>,
+    ) -> SignedAccountChanges {
+        // These tests probe sequence gating and authenticator resolution, not
+        // change content, so callers pass an empty vec. The apply path now
+        // rejects an empty batch (`EmptyChangeSet`), so substitute a benign,
+        // always-appliable change to keep the batch non-empty.
+        let changes = if changes.is_empty() { vec![benign_change()] } else { changes };
+        let mut change =
+            SignedAccountChanges { channel, sequence, changes, signature: Bytes::new() };
+        let digest = ConfigChangeAuthorizer::changes_digest(account, LOCAL, &change);
+        change.signature = auth_blob(authenticator, &sig(signer, digest));
         change
     }
 
@@ -332,7 +371,8 @@ mod tests {
             sender,
             nonce_key: U256::ZERO,
             nonce_sequence: 0,
-            expiry: 0,
+            valid_after: 0,
+            valid_before: 0,
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 5_000_000_000,
             gas_limit: 250_000,
@@ -375,8 +415,8 @@ mod tests {
         // Two multichain entries with empty actor changes (each still advances
         // the channel): the first applies and the second is then authorized
         // against the advanced live sequence (1).
-        let cc0 = signed_change(account, K1, &k, 0, 0, vec![]);
-        let cc1 = signed_change(account, K1, &k, 0, 1, vec![]);
+        let cc0 = signed_change(account, K1, &k, AccountChangeChannel::Multichain, 0, vec![]);
+        let cc1 = signed_change(account, K1, &k, AccountChangeChannel::Multichain, 1, vec![]);
         let signed = eoa_signed(
             tx_with(
                 None,
@@ -402,8 +442,8 @@ mod tests {
         let account = addr(&k);
         // Both entries claim sequence 0; the second must fail once the first has
         // applied and advanced the channel to 1.
-        let cc0 = signed_change(account, K1, &k, 0, 0, vec![]);
-        let stale = signed_change(account, K1, &k, 0, 0, vec![]);
+        let cc0 = signed_change(account, K1, &k, AccountChangeChannel::Multichain, 0, vec![]);
+        let stale = signed_change(account, K1, &k, AccountChangeChannel::Multichain, 0, vec![]);
         let signed = eoa_signed(
             tx_with(
                 None,
@@ -425,9 +465,9 @@ mod tests {
         let k = key(0x11);
         let account = addr(&k);
         // multichain#0, local#0, multichain#1 — each channel advances separately.
-        let m0 = signed_change(account, K1, &k, 0, 0, vec![]);
-        let l0 = signed_change(account, K1, &k, LOCAL, 0, vec![]);
-        let m1 = signed_change(account, K1, &k, 0, 1, vec![]);
+        let m0 = signed_change(account, K1, &k, AccountChangeChannel::Multichain, 0, vec![]);
+        let l0 = signed_change(account, K1, &k, AccountChangeChannel::Local, 0, vec![]);
+        let m1 = signed_change(account, K1, &k, AccountChangeChannel::Multichain, 1, vec![]);
         let signed = eoa_signed(
             tx_with(
                 None,
@@ -448,45 +488,40 @@ mod tests {
     }
 
     #[test]
-    fn foreign_chain_config_change_is_rejected_without_advancing_a_channel() {
+    fn stale_local_epoch_config_change_is_rejected() {
         let k = key(0x11);
         let account = addr(&k);
-        // A valid multichain entry followed by one bound to a foreign chain
-        // (neither 0 nor LOCAL). The orchestrator rejects the foreign entry at
-        // its chain-binding check, surfacing `ConfigChainId`.
-        const FOREIGN: u64 = LOCAL + 1;
-        let m0 = signed_change(account, K1, &k, 0, 0, vec![]);
-        let foreign = signed_change(account, K1, &k, FOREIGN, 0, vec![]);
-        let signed = eoa_signed(
-            tx_with(
-                None,
-                None,
-                vec![AccountChange::ConfigChange(m0), AccountChange::ConfigChange(foreign)],
-            ),
-            &k,
-        );
+        // A Local-channel batch committing local epoch 0 against an account whose
+        // local epoch has advanced to 1: rejected at the epoch gate.
+        let change = signed_change(account, K1, &k, AccountChangeChannel::Local, 0, vec![]);
+        let signed = eoa_signed(tx_with(None, None, vec![AccountChange::ConfigChange(change)]), &k);
         with_storage(|acc| {
+            // localEpoch = 1 (uint32 at bytes 16..20 of the packed slot).
+            let mut b = [0u8; 32];
+            b[16..20].copy_from_slice(&1u32.to_be_bytes());
+            acc.account_state.at_mut(&account).write(U256::from_be_bytes(b)).unwrap();
             assert_eq!(
                 TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW),
-                Err(TxAuthError::ConfigChainId { expected: LOCAL, got: FOREIGN }),
+                Err(TxAuthError::StaleEpoch { expected: 1, got: 0 }),
             );
         });
     }
 
     #[test]
-    fn channel_sequence_overflow_is_rejected_not_wrapped() {
+    fn channel_sequence_saturation_is_rejected_not_wrapped() {
         let k = key(0x11);
         let account = addr(&k);
-        // The entry sits at the channel's max sequence; applying it would advance
-        // the channel past u64::MAX, which must be rejected rather than wrapping
-        // back to a duplicate-accepting state.
-        let at_max = signed_change(account, K1, &k, 0, u64::MAX, vec![]);
+        // The batch sits at the multichain channel's max sequence; advancing it
+        // would overflow, so the gate rejects it rather than wrapping back to a
+        // duplicate-accepting state.
+        let at_max =
+            signed_change(account, K1, &k, AccountChangeChannel::Multichain, u64::MAX, vec![]);
         let signed = eoa_signed(tx_with(None, None, vec![AccountChange::ConfigChange(at_max)]), &k);
         with_storage(|acc| {
             acc.account_state.at_mut(&account).write(pack_state(u64::MAX, 0, 0, 0)).unwrap();
             assert_eq!(
                 TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW),
-                Err(TxAuthError::Apply(ApplyError::SequenceOverflow)),
+                Err(TxAuthError::SequenceSaturated),
             );
         });
     }
@@ -501,13 +536,13 @@ mod tests {
 
         let ordinary_tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
-            expiry: NOW + 1,
+            valid_before: NOW + 1,
             ..tx_with(Some(account), Some(payer_account), vec![])
         };
         let ordinary = configured_signed(ordinary_tx, &sender, Some(&payer));
         let delegation_tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
-            expiry: NOW + 1,
+            valid_before: NOW + 1,
             ..tx_with(
                 Some(account),
                 Some(payer_account),
@@ -582,7 +617,7 @@ mod tests {
 
         let tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
-            expiry: NOW + 1,
+            valid_before: NOW + 1,
             ..tx_with(
                 Some(account),
                 Some(payer_account),
@@ -743,7 +778,8 @@ mod tests {
             sender: Some(derived),
             nonce_key: U256::ZERO,
             nonce_sequence: 0,
-            expiry: 0,
+            valid_after: 0,
+            valid_before: 0,
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 5_000_000_000,
             gas_limit: 250_000,
@@ -797,7 +833,8 @@ mod tests {
             sender: Some(derived),
             nonce_key: U256::ZERO,
             nonce_sequence: 0,
-            expiry: 0,
+            valid_after: 0,
+            valid_before: 0,
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 5_000_000_000,
             gas_limit: 250_000,
@@ -827,7 +864,7 @@ mod tests {
         let sk = key(0x22);
         let account = address!("0x00000000000000000000000000000000000000aa");
         let sid = actor_id(addr(&sk));
-        let cc = signed_change(account, K1, &sk, 0, 0, vec![]);
+        let cc = signed_change(account, K1, &sk, AccountChangeChannel::Multichain, 0, vec![]);
         let tx = tx_with(Some(account), None, vec![AccountChange::ConfigChange(cc)]);
         let hash = tx.sender_signature_hash();
         let signed = Eip8130Signed::new(tx, auth_blob(K1, &sig(&sk, hash)), Bytes::new());
@@ -854,7 +891,8 @@ mod tests {
         let ck = key(0x44);
         let cid = actor_id(addr(&ck));
 
-        let cc = signed_change(sender_account, K1, &ck, 0, 0, vec![]);
+        let cc =
+            signed_change(sender_account, K1, &ck, AccountChangeChannel::Multichain, 0, vec![]);
         let tx = tx_with(
             Some(sender_account),
             Some(payer_account),
@@ -932,7 +970,8 @@ mod tests {
             sender: Some(derived),
             nonce_key: U256::ZERO,
             nonce_sequence: 0,
-            expiry: 0,
+            valid_after: 0,
+            valid_before: 0,
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 5_000_000_000,
             gas_limit: 250_000,
@@ -997,13 +1036,14 @@ mod tests {
 
         // Config change signed by the initial actor, bound to the derived account
         // at the multichain channel's first sequence.
-        let cc = signed_change(derived, K1, &k, 0, 0, vec![]);
+        let cc = signed_change(derived, K1, &k, AccountChangeChannel::Multichain, 0, vec![]);
         let tx = TxEip8130 {
             chain_id: LOCAL,
             sender: Some(derived),
             nonce_key: U256::ZERO,
             nonce_sequence: 0,
-            expiry: 0,
+            valid_after: 0,
+            valid_before: 0,
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 5_000_000_000,
             gas_limit: 250_000,
@@ -1058,7 +1098,8 @@ mod tests {
             sender: Some(derived),
             nonce_key: U256::ZERO,
             nonce_sequence: 0,
-            expiry: 0,
+            valid_after: 0,
+            valid_before: 0,
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 5_000_000_000,
             gas_limit: 250_000,
@@ -1103,7 +1144,8 @@ mod tests {
             sender: None, // missing explicit sender
             nonce_key: U256::ZERO,
             nonce_sequence: 0,
-            expiry: 0,
+            valid_after: 0,
+            valid_before: 0,
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 5_000_000_000,
             gas_limit: 250_000,

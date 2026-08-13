@@ -304,6 +304,10 @@ impl AggregateVerifierClient for MockAggregateVerifier {
         self.get(game_address, |s| s.game_info)
     }
 
+    async fn game_type(&self, _game_address: Address) -> Result<u32, ContractError> {
+        Ok(1)
+    }
+
     async fn status(&self, game_address: Address) -> Result<GameStatus, ContractError> {
         self.status_reads.lock().unwrap().push(game_address);
         self.get(game_address, |s| s.status)

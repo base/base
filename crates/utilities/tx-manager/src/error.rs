@@ -284,12 +284,13 @@ impl RpcErrorClassifier {
     /// [`as_revert_data`](alloy_json_rpc::ErrorPayload::as_revert_data)
     /// and decoded with [`alloy_sol_types::decode_revert_reason`].
     ///
-    /// Non-server errors and unrecognised messages fall through to
-    /// [`TxManagerError::Rpc`], preserving the original error string.
+    /// Unrecognised server messages preserve their original text. Non-server
+    /// errors use a fixed message because they may expose credentials in RPC
+    /// URLs. This also keeps transaction-manager logs credential-free.
     #[must_use]
     pub fn classify_rpc_error(error: &TransportError) -> TxManagerError {
         let Some(payload) = error.as_error_resp() else {
-            return TxManagerError::Rpc(error.to_string());
+            return TxManagerError::Rpc("transport request failed".to_string());
         };
 
         let lowered = payload.message.to_ascii_lowercase();
@@ -420,6 +421,16 @@ mod tests {
         let err: TransportError = RpcError::Transport(TransportErrorKind::BackendGone);
         let classified = RpcErrorClassifier::classify_rpc_error(&err);
         assert!(matches!(classified, TxManagerError::Rpc(_)));
+    }
+
+    #[test]
+    fn classify_replaces_transport_error_messages() {
+        // Transport errors may contain credential-bearing request URLs.
+        let err: TransportError = TransportErrorKind::custom_str(
+            "error sending request for url (https://user:password@l1.example/v3/api-key?token=secret)",
+        );
+        let classified = RpcErrorClassifier::classify_rpc_error(&err);
+        assert_eq!(classified, TxManagerError::Rpc("transport request failed".to_string()));
     }
 
     // ── is_retryable ────────────────────────────────────────────────────
