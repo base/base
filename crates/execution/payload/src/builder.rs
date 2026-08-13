@@ -1,5 +1,5 @@
 //! Base payload builder implementation.
-use std::{marker::PhantomData, sync::Arc, time::Instant};
+use std::{marker::PhantomData, sync::Arc};
 
 use alloy_consensus::{BlockHeader, Transaction, Typed2718};
 use alloy_evm::Evm as AlloyEvm;
@@ -41,7 +41,7 @@ use tracing::{debug, debug_span, instrument, trace, warn};
 
 use crate::{
     Attributes, BasePayloadBuilderAttributes, PayloadPrimitives, config::BaseBuilderConfig,
-    error::BasePayloadBuilderError, metrics::PayloadBuilderMetrics, payload::BaseBuiltPayload,
+    error::BasePayloadBuilderError, payload::BaseBuiltPayload,
 };
 
 /// Base payload builder
@@ -204,17 +204,12 @@ where
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
         let state = StateProviderDatabase::new(&state_provider);
 
-        let build_started_at = Instant::now();
-        (if ctx.attributes().no_tx_pool() {
+        if ctx.attributes().no_tx_pool() {
             builder.build(state, &state_provider, ctx)
         } else {
             // sequencer mode we can reuse cachedreads from previous runs
             builder.build(cached_reads.as_db_mut(state), &state_provider, ctx)
-        })
-        .inspect(|_| {
-            PayloadBuilderMetrics::build_duration()
-                .record(build_started_at.elapsed().as_secs_f64());
-        })
+        }
         .map(|out| out.with_cached_reads(cached_reads))
     }
 
@@ -282,11 +277,8 @@ where
         MissingPayloadBehaviour::AwaitInProgress
     }
 
-    // Builds a production-valid empty block: the payload attributes' sequencer
-    // transactions (L1 info, deposits, `BaseTime` metadata) execute and a real
-    // state root is computed; only pool transactions are omitted. Not a hot
-    // path: `on_missing_payload` awaits the in-progress build instead, so this
-    // exists for trait correctness.
+    // NOTE: this should only be used for testing purposes because this doesn't have access to L1
+    // system txs, hence on_missing_payload we return [MissingPayloadBehaviour::AwaitInProgress].
     fn build_empty_payload(
         &self,
         config: PayloadConfig<Self::Attributes, N::BlockHeader>,
@@ -423,14 +415,10 @@ impl<Txs> Builder<'_, Txs> {
             block_access_list.map(|bal| alloy_rlp::encode(bal).into()),
         );
 
-        if no_tx_pool || ctx.is_denim_active() {
+        if no_tx_pool {
             // if `no_tx_pool` is set only transactions from the payload attributes will be included
             // in the payload. In other words, the payload is deterministic and we can
             // freeze it once we've successfully built it.
-            //
-            // Denim-active builds freeze by policy instead of using reth's
-            // iterative-improvement loop. Frozen only means "stop rebuilding";
-            // resolve returns this payload immediately.
             Ok(BuildOutcomeKind::Freeze(payload))
         } else {
             Ok(BuildOutcomeKind::Better { payload })
@@ -612,11 +600,6 @@ where
     /// Returns the builder attributes.
     pub const fn attributes(&self) -> &Attrs {
         &self.config.attributes
-    }
-
-    /// Returns `true` if Denim is active at this payload's timestamp.
-    pub fn is_denim_active(&self) -> bool {
-        self.chain_spec.is_denim_active_at_timestamp(self.attributes().timestamp())
     }
 
     /// Returns the current fee settings for transactions from the mempool

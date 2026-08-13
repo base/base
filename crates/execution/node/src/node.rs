@@ -212,11 +212,15 @@ pub struct BaseNode {
 pub type BaseNodeComponentBuilder<Node, Payload = BasePayloadBuilder> = ComponentsBuilder<
     Node,
     BasePoolBuilder,
-    BasicPayloadServiceBuilder<Payload>,
+    BasePayloadServiceBuilder<Payload>,
     BaseNetworkBuilder,
     BaseExecutorBuilder,
     BaseConsensusBuilder,
 >;
+
+/// Base's composition point for reth's payload service.
+pub type BasePayloadServiceBuilder<Payload = BasePayloadBuilder> =
+    BasicPayloadServiceBuilder<Payload>;
 
 impl BaseNode {
     /// Creates a new instance of the Base node type.
@@ -274,7 +278,7 @@ impl BaseNode {
                         self.args.mempool_trusted_delegation_targets.iter().copied(),
                     ),
             )
-            .payload(BasicPayloadServiceBuilder::new(
+            .payload(BasePayloadServiceBuilder::new(
                 BasePayloadBuilder::new(compute_pending_block)
                     .with_da_config(self.da_config.clone())
                     .with_gas_limit_config(self.gas_limit_config.clone()),
@@ -341,7 +345,7 @@ where
     type ComponentsBuilder = ComponentsBuilder<
         N,
         BasePoolBuilder,
-        BasicPayloadServiceBuilder<BasePayloadBuilder>,
+        BasePayloadServiceBuilder,
         BaseNetworkBuilder,
         BaseExecutorBuilder,
         BaseConsensusBuilder,
