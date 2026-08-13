@@ -9,6 +9,7 @@ use super::{
     parsing::{parse_address, parse_amount, validate_swap_amounts},
     precompile::PrecompileTarget,
     real_token::{RealTokenSetupConfig, parse_real_token_setup},
+    validity::ValidityConfig,
 };
 use crate::{
     metrics::ConfigSummary,
@@ -142,6 +143,11 @@ pub struct TestConfig {
     /// re-funded via deposit rather than reclaimed.
     #[serde(default)]
     pub skip_drain: bool,
+
+    /// Validity (conditional) transaction workload. When `ratio` is `0.0`
+    /// (the default), no validity transactions are submitted.
+    #[serde(default)]
+    pub validity: ValidityConfig,
 }
 
 impl Default for TestConfig {
@@ -173,6 +179,7 @@ impl Default for TestConfig {
             b20_mint_amount: default_b20_mint_amount(),
             real_token_setup: None,
             skip_drain: false,
+            validity: ValidityConfig::default(),
         }
     }
 }
@@ -204,6 +211,7 @@ impl fmt::Debug for TestConfig {
             .field("b20_mint_amount", &self.b20_mint_amount)
             .field("real_token_setup", &self.real_token_setup)
             .field("skip_drain", &self.skip_drain)
+            .field("validity", &self.validity)
             .finish()
     }
 }
@@ -445,6 +453,8 @@ impl TestConfig {
             return Err(BaselineError::Config("block_time must be > 0".into()));
         }
 
+        self.validity.validate()?;
+
         Ok(())
     }
 
@@ -586,6 +596,9 @@ impl TestConfig {
                 })
                 .unwrap_or_default(),
             fresh_recipient_ratio: self.fresh_recipient_ratio,
+            validity_ratio: self.validity.ratio,
+            validity_predicate_count: self.validity.predicates.len(),
+            validity_control_ratio: self.validity.control_ratio,
             looper_contract: self.looper_contract.clone(),
             swap_token_amount: self.swap_token_amount.clone(),
             b20_mint_amount: self.b20_mint_amount.clone(),
@@ -652,6 +665,10 @@ impl TestConfig {
             max_gas_price: crate::runner::DEFAULT_MAX_GAS_PRICE,
             flashblocks_ws: self.flashblocks_ws.clone(),
             fresh_recipient_ratio: self.fresh_recipient_ratio,
+            validity_ratio: self.validity.ratio,
+            validity_predicates: self.validity.to_templates()?,
+            validity_empty_control: self.validity.empty_predicate_control,
+            validity_control_ratio: self.validity.control_ratio,
         })
     }
 
@@ -1303,6 +1320,86 @@ transactions:
             }
             _ => panic!("expected UniswapV3"),
         }
+    }
+
+    #[test]
+    fn validity_defaults_to_disabled() {
+        let yaml = r#"
+transaction_submission_rpcs: http://localhost:8545
+flashblocks_ws: ws://localhost:7111
+"#;
+        let config = TestConfig::from_yaml(yaml).unwrap();
+        assert_eq!(config.validity.ratio, 0.0);
+        let load_config = config.to_load_config(Some(1337)).unwrap();
+        assert_eq!(load_config.validity_ratio, 0.0);
+        assert!(load_config.validity_predicates.is_empty());
+        assert_eq!(config.to_summary().validity_ratio, 0.0);
+    }
+
+    #[test]
+    fn validity_config_round_trips_predicates() {
+        let yaml = r#"
+transaction_submission_rpcs: http://localhost:8545
+flashblocks_ws: ws://localhost:7111
+validity:
+  ratio: 0.25
+  empty_predicate_control: true
+  control_ratio: 0.2
+  predicates:
+    - type: balance
+      address: sender
+      op: ">="
+      value: "0"
+    - type: storage
+      address: "0x1234567890123456789012345678901234567890"
+      slot:
+        kind: mapping_balance_of
+        mapping_slot: "0x0"
+        key: sender
+      op: ">="
+      value: "0x0"
+"#;
+        let config = TestConfig::from_yaml(yaml).unwrap();
+        assert_eq!(config.validity.ratio, 0.25);
+        assert_eq!(config.validity.predicates.len(), 2);
+
+        let load_config = config.to_load_config(Some(1337)).unwrap();
+        assert_eq!(load_config.validity_ratio, 0.25);
+        assert!(load_config.validity_empty_control);
+        assert_eq!(load_config.validity_control_ratio, 0.2);
+        assert_eq!(load_config.validity_predicates.len(), 2);
+
+        let summary = config.to_summary();
+        assert_eq!(summary.validity_ratio, 0.25);
+        assert_eq!(summary.validity_predicate_count, 2);
+    }
+
+    #[test]
+    fn validity_rejects_ratio_above_one() {
+        let yaml = r#"
+transaction_submission_rpcs: http://localhost:8545
+flashblocks_ws: ws://localhost:7111
+validity:
+  ratio: 1.5
+  predicates:
+    - type: balance
+      op: ">="
+      value: "0"
+"#;
+        let err = TestConfig::from_yaml(yaml).unwrap_err();
+        assert!(err.to_string().contains("validity.ratio"));
+    }
+
+    #[test]
+    fn validity_rejects_enabled_without_predicates() {
+        let yaml = r#"
+transaction_submission_rpcs: http://localhost:8545
+flashblocks_ws: ws://localhost:7111
+validity:
+  ratio: 0.5
+"#;
+        let err = TestConfig::from_yaml(yaml).unwrap_err();
+        assert!(err.to_string().contains("validity.predicates must be non-empty"));
     }
 
     #[test]

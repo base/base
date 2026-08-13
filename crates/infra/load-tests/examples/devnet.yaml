@@ -73,3 +73,39 @@ transactions:
   #   router: "0x..."
   #   token_in: "0x..."
   #   token_out: "0x..."
+
+# Validity (conditional) transaction workload.
+#
+# A fraction of *senders* route their entire traffic through
+# base_sendRawTransactionValidity, carrying state predicates. For predicates to
+# be evaluated end-to-end, the ingress node must run with
+# --enable-experimental-validity-transactions (which also requires tx-forwarding)
+# and the builder must run with --builder.enable-experimental-validity-transactions
+# using the flashblocks builder. Omit this block (or set ratio: 0.0) to disable.
+#
+# validity:
+#   ratio: 0.25                 # fraction of senders routed to the validity endpoint
+#   empty_predicate_control: true
+#   control_ratio: 0.2          # of validity senders, fraction sending empty-predicate control txs
+#   predicates:
+#     - type: balance
+#       address: sender          # sender | recipient | 0x-literal
+#       op: ">="
+#       value: "0"
+#     - type: storage
+#       address: "0x1234567890123456789012345678901234567890"
+#       slot:
+#         kind: fixed
+#         value: "0x1"
+#       mask: "0xff"             # optional; defaults to all ones server-side
+#       op: "="
+#       value: "0x0"
+#     # balanceOf(sender) against a seeded token's mapping slot:
+#     - type: storage
+#       address: "0xTOKEN000000000000000000000000000000000000"
+#       slot:
+#         kind: mapping_balance_of
+#         mapping_slot: "0x0"
+#         key: sender
+#       op: ">="
+#       value: "0x0"
