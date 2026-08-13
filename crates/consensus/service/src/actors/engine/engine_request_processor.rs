@@ -624,7 +624,10 @@ where
                 }
             }
         } else if let Some(head) = head {
-            let Some(probe_update) = self.active_sequencer_probe_update(head).await else {
+            // Preserve CL mode's historical zero-head fallback because it has no periodic probe.
+            // EL mode retries transient label failures on its probe interval instead.
+            let Some(probe_update) = self.active_sequencer_probe_update(head, !el_sync_mode).await
+            else {
                 self.engine.seed_state(EngineSyncStateUpdate {
                     unsafe_head: Some(head),
                     ..Default::default()
@@ -649,10 +652,13 @@ where
             };
 
             if !el_confirmed {
-                self.engine.seed_state(EngineSyncStateUpdate {
-                    unsafe_head: Some(head),
-                    ..Default::default()
-                });
+                let seed = if el_sync_mode {
+                    EngineSyncStateUpdate { unsafe_head: Some(head), ..Default::default() }
+                } else {
+                    // CL mode keeps the pre-EL-sync-mode behavior of publishing reth's labels.
+                    probe_update
+                };
+                self.engine.seed_state(seed);
             }
 
             if el_confirmed {
@@ -684,9 +690,14 @@ where
     async fn active_sequencer_probe_update(
         &self,
         head: L2BlockInfo,
+        fallback_to_default: bool,
     ) -> Option<EngineSyncStateUpdate> {
         let safe = match self.client.l2_block_info_by_label(BlockNumberOrTag::Safe).await {
             Ok(safe) => safe.unwrap_or_default(),
+            Err(err) if fallback_to_default => {
+                warn!(target: "engine", error = %err, "Sequencer EL sync probe failed to query safe head, using default");
+                L2BlockInfo::default()
+            }
             Err(err) => {
                 warn!(target: "engine", error = %err, "Sequencer EL sync probe failed to query safe head");
                 return None;
@@ -695,6 +706,10 @@ where
         let finalized = match self.client.l2_block_info_by_label(BlockNumberOrTag::Finalized).await
         {
             Ok(finalized) => finalized.unwrap_or_default(),
+            Err(err) if fallback_to_default => {
+                warn!(target: "engine", error = %err, "Sequencer EL sync probe failed to query finalized head, using default");
+                L2BlockInfo::default()
+            }
             Err(err) => {
                 warn!(target: "engine", error = %err, "Sequencer EL sync probe failed to query finalized head");
                 return None;
@@ -737,7 +752,7 @@ where
         // A genesis EL that reports sync complete still needs an FCU probe to confirm the engine
         // transition and mark sequencer EL sync finished.
         let update = if active_sequencer {
-            let Some(update) = self.active_sequencer_probe_update(head).await else {
+            let Some(update) = self.active_sequencer_probe_update(head, false).await else {
                 self.engine.seed_state(EngineSyncStateUpdate {
                     unsafe_head: Some(head),
                     ..Default::default()
@@ -1179,8 +1194,11 @@ mod tests {
     /// stays false and a subsequent Reset request is correctly deferred with `ELSyncing`.
     ///
     /// Tests the standalone sequencer path (`unsafe_head_tx` = Some, no conductor).
+    #[rstest]
     #[tokio::test]
-    async fn bootstrap_beyond_genesis_syncing_fcu_defers_reset() {
+    async fn bootstrap_beyond_genesis_syncing_fcu_defers_reset(
+        #[values(SequencerSyncMode::Cl, SequencerSyncMode::El)] sync_mode: SequencerSyncMode,
+    ) {
         let head = test_block_info(100);
         let safe = test_block_info(90);
         let finalized = test_block_info(80);
@@ -1194,9 +1212,11 @@ mod tests {
                 .build(),
         );
 
-        // EL-sync mode only seeds the unsafe head while sync is pending, so no derivation
-        // notifications are expected.
-        let mock_derivation = MockEngineDerivationClient::new();
+        let mut mock_derivation = MockEngineDerivationClient::new();
+        if !sync_mode.is_el() {
+            // CL mode preserves the historical behavior of publishing reth's safe label.
+            mock_derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));
+        }
 
         let (state_tx, state_rx) = watch::channel(EngineState::default());
         let (queue_tx, _) = watch::channel(0usize);
@@ -1218,7 +1238,7 @@ mod tests {
             false,
             None,
             false,
-            SequencerSyncMode::El,
+            sync_mode,
             unsafe_head_tx,
         )
         .start(req_rx);
