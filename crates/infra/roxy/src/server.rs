@@ -26,7 +26,8 @@ impl Server {
 
     /// Starts the Roxy HTTP server with the provided configuration.
     pub async fn serve(config: Config, cancel: CancellationToken) -> anyhow::Result<()> {
-        let backend = config.backend()?.clone();
+        let backends = config.backends()?;
+        let backend = backends[0].clone();
         let proxy = ProxyState::from_backend(&backend);
 
         let listen_addr = config.listen_addr;
