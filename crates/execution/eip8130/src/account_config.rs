@@ -363,14 +363,14 @@ pub struct AccountState {
     /// invalidating every unlanded local signature at a prior epoch. A non-zero
     /// value also marks the account initialized.
     pub local_epoch: u64,
-    /// Account flags bitfield: bit 0 ([`Eip8130Constants::DEFAULT_EOA_REVOKED`])
-    /// disables the inline secp256k1 self key; bit 1
-    /// ([`Eip8130Constants::FLAG_LOCKED`]) freezes actor configuration; bit 2
-    /// ([`Eip8130Constants::FLAG_UNLOCK_INITIATED`]) selects the `lock_union`
-    /// interpretation; bit 3
+    /// Account flags bitfield: bit 0
     /// ([`Eip8130Constants::FLAG_CONTRACT_ESTABLISHED`]) marks a
     /// keystore-established account (create/import) that must not be treated as a
-    /// proven-key EOA even when its code is empty.
+    /// proven-key EOA even when its code is empty; bit 1
+    /// ([`Eip8130Constants::DEFAULT_EOA_REVOKED`]) disables the inline secp256k1
+    /// self key; bit 2 ([`Eip8130Constants::FLAG_LOCKED`]) freezes actor
+    /// configuration; bit 3 ([`Eip8130Constants::FLAG_UNLOCK_INITIATED`]) selects
+    /// the `lock_union` interpretation.
     pub flags: u8,
     /// `uint48` lock union: `unlock_delay` (seconds) while `FLAG_UNLOCK_INITIATED`
     /// is clear, else `unlocks_at` (Unix-seconds timestamp).
