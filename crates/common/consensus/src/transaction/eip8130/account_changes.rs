@@ -7,6 +7,7 @@
 //! [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
 
 use alloc::vec::Vec;
+use core::mem;
 
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_rlp::{
@@ -376,6 +377,31 @@ impl AccountChange {
             Self::Create(_) => Eip8130Constants::ACCOUNT_CHANGE_TYPE_CREATE,
             Self::ConfigChange(_) => Eip8130Constants::ACCOUNT_CHANGE_TYPE_CONFIG,
             Self::Delegation(_) => Eip8130Constants::ACCOUNT_CHANGE_TYPE_DELEGATION,
+        }
+    }
+
+    /// Heap bytes owned beyond the enum slot itself.
+    ///
+    /// The surrounding [`Vec`] capacity × [`mem::size_of`]`<Self>` covers the
+    /// inline layout; this method accounts for `Bytes` payloads and nested
+    /// vector buffers only.
+    pub fn heap_size(&self) -> usize {
+        match self {
+            Self::Create(entry) => {
+                entry.code.len()
+                    + entry.initial_actors.capacity().saturating_mul(mem::size_of::<InitialActor>())
+                    + entry
+                        .initial_actors
+                        .iter()
+                        .map(|actor| actor.policy_data.len())
+                        .sum::<usize>()
+            }
+            Self::ConfigChange(entry) => {
+                entry.signature.len()
+                    + entry.changes.capacity().saturating_mul(mem::size_of::<SignedChange>())
+                    + entry.changes.iter().map(|change| change.payload.len()).sum::<usize>()
+            }
+            Self::Delegation(_) => 0,
         }
     }
 
