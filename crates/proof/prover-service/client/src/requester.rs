@@ -517,6 +517,7 @@ mod tests {
         ProveBlockRangeRequest {
             proof: ProofRequest {
                 session_id: session_id.to_owned(),
+                protocol_version: 1,
                 request: ProofRequestKind::Compressed(ZkProofRequest {
                     start_block_number: 100,
                     number_of_blocks_to_prove: 5,

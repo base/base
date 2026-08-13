@@ -152,6 +152,7 @@ impl ChallengerService {
             Arc::clone(&factory_client),
             Arc::clone(&verifier_client),
             Arc::clone(&anchor_registry_client),
+            config.proof_protocol_versions.clone(),
         );
 
         let anchor_updater = AnchorUpdater::new(

@@ -153,6 +153,9 @@ pub struct DeleteProofsByTeeSignerRequest {
 pub struct ProofRequest {
     /// Client-provided idempotency key.
     pub session_id: String,
+    /// Opaque prover routing version. Omission defaults to compatibility route `0`.
+    #[serde(default)]
+    pub protocol_version: u32,
     /// Proof request details.
     pub request: ProofRequestKind,
 }
@@ -391,6 +394,13 @@ pub struct GetNextProofRequest {
     /// ZK proving backends this worker can execute for ZK proofs.
     #[serde(default)]
     pub zk_backends: Vec<ZkBackend>,
+    /// Worker protocol versions used to gate incompatible jobs.
+    ///
+    /// A worker announces every version it can serve. The fingerprint still mixes TEE and ZK
+    /// hashes, so a ZK-only program rotation mints a new version even when the TEE image is
+    /// unchanged. Omission or an empty list means `[0]`, matching pre-versioning workers.
+    #[serde(default)]
+    pub protocol_versions: Vec<u32>,
     /// Requested lock duration in seconds. Zero uses the server default.
     pub lock_duration_seconds: u32,
 }
@@ -535,6 +545,7 @@ mod tests {
         let request = ProveBlockRangeRequest {
             proof: ProofRequest {
                 session_id: "proof-session".to_owned(),
+                protocol_version: 1,
                 request: ProofRequestKind::Compressed(ZkProofRequest {
                     start_block_number: 10,
                     number_of_blocks_to_prove: 20,
@@ -548,13 +559,14 @@ mod tests {
             },
         };
 
-        let value = serde_json::to_value(request).expect("proof request should serialize");
+        let value = serde_json::to_value(&request).expect("proof request should serialize");
 
         assert_eq!(
             value,
             json!({
                 "proof": {
                     "session_id": "proof-session",
+                    "protocol_version": 1,
                     "request": {
                         "proof_type": "compressed",
                         "payload": {
@@ -569,6 +581,13 @@ mod tests {
                 }
             })
         );
+
+        // A legacy producer omits the field entirely, which must read back as version 0.
+        let mut legacy = value;
+        legacy["proof"].as_object_mut().unwrap().remove("protocol_version");
+        let deserialized: ProveBlockRangeRequest =
+            serde_json::from_value(legacy).expect("legacy proof request should deserialize");
+        assert_eq!(deserialized.proof.protocol_version, 0);
     }
 
     #[test]
@@ -929,6 +948,7 @@ mod tests {
             tee_kinds: Vec::new(),
             zk_vms: vec![ZkVm::Sp1],
             zk_backends: vec![ZkBackend::Cluster, ZkBackend::DryRun],
+            protocol_versions: vec![1, 2],
             lock_duration_seconds: 30,
         };
 
@@ -942,6 +962,7 @@ mod tests {
                 "tee_kinds": [],
                 "zk_vms": ["sp1"],
                 "zk_backends": ["cluster", "dry_run"],
+                "protocol_versions": [1, 2],
                 "lock_duration_seconds": 30
             })
         );
@@ -959,6 +980,7 @@ mod tests {
         assert_eq!(request.tee_kinds, Vec::new());
         assert_eq!(request.zk_vms, Vec::new());
         assert_eq!(request.zk_backends, Vec::new());
+        assert_eq!(request.protocol_versions, Vec::<u32>::new());
     }
 
     #[test]

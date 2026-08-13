@@ -392,7 +392,6 @@ mod tests {
 
     #[test]
     fn proofs_commands_parse() {
-        assert!(try_parse(["basectl", "proofs", "finalize", "100", "5", "--yes"]).is_ok());
         assert!(
             try_parse([
                 "basectl",
@@ -400,6 +399,21 @@ mod tests {
                 "finalize",
                 "100",
                 "5",
+                "--proof-protocol-version",
+                "0",
+                "--yes",
+            ])
+            .is_ok()
+        );
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "finalize",
+                "100",
+                "5",
+                "--proof-protocol-version",
+                "1",
                 "--session-id",
                 "custom-session",
                 "--l1-head",
@@ -450,14 +464,49 @@ mod tests {
 
     #[test]
     fn proofs_finalize_rejects_zero_blocks() {
-        assert!(try_parse(["basectl", "proofs", "finalize", "100", "0", "--yes"]).is_err());
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "finalize",
+                "100",
+                "0",
+                "--proof-protocol-version",
+                "0",
+                "--yes",
+            ])
+            .is_err()
+        );
     }
 
     #[test]
     fn proofs_finalize_json_requires_yes() {
-        assert!(try_parse(["basectl", "proofs", "finalize", "100", "5", "--json"]).is_err());
         assert!(
-            try_parse(["basectl", "proofs", "finalize", "100", "5", "--yes", "--json"]).is_ok()
+            try_parse([
+                "basectl",
+                "proofs",
+                "finalize",
+                "100",
+                "5",
+                "--proof-protocol-version",
+                "0",
+                "--json",
+            ])
+            .is_err()
+        );
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "finalize",
+                "100",
+                "5",
+                "--proof-protocol-version",
+                "0",
+                "--yes",
+                "--json",
+            ])
+            .is_ok()
         );
     }
 

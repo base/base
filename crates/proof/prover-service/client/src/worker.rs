@@ -599,6 +599,7 @@ mod tests {
             tee_kinds: Vec::new(),
             zk_vms: vec![ZkVm::Sp1],
             zk_backends: vec![ZkBackend::Cluster],
+            protocol_versions: vec![1],
             lock_duration_seconds: 60,
         }
     }
@@ -667,6 +668,7 @@ mod tests {
     fn proof_request(session_id: impl Into<String>) -> ProofRequest {
         ProofRequest {
             session_id: session_id.into(),
+            protocol_version: 1,
             request: ProofRequestKind::Compressed(ZkProofRequest {
                 start_block_number: 10,
                 number_of_blocks_to_prove: 2,
@@ -699,6 +701,7 @@ mod tests {
             tee_kinds: Vec::new(),
             zk_vms: vec![ZkVm::Sp1],
             zk_backends: vec![ZkBackend::Cluster],
+            protocol_versions: vec![1],
             lock_duration_seconds: 60,
         };
         let provider: &dyn ProverWorkerProvider = &server.client;

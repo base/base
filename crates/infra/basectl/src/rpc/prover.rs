@@ -33,6 +33,8 @@ pub struct ProofFinalizeRequest {
     pub sequence_window: Option<u64>,
     /// Optional intermediate output root interval.
     pub intermediate_root_interval: Option<u64>,
+    /// Prover-service routing version required by this proof job.
+    pub protocol_version: u32,
 }
 
 impl ProofFinalizeRequest {
@@ -70,6 +72,7 @@ impl ProofFinalizeRequest {
         ProveBlockRangeRequest {
             proof: ProofRequest {
                 session_id: self.effective_session_id(network),
+                protocol_version: self.protocol_version,
                 request: ProofRequestKind::Compressed(ZkProofRequest {
                     start_block_number: self.start_block,
                     number_of_blocks_to_prove: self.num_blocks,
@@ -246,6 +249,7 @@ mod tests {
             l1_head: None,
             sequence_window: None,
             intermediate_root_interval: None,
+            protocol_version: 1,
         }
     }
 
@@ -288,10 +292,12 @@ mod tests {
             l1_head: Some(alloy_primitives::B256::repeat_byte(0xaa)),
             sequence_window: Some(3600),
             intermediate_root_interval: Some(10),
+            protocol_version: 7,
         };
 
         let prove = request.to_prove_request("devnet");
         assert_eq!(prove.proof.session_id, "session-map");
+        assert_eq!(prove.proof.protocol_version, 7);
         match prove.proof.request {
             ProofRequestKind::Compressed(zk) => {
                 assert_eq!(zk.start_block_number, 100);

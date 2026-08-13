@@ -29,6 +29,8 @@ pub struct ProposerConfig {
     pub dispute_game_factory_addr: Address,
     /// Game type ID for `AggregateVerifier` dispute games.
     pub game_type: u32,
+    /// Prover-service routing version required by newly proposed games.
+    pub proof_protocol_version: u32,
     /// Polling interval for new blocks.
     pub poll_interval: Duration,
     /// RPC request timeout.
@@ -123,6 +125,7 @@ impl ProposerConfig {
             anchor_state_registry_addr: proposer.anchor_state_registry_addr,
             dispute_game_factory_addr: proposer.dispute_game_factory_addr,
             game_type: proposer.game_type,
+            proof_protocol_version: proposer.proof_protocol_version,
             poll_interval: proposer.poll_interval,
             rpc_timeout: proposer.rpc_timeout,
             rollup_rpc: proposer.rollup_rpc,
@@ -168,6 +171,8 @@ mod tests {
             "--dispute-game-factory-addr",
             "0x2234567890123456789012345678901234567890",
             "--game-type",
+            "1",
+            "--proof-protocol-version",
             "1",
             "--rollup-rpc",
             "http://localhost:7545",

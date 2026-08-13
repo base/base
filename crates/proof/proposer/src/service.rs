@@ -222,6 +222,7 @@ impl ProposerService {
             block_interval,
             intermediate_block_interval,
             game_type: config.game_type,
+            proof_protocol_version: config.proof_protocol_version,
             proposer_address: proposer_address.unwrap_or_default(),
             anchor_state_registry_address: config.anchor_state_registry_addr,
         };

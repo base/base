@@ -16,6 +16,7 @@ fn compressed_request(session_id: &str, start_block_number: u64) -> ProveBlockRa
     ProveBlockRangeRequest {
         proof: ProofRequest {
             session_id: session_id.to_string(),
+            protocol_version: 1,
             request: ProofRequestKind::Compressed(ZkProofRequest {
                 start_block_number,
                 number_of_blocks_to_prove: 1,

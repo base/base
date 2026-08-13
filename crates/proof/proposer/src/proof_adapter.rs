@@ -24,19 +24,24 @@ impl ProposerProofAdapter {
     }
 
     /// Builds a prover-service request for a TEE proposal proof.
-    pub fn tee_prove_block_range_request(request: PrimitiveProofRequest) -> ProveBlockRangeRequest {
+    pub fn tee_prove_block_range_request(
+        request: PrimitiveProofRequest,
+        protocol_version: u32,
+    ) -> ProveBlockRangeRequest {
         let session_id = Self::tee_session_id_for_root(request.claimed_l2_output_root);
-        Self::tee_prove_block_range_request_with_session_id(request, session_id)
+        Self::tee_prove_block_range_request_with_session_id(request, session_id, protocol_version)
     }
 
     /// Builds a prover-service request for a TEE proposal proof with a caller-supplied session id.
     pub const fn tee_prove_block_range_request_with_session_id(
         request: PrimitiveProofRequest,
         session_id: String,
+        protocol_version: u32,
     ) -> ProveBlockRangeRequest {
         ProveBlockRangeRequest {
             proof: ProofRequest {
                 session_id,
+                protocol_version,
                 request: ProofRequestKind::Tee(TeeProofRequest {
                     proof: request,
                     tee_kind: TeeKind::AwsNitro,
@@ -102,9 +107,10 @@ mod tests {
         let request = test_request(root);
         let expected_session_id = ProposerProofAdapter::tee_session_id_for_root(root);
 
-        let wrapped = ProposerProofAdapter::tee_prove_block_range_request(request.clone());
+        let wrapped = ProposerProofAdapter::tee_prove_block_range_request(request.clone(), 7);
 
         assert_eq!(wrapped.proof.session_id, expected_session_id);
+        assert_eq!(wrapped.proof.protocol_version, 7);
         match wrapped.proof.request {
             ProofRequestKind::Tee(tee) => {
                 assert_eq!(tee.proof, request);

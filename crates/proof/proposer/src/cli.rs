@@ -84,6 +84,10 @@ pub struct ProposerArgs {
     #[arg(long = "game-type", env = cli_env!("GAME_TYPE"))]
     pub game_type: u32,
 
+    /// Prover-service routing version required by newly proposed games.
+    #[arg(long = "proof-protocol-version", env = cli_env!("PROOF_PROTOCOL_VERSION"))]
+    pub proof_protocol_version: u32,
+
     /// Polling interval for new blocks (e.g., "12s", "1m").
     #[arg(
         long = "poll-interval",
@@ -194,6 +198,8 @@ mod tests {
             "--dispute-game-factory-addr",
             "0x2234567890123456789012345678901234567890",
             "--game-type",
+            "1",
+            "--proof-protocol-version",
             "1",
             "--rollup-rpc",
             "http://localhost:7545",

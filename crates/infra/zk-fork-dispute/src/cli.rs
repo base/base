@@ -48,6 +48,10 @@ pub struct ForkArgs {
     )]
     pub prover_service_url: Url,
 
+    /// Prover-service routing version required by the selected game.
+    #[arg(long = "proof-protocol-version", env = cli_env!("PROOF_PROTOCOL_VERSION"))]
+    pub proof_protocol_version: u32,
+
     /// `DisputeGameFactory` address.
     #[arg(long = "dispute-game-factory", env = cli_env!("DISPUTE_GAME_FACTORY"))]
     pub dispute_game_factory: Address,
