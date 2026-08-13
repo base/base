@@ -298,7 +298,11 @@ where
                     *catchup = CanonicalUnsafeCatchup::default();
                 }
 
-                self.advance_canonical_catchup().await?;
+                // Canonical catch-up inserts payloads and sends FCUs directly, bypassing the task
+                // queue cleared above. Keep buffered payloads untouched until snap sync completes.
+                if !el_sync_pending {
+                    self.advance_canonical_catchup().await?;
+                }
 
                 // If the unsafe head has updated, propagate it to the outbound channels.
                 self.unsafe_head_tx.send_if_modified(|val| {
