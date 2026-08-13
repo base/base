@@ -49,6 +49,7 @@ impl ContractError {
     /// Unknown selectors and empty (`0x`) returns or reverts indicate that
     /// the method is unavailable. Non-empty reverts and ABI decoding
     /// failures are preserved as contract errors.
+    #[must_use]
     pub fn is_missing_method(&self) -> bool {
         let Self::Call { source, .. } = self else {
             return false;
