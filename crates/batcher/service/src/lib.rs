@@ -11,18 +11,7 @@ mod config;
 pub use config::BatcherConfig;
 
 mod metrics;
-pub use metrics::{BatcherServiceMetrics, L2BlockParityMetrics};
-
-mod parity_error;
-pub use parity_error::ParityError;
-
-mod parity_normalized;
-pub use parity_normalized::{
-    NormalizedBatch, NormalizedBatchKind, NormalizedChannel, NormalizedSubmission, ParityComparison,
-};
-
-mod parity_normalizer;
-pub use parity_normalizer::{ParityComparator, ParityNormalizer};
+pub use metrics::L2BlockParityMetrics;
 
 mod recent_txs;
 pub use recent_txs::{MAX_CHECK_RECENT_TXS_DEPTH, RecentTxSyncTarget};
@@ -44,13 +33,6 @@ pub use throttle::RpcThrottleClient;
 
 mod derivation_status_poller;
 pub use derivation_status_poller::{DerivationStatusPoller, DerivationStatusProvider};
-
-mod shadow_parity;
-pub use shadow_parity::{
-    IngestedPayload, MAX_PENDING_BATCH_QUEUE_LEN, PENDING_QUEUE_DRIFT_WARN_THRESHOLD,
-    ParityCompareStats, ParitySide, ParitySideState, ParityState, ShadowParityMonitor,
-    ShadowParityMonitorConfig,
-};
 
 mod service;
 pub use service::{BatcherService, ReadyBatcher};

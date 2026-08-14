@@ -15,11 +15,8 @@ workspace = true
 url.workspace = true
 eyre.workspace = true
 futures.workspace = true
-alloy-rlp.workspace = true
-thiserror.workspace = true
 tokio-util.workspace = true
 async-trait.workspace = true
-base-blobs.workspace = true
 base-metrics.workspace = true
 base-tx-manager.workspace = true
 base-batcher-core.workspace = true
@@ -30,26 +27,19 @@ base-batcher-source.workspace = true
 base-batcher-encoder.workspace = true
 metrics = { workspace = true, optional = true }
 tracing = { workspace = true, features = ["std"] }
-alloy-eips = { workspace = true, features = ["std"] }
 derive_more = { workspace = true, features = ["debug"] }
-serde = { workspace = true, features = ["derive", "std"] }
 base-protocol = { workspace = true, features = ["std"] }
 base-runtime = { workspace = true, features = ["tokio"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
-base-consensus-derive.workspace = true
 base-common-consensus = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["rt", "sync", "time"] }
 base-consensus-rpc = { workspace = true, features = ["client"] }
-base-common-genesis = { workspace = true, features = ["std"] }
-base-consensus-providers.workspace = true
-alloy-consensus = { workspace = true, features = ["std"] }
 alloy-provider = { workspace = true, features = ["pubsub", "ws"] }
 alloy-primitives = { workspace = true, features = ["serde", "std"] }
 jsonrpsee = { workspace = true, features = ["http-client", "macros"] }
 
 [dev-dependencies]
 httpmock.workspace = true
-miniz_oxide.workspace = true
 base-runtime = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
@@ -57,8 +47,6 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 metrics = [
 	"base-batcher-core/metrics",
 	"base-batcher-encoder/metrics",
-	"base-consensus-derive/metrics",
-	"base-consensus-providers/metrics",
 	"base-consensus-rpc/metrics",
 	"base-metrics/metrics",
 	"base-tx-manager/metrics",

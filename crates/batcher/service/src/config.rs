@@ -47,11 +47,6 @@ pub struct BatcherConfig {
     /// Same connection-time failover semantics as [`l1_rpc_url`](Self::l1_rpc_url).
     /// Must be non-empty.
     pub rollup_rpc_url: Vec<Url>,
-    /// Optional L1 beacon API endpoint.
-    ///
-    /// Used only by shadow-mode parity monitoring to fetch EIP-4844 blob sidecars
-    /// for canonical and shadow inbox submissions. Calldata parity does not require it.
-    pub l1_beacon_url: Option<Url>,
     /// Signer configuration for signing L1 transactions.
     ///
     /// Must be `Some` before the batcher is started; a `None` value will cause
@@ -126,7 +121,6 @@ impl Default for BatcherConfig {
             l2_rpc_url: vec!["http://localhost:9545".parse().expect("valid default URL")],
             parity_validator_l2_rpc_url: None,
             rollup_rpc_url: vec!["http://localhost:7545".parse().expect("valid default URL")],
-            l1_beacon_url: None,
             signer: None,
             metrics_enabled: false,
             batch_inbox_override: None,
