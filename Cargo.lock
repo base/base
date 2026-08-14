@@ -6367,7 +6367,9 @@ name = "base-shadow-metrics"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "base-metrics",
  "base-shadow-indexer-db",
+ "metrics",
  "sqlx",
  "thiserror 2.0.19",
 ]

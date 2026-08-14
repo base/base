@@ -11,7 +11,12 @@ edition.workspace = true
 workspace = true
 
 [dependencies]
+base-metrics.workspace = true
 base-shadow-indexer-db.workspace = true
+metrics = { workspace = true, optional = true }
 anyhow = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "tls-native-tls"] }
+
+[features]
+metrics = ["base-metrics/metrics", "dep:metrics"]
