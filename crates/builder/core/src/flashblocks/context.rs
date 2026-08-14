@@ -773,27 +773,23 @@ impl BasePayloadBuilderCtx {
 
             let tx_hash = *tx.hash();
             let mut predicate_read_failed = false;
-            let blocking_predicate = {
-                let db = evm.db_mut();
-                tx.validity_predicates().iter().find_map(|predicate| {
-                    match predicate.matches_state(db) {
-                        Ok(true) => None,
-                        Ok(false) => Some(ValidityPredicateKey::for_predicate(predicate)),
-                        Err(error) => {
-                            warn!(
-                                target: "payload_builder",
-                                tx_hash = ?tx_hash,
-                                predicate = ?predicate,
-                                error = ?error,
-                                "failed to read validity predicate state"
-                            );
-                            predicate_read_failed = true;
-                            Some(ValidityPredicateKey::for_predicate(predicate))
-                        }
-                    }
-                })
+            let blocking_predicate = match ValidityPredicateKey::first_unsatisfied(
+                tx.validity_predicates(),
+                evm.db_mut(),
+            ) {
+                Ok(blocking_predicate) => blocking_predicate,
+                Err(error) => {
+                    warn!(
+                        target: "payload_builder",
+                        tx_hash = ?tx_hash,
+                        error = ?error,
+                        "failed to read validity predicate state"
+                    );
+                    predicate_read_failed = true;
+                    None
+                }
             };
-            if let Some(blocking_predicate) = blocking_predicate {
+            if predicate_read_failed || blocking_predicate.is_some() {
                 num_txs_considered += 1;
                 let ordering_position = num_txs_considered;
                 let (rejection_reason, rejection_detail) = if predicate_read_failed {
@@ -842,7 +838,9 @@ impl BasePayloadBuilderCtx {
                 // its predicate may have already been satisfied at its first position.
                 if predicate_read_failed {
                     best_txs.mark_invalid(tx.sender(), tx.nonce());
-                } else if best_txs.park_current() {
+                } else if let Some(blocking_predicate) = blocking_predicate
+                    && best_txs.park_current()
+                {
                     predicate_index.park(tx_hash, tx, blocking_predicate);
                 } else {
                     best_txs.mark_invalid(tx.sender(), tx.nonce());
@@ -1341,24 +1339,22 @@ impl BasePayloadBuilderCtx {
                     );
                     continue;
                 };
-                let blocking_predicate =
-                    parked_transaction.validity_predicates().iter().find_map(|predicate| {
-                        match predicate.matches_state(evm.db_mut()) {
-                            Ok(true) => None,
-                            Ok(false) => Some(ValidityPredicateKey::for_predicate(predicate)),
-                            Err(error) => {
-                                warn!(
-                                    target: "payload_builder",
-                                    tx_hash = ?parked_hash,
-                                    predicate = ?predicate,
-                                    error = ?error,
-                                    "failed to re-read validity predicate state"
-                                );
-                                predicate_read_failed = true;
-                                Some(ValidityPredicateKey::for_predicate(predicate))
-                            }
-                        }
-                    });
+                let blocking_predicate = match ValidityPredicateKey::first_unsatisfied(
+                    parked_transaction.validity_predicates(),
+                    evm.db_mut(),
+                ) {
+                    Ok(blocking_predicate) => blocking_predicate,
+                    Err(error) => {
+                        warn!(
+                            target: "payload_builder",
+                            tx_hash = ?parked_hash,
+                            error = ?error,
+                            "failed to re-read validity predicate state"
+                        );
+                        predicate_read_failed = true;
+                        None
+                    }
+                };
                 if predicate_read_failed {
                     predicate_index.remove(*parked_hash);
                     best_txs.discard_parked(*parked_hash);

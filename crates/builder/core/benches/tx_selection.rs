@@ -236,11 +236,9 @@ fn run_predicate_selection(pool: &Pool, db: &mut InMemoryDB) -> usize {
     let mut selected = 0;
 
     while let Some(transaction) = best.next(()) {
-        let blocking_predicate = transaction
-            .validity_predicates()
-            .iter()
-            .find(|predicate| !predicate.matches_state(db).expect("in-memory reads cannot fail"))
-            .map(ValidityPredicateKey::for_predicate);
+        let blocking_predicate =
+            ValidityPredicateKey::first_unsatisfied(transaction.validity_predicates(), db)
+                .expect("in-memory reads cannot fail");
         if let Some(blocking_predicate) = blocking_predicate {
             let transaction_hash = *transaction.hash();
             assert!(best.park_current());

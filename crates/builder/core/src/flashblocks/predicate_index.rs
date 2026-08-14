@@ -5,7 +5,7 @@ use alloy_primitives::{
     map::{HashMap, HashSet},
 };
 use base_execution_txpool::ValidityPredicate;
-use revm::state::EvmState;
+use revm::{Database, state::EvmState};
 
 /// State location read by a validity predicate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -23,6 +23,24 @@ impl ValidityPredicateKey {
             ValidityPredicate::Balance { address, .. } => Self::Balance(*address),
             ValidityPredicate::Storage { address, slot, .. } => Self::Storage(*address, *slot),
         }
+    }
+
+    /// Returns the first predicate that does not hold against `db`.
+    ///
+    /// `Ok(None)` means every predicate matches. `Err` means a predicate's state could not be
+    /// read; callers must treat that as an inability to verify rather than a successful match.
+    pub fn first_unsatisfied<DB: Database>(
+        predicates: &[ValidityPredicate],
+        db: &mut DB,
+    ) -> Result<Option<Self>, DB::Error> {
+        for predicate in predicates {
+            match predicate.matches_state(db) {
+                Ok(true) => {}
+                Ok(false) => return Ok(Some(Self::for_predicate(predicate))),
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(None)
     }
 }
 
@@ -134,9 +152,17 @@ impl<T> ParkedPredicateIndex<T> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256};
-    use revm::state::{Account, EvmState, EvmStorageSlot};
+    use base_execution_txpool::{ValidityOperator, ValidityPredicate};
+    use revm::{
+        database::InMemoryDB,
+        state::{Account, EvmState, EvmStorageSlot},
+    };
 
     use super::{ParkedPredicateIndex, ValidityPredicateKey};
+
+    fn balance_predicate(address: Address, value: U256) -> ValidityPredicate {
+        ValidityPredicate::Balance { address, op: ValidityOperator::Equal, value }
+    }
 
     #[test]
     fn indexes_only_transactions_affected_by_changed_state() {
@@ -187,5 +213,22 @@ mod tests {
         state.insert(address, account);
 
         assert_eq!(index.affected_by_state(&state), vec![hash]);
+    }
+
+    #[test]
+    fn first_unsatisfied_returns_first_failing_predicate() {
+        let mut db = InMemoryDB::default();
+        let passing = balance_predicate(Address::with_last_byte(1), U256::ZERO);
+        let failing = balance_predicate(Address::with_last_byte(2), U256::ONE);
+
+        assert_eq!(ValidityPredicateKey::first_unsatisfied(&[], &mut db).unwrap(), None);
+        assert_eq!(
+            ValidityPredicateKey::first_unsatisfied(&[passing.clone()], &mut db).unwrap(),
+            None
+        );
+        assert_eq!(
+            ValidityPredicateKey::first_unsatisfied(&[passing, failing], &mut db).unwrap(),
+            Some(ValidityPredicateKey::Balance(Address::with_last_byte(2)))
+        );
     }
 }
