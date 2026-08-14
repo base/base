@@ -22,10 +22,10 @@ pub use metrics::ResourceMeteringMetrics;
 mod resource_metering;
 pub use resource_metering::{
     CompiledResourceMeteringDimension, CompiledResourceMeteringSchedule,
-    ResourceMeteringCheckError, ResourceMeteringDecision, ResourceMeteringDimension,
-    ResourceMeteringError, ResourceMeteringLimitExceeded, ResourceMeteringLimitScope,
-    ResourceMeteringMode, ResourceMeteringOperation, ResourceMeteringSchedule,
-    ResourceMeteringStore, ResourceMeteringStoreError, ResourceMeteringUsage,
+    ResourceMeteringDimension, ResourceMeteringError, ResourceMeteringOperation,
+    ResourceMeteringSchedule, ResourceMeteringStore, ResourceMeteringStoreError,
+    ResourceMeteringUsage, ResourceThrottlingCheckError, ResourceThrottlingDecision,
+    ResourceThrottlingLimitExceeded, ResourceThrottlingLimitScope, ResourceThrottlingMode,
     SharedResourceMeteringStore, VersionedResourceMeteringSchedule, evaluate_transaction,
 };
 pub mod payload;

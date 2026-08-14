@@ -11,11 +11,12 @@ verifies
 built payloads against consensus rules. Also provides data availability configuration via
 `BaseDAConfig` for fee calculation.
 
-Resource metering by opcode is an optional native-builder admission guardrail. A versioned
-schedule converts `meterBundle` opcode, precompile, and pseudo-opcode aggregates into
-independent resource-unit dimensions. The builder can observe those budgets in dry-run or
-skip over-budget transactions in enforce mode. This does not change protocol gas, fees, or
-validity.
+Resource metering is an optional native-builder admission guardrail. Metering
+converts `meterBundle` opcode, precompile, and pseudo-opcode aggregates into
+independent resource-unit dimensions. Resource throttling then excludes
+transactions whose metered usage exceeds a budget. Dry-run observes those
+over-budget transactions without excluding them. This does not change protocol
+gas, fees, or validity.
 
 ## Usage
 

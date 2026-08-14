@@ -1,4 +1,4 @@
-//! RPC for native payload resource metering by opcode.
+//! RPC for native payload resource metering and throttling.
 
 use alloy_primitives::TxHash;
 use base_bundles::MeterBundleResponse;

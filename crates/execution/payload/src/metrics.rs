@@ -1,20 +1,20 @@
 //! Metrics for native payload resource metering by opcode.
 
-use crate::resource_metering::{ResourceMeteringLimitExceeded, ResourceMeteringLimitScope};
+use crate::resource_metering::{ResourceThrottlingLimitExceeded, ResourceThrottlingLimitScope};
 
 base_metrics::define_metrics! {
     base_payload.resource_metering,
     struct = ResourceMeteringMetrics,
     #[describe("Transactions whose resource-metering usage could not be calculated")]
     calculation_failed: counter,
-    #[describe("Transactions that would be rejected by a resource-metering budget")]
+    #[describe("Transactions that would be throttled by a resource-metering budget")]
     #[label(dimension)]
     #[label(scope)]
     limit_exceeded_total: counter,
-    #[describe("Transactions skipped by a resource-metering budget")]
+    #[describe("Transactions throttled by a resource-metering budget")]
     #[label(dimension)]
     #[label(scope)]
-    rejected_total: counter,
+    throttled_total: counter,
     #[describe("Resource-metering schedule replacements")]
     schedule_updates_total: counter,
     #[describe("Active resource-metering schedule revision")]
@@ -22,12 +22,12 @@ base_metrics::define_metrics! {
 }
 
 impl ResourceMeteringMetrics {
-    /// Records a budget observation, and a rejection when the builder enforces the schedule.
-    pub fn record_limit(error: &ResourceMeteringLimitExceeded, enforced: bool) {
+    /// Records a budget observation, and a throttle when the builder enforces the schedule.
+    pub fn record_limit(error: &ResourceThrottlingLimitExceeded, enforced: bool) {
         let scope = error.scope.as_metric_label().to_string();
         Self::limit_exceeded_total(error.dimension.clone(), scope.clone()).increment(1);
         if enforced {
-            Self::rejected_total(error.dimension.clone(), scope).increment(1);
+            Self::throttled_total(error.dimension.clone(), scope).increment(1);
         }
     }
 
@@ -37,7 +37,7 @@ impl ResourceMeteringMetrics {
     }
 }
 
-impl ResourceMeteringLimitScope {
+impl ResourceThrottlingLimitScope {
     /// Returns the low-cardinality metric label for this scope.
     pub const fn as_metric_label(self) -> &'static str {
         match self {

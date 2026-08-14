@@ -5,7 +5,7 @@ use std::{env, path::PathBuf, sync::Arc, time::Duration};
 use base_bundle_extension::BundleExtension;
 use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
 use base_execution_payload_builder::{
-    MemoryMeteringStore, ResourceMeteringMode, config::ResourceMeteringConfig,
+    MemoryMeteringStore, ResourceThrottlingMode, config::ResourceMeteringConfig,
 };
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
@@ -81,39 +81,39 @@ pub struct MeteringArgs {
     #[arg(long = "metering.metered-opcodes", requires = "enable_metering", value_delimiter = ',')]
     pub metering_metered_opcodes: Vec<String>,
 
-    /// Resource metering by opcode mode for native payload admission: off, dry-run, or enforce.
+    /// Resource throttling mode for native payload admission: off, dry-run, or enforce.
     #[arg(
-        long = "payload.resource-metering-mode",
-        env = "PAYLOAD_RESOURCE_METERING_MODE",
+        long = "payload.resource-throttling-mode",
+        env = "PAYLOAD_RESOURCE_THROTTLING_MODE",
         value_enum,
-        default_value_t = ResourceMeteringModeArg::Off
+        default_value_t = ResourceThrottlingModeArg::Off
     )]
-    pub resource_metering_mode: ResourceMeteringModeArg,
+    pub resource_throttling_mode: ResourceThrottlingModeArg,
 
     /// JSON file containing the startup resource-metering schedule.
     #[arg(long = "payload.resource-metering-schedule", env = "PAYLOAD_RESOURCE_METERING_SCHEDULE")]
     pub resource_metering_schedule: Option<PathBuf>,
 }
 
-/// CLI value for [`ResourceMeteringMode`].
+/// CLI value for [`ResourceThrottlingMode`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
 #[value(rename_all = "kebab-case")]
-pub enum ResourceMeteringModeArg {
-    /// Resource-metering budgets are ignored.
+pub enum ResourceThrottlingModeArg {
+    /// Ignore metered usage and do not throttle.
     #[default]
     Off,
-    /// Record metrics for over-budget transactions, but still include them.
+    /// Record metrics for transactions that would be throttled, but still include them.
     DryRun,
-    /// Skip transactions that exceed a configured budget.
+    /// Exclude transactions that exceed a configured budget.
     Enforce,
 }
 
-impl From<ResourceMeteringModeArg> for ResourceMeteringMode {
-    fn from(mode: ResourceMeteringModeArg) -> Self {
+impl From<ResourceThrottlingModeArg> for ResourceThrottlingMode {
+    fn from(mode: ResourceThrottlingModeArg) -> Self {
         match mode {
-            ResourceMeteringModeArg::Off => Self::Off,
-            ResourceMeteringModeArg::DryRun => Self::DryRun,
-            ResourceMeteringModeArg::Enforce => Self::Enforce,
+            ResourceThrottlingModeArg::Off => Self::Off,
+            ResourceThrottlingModeArg::DryRun => Self::DryRun,
+            ResourceThrottlingModeArg::Enforce => Self::Enforce,
         }
     }
 }
@@ -502,12 +502,12 @@ impl StandardBaseRethNode {
         // Fail fast on an incomplete upgrade-signal configuration before installing extensions.
         Self::validate_upgrade_signal_args(&rollup_args)?;
         let mut runner = BaseNodeRunner::new(rollup_args.clone());
-        let resource_metering_mode =
-            ResourceMeteringMode::from(args.metering.resource_metering_mode);
+        let resource_throttling_mode =
+            ResourceThrottlingMode::from(args.metering.resource_throttling_mode);
         let resource_metering = ResourceMeteringConfig::from_parts(
-            resource_metering_mode,
+            resource_throttling_mode,
             args.metering.resource_metering_schedule.as_deref(),
-            Arc::new(MemoryMeteringStore::new(resource_metering_mode.is_enabled())),
+            Arc::new(MemoryMeteringStore::new(resource_throttling_mode.is_enabled())),
         )?;
         runner = runner.with_resource_metering(resource_metering);
 
@@ -1017,14 +1017,14 @@ mod tests {
     fn test_standard_node_args_parses_resource_metering_flags() {
         let args = CommandParser::<StandardNodeArgs>::parse_from([
             "reth",
-            "--payload.resource-metering-mode",
+            "--payload.resource-throttling-mode",
             "dry-run",
             "--payload.resource-metering-schedule",
             "/tmp/resource-metering.json",
         ])
         .args;
 
-        assert_eq!(args.metering.resource_metering_mode, ResourceMeteringModeArg::DryRun);
+        assert_eq!(args.metering.resource_throttling_mode, ResourceThrottlingModeArg::DryRun);
         assert_eq!(
             args.metering.resource_metering_schedule.as_deref(),
             Some(std::path::Path::new("/tmp/resource-metering.json"))

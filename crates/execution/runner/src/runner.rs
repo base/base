@@ -211,7 +211,7 @@ mod tests {
             .with_gas_limit_config(gas_limit_config.clone())
             .with_manifest_precheck_enabled(false)
             .with_resource_metering(ResourceMeteringConfig::enabled(
-                base_execution_payload_builder::ResourceMeteringMode::DryRun,
+                base_execution_payload_builder::ResourceThrottlingMode::DryRun,
             ))
             .with_service_builder(TestPayloadServiceBuilder);
 
@@ -225,8 +225,8 @@ mod tests {
         assert_eq!(configured_da.max_da_block_size(), Some(200));
         assert_eq!(configured_gas.gas_limit(), Some(30_000_000));
         assert_eq!(
-            configured_metering.mode,
-            base_execution_payload_builder::ResourceMeteringMode::DryRun
+            configured_metering.throttling_mode,
+            base_execution_payload_builder::ResourceThrottlingMode::DryRun
         );
 
         da_config.set_max_da_size(300, 400);

@@ -1,8 +1,11 @@
 //! Versioned resource-metering schedules and their transaction-cost evaluator.
 //!
-//! Resource metering by opcode is a builder admission guardrail. It reweights
-//! `meterBundle` opcode/precompile/pseudo-opcode aggregates into independent
-//! resource-unit dimensions. It does not change protocol gas, fees, or validity.
+//! Resource metering is the system: simulate a transaction, measure its resource
+//! usage, and optionally throttle selection from those measurements. Metering
+//! reweights `meterBundle` opcode, precompile, and pseudo-opcode aggregates into
+//! independent resource-unit dimensions. Throttling excludes a transaction from
+//! the payload when that metered usage exceeds a budget. Neither changes
+//! protocol gas, fees, or validity.
 
 use std::{collections::HashMap, fmt, fs, path::Path, sync::Arc};
 
@@ -18,24 +21,24 @@ const MAX_DIMENSION_NAME_LENGTH: usize = 64;
 const MAX_OPERATIONS_PER_DIMENSION: usize = 512;
 const MAX_OPERATION_NAME_LENGTH: usize = 128;
 
-/// Mode for resource metering by opcode.
+/// How the native payload builder throttles from metered resource usage.
 ///
-/// Controls how the native payload builder handles resource-unit budgets derived
-/// from `meterBundle` opcode data. Limits can be observed in dry-run before
-/// they are enforced.
+/// Metering still computes resource units whenever this mode is enabled. Dry-run
+/// observes over-budget transactions without excluding them; enforce throttles
+/// them out of the payload.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum ResourceMeteringMode {
-    /// Resource-metering budgets are ignored.
+pub enum ResourceThrottlingMode {
+    /// Ignore metered usage and do not throttle.
     #[default]
     Off,
-    /// Record metrics for transactions that would exceed a budget, but still include them.
+    /// Record metrics for transactions that would be throttled, but still include them.
     DryRun,
-    /// Skip transactions that exceed a configured budget.
+    /// Exclude transactions that exceed a configured budget.
     Enforce,
 }
 
-impl ResourceMeteringMode {
-    /// Returns true if resource-metering data should be evaluated.
+impl ResourceThrottlingMode {
+    /// Returns true if usage should be metered and compared to throttling budgets.
     pub const fn is_enabled(self) -> bool {
         matches!(self, Self::DryRun | Self::Enforce)
     }
@@ -253,17 +256,17 @@ impl CompiledResourceMeteringSchedule {
         &self,
         usage: &ResourceMeteringUsage,
         cumulative: &[u128],
-    ) -> Result<(), ResourceMeteringCheckError> {
+    ) -> Result<(), ResourceThrottlingCheckError> {
         for (index, dimension) in self.dimensions.iter().enumerate() {
             let transaction_cost = usage.get(index);
 
             if let Some(transaction_limit) = dimension.transaction_limit
                 && transaction_cost > u128::from(transaction_limit)
             {
-                return Err(ResourceMeteringCheckError::LimitExceeded(
-                    ResourceMeteringLimitExceeded {
+                return Err(ResourceThrottlingCheckError::LimitExceeded(
+                    ResourceThrottlingLimitExceeded {
                         dimension: dimension.name.clone(),
-                        scope: ResourceMeteringLimitScope::Transaction,
+                        scope: ResourceThrottlingLimitScope::Transaction,
                         used: transaction_cost,
                         transaction_cost,
                         limit: transaction_limit,
@@ -277,12 +280,12 @@ impl CompiledResourceMeteringSchedule {
                 .copied()
                 .unwrap_or_default()
                 .checked_add(transaction_cost)
-                .ok_or(ResourceMeteringCheckError::ArithmeticOverflow)?;
+                .ok_or(ResourceThrottlingCheckError::ArithmeticOverflow)?;
             if used > u128::from(dimension.block_limit) {
-                return Err(ResourceMeteringCheckError::LimitExceeded(
-                    ResourceMeteringLimitExceeded {
+                return Err(ResourceThrottlingCheckError::LimitExceeded(
+                    ResourceThrottlingLimitExceeded {
                         dimension: dimension.name.clone(),
-                        scope: ResourceMeteringLimitScope::Block,
+                        scope: ResourceThrottlingLimitScope::Block,
                         used,
                         transaction_cost,
                         limit: dimension.block_limit,
@@ -296,16 +299,16 @@ impl CompiledResourceMeteringSchedule {
     }
 }
 
-/// Scope of a resource-metering budget violation.
+/// Scope of a resource-throttling budget violation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ResourceMeteringLimitScope {
+pub enum ResourceThrottlingLimitScope {
     /// The transaction exceeded its optional individual budget.
     Transaction,
     /// Adding the transaction would exceed the block budget.
     Block,
 }
 
-impl fmt::Display for ResourceMeteringLimitScope {
+impl fmt::Display for ResourceThrottlingLimitScope {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Transaction => formatter.write_str("transaction"),
@@ -314,17 +317,17 @@ impl fmt::Display for ResourceMeteringLimitScope {
     }
 }
 
-/// Details of a resource-metering budget violation.
+/// Details of a resource-throttling budget violation.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[error(
-    "resource metering {scope} limit exceeded: dimension={dimension} used={used} \
+    "resource throttling {scope} limit exceeded: dimension={dimension} used={used} \
      transaction_cost={transaction_cost} limit={limit} revision={revision}"
 )]
-pub struct ResourceMeteringLimitExceeded {
+pub struct ResourceThrottlingLimitExceeded {
     /// Dimension whose budget was exceeded.
     pub dimension: String,
     /// Budget scope.
-    pub scope: ResourceMeteringLimitScope,
+    pub scope: ResourceThrottlingLimitScope,
     /// Usage after adding the transaction, or transaction usage for a transaction budget.
     pub used: u128,
     /// Resource units charged by this transaction.
@@ -335,14 +338,14 @@ pub struct ResourceMeteringLimitExceeded {
     pub revision: u64,
 }
 
-/// Failure while checking a resource-metering budget.
+/// Failure while checking a resource-throttling budget.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum ResourceMeteringCheckError {
+pub enum ResourceThrottlingCheckError {
     /// A configured budget was exceeded.
     #[error("{0}")]
-    LimitExceeded(ResourceMeteringLimitExceeded),
+    LimitExceeded(ResourceThrottlingLimitExceeded),
     /// Cumulative usage overflowed the evaluator's integer range.
-    #[error("resource metering arithmetic overflow")]
+    #[error("resource throttling arithmetic overflow")]
     ArithmeticOverflow,
 }
 
@@ -611,25 +614,25 @@ impl ResourceMeteringSchedule {
     }
 }
 
-/// Builder admission decision for one transaction's resource-metering usage.
+/// Builder throttling decision for one transaction's metered resource usage.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ResourceMeteringDecision {
-    /// Resource metering is disabled or the schedule has no dimensions.
+pub enum ResourceThrottlingDecision {
+    /// Resource throttling is disabled or the schedule has no dimensions.
     Inactive,
     /// The transaction may be included. Usage is zero when metering data is missing.
     Allow(ResourceMeteringUsage),
-    /// The transaction exceeds a configured budget.
-    Reject {
+    /// The transaction exceeds a configured budget and should be throttled.
+    Throttle {
         /// Budget that was exceeded.
-        error: ResourceMeteringLimitExceeded,
-        /// Usage that produced the rejection.
+        error: ResourceThrottlingLimitExceeded,
+        /// Usage that produced the throttle.
         usage: ResourceMeteringUsage,
     },
     /// Usage could not be calculated from the available metering data.
     CalculationFailed,
 }
 
-/// Evaluates one transaction against a snapped schedule.
+/// Meters one transaction against a snapped schedule and returns a throttling decision.
 ///
 /// Missing metering data fails open with zero operation-specific usage.
 pub fn evaluate_transaction(
@@ -637,9 +640,9 @@ pub fn evaluate_transaction(
     meter: Option<&MeterBundleResponse>,
     tx_hash: &TxHash,
     cumulative: &[u128],
-) -> ResourceMeteringDecision {
+) -> ResourceThrottlingDecision {
     let Some(meter) = meter else {
-        return ResourceMeteringDecision::Allow(ResourceMeteringUsage::zero(
+        return ResourceThrottlingDecision::Allow(ResourceMeteringUsage::zero(
             schedule.dimensions.len(),
         ));
     };
@@ -649,16 +652,16 @@ pub fn evaluate_transaction(
     let opcode_gas = result.map(|result| result.opcode_gas.as_slice()).unwrap_or_default();
     let usage = match schedule.evaluate(gas_used, opcode_gas) {
         Ok(usage) => usage,
-        Err(_) => return ResourceMeteringDecision::CalculationFailed,
+        Err(_) => return ResourceThrottlingDecision::CalculationFailed,
     };
 
     match schedule.check(&usage, cumulative) {
-        Ok(()) => ResourceMeteringDecision::Allow(usage),
-        Err(ResourceMeteringCheckError::LimitExceeded(error)) => {
-            ResourceMeteringDecision::Reject { error, usage }
+        Ok(()) => ResourceThrottlingDecision::Allow(usage),
+        Err(ResourceThrottlingCheckError::LimitExceeded(error)) => {
+            ResourceThrottlingDecision::Throttle { error, usage }
         }
-        Err(ResourceMeteringCheckError::ArithmeticOverflow) => {
-            ResourceMeteringDecision::CalculationFailed
+        Err(ResourceThrottlingCheckError::ArithmeticOverflow) => {
+            ResourceThrottlingDecision::CalculationFailed
         }
     }
 }
@@ -768,8 +771,8 @@ mod tests {
         let error = compiled.check(&usage, &[]).unwrap_err();
         assert!(matches!(
             error,
-            ResourceMeteringCheckError::LimitExceeded(ResourceMeteringLimitExceeded {
-                scope: ResourceMeteringLimitScope::Transaction,
+            ResourceThrottlingCheckError::LimitExceeded(ResourceThrottlingLimitExceeded {
+                scope: ResourceThrottlingLimitScope::Transaction,
                 ..
             })
         ));
@@ -778,8 +781,8 @@ mod tests {
         let error = compiled.check(&usage, &[90]).unwrap_err();
         assert!(matches!(
             error,
-            ResourceMeteringCheckError::LimitExceeded(ResourceMeteringLimitExceeded {
-                scope: ResourceMeteringLimitScope::Block,
+            ResourceThrottlingCheckError::LimitExceeded(ResourceThrottlingLimitExceeded {
+                scope: ResourceThrottlingLimitScope::Block,
                 ..
             })
         ));
@@ -926,6 +929,6 @@ mod tests {
         };
         let compiled = CompiledResourceMeteringSchedule::compile(schedule, 0).unwrap();
         let decision = evaluate_transaction(&compiled, None, &TxHash::ZERO, &[]);
-        assert_eq!(decision, ResourceMeteringDecision::Allow(ResourceMeteringUsage::zero(1)));
+        assert_eq!(decision, ResourceThrottlingDecision::Allow(ResourceMeteringUsage::zero(1)));
     }
 }
