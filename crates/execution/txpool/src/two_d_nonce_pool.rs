@@ -1,7 +1,7 @@
 //! Sidecar storage and iteration for channelized and nonce-free EIP-8130 transactions.
 
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, BinaryHeap, HashMap, HashSet},
     sync::Arc,
 };
 
@@ -517,6 +517,9 @@ where
     O: TransactionOrdering<Transaction = T>,
 {
     lanes: Vec<LaneIterator<T>>,
+    candidates: BinaryHeap<(BestTransactionPriority<O::PriorityValue>, usize)>,
+    lane_indexes: HashMap<LaneId, usize>,
+    nonce_free_indexes: HashMap<TxHash, usize>,
     ordering: O,
     base_fee: u64,
 }
@@ -559,13 +562,36 @@ where
                 })
             })
             .collect();
+        let finite_lane_count = lanes.len();
         lanes.extend(nonce_free.values().map(|transaction| LaneIterator {
             id: (transaction.sender(), Eip8130Constants::NONCE_KEY_MAX),
             transactions: vec![Arc::clone(transaction)],
             index: 0,
             invalidated: false,
         }));
-        Self { lanes, ordering, base_fee }
+        let lane_indexes = lanes[..finite_lane_count]
+            .iter()
+            .enumerate()
+            .map(|(index, lane)| (lane.id, index))
+            .collect();
+        let nonce_free_indexes = lanes[finite_lane_count..]
+            .iter()
+            .enumerate()
+            .map(|(offset, lane)| (*lane.transactions[0].hash(), finite_lane_count + offset))
+            .collect();
+        let candidates = BinaryHeap::from(
+            lanes
+                .iter()
+                .enumerate()
+                .map(|(index, lane)| {
+                    (
+                        BestTransactionPriority::new(&ordering, &lane.transactions[0], base_fee),
+                        index,
+                    )
+                })
+                .collect::<Vec<_>>(),
+        );
+        Self { candidates, lanes, lane_indexes, nonce_free_indexes, ordering, base_fee }
     }
 
     fn priority_key(
@@ -573,6 +599,15 @@ where
         transaction: &Arc<ValidPoolTransaction<T>>,
     ) -> BestTransactionPriority<O::PriorityValue> {
         BestTransactionPriority::new(&self.ordering, transaction, self.base_fee)
+    }
+
+    fn push_lane_head(&mut self, index: usize) {
+        let lane = &self.lanes[index];
+        if lane.invalidated || lane.index >= lane.transactions.len() {
+            return;
+        }
+        let priority = self.priority_key(&lane.transactions[lane.index]);
+        self.candidates.push((priority, index));
     }
 }
 
@@ -583,24 +618,17 @@ where
     type Item = Arc<ValidPoolTransaction<T>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let best_index = self
-            .lanes
-            .iter()
-            .enumerate()
-            .filter_map(|(index, lane)| {
-                if lane.invalidated || lane.index >= lane.transactions.len() {
-                    None
-                } else {
-                    Some((index, self.priority_key(&lane.transactions[lane.index])))
-                }
-            })
-            .max_by_key(|(_, priority)| priority.clone())
-            .map(|(index, _)| index)?;
-
-        let lane = &mut self.lanes[best_index];
-        let transaction = Arc::clone(&lane.transactions[lane.index]);
-        lane.index += 1;
-        Some(transaction)
+        loop {
+            let (_, best_index) = self.candidates.pop()?;
+            let lane = &mut self.lanes[best_index];
+            if lane.invalidated {
+                continue;
+            }
+            let transaction = Arc::clone(&lane.transactions[lane.index]);
+            lane.index += 1;
+            self.push_lane_head(best_index);
+            return Some(transaction);
+        }
     }
 }
 
@@ -609,17 +637,13 @@ where
     O: TransactionOrdering<Transaction = T>,
 {
     fn mark_invalid(&mut self, transaction: &Self::Item, _kind: InvalidPoolTransactionError) {
-        let lane = if let Some(nonce_key) = transaction.transaction.eip8130_nonce_channel_key() {
-            self.lanes
-                .iter_mut()
-                .find(|lane| lane.id.0 == transaction.sender() && lane.id.1 == nonce_key)
+        let index = if let Some(nonce_key) = transaction.transaction.eip8130_nonce_channel_key() {
+            self.lane_indexes.get(&(transaction.sender(), nonce_key)).copied()
         } else {
-            self.lanes.iter_mut().find(|lane| {
-                lane.transactions.iter().any(|candidate| candidate.hash() == transaction.hash())
-            })
+            self.nonce_free_indexes.get(transaction.hash()).copied()
         };
-        if let Some(lane) = lane {
-            lane.invalidated = true;
+        if let Some(index) = index {
+            self.lanes[index].invalidated = true;
         }
     }
 
@@ -630,7 +654,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
+    use std::{
+        sync::atomic::{AtomicUsize, Ordering},
+        time::Instant,
+    };
 
     use alloy_consensus::{Transaction, transaction::Recovered};
     use alloy_primitives::Bytes;
@@ -640,10 +667,29 @@ mod tests {
     use base_common_consensus::{
         BasePooledTransaction as ConsensusPooledTransaction, Eip8130Signed, TxEip8130,
     };
-    use reth_transaction_pool::{PoolTransaction, PriceBumpConfig, TransactionOrigin};
+    use reth_transaction_pool::{PoolTransaction, PriceBumpConfig, Priority, TransactionOrigin};
 
     use super::*;
     use crate::{BaseOrdering, BasePooledTransaction};
+
+    #[derive(Clone, Debug, Default)]
+    struct CountingOrdering {
+        priority_evaluations: Arc<AtomicUsize>,
+    }
+
+    impl TransactionOrdering for CountingOrdering {
+        type PriorityValue = u128;
+        type Transaction = BasePooledTransaction;
+
+        fn priority(
+            &self,
+            transaction: &Self::Transaction,
+            base_fee: u64,
+        ) -> Priority<Self::PriorityValue> {
+            self.priority_evaluations.fetch_add(1, Ordering::Relaxed);
+            transaction.effective_tip_per_gas(base_fee).into()
+        }
+    }
 
     fn test_chain_id() -> u64 {
         ChainConfig::mainnet().chain_id
@@ -738,6 +784,61 @@ mod tests {
         }
     }
 
+    fn best_transaction_priority_evaluations(lane_count: usize) -> usize {
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
+        let signer = signer();
+        for nonce_key in 1..=lane_count {
+            let transaction = valid_pool_transaction(signed_channel_tx(
+                &signer,
+                U256::from(nonce_key),
+                0,
+                nonce_key as u128,
+            ));
+            pool.insert_validated(transaction, 0).unwrap();
+        }
+
+        let ordering = CountingOrdering::default();
+        let priority_evaluations = Arc::clone(&ordering.priority_evaluations);
+        let yielded = pool.best_transactions(ordering, 0).count();
+
+        assert_eq!(yielded, lane_count);
+        priority_evaluations.load(Ordering::Relaxed)
+    }
+
+    fn run_best_transactions_wall_clock(lane_count: usize) {
+        let signer = signer();
+        let transaction =
+            Arc::new(valid_pool_transaction(signed_channel_tx(&signer, U256::from(1), 0, 1_000)));
+
+        let setup_started = Instant::now();
+        let lanes = (1..=lane_count)
+            .map(|nonce_key| {
+                (
+                    (signer.address(), U256::from(nonce_key)),
+                    NonceLane {
+                        next_nonce: 0,
+                        transactions: BTreeMap::from([(0, Arc::clone(&transaction))]),
+                    },
+                )
+            })
+            .collect();
+        let setup_elapsed = setup_started.elapsed();
+
+        let snapshot_started = Instant::now();
+        let best =
+            BestTwoDTransactions::new(&lanes, &HashMap::new(), BaseOrdering::coinbase_tip(), 0);
+        let snapshot_elapsed = snapshot_started.elapsed();
+
+        let drain_started = Instant::now();
+        let yielded = best.count();
+        let drain_elapsed = drain_started.elapsed();
+
+        eprintln!(
+            "{lane_count:>6} lanes: setup={setup_elapsed:?}, snapshot={snapshot_elapsed:?}, drain={drain_elapsed:?}"
+        );
+        assert_eq!(yielded, lane_count);
+    }
+
     #[test]
     fn channelized_transactions_with_same_sequence_can_coexist() {
         let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
@@ -753,6 +854,36 @@ mod tests {
         assert_eq!(pending, 2);
         assert_eq!(queued, 0);
         assert_eq!(pool.all_transactions().len(), 2);
+    }
+
+    #[test]
+    fn best_transactions_evaluates_each_lane_head_once() {
+        const SMALL_LANE_COUNT: usize = 16;
+        const LARGE_LANE_COUNT: usize = SMALL_LANE_COUNT * 2;
+
+        let small_evaluations = best_transaction_priority_evaluations(SMALL_LANE_COUNT);
+        let large_evaluations = best_transaction_priority_evaluations(LARGE_LANE_COUNT);
+
+        assert_eq!(small_evaluations, SMALL_LANE_COUNT);
+        assert_eq!(large_evaluations, LARGE_LANE_COUNT);
+    }
+
+    #[test]
+    #[ignore = "wall-clock diagnostic; run explicitly in release mode with --ignored --nocapture"]
+    fn best_transactions_wall_clock_1k_lanes() {
+        run_best_transactions_wall_clock(1_000);
+    }
+
+    #[test]
+    #[ignore = "wall-clock diagnostic; run explicitly in release mode with --ignored --nocapture"]
+    fn best_transactions_wall_clock_10k_lanes() {
+        run_best_transactions_wall_clock(10_000);
+    }
+
+    #[test]
+    #[ignore = "wall-clock diagnostic; run explicitly in release mode with --ignored --nocapture"]
+    fn best_transactions_wall_clock_100k_lanes() {
+        run_best_transactions_wall_clock(100_000);
     }
 
     #[test]
