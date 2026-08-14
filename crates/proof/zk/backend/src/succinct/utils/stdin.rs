@@ -44,8 +44,8 @@ pub fn get_agg_proof_stdin(
         multi_block_vkey: multi_block_vkey.hash_u32(),
         prover_address,
     });
-    // The headers have issues serializing with bincode, so use serde_json instead.
-    let headers_bytes = serde_cbor::to_vec(&headers).unwrap();
+    // The headers have issues serializing with bincode, so use serde_cbor instead.
+    let headers_bytes = serde_cbor::to_vec(&headers)?;
     stdin.write_vec(headers_bytes);
 
     Ok(stdin)
