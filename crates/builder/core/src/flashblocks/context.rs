@@ -53,6 +53,8 @@ use crate::{
     },
 };
 
+const PREDICATE_COUNT_OVERFLOW_BUCKET: usize = 17;
+
 /// Records the priority fee of a rejected transaction with the given reason as a label.
 fn record_rejected_tx_priority_fee(reason: &TxnExecutionError, priority_fee: f64) {
     BuilderMetrics::rejected_tx_priority_fee(rejection_reason_code(reason)).record(priority_fee);
@@ -678,6 +680,10 @@ impl BasePayloadBuilderCtx {
         let block_timestamp = self.attributes().timestamp();
         let payload_id = self.payload_id().to_string();
         let mut predicate_index = ParkedPredicateIndex::default();
+        let hash_rotate_predicate_blockers = self.builder_config.hash_rotate_predicate_blockers;
+        let predicate_blocker_policy =
+            if hash_rotate_predicate_blockers { "hash_rotated" } else { "first_failing" };
+        let mut parked_by_predicate_count = [0_u64; PREDICATE_COUNT_OVERFLOW_BUCKET + 1];
 
         while let Some(tx) = best_txs.next(()) {
             if tx.is_bundle_expired(block_number, block_timestamp) {
@@ -775,7 +781,10 @@ impl BasePayloadBuilderCtx {
             let mut predicate_read_failed = false;
             let blocking_predicate = {
                 let db = evm.db_mut();
-                ValidityPredicateKey::hash_rotated_scan(tx.validity_predicates(), tx_hash).find_map(
+                ValidityPredicateKey::find_map_in_scan_order(
+                    tx.validity_predicates(),
+                    tx_hash,
+                    hash_rotate_predicate_blockers,
                     |predicate| match predicate.matches_state(db) {
                         Ok(true) => None,
                         Ok(false) => Some(ValidityPredicateKey::for_predicate(predicate)),
@@ -843,6 +852,9 @@ impl BasePayloadBuilderCtx {
                 if predicate_read_failed {
                     best_txs.mark_invalid(tx.sender(), tx.nonce());
                 } else if best_txs.park_current() {
+                    let predicate_count =
+                        tx.validity_predicates().len().min(PREDICATE_COUNT_OVERFLOW_BUCKET);
+                    parked_by_predicate_count[predicate_count] += 1;
                     predicate_index.park(tx_hash, tx, blocking_predicate);
                 } else {
                     best_txs.mark_invalid(tx.sender(), tx.nonce());
@@ -1319,11 +1331,16 @@ impl BasePayloadBuilderCtx {
             };
             info.receipts.push(self.build_receipt(ctx, None));
 
-            let affected_parked = if predicate_index.is_empty() {
+            let had_parked_transactions = !predicate_index.is_empty();
+            let affected_parked = if !had_parked_transactions {
                 Vec::new()
             } else {
                 predicate_index.affected_by_state(&state)
             };
+            if had_parked_transactions {
+                BuilderMetrics::validity_predicate_rescan_transactions(predicate_blocker_policy)
+                    .record(affected_parked.len() as f64);
+            }
 
             // commit changes
             evm.db_mut().commit(state);
@@ -1341,28 +1358,26 @@ impl BasePayloadBuilderCtx {
                     );
                     continue;
                 };
-                let blocking_predicate =
-                    ValidityPredicateKey::hash_rotated_scan(
-                        parked_transaction.validity_predicates(),
-                        *parked_hash,
-                    )
-                    .find_map(
-                        |predicate| match predicate.matches_state(evm.db_mut()) {
-                            Ok(true) => None,
-                            Ok(false) => Some(ValidityPredicateKey::for_predicate(predicate)),
-                            Err(error) => {
-                                warn!(
-                                    target: "payload_builder",
-                                    tx_hash = ?parked_hash,
-                                    predicate = ?predicate,
-                                    error = ?error,
-                                    "failed to re-read validity predicate state"
-                                );
-                                predicate_read_failed = true;
-                                Some(ValidityPredicateKey::for_predicate(predicate))
-                            }
-                        },
-                    );
+                let blocking_predicate = ValidityPredicateKey::find_map_in_scan_order(
+                    parked_transaction.validity_predicates(),
+                    *parked_hash,
+                    hash_rotate_predicate_blockers,
+                    |predicate| match predicate.matches_state(evm.db_mut()) {
+                        Ok(true) => None,
+                        Ok(false) => Some(ValidityPredicateKey::for_predicate(predicate)),
+                        Err(error) => {
+                            warn!(
+                                target: "payload_builder",
+                                tx_hash = ?parked_hash,
+                                predicate = ?predicate,
+                                error = ?error,
+                                "failed to re-read validity predicate state"
+                            );
+                            predicate_read_failed = true;
+                            Some(ValidityPredicateKey::for_predicate(predicate))
+                        }
+                    },
+                );
                 if predicate_read_failed {
                     predicate_index.remove(*parked_hash);
                     best_txs.discard_parked(*parked_hash);
@@ -1374,7 +1389,7 @@ impl BasePayloadBuilderCtx {
                 }
             }
             if !affected_parked.is_empty() {
-                BuilderMetrics::validity_predicate_rescan_duration()
+                BuilderMetrics::validity_predicate_rescan_duration(predicate_blocker_policy)
                     .record(predicate_rescan_start.elapsed().as_secs_f64());
             }
 
@@ -1403,6 +1418,27 @@ impl BasePayloadBuilderCtx {
             info.executed_senders.push(tx.signer());
             info.executed_transactions.push(tx.into_inner());
         }
+
+        for (predicate_count, parked) in parked_by_predicate_count.into_iter().enumerate() {
+            if parked > 0 {
+                let predicate_count = if predicate_count == PREDICATE_COUNT_OVERFLOW_BUCKET {
+                    "17+".to_string()
+                } else {
+                    predicate_count.to_string()
+                };
+                BuilderMetrics::validity_predicate_parked_total(
+                    predicate_blocker_policy,
+                    predicate_count,
+                )
+                .increment(parked);
+            }
+        }
+        BuilderMetrics::validity_predicate_parked_transactions(predicate_blocker_policy)
+            .record(predicate_index.len() as f64);
+        BuilderMetrics::validity_predicate_blocker_keys(predicate_blocker_policy)
+            .record(predicate_index.blocker_key_count() as f64);
+        BuilderMetrics::validity_predicate_max_blocker_bucket_size(predicate_blocker_policy)
+            .record(predicate_index.largest_blocker_bucket_size() as f64);
 
         let payload_transaction_simulation_time = execute_txs_start_time.elapsed();
         BuilderMetrics::set_payload_builder_metrics(

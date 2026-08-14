@@ -80,6 +80,10 @@ pub struct BuilderConfig {
     /// Whether to drop EIP-8130 transactions whose captured authorization
     /// predicates are positively stale before executing them.
     pub manifest_precheck_enabled: bool,
+
+    /// Whether to distribute predicate-parked transactions by scanning from a transaction-specific
+    /// predicate offset instead of always selecting the first unsatisfied predicate.
+    pub hash_rotate_predicate_blockers: bool,
 }
 
 impl BuilderConfig {
@@ -114,6 +118,7 @@ impl core::fmt::Debug for BuilderConfig {
             .field("rejected_tx_channel_size", &self.rejected_tx_channel_size)
             .field("max_rejected_txs_per_block", &self.max_rejected_txs_per_block)
             .field("manifest_precheck_enabled", &self.manifest_precheck_enabled)
+            .field("hash_rotate_predicate_blockers", &self.hash_rotate_predicate_blockers)
             .finish()
     }
 }
@@ -140,6 +145,7 @@ impl Default for BuilderConfig {
             rejected_tx_channel_size: 500,
             max_rejected_txs_per_block: 500,
             manifest_precheck_enabled: true,
+            hash_rotate_predicate_blockers: false,
         }
     }
 }

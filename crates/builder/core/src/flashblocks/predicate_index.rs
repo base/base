@@ -44,6 +44,21 @@ impl ValidityPredicateKey {
         };
         predicates[start..].iter().chain(predicates[..start].iter())
     }
+
+    /// Applies a function to predicates in the configured blocker-selection order until it returns
+    /// a value.
+    pub fn find_map_in_scan_order<'a, T>(
+        predicates: &'a [ValidityPredicate],
+        transaction_hash: TxHash,
+        hash_rotated: bool,
+        function: impl FnMut(&'a ValidityPredicate) -> Option<T>,
+    ) -> Option<T> {
+        if hash_rotated {
+            Self::hash_rotated_scan(predicates, transaction_hash).find_map(function)
+        } else {
+            predicates.iter().find_map(function)
+        }
+    }
 }
 
 /// Predicate-parked transactions indexed by one currently unsatisfied state location.
@@ -66,6 +81,21 @@ impl<T> ParkedPredicateIndex<T> {
     /// Returns whether no transactions are indexed.
     pub fn is_empty(&self) -> bool {
         self.transactions.is_empty()
+    }
+
+    /// Returns the number of parked transactions.
+    pub fn len(&self) -> usize {
+        self.transactions.len()
+    }
+
+    /// Returns the number of state keys currently blocking parked transactions.
+    pub fn blocker_key_count(&self) -> usize {
+        self.blockers.len()
+    }
+
+    /// Returns the largest current blocker bucket size.
+    pub fn largest_blocker_bucket_size(&self) -> usize {
+        self.blockers.values().map(HashSet::len).max().unwrap_or_default()
     }
 
     /// Adds a parked transaction under one currently unsatisfied predicate key.
@@ -213,6 +243,47 @@ mod tests {
     }
 
     #[test]
+    fn scan_preserves_original_order_when_hash_rotation_is_disabled() {
+        let predicates = [balance_predicate(0), balance_predicate(1), balance_predicate(2)];
+        let mut keys = Vec::new();
+        ValidityPredicateKey::find_map_in_scan_order(
+            &predicates,
+            B256::with_last_byte(2),
+            false,
+            |predicate| {
+                keys.push(ValidityPredicateKey::for_predicate(predicate));
+                None::<()>
+            },
+        );
+
+        assert_eq!(
+            keys,
+            vec![
+                ValidityPredicateKey::Balance(Address::with_last_byte(0)),
+                ValidityPredicateKey::Balance(Address::with_last_byte(1)),
+                ValidityPredicateKey::Balance(Address::with_last_byte(2)),
+            ]
+        );
+    }
+
+    #[test]
+    fn reports_current_blocker_topology() {
+        let mut index = ParkedPredicateIndex::default();
+        let shared = ValidityPredicateKey::Balance(Address::ZERO);
+        index.park(B256::with_last_byte(1), (), shared);
+        index.park(B256::with_last_byte(2), (), shared);
+        index.park(
+            B256::with_last_byte(3),
+            (),
+            ValidityPredicateKey::Balance(Address::with_last_byte(1)),
+        );
+
+        assert_eq!(index.len(), 3);
+        assert_eq!(index.blocker_key_count(), 2);
+        assert_eq!(index.largest_blocker_bucket_size(), 2);
+    }
+
+    #[test]
     fn indexes_only_transactions_affected_by_changed_state() {
         let balance_address = Address::with_last_byte(1);
         let storage_address = Address::with_last_byte(2);
@@ -221,6 +292,10 @@ mod tests {
         let mut index = ParkedPredicateIndex::default();
         index.park(balance_hash, 1, ValidityPredicateKey::Balance(balance_address));
         index.park(storage_hash, 2, ValidityPredicateKey::Storage(storage_address, U256::from(7)));
+
+        assert_eq!(index.len(), 2);
+        assert_eq!(index.blocker_key_count(), 2);
+        assert_eq!(index.largest_blocker_bucket_size(), 1);
 
         let mut state = EvmState::default();
         let mut account = Account::default();
@@ -246,6 +321,7 @@ mod tests {
         assert_eq!(index.affected_by_state(&state), vec![balance_hash]);
         assert_eq!(index.remove(balance_hash), Some(1));
         assert_eq!(index.transaction(storage_hash), Some(&2));
+        assert_eq!(index.len(), 1);
     }
 
     #[test]

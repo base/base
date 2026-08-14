@@ -275,20 +275,15 @@ fn run_predicate_selection(
 
     while let Some(transaction) = best.next(()) {
         let predicates = transaction.validity_predicates();
-        let blocking_predicate = if hash_rotated {
-            ValidityPredicateKey::hash_rotated_scan(predicates, *transaction.hash())
-                .find(|predicate| {
-                    !predicate.matches_state(db).expect("in-memory reads cannot fail")
-                })
-                .map(ValidityPredicateKey::for_predicate)
-        } else {
-            predicates
-                .iter()
-                .find(|predicate| {
-                    !predicate.matches_state(db).expect("in-memory reads cannot fail")
-                })
-                .map(ValidityPredicateKey::for_predicate)
-        };
+        let blocking_predicate = ValidityPredicateKey::find_map_in_scan_order(
+            predicates,
+            *transaction.hash(),
+            hash_rotated,
+            |predicate| {
+                (!predicate.matches_state(db).expect("in-memory reads cannot fail"))
+                    .then_some(ValidityPredicateKey::for_predicate(predicate))
+            },
+        );
         if let Some(blocking_predicate) = blocking_predicate {
             let transaction_hash = *transaction.hash();
             assert!(best.park_current());
@@ -399,20 +394,15 @@ fn run_hot_key_cycle(pool: &Pool, hash_rotated: bool) -> usize {
             .transaction(*transaction_hash)
             .expect("affected transaction must remain indexed")
             .validity_predicates();
-        let blocker = if hash_rotated {
-            ValidityPredicateKey::hash_rotated_scan(predicates, *transaction_hash)
-                .find(|predicate| {
-                    !predicate.matches_state(&mut db).expect("in-memory reads cannot fail")
-                })
-                .map(ValidityPredicateKey::for_predicate)
-        } else {
-            predicates
-                .iter()
-                .find(|predicate| {
-                    !predicate.matches_state(&mut db).expect("in-memory reads cannot fail")
-                })
-                .map(ValidityPredicateKey::for_predicate)
-        }
+        let blocker = ValidityPredicateKey::find_map_in_scan_order(
+            predicates,
+            *transaction_hash,
+            hash_rotated,
+            |predicate| {
+                (!predicate.matches_state(&mut db).expect("in-memory reads cannot fail"))
+                    .then_some(ValidityPredicateKey::for_predicate(predicate))
+            },
+        )
         .expect("each transaction retains an unsatisfied unique predicate");
         assert!(predicate_index.reindex(*transaction_hash, blocker));
     }

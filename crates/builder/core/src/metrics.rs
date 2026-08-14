@@ -111,7 +111,24 @@ base_metrics::define_metrics! {
     #[describe("Number of entries in the rejection cache")]
     rejection_cache_size: gauge,
     #[describe("Duration of rescanning parked transaction validity predicates in seconds")]
+    #[label(policy)]
     validity_predicate_rescan_duration: histogram,
+    #[describe("Transactions parked because a validity predicate was unsatisfied")]
+    #[label(policy)]
+    #[label(predicate_count)]
+    validity_predicate_parked_total: counter,
+    #[describe("Parked transactions considered after a state change")]
+    #[label(policy)]
+    validity_predicate_rescan_transactions: histogram,
+    #[describe("Transactions remaining predicate-parked after a selection pass")]
+    #[label(policy)]
+    validity_predicate_parked_transactions: histogram,
+    #[describe("Validity-predicate blocker state keys after a selection pass")]
+    #[label(policy)]
+    validity_predicate_blocker_keys: histogram,
+    #[describe("Largest validity-predicate blocker bucket after a selection pass")]
+    #[label(policy)]
+    validity_predicate_max_blocker_bucket_size: histogram,
     #[describe("Transactions skipped because metering data has not yet arrived")]
     metering_data_pending_skip: counter,
     #[describe("Transactions rejected by per-tx DA size limit")]

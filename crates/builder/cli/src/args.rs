@@ -242,6 +242,14 @@ pub struct Args {
     )]
     pub manifest_precheck_enabled: bool,
 
+    /// Distribute predicate-parked transactions across unsatisfied predicate state keys.
+    #[arg(
+        long = "builder.hash-rotate-predicate-blockers",
+        env = "BUILDER_HASH_ROTATE_PREDICATE_BLOCKERS",
+        default_value = "false"
+    )]
+    pub hash_rotate_predicate_blockers: bool,
+
     /// Flashblocks configuration
     #[command(flatten)]
     pub flashblocks: FlashblocksArgs,
@@ -298,6 +306,7 @@ impl Default for Args {
             rejection_cache_ttl_secs: 1800,
             sampling_ratio: 100,
             manifest_precheck_enabled: true,
+            hash_rotate_predicate_blockers: false,
             flashblocks: FlashblocksArgs::default(),
             transaction_events: TransactionEventsArgs::default(),
             shadow_indexer: ShadowIndexerArgs::default(),
@@ -351,6 +360,7 @@ impl Args {
             rejected_tx_channel_size: self.rejected_tx_channel_size,
             max_rejected_txs_per_block: self.max_rejected_txs_per_block,
             manifest_precheck_enabled: self.manifest_precheck_enabled,
+            hash_rotate_predicate_blockers: self.hash_rotate_predicate_blockers,
         })
     }
 }
@@ -392,6 +402,7 @@ mod tests {
         assert_eq!(config.block_time, Duration::from_millis(1000));
         assert!(config.max_gas_per_txn.is_none());
         assert!(config.manifest_precheck_enabled);
+        assert!(!config.hash_rotate_predicate_blockers);
     }
 
     #[test]
@@ -417,6 +428,14 @@ mod tests {
         let parsed =
             CommandParser::parse_from(["test", "--builder.eip8130-manifest-precheck=false"]);
         assert!(!parsed.args.manifest_precheck_enabled);
+    }
+
+    #[test]
+    fn hash_rotated_predicate_blockers_require_explicit_opt_in() {
+        let parsed =
+            CommandParser::parse_from(["builder", "--builder.hash-rotate-predicate-blockers"]);
+        assert!(parsed.args.hash_rotate_predicate_blockers);
+        assert!(convert(parsed.args).hash_rotate_predicate_blockers);
     }
 
     #[rstest]
