@@ -654,7 +654,7 @@ impl UpgradeConfig {
     /// This schedule lives here because `base-common-chains` already depends on this crate;
     /// importing its `ChainConfig` would create a circular crate dependency.
     pub const BASE_MAINNET: Self = Self {
-        regolith_time: Some(0),
+        regolith_time: Some(1_686_789_347),
         canyon_time: Some(1_704_992_401),
         delta_time: Some(1_708_560_000),
         ecotone_time: Some(1_710_374_401),
@@ -678,7 +678,7 @@ impl UpgradeConfig {
     /// This schedule lives here because `base-common-chains` already depends on this crate;
     /// importing its `ChainConfig` would create a circular crate dependency.
     pub const BASE_SEPOLIA: Self = Self {
-        regolith_time: Some(0),
+        regolith_time: Some(1_695_768_288),
         canyon_time: Some(1_699_981_200),
         delta_time: Some(1_703_203_200),
         ecotone_time: Some(1_708_534_800),

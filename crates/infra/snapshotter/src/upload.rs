@@ -8,8 +8,8 @@
 //!   `manifest.json` against the freshly generated manifest, and skips chunks
 //!   whose hashes match.
 //!
-//! - `{prefix}/{date}/` — per-run directory for mdbx state, rocksdb, and the manifest.
-//!   These are always re-uploaded since they change every snapshot.
+//! - `{prefix}/{date}/` — per-run directory for mdbx state, rocksdb indices, proofs, and the
+//!   manifest. These are always re-uploaded since they change every snapshot.
 
 use std::{
     collections::HashMap,
@@ -65,7 +65,7 @@ pub struct SnapshotRun {
 /// or can be skipped when the remote copy already matches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UploadStrategy {
-    /// Always upload to the per-run date directory (mdbx, rocksdb, manifest).
+    /// Always upload to the per-run date directory (mdbx, rocksdb, proofs, manifest).
     AlwaysUpload,
     /// Upload to `static_files/`, skipping if the per-file BLAKE3 hashes
     /// recorded in the previous run's manifest match the freshly generated ones.
@@ -79,7 +79,7 @@ impl UploadStrategy {
     /// (e.g. `headers-0-499999.tar.zst`). These are immutable for finalized block
     /// ranges and only the tip chunk changes between snapshots.
     ///
-    /// Everything else (state, rocksdb, manifest) is always uploaded.
+    /// Everything else (state, rocksdb, proofs, manifest) is always uploaded.
     pub fn classify(filename: &str) -> Self {
         if ChunkFilename::parse(filename).is_some() { Self::DiffByHash } else { Self::AlwaysUpload }
     }
@@ -257,7 +257,7 @@ impl SnapshotUploader {
     ///
     /// Static file chunks go to `{prefix}/static_files/` and are skipped when
     /// their per-file BLAKE3 hashes (recorded in `local_manifest`) match those
-    /// from `remote_manifest`. State, rocksdb, and manifest go to
+    /// from `remote_manifest`. State, rocksdb, proofs, and manifest go to
     /// `{prefix}/{timestamp}/` and are always re-uploaded. `manifest.json` is
     /// uploaded last as the "snapshot complete" signal.
     pub async fn upload(
@@ -1010,6 +1010,10 @@ fn retry_delay_secs(attempt: usize) -> u64 {
 /// Chunked archives are served from top-level `static_files/` via `base_url`, while
 /// the always-changing `state` and `rocksdb_indices` archives stay in the timestamped
 /// run directory and are referenced through `../{timestamp}/...` file paths.
+///
+/// `proofs` is also uploaded into the run directory, but its `file` field is left as
+/// a bare filename (`proofs.tar.zst`). The proofs downloader resolves the archive as a
+/// sibling of `manifest.json` and rejects path traversal (`..`).
 fn build_published_manifest(
     local_manifest: &SnapshotManifest,
     public_static_files_base_url: Option<&str>,
@@ -1068,8 +1072,67 @@ mod tests {
             UploadStrategy::classify("rocksdb_indices.tar.zst"),
             UploadStrategy::AlwaysUpload
         );
+        assert_eq!(UploadStrategy::classify("proofs.tar.zst"), UploadStrategy::AlwaysUpload);
         assert_eq!(UploadStrategy::classify("manifest.json"), UploadStrategy::AlwaysUpload);
         assert_eq!(UploadStrategy::classify("random-file.txt"), UploadStrategy::AlwaysUpload);
+    }
+
+    #[test]
+    fn build_published_manifest_leaves_proofs_file_as_sibling() {
+        use std::collections::BTreeMap;
+
+        use reth_cli_commands::download::manifest::{
+            ComponentManifest, SingleArchive, SnapshotManifest,
+        };
+
+        let mut components = BTreeMap::new();
+        components.insert(
+            "state".to_string(),
+            ComponentManifest::Single(SingleArchive {
+                file: "state.tar.zst".to_string(),
+                size: 100,
+                decompressed_size: 200,
+                blake3: None,
+                output_files: vec![],
+            }),
+        );
+        components.insert(
+            "proofs".to_string(),
+            ComponentManifest::Single(SingleArchive {
+                file: "proofs.tar.zst".to_string(),
+                size: 50,
+                decompressed_size: 80,
+                blake3: None,
+                output_files: vec![],
+            }),
+        );
+
+        let local = SnapshotManifest {
+            block: 1,
+            chain_id: 8453,
+            storage_version: 2,
+            timestamp: 1_700_000_000,
+            base_url: None,
+            reth_version: None,
+            components,
+        };
+
+        let published = build_published_manifest(
+            &local,
+            Some("https://example.com/static_files"),
+            1_700_000_000,
+        )
+        .unwrap();
+        let manifest: serde_json::Value = serde_json::from_slice(&published).unwrap();
+
+        assert_eq!(
+            manifest["components"]["state"]["file"], "../1700000000/state.tar.zst",
+            "state should be rewritten relative to static_files base_url"
+        );
+        assert_eq!(
+            manifest["components"]["proofs"]["file"], "proofs.tar.zst",
+            "proofs must remain a sibling of manifest.json for ProofsDownloader"
+        );
     }
 
     #[test]

@@ -15,19 +15,20 @@ use alloy_provider::{Provider, ProviderBuilder};
 use base_balance_monitor::BalanceMonitorLayer;
 use base_cli_utils::RuntimeManager;
 use base_health::HealthServer;
-use base_proof_contracts::{NitroEnclaveVerifierContractClient, TEEProverRegistryContractClient};
-use base_proof_tee_nitro_attestation_prover::BoundlessProver;
+use base_proof_contracts::{
+    CertManagerContractClient, NitroValidatorClient, NitroValidatorContractClient,
+    TEEProverRegistryClient, TEEProverRegistryContractClient,
+};
+use base_proof_tee_nitro_attestation_prover::BoundlessProverConfig;
 use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 use url::Url;
 
 use crate::{
-    AwsTargetGroupDiscovery, CertManager, DriverConfig, ProverClient, RegistrarError,
-    RegistrarMetrics, RegistrationDriver, Result, SignerManager, SignerManagerConfig,
+    AwsTargetGroupDiscovery, DriverConfig, ProverClient, RegistrarError, RegistrarMetrics,
+    RegistrationDriver, Result, SignerManager, SignerManagerConfig,
 };
-
-const CRL_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Configuration needed to run the registrar service.
 pub struct RegistrarConfig {
@@ -45,8 +46,9 @@ pub struct RegistrarConfig {
     pub signing: SignerConfig,
     /// Transaction manager configuration.
     pub tx_manager_config: TxManagerConfig,
-    /// Boundless prover client configuration.
-    pub boundless_prover: BoundlessProver,
+    /// Legacy Boundless configuration retained until O6 removes deployment requirements.
+    /// O5 never constructs or invokes a Boundless proof client.
+    pub boundless_prover_config: BoundlessProverConfig,
     /// Interval between discovery and registration poll cycles.
     pub poll_interval: Duration,
     /// Timeout for JSON-RPC calls to prover instances.
@@ -79,7 +81,7 @@ impl fmt::Debug for RegistrarConfig {
             .field("prover_port", &self.prover_port)
             .field("signing", &self.signing)
             .field("tx_manager_config", &self.tx_manager_config)
-            .field("boundless_prover", &self.boundless_prover)
+            .field("boundless_prover_config", &self.boundless_prover_config)
             .field("poll_interval", &self.poll_interval)
             .field("prover_timeout", &self.prover_timeout)
             .field("max_concurrency", &self.max_concurrency)
@@ -146,7 +148,7 @@ impl RegistrarConfig {
                 }
             }));
 
-            let boundless_address = self.boundless_prover.signer.address();
+            let boundless_address = self.boundless_prover_config.signer.address();
             let (boundless_layer, mut boundless_balance_rx) = BalanceMonitorLayer::new(
                 boundless_address,
                 cancel.clone(),
@@ -155,7 +157,7 @@ impl RegistrarConfig {
             // The balance monitor layer starts polling when it is applied.
             let _boundless_provider = ProviderBuilder::new()
                 .layer(boundless_layer)
-                .connect_http(self.boundless_prover.rpc_url.clone());
+                .connect_http(self.boundless_prover_config.rpc_url.clone());
             let boundless_balance_cancel = cancel.clone();
             balance_monitor_handles.push(tokio::spawn(async move {
                 loop {
@@ -206,15 +208,31 @@ impl RegistrarConfig {
             self.tee_prover_registry_address,
             self.l1_rpc_url.clone(),
         );
+        let nitro_validator_address = registry.nitro_validator().await?;
+        if nitro_validator_address.is_zero() {
+            return Err(RegistrarError::Service(
+                "TEEProverRegistry returned a zero NitroValidator address".into(),
+            ));
+        }
+        let nitro_validator =
+            NitroValidatorContractClient::new(nitro_validator_address, self.l1_rpc_url.clone());
+        let cert_manager_address = nitro_validator.cert_manager().await?;
+        if cert_manager_address.is_zero() {
+            return Err(RegistrarError::Service(
+                "NitroValidator returned a zero CertManager address".into(),
+            ));
+        }
+        let cert_manager =
+            CertManagerContractClient::new(cert_manager_address, self.l1_rpc_url.clone());
 
         let ready = Arc::new(AtomicBool::new(false));
         let health_handle =
             tokio::spawn(HealthServer::serve(self.health_addr, Arc::clone(&ready), cancel.clone()));
 
-        let max_attestation_age = self.boundless_prover.max_attestation_age;
+        let max_attestation_age = self.boundless_prover_config.max_attestation_age;
         let signer_manager = Arc::new(SignerManager::new(
-            self.boundless_prover,
             registry,
+            cert_manager,
             tx_manager.clone(),
             SignerManagerConfig {
                 registry_address: self.tee_prover_registry_address,
@@ -222,20 +240,9 @@ impl RegistrarConfig {
                 max_tx_retries: self.max_tx_retries,
                 tx_retry_delay: self.tx_retry_delay,
                 max_attestation_age,
+                crl_checks_enabled: self.crl_nitro_verifier_address.is_some(),
             },
-        ));
-        let cert_manager = if let Some(nitro_verifier_address) = self.crl_nitro_verifier_address {
-            Some(CertManager::new(
-                CRL_FETCH_TIMEOUT,
-                Box::new(NitroEnclaveVerifierContractClient::new(
-                    nitro_verifier_address,
-                    self.l1_rpc_url,
-                )),
-                tx_manager,
-            )?)
-        } else {
-            None
-        };
+        )?);
         let driver = RegistrationDriver::new(
             discovery,
             ProverClient::new(self.prover_timeout),
@@ -245,7 +252,6 @@ impl RegistrarConfig {
                 max_concurrency: self.max_concurrency,
                 instance_cache_ttl_cycles: self.instance_cache_ttl_cycles,
             },
-            cert_manager,
             signer_manager,
         );
         ready.store(true, Ordering::SeqCst);
@@ -284,8 +290,6 @@ impl RegistrarConfig {
 
 #[cfg(test)]
 mod tests {
-    use base_proof_tee_nitro_attestation_prover::BoundlessProverConfig;
-
     use super::*;
     use crate::test_utils::TEST_REGISTRY_ADDRESS;
 
@@ -305,7 +309,7 @@ mod tests {
                     .unwrap(),
             ),
             tx_manager_config: TxManagerConfig::default(),
-            boundless_prover: BoundlessProver::new(BoundlessProverConfig {
+            boundless_prover_config: BoundlessProverConfig {
                 rpc_url: Url::parse("https://boundless.example/v3/BOUNDLESS_SECRET").unwrap(),
                 signer: "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
                     .parse()
@@ -322,8 +326,7 @@ mod tests {
                 offer_ramp_up_period_secs: None,
                 offer_lock_timeout_secs: None,
                 offer_bidding_start_delay_secs: 0,
-            })
-            .unwrap(),
+            },
             poll_interval: Duration::from_secs(1),
             prover_timeout: Duration::from_secs(1),
             max_concurrency: 1,

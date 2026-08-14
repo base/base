@@ -12,7 +12,10 @@ use tracing::{error, info, warn};
 use crate::{
     SnapshotterConfig,
     container::ContainerManager,
-    snapshot::{OutputFileChecksum, SnapshotGenerator, SnapshotManifest, SnapshotManifestExt},
+    snapshot::{
+        ManifestGenerationParams, OutputFileChecksum, SnapshotGenerator, SnapshotManifest,
+        SnapshotManifestExt,
+    },
     tip::TipChecker,
     upload::SnapshotUploader,
 };
@@ -195,17 +198,20 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
         let blocks_per_file = self.config.blocks_per_file;
         let remote_for_gen = remote_static_files;
         let previous_chunk_output_files_for_gen = previous_chunk_output_files;
+        let upload_proofs = self.config.upload_proofs;
 
         let files = tokio::task::spawn_blocking(move || {
-            SnapshotGenerator::generate_manifest_with_previous_chunk_output_files(
-                &source_datadir,
-                &output_dir_for_gen,
+            let params = ManifestGenerationParams {
+                source_datadir: &source_datadir,
+                output_dir: &output_dir_for_gen,
                 chain_id,
                 block,
                 blocks_per_file,
-                &remote_for_gen,
-                &previous_chunk_output_files_for_gen,
-            )
+                remote_static_files: &remote_for_gen,
+                previous_chunk_output_files: &previous_chunk_output_files_for_gen,
+                upload_proofs,
+            };
+            SnapshotGenerator::generate_manifest(&params)
         })
         .await
         .context("snapshot generation task panicked")?

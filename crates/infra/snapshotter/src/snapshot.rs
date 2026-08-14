@@ -95,6 +95,27 @@ impl SnapshotManifestExt for SnapshotManifest {
     }
 }
 
+/// Inputs for [`SnapshotGenerator::generate_manifest`].
+#[derive(Debug, Clone, Copy)]
+pub struct ManifestGenerationParams<'a> {
+    /// Reth node datadir containing static files, state DB, and optional proofs DB.
+    pub source_datadir: &'a Path,
+    /// Directory where snapshot archives and `manifest.json` are written.
+    pub output_dir: &'a Path,
+    /// Chain ID recorded in the manifest.
+    pub chain_id: u64,
+    /// Snapshot block height. Inferred from header static files when `None`.
+    pub block: Option<u64>,
+    /// Blocks per static-file chunk archive. Defaults to `500_000` when `None`.
+    pub blocks_per_file: Option<u64>,
+    /// Remote static-file chunk filenames and sizes used for skip-range computation.
+    pub remote_static_files: &'a HashMap<String, u64>,
+    /// Prior per-file chunk metadata reused for skipped archives.
+    pub previous_chunk_output_files: &'a HashMap<String, Vec<OutputFileChecksum>>,
+    /// Whether to package `{source_datadir}/proofs` into `proofs.tar.zst`.
+    pub upload_proofs: bool,
+}
+
 /// Generates snapshot archives with selective compression.
 ///
 /// Static file chunks whose block ranges are in `skip_ranges` are not
@@ -103,73 +124,43 @@ impl SnapshotManifestExt for SnapshotManifest {
 pub struct SnapshotGenerator;
 
 impl SnapshotGenerator {
-    /// Generates snapshot archives, skipping compression for chunks in `skip_ranges`.
-    ///
-    /// `skip_ranges` contains `(start, end)` block ranges that already exist
-    /// remotely and don't need to be re-compressed.
+    /// Generates snapshot archives, skipping compression for chunks that already
+    /// exist remotely and reusing prior per-file chunk metadata when available.
     ///
     /// Returns the list of files created in the output directory.
     ///
     /// From <https://github.com/paradigmxyz/reth/blob/420693521fccd1437071a15a4a54a3a98b5492cf/crates/cli/commands/src/download/manifest.rs>
-    pub fn generate_manifest(
-        source_datadir: &Path,
-        output_dir: &Path,
-        chain_id: u64,
-        block: Option<u64>,
-        blocks_per_file: Option<u64>,
-        remote_static_files: &HashMap<String, u64>,
-    ) -> Result<Vec<PathBuf>> {
-        Self::generate_manifest_with_previous_chunk_output_files(
-            source_datadir,
-            output_dir,
-            chain_id,
-            block,
-            blocks_per_file,
-            remote_static_files,
-            &HashMap::new(),
-        )
-    }
+    pub fn generate_manifest(params: &ManifestGenerationParams<'_>) -> Result<Vec<PathBuf>> {
+        std::fs::create_dir_all(params.output_dir).with_context(|| {
+            format!("failed to create output dir {}", params.output_dir.display())
+        })?;
 
-    /// Generates snapshot archives while reusing prior per-file chunk metadata when available.
-    ///
-    /// This avoids a long serial pre-pass over finalized chunks: when `previous_chunk_output_files`
-    /// contains a skipped archive's `OutputFileChecksum` entries, the generator can copy those
-    /// manifest rows directly instead of re-hashing local files that will not be re-uploaded.
-    pub fn generate_manifest_with_previous_chunk_output_files(
-        source_datadir: &Path,
-        output_dir: &Path,
-        chain_id: u64,
-        block: Option<u64>,
-        blocks_per_file: Option<u64>,
-        remote_static_files: &HashMap<String, u64>,
-        previous_chunk_output_files: &HashMap<String, Vec<OutputFileChecksum>>,
-    ) -> Result<Vec<PathBuf>> {
-        std::fs::create_dir_all(output_dir)
-            .with_context(|| format!("failed to create output dir {}", output_dir.display()))?;
-
-        let blocks_per_file = blocks_per_file.unwrap_or(DEFAULT_BLOCKS_PER_FILE);
-        let block = match block {
-            Some(b) => b,
-            None => infer_block_from_headers(source_datadir)?,
+        let blocks_per_file = params.blocks_per_file.unwrap_or(DEFAULT_BLOCKS_PER_FILE);
+        let block = match params.block {
+            Some(block) => block,
+            None => infer_block_from_headers(params.source_datadir)?,
         };
 
         let remote_filenames: HashSet<&str> =
-            remote_static_files.keys().map(String::as_str).collect();
+            params.remote_static_files.keys().map(String::as_str).collect();
         let skip_ranges = Self::compute_skip_ranges(&remote_filenames, block, blocks_per_file)?;
 
         info!(
-            source = %source_datadir.display(),
-            output = %output_dir.display(),
-            chain_id,
+            source = %params.source_datadir.display(),
+            output = %params.output_dir.display(),
+            chain_id = params.chain_id,
             block,
             blocks_per_file,
             skip_count = skip_ranges.len(),
             "generating snapshot archives"
         );
 
-        let static_files_dir = source_datadir.join("static_files");
-        let static_dir =
-            if static_files_dir.exists() { static_files_dir } else { source_datadir.to_path_buf() };
+        let static_files_dir = params.source_datadir.join("static_files");
+        let static_dir = if static_files_dir.exists() {
+            static_files_dir
+        } else {
+            params.source_datadir.to_path_buf()
+        };
         let dir_listing = read_static_dir(&static_dir)?;
 
         let mut components = BTreeMap::new();
@@ -207,19 +198,23 @@ impl SnapshotGenerator {
                 if skip_ranges.contains(&(start, end)) {
                     let archive_name = ChunkFilename::format(key, start, end);
                     chunk_sizes[i as usize] =
-                        remote_static_files.get(&archive_name).copied().ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "missing remote size for skipped archive {archive_name}"
-                            )
-                        })?;
+                        params.remote_static_files.get(&archive_name).copied().ok_or_else(
+                            || {
+                                anyhow::anyhow!(
+                                    "missing remote size for skipped archive {archive_name}"
+                                )
+                            },
+                        )?;
 
-                    if let Some(output_files) = previous_chunk_output_files.get(&archive_name) {
+                    if let Some(output_files) =
+                        params.previous_chunk_output_files.get(&archive_name)
+                    {
                         chunk_decompressed[i as usize] = output_files.iter().map(|f| f.size).sum();
                         chunk_output_files[i as usize] = output_files.clone();
                     } else {
                         planned_hash_only.push(PlannedChunk {
                             chunk_idx: i,
-                            archive_path: output_dir.join(&archive_name),
+                            archive_path: params.output_dir.join(&archive_name),
                             source_files,
                         });
                     }
@@ -228,7 +223,7 @@ impl SnapshotGenerator {
 
                 planned.push(PlannedChunk {
                     chunk_idx: i,
-                    archive_path: output_dir.join(ChunkFilename::format(key, start, end)),
+                    archive_path: params.output_dir.join(ChunkFilename::format(key, start, end)),
                     source_files,
                 });
             }
@@ -303,9 +298,9 @@ impl SnapshotGenerator {
             }
         }
 
-        let state_files = state_source_files(source_datadir)?;
+        let state_files = state_source_files(params.source_datadir)?;
         let (state_size, state_output_files) =
-            package_single_component(output_dir, "state.tar.zst", &state_files)?;
+            package_single_component(params.output_dir, "state.tar.zst", &state_files)?;
         let state_decompressed_size: u64 = state_output_files.iter().map(|f| f.size).sum();
         info!(
             component = "state",
@@ -325,10 +320,13 @@ impl SnapshotGenerator {
             }),
         );
 
-        let rocksdb_files = rocksdb_source_files(source_datadir)?;
+        let rocksdb_files = rocksdb_source_files(params.source_datadir)?;
         if !rocksdb_files.is_empty() {
-            let (rocksdb_size, rocksdb_output_files) =
-                package_single_component(output_dir, "rocksdb_indices.tar.zst", &rocksdb_files)?;
+            let (rocksdb_size, rocksdb_output_files) = package_single_component(
+                params.output_dir,
+                "rocksdb_indices.tar.zst",
+                &rocksdb_files,
+            )?;
             let rocksdb_decompressed_size: u64 = rocksdb_output_files.iter().map(|f| f.size).sum();
             info!(
                 component = "rocksdb_indices",
@@ -349,6 +347,34 @@ impl SnapshotGenerator {
             );
         }
 
+        let proofs_files = if params.upload_proofs {
+            proofs_source_files(params.source_datadir)?
+        } else {
+            Vec::new()
+        };
+        if !proofs_files.is_empty() {
+            let (proofs_size, proofs_output_files) =
+                package_single_component(params.output_dir, "proofs.tar.zst", &proofs_files)?;
+            let proofs_decompressed_size: u64 = proofs_output_files.iter().map(|f| f.size).sum();
+            info!(
+                component = "proofs",
+                compressed_size = proofs_size,
+                decompressed_size = proofs_decompressed_size,
+                file_count = proofs_files.len(),
+                "packaged proofs database"
+            );
+            components.insert(
+                "proofs".to_string(),
+                ComponentManifest::Single(SingleArchive {
+                    file: "proofs.tar.zst".to_string(),
+                    size: proofs_size,
+                    decompressed_size: proofs_decompressed_size,
+                    blake3: None,
+                    output_files: proofs_output_files,
+                }),
+            );
+        }
+
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .context("system clock is before UNIX epoch")?
@@ -356,7 +382,7 @@ impl SnapshotGenerator {
 
         let manifest = SnapshotManifest {
             block,
-            chain_id,
+            chain_id: params.chain_id,
             storage_version: 2,
             timestamp,
             base_url: None,
@@ -364,11 +390,11 @@ impl SnapshotGenerator {
             components,
         };
 
-        let manifest_path = output_dir.join("manifest.json");
+        let manifest_path = params.output_dir.join("manifest.json");
         std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)?)?;
         info!(block, components = manifest.components.len(), "manifest written");
 
-        let files = Self::collect_output_files(output_dir)?;
+        let files = Self::collect_output_files(params.output_dir)?;
         info!(file_count = files.len(), "snapshot generation complete");
         Ok(files)
     }
@@ -548,6 +574,14 @@ fn rocksdb_source_files(source_datadir: &Path) -> Result<Vec<PlannedFile>> {
         return Ok(Vec::new());
     }
     collect_files_recursive(&rocksdb_dir, Path::new("rocksdb"))
+}
+
+fn proofs_source_files(source_datadir: &Path) -> Result<Vec<PlannedFile>> {
+    let proofs_dir = source_datadir.join("proofs");
+    if !proofs_dir.exists() {
+        return Ok(Vec::new());
+    }
+    collect_files_recursive(&proofs_dir, Path::new("proofs"))
 }
 
 fn looks_like_db_dir(path: &Path) -> Result<bool> {
@@ -799,6 +833,26 @@ fn source_files_total_bytes(source_files: &[PathBuf]) -> Result<u64> {
 mod tests {
     use super::*;
 
+    fn test_manifest_params<'a>(
+        source_datadir: &'a Path,
+        output_dir: &'a Path,
+        remote_static_files: &'a HashMap<String, u64>,
+        previous_chunk_output_files: &'a HashMap<String, Vec<OutputFileChecksum>>,
+        block: Option<u64>,
+        upload_proofs: bool,
+    ) -> ManifestGenerationParams<'a> {
+        ManifestGenerationParams {
+            source_datadir,
+            output_dir,
+            chain_id: 8453,
+            block,
+            blocks_per_file: Some(500_000),
+            remote_static_files,
+            previous_chunk_output_files,
+            upload_proofs,
+        }
+    }
+
     #[test]
     fn parse_headers_range_valid() {
         assert_eq!(parse_headers_range("static_file_headers_0_499999"), Some((0, 499_999)));
@@ -911,14 +965,15 @@ mod tests {
         std::fs::write(db_dir.join("mdbx.dat"), b"state-data").unwrap();
 
         let remote = HashMap::new();
-        let files = SnapshotGenerator::generate_manifest(
+        let previous_chunk_output_files = HashMap::new();
+        let files = SnapshotGenerator::generate_manifest(&test_manifest_params(
             source.path(),
             output.path(),
-            8453,
-            Some(0),
-            Some(500_000),
             &remote,
-        )
+            &previous_chunk_output_files,
+            Some(0),
+            false,
+        ))
         .unwrap();
 
         assert!(
@@ -928,6 +983,138 @@ mod tests {
         assert!(
             files.iter().any(|f| f.file_name().unwrap() == "manifest.json"),
             "should produce manifest.json"
+        );
+    }
+
+    #[test]
+    fn generate_manifest_creates_proofs_archive() {
+        let source = tempfile::tempdir().unwrap();
+        let output = tempfile::tempdir().unwrap();
+        let db_dir = source.path().join("db");
+        std::fs::create_dir_all(&db_dir).unwrap();
+        std::fs::write(db_dir.join("mdbx.dat"), b"state-data").unwrap();
+
+        let proofs_dir = source.path().join("proofs");
+        std::fs::create_dir_all(&proofs_dir).unwrap();
+        std::fs::write(proofs_dir.join("CURRENT"), b"MANIFEST-000014\n").unwrap();
+        std::fs::write(proofs_dir.join("IDENTITY"), b"identity-bytes").unwrap();
+        std::fs::write(proofs_dir.join("LOCK"), b"").unwrap();
+        std::fs::write(proofs_dir.join("MANIFEST-000014"), b"manifest-data").unwrap();
+        std::fs::write(proofs_dir.join("OPTIONS-000007"), b"options-data").unwrap();
+        std::fs::write(proofs_dir.join("000060.sst"), b"sst-data").unwrap();
+        std::fs::write(proofs_dir.join("000801.log"), b"wal-data").unwrap();
+
+        let remote = HashMap::new();
+        let previous_chunk_output_files = HashMap::new();
+        let files = SnapshotGenerator::generate_manifest(&test_manifest_params(
+            source.path(),
+            output.path(),
+            &remote,
+            &previous_chunk_output_files,
+            Some(0),
+            true,
+        ))
+        .unwrap();
+
+        assert!(
+            files.iter().any(|f| f.file_name().unwrap() == "proofs.tar.zst"),
+            "should produce proofs.tar.zst when proofs/ exists"
+        );
+
+        let manifest_content =
+            std::fs::read_to_string(output.path().join("manifest.json")).unwrap();
+        let manifest: SnapshotManifest = serde_json::from_str(&manifest_content).unwrap();
+        let ComponentManifest::Single(proofs) =
+            manifest.components.get("proofs").expect("manifest should include proofs component")
+        else {
+            panic!("proofs component should be a Single archive");
+        };
+
+        assert_eq!(proofs.file, "proofs.tar.zst", "proofs archive filename");
+        assert_eq!(proofs.output_files.len(), 7, "exactly 7 proofs DB files should be packaged");
+        assert!(
+            proofs.output_files.iter().all(|f| f.path.starts_with("proofs/")),
+            "all proofs output paths should be under proofs/"
+        );
+        assert!(
+            proofs.output_files.iter().any(|f| f.path == "proofs/000060.sst"),
+            "should include SST file under proofs/"
+        );
+        assert!(
+            proofs.output_files.iter().any(|f| f.path == "proofs/CURRENT"),
+            "should include CURRENT under proofs/"
+        );
+    }
+
+    #[test]
+    fn generate_manifest_skips_proofs_when_missing() {
+        let source = tempfile::tempdir().unwrap();
+        let output = tempfile::tempdir().unwrap();
+        let db_dir = source.path().join("db");
+        std::fs::create_dir_all(&db_dir).unwrap();
+        std::fs::write(db_dir.join("mdbx.dat"), b"state-data").unwrap();
+
+        let remote = HashMap::new();
+        let previous_chunk_output_files = HashMap::new();
+        let files = SnapshotGenerator::generate_manifest(&test_manifest_params(
+            source.path(),
+            output.path(),
+            &remote,
+            &previous_chunk_output_files,
+            Some(0),
+            true,
+        ))
+        .unwrap();
+
+        assert!(
+            !files.iter().any(|f| f.file_name().unwrap() == "proofs.tar.zst"),
+            "should not produce proofs.tar.zst when proofs/ is missing"
+        );
+
+        let manifest_content =
+            std::fs::read_to_string(output.path().join("manifest.json")).unwrap();
+        let manifest: SnapshotManifest = serde_json::from_str(&manifest_content).unwrap();
+        assert!(
+            !manifest.components.contains_key("proofs"),
+            "manifest should omit proofs component when proofs/ is missing"
+        );
+    }
+
+    #[test]
+    fn generate_manifest_skips_proofs_when_upload_disabled() {
+        let source = tempfile::tempdir().unwrap();
+        let output = tempfile::tempdir().unwrap();
+        let db_dir = source.path().join("db");
+        std::fs::create_dir_all(&db_dir).unwrap();
+        std::fs::write(db_dir.join("mdbx.dat"), b"state-data").unwrap();
+
+        let proofs_dir = source.path().join("proofs");
+        std::fs::create_dir_all(&proofs_dir).unwrap();
+        std::fs::write(proofs_dir.join("CURRENT"), b"MANIFEST-000014\n").unwrap();
+
+        let remote = HashMap::new();
+        let previous_chunk_output_files = HashMap::new();
+        let files = SnapshotGenerator::generate_manifest(&test_manifest_params(
+            source.path(),
+            output.path(),
+            &remote,
+            &previous_chunk_output_files,
+            Some(0),
+            false,
+        ))
+        .unwrap();
+
+        assert!(
+            !files.iter().any(|f| f.file_name().unwrap() == "proofs.tar.zst"),
+            "should not produce proofs.tar.zst when upload_proofs is disabled"
+        );
+
+        let manifest_content =
+            std::fs::read_to_string(output.path().join("manifest.json")).unwrap();
+        let manifest: SnapshotManifest = serde_json::from_str(&manifest_content).unwrap();
+        assert!(
+            !manifest.components.contains_key("proofs"),
+            "manifest should omit proofs component when upload_proofs is disabled"
         );
     }
 
@@ -956,14 +1143,15 @@ mod tests {
             remote.insert(ChunkFilename::format(key, 0, 499_999), 0u64);
         }
 
-        let files = SnapshotGenerator::generate_manifest(
+        let previous_chunk_output_files = HashMap::new();
+        let files = SnapshotGenerator::generate_manifest(&test_manifest_params(
             source.path(),
             output.path(),
-            8453,
-            Some(2_000_000),
-            Some(500_000),
             &remote,
-        )
+            &previous_chunk_output_files,
+            Some(2_000_000),
+            false,
+        ))
         .unwrap();
 
         let filenames: Vec<String> = files
@@ -1017,15 +1205,16 @@ mod tests {
             }],
         )]);
 
-        SnapshotGenerator::generate_manifest_with_previous_chunk_output_files(
-            source.path(),
-            output.path(),
-            8453,
-            Some(2_000_000),
-            Some(500_000),
-            &remote,
-            &previous_chunk_output_files,
-        )
+        SnapshotGenerator::generate_manifest(&ManifestGenerationParams {
+            source_datadir: source.path(),
+            output_dir: output.path(),
+            chain_id: 8453,
+            block: Some(2_000_000),
+            blocks_per_file: Some(500_000),
+            remote_static_files: &remote,
+            previous_chunk_output_files: &previous_chunk_output_files,
+            upload_proofs: false,
+        })
         .unwrap();
 
         let manifest_content =

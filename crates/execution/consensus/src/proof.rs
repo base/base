@@ -82,6 +82,7 @@ mod tests {
     use alloy_consensus::{Receipt, ReceiptWithBloom, TxReceipt};
     use alloy_primitives::{Address, Bytes, Log, LogData, b256, bloom, hex};
     use base_common_consensus::{BaseReceipt, DepositReceipt};
+    use base_common_genesis::BaseUpgrade;
     use base_execution_chainspec::BaseChainSpec;
 
     use super::*;
@@ -94,29 +95,36 @@ mod tests {
     /// to strip the deposit nonce from each receipt before calculating the root.
     #[test]
     fn check_optimism_receipt_root() {
+        const REGOLITH_TIMESTAMP: u64 = 1_679_079_600;
+        const CANYON_TIMESTAMP: u64 = 1_699_981_200;
+
         let cases = [
             // Deposit nonces didn't exist in Bedrock; No need to strip. For the purposes of this
             // test, we do have them, so we should get the same root as Canyon.
             (
                 "bedrock",
                 1679079599,
-                b256!("0xe255fed45eae7ede0556fe4fabc77b0d294d18781a5a581cab09127bc4cd9ffb"),
+                b256!("0x6eefbb5efb95235476654a8bfbf8cb64a4f5f0b0c80b700b0c5964550beee6d7"),
             ),
             // Deposit nonces introduced in Regolith. They weren't included in the receipt RLP,
             // so we need to strip them - the receipt root will differ.
             (
                 "regolith",
-                1679079600,
+                REGOLITH_TIMESTAMP,
                 b256!("0xe255fed45eae7ede0556fe4fabc77b0d294d18781a5a581cab09127bc4cd9ffb"),
             ),
             // Receipt root hashing bug fixed in Canyon. Back to including the deposit nonce
             // in the receipt RLP when computing the receipt root.
             (
                 "canyon",
-                1699981200,
+                CANYON_TIMESTAMP,
                 b256!("0x6eefbb5efb95235476654a8bfbf8cb64a4f5f0b0c80b700b0c5964550beee6d7"),
             ),
         ];
+
+        let mut chain_spec = BaseChainSpec::sepolia();
+        chain_spec.set_hardfork_activation_timestamp(BaseUpgrade::Regolith, REGOLITH_TIMESTAMP);
+        chain_spec.set_hardfork_activation_timestamp(BaseUpgrade::Canyon, CANYON_TIMESTAMP);
 
         for case in cases {
             let receipts = [
@@ -465,7 +473,7 @@ mod tests {
             ];
             let root = calculate_receipt_root(
                 &receipts.iter().map(TxReceipt::with_bloom_ref).collect::<Vec<_>>(),
-                BaseChainSpec::sepolia(),
+                &chain_spec,
                 case.1,
             );
             assert_eq!(root, case.2);

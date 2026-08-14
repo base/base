@@ -1,7 +1,7 @@
 //! Registration driver — core orchestration loop.
 //!
-//! Discovers prover instances, checks onchain registration status, generates
-//! ZK proofs for unregistered signers, and submits registration transactions
+//! Discovers prover instances, checks onchain registration status, prepares
+//! hinted attestations for unregistered signers, and submits registration transactions
 //! to L1 via the [`TxManager`]. Also detects orphaned onchain signers (those
 //! no longer backed by a healthy instance) and deregisters them.
 
@@ -12,23 +12,21 @@ use std::{
 };
 
 use alloy_primitives::Address;
-use base_proof_contracts::TEEProverRegistryClient;
-use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
+use base_proof_contracts::{CertManagerClient, TEEProverRegistryClient};
 use base_tx_manager::TxManager;
 use futures::stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, info, warn};
 
 use crate::{
-    CertManager, EnclaveEndpointClient, InstanceDiscovery, InstanceHealthStatus, ProofTaskSet,
-    ProverClient, ProverInstance, RegistrarMetrics, Result, SignerManager,
+    EnclaveEndpointClient, InstanceDiscovery, InstanceHealthStatus, ProofTaskSet, ProverClient,
+    ProverInstance, RegistrarMetrics, Result, SignerManager,
 };
 
 /// Default maximum number of instances processed concurrently.
 ///
-/// Each instance may trigger a ~20-minute Boundless proof generation, so
-/// limiting concurrency prevents overwhelming the proof service and keeps
-/// resource usage bounded. The transaction manager handles nonce
+/// Each instance may trigger CPU-intensive P-384 hint generation, so limiting
+/// concurrency keeps resource usage bounded. The transaction manager handles nonce
 /// serialization separately.
 pub const DEFAULT_MAX_CONCURRENCY: usize = 4;
 
@@ -58,7 +56,7 @@ pub struct DriverConfig {
     pub instance_cache_ttl_cycles: u32,
 }
 
-/// A signer and attestation ready to be spawned as a proof task.
+/// A signer and attestation ready to be spawned as a registration task.
 #[derive(Debug, Clone)]
 pub struct RegisterableSigner {
     /// Source prover instance for attribution.
@@ -85,33 +83,28 @@ pub struct DiscoveryResolution {
 ///
 /// Generic over discovery and RPC backends.
 #[derive(Debug)]
-pub struct RegistrationDriver<D, S, P, R, T> {
+pub struct RegistrationDriver<D, S, R, C, T> {
     discovery: D,
     signer_client: S,
     config: DriverConfig,
-    /// Certificate revocation manager.
-    cert_manager: Option<CertManager<T>>,
     /// Signer lifecycle manager for registration tasks and orphan cleanup.
-    signer_manager: Arc<SignerManager<P, R, T>>,
+    signer_manager: Arc<SignerManager<R, C, T>>,
 }
 
-impl<D, S, P, R, T> RegistrationDriver<D, S, P, R, T> {
+impl<D, S, R, C, T> RegistrationDriver<D, S, R, C, T> {
     /// Creates a new registration driver.
     ///
-    /// Accepts a pre-built certificate manager so CRL client construction and
-    /// revocation transaction wiring stay outside the core driver loop.
     pub const fn new(
         discovery: D,
         signer_client: S,
         config: DriverConfig,
-        cert_manager: Option<CertManager<T>>,
-        signer_manager: Arc<SignerManager<P, R, T>>,
+        signer_manager: Arc<SignerManager<R, C, T>>,
     ) -> Self {
-        Self { discovery, signer_client, config, cert_manager, signer_manager }
+        Self { discovery, signer_client, config, signer_manager }
     }
 }
 
-impl<D, S, P, R, T> RegistrationDriver<D, S, P, R, T>
+impl<D, S, R, C, T> RegistrationDriver<D, S, R, C, T>
 where
     D: InstanceDiscovery,
     S: EnclaveEndpointClient,
@@ -122,8 +115,8 @@ where
     where
         D: 'static,
         S: 'static,
-        P: AttestationProofProvider + 'static,
         R: TEEProverRegistryClient + 'static,
+        C: CertManagerClient + 'static,
         T: 'static,
     {
         info!(
@@ -268,32 +261,6 @@ where
             RegistrarMetrics::processing_errors_total().increment(1);
             outcome.unresolved_instance_ids.insert(instance.instance_id.clone());
             return Ok(outcome);
-        }
-
-        if self.config.cancel.is_cancelled() {
-            return Ok(outcome);
-        }
-        if let Some(cert_manager) = &self.cert_manager {
-            let first_attestation = all_attestations
-                .first()
-                .expect("guarded by attestation count == signer count >= 1");
-            match cert_manager.check_and_revoke_crls(first_attestation, instance).await {
-                Ok(true) => {
-                    warn!(
-                        instance = %instance.instance_id,
-                        "certificate revoked, skipping registration for this instance"
-                    );
-                    return Ok(outcome);
-                }
-                Ok(false) => {}
-                Err(e) => {
-                    warn!(
-                        error = %e,
-                        instance = %instance.instance_id,
-                        "CRL check failed (fail-open, proceeding with registration)"
-                    );
-                }
-            }
         }
 
         outcome.registerable.extend(addresses.into_iter().zip(all_attestations).map(
@@ -562,13 +529,8 @@ mod tests {
         }
     }
 
-    type TestDriver = RegistrationDriver<
-        Vec<ProverInstance>,
-        MockEnclaveEndpointClient,
-        MockEnclaveEndpointClient,
-        (),
-        NoopTxManager,
-    >;
+    type TestDriver =
+        RegistrationDriver<Vec<ProverInstance>, MockEnclaveEndpointClient, (), (), NoopTxManager>;
 
     const TEST_MAX_ATTESTATION_AGE: Duration = Duration::from_secs(3300);
 
@@ -595,18 +557,22 @@ mod tests {
         cancel: CancellationToken,
         instance_cache_ttl_cycles: u32,
     ) -> TestDriver {
-        let signer_manager = Arc::new(SignerManager::new(
-            signer_client.clone(),
-            (),
-            NoopTxManager,
-            SignerManagerConfig {
-                registry_address: TEST_REGISTRY_ADDRESS,
-                max_concurrency: DEFAULT_MAX_CONCURRENCY,
-                max_tx_retries: DEFAULT_MAX_TX_RETRIES,
-                tx_retry_delay: Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
-                max_attestation_age: TEST_MAX_ATTESTATION_AGE,
-            },
-        ));
+        let signer_manager = Arc::new(
+            SignerManager::new(
+                (),
+                (),
+                NoopTxManager,
+                SignerManagerConfig {
+                    registry_address: TEST_REGISTRY_ADDRESS,
+                    max_concurrency: DEFAULT_MAX_CONCURRENCY,
+                    max_tx_retries: DEFAULT_MAX_TX_RETRIES,
+                    tx_retry_delay: Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
+                    max_attestation_age: TEST_MAX_ATTESTATION_AGE,
+                    crl_checks_enabled: false,
+                },
+            )
+            .unwrap(),
+        );
 
         RegistrationDriver::new(
             instances,
@@ -617,7 +583,6 @@ mod tests {
                 max_concurrency: DEFAULT_MAX_CONCURRENCY,
                 instance_cache_ttl_cycles,
             },
-            None,
             signer_manager,
         )
     }
@@ -703,18 +668,16 @@ mod tests {
         let resolution = discover_once(&driver).await;
 
         assert_eq!(resolution.registerable.len(), 2);
-        let nonce_a =
-            SignerManager::<MockEnclaveEndpointClient, (), NoopTxManager>::attestation_nonce_for(
-                TEST_REGISTRY_ADDRESS,
-                signer_a,
-            )
-            .to_vec();
-        let nonce_b =
-            SignerManager::<MockEnclaveEndpointClient, (), NoopTxManager>::attestation_nonce_for(
-                TEST_REGISTRY_ADDRESS,
-                signer_b,
-            )
-            .to_vec();
+        let nonce_a = SignerManager::<(), (), NoopTxManager>::attestation_nonce_for(
+            TEST_REGISTRY_ADDRESS,
+            signer_a,
+        )
+        .to_vec();
+        let nonce_b = SignerManager::<(), (), NoopTxManager>::attestation_nonce_for(
+            TEST_REGISTRY_ADDRESS,
+            signer_b,
+        )
+        .to_vec();
         assert_eq!(*requested_nonces.lock().unwrap(), vec![Some(vec![nonce_a, nonce_b])]);
     }
 

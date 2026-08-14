@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use alloy_primitives::{Address, hex::FromHex};
-use base_proof_tee_nitro_attestation_prover::{BoundlessProver, BoundlessProverConfig};
+use base_proof_tee_nitro_attestation_prover::BoundlessProverConfig;
 use base_proof_tee_registrar::{
     DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
     INSTANCE_CACHE_TTL_CYCLES, RegistrarConfig, RegistrarError,
@@ -246,7 +246,7 @@ impl Cli {
                 .map_err(|e| Box::new(RegistrarError::Config(format!("signer: {e}"))))?,
             tx_manager_config: TxManagerConfig::try_from(self.tx_manager)
                 .map_err(|e| Box::new(RegistrarError::Config(format!("tx-manager: {e}"))))?,
-            boundless_prover: BoundlessProver::new(BoundlessProverConfig {
+            boundless_prover_config: BoundlessProverConfig {
                 rpc_url: self.boundless_rpc_url,
                 signer: self.boundless_fee_private_key,
                 verifier_program_url: self.boundless_verifier_program_url,
@@ -260,8 +260,7 @@ impl Cli {
                 offer_ramp_up_period_secs: self.boundless_offer_ramp_up_period_secs,
                 offer_lock_timeout_secs: self.boundless_offer_lock_timeout_secs,
                 offer_bidding_start_delay_secs: self.boundless_offer_bidding_start_delay_secs,
-            })
-            .map_err(|e| Box::new(RegistrarError::Config(format!("boundless prover: {e}"))))?,
+            },
             poll_interval: Duration::from_secs(self.poll_interval),
             prover_timeout: Duration::from_secs(self.prover_timeout),
             max_concurrency: self.max_concurrency,

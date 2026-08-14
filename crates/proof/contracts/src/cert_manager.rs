@@ -132,6 +132,22 @@ pub trait CertManagerClient: Send + Sync + std::fmt::Debug {
     /// Returns the `CertManager` address this client is bound to.
     fn address(&self) -> Address;
 
+    /// Verifies a CA certificate with supplied hints using `eth_call`.
+    async fn verify_ca_cert_with_hints(
+        &self,
+        cert: Bytes,
+        parent_cert_hash: B256,
+        signature_hints: Bytes,
+    ) -> Result<B256, ContractError>;
+
+    /// Verifies a client certificate with supplied hints using `eth_call`.
+    async fn verify_client_cert_with_hints(
+        &self,
+        cert: Bytes,
+        parent_cert_hash: B256,
+        signature_hints: Bytes,
+    ) -> Result<VerifiedCert, ContractError>;
+
     /// Returns raw cached metadata, which may be expired or revoked.
     async fn load_verified(&self, cert_hash: B256) -> Result<VerifiedCert, ContractError>;
 
@@ -167,6 +183,31 @@ impl CertManagerContractClient {
 impl CertManagerClient for CertManagerContractClient {
     fn address(&self) -> Address {
         *self.contract.address()
+    }
+
+    async fn verify_ca_cert_with_hints(
+        &self,
+        cert: Bytes,
+        parent_cert_hash: B256,
+        signature_hints: Bytes,
+    ) -> Result<B256, ContractError> {
+        contract_call!(
+            self.contract.verifyCACertWithHints(cert, parent_cert_hash, signature_hints).call(),
+            "verifyCACertWithHints(bytes,bytes32,bytes)"
+        )
+    }
+
+    async fn verify_client_cert_with_hints(
+        &self,
+        cert: Bytes,
+        parent_cert_hash: B256,
+        signature_hints: Bytes,
+    ) -> Result<VerifiedCert, ContractError> {
+        let cert = contract_call!(
+            self.contract.verifyClientCertWithHints(cert, parent_cert_hash, signature_hints).call(),
+            "verifyClientCertWithHints(bytes,bytes32,bytes)"
+        )?;
+        Ok(cert.into())
     }
 
     async fn load_verified(&self, cert_hash: B256) -> Result<VerifiedCert, ContractError> {
@@ -297,6 +338,38 @@ mod tests {
         assert_eq!(cert.max_path_len, -1);
         assert_eq!(cert.subject_hash, B256::repeat_byte(0x33));
         assert_eq!(cert.public_key, Bytes::from(vec![0x44; 96]));
+    }
+
+    #[test]
+    fn warm_call_returns_decode() {
+        let cert_hash = B256::repeat_byte(0x55);
+        let ca_encoded = ICertManager::verifyCACertWithHintsCall::abi_encode_returns(&cert_hash);
+        let ca_decoded = ICertManager::verifyCACertWithHintsCall::abi_decode_returns(&ca_encoded)
+            .expect("CA verification return should decode");
+        assert_eq!(ca_decoded, cert_hash);
+
+        let raw = CertManagerVerifiedCert {
+            ca: false,
+            notAfter: 2_519_044_085,
+            maxPathLen: 0,
+            subjectHash: B256::repeat_byte(0x66),
+            pubKey: Bytes::from(vec![0x77; 96]),
+        };
+        let client_encoded = ICertManager::verifyClientCertWithHintsCall::abi_encode_returns(&raw);
+        let client_decoded =
+            ICertManager::verifyClientCertWithHintsCall::abi_decode_returns(&client_encoded)
+                .expect("client verification return should decode");
+
+        assert_eq!(
+            VerifiedCert::from(client_decoded),
+            VerifiedCert {
+                ca: false,
+                not_after: 2_519_044_085,
+                max_path_len: 0,
+                subject_hash: B256::repeat_byte(0x66),
+                public_key: Bytes::from(vec![0x77; 96]),
+            }
+        );
     }
 
     #[test]

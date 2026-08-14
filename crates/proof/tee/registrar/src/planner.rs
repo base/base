@@ -11,8 +11,7 @@ use x509_parser::prelude::{FromDer, X509Version};
 use crate::{
     cbor::NitroCose,
     error::{PlannerError, PlannerResult},
-    hints::P384Hints,
-    types::{CertKind, CertPlan, HintedRegistrationPlan, RegistrationPlan},
+    types::{CertKind, CertPlan, RegistrationPlan},
 };
 
 const UNCOMPRESSED_SECP256K1_LEN: usize = 65;
@@ -32,26 +31,6 @@ impl AttestationPlanner {
     /// Does not generate P-384 inverse hints or submit transactions. The signer is
     /// derived from attestation `public_key` (Base semantics), never from `user_data`.
     pub fn prepare_registration_plan(attestation: &[u8]) -> PlannerResult<RegistrationPlan> {
-        Ok(Self::prepare_registration_plan_with_root(attestation)?.0)
-    }
-
-    /// Parses a Nitro attestation into a registration plan plus P-384 inverse hints.
-    ///
-    /// Hint streams cover every non-root CA, the leaf certificate, and the final
-    /// attestation signature. Unused by the running Boundless registrar path until
-    /// hinted orchestration lands.
-    pub fn prepare_hinted_registration_plan(
-        attestation: &[u8],
-    ) -> PlannerResult<HintedRegistrationPlan> {
-        let (plan, root_cert) = Self::prepare_registration_plan_with_root(attestation)?;
-        let hints = P384Hints::for_registration_plan(&root_cert, &plan)?;
-        Ok(HintedRegistrationPlan { plan, hints })
-    }
-
-    /// Shared parse path returning the plan and pinned root certificate DER.
-    fn prepare_registration_plan_with_root(
-        attestation: &[u8],
-    ) -> PlannerResult<(RegistrationPlan, Vec<u8>)> {
         let cose = NitroCose::parse_sign1(attestation)?;
         // Intentional overlap with `AttestationVerifier::validate_attestation_content` below:
         // raw CBOR rejects duplicates/trailing bytes that deserialization would collapse or
@@ -116,20 +95,18 @@ impl AttestationPlanner {
             revocation_id: leaf_revocation_id,
         });
 
-        Ok((
-            RegistrationPlan {
-                signer,
-                pcr0,
-                timestamp: doc.timestamp,
-                nonce: doc.nonce.as_ref().map(|n| n.to_vec()),
-                root_cert_hash: root_hash,
-                leaf_cert_hash: leaf_hash,
-                attestation_tbs: cose.attestation_tbs,
-                signature: cose.signature,
-                certs,
-            },
+        Ok(RegistrationPlan {
+            signer,
+            pcr0,
+            timestamp: doc.timestamp,
+            nonce: doc.nonce.as_ref().map(|n| n.to_vec()),
+            root_cert_hash: root_hash,
             root_cert,
-        ))
+            leaf_cert_hash: leaf_hash,
+            attestation_tbs: cose.attestation_tbs,
+            signature: cose.signature,
+            certs,
+        })
     }
 
     /// Human-readable role label for a non-root CA index in the cabundle.
@@ -285,7 +262,6 @@ impl CertManagerKeys {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{address, b256};
-    use base_proof_tee_nitro_verifier::AttestationReport;
 
     use super::*;
     use crate::cbor::NitroCose;
@@ -335,6 +311,7 @@ mod tests {
         // Fixture encodes `nonce: null`.
         assert_eq!(plan.nonce, None);
         assert_eq!(plan.root_cert_hash, PINNED_ROOT_CERT_HASH);
+        assert_eq!(keccak256(&plan.root_cert), PINNED_ROOT_CERT_HASH);
         assert_eq!(plan.leaf_cert_hash, LEAF_HASH);
         assert_eq!(plan.signature.len(), 96);
         assert_eq!(keccak256(&plan.attestation_tbs), FIXTURE_TBS_KECCAK);
@@ -410,24 +387,5 @@ mod tests {
         let plan = AttestationPlanner::prepare_registration_plan(&attestation).unwrap();
         assert_eq!(plan.nonce.as_deref(), Some(FIXTURE_NONCE.as_slice()));
         assert_eq!(plan.signer, FIXTURE_SIGNER);
-    }
-
-    #[test]
-    fn prepare_hinted_registration_plan_matches_for_registration_plan() {
-        let attestation = base_fixture_attestation();
-        let hinted = AttestationPlanner::prepare_hinted_registration_plan(&attestation).unwrap();
-        let plan = AttestationPlanner::prepare_registration_plan(&attestation).unwrap();
-        assert_eq!(hinted.plan, plan);
-
-        // Planner path uses NitroCose raw-TLV TBS; report path must match when fed the same plan.
-        let root = {
-            let report = AttestationReport::parse(&attestation).unwrap();
-            report.doc.cabundle[0].as_ref().to_vec()
-        };
-        let from_plan = P384Hints::for_registration_plan(&root, &plan).unwrap();
-        assert_eq!(hinted.hints, from_plan);
-        assert_eq!(hinted.hints.cert_signature_hints.len(), plan.certs.len());
-        assert!(!hinted.hints.attestation_hints.is_empty());
-        assert_eq!(hinted.hints.attestation_hints.len() % 48, 0);
     }
 }
