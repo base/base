@@ -41,17 +41,25 @@ runs:
   steps:
     - name: Free Disk Space (fast pre-clean)
       if: inputs.free-disk == 'true'
+      id: disk-space
       shell: bash
       run: |
-        sudo rm -rf /usr/local/lib/android
-        sudo rm -rf /usr/share/dotnet
-        sudo rm -rf /opt/ghc
-        sudo rm -rf /usr/local/share/boost
-        sudo rm -rf /opt/hostedtoolcache/CodeQL
-        df -h
+        available_kib=$(df -Pk "$GITHUB_WORKSPACE" | awk 'NR == 2 { print $4 }')
+        echo "Available disk space: $((available_kib / 1024 / 1024)) GiB"
+        if (( available_kib < 100 * 1024 * 1024 )); then
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          available_kib=$(df -Pk "$GITHUB_WORKSPACE" | awk 'NR == 2 { print $4 }')
+          echo "Available disk space after pre-clean: $((available_kib / 1024 / 1024)) GiB"
+        fi
+        (( available_kib < 100 * 1024 * 1024 )) && cleanup=true || cleanup=false
+        echo "cleanup=$cleanup" >> "$GITHUB_OUTPUT"
 
     - name: Free Disk Space
-      if: inputs.free-disk == 'true'
+      if: steps.disk-space.outputs.cleanup == 'true'
       continue-on-error: true
       uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
       with:
