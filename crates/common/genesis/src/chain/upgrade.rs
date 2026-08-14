@@ -206,6 +206,48 @@ impl BaseUpgrade {
         })
     }
 
+    /// Returns the next execution upgrade whose activation implies this upgrade is active.
+    ///
+    /// Contract-only upgrades are omitted because they do not enter the execution fork ladder.
+    /// The Base-specific upgrade line beginning with [`Azul`](Self::Azul) is standalone and does
+    /// not cascade from [`Jovian`](Self::Jovian).
+    pub const fn cascading_successor(self) -> Option<Self> {
+        match self {
+            Self::Regolith => Some(Self::Canyon),
+            Self::Canyon => Some(Self::Ecotone),
+            Self::Ecotone => Some(Self::Fjord),
+            Self::Fjord => Some(Self::Granite),
+            Self::Granite => Some(Self::Holocene),
+            Self::Holocene => Some(Self::Isthmus),
+            Self::Isthmus => Some(Self::Jovian),
+            _ => None,
+        }
+    }
+
+    /// Resolves this upgrade's effective activation timestamp across its cascading successors.
+    ///
+    /// A successor's activation implies that every predecessor in the cascade is active. If more
+    /// than one upgrade in the cascade has a timestamp, the earliest timestamp is effective.
+    pub fn cascaded_activation_timestamp(
+        self,
+        mut activation_timestamp: impl FnMut(Self) -> Option<u64>,
+    ) -> Option<u64> {
+        let mut effective_timestamp = None;
+        let mut upgrade = Some(self);
+
+        while let Some(current) = upgrade {
+            if let Some(timestamp) = activation_timestamp(current) {
+                effective_timestamp = Some(
+                    effective_timestamp
+                        .map_or(timestamp, |effective: u64| effective.min(timestamp)),
+                );
+            }
+            upgrade = current.cascading_successor();
+        }
+
+        effective_timestamp
+    }
+
     /// Returns the canonical `snake_case` contract upgrade ID used by the L1 upgrade-signal
     /// contract and metrics.
     ///

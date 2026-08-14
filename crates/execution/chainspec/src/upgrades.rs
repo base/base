@@ -1,7 +1,7 @@
 use alloc::{boxed::Box, vec};
 
 use alloy_primitives::U256;
-use base_common_chains::ChainUpgrades;
+use base_common_chains::{ChainUpgrades, Upgrades};
 use base_common_genesis::BaseUpgrade;
 use reth_ethereum_forks::{ChainHardforks, EthereumHardfork, ForkCondition, Hardfork};
 
@@ -41,44 +41,44 @@ impl ChainUpgradesExt for ChainUpgrades {
             ),
         ];
 
-        forks.push((BaseUpgrade::Bedrock.boxed(), self[BaseUpgrade::Bedrock]));
-        forks.push((BaseUpgrade::Regolith.boxed(), self[BaseUpgrade::Regolith]));
+        forks.push((BaseUpgrade::Bedrock.boxed(), self.fork_condition(BaseUpgrade::Bedrock)));
+        forks.push((BaseUpgrade::Regolith.boxed(), self.fork_condition(BaseUpgrade::Regolith)));
 
-        let canyon = self[BaseUpgrade::Canyon];
+        let canyon = self.fork_condition(BaseUpgrade::Canyon);
         forks.push((EthereumHardfork::Shanghai.boxed(), canyon));
         forks.push((BaseUpgrade::Canyon.boxed(), canyon));
 
-        let ecotone = self[BaseUpgrade::Ecotone];
+        let ecotone = self.fork_condition(BaseUpgrade::Ecotone);
         forks.push((EthereumHardfork::Cancun.boxed(), ecotone));
         forks.push((BaseUpgrade::Ecotone.boxed(), ecotone));
 
-        forks.push((BaseUpgrade::Fjord.boxed(), self[BaseUpgrade::Fjord]));
-        forks.push((BaseUpgrade::Granite.boxed(), self[BaseUpgrade::Granite]));
-        forks.push((BaseUpgrade::Holocene.boxed(), self[BaseUpgrade::Holocene]));
+        forks.push((BaseUpgrade::Fjord.boxed(), self.fork_condition(BaseUpgrade::Fjord)));
+        forks.push((BaseUpgrade::Granite.boxed(), self.fork_condition(BaseUpgrade::Granite)));
+        forks.push((BaseUpgrade::Holocene.boxed(), self.fork_condition(BaseUpgrade::Holocene)));
 
-        let isthmus = self[BaseUpgrade::Isthmus];
+        let isthmus = self.fork_condition(BaseUpgrade::Isthmus);
         if !matches!(isthmus, ForkCondition::Never) {
             forks.push((EthereumHardfork::Prague.boxed(), isthmus));
             forks.push((BaseUpgrade::Isthmus.boxed(), isthmus));
         }
 
-        let jovian = self[BaseUpgrade::Jovian];
+        let jovian = self.fork_condition(BaseUpgrade::Jovian);
         if !matches!(jovian, ForkCondition::Never) {
             forks.push((BaseUpgrade::Jovian.boxed(), jovian));
         }
 
-        let azul = self[BaseUpgrade::Azul];
+        let azul = self.fork_condition(BaseUpgrade::Azul);
         if !matches!(azul, ForkCondition::Never) {
             forks.push((EthereumHardfork::Osaka.boxed(), azul));
             forks.push((BaseUpgrade::Azul.boxed(), azul));
         }
 
-        let beryl = self[BaseUpgrade::Beryl];
+        let beryl = self.fork_condition(BaseUpgrade::Beryl);
         if !matches!(beryl, ForkCondition::Never) {
             forks.push((BaseUpgrade::Beryl.boxed(), beryl));
         }
 
-        let cobalt = self[BaseUpgrade::Cobalt];
+        let cobalt = self.fork_condition(BaseUpgrade::Cobalt);
         if !matches!(cobalt, ForkCondition::Never) {
             forks.push((BaseUpgrade::Cobalt.boxed(), cobalt));
         }

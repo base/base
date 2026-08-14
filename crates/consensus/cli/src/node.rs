@@ -629,6 +629,7 @@ mod tests {
 
     use alloy_chains::Chain;
     use alloy_primitives::{B256, U256, address};
+    use base_common_chains::Upgrades;
     use base_common_genesis::BaseUpgrade;
     use clap::{Args, Parser};
     use rstest::rstest;
@@ -750,6 +751,22 @@ mod tests {
         assert_eq!(applied, 2);
         assert_eq!(cfg.upgrades.activation_timestamp(BaseUpgrade::Delta), Some(40));
         assert_eq!(cfg.upgrades.activation_timestamp(BaseUpgrade::Azul), Some(42));
+    }
+
+    #[test]
+    fn cascades_later_upgrade_to_consensus_predecessors() {
+        let mut cfg = RollupConfig::default();
+
+        let applied = ConsensusNodeArgs::apply_schedule_to_rollup_config(
+            &mut cfg,
+            &upgrade_schedule(&[(BaseUpgrade::Canyon, 0), (BaseUpgrade::Ecotone, 42)]),
+        );
+
+        assert_eq!(applied, 1);
+        assert_eq!(cfg.upgrades.activation_timestamp(BaseUpgrade::Canyon), None);
+        assert!(!cfg.fork_condition(BaseUpgrade::Canyon).active_at_timestamp(41));
+        assert!(cfg.fork_condition(BaseUpgrade::Canyon).active_at_timestamp(42));
+        assert!(cfg.fork_condition(BaseUpgrade::Ecotone).active_at_timestamp(42));
     }
 
     #[test]

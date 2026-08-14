@@ -263,10 +263,31 @@ mod tests {
         .unwrap();
 
         assert_eq!(applied, 2);
-        assert_eq!(chain_spec.fork(EthereumHardfork::Shanghai), ForkCondition::Timestamp(40));
-        assert_eq!(chain_spec.fork(BaseUpgrade::Canyon), ForkCondition::Timestamp(40));
+        assert_eq!(
+            chain_spec.configured_fork(EthereumHardfork::Shanghai),
+            ForkCondition::Timestamp(40)
+        );
+        assert_eq!(chain_spec.configured_fork(BaseUpgrade::Canyon), ForkCondition::Timestamp(40));
         assert_eq!(chain_spec.fork(EthereumHardfork::Osaka), ForkCondition::Timestamp(42));
         assert_eq!(chain_spec.fork(BaseUpgrade::Azul), ForkCondition::Timestamp(42));
+    }
+
+    #[test]
+    fn cascades_later_upgrade_to_execution_predecessors() {
+        let mut chain_spec = BaseChainSpec::from(ChainSpec::default());
+
+        let applied = ExecutionUpgradeSignal::apply_schedule_to_chain_spec(
+            &mut chain_spec,
+            &schedule(&[(BaseUpgrade::Canyon, 0), (BaseUpgrade::Ecotone, 42)]),
+        )
+        .unwrap();
+
+        assert_eq!(applied, 1);
+        assert_eq!(chain_spec.configured_fork(BaseUpgrade::Canyon), ForkCondition::Never);
+        assert_eq!(chain_spec.fork(EthereumHardfork::Shanghai), ForkCondition::Timestamp(42));
+        assert_eq!(chain_spec.fork(BaseUpgrade::Canyon), ForkCondition::Timestamp(42));
+        assert_eq!(chain_spec.fork(EthereumHardfork::Cancun), ForkCondition::Timestamp(42));
+        assert_eq!(chain_spec.fork(BaseUpgrade::Ecotone), ForkCondition::Timestamp(42));
     }
 
     #[test]
@@ -285,8 +306,11 @@ mod tests {
         .unwrap();
 
         assert_eq!(applied, 0);
-        assert_eq!(chain_spec.fork(EthereumHardfork::Shanghai), ForkCondition::Timestamp(40));
-        assert_eq!(chain_spec.fork(BaseUpgrade::Canyon), ForkCondition::Timestamp(40));
+        assert_eq!(
+            chain_spec.configured_fork(EthereumHardfork::Shanghai),
+            ForkCondition::Timestamp(40)
+        );
+        assert_eq!(chain_spec.configured_fork(BaseUpgrade::Canyon), ForkCondition::Timestamp(40));
         assert_eq!(chain_spec.fork(EthereumHardfork::Osaka), ForkCondition::Never);
         assert_eq!(chain_spec.fork(BaseUpgrade::Azul), ForkCondition::Never);
     }

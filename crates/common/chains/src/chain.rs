@@ -74,12 +74,14 @@ impl ChainUpgrades {
 
 impl EthereumHardforks for ChainUpgrades {
     fn ethereum_fork_activation(&self, fork: EthereumHardfork) -> ForkCondition {
-        self[fork]
+        BaseUpgrade::from_ethereum_hardfork(fork)
+            .map(|upgrade| self.fork_condition(upgrade))
+            .unwrap_or(self[fork])
     }
 }
 
 impl Upgrades for ChainUpgrades {
-    fn fork_condition(&self, fork: BaseUpgrade) -> ForkCondition {
+    fn configured_fork_condition(&self, fork: BaseUpgrade) -> ForkCondition {
         self[fork]
     }
 }

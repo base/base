@@ -5,9 +5,31 @@ use base_common_genesis::{BaseUpgrade, RollupConfig};
 /// Extends [`EthereumHardforks`] with Base upgrade helper methods.
 #[auto_impl::auto_impl(&, Arc)]
 pub trait Upgrades: EthereumHardforks {
-    /// Retrieves [`ForkCondition`] by a [`BaseUpgrade`]. If `fork` is not present, returns
-    /// [`ForkCondition::Never`].
-    fn fork_condition(&self, fork: BaseUpgrade) -> ForkCondition;
+    /// Retrieves the directly configured [`ForkCondition`] for a [`BaseUpgrade`].
+    ///
+    /// This target-specific lookup does not apply cascading-upgrade semantics.
+    fn configured_fork_condition(&self, fork: BaseUpgrade) -> ForkCondition;
+
+    /// Retrieves the effective [`ForkCondition`] for a [`BaseUpgrade`].
+    ///
+    /// Cascading upgrades imply that their predecessors are active. When both a predecessor and a
+    /// cascading successor have timestamp conditions, the earlier timestamp wins. If `fork` is
+    /// not present, implementations return [`ForkCondition::Never`].
+    fn fork_condition(&self, fork: BaseUpgrade) -> ForkCondition {
+        let configured = self.configured_fork_condition(fork);
+        if !matches!(configured, ForkCondition::Never | ForkCondition::Timestamp(_)) {
+            return configured;
+        }
+
+        fork.cascaded_activation_timestamp(|upgrade| {
+            match self.configured_fork_condition(upgrade) {
+                ForkCondition::Timestamp(timestamp) => Some(timestamp),
+                _ => None,
+            }
+        })
+        .map(ForkCondition::Timestamp)
+        .unwrap_or(ForkCondition::Never)
+    }
 
     /// Returns the activation registry admin address.
     fn activation_admin_address(&self) -> Option<Address> {
@@ -96,74 +118,27 @@ pub trait Upgrades: EthereumHardforks {
 }
 
 impl Upgrades for RollupConfig {
-    fn fork_condition(&self, fork: BaseUpgrade) -> ForkCondition {
-        match fork {
-            BaseUpgrade::Bedrock => ForkCondition::Block(0),
-            BaseUpgrade::Regolith => self
-                .upgrade_activation_timestamp(BaseUpgrade::Regolith)
-                .map(ForkCondition::Timestamp)
-                .unwrap_or_else(|| self.fork_condition(BaseUpgrade::Canyon)),
-            BaseUpgrade::Canyon => self
-                .upgrade_activation_timestamp(BaseUpgrade::Canyon)
-                .map(ForkCondition::Timestamp)
-                .unwrap_or_else(|| self.fork_condition(BaseUpgrade::Ecotone)),
-            BaseUpgrade::Ecotone => self
-                .upgrade_activation_timestamp(BaseUpgrade::Ecotone)
-                .map(ForkCondition::Timestamp)
-                .unwrap_or_else(|| self.fork_condition(BaseUpgrade::Fjord)),
-            BaseUpgrade::Fjord => self
-                .upgrade_activation_timestamp(BaseUpgrade::Fjord)
-                .map(ForkCondition::Timestamp)
-                .unwrap_or_else(|| self.fork_condition(BaseUpgrade::Granite)),
-            BaseUpgrade::Granite => self
-                .upgrade_activation_timestamp(BaseUpgrade::Granite)
-                .map(ForkCondition::Timestamp)
-                .unwrap_or_else(|| self.fork_condition(BaseUpgrade::Holocene)),
-            BaseUpgrade::Holocene => self
-                .upgrade_activation_timestamp(BaseUpgrade::Holocene)
-                .map(ForkCondition::Timestamp)
-                .unwrap_or_else(|| self.fork_condition(BaseUpgrade::Isthmus)),
-            BaseUpgrade::Isthmus => self
-                .upgrade_activation_timestamp(BaseUpgrade::Isthmus)
-                .map(ForkCondition::Timestamp)
-                .unwrap_or_else(|| self.fork_condition(BaseUpgrade::Jovian)),
-            BaseUpgrade::Jovian => self
-                .upgrade_activation_timestamp(BaseUpgrade::Jovian)
-                .map(ForkCondition::Timestamp)
-                .unwrap_or(ForkCondition::Never),
-            BaseUpgrade::Azul => self
-                .upgrade_activation_timestamp(BaseUpgrade::Azul)
-                .map(ForkCondition::Timestamp)
-                .unwrap_or(ForkCondition::Never),
-            BaseUpgrade::Beryl => self
-                .upgrade_activation_timestamp(BaseUpgrade::Beryl)
-                .map(ForkCondition::Timestamp)
-                .unwrap_or(ForkCondition::Never),
-            BaseUpgrade::Cobalt => self
-                .upgrade_activation_timestamp(BaseUpgrade::Cobalt)
-                .map(ForkCondition::Timestamp)
-                .unwrap_or(ForkCondition::Never),
-            BaseUpgrade::Denim => self
-                .upgrade_activation_timestamp(BaseUpgrade::Denim)
-                .map(ForkCondition::Timestamp)
-                .unwrap_or(ForkCondition::Never),
-            // Zenith is the genesis-only gate for future hardfork feature testing: the runtime
-            // registry drops Zenith writes, so only a genesis-configured timestamp can appear
-            // here.
-            BaseUpgrade::Zenith => self
-                .upgrade_activation_timestamp(BaseUpgrade::Zenith)
-                .map(ForkCondition::Timestamp)
-                .unwrap_or(ForkCondition::Never),
-            // Contract-only upgrades (Delta, PectraBlobSchedule) and any future variants are
-            // absent from the execution fork ladder.
-            _ => ForkCondition::Never,
+    fn configured_fork_condition(&self, fork: BaseUpgrade) -> ForkCondition {
+        if fork == BaseUpgrade::Bedrock {
+            return ForkCondition::Block(0);
         }
+
+        // Contract-only upgrades are absent from the execution fork ladder. Zenith is the
+        // genesis-only testing gate and remains readable from rollup genesis configuration.
+        if !fork.is_execution() && fork != BaseUpgrade::Zenith {
+            return ForkCondition::Never;
+        }
+
+        self.upgrade_activation_timestamp(fork)
+            .map(ForkCondition::Timestamp)
+            .unwrap_or(ForkCondition::Never)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ChainUpgrades;
 
     #[test]
     fn rollup_config_upgrade_activation_cascade() {
@@ -184,6 +159,45 @@ mod tests {
         assert_eq!(cfg.fork_condition(BaseUpgrade::Cobalt), ForkCondition::Never);
         assert_eq!(cfg.fork_condition(BaseUpgrade::Denim), ForkCondition::Never);
         assert_eq!(cfg.fork_condition(BaseUpgrade::Zenith), ForkCondition::Never);
+    }
+
+    #[test]
+    fn rollup_config_upgrade_activation_cascade_uses_earliest_timestamp() {
+        let mut cfg = RollupConfig::default();
+        cfg.upgrades.canyon_time = Some(20);
+        cfg.upgrades.ecotone_time = Some(10);
+
+        assert_eq!(cfg.fork_condition(BaseUpgrade::Canyon), ForkCondition::Timestamp(10));
+        assert_eq!(cfg.fork_condition(BaseUpgrade::Ecotone), ForkCondition::Timestamp(10));
+    }
+
+    #[test]
+    fn chain_upgrades_share_rollup_config_cascade_semantics() {
+        let upgrades = ChainUpgrades::new([
+            (BaseUpgrade::Canyon, ForkCondition::Never),
+            (BaseUpgrade::Ecotone, ForkCondition::Timestamp(42)),
+        ]);
+
+        assert_eq!(upgrades[BaseUpgrade::Canyon], ForkCondition::Never);
+        assert_eq!(upgrades.fork_condition(BaseUpgrade::Canyon), ForkCondition::Timestamp(42));
+        assert_eq!(
+            upgrades.ethereum_fork_activation(alloy_hardforks::EthereumHardfork::Shanghai),
+            ForkCondition::Timestamp(42)
+        );
+        assert_eq!(upgrades.fork_condition(BaseUpgrade::Jovian), ForkCondition::Never);
+    }
+
+    #[test]
+    fn pectra_blob_schedule_can_remain_unscheduled_in_cascade() {
+        let mut cfg = RollupConfig::default();
+        cfg.upgrades.isthmus_time = Some(42);
+
+        assert_eq!(cfg.fork_condition(BaseUpgrade::Holocene), ForkCondition::Timestamp(42));
+        assert_eq!(cfg.fork_condition(BaseUpgrade::PectraBlobSchedule), ForkCondition::Never);
+        assert_eq!(cfg.fork_condition(BaseUpgrade::Isthmus), ForkCondition::Timestamp(42));
+        assert!(cfg.is_holocene_active(42));
+        assert!(!cfg.is_pectra_blob_schedule_active(42));
+        assert!(cfg.is_isthmus_active(42));
     }
 
     #[cfg(feature = "std")]

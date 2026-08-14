@@ -314,9 +314,18 @@ impl BaseChainSpec {
         self.inner.hardforks.insert(fork, condition);
     }
 
-    /// Returns the runtime-aware activation condition for a hardfork.
-    pub fn fork<H: Hardfork>(&self, fork: H) -> ForkCondition {
+    /// Returns the directly configured, runtime-aware activation condition for a hardfork.
+    pub fn configured_fork<H: Hardfork>(&self, fork: H) -> ForkCondition {
         self.runtime_fork_condition(&fork).unwrap_or_else(|| self.inner.fork(fork))
+    }
+
+    /// Returns the effective, runtime-aware activation condition for a hardfork.
+    pub fn fork<H: Hardfork>(&self, fork: H) -> ForkCondition {
+        if let Some(upgrade) = BaseUpgrade::from_contract_fork_name(fork.name()) {
+            return Upgrades::fork_condition(self, upgrade);
+        }
+
+        self.configured_fork(fork)
     }
 
     /// Returns a runtime upgrade override for an execution fork condition.
@@ -333,14 +342,16 @@ impl BaseChainSpec {
     /// Returns hardforks with runtime overrides materialized into the schedule.
     pub fn runtime_hardforks(&self) -> ChainHardforks {
         let mut hardforks = self.inner.hardforks.clone();
-        if let Some(overrides) = RuntimeUpgradeRegistry::overrides(self.chain().id()) {
-            for (hardfork_id, activation) in overrides.activations {
-                let condition = match activation {
-                    UpgradeActivation::Never => ForkCondition::Never,
-                    UpgradeActivation::Timestamp(timestamp) => ForkCondition::Timestamp(timestamp),
-                };
-                Self::set_hardfork_activation_condition_for(&mut hardforks, hardfork_id, condition);
+        for hardfork_id in BaseUpgrade::EXECUTION_VARIANTS {
+            let condition = Upgrades::fork_condition(self, hardfork_id);
+            if matches!(condition, ForkCondition::Never) {
+                if let Some(execution_hardfork) = hardfork_id.execution_hardfork() {
+                    hardforks.remove(&execution_hardfork);
+                }
+                hardforks.remove(&hardfork_id);
+                continue;
             }
+            Self::set_hardfork_activation_condition_for(&mut hardforks, hardfork_id, condition);
         }
 
         hardforks
@@ -356,7 +367,9 @@ impl BaseChainSpec {
     /// Get an iterator of all hardforks with runtime-aware activation conditions.
     pub fn forks_iter(&self) -> impl Iterator<Item = (&dyn Hardfork, ForkCondition)> {
         self.inner.forks_iter().map(|(fork, condition)| {
-            let condition = self.runtime_fork_condition(fork).unwrap_or(condition);
+            let condition = BaseUpgrade::from_contract_fork_name(fork.name())
+                .map(|upgrade| Upgrades::fork_condition(self, upgrade))
+                .unwrap_or_else(|| self.runtime_fork_condition(fork).unwrap_or(condition));
             (fork, condition)
         })
     }
@@ -652,8 +665,8 @@ impl EthereumHardforks for BaseChainSpec {
 }
 
 impl Upgrades for BaseChainSpec {
-    fn fork_condition(&self, fork: BaseUpgrade) -> ForkCondition {
-        self.fork(fork)
+    fn configured_fork_condition(&self, fork: BaseUpgrade) -> ForkCondition {
+        self.configured_fork(fork)
     }
 
     fn activation_admin_address(&self) -> Option<Address> {

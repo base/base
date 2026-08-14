@@ -415,7 +415,7 @@ mod tests {
     }
 
     impl Upgrades for TestUpgrades {
-        fn fork_condition(&self, fork: BaseUpgrade) -> ForkCondition {
+        fn configured_fork_condition(&self, fork: BaseUpgrade) -> ForkCondition {
             if fork == BaseUpgrade::Denim && self.0 {
                 ForkCondition::Timestamp(100)
             } else {
