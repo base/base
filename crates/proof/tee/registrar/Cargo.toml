@@ -41,7 +41,6 @@ base-proof-contracts.workspace = true
 
 # Proving
 base-proof-tee-nitro-verifier.workspace = true
-base-proof-tee-nitro-attestation-prover = { workspace = true, features = ["prove"] }
 
 # Transaction management
 base-tx-manager.workspace = true
@@ -89,7 +88,6 @@ tokio = { workspace = true, features = ["rt", "macros", "test-util"] }
 [features]
 metrics = [
 	"base-metrics/metrics",
-	"base-proof-tee-nitro-attestation-prover/metrics",
 	"base-tx-manager/metrics",
 	"dep:metrics",
 ]
