@@ -24,7 +24,7 @@ uuid = { workspace = true, features = ["v4"] }
 base-prover-service-client = { workspace = true }
 base-prover-service-protocol = { workspace = true }
 bincode = { workspace = true, features = ["serde"] }
-base-proof-succinct-proof-utils = { workspace = true }
+base-proof-zk-backend = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 
 [dev-dependencies]

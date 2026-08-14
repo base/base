@@ -1,10 +1,29 @@
+//! SP1 [`ExecutionReport`] statistics for range-program execution.
+
 use std::fmt;
 
 use base_proof_zk_utils::precompiles::cycle_tracker::keys;
-use base_proof_zk_witness::fetcher::BlockInfo;
 use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
 use sp1_sdk::ExecutionReport;
+
+/// Per-block inputs used to aggregate [`ExecutionStats`].
+///
+/// Kept independent of `zk-witness` `BlockInfo` so SP1 execution reporting does not
+/// depend on the RPC witness crate.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
+pub struct BlockExecutionStats {
+    /// Block number.
+    pub block_number: u64,
+    /// Transaction count.
+    pub transaction_count: u64,
+    /// Gas used.
+    pub gas_used: u64,
+    /// Total L1 fees.
+    pub total_l1_fees: u128,
+    /// Total transaction fees.
+    pub total_tx_fees: u128,
+}
 
 /// Statistics for the range execution.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -107,7 +126,7 @@ impl ExecutionStats {
     /// Create a new execution stats.
     pub fn new(
         l1_head: u64,
-        block_data: &[BlockInfo],
+        block_data: &[BlockExecutionStats],
         report: &ExecutionReport,
         witness_generation_time_sec: u64,
         total_execution_time_sec: u64,
@@ -203,5 +222,49 @@ impl fmt::Display for MarkdownExecutionStats {
         write_stat(f, "KZG Eval Cycles", self.0.kzg_eval_cycles)?;
         write_stat(f, "EC Recover Cycles", self.0.ec_recover_cycles)?;
         write_stat(f, "P256 Verify Cycles", self.0.p256_verify_cycles)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn block(number: u64, txs: u64, gas: u64) -> BlockExecutionStats {
+        BlockExecutionStats {
+            block_number: number,
+            transaction_count: txs,
+            gas_used: gas,
+            total_l1_fees: 1,
+            total_tx_fees: 2,
+        }
+    }
+
+    #[test]
+    fn execution_stats_returns_default_for_empty_blocks() {
+        let stats = ExecutionStats::new(1, &[], &ExecutionReport::default(), 0, 0);
+        assert_eq!(stats.nb_blocks, 0);
+        assert_eq!(stats.batch_start, 0);
+        assert_eq!(stats.batch_end, 0);
+    }
+
+    #[test]
+    fn execution_stats_sorts_blocks_and_subtracts_start() {
+        let stats = ExecutionStats::new(
+            42,
+            &[block(12, 2, 100), block(11, 1, 50)],
+            &ExecutionReport::default(),
+            5,
+            7,
+        );
+        assert_eq!(stats.l1_head, 42);
+        assert_eq!(stats.batch_start, 10);
+        assert_eq!(stats.batch_end, 12);
+        assert_eq!(stats.nb_blocks, 2);
+        assert_eq!(stats.nb_transactions, 3);
+        assert_eq!(stats.eth_gas_used, 150);
+        assert_eq!(stats.l1_fees, 2);
+        assert_eq!(stats.total_tx_fees, 4);
+        assert_eq!(stats.witness_generation_time_sec, 5);
+        assert_eq!(stats.total_execution_time_sec, 7);
     }
 }

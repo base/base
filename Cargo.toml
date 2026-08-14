@@ -237,8 +237,6 @@ base-proof-primitives = { path = "crates/proof/primitives", default-features = f
 
 # Succinct (OP Succinct / SP1 proving)
 base-proof-succinct-elfs = { path = "crates/proof/succinct/utils/elfs" }
-base-proof-succinct-host-utils = { path = "crates/proof/succinct/utils/host" }
-base-proof-succinct-proof-utils = { path = "crates/proof/succinct/utils/proof" }
 
 # Batcher
 base-blobs = { path = "crates/batcher/blobs" }

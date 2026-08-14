@@ -1,3 +1,5 @@
+//! SP1 prover-network client helpers.
+
 use std::env;
 
 use anyhow::{Context, Result, anyhow, bail};

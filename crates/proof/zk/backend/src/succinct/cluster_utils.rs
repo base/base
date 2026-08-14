@@ -1,7 +1,5 @@
 //! SP1 cluster proof utilities.
 
-#![recursion_limit = "256"]
-
 use std::{
     fmt,
     sync::Arc,

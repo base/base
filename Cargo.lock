@@ -5335,63 +5335,13 @@ name = "base-proof-succinct-elfs"
 version = "0.0.0"
 
 [[package]]
-name = "base-proof-succinct-host-utils"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus 2.4.1",
- "alloy-contract",
- "alloy-primitives",
- "alloy-sol-types",
- "anyhow",
- "base-proof-zk-utils",
- "base-proof-zk-witness",
- "bincode 2.0.1",
- "cargo_metadata",
- "lazy_static",
- "metrics",
- "metrics-exporter-prometheus",
- "metrics-process",
- "num-format",
- "opentelemetry 0.32.0",
- "opentelemetry-appender-tracing 0.32.0",
- "opentelemetry-otlp 0.32.0",
- "opentelemetry_sdk 0.32.1",
- "rkyv",
- "serde",
- "serde_cbor",
- "sp1-sdk",
- "strum 0.27.2",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "base-proof-succinct-proof-utils"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "base-proof-succinct-elfs",
- "base-proof-zk-witness",
- "cfg-if",
- "serde",
- "serde_json",
- "sp1-cluster-artifact",
- "sp1-cluster-common",
- "sp1-cluster-utils",
- "sp1-prover-types",
- "sp1-sdk",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "base-proof-succinct-scripts"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
  "anyhow",
  "base-proof-succinct-elfs",
- "base-proof-succinct-proof-utils",
+ "base-proof-zk-backend",
  "base-proof-zk-utils",
  "bincode 2.0.1",
  "clap",
@@ -5561,21 +5511,26 @@ dependencies = [
 name = "base-proof-zk-backend"
 version = "0.0.0"
 dependencies = [
+ "alloy-consensus 2.4.1",
+ "alloy-contract",
  "alloy-primitives",
+ "alloy-sol-types",
+ "anyhow",
  "async-trait",
  "backoff",
  "base-l1-head",
  "base-metrics",
  "base-proof-host",
  "base-proof-succinct-elfs",
- "base-proof-succinct-host-utils",
- "base-proof-succinct-proof-utils",
  "base-proof-zk-host",
  "base-proof-zk-utils",
  "base-proof-zk-witness",
  "base-prover-service-protocol",
  "bincode 2.0.1",
+ "num-format",
+ "rkyv",
  "serde",
+ "serde_cbor",
  "serde_json",
  "sp1-cluster-artifact",
  "sp1-cluster-common",
@@ -6137,7 +6092,7 @@ dependencies = [
  "anyhow",
  "base-common-network",
  "base-l1-head",
- "base-proof-succinct-proof-utils",
+ "base-proof-zk-backend",
  "base-prover-service-client",
  "base-prover-service-protocol",
  "bincode 2.0.1",
@@ -8414,15 +8369,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "80a4af69c60438a1a82af89d362f4729fd38db7b73f305a237636fad31ceb2bf"
 
 [[package]]
-name = "debugid"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bef552e6f588e446098f6ba40d89ac146c8c7b64aade83c051ee00bb5d2bc18d"
-dependencies = [
- "uuid",
-]
-
-[[package]]
 name = "deepsize2"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9753,17 +9699,6 @@ name = "gcd"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d758ba1b47b00caf47f24925c0074ecb20d6dfcffe7f6d53395c0465674841a"
-
-[[package]]
-name = "gecko_profile"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "890852c7e1e02bc6758e325d6b1e0236e4fbf21b492f585ce4d4715be54b4c6a"
-dependencies = [
- "debugid",
- "serde",
- "serde_json",
-]
 
 [[package]]
 name = "gen_ops"
@@ -20533,16 +20468,13 @@ dependencies = [
  "elf",
  "enum-map",
  "eyre",
- "gecko_profile",
  "hashbrown 0.14.5",
  "hex",
- "indicatif 0.17.11",
  "itertools 0.14.0",
  "memmap2",
  "num",
  "object",
  "rrs-succinct",
- "rustc-demangle",
  "serde",
  "serde_arrays",
  "serde_json",

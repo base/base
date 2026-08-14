@@ -1,3 +1,5 @@
+//! SP1 aggregation-program stdin encoding.
+
 use alloy_consensus::Header;
 use alloy_primitives::{Address, B256};
 use anyhow::Result;
