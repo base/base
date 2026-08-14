@@ -62,6 +62,15 @@ impl ContractError {
                 | alloy_contract::Error::ZeroData(_, _)
         ) || source.as_revert_data().is_some_and(|data| data.is_empty())
     }
+
+    /// Returns whether a contract call reached EVM execution and reverted.
+    #[must_use]
+    pub fn is_execution_revert(&self) -> bool {
+        let Self::Call { source, .. } = self else {
+            return false;
+        };
+        source.as_revert_data().is_some()
+    }
 }
 
 #[cfg(test)]
@@ -126,7 +135,9 @@ mod tests {
                 .unwrap(),
             ));
 
-        assert!(!ContractError::call("probe failed", source).is_missing_method());
+        let error = ContractError::call("probe failed", source);
+        assert!(!error.is_missing_method());
+        assert!(error.is_execution_revert());
     }
 
     #[test]
@@ -145,6 +156,7 @@ mod tests {
         );
 
         assert!(!err.is_missing_method());
+        assert!(!err.is_execution_revert());
     }
 
     #[test]

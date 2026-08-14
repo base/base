@@ -12,10 +12,10 @@ use std::{
 use alloy_primitives::{Address, B256, Bytes, b256, keccak256};
 use alloy_sol_types::SolCall;
 use base_proof_contracts::{
-    CertManagerAuthorizationError, CertManagerClient, ITEEProverRegistry, TEEProverRegistryClient,
-    decode_cert_manager_authorization_error, encode_register_signer_calldata,
-    encode_revoke_cert_calldata, encode_verify_ca_cert_with_hints_calldata,
-    encode_verify_client_cert_with_hints_calldata,
+    CertManagerAuthorizationError, CertManagerClient, ContractError, ITEEProverRegistry,
+    TEEProverRegistryClient, decode_cert_manager_authorization_error,
+    encode_register_signer_calldata, encode_revoke_cert_calldata,
+    encode_verify_ca_cert_with_hints_calldata, encode_verify_client_cert_with_hints_calldata,
 };
 use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 use tokio::{
@@ -811,10 +811,16 @@ where
                 "cached certificate {} returned inconsistent metadata",
                 cert.label
             ))),
-            Err(error) => Err(RegistrarError::InvalidAttestationProof(format!(
-                "cached certificate {} failed warm validation: {error}",
-                cert.label
-            ))),
+            Err(error)
+                if error.is_execution_revert()
+                    || matches!(&error, ContractError::Validation(_)) =>
+            {
+                Err(RegistrarError::InvalidAttestationProof(format!(
+                    "cached certificate {} failed warm validation: {error}",
+                    cert.label
+                )))
+            }
+            Err(error) => Err(error.into()),
         }
     }
 

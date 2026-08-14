@@ -406,7 +406,8 @@ mod tests {
     fn fixture_hints() -> RegistrationHints {
         let attestation =
             hex::decode(include_str!("testdata/nitro_attestation.hex").trim()).unwrap();
-        crate::AttestationPlanner::prepare_hinted_registration_plan(&attestation).unwrap().hints
+        let plan = crate::AttestationPlanner::prepare_registration_plan(&attestation).unwrap();
+        P384Hints::for_registration_plan(&plan.root_cert, &plan).unwrap()
     }
 
     #[test]

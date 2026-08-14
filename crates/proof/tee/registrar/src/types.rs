@@ -91,14 +91,3 @@ pub struct RegistrationHints {
     /// Hint stream for the attestation COSE signature.
     pub attestation_hints: Vec<u8>,
 }
-
-/// Registration plan plus `CertManager` / attestation inverse-hint streams.
-///
-/// Produced by [`crate::AttestationPlanner::prepare_hinted_registration_plan`].
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HintedRegistrationPlan {
-    /// Certificate / signer plan (no hints).
-    pub plan: RegistrationPlan,
-    /// Packed inverse hints for CA/leaf cert signatures and the attestation sig.
-    pub hints: RegistrationHints,
-}
