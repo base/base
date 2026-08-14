@@ -79,22 +79,22 @@ mod tests {
     #[test]
     fn preserves_existing_response_variant_indices() {
         let signer_public_key = bincode::serde::encode_to_vec(
-            EnclaveResponse::SignerPublicKey(vec![]),
+            &EnclaveResponse::SignerPublicKey(vec![]),
             bincode::config::standard(),
         )
         .unwrap();
         let signer_attestation = bincode::serde::encode_to_vec(
-            EnclaveResponse::SignerAttestation(vec![]),
+            &EnclaveResponse::SignerAttestation(vec![]),
             bincode::config::standard(),
         )
         .unwrap();
         let error = bincode::serde::encode_to_vec(
-            EnclaveResponse::Error(String::new()),
+            &EnclaveResponse::Error(String::new()),
             bincode::config::standard(),
         )
         .unwrap();
         let attested_withdrawal = bincode::serde::encode_to_vec(
-            EnclaveResponse::AttestedWithdrawal(vec![]),
+            &EnclaveResponse::AttestedWithdrawal(vec![]),
             bincode::config::standard(),
         )
         .unwrap();
