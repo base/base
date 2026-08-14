@@ -3486,6 +3486,7 @@ dependencies = [
  "base-node-runner",
  "base-observability-events",
  "base-reth-cli",
+ "base-shadow-indexer",
  "base-txpool-rpc",
  "clap",
  "reth-cli-util",
@@ -3499,6 +3500,7 @@ dependencies = [
  "base-builder-core",
  "base-builder-metering",
  "base-bundles",
+ "base-execution-cli",
  "base-node-core",
  "base-observability-events",
  "clap",
@@ -4497,6 +4499,8 @@ dependencies = [
  "base-node-runner",
  "base-observability-events",
  "base-proofs-extension",
+ "base-shadow-indexer",
+ "base-shadow-indexer-db",
  "base-tx-forwarding",
  "base-txpool-rpc",
  "base-txpool-tracing",
@@ -6330,6 +6334,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-shadow-indexer"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus 2.2.0",
+ "alloy-primitives",
+ "anyhow",
+ "async-trait",
+ "base-common-consensus",
+ "base-node-runner",
+ "base-shadow-indexer-db",
+ "chrono",
+ "eyre",
+ "futures",
+ "mockall",
+ "reth-execution-types",
+ "reth-exex",
+ "reth-node-api",
+ "reth-primitives-traits",
+ "reth-tasks",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "base-shadow-indexer-db"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "base-common-consensus",
+ "chrono",
+ "reth-primitives-traits",
+ "serde",
+ "sqlx",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "base-shadow-metrics"
 version = "0.0.0"
 dependencies = [
@@ -6507,6 +6549,8 @@ dependencies = [
  "base-prover-service-client",
  "base-prover-service-protocol",
  "base-runtime",
+ "base-shadow-indexer",
+ "base-shadow-indexer-db",
  "base-test-utils",
  "base-tx-forwarding",
  "base-tx-manager",
@@ -6533,6 +6577,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "testcontainers",
+ "testcontainers-modules",
  "tokio",
  "tokio-util",
  "tower 0.5.3",

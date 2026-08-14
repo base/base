@@ -130,8 +130,13 @@ base-optimism-rpc.workspace = true
 base-prover-service-client.workspace = true
 base-prover-service-protocol.workspace = true
 
+# execution
+base-shadow-indexer.workspace = true
+base-shadow-indexer-db.workspace = true
+
 # misc
 indicatif.workspace = true
+testcontainers-modules = { workspace = true, features = ["postgres"] }
 
 [[bench]]
 name = "b20_zk_proving"

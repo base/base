@@ -7,6 +7,7 @@ use base_builder_core::{
     BuilderConfig, ExecutionMeteringMode, RejectionCache, SharedMeteringProvider,
 };
 use base_builder_metering::MeteringStore;
+use base_execution_cli::ShadowIndexerArgs;
 use base_node_core::{HasRollupArgs, RollupArgs};
 use base_observability_events::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, TransactionEventProducer,
@@ -248,6 +249,10 @@ pub struct Args {
     /// Transaction event journal configuration
     #[command(flatten)]
     pub transaction_events: TransactionEventsArgs,
+
+    /// Shadow indexer `ExEx` configuration
+    #[command(flatten)]
+    pub shadow_indexer: ShadowIndexerArgs,
 }
 
 impl HasRollupArgs for Args {
@@ -295,6 +300,7 @@ impl Default for Args {
             manifest_precheck_enabled: true,
             flashblocks: FlashblocksArgs::default(),
             transaction_events: TransactionEventsArgs::default(),
+            shadow_indexer: ShadowIndexerArgs::default(),
         }
     }
 }
