@@ -1333,24 +1333,30 @@ impl BasePayloadBuilderCtx {
             let predicate_rescan_start = Instant::now();
             for parked_hash in &affected_parked {
                 let mut predicate_read_failed = false;
-                let blocking_predicate = predicate_index
-                    .transaction(*parked_hash)
-                    .expect("affected transaction must remain indexed")
-                    .validity_predicates()
-                    .iter()
-                    .find_map(|predicate| match predicate.matches_state(evm.db_mut()) {
-                        Ok(true) => None,
-                        Ok(false) => Some(ValidityPredicateKey::for_predicate(predicate)),
-                        Err(error) => {
-                            warn!(
-                                target: "payload_builder",
-                                tx_hash = ?parked_hash,
-                                predicate = ?predicate,
-                                error = ?error,
-                                "failed to re-read validity predicate state"
-                            );
-                            predicate_read_failed = true;
-                            Some(ValidityPredicateKey::for_predicate(predicate))
+                let Some(parked_transaction) = predicate_index.transaction(*parked_hash) else {
+                    warn!(
+                        target: "payload_builder",
+                        tx_hash = ?parked_hash,
+                        "affected transaction is no longer predicate-indexed"
+                    );
+                    continue;
+                };
+                let blocking_predicate =
+                    parked_transaction.validity_predicates().iter().find_map(|predicate| {
+                        match predicate.matches_state(evm.db_mut()) {
+                            Ok(true) => None,
+                            Ok(false) => Some(ValidityPredicateKey::for_predicate(predicate)),
+                            Err(error) => {
+                                warn!(
+                                    target: "payload_builder",
+                                    tx_hash = ?parked_hash,
+                                    predicate = ?predicate,
+                                    error = ?error,
+                                    "failed to re-read validity predicate state"
+                                );
+                                predicate_read_failed = true;
+                                Some(ValidityPredicateKey::for_predicate(predicate))
+                            }
                         }
                     });
                 if predicate_read_failed {
