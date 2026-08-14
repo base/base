@@ -13,7 +13,7 @@ use axum::{
     routing::post,
 };
 use base_observability_events::{TransactionEvent, TransactionEventProducer, TransactionEventType};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use serde::{
     Deserialize, Serialize,
     de::{
@@ -48,6 +48,63 @@ pub const DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES: usize = 8 * 1024 * 1024;
 /// Each row uses 12 bind parameters, so this stays below Postgres' 65,535 bind
 /// parameter limit with room for future columns.
 pub const MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE: usize = 5_000;
+
+/// Default number of days to keep transaction events in Postgres.
+pub const DEFAULT_TRANSACTION_EVENT_RETENTION_DAYS: u32 = 90;
+/// Default number of expired rows deleted in one statement.
+const DEFAULT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE: u32 = 10_000;
+/// Default maximum delete statements per retention pass.
+const DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES: u32 = 100;
+const TRANSACTION_EVENT_RETENTION_LOCK_ID: i64 = 744_697_762_131_337_711;
+
+/// Configuration for one transaction event retention pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TransactionEventRetentionConfig {
+    /// Number of days to keep rows after `ingested_at`.
+    pub retention_days: u32,
+    /// Maximum rows deleted in one statement.
+    pub delete_batch_size: u32,
+    /// Maximum delete statements in one locked pass.
+    pub max_batches: u32,
+}
+
+impl Default for TransactionEventRetentionConfig {
+    fn default() -> Self {
+        Self {
+            retention_days: DEFAULT_TRANSACTION_EVENT_RETENTION_DAYS,
+            delete_batch_size: DEFAULT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE,
+            max_batches: DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES,
+        }
+    }
+}
+
+impl TransactionEventRetentionConfig {
+    /// Validates retention bounds before deleting expired rows.
+    pub fn validate(self) -> Result<Self> {
+        anyhow::ensure!(
+            self.retention_days > 0,
+            "transaction event retention days must be greater than zero"
+        );
+        anyhow::ensure!(
+            (1..=100_000).contains(&self.delete_batch_size),
+            "transaction event retention delete batch size must be between 1 and 100000"
+        );
+        anyhow::ensure!(
+            (1..=1_000).contains(&self.max_batches),
+            "transaction event retention max batches must be between 1 and 1000"
+        );
+        Ok(self)
+    }
+}
+
+/// Result of one locked retention pass.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransactionEventRetentionOutcome {
+    /// Expired rows deleted in this pass.
+    pub rows_deleted: u64,
+    /// Delete statements executed in this pass.
+    pub batches: u64,
+}
 
 /// Configuration for transaction event HTTP ingest.
 #[derive(Debug, Clone)]
@@ -332,6 +389,69 @@ impl PgTransactionEventSink {
         )?;
 
         Ok(())
+    }
+
+    /// Deletes expired `transaction_events` rows in bounded batches.
+    ///
+    /// Uses a session advisory lock so only one replica expires rows at a time.
+    /// Returns a zeroed outcome when another replica already holds the lock.
+    pub async fn expire_old_events(
+        &self,
+        config: TransactionEventRetentionConfig,
+    ) -> Result<TransactionEventRetentionOutcome> {
+        let config = config.validate()?;
+        let cutoff = Utc::now() - Duration::days(i64::from(config.retention_days));
+        let batch_size = i64::from(config.delete_batch_size);
+
+        let mut conn = self.pool.acquire().await?;
+        let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
+            .bind(TRANSACTION_EVENT_RETENTION_LOCK_ID)
+            .fetch_one(&mut *conn)
+            .await?;
+        if !locked {
+            return Ok(TransactionEventRetentionOutcome { rows_deleted: 0, batches: 0 });
+        }
+
+        let outcome: Result<TransactionEventRetentionOutcome> = async {
+            let mut rows_deleted = 0u64;
+            let mut batches = 0u64;
+            while batches < u64::from(config.max_batches) {
+                let deleted = sqlx::query(
+                    "WITH doomed AS ( \
+                        SELECT event_id \
+                        FROM transaction_events \
+                        WHERE ingested_at < $1 \
+                        LIMIT $2 \
+                     ) \
+                     DELETE FROM transaction_events \
+                     WHERE event_id IN (SELECT event_id FROM doomed)",
+                )
+                .bind(cutoff)
+                .bind(batch_size)
+                .execute(&mut *conn)
+                .await?
+                .rows_affected();
+                batches += 1;
+                if deleted == 0 {
+                    break;
+                }
+                rows_deleted += deleted;
+            }
+            Ok(TransactionEventRetentionOutcome { rows_deleted, batches })
+        }
+        .await;
+
+        if let Err(err) = sqlx::query("SELECT pg_advisory_unlock($1)")
+            .bind(TRANSACTION_EVENT_RETENTION_LOCK_ID)
+            .execute(&mut *conn)
+            .await
+        {
+            error!(error = %err, "failed to release transaction event retention lock");
+        }
+
+        let outcome = outcome?;
+        Metrics::transaction_events_expired().increment(outcome.rows_deleted);
+        Ok(outcome)
     }
 
     /// Checks optional transaction event storage readiness.
@@ -1000,6 +1120,26 @@ mod tests {
     fn raw_event(value: Value) -> RawTransactionEvent {
         let byte_len = serde_json::to_string(&value).unwrap().len();
         RawTransactionEvent { value, byte_len }
+    }
+
+    #[test]
+    fn validates_transaction_event_retention_bounds() {
+        assert!(TransactionEventRetentionConfig::default().validate().is_ok());
+        assert!(
+            TransactionEventRetentionConfig { retention_days: 0, ..Default::default() }
+                .validate()
+                .is_err()
+        );
+        assert!(
+            TransactionEventRetentionConfig { delete_batch_size: 0, ..Default::default() }
+                .validate()
+                .is_err()
+        );
+        assert!(
+            TransactionEventRetentionConfig { max_batches: 0, ..Default::default() }
+                .validate()
+                .is_err()
+        );
     }
 
     #[tokio::test]

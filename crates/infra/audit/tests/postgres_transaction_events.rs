@@ -11,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use audit_archiver_lib::{
     MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE, PgTransactionEventSink,
-    TransactionEventSchemaReadinessError, TransactionEventSink,
+    TransactionEventRetentionConfig, TransactionEventSchemaReadinessError, TransactionEventSink,
 };
 use base_observability_events::TransactionEvent;
 use chrono::Utc;
@@ -156,6 +156,66 @@ async fn postgres_sink_chunks_large_direct_inserts() -> anyhow::Result<()> {
             .await?;
     assert_eq!(count.0, i64::try_from(event_count)?);
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn postgres_retention_deletes_expired_rows_in_batches() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    let event_prefix = unique_event_id();
+
+    let events = (0..3).map(|index| event(&format!("{event_prefix}-{index}"))).collect::<Vec<_>>();
+    sink.insert_events(&events).await?;
+    sqlx::query(
+        "UPDATE transaction_events SET ingested_at = now() - interval '10 days' \
+         WHERE event_id IN ($1, $2)",
+    )
+    .bind(format!("{event_prefix}-0"))
+    .bind(format!("{event_prefix}-1"))
+    .execute(&pool)
+    .await?;
+
+    let outcome = sink
+        .expire_old_events(TransactionEventRetentionConfig {
+            retention_days: 7,
+            delete_batch_size: 1,
+            max_batches: 10,
+        })
+        .await?;
+    assert_eq!(outcome.rows_deleted, 2);
+    assert_eq!(outcome.batches, 3);
+
+    let remaining: Vec<String> = sqlx::query_scalar(
+        "SELECT event_id FROM transaction_events WHERE event_id LIKE $1 ORDER BY event_id",
+    )
+    .bind(format!("{event_prefix}-%"))
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(remaining, vec![format!("{event_prefix}-2")]);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn postgres_retention_skips_when_another_replica_holds_lock() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    let mut transaction = pool.begin().await?;
+    let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_xact_lock(744697762131337711)")
+        .fetch_one(&mut *transaction)
+        .await?;
+    assert!(locked);
+
+    let outcome = sink.expire_old_events(TransactionEventRetentionConfig::default()).await?;
+    assert_eq!(outcome.rows_deleted, 0);
+    assert_eq!(outcome.batches, 0);
+
+    transaction.rollback().await?;
     Ok(())
 }
 

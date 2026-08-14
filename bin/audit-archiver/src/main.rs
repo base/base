@@ -7,7 +7,8 @@ use audit_archiver_lib::{
     AuditArchiver, AuditArchiverApiServer, AuditArchiverRpc, DEFAULT_TRANSACTION_EVENT_BATCH_PATH,
     DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE, DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES,
     DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
-    PgTransactionEventSink, RpcEventReader, S3EventReaderWriter, TransactionEventIngestConfig,
+    DEFAULT_TRANSACTION_EVENT_RETENTION_DAYS, Metrics, PgTransactionEventSink, RpcEventReader,
+    S3EventReaderWriter, TransactionEventIngestConfig, TransactionEventRetentionConfig,
 };
 use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
@@ -24,7 +25,11 @@ use base_cli_utils::LogConfig;
 use clap::{Parser, ValueEnum};
 use jsonrpsee::server::{ServerBuilder, stop_channel};
 use moka::{policy::EvictionPolicy, sync::Cache};
-use tokio::{net::TcpListener, sync::mpsc};
+use tokio::{
+    net::TcpListener,
+    sync::mpsc,
+    time::{MissedTickBehavior, interval},
+};
 use tower::ServiceBuilder;
 use tracing::{error, info};
 
@@ -120,6 +125,22 @@ struct Args {
     #[arg(long, env = "TIPS_AUDIT_POSTGRES_MAX_CONNECTIONS", default_value = "10")]
     postgres_max_connections: u32,
 
+    /// Seconds between transaction-event retention delete passes.
+    #[arg(
+        long,
+        env = "TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS",
+        default_value = "3600"
+    )]
+    transaction_event_retention_interval_secs: u64,
+
+    /// Number of days to keep transaction events in Postgres.
+    #[arg(
+        long,
+        env = "TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_DAYS",
+        default_value_t = DEFAULT_TRANSACTION_EVENT_RETENTION_DAYS
+    )]
+    transaction_event_retention_days: u32,
+
     /// HTTP path for Vector transaction-event batch ingest.
     #[arg(
         long,
@@ -205,6 +226,13 @@ async fn run_server(args: Args) -> Result<()> {
         .clone()
         .ok_or_else(|| anyhow::anyhow!("TIPS_AUDIT_S3_BUCKET must be set for serve"))?;
 
+    let retention_config = TransactionEventRetentionConfig {
+        retention_days: args.transaction_event_retention_days,
+        ..TransactionEventRetentionConfig::default()
+    }
+    .validate()?;
+    let retention_interval = Duration::from_secs(args.transaction_event_retention_interval_secs);
+
     info!(
         s3_bucket = %s3_bucket,
         metrics_addr = %args.metrics.addr,
@@ -212,6 +240,8 @@ async fn run_server(args: Args) -> Result<()> {
         rpc_port = args.rpc_port,
         transaction_event_http_path = %args.transaction_event_http_path,
         transaction_event_http_enabled = args.postgres_url.is_some(),
+        transaction_event_retention_days = retention_config.retention_days,
+        transaction_event_retention_interval_secs = retention_interval.as_secs(),
         rpc_cache_capacity = args.rpc_cache_capacity,
         rpc_cache_ttl_secs = args.rpc_cache_ttl_secs,
         channel_buffer_size = args.channel_buffer_size,
@@ -257,6 +287,7 @@ async fn run_server(args: Args) -> Result<()> {
         }))
         .service(rpc_service);
 
+    let retention_sink = transaction_event_sink.clone();
     let health_router = health_router(transaction_event_sink.clone());
     let http_app = if let Some(sink) = transaction_event_sink {
         let config = TransactionEventIngestConfig {
@@ -287,11 +318,48 @@ async fn run_server(args: Args) -> Result<()> {
     );
 
     info!("Audit archiver initialized, starting main loop");
+    let retention_worker =
+        run_retention_worker(retention_sink, retention_config, retention_interval);
 
     tokio::select! {
         result = archiver.run() => result,
         result = http_server => {
             result.map_err(|e| anyhow::anyhow!("audit archiver HTTP server stopped unexpectedly: {e}"))
+        }
+        result = retention_worker => result,
+    }
+}
+
+async fn run_retention_worker(
+    transaction_event_sink: Option<PgTransactionEventSink>,
+    retention_config: TransactionEventRetentionConfig,
+    retention_interval: Duration,
+) -> Result<()> {
+    let Some(sink) = transaction_event_sink else {
+        return std::future::pending().await;
+    };
+
+    if retention_interval.is_zero() {
+        anyhow::bail!("transaction event retention interval must be greater than zero");
+    }
+    let mut ticker = interval(retention_interval);
+    ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+
+    loop {
+        ticker.tick().await;
+        match sink.expire_old_events(retention_config).await {
+            Ok(outcome) if outcome.rows_deleted > 0 => {
+                info!(
+                    rows_deleted = outcome.rows_deleted,
+                    batches = outcome.batches,
+                    "transaction event retention deleted expired rows"
+                );
+            }
+            Ok(_) => {}
+            Err(err) => {
+                Metrics::transaction_event_retention_failures().increment(1);
+                error!(error = %err, "transaction event retention failed");
+            }
         }
     }
 }
