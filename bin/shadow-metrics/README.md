@@ -1,16 +1,15 @@
 # `shadow-metrics`
 
-Noop mock service that connects to Postgres from config and exposes health
-probes. It performs no real metrics work; it is a scaffold that proves
-configuration-driven Postgres connectivity and Kubernetes-style health probes.
+Service process for shadow metrics. It connects to Postgres from config and
+exposes Kubernetes-style health probes.
 
 ## Behavior
 
-- `serve` (default): connects to Postgres when `SHADOW_METRICS_POSTGRES_URL` is
-  set, starts an HTTP health server (`GET /healthz`, `GET /readyz`), and runs an
-  idle heartbeat loop. `/readyz` verifies the Postgres schema is migrated when a
-  connection is configured; otherwise it always reports ready.
-- `migrate up`: runs pending Postgres migrations, then exits.
+On startup, the service connects to Postgres when
+`SHADOW_METRICS_POSTGRES_URL` is set, starts an HTTP health server (`GET
+/healthz`, `GET /readyz`), and runs an idle heartbeat loop. `/readyz` verifies
+the shadow-indexer schema is usable by the runtime role when a connection is
+configured; otherwise it always reports ready.
 
 ## Security Model
 

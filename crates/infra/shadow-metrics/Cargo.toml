@@ -11,6 +11,7 @@ edition.workspace = true
 workspace = true
 
 [dependencies]
+base-shadow-indexer-db.workspace = true
 anyhow = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
-sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "migrate", "macros", "tls-native-tls"] }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "tls-native-tls"] }

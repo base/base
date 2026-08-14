@@ -6356,6 +6356,7 @@ dependencies = [
  "chrono",
  "reth-primitives-traits",
  "serde",
+ "serde_json",
  "sqlx",
  "tokio",
  "tracing",
@@ -6366,6 +6367,7 @@ name = "base-shadow-metrics"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "base-shadow-indexer-db",
  "sqlx",
  "thiserror 2.0.19",
 ]

@@ -1,4 +1,4 @@
-//! Shadow-metrics noop mock service entry point.
+//! Shadow-metrics service entry point.
 
 use std::{net::SocketAddr, time::Duration};
 
@@ -11,39 +11,22 @@ use axum::{
     routing::get,
 };
 use base_cli_utils::LogConfig;
-use base_shadow_metrics::ShadowMetricsSink;
-use clap::{Parser, ValueEnum};
+use base_shadow_metrics::ShadowMetricsStore;
+use clap::Parser;
 use tokio::net::TcpListener;
 use tracing::{error, info};
 
 base_cli_utils::define_log_args!("SHADOW_METRICS");
 base_cli_utils::define_metrics_args!("SHADOW_METRICS", 9003);
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
-enum Command {
-    Serve,
-    Migrate,
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-enum MigrationDirection {
-    Up,
-}
-
 #[derive(Debug, Clone)]
 struct HealthState {
-    sink: Option<ShadowMetricsSink>,
+    store: Option<ShadowMetricsStore>,
 }
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    #[arg(value_enum, default_value_t = Command::Serve)]
-    command: Command,
-
-    #[arg(value_enum)]
-    migration_direction: Option<MigrationDirection>,
-
     #[command(flatten)]
     log: LogArgs,
 
@@ -82,35 +65,14 @@ async fn main() -> Result<()> {
         .init()
         .expect("Failed to install Prometheus exporter");
 
-    if matches!(args.command, Command::Migrate) {
-        run_migrations(&args).await?;
-        return Ok(());
-    }
-
     run_server(args).await
-}
-
-async fn run_migrations(args: &Args) -> Result<()> {
-    if !matches!(args.migration_direction, Some(MigrationDirection::Up)) {
-        anyhow::bail!("migration command requires an explicit direction: migrate up");
-    }
-
-    let postgres_url = args
-        .postgres_url
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("SHADOW_METRICS_POSTGRES_URL must be set for migrations"))?;
-
-    info!("Running shadow-metrics Postgres migrations");
-    ShadowMetricsSink::migrate(postgres_url).await?;
-    info!("Shadow-metrics Postgres migrations complete");
-    Ok(())
 }
 
 async fn run_server(args: Args) -> Result<()> {
     let http_addr = SocketAddr::from(([0, 0, 0, 0], args.http_port));
 
-    let sink = if let Some(postgres_url) = &args.postgres_url {
-        Some(ShadowMetricsSink::connect(postgres_url, args.postgres_max_connections).await?)
+    let store = if let Some(postgres_url) = &args.postgres_url {
+        Some(ShadowMetricsStore::connect(postgres_url, args.postgres_max_connections).await?)
     } else {
         None
     };
@@ -121,10 +83,10 @@ async fn run_server(args: Args) -> Result<()> {
         metrics_port = args.metrics.port,
         postgres_enabled = args.postgres_url.is_some(),
         heartbeat_interval_secs = args.heartbeat_interval_secs,
-        "Starting shadow-metrics noop service"
+        "Starting shadow-metrics service"
     );
 
-    let app = health_router(sink);
+    let app = health_router(store);
     let http_listener = TcpListener::bind(http_addr).await?;
     let http_server = axum::serve(http_listener, app);
     info!(http_addr = %http_addr, "Shadow-metrics health server started");
@@ -175,11 +137,11 @@ async fn run_heartbeat(interval: Duration) -> Result<()> {
     }
 }
 
-fn health_router(sink: Option<ShadowMetricsSink>) -> Router {
+fn health_router(store: Option<ShadowMetricsStore>) -> Router {
     Router::new()
         .route("/healthz", get(healthz_handler))
         .route("/readyz", get(readyz_handler))
-        .with_state(HealthState { sink })
+        .with_state(HealthState { store })
 }
 
 async fn healthz_handler() -> &'static str {
@@ -187,8 +149,8 @@ async fn healthz_handler() -> &'static str {
 }
 
 async fn readyz_handler(State(state): State<HealthState>) -> Response {
-    let readiness = match &state.sink {
-        Some(sink) => sink.check_schema_ready().await,
+    let readiness = match &state.store {
+        Some(store) => store.check_schema_ready().await,
         None => Ok(()),
     };
     match readiness {
