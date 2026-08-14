@@ -2,7 +2,6 @@
 
 use std::{error::Error as StdError, fmt, sync::Arc};
 
-use super::utils::{get_agg_proof_stdin, get_sp1_stdin};
 use alloy_primitives::{Address, B256};
 use base_l1_head::{L1HeadCalculator, L1HeadError};
 use base_proof_host::Metrics;
@@ -11,6 +10,8 @@ use base_proof_zk_witness::{fetcher::OPSuccinctDataFetcher, host::SuccinctHost};
 use sp1_sdk::{SP1ProofWithPublicValues, SP1Stdin, SP1VerifyingKey};
 use thiserror::Error;
 use tracing::{debug, info};
+
+use super::utils::{get_agg_proof_stdin, get_sp1_stdin};
 
 /// Inputs to [`OpSuccinctWitnessProvider::generate_witness`].
 #[derive(Debug, Clone, Copy)]

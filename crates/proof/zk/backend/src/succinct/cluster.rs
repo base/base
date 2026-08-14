@@ -9,7 +9,6 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use super::utils::{ClusterArtifactStore, ClusterProofConfig};
 use async_trait::async_trait;
 use base_proof_zk_host::{ZkProver, ZkProverError, ZkSessionState};
 use base_proof_zk_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL;
@@ -33,6 +32,7 @@ use sp1_sdk::{
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
+use super::utils::{ClusterArtifactStore, ClusterProofConfig};
 use crate::succinct::{
     L1HeadSource, OpSuccinctWitnessProvider, SuccinctRpcConfig, SuccinctZkProverBuildError,
     SuccinctZkProverBuilder, WitnessParams,
