@@ -133,8 +133,17 @@ base-prover-service-protocol.workspace = true
 # execution
 base-shadow-indexer.workspace = true
 base-shadow-indexer-db.workspace = true
+base-shadow-metrics = { workspace = true, features = ["metrics"] }
+
+# reth
+reth-primitives-traits.workspace = true
+
+# database
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "json", "migrate", "macros", "tls-native-tls"] }
 
 # misc
+chrono.workspace = true
+anyhow.workspace = true
 indicatif.workspace = true
 testcontainers-modules = { workspace = true, features = ["postgres"] }
 
