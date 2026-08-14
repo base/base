@@ -145,6 +145,7 @@ fn test_config(bucket: &str, tmp: &Path) -> base_snapshotter::SnapshotterConfig 
         s3_access_key_id: None,
         s3_secret_access_key: None,
         public_base_url: None,
+        upload_proofs: false,
     }
 }
 
@@ -758,6 +759,7 @@ async fn selective_compression_skips_finalized_chunks() -> Result<()> {
         Some(2_000_000),
         Some(500_000),
         &remote,
+        false,
     )?;
 
     let filenames: Vec<String> = files
@@ -826,6 +828,7 @@ async fn generate_and_upload_proofs_to_minio() -> Result<()> {
         Some(0),
         Some(500_000),
         &HashMap::new(),
+        true,
     )?;
 
     assert!(

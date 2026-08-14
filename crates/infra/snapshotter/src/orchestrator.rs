@@ -195,6 +195,7 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
         let blocks_per_file = self.config.blocks_per_file;
         let remote_for_gen = remote_static_files;
         let previous_chunk_output_files_for_gen = previous_chunk_output_files;
+        let upload_proofs = self.config.upload_proofs;
 
         let files = tokio::task::spawn_blocking(move || {
             SnapshotGenerator::generate_manifest_with_previous_chunk_output_files(
@@ -205,6 +206,7 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
                 blocks_per_file,
                 &remote_for_gen,
                 &previous_chunk_output_files_for_gen,
+                upload_proofs,
             )
         })
         .await

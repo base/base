@@ -118,6 +118,7 @@ impl SnapshotGenerator {
         block: Option<u64>,
         blocks_per_file: Option<u64>,
         remote_static_files: &HashMap<String, u64>,
+        upload_proofs: bool,
     ) -> Result<Vec<PathBuf>> {
         Self::generate_manifest_with_previous_chunk_output_files(
             source_datadir,
@@ -127,6 +128,7 @@ impl SnapshotGenerator {
             blocks_per_file,
             remote_static_files,
             &HashMap::new(),
+            upload_proofs,
         )
     }
 
@@ -135,6 +137,7 @@ impl SnapshotGenerator {
     /// This avoids a long serial pre-pass over finalized chunks: when `previous_chunk_output_files`
     /// contains a skipped archive's `OutputFileChecksum` entries, the generator can copy those
     /// manifest rows directly instead of re-hashing local files that will not be re-uploaded.
+    #[allow(clippy::too_many_arguments)]
     pub fn generate_manifest_with_previous_chunk_output_files(
         source_datadir: &Path,
         output_dir: &Path,
@@ -143,6 +146,7 @@ impl SnapshotGenerator {
         blocks_per_file: Option<u64>,
         remote_static_files: &HashMap<String, u64>,
         previous_chunk_output_files: &HashMap<String, Vec<OutputFileChecksum>>,
+        upload_proofs: bool,
     ) -> Result<Vec<PathBuf>> {
         std::fs::create_dir_all(output_dir)
             .with_context(|| format!("failed to create output dir {}", output_dir.display()))?;
@@ -349,7 +353,8 @@ impl SnapshotGenerator {
             );
         }
 
-        let proofs_files = proofs_source_files(source_datadir)?;
+        let proofs_files =
+            if upload_proofs { proofs_source_files(source_datadir)? } else { Vec::new() };
         if !proofs_files.is_empty() {
             let (proofs_size, proofs_output_files) =
                 package_single_component(output_dir, "proofs.tar.zst", &proofs_files)?;
@@ -950,6 +955,7 @@ mod tests {
             Some(0),
             Some(500_000),
             &remote,
+            false,
         )
         .unwrap();
 
@@ -989,6 +995,7 @@ mod tests {
             Some(0),
             Some(500_000),
             &remote,
+            true,
         )
         .unwrap();
 
@@ -1038,6 +1045,7 @@ mod tests {
             Some(0),
             Some(500_000),
             &remote,
+            true,
         )
         .unwrap();
 
@@ -1052,6 +1060,44 @@ mod tests {
         assert!(
             !manifest.components.contains_key("proofs"),
             "manifest should omit proofs component when proofs/ is missing"
+        );
+    }
+
+    #[test]
+    fn generate_manifest_skips_proofs_when_upload_disabled() {
+        let source = tempfile::tempdir().unwrap();
+        let output = tempfile::tempdir().unwrap();
+        let db_dir = source.path().join("db");
+        std::fs::create_dir_all(&db_dir).unwrap();
+        std::fs::write(db_dir.join("mdbx.dat"), b"state-data").unwrap();
+
+        let proofs_dir = source.path().join("proofs");
+        std::fs::create_dir_all(&proofs_dir).unwrap();
+        std::fs::write(proofs_dir.join("CURRENT"), b"MANIFEST-000014\n").unwrap();
+
+        let remote = HashMap::new();
+        let files = SnapshotGenerator::generate_manifest(
+            source.path(),
+            output.path(),
+            8453,
+            Some(0),
+            Some(500_000),
+            &remote,
+            false,
+        )
+        .unwrap();
+
+        assert!(
+            !files.iter().any(|f| f.file_name().unwrap() == "proofs.tar.zst"),
+            "should not produce proofs.tar.zst when upload_proofs is disabled"
+        );
+
+        let manifest_content =
+            std::fs::read_to_string(output.path().join("manifest.json")).unwrap();
+        let manifest: SnapshotManifest = serde_json::from_str(&manifest_content).unwrap();
+        assert!(
+            !manifest.components.contains_key("proofs"),
+            "manifest should omit proofs component when upload_proofs is disabled"
         );
     }
 
@@ -1087,6 +1133,7 @@ mod tests {
             Some(2_000_000),
             Some(500_000),
             &remote,
+            false,
         )
         .unwrap();
 
@@ -1149,6 +1196,7 @@ mod tests {
             Some(500_000),
             &remote,
             &previous_chunk_output_files,
+            false,
         )
         .unwrap();
 
