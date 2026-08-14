@@ -405,6 +405,7 @@ mod tests {
         assert!(error.message().contains("storage proof"));
     }
 
+    #[tokio::test]
     async fn registrar_rpc_server_uses_shared_registration_checker() {
         let server = Arc::new(EnclaveServer::new_local().unwrap());
         let transport = Arc::new(NitroTransport::local(server));
