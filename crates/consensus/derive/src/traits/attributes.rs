@@ -4,6 +4,7 @@ use alloc::boxed::Box;
 use core::fmt::Debug;
 
 use alloy_eips::BlockNumHash;
+use alloy_primitives::Sealed;
 use async_trait::async_trait;
 use base_common_consensus::BaseBlock;
 use base_common_rpc_types_engine::BasePayloadAttributes;
@@ -46,15 +47,15 @@ pub trait AttributesBuilder: Debug + Send {
     /// This can be done by either setting the `no_tx_pool` to false as sequencer, or by appending
     /// batch transactions as the verifier.
     ///
-    /// `parent_block` is the L2 parent payload when the caller already has it (the sequencer
-    /// just built it). When its hash matches `l2_parent`, the parent [`SystemConfig`] is decoded
-    /// from it instead of reading the execution layer.
+    /// `parent_block` is the sealed L2 parent payload when the caller already has it (the
+    /// sequencer just built it). When its memoized hash matches `l2_parent`, the parent
+    /// [`SystemConfig`] is decoded from it instead of reading the execution layer.
     ///
     /// [`SystemConfig`]: base_common_genesis::SystemConfig
     async fn prepare_payload_attributes(
         &mut self,
         l2_parent: L2BlockInfo,
         epoch: BlockNumHash,
-        parent_block: Option<&BaseBlock>,
+        parent_block: Option<&Sealed<BaseBlock>>,
     ) -> PipelineResult<BasePayloadAttributes>;
 }

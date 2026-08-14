@@ -3,6 +3,7 @@
 use alloc::{boxed::Box, vec::Vec};
 
 use alloy_eips::BlockNumHash;
+use alloy_primitives::Sealed;
 use async_trait::async_trait;
 use base_common_consensus::BaseBlock;
 use base_common_genesis::SystemConfig;
@@ -29,7 +30,7 @@ impl AttributesBuilder for TestAttributesBuilder {
         &mut self,
         _l2_parent: L2BlockInfo,
         _epoch: BlockNumHash,
-        _parent_block: Option<&BaseBlock>,
+        _parent_block: Option<&Sealed<BaseBlock>>,
     ) -> PipelineResult<BasePayloadAttributes> {
         match self.attributes.pop() {
             Some(Ok(attrs)) => Ok(attrs),

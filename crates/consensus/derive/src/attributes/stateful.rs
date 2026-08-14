@@ -1,11 +1,11 @@
 //! The [`AttributesBuilder`] and it's default implementation.
 
-use alloc::{boxed::Box, fmt::Debug, string::ToString, sync::Arc, vec, vec::Vec};
+use alloc::{boxed::Box, fmt::Debug, format, string::ToString, sync::Arc, vec, vec::Vec};
 
 use alloy_consensus::{Eip658Value, Receipt};
 use alloy_eips::{BlockNumHash, eip2718::Encodable2718};
 use alloy_genesis::ChainConfig;
-use alloy_primitives::{Address, B256, Bytes};
+use alloy_primitives::{Address, B256, Bytes, Sealed};
 use alloy_rlp::Encodable;
 use alloy_rpc_types_engine::PayloadAttributes;
 use async_trait::async_trait;
@@ -73,7 +73,7 @@ where
         &mut self,
         l2_parent: L2BlockInfo,
         epoch: BlockNumHash,
-        parent_block: Option<&BaseBlock>,
+        parent_block: Option<&Sealed<BaseBlock>>,
     ) -> PipelineResult<BasePayloadAttributes> {
         let l1_header;
         let deposit_transactions: Vec<Bytes>;
@@ -86,8 +86,8 @@ where
         // Hash must match so a stashed block from before a reorg cannot be used. Decode
         // failure falls through to the EL.
         let mut sys_config = match parent_block
-            .filter(|block| block.header.hash_slow() == l2_parent.block_info.hash)
-            .and_then(|block| match to_system_config(block, &self.rollup_cfg) {
+            .filter(|block| block.hash() == l2_parent.block_info.hash)
+            .and_then(|block| match to_system_config(block.inner(), &self.rollup_cfg) {
                 Ok(config) => Some(config),
                 Err(err) => {
                     warn!(
@@ -121,7 +121,11 @@ where
                 }
                 to_system_config(&block, &self.rollup_cfg).map_err(|err| {
                     warn!(target: "attributes", error = ?err, number = block.header.number, "Failed to decode system config from parent block");
-                    PipelineError::Provider("system config conversion failed".to_string()).temp()
+                    PipelineError::Provider(format!(
+                        "system config conversion failed for block {}",
+                        block.header.number
+                    ))
+                    .temp()
                 })?
             }
         };
@@ -994,6 +998,12 @@ mod tests {
         }
     }
 
+    /// Memoizes a block's header hash for parent-payload tests.
+    fn sealed_block(block: BaseBlock) -> Sealed<BaseBlock> {
+        let hash = block.header.hash_slow();
+        Sealed::new_unchecked(block, hash)
+    }
+
     /// Installs a decodable block built from `header` into the fetcher and returns its hash:
     /// the EL fallback verifies the fetched block's hash against the parent hash, so tests
     /// exercising it need the parent hash to be a real block hash.
@@ -1007,8 +1017,12 @@ mod tests {
     #[tokio::test]
     async fn test_parent_block_skips_el_read() {
         let (mut builder, epoch, mut l2_parent) = transition_setup();
-        let parent = seedable_block(Header { number: 1, timestamp: 100, ..Default::default() });
-        l2_parent.block_info.hash = parent.header.hash_slow();
+        let parent = sealed_block(seedable_block(Header {
+            number: 1,
+            timestamp: 100,
+            ..Default::default()
+        }));
+        l2_parent.block_info.hash = parent.hash();
         builder.config_fetcher.clear();
         builder.prepare_payload_attributes(l2_parent, epoch, Some(&parent)).await.unwrap();
         assert!(builder.config_fetcher.block_calls.is_empty());
@@ -1024,7 +1038,7 @@ mod tests {
     #[tokio::test]
     async fn test_parent_block_hash_mismatch_falls_back_to_el() {
         let (mut builder, epoch, l2_parent) = transition_setup();
-        let other = seedable_block(Header { number: 99, ..Default::default() });
+        let other = sealed_block(seedable_block(Header { number: 99, ..Default::default() }));
         builder.prepare_payload_attributes(l2_parent, epoch, Some(&other)).await.unwrap();
         assert_eq!(builder.config_fetcher.block_calls, vec![1]);
     }
@@ -1049,13 +1063,13 @@ mod tests {
     #[tokio::test]
     async fn test_parent_block_wins_over_el_value() {
         let (mut builder, epoch, mut l2_parent) = transition_setup();
-        let parent = seedable_block(Header {
+        let parent = sealed_block(seedable_block(Header {
             number: 1,
             timestamp: 100,
             gas_limit: 40_000_000,
             ..Default::default()
-        });
-        l2_parent.block_info.hash = parent.header.hash_slow();
+        }));
+        l2_parent.block_info.hash = parent.hash();
         let payload =
             builder.prepare_payload_attributes(l2_parent, epoch, Some(&parent)).await.unwrap();
         assert_eq!(payload.gas_limit, Some(40_000_000));
@@ -1066,11 +1080,11 @@ mod tests {
     async fn test_undecodable_parent_block_falls_back_to_el() {
         let (mut builder, epoch, l2_parent) = transition_setup();
         // Same header hash as the parent, but no L1 info tx, so `to_system_config` fails.
-        let undecodable = BaseBlock {
+        let undecodable = sealed_block(BaseBlock {
             header: Header { number: 1, timestamp: 100, ..Default::default() },
             body: BlockBody::default(),
-        };
-        assert_eq!(undecodable.header.hash_slow(), l2_parent.block_info.hash);
+        });
+        assert_eq!(undecodable.hash(), l2_parent.block_info.hash);
         builder.prepare_payload_attributes(l2_parent, epoch, Some(&undecodable)).await.unwrap();
         assert_eq!(builder.config_fetcher.block_calls, vec![1]);
     }
@@ -1104,18 +1118,18 @@ mod tests {
 
         // The sequencer inserted block 2 (the first Holocene block), whose `extra_data`
         // persists denominator 250 and elasticity 6.
-        let inserted = seedable_block(Header {
+        let inserted = sealed_block(seedable_block(Header {
             number: 2,
             timestamp: 102,
             extra_data: bytes!("00000000fa00000006"),
             ..Default::default()
-        });
+        }));
 
         // Build block 3 on the post-fork parent payload: the persisted parameters come from
         // the payload and the EL is never consulted.
         let l2_parent = L2BlockInfo {
             block_info: BlockInfo {
-                hash: inserted.header.hash_slow(),
+                hash: inserted.hash(),
                 number: 2,
                 timestamp: 102,
                 parent_hash: B256::ZERO,

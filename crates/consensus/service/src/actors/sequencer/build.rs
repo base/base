@@ -7,6 +7,7 @@
 
 use std::{sync::Arc, time::Instant};
 
+use alloy_primitives::Sealed;
 use alloy_rpc_types_engine::PayloadId;
 use base_common_consensus::BaseBlock;
 use base_common_genesis::RollupConfig;
@@ -69,7 +70,7 @@ pub struct PayloadBuilder<A: AttributesBuilder, O: OriginSelector, E: SequencerE
     pub origin_selector: O,
     /// Last L2 block this sequencer inserted, passed into the next
     /// [`AttributesBuilder::prepare_payload_attributes`] as the parent payload.
-    pub last_inserted_block: Option<BaseBlock>,
+    pub last_inserted_block: Option<Sealed<BaseBlock>>,
     /// Shared recovery mode flag.
     pub recovery_mode: RecoveryModeGuard,
     /// The rollup configuration.
@@ -146,6 +147,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
                 self.engine_client
                     .reset_engine_forkchoice(ResetReason::L1OriginUnavailable)
                     .await?;
+                self.last_inserted_block = None;
                 return Ok(BuildOutcome::Deferred);
             }
             Err(err @ L1OriginSelectorError::NextL1OriginOrphaned { .. }) => {
@@ -155,6 +157,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
                     "Next L1 origin orphaned the accepted current origin, triggering engine reset"
                 );
                 self.engine_client.reset_engine_forkchoice(ResetReason::L1OriginOrphaned).await?;
+                self.last_inserted_block = None;
                 return Ok(BuildOutcome::Deferred);
             }
             Err(err @ L1OriginSelectorError::NotEnoughData(_)) => {
@@ -186,6 +189,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
                 "Cannot build new L2 block on inconsistent L1 origin, resetting engine"
             );
             self.engine_client.reset_engine_forkchoice(ResetReason::L1OriginInconsistent).await?;
+            self.last_inserted_block = None;
             return Ok(BuildOutcome::Deferred);
         }
 
@@ -201,6 +205,14 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
         unsafe_head: L2BlockInfo,
         l1_origin: BlockInfo,
     ) -> Result<Option<AttributesWithParent>, SequencerActorError> {
+        if self
+            .last_inserted_block
+            .as_ref()
+            .is_some_and(|block| block.hash() != unsafe_head.block_info.hash)
+        {
+            self.last_inserted_block = None;
+        }
+
         let mut attributes = match self
             .attributes_builder
             .prepare_payload_attributes(
@@ -213,6 +225,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
             Ok(attrs) => attrs,
             Err(PipelineErrorKind::Temporary(_)) => return Ok(None),
             Err(PipelineErrorKind::Reset(err)) => {
+                self.last_inserted_block = None;
                 // The attributes builder returned a reset error. These errors fall into two
                 // categories, neither of which requires an engine reset here:
                 //

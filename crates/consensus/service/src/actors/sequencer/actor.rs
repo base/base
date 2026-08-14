@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use alloy_primitives::B256;
+use alloy_primitives::{B256, Sealed};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::AttributesBuilder;
@@ -215,6 +215,7 @@ where
         &mut self,
         next_payload: &mut Option<UnsealedPayloadHandle>,
     ) -> Result<(), SequencerActorError> {
+        self.builder.last_inserted_block = None;
         loop {
             let engine_client = Arc::clone(&self.engine_client);
             let shadow_cycle_coordinated = self.is_shadow_sequencer();
@@ -283,6 +284,7 @@ where
             shadow_state.abort_reconciliation();
         }
         self.sealer = None;
+        self.builder.last_inserted_block = None;
         pipeline.pending_build_parent = None;
         let canonical_head = self.engine_client.get_unsafe_head().await?;
         *shadow = Some(ShadowSequencingState::new(canonical_head)?);
@@ -364,8 +366,12 @@ where
         let reset_requested =
             self.handle_admin_query(&mut pipeline.next_payload_to_seal, query).await;
 
-        if reset_requested && self.is_shadow_sequencer() {
-            self.reset_shadow_cycle_after_admin(shadow, pipeline, build_ticker).await?;
+        if reset_requested {
+            if self.is_shadow_sequencer() {
+                self.reset_shadow_cycle_after_admin(shadow, pipeline, build_ticker).await?;
+            } else {
+                self.builder.last_inserted_block = None;
+            }
         }
 
         if active_before && !self.is_active {
@@ -442,16 +448,23 @@ where
 
                 if let Some(sealer) = self.sealer.take() {
                     Metrics::sequencer_seal_pipeline_duration().record(sealer.started_at.elapsed());
-                    // Keep the inserted payload so the next build can decode SystemConfig from it
-                    // instead of reading the execution layer.
-                    match sealer.envelope.try_into_block() {
-                        Ok(block) => {
-                            self.builder.last_inserted_block = Some(block);
+                    if self.is_active {
+                        // Keep the inserted payload so the next build can decode SystemConfig from
+                        // it instead of reading the execution layer. Memoize the acknowledged
+                        // inserted hash with the decoded block.
+                        let block_hash = inserted_head.block_info.hash;
+                        match sealer.envelope.try_into_block() {
+                            Ok(block) => {
+                                self.builder.last_inserted_block =
+                                    Some(Sealed::new_unchecked(block, block_hash));
+                            }
+                            Err(err) => {
+                                warn!(target: "sequencer", error = ?err, "Failed to decode inserted payload as parent block");
+                                self.builder.last_inserted_block = None;
+                            }
                         }
-                        Err(err) => {
-                            warn!(target: "sequencer", error = ?err, "Failed to decode inserted payload as parent block");
-                            self.builder.last_inserted_block = None;
-                        }
+                    } else {
+                        self.builder.last_inserted_block = None;
                     }
                 }
 

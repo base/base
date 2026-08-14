@@ -199,6 +199,7 @@ where
         // Discard any pre-built payload so a subsequent start_sequencer always builds on a fresh,
         // accurate head.
         next_payload.take();
+        self.builder.last_inserted_block = None;
         self.update_metrics();
 
         if self.sealer.is_some() {

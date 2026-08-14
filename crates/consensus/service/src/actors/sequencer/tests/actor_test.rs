@@ -768,10 +768,13 @@ async fn test_seal_payload_failure_propagates() {
 
 // --- handle_seal_step_result tests ---
 
+#[rstest]
+#[case(true)]
+#[case(false)]
 #[tokio::test]
-async fn test_inserted_outcome_stores_last_block() {
+async fn test_inserted_outcome_caches_last_block_only_while_active(#[case] is_active: bool) {
     let mut actor = test_actor();
-    actor.is_active = false;
+    actor.is_active = is_active;
     actor.sealer = Some(PayloadSealer::new_private(dummy_envelope()));
 
     let mut pipeline = BuildPipelineState::default();
@@ -789,11 +792,14 @@ async fn test_inserted_outcome_stores_last_block() {
         .await
         .unwrap();
 
-    let inserted: BaseBlock = dummy_envelope().try_into_block().unwrap();
-    assert_eq!(
-        actor.builder.last_inserted_block.as_ref().map(|block| block.header.hash_slow()),
-        Some(inserted.header.hash_slow())
-    );
+    if is_active {
+        let inserted: BaseBlock = dummy_envelope().try_into_block().unwrap();
+        let cached = actor.builder.last_inserted_block.as_ref().unwrap();
+        assert_eq!(cached.hash(), B256::ZERO);
+        assert_eq!(cached.inner(), &inserted);
+    } else {
+        assert!(actor.builder.last_inserted_block.is_none());
+    }
     assert!(actor.sealer.is_none());
 }
 

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use alloy_primitives::B256;
+use alloy_primitives::{B256, Sealed};
+use base_common_consensus::BaseBlock;
 use base_consensus_rpc::SequencerAdminAPIError;
 use base_protocol::{BlockInfo, L2BlockInfo};
 use jsonrpsee::core::ClientError;
@@ -404,6 +405,8 @@ async fn test_stop_sequencer_success(
     let mut actor = test_actor();
     actor.engine_client = Arc::new(client);
     actor.is_active = !already_stopped;
+    actor.builder.last_inserted_block =
+        Some(Sealed::new_unchecked(BaseBlock::default(), B256::ZERO));
 
     // verify starting state
     let result = actor.is_sequencer_active().await;
@@ -426,6 +429,7 @@ async fn test_stop_sequencer_success(
     let result = actor.is_sequencer_active().await;
     assert!(result.is_ok());
     assert!(!result.unwrap());
+    assert!(actor.builder.last_inserted_block.is_none());
 }
 
 #[rstest]

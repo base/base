@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use alloy_eips::eip2718::Encodable2718;
-use alloy_primitives::Bytes;
+use alloy_primitives::{Bytes, Sealed};
 use async_trait::async_trait;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use base_common_rpc_types_engine::BasePayloadAttributes;
@@ -41,7 +41,7 @@ impl AttributesBuilder for ActionSequencerAttributesBuilder {
         &mut self,
         l2_parent: L2BlockInfo,
         epoch: alloy_eips::BlockNumHash,
-        parent_block: Option<&BaseBlock>,
+        parent_block: Option<&Sealed<BaseBlock>>,
     ) -> PipelineResult<BasePayloadAttributes> {
         let mut attrs =
             self.inner.prepare_payload_attributes(l2_parent, epoch, parent_block).await?;
