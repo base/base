@@ -490,7 +490,7 @@ mod tests {
     }
 
     #[test]
-    fn block_number_predicate_round_trips() {
+    fn flashblock_index_predicate_round_trips() {
         let predicate = ValidityPredicate::FlashblockIndex {
             op: ValidityOperator::LessThanOrEqual,
             value: U256::from(7),
@@ -503,6 +503,30 @@ mod tests {
                 "params": {
                     "op": "<=",
                     "value": "0x7",
+                },
+            })
+        );
+        assert_eq!(
+            serde_json::from_value::<ValidityPredicate>(serde_json::to_value(&predicate).unwrap())
+                .unwrap(),
+            predicate
+        );
+    }
+
+    #[test]
+    fn block_number_predicate_round_trips() {
+        let predicate = ValidityPredicate::BlockNumber {
+            op: ValidityOperator::GreaterThanOrEqual,
+            value: U256::from(0x1234),
+        };
+
+        assert_eq!(
+            serde_json::to_value(&predicate).unwrap(),
+            json!({
+                "type": "block_number",
+                "params": {
+                    "op": ">=",
+                    "value": "0x1234",
                 },
             })
         );
