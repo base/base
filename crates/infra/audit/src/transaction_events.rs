@@ -61,6 +61,51 @@ const DEFAULT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE: u32 = 10_000;
 const DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES: u32 = 100;
 const TRANSACTION_EVENT_RETENTION_LOCK_ID: i64 = 744_697_762_131_337_711;
 
+/// Every `TransactionEventType` variant. Keep this aligned with the enum so
+/// new types are expired; `for_event_type` stays the class assignment.
+const ALL_TRANSACTION_EVENT_TYPES: &[TransactionEventType] = &[
+    TransactionEventType::ProxyReceived,
+    TransactionEventType::ProxyRejected,
+    TransactionEventType::ProxyValidationAccepted,
+    TransactionEventType::ProxyValidationRejected,
+    TransactionEventType::ProxyRoutedToBackend,
+    TransactionEventType::ProxyBackendSuccess,
+    TransactionEventType::ProxyBackendFailure,
+    TransactionEventType::ProxyIngressRpcAttempt,
+    TransactionEventType::ProxyIngressRpcSuccess,
+    TransactionEventType::ProxyIngressRpcFailure,
+    TransactionEventType::IngressReceived,
+    TransactionEventType::SimulationStarted,
+    TransactionEventType::SimulationSucceeded,
+    TransactionEventType::SimulationFailed,
+    TransactionEventType::IngressMeteringSendAttempt,
+    TransactionEventType::IngressMeteringSendSuccess,
+    TransactionEventType::IngressMeteringSendFailure,
+    TransactionEventType::IngressMeteringSendDropped,
+    TransactionEventType::Pending,
+    TransactionEventType::Queued,
+    TransactionEventType::PendingToQueued,
+    TransactionEventType::QueuedToPending,
+    TransactionEventType::Dropped,
+    TransactionEventType::Replaced,
+    TransactionEventType::Overflowed,
+    TransactionEventType::TxpoolBuilderForwardAttempt,
+    TransactionEventType::TxpoolBuilderForwardSuccess,
+    TransactionEventType::TxpoolBuilderForwardFailure,
+    TransactionEventType::TxpoolBuilderForwardDropped,
+    TransactionEventType::TxpoolBuilderConsumed,
+    TransactionEventType::TxpoolValidatedInsertAccepted,
+    TransactionEventType::TxpoolValidatedInsertRejected,
+    TransactionEventType::BuilderConsidered,
+    TransactionEventType::BuilderAccepted,
+    TransactionEventType::BuilderRejected,
+    TransactionEventType::BuilderIncluded,
+    TransactionEventType::BuilderPayloadFinalized,
+    TransactionEventType::BuilderFlashblockStarted,
+    TransactionEventType::BuilderFlashblockPublished,
+    TransactionEventType::BuilderFlashblockBuildStopped,
+];
+
 /// Retention class used to pick a delete cutoff for an event type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransactionEventRetentionClass {
@@ -133,58 +178,14 @@ impl TransactionEventRetentionClass {
 
     /// Event-type labels stored in Postgres for this class.
     fn event_type_labels(self) -> Vec<String> {
-        self.event_types().iter().map(ToString::to_string).collect()
+        self.event_types().map(|event_type| event_type.to_string()).collect()
     }
 
-    const fn event_types(self) -> &'static [TransactionEventType] {
-        match self {
-            Self::Hot => &[
-                TransactionEventType::ProxyReceived,
-                TransactionEventType::ProxyValidationAccepted,
-                TransactionEventType::ProxyRoutedToBackend,
-                TransactionEventType::ProxyBackendSuccess,
-                TransactionEventType::ProxyIngressRpcAttempt,
-                TransactionEventType::ProxyIngressRpcSuccess,
-                TransactionEventType::BuilderConsidered,
-                TransactionEventType::BuilderAccepted,
-                TransactionEventType::BuilderRejected,
-            ],
-            Self::Warm => &[
-                TransactionEventType::IngressReceived,
-                TransactionEventType::SimulationStarted,
-                TransactionEventType::SimulationSucceeded,
-                TransactionEventType::IngressMeteringSendAttempt,
-                TransactionEventType::IngressMeteringSendSuccess,
-                TransactionEventType::Pending,
-                TransactionEventType::Queued,
-                TransactionEventType::PendingToQueued,
-                TransactionEventType::QueuedToPending,
-                TransactionEventType::TxpoolBuilderForwardAttempt,
-                TransactionEventType::TxpoolBuilderForwardSuccess,
-                TransactionEventType::TxpoolBuilderConsumed,
-                TransactionEventType::TxpoolValidatedInsertAccepted,
-            ],
-            Self::Cold => &[
-                TransactionEventType::ProxyRejected,
-                TransactionEventType::ProxyValidationRejected,
-                TransactionEventType::ProxyBackendFailure,
-                TransactionEventType::ProxyIngressRpcFailure,
-                TransactionEventType::SimulationFailed,
-                TransactionEventType::IngressMeteringSendFailure,
-                TransactionEventType::IngressMeteringSendDropped,
-                TransactionEventType::Dropped,
-                TransactionEventType::Replaced,
-                TransactionEventType::Overflowed,
-                TransactionEventType::TxpoolBuilderForwardFailure,
-                TransactionEventType::TxpoolBuilderForwardDropped,
-                TransactionEventType::TxpoolValidatedInsertRejected,
-                TransactionEventType::BuilderIncluded,
-                TransactionEventType::BuilderPayloadFinalized,
-                TransactionEventType::BuilderFlashblockStarted,
-                TransactionEventType::BuilderFlashblockPublished,
-                TransactionEventType::BuilderFlashblockBuildStopped,
-            ],
-        }
+    fn event_types(self) -> impl Iterator<Item = TransactionEventType> {
+        ALL_TRANSACTION_EVENT_TYPES
+            .iter()
+            .copied()
+            .filter(move |event_type| Self::for_event_type(*event_type) == self)
     }
 }
 
@@ -1345,21 +1346,17 @@ mod tests {
     }
 
     #[test]
-    fn retention_class_lists_agree_with_classifier() {
+    fn retention_classes_partition_all_event_types() {
         let mut seen = std::collections::HashSet::new();
-        for class in [
-            TransactionEventRetentionClass::Hot,
-            TransactionEventRetentionClass::Warm,
-            TransactionEventRetentionClass::Cold,
-        ] {
-            for event_type in class.event_types() {
-                assert!(
-                    seen.insert(*event_type),
-                    "event type {event_type} listed in more than one retention class"
-                );
-                assert_eq!(TransactionEventRetentionClass::for_event_type(*event_type), class);
-            }
+        for event_type in ALL_TRANSACTION_EVENT_TYPES {
+            assert!(
+                seen.insert(*event_type),
+                "event type {event_type} listed more than once in ALL_TRANSACTION_EVENT_TYPES"
+            );
+            let class = TransactionEventRetentionClass::for_event_type(*event_type);
+            assert!(class.event_types().any(|candidate| candidate == *event_type));
         }
+        assert_eq!(seen.len(), ALL_TRANSACTION_EVENT_TYPES.len());
     }
 
     #[test]
