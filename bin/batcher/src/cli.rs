@@ -90,12 +90,6 @@ pub(crate) struct BatcherArgs {
     )]
     pub rollup_rpc_url: Vec<Url>,
 
-    /// Optional L1 beacon API endpoint.
-    ///
-    /// Used by shadow-mode parity monitoring to fetch EIP-4844 blob sidecars.
-    #[arg(long = "l1-beacon-url", env = "BATCHER_L1_BEACON_URL")]
-    pub l1_beacon_url: Option<Url>,
-
     /// Signer configuration.
     #[command(flatten)]
     pub signer: SignerCli,
@@ -322,7 +316,6 @@ impl BatcherArgs {
             l2_rpc_url: self.l2_rpc_url,
             parity_validator_l2_rpc_url: self.parity_validator_l2_rpc_url,
             rollup_rpc_url: self.rollup_rpc_url,
-            l1_beacon_url: self.l1_beacon_url,
             signer: Some(signer),
             metrics_enabled: self.metrics.enabled,
             batch_inbox_override: self.dangerously_override_batch_inbox_address,
@@ -595,14 +588,6 @@ mod tests {
         assert_eq!(config.l1_rpc_url.len(), 1);
         assert_eq!(config.l2_rpc_url.len(), 1);
         assert_eq!(config.rollup_rpc_url.len(), 1);
-    }
-
-    #[test]
-    fn into_config_accepts_l1_beacon_url() {
-        let cli = parse_cli(&["--l1-beacon-url", "http://localhost:5052"]);
-        let config = cli.args.into_config().expect("config should build");
-
-        assert_eq!(config.l1_beacon_url.unwrap().as_str(), "http://localhost:5052/");
     }
 
     #[test]

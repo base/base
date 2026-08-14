@@ -25,6 +25,6 @@ A shadow verifier must therefore use accepted inbox and signer inputs that match
 the shadow submissions. Do not add permanent production consensus bypass logic
 just to support this rollout.
 
-Shadow rollout parity is split into two checks: DA parity compares decoded
-canonical and shadow submissions, and derived block parity compares the L2 block
-hashes reported by an isolated parity-validator RPC.
+Shadow deployments use an isolated parity validator to derive their submitted
+data. The batcher compares its derived L2 block hashes with the canonical
+sequencer through `--parity-validator-l2-rpc-url`.

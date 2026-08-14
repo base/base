@@ -31,11 +31,10 @@ use crate::{
     BatcherConfig, DerivationStatusPoller, DerivationStatusProvider, L2BlockParityMonitor,
     L2BlockParityMonitorConfig, MAX_CHECK_RECENT_TXS_DEPTH, NullL1HeadSubscription,
     RecentTxSyncTarget, RpcL1HeadPollingSource, RpcL2BlockProvider, RpcPollingSource,
-    RpcThrottleClient, ShadowParityMonitor, ShadowParityMonitorConfig, WsL1HeadSubscription,
+    RpcThrottleClient, WsL1HeadSubscription,
 };
 
 const WEI_PER_ETHER: f64 = 1_000_000_000_000_000_000.0;
-const MAX_SHADOW_PARITY_START_DEPTH: u64 = 128;
 
 /// Service-internal throttle client variant: either a no-op or an RPC client.
 ///
@@ -552,44 +551,6 @@ impl BatcherService {
                 address = %signer_address,
                 "batcher balance monitor started"
             );
-        }
-
-        if let Some(shadow_inbox) = self.config.batch_inbox_override {
-            if shadow_inbox == rollup_config.batch_inbox_address {
-                warn!(
-                    inbox = %shadow_inbox,
-                    "shadow parity monitor disabled because shadow inbox matches canonical inbox"
-                );
-            } else {
-                let channel_timeout_depth = rollup_config.channel_timeout(next_l2_timestamp);
-                let start_depth = channel_timeout_depth.clamp(1, MAX_SHADOW_PARITY_START_DEPTH);
-                let monitor_config = ShadowParityMonitorConfig {
-                    canonical_inbox: rollup_config.batch_inbox_address,
-                    canonical_batcher: rollup_config
-                        .genesis
-                        .system_config
-                        .as_ref()
-                        .map(|config| config.batcher_address),
-                    shadow_inbox,
-                    shadow_batcher: signer_address,
-                    poll_interval: self.config.poll_interval,
-                    start_depth,
-                    rollup_config: Arc::clone(&rollup_config),
-                    l1_beacon_url: self.config.l1_beacon_url.clone(),
-                };
-                match ShadowParityMonitor::new(l1_provider.clone(), monitor_config).await {
-                    Ok(monitor) => {
-                        let handle = monitor.spawn(cancellation.clone());
-                        background_tasks.push(("shadow parity monitor", handle));
-                    }
-                    Err(e) => {
-                        warn!(
-                            error = %e,
-                            "shadow parity monitor failed to initialize; continuing without parity monitoring"
-                        );
-                    }
-                }
-            }
         }
 
         if let Some(validator_provider) = validator_provider.as_ref() {
