@@ -22,4 +22,4 @@ thiserror = { workspace = true, features = ["std"] }
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "tls-native-tls"] }
 
 [features]
-metrics = ["base-metrics/metrics", "dep:metrics"]
+metrics = [ "base-metrics/metrics", "dep:metrics" ]
