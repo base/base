@@ -23,7 +23,7 @@ use base_execution_payload_builder::{
 };
 use base_execution_txpool::{
     BasePooledTx, BundleTransaction, GuardMetrics, PredicateContext, TimestampedTransaction,
-    estimated_da_size::DataAvailabilitySized,
+    ValidityPredicate, estimated_da_size::DataAvailabilitySized,
 };
 use base_observability_events::TransactionEventType;
 use reth_basic_payload_builder::PayloadConfig;
@@ -795,10 +795,23 @@ impl BasePayloadBuilderCtx {
             if predicate_read_failed || blocking_predicate.is_some() {
                 num_txs_considered += 1;
                 let ordering_position = num_txs_considered;
+                // A position predicate (block_number / flashblock_index) whose
+                // upper bound the build has passed can never be satisfied again,
+                // so the transaction is expired rather than merely unsatisfied.
+                let predicate_expired = !predicate_read_failed
+                    && ValidityPredicate::is_batch_expired(
+                        tx.validity_predicates(),
+                        &predicate_context,
+                    );
                 let (rejection_reason, rejection_detail) = if predicate_read_failed {
                     (
                         "validity_predicate_read_failed",
                         "failed to read state required by a validity predicate",
+                    )
+                } else if predicate_expired {
+                    (
+                        "validity_predicate_expired",
+                        "a validity predicate can no longer be satisfied at or after the current build position",
                     )
                 } else {
                     (
@@ -838,8 +851,10 @@ impl BasePayloadBuilderCtx {
                 diag.txs_rejected_other += 1;
                 // A read failure cannot be retried at a later ordering position: including the
                 // transaction there could place it behind a lower-priority transaction even though
-                // its predicate may have already been satisfied at its first position.
-                if predicate_read_failed {
+                // its predicate may have already been satisfied at its first position. An expired
+                // position predicate is terminal too — no later position can satisfy it — so both
+                // are dropped rather than parked; only recoverable state mismatches are parked.
+                if predicate_read_failed || predicate_expired {
                     best_txs.mark_invalid(tx.sender(), tx.nonce());
                 } else if let Some(blocking_predicate) = blocking_predicate
                     && best_txs.park_current()

@@ -212,6 +212,75 @@ impl ValidityPredicate {
             }
         }
     }
+
+    /// Returns whether these predicates can no longer be satisfied at any build
+    /// position at or after `context`.
+    ///
+    /// Build position advances monotonically: `block_number` strictly increases
+    /// across blocks and `flashblock_index` increases from zero within a block.
+    /// A [`Self::BlockNumber`] or [`Self::FlashblockIndex`] predicate whose upper
+    /// bound the build has already passed can therefore never hold again, so the
+    /// transaction is permanently ineligible and should be evicted rather than
+    /// parked for a later rescan. State predicates ([`Self::Balance`],
+    /// [`Self::Storage`]) are recoverable and never make a batch expired.
+    ///
+    /// The check is conservative — it reports `true` only when expiry is
+    /// provable from upper-bound comparisons (`<`, `<=`, `=`), so any shape it
+    /// does not recognize simply parks as before rather than being wrongly
+    /// discarded.
+    #[must_use]
+    pub fn is_batch_expired(predicates: &[Self], context: &PredicateContext) -> bool {
+        let current_block = U256::from(context.block_number);
+        let current_flashblock = U256::from(context.flashblock_index);
+
+        // Tightest inclusive upper bound implied by each monotonic target.
+        // `None` means unbounded; the `_impossible` flags mark a comparison no
+        // value can satisfy (e.g. `< 0`).
+        let mut block_upper: Option<U256> = None;
+        let mut block_impossible = false;
+        let mut flashblock_upper: Option<U256> = None;
+        let mut flashblock_impossible = false;
+
+        for predicate in predicates {
+            let (op, value, upper, impossible) = match predicate {
+                Self::BlockNumber { op, value } => {
+                    (op, value, &mut block_upper, &mut block_impossible)
+                }
+                Self::FlashblockIndex { op, value } => {
+                    (op, value, &mut flashblock_upper, &mut flashblock_impossible)
+                }
+                // State predicates are recoverable and never expire a batch.
+                Self::Balance { .. } | Self::Storage { .. } => continue,
+            };
+            // Only `<`, `<=`, `=` cap a value from above; `!=`, `>`, `>=` do not.
+            let candidate = match op {
+                ValidityOperator::LessThan => match value.checked_sub(U256::from(1)) {
+                    Some(max) => max,
+                    None => {
+                        *impossible = true;
+                        continue;
+                    }
+                },
+                ValidityOperator::LessThanOrEqual | ValidityOperator::Equal => *value,
+                ValidityOperator::NotEqual
+                | ValidityOperator::GreaterThan
+                | ValidityOperator::GreaterThanOrEqual => continue,
+            };
+            *upper = Some((*upper).map_or(candidate, |current| current.min(candidate)));
+        }
+
+        // No block at or after the current one can satisfy the block predicates.
+        if block_impossible || block_upper.is_some_and(|max| max < current_block) {
+            return true;
+        }
+        if flashblock_impossible {
+            return true;
+        }
+        // The flashblock index resets each block, so a passed flashblock bound is
+        // terminal only when no later block is allowed either.
+        let pinned_to_current_block = block_upper == Some(current_block);
+        pinned_to_current_block && flashblock_upper.is_some_and(|max| max < current_flashblock)
+    }
 }
 
 /// Experimental validity predicates carried with a validated transaction.
@@ -768,5 +837,114 @@ mod tests {
             ValidityPredicate::validate_batch(&predicates, DEFAULT_MAX_VALIDITY_PREDICATES),
             Err(ValidityPredicateError::StorageValueOutsideMask { index: 1 })
         );
+    }
+
+    /// Builds a context at the given build position.
+    fn context_at(block_number: u64, flashblock_index: u64) -> PredicateContext {
+        PredicateContext { block_number, flashblock_index }
+    }
+
+    /// A block-number predicate with the given operator and value.
+    fn block_number(op: ValidityOperator, value: u64) -> ValidityPredicate {
+        ValidityPredicate::BlockNumber { op, value: U256::from(value) }
+    }
+
+    /// A flashblock-index predicate with the given operator and value.
+    fn flashblock_index(op: ValidityOperator, value: u64) -> ValidityPredicate {
+        ValidityPredicate::FlashblockIndex { op, value: U256::from(value) }
+    }
+
+    #[test]
+    fn block_number_upper_bound_expires_once_passed() {
+        for (op, deadline) in
+            [(ValidityOperator::LessThanOrEqual, 100), (ValidityOperator::Equal, 100)]
+        {
+            let predicates = [block_number(op, deadline)];
+            assert!(!ValidityPredicate::is_batch_expired(&predicates, &context_at(100, 0)));
+            assert!(ValidityPredicate::is_batch_expired(&predicates, &context_at(101, 0)));
+        }
+
+        // `<` is exclusive, so it expires one block earlier.
+        let predicates = [block_number(ValidityOperator::LessThan, 100)];
+        assert!(!ValidityPredicate::is_batch_expired(&predicates, &context_at(99, 0)));
+        assert!(ValidityPredicate::is_batch_expired(&predicates, &context_at(100, 0)));
+    }
+
+    #[test]
+    fn block_number_lower_bounds_and_inequality_never_expire() {
+        for op in [
+            ValidityOperator::GreaterThan,
+            ValidityOperator::GreaterThanOrEqual,
+            ValidityOperator::NotEqual,
+        ] {
+            let predicates = [block_number(op, 100)];
+            assert!(!ValidityPredicate::is_batch_expired(&predicates, &context_at(1_000, 0)));
+        }
+    }
+
+    #[test]
+    fn flashblock_index_alone_never_expires() {
+        // The flashblock index resets each block, so a future block can still
+        // satisfy an upper-bounded flashblock predicate.
+        let predicates = [flashblock_index(ValidityOperator::LessThanOrEqual, 2)];
+        assert!(!ValidityPredicate::is_batch_expired(&predicates, &context_at(100, 9)));
+    }
+
+    #[test]
+    fn composite_block_and_flashblock_deadline_expires_within_the_pinned_block() {
+        // Pinned to block 100, valid through flashblock index 2.
+        let predicates = [
+            block_number(ValidityOperator::Equal, 100),
+            flashblock_index(ValidityOperator::LessThanOrEqual, 2),
+        ];
+        // Still satisfiable up to and including (100, 2).
+        assert!(!ValidityPredicate::is_batch_expired(&predicates, &context_at(100, 2)));
+        // Past the flashblock bound within the pinned block: terminal.
+        assert!(ValidityPredicate::is_batch_expired(&predicates, &context_at(100, 3)));
+        // Before the pinned block, the flashblock bound is not yet binding.
+        assert!(!ValidityPredicate::is_batch_expired(&predicates, &context_at(99, 9)));
+        // After the pinned block: terminal via the block bound.
+        assert!(ValidityPredicate::is_batch_expired(&predicates, &context_at(101, 0)));
+    }
+
+    #[test]
+    fn unsatisfiable_upper_bound_expires_immediately() {
+        // `block_number < 0` can never hold at any position.
+        let predicates = [block_number(ValidityOperator::LessThan, 0)];
+        assert!(ValidityPredicate::is_batch_expired(&predicates, &context_at(0, 0)));
+
+        // `flashblock_index < 0` likewise, regardless of block bound.
+        let predicates = [flashblock_index(ValidityOperator::LessThan, 0)];
+        assert!(ValidityPredicate::is_batch_expired(&predicates, &context_at(50, 0)));
+    }
+
+    #[test]
+    fn tightest_block_bound_wins() {
+        let predicates = [
+            block_number(ValidityOperator::LessThanOrEqual, 200),
+            block_number(ValidityOperator::LessThanOrEqual, 100),
+        ];
+        assert!(!ValidityPredicate::is_batch_expired(&predicates, &context_at(100, 0)));
+        assert!(ValidityPredicate::is_batch_expired(&predicates, &context_at(101, 0)));
+    }
+
+    #[test]
+    fn state_only_and_empty_batches_never_expire() {
+        let state_only = [
+            ValidityPredicate::Balance {
+                address: Address::repeat_byte(0x11),
+                op: ValidityOperator::Equal,
+                value: U256::from(1),
+            },
+            ValidityPredicate::Storage {
+                address: Address::repeat_byte(0x22),
+                slot: U256::from(7),
+                mask: U256::MAX,
+                op: ValidityOperator::Equal,
+                value: U256::from(3),
+            },
+        ];
+        assert!(!ValidityPredicate::is_batch_expired(&state_only, &context_at(10_000, 9)));
+        assert!(!ValidityPredicate::is_batch_expired(&[], &context_at(10_000, 9)));
     }
 }
