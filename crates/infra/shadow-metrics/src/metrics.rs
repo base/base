@@ -1,4 +1,4 @@
-//! Shadow metrics reader metric definitions.
+//! Metrics emitted by shadow block reader.
 
 base_metrics::define_metrics! {
     shadow_metrics, struct = ShadowMetrics,

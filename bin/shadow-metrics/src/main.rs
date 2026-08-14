@@ -32,9 +32,7 @@ base_cli_utils::define_metrics_args!("SHADOW_METRICS", 9003);
 #[derive(Debug, Clone)]
 struct HealthState {
     store: Option<ShadowMetricsStore>,
-    /// `None` when no reader is configured. Otherwise the flag is cleared once the
-    /// reader task stops, so `/readyz` fails and Kubernetes restarts the pod rather
-    /// than leaving a healthy-looking service that emits nothing.
+    /// Reader liveness, absent when Postgres is disabled.
     reader_alive: Option<Arc<AtomicBool>>,
 }
 
@@ -47,8 +45,7 @@ struct Args {
     #[command(flatten)]
     metrics: MetricsArgs,
 
-    /// Postgres connection URL. When unset, Postgres connectivity is disabled,
-    /// no reader is started, and `/readyz` always reports ready.
+    /// Postgres URL; unset disables reader and database readiness checks.
     #[arg(long, env = "SHADOW_METRICS_POSTGRES_URL")]
     postgres_url: Option<String>,
 
@@ -60,10 +57,7 @@ struct Args {
     #[arg(long, env = "SHADOW_METRICS_HTTP_PORT", default_value = "9101")]
     http_port: u16,
 
-    /// Interval in seconds between shadow block polls. The writer flushes every
-    /// second and reconciliation lands in bursts roughly every ten seconds, so a
-    /// short interval keeps emission close to real time without idle-spinning on
-    /// Postgres.
+    /// Seconds between shadow block polls.
     #[arg(
         long,
         env = "SHADOW_METRICS_POLL_INTERVAL_SECS",
@@ -71,8 +65,7 @@ struct Args {
     )]
     poll_interval_secs: u64,
 
-    /// Maximum shadow block rows fetched by one poll. Bounds catch-up so a long
-    /// outage drains steadily instead of loading every JSONB payload at once.
+    /// Maximum rows fetched per poll.
     #[arg(
         long,
         env = "SHADOW_METRICS_MAX_ROWS_PER_POLL",
@@ -117,10 +110,7 @@ async fn run_server(args: Args) -> Result<()> {
         "Starting shadow-metrics service"
     );
 
-    // Starting the reader before the health server is deliberate. `ShadowMetricsReader::new`
-    // resolves and persists the starting cursor, so it fails closed on an unreachable or
-    // unmigrated Postgres and aborts startup for Kubernetes to retry. Serving `/readyz` while
-    // silently running without a reader would be worse.
+    // Initialize reader before health server so cursor failures abort startup.
     let reader_alive = match &store {
         Some(store) => {
             let config = ShadowMetricsReaderConfig {
@@ -153,11 +143,7 @@ async fn run_server(args: Args) -> Result<()> {
     }
 }
 
-/// Spawns the reader poll loop and returns a liveness flag cleared when it stops.
-///
-/// `ShadowMetricsReader::run` loops forever and absorbs poll failures internally, so
-/// the flag only clears on something genuinely unexpected. Detecting that is the point:
-/// a dead reader must surface through `/readyz` instead of being assumed impossible.
+/// Spawns reader and returns a liveness flag cleared on unexpected exit.
 fn spawn_reader(reader: ShadowMetricsReader) -> Arc<AtomicBool> {
     let alive = Arc::new(AtomicBool::new(true));
     let reader_alive = Arc::clone(&alive);
@@ -179,8 +165,7 @@ fn spawn_reader(reader: ShadowMetricsReader) -> Arc<AtomicBool> {
     alive
 }
 
-/// Resolves on SIGINT or, on Unix, SIGTERM so the k8s pre-kill SIGTERM unwinds
-/// the runtime and drops the `PgPool` cleanly instead of a hard kill.
+/// Waits for SIGINT or SIGTERM.
 async fn shutdown_signal() {
     let ctrl_c = async {
         tokio::signal::ctrl_c().await.expect("failed to install SIGINT handler");
@@ -218,8 +203,7 @@ async fn healthz_handler() -> &'static str {
 }
 
 async fn readyz_handler(State(state): State<HealthState>) -> Response {
-    // The reader's death is already logged with the real cause by `spawn_reader`
-    // when its task stops; don't re-log here, or every probe floods the log.
+    // `spawn_reader` logs death once; probes must not flood logs.
     if state.reader_alive.as_ref().is_some_and(|alive| !alive.load(Ordering::Acquire)) {
         return (StatusCode::SERVICE_UNAVAILABLE, "not ready\n").into_response();
     }

@@ -1,57 +1,52 @@
-//! Postgres access for reading shadow blocks and persisting the metrics cursor.
+//! Postgres access for shadow metrics.
 
 use anyhow::Result;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 
-/// Error returned when the shadow-metrics Postgres schema is not ready.
+/// Schema readiness failure.
 #[derive(Debug, thiserror::Error)]
 pub enum ShadowMetricsSchemaReadinessError {
-    /// The shadow blocks table or its update timestamp cannot be read.
+    /// Shadow blocks cannot be read.
     #[error(
         "shadow-metrics Postgres schema is not ready: public.shadow_blocks.updated_at is not readable: {source}; verify database connectivity, apply the shadow-indexer migrations via ShadowDbConfig::init_pool, and grant the runtime role SELECT on public.shadow_blocks"
     )]
     ShadowBlocksNotReadable {
-        /// Underlying database error.
+        /// Database error.
         #[source]
         source: sqlx::Error,
     },
-    /// The shadow metrics cursor table is missing.
+    /// Cursor table is missing.
     #[error(
         "shadow-metrics Postgres schema is not ready: public.shadow_metrics_cursor is missing; apply the shadow-indexer migrations via ShadowDbConfig::init_pool"
     )]
     MetricsCursorMissing,
-    /// The runtime role cannot insert or update the shadow metrics cursor.
+    /// Cursor table is not writable.
     #[error(
         "shadow-metrics Postgres schema is not ready: runtime role needs INSERT and UPDATE on public.shadow_metrics_cursor; grant both privileges to the runtime role"
     )]
     MetricsCursorNotWritable,
-    /// A readiness query failed before readiness could be determined.
+    /// Readiness query failed.
     #[error(
         "shadow-metrics Postgres schema readiness query failed: {source}; verify database connectivity and that the runtime role can inspect public.shadow_metrics_cursor"
     )]
     QueryFailed {
-        /// Underlying database error.
+        /// Database error.
         #[source]
         source: sqlx::Error,
     },
 }
 
-/// Postgres store used by the shadow metrics reader.
+/// Shadow metrics Postgres store.
 #[derive(Debug, Clone)]
 pub struct ShadowMetricsStore {
     pool: PgPool,
 }
 
 impl ShadowMetricsStore {
-    /// Connects to Postgres without running migrations.
-    ///
-    /// Mirrors the audit archiver pool policy: eagerly opens the full configured
-    /// pool and keeps physical connections open with no lifetime or idle expiry,
-    /// so RDS IAM startup tokens stay valid for the life of the process.
+    /// Connects without migrations, retaining eager connections for RDS IAM token lifetime.
     ///
     /// # Errors
-    ///
-    /// Returns an error if the Postgres pool cannot connect.
+    /// Returns an error when the pool cannot connect.
     pub async fn connect(database_url: &str, max_connections: u32) -> Result<Self> {
         let max_connections = max_connections.max(1);
         let pool = PgPoolOptions::new()
@@ -64,24 +59,22 @@ impl ShadowMetricsStore {
         Ok(Self { pool })
     }
 
-    /// Creates a store from an existing pool.
+    /// Wraps an existing pool.
     #[must_use]
     pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
-    /// Returns the Postgres pool used by the store.
+    /// Returns the pool.
     #[must_use]
     pub const fn pool(&self) -> &PgPool {
         &self.pool
     }
 
-    /// Checks whether shadow-metrics Postgres storage is ready for runtime use.
+    /// Checks schema and runtime privileges.
     ///
     /// # Errors
-    ///
-    /// Returns an error when required shadow-indexer relations or runtime-role
-    /// privileges are unavailable, or when readiness cannot be determined.
+    /// Returns an error when schema, privileges, or readiness queries fail.
     pub async fn check_schema_ready(&self) -> Result<(), ShadowMetricsSchemaReadinessError> {
         sqlx::query("SELECT updated_at FROM public.shadow_blocks LIMIT 0")
             .execute(&self.pool)

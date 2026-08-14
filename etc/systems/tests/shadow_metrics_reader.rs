@@ -50,7 +50,7 @@ impl TestDatabase {
 }
 
 struct ShadowBlockFixture {
-    number: u64,
+    number: i64,
     gas_used: u64,
     base_fee_per_gas: u64,
     deposit_count: usize,
@@ -59,7 +59,7 @@ struct ShadowBlockFixture {
 }
 
 impl ShadowBlockFixture {
-    fn new(number: u64) -> Self {
+    fn new(number: i64) -> Self {
         Self {
             number,
             gas_used: 21_000,
@@ -106,7 +106,7 @@ impl ShadowBlockFixture {
         let now = Utc::now();
 
         ShadowBlockRow {
-            number: i64::try_from(number).expect("fixture block number fits in i64"),
+            number,
             hash: vec![hash_seed; 32],
             reorged_out,
             canonical_hash: canonical_hash_seed.map(|seed| vec![seed; 32]),
@@ -139,7 +139,6 @@ impl ShadowBlockFixture {
         let senders = vec![Address::ZERO; transactions.len()];
         let block = Block::<BaseTxEnvelope> {
             header: Header {
-                number: self.number,
                 gas_used: self.gas_used,
                 base_fee_per_gas: Some(self.base_fee_per_gas),
                 ..Default::default()
@@ -214,8 +213,7 @@ async fn skips_unwind_and_advances_cursor() -> Result<()> {
     Ok(())
 }
 
-/// Pins an accepted risk: one poison payload fails the whole poll and leaves the reader
-/// stuck without emitting valid neighbors or advancing until the row is repaired.
+/// Deliberately pins accepted stall: poison blocks neighbors and cursor until repaired.
 #[tokio::test]
 async fn poison_payload_fails_the_whole_poll() -> Result<()> {
     let database = TestDatabase::start().await?;
@@ -332,7 +330,7 @@ async fn respects_poll_cap_and_advances_by_cap() -> Result<()> {
     let mut reader = database.reader(MAX_ROWS).await?;
     let rows = (1_u8..=7)
         .map(|offset| {
-            ShadowBlockFixture::new(60 + u64::from(offset)).into_row(
+            ShadowBlockFixture::new(60 + i64::from(offset)).into_row(
                 offset,
                 true,
                 Some(0xe0 + offset),
@@ -362,14 +360,15 @@ async fn respects_poll_cap_and_advances_by_cap() -> Result<()> {
 async fn drains_timestamp_tie_group_without_loss_or_duplicates() -> Result<()> {
     const MAX_ROWS: u32 = 10;
     const ROW_COUNT: usize = 55;
-    const FIRST_NUMBER: u64 = 1_000;
+    const FIRST_NUMBER: i64 = 1_000;
 
     let database = TestDatabase::start().await?;
     let mut reader = database.reader(MAX_ROWS).await?;
-    let rows = (0..ROW_COUNT)
-        .map(|index| {
-            let offset = u64::try_from(index).expect("fixture index fits in u64");
-            ShadowBlockFixture::new(FIRST_NUMBER + offset).into_row(
+    let rows = (FIRST_NUMBER..)
+        .take(ROW_COUNT)
+        .enumerate()
+        .map(|(index, number)| {
+            ShadowBlockFixture::new(number).into_row(
                 u8::try_from(index + 1).expect("fixture hash seed fits in u8"),
                 true,
                 Some(0xf1),
@@ -396,9 +395,7 @@ async fn drains_timestamp_tie_group_without_loss_or_duplicates() -> Result<()> {
 
     assert_eq!(emitted_numbers.len(), ROW_COUNT);
     let unique_numbers = emitted_numbers.iter().copied().collect::<BTreeSet<_>>();
-    let expected_numbers = (FIRST_NUMBER
-        ..FIRST_NUMBER + u64::try_from(ROW_COUNT).expect("row count fits in u64"))
-        .collect::<BTreeSet<_>>();
+    let expected_numbers = (FIRST_NUMBER..).take(ROW_COUNT).collect::<BTreeSet<_>>();
     assert_eq!(unique_numbers.len(), ROW_COUNT, "tie group must not produce duplicates");
     assert_eq!(unique_numbers, expected_numbers, "tie group must not lose rows");
     assert!(reader.poll_once().await?.is_empty());

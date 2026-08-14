@@ -1,4 +1,4 @@
-//! Polling reader for persisted shadow block metrics.
+//! Polling and emission for persisted shadow blocks.
 
 use std::time::Duration;
 
@@ -9,18 +9,18 @@ use tracing::{error, info};
 
 use crate::{ShadowBlockStats, ShadowMetrics, ShadowMetricsStore};
 
-/// Default interval in seconds between shadow metrics polls.
+/// Default poll interval in seconds.
 pub const DEFAULT_POLL_INTERVAL_SECS: u64 = 2;
 
-/// Default maximum number of shadow block rows fetched by one poll.
+/// Default row limit per poll.
 pub const DEFAULT_MAX_ROWS_PER_POLL: u32 = 1_000;
 
-/// Runtime settings for [`ShadowMetricsReader`].
+/// Reader settings.
 #[derive(Clone, Copy, Debug)]
 pub struct ShadowMetricsReaderConfig {
-    /// Interval between polling attempts.
+    /// Poll interval.
     pub poll_interval: Duration,
-    /// Maximum number of rows fetched by one polling attempt.
+    /// Row limit per poll.
     pub max_rows_per_poll: u32,
 }
 
@@ -33,32 +33,23 @@ impl Default for ShadowMetricsReaderConfig {
     }
 }
 
-/// Polls finalized shadow block rows and emits their metrics.
+/// Polls finalized shadow blocks and emits metrics.
 ///
-/// Cursor safety depends on `ShadowWriter::run` flushing sequentially with only one
-/// `insert_batch` in flight. Concurrent writers can commit rows behind this reader's
-/// `now()`-based watermark. If the writer becomes concurrent, this design silently
-/// loses rows and must use a snapshot- or sequence-based watermark instead.
+/// `updated_at` revisits rows after reconciliation; block-number cursors classify too early.
 #[derive(Debug)]
 pub struct ShadowMetricsReader {
     block_repo: ShadowBlockRepo,
     cursor_repo: ShadowMetricsCursorRepo,
     config: ShadowMetricsReaderConfig,
     cursor: ShadowBlockCursor,
-    latest_block_number: Option<u64>,
+    latest_block_number: Option<i64>,
 }
 
 impl ShadowMetricsReader {
-    /// Creates a reader and resolves its starting cursor.
-    ///
-    /// A persisted cursor provides restart continuity. Without one, the reader starts
-    /// at the current table tip to avoid replaying historical rows, or at genesis when
-    /// the table is empty.
+    /// Creates a reader, resuming a cursor or starting at current table tip.
     ///
     /// # Errors
-    ///
-    /// Returns an error if configuration is invalid or the starting cursor cannot be
-    /// loaded from Postgres.
+    /// Returns an error for invalid settings or cursor I/O failure.
     pub async fn new(store: ShadowMetricsStore, config: ShadowMetricsReaderConfig) -> Result<Self> {
         ensure!(!config.poll_interval.is_zero(), "poll interval must be greater than zero");
         ensure!(config.max_rows_per_poll > 0, "max rows per poll must be greater than zero");
@@ -94,10 +85,7 @@ impl ShadowMetricsReader {
                     }
                 };
 
-                // Persist the first-boot boundary immediately. Otherwise, a restart before the
-                // first non-empty batch re-resolves to the then-current tip and silently skips
-                // rows written in between, violating restart continuity rather than merely
-                // omitting historical backfill.
+                // Persist now so restart before first batch cannot skip intervening rows.
                 cursor_repo.store(&cursor).await?;
                 cursor
             }
@@ -106,19 +94,12 @@ impl ShadowMetricsReader {
         Ok(Self { block_repo, cursor_repo, config, cursor, latest_block_number: None })
     }
 
-    /// Polls one batch, emits metrics, and returns the stats it emitted.
+    /// Polls one batch and returns emitted statistics.
     ///
-    /// Pipeline unwinds advance the cursor but produce no returned stats. Payloads
-    /// deserialize during the sqlx fetch, so one incompatible payload fails the entire
-    /// poll before any row is emitted and leaves the cursor untouched. [`Self::run`]
-    /// counts that failure in `poll_errors_total` and retries the same batch, stalling
-    /// until the offending row is repaired or deleted. This is an accepted trade-off
-    /// for using one typed row shape. Other database failures have the same retry
-    /// behavior.
+    /// Typed payload incompatibility fails the whole fetch and stalls at this cursor.
     ///
     /// # Errors
-    ///
-    /// Returns an error if fetching rows or persisting the resulting cursor fails.
+    /// Returns an error when fetch or cursor persistence fails.
     pub async fn poll_once(&mut self) -> Result<Vec<ShadowBlockStats>> {
         let rows = self
             .block_repo
@@ -132,7 +113,7 @@ impl ShadowMetricsReader {
             match row.canonical_hash.as_ref() {
                 None => ShadowMetrics::reverted_blocks_total().increment(1),
                 Some(_) => {
-                    let stats = ShadowBlockStats::from_payload(&row.payload);
+                    let stats = ShadowBlockStats::from_row(&row);
                     ShadowMetrics::gas_used(stats.builder_version.clone())
                         .record(stats.gas_used as f64);
                     ShadowMetrics::transaction_count(stats.builder_version.clone())
@@ -151,12 +132,12 @@ impl ShadowMetricsReader {
                     emitted.push(stats);
                 }
             }
+            // Every fetched row advances the cursor, including unwinds.
             next_cursor = cursor;
         }
 
         if next_cursor != self.cursor {
-            // Emit before persisting for at-least-once delivery. A crash or store failure
-            // re-emits this batch; persisting first would create permanent metric holes.
+            // Persist after emission: duplicate retries are safer than permanent metric holes.
             self.cursor_repo.store(&next_cursor).await?;
             self.cursor = next_cursor;
         }
@@ -164,15 +145,10 @@ impl ShadowMetricsReader {
         Ok(emitted)
     }
 
-    /// Runs the poll loop until cancelled by dropping this future.
-    ///
-    /// Poll failures are counted and retried on the next delayed tick. This method
-    /// never returns an error, so transient Postgres failures cannot crash-loop the
-    /// service.
+    /// Runs until cancelled, counting and retrying poll failures.
     ///
     /// # Errors
-    ///
-    /// This method handles all polling errors internally and does not return an error.
+    /// Polling errors are handled internally.
     pub async fn run(mut self) -> Result<()> {
         let mut interval = interval(self.config.poll_interval);
         interval.set_missed_tick_behavior(MissedTickBehavior::Delay);

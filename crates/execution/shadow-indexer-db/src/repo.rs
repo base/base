@@ -6,38 +6,32 @@ use sqlx::{PgPool, Postgres, QueryBuilder, query_as, types::Json};
 
 use crate::{ShadowBlockCursor, ShadowBlockRow};
 
-/// Repository for shadow indexer block persistence.
+/// Shadow block repository.
 #[derive(Debug)]
 pub struct ShadowBlockRepo {
     pool: PgPool,
 }
 
 impl ShadowBlockRepo {
-    /// Create a new repository backed by the provided pool.
+    /// Creates a repository.
     #[must_use]
     pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
-    /// Insert a batch of shadow block rows.
+    /// Inserts shadow block rows.
     ///
     /// # Errors
-    ///
-    /// Returns an error if the insert fails.
+    /// Returns an error when the insert fails.
     pub async fn insert_batch(&self, rows: &[ShadowBlockRow]) -> Result<usize> {
-        // 6 columns per row are bound. Postgres caps a single statement at 65_535
-        // bind parameters, so keep chunks below 65_535 / 6 ≈ 10_922 rows.
+        // Six binds per row; 4,000 stays below Postgres's 65,535-parameter limit.
         const CHUNK_SIZE: usize = 4_000;
 
         if rows.is_empty() {
             return Ok(0);
         }
 
-        // Collapse duplicate `(number, hash)` rows within the batch, keeping the
-        // last occurrence. A single `INSERT ... ON CONFLICT DO UPDATE` cannot
-        // touch the same conflict key twice (Postgres error 21000), which would
-        // otherwise reject the entire batch when a block is committed and then
-        // reorged out inside one flush window.
+        // Postgres cannot upsert one key twice; retain its final state within each flush.
         let deduped = Self::dedupe_last_write_wins(rows);
 
         let mut inserted = 0usize;
@@ -85,11 +79,10 @@ impl ShadowBlockRepo {
         by_key.into_values().collect()
     }
 
-    /// Lists shadow block rows with block numbers in the provided inclusive range.
+    /// Lists rows in an inclusive block-number range.
     ///
     /// # Errors
-    ///
-    /// Returns an error if the query fails.
+    /// Returns an error when the query fails.
     pub async fn list_by_number_range(&self, start: i64, end: i64) -> Result<Vec<ShadowBlockRow>> {
         let rows = query_as::<_, ShadowBlockRow>(
             "SELECT * FROM shadow_blocks WHERE number BETWEEN $1 AND $2 ORDER BY number, created_at",
@@ -103,18 +96,12 @@ impl ShadowBlockRepo {
         Ok(rows)
     }
 
-    /// Lists rows reorged out of the canonical chain, ordered by the composite
-    /// cursor, strictly after `after`.
+    /// Lists reorged rows after a composite cursor.
     ///
-    /// Returns both shadow candidates (`canonical_hash IS NOT NULL`) and pipeline
-    /// unwinds (`canonical_hash IS NULL`); the caller partitions them. Filtering
-    /// unwinds out in SQL would make them uncountable, and the cursor would never
-    /// advance past them.
+    /// Unwinds remain in the query so Rust can count them and advance past them.
     ///
     /// # Errors
-    ///
-    /// Returns an error if the query fails. A payload that cannot deserialize into
-    /// `ShadowBlockPayload` fails the whole call.
+    /// Returns an error on query or payload decode failure.
     pub async fn list_reorged_since(
         &self,
         after: &ShadowBlockCursor,
@@ -139,14 +126,12 @@ impl ShadowBlockRepo {
         Ok(rows)
     }
 
-    /// Newest cursor position present, for first-boot initialization.
+    /// Returns the newest cursor for first-boot initialization.
     ///
     /// # Errors
-    ///
-    /// Returns an error if the query fails.
+    /// Returns an error when the query fails.
     pub async fn max_cursor(&self) -> Result<Option<ShadowBlockCursor>> {
-        // Deliberately scan all rows: filtering to reorged rows could replay
-        // un-reconciled rows when a fresh reader starts behind them.
+        // Include unreconciled rows so first boot cannot replay them later.
         let row = query_as::<_, (DateTime<Utc>, i64, Vec<u8>)>(
             "SELECT updated_at, number, hash FROM shadow_blocks \
              ORDER BY updated_at DESC, number DESC, hash DESC \
