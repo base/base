@@ -2,17 +2,19 @@
 
 use core::time::Duration;
 
+use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_rpc_types_eth::{Block, BlockId, BlockNumberOrTag, TransactionInput, TransactionRequest};
+use alloy_provider::{Provider, RootProvider};
+use alloy_rpc_client::RpcClient;
+use alloy_rpc_types_eth::{BlockId, BlockNumberOrTag, TransactionInput, TransactionRequest};
 use alloy_sol_types::{SolCall, sol};
+use alloy_transport::{TransportError, TransportErrorKind, TransportFut, utils::guess_local_url};
 use backon::Retryable;
 use base_common_genesis::BaseUpgrade;
 use base_retry::RetryConfig;
 use futures::future::try_join;
-use jsonrpsee::{
-    core::client::ClientT,
-    http_client::{HttpClient, HttpClientBuilder},
-};
+use reqwest::Client;
+use tower::{ServiceExt, service_fn};
 use tracing::warn;
 use url::Url;
 
@@ -38,8 +40,8 @@ sol! {
 /// Reads upgrade signals from an L1 contract with Alloy.
 #[derive(Debug, Clone)]
 pub struct AlloyUpgradeSignalReader {
-    /// Size-bounded L1 JSON-RPC client.
-    pub client: HttpClient,
+    /// L1 provider using a size-bounded HTTP transport.
+    pub provider: RootProvider,
     /// L1 contract or proxy address.
     pub contract_address: Address,
     /// L1 block tag used to pin reads. Defaults to [`BlockNumberOrTag::Finalized`].
@@ -48,7 +50,7 @@ pub struct AlloyUpgradeSignalReader {
 
 impl AlloyUpgradeSignalReader {
     /// Maximum JSON-RPC response body accepted from an upgrade signal endpoint.
-    pub const MAX_RESPONSE_BYTES: u32 = 256 * 1024;
+    pub const MAX_RESPONSE_BYTES: usize = 256 * 1024;
 
     /// Maximum number of schedule entries accepted from the L1 contract.
     ///
@@ -62,14 +64,67 @@ impl AlloyUpgradeSignalReader {
         contract_address: Address,
         request_timeout: Duration,
     ) -> Result<Self, UpgradeSignalError> {
-        let client = HttpClientBuilder::default()
-            .request_timeout(request_timeout)
-            .max_response_size(Self::MAX_RESPONSE_BYTES)
-            .build(l1_rpc.as_str())
-            .map_err(|error| {
-                UpgradeSignalError::provider("build upgrade signal HTTP client failed", error)
-            })?;
-        Ok(Self { client, contract_address, block_tag: BlockNumberOrTag::Finalized })
+        if !matches!(l1_rpc.scheme(), "http" | "https") {
+            return Err(UpgradeSignalError::provider(
+                "build upgrade signal HTTP client failed",
+                "URL scheme must be http or https",
+            ));
+        }
+
+        let client = Client::builder().timeout(request_timeout).build().map_err(|error| {
+            UpgradeSignalError::provider("build upgrade signal HTTP client failed", error)
+        })?;
+
+        let is_local = guess_local_url(l1_rpc.as_str());
+        // Alloy's built-in reqwest transport collects the entire response before decoding it, so
+        // cap the stream here and feed the resulting transport back into Alloy's typed provider.
+        let transport = service_fn(move |request: RequestPacket| {
+            let client = client.clone();
+            let l1_rpc = l1_rpc.clone();
+            async move {
+                let headers = request.headers();
+                let mut response = client
+                    .post(l1_rpc)
+                    .json(&request)
+                    .headers(headers)
+                    .send()
+                    .await
+                    .map_err(TransportErrorKind::custom)?;
+                let status = response.status();
+                let mut body = Vec::new();
+
+                while let Some(chunk) =
+                    response.chunk().await.map_err(TransportErrorKind::custom)?
+                {
+                    if body.len().saturating_add(chunk.len()) > Self::MAX_RESPONSE_BYTES {
+                        return Err(TransportErrorKind::non_retryable_str(
+                            "upgrade signal JSON-RPC response exceeds 256 KiB",
+                        ));
+                    }
+                    body.extend_from_slice(&chunk);
+                }
+
+                if !status.is_success() {
+                    if let Ok(response) = serde_json::from_slice::<ResponsePacket>(&body)
+                        && response.is_error()
+                    {
+                        return Ok(response);
+                    }
+                    return Err(TransportErrorKind::http_error(
+                        status.as_u16(),
+                        String::from_utf8_lossy(&body).into_owned(),
+                    ));
+                }
+
+                serde_json::from_slice(&body).map_err(|error| {
+                    TransportError::deser_err(error, String::from_utf8_lossy(&body))
+                })
+            }
+        })
+        .map_future(|future| Box::pin(future) as TransportFut<'static>);
+        let provider = RootProvider::new(RpcClient::new(transport, is_local));
+
+        Ok(Self { provider, contract_address, block_tag: BlockNumberOrTag::Finalized })
     }
 
     /// Sets the L1 block tag used to pin reads.
@@ -92,8 +147,9 @@ impl AlloyUpgradeSignalReader {
             .to(self.contract_address)
             .input(TransactionInput::new(Bytes::from(call.abi_encode())));
 
-        self.client
-            .request::<Bytes, _>("eth_call", (request, block))
+        self.provider
+            .call(request)
+            .block(block)
             .await
             .map_err(|error| UpgradeSignalError::provider(context, error))
     }
@@ -105,8 +161,8 @@ impl AlloyUpgradeSignalReader {
     /// reorg-stable.
     pub async fn pinned_l1_block_id(&self) -> Result<(u64, BlockId), UpgradeSignalError> {
         let block = self
-            .client
-            .request::<Option<Block>, _>("eth_getBlockByNumber", (self.block_tag, false))
+            .provider
+            .get_block_by_number(self.block_tag)
             .await
             .map_err(|error| UpgradeSignalError::provider("get L1 block failed", error))?
             .ok_or_else(|| {
@@ -314,6 +370,7 @@ impl AlloyUpgradeSignalReader {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
+    use alloy_rpc_types_eth::Block;
     use httpmock::prelude::*;
 
     use super::*;
@@ -333,8 +390,18 @@ mod tests {
         encoded
     }
 
+    fn is_reqwest_timeout<T>(result: &alloy_transport::TransportResult<T>) -> bool {
+        result
+            .as_ref()
+            .err()
+            .and_then(|error| error.as_transport_err())
+            .and_then(|error| error.as_custom())
+            .and_then(|error| error.downcast_ref::<reqwest::Error>())
+            .is_some_and(reqwest::Error::is_timeout)
+    }
+
     #[tokio::test]
-    async fn reads_block_and_contract_call_through_bounded_rpc_client() {
+    async fn reads_block_and_contract_call_through_bounded_alloy_provider() {
         let server = MockServer::start_async().await;
         let block_hash = B256::repeat_byte(1);
         let mut block: Block = Block::default();
@@ -384,6 +451,55 @@ mod tests {
         assert_eq!(output, expected_call_output);
         block_mock.assert_calls_async(1).await;
         call_mock.assert_calls_async(1).await;
+    }
+
+    #[tokio::test]
+    async fn times_out_slow_alloy_provider_response() {
+        let server = MockServer::start_async().await;
+        let response_delay = Duration::from_millis(250);
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(POST).path("/");
+                then.status(200).delay(response_delay);
+            })
+            .await;
+        let reader = AlloyUpgradeSignalReader::new(
+            server.url("/").parse().unwrap(),
+            Address::ZERO,
+            Duration::from_millis(25),
+        )
+        .unwrap();
+
+        let result = tokio::time::timeout(
+            Duration::from_millis(500),
+            reader.provider.get_block_by_number(BlockNumberOrTag::Latest),
+        )
+        .await
+        .expect("provider request must not remain pending");
+
+        assert!(is_reqwest_timeout(&result));
+        mock.assert_calls_async(1).await;
+    }
+
+    #[tokio::test]
+    async fn rejects_oversized_rpc_response() {
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(POST).path("/");
+                then.body(vec![b' '; AlloyUpgradeSignalReader::MAX_RESPONSE_BYTES + 1]);
+            })
+            .await;
+        let reader = AlloyUpgradeSignalReader::new(
+            server.url("/").parse().unwrap(),
+            Address::ZERO,
+            Duration::from_secs(1),
+        )
+        .unwrap();
+
+        let error = reader.pinned_l1_block_id().await.unwrap_err();
+
+        assert!(error.to_string().contains("response exceeds 256 KiB"));
     }
 
     #[test]

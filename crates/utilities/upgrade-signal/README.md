@@ -36,12 +36,12 @@ typically advances. It records the latest schedule metrics and update counters w
 contract-backed signal changes. Read failures are metrics-only failures: they are logged and
 counted, but they do not clear the last observed schedule or stop the node.
 
-Every schedule path uses a size-bounded `jsonrpsee` HTTP client with a fifteen-second request
-deadline by default and a 256 `KiB` maximum response. Consensus readers continue to honor the
-configured `--l1.rpc-timeout-ms` as their request deadline. The reader rejects a `getSchedule()`
-ABI array declaring more than 256 entries before allocating the decoded vector. Startup and manual
-reads make at most three attempts with the shared capped, jittered exponential backoff, while live
-reads are dropped immediately when the node's shutdown signal wins its cancellation selection.
+Every schedule path uses a size-bounded Alloy HTTP provider with a fifteen-second request deadline
+by default and a 256 `KiB` maximum response. Consensus readers continue to honor the configured
+`--l1.rpc-timeout-ms` as their request deadline. The reader rejects a `getSchedule()` ABI array
+declaring more than 256 entries before allocating the decoded vector. Startup and manual reads make
+at most three attempts with the shared capped, jittered exponential backoff, while live reads are
+dropped immediately when the node's shutdown signal wins its cancellation selection.
 
 `startup-apply` reads and validates the L1 schedule before the node starts serving.
 Execution-side callers apply the schedule to the chain spec, consensus-side callers apply it to the

@@ -6773,9 +6773,13 @@ dependencies = [
 name = "base-upgrade-signal"
 version = "0.0.0"
 dependencies = [
+ "alloy-json-rpc 2.2.0",
  "alloy-primitives",
+ "alloy-provider 2.2.0",
+ "alloy-rpc-client 2.2.0",
  "alloy-rpc-types-eth 2.2.0",
  "alloy-sol-types",
+ "alloy-transport 2.2.0",
  "backon",
  "base-common-genesis",
  "base-metrics",
@@ -6784,13 +6788,14 @@ dependencies = [
  "eyre",
  "futures",
  "httpmock",
- "jsonrpsee",
  "metrics",
+ "reqwest 0.13.4",
  "rstest",
  "serde",
  "serde_json",
  "thiserror 2.0.19",
  "tokio",
+ "tower 0.5.3",
  "tracing",
  "url",
 ]
