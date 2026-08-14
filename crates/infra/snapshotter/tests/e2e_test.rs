@@ -14,8 +14,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 use base_snapshotter::{
     ChunkedArchive, ComponentManifest, ContainerManager, DockerContainerManager,
-    OutputFileChecksum, SnapshotGenerator, SnapshotManifest, SnapshotUploader, TipChecker,
-    TipStatus,
+    ManifestGenerationParams, OutputFileChecksum, SnapshotGenerator, SnapshotManifest,
+    SnapshotUploader, TipChecker, TipStatus,
 };
 use bollard::{
     Docker,
@@ -145,6 +145,7 @@ fn test_config(bucket: &str, tmp: &Path) -> base_snapshotter::SnapshotterConfig 
         s3_access_key_id: None,
         s3_secret_access_key: None,
         public_base_url: None,
+        upload_proofs: false,
     }
 }
 
@@ -212,6 +213,15 @@ fn create_fake_snapshot(dir: &Path, block: u64) -> Result<Vec<PathBuf>> {
                 "size": 226_377_256_076u64,
                 "decompressed_size": 452_754_512_152u64,
                 "output_files": [{"path": "rocksdb/CURRENT", "size": 16, "blake3": "fake-blake3-rocksdb-current"}]
+            },
+            "proofs": {
+                "file": "proofs.tar.zst",
+                "size": 3_870_192_000u64,
+                "decompressed_size": 3_870_192_000u64,
+                "output_files": [
+                    {"path": "proofs/CURRENT", "size": 16, "blake3": "fake-blake3-proofs-current"},
+                    {"path": "proofs/000060.sst", "size": 9_695_151u64, "blake3": "fake-blake3-proofs-sst"}
+                ]
             }
         }
     });
@@ -226,6 +236,9 @@ fn create_fake_snapshot(dir: &Path, block: u64) -> Result<Vec<PathBuf>> {
 
     std::fs::write(dir.join("rocksdb_indices.tar.zst"), b"fake-rocksdb-archive")?;
     files.push(dir.join("rocksdb_indices.tar.zst"));
+
+    std::fs::write(dir.join("proofs.tar.zst"), b"fake-proofs-archive")?;
+    files.push(dir.join("proofs.tar.zst"));
 
     for component in [
         "headers",
@@ -353,6 +366,9 @@ async fn upload_artifacts_to_minio() -> Result<()> {
         get_object_bytes(s3, bucket, "mainnet/1700000000/rocksdb_indices.tar.zst").await?;
     assert_eq!(rocksdb_body, b"fake-rocksdb-archive", "rocksdb should be in date dir");
 
+    let proofs_body = get_object_bytes(s3, bucket, "mainnet/1700000000/proofs.tar.zst").await?;
+    assert_eq!(proofs_body, b"fake-proofs-archive", "proofs should be in date dir");
+
     let manifest_body = get_object_bytes(s3, bucket, "mainnet/1700000000/manifest.json").await?;
     let manifest: serde_json::Value = serde_json::from_slice(&manifest_body)?;
     assert_eq!(manifest["block"], 1_000_000, "manifest block mismatch");
@@ -365,9 +381,13 @@ async fn upload_artifacts_to_minio() -> Result<()> {
         manifest["components"]["state"]["file"], "../1700000000/state.tar.zst",
         "manifest should point state back to the dated run dir"
     );
+    assert_eq!(
+        manifest["components"]["proofs"]["file"], "proofs.tar.zst",
+        "proofs must remain a sibling of manifest.json for ProofsDownloader"
+    );
 
     let components = manifest["components"].as_object().expect("components should be an object");
-    assert_eq!(components.len(), 8, "should have all 8 component types");
+    assert_eq!(components.len(), 9, "should have all 9 component types");
 
     // Verify static file chunks go to {prefix}/static_files/
     for component in ["headers", "transactions", "receipts"] {
@@ -417,6 +437,9 @@ async fn upload_with_empty_prefix() -> Result<()> {
     let rocksdb_body = get_object_bytes(s3, bucket, "1700000000/rocksdb_indices.tar.zst").await?;
     assert_eq!(rocksdb_body, b"fake-rocksdb-archive", "rocksdb should be in date dir");
 
+    let proofs_body = get_object_bytes(s3, bucket, "1700000000/proofs.tar.zst").await?;
+    assert_eq!(proofs_body, b"fake-proofs-archive", "proofs should be in date dir");
+
     let manifest_body = get_object_bytes(s3, bucket, "1700000000/manifest.json").await?;
     let manifest: serde_json::Value = serde_json::from_slice(&manifest_body)?;
     assert_eq!(manifest["block"], 100, "manifest should be in date dir");
@@ -427,6 +450,10 @@ async fn upload_with_empty_prefix() -> Result<()> {
     assert_eq!(
         manifest["components"]["state"]["file"], "../1700000000/state.tar.zst",
         "manifest should point state back to the dated run dir"
+    );
+    assert_eq!(
+        manifest["components"]["proofs"]["file"], "proofs.tar.zst",
+        "proofs must remain a sibling of manifest.json for ProofsDownloader"
     );
 
     let headers_body =
@@ -725,14 +752,16 @@ async fn selective_compression_skips_finalized_chunks() -> Result<()> {
     }
 
     let output = tempfile::tempdir()?;
-    let files = SnapshotGenerator::generate_manifest(
-        source.path(),
-        output.path(),
-        8453,
-        Some(2_000_000),
-        Some(500_000),
-        &remote,
-    )?;
+    let files = SnapshotGenerator::generate_manifest(&ManifestGenerationParams {
+        source_datadir: source.path(),
+        output_dir: output.path(),
+        chain_id: 8453,
+        block: Some(2_000_000),
+        blocks_per_file: Some(500_000),
+        remote_static_files: &remote,
+        previous_chunk_output_files: &HashMap::new(),
+        upload_proofs: false,
+    })?;
 
     let filenames: Vec<String> = files
         .iter()
@@ -768,7 +797,87 @@ async fn selective_compression_skips_finalized_chunks() -> Result<()> {
 
 #[tokio::test]
 #[serial]
-async fn always_upload_overwrites_existing_state_and_rocksdb() -> Result<()> {
+async fn generate_and_upload_proofs_to_minio() -> Result<()> {
+    let harness = TestHarness::new().await?;
+    let uploader = SnapshotUploader::new(
+        harness.storage_client.clone(),
+        harness.bucket_name.clone(),
+        "proofs-gen".to_string(),
+        Some("https://snapshots.example.com".to_string()),
+    );
+
+    let source = tempfile::tempdir()?;
+    let db_dir = source.path().join("db");
+    std::fs::create_dir_all(&db_dir)?;
+    std::fs::write(db_dir.join("mdbx.dat"), b"state-data")?;
+
+    let proofs_dir = source.path().join("proofs");
+    std::fs::create_dir_all(&proofs_dir)?;
+    std::fs::write(proofs_dir.join("CURRENT"), b"MANIFEST-000014\n")?;
+    std::fs::write(proofs_dir.join("IDENTITY"), b"identity-bytes")?;
+    std::fs::write(proofs_dir.join("LOCK"), b"")?;
+    std::fs::write(proofs_dir.join("MANIFEST-000014"), b"manifest-data")?;
+    std::fs::write(proofs_dir.join("OPTIONS-000007"), b"options-data")?;
+    std::fs::write(proofs_dir.join("000060.sst"), b"sst-data")?;
+    std::fs::write(proofs_dir.join("000801.log"), b"wal-data")?;
+
+    let output = tempfile::tempdir()?;
+    let empty_remote = HashMap::new();
+    let files = SnapshotGenerator::generate_manifest(&ManifestGenerationParams {
+        source_datadir: source.path(),
+        output_dir: output.path(),
+        chain_id: 8453,
+        block: Some(0),
+        blocks_per_file: Some(500_000),
+        remote_static_files: &empty_remote,
+        previous_chunk_output_files: &HashMap::new(),
+        upload_proofs: true,
+    })?;
+
+    assert!(
+        files.iter().any(|f| f.file_name().is_some_and(|n| n == "proofs.tar.zst")),
+        "generator should produce proofs.tar.zst"
+    );
+
+    let local_manifest = parse_local_manifest(output.path())?;
+    let upload_prefix =
+        uploader.upload(output.path(), &files, 1_700_000_000, 100, &local_manifest, None).await?;
+    assert_eq!(upload_prefix, "proofs-gen/1700000000");
+
+    let s3 = &harness.storage_client;
+    let bucket = &harness.bucket_name;
+
+    let proofs_body = get_object_bytes(s3, bucket, "proofs-gen/1700000000/proofs.tar.zst").await?;
+    assert!(!proofs_body.is_empty(), "uploaded proofs archive should not be empty");
+
+    let manifest_body = get_object_bytes(s3, bucket, "proofs-gen/1700000000/manifest.json").await?;
+    let manifest: serde_json::Value = serde_json::from_slice(&manifest_body)?;
+    assert_eq!(
+        manifest["components"]["proofs"]["file"], "proofs.tar.zst",
+        "published proofs file must be a sibling of manifest.json"
+    );
+    assert_eq!(
+        manifest["components"]["state"]["file"], "../1700000000/state.tar.zst",
+        "state should still use the relative run-dir path"
+    );
+    assert!(
+        manifest["components"]["proofs"]["output_files"].as_array().is_some_and(|files| files
+            .iter()
+            .all(|f| { f["path"].as_str().is_some_and(|p| p.starts_with("proofs/")) })),
+        "proofs output_files paths should all be under proofs/"
+    );
+    assert_eq!(
+        manifest["components"]["proofs"]["output_files"].as_array().map(|a| a.len()),
+        Some(7),
+        "exactly 7 proofs DB files should be recorded in the published manifest"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn always_upload_overwrites_existing_state_rocksdb_and_proofs() -> Result<()> {
     let harness = TestHarness::new().await?;
     let s3 = &harness.storage_client;
     let bucket = &harness.bucket_name;
@@ -780,10 +889,11 @@ async fn always_upload_overwrites_existing_state_and_rocksdb() -> Result<()> {
         None,
     );
 
-    // Simulate a previous run's date dir with old state + rocksdb
+    // Simulate a previous run's date dir with old state + rocksdb + proofs
     let prev_files: &[(&str, &[u8])] = &[
         ("state.tar.zst", b"old-mdbx-from-yesterday"),
         ("rocksdb_indices.tar.zst", b"old-rocksdb-from-yesterday"),
+        ("proofs.tar.zst", b"old-proofs-from-yesterday"),
         ("manifest.json", b"{\"block\":1500000}"),
     ];
     for (name, data) in prev_files {
@@ -805,9 +915,11 @@ async fn always_upload_overwrites_existing_state_and_rocksdb() -> Result<()> {
     std::fs::write(output_dir.join("manifest.json"), serde_json::to_string(&manifest)?)?;
     std::fs::write(output_dir.join("state.tar.zst"), b"fresh-mdbx-state")?;
     std::fs::write(output_dir.join("rocksdb_indices.tar.zst"), b"fresh-rocksdb")?;
+    std::fs::write(output_dir.join("proofs.tar.zst"), b"fresh-proofs")?;
 
     let files = vec![
         output_dir.join("manifest.json"),
+        output_dir.join("proofs.tar.zst"),
         output_dir.join("rocksdb_indices.tar.zst"),
         output_dir.join("state.tar.zst"),
     ];
@@ -827,12 +939,25 @@ async fn always_upload_overwrites_existing_state_and_rocksdb() -> Result<()> {
         get_object_bytes(s3, bucket, "overwrite-test/1700000000/rocksdb_indices.tar.zst").await?;
     assert_eq!(rocksdb_body, b"fresh-rocksdb", "rocksdb should be in new date dir");
 
+    // Verify new proofs in new date dir
+    let proofs_body =
+        get_object_bytes(s3, bucket, "overwrite-test/1700000000/proofs.tar.zst").await?;
+    assert_eq!(proofs_body, b"fresh-proofs", "proofs should be in new date dir");
+
     // Verify previous run's files are untouched
     let old_state = get_object_bytes(s3, bucket, "overwrite-test/1699000000/state.tar.zst").await?;
     assert_eq!(
         old_state.as_slice(),
         b"old-mdbx-from-yesterday",
         "previous run should be untouched"
+    );
+
+    let old_proofs =
+        get_object_bytes(s3, bucket, "overwrite-test/1699000000/proofs.tar.zst").await?;
+    assert_eq!(
+        old_proofs.as_slice(),
+        b"old-proofs-from-yesterday",
+        "previous proofs should be untouched"
     );
 
     Ok(())

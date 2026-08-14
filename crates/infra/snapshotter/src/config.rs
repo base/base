@@ -130,4 +130,11 @@ pub struct SnapshotterConfig {
     /// S3 secret access key. Required for `manual` config type.
     #[arg(long, env = "SNAPSHOTTER_S3_SECRET_ACCESS_KEY")]
     pub s3_secret_access_key: Option<String>,
+
+    /// Package and upload the proofs database from `{source_datadir}/proofs`.
+    ///
+    /// Temporary rollout gate while proofs snapshot behavior is validated in
+    /// production. Disabled by default.
+    #[arg(long, env = "SNAPSHOTTER_UPLOAD_PROOFS", default_value_t = false)]
+    pub upload_proofs: bool,
 }
