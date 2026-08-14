@@ -61,51 +61,6 @@ const DEFAULT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE: u32 = 10_000;
 const DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES: u32 = 100;
 const TRANSACTION_EVENT_RETENTION_LOCK_ID: i64 = 744_697_762_131_337_711;
 
-/// Every `TransactionEventType` variant. Keep this aligned with the enum so
-/// new types are expired; `for_event_type` stays the class assignment.
-const ALL_TRANSACTION_EVENT_TYPES: &[TransactionEventType] = &[
-    TransactionEventType::ProxyReceived,
-    TransactionEventType::ProxyRejected,
-    TransactionEventType::ProxyValidationAccepted,
-    TransactionEventType::ProxyValidationRejected,
-    TransactionEventType::ProxyRoutedToBackend,
-    TransactionEventType::ProxyBackendSuccess,
-    TransactionEventType::ProxyBackendFailure,
-    TransactionEventType::ProxyIngressRpcAttempt,
-    TransactionEventType::ProxyIngressRpcSuccess,
-    TransactionEventType::ProxyIngressRpcFailure,
-    TransactionEventType::IngressReceived,
-    TransactionEventType::SimulationStarted,
-    TransactionEventType::SimulationSucceeded,
-    TransactionEventType::SimulationFailed,
-    TransactionEventType::IngressMeteringSendAttempt,
-    TransactionEventType::IngressMeteringSendSuccess,
-    TransactionEventType::IngressMeteringSendFailure,
-    TransactionEventType::IngressMeteringSendDropped,
-    TransactionEventType::Pending,
-    TransactionEventType::Queued,
-    TransactionEventType::PendingToQueued,
-    TransactionEventType::QueuedToPending,
-    TransactionEventType::Dropped,
-    TransactionEventType::Replaced,
-    TransactionEventType::Overflowed,
-    TransactionEventType::TxpoolBuilderForwardAttempt,
-    TransactionEventType::TxpoolBuilderForwardSuccess,
-    TransactionEventType::TxpoolBuilderForwardFailure,
-    TransactionEventType::TxpoolBuilderForwardDropped,
-    TransactionEventType::TxpoolBuilderConsumed,
-    TransactionEventType::TxpoolValidatedInsertAccepted,
-    TransactionEventType::TxpoolValidatedInsertRejected,
-    TransactionEventType::BuilderConsidered,
-    TransactionEventType::BuilderAccepted,
-    TransactionEventType::BuilderRejected,
-    TransactionEventType::BuilderIncluded,
-    TransactionEventType::BuilderPayloadFinalized,
-    TransactionEventType::BuilderFlashblockStarted,
-    TransactionEventType::BuilderFlashblockPublished,
-    TransactionEventType::BuilderFlashblockBuildStopped,
-];
-
 /// Retention class used to pick a delete cutoff for an event type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransactionEventRetentionClass {
@@ -182,9 +137,7 @@ impl TransactionEventRetentionClass {
     }
 
     fn event_types(self) -> impl Iterator<Item = TransactionEventType> {
-        ALL_TRANSACTION_EVENT_TYPES
-            .iter()
-            .copied()
+        TransactionEventType::all()
             .filter(move |event_type| Self::for_event_type(*event_type) == self)
     }
 }
@@ -1348,15 +1301,11 @@ mod tests {
     #[test]
     fn retention_classes_partition_all_event_types() {
         let mut seen = std::collections::HashSet::new();
-        for event_type in ALL_TRANSACTION_EVENT_TYPES {
-            assert!(
-                seen.insert(*event_type),
-                "event type {event_type} listed more than once in ALL_TRANSACTION_EVENT_TYPES"
-            );
-            let class = TransactionEventRetentionClass::for_event_type(*event_type);
-            assert!(class.event_types().any(|candidate| candidate == *event_type));
+        for event_type in TransactionEventType::all() {
+            assert!(seen.insert(event_type), "event type {event_type} appeared more than once");
+            let class = TransactionEventRetentionClass::for_event_type(event_type);
+            assert!(class.event_types().any(|candidate| candidate == event_type));
         }
-        assert_eq!(seen.len(), ALL_TRANSACTION_EVENT_TYPES.len());
     }
 
     #[test]

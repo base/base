@@ -4,6 +4,7 @@ use alloy_primitives::{B256, TxHash};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use strum::IntoEnumIterator;
 
 /// Current transaction event schema version.
 pub const SCHEMA_VERSION: &str = "transaction-event/v1";
@@ -49,7 +50,7 @@ impl fmt::Display for TransactionEventProducer {
 }
 
 /// Versioned transaction event vocabulary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, strum::EnumIter)]
 pub enum TransactionEventType {
     /// Proxyd accepted a transaction request from a client.
     #[serde(rename = "PROXY_RECEIVED")]
@@ -171,6 +172,13 @@ pub enum TransactionEventType {
     /// The builder stopped flashblock construction before publishing.
     #[serde(rename = "BUILDER_FLASHBLOCK_BUILD_STOPPED")]
     BuilderFlashblockBuildStopped,
+}
+
+impl TransactionEventType {
+    /// Every variant in declaration order.
+    pub fn all() -> impl Iterator<Item = Self> {
+        Self::iter()
+    }
 }
 
 impl fmt::Display for TransactionEventType {
