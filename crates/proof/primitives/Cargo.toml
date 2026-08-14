@@ -36,6 +36,7 @@ std = [
 	"alloy-chains/std",
 	"alloy-eips/std",
 	"alloy-primitives/std",
+	"alloy-rlp/std",
 	"alloy-rpc-types-eth/std",
 	"alloy-trie/std",
 	"base-common-genesis/std",
