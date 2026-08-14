@@ -1,0 +1,9 @@
+name: Report sccache
+description: Classify sccache write failures and publish stats to the job summary
+
+runs:
+  using: composite
+  steps:
+    - name: Report sccache stats
+      shell: bash
+      run: ./etc/scripts/ci/sccache-report.sh

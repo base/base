@@ -12,7 +12,7 @@ all-targets: contracts elfs
 
 # Builds all targets with ci profile
 ci: contracts
-    cargo build --locked --workspace --all-targets --profile ci
+    cargo build --locked --workspace --all-targets --all-features --profile ci
 
 # Builds only affected packages with ci profile
 affected-ci base="main": contracts
@@ -28,7 +28,7 @@ affected-ci base="main": contracts
         exit 0
     fi
     echo "Building affected crates:${pkg_args[*]}"
-    cargo build --locked --all-targets --profile ci "${pkg_args[@]}"
+    cargo build --locked --all-targets --all-features --profile ci "${pkg_args[@]}"
 
 elfs:
     just succinct build-elfs

@@ -58,6 +58,14 @@ no-std-proof:
 crate-deps:
     {{justfile_directory()}}/etc/scripts/ci/check-crate-deps.sh
 
+# Typechecks the default feature set for all targets (no --all-features)
+default-features: _build-contracts
+    {{_skip_kernels}} {{_elf_stub}} cargo check --workspace --all-targets
+
+# Typechecks the default feature set with the ci profile
+default-features-ci: _build-contracts
+    {{_skip_kernels}} {{_elf_stub}} cargo check --locked --workspace --all-targets --profile ci
+
 [private]
 _build-contracts:
     cd {{justfile_directory()}}/crates/utilities/test-utils/contracts && forge soldeer install && forge build
