@@ -306,9 +306,7 @@ where
         let idle = loop {
             match self.pipeline.step() {
                 Ok(StepResult::Idle) => break true,
-                Ok(
-                    StepResult::BlockEncoded | StepResult::SpanFlushed | StepResult::ChannelClosed,
-                ) => {
+                Ok(StepResult::BlockEncoded | StepResult::ChannelClosed) => {
                     steps += 1;
                     budget -= 1;
                     if budget == 0 {

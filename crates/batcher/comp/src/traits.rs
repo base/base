@@ -1,46 +1,25 @@
 //! Contains the core `Compressor` trait.
 
-use alloc::vec::Vec;
-
 use crate::CompressorResult;
 
-/// Compressor Writer
+/// Compression stream used while building and framing a channel.
 ///
-/// A trait that expands the standard library `Write` trait to include
-/// compression-specific methods and return [`CompressorResult`] instead of
-/// standard library `Result`.
+/// Producers write RLP input and may reset the stream for an exact size
+/// checkpoint. [`crate::ChannelOut::into_frames`] then drains the compressed
+/// bytes and prepends the format's optional channel-version byte.
 pub trait CompressorWriter {
     /// Writes the given data to the compressor.
     fn write(&mut self, data: &[u8]) -> CompressorResult<usize>;
 
-    /// Flushes the buffer.
-    fn flush(&mut self) -> CompressorResult<()>;
-
-    /// Closes the compressor.
-    fn close(&mut self) -> CompressorResult<()>;
-
     /// Resets the compressor.
     fn reset(&mut self);
 
-    /// Returns the length of the compressed data.
-    fn len(&self) -> usize;
-
-    /// Returns `true` if the compressed output is empty.
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
+    /// Returns the number of compressed bytes available to read.
+    fn compressed_len(&self) -> CompressorResult<usize>;
 
     /// Reads the compressed data into the given buffer.
     /// Returns the number of bytes read.
     fn read(&mut self, buf: &mut [u8]) -> CompressorResult<usize>;
-}
-
-/// Channel Compressor
-///
-/// A compressor for channels.
-pub trait ChannelCompressor: CompressorWriter {
-    /// Returns the compressed data buffer.
-    fn get_compressed(&self) -> Vec<u8>;
 
     /// Returns the single-byte channel version prefix to prepend to the first
     /// frame's data, or `None` if the compression format is self-identifying
