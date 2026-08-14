@@ -91,11 +91,7 @@ impl RetentionAdvisoryLock {
                 return Err(err.into());
             }
         };
-        if locked {
-            Ok(Some(Self { conn: Some(conn) }))
-        } else {
-            Ok(None)
-        }
+        if locked { Ok(Some(Self { conn: Some(conn) })) } else { Ok(None) }
     }
 
     fn conn(&mut self) -> &mut sqlx::PgConnection {
