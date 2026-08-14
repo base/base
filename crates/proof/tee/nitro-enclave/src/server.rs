@@ -6,7 +6,10 @@ use base_common_genesis::RollupConfig;
 use base_proof::BootInfo;
 use base_proof_client::Prologue;
 use base_proof_preimage::PreimageKey;
-use base_proof_primitives::{PerChainConfig, ProofJournal, ProofResult, Proposal};
+use base_proof_primitives::{
+    ATTESTED_WITHDRAWAL_SLOT, PerChainConfig, ProofJournal, ProofResult, Proposal,
+    StorageProofVerifier, WithdrawalAuthorization,
+};
 use tracing::info;
 
 use crate::{
@@ -127,6 +130,35 @@ impl Server {
             .ok_or_else(|| NsmError::SessionOpen("NSM not available".to_string()))?;
         let public_key = self.signer_public_key();
         session.get_attestation(public_key, user_data, nonce)
+    }
+
+    /// Verify a withdrawal record in the message passer storage trie and sign it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the storage proof does not establish the withdrawal
+    /// record or the enclave cannot produce a signature.
+    pub fn sign_attested_withdrawal(
+        &self,
+        auth_hash: B256,
+        message_passer_storage_root: B256,
+        storage_proof: &[Bytes],
+    ) -> Result<Bytes> {
+        let mut encoded_slot = [0_u8; 64];
+        encoded_slot[..32].copy_from_slice(auth_hash.as_slice());
+        encoded_slot[56..].copy_from_slice(&ATTESTED_WITHDRAWAL_SLOT.to_be_bytes());
+        let storage_slot = keccak256(encoded_slot);
+
+        StorageProofVerifier::verify_storage_slot(
+            message_passer_storage_root,
+            storage_slot,
+            &[0x01],
+            storage_proof,
+        )
+        .map_err(|error| NitroError::ProofPipeline(error.to_string()))?;
+
+        let authorization = WithdrawalAuthorization { auth_hash };
+        Signing::sign(&self.signer_key, &authorization.signing_preimage())
     }
 
     /// Run the proof-client pipeline for the given preimages and return per-block proposals

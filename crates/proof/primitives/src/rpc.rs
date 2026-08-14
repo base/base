@@ -17,6 +17,7 @@ use jsonrpsee::core::RpcResult;
 use jsonrpsee::proc_macros::rpc;
 
 use crate::{ProofRequest, ProofResult};
+use alloy_primitives::{B256, Bytes};
 
 #[cfg_attr(
     all(feature = "rpc-server", feature = "rpc-client"),
@@ -50,8 +51,7 @@ pub trait ProverApi {
     all(feature = "rpc-client", not(feature = "rpc-server")),
     rpc(client, namespace = "enclave")
 )]
-/// Exposed by the host-side prover server; the registrar calls these endpoints
-/// to obtain the signer public key and attestation for on-chain registration.
+/// Exposed by host-side prover servers for on-chain signer registration.
 pub trait EnclaveApi {
     /// Return the 65-byte uncompressed ECDSA public key for each enclave signer.
     #[method(name = "signerPublicKey")]
@@ -67,4 +67,30 @@ pub trait EnclaveApi {
         user_data: Option<Vec<u8>>,
         nonces: Option<Vec<Vec<u8>>>,
     ) -> RpcResult<Vec<Vec<u8>>>;
+}
+
+/// JSON-RPC interface for the private attested-withdrawal relay endpoint.
+#[cfg_attr(
+    all(feature = "rpc-server", feature = "rpc-client"),
+    rpc(server, client, namespace = "enclave")
+)]
+#[cfg_attr(
+    all(feature = "rpc-server", not(feature = "rpc-client")),
+    rpc(server, namespace = "enclave")
+)]
+#[cfg_attr(
+    all(feature = "rpc-client", not(feature = "rpc-server")),
+    rpc(client, namespace = "enclave")
+)]
+/// This method authorizes an L1 payout. Expose it only on the private prover
+/// endpoint used by the attested-withdrawal relay.
+pub trait AttestedWithdrawalApi {
+    /// Verify an attested withdrawal record and return its raw ECDSA signature.
+    #[method(name = "signAttestedWithdrawal")]
+    async fn sign_attested_withdrawal(
+        &self,
+        auth_hash: B256,
+        message_passer_storage_root: B256,
+        storage_proof: Vec<Bytes>,
+    ) -> RpcResult<Vec<u8>>;
 }

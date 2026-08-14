@@ -3,7 +3,9 @@ use std::{fmt, net::SocketAddr, sync::Arc};
 use alloy_signer::utils::public_key_to_address;
 use base_health::{HealthzApiServer, HealthzRpc};
 use base_proof_host::ProverConfig;
-use base_proof_primitives::{EnclaveApiServer, ProofRequest, ProofResult, ProverApiServer};
+use base_proof_primitives::{
+    AttestedWithdrawalApiServer, EnclaveApiServer, ProofRequest, ProofResult, ProverApiServer,
+};
 use jsonrpsee::{
     RpcModule,
     core::{RpcResult, async_trait},
@@ -121,7 +123,8 @@ impl NitroProverServer {
         }
         module.merge(NitroProverRpc { pool: Arc::new(pool) }.into_rpc())?;
 
-        module.merge(NitroSignerRpc { transports }.into_rpc())?;
+        module.merge(NitroSignerRpc { transports: transports.clone() }.into_rpc())?;
+        module.merge(NitroAttestedWithdrawalRpc { transports }.into_rpc())?;
 
         Ok(server.start(module))
     }
@@ -249,6 +252,29 @@ impl EnclaveApiServer for NitroSignerRpc {
     }
 }
 
+/// Inner RPC handler for attested-withdrawal signing on the private prover endpoint.
+struct NitroAttestedWithdrawalRpc {
+    transports: Vec<Arc<NitroTransport>>,
+}
+
+#[async_trait]
+impl AttestedWithdrawalApiServer for NitroAttestedWithdrawalRpc {
+    async fn sign_attested_withdrawal(
+        &self,
+        auth_hash: alloy_primitives::B256,
+        message_passer_storage_root: alloy_primitives::B256,
+        storage_proof: Vec<alloy_primitives::Bytes>,
+    ) -> RpcResult<Vec<u8>> {
+        let transport = self.transports.first().ok_or_else(|| {
+            NitroProverServer::rpc_err(-32001, "no enclave transports configured")
+        })?;
+        transport
+            .sign_attested_withdrawal(auth_hash, message_passer_storage_root, storage_proof)
+            .await
+            .map_err(|error| NitroProverServer::rpc_err(-32001, error))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::Ordering;
@@ -299,6 +325,35 @@ mod tests {
         let result: Vec<Vec<u8>> =
             client.request("enclave_signerPublicKey", jsonrpsee::rpc_params![]).await.unwrap();
         assert_eq!(result, vec![expected]);
+        handle.stop().unwrap();
+    }
+
+    #[tokio::test]
+    async fn registrar_rpc_server_does_not_expose_attested_withdrawal_signing() {
+        let server = Arc::new(EnclaveServer::new_local().unwrap());
+        let transport = Arc::new(NitroTransport::local(server));
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+
+        let handle =
+            NitroProverServer::run_registrar_rpc_server(addr, vec![transport], None).await.unwrap();
+        let client = jsonrpsee::http_client::HttpClientBuilder::default()
+            .build(format!("http://{addr}"))
+            .unwrap();
+
+        let error = client
+            .request::<Vec<u8>, _>(
+                "enclave_signAttestedWithdrawal",
+                jsonrpsee::rpc_params![
+                    alloy_primitives::B256::ZERO,
+                    alloy_primitives::B256::ZERO,
+                    Vec::<alloy_primitives::Bytes>::new()
+                ],
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("Method not found"));
         handle.stop().unwrap();
     }
 

@@ -17,6 +17,9 @@ async-trait.workspace = true
 alloy-eips = { workspace = true }
 alloy-chains = { workspace = true }
 alloy-primitives = { workspace = true }
+alloy-rlp.workspace = true
+alloy-rpc-types-eth = { workspace = true, features = ["serde"] }
+alloy-trie.workspace = true
 base-proof-preimage = { workspace = true }
 base-common-genesis = { workspace = true }
 jsonrpsee = { workspace = true, optional = true }
@@ -33,6 +36,8 @@ std = [
 	"alloy-chains/std",
 	"alloy-eips/std",
 	"alloy-primitives/std",
+	"alloy-rpc-types-eth/std",
+	"alloy-trie/std",
 	"base-common-genesis/std",
 	"base-proof-preimage/std",
 	"serde?/std",
