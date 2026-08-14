@@ -19,6 +19,7 @@ use base_execution_txpool::{
     ValidityPredicate,
 };
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 use reth_payload_util::PayloadTransactions;
 use reth_primitives_traits::Recovered;
 use reth_transaction_pool::{
@@ -138,13 +139,19 @@ fn skewed_predicates(transaction_index: usize, count: usize) -> Vec<ValidityPred
         .collect()
 }
 
-fn skewed_pool(transaction_count: usize, predicates_per_transaction: usize) -> Pool {
+fn skewed_pool(
+    transaction_count: usize,
+    predicates_per_transaction: usize,
+    shuffle_predicates: bool,
+) -> Pool {
     let mut pool = PendingPool::new(Ordering::coinbase_tip());
+    let mut rng = StdRng::seed_from_u64(0x5eed);
     for index in 0..transaction_count {
-        pool.add_transaction(
-            transaction(index, index, 0, skewed_predicates(index, predicates_per_transaction)),
-            0,
-        );
+        let mut predicates = skewed_predicates(index, predicates_per_transaction);
+        if shuffle_predicates {
+            predicates.shuffle(&mut rng);
+        }
+        pool.add_transaction(transaction(index, index, 0, predicates), 0);
     }
     pool
 }
@@ -257,18 +264,27 @@ fn selection_benches(c: &mut Criterion) {
     parking.finish();
 }
 
-fn run_predicate_selection(pool: &Pool, db: &mut InMemoryDB) -> usize {
+fn run_predicate_selection(pool: &Pool, db: &mut InMemoryDB, hash_rotated: bool) -> usize {
     let mut best = parkable(pool);
     let mut predicate_index = ParkedPredicateIndex::default();
     let mut selected = 0;
 
     while let Some(transaction) = best.next(()) {
-        let blocking_predicate = ValidityPredicateKey::hash_rotated_scan(
-            transaction.validity_predicates(),
-            *transaction.hash(),
-        )
-        .find(|predicate| !predicate.matches_state(db).expect("in-memory reads cannot fail"))
-        .map(ValidityPredicateKey::for_predicate);
+        let predicates = transaction.validity_predicates();
+        let blocking_predicate = if hash_rotated {
+            ValidityPredicateKey::hash_rotated_scan(predicates, *transaction.hash())
+                .find(|predicate| {
+                    !predicate.matches_state(db).expect("in-memory reads cannot fail")
+                })
+                .map(ValidityPredicateKey::for_predicate)
+        } else {
+            predicates
+                .iter()
+                .find(|predicate| {
+                    !predicate.matches_state(db).expect("in-memory reads cannot fail")
+                })
+                .map(ValidityPredicateKey::for_predicate)
+        };
         if let Some(blocking_predicate) = blocking_predicate {
             let transaction_hash = *transaction.hash();
             assert!(best.park_current());
@@ -314,7 +330,7 @@ fn predicate_benches(c: &mut Criterion) {
             b.iter_batched(
                 InMemoryDB::default,
                 |mut db| {
-                    let selected = run_predicate_selection(&pool, &mut db);
+                    let selected = run_predicate_selection(&pool, &mut db, true);
                     assert_eq!(selected, PREDICATE_TRANSACTION_COUNT - predicate_transactions);
                 },
                 BatchSize::SmallInput,
@@ -328,25 +344,36 @@ fn predicate_skew_benches(c: &mut Criterion) {
     let mut group = c.benchmark_group("tx_selection/predicate_skew");
     group.sample_size(10);
 
-    for (transaction_count, predicates_per_transaction) in
-        [(10_000, 2), (10_000, 8), (10_000, 64), (100_000, 2), (100_000, 8)]
-    {
+    for (transaction_count, predicates_per_transaction, order) in [
+        (10_000, 2, "correlated"),
+        (10_000, 8, "correlated"),
+        (10_000, 64, "correlated"),
+        (100_000, 2, "correlated"),
+        (100_000, 8, "correlated"),
+        (100_000, 2, "shuffled"),
+        (100_000, 8, "shuffled"),
+    ] {
         group.throughput(Throughput::Elements(transaction_count as u64));
-        let pool = skewed_pool(transaction_count, predicates_per_transaction);
-        group.bench_function(
-            format!(
-                "park/transactions={transaction_count}/predicates={predicates_per_transaction}"
-            ),
-            |b| {
-                b.iter_batched(
-                    InMemoryDB::default,
-                    |mut db| {
-                        assert_eq!(run_predicate_selection(&pool, &mut db), 0);
-                    },
-                    BatchSize::SmallInput,
-                );
-            },
-        );
+        let pool = skewed_pool(transaction_count, predicates_per_transaction, order == "shuffled");
+        for (policy, hash_rotated) in [("first", false), ("hash_rotated", true)] {
+            group.bench_function(
+                format!(
+                    "drain/order={order}/policy={policy}/n={transaction_count}/p={predicates_per_transaction}"
+                ),
+                |b| {
+                    b.iter_batched(
+                        InMemoryDB::default,
+                        |mut db| {
+                            assert_eq!(
+                                run_predicate_selection(&pool, &mut db, hash_rotated),
+                                0
+                            );
+                        },
+                        BatchSize::SmallInput,
+                    );
+                },
+            );
+        }
     }
     group.finish();
 }
