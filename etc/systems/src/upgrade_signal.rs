@@ -234,6 +234,13 @@ mod tests {
 
     use super::*;
 
+    fn contract_position(upgrade: BaseUpgrade) -> usize {
+        BaseUpgrade::CONTRACT_VARIANTS
+            .iter()
+            .position(|variant| *variant == upgrade)
+            .expect("upgrade is contract-backed")
+    }
+
     #[test]
     fn id_ordered_schedule_places_timestamps_by_contract_position() {
         let schedule = MockProtocolVersionsClient::id_ordered_schedule(&[
@@ -242,10 +249,15 @@ mod tests {
         ])
         .unwrap();
 
+        let regolith = contract_position(BaseUpgrade::Regolith);
+        let cobalt = contract_position(BaseUpgrade::Cobalt);
+
         assert_eq!(schedule.len(), BaseUpgrade::CONTRACT_VARIANTS.len());
-        assert_eq!(schedule[0], 7);
-        assert_eq!(*schedule.last().unwrap(), 42);
-        assert!(schedule[1..schedule.len() - 1].iter().all(|&ts| ts == 0));
+        assert_eq!(schedule[regolith], 7);
+        assert_eq!(schedule[cobalt], 42);
+        assert!(
+            schedule.iter().enumerate().all(|(i, &ts)| i == regolith || i == cobalt || ts == 0)
+        );
     }
 
     #[test]
@@ -256,7 +268,7 @@ mod tests {
         ])
         .unwrap();
 
-        assert_eq!(*schedule.last().unwrap(), 84);
+        assert_eq!(schedule[contract_position(BaseUpgrade::Cobalt)], 84);
     }
 
     #[test]

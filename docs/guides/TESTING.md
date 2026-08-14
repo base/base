@@ -64,7 +64,8 @@ after building test contracts and SP1 ELFs. To scope to only the crates affected
 just test-affected
 ```
 
-`base-system-tests` is excluded here — it is the system-test crate covered separately below.
+`base-system-tests` is excluded here — Docker-backed integration tests and the crate's colocated
+unit tests both run under [System Tests](#system-tests) below.
 
 
 ### Action Tests
@@ -106,8 +107,8 @@ which runs `cargo nextest run -p base-system-tests` after building test contract
 [`etc/systems/README.md`](../../etc/systems/README.md) for the crate itself.
 
 System tests require Docker and are **not** run on every pull request (see
-[CI Pipeline](#ci-pipeline) below) because of their cost — they run on the merge queue instead, so
-every commit that reaches `main` has been through them.
+[CI Pipeline](#ci-pipeline) below) because of their cost. They run as the required
+`ci / System Tests` check on the merge queue, so a commit cannot reach `main` unless they pass.
 
 
 ### Fuzz Tests
@@ -159,13 +160,14 @@ CI runs a different subset of checks depending on where a change is in its lifec
 
 The affected-crates scoping on pull requests (via `etc/scripts/local/affected-crates.py`) is why
 `just pr` locally mirrors PR CI, while `just ci` mirrors what the merge queue ultimately requires —
-every affected crate, workspace-wide, before a change reaches `main`. System tests are only run on
-the merge queue: since every commit passes through it before landing on `main`, this still
-guarantees `main` is never broken by an untested integration path, while keeping PR feedback fast.
+every affected crate, workspace-wide, before a change reaches `main`. System tests stay on the
+merge queue (not pull requests) so PR feedback stays fast; they are a required status check, so
+the queue will not merge if they fail.
 
 `action-tests.yml`, despite the name, is unrelated to testing GitHub Actions workflows — it runs
 the [action tests](#action-tests) described above (`just actions::lint-ci` and
-`just actions::test-ci`) on every PR and merge-queue run.
+`just actions::test-ci`) on every PR and merge-queue run. Action tests are also a required
+status check.
 
 
 ## Guidelines
