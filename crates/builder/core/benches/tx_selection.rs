@@ -417,6 +417,7 @@ fn run_hot_key_cycle(pool: &Pool, hash_rotated: bool) -> usize {
         assert!(predicate_index.reindex(*transaction_hash, blocker));
     }
 
+    black_box(&predicate_index);
     affected.len()
 }
 
