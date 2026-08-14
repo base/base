@@ -191,7 +191,7 @@ impl ActorAuthorizer {
             }
             // 0 = no expiry; otherwise valid while now <= expiry.
             if state.default_eoa_expiry != 0 && now > state.default_eoa_expiry {
-                return Err(AuthorizeError::Expired {
+                return Err(AuthorizeError::ActorExpired {
                     actor_id: recovered,
                     expiry: state.default_eoa_expiry,
                 });
@@ -226,15 +226,15 @@ impl ActorAuthorizer {
         now: u64,
     ) -> Result<ResolvedActor, AuthorizeError> {
         if actor_id.is_zero() {
-            return Err(AuthorizeError::ZeroActor);
+            return Err(AuthorizeError::AuthenticationFailed);
         }
         let config = storage.actor_config_slot(account, actor_id)?;
         if config.authenticator != authenticator {
-            return Err(AuthorizeError::NotBound { actor_id, authenticator });
+            return Err(AuthorizeError::AuthenticatorMismatch { actor_id, authenticator });
         }
         // 0 = no expiry; otherwise valid while now <= expiry.
         if config.expiry != 0 && now > config.expiry {
-            return Err(AuthorizeError::Expired { actor_id, expiry: config.expiry });
+            return Err(AuthorizeError::ActorExpired { actor_id, expiry: config.expiry });
         }
         // `_resolvePolicyTarget`: address(0) when ungated, else the policy manager
         // (never the signed commitment). Resolved from the `config` already in
@@ -397,7 +397,7 @@ mod tests {
             acc.account_state.at_mut(&account).write(pack_self(0, NOW - 1, false)).unwrap();
             assert_eq!(
                 ActorAuthorizer::authenticate_actor(acc, account, HASH, &auth, NOW),
-                Err(AuthorizeError::Expired { actor_id: actor_id(account), expiry: NOW - 1 }),
+                Err(AuthorizeError::ActorExpired { actor_id: actor_id(account), expiry: NOW - 1 }),
             );
         });
     }
@@ -434,7 +434,7 @@ mod tests {
         with_storage(|acc| {
             assert_eq!(
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
-                Err(AuthorizeError::NotBound {
+                Err(AuthorizeError::AuthenticatorMismatch {
                     actor_id: id,
                     authenticator: Eip8130Constants::K1_AUTHENTICATOR,
                 }),
@@ -475,7 +475,7 @@ mod tests {
         with_storage(|acc| {
             assert_eq!(
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
-                Err(AuthorizeError::NotBound {
+                Err(AuthorizeError::AuthenticatorMismatch {
                     actor_id: id,
                     authenticator: Eip8130Constants::K1_AUTHENTICATOR,
                 }),
@@ -499,7 +499,7 @@ mod tests {
             // Expired once now > expiry.
             assert_eq!(
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, 501),
-                Err(AuthorizeError::Expired { actor_id: id, expiry: 500 }),
+                Err(AuthorizeError::ActorExpired { actor_id: id, expiry: 500 }),
             );
         });
     }
@@ -675,7 +675,7 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
-                Err(AuthorizeError::NotBound {
+                Err(AuthorizeError::AuthenticatorMismatch {
                     actor_id: nested_id,
                     authenticator: Eip8130Constants::K1_AUTHENTICATOR,
                 }),
@@ -710,7 +710,7 @@ mod tests {
         // EOA as parent: nested k1 recovers to the delegate account itself,
         // with no `actor_config` entry — only the live inline default EOA.
         // `DelegateAuthenticator` → `authenticateActor` must honor that path;
-        // bare `resolve_bound` would incorrectly return NotBound.
+        // bare `resolve_bound` would incorrectly return AuthenticatorMismatch.
         let nested_key = k1_key(0x55);
         let delegate_account = k1_address(&nested_key);
         let outer_id = actor_id(delegate_account);
@@ -797,7 +797,7 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
-                Err(AuthorizeError::NotBound {
+                Err(AuthorizeError::AuthenticatorMismatch {
                     actor_id: outer_id,
                     authenticator: Eip8130Contracts::DELEGATE_AUTHENTICATOR,
                 }),
@@ -821,7 +821,7 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
-                Err(AuthorizeError::ZeroActor),
+                Err(AuthorizeError::AuthenticationFailed),
             );
         });
     }

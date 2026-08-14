@@ -117,7 +117,7 @@ impl ConfigChangeAuthorizer {
                 // must match the account's current local sequence.
                 if seq != Eip8130Constants::UNSEQUENCED {
                     if u64::from(seq) != state.local_sequence {
-                        return Err(TxAuthError::ConfigSequence {
+                        return Err(TxAuthError::BadSequence {
                             expected: state.local_sequence,
                             got: u64::from(seq),
                         });
@@ -129,7 +129,7 @@ impl ConfigChangeAuthorizer {
             }
             AccountChangeChannel::Multichain => {
                 if change.sequence != state.multichain_sequence {
-                    return Err(TxAuthError::ConfigSequence {
+                    return Err(TxAuthError::BadSequence {
                         expected: state.multichain_sequence,
                         got: change.sequence,
                     });
@@ -407,7 +407,7 @@ mod tests {
         with_storage(|acc| {
             assert_eq!(
                 ConfigChangeAuthorizer::authorize(acc, account, LOCAL, &change, NOW),
-                Err(TxAuthError::ConfigSequence { expected: 0, got: 5 }),
+                Err(TxAuthError::BadSequence { expected: 0, got: 5 }),
             );
         });
     }
@@ -463,7 +463,7 @@ mod tests {
             // The recovered signer is not the account and has no registered actor.
             assert_eq!(
                 ConfigChangeAuthorizer::authorize(acc, account, LOCAL, &change, NOW),
-                Err(TxAuthError::Authorize(AuthorizeError::NotBound {
+                Err(TxAuthError::Authorize(AuthorizeError::AuthenticatorMismatch {
                     actor_id: attacker_id,
                     authenticator: Eip8130Constants::K1_AUTHENTICATOR,
                 })),

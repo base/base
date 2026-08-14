@@ -75,7 +75,7 @@ pub enum SignatureError {
     /// The envelope was empty (missing its leading `sigType` byte). Mirrors
     /// `EmptySignatureEnvelope`.
     #[error("signature envelope is empty (missing its leading sigType byte)")]
-    EmptyEnvelope,
+    EmptySignatureEnvelope,
 
     /// The leading `sigType` byte is not a recognized [`SignatureType`] (it was
     /// `Invalid` or out of range). Mirrors `UnknownSignatureType`.
@@ -143,7 +143,7 @@ impl SignatureVerifier {
         local_chain_id: u64,
         now: u64,
     ) -> Result<ResolvedActor, SignatureError> {
-        let (&sig_type_byte, inner) = auth.split_first().ok_or(SignatureError::EmptyEnvelope)?;
+        let (&sig_type_byte, inner) = auth.split_first().ok_or(SignatureError::EmptySignatureEnvelope)?;
         let sig_type = SignatureType::from_byte(sig_type_byte)
             .ok_or(SignatureError::UnknownSignatureType(sig_type_byte))?;
         let digest = Self::envelope_digest(sig_type, account, hash, local_chain_id);
@@ -239,7 +239,7 @@ mod tests {
         with_storage(|acc| {
             assert_eq!(
                 SignatureVerifier::validate_signature(acc, ACCOUNT, HASH, &[], CHAIN_ID, NOW),
-                Err(SignatureError::EmptyEnvelope),
+                Err(SignatureError::EmptySignatureEnvelope),
             );
         });
     }
@@ -306,10 +306,10 @@ mod tests {
         let auth = envelope(SignatureType::Local as u8, K1, &sig(&k, digest));
         with_storage(|acc| {
             acc.actor_config.at_mut(&id).at_mut(&ACCOUNT).write(pack(K1, 0, 0)).unwrap();
-            // Recovers a different actor id than the one bound: NotBound.
+            // Recovers a different actor id than the one bound: AuthenticatorMismatch.
             assert!(matches!(
                 SignatureVerifier::validate_signature(acc, ACCOUNT, HASH, &auth, CHAIN_ID + 1, NOW,),
-                Err(SignatureError::Authenticate(AuthorizeError::NotBound { .. })),
+                Err(SignatureError::Authenticate(AuthorizeError::AuthenticatorMismatch { .. })),
             ));
         });
     }
