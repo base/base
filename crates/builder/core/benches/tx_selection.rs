@@ -28,7 +28,7 @@ use reth_transaction_pool::{
 };
 use revm::{
     database::InMemoryDB,
-    state::{Account, EvmState},
+    state::{Account, AccountInfo, EvmState},
 };
 
 type Ordering = BaseOrdering<BasePooledTransaction>;
@@ -264,7 +264,11 @@ fn selection_benches(c: &mut Criterion) {
     parking.finish();
 }
 
-fn run_predicate_selection(pool: &Pool, db: &mut InMemoryDB, hash_rotated: bool) -> usize {
+fn run_predicate_selection(
+    pool: &Pool,
+    db: &mut InMemoryDB,
+    hash_rotated: bool,
+) -> (usize, ParkedPredicateIndex<BasePooledTransaction>) {
     let mut best = parkable(pool);
     let mut predicate_index = ParkedPredicateIndex::default();
     let mut selected = 0;
@@ -298,7 +302,7 @@ fn run_predicate_selection(pool: &Pool, db: &mut InMemoryDB, hash_rotated: bool)
         assert!(predicate_index.affected_by_state(&EvmState::default()).is_empty());
     }
 
-    selected
+    (selected, predicate_index)
 }
 
 fn predicate_benches(c: &mut Criterion) {
@@ -330,7 +334,7 @@ fn predicate_benches(c: &mut Criterion) {
             b.iter_batched(
                 InMemoryDB::default,
                 |mut db| {
-                    let selected = run_predicate_selection(&pool, &mut db, true);
+                    let (selected, _) = run_predicate_selection(&pool, &mut db, true);
                     assert_eq!(selected, PREDICATE_TRANSACTION_COUNT - predicate_transactions);
                 },
                 BatchSize::SmallInput,
@@ -365,12 +369,76 @@ fn predicate_skew_benches(c: &mut Criterion) {
                         InMemoryDB::default,
                         |mut db| {
                             assert_eq!(
-                                run_predicate_selection(&pool, &mut db, hash_rotated),
+                                run_predicate_selection(&pool, &mut db, hash_rotated).0,
                                 0
                             );
                         },
                         BatchSize::SmallInput,
                     );
+                },
+            );
+        }
+    }
+    group.finish();
+}
+
+fn run_hot_key_cycle(pool: &Pool, hash_rotated: bool) -> usize {
+    let mut db = InMemoryDB::default();
+    let (selected, mut predicate_index) = run_predicate_selection(pool, &mut db, hash_rotated);
+    assert_eq!(selected, 0);
+
+    db.insert_account_info(Address::ZERO, AccountInfo { balance: U256::ONE, ..Default::default() });
+    let mut changed_state = EvmState::default();
+    let mut changed_account = Account::default();
+    changed_account.info.balance = U256::ONE;
+    changed_state.insert(Address::ZERO, changed_account);
+
+    let affected = predicate_index.affected_by_state(&changed_state);
+    for transaction_hash in &affected {
+        let predicates = predicate_index
+            .transaction(*transaction_hash)
+            .expect("affected transaction must remain indexed")
+            .validity_predicates();
+        let blocker = if hash_rotated {
+            ValidityPredicateKey::hash_rotated_scan(predicates, *transaction_hash)
+                .find(|predicate| {
+                    !predicate.matches_state(&mut db).expect("in-memory reads cannot fail")
+                })
+                .map(ValidityPredicateKey::for_predicate)
+        } else {
+            predicates
+                .iter()
+                .find(|predicate| {
+                    !predicate.matches_state(&mut db).expect("in-memory reads cannot fail")
+                })
+                .map(ValidityPredicateKey::for_predicate)
+        }
+        .expect("each transaction retains an unsatisfied unique predicate");
+        assert!(predicate_index.reindex(*transaction_hash, blocker));
+    }
+
+    affected.len()
+}
+
+fn predicate_hot_key_cycle_benches(c: &mut Criterion) {
+    let mut group = c.benchmark_group("tx_selection/predicate_hot_key_cycle");
+    group.sample_size(10);
+    group.throughput(Throughput::Elements(100_000));
+
+    for predicates_per_transaction in [2, 8] {
+        let pool = skewed_pool(100_000, predicates_per_transaction, false);
+        for (policy, hash_rotated) in [("first", false), ("hash_rotated", true)] {
+            group.bench_function(
+                format!("policy={policy}/n=100000/p={predicates_per_transaction}"),
+                |b| {
+                    b.iter(|| {
+                        let affected = run_hot_key_cycle(&pool, hash_rotated);
+                        if hash_rotated {
+                            assert!(affected < 100_000);
+                        } else {
+                            assert_eq!(affected, 100_000);
+                        }
+                    });
                 },
             );
         }
@@ -468,6 +536,7 @@ criterion_group!(
     selection_benches,
     predicate_benches,
     predicate_skew_benches,
+    predicate_hot_key_cycle_benches,
     predicate_index_benches
 );
 criterion_main!(benches);
