@@ -1453,13 +1453,30 @@ fn select_two_leg_counterparties(
     started: Instant,
     time_budget: Duration,
 ) -> (Vec<usize>, usize, bool, bool) {
-    let graph = build_graph(pools);
     let dirty_addresses = dirty_indexes
         .iter()
         .filter_map(|index| pools.get(*index).map(|pool| pool.pool))
         .collect::<BTreeSet<_>>();
-    let dirty_edges =
-        graph.edges.iter().filter(|edge| dirty_addresses.contains(&edge.pool)).collect::<Vec<_>>();
+    let mut required_directions = BTreeSet::new();
+    for pool in pools.iter().filter(|pool| dirty_addresses.contains(&pool.pool)) {
+        if marginal_rate(pool, true).is_some() {
+            required_directions.insert((pool.token1, pool.token0));
+        }
+        if marginal_rate(pool, false).is_some() {
+            required_directions.insert((pool.token0, pool.token1));
+        }
+    }
+
+    let mut admissible_addresses = BTreeSet::new();
+    for pool in pools {
+        let forward_admissible = required_directions.contains(&(pool.token0, pool.token1))
+            && marginal_rate(pool, true).is_some();
+        let reverse_admissible = required_directions.contains(&(pool.token1, pool.token0))
+            && marginal_rate(pool, false).is_some();
+        if forward_admissible || reverse_admissible {
+            admissible_addresses.insert(pool.pool);
+        }
+    }
 
     for (index, pool) in pools.iter().enumerate() {
         if started.elapsed() > time_budget {
@@ -1468,12 +1485,7 @@ fn select_two_leg_counterparties(
         if selected_set.contains(&index) {
             continue;
         }
-        let graph_admissible = dirty_edges.iter().any(|dirty_edge| {
-            graph.edges.iter().any(|edge| {
-                edge.pool == pool.pool && edge.from == dirty_edge.to && edge.to == dirty_edge.from
-            })
-        });
-        if !graph_admissible {
+        if !admissible_addresses.contains(&pool.pool) {
             continue;
         }
         if selected.len() >= max_pools_per_frame {
@@ -3164,6 +3176,215 @@ mod tests {
         assert_eq!(selected, vec![0, 1]);
         assert!(!cap_early_exit);
         assert!(!elapsed);
+    }
+
+    fn select_two_leg_counterparties_reference(
+        pools: &[PoolState],
+        dirty_indexes: &BTreeSet<usize>,
+        mut selected: Vec<usize>,
+        mut selected_set: BTreeSet<usize>,
+        dirty_len: usize,
+        max_pools_per_frame: usize,
+    ) -> (Vec<usize>, usize, bool, bool) {
+        let graph = build_graph(pools);
+        let dirty_addresses = dirty_indexes
+            .iter()
+            .filter_map(|index| pools.get(*index).map(|pool| pool.pool))
+            .collect::<BTreeSet<_>>();
+        let dirty_edges = graph
+            .edges
+            .iter()
+            .filter(|edge| dirty_addresses.contains(&edge.pool))
+            .collect::<Vec<_>>();
+
+        for (index, pool) in pools.iter().enumerate() {
+            if selected_set.contains(&index) {
+                continue;
+            }
+            let graph_admissible = dirty_edges.iter().any(|dirty_edge| {
+                graph.edges.iter().any(|edge| {
+                    edge.pool == pool.pool
+                        && edge.from == dirty_edge.to
+                        && edge.to == dirty_edge.from
+                })
+            });
+            if !graph_admissible {
+                continue;
+            }
+            if selected.len() >= max_pools_per_frame {
+                return (selected, dirty_len, true, false);
+            }
+            selected_set.insert(index);
+            selected.push(index);
+        }
+
+        (selected, dirty_len, false, false)
+    }
+
+    #[test]
+    fn indexed_two_leg_selector_preserves_reference_selection_and_order() {
+        let duplicate_address = addr(0x36);
+        let pools = vec![
+            PoolState::v2_like(
+                addr(0x31),
+                Protocol::UniswapV2,
+                addr(0x01),
+                addr(0x02),
+                1,
+                1_000,
+                1_200,
+            ),
+            PoolState::v2_like(
+                addr(0x32),
+                Protocol::UniswapV2,
+                addr(0x02),
+                addr(0x01),
+                1,
+                1_100,
+                1_000,
+            ),
+            PoolState::v2_like(
+                addr(0x33),
+                Protocol::UniswapV2,
+                addr(0x01),
+                addr(0x03),
+                1,
+                1_000,
+                1_000,
+            ),
+            PoolState::v2_like(
+                addr(0x34),
+                Protocol::UniswapV2,
+                addr(0x02),
+                addr(0x01),
+                1,
+                0,
+                1_000,
+            ),
+            PoolState::v2_like(
+                duplicate_address,
+                Protocol::UniswapV2,
+                addr(0x04),
+                addr(0x05),
+                1,
+                0,
+                1_000,
+            ),
+            PoolState::v2_like(
+                duplicate_address,
+                Protocol::UniswapV2,
+                addr(0x02),
+                addr(0x01),
+                1,
+                1_300,
+                1_000,
+            ),
+            PoolState::v2_like(
+                addr(0x37),
+                Protocol::UniswapV2,
+                addr(0x03),
+                addr(0x01),
+                1,
+                1_100,
+                1_000,
+            ),
+        ];
+
+        for dirty_indexes in [
+            BTreeSet::from([0usize]),
+            BTreeSet::from([0usize, 2usize]),
+            BTreeSet::from([0usize, 4usize]),
+        ] {
+            for max_pools in [dirty_indexes.len(), dirty_indexes.len() + 1, pools.len()] {
+                let selected = dirty_indexes.iter().copied().collect::<Vec<_>>();
+                let expected = select_two_leg_counterparties_reference(
+                    &pools,
+                    &dirty_indexes,
+                    selected.clone(),
+                    dirty_indexes.clone(),
+                    dirty_indexes.len(),
+                    max_pools,
+                );
+                let actual = select_two_leg_counterparties(
+                    &pools,
+                    &dirty_indexes,
+                    selected,
+                    dirty_indexes.clone(),
+                    dirty_indexes.len(),
+                    max_pools,
+                    Instant::now(),
+                    Duration::from_secs(1),
+                );
+                assert_eq!(actual, expected);
+            }
+        }
+    }
+
+    #[test]
+    fn indexed_two_leg_selector_has_no_full_graph_nested_scan() {
+        let source = include_str!("arb_dryrun.rs");
+        let body = source
+            .split_once("fn select_two_leg_counterparties(")
+            .unwrap()
+            .1
+            .split_once("fn select_connected_frame_indexes(")
+            .unwrap()
+            .0;
+
+        assert!(!body.contains("build_graph("));
+        assert!(!body.contains("graph.edges"));
+        assert!(body.contains("required_directions"));
+        assert!(body.contains("admissible_addresses"));
+    }
+
+    #[test]
+    fn indexed_two_leg_selector_completes_live_sized_scan_inside_budget() {
+        let dirty_pool = addr(0x31);
+        let mut pools = vec![
+            PoolState::v2_like(
+                dirty_pool,
+                Protocol::UniswapV2,
+                addr(0x01),
+                addr(0x02),
+                1,
+                1_000,
+                1_200,
+            ),
+            PoolState::v2_like(
+                addr(0x32),
+                Protocol::UniswapV2,
+                addr(0x02),
+                addr(0x01),
+                1,
+                1_100,
+                1_000,
+            ),
+        ];
+        pools.extend((2..2_920).map(|index| {
+            PoolState::v2_like(
+                Address::with_last_byte(u8::try_from(index % 251).unwrap()),
+                Protocol::UniswapV2,
+                addr(0x03),
+                addr(0x04),
+                1,
+                1_000,
+                1_000,
+            )
+        }));
+        let dirty_indexes = BTreeSet::from([0usize]);
+
+        let result = select_two_leg_counterparties(
+            &pools,
+            &dirty_indexes,
+            vec![0],
+            dirty_indexes.clone(),
+            1,
+            DEFAULT_MAX_POOLS_PER_FRAME,
+            Instant::now(),
+            Duration::from_micros(6_000),
+        );
+
+        assert_eq!(result, (vec![0, 1], 1, false, false));
     }
 
     #[test]
