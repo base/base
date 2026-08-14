@@ -9,7 +9,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use super::host::{ClusterArtifactStore, ClusterProofConfig};
+use super::support::{ClusterArtifactStore, ClusterProofConfig};
 use async_trait::async_trait;
 use base_proof_zk_host::{ZkProver, ZkProverError, ZkSessionState};
 use base_proof_zk_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL;
@@ -176,7 +176,7 @@ impl ClusterZkProver {
         let Some((range_vk, _aggregation_vk)) = SuccinctZkProverBuilder::complete_unless_cancelled(
             cancel,
             async {
-                super::host::cluster_setup_vkeys().await.map_err(|error| {
+                super::support::cluster_setup_vkeys().await.map_err(|error| {
                     SuccinctZkProverBuildError::boxed_operation(
                         "failed to compute proof verification keys",
                         error.into_boxed_dyn_error(),

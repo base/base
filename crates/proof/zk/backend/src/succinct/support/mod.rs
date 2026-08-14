@@ -1,4 +1,4 @@
-//! SP1 host helpers used by the Succinct proving backends.
+//! SP1 stdin, ELF, and proving-client helpers used by the Succinct backends.
 
 mod stdin;
 pub use stdin::{get_agg_proof_stdin, get_sp1_stdin};
