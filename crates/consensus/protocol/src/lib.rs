@@ -54,8 +54,10 @@ pub use deposits::{DepositDecodeError, Deposits};
 mod base_time;
 pub use base_time::{
     BaseTimeMetadataError, BaseTimeUpdateDecodeError, BaseTimeUpdateError, BaseTimeUpdateTx,
-    DEFAULT_SEAL_OFFSET,
 };
+
+mod timing;
+pub use timing::DEFAULT_SEAL_OFFSET;
 
 mod info;
 pub use info::{
