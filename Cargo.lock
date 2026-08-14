@@ -5527,7 +5527,6 @@ dependencies = [
  "base-proof-zk-witness",
  "base-prover-service-protocol",
  "bincode 2.0.1",
- "num-format",
  "rkyv",
  "serde",
  "serde_cbor",
@@ -8369,6 +8368,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "80a4af69c60438a1a82af89d362f4729fd38db7b73f305a237636fad31ceb2bf"
 
 [[package]]
+name = "debugid"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bef552e6f588e446098f6ba40d89ac146c8c7b64aade83c051ee00bb5d2bc18d"
+dependencies = [
+ "uuid",
+]
+
+[[package]]
 name = "deepsize2"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9699,6 +9707,17 @@ name = "gcd"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d758ba1b47b00caf47f24925c0074ecb20d6dfcffe7f6d53395c0465674841a"
+
+[[package]]
+name = "gecko_profile"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "890852c7e1e02bc6758e325d6b1e0236e4fbf21b492f585ce4d4715be54b4c6a"
+dependencies = [
+ "debugid",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "gen_ops"
@@ -13025,16 +13044,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "num-format"
-version = "0.4.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a652d9771a63711fd3c3deb670acfbe5c30a4072e664d7a3bf5a9e1056ac72c3"
-dependencies = [
- "arrayvec",
- "itoa",
 ]
 
 [[package]]
@@ -20468,13 +20477,16 @@ dependencies = [
  "elf",
  "enum-map",
  "eyre",
+ "gecko_profile",
  "hashbrown 0.14.5",
  "hex",
+ "indicatif 0.17.11",
  "itertools 0.14.0",
  "memmap2",
  "num",
  "object",
  "rrs-succinct",
+ "rustc-demangle",
  "serde",
  "serde_arrays",
  "serde_json",

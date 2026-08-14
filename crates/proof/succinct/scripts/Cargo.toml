@@ -27,8 +27,8 @@ bincode = { workspace = true, features = ["serde"] }
 
 # local
 base-proof-zk-utils.workspace = true
-base-proof-zk-backend.workspace = true
 base-proof-succinct-elfs.workspace = true
+base-proof-zk-backend = { workspace = true, default-features = false }
 
 # sp1
 sp1-sdk = { workspace = true, features = ["blocking"] }

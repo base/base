@@ -12,5 +12,5 @@ interface.
 - `ClusterZkProver`: SP1 cluster range-proof backend for compressed proofs.
 - `NetworkZkProver`: SP1 prover-network range-proof backend for compressed proofs.
 
-SP1 stdin, ELF/key setup, cluster/network clients, L2OO bindings, execution
-stats, and stdin caches live under `succinct/utils`.
+SP1 stdin, ELF/key setup, cluster clients, L2OO bindings, and stdin caches
+live under `succinct/utils`.

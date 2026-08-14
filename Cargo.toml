@@ -216,7 +216,7 @@ base-proof-zk-host = { path = "crates/proof/zk/host" }
 base-proof-zk-utils = { path = "crates/proof/zk/utils" }
 base-proof-contracts = { path = "crates/proof/contracts" }
 base-proof-submission = { path = "crates/proof/submission" }
-base-proof-zk-backend = { path = "crates/proof/zk/backend" }
+base-proof-zk-backend = { path = "crates/proof/zk/backend", default-features = false }
 base-proof-zk-witness = { path = "crates/proof/zk/witness" }
 base-prover-service = { path = "crates/proof/prover-service" }
 base-proof-tee-registrar = { path = "crates/proof/tee/registrar" }

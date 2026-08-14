@@ -35,7 +35,7 @@ sp1-prover-types.workspace = true
 sp1-cluster-utils.workspace = true
 sp1-cluster-common.workspace = true
 sp1-cluster-artifact.workspace = true
-sp1-sdk = { workspace = true, features = ["network", "blocking"] }
+sp1-sdk = { workspace = true, features = ["network", "blocking", "profiling"] }
 
 # async
 backoff.workspace = true
@@ -56,7 +56,6 @@ serde = { workspace = true, features = ["derive", "std"] }
 
 # observability
 tracing.workspace = true
-num-format.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
