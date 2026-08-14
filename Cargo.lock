@@ -6373,6 +6373,8 @@ dependencies = [
  "metrics",
  "sqlx",
  "thiserror 2.0.19",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

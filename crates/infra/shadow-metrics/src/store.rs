@@ -1,7 +1,6 @@
 //! Postgres access for reading shadow blocks and persisting the metrics cursor.
 
 use anyhow::Result;
-use base_shadow_indexer_db as _;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 
 /// Error returned when the shadow-metrics Postgres schema is not ready.
