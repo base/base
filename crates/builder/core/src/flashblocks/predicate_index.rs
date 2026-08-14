@@ -223,7 +223,10 @@ mod tests {
 
         let predicates = [passing, failing];
         assert_eq!(ValidityPredicateKey::first_unsatisfied(&[], &mut db).unwrap(), None);
-        assert_eq!(ValidityPredicateKey::first_unsatisfied(&predicates[..1], &mut db).unwrap(), None);
+        assert_eq!(
+            ValidityPredicateKey::first_unsatisfied(&predicates[..1], &mut db).unwrap(),
+            None
+        );
         assert_eq!(
             ValidityPredicateKey::first_unsatisfied(&predicates, &mut db).unwrap(),
             Some(ValidityPredicateKey::Balance(Address::with_last_byte(2)))
