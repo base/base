@@ -12,12 +12,12 @@ compile_error!("this module requires the `rpc-server` or `rpc-client` feature");
 // `RpcResult` is only used by the *server* side of the generated code; when
 // only `rpc-client` is active the macro rewrites signatures to use its own
 // client return type, so the import would be dead code.
+use alloy_primitives::{B256, Bytes};
 #[cfg(feature = "rpc-server")]
 use jsonrpsee::core::RpcResult;
 use jsonrpsee::proc_macros::rpc;
 
 use crate::{ProofRequest, ProofResult};
-use alloy_primitives::{B256, Bytes};
 
 #[cfg_attr(
     all(feature = "rpc-server", feature = "rpc-client"),
@@ -83,7 +83,8 @@ pub trait EnclaveApi {
     rpc(client, namespace = "enclave")
 )]
 /// This method authorizes an L1 payout. Expose it only on the private prover
-/// endpoint used by the attested-withdrawal relay.
+/// endpoint used by the attested-withdrawal relay. The supplied storage root is
+/// not bound to an L2 output root, so untrusted callers must not access it.
 pub trait AttestedWithdrawalApi {
     /// Verify an attested withdrawal record and return its raw ECDSA signature.
     #[method(name = "signAttestedWithdrawal")]

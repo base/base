@@ -46,11 +46,10 @@ mod tee;
 pub use tee::L1HeadProvider;
 
 mod validator;
+pub use base_proof_primitives::{AccountProofError, AccountProofVerifier};
 pub use validator::{
     IntermediateValidationParams, OutputValidator, ValidationResult, ValidatorError,
 };
-
-pub use base_proof_primitives::{AccountProofError, AccountProofVerifier};
 
 mod bond;
 pub use bond::{BondManager, BondManagerConfig};
