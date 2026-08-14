@@ -221,13 +221,11 @@ mod tests {
         let passing = balance_predicate(Address::with_last_byte(1), U256::ZERO);
         let failing = balance_predicate(Address::with_last_byte(2), U256::ONE);
 
+        let predicates = [passing, failing];
         assert_eq!(ValidityPredicateKey::first_unsatisfied(&[], &mut db).unwrap(), None);
+        assert_eq!(ValidityPredicateKey::first_unsatisfied(&predicates[..1], &mut db).unwrap(), None);
         assert_eq!(
-            ValidityPredicateKey::first_unsatisfied(&[passing.clone()], &mut db).unwrap(),
-            None
-        );
-        assert_eq!(
-            ValidityPredicateKey::first_unsatisfied(&[passing, failing], &mut db).unwrap(),
+            ValidityPredicateKey::first_unsatisfied(&predicates, &mut db).unwrap(),
             Some(ValidityPredicateKey::Balance(Address::with_last_byte(2)))
         );
     }
