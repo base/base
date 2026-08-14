@@ -1,11 +1,14 @@
 //! Sidecar storage and iteration for channelized and nonce-free EIP-8130 transactions.
 
 use std::{
-    collections::{BTreeMap, BinaryHeap, HashMap, HashSet},
+    collections::{BTreeMap, BinaryHeap, HashSet},
     sync::Arc,
 };
 
-use alloy_primitives::{Address, B256, TxHash, U256};
+use alloy_primitives::{
+    Address, TxHash, U256,
+    map::{B256Map, HashMap},
+};
 use base_common_consensus::Eip8130Constants;
 use reth_primitives_traits::transaction::error::InvalidTransactionError;
 use reth_transaction_pool::{
@@ -81,9 +84,8 @@ pub(crate) struct PruneMinedOutcome<T: BasePooledTx> {
 #[derive(Debug)]
 pub(crate) struct TwoDNoncePool<T: BasePooledTx> {
     lanes: HashMap<LaneId, NonceLane<T>>,
-    nonce_free: HashMap<B256, Arc<ValidPoolTransaction<T>>>,
-    hashes: HashMap<TxHash, Arc<ValidPoolTransaction<T>>>,
-    index: HashMap<TxHash, (LaneId, u64)>,
+    nonce_free: B256Map<Arc<ValidPoolTransaction<T>>>,
+    hashes: B256Map<Arc<ValidPoolTransaction<T>>>,
     senders: SenderIdentifiers,
     price_bump_config: PriceBumpConfig,
 }
@@ -92,10 +94,9 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     /// Creates a new 2D nonce sidecar pool.
     pub(crate) fn new(price_bump_config: PriceBumpConfig) -> Self {
         Self {
-            lanes: HashMap::new(),
-            nonce_free: HashMap::new(),
-            hashes: HashMap::new(),
-            index: HashMap::new(),
+            lanes: HashMap::default(),
+            nonce_free: B256Map::default(),
+            hashes: B256Map::default(),
             senders: SenderIdentifiers::default(),
             price_bump_config,
         }
@@ -319,12 +320,10 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
 
         lane.transactions.insert(nonce, Arc::clone(&transaction));
         self.hashes.insert(hash, Arc::clone(&transaction));
-        self.index.insert(hash, (lane_id, nonce));
 
         if let Some(replaced) = &replaced {
             let replaced_hash = *replaced.hash();
             self.hashes.remove(&replaced_hash);
-            self.index.remove(&replaced_hash);
         }
 
         let pending_len_after = lane.consecutive_pending_len();
@@ -382,9 +381,14 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
                 }
                 continue;
             }
-            let Some((lane_id, nonce)) = self.index.get(hash).copied() else {
+            let Some(transaction) = self.hashes.get(hash) else {
                 continue;
             };
+            let Some(nonce_key) = transaction.transaction.eip8130_nonce_channel_key() else {
+                continue;
+            };
+            let lane_id = (transaction.sender(), nonce_key);
+            let nonce = transaction.nonce();
             let Some(lane) = self.lanes.get(&lane_id) else {
                 continue;
             };
@@ -415,7 +419,9 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         let mut ordered_hashes: Vec<_> = hashes
             .iter()
             .filter_map(|hash| {
-                self.index.get(hash).map(|(lane_id, nonce)| (lane_id.0, lane_id.1, *nonce, *hash))
+                let transaction = self.hashes.get(hash)?;
+                let nonce_key = transaction.transaction.eip8130_nonce_channel_key()?;
+                Some((transaction.sender(), nonce_key, transaction.nonce(), *hash))
             })
             .collect();
         ordered_hashes.sort_unstable();
@@ -485,7 +491,10 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             self.hashes.remove(&hash);
             return Some(transaction);
         }
-        let (lane_id, nonce) = *self.index.get(&hash)?;
+        let transaction = self.hashes.get(&hash)?;
+        let nonce_key = transaction.transaction.eip8130_nonce_channel_key()?;
+        let lane_id = (transaction.sender(), nonce_key);
+        let nonce = transaction.nonce();
         let transaction = {
             let lane = self.lanes.get_mut(&lane_id)?;
             let transaction = lane.transactions.remove(&nonce)?;
@@ -501,7 +510,6 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         if self.lanes.get(&lane_id).is_some_and(|lane| lane.transactions.is_empty()) {
             self.lanes.remove(&lane_id);
         }
-        self.index.remove(&hash);
         self.hashes.remove(&hash);
         Some(transaction)
     }
@@ -538,7 +546,7 @@ where
 {
     fn new(
         lanes: &HashMap<LaneId, NonceLane<T>>,
-        nonce_free: &HashMap<B256, Arc<ValidPoolTransaction<T>>>,
+        nonce_free: &B256Map<Arc<ValidPoolTransaction<T>>>,
         ordering: O,
         base_fee: u64,
     ) -> Self {
@@ -826,7 +834,7 @@ mod tests {
 
         let snapshot_started = Instant::now();
         let best =
-            BestTwoDTransactions::new(&lanes, &HashMap::new(), BaseOrdering::coinbase_tip(), 0);
+            BestTwoDTransactions::new(&lanes, &B256Map::default(), BaseOrdering::coinbase_tip(), 0);
         let snapshot_elapsed = snapshot_started.elapsed();
 
         let drain_started = Instant::now();
@@ -1123,9 +1131,6 @@ mod tests {
         pool.hashes.insert(*stale.hash(), Arc::clone(&stale));
         pool.hashes.insert(*pending.hash(), Arc::clone(&pending));
         pool.hashes.insert(*queued.hash(), Arc::clone(&queued));
-        pool.index.insert(*stale.hash(), (lane_id, 3));
-        pool.index.insert(*pending.hash(), (lane_id, 5));
-        pool.index.insert(*queued.hash(), (lane_id, 7));
         pool.lanes.insert(
             lane_id,
             NonceLane {
@@ -1164,16 +1169,18 @@ mod tests {
             1_000,
         )));
         let lane_id = (signer.address(), U256::from(17));
-        let lanes = HashMap::from([(
+        let lanes: HashMap<_, _> = [(
             lane_id,
             NonceLane {
                 next_nonce: u64::MAX,
                 transactions: BTreeMap::from([(u64::MAX, Arc::clone(&transaction))]),
             },
-        )]);
+        )]
+        .into_iter()
+        .collect();
 
         let mut best =
-            BestTwoDTransactions::new(&lanes, &HashMap::new(), BaseOrdering::coinbase_tip(), 0);
+            BestTwoDTransactions::new(&lanes, &B256Map::default(), BaseOrdering::coinbase_tip(), 0);
         assert_eq!(best.next().map(|transaction| *transaction.hash()), Some(*transaction.hash()));
         assert!(best.next().is_none());
     }
@@ -1210,7 +1217,6 @@ mod tests {
         let lane_id = (signer.address(), U256::from(19));
 
         pool.hashes.insert(head_hash, Arc::clone(&head));
-        pool.index.insert(head_hash, (lane_id, u64::MAX));
         pool.lanes.insert(
             lane_id,
             NonceLane {
