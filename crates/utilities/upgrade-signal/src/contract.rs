@@ -91,7 +91,12 @@ impl AlloyUpgradeSignalReader {
                     .await
                     .map_err(TransportErrorKind::custom)?;
                 let status = response.status();
-                let mut body = Vec::new();
+                let capacity = response
+                    .content_length()
+                    .and_then(|length| usize::try_from(length).ok())
+                    .unwrap_or_default()
+                    .min(Self::MAX_RESPONSE_BYTES);
+                let mut body = Vec::with_capacity(capacity);
 
                 while let Some(chunk) =
                     response.chunk().await.map_err(TransportErrorKind::custom)?
@@ -330,6 +335,8 @@ impl AlloyUpgradeSignalReader {
 
         (|| self.read_schedule(metrics_layers))
             .retry(retry_config.to_backoff_builder())
+            .when(|error| matches!(error, UpgradeSignalError::Provider { .. }))
+            // Backon adds jitter after enforcing `max_delay`, so cap the yielded delay too.
             .adjust(|_, retry_delay| retry_delay.map(|delay| delay.min(max_backoff)))
             .notify(|error, retry_delay| {
                 warn!(
@@ -500,6 +507,75 @@ mod tests {
         let error = reader.pinned_l1_block_id().await.unwrap_err();
 
         assert!(error.to_string().contains("response exceeds 256 KiB"));
+    }
+
+    #[tokio::test]
+    async fn retries_provider_errors() {
+        let server = MockServer::start_async().await;
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(POST).path("/");
+                then.status(503);
+            })
+            .await;
+        let reader = AlloyUpgradeSignalReader::new(
+            server.url("/").parse().unwrap(),
+            Address::ZERO,
+            Duration::from_secs(1),
+        )
+        .unwrap();
+
+        let error = reader
+            .read_schedule_with_retries(3, Duration::ZERO, Duration::ZERO, &[])
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, UpgradeSignalError::Provider { .. }));
+        mock.assert_calls_async(3).await;
+    }
+
+    #[tokio::test]
+    async fn does_not_retry_decode_errors() {
+        let server = MockServer::start_async().await;
+        let block_hash = B256::repeat_byte(1);
+        let mut block: Block = Block::default();
+        block.header.hash = block_hash;
+        block.header.inner.number = 42;
+        let block_mock = server
+            .mock_async(|when, then| {
+                when.method(POST).path("/").body_includes("eth_getBlockByNumber");
+                then.json_body(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 0,
+                    "result": block,
+                }));
+            })
+            .await;
+        let call_mock = server
+            .mock_async(|when, then| {
+                when.method(POST).path("/").body_includes("eth_call");
+                then.json_body(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": "0x",
+                }));
+            })
+            .await;
+        let reader = AlloyUpgradeSignalReader::new(
+            server.url("/").parse().unwrap(),
+            Address::ZERO,
+            Duration::from_secs(1),
+        )
+        .unwrap();
+
+        let error = reader
+            .read_schedule_with_retries(3, Duration::ZERO, Duration::ZERO, &[])
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, UpgradeSignalError::Decode { .. }));
+        block_mock.assert_calls_async(1).await;
+        call_mock.assert_calls_async(2).await;
     }
 
     #[test]
