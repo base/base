@@ -6366,6 +6366,7 @@ dependencies = [
 name = "base-shadow-metrics"
 version = "0.0.0"
 dependencies = [
+ "alloy-consensus 2.2.0",
  "anyhow",
  "base-metrics",
  "base-shadow-indexer-db",

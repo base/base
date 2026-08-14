@@ -10,5 +10,8 @@
 mod metrics;
 pub use metrics::ShadowMetrics;
 
+mod stats;
+pub use stats::ShadowBlockStats;
+
 mod store;
 pub use store::{ShadowMetricsSchemaReadinessError, ShadowMetricsStore};

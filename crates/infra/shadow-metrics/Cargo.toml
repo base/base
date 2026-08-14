@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 base-metrics.workspace = true
+alloy-consensus.workspace = true
 base-shadow-indexer-db.workspace = true
 metrics = { workspace = true, optional = true }
 anyhow = { workspace = true, features = ["std"] }
