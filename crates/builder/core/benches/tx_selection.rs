@@ -12,8 +12,8 @@ use alloy_primitives::{Address, Bytes, Signature, TxKind, U256};
 use base_builder_core::{ParkableBestPayloadTransactions, ParkablePayloadTransactions};
 use base_common_consensus::{BaseTransactionSigned, BaseTxEnvelope};
 use base_execution_txpool::{
-    BaseOrdering, BasePooledTransaction, ParkedBestTransactions, ValidityOperator,
-    ValidityPredicate,
+    BaseOrdering, BasePooledTransaction, ParkedBestTransactions, PredicateContext,
+    ValidityOperator, ValidityPredicate,
 };
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use reth_payload_util::PayloadTransactions;
@@ -227,12 +227,14 @@ fn selection_benches(c: &mut Criterion) {
 fn run_predicate_selection(pool: &Pool, db: &mut InMemoryDB) -> usize {
     let mut best = parkable(pool);
     let mut selected = 0;
+    // These benchmarks exercise state predicates, so the build position is irrelevant.
+    let context = PredicateContext { block_number: 0, flashblock_index: 0 };
 
     while let Some(transaction) = best.next(()) {
         let predicates_match = transaction
             .validity_predicates()
             .iter()
-            .all(|predicate| predicate.matches_state(db).expect("in-memory reads cannot fail"));
+            .all(|predicate| predicate.matches(db, &context).expect("in-memory reads cannot fail"));
         if !predicates_match {
             assert!(best.park_current());
             continue;
@@ -243,10 +245,9 @@ fn run_predicate_selection(pool: &Pool, db: &mut InMemoryDB) -> usize {
         selected += 1;
 
         for parked in best.parked_transactions() {
-            let matches =
-                parked.transaction.validity_predicates().iter().all(|predicate| {
-                    predicate.matches_state(db).expect("in-memory reads cannot fail")
-                });
+            let matches = parked.transaction.validity_predicates().iter().all(|predicate| {
+                predicate.matches(db, &context).expect("in-memory reads cannot fail")
+            });
             if matches {
                 assert!(best.promote(*parked.hash()));
             }
