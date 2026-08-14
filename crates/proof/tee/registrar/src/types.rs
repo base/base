@@ -68,6 +68,8 @@ pub struct RegistrationPlan {
     pub nonce: Option<Vec<u8>>,
     /// Pinned root certificate cache key (`keccak256(full DER)`).
     pub root_cert_hash: B256,
+    /// DER-encoded pinned root certificate used to generate the first CA hint stream.
+    pub root_cert: Vec<u8>,
     /// Leaf certificate cache key (`keccak256(TBSCertificate TLV)`).
     pub leaf_cert_hash: B256,
     /// COSE `Sig_structure` bytes (attestation TBS).
@@ -93,7 +95,6 @@ pub struct RegistrationHints {
 /// Registration plan plus `CertManager` / attestation inverse-hint streams.
 ///
 /// Produced by [`crate::AttestationPlanner::prepare_hinted_registration_plan`].
-/// Not consumed by the running Boundless registrar path until orchestration lands.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HintedRegistrationPlan {
     /// Certificate / signer plan (no hints).

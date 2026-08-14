@@ -1,28 +1,34 @@
 //! Signer lifecycle orchestration for the registrar.
 //!
-//! Coordinates signer-level registration tasks and orphaned signer cleanup
-//! after the driver has resolved discovered prover instances.
+//! Coordinates hinted certificate caching, signer registration, and orphaned
+//! signer cleanup after the driver has resolved discovered prover instances.
 
 use std::{
     collections::{HashMap, HashSet},
-    sync::Arc,
+    sync::{Arc, Mutex, Weak},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use alloy_primitives::{Address, Bytes, keccak256};
+use alloy_primitives::{Address, B256, Bytes, b256, keccak256};
 use alloy_sol_types::SolCall;
-use base_proof_contracts::{ITEEProverRegistry, TEEProverRegistryClient};
-use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
-use base_proof_tee_nitro_verifier::VerifierJournal;
+use base_proof_contracts::{
+    CertManagerAuthorizationError, CertManagerClient, ITEEProverRegistry, TEEProverRegistryClient,
+    decode_cert_manager_authorization_error, encode_register_signer_calldata,
+    encode_revoke_cert_calldata, encode_verify_ca_cert_with_hints_calldata,
+    encode_verify_client_cert_with_hints_calldata,
+};
 use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 use tokio::{
-    sync::Semaphore,
+    sync::{Mutex as AsyncMutex, Semaphore},
     task::{self, JoinError, JoinSet},
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::{DiscoveryResolution, RegistrarError, RegistrarMetrics, Result};
+use crate::{
+    AttestationPlanner, CertKind, CertPlan, DiscoveryResolution, P384Hints, PINNED_ROOT_CERT_HASH,
+    RegistrarError, RegistrarMetrics, RegistrationHints, RegistrationPlan, Result, crl,
+};
 
 /// Default maximum number of transaction submission retries for transient
 /// errors before giving up.
@@ -32,26 +38,29 @@ pub const DEFAULT_MAX_TX_RETRIES: u32 = 3;
 pub const DEFAULT_TX_RETRY_DELAY_SECS: u64 = 5;
 
 const ATTESTATION_NONCE_DOMAIN: &[u8] = b"base-proof-tee-registrar:attestation-nonce:v1";
+const CRL_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_TX_RETRY_BACKOFF_DELAY: Duration = Duration::from_secs(60);
+const DEBUG_MODE_PCR0_HASH: B256 =
+    b256!("0xc980e59163ce244bb4bb6211f48c7b46f88a4f40943e84eb99bdc41e129bd293");
 
 /// Runtime configuration for [`SignerManager`].
 #[derive(Debug, Clone, Copy)]
 pub struct SignerManagerConfig {
     /// `TEEProverRegistry` contract address.
     pub registry_address: Address,
-    /// Maximum concurrent proof-generation tasks.
+    /// Maximum concurrent hint-generation tasks.
     pub max_concurrency: usize,
     /// Maximum number of transaction submission retries for transient errors.
     pub max_tx_retries: u32,
     /// Delay between transaction submission retries.
     pub tx_retry_delay: Duration,
-    /// Maximum proof attestation age accepted before on-chain submission.
+    /// Maximum attestation age accepted before onchain submission.
     pub max_attestation_age: Duration,
+    /// Whether AWS CRL checks and issuer/serial revocation transactions are enabled.
+    pub crl_checks_enabled: bool,
 }
 
-/// Maximum exponential backoff delay between transaction submission retries.
-const MAX_TX_RETRY_BACKOFF_DELAY: Duration = Duration::from_secs(60);
-
-/// State for a proof-generation task currently in-flight.
+/// State for a registration task currently in flight.
 ///
 /// One entry per signer address. The pending map is keyed by [`Address`] so
 /// each signer has at most one active registration task.
@@ -60,7 +69,7 @@ pub struct PendingRegistration {
     /// Originating instance ID, used to preserve tasks when the source
     /// instance is unresolved and to attribute log lines.
     pub instance_id: String,
-    /// `JoinSet` task id for this proof task.
+    /// `JoinSet` task id for this registration task.
     pub task_id: task::Id,
     /// Cooperative cancel handle for this single task.
     pub cancel: CancellationToken,
@@ -68,38 +77,49 @@ pub struct PendingRegistration {
 
 /// Coordinates signer registration and orphan signer deregistration.
 #[derive(Debug)]
-pub struct SignerManager<P, R, T> {
-    proof_provider: P,
+pub struct SignerManager<R, C, T> {
     registry: R,
+    cert_manager: C,
     tx_manager: T,
-    proof_semaphore: Semaphore,
+    hint_semaphore: Arc<Semaphore>,
+    cert_locks: Mutex<HashMap<B256, Weak<AsyncMutex<()>>>>,
+    crl_http_client: Option<reqwest::Client>,
     registry_address: Address,
     max_tx_retries: u32,
     tx_retry_delay: Duration,
     max_attestation_age: Duration,
 }
 
-impl<P, R, T> SignerManager<P, R, T> {
+impl<R, C, T> SignerManager<R, C, T> {
     /// Creates a signer manager from the signer lifecycle dependencies.
-    pub fn new(proof_provider: P, registry: R, tx_manager: T, config: SignerManagerConfig) -> Self {
-        let SignerManagerConfig {
-            registry_address,
-            max_concurrency,
-            max_tx_retries,
-            tx_retry_delay,
-            max_attestation_age,
-        } = config;
-        let proof_semaphore = Semaphore::new(max_concurrency.max(1));
-        Self {
-            proof_provider,
+    pub fn new(
+        registry: R,
+        cert_manager: C,
+        tx_manager: T,
+        config: SignerManagerConfig,
+    ) -> Result<Self> {
+        let crl_http_client = config
+            .crl_checks_enabled
+            .then(|| {
+                reqwest::Client::builder()
+                    .timeout(CRL_FETCH_TIMEOUT)
+                    .redirect(reqwest::redirect::Policy::none())
+                    .build()
+            })
+            .transpose()
+            .map_err(|e| RegistrarError::Config(format!("failed to build CRL HTTP client: {e}")))?;
+        Ok(Self {
             registry,
+            cert_manager,
             tx_manager,
-            proof_semaphore,
-            registry_address,
-            max_tx_retries,
-            tx_retry_delay,
-            max_attestation_age,
-        }
+            hint_semaphore: Arc::new(Semaphore::new(config.max_concurrency.max(1))),
+            cert_locks: Mutex::new(HashMap::new()),
+            crl_http_client,
+            registry_address: config.registry_address,
+            max_tx_retries: config.max_tx_retries,
+            tx_retry_delay: config.tx_retry_delay,
+            max_attestation_age: config.max_attestation_age,
+        })
     }
 
     /// Derives the deterministic attestation nonce for a signer.
@@ -117,12 +137,118 @@ impl<P, R, T> SignerManager<P, R, T> {
         input.extend_from_slice(ATTESTATION_NONCE_DOMAIN);
         input.extend_from_slice(registry_address.as_slice());
         input.extend_from_slice(signer.as_slice());
-
         *keccak256(input)
+    }
+
+    fn cert_lock(&self, cert_hash: B256) -> Arc<AsyncMutex<()>> {
+        let mut locks = self.cert_locks.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        if let Some(lock) = locks.get(&cert_hash).and_then(Weak::upgrade) {
+            return lock;
+        }
+        let lock = Arc::new(AsyncMutex::new(()));
+        locks.insert(cert_hash, Arc::downgrade(&lock));
+        lock
+    }
+
+    fn retry_delay(&self, retry: u32) -> Duration {
+        self.tx_retry_delay
+            .saturating_mul(2_u32.saturating_pow(retry.saturating_sub(1)))
+            .min(MAX_TX_RETRY_BACKOFF_DELAY.max(self.tx_retry_delay))
+    }
+
+    fn now() -> (u64, u64) {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+        (now.as_secs(), u64::try_from(now.as_millis()).unwrap_or(u64::MAX))
+    }
+
+    fn validate_plan(&self, expected_signer: Address, plan: &RegistrationPlan) -> Result<()> {
+        if plan.signer != expected_signer {
+            return Err(RegistrarError::InvalidAttestationProof(format!(
+                "signer mismatch: expected {expected_signer}, got {}",
+                plan.signer
+            )));
+        }
+        let expected_nonce = self.attestation_nonce(expected_signer);
+        if plan.nonce.as_deref() != Some(expected_nonce.as_slice()) {
+            return Err(RegistrarError::InvalidAttestationProof(format!(
+                "nonce mismatch for signer {expected_signer}: expected 0x{}, got {}",
+                hex::encode(expected_nonce),
+                plan.nonce
+                    .as_deref()
+                    .map(|nonce| format!("0x{}", hex::encode(nonce)))
+                    .unwrap_or_else(|| "null".into())
+            )));
+        }
+        if plan.pcr0.len() != 48 || keccak256(&plan.pcr0) == DEBUG_MODE_PCR0_HASH {
+            return Err(RegistrarError::InvalidAttestationProof(
+                "PCR0 must be a non-debug 48-byte measurement".into(),
+            ));
+        }
+        if plan.root_cert_hash != PINNED_ROOT_CERT_HASH
+            || keccak256(&plan.root_cert) != PINNED_ROOT_CERT_HASH
+        {
+            return Err(RegistrarError::InvalidAttestationProof(
+                "registration plan does not use the pinned Nitro root certificate".into(),
+            ));
+        }
+        if plan.certs.is_empty() || plan.certs.last().is_none_or(|cert| cert.kind != CertKind::Leaf)
+        {
+            return Err(RegistrarError::InvalidAttestationProof(
+                "certificate plan must end in one leaf certificate".into(),
+            ));
+        }
+        if plan.certs[..plan.certs.len() - 1].iter().any(|cert| cert.kind != CertKind::Ca) {
+            return Err(RegistrarError::InvalidAttestationProof(
+                "non-leaf certificate plan contains a non-CA certificate".into(),
+            ));
+        }
+        let mut parent_hash = plan.root_cert_hash;
+        for cert in &plan.certs {
+            if cert.parent_cert_hash != parent_hash {
+                return Err(RegistrarError::InvalidAttestationProof(format!(
+                    "certificate {} has an unexpected parent hash",
+                    cert.label
+                )));
+            }
+            parent_hash = cert.cert_hash;
+        }
+        if plan.leaf_cert_hash != parent_hash {
+            return Err(RegistrarError::InvalidAttestationProof(
+                "leaf certificate hash does not match the final cache step".into(),
+            ));
+        }
+        self.ensure_attestation_fresh(expected_signer, plan.timestamp)
+    }
+
+    fn ensure_attestation_fresh(&self, signer: Address, timestamp_ms: u64) -> Result<()> {
+        let (now_secs, now_ms) = Self::now();
+        let timestamp_secs = timestamp_ms / 1000;
+        // A same-second attestation is valid to submit because transaction execution will occur
+        // in a later block; the Registry remains the authority on its block-timestamp boundary.
+        if timestamp_secs > now_secs {
+            return Err(RegistrarError::FutureAttestationProof { signer, timestamp_ms });
+        }
+        if timestamp_secs.saturating_add(self.max_attestation_age.as_secs()) <= now_secs {
+            let age = Duration::from_millis(now_ms.saturating_sub(timestamp_ms));
+            warn!(
+                signer = %signer,
+                age_secs = age.as_secs(),
+                max_age_secs = self.max_attestation_age.as_secs(),
+                timestamp_ms,
+                "pre-submission freshness check failed"
+            );
+            return Err(RegistrarError::StaleAttestationProof {
+                signer,
+                age,
+                max_age: self.max_attestation_age,
+            });
+        }
+        Ok(())
     }
 }
 
-/// Driver-owned set of in-flight proof-generation tasks.
+/// Driver-owned set of in-flight registration tasks.
 #[derive(Debug, Default)]
 pub struct ProofTaskSet {
     tasks: JoinSet<(Address, Result<()>)>,
@@ -151,7 +277,6 @@ impl ProofTaskSet {
                     removed.as_ref().is_some_and(|entry| entry.cancel.is_cancelled());
                 let instance_id =
                     removed.as_ref().map_or("missing", |entry| entry.instance_id.as_str());
-
                 match result {
                     Ok(()) => {
                         RegistrarMetrics::record_proof_task_completed(if was_cancelled {
@@ -164,7 +289,7 @@ impl ProofTaskSet {
                             signer = %signer,
                             instance = %instance_id,
                             pending_entry_found = removed.is_some(),
-                            "proof task completed",
+                            "registration task completed"
                         );
                     }
                     Err(e) => {
@@ -177,7 +302,7 @@ impl ProofTaskSet {
                             signer = %signer,
                             instance = %instance_id,
                             pending_entry_found = removed.is_some(),
-                            "proof task failed"
+                            "registration task failed"
                         );
                         RegistrarMetrics::processing_errors_total().increment(1);
                     }
@@ -188,15 +313,14 @@ impl ProofTaskSet {
                     RegistrarMetrics::PROOF_TASK_OUTCOME_JOIN_ERROR,
                 );
                 let id = join_err.id();
-                let removed = self.pending.extract_if(|_, p| p.task_id == id).next();
-                let signer = removed.as_ref().map(|(signer, _)| *signer);
+                let removed = self.pending.extract_if(|_, pending| pending.task_id == id).next();
                 warn!(
                     task_id = ?id,
                     error = %join_err,
-                    signer = ?signer,
-                    instance = ?removed.as_ref().map(|(_, t)| t.instance_id.as_str()),
+                    signer = ?removed.as_ref().map(|(signer, _)| *signer),
+                    instance = ?removed.as_ref().map(|(_, task)| task.instance_id.as_str()),
                     pending_entry_found = removed.is_some(),
-                    "proof task join error (panic or abort)"
+                    "registration task join error"
                 );
                 RegistrarMetrics::processing_errors_total().increment(1);
             }
@@ -218,10 +342,10 @@ impl ProofTaskSet {
     }
 }
 
-impl<P, R, T> SignerManager<P, R, T>
+impl<R, C, T> SignerManager<R, C, T>
 where
-    P: AttestationProofProvider,
     R: TEEProverRegistryClient,
+    C: CertManagerClient,
     T: TxManager,
 {
     /// Attempts to register a signer onchain if it is not already registered.
@@ -232,6 +356,39 @@ where
         attestation_bytes: &[u8],
         signer_cancel: &CancellationToken,
     ) -> Result<()> {
+        let plan = AttestationPlanner::prepare_registration_plan(attestation_bytes)?;
+        self.register_plan(instance_id, signer_address, plan, None, signer_cancel).await
+    }
+
+    async fn register_plan(
+        &self,
+        instance_id: &str,
+        signer_address: Address,
+        plan: RegistrationPlan,
+        prepared_hints: Option<RegistrationHints>,
+        signer_cancel: &CancellationToken,
+    ) -> Result<()> {
+        if self.registry.address() != self.registry_address {
+            return Err(RegistrarError::Config(format!(
+                "registry client address {} does not match configured address {}",
+                self.registry.address(),
+                self.registry_address
+            )));
+        }
+        self.validate_plan(signer_address, &plan)?;
+        if signer_cancel.is_cancelled() {
+            return Ok(());
+        }
+
+        // Keep revocation monitoring active for already-registered signers. Persisting a newly
+        // observed CRL entry protects every future registration that shares this certificate chain.
+        if !self.check_revocations(&plan, signer_cancel).await? {
+            return Ok(());
+        }
+        if !self.check_crls(&plan, signer_cancel).await? {
+            return Ok(());
+        }
+
         let Some(already_registered) = signer_cancel
             .run_until_cancelled(self.registry.is_registered_signer(signer_address))
             .await
@@ -243,281 +400,572 @@ where
             RegistrarMetrics::record_registration_stage(
                 RegistrarMetrics::REGISTRATION_STAGE_ALREADY_REGISTERED,
             );
-            debug!(
-                signer = %signer_address,
-                instance = %instance_id,
-                "already registered, skipping"
-            );
+            debug!(signer = %signer_address, instance = %instance_id, "already registered");
             return Ok(());
         }
 
-        info!(
-            signer = %signer_address,
-            instance = %instance_id,
-            "generating proof for unregistered signer"
-        );
-        RegistrarMetrics::record_registration_stage(
-            RegistrarMetrics::REGISTRATION_STAGE_PROOF_STARTED,
-        );
-
-        let Some(permit) = signer_cancel.run_until_cancelled(self.proof_semaphore.acquire()).await
-        else {
-            RegistrarMetrics::record_registration_stage(
-                RegistrarMetrics::REGISTRATION_STAGE_PROOF_CANCELLED,
-            );
+        if !self.validate_root_cache(&plan, signer_cancel).await? {
             return Ok(());
-        };
-        let proof_permit = match permit {
-            Ok(p) => p,
-            Err(_) => {
-                warn!(
-                    signer = %signer_address,
-                    instance = %instance_id,
-                    "proof semaphore closed unexpectedly, exiting task"
+        }
+
+        let hints = match prepared_hints {
+            Some(hints) => hints,
+            None => {
+                RegistrarMetrics::record_registration_stage(
+                    RegistrarMetrics::REGISTRATION_STAGE_PROOF_STARTED,
                 );
-                return Ok(());
-            }
-        };
-
-        // Dropping the provider future on cancel can abandon offchain work; the
-        // Boundless provider recovers via deterministic request IDs on retry.
-        let Some(proof_result) = signer_cancel
-            .run_until_cancelled(self.proof_provider.generate_proof_for_signer(
-                attestation_bytes,
-                signer_address,
-                signer_cancel,
-            ))
-            .await
-        else {
-            RegistrarMetrics::record_registration_stage(
-                RegistrarMetrics::REGISTRATION_STAGE_PROOF_CANCELLED,
-            );
-            return Ok(());
-        };
-        let proof = match proof_result {
-            Ok(proof) => {
+                let Some(permit) = signer_cancel
+                    .run_until_cancelled(Arc::clone(&self.hint_semaphore).acquire_owned())
+                    .await
+                else {
+                    RegistrarMetrics::record_registration_stage(
+                        RegistrarMetrics::REGISTRATION_STAGE_PROOF_CANCELLED,
+                    );
+                    return Ok(());
+                };
+                let permit = permit.map_err(|_| {
+                    RegistrarError::Service("hint-generation semaphore closed unexpectedly".into())
+                })?;
+                let hint_plan = plan.clone();
+                let task = task::spawn_blocking(move || {
+                    let _permit = permit;
+                    P384Hints::for_registration_plan(&hint_plan.root_cert, &hint_plan)
+                });
+                let Some(hints) = signer_cancel.run_until_cancelled(task).await else {
+                    RegistrarMetrics::record_registration_stage(
+                        RegistrarMetrics::REGISTRATION_STAGE_PROOF_CANCELLED,
+                    );
+                    return Ok(());
+                };
+                let hints = hints
+                    .map_err(|e| {
+                        RegistrarError::Service(format!("hint-generation task failed: {e}"))
+                    })?
+                    .map_err(crate::PlannerError::from)?;
                 RegistrarMetrics::record_registration_stage(
                     RegistrarMetrics::REGISTRATION_STAGE_PROOF_SUCCEEDED,
                 );
-                proof
-            }
-            Err(_) if signer_cancel.is_cancelled() => {
-                RegistrarMetrics::record_registration_stage(
-                    RegistrarMetrics::REGISTRATION_STAGE_PROOF_CANCELLED,
-                );
-                return Ok(());
-            }
-            Err(e) => {
-                RegistrarMetrics::record_registration_stage(
-                    RegistrarMetrics::REGISTRATION_STAGE_PROOF_FAILED,
-                );
-                return Err(e.into());
+                hints
             }
         };
-        let journal = match VerifierJournal::decode(&proof.output) {
-            Ok(journal) => journal,
-            Err(e) => {
-                RegistrarMetrics::record_registration_stage(
-                    RegistrarMetrics::REGISTRATION_STAGE_PROOF_INVALID,
-                );
-                return Err(RegistrarError::InvalidProofJournal { reason: e.to_string() });
-            }
-        };
-        let expected_nonce = self.attestation_nonce(signer_address);
-        if journal.nonce.as_ref() != expected_nonce.as_slice() {
-            RegistrarMetrics::record_registration_stage(
-                RegistrarMetrics::REGISTRATION_STAGE_PROOF_INVALID,
-            );
-            self.proof_provider.block_recovery_for_signer(signer_address);
+
+        if hints.cert_signature_hints.len() != plan.certs.len() {
             return Err(RegistrarError::InvalidAttestationProof(format!(
-                "nonce mismatch for signer {signer_address}: expected 0x{}, got 0x{}",
-                hex::encode(expected_nonce),
-                hex::encode(journal.nonce)
+                "certificate hint count mismatch: expected {}, got {}",
+                plan.certs.len(),
+                hints.cert_signature_hints.len()
             )));
         }
-        let attestation_timestamp = journal.timestamp;
-        drop(proof_permit);
-
-        let calldata = Bytes::from(
-            ITEEProverRegistry::registerSignerCall {
-                output: proof.output,
-                proofBytes: proof.proof_bytes,
+        for (cert, cert_hints) in plan.certs.iter().zip(&hints.cert_signature_hints) {
+            if !self
+                .ensure_cert_cached(cert, cert_hints, signer_address, plan.timestamp, signer_cancel)
+                .await?
+            {
+                return Ok(());
             }
-            .abi_encode(),
-        );
+        }
 
+        self.submit_registration(instance_id, signer_address, &plan, &hints, signer_cancel).await
+    }
+
+    async fn check_revocations(
+        &self,
+        plan: &RegistrationPlan,
+        signer_cancel: &CancellationToken,
+    ) -> Result<bool> {
+        let checks = std::iter::once(("pinned root certificate", plan.root_cert_hash))
+            .chain(plan.certs.iter().map(|cert| (cert.label.as_str(), cert.revocation_id)));
+        for (label, cert_id) in checks {
+            RegistrarMetrics::onchain_revocation_checks_total().increment(1);
+            let Some(revoked) = signer_cancel
+                .run_until_cancelled(self.cert_manager.is_revoked(cert_id))
+                .await
+                .transpose()?
+            else {
+                return Ok(false);
+            };
+            if revoked {
+                RegistrarMetrics::onchain_revocations_detected().increment(1);
+                return Err(RegistrarError::RevokedCertificate { label: label.into(), cert_id });
+            }
+        }
+        Ok(true)
+    }
+
+    async fn validate_root_cache(
+        &self,
+        plan: &RegistrationPlan,
+        signer_cancel: &CancellationToken,
+    ) -> Result<bool> {
+        let root = CertPlan {
+            kind: CertKind::Ca,
+            label: "pinned root certificate".into(),
+            cert: plan.root_cert.clone(),
+            cert_hash: plan.root_cert_hash,
+            parent_cert_hash: B256::ZERO,
+            revocation_id: plan.root_cert_hash,
+        };
+        match self.validate_cached_cert(&root, signer_cancel).await? {
+            None => Ok(false),
+            Some(true) => Ok(true),
+            Some(false) => Err(RegistrarError::InvalidAttestationProof(
+                "pinned root certificate is not cached by CertManager".into(),
+            )),
+        }
+    }
+
+    async fn check_crls(
+        &self,
+        plan: &RegistrationPlan,
+        signer_cancel: &CancellationToken,
+    ) -> Result<bool> {
+        let Some(http_client) = &self.crl_http_client else {
+            return Ok(true);
+        };
+        let cert_infos = crl::CertCrlInfo::from_cert_plans(&plan.certs)?;
+        RegistrarMetrics::crl_checks_total().increment(1);
+        let Some(revoked) = signer_cancel
+            .run_until_cancelled(crl::check_chain_against_crls(&cert_infos, http_client))
+            .await
+        else {
+            return Ok(false);
+        };
+        if revoked.is_empty() {
+            return Ok(true);
+        }
+        RegistrarMetrics::crl_revocations_detected().increment(revoked.len() as u64);
+        for cert in &revoked {
+            if let Err(e) = self
+                .submit_revocation(cert.revocation_id, plan.signer, plan.timestamp, signer_cancel)
+                .await
+            {
+                warn!(
+                    error = %e,
+                    cert_id = %cert.revocation_id,
+                    "failed to persist CRL revocation"
+                );
+                RegistrarMetrics::revoke_cert_tx_failures().increment(1);
+            }
+        }
+        let first = revoked[0];
+        Err(RegistrarError::RevokedCertificate {
+            label: format!("CA certificate {}", first.index),
+            cert_id: first.revocation_id,
+        })
+    }
+
+    async fn submit_revocation(
+        &self,
+        cert_id: B256,
+        signer: Address,
+        timestamp_ms: u64,
+        signer_cancel: &CancellationToken,
+    ) -> Result<()> {
         let candidate = TxCandidate {
-            tx_data: calldata,
-            to: Some(self.registry_address),
+            tx_data: encode_revoke_cert_calldata(cert_id),
+            to: Some(self.cert_manager.address()),
             ..Default::default()
         };
-
-        info!(
-            signer = %signer_address,
-            instance = %instance_id,
-            registry = %self.registry_address,
-            tx = ?candidate,
-            "sending registration tx candidate"
-        );
-
-        let receipt = 'submit: {
-            for retry in 0..=self.max_tx_retries {
-                if signer_cancel.is_cancelled() {
-                    return Ok(());
+        for retry in 0..=self.max_tx_retries {
+            if signer_cancel.is_cancelled() {
+                return Ok(());
+            }
+            self.ensure_attestation_fresh(signer, timestamp_ms)?;
+            let result = self.tx_manager.send(candidate.clone()).await;
+            let observed_revoked = signer_cancel
+                .run_until_cancelled(self.cert_manager.is_revoked(cert_id))
+                .await
+                .transpose();
+            if matches!(observed_revoked, Ok(Some(true))) {
+                RegistrarMetrics::revoke_cert_success_total().increment(1);
+                return Ok(());
+            }
+            match result {
+                Ok(receipt) if receipt.inner.status() => {
+                    return Err(RegistrarError::InvalidAttestationProof(format!(
+                        "revokeCert transaction {} succeeded without setting revocation state",
+                        receipt.transaction_hash
+                    )));
                 }
-                if let Err(e) = self.ensure_attestation_fresh(signer_address, attestation_timestamp)
-                {
-                    RegistrarMetrics::record_registration_stage(
-                        RegistrarMetrics::REGISTRATION_STAGE_PROOF_STALE,
-                    );
-                    return Err(e);
+                Ok(receipt) => {
+                    RegistrarMetrics::revoke_cert_reverted_total().increment(1);
+                    return Err(RegistrarError::ReceiptReverted {
+                        tx_hash: receipt.transaction_hash,
+                    });
                 }
-
-                // Do not wrap send in run_until_cancelled: dropping it after nonce
-                // acquisition can leave a nonce gap.
-                RegistrarMetrics::record_registration_stage(
-                    RegistrarMetrics::REGISTRATION_STAGE_TX_SUBMITTED,
-                );
-                match self.tx_manager.send(candidate.clone()).await {
-                    Ok(receipt) => break 'submit receipt,
-                    Err(e) => {
-                        let Some(post_err_check) = signer_cancel
-                            .run_until_cancelled(self.registry.is_registered_signer(signer_address))
-                            .await
-                        else {
-                            return Ok(());
-                        };
-                        match post_err_check {
-                            Ok(true) => {
-                                info!(
-                                    signer = %signer_address,
-                                    error = %e,
-                                    "tx error but signer is registered onchain, treating as success"
-                                );
-                                RegistrarMetrics::record_registration_stage(
-                                    RegistrarMetrics::REGISTRATION_STAGE_TX_OBSERVED_REGISTERED,
-                                );
-                                RegistrarMetrics::registrations_total().increment(1);
-                                return Ok(());
-                            }
-                            Err(registry_err) => {
-                                warn!(
-                                    error = %registry_err,
-                                    signer = %signer_address,
-                                    "failed to query is_registered after tx error"
-                                );
-                            }
-                            Ok(false) => {}
-                        }
-
-                        if !e.is_retryable() {
-                            if let TxManagerError::ExecutionReverted { data, reason, .. } = &e {
-                                let registry_error = data
-                                    .as_ref()
-                                    .and_then(|d| d.get(..4))
-                                    .and_then(|selector| selector.try_into().ok())
-                                    .and_then(
-                                        ITEEProverRegistry::ITEEProverRegistryErrors::name_by_selector,
-                                    );
-                                warn!(
-                                    signer = %signer_address,
-                                    registry_error = ?registry_error,
-                                    reason = ?reason,
-                                    "execution reverted, blocking proof recovery for signer"
-                                );
-                                self.proof_provider.block_recovery_for_signer(signer_address);
-                            }
-                            RegistrarMetrics::record_registration_stage(
-                                RegistrarMetrics::REGISTRATION_STAGE_TX_FAILED,
-                            );
-                            return Err(RegistrarError::from(e));
-                        }
-
-                        if retry == self.max_tx_retries {
-                            RegistrarMetrics::record_registration_stage(
-                                RegistrarMetrics::REGISTRATION_STAGE_TX_FAILED,
-                            );
-                            return Err(RegistrarError::from(e));
-                        }
-
-                        let retry = retry + 1;
-                        let max_retry_delay = MAX_TX_RETRY_BACKOFF_DELAY.max(self.tx_retry_delay);
-                        let retry_delay = self
-                            .tx_retry_delay
-                            .saturating_mul(2_u32.saturating_pow(retry - 1))
-                            .min(max_retry_delay);
+                Err(error) => {
+                    if Self::cert_manager_authorization_error(&error).is_some() {
                         warn!(
-                            error = %e,
-                            signer = %signer_address,
-                            retry,
-                            max_retries = self.max_tx_retries,
-                            delay = ?retry_delay,
-                            "tx submission failed, retrying with same proof"
+                            error = %error,
+                            cert_id = %cert_id,
+                            "CertManager revocation sender is not authorized"
                         );
-                        RegistrarMetrics::record_registration_stage(
-                            RegistrarMetrics::REGISTRATION_STAGE_TX_RETRY,
-                        );
-
-                        if signer_cancel
-                            .run_until_cancelled(tokio::time::sleep(retry_delay))
-                            .await
-                            .is_none()
-                        {
-                            return Ok(());
-                        }
+                    }
+                    if !error.is_retryable() || retry == self.max_tx_retries {
+                        return Err(error.into());
+                    }
+                    let retry = retry + 1;
+                    if !self
+                        .sleep_before_retry(retry, signer, "revocation", &error, signer_cancel)
+                        .await
+                    {
+                        return Ok(());
                     }
                 }
             }
-            unreachable!("retry loop must return a receipt or error")
-        };
-
-        if !receipt.inner.status() {
-            RegistrarMetrics::record_registration_stage(
-                RegistrarMetrics::REGISTRATION_STAGE_TX_REVERTED,
-            );
-            warn!(
-                signer = %signer_address,
-                tx_hash = %receipt.transaction_hash,
-                "registration transaction reverted onchain",
-            );
-            self.proof_provider.block_recovery_for_signer(signer_address);
-            return Err(RegistrarError::ReceiptReverted { tx_hash: receipt.transaction_hash });
         }
-
-        info!(
-            signer = %signer_address,
-            tx_hash = %receipt.transaction_hash,
-            "signer registered successfully"
-        );
-        RegistrarMetrics::record_registration_stage(
-            RegistrarMetrics::REGISTRATION_STAGE_TX_SUCCEEDED,
-        );
-        RegistrarMetrics::registrations_total().increment(1);
-
-        Ok(())
+        unreachable!("bounded revocation retry loop must return")
     }
 
-    fn ensure_attestation_fresh(&self, signer: Address, timestamp_ms: u64) -> Result<()> {
-        let now_ms =
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
-        let age = Duration::from_millis(now_ms.saturating_sub(timestamp_ms));
+    fn cert_manager_authorization_error(
+        error: &TxManagerError,
+    ) -> Option<CertManagerAuthorizationError> {
+        let TxManagerError::ExecutionReverted { data, reason } = error else {
+            return None;
+        };
+        data.as_deref()
+            .and_then(|data| decode_cert_manager_authorization_error(data.as_ref()))
+            .or_else(|| {
+                let reason = reason.as_deref()?;
+                if reason.contains("NotOwner") {
+                    Some(CertManagerAuthorizationError::NotOwner)
+                } else if reason.contains("NotRevoker") {
+                    Some(CertManagerAuthorizationError::NotRevoker)
+                } else {
+                    None
+                }
+            })
+    }
 
-        if age > self.max_attestation_age {
-            warn!(
-                signer = %signer,
-                age_secs = age.as_secs(),
-                max_age_secs = self.max_attestation_age.as_secs(),
-                timestamp_ms,
-                "pre-submission freshness check failed"
-            );
-            return Err(RegistrarError::StaleAttestationProof {
-                signer,
-                age,
-                max_age: self.max_attestation_age,
-            });
+    async fn ensure_cert_cached(
+        &self,
+        cert: &CertPlan,
+        signature_hints: &[u8],
+        signer: Address,
+        timestamp_ms: u64,
+        signer_cancel: &CancellationToken,
+    ) -> Result<bool> {
+        let lock = self.cert_lock(cert.cert_hash);
+        let Some(_guard) = signer_cancel.run_until_cancelled(lock.lock()).await else {
+            return Ok(false);
+        };
+
+        match self.validate_cached_cert(cert, signer_cancel).await? {
+            None => return Ok(false),
+            Some(true) => return Ok(true),
+            Some(false) => {}
         }
 
-        Ok(())
+        let tx_data = match cert.kind {
+            CertKind::Ca => encode_verify_ca_cert_with_hints_calldata(
+                Bytes::copy_from_slice(&cert.cert),
+                cert.parent_cert_hash,
+                Bytes::copy_from_slice(signature_hints),
+            ),
+            CertKind::Leaf => encode_verify_client_cert_with_hints_calldata(
+                Bytes::copy_from_slice(&cert.cert),
+                cert.parent_cert_hash,
+                Bytes::copy_from_slice(signature_hints),
+            ),
+        };
+        let candidate =
+            TxCandidate { tx_data, to: Some(self.cert_manager.address()), ..Default::default() };
+
+        for retry in 0..=self.max_tx_retries {
+            if signer_cancel.is_cancelled() {
+                return Ok(false);
+            }
+            self.ensure_attestation_fresh(signer, timestamp_ms)?;
+            let result = self.tx_manager.send(candidate.clone()).await;
+            let state = self.validate_cached_cert(cert, signer_cancel).await;
+            let mut state_error = None;
+            match state {
+                Ok(Some(true)) => return Ok(true),
+                Ok(None) => return Ok(false),
+                Err(
+                    error @ (RegistrarError::ExpiredCertificate { .. }
+                    | RegistrarError::RevokedCertificate { .. }
+                    | RegistrarError::InvalidAttestationProof(_)),
+                ) => return Err(error),
+                Err(error) => {
+                    warn!(
+                        error = %error,
+                        cert_hash = %cert.cert_hash,
+                        "failed to reread certificate state after transaction"
+                    );
+                    state_error = Some(error);
+                }
+                Ok(Some(false)) => {}
+            }
+
+            match result {
+                Ok(receipt) if receipt.inner.status() => {
+                    if let Some(error) = state_error {
+                        return Err(error);
+                    }
+                    return Err(RegistrarError::InvalidAttestationProof(format!(
+                        "certificate {} was not usable after successful cache transaction {}",
+                        cert.label, receipt.transaction_hash
+                    )));
+                }
+                Ok(receipt) => {
+                    return Err(RegistrarError::CertificateCacheReverted {
+                        cert_hash: cert.cert_hash,
+                        tx_hash: receipt.transaction_hash,
+                    });
+                }
+                Err(error) if error.is_retryable() && retry < self.max_tx_retries => {
+                    let retry = retry + 1;
+                    if !self
+                        .sleep_before_retry(
+                            retry,
+                            signer,
+                            "certificate cache",
+                            &error,
+                            signer_cancel,
+                        )
+                        .await
+                    {
+                        return Ok(false);
+                    }
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+        unreachable!("bounded certificate retry loop must return")
+    }
+
+    async fn validate_cached_cert(
+        &self,
+        cert: &CertPlan,
+        signer_cancel: &CancellationToken,
+    ) -> Result<Option<bool>> {
+        let Some(verified) = signer_cancel
+            .run_until_cancelled(self.cert_manager.load_verified(cert.cert_hash))
+            .await
+            .transpose()?
+        else {
+            return Ok(None);
+        };
+        let Some(revoked) = signer_cancel
+            .run_until_cancelled(self.cert_manager.is_revoked(cert.revocation_id))
+            .await
+            .transpose()?
+        else {
+            return Ok(None);
+        };
+        if revoked {
+            return Err(RegistrarError::RevokedCertificate {
+                label: cert.label.clone(),
+                cert_id: cert.revocation_id,
+            });
+        }
+        if verified.public_key.is_empty() {
+            return Ok(Some(false));
+        }
+        let (now_secs, _) = Self::now();
+        if verified.not_after < now_secs {
+            return Err(RegistrarError::ExpiredCertificate {
+                label: cert.label.clone(),
+                not_after: verified.not_after,
+            });
+        }
+        if verified.ca != (cert.kind == CertKind::Ca) {
+            return Err(RegistrarError::InvalidAttestationProof(format!(
+                "cached certificate {} has the wrong certificate kind",
+                cert.label
+            )));
+        }
+
+        let warm_result = match cert.kind {
+            CertKind::Ca => {
+                let Some(result) = signer_cancel
+                    .run_until_cancelled(self.cert_manager.verify_ca_cert_with_hints(
+                        Bytes::copy_from_slice(&cert.cert),
+                        cert.parent_cert_hash,
+                        Bytes::new(),
+                    ))
+                    .await
+                else {
+                    return Ok(None);
+                };
+                result.map(|returned_hash| returned_hash == cert.cert_hash)
+            }
+            CertKind::Leaf => {
+                let Some(result) = signer_cancel
+                    .run_until_cancelled(self.cert_manager.verify_client_cert_with_hints(
+                        Bytes::copy_from_slice(&cert.cert),
+                        cert.parent_cert_hash,
+                        Bytes::new(),
+                    ))
+                    .await
+                else {
+                    return Ok(None);
+                };
+                result.map(|returned| !returned.ca && !returned.public_key.is_empty())
+            }
+        };
+        match warm_result {
+            Ok(true) => Ok(Some(true)),
+            Ok(false) => Err(RegistrarError::InvalidAttestationProof(format!(
+                "cached certificate {} returned inconsistent metadata",
+                cert.label
+            ))),
+            Err(error) => Err(RegistrarError::InvalidAttestationProof(format!(
+                "cached certificate {} failed warm validation: {error}",
+                cert.label
+            ))),
+        }
+    }
+
+    async fn submit_registration(
+        &self,
+        instance_id: &str,
+        signer: Address,
+        plan: &RegistrationPlan,
+        hints: &RegistrationHints,
+        signer_cancel: &CancellationToken,
+    ) -> Result<()> {
+        let candidate = TxCandidate {
+            tx_data: encode_register_signer_calldata(
+                Bytes::copy_from_slice(&plan.attestation_tbs),
+                Bytes::copy_from_slice(&plan.signature),
+                Bytes::copy_from_slice(&hints.attestation_hints),
+            ),
+            to: Some(self.registry_address),
+            ..Default::default()
+        };
+        for retry in 0..=self.max_tx_retries {
+            if signer_cancel.is_cancelled() {
+                return Ok(());
+            }
+            self.ensure_attestation_fresh(signer, plan.timestamp)?;
+            let Some(registered) = signer_cancel
+                .run_until_cancelled(self.registry.is_registered_signer(signer))
+                .await
+                .transpose()?
+            else {
+                return Ok(());
+            };
+            if registered {
+                RegistrarMetrics::record_registration_stage(
+                    RegistrarMetrics::REGISTRATION_STAGE_TX_OBSERVED_REGISTERED,
+                );
+                return Ok(());
+            }
+
+            info!(
+                signer = %signer,
+                instance = %instance_id,
+                registry = %self.registry_address,
+                "sending hinted registration transaction"
+            );
+            RegistrarMetrics::record_registration_stage(
+                RegistrarMetrics::REGISTRATION_STAGE_TX_SUBMITTED,
+            );
+            let result = self.tx_manager.send(candidate.clone()).await;
+            match result {
+                Ok(receipt) if receipt.inner.status() => {
+                    info!(signer = %signer, tx_hash = %receipt.transaction_hash, "signer registered");
+                    RegistrarMetrics::record_registration_stage(
+                        RegistrarMetrics::REGISTRATION_STAGE_TX_SUCCEEDED,
+                    );
+                    RegistrarMetrics::registrations_total().increment(1);
+                    return Ok(());
+                }
+                Ok(receipt) => {
+                    match self.observed_registered(signer, signer_cancel).await {
+                        Some(true) | None => return Ok(()),
+                        Some(false) => {}
+                    }
+                    RegistrarMetrics::record_registration_stage(
+                        RegistrarMetrics::REGISTRATION_STAGE_TX_REVERTED,
+                    );
+                    return Err(RegistrarError::ReceiptReverted {
+                        tx_hash: receipt.transaction_hash,
+                    });
+                }
+                Err(error) => {
+                    match self.observed_registered(signer, signer_cancel).await {
+                        Some(true) => {
+                            info!(
+                                signer = %signer,
+                                error = %error,
+                                "registration transaction errored but signer is registered"
+                            );
+                            return Ok(());
+                        }
+                        None => return Ok(()),
+                        Some(false) => {}
+                    }
+                    if !error.is_retryable() || retry == self.max_tx_retries {
+                        RegistrarMetrics::record_registration_stage(
+                            RegistrarMetrics::REGISTRATION_STAGE_TX_FAILED,
+                        );
+                        return Err(error.into());
+                    }
+                    let retry = retry + 1;
+                    RegistrarMetrics::record_registration_stage(
+                        RegistrarMetrics::REGISTRATION_STAGE_TX_RETRY,
+                    );
+                    if !self
+                        .sleep_before_retry(retry, signer, "registration", &error, signer_cancel)
+                        .await
+                    {
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        unreachable!("bounded registration retry loop must return")
+    }
+
+    async fn observed_registered(
+        &self,
+        signer: Address,
+        signer_cancel: &CancellationToken,
+    ) -> Option<bool> {
+        let result =
+            signer_cancel.run_until_cancelled(self.registry.is_registered_signer(signer)).await?;
+        let registered = match result {
+            Ok(registered) => registered,
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    signer = %signer,
+                    "failed to query registration state after transaction"
+                );
+                return Some(false);
+            }
+        };
+        if registered {
+            RegistrarMetrics::record_registration_stage(
+                RegistrarMetrics::REGISTRATION_STAGE_TX_OBSERVED_REGISTERED,
+            );
+            RegistrarMetrics::registrations_total().increment(1);
+        }
+        Some(registered)
+    }
+
+    async fn sleep_before_retry(
+        &self,
+        retry: u32,
+        signer: Address,
+        operation: &'static str,
+        error: &TxManagerError,
+        signer_cancel: &CancellationToken,
+    ) -> bool {
+        let delay = self.retry_delay(retry);
+        warn!(
+            error = %error,
+            signer = %signer,
+            operation,
+            retry,
+            max_retries = self.max_tx_retries,
+            delay = ?delay,
+            "transaction submission failed, retrying"
+        );
+        signer_cancel.run_until_cancelled(tokio::time::sleep(delay)).await.is_some()
     }
 
     /// Queries onchain signers and deregisters orphans.
@@ -529,18 +977,15 @@ where
         let Some(registered_signers) =
             cancel.run_until_cancelled(self.registry.get_registered_signers()).await.transpose()?
         else {
-            debug!("cancelled before loading registered signers for orphan dereg");
+            debug!("cancelled before loading registered signers for orphan deregistration");
             return Ok(());
         };
-
         for signer in
             registered_signers.into_iter().filter(|addr| !protected_signers.contains(addr))
         {
             if cancel.is_cancelled() {
-                debug!(signer = %signer, "shutdown requested, skipping orphan deregistration");
                 break;
             }
-
             let candidate = TxCandidate {
                 tx_data: Bytes::from(
                     ITEEProverRegistry::deregisterSignerCall { signer }.abi_encode(),
@@ -548,29 +993,18 @@ where
                 to: Some(self.registry_address),
                 ..Default::default()
             };
-            info!(
-                signer = %signer,
-                registry = %self.registry_address,
-                tx = ?candidate,
-                "sending deregistration tx candidate",
-            );
-
             match self.tx_manager.send(candidate).await {
-                Ok(receipt) if !receipt.inner.status() => {
+                Ok(receipt) if receipt.inner.status() => {
+                    info!(signer = %signer, tx_hash = %receipt.transaction_hash, "signer deregistered");
+                    RegistrarMetrics::deregistrations_total().increment(1);
+                }
+                Ok(receipt) => {
                     warn!(
                         signer = %signer,
                         tx_hash = %receipt.transaction_hash,
-                        "deregistration transaction reverted onchain",
+                        "deregistration transaction reverted"
                     );
                     RegistrarMetrics::processing_errors_total().increment(1);
-                }
-                Ok(receipt) => {
-                    info!(
-                        signer = %signer,
-                        tx_hash = %receipt.transaction_hash,
-                        "signer deregistered"
-                    );
-                    RegistrarMetrics::deregistrations_total().increment(1);
                 }
                 Err(e) => {
                     warn!(error = %e, signer = %signer, "failed to deregister signer");
@@ -578,22 +1012,17 @@ where
                 }
             }
         }
-
         Ok(())
     }
 }
 
-impl<P, R, T> SignerManager<P, R, T>
+impl<R, C, T> SignerManager<R, C, T>
 where
-    P: AttestationProofProvider + 'static,
     R: TEEProverRegistryClient + 'static,
+    C: CertManagerClient + 'static,
     T: TxManager + 'static,
 {
     /// Reconciles in-flight registration tasks against fetched prover signers.
-    ///
-    /// New proof-task child tokens are derived from `cancel`, which is owned
-    /// by the driver so every signer lifecycle operation shares one shutdown
-    /// source of truth.
     pub fn reconcile_proof_tasks(
         self: &Arc<Self>,
         resolution: &DiscoveryResolution,
@@ -603,7 +1032,6 @@ where
         if cancel.is_cancelled() {
             return;
         }
-
         for (signer, task) in &mut proof_tasks.pending {
             if task.cancel.is_cancelled()
                 || resolution.registerable.iter().any(|entry| entry.signer == *signer)
@@ -611,16 +1039,14 @@ where
             {
                 continue;
             }
-
             info!(
                 signer = %signer,
                 instance = %task.instance_id,
-                "cancelling proof task: signer no longer registerable"
+                "cancelling registration task: signer no longer registerable"
             );
             task.cancel.cancel();
             RegistrarMetrics::proof_tasks_cancelled().increment(1);
         }
-
         for entry in &resolution.registerable {
             if proof_tasks.pending.contains_key(&entry.signer) {
                 continue;
@@ -632,7 +1058,6 @@ where
             let attestation = entry.attestation.clone();
             let task_cancel = signer_cancel.clone();
             let signer = entry.signer;
-
             let handle = proof_tasks.tasks.spawn(async move {
                 let result = manager
                     .register_signer(&task_instance_id, signer, &attestation, &task_cancel)
@@ -650,146 +1075,321 @@ where
 
 #[cfg(test)]
 mod tests {
+    //! These hand-rolled mocks share one ordered state across contract reads and transaction
+    //! writes, which `mockall` cannot express while transactions race through per-certificate locks.
+
     use std::{
-        collections::{HashSet, VecDeque},
+        collections::VecDeque,
         sync::{
-            Arc, Mutex,
+            OnceLock,
             atomic::{AtomicBool, Ordering},
         },
-        time::Duration,
     };
 
-    use alloy_primitives::{Address, B256};
+    use alloy_primitives::Address;
     use async_trait::async_trait;
-    use base_proof_tee_nitro_attestation_prover::AttestationProof;
-    use base_proof_tee_nitro_verifier::VerificationResult;
+    use base_proof_contracts::{ContractError, ICertManager, VerifiedCert};
     use base_tx_manager::{SendHandle, TxManagerError};
-    use tokio::sync::Notify;
 
     use super::*;
     use crate::{
-        DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
-        RegisterableSigner, RegistrarError,
+        DEFAULT_MAX_CONCURRENCY, RegisterableSigner,
         test_utils::{
             EP1, EP2, HARDHAT_KEY_0, HARDHAT_KEY_1, TEST_REGISTRY_ADDRESS, healthy_prover_instance,
             signer_from_private_key, stub_receipt_with_status,
         },
     };
 
-    const TEST_PENDING_INSTANCE_ID: &str = "i-pending-test";
-    const GATED_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
-    const TEST_MAX_ATTESTATION_AGE: Duration = Duration::from_secs(3300);
-    const ATTESTATION: &[u8] = b"stub-attestation";
-    const SIGNER_A: Address = Address::new([0xAA; 20]);
-    const SIGNER_B: Address = Address::new([0xBB; 20]);
+    const TEST_INSTANCE: &str = "i-registrar-test";
+    const TEST_CERT_MANAGER_ADDRESS: Address = Address::repeat_byte(0x22);
+    const TEST_MAX_AGE: Duration = Duration::from_secs(3600);
+    const TEST_RETRY_DELAY: Duration = Duration::from_secs(1);
+    const SIGNER_A: Address = Address::repeat_byte(0xaa);
+    const SIGNER_B: Address = Address::repeat_byte(0xbb);
 
-    type TestSignerManager =
-        Arc<SignerManager<RecordingProofProvider, MockRegistry, RecordingTxManager>>;
-    type ProofRecords = Arc<Mutex<Vec<(Address, Vec<u8>)>>>;
+    #[derive(Clone, Debug)]
+    struct MockCertSpec {
+        hash: B256,
+        parent: B256,
+        revocation_id: B256,
+        kind: CertKind,
+        verified: VerifiedCert,
+    }
 
-    #[derive(Debug, Default)]
-    enum RegistryMode {
-        #[default]
-        Static,
-        RegisteredAfterFirstProbe(AtomicBool),
-        StallIsRegistered,
-        StallGetRegisteredSigners,
+    #[derive(Clone, Debug)]
+    enum MockTxOutcome {
+        Success,
+        Error(TxManagerError),
+        ApplyThenError(TxManagerError),
+        ApplyThenRevert,
     }
 
     #[derive(Debug, Default)]
-    struct MockRegistry {
-        signers: Vec<Address>,
-        mode: RegistryMode,
-        get_registered_signers_started: Notify,
+    struct MockChainState {
+        specs: HashMap<Vec<u8>, MockCertSpec>,
+        cached: HashMap<B256, (B256, VerifiedCert)>,
+        revoked: HashSet<B256>,
+        registered: HashSet<Address>,
+        sent: Vec<(Option<Address>, Bytes)>,
+        outcomes: VecDeque<MockTxOutcome>,
+        final_signer: Option<Address>,
+        cert_reads: usize,
     }
 
-    impl MockRegistry {
-        fn with_registered_signers(signers: Vec<Address>) -> Self {
-            Self { signers, ..Self::default() }
+    #[derive(Clone, Debug, Default)]
+    struct MockChain(Arc<Mutex<MockChainState>>);
+
+    impl MockChain {
+        fn with_plan(plan: &RegistrationPlan) -> Self {
+            let chain = Self::default();
+            let root = MockCertSpec {
+                hash: plan.root_cert_hash,
+                parent: B256::ZERO,
+                revocation_id: plan.root_cert_hash,
+                kind: CertKind::Ca,
+                verified: verified_cert(CertKind::Ca),
+            };
+            let mut state = chain.0.lock().unwrap();
+            state.specs.insert(plan.root_cert.clone(), root.clone());
+            state.cached.insert(root.hash, (root.parent, root.verified));
+            for cert in &plan.certs {
+                state.specs.insert(
+                    cert.cert.clone(),
+                    MockCertSpec {
+                        hash: cert.cert_hash,
+                        parent: cert.parent_cert_hash,
+                        revocation_id: cert.revocation_id,
+                        kind: cert.kind,
+                        verified: verified_cert(cert.kind),
+                    },
+                );
+            }
+            drop(state);
+            chain
         }
+
+        fn precache(&self, plan: &RegistrationPlan, prefix_len: usize) {
+            let mut state = self.0.lock().unwrap();
+            for cert in plan.certs.iter().take(prefix_len) {
+                let spec = state.specs.get(&cert.cert).unwrap().clone();
+                state.cached.insert(spec.hash, (spec.parent, spec.verified));
+            }
+        }
+
+        fn set_outcomes(&self, outcomes: impl IntoIterator<Item = MockTxOutcome>) {
+            self.0.lock().unwrap().outcomes = outcomes.into_iter().collect();
+        }
+
+        fn tx_count_to(&self, address: Address) -> usize {
+            self.0.lock().unwrap().sent.iter().filter(|(to, _)| *to == Some(address)).count()
+        }
+
+        fn sent(&self) -> Vec<(Option<Address>, Bytes)> {
+            self.0.lock().unwrap().sent.clone()
+        }
+
+        fn cert_reads(&self) -> usize {
+            self.0.lock().unwrap().cert_reads
+        }
+
+        fn apply(&self, candidate: &TxCandidate) {
+            let mut state = self.0.lock().unwrap();
+            let data = candidate.tx_data.as_ref();
+            if data.starts_with(&ICertManager::verifyCACertWithHintsCall::SELECTOR) {
+                let call = ICertManager::verifyCACertWithHintsCall::abi_decode(data).unwrap();
+                let spec = state.specs.get(call.cert.as_ref()).unwrap().clone();
+                assert_eq!(spec.kind, CertKind::Ca);
+                assert_eq!(spec.parent, call.parentCertHash);
+                state.cached.insert(spec.hash, (spec.parent, spec.verified));
+            } else if data.starts_with(&ICertManager::verifyClientCertWithHintsCall::SELECTOR) {
+                let call = ICertManager::verifyClientCertWithHintsCall::abi_decode(data).unwrap();
+                let spec = state.specs.get(call.cert.as_ref()).unwrap().clone();
+                assert_eq!(spec.kind, CertKind::Leaf);
+                assert_eq!(spec.parent, call.parentCertHash);
+                state.cached.insert(spec.hash, (spec.parent, spec.verified));
+            } else if data.starts_with(&ICertManager::revokeCertCall::SELECTOR) {
+                let call = ICertManager::revokeCertCall::abi_decode(data).unwrap();
+                state.revoked.insert(call.certId);
+            } else if data.starts_with(&ITEEProverRegistry::registerSignerCall::SELECTOR) {
+                if let Some(signer) = state.final_signer {
+                    state.registered.insert(signer);
+                }
+            } else if data.starts_with(&ITEEProverRegistry::deregisterSignerCall::SELECTOR) {
+                let call = ITEEProverRegistry::deregisterSignerCall::abi_decode(data).unwrap();
+                state.registered.remove(&call.signer);
+            }
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct MockRegistry {
+        chain: MockChain,
+        stall_get_registered: Arc<AtomicBool>,
     }
 
     #[async_trait]
     impl TEEProverRegistryClient for MockRegistry {
+        fn address(&self) -> Address {
+            TEST_REGISTRY_ADDRESS
+        }
+
+        async fn nitro_validator(&self) -> std::result::Result<Address, ContractError> {
+            Ok(Address::repeat_byte(0x33))
+        }
+
         async fn is_valid_signer(
             &self,
             signer: Address,
-        ) -> std::result::Result<bool, base_proof_contracts::ContractError> {
+        ) -> std::result::Result<bool, ContractError> {
             self.is_registered_signer(signer).await
         }
 
         async fn is_registered_signer(
             &self,
             signer: Address,
-        ) -> std::result::Result<bool, base_proof_contracts::ContractError> {
-            match &self.mode {
-                RegistryMode::Static | RegistryMode::StallGetRegisteredSigners => {
-                    Ok(self.signers.contains(&signer))
-                }
-                RegistryMode::RegisteredAfterFirstProbe(registered) => {
-                    Ok(registered.swap(true, Ordering::SeqCst))
-                }
-                RegistryMode::StallIsRegistered => std::future::pending().await,
-            }
+        ) -> std::result::Result<bool, ContractError> {
+            Ok(self.chain.0.lock().unwrap().registered.contains(&signer))
         }
 
-        async fn get_registered_signers(
-            &self,
-        ) -> std::result::Result<Vec<Address>, base_proof_contracts::ContractError> {
-            self.get_registered_signers_started.notify_waiters();
-            if matches!(&self.mode, RegistryMode::StallGetRegisteredSigners) {
+        async fn get_registered_signers(&self) -> std::result::Result<Vec<Address>, ContractError> {
+            if self.stall_get_registered.load(Ordering::SeqCst) {
                 std::future::pending::<()>().await;
             }
-            Ok(self.signers.clone())
+            Ok(self.chain.0.lock().unwrap().registered.iter().copied().collect())
         }
     }
 
-    #[derive(Debug, Default)]
-    struct RecordingTxManager {
-        results: Mutex<VecDeque<base_tx_manager::SendResponse>>,
-        sent: Mutex<Vec<(Option<Address>, Bytes)>>,
-        stall_sends: bool,
-        send_started: Notify,
+    #[derive(Clone, Debug)]
+    struct MockCertManager {
+        chain: MockChain,
     }
 
-    impl RecordingTxManager {
-        fn stalling() -> Self {
-            Self { stall_sends: true, ..Self::default() }
-        }
-
-        fn with_errors(errors: Vec<TxManagerError>) -> Self {
-            Self::with_results(errors.into_iter().map(Err).collect())
-        }
-
-        fn with_results(results: Vec<base_tx_manager::SendResponse>) -> Self {
-            Self { results: Mutex::new(results.into()), ..Self::default() }
-        }
-
-        fn send_count(&self) -> usize {
-            self.sent.lock().unwrap().len()
-        }
-
-        fn take_sent(&self) -> Vec<(Option<Address>, Bytes)> {
-            std::mem::take(&mut *self.sent.lock().unwrap())
-        }
-    }
-
-    impl TxManager for RecordingTxManager {
-        async fn send(&self, candidate: TxCandidate) -> base_tx_manager::SendResponse {
-            self.sent.lock().unwrap().push((candidate.to, candidate.tx_data));
-            self.send_started.notify_one();
-            if self.stall_sends {
-                return std::future::pending::<base_tx_manager::SendResponse>().await;
+    impl MockCertManager {
+        fn warm(
+            &self,
+            cert: &Bytes,
+            parent_cert_hash: B256,
+            kind: CertKind,
+        ) -> std::result::Result<(B256, VerifiedCert), ContractError> {
+            let mut state = self.chain.0.lock().unwrap();
+            state.cert_reads += 1;
+            let spec = state
+                .specs
+                .get(cert.as_ref())
+                .ok_or_else(|| ContractError::validation("unknown certificate"))?
+                .clone();
+            let (cached_parent, verified) = state
+                .cached
+                .get(&spec.hash)
+                .cloned()
+                .ok_or_else(|| ContractError::validation("inverse hint underflow"))?;
+            if cached_parent != parent_cert_hash {
+                return Err(ContractError::validation("parent cert mismatch"));
             }
-            self.results
+            if spec.kind != kind || verified.ca != (kind == CertKind::Ca) {
+                return Err(ContractError::validation("cert is not a CA"));
+            }
+            if state.revoked.contains(&spec.revocation_id) {
+                return Err(ContractError::validation("cert revoked"));
+            }
+            Ok((spec.hash, verified))
+        }
+    }
+
+    #[async_trait]
+    impl CertManagerClient for MockCertManager {
+        fn address(&self) -> Address {
+            TEST_CERT_MANAGER_ADDRESS
+        }
+
+        async fn verify_ca_cert_with_hints(
+            &self,
+            cert: Bytes,
+            parent_cert_hash: B256,
+            _signature_hints: Bytes,
+        ) -> std::result::Result<B256, ContractError> {
+            Ok(self.warm(&cert, parent_cert_hash, CertKind::Ca)?.0)
+        }
+
+        async fn verify_client_cert_with_hints(
+            &self,
+            cert: Bytes,
+            parent_cert_hash: B256,
+            _signature_hints: Bytes,
+        ) -> std::result::Result<VerifiedCert, ContractError> {
+            Ok(self.warm(&cert, parent_cert_hash, CertKind::Leaf)?.1)
+        }
+
+        async fn load_verified(
+            &self,
+            cert_hash: B256,
+        ) -> std::result::Result<VerifiedCert, ContractError> {
+            let mut state = self.chain.0.lock().unwrap();
+            state.cert_reads += 1;
+            Ok(state
+                .cached
+                .get(&cert_hash)
+                .map(|(_, cert)| cert.clone())
+                .unwrap_or_else(empty_verified_cert))
+        }
+
+        async fn is_revoked(&self, cert_id: B256) -> std::result::Result<bool, ContractError> {
+            let mut state = self.chain.0.lock().unwrap();
+            state.cert_reads += 1;
+            Ok(state.revoked.contains(&cert_id))
+        }
+
+        async fn owner(&self) -> std::result::Result<Address, ContractError> {
+            Ok(Address::ZERO)
+        }
+
+        async fn revoker(&self) -> std::result::Result<Address, ContractError> {
+            Ok(Address::ZERO)
+        }
+
+        async fn compute_cert_id(&self, cert: Bytes) -> std::result::Result<B256, ContractError> {
+            self.chain
+                .0
                 .lock()
                 .unwrap()
-                .pop_front()
-                .unwrap_or_else(|| Ok(stub_receipt_with_status(true)))
+                .specs
+                .get(cert.as_ref())
+                .map(|spec| spec.revocation_id)
+                .ok_or_else(|| ContractError::validation("unknown certificate"))
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct MockTxManager {
+        chain: MockChain,
+    }
+
+    impl TxManager for MockTxManager {
+        async fn send(&self, candidate: TxCandidate) -> base_tx_manager::SendResponse {
+            let outcome = {
+                let mut state = self.chain.0.lock().unwrap();
+                state.sent.push((candidate.to, candidate.tx_data.clone()));
+                state.outcomes.pop_front().unwrap_or(MockTxOutcome::Success)
+            };
+            match outcome {
+                MockTxOutcome::Success => {
+                    self.chain.apply(&candidate);
+                    Ok(stub_receipt_with_status(true))
+                }
+                MockTxOutcome::Error(error) => Err(error),
+                MockTxOutcome::ApplyThenError(error) => {
+                    self.chain.apply(&candidate);
+                    Err(error)
+                }
+                MockTxOutcome::ApplyThenRevert => {
+                    self.chain.apply(&candidate);
+                    Ok(stub_receipt_with_status(false))
+                }
+            }
         }
 
         async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
-            unreachable!("signer manager orphan dereg tests use synchronous send")
+            unreachable!("registrar tests use synchronous transaction submission")
         }
 
         fn sender_address(&self) -> Address {
@@ -797,825 +1397,513 @@ mod tests {
         }
     }
 
-    #[derive(Debug, Clone, Default)]
-    struct RecordingProofProvider {
-        cancel_then_error: bool,
-        blocked_signers: Arc<Mutex<Vec<Address>>>,
-        proof_output: Option<Bytes>,
-        records: ProofRecords,
+    type TestManager = SignerManager<MockRegistry, MockCertManager, MockTxManager>;
+
+    fn verified_cert(kind: CertKind) -> VerifiedCert {
+        VerifiedCert {
+            ca: kind == CertKind::Ca,
+            not_after: SignerManager::<(), (), ()>::now().0 + 10_000,
+            max_path_len: if kind == CertKind::Ca { 3 } else { 0 },
+            subject_hash: B256::repeat_byte(0x44),
+            public_key: Bytes::from(vec![0x55; 96]),
+        }
     }
 
-    fn expected_nonce(signer: Address) -> [u8; 32] {
-        SignerManager::<RecordingProofProvider, MockRegistry, RecordingTxManager>::attestation_nonce_for(
-            TEST_REGISTRY_ADDRESS,
+    fn empty_verified_cert() -> VerifiedCert {
+        VerifiedCert {
+            ca: false,
+            not_after: 0,
+            max_path_len: 0,
+            subject_hash: B256::ZERO,
+            public_key: Bytes::new(),
+        }
+    }
+
+    fn root_cert() -> Vec<u8> {
+        static ROOT: OnceLock<Vec<u8>> = OnceLock::new();
+        ROOT.get_or_init(|| {
+            let attestation =
+                hex::decode(include_str!("testdata/nitro_attestation.hex").trim()).unwrap();
+            AttestationPlanner::prepare_registration_plan(&attestation).unwrap().root_cert
+        })
+        .clone()
+    }
+
+    fn synthetic_plan(signer: Address) -> RegistrationPlan {
+        let (_, now_ms) = SignerManager::<(), (), ()>::now();
+        let mut parent = PINNED_ROOT_CERT_HASH;
+        let mut certs = Vec::new();
+        for index in 1..=4u8 {
+            let hash = B256::repeat_byte(index);
+            certs.push(CertPlan {
+                kind: if index == 4 { CertKind::Leaf } else { CertKind::Ca },
+                label: format!("certificate {index}"),
+                cert: vec![index],
+                cert_hash: hash,
+                parent_cert_hash: parent,
+                revocation_id: B256::repeat_byte(index + 0x10),
+            });
+            parent = hash;
+        }
+        RegistrationPlan {
             signer,
-        )
-    }
-
-    fn proof_output_with_nonce(nonce: &[u8]) -> Bytes {
-        proof_output_with_nonce_and_age(nonce, Duration::ZERO)
-    }
-
-    fn proof_output_with_age(age: Duration) -> Bytes {
-        proof_output_with_nonce_and_age(&expected_nonce(SIGNER_A), age)
-    }
-
-    fn proof_output_with_nonce_and_age(nonce: &[u8], age: Duration) -> Bytes {
-        let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis();
-        let age_ms = u64::try_from(age.as_millis()).unwrap_or(u64::MAX);
-        let timestamp = u64::try_from(now_ms).unwrap_or(u64::MAX).saturating_sub(age_ms);
-        Bytes::from(
-            VerifierJournal {
-                result: VerificationResult::Success,
-                trustedCertsPrefixLen: 1,
-                timestamp,
-                certs: Vec::new(),
-                certExpiries: Vec::new(),
-                userData: Bytes::new(),
-                nonce: Bytes::copy_from_slice(nonce),
-                publicKey: Bytes::new(),
-                pcrs: Vec::new(),
-                moduleId: "test-module".to_string(),
-            }
-            .encode(),
-        )
-    }
-
-    #[async_trait]
-    impl AttestationProofProvider for RecordingProofProvider {
-        async fn generate_proof(
-            &self,
-            _attestation_bytes: &[u8],
-            _cancel: &CancellationToken,
-        ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
-            unreachable!("signer manager tests call generate_proof_for_signer")
-        }
-
-        async fn generate_proof_for_signer(
-            &self,
-            attestation_bytes: &[u8],
-            signer_address: Address,
-            cancel: &CancellationToken,
-        ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
-            self.records.lock().unwrap().push((signer_address, attestation_bytes.to_vec()));
-            if self.cancel_then_error {
-                cancel.cancel();
-                return Err(base_proof_tee_nitro_attestation_prover::ProverError::Boundless(
-                    "simulated cancel race".into(),
-                ));
-            }
-            Ok(AttestationProof {
-                output: self
-                    .proof_output
-                    .clone()
-                    .unwrap_or_else(|| proof_output_with_nonce(&expected_nonce(signer_address))),
-                proof_bytes: Bytes::from_static(b"stub-proof"),
-            })
-        }
-
-        fn block_recovery_for_signer(&self, signer: Address) {
-            self.blocked_signers.lock().unwrap().push(signer);
+            pcr0: vec![0x42; 48],
+            timestamp: now_ms.saturating_sub(1_000),
+            nonce: Some(TestManager::attestation_nonce_for(TEST_REGISTRY_ADDRESS, signer).to_vec()),
+            root_cert_hash: PINNED_ROOT_CERT_HASH,
+            root_cert: root_cert(),
+            leaf_cert_hash: parent,
+            attestation_tbs: vec![signer.as_slice()[19]],
+            signature: vec![0x66; 96],
+            certs,
         }
     }
 
-    fn manager_with<T>(
-        proof_provider: RecordingProofProvider,
-        registry: MockRegistry,
-        tx_manager: T,
-    ) -> SignerManager<RecordingProofProvider, MockRegistry, T> {
-        manager_with_config(
-            proof_provider,
-            registry,
-            tx_manager,
-            DEFAULT_MAX_TX_RETRIES,
-            Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
-            TEST_MAX_ATTESTATION_AGE,
-        )
+    fn synthetic_hints() -> RegistrationHints {
+        RegistrationHints {
+            cert_signature_hints: (1..=4).map(|index| vec![index; 48]).collect(),
+            attestation_hints: vec![0x77; 48],
+        }
     }
 
-    fn manager_with_config<T>(
-        proof_provider: RecordingProofProvider,
-        registry: MockRegistry,
-        tx_manager: T,
+    fn manager_with_plan(plan: &RegistrationPlan) -> (Arc<TestManager>, MockChain) {
+        manager_with_config(plan, DEFAULT_MAX_TX_RETRIES, TEST_RETRY_DELAY, TEST_MAX_AGE)
+    }
+
+    fn manager_with_config(
+        plan: &RegistrationPlan,
         max_tx_retries: u32,
         tx_retry_delay: Duration,
         max_attestation_age: Duration,
-    ) -> SignerManager<RecordingProofProvider, MockRegistry, T> {
-        SignerManager::new(
-            proof_provider,
-            registry,
-            tx_manager,
+    ) -> (Arc<TestManager>, MockChain) {
+        let chain = MockChain::with_plan(plan);
+        let manager = SignerManager::new(
+            MockRegistry {
+                chain: chain.clone(),
+                stall_get_registered: Arc::new(AtomicBool::new(false)),
+            },
+            MockCertManager { chain: chain.clone() },
+            MockTxManager { chain: chain.clone() },
             SignerManagerConfig {
                 registry_address: TEST_REGISTRY_ADDRESS,
                 max_concurrency: DEFAULT_MAX_CONCURRENCY,
                 max_tx_retries,
                 tx_retry_delay,
                 max_attestation_age,
+                crl_checks_enabled: false,
             },
         )
+        .unwrap();
+        (Arc::new(manager), chain)
     }
 
-    fn manager(proof_provider: RecordingProofProvider) -> TestSignerManager {
-        Arc::new(manager_with(
-            proof_provider,
-            MockRegistry::default(),
-            RecordingTxManager::default(),
-        ))
+    async fn register_prepared(manager: &TestManager, plan: RegistrationPlan) -> Result<()> {
+        manager
+            .register_plan(
+                TEST_INSTANCE,
+                plan.signer,
+                plan,
+                Some(synthetic_hints()),
+                &CancellationToken::new(),
+            )
+            .await
     }
 
-    async fn register(
-        manager: &SignerManager<RecordingProofProvider, MockRegistry, RecordingTxManager>,
-        cancel: &CancellationToken,
-    ) -> Result<()> {
-        manager.register_signer(TEST_PENDING_INSTANCE_ID, SIGNER_A, ATTESTATION, cancel).await
+    #[tokio::test]
+    async fn cold_chain_submits_four_cache_transactions_then_registration() {
+        let plan = synthetic_plan(SIGNER_A);
+        let (manager, chain) = manager_with_plan(&plan);
+
+        register_prepared(&manager, plan).await.unwrap();
+
+        assert_eq!(chain.tx_count_to(TEST_CERT_MANAGER_ADDRESS), 4);
+        assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1);
     }
 
-    fn reconcile(
-        manager: &TestSignerManager,
-        resolution: &DiscoveryResolution,
-        proof_tasks: &mut ProofTaskSet,
-    ) {
+    #[tokio::test]
+    async fn every_cache_prefix_submits_only_missing_suffix_and_registration() {
+        for prefix in 0..=4 {
+            let plan = synthetic_plan(SIGNER_A);
+            let (manager, chain) = manager_with_plan(&plan);
+            chain.precache(&plan, prefix);
+
+            register_prepared(&manager, plan).await.unwrap();
+
+            assert_eq!(chain.tx_count_to(TEST_CERT_MANAGER_ADDRESS), 4 - prefix, "prefix {prefix}");
+            assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1, "prefix {prefix}");
+        }
+    }
+
+    #[tokio::test]
+    async fn cached_cas_and_new_leaf_submit_two_transactions() {
+        let plan = synthetic_plan(SIGNER_A);
+        let (manager, chain) = manager_with_plan(&plan);
+        chain.precache(&plan, 3);
+
+        register_prepared(&manager, plan).await.unwrap();
+
+        assert_eq!(chain.sent().len(), 2);
+        assert_eq!(chain.tx_count_to(TEST_CERT_MANAGER_ADDRESS), 1);
+        assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1);
+    }
+
+    #[tokio::test]
+    async fn fully_warm_chain_submits_only_registration() {
+        let plan = synthetic_plan(SIGNER_A);
+        let (manager, chain) = manager_with_plan(&plan);
+        chain.precache(&plan, 4);
+
+        register_prepared(&manager, plan).await.unwrap();
+
+        assert_eq!(chain.sent().len(), 1);
+        assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1);
+    }
+
+    #[tokio::test]
+    async fn concurrent_registrations_cache_shared_chain_once() {
+        let plan_a = synthetic_plan(SIGNER_A);
+        let plan_b = synthetic_plan(SIGNER_B);
+        let (manager, chain) = manager_with_plan(&plan_a);
+        {
+            let mut state = chain.0.lock().unwrap();
+            for cert in &plan_b.certs {
+                state.specs.entry(cert.cert.clone()).or_insert_with(|| MockCertSpec {
+                    hash: cert.cert_hash,
+                    parent: cert.parent_cert_hash,
+                    revocation_id: cert.revocation_id,
+                    kind: cert.kind,
+                    verified: verified_cert(cert.kind),
+                });
+            }
+        }
+        let first = {
+            let manager = Arc::clone(&manager);
+            tokio::spawn(async move { register_prepared(&manager, plan_a).await })
+        };
+        let second = {
+            let manager = Arc::clone(&manager);
+            tokio::spawn(async move { register_prepared(&manager, plan_b).await })
+        };
+
+        first.await.unwrap().unwrap();
+        second.await.unwrap().unwrap();
+
+        assert_eq!(chain.tx_count_to(TEST_CERT_MANAGER_ADDRESS), 4);
+        assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn ambiguous_cache_error_and_reverted_receipt_reread_usable_state() {
+        for first_outcome in [
+            MockTxOutcome::ApplyThenError(TxManagerError::Rpc("receipt timeout".into())),
+            MockTxOutcome::ApplyThenRevert,
+        ] {
+            let plan = synthetic_plan(SIGNER_A);
+            let (manager, chain) = manager_with_plan(&plan);
+            chain.set_outcomes([first_outcome]);
+
+            register_prepared(&manager, plan).await.unwrap();
+
+            assert_eq!(chain.tx_count_to(TEST_CERT_MANAGER_ADDRESS), 4);
+            assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn ambiguous_final_error_and_reverted_receipt_observe_registration() {
+        for final_outcome in [
+            MockTxOutcome::ApplyThenError(TxManagerError::Rpc("receipt timeout".into())),
+            MockTxOutcome::ApplyThenRevert,
+        ] {
+            let plan = synthetic_plan(SIGNER_A);
+            let (manager, chain) = manager_with_plan(&plan);
+            chain.0.lock().unwrap().final_signer = Some(SIGNER_A);
+            chain.set_outcomes(
+                std::iter::repeat_n(MockTxOutcome::Success, 4).chain([final_outcome]),
+            );
+
+            register_prepared(&manager, plan).await.unwrap();
+
+            assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn expired_cached_certificate_is_rejected_without_transaction() {
+        let plan = synthetic_plan(SIGNER_A);
+        let (manager, chain) = manager_with_plan(&plan);
+        chain.precache(&plan, 1);
+        chain.0.lock().unwrap().cached.get_mut(&plan.certs[0].cert_hash).unwrap().1.not_after = 1;
+
+        let result = register_prepared(&manager, plan).await;
+
+        assert!(matches!(result, Err(RegistrarError::ExpiredCertificate { .. })));
+        assert!(chain.sent().is_empty());
+    }
+
+    #[tokio::test]
+    async fn root_and_certificate_revocations_are_rejected_before_cache_transactions() {
+        for cert_id in [PINNED_ROOT_CERT_HASH, B256::repeat_byte(0x12)] {
+            let plan = synthetic_plan(SIGNER_A);
+            let (manager, chain) = manager_with_plan(&plan);
+            chain.0.lock().unwrap().revoked.insert(cert_id);
+
+            let result = register_prepared(&manager, plan).await;
+
+            assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
+            assert!(chain.sent().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn already_registered_signer_still_checks_revocation_state() {
+        let plan = synthetic_plan(SIGNER_A);
+        let (manager, chain) = manager_with_plan(&plan);
+        {
+            let mut state = chain.0.lock().unwrap();
+            state.registered.insert(SIGNER_A);
+            state.revoked.insert(plan.certs[0].revocation_id);
+        }
+
+        let result = register_prepared(&manager, plan).await;
+
+        assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
+        assert!(chain.sent().is_empty());
+    }
+
+    #[tokio::test]
+    async fn cached_parent_mismatch_is_rejected_without_recache_transaction() {
+        let plan = synthetic_plan(SIGNER_A);
+        let (manager, chain) = manager_with_plan(&plan);
+        chain.precache(&plan, 1);
+        chain.0.lock().unwrap().cached.get_mut(&plan.certs[0].cert_hash).unwrap().0 =
+            B256::repeat_byte(0xfe);
+
+        let result = register_prepared(&manager, plan).await;
+
+        assert!(
+            matches!(result, Err(RegistrarError::InvalidAttestationProof(reason)) if reason.contains("parent cert mismatch"))
+        );
+        assert!(chain.sent().is_empty());
+    }
+
+    #[tokio::test]
+    async fn real_attestation_signer_and_nonce_rejections_happen_before_contract_reads() {
+        let attestation =
+            hex::decode(include_str!("testdata/nitro_attestation.hex").trim()).unwrap();
+        let parsed = AttestationPlanner::prepare_registration_plan(&attestation).unwrap();
+        for signer in [SIGNER_B, parsed.signer] {
+            let plan = synthetic_plan(signer);
+            let (manager, chain) = manager_with_plan(&plan);
+
+            let result = manager
+                .register_signer(TEST_INSTANCE, signer, &attestation, &CancellationToken::new())
+                .await;
+
+            assert!(matches!(result, Err(RegistrarError::InvalidAttestationProof(_))));
+            assert_eq!(chain.cert_reads(), 0);
+            assert!(chain.sent().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn pcr_future_and_stale_plans_are_rejected_before_transactions() {
+        let (_, now_ms) = TestManager::now();
+        for mutation in 0..3 {
+            let mut plan = synthetic_plan(SIGNER_A);
+            match mutation {
+                0 => plan.pcr0 = vec![0; 47],
+                1 => plan.timestamp = now_ms + 10_000,
+                _ => {
+                    plan.timestamp = now_ms.saturating_sub(TEST_MAX_AGE.as_millis() as u64 + 2_000)
+                }
+            }
+            let (manager, chain) = manager_with_plan(&plan);
+
+            let result = register_prepared(&manager, plan).await;
+
+            assert!(result.is_err());
+            assert!(chain.sent().is_empty());
+        }
+    }
+
+    #[test]
+    fn same_second_attestation_is_not_rejected_locally() {
+        let mut plan = synthetic_plan(SIGNER_A);
+        let (manager, _) = manager_with_plan(&plan);
+        plan.timestamp = TestManager::now().1;
+
+        manager.validate_plan(SIGNER_A, &plan).unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn retryable_cache_error_retries_same_calldata_with_backoff() {
+        let plan = synthetic_plan(SIGNER_A);
+        let (manager, chain) = manager_with_config(&plan, 2, TEST_RETRY_DELAY, TEST_MAX_AGE);
+        chain.set_outcomes([MockTxOutcome::Error(TxManagerError::Rpc("temporary".into()))]);
+        let start = tokio::time::Instant::now();
+
+        register_prepared(&manager, plan).await.unwrap();
+
+        assert_eq!(start.elapsed(), TEST_RETRY_DELAY);
+        assert_eq!(chain.tx_count_to(TEST_CERT_MANAGER_ADDRESS), 5);
+        let sent = chain.sent();
+        assert_eq!(sent[0], sent[1]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cancellation_during_retry_backoff_stops_without_another_send() {
+        let plan = synthetic_plan(SIGNER_A);
+        let (manager, chain) = manager_with_plan(&plan);
+        chain.set_outcomes([MockTxOutcome::Error(TxManagerError::Rpc("temporary".into()))]);
         let cancel = CancellationToken::new();
-        manager.reconcile_proof_tasks(resolution, proof_tasks, &cancel);
+        let cancel_task = cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            cancel_task.cancel();
+        });
+
+        manager
+            .register_plan(TEST_INSTANCE, SIGNER_A, plan, Some(synthetic_hints()), &cancel)
+            .await
+            .unwrap();
+
+        assert_eq!(chain.sent().len(), 1);
     }
 
-    fn resolution_from_registerable(kept: &[(&str, &[u8; 32])]) -> DiscoveryResolution {
-        let registerable = kept
-            .iter()
-            .map(|(ep, key)| RegisterableSigner {
-                instance: healthy_prover_instance(ep),
-                signer: signer_from_private_key(key),
-                attestation: b"gated-attestation".to_vec(),
-            })
-            .collect();
+    fn resolution(entries: &[(&str, Address)]) -> DiscoveryResolution {
         DiscoveryResolution {
-            registerable,
+            registerable: entries
+                .iter()
+                .map(|(endpoint, signer)| RegisterableSigner {
+                    instance: healthy_prover_instance(endpoint),
+                    signer: *signer,
+                    attestation: b"synthetic-attestation".to_vec(),
+                })
+                .collect(),
             active_signers: HashSet::new(),
             unresolved_instance_ids: HashSet::new(),
         }
     }
 
     fn spawn_pending(
-        proof_tasks: &mut ProofTaskSet,
+        tasks: &mut ProofTaskSet,
         signer: Address,
         instance_id: &str,
-    ) -> (tokio::task::Id, CancellationToken) {
+    ) -> CancellationToken {
         let cancel = CancellationToken::new();
-        let handle = proof_tasks.tasks.spawn(std::future::pending::<(Address, Result<()>)>());
-        let task_id = handle.id();
-        proof_tasks.pending.insert(
+        let handle = tasks.tasks.spawn(std::future::pending::<(Address, Result<()>)>());
+        tasks.pending.insert(
             signer,
             PendingRegistration {
-                instance_id: instance_id.to_string(),
-                task_id,
+                instance_id: instance_id.into(),
+                task_id: handle.id(),
                 cancel: cancel.clone(),
             },
         );
-        (task_id, cancel)
+        cancel
     }
 
-    async fn drain_test_tasks(proof_tasks: &mut ProofTaskSet) {
-        let tasks = &mut proof_tasks.tasks;
-        tasks.abort_all();
-        while tasks.join_next().await.is_some() {}
-        proof_tasks.pending.clear();
-    }
-
-    #[tokio::test]
-    async fn register_signer_provider_err_after_cancel_returns_ok() {
-        let manager = manager_with(
-            RecordingProofProvider { cancel_then_error: true, ..Default::default() },
-            MockRegistry::default(),
-            RecordingTxManager::default(),
-        );
-        let cancel = CancellationToken::new();
-
-        let result = register(&manager, &cancel).await;
-
-        assert!(result.is_ok(), "provider Err after cancel must be mapped to Ok(()): {result:?}",);
-        assert_eq!(
-            manager.tx_manager.send_count(),
-            0,
-            "cancelled task must not submit a transaction"
-        );
+    async fn abort_tasks(tasks: &mut ProofTaskSet) {
+        tasks.tasks.abort_all();
+        while tasks.tasks.join_next().await.is_some() {}
+        tasks.pending.clear();
     }
 
     #[tokio::test]
-    async fn register_signer_aborts_promptly_when_cancel_fires_during_registry_stall() {
-        let manager = Arc::new(manager_with(
-            RecordingProofProvider::default(),
-            MockRegistry { mode: RegistryMode::StallIsRegistered, ..Default::default() },
-            RecordingTxManager::default(),
-        ));
-        let signer_cancel = CancellationToken::new();
-        let task_manager = Arc::clone(&manager);
-        let task_cancel = signer_cancel.clone();
-        let handle = tokio::spawn(async move { register(&task_manager, &task_cancel).await });
-
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        signer_cancel.cancel();
-
-        let result = tokio::time::timeout(GATED_WAIT_TIMEOUT, handle)
-            .await
-            .expect("register_signer must not hang past the timeout")
-            .expect("spawned task must not panic");
-
-        assert!(result.is_ok(), "cancel-induced exit must be Ok(()): {result:?}");
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn register_signer_already_registered_after_error_returns_ok() {
-        let manager = manager_with(
-            RecordingProofProvider::default(),
-            MockRegistry {
-                mode: RegistryMode::RegisteredAfterFirstProbe(AtomicBool::new(false)),
-                ..Default::default()
-            },
-            RecordingTxManager::with_errors(vec![TxManagerError::Rpc("nonce race".into())]),
-        );
-
-        let result = register(&manager, &CancellationToken::new()).await;
-
-        assert!(result.is_ok(), "should succeed when signer is registered onchain: {result:?}");
-        assert_eq!(manager.tx_manager.send_count(), 1);
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn register_signer_tx_outcome() {
-        for (errors, should_succeed, expected_sends) in [
-            (vec![], true, 1),
-            (
-                vec![
-                    TxManagerError::Rpc("transient 1".into()),
-                    TxManagerError::Rpc("transient 2".into()),
-                ],
-                true,
-                3,
-            ),
-            (
-                (0..=DEFAULT_MAX_TX_RETRIES)
-                    .map(|_| TxManagerError::Rpc("persistent failure".into()))
-                    .collect(),
-                false,
-                (DEFAULT_MAX_TX_RETRIES + 1) as usize,
-            ),
-            (
-                vec![TxManagerError::ExecutionReverted {
-                    reason: Some("bad proof".into()),
-                    data: None,
-                }],
-                false,
-                1,
-            ),
-        ] {
-            let manager = manager_with(
-                RecordingProofProvider::default(),
-                MockRegistry::default(),
-                RecordingTxManager::with_errors(errors),
-            );
-
-            let result = register(&manager, &CancellationToken::new()).await;
-
-            assert_eq!(
-                result.is_ok(),
-                should_succeed,
-                "unexpected registration result: {result:?}",
-            );
-            assert_eq!(manager.tx_manager.send_count(), expected_sends);
-            let sent: Vec<_> =
-                manager.tx_manager.take_sent().into_iter().map(|(_, data)| data).collect();
-            assert!(sent.windows(2).all(|w| w[0] == w[1]), "calldata mismatch: {sent:?}");
-        }
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn register_signer_backs_off_between_tx_retries() {
-        for (case, max_retries, retry_delay, errors, expected_sends, expected_elapsed) in [
-            ("exponential", 3, Duration::from_secs(1), 3, 4, Duration::from_secs(7)),
-            ("capped", 4, Duration::from_secs(30), 4, 5, Duration::from_secs(210)),
-        ] {
-            let manager = manager_with_config(
-                RecordingProofProvider::default(),
-                MockRegistry::default(),
-                RecordingTxManager::with_errors(
-                    (1..=errors)
-                        .map(|retry| TxManagerError::Rpc(format!("transient {retry}")))
-                        .collect(),
-                ),
-                max_retries,
-                retry_delay,
-                TEST_MAX_ATTESTATION_AGE,
-            );
-            let start = tokio::time::Instant::now();
-
-            let result = register(&manager, &CancellationToken::new()).await;
-
-            assert!(
-                result.is_ok(),
-                "{case}: retryable errors should eventually succeed: {result:?}"
-            );
-            assert_eq!(manager.tx_manager.send_count(), expected_sends, "{case}");
-            assert_eq!(start.elapsed(), expected_elapsed, "{case}");
-        }
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn register_signer_reverted_receipt_blocks_recovery() {
-        let proof_provider = RecordingProofProvider::default();
-        let manager = manager_with(
-            proof_provider.clone(),
-            MockRegistry::default(),
-            RecordingTxManager::with_results(vec![Ok(stub_receipt_with_status(false))]),
-        );
-
-        let result = register(&manager, &CancellationToken::new()).await;
-
-        assert!(
-            matches!(result, Err(RegistrarError::ReceiptReverted { tx_hash }) if tx_hash == B256::ZERO),
-            "reverted receipt should fail with ReceiptReverted: {result:?}"
-        );
-        assert_eq!(manager.tx_manager.send_count(), 1, "should submit exactly one tx");
-        assert_eq!(*proof_provider.blocked_signers.lock().unwrap(), vec![SIGNER_A]);
-    }
-
-    #[tokio::test]
-    async fn register_signer_rejects_nonce_mismatch_before_tx() {
-        let proof_provider = RecordingProofProvider {
-            proof_output: Some(proof_output_with_nonce(b"old-nonce")),
+    async fn reconciliation_deduplicates_preserves_unresolved_and_cancels_absent_tasks() {
+        let plan = synthetic_plan(SIGNER_A);
+        let (manager, _) = manager_with_plan(&plan);
+        let mut tasks = ProofTaskSet::default();
+        let pending_cancel = spawn_pending(&mut tasks, SIGNER_A, TEST_INSTANCE);
+        let unresolved = DiscoveryResolution {
+            unresolved_instance_ids: HashSet::from([TEST_INSTANCE.into()]),
             ..Default::default()
         };
-        let manager = manager_with(
-            proof_provider.clone(),
-            MockRegistry::default(),
-            RecordingTxManager::default(),
-        );
+        manager.reconcile_proof_tasks(&unresolved, &mut tasks, &CancellationToken::new());
+        assert!(!pending_cancel.is_cancelled());
 
-        let result = register(&manager, &CancellationToken::new()).await;
-
-        assert!(
-            matches!(result, Err(RegistrarError::InvalidAttestationProof(_))),
-            "mismatched nonce should fail before submission: {result:?}"
+        manager.reconcile_proof_tasks(
+            &resolution(&[(EP1, SIGNER_A), (EP2, SIGNER_A)]),
+            &mut tasks,
+            &CancellationToken::new(),
         );
-        assert_eq!(manager.tx_manager.send_count(), 0, "nonce mismatch must not submit a tx");
-        assert_eq!(*proof_provider.blocked_signers.lock().unwrap(), vec![SIGNER_A]);
+        assert_eq!(tasks.pending.len(), 1);
+
+        manager.reconcile_proof_tasks(
+            &DiscoveryResolution::default(),
+            &mut tasks,
+            &CancellationToken::new(),
+        );
+        assert!(pending_cancel.is_cancelled());
+        abort_tasks(&mut tasks).await;
     }
 
     #[tokio::test]
-    async fn register_signer_rejects_stale_proof_before_tx() {
-        let proof_provider = RecordingProofProvider {
-            proof_output: Some(proof_output_with_age(
-                TEST_MAX_ATTESTATION_AGE + Duration::from_secs(1),
-            )),
-            ..Default::default()
-        };
-        let manager = manager_with(
-            proof_provider.clone(),
-            MockRegistry::default(),
-            RecordingTxManager::default(),
+    async fn reconciliation_spawns_one_task_per_distinct_signer() {
+        let plan = synthetic_plan(SIGNER_A);
+        let (manager, _) = manager_with_plan(&plan);
+        let mut tasks = ProofTaskSet::default();
+
+        manager.reconcile_proof_tasks(
+            &resolution(&[(EP1, SIGNER_A), (EP2, SIGNER_B)]),
+            &mut tasks,
+            &CancellationToken::new(),
         );
 
-        let result = register(&manager, &CancellationToken::new()).await;
-
-        assert!(
-            matches!(result, Err(RegistrarError::StaleAttestationProof { signer, .. }) if signer == SIGNER_A),
-            "stale proof should fail before submission: {result:?}"
-        );
-        assert_eq!(manager.tx_manager.send_count(), 0, "stale proof must not submit a tx");
-        assert!(proof_provider.blocked_signers.lock().unwrap().is_empty());
+        assert_eq!(tasks.pending.len(), 2);
+        abort_tasks(&mut tasks).await;
     }
 
     #[tokio::test]
-    async fn register_signer_rechecks_freshness_before_retry_send() {
-        let proof_provider = RecordingProofProvider::default();
-        let manager = manager_with_config(
-            proof_provider.clone(),
-            MockRegistry::default(),
-            RecordingTxManager::with_errors(vec![TxManagerError::Rpc("transient".into())]),
-            DEFAULT_MAX_TX_RETRIES,
-            Duration::from_millis(50),
-            Duration::from_millis(20),
-        );
+    async fn orphan_deregistration_submits_only_unprotected_signers() {
+        let plan = synthetic_plan(SIGNER_A);
+        let (manager, chain) = manager_with_plan(&plan);
+        chain.0.lock().unwrap().registered.extend([SIGNER_A, SIGNER_B]);
 
-        let result = register(&manager, &CancellationToken::new()).await;
-
-        assert!(
-            matches!(result, Err(RegistrarError::StaleAttestationProof { signer, .. }) if signer == SIGNER_A),
-            "proof should become stale before retry submission: {result:?}"
-        );
-        assert_eq!(manager.tx_manager.send_count(), 1, "stale retry must not submit again");
-        assert!(proof_provider.blocked_signers.lock().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn register_signer_rejects_invalid_proof_journal_before_tx() {
-        let proof_provider = RecordingProofProvider {
-            proof_output: Some(Bytes::from_static(b"not-an-abi-journal")),
-            ..Default::default()
-        };
-        let manager = manager_with(
-            proof_provider.clone(),
-            MockRegistry::default(),
-            RecordingTxManager::default(),
-        );
-
-        let result = register(&manager, &CancellationToken::new()).await;
-
-        assert!(
-            matches!(result, Err(RegistrarError::InvalidProofJournal { .. })),
-            "invalid proof journal should fail before submission: {result:?}"
-        );
-        assert_eq!(manager.tx_manager.send_count(), 0, "invalid proof must not submit a tx");
-        assert!(proof_provider.blocked_signers.lock().unwrap().is_empty());
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn register_signer_cancellation_during_retry_sleep_aborts() {
-        let manager = manager_with(
-            RecordingProofProvider::default(),
-            MockRegistry::default(),
-            RecordingTxManager::with_errors(vec![
-                TxManagerError::Rpc("fail 1".into()),
-                TxManagerError::Rpc("fail 2".into()),
-                TxManagerError::Rpc("fail 3".into()),
-            ]),
-        );
-        let cancel = CancellationToken::new();
-        let cancel_handle = cancel.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            cancel_handle.cancel();
-        });
-
-        let result = register(&manager, &cancel).await;
-
-        assert!(result.is_ok(), "cancel-induced exit should be Ok(()): {result:?}");
-        assert_eq!(manager.tx_manager.send_count(), 1, "should abort during retry sleep");
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn register_signer_cancellation_before_tx_sends_nothing() {
-        let manager = manager_with(
-            RecordingProofProvider::default(),
-            MockRegistry::default(),
-            RecordingTxManager::default(),
-        );
-        let cancel = CancellationToken::new();
-        cancel.cancel();
-
-        let result = register(&manager, &cancel).await;
-
-        assert!(result.is_ok(), "pre-cancel should be a cooperative success: {result:?}");
-        assert_eq!(
-            manager.tx_manager.send_count(),
-            0,
-            "should not send any tx after pre-cancellation"
-        );
-    }
-
-    #[tokio::test]
-    async fn register_signer_releases_proof_permit_before_tx_submission_finishes() {
-        let proof_provider = RecordingProofProvider::default();
-        let manager = Arc::new(SignerManager::new(
-            proof_provider.clone(),
-            MockRegistry::default(),
-            RecordingTxManager::stalling(),
-            SignerManagerConfig {
-                registry_address: TEST_REGISTRY_ADDRESS,
-                max_concurrency: 1,
-                max_tx_retries: DEFAULT_MAX_TX_RETRIES,
-                tx_retry_delay: Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
-                max_attestation_age: TEST_MAX_ATTESTATION_AGE,
-            },
-        ));
-        let cancel = CancellationToken::new();
-
-        let first_manager = Arc::clone(&manager);
-        let first_cancel = cancel.clone();
-        let first = tokio::spawn(async move {
-            first_manager
-                .register_signer(TEST_PENDING_INSTANCE_ID, SIGNER_A, ATTESTATION, &first_cancel)
-                .await
-        });
-        let second_manager = Arc::clone(&manager);
-        let second_cancel = cancel.clone();
-        let second = tokio::spawn(async move {
-            second_manager
-                .register_signer("i-pending-test-2", SIGNER_B, ATTESTATION, &second_cancel)
-                .await
-        });
-
-        tokio::time::timeout(GATED_WAIT_TIMEOUT, manager.tx_manager.send_started.notified())
+        manager
+            .run_orphan_dereg(&HashSet::from([SIGNER_A]), &CancellationToken::new())
             .await
-            .expect("first registration never reached tx submission");
-        let records = tokio::time::timeout(GATED_WAIT_TIMEOUT, async {
-            loop {
-                let records = proof_provider.records.lock().unwrap().clone();
-                if records.len() >= 2 {
-                    break records;
-                }
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("second proof generation was blocked behind stalled tx submission");
-
-        assert!(records.iter().any(|(signer, _)| *signer == SIGNER_A));
-        assert!(records.iter().any(|(signer, _)| *signer == SIGNER_B));
-        first.abort();
-        second.abort();
-        let _ = first.await;
-        let _ = second.await;
-    }
-
-    #[tokio::test]
-    async fn reconcile_proof_tasks_cancel_and_spawn_passes() {
-        for (pre_existing, kept, expected_new_spawns, expected_cancels) in [
-            (&[][..], &[(EP1, &HARDHAT_KEY_0)][..], 1, 0),
-            (&[(EP1, &HARDHAT_KEY_0)][..], &[(EP1, &HARDHAT_KEY_0)][..], 0, 0),
-            (&[(EP1, &HARDHAT_KEY_0)][..], &[][..], 0, 1),
-        ] {
-            let manager = manager(RecordingProofProvider::default());
-            let mut proof_tasks = ProofTaskSet::default();
-            let mut seeded_cancels = Vec::new();
-
-            for (_, key) in pre_existing {
-                let signer = signer_from_private_key(key);
-                let (_, task_cancel) =
-                    spawn_pending(&mut proof_tasks, signer, TEST_PENDING_INSTANCE_ID);
-                seeded_cancels.push(task_cancel);
-            }
-
-            let resolution = resolution_from_registerable(kept);
-            let pre_task_count = proof_tasks.tasks.len();
-            let expected_pending = pre_existing.len() + expected_new_spawns;
-
-            reconcile(&manager, &resolution, &mut proof_tasks);
-
-            let cancelled = seeded_cancels.iter().filter(|c| c.is_cancelled()).count();
-            let new_spawns = proof_tasks.tasks.len().saturating_sub(pre_task_count);
-
-            assert_eq!(new_spawns, expected_new_spawns, "spawn-pass count");
-            assert_eq!(cancelled, expected_cancels, "cancel-pass count");
-            assert_eq!(proof_tasks.pending.len(), expected_pending, "pending task count");
-
-            drain_test_tasks(&mut proof_tasks).await;
-        }
-    }
-
-    #[tokio::test]
-    async fn reconcile_proof_tasks_waits_for_reap_before_respawn() {
-        let manager = manager(RecordingProofProvider::default());
-        let mut proof_tasks = ProofTaskSet::default();
-        let signer = signer_from_private_key(&HARDHAT_KEY_0);
-
-        let (stale_task_id, stale_cancel) =
-            spawn_pending(&mut proof_tasks, signer, TEST_PENDING_INSTANCE_ID);
-
-        reconcile(&manager, &resolution_from_registerable(&[]), &mut proof_tasks);
-        assert!(stale_cancel.is_cancelled(), "stale task must be cancelled by reconcile");
-
-        reconcile(
-            &manager,
-            &resolution_from_registerable(&[(EP1, &HARDHAT_KEY_0)]),
-            &mut proof_tasks,
-        );
-
-        assert_eq!(proof_tasks.pending.len(), 1, "still exactly one entry per signer");
-        let entry = proof_tasks.pending.get(&signer).expect("pending entry keyed by signer");
-        assert_eq!(entry.task_id, stale_task_id, "respawn waits for reap");
-
-        drain_test_tasks(&mut proof_tasks).await;
-    }
-
-    #[tokio::test]
-    async fn reconcile_proof_tasks_preserves_task_when_instance_fails_to_resolve() {
-        let manager = manager(RecordingProofProvider::default());
-        let mut proof_tasks = ProofTaskSet::default();
-        let signer = signer_from_private_key(&HARDHAT_KEY_0);
-
-        let (_, task_cancel) = spawn_pending(&mut proof_tasks, signer, TEST_PENDING_INSTANCE_ID);
-
-        let resolution = DiscoveryResolution {
-            registerable: Vec::new(),
-            active_signers: HashSet::new(),
-            unresolved_instance_ids: HashSet::from([TEST_PENDING_INSTANCE_ID.to_string()]),
-        };
-
-        reconcile(&manager, &resolution, &mut proof_tasks);
-
-        assert!(
-            !task_cancel.is_cancelled(),
-            "task tied to an unresolved instance must be preserved",
-        );
-        assert_eq!(proof_tasks.pending.len(), 1, "no spurious spawn or eviction this cycle");
-
-        let resolution_conclusive = DiscoveryResolution {
-            registerable: Vec::new(),
-            active_signers: HashSet::new(),
-            unresolved_instance_ids: HashSet::new(),
-        };
-        reconcile(&manager, &resolution_conclusive, &mut proof_tasks);
-        assert!(task_cancel.is_cancelled(), "conclusive absence must cancel the task");
-
-        drain_test_tasks(&mut proof_tasks).await;
-    }
-
-    #[tokio::test]
-    async fn reconcile_proof_tasks_dedupes_signer_across_registerable_entries() {
-        let manager = manager(RecordingProofProvider::default());
-        let signer = signer_from_private_key(&HARDHAT_KEY_0);
-        let resolution = DiscoveryResolution {
-            registerable: vec![
-                RegisterableSigner {
-                    instance: healthy_prover_instance(EP1),
-                    signer,
-                    attestation: b"attestation-from-instance-a".to_vec(),
-                },
-                RegisterableSigner {
-                    instance: healthy_prover_instance(EP2),
-                    signer,
-                    attestation: b"attestation-from-instance-b".to_vec(),
-                },
-            ],
-            active_signers: HashSet::new(),
-            unresolved_instance_ids: HashSet::new(),
-        };
-        let mut proof_tasks = ProofTaskSet::default();
-
-        reconcile(&manager, &resolution, &mut proof_tasks);
-
-        assert_eq!(proof_tasks.pending.len(), 1, "exactly one task should spawn");
-        let (&only_signer, _entry) = proof_tasks.pending.iter().next().unwrap();
-        assert_eq!(only_signer, signer, "the task is keyed by the deduplicated signer");
-
-        drain_test_tasks(&mut proof_tasks).await;
-    }
-
-    #[tokio::test]
-    async fn reconcile_proof_tasks_pairs_attestation_with_signer() {
-        let signer_a = signer_from_private_key(&HARDHAT_KEY_0);
-        let signer_b = signer_from_private_key(&HARDHAT_KEY_1);
-        assert_ne!(signer_a, signer_b, "test setup: distinct signer addresses");
-
-        let att_a: Vec<u8> = b"attestation-aligned-to-A".to_vec();
-        let att_b: Vec<u8> = b"attestation-aligned-to-B".to_vec();
-        let proof_provider = RecordingProofProvider::default();
-        let manager = manager(proof_provider.clone());
-        let resolution = DiscoveryResolution {
-            registerable: vec![
-                RegisterableSigner {
-                    instance: healthy_prover_instance(EP1),
-                    signer: signer_a,
-                    attestation: att_a.clone(),
-                },
-                RegisterableSigner {
-                    instance: healthy_prover_instance(EP2),
-                    signer: signer_b,
-                    attestation: att_b.clone(),
-                },
-            ],
-            active_signers: HashSet::new(),
-            unresolved_instance_ids: HashSet::new(),
-        };
-        let mut proof_tasks = ProofTaskSet::default();
-
-        reconcile(&manager, &resolution, &mut proof_tasks);
-
-        let records = tokio::time::timeout(GATED_WAIT_TIMEOUT, async {
-            loop {
-                let records = proof_provider.records.lock().unwrap().clone();
-                if records.len() >= 2 {
-                    break records;
-                }
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("timed out waiting for proof records");
-        drain_test_tasks(&mut proof_tasks).await;
-
-        assert!(records.contains(&(signer_a, att_a)), "signer A got A attestation");
-        assert!(records.contains(&(signer_b, att_b)), "signer B got B attestation");
-    }
-
-    #[tokio::test]
-    async fn reap_finished_tasks_drains_completed_and_evicts_pending() {
-        let mut proof_tasks = ProofTaskSet::default();
-        let signer = signer_from_private_key(&HARDHAT_KEY_0);
-
-        let cancel = CancellationToken::new();
-        let handle = proof_tasks.tasks.spawn(async move { (signer, Ok(())) });
-        proof_tasks.pending.insert(
-            signer,
-            PendingRegistration {
-                instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
-                task_id: handle.id(),
-                cancel,
-            },
-        );
-
-        tokio::task::yield_now().await;
-        proof_tasks.reap_finished_tasks();
-
-        assert!(proof_tasks.pending.is_empty(), "completed task must be evicted");
-        assert!(proof_tasks.tasks.is_empty(), "JoinSet must drain to empty");
-    }
-
-    #[tokio::test]
-    async fn reap_finished_tasks_drops_pending_entry_when_task_panics() {
-        let mut proof_tasks = ProofTaskSet::default();
-        let signer = signer_from_private_key(&HARDHAT_KEY_0);
-
-        let cancel = CancellationToken::new();
-        let handle = proof_tasks.tasks.spawn(async {
-            panic!("synthetic proof-task panic for apply_join_outcome test");
-        });
-        proof_tasks.pending.insert(
-            signer,
-            PendingRegistration {
-                instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
-                task_id: handle.id(),
-                cancel,
-            },
-        );
-
-        tokio::task::yield_now().await;
-        proof_tasks.reap_finished_tasks();
-
-        assert!(proof_tasks.pending.is_empty(), "panicked task must be evicted");
-        assert!(proof_tasks.tasks.is_empty(), "JoinSet must drain to empty");
-    }
-
-    #[tokio::test]
-    async fn deregister_orphans_submits_expected_signers() {
-        for (registered_signers, protected_signers, expected_signers) in [
-            (&[SIGNER_A, SIGNER_B][..], &[SIGNER_A, SIGNER_B][..], &[][..]),
-            (&[SIGNER_A, SIGNER_B][..], &[SIGNER_A][..], &[SIGNER_B][..]),
-            (&[SIGNER_A, SIGNER_B][..], &[][..], &[SIGNER_A, SIGNER_B][..]),
-        ] {
-            let manager = manager_with(
-                RecordingProofProvider::default(),
-                MockRegistry::with_registered_signers(registered_signers.to_vec()),
-                RecordingTxManager::default(),
-            );
-            let protected_signers: HashSet<Address> = protected_signers.iter().copied().collect();
-
-            manager.run_orphan_dereg(&protected_signers, &CancellationToken::new()).await.unwrap();
-
-            let sent = manager.tx_manager.take_sent();
-            assert_eq!(sent.len(), expected_signers.len());
-            for ((to, tx_data), signer) in sent.iter().zip(expected_signers) {
-                assert_eq!(*to, Some(TEST_REGISTRY_ADDRESS));
-                let expected = Bytes::from(
-                    ITEEProverRegistry::deregisterSignerCall { signer: *signer }.abi_encode(),
-                );
-                assert_eq!(tx_data, &expected);
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn deregister_orphans_respects_cancellation() {
-        let manager = manager_with(
-            RecordingProofProvider::default(),
-            MockRegistry::with_registered_signers(vec![SIGNER_A]),
-            RecordingTxManager::default(),
-        );
-        let cancel = CancellationToken::new();
-        cancel.cancel();
-
-        let protected_signers = HashSet::new();
-
-        manager.run_orphan_dereg(&protected_signers, &cancel).await.unwrap();
-
-        assert!(manager.tx_manager.take_sent().is_empty());
-    }
-
-    #[tokio::test]
-    async fn run_orphan_dereg_respects_cancellation_while_loading_signers() {
-        let manager = manager_with(
-            RecordingProofProvider::default(),
-            MockRegistry { mode: RegistryMode::StallGetRegisteredSigners, ..Default::default() },
-            RecordingTxManager::default(),
-        );
-        let cancel = CancellationToken::new();
-        let protected_signers = HashSet::new();
-        let run = manager.run_orphan_dereg(&protected_signers, &cancel);
-        tokio::pin!(run);
-
-        let notified = manager.registry.get_registered_signers_started.notified();
-        tokio::pin!(notified);
-        tokio::select! {
-            () = &mut notified => {}
-            result = &mut run => panic!("run_orphan_dereg completed before cancellation: {result:?}"),
-        }
-
-        cancel.cancel();
-
-        tokio::time::timeout(Duration::from_secs(1), run)
-            .await
-            .expect("run_orphan_dereg should stop promptly after cancellation")
             .unwrap();
-        assert!(manager.tx_manager.take_sent().is_empty());
+
+        assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1);
+        let sent = chain.sent();
+        let call = ITEEProverRegistry::deregisterSignerCall::abi_decode(&sent[0].1).unwrap();
+        assert_eq!(call.signer, SIGNER_B);
+    }
+
+    #[tokio::test]
+    async fn orphan_deregistration_stops_while_registry_read_is_cancelled() {
+        let plan = synthetic_plan(SIGNER_A);
+        let (manager, chain) = manager_with_plan(&plan);
+        manager.registry.stall_get_registered.store(true, Ordering::SeqCst);
+        let cancel = CancellationToken::new();
+        let protected = HashSet::new();
+        let run = manager.run_orphan_dereg(&protected, &cancel);
+        tokio::pin!(run);
+        tokio::select! {
+            result = &mut run => panic!("orphan pass returned before cancellation: {result:?}"),
+            () = tokio::task::yield_now() => {}
+        }
+        cancel.cancel();
+
+        run.await.unwrap();
+        assert!(chain.sent().is_empty());
+    }
+
+    #[test]
+    fn nonce_is_bound_to_registry_and_signer() {
+        let signer = signer_from_private_key(&HARDHAT_KEY_0);
+        assert_ne!(
+            TestManager::attestation_nonce_for(TEST_REGISTRY_ADDRESS, signer),
+            TestManager::attestation_nonce_for(Address::repeat_byte(2), signer)
+        );
+        assert_ne!(
+            TestManager::attestation_nonce_for(TEST_REGISTRY_ADDRESS, signer),
+            TestManager::attestation_nonce_for(
+                TEST_REGISTRY_ADDRESS,
+                signer_from_private_key(&HARDHAT_KEY_1)
+            )
+        );
     }
 }

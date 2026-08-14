@@ -38,13 +38,12 @@ impl AttestationPlanner {
     /// Parses a Nitro attestation into a registration plan plus P-384 inverse hints.
     ///
     /// Hint streams cover every non-root CA, the leaf certificate, and the final
-    /// attestation signature. Unused by the running Boundless registrar path until
-    /// hinted orchestration lands.
+    /// attestation signature.
     pub fn prepare_hinted_registration_plan(
         attestation: &[u8],
     ) -> PlannerResult<HintedRegistrationPlan> {
-        let (plan, root_cert) = Self::prepare_registration_plan_with_root(attestation)?;
-        let hints = P384Hints::for_registration_plan(&root_cert, &plan)?;
+        let (plan, _) = Self::prepare_registration_plan_with_root(attestation)?;
+        let hints = P384Hints::for_registration_plan(&plan.root_cert, &plan)?;
         Ok(HintedRegistrationPlan { plan, hints })
     }
 
@@ -123,6 +122,7 @@ impl AttestationPlanner {
                 timestamp: doc.timestamp,
                 nonce: doc.nonce.as_ref().map(|n| n.to_vec()),
                 root_cert_hash: root_hash,
+                root_cert: root_cert.clone(),
                 leaf_cert_hash: leaf_hash,
                 attestation_tbs: cose.attestation_tbs,
                 signature: cose.signature,
@@ -335,6 +335,7 @@ mod tests {
         // Fixture encodes `nonce: null`.
         assert_eq!(plan.nonce, None);
         assert_eq!(plan.root_cert_hash, PINNED_ROOT_CERT_HASH);
+        assert_eq!(keccak256(&plan.root_cert), PINNED_ROOT_CERT_HASH);
         assert_eq!(plan.leaf_cert_hash, LEAF_HASH);
         assert_eq!(plan.signature.len(), 96);
         assert_eq!(keccak256(&plan.attestation_tbs), FIXTURE_TBS_KECCAK);
