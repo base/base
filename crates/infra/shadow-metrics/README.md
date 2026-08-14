@@ -21,14 +21,15 @@ or deleted. This is an accepted trade-off for using one typed database row.
 
 ## Usage
 
-Metric emission is behind the `metrics` feature. Without it, `define_metrics!`
-expands to no-ops and the reader runs while emitting nothing, so any consumer
-that expects metrics must enable it explicitly:
+Metric emission is enabled by default through the `metrics` feature:
 
 ```toml
 [dependencies]
-base-shadow-metrics = { workspace = true, features = ["metrics"] }
+base-shadow-metrics.workspace = true
 ```
+
+Setting `default-features = false` explicitly disables emission and makes the
+generated metric handles no-ops.
 
 ```rust,ignore
 use base_shadow_metrics::{ShadowMetricsReader, ShadowMetricsReaderConfig, ShadowMetricsStore};

@@ -132,8 +132,8 @@ base-prover-service-protocol.workspace = true
 
 # execution
 base-shadow-indexer.workspace = true
+base-shadow-metrics.workspace = true
 base-shadow-indexer-db.workspace = true
-base-shadow-metrics = { workspace = true, features = ["metrics"] }
 
 # reth
 reth-primitives-traits.workspace = true
