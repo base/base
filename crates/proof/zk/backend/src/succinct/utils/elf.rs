@@ -1,7 +1,7 @@
 //! Embedded SP1 program bytes and proving-key setup.
 
 use anyhow::{Context, Result};
-use base_proof_succinct_elfs::AGGREGATION_ELF;
+use base_proof_succinct_elfs::{AGGREGATION_ELF, RANGE_ELF_EMBEDDED};
 use sp1_sdk::{
     Elf, ProvingKey, SP1ProvingKey, SP1VerifyingKey,
     blocking::{CpuProver, LightProver, Prover as BlockingProver},
@@ -9,8 +9,6 @@ use sp1_sdk::{
 
 /// Get the range ELF.
 pub const fn get_range_elf_embedded() -> &'static [u8] {
-    use base_proof_succinct_elfs::RANGE_ELF_EMBEDDED;
-
     RANGE_ELF_EMBEDDED
 }
 
