@@ -342,11 +342,10 @@ where
         if self.rollup_config.is_denim_active(self.rollup_config.l2_block_timestamp(block_number)) {
             let interval =
                 Duration::from_millis(RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS);
-            target - interval.saturating_sub(self.seal_offset)
-        } else {
-            let block_interval = Duration::from_secs(self.rollup_config.block_time);
-            target - last_seal_duration.min(block_interval / 2)
+            return target - interval.saturating_sub(self.seal_offset);
         }
+        let block_interval = Duration::from_secs(self.rollup_config.block_time);
+        target - last_seal_duration.min(block_interval / 2)
     }
 
     fn next_block_seal_target(
