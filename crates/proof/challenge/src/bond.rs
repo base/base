@@ -899,7 +899,7 @@ mod tests {
                 metrics_enabled: false,
             },
             factory,
-            Arc::new(MockL2Provider::new()),
+            Arc::new(MockL2Provider::default()),
             fixed_clock(1_000),
         );
 
