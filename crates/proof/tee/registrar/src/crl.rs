@@ -14,6 +14,8 @@ use x509_parser::{
     revocation_list::CertificateRevocationList,
 };
 
+use crate::{CertKind, CertManagerKeys, CertPlan};
+
 const MAX_CRL_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
 const ALLOWED_CRL_HOST_SUFFIX: &str = ".amazonaws.com";
 const ALLOWED_CRL_HOST_KEYWORD: &str = "nitro-enclave";
@@ -30,6 +32,8 @@ pub struct CertCrlInfo {
     /// Accumulated path digest for this certificate position (for onchain
     /// `revokeCert` calls).
     pub path_digest: B256,
+    /// Issuer/serial identity used by the hinted `CertManager`.
+    pub revocation_id: B256,
 }
 
 impl CertCrlInfo {
@@ -66,10 +70,41 @@ impl CertCrlInfo {
             let serial_number = cert.tbs_certificate.serial.to_bytes_be();
             let crl_url = extract_crl_distribution_point(&cert);
 
-            infos.push(Self { index, serial_number, crl_url, path_digest });
+            let revocation_id = CertManagerKeys::revocation_id(der)
+                .map_err(|e| CrlError(format!("certificate identity error: {e}")))?;
+            infos.push(Self { index, serial_number, crl_url, path_digest, revocation_id });
         }
 
         Ok(infos)
+    }
+
+    /// Extracts CRL information from the non-root CA steps in a hinted registration plan.
+    pub fn from_cert_plans(certs: &[CertPlan]) -> Result<Vec<Self>, CrlError> {
+        certs
+            .iter()
+            .enumerate()
+            .filter(|(_, cert)| cert.kind == CertKind::Ca)
+            .map(|(index, cert_plan)| {
+                let (remaining, cert) =
+                    X509Certificate::from_der(&cert_plan.cert).map_err(|e| {
+                        CrlError(format!("certificate parse error: certificate {}: {e}", index + 1))
+                    })?;
+                if !remaining.is_empty() {
+                    return Err(CrlError(format!(
+                        "certificate parse error: certificate {}: trailing DER data ({} bytes)",
+                        index + 1,
+                        remaining.len()
+                    )));
+                }
+                Ok(Self {
+                    index: index + 1,
+                    serial_number: cert.tbs_certificate.serial.to_bytes_be(),
+                    crl_url: extract_crl_distribution_point(&cert),
+                    path_digest: B256::ZERO,
+                    revocation_id: cert_plan.revocation_id,
+                })
+            })
+            .collect()
     }
 }
 
@@ -133,7 +168,7 @@ pub async fn check_chain_against_crls<'a>(
                     cert_index = info.index,
                     url = %crl_url,
                     serial = %hex::encode(&info.serial_number),
-                    path_digest = %info.path_digest,
+                    revocation_id = %info.revocation_id,
                     "certificate found on CRL — REVOKED"
                 );
                 revoked.push(info);

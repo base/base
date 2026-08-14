@@ -37,12 +37,7 @@ pub use dispute_game_factory::{
 mod tee_prover_registry;
 pub use tee_prover_registry::{
     ITEEProverRegistry, TEEProverRegistryClient, TEEProverRegistryContractClient,
-};
-
-mod hinted_tee_prover_registry;
-pub use hinted_tee_prover_registry::{
-    HintedTEEProverRegistryClient, HintedTEEProverRegistryContractClient, IHintedTEEProverRegistry,
-    encode_hinted_register_signer_calldata,
+    encode_register_signer_calldata,
 };
 
 mod nitro_validator;

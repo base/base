@@ -3,33 +3,31 @@
 //! Used by the registrar to manage signer registration and deregistration,
 //! and by the proposer to validate signers before on-chain submission.
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, Bytes};
 use alloy_provider::RootProvider;
-use alloy_sol_types::sol;
+use alloy_sol_types::{SolCall, sol};
 use async_trait::async_trait;
 
 use crate::ContractError;
 
-// Interface mirrored from the canonical contract source:
-// https://github.com/base/contracts/blob/96b132077b86bdc77f3f96dd40e09dad363df32e/src/multiproof/tee/TEEProverRegistry.sol
 sol! {
     /// `TEEProverRegistry` contract interface.
     #[sol(rpc)]
     interface ITEEProverRegistry {
+        /// Thrown when the attestation timestamp is in the future.
+        error AttestationFromFuture();
+
         /// Thrown when the attestation document is too old.
         error AttestationTooOld();
 
-        /// Thrown when the ZK attestation verification fails.
-        error AttestationVerificationFailed();
+        /// Thrown when the attestation's PCR0 is malformed or not trusted.
+        error InvalidPCR0();
 
         /// Thrown when the attestation's public key is malformed.
         error InvalidPublicKey();
 
         /// Thrown when PCR0 is not found in the attestation's PCR list.
         error PCR0NotFound();
-
-        /// Thrown when the attestation PCR0 does not match the expected image.
-        error PCR0Mismatch();
 
         /// Thrown when the dispute game factory is not configured.
         error DisputeGameFactoryNotSet();
@@ -40,8 +38,15 @@ sol! {
         /// Thrown when the selected game type has no `TEE_IMAGE_HASH`.
         error InvalidGameType();
 
-        /// Registers a signer using a ZK-proven AWS Nitro attestation.
-        function registerSigner(bytes calldata output, bytes calldata proofBytes) external;
+        /// Returns the validator configured immutably on this Registry implementation.
+        function NITRO_VALIDATOR() external view returns (address);
+
+        /// Registers a signer using a hinted AWS Nitro attestation.
+        function registerSigner(
+            bytes calldata attestationTbs,
+            bytes calldata signature,
+            bytes calldata hints
+        ) external;
 
         /// Deregisters a signer.
         function deregisterSigner(address signer) external;
@@ -62,6 +67,12 @@ sol! {
 /// Reads registration state from the on-chain `TEEProverRegistry`.
 #[async_trait]
 pub trait TEEProverRegistryClient: Send + Sync {
+    /// Returns the Registry address this client is bound to.
+    fn address(&self) -> Address;
+
+    /// Returns the `NitroValidator` address configured on the Registry implementation.
+    async fn nitro_validator(&self) -> Result<Address, ContractError>;
+
     /// Returns `true` if `signer` is registered AND its image hash matches
     /// the contract's current expected image hash.
     async fn is_valid_signer(&self, signer: Address) -> Result<bool, ContractError>;
@@ -91,6 +102,14 @@ impl TEEProverRegistryContractClient {
 
 #[async_trait]
 impl TEEProverRegistryClient for TEEProverRegistryContractClient {
+    fn address(&self) -> Address {
+        *self.contract.address()
+    }
+
+    async fn nitro_validator(&self) -> Result<Address, ContractError> {
+        contract_call!(self.contract.NITRO_VALIDATOR().call(), "NITRO_VALIDATOR()")
+    }
+
     async fn is_valid_signer(&self, signer: Address) -> Result<bool, ContractError> {
         contract_call!(
             self.contract.isValidSigner(signer).call(),
@@ -110,23 +129,51 @@ impl TEEProverRegistryClient for TEEProverRegistryContractClient {
     }
 }
 
+/// Encodes calldata for the final three-argument `registerSigner` call.
+pub fn encode_register_signer_calldata(
+    attestation_tbs: Bytes,
+    signature: Bytes,
+    hints: Bytes,
+) -> Bytes {
+    Bytes::from(
+        ITEEProverRegistry::registerSignerCall {
+            attestationTbs: attestation_tbs,
+            signature,
+            hints,
+        }
+        .abi_encode(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, Bytes};
-    use alloy_sol_types::SolCall;
+    use alloy_sol_types::SolCall as _;
 
     use super::*;
 
     #[test]
-    fn register_signer_abi_encodes_correctly() {
-        let call = ITEEProverRegistry::registerSignerCall {
-            output: Bytes::new(),
-            proofBytes: Bytes::new(),
-        };
-        let encoded = call.abi_encode();
-        // 4 (selector) + 2×32 (offsets) + 2×32 (lengths) + 0 (data) = 132
-        assert_eq!(encoded.len(), 132);
-        assert_eq!(&encoded[..4], &ITEEProverRegistry::registerSignerCall::SELECTOR);
+    fn registry_selectors_match_final_contract_abi() {
+        assert_eq!(ITEEProverRegistry::NITRO_VALIDATORCall::SELECTOR, [0x96, 0xce, 0x7e, 0x96]);
+        assert_eq!(ITEEProverRegistry::registerSignerCall::SELECTOR, [0xb3, 0x9d, 0xc0, 0x9d]);
+    }
+
+    #[test]
+    fn register_signer_calldata_roundtrips() {
+        let attestation_tbs = Bytes::from_static(b"attestation-tbs");
+        let signature = Bytes::from(vec![0x11; 96]);
+        let hints = Bytes::from(vec![0x22; 144]);
+
+        let calldata = encode_register_signer_calldata(
+            attestation_tbs.clone(),
+            signature.clone(),
+            hints.clone(),
+        );
+        let decoded = ITEEProverRegistry::registerSignerCall::abi_decode(&calldata)
+            .expect("registerSigner calldata should decode");
+
+        assert_eq!(decoded.attestationTbs, attestation_tbs);
+        assert_eq!(decoded.signature, signature);
+        assert_eq!(decoded.hints, hints);
     }
 
     #[test]
@@ -140,6 +187,7 @@ mod tests {
 
     #[test]
     fn all_selectors_are_nonzero() {
+        assert_ne!(ITEEProverRegistry::NITRO_VALIDATORCall::SELECTOR, [0u8; 4]);
         assert_ne!(ITEEProverRegistry::registerSignerCall::SELECTOR, [0u8; 4]);
         assert_ne!(ITEEProverRegistry::deregisterSignerCall::SELECTOR, [0u8; 4]);
         assert_ne!(ITEEProverRegistry::isValidSignerCall::SELECTOR, [0u8; 4]);
