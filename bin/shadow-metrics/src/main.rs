@@ -218,8 +218,9 @@ async fn healthz_handler() -> &'static str {
 }
 
 async fn readyz_handler(State(state): State<HealthState>) -> Response {
+    // The reader's death is already logged with the real cause by `spawn_reader`
+    // when its task stops; don't re-log here, or every probe floods the log.
     if state.reader_alive.as_ref().is_some_and(|alive| !alive.load(Ordering::Acquire)) {
-        error!("shadow-metrics reader is no longer running");
         return (StatusCode::SERVICE_UNAVAILABLE, "not ready\n").into_response();
     }
 
