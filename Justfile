@@ -156,18 +156,67 @@ watch-test: build::contracts
 watch-check:
     cargo watch -x "fmt --all -- --check" -x "clippy --all-features --all-targets -- -D warnings" -x test
 
-# Runs all benchmarks
+# Runs all benchmarks (excludes b20_zk_proving, which requires a live local L2/rollup/prover-service stack)
 benches:
-    @just bench-flashblocks
+    @just bench-flashblocks-pending-state
+    @just bench-flashblocks-sender-recovery
     @just bench-proof-mpt
+    @just bench-protocol
+    @just bench-consensus-derive
+    @just bench-precompiles
+    @just bench-node-runner
+    @just bench-execution-trie-witness-reads
+    @just bench-execution-trie-deep-history-reads
+    @just bench-builder-core
+    @just bench-builder-publish
 
 # Runs flashblocks pending state benchmarks
-bench-flashblocks:
-    cargo bench -p base-flashblocks --bench pending_state
+bench-flashblocks-pending-state:
+    cargo bench -p base-flashblocks-node --bench pending_state
+
+# Runs flashblocks sender recovery benchmarks
+bench-flashblocks-sender-recovery:
+    cargo bench -p base-flashblocks-node --bench sender_recovery
 
 # Runs MPT trie node benchmarks
 bench-proof-mpt:
     cargo bench -p base-proof-mpt --bench trie_node
+
+# Runs consensus protocol batch transaction benchmarks
+bench-protocol:
+    cargo bench -p base-protocol --bench batch_transaction
+
+# Runs consensus derive batch queue benchmarks
+bench-consensus-derive:
+    cargo bench -p base-consensus-derive --bench batch_queue --features test-utils
+
+# Runs precompile benchmarks
+bench-precompiles:
+    cargo bench -p base-common-precompiles --bench base_precompiles --features test-utils
+
+# Runs node runner forkchoice update benchmarks
+bench-node-runner:
+    cargo bench -p base-node-runner --bench fcu_unsafe
+
+# Runs execution trie witness read benchmarks
+bench-execution-trie-witness-reads:
+    cargo bench -p base-execution-trie --bench witness_reads
+
+# Runs execution trie deep history read benchmarks
+bench-execution-trie-deep-history-reads:
+    cargo bench -p base-execution-trie --bench deep_history_reads
+
+# Runs builder core state root benchmarks
+bench-builder-core:
+    cargo bench -p base-builder-core --bench state_root
+
+# Runs builder publish benchmarks
+bench-builder-publish:
+    cargo bench -p base-builder-publish --bench publisher
+
+# Runs the B-20 ZK proving system benchmark (requires a live local L2/rollup/prover-service stack)
+bench-b20-zk-proving:
+    cargo bench -p base-system-tests --bench b20_zk_proving
 
 # Run basectl TUI dashboard
 basectl:
