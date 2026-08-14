@@ -324,26 +324,14 @@ where
 
     /// Wall-clock time at which `block_number` should be sealed.
     ///
-    /// Denim-active blocks seal at a fixed, configurable offset into their 200ms slot:
-    /// `T_{N−1} + seal_offset`, computed as `T_N − (interval − seal_offset)` so that the
-    /// first Denim-active block — whose parent slot spans a full legacy block time — still
-    /// seals relative to its own timestamp. The target is deliberately independent of how
-    /// long the previous seal took: getPayload resolves a payload the builder froze at its
-    /// own wall-clock cutoff, so there is no build work to compensate for, and a target
-    /// already in the past makes the ticker fire immediately. Lateness therefore only
-    /// shrinks the current block's build window (down to an empty block) instead of
-    /// shifting the schedule — never grant minimum build time when behind.
+    /// Denim-active blocks seal at a fixed offset into their 200ms slot, computed as
+    /// `T_N − (interval − seal_offset)` so the first Denim block still seals relative to
+    /// its own timestamp. The target ignores how long the previous seal took: lateness
+    /// shrinks the current build window instead of shifting the schedule.
     ///
-    /// Pre-Denim blocks keep the adaptive compensation for the time already spent sealing
-    /// the previous block, because getPayload still performs the build finalization in the
-    /// flashblocks builder. The compensation is capped at half the block interval so a
-    /// single slow seal cannot collapse the next block's build window to zero. Uncapped, a
-    /// seal that overruns the interval schedules the next seal in the past (immediate
-    /// build, near-empty block, fast seal), which then grants the following block a full
-    /// build window — a self-sustaining fat/thin oscillation. Clamping guarantees every
-    /// block at least `block_interval / 2` of build time and damps that loop. The raw
-    /// `last_seal_duration` is still recorded for metrics; only the scheduling compensation
-    /// is clamped.
+    /// Pre-Denim blocks compensate for the previous seal duration, capped at half the
+    /// block interval so one slow seal cannot collapse the next build window to zero and
+    /// trigger a fat/thin block oscillation.
     pub(super) fn block_seal_target(
         &self,
         block_number: u64,
