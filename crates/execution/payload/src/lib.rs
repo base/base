@@ -13,6 +13,21 @@ pub mod builder;
 pub use builder::BasePayloadBuilder;
 pub mod config;
 pub mod error;
+mod metering;
+pub use metering::{
+    MemoryMeteringStore, MeteringProvider, NoopMeteringProvider, SharedMeteringProvider,
+};
+mod metrics;
+pub use metrics::ResourceMeteringMetrics;
+mod resource_metering;
+pub use resource_metering::{
+    CompiledResourceMeteringDimension, CompiledResourceMeteringSchedule,
+    ResourceMeteringCheckError, ResourceMeteringDecision, ResourceMeteringDimension,
+    ResourceMeteringError, ResourceMeteringLimitExceeded, ResourceMeteringLimitScope,
+    ResourceMeteringMode, ResourceMeteringOperation, ResourceMeteringSchedule,
+    ResourceMeteringStore, ResourceMeteringStoreError, ResourceMeteringUsage,
+    SharedResourceMeteringStore, VersionedResourceMeteringSchedule, evaluate_transaction,
+};
 pub mod payload;
 pub use payload::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 mod traits;

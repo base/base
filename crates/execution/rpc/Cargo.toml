@@ -42,6 +42,7 @@ base-execution-trie.workspace = true
 base-execution-txpool.workspace = true
 base-observability-events.workspace = true
 base-execution-payload-builder.workspace = true
+base-bundles.workspace = true
 
 # ethereum
 revm.workspace = true

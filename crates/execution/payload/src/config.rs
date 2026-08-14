@@ -1,6 +1,14 @@
 //! Additional configuration for the Base payload builder.
 
-use std::sync::{Arc, atomic::AtomicU64};
+use std::{
+    path::Path,
+    sync::{Arc, atomic::AtomicU64},
+};
+
+use crate::{
+    MemoryMeteringStore, NoopMeteringProvider, ResourceMeteringMode, ResourceMeteringStore,
+    ResourceMeteringStoreError, SharedMeteringProvider, SharedResourceMeteringStore,
+};
 
 /// Settings for the Base payload builder.
 #[derive(Debug, Clone)]
@@ -12,6 +20,8 @@ pub struct BaseBuilderConfig {
     /// Whether to drop positively stale EIP-8130 transactions using their
     /// captured authorization manifest before execution.
     pub manifest_precheck_enabled: bool,
+    /// Resource metering by opcode configuration for native payload admission.
+    pub resource_metering: ResourceMeteringConfig,
 }
 
 impl Default for BaseBuilderConfig {
@@ -20,18 +30,30 @@ impl Default for BaseBuilderConfig {
             da_config: BaseDAConfig::default(),
             gas_limit_config: GasLimitConfig::default(),
             manifest_precheck_enabled: true,
+            resource_metering: ResourceMeteringConfig::default(),
         }
     }
 }
 
 impl BaseBuilderConfig {
     /// Creates a new Base payload builder configuration.
-    pub const fn new(
+    pub fn new(
         da_config: BaseDAConfig,
         gas_limit_config: GasLimitConfig,
         manifest_precheck_enabled: bool,
     ) -> Self {
-        Self { da_config, gas_limit_config, manifest_precheck_enabled }
+        Self {
+            da_config,
+            gas_limit_config,
+            manifest_precheck_enabled,
+            resource_metering: ResourceMeteringConfig::default(),
+        }
+    }
+
+    /// Sets resource metering by opcode for native payload admission.
+    pub fn with_resource_metering(mut self, resource_metering: ResourceMeteringConfig) -> Self {
+        self.resource_metering = resource_metering;
+        self
     }
 
     /// Returns the data availability configuration for the Base payload builder, if it has
@@ -39,6 +61,61 @@ impl BaseBuilderConfig {
     /// constraints.
     pub fn constrained_da_config(&self) -> Option<&BaseDAConfig> {
         if self.da_config.is_empty() { None } else { Some(&self.da_config) }
+    }
+}
+
+/// Native payload resource metering by opcode.
+#[derive(Clone)]
+pub struct ResourceMeteringConfig {
+    /// Whether budgets are ignored, observed, or enforced.
+    pub mode: ResourceMeteringMode,
+    /// Versioned schedule shared with the authenticated replacement RPC.
+    pub store: SharedResourceMeteringStore,
+    /// `meterBundle` results used to evaluate the snapped schedule.
+    pub provider: SharedMeteringProvider,
+}
+
+impl std::fmt::Debug for ResourceMeteringConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ResourceMeteringConfig")
+            .field("mode", &self.mode)
+            .field("store_revision", &self.store.revision())
+            .field("provider_enabled", &crate::MeteringProvider::is_enabled(self.provider.as_ref()))
+            .finish()
+    }
+}
+
+impl Default for ResourceMeteringConfig {
+    fn default() -> Self {
+        Self {
+            mode: ResourceMeteringMode::Off,
+            store: Arc::new(ResourceMeteringStore::default()),
+            provider: Arc::new(NoopMeteringProvider),
+        }
+    }
+}
+
+impl ResourceMeteringConfig {
+    /// Builds a shared config from startup flags.
+    pub fn from_parts(
+        mode: ResourceMeteringMode,
+        schedule_path: Option<&Path>,
+        provider: SharedMeteringProvider,
+    ) -> Result<Self, ResourceMeteringStoreError> {
+        let store = match schedule_path {
+            Some(path) => Arc::new(ResourceMeteringStore::from_file(path)?),
+            None => Arc::new(ResourceMeteringStore::default()),
+        };
+        Ok(Self { mode, store, provider })
+    }
+
+    /// Builds a config that uses an in-memory metering store enabled whenever `mode` is active.
+    pub fn enabled(mode: ResourceMeteringMode) -> Self {
+        Self {
+            mode,
+            store: Arc::new(ResourceMeteringStore::default()),
+            provider: Arc::new(MemoryMeteringStore::new(mode.is_enabled())),
+        }
     }
 }
 

@@ -42,8 +42,9 @@ use revm::context::{Block, BlockEnv};
 use tracing::{debug, debug_span, instrument, trace, warn};
 
 use crate::{
-    Attributes, BasePayloadBuilderAttributes, PayloadPrimitives, config::BaseBuilderConfig,
-    error::BasePayloadBuilderError, payload::BaseBuiltPayload,
+    Attributes, BasePayloadBuilderAttributes, PayloadPrimitives, ResourceMeteringDecision,
+    ResourceMeteringMetrics, config::BaseBuilderConfig, error::BasePayloadBuilderError,
+    evaluate_transaction, payload::BaseBuiltPayload,
 };
 
 /// Base payload builder
@@ -537,12 +538,19 @@ pub struct ExecutionInfo {
     pub cumulative_da_bytes_used: u64,
     /// Tracks fees from executed mempool transactions
     pub total_fees: U256,
+    /// Cumulative resource-metering units for the current payload, aligned with the snapped schedule.
+    pub resource_metering_usage: Vec<u128>,
 }
 
 impl ExecutionInfo {
     /// Create a new instance with allocated slots.
     pub const fn new() -> Self {
-        Self { cumulative_gas_used: 0, cumulative_da_bytes_used: 0, total_fees: U256::ZERO }
+        Self {
+            cumulative_gas_used: 0,
+            cumulative_da_bytes_used: 0,
+            total_fees: U256::ZERO,
+            resource_metering_usage: Vec::new(),
+        }
     }
 
     /// Returns true if the transaction would exceed the block limits:
@@ -760,6 +768,10 @@ where
 
         let block_timestamp = self.attributes().timestamp();
         let can_finalize_early = self.is_denim_active();
+        let resource_metering = &self.builder_config.resource_metering;
+        let resource_schedule = resource_metering.store.snapshot();
+        let resource_metering_active =
+            resource_metering.mode.is_enabled() && !resource_schedule.is_empty();
         while let Some(tx) = best_txs.next(()) {
             if self.cancel.is_cancelled() {
                 return Ok(Some(()));
@@ -816,6 +828,54 @@ where
                 None => 0,
             };
 
+            let tx_hash = *tx.hash();
+            let mut pending_resource_usage = None;
+            if resource_metering_active {
+                let meter =
+                    crate::MeteringProvider::get(resource_metering.provider.as_ref(), &tx_hash);
+
+                match evaluate_transaction(
+                    resource_schedule.as_ref(),
+                    meter.as_ref(),
+                    &tx_hash,
+                    &info.resource_metering_usage,
+                ) {
+                    ResourceMeteringDecision::Inactive => {}
+                    ResourceMeteringDecision::Allow(usage) => {
+                        pending_resource_usage = Some(usage);
+                    }
+                    ResourceMeteringDecision::Reject { error, usage } => {
+                        let enforced = !resource_metering.mode.is_dry_run();
+                        ResourceMeteringMetrics::record_limit(&error, enforced);
+                        warn!(
+                            target: "payload_builder",
+                            tx_hash = %tx_hash,
+                            dimension = %error.dimension,
+                            scope = %error.scope,
+                            used = error.used,
+                            limit = error.limit,
+                            dry_run = !enforced,
+                            "resource metering budget exceeded"
+                        );
+                        if enforced {
+                            best_txs.mark_invalid(tx.sender(), tx.nonce());
+                            continue;
+                        }
+                        pending_resource_usage = Some(usage);
+                    }
+                    ResourceMeteringDecision::CalculationFailed => {
+                        ResourceMeteringMetrics::calculation_failed().increment(1);
+                        warn!(
+                            target: "payload_builder",
+                            tx_hash = %tx_hash,
+                            "resource metering usage calculation failed"
+                        );
+                        best_txs.mark_invalid(tx.sender(), tx.nonce());
+                        continue;
+                    }
+                }
+            }
+
             let tx = tx.into_consensus();
 
             let da_footprint_gas_scalar = self
@@ -869,6 +929,16 @@ where
 
             info.cumulative_gas_used += gas_output.tx_gas_used();
             info.cumulative_da_bytes_used += tx_da_size;
+            if let Some(usage) = pending_resource_usage
+                && let Err(error) = usage.add_to(&mut info.resource_metering_usage)
+            {
+                warn!(
+                    target: "payload_builder",
+                    tx_hash = %tx_hash,
+                    error = %error,
+                    "resource metering cumulative usage overflowed"
+                );
+            }
 
             let miner_fee = tx
                 .effective_tip_per_gas(base_fee)

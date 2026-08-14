@@ -14,6 +14,7 @@ pub mod error;
 pub mod eth;
 pub mod metrics;
 pub mod miner;
+pub mod resource_metering;
 pub mod sequencer;
 pub mod state;
 mod trace_middleware;
@@ -33,4 +34,10 @@ pub use metrics::{DebugApiExtMetrics, DebugApis, EthApiExtMetrics, SequencerMetr
 #[cfg(feature = "client")]
 pub use miner::MinerApiExtClient;
 pub use miner::MinerApiExtServer;
+#[cfg(feature = "client")]
+pub use resource_metering::{ResourceMeteringApiClient, ResourceMeteringScheduleApiClient};
+pub use resource_metering::{
+    ResourceMeteringApiExt, ResourceMeteringApiServer, ResourceMeteringScheduleApiServer,
+    ResourceMeteringScheduleExt,
+};
 pub use sequencer::{SequencerClient, SequencerClientInner};

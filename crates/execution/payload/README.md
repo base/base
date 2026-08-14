@@ -11,6 +11,12 @@ verifies
 built payloads against consensus rules. Also provides data availability configuration via
 `BaseDAConfig` for fee calculation.
 
+Resource metering by opcode is an optional native-builder admission guardrail. A versioned
+schedule converts `meterBundle` opcode, precompile, and pseudo-opcode aggregates into
+independent resource-unit dimensions. The builder can observe those budgets in dry-run or
+skip over-budget transactions in enforce mode. This does not change protocol gas, fees, or
+validity.
+
 ## Usage
 
 Add the dependency to your `Cargo.toml`:

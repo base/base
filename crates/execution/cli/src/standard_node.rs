@@ -4,6 +4,9 @@ use std::{env, path::PathBuf, sync::Arc, time::Duration};
 
 use base_bundle_extension::BundleExtension;
 use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
+use base_execution_payload_builder::{
+    MemoryMeteringStore, ResourceMeteringMode, config::ResourceMeteringConfig,
+};
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
 use base_metering::{MeteredOpcodes, MeteringConfig, MeteringExtension, MeteringResourceLimits};
@@ -77,6 +80,42 @@ pub struct MeteringArgs {
     /// (e.g., "SSTORE,SLOAD,KECCAK256"). Precompile gas is always tracked.
     #[arg(long = "metering.metered-opcodes", requires = "enable_metering", value_delimiter = ',')]
     pub metering_metered_opcodes: Vec<String>,
+
+    /// Resource metering by opcode mode for native payload admission: off, dry-run, or enforce.
+    #[arg(
+        long = "payload.resource-metering-mode",
+        env = "PAYLOAD_RESOURCE_METERING_MODE",
+        value_enum,
+        default_value_t = ResourceMeteringModeArg::Off
+    )]
+    pub resource_metering_mode: ResourceMeteringModeArg,
+
+    /// JSON file containing the startup resource-metering schedule.
+    #[arg(long = "payload.resource-metering-schedule", env = "PAYLOAD_RESOURCE_METERING_SCHEDULE")]
+    pub resource_metering_schedule: Option<PathBuf>,
+}
+
+/// CLI value for [`ResourceMeteringMode`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
+#[value(rename_all = "kebab-case")]
+pub enum ResourceMeteringModeArg {
+    /// Resource-metering budgets are ignored.
+    #[default]
+    Off,
+    /// Record metrics for over-budget transactions, but still include them.
+    DryRun,
+    /// Skip transactions that exceed a configured budget.
+    Enforce,
+}
+
+impl From<ResourceMeteringModeArg> for ResourceMeteringMode {
+    fn from(mode: ResourceMeteringModeArg) -> Self {
+        match mode {
+            ResourceMeteringModeArg::Off => Self::Off,
+            ResourceMeteringModeArg::DryRun => Self::DryRun,
+            ResourceMeteringModeArg::Enforce => Self::Enforce,
+        }
+    }
 }
 
 /// Default maximum number of open shadow indexer database connections.
@@ -463,6 +502,14 @@ impl StandardBaseRethNode {
         // Fail fast on an incomplete upgrade-signal configuration before installing extensions.
         Self::validate_upgrade_signal_args(&rollup_args)?;
         let mut runner = BaseNodeRunner::new(rollup_args.clone());
+        let resource_metering_mode =
+            ResourceMeteringMode::from(args.metering.resource_metering_mode);
+        let resource_metering = ResourceMeteringConfig::from_parts(
+            resource_metering_mode,
+            args.metering.resource_metering_schedule.as_deref(),
+            Arc::new(MemoryMeteringStore::new(resource_metering_mode.is_enabled())),
+        )?;
+        runner = runner.with_resource_metering(resource_metering);
 
         // Create flashblocks config first so we can share its state with metering.
         let flashblocks_config: Option<FlashblocksConfig> = (&args).into();
@@ -964,6 +1011,24 @@ mod tests {
 
         assert!(!config.enabled);
         assert_eq!(config.builder_version, env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn test_standard_node_args_parses_resource_metering_flags() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
+            "reth",
+            "--payload.resource-metering-mode",
+            "dry-run",
+            "--payload.resource-metering-schedule",
+            "/tmp/resource-metering.json",
+        ])
+        .args;
+
+        assert_eq!(args.metering.resource_metering_mode, ResourceMeteringModeArg::DryRun);
+        assert_eq!(
+            args.metering.resource_metering_schedule.as_deref(),
+            Some(std::path::Path::new("/tmp/resource-metering.json"))
+        );
     }
 
     #[test]

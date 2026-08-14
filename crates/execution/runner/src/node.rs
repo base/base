@@ -2,7 +2,9 @@
 
 use base_common_consensus::BasePrimitives;
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
+use base_execution_payload_builder::config::{
+    BaseDAConfig, GasLimitConfig, ResourceMeteringConfig,
+};
 use base_execution_rpc::eth::BaseEthApiBuilder;
 use base_execution_txpool::GuardLimits;
 use base_node_core::{
@@ -43,6 +45,8 @@ pub struct BaseNode {
     /// Whether to drop positively stale EIP-8130 transactions using their
     /// captured authorization manifest before execution.
     pub manifest_precheck_enabled: bool,
+    /// Resource metering by opcode for native payload admission.
+    pub resource_metering: ResourceMeteringConfig,
 }
 
 impl Default for BaseNode {
@@ -59,6 +63,7 @@ impl BaseNode {
             da_config: BaseDAConfig::default(),
             gas_limit_config: GasLimitConfig::default(),
             manifest_precheck_enabled: true,
+            resource_metering: ResourceMeteringConfig::default(),
         }
     }
 
@@ -77,6 +82,12 @@ impl BaseNode {
     /// Configure whether EIP-8130 authorization manifests are checked before execution.
     pub const fn with_manifest_precheck_enabled(mut self, enabled: bool) -> Self {
         self.manifest_precheck_enabled = enabled;
+        self
+    }
+
+    /// Configure resource metering by opcode for the native payload builder.
+    pub fn with_resource_metering(mut self, resource_metering: ResourceMeteringConfig) -> Self {
+        self.resource_metering = resource_metering;
         self
     }
 
@@ -111,7 +122,8 @@ impl BaseNode {
                 BasePayloadBuilder::new()
                     .with_da_config(self.da_config.clone())
                     .with_gas_limit_config(self.gas_limit_config.clone())
-                    .with_manifest_precheck_enabled(self.manifest_precheck_enabled),
+                    .with_manifest_precheck_enabled(self.manifest_precheck_enabled)
+                    .with_resource_metering(self.resource_metering.clone()),
             ))
             .network(BaseNetworkBuilder::new(disable_txpool_gossip, !discovery_v4))
             .consensus(BaseConsensusBuilder::default())
@@ -124,6 +136,7 @@ impl BaseNode {
             .with_sequencer_headers(self.args.sequencer_headers.clone())
             .with_da_config(self.da_config.clone())
             .with_gas_limit_config(self.gas_limit_config.clone())
+            .with_resource_metering(self.resource_metering.clone())
             .with_min_suggested_priority_fee(self.args.min_suggested_priority_fee)
     }
 

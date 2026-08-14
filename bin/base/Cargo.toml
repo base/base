@@ -27,6 +27,7 @@ base-common-chains.workspace = true
 base-consensus-cli.workspace = true
 base-execution-cli.workspace = true
 base-execution-evm.workspace = true
+base-execution-payload-builder.workspace = true
 base-upgrade-signal.workspace = true
 base-builder-metering.workspace = true
 base-execution-chainspec.workspace = true

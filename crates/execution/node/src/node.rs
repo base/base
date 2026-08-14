@@ -18,7 +18,7 @@ use base_execution_evm::{BaseEvmConfig, BaseRethReceiptBuilder};
 use base_execution_payload_builder::{
     Attributes, BaseBuiltPayload, BasePayloadBuilderAttributes, PayloadPrimitives,
     builder::BasePayloadTransactions,
-    config::{BaseBuilderConfig, BaseDAConfig, GasLimitConfig},
+    config::{BaseBuilderConfig, BaseDAConfig, GasLimitConfig, ResourceMeteringConfig},
 };
 use base_execution_rpc::{
     config::{BaseEthConfigApiServer, BaseEthConfigHandler},
@@ -1044,6 +1044,8 @@ pub struct BasePayloadBuilder<Txs = ()> {
     /// Whether to drop positively stale EIP-8130 transactions using their
     /// captured authorization manifest before execution.
     pub manifest_precheck_enabled: bool,
+    /// Resource metering by opcode for native payload admission.
+    pub resource_metering: ResourceMeteringConfig,
 }
 
 impl<Txs: Default> Default for BasePayloadBuilder<Txs> {
@@ -1053,6 +1055,7 @@ impl<Txs: Default> Default for BasePayloadBuilder<Txs> {
             da_config: BaseDAConfig::default(),
             gas_limit_config: GasLimitConfig::default(),
             manifest_precheck_enabled: true,
+            resource_metering: ResourceMeteringConfig::default(),
         }
     }
 }
@@ -1065,6 +1068,7 @@ impl BasePayloadBuilder {
             da_config: BaseDAConfig::default(),
             gas_limit_config: GasLimitConfig::default(),
             manifest_precheck_enabled: true,
+            resource_metering: ResourceMeteringConfig::default(),
         }
     }
 
@@ -1085,6 +1089,12 @@ impl BasePayloadBuilder {
         self.manifest_precheck_enabled = enabled;
         self
     }
+
+    /// Configure resource metering by opcode for the native payload builder.
+    pub fn with_resource_metering(mut self, resource_metering: ResourceMeteringConfig) -> Self {
+        self.resource_metering = resource_metering;
+        self
+    }
 }
 
 impl<Txs> BasePayloadBuilder<Txs> {
@@ -1096,6 +1106,7 @@ impl<Txs> BasePayloadBuilder<Txs> {
             da_config: self.da_config,
             gas_limit_config: self.gas_limit_config,
             manifest_precheck_enabled: self.manifest_precheck_enabled,
+            resource_metering: self.resource_metering,
         }
     }
 }
@@ -1143,6 +1154,7 @@ where
                     da_config: self.da_config,
                     gas_limit_config: self.gas_limit_config,
                     manifest_precheck_enabled: self.manifest_precheck_enabled,
+                    resource_metering: self.resource_metering,
                 },
             )
             .with_transactions(self.best_transactions);
