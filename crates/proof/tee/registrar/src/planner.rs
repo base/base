@@ -261,9 +261,10 @@ impl CertManagerKeys {
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::{address, b256};
+
     use super::*;
     use crate::cbor::NitroCose;
-    use alloy_primitives::{address, b256};
 
     /// Uncompressed secp256k1 `public_key` embedded in the Base `NitroValidator` fixture.
     const FIXTURE_PUBLIC_KEY: [u8; 65] = hex_literal::hex!(

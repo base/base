@@ -69,7 +69,7 @@ impl ContractError {
         let Self::Call { source, .. } = self else {
             return false;
         };
-        source.as_revert_data().is_some()
+        source.as_revert_data().is_some_and(|data| !data.is_empty())
     }
 }
 
@@ -122,7 +122,9 @@ mod tests {
                     .unwrap(),
             ));
 
-        assert!(ContractError::call("probe failed", source).is_missing_method());
+        let error = ContractError::call("probe failed", source);
+        assert!(error.is_missing_method());
+        assert!(!error.is_execution_revert());
     }
 
     #[test]
