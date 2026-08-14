@@ -26,16 +26,26 @@ stat_field() {
 
 write_errors="$(stat_field "Cache write errors")"
 write_errors="${write_errors:-0}"
+misses="$(stat_field "Cache misses")"
+misses="${misses:-0}"
 hit_rate="$(stat_field "Cache hits rate")"
 rust_hits="$(stat_field "Cache hits (Rust)")"
 rust_misses="$(stat_field "Cache misses (Rust)")"
 cxx_hits="$(stat_field "Cache hits (C/C++)")"
 cxx_misses="$(stat_field "Cache misses (C/C++)")"
+writes_stuck=0
+if [[ "$misses" =~ ^[0-9]+$ && "$write_errors" =~ ^[0-9]+$ ]]; then
+  writes_stuck=$((misses - write_errors))
+  if (( writes_stuck < 0 )); then
+    writes_stuck=0
+  fi
+fi
 
 rate_limited=0
 cache_full=0
 auth=0
 timeout=0
+readonly_skip=0
 other=0
 classified_lines=0
 
@@ -51,6 +61,8 @@ classify_line() {
     auth=$((auth + 1))
   elif [[ "$lower" == *timeout* || "$lower" == *"timed out"* || "$lower" == *deadline* ]]; then
     timeout=$((timeout + 1))
+  elif [[ "$lower" == *read.only* || "$lower" == *readonly* || "$lower" == *"not writable"* || "$lower" == *"skipping write"* ]]; then
+    readonly_skip=$((readonly_skip + 1))
   else
     other=$((other + 1))
   fi
@@ -73,20 +85,23 @@ summary="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
   echo "| Cache hits rate | ${hit_rate:-n/a} |"
   echo "| Rust hits / misses | ${rust_hits:-n/a} / ${rust_misses:-n/a} |"
   echo "| C/C++ hits / misses | ${cxx_hits:-n/a} / ${cxx_misses:-n/a} |"
+  echo "| Cache misses | \`$misses\` |"
   echo "| Cache write errors (stats) | \`$write_errors\` |"
+  echo "| Writes that stuck | \`$writes_stuck\` |"
   echo "| Error-log lines | \`$classified_lines\` |"
   echo "| Rate limited | \`$rate_limited\` |"
   echo "| Cache full / quota | \`$cache_full\` |"
   echo "| Auth | \`$auth\` |"
   echo "| Timeout | \`$timeout\` |"
-  echo "| Other errors | \`$other\` |"
+  echo "| Read-only skip | \`$readonly_skip\` |"
+  echo "| Other log lines | \`$other\` |"
   echo
-  if [[ "$mode" == "READ_ONLY" && "$write_errors" != "0" ]]; then
-    echo "Write errors on a read-only job are unexpected; the GHA backend may have opened read-write before \`SCCACHE_GHA_RW_MODE\` was applied."
+  if [[ "$mode" == "READ_ONLY" && "$write_errors" == "$misses" && "$misses" != "0" ]]; then
+    echo "Read-only job: write errors equal misses. That is consistent with sccache counting skipped writes rather than GHA upload failures. Confirm from the log sample below (look for PUT/429 vs read-only skip)."
     echo
   fi
   if [[ "$write_errors" != "0" && "$classified_lines" -eq 0 ]]; then
-    echo "Stats reported write errors but \`SCCACHE_ERROR_LOG\` was empty. The usual cause on this repo is the GitHub Actions cache upload rate limit (200/min/repo); sccache increments the counter without always logging a line."
+    echo "Stats reported write errors but \`SCCACHE_ERROR_LOG\` was empty. Enable \`sccache-log: true\` on this job, or the GHA backend is incrementing the counter without logging (typical for 200/min rate limits)."
     echo
   fi
   echo "<details><summary>sccache --show-stats</summary>"
@@ -98,14 +113,14 @@ summary="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
   echo "</details>"
   if [[ -s "$error_log" ]]; then
     echo
-    echo "<details><summary>SCCACHE_ERROR_LOG (last 80 lines)</summary>"
+    echo "<details><summary>SCCACHE_ERROR_LOG (last 120 lines)</summary>"
     echo
     echo '```'
-    tail -n 80 "$error_log"
+    tail -n 120 "$error_log"
     echo '```'
     echo
     echo "</details>"
   fi
 } >> "$summary"
 
-echo "sccache mode=$mode write_errors=$write_errors rate_limited=$rate_limited cache_full=$cache_full auth=$auth timeout=$timeout other=$other"
+echo "sccache mode=$mode misses=$misses write_errors=$write_errors writes_stuck=$writes_stuck rate_limited=$rate_limited cache_full=$cache_full auth=$auth timeout=$timeout readonly_skip=$readonly_skip other=$other"
