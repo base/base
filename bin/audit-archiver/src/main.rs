@@ -128,7 +128,8 @@ struct Args {
     #[arg(long, env = "TIPS_AUDIT_POSTGRES_MAX_CONNECTIONS", default_value = "10")]
     postgres_max_connections: u32,
 
-    /// Seconds between transaction-event retention delete passes.
+    /// Seconds between transaction-event retention delete passes. The first
+    /// pass runs immediately at startup; later passes wait this interval.
     #[arg(
         long,
         env = "TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS",
@@ -168,7 +169,9 @@ struct Args {
     )]
     transaction_event_retention_batch_size: u32,
 
-    /// Maximum delete statements in one locked retention pass.
+    /// Maximum delete statements in one locked retention pass. Shared across
+    /// hot, then warm, then cold; raise this if a hot backlog starves warmer
+    /// classes.
     #[arg(
         long,
         env = "TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES",
@@ -269,6 +272,9 @@ async fn run_server(args: Args) -> Result<()> {
         max_batches: args.transaction_event_retention_max_batches,
     }
     .validate()?;
+    if args.transaction_event_retention_interval_secs == 0 {
+        anyhow::bail!("transaction event retention interval must be greater than zero");
+    }
     let retention_interval = Duration::from_secs(args.transaction_event_retention_interval_secs);
 
     info!(
@@ -381,9 +387,8 @@ async fn run_retention_worker(
         return std::future::pending().await;
     };
 
-    if retention_interval.is_zero() {
-        anyhow::bail!("transaction event retention interval must be greater than zero");
-    }
+    // First tick is immediate so a new replica starts expiry without waiting
+    // a full interval. Skip missed ticks so a slow pass does not catch up.
     let mut ticker = interval(retention_interval);
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
 

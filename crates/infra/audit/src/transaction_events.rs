@@ -58,8 +58,72 @@ pub const DEFAULT_TRANSACTION_EVENT_COLD_RETENTION_DAYS: u32 = 30;
 /// Default number of expired rows deleted in one statement.
 pub const DEFAULT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE: u32 = 10_000;
 /// Default maximum delete statements per retention pass.
+///
+/// Shared across hot, then warm, then cold. A large hot backlog can consume
+/// the whole budget and defer warmer expiry until a later pass.
 pub const DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES: u32 = 1_000;
 const TRANSACTION_EVENT_RETENTION_LOCK_ID: i64 = 744_697_762_131_337_711;
+
+/// Session advisory lock held on one pooled connection for a retention pass.
+///
+/// Unlock is always attempted. If unlock fails, or this guard is dropped
+/// without unlocking, the connection is detached from the pool so Postgres
+/// releases the session lock when the backend disconnects instead of leaking
+/// it onto a reused pool connection.
+struct RetentionAdvisoryLock {
+    conn: Option<sqlx::pool::PoolConnection<sqlx::Postgres>>,
+}
+
+impl RetentionAdvisoryLock {
+    async fn try_acquire(pool: &PgPool) -> Result<Option<Self>> {
+        let mut conn = pool.acquire().await?;
+        let locked = match sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
+            .bind(TRANSACTION_EVENT_RETENTION_LOCK_ID)
+            .fetch_one(&mut *conn)
+            .await
+        {
+            Ok(locked) => locked,
+            Err(err) => {
+                // The lock statement may have succeeded on the server even if
+                // the client failed to read the result. Detach so a held
+                // session lock cannot leak onto a reused pool connection.
+                let _detached = conn.detach();
+                return Err(err.into());
+            }
+        };
+        if locked {
+            Ok(Some(Self { conn: Some(conn) }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn conn(&mut self) -> &mut sqlx::PgConnection {
+        self.conn.as_deref_mut().expect("retention lock connection taken")
+    }
+
+    async fn unlock(mut self) {
+        let Some(mut conn) = self.conn.take() else {
+            return;
+        };
+        if let Err(err) = sqlx::query("SELECT pg_advisory_unlock($1)")
+            .bind(TRANSACTION_EVENT_RETENTION_LOCK_ID)
+            .execute(&mut *conn)
+            .await
+        {
+            error!(error = %err, "failed to release transaction event retention lock");
+            let _detached = conn.detach();
+        }
+    }
+}
+
+impl Drop for RetentionAdvisoryLock {
+    fn drop(&mut self) {
+        if let Some(conn) = self.conn.take() {
+            let _detached = conn.detach();
+        }
+    }
+}
 
 /// Retention class used to pick a delete cutoff for an event type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,6 +218,10 @@ pub struct TransactionEventRetentionConfig {
     /// Maximum rows deleted in one statement.
     pub delete_batch_size: u32,
     /// Maximum delete statements in one locked pass.
+    ///
+    /// Shared across hot, then warm, then cold. A large hot backlog can
+    /// consume the whole budget and defer warmer expiry until a later pass.
+    /// Raise this if warm or cold expiry stalls behind hot deletes.
     pub max_batches: u32,
 }
 
@@ -504,12 +572,17 @@ impl PgTransactionEventSink {
     ///
     /// Uses a session advisory lock so only one replica expires rows at a time.
     /// Returns a zeroed outcome when another replica already holds the lock.
+    /// The lock is released after the pass, including when a batch fails. If
+    /// unlock itself fails, the connection is detached so the session lock
+    /// cannot leak onto a reused pool connection.
     /// Hot rows are expired first so high-churn types free space before colder
-    /// types consume the shared batch budget.
+    /// types consume the shared batch budget. That can starve warm and cold
+    /// deletes in one pass; raise `max_batches` if they stall.
     pub async fn expire_old_events(
         &self,
         config: TransactionEventRetentionConfig,
     ) -> Result<TransactionEventRetentionOutcome> {
+        // Public API: validate here so tests and other callers cannot skip it.
         let config = config.validate()?;
         let batch_size = i64::from(config.delete_batch_size);
         let classes = [
@@ -518,12 +591,7 @@ impl PgTransactionEventSink {
             TransactionEventRetentionClass::Cold,
         ];
 
-        let mut conn = self.pool.acquire().await?;
-        let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
-            .bind(TRANSACTION_EVENT_RETENTION_LOCK_ID)
-            .fetch_one(&mut *conn)
-            .await?;
-        if !locked {
+        let Some(mut lock) = RetentionAdvisoryLock::try_acquire(&self.pool).await? else {
             return Ok(TransactionEventRetentionOutcome {
                 rows_deleted: 0,
                 batches: 0,
@@ -531,9 +599,9 @@ impl PgTransactionEventSink {
                 warm_rows_deleted: 0,
                 cold_rows_deleted: 0,
             });
-        }
+        };
 
-        let outcome: Result<TransactionEventRetentionOutcome> = async {
+        let outcome = async {
             let mut rows_deleted = 0u64;
             let mut batches = 0u64;
             let mut hot_rows_deleted = 0u64;
@@ -556,7 +624,7 @@ impl PgTransactionEventSink {
                     .bind(&event_types)
                     .bind(cutoff)
                     .bind(batch_size)
-                    .execute(&mut *conn)
+                    .execute(lock.conn())
                     .await?
                     .rows_affected();
                     batches += 1;
@@ -582,14 +650,7 @@ impl PgTransactionEventSink {
         }
         .await;
 
-        if let Err(err) = sqlx::query("SELECT pg_advisory_unlock($1)")
-            .bind(TRANSACTION_EVENT_RETENTION_LOCK_ID)
-            .execute(&mut *conn)
-            .await
-        {
-            error!(error = %err, "failed to release transaction event retention lock");
-        }
-
+        lock.unlock().await;
         outcome
     }
 
