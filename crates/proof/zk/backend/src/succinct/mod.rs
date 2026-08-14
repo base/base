@@ -2,7 +2,7 @@
 //!
 //! Each backend implements [`base_proof_zk_host::ZkProver`] for a different SP1
 //! execution target. SP1 stdin, ELF setup, and cluster/network clients live
-//! under `support`.
+//! under `utils`.
 
 mod provider;
 pub use provider::{L1HeadSource, OpSuccinctWitnessProvider, WitnessError, WitnessParams};
@@ -24,8 +24,8 @@ pub use network::{NetworkZkProver, NetworkZkProverConfig, SuccinctNetworkBackend
 mod dry_run;
 pub use dry_run::{DRY_RUN_SNARK_PREFIX, DRY_RUN_STARK_PREFIX, DryRunZkProver};
 
-mod support;
-pub use support::{
+mod utils;
+pub use utils::{
     BlockExecutionStats, Claim, ClusterArtifactStore, ClusterProofConfig, ClusterProofHandle,
     ClusterProofHandleJson, DisputeGameFactory, ExecutionStats, GameStatus, GameType, Hash,
     IDisputeGame, IInitializable, MarkdownExecutionStats, OPSuccinctL2OutputOracle, SP1Blobstream,
