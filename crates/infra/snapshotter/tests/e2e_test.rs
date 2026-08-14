@@ -14,8 +14,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 use base_snapshotter::{
     ChunkedArchive, ComponentManifest, ContainerManager, DockerContainerManager,
-    OutputFileChecksum, SnapshotGenerator, SnapshotManifest, SnapshotUploader, TipChecker,
-    TipStatus,
+    ManifestGenerationParams, OutputFileChecksum, SnapshotGenerator, SnapshotManifest,
+    SnapshotUploader, TipChecker, TipStatus,
 };
 use bollard::{
     Docker,
@@ -752,15 +752,16 @@ async fn selective_compression_skips_finalized_chunks() -> Result<()> {
     }
 
     let output = tempfile::tempdir()?;
-    let files = SnapshotGenerator::generate_manifest(
-        source.path(),
-        output.path(),
-        8453,
-        Some(2_000_000),
-        Some(500_000),
-        &remote,
-        false,
-    )?;
+    let files = SnapshotGenerator::generate_manifest(&ManifestGenerationParams {
+        source_datadir: source.path(),
+        output_dir: output.path(),
+        chain_id: 8453,
+        block: Some(2_000_000),
+        blocks_per_file: Some(500_000),
+        remote_static_files: &remote,
+        previous_chunk_output_files: &HashMap::new(),
+        upload_proofs: false,
+    })?;
 
     let filenames: Vec<String> = files
         .iter()
@@ -821,15 +822,17 @@ async fn generate_and_upload_proofs_to_minio() -> Result<()> {
     std::fs::write(proofs_dir.join("000801.log"), b"wal-data")?;
 
     let output = tempfile::tempdir()?;
-    let files = SnapshotGenerator::generate_manifest(
-        source.path(),
-        output.path(),
-        8453,
-        Some(0),
-        Some(500_000),
-        &HashMap::new(),
-        true,
-    )?;
+    let empty_remote = HashMap::new();
+    let files = SnapshotGenerator::generate_manifest(&ManifestGenerationParams {
+        source_datadir: source.path(),
+        output_dir: output.path(),
+        chain_id: 8453,
+        block: Some(0),
+        blocks_per_file: Some(500_000),
+        remote_static_files: &empty_remote,
+        previous_chunk_output_files: &HashMap::new(),
+        upload_proofs: true,
+    })?;
 
     assert!(
         files.iter().any(|f| f.file_name().is_some_and(|n| n == "proofs.tar.zst")),
