@@ -72,8 +72,8 @@ pub struct SpanChannel {
     encoded_span: Vec<u8>,
     /// Number of accepted RLP bytes belonging to sealed span batches.
     sealed_rlp_bytes: usize,
-    /// Accepted RLP length represented by the current compressor checkpoint.
-    compressed_rlp_bytes: usize,
+    /// Accepted RLP input length represented by the current compressor checkpoint.
+    compressor_input_bytes: usize,
     /// Maximum compressed bytes that fit in the configured target frames.
     target_output_bytes: usize,
     /// Optional maximum number of blocks per span batch.
@@ -99,7 +99,7 @@ impl SpanChannel {
             candidate_rlp: Vec::new(),
             encoded_span: Vec::new(),
             sealed_rlp_bytes: 0,
-            compressed_rlp_bytes: 0,
+            compressor_input_bytes: 0,
             target_output_bytes: config.target_output_size(),
             max_blocks_per_span_batch: config.max_blocks_per_span_batch,
         }
@@ -110,11 +110,18 @@ impl SpanChannel {
     /// [`OpenChannel::add_block`] calls this from the encoder's `step` transition.
     /// The returned [`ChannelAddOutcome`] tells the caller whether to advance the
     /// block cursor, close the channel, or retry the block in a fresh channel.
+    /// A [`ChannelAddOutcome::Rejected`] result makes this channel terminal:
+    /// the caller must close it rather than call `add_block` again.
     pub fn add_block(
         &mut self,
         batch: SingleBatch,
         sequence_number: u64,
     ) -> Result<ChannelAddOutcome, OpenChannelError> {
+        debug_assert!(
+            self.candidate_rlp.len() <= self.accepted_rlp.len(),
+            "cannot append to a SpanChannel after rejection"
+        );
+
         // A span at the configured block limit is already represented by
         // `accepted_rlp`; seal it before building the next candidate span.
         if self.max_blocks_per_span_batch.is_some_and(|max| self.active_span.batches.len() == max) {
@@ -152,7 +159,7 @@ impl SpanChannel {
         // uncompressed bytes approaches the target.
         // Swapping the candidate into `accepted_rlp` is the commit point in each
         // accepted branch below.
-        let rlp_growth = self.candidate_rlp.len() - self.compressed_rlp_bytes;
+        let rlp_growth = self.candidate_rlp.len() - self.compressor_input_bytes;
         if self.compressor.compressed_len()? + rlp_growth < self.target_output_bytes {
             std::mem::swap(&mut self.accepted_rlp, &mut self.candidate_rlp);
             return Ok(ChannelAddOutcome::Accepted);
@@ -162,7 +169,7 @@ impl SpanChannel {
         // uses its actual encoded size.
         self.compressor.reset();
         self.compressor.write(&self.candidate_rlp)?;
-        self.compressed_rlp_bytes = self.candidate_rlp.len();
+        self.compressor_input_bytes = self.candidate_rlp.len();
         let compressed_bytes = self.compressor.compressed_len()?;
         if compressed_bytes < self.target_output_bytes {
             std::mem::swap(&mut self.accepted_rlp, &mut self.candidate_rlp);
@@ -189,7 +196,7 @@ impl SpanChannel {
     pub fn compress_accepted(&mut self) -> Result<usize, CompressorError> {
         self.compressor.reset();
         self.compressor.write(&self.accepted_rlp)?;
-        self.compressed_rlp_bytes = self.accepted_rlp.len();
+        self.compressor_input_bytes = self.accepted_rlp.len();
         self.compressor.compressed_len()
     }
 
@@ -200,7 +207,7 @@ impl SpanChannel {
     pub fn into_frames(mut self, max_frame_size: usize) -> Result<Vec<Frame>, OpenChannelError> {
         // Accepted candidates may have used the cheap size pre-check, leaving
         // the compressor at an older checkpoint.
-        if self.compressed_rlp_bytes != self.accepted_rlp.len() {
+        if self.compressor_input_bytes != self.accepted_rlp.len() {
             self.compress_accepted()?;
         }
         Ok(ChannelOut::new(self.id, self.rollup_config, self.compressor)
@@ -223,15 +230,15 @@ pub enum OpenChannelKind {
 /// common to both producer modes and delegates encoding to [`OpenChannelKind`].
 pub struct OpenChannel {
     /// Batch-type-specific channel state.
-    kind: OpenChannelKind,
+    pub kind: OpenChannelKind,
     /// Index of the first block encoded into this channel.
-    pub(crate) block_start: usize,
+    pub block_start: usize,
     /// L1 block number when this channel was opened (for `MaxChannelDuration`).
-    pub(crate) opened_at_l1: u64,
+    pub opened_at_l1: u64,
     /// Number of L2 blocks fed into this channel so far.
-    pub(crate) blocks_added: usize,
+    pub blocks_added: usize,
     /// Estimated DA bytes for blocks fed into this channel.
-    pub(crate) da_backlog_bytes: u64,
+    pub da_backlog_bytes: u64,
 }
 
 impl fmt::Debug for OpenChannel {
@@ -343,21 +350,21 @@ pub enum FrameState {
 #[derive(Debug)]
 pub struct ReadyChannel {
     /// The channel identifier.
-    pub(crate) id: ChannelId,
+    pub id: ChannelId,
     /// All frames, in order. Wrapped in [`Arc`] so that the slice handed to
     /// [`BatchSubmission`] is a cheap pointer copy rather than a deep clone of
     /// the frame payload (up to `max_frame_size` bytes per frame).
-    pub(crate) frames: Vec<Arc<Frame>>,
+    pub frames: Vec<Arc<Frame>>,
     /// Submission state for each frame.
-    pub(crate) frame_states: Vec<FrameState>,
+    pub frame_states: Vec<FrameState>,
     /// Exact input block range encoded into this channel.
-    pub(crate) encoded_block_range: Range<usize>,
+    pub encoded_block_range: Range<usize>,
     /// DA bytes still represented by this closed channel's frames.
-    pub(crate) da_backlog_bytes: u64,
+    pub da_backlog_bytes: u64,
     /// Earliest L1 block that confirmed any frame from this channel.
-    pub(crate) first_confirmed_l1_block: Option<u64>,
+    pub first_confirmed_l1_block: Option<u64>,
     /// Latest L1 block that confirmed any frame from this channel.
-    pub(crate) last_confirmed_l1_block: Option<u64>,
+    pub last_confirmed_l1_block: Option<u64>,
 }
 
 impl ReadyChannel {
@@ -408,11 +415,11 @@ impl ReadyChannel {
 #[derive(Debug, Clone)]
 pub struct PendingRef {
     /// Index into the `ready_channels` deque.
-    pub(crate) channel_idx: usize,
+    pub channel_idx: usize,
     /// Index of the first frame in the ready channel covered by this submission.
-    pub(crate) frame_start: usize,
+    pub frame_start: usize,
     /// Number of frames included in this submission (1 when `target_num_frames == 1`).
-    pub(crate) frame_count: usize,
+    pub frame_count: usize,
 }
 
 #[cfg(test)]
@@ -424,15 +431,17 @@ mod tests {
     use alloy_primitives::{Bytes, Signature};
     use base_common_genesis::RollupConfig;
     use base_protocol::{ChannelId, Frame, SingleBatch};
+    use rstest::rstest;
 
     use super::{ChannelAddOutcome, FrameState, ReadyChannel, SpanChannel};
     use crate::{CompressionAlgo, EncoderConfig};
 
-    fn span_config(target_output_bytes: usize) -> EncoderConfig {
+    fn span_config(target_output_bytes: usize, compression_algo: CompressionAlgo) -> EncoderConfig {
+        let version_byte = usize::from(compression_algo != CompressionAlgo::Zlib);
         EncoderConfig {
             batch_type: base_protocol::BatchType::Span,
-            compression_algo: CompressionAlgo::Zlib,
-            target_frame_size: Frame::ENCODED_OVERHEAD + target_output_bytes,
+            compression_algo,
+            target_frame_size: Frame::ENCODED_OVERHEAD + version_byte + target_output_bytes,
             max_frame_size: EncoderConfig::MAX_BLOB_FRAME_SIZE,
             ..EncoderConfig::default()
         }
@@ -442,11 +451,15 @@ mod tests {
         SingleBatch { epoch_num: timestamp, timestamp, ..Default::default() }
     }
 
-    fn exact_compressed_size(blocks: usize) -> usize {
+    fn exact_compressed_size(blocks: usize, compression_algo: CompressionAlgo) -> usize {
+        let version_byte = usize::from(compression_algo != CompressionAlgo::Zlib);
         let mut channel = SpanChannel::new(
             ChannelId::default(),
             Arc::new(RollupConfig::default()),
-            &span_config(EncoderConfig::MAX_BLOB_FRAME_SIZE - Frame::ENCODED_OVERHEAD),
+            &span_config(
+                EncoderConfig::MAX_BLOB_FRAME_SIZE - Frame::ENCODED_OVERHEAD - version_byte,
+                compression_algo,
+            ),
         );
         for timestamp in 1..=blocks as u64 {
             assert_eq!(
@@ -503,16 +516,20 @@ mod tests {
         assert_eq!(channel.next_ready_frame_range(), Some(1..3));
     }
 
-    #[test]
-    fn span_channel_rejects_overflow_without_committing_candidate() {
-        let one_block_size = exact_compressed_size(1);
-        let two_block_size = exact_compressed_size(2);
+    #[rstest]
+    #[case(CompressionAlgo::Zlib)]
+    #[case(CompressionAlgo::Brotli10)]
+    fn span_channel_rejects_overflow_without_committing_candidate(
+        #[case] compression_algo: CompressionAlgo,
+    ) {
+        let one_block_size = exact_compressed_size(1, compression_algo);
+        let two_block_size = exact_compressed_size(2, compression_algo);
         assert!(two_block_size > one_block_size);
         let target = one_block_size + 1;
         let mut channel = SpanChannel::new(
             ChannelId::default(),
             Arc::new(RollupConfig::default()),
-            &span_config(target),
+            &span_config(target, compression_algo),
         );
 
         assert_eq!(channel.add_block(single_batch(1), 0).unwrap(), ChannelAddOutcome::Accepted);
@@ -525,16 +542,18 @@ mod tests {
         );
 
         assert_eq!(channel.accepted_rlp, accepted);
-        assert_eq!(channel.compressed_rlp_bytes, channel.accepted_rlp.len());
+        assert_eq!(channel.compressor_input_bytes, channel.accepted_rlp.len());
     }
 
-    #[test]
-    fn span_channel_accepts_exact_compression_target() {
-        let target = exact_compressed_size(1);
+    #[rstest]
+    #[case(CompressionAlgo::Zlib)]
+    #[case(CompressionAlgo::Brotli10)]
+    fn span_channel_accepts_exact_compression_target(#[case] compression_algo: CompressionAlgo) {
+        let target = exact_compressed_size(1, compression_algo);
         let mut channel = SpanChannel::new(
             ChannelId::default(),
             Arc::new(RollupConfig::default()),
-            &span_config(target),
+            &span_config(target, compression_algo),
         );
 
         assert_eq!(
@@ -544,13 +563,15 @@ mod tests {
         assert!(!channel.accepted_rlp.is_empty());
     }
 
-    #[test]
-    fn span_channel_accepts_oversized_first_block() {
-        let target = exact_compressed_size(1) - 1;
+    #[rstest]
+    #[case(CompressionAlgo::Zlib)]
+    #[case(CompressionAlgo::Brotli10)]
+    fn span_channel_accepts_oversized_first_block(#[case] compression_algo: CompressionAlgo) {
+        let target = exact_compressed_size(1, compression_algo) - 1;
         let mut channel = SpanChannel::new(
             ChannelId::default(),
             Arc::new(RollupConfig::default()),
-            &span_config(target),
+            &span_config(target, compression_algo),
         );
 
         assert_eq!(
@@ -574,7 +595,11 @@ mod tests {
             transactions: vec![Bytes::from(encoded_tx)],
             ..Default::default()
         };
-        let mut channel = SpanChannel::new(ChannelId::default(), rollup_config, &span_config(1024));
+        let mut channel = SpanChannel::new(
+            ChannelId::default(),
+            rollup_config,
+            &span_config(1024, CompressionAlgo::Brotli10),
+        );
 
         assert_eq!(
             channel.add_block(batch, 0).unwrap(),

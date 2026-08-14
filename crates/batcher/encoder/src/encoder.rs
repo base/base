@@ -826,10 +826,16 @@ mod tests {
         }
     }
 
-    fn make_user_block_at(parent_hash: B256, number: u64, timestamp: u64) -> BaseBlock {
+    fn make_user_block_at(
+        parent_hash: B256,
+        number: u64,
+        timestamp: u64,
+        input_len: usize,
+    ) -> BaseBlock {
         let mut block = make_block_at(parent_hash, number, timestamp);
-        let signed = TxLegacy { nonce: number, ..Default::default() }
-            .into_signed(Signature::test_signature());
+        let signed =
+            TxLegacy { nonce: number, input: vec![0; input_len].into(), ..Default::default() }
+                .into_signed(Signature::test_signature());
         block.body.transactions.push(BaseTxEnvelope::Legacy(signed));
         block
     }
@@ -1707,6 +1713,39 @@ mod tests {
         assert_eq!(encoder.block_cursor, 2);
     }
 
+    #[test]
+    fn test_span_rlp_rejection_closes_without_advancing_cursor() {
+        let rollup_config = Arc::new(RollupConfig::default());
+        let max_rlp_bytes = rollup_config.max_rlp_bytes_per_channel(1) as usize;
+        let input_len = max_rlp_bytes / 2 + 1_024;
+        let first = make_user_block_at(B256::ZERO, 0, 1, input_len);
+        let second = make_user_block_at(first.header.hash_slow(), 1, 2, input_len);
+        let config = EncoderConfig {
+            batch_type: BatchType::Span,
+            compression_algo: crate::CompressionAlgo::Zlib,
+            max_channel_duration: 1_000,
+            ..EncoderConfig::default()
+        };
+
+        let mut encoder = BatchEncoder::new(rollup_config, config);
+        encoder.add_block(first).unwrap();
+        encoder.add_block(second).unwrap();
+
+        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
+        assert_eq!(encoder.block_cursor, 1);
+
+        assert_eq!(encoder.step().unwrap(), StepResult::ChannelClosed);
+        assert_eq!(encoder.block_cursor, 1, "rejected block must remain at the cursor");
+        assert!(encoder.current_channel.is_none());
+        assert_eq!(encoder.ready_channels[0].encoded_block_range, 0..1);
+
+        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
+        assert_eq!(encoder.block_cursor, 2);
+        let retry_channel = encoder.current_channel.as_ref().expect("retry channel should be open");
+        assert_eq!(retry_channel.block_start, 1);
+        assert_eq!(retry_channel.blocks_added, 1);
+    }
+
     #[rstest]
     #[case(1)]
     #[case(2)]
@@ -1729,6 +1768,7 @@ mod tests {
                     parent_hash,
                     number,
                     (number + 1) * rollup_config.block_time,
+                    0,
                 );
                 parent_hash = block.header.hash_slow();
                 block

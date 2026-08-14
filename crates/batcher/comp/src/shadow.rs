@@ -12,9 +12,14 @@ const CLOSE_OVERHEAD_ZLIB: u64 = 9;
 /// Maintains the channel's compressed output plus a shadow copy used for size
 /// checks in the Single producer.
 ///
-/// One exception to the rule is when the first write to the buffer is not checked against
-/// the target. This allows individual blocks larger than the target to be included.
-/// Notice, this will be split across multiple channel frames.
+/// This preserves the current Single behavior: the compressed target is checked
+/// only when an individual write is larger than the target. A sequence of
+/// smaller writes is not cumulatively bounded. The Span producer does not use
+/// this compressor, and the limitation remains until the Single producer is
+/// removed.
+///
+/// An oversized first write is accepted and marks the compressor full so one
+/// large block can make progress; framing later splits it across multiple frames.
 #[derive(Debug, Clone)]
 pub struct ShadowCompressor {
     /// Target compressed channel size.
@@ -53,6 +58,7 @@ impl CompressorWriter for ShadowCompressor {
         // Write to the shadow compressor.
         self.shadow.write(data)?;
 
+        // Preserve the current per-write check. This is not a cumulative channel bound.
         let input_size = data.len() as u64;
         if input_size > self.target_output_size {
             let output_size = self.shadow.compressed_len()? as u64 + CLOSE_OVERHEAD_ZLIB;
