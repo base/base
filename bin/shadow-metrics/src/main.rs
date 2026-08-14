@@ -1,6 +1,13 @@
 //! Shadow-metrics service entry point.
 
-use std::{net::SocketAddr, time::Duration};
+use std::{
+    net::SocketAddr,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use anyhow::Result;
 use axum::{
@@ -11,7 +18,10 @@ use axum::{
     routing::get,
 };
 use base_cli_utils::LogConfig;
-use base_shadow_metrics::ShadowMetricsStore;
+use base_shadow_metrics::{
+    DEFAULT_MAX_ROWS_PER_POLL, DEFAULT_POLL_INTERVAL_SECS, ShadowMetricsReader,
+    ShadowMetricsReaderConfig, ShadowMetricsStore,
+};
 use clap::Parser;
 use tokio::net::TcpListener;
 use tracing::{error, info};
@@ -22,6 +32,10 @@ base_cli_utils::define_metrics_args!("SHADOW_METRICS", 9003);
 #[derive(Debug, Clone)]
 struct HealthState {
     store: Option<ShadowMetricsStore>,
+    /// `None` when no reader is configured. Otherwise the flag is cleared once the
+    /// reader task stops, so `/readyz` fails and Kubernetes restarts the pod rather
+    /// than leaving a healthy-looking service that emits nothing.
+    reader_alive: Option<Arc<AtomicBool>>,
 }
 
 #[derive(Parser, Debug)]
@@ -33,8 +47,8 @@ struct Args {
     #[command(flatten)]
     metrics: MetricsArgs,
 
-    /// Postgres connection URL. When unset, Postgres connectivity is disabled
-    /// and `/readyz` always reports ready.
+    /// Postgres connection URL. When unset, Postgres connectivity is disabled,
+    /// no reader is started, and `/readyz` always reports ready.
     #[arg(long, env = "SHADOW_METRICS_POSTGRES_URL")]
     postgres_url: Option<String>,
 
@@ -46,9 +60,25 @@ struct Args {
     #[arg(long, env = "SHADOW_METRICS_HTTP_PORT", default_value = "9101")]
     http_port: u16,
 
-    /// Idle heartbeat log interval in seconds.
-    #[arg(long, env = "SHADOW_METRICS_HEARTBEAT_INTERVAL_SECS", default_value = "30")]
-    heartbeat_interval_secs: u64,
+    /// Interval in seconds between shadow block polls. The writer flushes every
+    /// second and reconciliation lands in bursts roughly every ten seconds, so a
+    /// short interval keeps emission close to real time without idle-spinning on
+    /// Postgres.
+    #[arg(
+        long,
+        env = "SHADOW_METRICS_POLL_INTERVAL_SECS",
+        default_value_t = DEFAULT_POLL_INTERVAL_SECS
+    )]
+    poll_interval_secs: u64,
+
+    /// Maximum shadow block rows fetched by one poll. Bounds catch-up so a long
+    /// outage drains steadily instead of loading every JSONB payload at once.
+    #[arg(
+        long,
+        env = "SHADOW_METRICS_MAX_ROWS_PER_POLL",
+        default_value_t = DEFAULT_MAX_ROWS_PER_POLL
+    )]
+    max_rows_per_poll: u32,
 }
 
 #[tokio::main]
@@ -82,19 +112,37 @@ async fn run_server(args: Args) -> Result<()> {
         metrics_addr = %args.metrics.addr,
         metrics_port = args.metrics.port,
         postgres_enabled = args.postgres_url.is_some(),
-        heartbeat_interval_secs = args.heartbeat_interval_secs,
+        poll_interval_secs = args.poll_interval_secs,
+        max_rows_per_poll = args.max_rows_per_poll,
         "Starting shadow-metrics service"
     );
 
-    let app = health_router(store);
+    // Starting the reader before the health server is deliberate. `ShadowMetricsReader::new`
+    // resolves and persists the starting cursor, so it fails closed on an unreachable or
+    // unmigrated Postgres and aborts startup for Kubernetes to retry. Serving `/readyz` while
+    // silently running without a reader would be worse.
+    let reader_alive = match &store {
+        Some(store) => {
+            let config = ShadowMetricsReaderConfig {
+                poll_interval: Duration::from_secs(args.poll_interval_secs),
+                max_rows_per_poll: args.max_rows_per_poll,
+            };
+            let reader = ShadowMetricsReader::new(store.clone(), config).await?;
+            info!("Shadow-metrics reader started");
+            Some(spawn_reader(reader))
+        }
+        None => {
+            info!("Postgres is not configured; shadow-metrics reader is disabled");
+            None
+        }
+    };
+
+    let app = health_router(store, reader_alive);
     let http_listener = TcpListener::bind(http_addr).await?;
     let http_server = axum::serve(http_listener, app);
     info!(http_addr = %http_addr, "Shadow-metrics health server started");
 
-    let heartbeat = run_heartbeat(Duration::from_secs(args.heartbeat_interval_secs));
-
     tokio::select! {
-        result = heartbeat => result,
         result = http_server => {
             result.map_err(|e| anyhow::anyhow!("shadow-metrics health server stopped unexpectedly: {e}"))
         }
@@ -103,6 +151,32 @@ async fn run_server(args: Args) -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// Spawns the reader poll loop and returns a liveness flag cleared when it stops.
+///
+/// `ShadowMetricsReader::run` loops forever and absorbs poll failures internally, so
+/// the flag only clears on something genuinely unexpected. Detecting that is the point:
+/// a dead reader must surface through `/readyz` instead of being assumed impossible.
+fn spawn_reader(reader: ShadowMetricsReader) -> Arc<AtomicBool> {
+    let alive = Arc::new(AtomicBool::new(true));
+    let reader_alive = Arc::clone(&alive);
+    let handle = tokio::spawn(reader.run());
+
+    tokio::spawn(async move {
+        match handle.await {
+            Ok(Ok(())) => error!("shadow-metrics reader poll loop returned unexpectedly"),
+            Ok(Err(error)) => error!(error = %error, "shadow-metrics reader poll loop failed"),
+            Err(error) => error!(
+                error = %error,
+                panicked = error.is_panic(),
+                "shadow-metrics reader task did not complete"
+            ),
+        }
+        reader_alive.store(false, Ordering::Release);
+    });
+
+    alive
 }
 
 /// Resolves on SIGINT or, on Unix, SIGTERM so the k8s pre-kill SIGTERM unwinds
@@ -129,19 +203,14 @@ async fn shutdown_signal() {
     }
 }
 
-async fn run_heartbeat(interval: Duration) -> Result<()> {
-    let mut ticker = tokio::time::interval(interval);
-    loop {
-        ticker.tick().await;
-        info!("shadow-metrics noop heartbeat");
-    }
-}
-
-fn health_router(store: Option<ShadowMetricsStore>) -> Router {
+fn health_router(
+    store: Option<ShadowMetricsStore>,
+    reader_alive: Option<Arc<AtomicBool>>,
+) -> Router {
     Router::new()
         .route("/healthz", get(healthz_handler))
         .route("/readyz", get(readyz_handler))
-        .with_state(HealthState { store })
+        .with_state(HealthState { store, reader_alive })
 }
 
 async fn healthz_handler() -> &'static str {
@@ -149,6 +218,11 @@ async fn healthz_handler() -> &'static str {
 }
 
 async fn readyz_handler(State(state): State<HealthState>) -> Response {
+    if state.reader_alive.as_ref().is_some_and(|alive| !alive.load(Ordering::Acquire)) {
+        error!("shadow-metrics reader is no longer running");
+        return (StatusCode::SERVICE_UNAVAILABLE, "not ready\n").into_response();
+    }
+
     let readiness = match &state.store {
         Some(store) => store.check_schema_ready().await,
         None => Ok(()),
@@ -159,5 +233,29 @@ async fn readyz_handler(State(state): State<HealthState>) -> Response {
             error!(error = %err, "shadow-metrics readiness check failed");
             (StatusCode::SERVICE_UNAVAILABLE, "not ready\n").into_response()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn readyz_is_ready_without_postgres() {
+        let state = HealthState { store: None, reader_alive: None };
+
+        let response = readyz_handler(State(state)).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn readyz_is_unavailable_when_the_reader_died() {
+        let state =
+            HealthState { store: None, reader_alive: Some(Arc::new(AtomicBool::new(false))) };
+
+        let response = readyz_handler(State(state)).await;
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 }

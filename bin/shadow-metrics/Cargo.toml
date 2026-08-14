@@ -19,8 +19,8 @@ serde.workspace = true
 anyhow.workspace = true
 dotenvy.workspace = true
 base-cli-utils.workspace = true
-base-shadow-metrics.workspace = true
 tracing = { workspace = true, features = ["std"] }
 clap = { workspace = true, features = ["derive", "env"] }
 axum = { workspace = true, features = ["tokio", "http1"] }
+base-shadow-metrics = { workspace = true, features = ["metrics"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "time", "signal"] }
