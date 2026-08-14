@@ -227,7 +227,6 @@ impl<Pool: TransactionPool + 'static> AdminTxPoolApiServer for AdminTxPoolApiImp
 #[cfg(test)]
 mod tests {
     use alloy_primitives::U256;
-    use base_execution_txpool::MAX_VALIDITY_PREDICATES;
     use httpmock::prelude::*;
     use reth_transaction_pool::{
         PoolTransaction, TransactionOrigin,
