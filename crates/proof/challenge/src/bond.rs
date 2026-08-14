@@ -157,8 +157,6 @@ impl<C: Clock> BondManager<C> {
     /// Ordering is load-bearing: `resolve()` reverts `ParentGameNotResolved` unless the parent game
     /// has already resolved, so a child processed before its parent is a guaranteed revert. Using
     /// `buffered` rather than `buffer_unordered` keeps the concurrency while preserving that order.
-    /// (`GameScanner` can use `buffer_unordered` because it tuples the index with each result and
-    /// re-sorts downstream; this scan consumes the actions in the order they are returned.)
     async fn bond_actions(
         &self,
         range: std::ops::Range<u64>,
