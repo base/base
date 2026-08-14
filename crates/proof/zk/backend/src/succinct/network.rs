@@ -169,7 +169,7 @@ impl NetworkZkProver {
             SuccinctZkProverBuilder::complete_unless_cancelled(
                 cancel,
                 async {
-                    crate::succinct::cluster_setup_keys().await.map_err(|error| {
+                    super::host::cluster_setup_keys().await.map_err(|error| {
                         SuccinctZkProverBuildError::boxed_operation(
                             "failed to compute proving keys",
                             error.into_boxed_dyn_error(),
