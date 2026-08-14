@@ -48,8 +48,7 @@ pub use traits::{EnclaveEndpointClient, InstanceDiscovery};
 
 mod types;
 pub use types::{
-    CertKind, CertPlan, HintedRegistrationPlan, InstanceHealthStatus, ProverInstance,
-    RegistrationHints, RegistrationPlan,
+    CertKind, CertPlan, InstanceHealthStatus, ProverInstance, RegistrationHints, RegistrationPlan,
 };
 
 #[cfg(test)]
