@@ -82,6 +82,7 @@ serde_json = { workspace = true, optional = true }
 
 [dev-dependencies]
 rstest.workspace = true
+alloy-sol-types.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 base-challenger = { path = ".", features = ["test-utils"] }
 metrics-util = { workspace = true, features = ["debugging"] }

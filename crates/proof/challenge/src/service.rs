@@ -182,6 +182,8 @@ impl ChallengerService {
                     lookback: config.bond_discovery_lookback_games,
                     discovery_interval: config.bond_discovery_interval,
                     metrics_enabled: config.metrics.enabled,
+                    batch_size: config.bond_batch_size,
+                    multicall3_address: config.multicall3_addr,
                 },
                 Arc::clone(&factory_client),
                 Arc::clone(&l2_client) as Arc<dyn L2Provider>,

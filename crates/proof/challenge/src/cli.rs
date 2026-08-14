@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use alloy_primitives::Address;
 use base_cli_utils::CliStyles;
+use base_proof_contracts::Multicall3;
 use clap::Parser;
 use url::Url;
 
@@ -148,4 +149,25 @@ pub struct ChallengerArgs {
         value_delimiter = ','
     )]
     pub bond_claim_addresses: Vec<Address>,
+
+    /// Maximum bond-lifecycle calls batched into a single `Multicall3` transaction.
+    ///
+    /// `1` (the default) preserves the historical behaviour of one transaction per call. Larger
+    /// values collapse a discovery pass into a handful of transactions, which decouples the
+    /// challenger's L1 cost from the game rate — necessary once `BLOCK_INTERVAL` drops far enough
+    /// that games arrive faster than a serial resolve/claim cycle can confirm them.
+    #[arg(
+        long = "bond-batch-size",
+        env = cli_env!("BOND_BATCH_SIZE"),
+        default_value = "1"
+    )]
+    pub bond_batch_size: usize,
+
+    /// Address of the `Multicall3` deployment used when `--bond-batch-size` is greater than 1.
+    #[arg(
+        long = "multicall3-addr",
+        env = cli_env!("MULTICALL3_ADDR"),
+        default_value_t = Multicall3::CANONICAL_ADDRESS
+    )]
+    pub multicall3_addr: Address,
 }

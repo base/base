@@ -8,10 +8,10 @@
 //!    with a ZK proof to refute the fraudulent challenge.
 //! 3. **Wrong ZK proposal** — `nullify()` with a ZK proof.
 
-use std::time::Instant;
+use std::{collections::HashSet, time::Instant};
 
 use alloy_primitives::{Address, B256, Bytes, U256};
-use base_proof_contracts::{encode_challenge_calldata, encode_nullify_calldata};
+use base_proof_contracts::{Multicall3, encode_challenge_calldata, encode_nullify_calldata};
 use base_tx_manager::{TxCandidate, TxManager};
 use tracing::{debug, info};
 
@@ -113,6 +113,59 @@ impl<T: TxManager> ChallengeSubmitter<T> {
 
         Ok(tx_hash)
     }
+    /// Sends several bond-lifecycle calls as one `Multicall3.aggregate3` transaction.
+    ///
+    /// Batching is what decouples the challenger's L1 cost from the game rate, but the ordering
+    /// property matters just as much: the calls execute sequentially inside a single transaction,
+    /// so a parent game's `resolve()` takes effect before a child's is attempted. Estimating the
+    /// child on its own would revert against pre-state while the parent is still unresolved.
+    ///
+    /// Every call is encoded with `allowFailure = true`, so the transaction succeeds even when an
+    /// individual call reverts. A reverted call is rolled back and emits no logs, so the set of
+    /// target addresses appearing in the receipt logs is exactly the set of calls that took
+    /// effect — that is what this returns, and callers must use it instead of assuming a
+    /// successful transaction resolved everything.
+    pub async fn send_batch_tx(
+        &self,
+        multicall_address: Address,
+        calls: Vec<(Address, Bytes)>,
+    ) -> Result<(B256, HashSet<Address>), ChallengeSubmitError> {
+        let batch_size = calls.len();
+        let candidate = TxCandidate {
+            tx_data: Multicall3::encode_aggregate3(calls),
+            to: Some(multicall_address),
+            value: U256::ZERO,
+            ..Default::default()
+        };
+
+        info!(
+            multicall = %multicall_address,
+            batch_size,
+            calldata_len = candidate.tx_data.len(),
+            "sending batched bond transaction"
+        );
+
+        let start = Instant::now();
+        let receipt = self.tx_manager.send(candidate).await?;
+        ChallengerMetrics::bond_tx_latency_seconds().record(start.elapsed().as_secs_f64());
+        let tx_hash = receipt.transaction_hash;
+
+        if !receipt.inner.status() {
+            return Err(ChallengeSubmitError::TxReverted { tx_hash });
+        }
+
+        let applied: HashSet<Address> =
+            receipt.inner.logs().iter().map(|log| log.address()).collect();
+        info!(
+            tx_hash = %tx_hash,
+            batch_size,
+            applied = applied.len(),
+            "batched bond transaction confirmed"
+        );
+
+        Ok((tx_hash, applied))
+    }
+
     /// Sends a bond or anchor maintenance transaction.
     pub async fn send_bond_tx(
         &self,

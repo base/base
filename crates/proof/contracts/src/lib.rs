@@ -33,6 +33,9 @@ pub use dispute_game_factory::{
     game_lookup_blocks, game_lookup_count, game_lookup_key,
 };
 
+mod multicall3;
+pub use multicall3::{IMulticall3, Multicall3};
+
 mod tee_prover_registry;
 pub use tee_prover_registry::{
     ITEEProverRegistry, TEEProverRegistryClient, TEEProverRegistryContractClient,

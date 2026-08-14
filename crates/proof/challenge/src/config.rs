@@ -46,6 +46,11 @@ pub struct ChallengerConfig {
     pub bond_discovery_interval: Duration,
     /// Addresses to claim bonds on behalf of.
     pub bond_claim_addresses: Vec<Address>,
+    /// Maximum bond-lifecycle calls batched into a single `Multicall3` transaction. `1` disables
+    /// batching and sends one transaction per call.
+    pub bond_batch_size: usize,
+    /// Address of the `Multicall3` deployment used when batching is enabled.
+    pub multicall3_addr: Address,
     /// Health server socket address.
     pub health_addr: SocketAddr,
     /// Metrics server configuration.
@@ -111,6 +116,12 @@ impl ChallengerConfig {
             "bond-discovery-lookback-games must be greater than 0"
         );
 
+        ensure!(challenger.bond_batch_size != 0, "bond-batch-size must be greater than 0");
+        ensure!(
+            challenger.bond_batch_size == 1 || challenger.multicall3_addr != Address::ZERO,
+            "multicall3-addr must be non-zero when bond-batch-size is greater than 1"
+        );
+
         ensure!(health.port != 0, "health.port must be greater than 0");
 
         ensure!(
@@ -137,6 +148,8 @@ impl ChallengerConfig {
             bond_discovery_lookback_games: challenger.bond_discovery_lookback_games,
             bond_discovery_interval: challenger.bond_discovery_interval,
             bond_claim_addresses: challenger.bond_claim_addresses,
+            bond_batch_size: challenger.bond_batch_size,
+            multicall3_addr: challenger.multicall3_addr,
             health_addr: health.socket_addr(),
             metrics: metrics.into(),
         })

@@ -3,7 +3,7 @@
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256, Bytes};
 use base_proof_contracts::{
     AggregateVerifierClient, DelayedWETHClient, DelayedWETHContractClient,
     DisputeGameFactoryClient, encode_claim_credit_calldata, encode_resolve_calldata,
@@ -38,6 +38,10 @@ pub struct BondManagerConfig {
     pub discovery_interval: Duration,
     /// Whether finality metrics are recorded.
     pub metrics_enabled: bool,
+    /// Maximum calls batched into a single `Multicall3` transaction. `1` disables batching.
+    pub batch_size: usize,
+    /// Address of the `Multicall3` deployment used when batching is enabled.
+    pub multicall3_address: Address,
 }
 
 impl BondAction {
@@ -62,6 +66,8 @@ pub struct BondManager<C: Clock> {
     lookback: u64,
     discovery_interval: Duration,
     metrics_enabled: bool,
+    batch_size: usize,
+    multicall3_address: Address,
 }
 
 impl<C: Clock> std::fmt::Debug for BondManager<C> {
@@ -91,6 +97,8 @@ impl<C: Clock> BondManager<C> {
             lookback: config.lookback,
             discovery_interval: config.discovery_interval,
             metrics_enabled: config.metrics_enabled,
+            batch_size: config.batch_size,
+            multicall3_address: config.multicall3_address,
         }
     }
 
@@ -128,13 +136,18 @@ impl<C: Clock> BondManager<C> {
         ChallengerMetrics::bond_discovery_scans_total("full").increment(1);
         let actions = self.bond_actions(start_index..game_count, verifier_client).await;
         let action_count = actions.len();
-        let mut finality_metric_records = Vec::new();
-
-        for action in actions {
-            if let Some(record) = self.process_action(action, verifier_client, submitter).await {
-                finality_metric_records.push(record);
+        let finality_metric_records = if self.batch_size > 1 {
+            self.process_actions_batched(actions, verifier_client, submitter).await
+        } else {
+            let mut records = Vec::new();
+            for action in actions {
+                if let Some(record) = self.process_action(action, verifier_client, submitter).await
+                {
+                    records.push(record);
+                }
             }
-        }
+            records
+        };
 
         self.record_finality_metrics(finality_metric_records, verifier_client).await;
         self.last_scan = Some(now);
@@ -152,6 +165,11 @@ impl<C: Clock> BondManager<C> {
             .is_none_or(|last_scan| now.saturating_sub(last_scan) >= self.discovery_interval)
     }
 
+    /// Evaluates the range concurrently but yields actions in **ascending game index order**.
+    ///
+    /// Ordering is load-bearing: `resolve()` reverts `ParentGameNotResolved` unless the parent game
+    /// has already resolved, so a child processed before its parent is a guaranteed revert. Using
+    /// `buffered` rather than `buffer_unordered` keeps the concurrency while preserving that order.
     async fn bond_actions(
         &self,
         range: std::ops::Range<u64>,
@@ -159,7 +177,7 @@ impl<C: Clock> BondManager<C> {
     ) -> Vec<BondAction> {
         stream::iter(range)
             .map(|i| self.evaluate_game_for_bonds(i, verifier_client))
-            .buffer_unordered(GameScanner::SCAN_CONCURRENCY)
+            .buffered(GameScanner::SCAN_CONCURRENCY)
             .filter_map(std::future::ready)
             .collect()
             .await
@@ -305,6 +323,107 @@ impl<C: Clock> BondManager<C> {
             Err(e) => {
                 warn!(game = %game_address, error = %e, "failed to advance bond claim");
                 None
+            }
+        }
+    }
+
+    /// Batched counterpart to [`Self::process_action`].
+    ///
+    /// `Resolve` and `Unlock` are unconditional single calls, so they batch directly.
+    /// `WithdrawIfReady` stays on the serial path because it needs a per-game `DelayedWETH`
+    /// readiness check before it can decide whether to send anything at all.
+    ///
+    /// Resolves are submitted before claims, in ascending game order, and each chunk is awaited
+    /// before the next is sent — a child's `resolve()` reverts unless its parent has already
+    /// resolved, and that holds within a chunk by execution order and across chunks by confirmation
+    /// order.
+    async fn process_actions_batched<T: TxManager>(
+        &mut self,
+        actions: Vec<BondAction>,
+        verifier_client: &dyn AggregateVerifierClient,
+        submitter: &ChallengeSubmitter<T>,
+    ) -> Vec<(Address, u64)> {
+        let mut resolves = Vec::new();
+        let mut unlocks = Vec::new();
+        let mut deferred = Vec::new();
+        for action in actions {
+            match action {
+                BondAction::Resolve(game_address) => resolves.push(game_address),
+                BondAction::Unlock(game_address) => unlocks.push(game_address),
+                withdraw @ BondAction::WithdrawIfReady { .. } => deferred.push(withdraw),
+            }
+        }
+
+        let mut records = Vec::new();
+        for chunk in resolves.chunks(self.batch_size) {
+            let (tx_hash, applied) = Self::send_bond_batch(
+                self.multicall3_address,
+                chunk,
+                encode_resolve_calldata(),
+                submitter,
+            )
+            .await;
+            let confirmed_at = self.clock.wall_clock_unix_secs();
+            for game_address in chunk {
+                if applied.contains(game_address) {
+                    info!(game = %game_address, tx_hash = %tx_hash, "resolve transaction confirmed");
+                    ChallengerMetrics::resolve_tx_outcome_total(ChallengerMetrics::STATUS_SUCCESS)
+                        .increment(1);
+                    if self.metrics_enabled {
+                        records.push((*game_address, confirmed_at));
+                    }
+                } else {
+                    warn!(game = %game_address, "resolve call in batch did not take effect");
+                    ChallengerMetrics::resolve_tx_outcome_total(ChallengerMetrics::STATUS_ERROR)
+                        .increment(1);
+                }
+            }
+        }
+
+        for chunk in unlocks.chunks(self.batch_size) {
+            ChallengerMetrics::claim_credit_tx_submitted_total().increment(chunk.len() as u64);
+            let (_, applied) = Self::send_bond_batch(
+                self.multicall3_address,
+                chunk,
+                encode_claim_credit_calldata(),
+                submitter,
+            )
+            .await;
+            for game_address in chunk {
+                let status = if applied.contains(game_address) {
+                    ChallengerMetrics::STATUS_SUCCESS
+                } else {
+                    ChallengerMetrics::STATUS_ERROR
+                };
+                ChallengerMetrics::claim_credit_tx_outcome_total(status).increment(1);
+            }
+        }
+
+        for action in deferred {
+            if let Some(record) = self.process_action(action, verifier_client, submitter).await {
+                records.push(record);
+            }
+        }
+
+        records
+    }
+
+    /// Sends one `Multicall3` batch applying `calldata` to each game, returning the batch
+    /// transaction hash and the games whose call actually took effect. A failed batch yields a zero
+    /// hash and an empty set, so every game in it is reported as unapplied.
+    async fn send_bond_batch<T: TxManager>(
+        multicall3_address: Address,
+        games: &[Address],
+        calldata: Bytes,
+        submitter: &ChallengeSubmitter<T>,
+    ) -> (B256, HashSet<Address>) {
+        let calls =
+            games.iter().map(|game_address| (*game_address, calldata.clone())).collect::<Vec<_>>();
+        match submitter.send_batch_tx(multicall3_address, calls).await {
+            Ok(result) => result,
+            Err(e) => {
+                warn!(batch_size = games.len(), error = %e, "batched bond transaction failed");
+                (B256::ZERO, HashSet::new())
             }
         }
     }
@@ -480,6 +599,8 @@ mod tests {
     };
 
     use alloy_primitives::B256;
+    use alloy_sol_types::SolCall;
+    use base_proof_contracts::Multicall3;
     use futures::stream::BoxStream;
     #[cfg(feature = "metrics")]
     use metrics_util::{
@@ -561,6 +682,8 @@ mod tests {
                 lookback: 1000,
                 discovery_interval: TEST_DISCOVERY_INTERVAL,
                 metrics_enabled,
+                batch_size: 1,
+                multicall3_address: Multicall3::CANONICAL_ADDRESS,
             },
             factory,
             Arc::new(l2_provider),
@@ -819,5 +942,174 @@ mod tests {
 
         assert_eq!(verifier.delayed_weth_reads.lock().unwrap().len(), 1);
         assert_eq!(tx_manager.recorded_calls().len(), 1);
+    }
+
+    /// Factory whose `game_at_index` completes in reverse index order, reproducing the condition
+    /// under which an unordered scan yields child games before their parents.
+    #[derive(Debug)]
+    struct ReverseLatencyFactory {
+        inner: MockDisputeGameFactory,
+        game_count: u64,
+    }
+
+    #[async_trait::async_trait]
+    impl DisputeGameFactoryClient for ReverseLatencyFactory {
+        async fn game_count(&self) -> Result<u64, base_proof_contracts::ContractError> {
+            self.inner.game_count().await
+        }
+
+        async fn game_at_index(
+            &self,
+            index: u64,
+        ) -> Result<base_proof_contracts::GameAtIndex, base_proof_contracts::ContractError>
+        {
+            let delay = self.game_count.saturating_sub(index).saturating_mul(20);
+            tokio::time::sleep(Duration::from_millis(delay)).await;
+            self.inner.game_at_index(index).await
+        }
+
+        async fn init_bonds(
+            &self,
+            game_type: u32,
+        ) -> Result<alloy_primitives::U256, base_proof_contracts::ContractError> {
+            self.inner.init_bonds(game_type).await
+        }
+
+        async fn game_impls(
+            &self,
+            game_type: u32,
+        ) -> Result<Address, base_proof_contracts::ContractError> {
+            self.inner.game_impls(game_type).await
+        }
+
+        async fn games(
+            &self,
+            game_type: u32,
+            root_claim: alloy_primitives::B256,
+            extra_data: Bytes,
+        ) -> Result<Address, base_proof_contracts::ContractError> {
+            self.inner.games(game_type, root_claim, extra_data).await
+        }
+    }
+
+    /// Builds a manager over `count` resolvable games, optionally with reversed evaluation latency.
+    fn multi_game_manager(
+        claim_addr: Address,
+        count: u64,
+        batch_size: usize,
+        reverse_latency: bool,
+    ) -> (BondManager<FixedClock>, Arc<MockAggregateVerifier>) {
+        let games = (0..count).map(|i| factory_game(i, 0)).collect::<Vec<_>>();
+        let factory: Arc<dyn DisputeGameFactoryClient> = if reverse_latency {
+            Arc::new(ReverseLatencyFactory {
+                inner: MockDisputeGameFactory::new(games),
+                game_count: count,
+            })
+        } else {
+            Arc::new(MockDisputeGameFactory::new(games))
+        };
+
+        let states = (0..count)
+            .map(|i| (addr(i), game_state(claim_addr, Address::ZERO, 0, false)))
+            .collect::<HashMap<_, _>>();
+
+        let manager = BondManager::new(
+            BondManagerConfig {
+                claim_addresses: vec![claim_addr],
+                l1_rpc_url: url::Url::parse("http://127.0.0.1:1").unwrap(),
+                lookback: 1000,
+                discovery_interval: TEST_DISCOVERY_INTERVAL,
+                metrics_enabled: false,
+                batch_size,
+                multicall3_address: Multicall3::CANONICAL_ADDRESS,
+            },
+            factory,
+            Arc::new(MockL2Provider::new()),
+            fixed_clock(1_000),
+        );
+
+        (manager, Arc::new(MockAggregateVerifier::new(states)))
+    }
+
+    /// `resolve()` reverts `ParentGameNotResolved` unless the parent resolved first, so the scan
+    /// must hand back actions in ascending game order even when the reads complete out of order.
+    #[tokio::test]
+    async fn bond_actions_are_ordered_by_game_index() {
+        let claim_addr = claim_addr();
+        let (mgr, verifier) = multi_game_manager(claim_addr, 5, 1, true);
+
+        let actions = mgr.bond_actions(0..5, &*verifier).await;
+
+        let ordered = actions.iter().map(|action| action.game_address()).collect::<Vec<_>>();
+        assert_eq!(
+            ordered,
+            (0..5).map(addr).collect::<Vec<_>>(),
+            "actions must be ascending by game index so parents resolve before children",
+        );
+    }
+
+    #[tokio::test]
+    async fn batched_resolves_are_sent_as_one_ordered_multicall() {
+        let claim_addr = claim_addr();
+        let (mut mgr, verifier) = multi_game_manager(claim_addr, 4, 8, false);
+        let (submitter, tx_manager) =
+            bond_submitter(vec![Ok(receipt_with_status(true, B256::repeat_byte(0x11)))]);
+
+        mgr.discover_claimable_games(&*verifier, &submitter).await.unwrap();
+
+        let calls = tx_manager.recorded_calls();
+        assert_eq!(calls.len(), 1, "four resolves must collapse into a single transaction");
+        assert_eq!(calls[0].to, Some(Multicall3::CANONICAL_ADDRESS));
+
+        let decoded =
+            base_proof_contracts::IMulticall3::aggregate3Call::abi_decode(&calls[0].tx_data)
+                .expect("decodes aggregate3 calldata");
+        let targets = decoded.calls.iter().map(|call| call.target).collect::<Vec<_>>();
+        assert_eq!(targets, (0..4).map(addr).collect::<Vec<_>>());
+        assert!(decoded.calls.iter().all(|call| call.callData == encode_resolve_calldata()));
+    }
+
+    #[tokio::test]
+    async fn batched_resolves_respect_the_batch_size_limit() {
+        let claim_addr = claim_addr();
+        let (mut mgr, verifier) = multi_game_manager(claim_addr, 5, 2, false);
+        let (submitter, tx_manager) = bond_submitter(vec![
+            Ok(receipt_with_status(true, B256::repeat_byte(0x11))),
+            Ok(receipt_with_status(true, B256::repeat_byte(0x22))),
+            Ok(receipt_with_status(true, B256::repeat_byte(0x33))),
+        ]);
+
+        mgr.discover_claimable_games(&*verifier, &submitter).await.unwrap();
+
+        let calls = tx_manager.recorded_calls();
+        assert_eq!(calls.len(), 3, "five resolves at batch size two must send 3 transactions");
+        let batch_sizes = calls
+            .iter()
+            .map(|call| {
+                base_proof_contracts::IMulticall3::aggregate3Call::abi_decode(&call.tx_data)
+                    .expect("decodes")
+                    .calls
+                    .len()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(batch_sizes, vec![2, 2, 1]);
+    }
+
+    /// A call that reverts inside `aggregate3` is rolled back and emits no logs, so an empty log
+    /// set must not be reported as success — otherwise a silently failing batch looks healthy.
+    #[tokio::test]
+    async fn batched_resolve_without_logs_is_not_treated_as_applied() {
+        let claim_addr = claim_addr();
+        let (mut mgr, verifier) = multi_game_manager(claim_addr, 2, 8, false);
+        let (submitter, _tx_manager) =
+            bond_submitter(vec![Ok(receipt_with_status(true, B256::repeat_byte(0x11)))]);
+
+        let actions = mgr.bond_actions(0..2, &*verifier).await;
+        let records = mgr.process_actions_batched(actions, &*verifier, &submitter).await;
+
+        assert!(
+            records.is_empty(),
+            "no game emitted logs, so none may be recorded as successfully resolved",
+        );
     }
 }
