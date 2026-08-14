@@ -66,7 +66,11 @@ impl ShadowMetricsCursorRepo {
         Ok(row.map(|(updated_at, number, hash)| ShadowBlockCursor { updated_at, number, hash }))
     }
 
-    /// Stores the shadow metrics cursor in the singleton row.
+    /// Stores the shadow metrics cursor in the singleton row without moving it backwards.
+    ///
+    /// The monotonic guard prevents concurrent readers during a rolling deployment from
+    /// rewinding their shared cursor. This bounds duplicate replay but does not make concurrent
+    /// readers correct: they still double-emit, so deployments should run a single reader.
     ///
     /// # Errors
     ///
@@ -80,7 +84,11 @@ impl ShadowMetricsCursorRepo {
              last_updated_at = EXCLUDED.last_updated_at, \
              last_number = EXCLUDED.last_number, \
              last_hash = EXCLUDED.last_hash, \
-             updated_at = now()",
+             updated_at = now() \
+             WHERE (shadow_metrics_cursor.last_updated_at, \
+                    shadow_metrics_cursor.last_number, \
+                    shadow_metrics_cursor.last_hash) \
+                 < (EXCLUDED.last_updated_at, EXCLUDED.last_number, EXCLUDED.last_hash)",
         )
         .bind(at.updated_at)
         .bind(at.number)

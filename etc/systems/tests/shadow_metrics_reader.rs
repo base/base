@@ -7,7 +7,8 @@ use alloy_primitives::{Address, Signature};
 use anyhow::Result;
 use base_common_consensus::{BaseTxEnvelope, TxDeposit};
 use base_shadow_indexer_db::{
-    ShadowBlockPayload, ShadowBlockRepo, ShadowBlockRow, ShadowDbConfig, ShadowMetricsCursorRepo,
+    ShadowBlockCursor, ShadowBlockPayload, ShadowBlockRepo, ShadowBlockRow, ShadowDbConfig,
+    ShadowMetricsCursorRepo,
 };
 use base_shadow_metrics::{ShadowMetricsReader, ShadowMetricsReaderConfig, ShadowMetricsStore};
 use chrono::Utc;
@@ -71,6 +72,11 @@ impl ShadowBlockFixture {
 
     const fn gas_used(mut self, gas_used: u64) -> Self {
         self.gas_used = gas_used;
+        self
+    }
+
+    const fn base_fee_per_gas(mut self, base_fee_per_gas: u64) -> Self {
+        self.base_fee_per_gas = base_fee_per_gas;
         self
     }
 
@@ -249,6 +255,7 @@ async fn counts_deposits_but_excludes_them_from_fee_ordering() -> Result<()> {
     ShadowBlockRepo::new(database.pool.clone())
         .insert_batch(&[ShadowBlockFixture::new(41)
             .gas_used(555_555)
+            .base_fee_per_gas(0)
             .deposits(2)
             .tips(&[30, 20, 40])
             .into_row(0x51, true, Some(0xc1))])
@@ -265,7 +272,7 @@ async fn counts_deposits_but_excludes_them_from_fee_ordering() -> Result<()> {
 }
 
 #[tokio::test]
-async fn counts_sawtooth_boundaries_and_accepts_descending_fees() -> Result<()> {
+async fn counts_sawtooth_boundaries_and_accepts_non_increasing_fees() -> Result<()> {
     let database = TestDatabase::start().await?;
     let mut reader = database.reader(DEFAULT_TEST_MAX_ROWS).await?;
     ShadowBlockRepo::new(database.pool.clone())
@@ -276,15 +283,36 @@ async fn counts_sawtooth_boundaries_and_accepts_descending_fees() -> Result<()> 
                 Some(0xd1),
             ),
             ShadowBlockFixture::new(52).tips(&[120, 110, 100, 90]).into_row(0x62, true, Some(0xd2)),
+            ShadowBlockFixture::new(53).tips(&[50, 50, 40]).into_row(0x63, true, Some(0xd3)),
         ])
         .await?;
 
     let emitted = reader.poll_once().await?;
-    assert_eq!(emitted.len(), 2);
+    assert_eq!(emitted.len(), 3);
     let sawtooth = emitted.iter().find(|stats| stats.number == 51).expect("sawtooth block");
     let descending = emitted.iter().find(|stats| stats.number == 52).expect("descending block");
+    let equal_adjacent =
+        emitted.iter().find(|stats| stats.number == 53).expect("equal-adjacent block");
     assert_eq!(sawtooth.priority_fee_inversions, 2);
     assert_eq!(descending.priority_fee_inversions, 0);
+    assert_eq!(equal_adjacent.priority_fee_inversions, 0);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn persisted_cursor_never_moves_backwards() -> Result<()> {
+    let database = TestDatabase::start().await?;
+    let repo = ShadowMetricsCursorRepo::new(database.pool.clone());
+    let updated_at = Utc::now();
+    let older = ShadowBlockCursor { updated_at, number: 1, hash: vec![0x71; 32] };
+    let newer = ShadowBlockCursor { updated_at, number: 2, hash: vec![0x72; 32] };
+
+    repo.store(&older).await?;
+    repo.store(&newer).await?;
+    repo.store(&older).await?;
+
+    assert_eq!(repo.load().await?, Some(newer));
 
     Ok(())
 }
