@@ -554,7 +554,6 @@ where
     ) -> Result<(), SequencerActorError> {
         let handle = pipeline.next_payload_to_seal.take().expect("caller checked Some");
         let handle_block_number = handle.block_number();
-        self.record_seal_target_drift(handle_block_number, pipeline.last_seal_duration);
         match self.try_seal_handle(handle).await? {
             Some((new_sealer, dur)) => {
                 pipeline.last_seal_duration = dur;
