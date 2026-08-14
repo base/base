@@ -41,8 +41,8 @@ pub trait BatchPipeline: Send {
     /// A step encodes one pending block into the current channel, or closes a full channel
     /// and moves it to the submission queue. Call repeatedly until [`StepResult::Idle`].
     ///
-    /// Returns [`StepError`] if a block cannot be composed into a batch. This is fatal:
-    /// skipping the block would silently break the contiguous L2 block sequence required
+    /// Returns [`StepError`] if batch composition or channel finalization fails. This is
+    /// fatal: continuing could silently break the contiguous L2 block sequence required
     /// by the derivation spec. The caller must not continue and should surface the error.
     fn step(&mut self) -> Result<StepResult, StepError>;
 
@@ -85,6 +85,9 @@ pub trait BatchPipeline: Send {
     ///
     /// Intended for test harnesses that need to flush the current channel without
     /// simulating L1 time progression.
+    ///
+    /// Implementations that encounter a fatal close error surface it from the next
+    /// [`step`](Self::step) call because this method cannot return a result.
     fn force_close_channel(&mut self);
 
     /// Reset buffered encoding and submission state.

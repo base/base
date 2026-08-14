@@ -141,9 +141,8 @@ impl BatchEncoder {
     ///
     /// # Errors
     ///
-    /// Returns the first [`StepError`] encountered during encoding. On error the
-    /// encoder state is left as-is; previously ready submissions remain available
-    /// via [`BatchPipeline::next_submission`].
+    /// Returns the first [`StepError`] encountered during encoding. Previously ready
+    /// submissions remain available via [`BatchPipeline::next_submission`].
     pub fn encode_and_drain(&mut self) -> Result<Vec<Arc<Frame>>, StepError> {
         loop {
             match self.step()? {
@@ -243,32 +242,24 @@ impl BatchEncoder {
     }
 
     /// Close the currently open channel, drain its frames, and push it to `ready_channels`.
-    fn close_open_channel(&mut self, close_reason: &'static str) {
+    fn close_open_channel(&mut self, close_reason: &'static str) -> Result<(), StepError> {
         let Some(mut open) = self.current_channel.take() else {
-            return;
+            return Ok(());
         };
 
         // Capture stats before flushing so we can record metrics after draining.
         let input_bytes = open.out.input_bytes();
         let opened_at_l1 = open.opened_at_l1;
         let blocks_added = open.blocks_added;
-
-        // Flush and close the compressor.
-        let _ = open.out.flush();
-        open.out.close();
-
         let channel_id = open.out.id;
 
-        // Drain all frames from the channel.
+        // Build the complete frame list before publishing the ready channel.
+        open.out.flush()?;
+        open.out.close();
+
         let mut frames = Vec::new();
         while open.out.ready_bytes() > 0 {
-            match open.out.output_frame(self.config.max_frame_size) {
-                Ok(frame) => frames.push(Arc::new(frame)),
-                Err(e) => {
-                    warn!(error = %e, "failed to output frame during channel close");
-                    break;
-                }
-            }
+            frames.push(Arc::new(open.out.output_frame(self.config.max_frame_size)?));
         }
 
         let encoded_block_end = open.block_start.saturating_add(blocks_added);
@@ -315,6 +306,8 @@ impl BatchEncoder {
             first_confirmed_l1_block: None,
             last_confirmed_l1_block: None,
         });
+
+        Ok(())
     }
 
     /// Close the current channel, drain its frames, and push it to `ready_channels`.
@@ -330,8 +323,7 @@ impl BatchEncoder {
             return Ok(());
         }
 
-        self.close_open_channel(close_reason);
-        Ok(())
+        self.close_open_channel(close_reason)
     }
 
     /// Flush the span accumulator or close the current channel so the next step can retry.
@@ -341,7 +333,7 @@ impl BatchEncoder {
             return Ok(true);
         }
 
-        self.close_or_discard_after_failed_span_flush(had_open_channel, close_reason);
+        self.close_or_discard_after_failed_span_flush(had_open_channel, close_reason)?;
         Ok(false)
     }
 
@@ -350,13 +342,14 @@ impl BatchEncoder {
         &mut self,
         had_open_channel: bool,
         close_reason: &'static str,
-    ) {
+    ) -> Result<(), StepError> {
         if had_open_channel {
-            self.close_open_channel(close_reason);
+            self.close_open_channel(close_reason)?;
         } else if self.current_channel.is_some() {
             BatcherMetrics::channel_closed_total(BatcherMetrics::REASON_DISCARD).increment(1);
             self.current_channel = None;
         }
+        Ok(())
     }
 
     /// Store a fatal encoding error so the next [`BatchPipeline::step`] reports it.
@@ -1841,6 +1834,26 @@ mod tests {
         // Cursor must still be 0 — the block was not consumed.
         assert_eq!(encoder.block_cursor, 0);
         assert_eq!(encoder.blocks.len(), 1);
+    }
+
+    #[test]
+    fn test_channel_output_failure_does_not_publish_partial_channel() {
+        let config =
+            EncoderConfig { max_frame_size: Frame::ENCODED_OVERHEAD, ..EncoderConfig::default() };
+        let mut encoder = BatchEncoder::new(Arc::new(RollupConfig::default()), config);
+
+        encoder.add_block(make_block(B256::ZERO)).unwrap();
+        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
+
+        let err =
+            encoder.close_current_channel("force").expect_err("invalid frame size should fail");
+
+        assert!(matches!(
+            err,
+            StepError::ChannelOutputFailed(base_comp::ChannelOutError::MaxFrameSizeTooSmall)
+        ));
+        assert!(encoder.current_channel.is_none());
+        assert!(encoder.ready_channels.is_empty());
     }
 
     // --- Span batch tests ---

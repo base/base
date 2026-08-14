@@ -20,10 +20,9 @@ pub enum StepResult {
 /// Returned by [`BatchPipeline::step`](crate::BatchPipeline::step) when a block cannot be
 /// encoded and the pipeline cannot continue.
 ///
-/// Batch composition failure is fatal: a block that cannot be serialised into a
-/// [`SingleBatch`](base_protocol::batch::SingleBatch) would be silently absent
-/// from the submitted data, breaking the contiguous L2 block sequence required by the
-/// derivation spec. The batcher must halt rather than skip such a block.
+/// Encoding failures are fatal. Continuing after a block-composition, span-construction,
+/// or channel-output error could omit part of the contiguous L2 block sequence required
+/// by the derivation spec.
 #[derive(Debug, thiserror::Error)]
 pub enum StepError {
     /// The block could not be converted to a [`SingleBatch`].
@@ -55,4 +54,7 @@ pub enum StepError {
         #[source]
         source: ChannelOutError,
     },
+    /// A channel could not be finalized into frames.
+    #[error("failed to finalize channel: {0}")]
+    ChannelOutputFailed(#[from] ChannelOutError),
 }
