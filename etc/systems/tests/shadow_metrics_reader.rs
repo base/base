@@ -214,11 +214,16 @@ async fn skips_unwind_and_advances_cursor() -> Result<()> {
     Ok(())
 }
 
+/// Pins an accepted risk: one poison payload fails the whole poll and leaves the reader
+/// stuck without emitting valid neighbors or advancing until the row is repaired.
 #[tokio::test]
-async fn skips_poison_between_valid_rows_and_advances_cursor() -> Result<()> {
+async fn poison_payload_fails_the_whole_poll() -> Result<()> {
     let database = TestDatabase::start().await?;
     let mut reader = database.reader(DEFAULT_TEST_MAX_ROWS).await?;
     let repo = ShadowBlockRepo::new(database.pool.clone());
+    let cursor_repo = ShadowMetricsCursorRepo::new(database.pool.clone());
+    let initial_cursor =
+        cursor_repo.load().await?.expect("reader initialization persists a cursor");
     repo.insert_batch(&[ShadowBlockFixture::new(31).into_row(0x41, true, Some(0xb1))]).await?;
     sleep(Duration::from_millis(2)).await;
     sqlx::query(
@@ -235,15 +240,17 @@ async fn skips_poison_between_valid_rows_and_advances_cursor() -> Result<()> {
     sleep(Duration::from_millis(2)).await;
     repo.insert_batch(&[ShadowBlockFixture::new(33).into_row(0x43, true, Some(0xb3))]).await?;
 
-    let emitted = reader.poll_once().await?;
-    assert_eq!(emitted.iter().map(|stats| stats.number).collect::<Vec<_>>(), [31, 33]);
-    assert!(reader.poll_once().await?.is_empty());
-    let cursor = ShadowMetricsCursorRepo::new(database.pool.clone())
-        .load()
-        .await?
-        .expect("reader initialization persists a cursor");
-    assert_eq!(cursor.number, 33);
-    assert_eq!(cursor.hash, vec![0x43; 32]);
+    let error = reader.poll_once().await.expect_err("poison payload must fail the whole poll");
+    let error_chain = format!("{error:#}");
+    assert!(
+        error_chain.contains("payload")
+            && error_chain.contains("missing field")
+            && error_chain.contains("block"),
+        "unexpected poll error: {error_chain}"
+    );
+    assert_eq!(cursor_repo.load().await?, Some(initial_cursor.clone()));
+    assert!(reader.poll_once().await.is_err(), "reader must remain stuck before repair");
+    assert_eq!(cursor_repo.load().await?, Some(initial_cursor));
 
     Ok(())
 }

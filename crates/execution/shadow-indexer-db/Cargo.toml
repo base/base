@@ -22,7 +22,6 @@ base-common-consensus = { workspace = true, features = ["reth"] }
 # serialization
 serde.workspace = true
 chrono.workspace = true
-serde_json = { workspace = true, features = ["std"] }
 
 # async
 tokio.workspace = true

@@ -108,9 +108,13 @@ impl ShadowMetricsReader {
 
     /// Polls one batch, emits metrics, and returns the stats it emitted.
     ///
-    /// Pipeline unwinds and undecodable payloads advance the cursor but produce no
-    /// returned stats. Database failures leave the in-memory cursor unchanged so the
-    /// next call retries the same batch.
+    /// Pipeline unwinds advance the cursor but produce no returned stats. Payloads
+    /// deserialize during the sqlx fetch, so one incompatible payload fails the entire
+    /// poll before any row is emitted and leaves the cursor untouched. [`Self::run`]
+    /// counts that failure in `poll_errors_total` and retries the same batch, stalling
+    /// until the offending row is repaired or deleted. This is an accepted trade-off
+    /// for using one typed row shape. Other database failures have the same retry
+    /// behavior.
     ///
     /// # Errors
     ///
@@ -127,36 +131,25 @@ impl ShadowMetricsReader {
             let cursor = row.cursor();
             match row.canonical_hash.as_ref() {
                 None => ShadowMetrics::reverted_blocks_total().increment(1),
-                Some(_) => match row.decode_payload() {
-                    Ok(payload) => {
-                        let stats = ShadowBlockStats::from_payload(&payload);
-                        ShadowMetrics::gas_used(stats.builder_version.clone())
-                            .record(stats.gas_used as f64);
-                        ShadowMetrics::transaction_count(stats.builder_version.clone())
-                            .record(stats.transaction_count as f64);
-                        ShadowMetrics::priority_fee_inversions(stats.builder_version.clone())
-                            .record(stats.priority_fee_inversions as f64);
-                        ShadowMetrics::blocks_inspected_total().increment(1);
-                        if stats.non_deposit_tx_count == 0 {
-                            ShadowMetrics::empty_blocks_total().increment(1);
-                        }
+                Some(_) => {
+                    let stats = ShadowBlockStats::from_payload(&row.payload);
+                    ShadowMetrics::gas_used(stats.builder_version.clone())
+                        .record(stats.gas_used as f64);
+                    ShadowMetrics::transaction_count(stats.builder_version.clone())
+                        .record(stats.transaction_count as f64);
+                    ShadowMetrics::priority_fee_inversions(stats.builder_version.clone())
+                        .record(stats.priority_fee_inversions as f64);
+                    ShadowMetrics::blocks_inspected_total().increment(1);
+                    if stats.non_deposit_tx_count == 0 {
+                        ShadowMetrics::empty_blocks_total().increment(1);
+                    }
 
-                        if self.latest_block_number.is_none_or(|latest| stats.number > latest) {
-                            self.latest_block_number = Some(stats.number);
-                            ShadowMetrics::latest_block_number().set(stats.number as f64);
-                        }
-                        emitted.push(stats);
+                    if self.latest_block_number.is_none_or(|latest| stats.number > latest) {
+                        self.latest_block_number = Some(stats.number);
+                        ShadowMetrics::latest_block_number().set(stats.number as f64);
                     }
-                    Err(error) => {
-                        ShadowMetrics::payload_decode_errors_total().increment(1);
-                        error!(
-                            error = %error,
-                            number = row.number,
-                            hash = ?row.hash,
-                            "failed to decode shadow block payload; skipping"
-                        );
-                    }
-                },
+                    emitted.push(stats);
+                }
             }
             next_cursor = cursor;
         }

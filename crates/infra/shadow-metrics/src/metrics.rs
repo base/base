@@ -34,7 +34,4 @@ base_metrics::define_metrics! {
 
     #[describe("Total polling iterations that failed")]
     poll_errors_total: counter,
-
-    #[describe("Total shadow block payloads that failed to deserialize")]
-    payload_decode_errors_total: counter,
 }

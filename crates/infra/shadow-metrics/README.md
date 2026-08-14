@@ -13,9 +13,11 @@ Kubernetes-style `/readyz` probes. `base-shadow-indexer-db` owns and applies the
 shared schema.
 
 Emission happens before the cursor is persisted, making delivery at-least-once.
-`ShadowMetricsReader::run` never returns an error: undecodable payloads are
-counted and skipped, and database errors leave the cursor untouched so the next
-tick retries the same batch.
+`ShadowMetricsReader::run` never returns an error: database errors leave the
+cursor untouched so the next tick retries the same batch. Payloads deserialize
+during the database fetch, so one incompatible payload fails the entire poll,
+increments `poll_errors_total`, and stalls the reader until that row is repaired
+or deleted. This is an accepted trade-off for using one typed database row.
 
 ## Usage
 

@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, QueryBuilder, query_as, types::Json};
 
-use crate::{ShadowBlockCursor, ShadowBlockRawRow, ShadowBlockRow};
+use crate::{ShadowBlockCursor, ShadowBlockRow};
 
 /// Repository for shadow indexer block persistence.
 #[derive(Debug)]
@@ -113,13 +113,14 @@ impl ShadowBlockRepo {
     ///
     /// # Errors
     ///
-    /// Returns an error if the query fails.
+    /// Returns an error if the query fails. A payload that cannot deserialize into
+    /// `ShadowBlockPayload` fails the whole call.
     pub async fn list_reorged_since(
         &self,
         after: &ShadowBlockCursor,
         limit: i64,
-    ) -> Result<Vec<ShadowBlockRawRow>> {
-        let rows = query_as::<_, ShadowBlockRawRow>(
+    ) -> Result<Vec<ShadowBlockRow>> {
+        let rows = query_as::<_, ShadowBlockRow>(
             "SELECT number, hash, reorged_out, canonical_hash, created_at, updated_at, payload \
              FROM shadow_blocks \
              WHERE reorged_out = true \
