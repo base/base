@@ -5,9 +5,10 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use anyhow::Result;
 use audit_archiver_lib::{
     AuditArchiver, AuditArchiverApiServer, AuditArchiverRpc, DEFAULT_TRANSACTION_EVENT_BATCH_PATH,
+    DEFAULT_TRANSACTION_EVENT_COLD_RETENTION_DAYS, DEFAULT_TRANSACTION_EVENT_HOT_RETENTION_DAYS,
     DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE, DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES,
     DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
-    DEFAULT_TRANSACTION_EVENT_RETENTION_DAYS, Metrics, PgTransactionEventSink, RpcEventReader,
+    DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS, Metrics, PgTransactionEventSink, RpcEventReader,
     S3EventReaderWriter, TransactionEventIngestConfig, TransactionEventRetentionConfig,
 };
 use aws_config::{BehaviorVersion, Region};
@@ -133,13 +134,29 @@ struct Args {
     )]
     transaction_event_retention_interval_secs: u64,
 
-    /// Number of days to keep transaction events in Postgres.
+    /// Days to keep high-volume proxy and builder-decision events.
     #[arg(
         long,
-        env = "TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_DAYS",
-        default_value_t = DEFAULT_TRANSACTION_EVENT_RETENTION_DAYS
+        env = "TIPS_AUDIT_TRANSACTION_EVENT_HOT_RETENTION_DAYS",
+        default_value_t = DEFAULT_TRANSACTION_EVENT_HOT_RETENTION_DAYS
     )]
-    transaction_event_retention_days: u32,
+    transaction_event_hot_retention_days: u32,
+
+    /// Days to keep ingress, simulation-success, and txpool-forward events.
+    #[arg(
+        long,
+        env = "TIPS_AUDIT_TRANSACTION_EVENT_WARM_RETENTION_DAYS",
+        default_value_t = DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS
+    )]
+    transaction_event_warm_retention_days: u32,
+
+    /// Days to keep failures, drops, inclusion, and flashblock events.
+    #[arg(
+        long,
+        env = "TIPS_AUDIT_TRANSACTION_EVENT_COLD_RETENTION_DAYS",
+        default_value_t = DEFAULT_TRANSACTION_EVENT_COLD_RETENTION_DAYS
+    )]
+    transaction_event_cold_retention_days: u32,
 
     /// HTTP path for Vector transaction-event batch ingest.
     #[arg(
@@ -227,7 +244,9 @@ async fn run_server(args: Args) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("TIPS_AUDIT_S3_BUCKET must be set for serve"))?;
 
     let retention_config = TransactionEventRetentionConfig {
-        retention_days: args.transaction_event_retention_days,
+        hot_days: args.transaction_event_hot_retention_days,
+        warm_days: args.transaction_event_warm_retention_days,
+        cold_days: args.transaction_event_cold_retention_days,
         ..TransactionEventRetentionConfig::default()
     }
     .validate()?;
@@ -240,7 +259,9 @@ async fn run_server(args: Args) -> Result<()> {
         rpc_port = args.rpc_port,
         transaction_event_http_path = %args.transaction_event_http_path,
         transaction_event_http_enabled = args.postgres_url.is_some(),
-        transaction_event_retention_days = retention_config.retention_days,
+        transaction_event_hot_retention_days = retention_config.hot_days,
+        transaction_event_warm_retention_days = retention_config.warm_days,
+        transaction_event_cold_retention_days = retention_config.cold_days,
         transaction_event_retention_interval_secs = retention_interval.as_secs(),
         rpc_cache_capacity = args.rpc_cache_capacity,
         rpc_cache_ttl_secs = args.rpc_cache_ttl_secs,
@@ -351,6 +372,9 @@ async fn run_retention_worker(
             Ok(outcome) if outcome.rows_deleted > 0 => {
                 info!(
                     rows_deleted = outcome.rows_deleted,
+                    hot_rows_deleted = outcome.hot_rows_deleted,
+                    warm_rows_deleted = outcome.warm_rows_deleted,
+                    cold_rows_deleted = outcome.cold_rows_deleted,
                     batches = outcome.batches,
                     "transaction event retention deleted expired rows"
                 );

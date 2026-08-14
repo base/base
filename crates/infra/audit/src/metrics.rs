@@ -55,6 +55,7 @@ base_metrics::define_metrics! {
     #[describe("Duration of transaction observability Postgres batch writes")]
     transaction_event_batch_write_duration: histogram,
     #[describe("Expired transaction observability rows deleted from Postgres")]
+    #[label(name = "retention_class", default = ["hot", "warm", "cold"])]
     transaction_events_expired: counter,
     #[describe("Transaction observability retention delete failures")]
     transaction_event_retention_failures: counter,

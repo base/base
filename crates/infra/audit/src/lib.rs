@@ -36,15 +36,17 @@ pub use storage::{
 
 mod transaction_events;
 pub use transaction_events::{
-    DEFAULT_TRANSACTION_EVENT_BATCH_PATH, DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE,
+    DEFAULT_TRANSACTION_EVENT_BATCH_PATH, DEFAULT_TRANSACTION_EVENT_COLD_RETENTION_DAYS,
+    DEFAULT_TRANSACTION_EVENT_HOT_RETENTION_DAYS, DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE,
     DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES,
     DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES, DEFAULT_TRANSACTION_EVENT_QUERY_LIMIT,
-    DEFAULT_TRANSACTION_EVENT_RETENTION_DAYS, MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE,
+    DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS, MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE,
     MAX_TRANSACTION_EVENT_QUERY_LIMIT, PgTransactionEventSink, RejectedTransactionEventQuery,
     TransactionEventBatchResponse, TransactionEventBatchStatus, TransactionEventIngestConfig,
     TransactionEventInsertOutcome, TransactionEventItemResult, TransactionEventItemStatus,
-    TransactionEventRecord, TransactionEventRetentionConfig, TransactionEventRetentionOutcome,
-    TransactionEventSchemaReadinessError, TransactionEventSink, TransactionEventStorageError,
+    TransactionEventRecord, TransactionEventRetentionClass, TransactionEventRetentionConfig,
+    TransactionEventRetentionOutcome, TransactionEventSchemaReadinessError, TransactionEventSink,
+    TransactionEventStorageError,
 };
 
 mod types;

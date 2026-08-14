@@ -12,9 +12,11 @@ one event JSON object per line, not a wrapped JSON batch.
 ## Postgres Retention
 
 `audit-archiver` stores events in Postgres for operational queries. Postgres is
-not the long-term archive. A background worker deletes rows whose `ingested_at`
-is older than the configured retention window (default 90 days). Autovacuum
-reclaims the resulting table bloat.
+not the long-term archive. A background worker deletes rows by event type:
+high-volume proxy and builder-decision events default to 3 days, ingress and
+forwarding events default to 7 days, and failures, drops, inclusion, and
+flashblock events default to 30 days. Autovacuum reclaims the resulting table
+bloat.
 
 ## Configuration Fields
 
