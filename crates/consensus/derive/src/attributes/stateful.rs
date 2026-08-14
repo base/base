@@ -1,6 +1,6 @@
 //! The [`AttributesBuilder`] and it's default implementation.
 
-use alloc::{boxed::Box, fmt::Debug, format, string::ToString, sync::Arc, vec, vec::Vec};
+use alloc::{boxed::Box, fmt::Debug, string::ToString, sync::Arc, vec, vec::Vec};
 
 use alloy_consensus::{Eip658Value, Receipt};
 use alloy_eips::{BlockNumHash, eip2718::Encodable2718};
@@ -13,10 +13,7 @@ use base_common_consensus::{BaseBlock, Predeploys};
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_consensus_upgrades::{Upgrade, Upgrades};
-use base_protocol::{
-    BaseTimeUpdateTx, BatchValidationProvider, Deposits, L1BlockInfoTx, L2BlockInfo,
-    to_system_config,
-};
+use base_protocol::{BaseTimeUpdateTx, Deposits, L1BlockInfoTx, L2BlockInfo, to_system_config};
 use tracing::warn;
 
 use crate::{
@@ -67,7 +64,6 @@ impl<L1P, L2P> AttributesBuilder for StatefulAttributesBuilder<L1P, L2P>
 where
     L1P: ChainProvider + Debug + Send,
     L2P: L2ChainProvider + Debug + Send,
-    <L2P as BatchValidationProvider>::Error: Into<PipelineErrorKind>,
 {
     async fn prepare_payload_attributes(
         &mut self,
@@ -100,34 +96,11 @@ where
                 }
             }) {
             Some(config) => config,
-            None => {
-                let block = self
-                    .config_fetcher
-                    .block_by_number(l2_parent.block_info.number)
-                    .await
-                    .map_err(Into::into)?;
-                let block_hash = block.header.hash_slow();
-                if block_hash != l2_parent.block_info.hash {
-                    return Err(PipelineErrorKind::Reset(
-                        BuilderError::BlockMismatch(
-                            BlockNumHash {
-                                number: l2_parent.block_info.number,
-                                hash: l2_parent.block_info.hash,
-                            },
-                            BlockNumHash { number: block.header.number, hash: block_hash },
-                        )
-                        .into(),
-                    ));
-                }
-                to_system_config(&block, &self.rollup_cfg).map_err(|err| {
-                    warn!(target: "attributes", error = ?err, number = block.header.number, "Failed to decode system config from parent block");
-                    PipelineError::Provider(format!(
-                        "system config conversion failed for block {}",
-                        block.header.number
-                    ))
-                    .temp()
-                })?
-            }
+            None => self
+                .config_fetcher
+                .system_config_by_number(l2_parent.block_info.number, Arc::clone(&self.rollup_cfg))
+                .await
+                .map_err(Into::into)?,
         };
 
         // If the L1 origin changed in this block, then we are in the first block of the epoch.
@@ -1004,14 +977,11 @@ mod tests {
         Sealed::new_unchecked(block, hash)
     }
 
-    /// Installs a decodable block built from `header` into the fetcher and returns its hash:
-    /// the EL fallback verifies the fetched block's hash against the parent hash, so tests
-    /// exercising it need the parent hash to be a real block hash.
+    /// Registers a fallback [`SystemConfig`] for `header`'s block number and returns the
+    /// header's hash to use as the L2 parent hash.
     fn fallback_parent(fetcher: &mut TestSystemConfigL2Fetcher, header: Header) -> B256 {
-        let block = seedable_block(header);
-        let hash = block.header.hash_slow();
-        fetcher.insert_block(block.header.number, block);
-        hash
+        fetcher.insert(header.number, SystemConfig::default());
+        header.hash_slow()
     }
 
     #[tokio::test]
@@ -1025,14 +995,14 @@ mod tests {
         l2_parent.block_info.hash = parent.hash();
         builder.config_fetcher.clear();
         builder.prepare_payload_attributes(l2_parent, epoch, Some(&parent)).await.unwrap();
-        assert!(builder.config_fetcher.block_calls.is_empty());
+        assert!(builder.config_fetcher.system_config_calls.is_empty());
     }
 
     #[tokio::test]
     async fn test_missing_parent_block_falls_back_to_el() {
         let (mut builder, epoch, l2_parent) = transition_setup();
         builder.prepare_payload_attributes(l2_parent, epoch, None).await.unwrap();
-        assert_eq!(builder.config_fetcher.block_calls, vec![1]);
+        assert_eq!(builder.config_fetcher.system_config_calls, vec![1]);
     }
 
     #[tokio::test]
@@ -1040,24 +1010,7 @@ mod tests {
         let (mut builder, epoch, l2_parent) = transition_setup();
         let other = sealed_block(seedable_block(Header { number: 99, ..Default::default() }));
         builder.prepare_payload_attributes(l2_parent, epoch, Some(&other)).await.unwrap();
-        assert_eq!(builder.config_fetcher.block_calls, vec![1]);
-    }
-
-    /// A fallback read that returns a different block than the parent being built on (e.g. the
-    /// EL reorged between the parent being chosen and the read) must reset instead of using
-    /// another block's config.
-    #[tokio::test]
-    async fn test_fallback_block_hash_mismatch_resets() {
-        let (mut builder, epoch, mut l2_parent) = transition_setup();
-        l2_parent.block_info.hash = B256::left_padding_from(&[0xAA]);
-        let err = builder.prepare_payload_attributes(l2_parent, epoch, None).await.unwrap_err();
-        assert!(matches!(
-            err,
-            PipelineErrorKind::Reset(ResetError::AttributesBuilder(BuilderError::BlockMismatch(
-                _,
-                _
-            )))
-        ));
+        assert_eq!(builder.config_fetcher.system_config_calls, vec![1]);
     }
 
     #[tokio::test]
@@ -1073,7 +1026,7 @@ mod tests {
         let payload =
             builder.prepare_payload_attributes(l2_parent, epoch, Some(&parent)).await.unwrap();
         assert_eq!(payload.gas_limit, Some(40_000_000));
-        assert!(builder.config_fetcher.block_calls.is_empty());
+        assert!(builder.config_fetcher.system_config_calls.is_empty());
     }
 
     #[tokio::test]
@@ -1086,7 +1039,7 @@ mod tests {
         });
         assert_eq!(undecodable.hash(), l2_parent.block_info.hash);
         builder.prepare_payload_attributes(l2_parent, epoch, Some(&undecodable)).await.unwrap();
-        assert_eq!(builder.config_fetcher.block_calls, vec![1]);
+        assert_eq!(builder.config_fetcher.system_config_calls, vec![1]);
     }
 
     /// Crossing a fork that changes the system config encoding (here Holocene, which moves the
@@ -1143,6 +1096,6 @@ mod tests {
             payload.eip_1559_params,
             Some(B64::from_slice(&[250_u32.to_be_bytes(), 6_u32.to_be_bytes()].concat()))
         );
-        assert!(builder.config_fetcher.block_calls.is_empty());
+        assert!(builder.config_fetcher.system_config_calls.is_empty());
     }
 }

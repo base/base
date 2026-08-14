@@ -21,10 +21,6 @@ pub struct TestSystemConfigL2Fetcher {
     pub system_configs: HashMap<u64, SystemConfig>,
     /// The block numbers for which the system config was requested, in call order.
     pub system_config_calls: Vec<u64>,
-    /// A map from [u64] block number to a [`BaseBlock`].
-    pub blocks: HashMap<u64, BaseBlock>,
-    /// The block numbers for which a block was requested, in call order.
-    pub block_calls: Vec<u64>,
 }
 
 impl TestSystemConfigL2Fetcher {
@@ -33,15 +29,9 @@ impl TestSystemConfigL2Fetcher {
         self.system_configs.insert(number, config);
     }
 
-    /// Inserts a new block into the mock fetcher with the given block number.
-    pub fn insert_block(&mut self, number: u64, block: BaseBlock) {
-        self.blocks.insert(number, block);
-    }
-
-    /// Clears all system configs and blocks from the mock fetcher.
+    /// Clears all system configs from the mock fetcher.
     pub fn clear(&mut self) {
         self.system_configs.clear();
-        self.blocks.clear();
     }
 }
 
@@ -51,9 +41,6 @@ pub enum TestSystemConfigL2FetcherError {
     /// The system config was not found.
     #[error("system config not found: {0}")]
     NotFound(u64),
-    /// The block was not found.
-    #[error("block not found: {0}")]
-    BlockNotFound(u64),
 }
 
 impl From<TestSystemConfigL2FetcherError> for PipelineErrorKind {
@@ -66,12 +53,8 @@ impl From<TestSystemConfigL2FetcherError> for PipelineErrorKind {
 impl BatchValidationProvider for TestSystemConfigL2Fetcher {
     type Error = TestSystemConfigL2FetcherError;
 
-    async fn block_by_number(&mut self, number: u64) -> Result<BaseBlock, Self::Error> {
-        self.block_calls.push(number);
-        self.blocks
-            .get(&number)
-            .cloned()
-            .ok_or(TestSystemConfigL2FetcherError::BlockNotFound(number))
+    async fn block_by_number(&mut self, _: u64) -> Result<BaseBlock, Self::Error> {
+        unimplemented!()
     }
 
     async fn l2_block_info_by_number(&mut self, _: u64) -> Result<L2BlockInfo, Self::Error> {

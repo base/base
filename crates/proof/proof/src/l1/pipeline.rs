@@ -43,7 +43,6 @@ where
     L1: ChainProvider + Send + Sync + Debug + Clone,
     L2: L2ChainProvider + Send + Sync + Debug + Clone,
     DA: DataAvailabilityProvider + Send + Sync + Debug + Clone,
-    <L2 as BatchValidationProvider>::Error: Into<PipelineErrorKind>,
 {
     /// The internal derivation pipeline.
     pub pipeline: ProviderDerivationPipeline<L1, L2, DA>,
@@ -57,7 +56,6 @@ where
     L1: ChainProvider + Send + Sync + Debug + Clone,
     L2: L2ChainProvider + Send + Sync + Debug + Clone,
     DA: DataAvailabilityProvider + Send + Sync + Debug + Clone,
-    <L2 as BatchValidationProvider>::Error: Into<PipelineErrorKind>,
 {
     /// Constructs a new oracle-backed derivation pipeline.
     pub async fn new(
@@ -68,7 +66,10 @@ where
         da_provider: DA,
         chain_provider: L1,
         l2_chain_provider: L2,
-    ) -> PipelineResult<Self> {
+    ) -> PipelineResult<Self>
+    where
+        <L2 as BatchValidationProvider>::Error: Into<PipelineErrorKind>,
+    {
         let attributes = StatefulAttributesBuilder::new(
             Arc::clone(&cfg),
             l1_cfg,
@@ -187,7 +188,6 @@ where
     L1: ChainProvider + Send + Sync + Debug + Clone,
     L2: L2ChainProvider + Send + Sync + Debug + Clone,
     DA: DataAvailabilityProvider + Send + Sync + Debug + Clone,
-    <L2 as BatchValidationProvider>::Error: Into<PipelineErrorKind>,
 {
     /// Returns the optional L1 [`BlockInfo`] origin.
     fn origin(&self) -> Option<BlockInfo> {
@@ -201,7 +201,6 @@ where
     L1: ChainProvider + Send + Sync + Debug + Clone,
     L2: L2ChainProvider + Send + Sync + Debug + Clone,
     DA: DataAvailabilityProvider + Send + Sync + Debug + Clone,
-    <L2 as BatchValidationProvider>::Error: Into<PipelineErrorKind>,
 {
     type Item = AttributesWithParent;
 
@@ -217,7 +216,6 @@ where
     L1: ChainProvider + Send + Sync + Debug + Clone,
     L2: L2ChainProvider + Send + Sync + Debug + Clone,
     DA: DataAvailabilityProvider + Send + Sync + Debug + Clone,
-    <L2 as BatchValidationProvider>::Error: Into<PipelineErrorKind>,
 {
     /// Peeks at the next [`AttributesWithParent`] from the pipeline.
     fn peek(&self) -> Option<&AttributesWithParent> {
