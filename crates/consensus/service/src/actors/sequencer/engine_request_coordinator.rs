@@ -495,6 +495,15 @@ where
                                     );
                                     self.processor
                                         .enqueue_unsafe_payload_insert(*envelope, None, false);
+                                    if self.sequencer_sync_mode.is_el()
+                                        && !self.processor.engine_state().el_sync_finished
+                                    {
+                                        // External unsafe payloads provide reth with the target it
+                                        // needs to begin EL sync. Drain this payload immediately;
+                                        // the normal loop intentionally clears queued derivation
+                                        // work while EL sync is pending.
+                                        self.processor.drain().await?;
+                                    }
                                 } else {
                                     info!(
                                         target: "engine",

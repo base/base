@@ -273,3 +273,47 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
         Ok(Some(attrs_with_parent))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use base_common_genesis::RollupConfig;
+    use base_common_rpc_types_engine::BasePayloadAttributes;
+    use base_consensus_derive::test_utils::TestAttributesBuilder;
+    use base_consensus_engine::{BuildTaskError, EngineBuildError};
+    use base_protocol::{BlockInfo, L2BlockInfo};
+
+    use super::{BuildOutcome, PayloadBuilder};
+    use crate::{
+        EngineClientError, MockOriginSelector, MockSequencerEngineClient,
+        actors::sequencer::RecoveryModeGuard,
+    };
+
+    #[tokio::test]
+    async fn engine_syncing_defers_build() {
+        let mut origin_selector = MockOriginSelector::new();
+        origin_selector.expect_next_l1_origin().once().return_once(|_| Ok(BlockInfo::default()));
+
+        let mut engine_client = MockSequencerEngineClient::new();
+        engine_client.expect_start_build_block().once().return_once(|_| {
+            Err(EngineClientError::StartBuildError(BuildTaskError::EngineBuildError(
+                EngineBuildError::EngineSyncing,
+            )))
+        });
+
+        let mut builder = PayloadBuilder {
+            attributes_builder: TestAttributesBuilder {
+                attributes: vec![Ok(BasePayloadAttributes::default())],
+            },
+            engine_client: Arc::new(engine_client),
+            origin_selector,
+            recovery_mode: RecoveryModeGuard::new(false),
+            rollup_config: Arc::new(RollupConfig::default()),
+        };
+
+        let outcome = builder.build_on(L2BlockInfo::default()).await.unwrap();
+
+        assert!(matches!(outcome, BuildOutcome::Deferred));
+    }
+}
