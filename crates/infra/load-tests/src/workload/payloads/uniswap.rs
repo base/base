@@ -2,11 +2,15 @@ use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, Bytes, U160, U256, Uint};
 use alloy_rpc_types::TransactionRequest;
 use alloy_sol_types::{SolCall, sol};
+use async_trait::async_trait;
 
 type U24 = Uint<24, 1>;
 
 use super::Payload;
-use crate::workload::SeededRng;
+use crate::{
+    Result,
+    workload::{SeededRng, chain_prep::ChainPrepContext},
+};
 
 sol! {
     interface IUniswapV3Router {
@@ -67,6 +71,7 @@ impl UniswapV3Payload {
     }
 }
 
+#[async_trait]
 impl Payload for UniswapV3Payload {
     fn name(&self) -> &'static str {
         "uniswap_v3"
@@ -74,6 +79,13 @@ impl Payload for UniswapV3Payload {
 
     fn uses_runner_recipient(&self) -> bool {
         false
+    }
+
+    async fn prepare(&self, ctx: &mut ChainPrepContext<'_>) -> Result<()> {
+        if let Some(setup) = ctx.real_token_setup {
+            super::real_token_lifecycle::prepare(ctx, setup).await?;
+        }
+        Ok(())
     }
 
     fn generate(&self, rng: &mut SeededRng, from: Address, _to: Address) -> TransactionRequest {

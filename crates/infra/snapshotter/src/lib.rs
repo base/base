@@ -24,8 +24,8 @@ pub use tip::{RpcTipChecker, TipChecker, TipStatus};
 
 mod snapshot;
 pub use snapshot::{
-    ChunkFilename, ChunkedArchive, ComponentManifest, OutputFileChecksum, SingleArchive,
-    SnapshotGenerator, SnapshotManifest, SnapshotManifestExt,
+    ChunkFilename, ChunkedArchive, ComponentManifest, ManifestGenerationParams, OutputFileChecksum,
+    SingleArchive, SnapshotGenerator, SnapshotManifest, SnapshotManifestExt,
 };
 
 mod upload;

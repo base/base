@@ -170,6 +170,7 @@ impl Checkpoint {
                     session_id: session_id.clone(),
                     request: ProofRequestKind::SnarkPlonk(snark_request),
                 },
+                retry_failed: true,
             })
             .await
             .context("failed to submit proveBlockRange")?;
@@ -364,10 +365,9 @@ impl AnvilPatch {
             encode_extra_data(info.l2_block_number, info.parent_address, &patched_roots);
         let patched_uuid = Self::game_uuid(config.game_type, info.root_claim, &patched_extra);
 
-        let factory = DisputeGameFactoryContractClient::new(
-            config.dispute_game_factory,
-            config.l1_rpc_url.clone(),
-        )?;
+        let provider: RootProvider = RootProvider::new_http(config.l1_rpc_url.clone());
+        let factory =
+            DisputeGameFactoryContractClient::new(config.dispute_game_factory, provider.clone());
         let original_lookup = factory
             .games(config.game_type, info.root_claim, original_extra)
             .await
@@ -379,7 +379,6 @@ impl AnvilPatch {
             );
         }
 
-        let provider: RootProvider = RootProvider::new_http(config.l1_rpc_url.clone());
         let (mapping_slot, packed_game_id) = Self::find_mapping_slot(
             &provider,
             config.dispute_game_factory,

@@ -96,15 +96,18 @@ impl LighthouseBeaconContainer {
     pub fn internal_beacon_url(&self) -> String {
         format!("http://{}:{}", self.name, L1_BEACON_HTTP_PORT)
     }
+
+    /// Stops the beacon node so it cannot overwrite a test-controlled execution forkchoice.
+    pub async fn stop(&self) -> Result<()> {
+        self.container.stop().await?;
+        Ok(())
+    }
 }
 
 /// Lighthouse validator client container wrapper.
 #[derive(Debug)]
 pub struct LighthouseValidatorContainer {
-    #[allow(dead_code)]
     container: ContainerAsync<GenericImage>,
-    #[allow(dead_code)]
-    name: String,
 }
 
 impl LighthouseValidatorContainer {
@@ -148,7 +151,13 @@ impl LighthouseValidatorContainer {
             .start()
             .await?;
 
-        Ok(Self { container, name })
+        Ok(Self { container })
+    }
+
+    /// Stops the validator before its beacon node is stopped for fault injection.
+    pub async fn stop(&self) -> Result<()> {
+        self.container.stop().await?;
+        Ok(())
     }
 }
 

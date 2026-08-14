@@ -26,7 +26,8 @@ use tracing::debug;
 
 use crate::{
     Admission, BasePooledTx, BaseTransactionValidator, GuardLimits, GuardMetrics,
-    InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard, StateDiffInvalidation,
+    InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard, ParkableBestTransactions,
+    ParkableTransactionPool, ParkedBestTransactions, StateDiffInvalidation,
     best::MergeBestTransactions,
     two_d_nonce_pool::{InsertOutcome, TwoDNoncePool},
 };
@@ -1339,6 +1340,30 @@ where
     }
 }
 
+impl<Client, S, Evm, T, O> ParkableTransactionPool for BaseTransactionPool<Client, S, Evm, T, O>
+where
+    Client: 'static,
+    Evm: 'static,
+    BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
+    T: BasePooledTx + reth_transaction_pool::EthPoolTransaction + 'static,
+    O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
+    S: BlobStore + Clone,
+{
+    fn best_transactions_with_attributes_and_parking(
+        &self,
+        attributes: BestTransactionsAttributes,
+    ) -> Box<dyn ParkableBestTransactions<Self::Transaction>> {
+        let base_fee = attributes.basefee;
+        let merged = MergeBestTransactions::new(
+            self.protocol_pool.best_transactions_with_attributes(attributes),
+            Box::new(self.nonce_pool.read().best_transactions(self.ordering.clone(), base_fee)),
+            self.ordering.clone(),
+            base_fee,
+        );
+        Box::new(ParkedBestTransactions::new(merged, self.ordering.clone(), base_fee))
+    }
+}
+
 impl<Client, S, Evm, T, O> TransactionPoolExt for BaseTransactionPool<Client, S, Evm, T, O>
 where
     Client: 'static,
@@ -1375,7 +1400,9 @@ where
         {
             let mut nonce_pool = self.nonce_pool.write();
             let pruned = nonce_pool.prune_mined(&mined_transactions);
-            let expired = nonce_pool.remove_expired_nonce_free(now);
+            // The nonce-free validity window is in milliseconds, evaluated
+            // against `block.timestamp * 1000`.
+            let expired = nonce_pool.remove_expired_nonce_free(now.saturating_mul(1_000));
             let mut listeners = self.listeners.write();
             if !pruned.removed.is_empty() {
                 listeners.on_mined(&pruned.removed, block_hash);
@@ -1749,7 +1776,7 @@ mod tests {
         signer: &PrivateKeySigner,
         nonce_key: U256,
         nonce_sequence: u64,
-        expiry: u64,
+        valid_before: u64,
         max_fee_per_gas: u128,
         gas_limit: u64,
     ) -> BasePooledTransaction {
@@ -1758,7 +1785,8 @@ mod tests {
             sender: None,
             nonce_key,
             nonce_sequence,
-            expiry,
+            valid_after: 0,
+            valid_before,
             max_priority_fee_per_gas: 0,
             max_fee_per_gas,
             gas_limit,

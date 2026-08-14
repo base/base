@@ -6,9 +6,9 @@ use std::{
 };
 
 use async_trait::async_trait;
-use base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL;
 use base_proof_succinct_proof_utils::get_range_elf_embedded;
 use base_proof_zk_host::{ZkProver, ZkProverError, ZkSessionState};
+use base_proof_zk_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL;
 use base_prover_service_protocol::{
     ExecutionStats, ProofResult, SessionType, SnarkPlonkProofRequest, SnarkPlonkProofResult,
     ZkProofRequest, ZkProofResult, ZkVm,

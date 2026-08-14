@@ -14,10 +14,11 @@ use base_cli_utils::RuntimeManager;
 use indicatif::MultiProgress;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+use tracing::info;
 
 use crate::{
-    BaselineError, LoadConfig, LoadRunner, LoadTestDisplay, MetricsSummary, RealTokenSetup, Result,
-    RpcProviders, RpcResultExt, TestConfig,
+    BaselineError, LoadConfig, LoadRunner, LoadTestDisplay, LoadTestStage, MetricsSummary,
+    RealTokenSetup, Result, RpcProviders, RpcResultExt, TestConfig,
 };
 
 /// Runtime options for a load-test execution.
@@ -27,6 +28,8 @@ pub struct LoadTestRunOptions {
     pub continuous: bool,
     /// Install signal handlers that ask the runner to stop gracefully.
     pub install_signal_handler: bool,
+    /// Skip draining native ETH balances back to the funder account.
+    pub skip_drain: bool,
 }
 
 /// Caller-supplied hooks for a prepared load-test run.
@@ -177,20 +180,25 @@ impl LoadTestExecutor {
         let (summary, run_error) = match run_result {
             Ok(summary) => (summary, None),
             Err(error) => {
-                let summary = MetricsSummary {
+                // Prefer stats the runner already collected before failing (e.g. an
+                // open-loop enqueue timeout after transactions were submitted) over an
+                // all-zero summary, so callers still see real throughput/confirmations.
+                let summary = runner.take_partial_summary().unwrap_or_else(|| MetricsSummary {
                     config: Some(config_summary),
                     error: Some(error.to_string()),
                     ..MetricsSummary::default()
-                };
+                });
                 (summary, Some(error))
             }
         };
 
         // Cleanup must run even if the caller hook panics, or funded accounts can leak ETH.
+        runner.set_display_stage(LoadTestStage::Cleanup);
         let hook_panic = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            (hooks.before_cleanup)(&summary);
+            runner.suspend_display(|| (hooks.before_cleanup)(&summary));
         }));
-        let cleanup = Self::cleanup(&runner, funding_key).await;
+        let cleanup = Self::cleanup(&runner, funding_key, options.skip_drain).await;
+        runner.finish_display();
         if let Err(payload) = hook_panic {
             std::panic::resume_unwind(payload);
         }
@@ -205,23 +213,25 @@ impl LoadTestExecutor {
         setup: LoadTestSetupAmounts,
         display: Option<LoadTestDisplayConfig>,
     ) -> Result<MetricsSummary> {
-        if runner.txpool_node_count() > 0 {
-            println!("Clearing txpool sender transactions...");
-            let removed = runner.clear_txpools().await?;
-            println!("Txpool clearing complete. Removed {removed} transaction(s).");
-        }
-
-        println!("Funding test accounts...");
-        runner.fund_accounts(funding_key.clone(), setup.funding).await?;
-        println!("Accounts funded.");
-
-        Self::setup_tokens(runner, funding_key, &setup).await?;
-
-        println!();
-        println!("Running load test...");
         if let Some(display) = display {
             runner.set_display(LoadTestDisplay::new(&display.multi_progress, display.duration));
         }
+        runner.set_display_stage(LoadTestStage::Setup);
+
+        if runner.txpool_node_count() > 0 {
+            info!(stage = LoadTestStage::Setup.as_str(), "clearing txpool sender transactions");
+            let removed = runner.clear_txpools().await?;
+            info!(stage = LoadTestStage::Setup.as_str(), removed, "txpool clearing complete");
+        }
+
+        info!(stage = LoadTestStage::Setup.as_str(), "funding test accounts");
+        runner.fund_accounts(funding_key.clone(), setup.funding).await?;
+        info!(stage = LoadTestStage::Setup.as_str(), "accounts funded");
+
+        Self::setup_tokens(runner, funding_key, &setup).await?;
+
+        runner.set_display_stage(LoadTestStage::Submitting);
+        info!(stage = LoadTestStage::Submitting.as_str(), "running load test");
         runner.run().await
     }
 
@@ -231,20 +241,16 @@ impl LoadTestExecutor {
         funding_key: &PrivateKeySigner,
         setup: &LoadTestSetupAmounts,
     ) -> Result<()> {
-        if let Some(real_token_setup) = setup.real_token_setup.as_ref() {
-            println!("Preparing real-token swap balances...");
-            runner.setup_real_tokens(real_token_setup).await?;
-            println!("Real-token swap balances prepared.");
-        } else if !runner.collect_swap_tokens().is_empty() {
-            println!("Distributing swap tokens...");
+        if setup.real_token_setup.is_none() && !runner.collect_swap_tokens().is_empty() {
+            info!(stage = LoadTestStage::Setup.as_str(), "distributing swap tokens");
             runner.setup_swap_tokens(funding_key.clone(), setup.swap_token).await?;
-            println!("Swap tokens distributed.");
+            info!(stage = LoadTestStage::Setup.as_str(), "swap tokens distributed");
         }
 
-        if runner.needs_b20_setup() {
-            println!("Setting up B-20 tokens...");
-            runner.setup_b20_tokens(setup.b20_mint).await?;
-            println!("B-20 tokens ready.");
+        if setup.real_token_setup.is_some() || runner.needs_b20_setup() {
+            info!(stage = LoadTestStage::Setup.as_str(), "preparing payload chain state");
+            runner.prepare_payloads(setup.b20_mint, setup.real_token_setup.as_ref()).await?;
+            info!(stage = LoadTestStage::Setup.as_str(), "payload chain state ready");
         }
 
         Ok(())
@@ -254,6 +260,7 @@ impl LoadTestExecutor {
     pub async fn cleanup(
         runner: &LoadRunner,
         funding_key: PrivateKeySigner,
+        skip_drain: bool,
     ) -> LoadTestCleanupSummary {
         tokio::time::sleep(Duration::from_secs(2)).await;
 
@@ -261,7 +268,7 @@ impl LoadTestExecutor {
         if runner.needs_b20_setup() {
             println!("Burning remaining B-20 tokens...");
             summary.b20_teardown_attempted = true;
-            match runner.teardown_b20_tokens().await {
+            match runner.teardown_payloads().await {
                 Ok(()) => println!("B-20 teardown complete."),
                 Err(error) => {
                     eprintln!("Warning: B-20 teardown failed: {error}");
@@ -271,15 +278,19 @@ impl LoadTestExecutor {
         }
 
         println!();
-        println!("Draining accounts back to funder...");
-        match runner.drain_accounts(funding_key).await {
-            Ok(drained) => {
-                println!("Drained {} ETH back to funder.", format_ether(drained));
-                summary.drained = Some(drained);
-            }
-            Err(error) => {
-                eprintln!("Warning: drain failed: {error}");
-                summary.drain_error = Some(error.to_string());
+        if skip_drain {
+            println!("Skipping drain due to --skip-drain.");
+        } else {
+            println!("Draining accounts back to funder...");
+            match runner.drain_accounts(funding_key).await {
+                Ok(drained) => {
+                    println!("Drained {} ETH back to funder.", format_ether(drained));
+                    summary.drained = Some(drained);
+                }
+                Err(error) => {
+                    eprintln!("Warning: drain failed: {error}");
+                    summary.drain_error = Some(error.to_string());
+                }
             }
         }
 

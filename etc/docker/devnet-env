@@ -143,6 +143,7 @@ SEQ2_P2P_KEY=47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a
 L1_RPC_URL=http://localhost:4545
 L1_WS_URL=ws://localhost:4546
 L1_BEACON_URL=http://localhost:4052
+L1_CONTAINER_BEACON_URL=http://l1-cl:4052
 L2_BUILDER_RPC_URL=http://localhost:7545
 L2_BUILDER_WS_URL=ws://localhost:7546
 L2_BUILDER_OP_RPC_URL=http://localhost:7549
@@ -194,9 +195,14 @@ L2_BASE_BERYL_BLOCK=21
 # Optional: set to a non-negative block number to schedule Base Cobalt in devnet.
 # Leave unset to avoid setting base.cobalt during genesis generation.
 L2_BASE_COBALT_BLOCK=22
-# Optional: set to a non-negative block number to schedule Base Zenith in devnet.
+# Optional: set to a non-negative block number to schedule Base Denim in devnet.
+# `just devnet up` defaults this to 23; set it to an empty value to leave base.denim unset.
+# L2_BASE_DENIM_BLOCK=23
+# Optional: set to a non-negative block number to schedule the genesis-only Base Zenith gate
+# used for future hardfork feature testing. `just devnet up zenith` defaults this to 50,
+# after the Denim default so it does not conflict with earlier activations.
 # Leave unset to avoid setting base.zenith during genesis generation.
-# L2_BASE_ZENITH_BLOCK=23
+# L2_BASE_ZENITH_BLOCK=50
 
 # Metering Resource Limits
 # Whole-block budgets for gas and DA.

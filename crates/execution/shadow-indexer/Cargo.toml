@@ -1,0 +1,44 @@
+[package]
+name = "base-shadow-indexer"
+description = "Shadow indexer ExEx for capturing executed blocks"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# workspace
+base-node-runner.workspace = true
+base-shadow-indexer-db = { path = "../shadow-indexer-db" }
+base-common-consensus = { workspace = true, features = ["reth"] }
+
+# reth
+reth-exex.workspace = true
+reth-execution-types.workspace = true
+reth-node-api.workspace = true
+reth-primitives-traits.workspace = true
+reth-tasks.workspace = true
+
+# tokio
+tokio.workspace = true
+
+# tracing
+tracing = { workspace = true, features = ["std"] }
+
+# misc
+anyhow.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+eyre.workspace = true
+futures.workspace = true
+
+[dev-dependencies]
+mockall.workspace = true
+alloy-consensus.workspace = true
+alloy-primitives.workspace = true
+reth-primitives-traits = { workspace = true, features = ["test-utils"] }

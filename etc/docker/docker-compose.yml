@@ -162,6 +162,7 @@ services:
       - L2_BASE_AZUL_BLOCK=${L2_BASE_AZUL_BLOCK-}
       - L2_BASE_BERYL_BLOCK=${L2_BASE_BERYL_BLOCK-}
       - L2_BASE_COBALT_BLOCK=${L2_BASE_COBALT_BLOCK-}
+      - L2_BASE_DENIM_BLOCK=${L2_BASE_DENIM_BLOCK-}
       - L2_BASE_ZENITH_BLOCK=${L2_BASE_ZENITH_BLOCK-}
       - OUTPUT_DIR=/devnet/l2/configs
       - L2_DATA_DIR=/data
@@ -323,7 +324,7 @@ services:
       - --l1-eth-rpc
       - http://l1-el:${L1_HTTP_PORT}
       - --l1-beacon
-      - http://l1-cl:${L1_CL_HTTP_PORT}
+      - ${L1_CONTAINER_BEACON_URL}
       - --l2-config-file
       - /genesis/l2/rollup.json
       - --l1-config-file
@@ -482,7 +483,7 @@ services:
       - --l1-eth-rpc
       - http://l1-el:${L1_HTTP_PORT}
       - --l1-beacon
-      - http://l1-cl:${L1_CL_HTTP_PORT}
+      - ${L1_CONTAINER_BEACON_URL}
       - --l2-config-file
       - /genesis/l2/rollup.json
       - --l1-config-file
@@ -582,7 +583,7 @@ services:
       - --l1-eth-rpc
       - http://l1-el:${L1_HTTP_PORT}
       - --l1-beacon
-      - http://l1-cl:${L1_CL_HTTP_PORT}
+      - ${L1_CONTAINER_BEACON_URL}
       - --l2-config-file
       - /genesis/l2/rollup.json
       - --l1-config-file

@@ -10,11 +10,11 @@ use base_node_core::{
     BaseNetworkBuilder, BaseNodeComponentBuilder, BaseNodeTypes, BasePayloadValidatorBuilder,
     BaseStorage,
     args::RollupArgs,
-    node::{BasePayloadBuilder, BasePoolBuilder},
+    node::{BasePayloadBuilder, BasePayloadServiceBuilder, BasePoolBuilder},
 };
 use reth_node_builder::{
     Node, NodeAdapter, NodeComponentsBuilder,
-    components::{BasicPayloadServiceBuilder, ComponentsBuilder},
+    components::ComponentsBuilder,
     node::{FullNodeTypes, NodeTypes},
     rpc::BasicEngineValidatorBuilder,
 };
@@ -87,7 +87,6 @@ impl BaseNode {
     {
         let RollupArgs {
             disable_txpool_gossip,
-            compute_pending_block,
             discovery_v4,
             max_inflight_delegated_slots,
             mempool_sender_limit,
@@ -108,8 +107,8 @@ impl BaseNode {
                     ),
             )
             .executor(BaseExecutorBuilder::default())
-            .payload(BasicPayloadServiceBuilder::new(
-                BasePayloadBuilder::new(compute_pending_block)
+            .payload(BasePayloadServiceBuilder::new(
+                BasePayloadBuilder::new()
                     .with_da_config(self.da_config.clone())
                     .with_gas_limit_config(self.gas_limit_config.clone())
                     .with_manifest_precheck_enabled(self.manifest_precheck_enabled),
@@ -186,7 +185,7 @@ where
     type ComponentsBuilder = ComponentsBuilder<
         N,
         BasePoolBuilder,
-        BasicPayloadServiceBuilder<BasePayloadBuilder>,
+        BasePayloadServiceBuilder,
         BaseNetworkBuilder,
         BaseExecutorBuilder,
         BaseConsensusBuilder,

@@ -1,18 +1,22 @@
 //! Result tracking for submitted transactions and inclusion observations.
 
 use std::{
-    collections::{BTreeSet, HashMap, VecDeque, hash_map::Entry},
+    collections::{BTreeSet, HashMap, HashSet, VecDeque, hash_map::Entry},
     sync::Arc,
     time::{Duration, Instant},
 };
 
 use alloy_primitives::{Address, TxHash};
 use parking_lot::RwLock;
+use tokio::sync::mpsc;
 
+use super::InclusionPulse;
 use crate::metrics::TransactionMetrics;
 
 /// Maximum flashblock entries retained from recent stream events.
 const MAX_FLASHBLOCK_CACHE_SIZE: usize = 50_000;
+/// Maximum terminal batch timestamps retained after refill timeouts.
+const MAX_COMPLETED_BATCH_CACHE_SIZE: usize = 4_096;
 
 /// A transaction accepted by a submission RPC.
 #[derive(Debug, Clone, Copy)]
@@ -21,6 +25,10 @@ pub struct SentTransaction {
     pub tx_hash: TxHash,
     /// Sender address used for in-flight accounting.
     pub from: Address,
+    /// Calibrated execution gas used for pacing.
+    pub estimated_gas: u64,
+    /// Whether this transaction belongs to the measured cohort.
+    pub measured: bool,
 }
 
 /// A block observed by the block watcher.
@@ -31,6 +39,17 @@ pub struct BlockObservation {
     /// Local time when the load-test process observed the block. Used as the
     /// landing time for transactions first seen in this block.
     pub observed_at: Instant,
+}
+
+/// Load-test transactions matched while scanning one canonical block.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BlockMatch {
+    /// Number of matched transaction hashes.
+    pub matched: u64,
+    /// Sum of matched transactions' calibrated execution gas.
+    pub included_gas: u128,
+    /// Calibrated gas newly released from in-flight accounting.
+    pub released_gas: u128,
 }
 
 /// Canonical receipt data for a transaction, fetched in a single batch pass at the
@@ -63,6 +82,7 @@ pub struct FlashblockInclusion {
 #[derive(Debug, Clone)]
 pub struct ResultsTracker {
     inner: Arc<RwLock<ResultsTrackerInner>>,
+    pulse_tx: Option<mpsc::Sender<InclusionPulse>>,
 }
 
 #[derive(Debug)]
@@ -75,9 +95,18 @@ struct ResultsTrackerInner {
     unreported_flashblock_observations: VecDeque<(Duration, Instant)>,
     in_flight_per_sender: HashMap<Address, u64>,
     total_in_flight: u64,
+    unconfirmed_gas: u128,
+    confirmed_gas: u128,
     /// Block numbers in which at least one of our transactions landed, used to scope
     /// the end-of-run `eth_getBlockReceipts` pass to only relevant blocks.
     landed_blocks: BTreeSet<u64>,
+    measurement_started: bool,
+    measured_landed: HashSet<TxHash>,
+    completed_batches: HashMap<u64, Instant>,
+    pending_refills: VecDeque<PendingRefill>,
+    completed_refill_lags: VecDeque<Duration>,
+    observed_gas_total: u128,
+    observed_gas_count: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -86,11 +115,55 @@ struct PendingTransaction {
     submit_time: Instant,
     /// Whether in-flight accounting was already released (e.g. by flashblock confirmation).
     in_flight_released: bool,
+    measured: bool,
+    estimated_gas: u64,
+}
+
+#[derive(Debug)]
+struct PendingRefill {
+    batch_ids: Vec<u64>,
+    started_at: Instant,
+}
+
+impl ResultsTrackerInner {
+    fn resolve_pending_refills(&mut self) {
+        for index in (0..self.pending_refills.len()).rev() {
+            let refill = &self.pending_refills[index];
+            if refill.batch_ids.iter().any(|id| !self.completed_batches.contains_key(id)) {
+                continue;
+            }
+
+            let latest = refill
+                .batch_ids
+                .iter()
+                .filter_map(|id| self.completed_batches.remove(id))
+                .max()
+                .expect("pending refill contains at least one batch");
+            let refill = self.pending_refills.swap_remove_back(index).expect("index is in bounds");
+            self.completed_refill_lags
+                .push_back(latest.saturating_duration_since(refill.started_at));
+        }
+    }
 }
 
 impl ResultsTracker {
     /// Creates a new tracker for the given sender addresses.
     pub fn new(sender_addresses: &[Address]) -> Self {
+        Self::new_with_optional_pulse_sender(sender_addresses, None)
+    }
+
+    /// Creates a tracker that can publish flashblock races resolved during RPC acknowledgement.
+    pub fn new_with_pulse_sender(
+        sender_addresses: &[Address],
+        pulse_tx: mpsc::Sender<InclusionPulse>,
+    ) -> Self {
+        Self::new_with_optional_pulse_sender(sender_addresses, Some(pulse_tx))
+    }
+
+    fn new_with_optional_pulse_sender(
+        sender_addresses: &[Address],
+        pulse_tx: Option<mpsc::Sender<InclusionPulse>>,
+    ) -> Self {
         let in_flight_per_sender =
             sender_addresses.iter().copied().map(|address| (address, 0)).collect();
         Self {
@@ -102,8 +175,18 @@ impl ResultsTracker {
                 unreported_flashblock_observations: VecDeque::new(),
                 in_flight_per_sender,
                 total_in_flight: 0,
+                unconfirmed_gas: 0,
+                confirmed_gas: 0,
                 landed_blocks: BTreeSet::new(),
+                measurement_started: false,
+                measured_landed: HashSet::new(),
+                completed_batches: HashMap::new(),
+                pending_refills: VecDeque::new(),
+                completed_refill_lags: VecDeque::new(),
+                observed_gas_total: 0,
+                observed_gas_count: 0,
             })),
+            pulse_tx,
         }
     }
 
@@ -111,18 +194,23 @@ impl ResultsTracker {
     pub fn sent_transactions(&self, transactions: Vec<SentTransaction>) {
         let submit_time = Instant::now();
         let mut inner = self.inner.write();
+        let mut reconciled_gas = 0u128;
 
         for transaction in transactions {
             if inner.pending.contains_key(&transaction.tx_hash) {
                 continue;
             }
 
+            let measured = transaction.measured && inner.measurement_started;
+            let flashblock_observed_at = inner.flashblocks.get(&transaction.tx_hash).copied();
             inner.pending.insert(
                 transaction.tx_hash,
                 PendingTransaction {
                     from: transaction.from,
                     submit_time,
-                    in_flight_released: false,
+                    in_flight_released: flashblock_observed_at.is_some(),
+                    measured,
+                    estimated_gas: transaction.estimated_gas,
                 },
             );
             inner
@@ -131,6 +219,25 @@ impl ResultsTracker {
                 .and_modify(|count| *count = count.saturating_add(1))
                 .or_insert(1);
             inner.total_in_flight = inner.total_in_flight.saturating_add(1);
+            inner.unconfirmed_gas =
+                inner.unconfirmed_gas.saturating_add(u128::from(transaction.estimated_gas));
+            if let Some(included_at) = flashblock_observed_at {
+                inner.decrement_in_flight(&transaction.from, transaction.estimated_gas);
+                reconciled_gas =
+                    reconciled_gas.saturating_add(u128::from(transaction.estimated_gas));
+                if measured {
+                    inner
+                        .unreported_flashblock_observations
+                        .push_back((Duration::ZERO, included_at));
+                }
+            }
+        }
+        drop(inner);
+
+        if reconciled_gas > 0
+            && let Some(pulse_tx) = &self.pulse_tx
+        {
+            let _ = pulse_tx.try_send(InclusionPulse::flashblock(Instant::now(), reconciled_gas));
         }
     }
 
@@ -140,8 +247,9 @@ impl ResultsTracker {
     /// immediately and the latency observation is queued for the rolling window. The
     /// flashblock latency is also stored in the cache so that `land_if_pending` can join
     /// it onto the canonical block metric for the final summary.
-    pub fn on_new_flashblock(&self, inclusions: Vec<FlashblockInclusion>) {
+    pub fn on_new_flashblock(&self, inclusions: Vec<FlashblockInclusion>) -> BlockMatch {
         let mut inner = self.inner.write();
+        let mut block_match = BlockMatch::default();
 
         for inclusion in inclusions {
             let first_observation =
@@ -153,28 +261,41 @@ impl ResultsTracker {
                     false
                 };
 
+            let measurement_started = inner.measurement_started;
             if first_observation && let Some(pending) = inner.pending.get_mut(&inclusion.tx_hash) {
                 let submit_time = pending.submit_time;
                 let should_release = !pending.in_flight_released;
                 let from = pending.from;
+                let estimated_gas = pending.estimated_gas;
+                let report_flashblock = pending.measured || !measurement_started;
                 if should_release {
                     pending.in_flight_released = true;
+                    block_match.matched = block_match.matched.saturating_add(1);
+                    block_match.included_gas =
+                        block_match.included_gas.saturating_add(u128::from(estimated_gas));
+                    block_match.released_gas =
+                        block_match.released_gas.saturating_add(u128::from(estimated_gas));
                 }
 
                 // Queue flashblock latency for the rolling window (drained separately).
-                if let Some(latency) = inclusion.included_at.checked_duration_since(submit_time) {
+                // Pre-measurement observations are included so the TUI can show FB latency
+                // before begin_measurement; they are cleared at begin_measurement.
+                if report_flashblock
+                    && let Some(latency) = inclusion.included_at.checked_duration_since(submit_time)
+                {
                     inner
                         .unreported_flashblock_observations
                         .push_back((latency, inclusion.included_at));
                 }
 
                 if should_release {
-                    inner.decrement_in_flight(&from);
+                    inner.decrement_in_flight(&from, estimated_gas);
                 }
             }
         }
 
         inner.evict_flashblocks();
+        block_match
     }
 
     /// Records the transaction hashes observed in a newly polled canonical block.
@@ -185,12 +306,27 @@ impl ResultsTracker {
     /// its block number is captured, and a [`TransactionMetrics`] entry is emitted.
     /// Gas, effective gas price, and revert status are left at defaults here and
     /// backfilled later by the end-of-run receipt pass.
-    pub fn on_new_block_hashes(&self, block: BlockObservation, tx_hashes: Vec<TxHash>) {
+    ///
+    /// Returns the count and estimated gas of matching pending submissions.
+    pub fn on_new_block_hashes(
+        &self,
+        block: BlockObservation,
+        tx_hashes: Vec<TxHash>,
+    ) -> BlockMatch {
         let mut inner = self.inner.write();
-
+        let mut block_match = BlockMatch::default();
         for tx_hash in tx_hashes {
-            inner.land_if_pending(tx_hash, &block);
+            if let Some((estimated_gas, released)) = inner.land_if_pending(tx_hash, &block) {
+                block_match.matched = block_match.matched.saturating_add(1);
+                block_match.included_gas =
+                    block_match.included_gas.saturating_add(u128::from(estimated_gas));
+                if released {
+                    block_match.released_gas =
+                        block_match.released_gas.saturating_add(u128::from(estimated_gas));
+                }
+            }
         }
+        block_match
     }
 
     /// Expires submitted transactions that were not observed in a canonical block.
@@ -214,8 +350,10 @@ impl ResultsTracker {
             if let Some(pending) = inner.pending.remove(&tx_hash)
                 && !pending.in_flight_released
             {
-                inner.decrement_in_flight(&pending.from);
-                unconfirmed_count += 1;
+                inner.decrement_in_flight(&pending.from, pending.estimated_gas);
+                if pending.measured {
+                    unconfirmed_count += 1;
+                }
             }
         }
 
@@ -253,6 +391,110 @@ impl ResultsTracker {
         self.inner.read().total_in_flight
     }
 
+    /// Returns estimated execution gas not yet observed in a canonical block.
+    pub fn unconfirmed_gas(&self) -> u128 {
+        self.inner.read().unconfirmed_gas
+    }
+
+    /// Returns estimated measured gas observed since measurement began.
+    pub fn confirmed_gas(&self) -> u128 {
+        self.inner.read().confirmed_gas
+    }
+
+    /// Returns measured transactions and gas still awaiting canonical inclusion.
+    pub fn measured_unconfirmed_inventory(&self) -> (u64, u128) {
+        self.inner.read().pending.values().filter(|pending| pending.measured).fold(
+            (0u64, 0u128),
+            |(count, gas), pending| {
+                (count.saturating_add(1), gas.saturating_add(u128::from(pending.estimated_gas)))
+            },
+        )
+    }
+
+    /// Records terminal completion of one submission batch.
+    pub fn record_batch_completed(&self, id: u64, completed_at: Instant) {
+        let mut inner = self.inner.write();
+        if inner.completed_batches.len() >= MAX_COMPLETED_BATCH_CACHE_SIZE {
+            let oldest_retained = id.saturating_sub((MAX_COMPLETED_BATCH_CACHE_SIZE / 2) as u64);
+            inner.completed_batches.retain(|batch_id, _| *batch_id >= oldest_retained);
+        }
+        inner.completed_batches.insert(id, completed_at);
+        inner.resolve_pending_refills();
+    }
+
+    /// Registers batches whose acknowledgement completed after the synchronous refill budget.
+    pub fn register_pending_refill(&self, batch_ids: Vec<u64>, started_at: Instant) {
+        if batch_ids.is_empty() {
+            return;
+        }
+        let mut inner = self.inner.write();
+        if inner.pending_refills.len() >= MAX_COMPLETED_BATCH_CACHE_SIZE {
+            inner.pending_refills.pop_front();
+        }
+        inner.pending_refills.push_back(PendingRefill { batch_ids, started_at });
+        inner.resolve_pending_refills();
+    }
+
+    /// Drains exact acknowledgement latencies for refills that completed asynchronously.
+    pub fn drain_completed_refill_lags(&self) -> Vec<Duration> {
+        self.inner.write().completed_refill_lags.drain(..).collect()
+    }
+
+    /// Removes completed entries for `batch_ids`, returning the latest completion time.
+    pub fn take_completed_batches(&self, batch_ids: &[u64]) -> Option<Instant> {
+        let mut inner = self.inner.write();
+        if batch_ids.iter().any(|id| !inner.completed_batches.contains_key(id)) {
+            return None;
+        }
+        let mut latest = None;
+        for id in batch_ids {
+            let completed_at = inner.completed_batches.remove(id).expect("presence checked above");
+            latest =
+                Some(latest.map_or(completed_at, |current: Instant| current.max(completed_at)));
+        }
+        latest
+    }
+
+    /// Starts measurement. Transactions already accepted remain warmup transactions.
+    pub fn begin_measurement(&self) {
+        let mut inner = self.inner.write();
+        inner.measurement_started = true;
+        inner.unreported_confirmations.clear();
+        inner.unreported_flashblock_observations.clear();
+        inner.landed_blocks.clear();
+        inner.measured_landed.clear();
+        inner.observed_gas_total = 0;
+        inner.observed_gas_count = 0;
+        inner.confirmed_gas = 0;
+    }
+
+    /// Returns whether this block contains a measured transaction awaiting canonical inclusion.
+    pub fn has_measured_pending(&self, tx_hashes: &[TxHash]) -> bool {
+        let inner = self.inner.read();
+        tx_hashes.iter().any(|hash| inner.pending.get(hash).is_some_and(|pending| pending.measured))
+    }
+
+    /// Records canonical receipt gas for recently landed measured transactions.
+    pub fn observe_live_receipts(&self, receipts: &[BlockReceipt]) {
+        let mut inner = self.inner.write();
+        for receipt in receipts {
+            if inner.measured_landed.remove(&receipt.tx_hash) {
+                inner.observed_gas_total =
+                    inner.observed_gas_total.saturating_add(u128::from(receipt.gas_used));
+                inner.observed_gas_count = inner.observed_gas_count.saturating_add(1);
+            }
+        }
+    }
+
+    /// Returns average canonical gas for measured transactions observed during this run.
+    pub fn observed_avg_gas(&self) -> Option<u64> {
+        let inner = self.inner.read();
+        if inner.observed_gas_count == 0 {
+            return None;
+        }
+        u64::try_from(inner.observed_gas_total / u128::from(inner.observed_gas_count)).ok()
+    }
+
     /// Returns the number of senders at or above the given in-flight limit.
     pub fn senders_at_limit(&self, limit: u64) -> usize {
         self.inner.read().in_flight_per_sender.values().filter(|&&count| count >= limit).count()
@@ -274,16 +516,32 @@ impl ResultsTrackerInner {
     ///
     /// Flashblock latency (computed from the WS observation time) is joined here so
     /// that the final summary only includes FB latency for canonically confirmed txs.
-    fn land_if_pending(&mut self, tx_hash: TxHash, block: &BlockObservation) {
-        let Some(pending) = self.pending.remove(&tx_hash) else {
-            return;
-        };
+    /// Returns the estimated gas when `tx_hash` was pending and is now settled.
+    fn land_if_pending(
+        &mut self,
+        tx_hash: TxHash,
+        block: &BlockObservation,
+    ) -> Option<(u64, bool)> {
+        let pending = self.pending.remove(&tx_hash)?;
 
         let block_latency = block.observed_at.checked_duration_since(pending.submit_time);
         let flashblocks_latency = self
             .flashblocks
             .remove(&tx_hash)
-            .and_then(|included_at| included_at.checked_duration_since(pending.submit_time));
+            .map(|included_at| included_at.saturating_duration_since(pending.submit_time));
+
+        let released = !pending.in_flight_released;
+        if released {
+            self.decrement_in_flight(&pending.from, pending.estimated_gas);
+        }
+
+        // Measured txs always emit metrics. Pre-measurement txs emit only before
+        // begin_measurement so live TUI/headroom can see inclusions; after
+        // begin_measurement they only release in-flight (already handled above).
+        let emit_metrics = pending.measured || !self.measurement_started;
+        if !emit_metrics {
+            return Some((pending.estimated_gas, released));
+        }
 
         let mut metrics = TransactionMetrics::new(
             tx_hash,
@@ -294,19 +552,23 @@ impl ResultsTrackerInner {
             Some(block.number),
         );
         metrics.confirmed_at = Some(block.observed_at);
-
-        self.landed_blocks.insert(block.number);
-        if !pending.in_flight_released {
-            self.decrement_in_flight(&pending.from);
-        }
         self.unreported_confirmations.push_back(metrics);
+
+        if pending.measured {
+            self.landed_blocks.insert(block.number);
+            self.measured_landed.insert(tx_hash);
+            self.confirmed_gas =
+                self.confirmed_gas.saturating_add(u128::from(pending.estimated_gas));
+        }
+        Some((pending.estimated_gas, released))
     }
 
-    fn decrement_in_flight(&mut self, from: &Address) {
+    fn decrement_in_flight(&mut self, from: &Address, estimated_gas: u64) {
         if let Some(count) = self.in_flight_per_sender.get_mut(from) {
             *count = count.saturating_sub(1);
         }
         self.total_in_flight = self.total_in_flight.saturating_sub(1);
+        self.unconfirmed_gas = self.unconfirmed_gas.saturating_sub(u128::from(estimated_gas));
     }
 
     fn evict_flashblocks(&mut self) {
@@ -331,13 +593,19 @@ mod tests {
         BlockObservation { number, observed_at }
     }
 
+    fn sent(tx_hash: TxHash, from: Address, measured: bool) -> SentTransaction {
+        SentTransaction { tx_hash, from, estimated_gas: 21_000, measured }
+    }
+
     #[test]
     fn confirms_pending_transaction_from_block_hashes() {
         let from = address!("0000000000000000000000000000000000000001");
         let tx_hash = TxHash::repeat_byte(1);
         let tracker = ResultsTracker::new(&[from]);
+        tracker.begin_measurement();
 
-        tracker.sent_transactions(vec![SentTransaction { tx_hash, from }]);
+        tracker.sent_transactions(vec![sent(tx_hash, from, true)]);
+        assert_eq!(tracker.unconfirmed_gas(), 21_000);
         let observed_at = Instant::now() + Duration::from_millis(250);
         tracker.on_new_block_hashes(block_at(7, observed_at), vec![tx_hash]);
 
@@ -350,6 +618,17 @@ mod tests {
         assert!(!metrics[0].reverted, "revert backfilled later by receipt pass");
         assert_eq!(tracker.landed_block_numbers(), vec![7], "block 7 tracked for receipt pass");
         assert_eq!(tracker.total_in_flight(), 0, "landing releases in-flight slot");
+        assert_eq!(tracker.unconfirmed_gas(), 0);
+        assert_eq!(tracker.confirmed_gas(), 21_000);
+
+        tracker.observe_live_receipts(&[BlockReceipt {
+            tx_hash,
+            block_number: 7,
+            gas_used: 42_000,
+            effective_gas_price: 1,
+            success: true,
+        }]);
+        assert_eq!(tracker.observed_avg_gas(), Some(42_000));
     }
 
     #[test]
@@ -357,8 +636,9 @@ mod tests {
         let from = address!("0000000000000000000000000000000000000001");
         let tx_hash = TxHash::repeat_byte(7);
         let tracker = ResultsTracker::new(&[from]);
+        tracker.begin_measurement();
 
-        tracker.sent_transactions(vec![SentTransaction { tx_hash, from }]);
+        tracker.sent_transactions(vec![sent(tx_hash, from, true)]);
         let now = Instant::now();
         tracker.on_new_block_hashes(block_at(11, now + Duration::from_millis(100)), vec![tx_hash]);
         tracker.on_new_block_hashes(block_at(12, now + Duration::from_millis(300)), vec![tx_hash]);
@@ -374,8 +654,9 @@ mod tests {
         let from = address!("0000000000000000000000000000000000000001");
         let tx_hash = TxHash::repeat_byte(2);
         let tracker = ResultsTracker::new(&[from]);
+        tracker.begin_measurement();
 
-        tracker.sent_transactions(vec![SentTransaction { tx_hash, from }]);
+        tracker.sent_transactions(vec![sent(tx_hash, from, true)]);
         let now = Instant::now();
         tracker.on_new_flashblock(vec![FlashblockInclusion {
             tx_hash,
@@ -403,8 +684,9 @@ mod tests {
         let from = address!("0000000000000000000000000000000000000001");
         let tx_hash = TxHash::repeat_byte(4);
         let tracker = ResultsTracker::new(&[from]);
+        tracker.begin_measurement();
 
-        tracker.sent_transactions(vec![SentTransaction { tx_hash, from }]);
+        tracker.sent_transactions(vec![sent(tx_hash, from, true)]);
         assert_eq!(tracker.total_in_flight(), 1);
         assert_eq!(tracker.in_flight_for(&from), 1);
 
@@ -432,17 +714,43 @@ mod tests {
         let tx_hash = TxHash::repeat_byte(5);
         let tracker = ResultsTracker::new(&[from]);
 
-        tracker.sent_transactions(vec![SentTransaction { tx_hash, from }]);
+        tracker.sent_transactions(vec![sent(tx_hash, from, true)]);
         assert_eq!(tracker.total_in_flight(), 1);
 
-        tracker
+        let first = tracker
             .on_new_flashblock(vec![FlashblockInclusion { tx_hash, included_at: Instant::now() }]);
         assert_eq!(tracker.total_in_flight(), 0);
+        assert_eq!(first.released_gas, 21_000);
 
         // Duplicate flashblock event for same tx.
-        tracker
+        let duplicate = tracker
             .on_new_flashblock(vec![FlashblockInclusion { tx_hash, included_at: Instant::now() }]);
         assert_eq!(tracker.total_in_flight(), 0, "duplicate flashblock should not underflow");
+        assert_eq!(duplicate.released_gas, 0);
+
+        let canonical = tracker.on_new_block_hashes(block_at(10, Instant::now()), vec![tx_hash]);
+        assert_eq!(canonical.included_gas, 21_000);
+        assert_eq!(canonical.released_gas, 0);
+    }
+
+    #[tokio::test]
+    async fn flashblock_before_rpc_ack_releases_on_registration() {
+        let from = address!("0000000000000000000000000000000000000001");
+        let tx_hash = TxHash::repeat_byte(6);
+        let (pulse_tx, mut pulse_rx) = mpsc::channel(1);
+        let tracker = ResultsTracker::new_with_pulse_sender(&[from], pulse_tx);
+        tracker.begin_measurement();
+
+        let flashblock = tracker
+            .on_new_flashblock(vec![FlashblockInclusion { tx_hash, included_at: Instant::now() }]);
+        assert_eq!(flashblock.released_gas, 0, "transaction is not registered yet");
+
+        tracker.sent_transactions(vec![sent(tx_hash, from, true)]);
+
+        assert_eq!(tracker.total_in_flight(), 0);
+        assert_eq!(tracker.unconfirmed_gas(), 0);
+        let pulse = pulse_rx.recv().await.expect("registration reconciles cached inclusion");
+        assert_eq!(pulse.released_gas, 21_000);
     }
 
     #[test]
@@ -451,7 +759,7 @@ mod tests {
         let tx_hash = TxHash::repeat_byte(0xe0);
         let tracker = ResultsTracker::new(&[from]);
 
-        tracker.sent_transactions(vec![SentTransaction { tx_hash, from }]);
+        tracker.sent_transactions(vec![sent(tx_hash, from, true)]);
         assert_eq!(tracker.pending_count(), 1);
 
         // Flashblock confirms it — releases in-flight but keeps the pending entry.
@@ -464,5 +772,65 @@ mod tests {
         let expired = tracker.expire_pending(Duration::ZERO);
         assert_eq!(expired, 0, "flashblock-released tx is not a true failure");
         assert_eq!(tracker.pending_count(), 0, "pending entry should be cleaned up");
+    }
+
+    #[test]
+    fn expired_setup_transaction_is_not_a_measured_failure() {
+        let from = address!("0000000000000000000000000000000000000001");
+        let tx_hash = TxHash::repeat_byte(0xe1);
+        let tracker = ResultsTracker::new(&[from]);
+
+        tracker.sent_transactions(vec![sent(tx_hash, from, false)]);
+        tracker.begin_measurement();
+
+        assert_eq!(tracker.expire_pending(Duration::ZERO), 0);
+        assert_eq!(tracker.pending_count(), 0);
+        assert_eq!(tracker.total_in_flight(), 0);
+    }
+
+    #[test]
+    fn warmup_landing_emits_metrics_before_measurement() {
+        let from = address!("0000000000000000000000000000000000000001");
+        let tx_hash = TxHash::repeat_byte(0xe2);
+        let tracker = ResultsTracker::new(&[from]);
+
+        tracker.sent_transactions(vec![sent(tx_hash, from, false)]);
+        assert_eq!(tracker.total_in_flight(), 1);
+
+        tracker.on_new_block_hashes(block_at(3, Instant::now()), vec![tx_hash]);
+        assert_eq!(tracker.total_in_flight(), 0);
+        let metrics = tracker.drain_confirmed_metrics();
+        assert_eq!(metrics.len(), 1, "warmup landing should emit live confirmation metrics");
+        assert!(tracker.landed_block_numbers().is_empty(), "warmup must not scope receipt pass");
+    }
+
+    #[test]
+    fn warmup_landing_after_measurement_does_not_pollute_metrics() {
+        let from = address!("0000000000000000000000000000000000000001");
+        let tx_hash = TxHash::repeat_byte(0xe3);
+        let tracker = ResultsTracker::new(&[from]);
+
+        tracker.sent_transactions(vec![sent(tx_hash, from, false)]);
+        tracker.begin_measurement();
+        tracker.on_new_block_hashes(block_at(4, Instant::now()), vec![tx_hash]);
+
+        assert_eq!(tracker.total_in_flight(), 0);
+        assert!(
+            tracker.drain_confirmed_metrics().is_empty(),
+            "warmup landing after measurement must not enter the measured summary"
+        );
+    }
+
+    #[test]
+    fn preserves_late_refill_acknowledgement_latency() {
+        let tracker = ResultsTracker::new(&[]);
+        let started_at = Instant::now();
+        tracker.register_pending_refill(vec![10, 11], started_at);
+
+        tracker.record_batch_completed(10, started_at + Duration::from_millis(120));
+        assert!(tracker.drain_completed_refill_lags().is_empty());
+        tracker.record_batch_completed(11, started_at + Duration::from_millis(145));
+
+        assert_eq!(tracker.drain_completed_refill_lags(), vec![Duration::from_millis(145)]);
     }
 }

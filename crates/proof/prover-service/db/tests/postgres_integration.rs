@@ -302,7 +302,7 @@ async fn test_legacy_rollout_request_without_protocol_storage_is_readable_and_re
     assert_eq!(listed.api_proof_type, ApiProofType::Compressed);
     assert_eq!(listed.zk_vm, Some(ZkVmKind::Sp1));
 
-    let outcome = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
+    let outcome = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES, true).await.unwrap();
     assert_eq!(outcome, CreateProofRequestOutcome::Replayed(explicit_id));
 }
 
@@ -1060,7 +1060,7 @@ async fn test_create_for_worker_queue_creates_claimable_job() {
     let mut req = compressed_request();
     set_request_session_id(&mut req, explicit_id.to_string());
 
-    let outcome = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
+    let outcome = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES, true).await.unwrap();
     assert!(matches!(outcome, CreateProofRequestOutcome::Created(id) if id == explicit_id));
 
     let job = repo
@@ -1082,7 +1082,7 @@ async fn test_create_for_worker_queue_accepts_tee_requests() {
     let mut req = tee_request();
     set_request_session_id(&mut req, explicit_id.clone());
 
-    let outcome = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
+    let outcome = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES, true).await.unwrap();
     let id = outcome.id();
 
     let row = repo.get(id).await.unwrap().expect("TEE request should be stored");
@@ -1109,13 +1109,14 @@ async fn test_create_for_worker_queue_idempotent_for_legacy_null_backend() {
     let mut req = compressed_request();
     set_request_session_id(&mut req, explicit_id.to_string());
 
-    let first = repo.create_for_worker_queue(req.clone(), TEST_MAX_PROOF_RETRIES).await.unwrap();
+    let first =
+        repo.create_for_worker_queue(req.clone(), TEST_MAX_PROOF_RETRIES, true).await.unwrap();
     sqlx::query("UPDATE proof_requests SET zk_backend = NULL WHERE id = $1")
         .bind(explicit_id)
         .execute(&pool)
         .await
         .unwrap();
-    let second = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
+    let second = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES, true).await.unwrap();
 
     assert!(matches!(first, CreateProofRequestOutcome::Created(id) if id == explicit_id));
     assert!(matches!(second, CreateProofRequestOutcome::Replayed(id) if id == explicit_id));
@@ -1136,12 +1137,12 @@ async fn test_create_for_worker_queue_rejects_backend_collision() {
     let explicit_id = Uuid::new_v4();
     let mut cluster = compressed_request_at_with_backend(100, ZkBackend::Cluster);
     set_request_session_id(&mut cluster, explicit_id.to_string());
-    repo.create_for_worker_queue(cluster, TEST_MAX_PROOF_RETRIES).await.unwrap();
+    repo.create_for_worker_queue(cluster, TEST_MAX_PROOF_RETRIES, true).await.unwrap();
 
     let mut network = compressed_request_at_with_backend(100, ZkBackend::Network);
     set_request_session_id(&mut network, explicit_id.to_string());
     assert!(matches!(
-        repo.create_for_worker_queue(network, TEST_MAX_PROOF_RETRIES).await.unwrap_err(),
+        repo.create_for_worker_queue(network, TEST_MAX_PROOF_RETRIES, true).await.unwrap_err(),
         CreateProofRequestError::IdCollision { id, field: "zk_backend" } if id == explicit_id
     ));
 }
@@ -1156,7 +1157,8 @@ async fn test_create_for_worker_queue_requeues_failed_row() {
     let mut req = compressed_request();
     set_request_session_id(&mut req, explicit_id.to_string());
 
-    let first = repo.create_for_worker_queue(req.clone(), TEST_MAX_PROOF_RETRIES).await.unwrap();
+    let first =
+        repo.create_for_worker_queue(req.clone(), TEST_MAX_PROOF_RETRIES, true).await.unwrap();
     assert!(matches!(first, CreateProofRequestOutcome::Created(id) if id == explicit_id));
     drive_to_failed(&repo, explicit_id, "transient backend error").await;
 
@@ -1170,7 +1172,7 @@ async fn test_create_for_worker_queue_requeues_failed_row() {
     .await
     .unwrap();
 
-    let second = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
+    let second = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES, true).await.unwrap();
     assert!(matches!(second, CreateProofRequestOutcome::Requeued(id) if id == explicit_id));
 
     let after = repo.get(explicit_id).await.unwrap().unwrap();
@@ -1192,6 +1194,33 @@ async fn test_create_for_worker_queue_requeues_failed_row() {
 
 #[tokio::test]
 #[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_create_for_worker_queue_does_not_requeue_failed_row_without_approval() {
+    let repo = test_repo(test_pool().await);
+
+    let explicit_id = Uuid::new_v4();
+    let mut req = compressed_request();
+    set_request_session_id(&mut req, explicit_id.to_string());
+
+    let first =
+        repo.create_for_worker_queue(req.clone(), TEST_MAX_PROOF_RETRIES, true).await.unwrap();
+    assert!(matches!(first, CreateProofRequestOutcome::Created(id) if id == explicit_id));
+    drive_to_failed(&repo, explicit_id, "transient backend error").await;
+
+    let second = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES, false).await.unwrap();
+    assert!(matches!(
+        second,
+        CreateProofRequestOutcome::RetryNotAllowed(id) if id == explicit_id
+    ));
+
+    let after = repo.get(explicit_id).await.unwrap().unwrap();
+    assert_eq!(after.status, ProofStatus::Failed);
+    assert_eq!(after.retry_count, 0);
+    assert_eq!(after.error_message.as_deref(), Some("transient backend error"));
+    assert!(after.completed_at.is_some());
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
 async fn test_create_for_worker_queue_replays_succeeded_row() {
     let pool = test_pool().await;
     let repo = test_repo(pool.clone());
@@ -1200,7 +1229,8 @@ async fn test_create_for_worker_queue_replays_succeeded_row() {
     let mut req = compressed_request();
     set_request_session_id(&mut req, explicit_id.to_string());
 
-    let first = repo.create_for_worker_queue(req.clone(), TEST_MAX_PROOF_RETRIES).await.unwrap();
+    let first =
+        repo.create_for_worker_queue(req.clone(), TEST_MAX_PROOF_RETRIES, true).await.unwrap();
     assert!(matches!(first, CreateProofRequestOutcome::Created(id) if id == explicit_id));
 
     sqlx::query(
@@ -1212,7 +1242,7 @@ async fn test_create_for_worker_queue_replays_succeeded_row() {
     .await
     .unwrap();
 
-    let second = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
+    let second = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES, true).await.unwrap();
     assert!(matches!(second, CreateProofRequestOutcome::Replayed(id) if id == explicit_id));
 
     let after = repo.get(explicit_id).await.unwrap().unwrap();
@@ -1234,7 +1264,7 @@ async fn test_create_for_worker_queue_rejects_succeeded_row_with_new_l1_head() {
     );
     set_request_session_id(&mut req, explicit_id.to_string());
 
-    let first = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
+    let first = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES, true).await.unwrap();
     assert!(matches!(first, CreateProofRequestOutcome::Created(id) if id == explicit_id));
 
     sqlx::query(
@@ -1251,7 +1281,7 @@ async fn test_create_for_worker_queue_rejects_succeeded_row_with_new_l1_head() {
     );
     set_request_session_id(&mut req, explicit_id.to_string());
 
-    let err = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES).await.unwrap_err();
+    let err = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES, true).await.unwrap_err();
     assert!(matches!(
         err,
         CreateProofRequestError::IdCollision { id, field: "l1_head" } if id == explicit_id
@@ -1269,7 +1299,7 @@ async fn test_delete_proof_request_by_session_id_deletes_terminal_rows() {
         let mut req = compressed_request();
         set_request_session_id(&mut req, explicit_id.to_string());
 
-        let first = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
+        let first = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES, true).await.unwrap();
         assert!(matches!(first, CreateProofRequestOutcome::Created(id) if id == explicit_id));
 
         sqlx::query(
@@ -1316,7 +1346,7 @@ async fn test_delete_proof_request_by_session_id_rejects_non_terminal_row() {
     let mut req = compressed_request();
     set_request_session_id(&mut req, explicit_id.to_string());
 
-    let first = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
+    let first = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES, true).await.unwrap();
     assert!(matches!(first, CreateProofRequestOutcome::Created(id) if id == explicit_id));
 
     let outcome = repo.delete_proof_request_by_session_id(&explicit_id.to_string()).await.unwrap();

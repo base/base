@@ -16,7 +16,7 @@ mod request;
 pub use request::{
     BuildRequest, EngineActorRequest, EngineClientError, EngineClientResult, EngineRpcRequest,
     GetPayloadRequest, InsertUnsafePayloadRequest, ReconcileShadowRequest, ResetOrigin,
-    ResetRequest,
+    ResetReason, ResetRequest, ResetRequestOutcome,
 };
 
 mod engine_request_processor;

@@ -40,7 +40,7 @@ impl ChannelNonceReader {
     /// # Errors
     /// - [`Eip8130Constants::NONCE_KEY_MAX`] returns an `INVALID_PARAMS` RPC
     ///   error: the expiring-nonce channel has no per-channel counter and
-    ///   replay protection there relies on `expiry`, not a sequence number.
+    ///   replay protection there relies on `valid_before`, not a sequence number.
     /// - Any error from the underlying `eth_api` (e.g. unknown block, state
     ///   read failure) propagates as an `ErrorObjectOwned`.
     pub async fn read<Eth>(

@@ -23,10 +23,15 @@ aws-sdk-elasticloadbalancingv2.workspace = true
 aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
 
 # Crypto
+sha2.workspace = true
 k256 = { workspace = true, features = ["ecdsa"] }
+p384 = { workspace = true, features = ["ecdsa", "expose-field"] }
 
 # X.509 / CRL
 x509-parser.workspace = true
+
+# CBOR (attestation document decode after strict COSE parse)
+ciborium.workspace = true
 
 # HTTP (CRL fetching)
 reqwest.workspace = true

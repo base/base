@@ -640,7 +640,9 @@ mod tests {
     use alloy_rpc_types_engine::{
         ExecutionPayloadV1, ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum,
     };
-    use alloy_rpc_types_eth::{Block as RpcBlock, BlockTransactions};
+    use alloy_rpc_types_eth::{
+        Block as RpcBlock, BlockTransactions, Transaction as EthTransaction,
+    };
     use async_trait::async_trait;
     use base_common_consensus::{BaseTxEnvelope, TxDeposit};
     use base_common_genesis::{ChainGenesis, RollupConfig, SystemConfig};
@@ -648,8 +650,8 @@ mod tests {
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
     use base_consensus_derive::Signal;
     use base_consensus_engine::{
-        Engine, EngineState, EngineTaskError, EngineTaskErrorSeverity, ForkchoiceCheckpointError,
-        ForkchoiceCheckpointLabel, ForkchoiceCheckpointReader,
+        Engine, EngineClient, EngineState, EngineTaskError, EngineTaskErrorSeverity,
+        ForkchoiceCheckpointError, ForkchoiceCheckpointLabel, ForkchoiceCheckpointReader,
         test_utils::{
             TestAttributesBuilder, TestEngineStateBuilder, test_block_info,
             test_engine_client_builder,
@@ -1041,6 +1043,7 @@ mod tests {
             .send(EngineActorRequest::ResetRequest(Box::new(ResetRequest {
                 result_tx,
                 origin: crate::ResetOrigin::Derivation,
+                reason: crate::ResetReason::DerivationPipeline,
             })))
             .await
             .expect("failed to send reset request");
@@ -1274,6 +1277,7 @@ mod tests {
             .send(EngineActorRequest::ResetRequest(Box::new(ResetRequest {
                 result_tx,
                 origin: crate::ResetOrigin::Derivation,
+                reason: crate::ResetReason::DerivationPipeline,
             })))
             .await
             .expect("failed to send reset during private build");
@@ -1576,10 +1580,14 @@ mod tests {
         block
     }
 
-    fn l1_info_rpc_transaction(block_number: u64) -> BaseTransaction {
+    fn l1_info_rpc_transaction(block_number: u64, l1_origin: BlockNumHash) -> BaseTransaction {
         let envelope = BaseTxEnvelope::Deposit(Sealed::new_unchecked(
             TxDeposit {
-                input: L1BlockInfoBedrock::default().encode_calldata(),
+                input: L1BlockInfoBedrock::new_from_number_and_block_hash(
+                    l1_origin.number,
+                    l1_origin.hash,
+                )
+                .encode_calldata(),
                 ..Default::default()
             },
             B256::ZERO,
@@ -1601,12 +1609,14 @@ mod tests {
     fn full_reth_l2_block_with_l1_info(
         number: u64,
         parent_hash: B256,
+        l1_origin: BlockNumHash,
     ) -> RpcBlock<BaseTransaction> {
         let mut block = RpcBlock::<BaseTransaction>::default();
         block.header.inner.number = number;
         block.header.inner.parent_hash = parent_hash;
         block.header.inner.timestamp = number;
-        block.transactions = BlockTransactions::Full(vec![l1_info_rpc_transaction(number)]);
+        block.transactions =
+            BlockTransactions::Full(vec![l1_info_rpc_transaction(number, l1_origin)]);
         block
     }
 
@@ -1655,6 +1665,7 @@ mod tests {
         let full_latest = full_reth_l2_block_with_l1_info(
             reth_latest.block_info.number + 1,
             reth_latest.block_info.hash,
+            BlockNumHash::default(),
         );
 
         let client = Arc::new(
@@ -1664,6 +1675,7 @@ mod tests {
                 .with_l2_block(BlockId::Number(BlockNumberOrTag::Safe), pruned_safe)
                 .with_l2_block(BlockId::Number(BlockNumberOrTag::Latest), full_latest)
                 .with_l1_block(BlockId::from(B256::ZERO), RpcBlock::default())
+                .with_l1_block(BlockId::from(0u64), RpcBlock::default())
                 .with_new_payload_v2_response(PayloadStatus {
                     status: PayloadStatusEnum::Valid,
                     latest_valid_hash: Some(next_hash),
@@ -1701,6 +1713,135 @@ mod tests {
             .drain()
             .await
             .expect("validator restart must not crash when reth pruned historical block bodies");
+    }
+
+    /// Verifies the engine actor reset boundary rejects an orphaned L1 origin even when the
+    /// orphan remains retrievable by hash, and rewinds only to the finalized canonical parent.
+    #[tokio::test]
+    async fn reset_request_rewinds_hash_retrievable_l1_orphan_and_preserves_finalized() {
+        let genesis_hash = B256::with_last_byte(0x50);
+        let canonical_parent_origin = BlockNumHash { number: 10, hash: B256::with_last_byte(0x10) };
+        let orphan_origin = BlockNumHash { number: 11, hash: B256::with_last_byte(0x11) };
+        let canonical_origin_hash = B256::with_last_byte(0x21);
+        let cfg = Arc::new(RollupConfig {
+            genesis: ChainGenesis {
+                l1: canonical_parent_origin,
+                l2: BlockNumHash { number: 0, hash: genesis_hash },
+                system_config: Some(SystemConfig::default()),
+                ..Default::default()
+            },
+            seq_window_size: 1,
+            ..Default::default()
+        });
+
+        let finalized = full_reth_l2_block_with_l1_info(1, genesis_hash, canonical_parent_origin);
+        let finalized_hash = finalized.clone().into_consensus().hash_slow();
+        let unsafe_head = full_reth_l2_block_with_l1_info(2, finalized_hash, orphan_origin);
+        let unsafe_hash = unsafe_head.clone().into_consensus().hash_slow();
+        let finalized_info = L2BlockInfo {
+            block_info: BlockInfo {
+                number: 1,
+                hash: finalized_hash,
+                parent_hash: genesis_hash,
+                timestamp: 1,
+            },
+            l1_origin: canonical_parent_origin,
+            seq_num: 0,
+        };
+        let unsafe_info = L2BlockInfo {
+            block_info: BlockInfo {
+                number: 2,
+                hash: unsafe_hash,
+                parent_hash: finalized_hash,
+                timestamp: 2,
+            },
+            l1_origin: orphan_origin,
+            seq_num: 0,
+        };
+
+        let mut canonical_parent_l1 = RpcBlock::<EthTransaction>::default();
+        canonical_parent_l1.header.hash = canonical_parent_origin.hash;
+        canonical_parent_l1.header.inner.number = canonical_parent_origin.number;
+        let mut canonical_l1 = RpcBlock::<EthTransaction>::default();
+        canonical_l1.header.hash = canonical_origin_hash;
+        canonical_l1.header.inner.number = orphan_origin.number;
+        let mut orphan_l1 = RpcBlock::<EthTransaction>::default();
+        orphan_l1.header.hash = orphan_origin.hash;
+        orphan_l1.header.inner.number = orphan_origin.number;
+
+        let client = Arc::new(
+            test_engine_client_builder()
+                .with_config(Arc::clone(&cfg))
+                .with_l2_block(BlockNumberOrTag::Finalized.into(), finalized.clone())
+                .with_l2_block(BlockNumberOrTag::Safe.into(), finalized.clone())
+                .with_l2_block(BlockNumberOrTag::Latest.into(), unsafe_head)
+                .with_l2_block(finalized_hash.into(), finalized)
+                .with_l1_block(canonical_parent_origin.number.into(), canonical_parent_l1)
+                .with_l1_block(orphan_origin.number.into(), canonical_l1)
+                .with_l1_block(orphan_origin.hash.into(), orphan_l1)
+                .with_fork_choice_updated_v3_response(valid_fcu())
+                .build(),
+        );
+        assert!(
+            client
+                .get_l1_block(orphan_origin.hash.into())
+                .await
+                .expect("orphan lookup should succeed")
+                .is_some(),
+            "test precondition failed: orphan must remain retrievable by hash"
+        );
+
+        let mut mock_derivation = MockEngineDerivationClient::new();
+        mock_derivation.expect_send_signal().times(1).returning(|_| Ok(()));
+        mock_derivation.expect_send_new_engine_safe_head().times(1).returning(|_| Ok(()));
+        mock_derivation.expect_notify_sync_completed().times(1).returning(|_| Ok(()));
+
+        let initial_state = TestEngineStateBuilder::new()
+            .with_unsafe_head(unsafe_info)
+            .with_safe_head(finalized_info)
+            .with_finalized_head(finalized_info)
+            .with_el_sync_finished(true)
+            .build();
+        let (state_tx, state_rx) = watch::channel(initial_state);
+        let (queue_tx, _) = watch::channel(0usize);
+        let engine = Engine::new(initial_state, state_tx, queue_tx);
+        let processor =
+            EngineProcessor::new(Arc::clone(&client), Arc::clone(&cfg), mock_derivation, engine);
+        let (request_tx, request_rx) = mpsc::channel(1);
+        let handle = ValidatorEngineRequestHandler::new(processor).start(request_rx);
+
+        let (result_tx, mut result_rx) = mpsc::channel(1);
+        request_tx
+            .send(EngineActorRequest::ResetRequest(Box::new(ResetRequest {
+                result_tx,
+                origin: crate::ResetOrigin::Derivation,
+                reason: crate::ResetReason::DerivationPipeline,
+            })))
+            .await
+            .expect("failed to send reset request");
+        tokio::time::timeout(std::time::Duration::from_secs(5), result_rx.recv())
+            .await
+            .expect("timed out waiting for reset response")
+            .expect("reset response channel closed")
+            .expect("reset should succeed");
+
+        let state = *state_rx.borrow();
+        assert_eq!(state.sync_state.unsafe_head(), finalized_info);
+        assert_eq!(state.sync_state.safe_head(), finalized_info);
+        assert_eq!(state.sync_state.finalized_head(), finalized_info);
+
+        let storage = client.storage();
+        let storage = storage.read().await;
+        assert_eq!(storage.fork_choice_updated_v3_requests.len(), 1);
+        let reset_forkchoice = storage.fork_choice_updated_v3_requests[0].0;
+        assert_eq!(reset_forkchoice.head_block_hash, finalized_hash);
+        assert_eq!(reset_forkchoice.safe_block_hash, finalized_hash);
+        assert_eq!(reset_forkchoice.finalized_block_hash, finalized_hash);
+        drop(storage);
+
+        drop(request_tx);
+        let result = handle.await.expect("engine handler panicked");
+        assert!(matches!(result, Err(crate::EngineError::ChannelClosed)));
     }
 
     /// Regression test: when a `Build` request fails with an `InvalidPayload` (the EL rejects

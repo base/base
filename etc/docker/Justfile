@@ -3,6 +3,7 @@ set working-directory := '../..'
 
 _ha := "-f etc/docker/docker-compose.yml -f etc/docker/docker-compose.ha.yml"
 _base := "-f etc/docker/docker-compose.yml"
+_anvil := "-f etc/docker/docker-compose.yml -f etc/docker/docker-compose.anvil-l1.yml"
 _env := "--env-file etc/docker/devnet-env"
 
 # Show devnet commands
@@ -16,6 +17,53 @@ up mode='default':
 # Stops devnet, deletes data, and starts fresh with a single sequencer (no conductor)
 up-single mode='default':
     just --justfile {{ source_file() }} _up-devnet "base" {{ quote(mode) }}
+
+# Starts the single-Anvil L1 devnet and its two-worker local no-Nitro proof stack
+up-anvil-no-nitro: down-anvil _build-setup-image (_build-rust-images "devnet" "dev")
+    #!/usr/bin/env bash
+    set -euo pipefail
+    l1_rpc_url="http://l1-el:${L1_HTTP_PORT}"
+    export L1_CONTAINER_BEACON_URL="$l1_rpc_url"
+    compose_cmd=(docker compose {{ _env }} {{ _anvil }})
+
+    "${compose_cmd[@]}" up -d --no-build --remove-orphans setup-l1 l1-el
+    until cast block-number --rpc-url "$L1_RPC_URL" >/dev/null 2>&1; do
+      sleep 0.25
+    done
+    cast rpc --rpc-url "$L1_RPC_URL" anvil_setBlockTimestampInterval 4 >/dev/null
+    cast rpc --rpc-url "$L1_RPC_URL" anvil_setIntervalMining 4 >/dev/null
+    mkdir -p .devnet/l2/configs
+    "${compose_cmd[@]}" up -d --no-build --remove-orphans setup-l2
+    setup_l2_status="$(docker wait setup-l2)"
+    if [ "$setup_l2_status" != "0" ]; then
+      docker logs setup-l2 >&2 || true
+      exit "$setup_l2_status"
+    fi
+
+    UPGRADE_SIGNAL_CONTAINER_L1_RPC="$l1_rpc_url" \
+      ./etc/scripts/devnet/anvil-no-nitro.sh bootstrap
+    "${compose_cmd[@]}" up -d --no-build --remove-orphans
+    # base-client/base-rpc/base-builder read upgrade-signal.env once at container
+    # start. If any of them were already running (e.g. left over from a prior
+    # partial run), the `up` above leaves them untouched with whatever value
+    # they booted with, which can predate the file bootstrap just wrote.
+    # Force-recreate them so they always boot off the final file.
+    "${compose_cmd[@]}" up -d --no-build --force-recreate base-client base-rpc base-builder
+    ./etc/scripts/devnet/anvil-no-nitro.sh up
+
+# Stops the single-Anvil L1 devnet, proof workers, and all of their data
+down-anvil:
+    -./etc/scripts/devnet/anvil-no-nitro.sh down
+    -docker compose {{ _env }} {{ _anvil }} --profile profiling down
+    -docker run --rm -v "$(pwd)/.devnet:/devnet" alpine sh -c 'rm -rf /devnet/*'
+
+# Builds the latest Base-Anvil default branch used by the no-Nitro devnet
+build-anvil-image source='https://github.com/base/base-anvil.git':
+    docker buildx build --load \
+      --tag base-anvil:prover-single-l1 \
+      --build-arg RUST_PROFILE=release \
+      --build-arg RUST_FEATURES=anvil/cli \
+      {{ quote(source) }}
 
 # Stops devnet, deletes data, and starts fresh with profiling (Pyroscope + optimized builds)
 profiling: down _build-setup-image (_build-rust-images "devnet" "profiling")
@@ -175,9 +223,14 @@ _up-devnet compose_profile mode:
     compose_profile={{ quote(compose_profile) }}
     devnet_mode={{ quote(mode) }}
 
+    # Denim is activated by default. The zenith mode additionally schedules the genesis-only
+    # Zenith gate used for future hardfork feature testing.
     case "$devnet_mode" in
-      default) ;;
-      zenith) export L2_BASE_ZENITH_BLOCK="${L2_BASE_ZENITH_BLOCK:-23}" ;;
+      default) export L2_BASE_DENIM_BLOCK="${L2_BASE_DENIM_BLOCK-23}" ;;
+      zenith)
+        export L2_BASE_DENIM_BLOCK="${L2_BASE_DENIM_BLOCK-23}"
+        export L2_BASE_ZENITH_BLOCK="${L2_BASE_ZENITH_BLOCK:-50}"
+        ;;
       *)
         echo "ERROR: mode must be 'default' or 'zenith' (got '${devnet_mode}')" >&2
         exit 1

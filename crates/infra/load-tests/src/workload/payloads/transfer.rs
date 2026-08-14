@@ -1,6 +1,7 @@
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, U256};
 use alloy_rpc_types::TransactionRequest;
+use async_trait::async_trait;
 
 use super::Payload;
 use crate::workload::SeededRng;
@@ -32,6 +33,7 @@ impl Default for TransferPayload {
     }
 }
 
+#[async_trait]
 impl Payload for TransferPayload {
     fn name(&self) -> &'static str {
         "transfer"
@@ -53,5 +55,17 @@ impl Payload for TransferPayload {
         };
 
         TransactionRequest::default().with_to(to).with_value(value).with_gas_limit(21_000)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transfer_payload_name_and_recipient_flags() {
+        let payload = TransferPayload::default();
+        assert_eq!(payload.name(), "transfer");
+        assert!(payload.uses_runner_recipient());
     }
 }

@@ -26,7 +26,7 @@ dependencies = [
  "alloy-consensus",
  "alloy-primitives",
  "alloy-sol-types",
- "base-proof-succinct-client-utils",
+ "base-proof-zk-utils",
  "bincode",
  "serde_cbor",
  "sha2",
@@ -909,7 +909,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-proof-succinct-client-utils"
+name = "base-proof-zk-utils"
 version = "0.0.0"
 dependencies = [
  "alloy-consensus",
@@ -950,7 +950,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "base-proof",
- "base-proof-succinct-client-utils",
+ "base-proof-zk-utils",
  "rkyv",
  "sp1-zkvm",
  "tracing",
@@ -2676,7 +2676,7 @@ name = "range"
 version = "0.0.0"
 dependencies = [
  "base-proof",
- "base-proof-succinct-client-utils",
+ "base-proof-zk-utils",
  "base-proof-succinct-range-utils",
  "rkyv",
  "sp1-zkvm",

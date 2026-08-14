@@ -1,6 +1,6 @@
 //! Validator engine request routing.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 use alloy_eips::BlockNumberOrTag;
 use base_consensus_engine::{
@@ -13,8 +13,8 @@ use tracing::{error, warn};
 
 use crate::{
     BuildRequest, EngineActorRequest, EngineClientError, EngineDerivationClient, EngineError,
-    EngineProcessor, EngineRequestReceiver, GetPayloadRequest, InsertUnsafePayloadRequest,
-    ReconcileShadowRequest, ResetRequest,
+    EngineProcessor, EngineRequestReceiver, GetPayloadRequest, InsertUnsafePayloadRequest, Metrics,
+    ReconcileShadowRequest, ResetRequest, ResetRequestOutcome,
 };
 
 /// Receives validator engine requests without carrying sequencer configuration.
@@ -158,9 +158,19 @@ where
                         }
                     }
                     EngineActorRequest::ResetRequest(request) => {
-                        let ResetRequest { result_tx, .. } = *request;
+                        let reset_started = Instant::now();
+                        let ResetRequest { result_tx, origin, reason } = *request;
+                        let unsafe_before = self.processor.engine_state().sync_state.unsafe_head();
                         if !self.processor.engine_state().el_sync_finished {
                             warn!(target: "engine", "Deferring engine reset: EL sync not yet complete");
+                            Metrics::record_engine_reset(
+                                origin,
+                                reason,
+                                ResetRequestOutcome::Deferred,
+                                reset_started.elapsed(),
+                                unsafe_before,
+                                self.processor.engine_state().sync_state.unsafe_head(),
+                            );
                             if result_tx.send(Err(EngineClientError::ELSyncing)).await.is_err() {
                                 warn!(target: "engine", "Sending ELSyncing response failed");
                             }
@@ -177,11 +187,37 @@ where
                                     .map_err(|error| {
                                         EngineClientError::ResetForkchoiceError(error.to_string())
                                     });
+                                let unsafe_after =
+                                    self.processor.engine_state().sync_state.unsafe_head();
+                                let outcome = if response.is_ok() {
+                                    ResetRequestOutcome::from_unsafe_heads(
+                                        unsafe_before,
+                                        unsafe_after,
+                                    )
+                                } else {
+                                    ResetRequestOutcome::DerivationNotificationFailed
+                                };
+                                Metrics::record_engine_reset(
+                                    origin,
+                                    reason,
+                                    outcome,
+                                    reset_started.elapsed(),
+                                    unsafe_before,
+                                    unsafe_after,
+                                );
                                 if result_tx.send(response).await.is_err() {
                                     warn!(target: "engine", "Sending reset response failed");
                                 }
                             }
                             Err(error) => {
+                                Metrics::record_engine_reset(
+                                    origin,
+                                    reason,
+                                    ResetRequestOutcome::Failed,
+                                    reset_started.elapsed(),
+                                    unsafe_before,
+                                    self.processor.engine_state().sync_state.unsafe_head(),
+                                );
                                 let response =
                                     Err(EngineClientError::ResetForkchoiceError(error.to_string()));
                                 if result_tx.send(response).await.is_err() {

@@ -29,7 +29,7 @@ use url::Url;
 use crate::upgrade_signal::{MockProtocolVersionsClient, UpgradeSignalStackOptions};
 use crate::{
     BATCHER, BUILDER, SEQUENCER,
-    l1::{L1ContainerConfig, L1Stack, L1StackConfig},
+    l1::{L1ContainerConfig, L1RpcProxy, L1Stack, L1StackConfig},
     l2::{
         L2ClientConsensusMode, L2ContainerConfig, L2Stack, L2StackConfig, ShadowSequencersConfig,
     },
@@ -107,6 +107,7 @@ pub struct SystemTestStack {
     l2_deployment: L2DeploymentOutput,
     l1_stack: L1Stack,
     l2_stack: L2Stack,
+    l1_rpc_proxy: Option<L1RpcProxy>,
     #[cfg(feature = "upgrade-signal")]
     upgrade_signal: Option<MockProtocolVersionsClient>,
     /// Must be the last field: it clears the runtime registry on drop, so the stacks above
@@ -133,6 +134,11 @@ impl SystemTestStack {
     /// Returns a reference to the L2 stack.
     pub const fn l2_stack(&self) -> &L2Stack {
         &self.l2_stack
+    }
+
+    /// Returns the controllable L1 RPC proxy when fault injection was enabled.
+    pub const fn l1_rpc_proxy(&self) -> Option<&L1RpcProxy> {
+        self.l1_rpc_proxy.as_ref()
     }
 
     /// Returns the public RPC URL of the L1 Reth node.
@@ -276,6 +282,7 @@ pub struct SystemTestStackBuilder {
     base_azul_activation_block: Option<u64>,
     base_beryl_activation_block: Option<u64>,
     base_cobalt_activation_block: Option<u64>,
+    base_denim_activation_block: Option<u64>,
     base_zenith_activation_block: Option<u64>,
     output_dir: Option<PathBuf>,
     stable_config: Option<StableSystemTestConfig>,
@@ -287,6 +294,7 @@ pub struct SystemTestStackBuilder {
     shadow_blocks_per_cycle: Option<NonZeroU64>,
     shadow_start_block: Option<u64>,
     tmpfs_datadirs: bool,
+    l1_fault_injection: bool,
     extra_builder_extensions: Vec<Box<dyn BaseNodeExtension>>,
     extra_client_extensions: Vec<Box<dyn BaseNodeExtension>>,
     #[cfg(feature = "upgrade-signal")]
@@ -341,7 +349,13 @@ impl SystemTestStackBuilder {
         self
     }
 
-    /// Sets the L2 block number at which Base Zenith activates.
+    /// Sets the L2 block number at which Base Denim activates.
+    pub const fn with_base_denim_activation_block(mut self, block: u64) -> Self {
+        self.base_denim_activation_block = Some(block);
+        self
+    }
+
+    /// Sets the L2 block number at which the genesis-only Base Zenith testing gate activates.
     pub const fn with_base_zenith_activation_block(mut self, block: u64) -> Self {
         self.base_zenith_activation_block = Some(block);
         self
@@ -382,6 +396,12 @@ impl SystemTestStackBuilder {
     /// already supports mmap.
     pub const fn with_tmpfs_datadirs(mut self) -> Self {
         self.tmpfs_datadirs = true;
+        self
+    }
+
+    /// Routes L2 services through a controllable L1 RPC proxy and enables L1 reorg control.
+    pub const fn with_l1_fault_injection(mut self) -> Self {
+        self.l1_fault_injection = true;
         self
     }
 
@@ -494,6 +514,10 @@ impl SystemTestStackBuilder {
             setup = setup.with_base_cobalt_activation_block(block);
         }
 
+        if let Some(block) = self.base_denim_activation_block {
+            setup = setup.with_base_denim_activation_block(block);
+        }
+
         if let Some(block) = self.base_zenith_activation_block {
             setup = setup.with_base_zenith_activation_block(block);
         }
@@ -523,6 +547,7 @@ impl SystemTestStackBuilder {
                     beacon_http_port: Some(config.ports.l1_cl_http),
                     beacon_p2p_port: Some(config.ports.l1_cl_p2p),
                     tmpfs_datadir: self.tmpfs_datadirs,
+                    enable_reorg_control: self.l1_fault_injection,
                 };
                 let l2_config = L2ContainerConfig {
                     use_stable_names: true,
@@ -548,8 +573,11 @@ impl SystemTestStackBuilder {
 
         // Ensure the tmpfs-datadir request reaches the L1 containers even without a stable config.
         let l1_container_config = l1_container_config.or_else(|| {
-            self.tmpfs_datadirs
-                .then(|| L1ContainerConfig { tmpfs_datadir: true, ..Default::default() })
+            (self.tmpfs_datadirs || self.l1_fault_injection).then(|| L1ContainerConfig {
+                tmpfs_datadir: self.tmpfs_datadirs,
+                enable_reorg_control: self.l1_fault_injection,
+                ..Default::default()
+            })
         });
 
         let l1_config = L1StackConfig {
@@ -625,6 +653,16 @@ impl SystemTestStackBuilder {
         #[cfg(not(feature = "upgrade-signal"))]
         let (l2_upgrade_signal, l2_execution_upgrade_signal) = (None, None);
 
+        let direct_l1_rpc_url = l1_stack.reth().rpc_url().await?;
+        let l1_rpc_proxy = if self.l1_fault_injection {
+            Some(L1RpcProxy::start(direct_l1_rpc_url.clone()).await?)
+        } else {
+            None
+        };
+        let l2_l1_rpc_url = l1_rpc_proxy
+            .as_ref()
+            .map_or_else(|| direct_l1_rpc_url.to_string(), |proxy| proxy.url().to_string());
+
         let l2_config = L2StackConfig {
             l2_genesis: l2_genesis_bytes,
             rollup_config: rollup_config_bytes,
@@ -633,7 +671,7 @@ impl SystemTestStackBuilder {
             p2p_key: BUILDER.private_key,
             sequencer_key: SEQUENCER.private_key,
             batcher_key: BATCHER.private_key,
-            l1_rpc_url: l1_stack.reth().rpc_url().await?.to_string(),
+            l1_rpc_url: l2_l1_rpc_url,
             l1_beacon_url: l1_stack.beacon().beacon_url().await?,
             container_config: l2_container_config,
             tx_forwarding_config: self.tx_forwarding_config,
@@ -658,6 +696,7 @@ impl SystemTestStackBuilder {
             l2_deployment,
             l1_stack,
             l2_stack,
+            l1_rpc_proxy,
             #[cfg(feature = "upgrade-signal")]
             upgrade_signal,
             #[cfg(feature = "upgrade-signal")]

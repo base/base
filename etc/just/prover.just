@@ -20,15 +20,21 @@ up network:
     fi
 
     missing=()
-    for var in L1_NODE_ADDRESS L1_BEACON_ADDRESS L2_NODE_ADDRESS BASE_CONSENSUS_ADDRESS NETWORK_PRIVATE_KEY; do
+    for var in L1_NODE_ADDRESS L1_BEACON_ADDRESS L2_NODE_ADDRESS BASE_CONSENSUS_ADDRESS; do
       if [ -z "${!var:-}" ]; then
         missing+=("$var")
       fi
     done
     if [ "${#missing[@]}" -gt 0 ]; then
       echo "ERROR: missing required environment variables: ${missing[*]}" >&2
-      echo "Export your RPC endpoints and funded Succinct requester key, then retry." >&2
+      echo "Export your RPC endpoints, then retry." >&2
+      echo "See docs/guides/STANDALONE_PROVING.md for the full workflow." >&2
       exit 1
+    fi
+
+    if [ -z "${NETWORK_PRIVATE_KEY:-}" ]; then
+      echo "NOTE: NETWORK_PRIVATE_KEY is not set; starting a dry-run-only stack." >&2
+      echo "The paid network backend stays disabled until the stack is restarted with a funded requester key." >&2
     fi
 
     for elf in range-elf-embedded aggregation-elf; do

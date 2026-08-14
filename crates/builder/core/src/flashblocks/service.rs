@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use base_builder_publish::WebSocketPublisher;
 use base_execution_evm::BaseEvmConfig;
-use base_execution_txpool::BasePooledTransaction;
 use base_node_core::{
     BaseConsensusBuilder, BaseExecutorBuilder, BaseNetworkBuilder, node::BasePoolBuilder,
 };
@@ -25,37 +24,23 @@ use super::{
     payload::{BasePayloadBuilder, BuilderOutputs},
 };
 use crate::{
-    BuilderConfig, CandidateSource, DefaultCandidateSource, RejectedTxForwarder,
+    BuilderConfig, RejectedTxForwarder,
     traits::{NodeBounds, PoolBounds},
 };
 
 /// Builder for the flashblocks payload service.
 ///
-/// Holds a [`BuilderConfig`] and a [`CandidateSource`], and implements
-/// [`BasePayloadServiceBuilder`] to spawn the flashblocks payload builder service, which produces
-/// sub-block chunks (flashblocks) at sub-second intervals during block construction.
-///
-/// The candidate source defaults to [`DefaultCandidateSource`] (the pool's best transactions,
-/// unchanged); use [`FlashblocksServiceBuilder::with_candidate_source`] to supply an alternative.
+/// Holds a [`BuilderConfig`] and implements [`BasePayloadServiceBuilder`] to spawn the flashblocks
+/// payload builder service, which produces sub-block chunks at sub-second intervals.
 #[derive(Debug)]
-pub struct FlashblocksServiceBuilder<S = DefaultCandidateSource> {
+pub struct FlashblocksServiceBuilder {
     config: BuilderConfig,
-    candidate_source: S,
 }
 
 impl FlashblocksServiceBuilder {
-    /// Create a service builder that uses the default candidate source
-    /// (the pool's priority-ordered best transactions, unchanged).
+    /// Creates a flashblocks payload service builder.
     pub const fn new(config: BuilderConfig) -> Self {
-        Self { config, candidate_source: DefaultCandidateSource }
-    }
-}
-
-impl<S> FlashblocksServiceBuilder<S> {
-    /// Replace the candidate transaction source used by the flashblocks build loop.
-    #[must_use]
-    pub fn with_candidate_source<S2>(self, candidate_source: S2) -> FlashblocksServiceBuilder<S2> {
-        FlashblocksServiceBuilder { config: self.config, candidate_source }
+        Self { config }
     }
 
     fn spawn_payload_builder_service<Node, Pool>(
@@ -66,7 +51,6 @@ impl<S> FlashblocksServiceBuilder<S> {
     where
         Node: NodeBounds,
         Pool: PoolBounds,
-        S: CandidateSource<Pool::Transaction> + Clone + Unpin + 'static,
     {
         let (built_payload_tx, built_payload_rx) = tokio::sync::mpsc::channel(16);
 
@@ -89,7 +73,6 @@ impl<S> FlashblocksServiceBuilder<S> {
             ctx.provider().clone(),
             self.config.clone(),
             BuilderOutputs { payload_tx: built_payload_tx, ws_pub, rejected_tx_sender },
-            self.candidate_source.clone(),
         );
         let payload_generator = BlockPayloadJobGenerator::with_builder(
             ctx.provider().clone(),
@@ -115,12 +98,10 @@ impl<S> FlashblocksServiceBuilder<S> {
     }
 }
 
-impl<Node, Pool, S> PayloadServiceBuilder<Node, Pool, BaseEvmConfig>
-    for FlashblocksServiceBuilder<S>
+impl<Node, Pool> PayloadServiceBuilder<Node, Pool, BaseEvmConfig> for FlashblocksServiceBuilder
 where
     Node: NodeBounds,
     Pool: PoolBounds,
-    S: CandidateSource<Pool::Transaction> + Clone + Unpin + 'static,
 {
     async fn spawn_payload_builder_service(
         self,
@@ -132,10 +113,7 @@ where
     }
 }
 
-impl<S> BasePayloadServiceBuilder for FlashblocksServiceBuilder<S>
-where
-    S: CandidateSource<BasePooledTransaction> + Clone + Unpin + 'static,
-{
+impl BasePayloadServiceBuilder for FlashblocksServiceBuilder {
     type ComponentsBuilder = ComponentsBuilder<
         BaseNodeTypes,
         BasePoolBuilder,

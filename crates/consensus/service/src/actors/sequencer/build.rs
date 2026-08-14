@@ -14,7 +14,7 @@ use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 use tracing::instrument;
 
 use crate::{
-    Metrics, PoolActivation,
+    Metrics, PoolActivation, ResetReason,
     actors::{
         SequencerEngineClient,
         sequencer::{
@@ -131,11 +131,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
         &mut self,
         unsafe_head: L2BlockInfo,
     ) -> Result<BuildOutcome<BlockInfo>, SequencerActorError> {
-        let l1_origin = match self
-            .origin_selector
-            .next_l1_origin(unsafe_head, self.recovery_mode.get())
-            .await
-        {
+        let l1_origin = match self.origin_selector.next_l1_origin(unsafe_head).await {
             Ok(l1_origin) => l1_origin,
             Err(L1OriginSelectorError::OriginNotFound(hash)) => {
                 warn!(
@@ -143,7 +139,18 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
                     hash = %hash,
                     "L1 origin block not found (reorg or sync lag), triggering engine reset"
                 );
-                self.engine_client.reset_engine_forkchoice().await?;
+                self.engine_client
+                    .reset_engine_forkchoice(ResetReason::L1OriginUnavailable)
+                    .await?;
+                return Ok(BuildOutcome::Deferred);
+            }
+            Err(err @ L1OriginSelectorError::NextL1OriginOrphaned { .. }) => {
+                warn!(
+                    target: "sequencer",
+                    ?err,
+                    "Next L1 origin orphaned the accepted current origin, triggering engine reset"
+                );
+                self.engine_client.reset_engine_forkchoice(ResetReason::L1OriginOrphaned).await?;
                 return Ok(BuildOutcome::Deferred);
             }
             Err(err @ L1OriginSelectorError::NotEnoughData(_)) => {
@@ -174,7 +181,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
                 unsafe_head_l1_origin = ?unsafe_head.l1_origin,
                 "Cannot build new L2 block on inconsistent L1 origin, resetting engine"
             );
-            self.engine_client.reset_engine_forkchoice().await?;
+            self.engine_client.reset_engine_forkchoice(ResetReason::L1OriginInconsistent).await?;
             return Ok(BuildOutcome::Deferred);
         }
 

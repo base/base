@@ -3,6 +3,7 @@ use std::time::Duration;
 use alloy_primitives::{Address, B256};
 use base_proof_contracts::ContractError;
 use base_proof_tee_nitro_attestation_prover::ProverError;
+use base_proof_tee_nitro_verifier::VerifierError;
 use base_tx_manager::TxManagerError;
 use thiserror::Error;
 
@@ -85,3 +86,49 @@ pub enum RegistrarError {
 
 /// Convenience result alias for registrar operations.
 pub type Result<T> = std::result::Result<T, RegistrarError>;
+
+/// Errors that can occur while parsing a Nitro attestation into a registration plan.
+#[derive(Debug, Error)]
+pub enum PlannerError {
+    /// Strict COSE / payload CBOR validation failed (`NitroValidator` parity).
+    #[error("COSE format error: {0}")]
+    Cose(String),
+
+    /// Underlying attestation decode / content validation failure from `nitro-verifier`.
+    #[error("attestation parse error")]
+    Parse(#[from] VerifierError),
+
+    /// Attestation document is missing fields required for Base registration.
+    #[error("attestation format error: {0}")]
+    Attestation(String),
+
+    /// Certificate parsing or `CertManager` key derivation failed.
+    #[error("certificate error")]
+    Certificate(#[source] Box<dyn std::error::Error + Send + Sync>),
+
+    /// Attestation `public_key` cannot be converted to a signer address.
+    #[error("public key error: {0}")]
+    PublicKey(String),
+
+    /// P-384 inverse-hint generation failed.
+    #[error(transparent)]
+    Hint(#[from] HintError),
+}
+
+/// Errors from the Agora / `nitro-validator` P-384 inverse-hint transcript.
+#[derive(Debug, Error)]
+pub enum HintError {
+    /// Signature, key, or arithmetic input rejected by the verifier transcript.
+    #[error("{0}")]
+    Rejected(String),
+
+    /// Certificate DER could not be parsed into P-384 verify inputs.
+    #[error("certificate error: {0}")]
+    Certificate(String),
+}
+
+/// Convenience result alias for hint generation.
+pub type HintResult<T> = std::result::Result<T, HintError>;
+
+/// Convenience result alias for planner operations.
+pub type PlannerResult<T> = std::result::Result<T, PlannerError>;

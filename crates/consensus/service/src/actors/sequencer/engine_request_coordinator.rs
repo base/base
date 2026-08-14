@@ -1,6 +1,6 @@
 //! Sequencer ownership and serialized routing of engine requests.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 use alloy_eips::BlockNumberOrTag;
 use base_consensus_engine::{
@@ -17,8 +17,9 @@ use tracing::{debug, error, info, warn};
 use super::{CanonicalUnsafeCatchup, Conductor, SequencerEngineState, ShadowReconciliationGate};
 use crate::{
     BuildRequest, EngineActorRequest, EngineClientError, EngineDerivationClient, EngineError,
-    EngineProcessor, EngineRequestReceiver, GetPayloadRequest, InsertUnsafePayloadRequest,
-    ReconcileShadowRequest, ResetOrigin, ResetRequest, actors::engine::ResetOutcome,
+    EngineProcessor, EngineRequestReceiver, GetPayloadRequest, InsertUnsafePayloadRequest, Metrics,
+    ReconcileShadowRequest, ResetOrigin, ResetRequest, ResetRequestOutcome,
+    actors::engine::ResetOutcome,
 };
 
 const MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP: u64 = 300;
@@ -456,9 +457,11 @@ where
                         }
                     }
                     EngineActorRequest::ResetRequest(reset_request) => {
-                        let ResetRequest { result_tx, origin } = *reset_request;
+                        let reset_started = Instant::now();
+                        let ResetRequest { result_tx, origin, reason } = *reset_request;
                         let sync_state = self.processor.engine_state().sync_state;
                         let head = sync_state.unsafe_head();
+                        let unsafe_before = head;
                         if origin != ResetOrigin::Derivation
                             && let SequencerEngineState::CatchingUp { shadow, catchup } =
                                 &self.sequencer_state
@@ -466,6 +469,14 @@ where
                             let shadow = *shadow;
                             if catchup.is_faulted() {
                                 error!(target: "engine", "Canonical catch-up payload buffer is faulted");
+                                Metrics::record_engine_reset(
+                                    origin,
+                                    reason,
+                                    ResetRequestOutcome::Failed,
+                                    reset_started.elapsed(),
+                                    unsafe_before,
+                                    self.processor.engine_state().sync_state.unsafe_head(),
+                                );
                                 if result_tx
                                     .send(Err(EngineClientError::ShadowBufferFaulted))
                                     .await
@@ -477,6 +488,14 @@ where
                             }
                             if !catchup.is_complete(head, sync_state.safe_head()) {
                                 warn!(target: "engine", "Deferring sequencer reset until canonical catch-up completes");
+                                Metrics::record_engine_reset(
+                                    origin,
+                                    reason,
+                                    ResetRequestOutcome::Deferred,
+                                    reset_started.elapsed(),
+                                    unsafe_before,
+                                    self.processor.engine_state().sync_state.unsafe_head(),
+                                );
                                 if result_tx.send(Err(EngineClientError::ELSyncing)).await.is_err()
                                 {
                                     warn!(target: "engine", "Sending ELSyncing response failed");
@@ -485,6 +504,14 @@ where
                             }
                             if shadow {
                                 if origin != ResetOrigin::ShadowCycleCoordinated {
+                                    Metrics::record_engine_reset(
+                                        origin,
+                                        reason,
+                                        ResetRequestOutcome::Failed,
+                                        reset_started.elapsed(),
+                                        unsafe_before,
+                                        self.processor.engine_state().sync_state.unsafe_head(),
+                                    );
                                     if result_tx
                                         .send(Err(EngineClientError::ShadowReconciliationDisabled))
                                         .await
@@ -507,6 +534,14 @@ where
                                     Box::new(ShadowReconciliationGate::new(head)),
                                 );
                                 self.unsafe_head_tx.send_replace(head);
+                                Metrics::record_engine_reset(
+                                    origin,
+                                    reason,
+                                    ResetRequestOutcome::from_unsafe_heads(unsafe_before, head),
+                                    reset_started.elapsed(),
+                                    unsafe_before,
+                                    head,
+                                );
                                 if result_tx.send(Ok(())).await.is_err() {
                                     warn!(target: "engine", "Sending shadow activation response failed");
                                 }
@@ -526,6 +561,14 @@ where
                         // aborting any in-progress snap sync. Defer until el_sync_finished=true.
                         if !self.processor.engine_state().el_sync_finished {
                             warn!(target: "engine", "Deferring engine reset: EL sync not yet complete");
+                            Metrics::record_engine_reset(
+                                origin,
+                                reason,
+                                ResetRequestOutcome::Deferred,
+                                reset_started.elapsed(),
+                                unsafe_before,
+                                self.processor.engine_state().sync_state.unsafe_head(),
+                            );
                             if result_tx.send(Err(EngineClientError::ELSyncing)).await.is_err() {
                                 warn!(target: "engine", "Sending ELSyncing response failed");
                             }
@@ -548,6 +591,14 @@ where
                             if let Err(error) =
                                 self.processor.notify_derivation_of_reset(*safe_head).await
                             {
+                                Metrics::record_engine_reset(
+                                    origin,
+                                    reason,
+                                    ResetRequestOutcome::DerivationNotificationFailed,
+                                    reset_started.elapsed(),
+                                    unsafe_before,
+                                    self.processor.engine_state().sync_state.unsafe_head(),
+                                );
                                 if result_tx
                                     .send(Err(EngineClientError::ResetForkchoiceError(
                                         error.to_string(),
@@ -563,6 +614,21 @@ where
                                 continue;
                             }
                         }
+
+                        let unsafe_after = self.processor.engine_state().sync_state.unsafe_head();
+                        let reset_outcome = if reset_res.is_ok() {
+                            ResetRequestOutcome::from_unsafe_heads(unsafe_before, unsafe_after)
+                        } else {
+                            ResetRequestOutcome::Failed
+                        };
+                        Metrics::record_engine_reset(
+                            origin,
+                            reason,
+                            reset_outcome,
+                            reset_started.elapsed(),
+                            unsafe_before,
+                            unsafe_after,
+                        );
 
                         // Send the result.
                         let response_payload = reset_res

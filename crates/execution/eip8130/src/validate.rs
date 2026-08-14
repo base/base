@@ -48,9 +48,9 @@ impl NonceValidator {
     /// `protocol_nonce` is the account's current basic nonce, read by the caller
     /// from account state; it is consulted only for the protocol channel
     /// (`nonce_key == 0`). `storage` serves the 2D channels and the nonce-free
-    /// replay set. `now` (Unix seconds; block timestamp at inclusion, wall-clock
-    /// in the pool) bounds the nonce-free replay-set lookup and is unused for
-    /// sequence channels.
+    /// replay set. `now` (Unix **milliseconds**; `block.timestamp * 1000` at
+    /// inclusion, wall-clock in the pool) bounds the nonce-free replay-set lookup
+    /// and is unused for sequence channels.
     ///
     /// Returns [`NonceStatus::Ready`] when the transaction may execute now,
     /// [`NonceStatus::Buffered`] when a pool transaction is ahead of its channel,
@@ -65,7 +65,7 @@ impl NonceValidator {
     ) -> Result<NonceStatus, NonceError> {
         if tx.nonce_key == Eip8130Constants::NONCE_KEY_MAX {
             // Nonce-free: no sequence channel. The structural rules
-            // (nonce_sequence == 0, expiry window) are enforced upstream by
+            // (nonce_sequence == 0, validity window) are enforced upstream by
             // `Eip8130Signed::validate_timestamp`; the only stateful check is
             // that this logical transaction's replay hash is not already
             // recorded and unexpired.
@@ -133,19 +133,23 @@ mod tests {
 
     /// Runs `validate` against a freshly-seeded nonce manager. `seed` may mutate
     /// the manager (e.g. advance a channel) before the (immutable) check.
+    ///
+    /// `now_secs` is the block timestamp in seconds (what the storage exposes);
+    /// the validity-window checks operate in milliseconds, so `validate` receives
+    /// `now_secs * 1000` to match the ring buffer's `block.timestamp * 1000`.
     fn check(
         tx: &TxEip8130,
         protocol_nonce: u64,
         mode: NonceMode,
-        now: u64,
+        now_secs: u64,
         seed: impl FnOnce(&mut NonceManagerStorage<'_>),
     ) -> Result<NonceStatus, NonceError> {
         let mut storage = HashMapStorageProvider::new(1);
-        storage.set_timestamp(U256::from(now));
+        storage.set_timestamp(U256::from(now_secs));
         StorageCtx::enter(&mut storage, |ctx| {
             let mut mgr = NonceManagerStorage::new(ctx);
             seed(&mut mgr);
-            NonceValidator::validate(tx, ACCOUNT, protocol_nonce, &mgr, mode, now)
+            NonceValidator::validate(tx, ACCOUNT, protocol_nonce, &mgr, mode, now_secs * 1_000)
         })
     }
 
@@ -232,12 +236,15 @@ mod tests {
 
     #[test]
     fn nonce_free_replay_is_rejected() {
-        let now = 1_000u64;
+        let now_secs = 1_000u64;
         let tx = tx_with(Eip8130Constants::NONCE_KEY_MAX, 0);
         let replay = NonceValidator::replay_hash(&tx, ACCOUNT);
+        // `valid_before` is milliseconds and must fall in
+        // `(now_secs * 1000, now_secs * 1000 + NONCE_FREE_EXPIRY_WINDOW]`.
+        let valid_before = now_secs * 1_000 + 20_000;
         let seed = |mgr: &mut NonceManagerStorage<'_>| {
-            mgr.check_and_mark_expiring_nonce(replay, now + 20).unwrap();
+            mgr.check_and_mark_expiring_nonce(replay, valid_before).unwrap();
         };
-        assert_eq!(check(&tx, 0, NonceMode::Inclusion, now, seed), Err(NonceError::Replay));
+        assert_eq!(check(&tx, 0, NonceMode::Inclusion, now_secs, seed), Err(NonceError::Replay));
     }
 }

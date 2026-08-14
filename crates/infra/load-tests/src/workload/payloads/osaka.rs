@@ -1,6 +1,7 @@
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, Bytes};
 use alloy_rpc_types::TransactionRequest;
+use async_trait::async_trait;
 
 use super::Payload;
 use crate::{config::OsakaTarget, workload::SeededRng};
@@ -113,6 +114,7 @@ impl OsakaPayload {
     }
 }
 
+#[async_trait]
 impl Payload for OsakaPayload {
     fn name(&self) -> &'static str {
         "osaka"

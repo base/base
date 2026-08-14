@@ -9,6 +9,7 @@ use std::{
 
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::ExecutionPayloadV1;
+use alloy_transport::TransportErrorKind;
 use base_common_genesis::{ChainGenesis, RollupConfig};
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BasePayloadAttributes,
@@ -21,9 +22,9 @@ use rstest::rstest;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
-    ConductorError, L1OriginSelectorError, NodeActor, ScheduledTicker, SealState, SealStepError,
-    SealStepOutcome, SequencerActorError, SequencerAdminQuery, UnsafePayloadGossipClientError,
-    UnsealedPayloadHandle,
+    ConductorError, L1OriginSelectorError, NodeActor, ResetReason, ScheduledTicker, SealState,
+    SealStepError, SealStepOutcome, SequencerActorError, SequencerAdminQuery,
+    UnsafePayloadGossipClientError, UnsealedPayloadHandle,
     actors::{
         MockConductor, MockOriginSelector, MockSequencerEngineClient,
         MockUnsafePayloadGossipClient,
@@ -153,7 +154,7 @@ async fn test_on_time_or_late_insert_starts_child_build_immediately(#[case] seco
     let (build_tx, mut build_rx) = mpsc::unbounded_channel();
 
     let mut client = MockSequencerEngineClient::new();
-    client.expect_reset_engine_forkchoice().times(1).return_once(|| Ok(()));
+    client.expect_reset_engine_forkchoice().times(1).return_once(|_| Ok(()));
     client.expect_get_unsafe_head().times(2).returning(move || Ok(initial_head));
     client.expect_start_build_block().times(2).returning(move |attributes| {
         build_tx.send(attributes.parent().block_info.number).unwrap();
@@ -163,7 +164,7 @@ async fn test_on_time_or_late_insert_starts_child_build_immediately(#[case] seco
     client.expect_insert_unsafe_payload().times(1).return_once(move |_| Ok(inserted_head));
 
     let mut origin_selector = MockOriginSelector::new();
-    origin_selector.expect_next_l1_origin().times(2).returning(|_, _| Ok(BlockInfo::default()));
+    origin_selector.expect_next_l1_origin().times(2).returning(|_| Ok(BlockInfo::default()));
 
     let mut gossip = MockUnsafePayloadGossipClient::new();
     gossip.expect_schedule_execution_payload_gossip().times(1).return_once(|_| Ok(()));
@@ -220,7 +221,7 @@ async fn test_early_insert_defers_child_build_until_parent_timestamp() {
     let (insert_tx, mut insert_rx) = mpsc::unbounded_channel();
 
     let mut client = MockSequencerEngineClient::new();
-    client.expect_reset_engine_forkchoice().times(1).return_once(|| Ok(()));
+    client.expect_reset_engine_forkchoice().times(1).return_once(|_| Ok(()));
     client.expect_get_unsafe_head().times(2).returning(move || Ok(initial_head));
     client.expect_start_build_block().times(2).returning(move |attributes| {
         build_tx.send(attributes.parent().block_info.number).unwrap();
@@ -233,7 +234,7 @@ async fn test_early_insert_defers_child_build_until_parent_timestamp() {
     });
 
     let mut origin_selector = MockOriginSelector::new();
-    origin_selector.expect_next_l1_origin().times(2).returning(|_, _| Ok(BlockInfo::default()));
+    origin_selector.expect_next_l1_origin().times(2).returning(|_| Ok(BlockInfo::default()));
 
     let mut gossip = MockUnsafePayloadGossipClient::new();
     gossip.expect_schedule_execution_payload_gossip().times(1).return_once(|_| Ok(()));
@@ -302,7 +303,7 @@ async fn test_stop_discards_queued_parent_and_restart_builds_immediately_on_fres
     let get_head_calls = Arc::new(AtomicUsize::new(0));
 
     let mut client = MockSequencerEngineClient::new();
-    client.expect_reset_engine_forkchoice().times(1).return_once(|| Ok(()));
+    client.expect_reset_engine_forkchoice().times(1).return_once(|_| Ok(()));
     client.expect_get_unsafe_head().times(5).returning({
         let get_head_calls = Arc::clone(&get_head_calls);
         move || {
@@ -325,7 +326,7 @@ async fn test_stop_discards_queued_parent_and_restart_builds_immediately_on_fres
     });
 
     let mut origin_selector = MockOriginSelector::new();
-    origin_selector.expect_next_l1_origin().times(2).returning(|_, _| Ok(BlockInfo::default()));
+    origin_selector.expect_next_l1_origin().times(2).returning(|_| Ok(BlockInfo::default()));
 
     let mut gossip = MockUnsafePayloadGossipClient::new();
     gossip.expect_schedule_execution_payload_gossip().times(1).return_once(|_| Ok(()));
@@ -398,7 +399,7 @@ async fn shadow_cycle_reconciles_after_configured_private_block_count() {
     let cancellation_token = tokio_util::sync::CancellationToken::new();
     let cancel_after_reconciliation = cancellation_token.clone();
     let mut client = MockSequencerEngineClient::new();
-    client.expect_reset_engine_forkchoice_coordinated().times(1).return_once(|| Ok(()));
+    client.expect_reset_engine_forkchoice_coordinated().times(1).return_once(|_| Ok(()));
     client.expect_get_unsafe_head().times(1).return_once(move || Ok(cycle_start));
     client.expect_insert_unsafe_payload().times(1).return_once(move |_| Ok(private_head));
     client
@@ -532,14 +533,22 @@ async fn test_try_seal_handle_non_fatal_seal_error_returns_none() {
     assert!(!actor.cancellation_token.is_cancelled());
 }
 
+#[rstest]
+#[case::awaiting_l1_origin(false, false)]
+#[case::provider_error(true, false)]
+#[case::repeated_orphan_resets(false, true)]
 #[tokio::test(start_paused = true)]
-async fn test_l1_origin_retries_are_paced_after_immediate_budget() {
+async fn test_build_retries_are_paced_after_immediate_budget(
+    #[case] provider_error: bool,
+    #[case] orphaned: bool,
+) {
     let attempts_before_delay = usize::from(ScheduledTicker::MAX_IMMEDIATE_L1_ORIGIN_RETRIES) + 1;
     let expected_attempts = attempts_before_delay + 1;
     let (attempt_tx, mut attempt_rx) = mpsc::unbounded_channel();
 
     let mut client = MockSequencerEngineClient::new();
-    client.expect_reset_engine_forkchoice().times(1).return_once(|| Ok(()));
+    let expected_resets = if orphaned { expected_attempts + 1 } else { 1 };
+    client.expect_reset_engine_forkchoice().times(expected_resets).returning(|_| Ok(()));
     client
         .expect_get_unsafe_head()
         .times(expected_attempts)
@@ -547,9 +556,20 @@ async fn test_l1_origin_retries_are_paced_after_immediate_budget() {
     client.expect_start_build_block().times(0);
 
     let mut origin_selector = MockOriginSelector::new();
-    origin_selector.expect_next_l1_origin().times(expected_attempts).returning(move |_, _| {
+    origin_selector.expect_next_l1_origin().times(expected_attempts).returning(move |_| {
         attempt_tx.send(()).unwrap();
-        Err(L1OriginSelectorError::NotEnoughData(BlockInfo::default()))
+        if orphaned {
+            Err(L1OriginSelectorError::NextL1OriginOrphaned {
+                current: B256::with_last_byte(1),
+                next: B256::with_last_byte(2),
+            })
+        } else if provider_error {
+            Err(L1OriginSelectorError::Provider(TransportErrorKind::custom_str(
+                "mock L1 provider failure",
+            )))
+        } else {
+            Err(L1OriginSelectorError::NotEnoughData(BlockInfo::default()))
+        }
     });
 
     let engine_client = Arc::new(client);
@@ -584,6 +604,64 @@ async fn test_l1_origin_retries_are_paced_after_immediate_budget() {
 
 // --- build tests ---
 
+#[tokio::test]
+async fn test_orphaned_l1_origin_resets_once_without_starting_block_build() {
+    let unsafe_head = L2BlockInfo::default();
+    let mut client = MockSequencerEngineClient::new();
+    client.expect_get_unsafe_head().times(1).return_once(move || Ok(unsafe_head));
+    client
+        .expect_reset_engine_forkchoice()
+        .with(mockall::predicate::eq(ResetReason::L1OriginOrphaned))
+        .times(1)
+        .return_once(|_| Ok(()));
+    client.expect_start_build_block().times(0);
+
+    let mut origin_selector = MockOriginSelector::new();
+    origin_selector.expect_next_l1_origin().times(1).return_once(|_| {
+        Err(L1OriginSelectorError::NextL1OriginOrphaned {
+            current: B256::with_last_byte(1),
+            next: B256::with_last_byte(2),
+        })
+    });
+
+    let mut actor = test_actor();
+    actor.builder.origin_selector = origin_selector;
+    actor.builder.engine_client = Arc::new(client);
+
+    assert!(matches!(actor.builder.build().await.unwrap(), crate::BuildOutcome::Deferred));
+}
+
+#[tokio::test]
+async fn test_orphaned_l1_origin_propagates_engine_reset_failure() {
+    let unsafe_head = L2BlockInfo::default();
+    let mut client = MockSequencerEngineClient::new();
+    client.expect_get_unsafe_head().times(1).return_once(move || Ok(unsafe_head));
+    client
+        .expect_reset_engine_forkchoice()
+        .with(mockall::predicate::eq(ResetReason::L1OriginOrphaned))
+        .times(1)
+        .return_once(|_| Err(EngineClientError::ResetForkchoiceError("mock reset failure".into())));
+    client.expect_start_build_block().times(0);
+
+    let mut origin_selector = MockOriginSelector::new();
+    origin_selector.expect_next_l1_origin().times(1).return_once(|_| {
+        Err(L1OriginSelectorError::NextL1OriginOrphaned {
+            current: B256::with_last_byte(1),
+            next: B256::with_last_byte(2),
+        })
+    });
+
+    let mut actor = test_actor();
+    actor.builder.origin_selector = origin_selector;
+    actor.builder.engine_client = Arc::new(client);
+
+    assert!(matches!(
+        actor.builder.build().await,
+        Err(SequencerActorError::EngineError(EngineClientError::ResetForkchoiceError(error)))
+            if error == "mock reset failure"
+    ));
+}
+
 #[rstest]
 #[case::temp(PipelineErrorKind::Temporary(BuilderError::Custom(String::new()).into()), false)]
 #[case::reset(PipelineErrorKind::Reset(BuilderError::Custom(String::new()).into()), false)]
@@ -604,7 +682,7 @@ async fn test_build_unsealed_payload_prepare_payload_attributes_error(
 
     let l1_origin = BlockInfo::default();
     let mut origin_selector = MockOriginSelector::new();
-    origin_selector.expect_next_l1_origin().times(1).return_once(move |_, _| Ok(l1_origin));
+    origin_selector.expect_next_l1_origin().times(1).return_once(move |_| Ok(l1_origin));
 
     let attributes_builder = TestAttributesBuilder { attributes: vec![Err(forced_error)] };
 

@@ -24,6 +24,13 @@ pub struct Call {
     pub data: Bytes,
 }
 
+impl Call {
+    /// Heap bytes owned beyond the [`Call`] slot itself (`data` payload).
+    pub fn heap_size(&self) -> usize {
+        self.data.len()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{address, bytes};

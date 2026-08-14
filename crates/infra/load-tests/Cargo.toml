@@ -39,6 +39,7 @@ tracing-subscriber = { workspace = true, features = ["fmt", "env-filter"] }
 url.workspace = true
 eyre.workspace = true
 rand.workspace = true
+async-trait.workspace = true
 revm.workspace = true
 serde.workspace = true
 futures.workspace = true

@@ -775,7 +775,7 @@ impl BasePayloadBuilderCtx {
                 let db = evm.db_mut();
                 tx.validity_predicates().iter().all(|predicate| {
                     predicate.matches_state(db).unwrap_or_else(|error| {
-                        trace!(
+                        warn!(
                             target: "payload_builder",
                             tx_hash = ?tx_hash,
                             predicate = ?predicate,
@@ -831,7 +831,13 @@ impl BasePayloadBuilderCtx {
                     },
                 );
                 diag.txs_rejected_other += 1;
-                best_txs.mark_invalid(tx.sender(), tx.nonce());
+                // A read failure cannot be retried at a later ordering position: including the
+                // transaction there could place it behind a lower-priority transaction even though
+                // its predicate may have already been satisfied at its first position.
+                let should_invalidate = predicate_read_failed || !best_txs.park_current();
+                if should_invalidate {
+                    best_txs.mark_invalid(tx.sender(), tx.nonce());
+                }
                 continue;
             }
 
@@ -1166,6 +1172,7 @@ impl BasePayloadBuilderCtx {
                             );
                             log_txn(Err(diag_err));
                             trace!(target: "payload_builder", %err, ?tx, "skipping nonce too low transaction");
+                            best_txs.mark_current_committed();
                         } else {
                             // if the transaction is invalid, we can skip it and all of its
                             // descendants
@@ -1305,6 +1312,40 @@ impl BasePayloadBuilderCtx {
 
             // commit changes
             evm.db_mut().commit(state);
+
+            // The committed state can satisfy transactions that were previously predicate-invalid.
+            // Release the committed transaction's lane first, then naively rescan all parked heads.
+            best_txs.mark_current_committed();
+            let predicate_rescan_start = Instant::now();
+            let parked_transactions = best_txs.parked_transactions();
+            let rescanned_predicates = !parked_transactions.is_empty();
+            for parked in parked_transactions {
+                let parked_hash = *parked.hash();
+                let mut predicate_read_failed = false;
+                let predicates_match =
+                    parked.transaction.validity_predicates().iter().all(|predicate| {
+                        predicate.matches_state(evm.db_mut()).unwrap_or_else(|error| {
+                            warn!(
+                                target: "payload_builder",
+                                tx_hash = ?parked_hash,
+                                predicate = ?predicate,
+                                error = ?error,
+                                "failed to re-read validity predicate state"
+                            );
+                            predicate_read_failed = true;
+                            false
+                        })
+                    });
+                if predicate_read_failed {
+                    best_txs.discard_parked(parked_hash);
+                } else if predicates_match {
+                    best_txs.promote(parked_hash);
+                }
+            }
+            if rescanned_predicates {
+                BuilderMetrics::validity_predicate_rescan_duration()
+                    .record(predicate_rescan_start.elapsed().as_secs_f64());
+            }
 
             // update add to total fees
             let miner_fee = tx

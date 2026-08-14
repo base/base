@@ -169,7 +169,7 @@ where
         let state_updates = state_updates();
         self.validate_isthmus_post_execution(state_updates, parent_state.as_ref(), block.header())?;
 
-        if !self.chain_spec().is_zenith_active_at_timestamp(timestamp) {
+        if !self.chain_spec().is_denim_active_at_timestamp(timestamp) {
             return Ok(());
         }
 
@@ -178,7 +178,7 @@ where
                 .map_err(ConsensusError::other)?
                 .timestamp_millis_part();
 
-        if !self.chain_spec().is_zenith_active_at_timestamp(parent_header.timestamp()) {
+        if !self.chain_spec().is_denim_active_at_timestamp(parent_header.timestamp()) {
             return Ok(());
         }
 
@@ -217,7 +217,7 @@ where
         header: &<Self::Block as Block>::Header,
     ) -> Result<(), InvalidPayloadAttributesError> {
         let timestamp = attributes.timestamp();
-        if !self.chain_spec().is_zenith_active_at_timestamp(timestamp) {
+        if !self.chain_spec().is_denim_active_at_timestamp(timestamp) {
             return (timestamp > header.timestamp())
                 .then_some(())
                 .ok_or(InvalidPayloadAttributesError::InvalidTimestamp);
@@ -405,7 +405,7 @@ mod tests {
     use super::*;
     use crate::engine;
 
-    const ZENITH_TIMESTAMP: u64 = 1_800_000_001;
+    const DENIM_TIMESTAMP: u64 = 1_800_000_001;
 
     fn validator_with_chain_spec(
         chain_spec: BaseChainSpec,
@@ -419,10 +419,10 @@ mod tests {
         validator_with_chain_spec(BaseChainSpec::sepolia())
     }
 
-    fn zenith_validator() -> BaseEngineValidator<BaseTxEnvelope, BaseChainSpec> {
+    fn denim_validator() -> BaseEngineValidator<BaseTxEnvelope, BaseChainSpec> {
         validator_with_chain_spec(
             BaseChainSpecBuilder::base_mainnet()
-                .with_fork(BaseUpgrade::Zenith, ForkCondition::Timestamp(ZENITH_TIMESTAMP))
+                .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(DENIM_TIMESTAMP))
                 .build(),
         )
     }
@@ -467,7 +467,7 @@ mod tests {
         .expect("valid test payload attributes")
     }
 
-    fn zenith_attributes(timestamp: u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope> {
+    fn denim_attributes(timestamp: u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope> {
         get_attributes(Some(b64!("0000000000000000")), Some(1), timestamp)
     }
 
@@ -629,7 +629,7 @@ mod tests {
         timestamp_millis_part: u16,
         parent_timestamp: u64,
     ) -> Result<(), InvalidPayloadAttributesError> {
-        let mut attributes = zenith_attributes(timestamp);
+        let mut attributes = denim_attributes(timestamp);
         add_base_time_transaction(&mut attributes, timestamp_millis_part);
         let header = Header { number: 8, timestamp: parent_timestamp, ..Default::default() };
 
@@ -638,38 +638,36 @@ mod tests {
     }
 
     #[test]
-    fn test_payload_attributes_post_zenith_accept_same_second() {
-        let validator = zenith_validator();
+    fn test_payload_attributes_post_denim_accept_same_second() {
+        let validator = denim_validator();
+
+        assert!(validate_against_parent(&validator, DENIM_TIMESTAMP, 200, DENIM_TIMESTAMP).is_ok());
+    }
+
+    #[test]
+    fn test_payload_attributes_post_denim_accept_next_second() {
+        let validator = denim_validator();
 
         assert!(
-            validate_against_parent(&validator, ZENITH_TIMESTAMP, 200, ZENITH_TIMESTAMP).is_ok()
+            validate_against_parent(&validator, DENIM_TIMESTAMP + 1, 0, DENIM_TIMESTAMP).is_ok()
         );
     }
 
     #[test]
-    fn test_payload_attributes_post_zenith_accept_next_second() {
-        let validator = zenith_validator();
-
-        assert!(
-            validate_against_parent(&validator, ZENITH_TIMESTAMP + 1, 0, ZENITH_TIMESTAMP).is_ok()
-        );
-    }
-
-    #[test]
-    fn test_payload_attributes_post_zenith_reject_backwards_seconds() {
-        let validator = zenith_validator();
+    fn test_payload_attributes_post_denim_reject_backwards_seconds() {
+        let validator = denim_validator();
 
         assert!(matches!(
-            validate_against_parent(&validator, ZENITH_TIMESTAMP, 800, ZENITH_TIMESTAMP + 1),
+            validate_against_parent(&validator, DENIM_TIMESTAMP, 800, DENIM_TIMESTAMP + 1),
             Err(InvalidPayloadAttributesError::InvalidTimestamp)
         ));
     }
 
     #[test]
-    fn test_payload_attributes_post_zenith_require_base_time_transaction() {
-        let validator = zenith_validator();
-        let attributes = zenith_attributes(ZENITH_TIMESTAMP);
-        let header = Header { number: 8, timestamp: ZENITH_TIMESTAMP, ..Default::default() };
+    fn test_payload_attributes_post_denim_require_base_time_transaction() {
+        let validator = denim_validator();
+        let attributes = denim_attributes(DENIM_TIMESTAMP);
+        let header = Header { number: 8, timestamp: DENIM_TIMESTAMP, ..Default::default() };
 
         let result = <engine::BaseEngineValidator<_, _> as PayloadValidator<BaseEngineTypes>>::
             validate_payload_attributes_against_header(&validator, &attributes, &header);
@@ -681,14 +679,14 @@ mod tests {
     }
 
     #[test]
-    fn test_payload_attributes_post_zenith_reject_invalid_base_time_transaction() {
-        let validator = zenith_validator();
-        let mut attributes = zenith_attributes(ZENITH_TIMESTAMP);
+    fn test_payload_attributes_post_denim_reject_invalid_base_time_transaction() {
+        let validator = denim_validator();
+        let mut attributes = denim_attributes(DENIM_TIMESTAMP);
         attributes.transactions = vec![
             WithEncoded::from_2718_encodable(TxDeposit::default().seal_slow().into()),
             WithEncoded::from_2718_encodable(TxDeposit::default().seal_slow().into()),
         ];
-        let header = Header { number: 8, timestamp: ZENITH_TIMESTAMP, ..Default::default() };
+        let header = Header { number: 8, timestamp: DENIM_TIMESTAMP, ..Default::default() };
 
         let result = <engine::BaseEngineValidator<_, _> as PayloadValidator<BaseEngineTypes>>::
             validate_payload_attributes_against_header(&validator, &attributes, &header);
@@ -702,7 +700,7 @@ mod tests {
     fn post_execution_block(withdrawals_root: B256) -> RecoveredBlock<BaseBlock> {
         let block = BaseBlock {
             header: Header {
-                timestamp: ZENITH_TIMESTAMP,
+                timestamp: DENIM_TIMESTAMP,
                 withdrawals_root: Some(withdrawals_root),
                 ..Default::default()
             },
@@ -764,7 +762,7 @@ mod tests {
     ) -> Result<(), InsertBlockErrorKind> {
         let validator = validator_with_chain_spec(
             BaseChainSpecBuilder::base_mainnet()
-                .with_fork(BaseUpgrade::Zenith, ForkCondition::Timestamp(ZENITH_TIMESTAMP))
+                .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(DENIM_TIMESTAMP))
                 .build(),
         );
         let block = base_time_block(child_timestamp, child_millis_part, withdrawals_root);
@@ -800,13 +798,13 @@ mod tests {
     fn post_execution_skips_base_time_at_activation_but_checks_isthmus() {
         let block = post_execution_block(EMPTY_ROOT_HASH);
         let parent = SealedHeader::seal_slow(Header {
-            timestamp: ZENITH_TIMESTAMP - 1,
+            timestamp: DENIM_TIMESTAMP - 1,
             ..Default::default()
         });
         let state_updates = HashedPostState::default();
         let error =
             PayloadValidator::<BaseEngineTypes>::validate_block_post_execution_with_hashed_state(
-                &zenith_validator(),
+                &denim_validator(),
                 || &state_updates,
                 &block,
                 &parent,
@@ -823,11 +821,11 @@ mod tests {
     #[test]
     fn post_execution_validates_exact_200ms_progression() {
         for (parent_seconds, parent_millis, child_seconds, child_millis) in [
-            (ZENITH_TIMESTAMP, 0, ZENITH_TIMESTAMP, 200),
-            (ZENITH_TIMESTAMP, 200, ZENITH_TIMESTAMP, 400),
-            (ZENITH_TIMESTAMP, 400, ZENITH_TIMESTAMP, 600),
-            (ZENITH_TIMESTAMP, 600, ZENITH_TIMESTAMP, 800),
-            (ZENITH_TIMESTAMP, 800, ZENITH_TIMESTAMP + 1, 0),
+            (DENIM_TIMESTAMP, 0, DENIM_TIMESTAMP, 200),
+            (DENIM_TIMESTAMP, 200, DENIM_TIMESTAMP, 400),
+            (DENIM_TIMESTAMP, 400, DENIM_TIMESTAMP, 600),
+            (DENIM_TIMESTAMP, 600, DENIM_TIMESTAMP, 800),
+            (DENIM_TIMESTAMP, 800, DENIM_TIMESTAMP + 1, 0),
         ] {
             validate_base_time_progression(
                 parent_seconds,
@@ -840,12 +838,12 @@ mod tests {
         }
 
         for (parent_seconds, parent_millis, child_seconds, child_millis) in [
-            (ZENITH_TIMESTAMP, 200, ZENITH_TIMESTAMP, 200),
-            (ZENITH_TIMESTAMP, 400, ZENITH_TIMESTAMP, 200),
-            (ZENITH_TIMESTAMP, 200, ZENITH_TIMESTAMP, 600),
-            (ZENITH_TIMESTAMP, 800, ZENITH_TIMESTAMP + 1, 200),
-            (ZENITH_TIMESTAMP, 800, ZENITH_TIMESTAMP, 800),
-            (ZENITH_TIMESTAMP, 200, ZENITH_TIMESTAMP + 1, 400),
+            (DENIM_TIMESTAMP, 200, DENIM_TIMESTAMP, 200),
+            (DENIM_TIMESTAMP, 400, DENIM_TIMESTAMP, 200),
+            (DENIM_TIMESTAMP, 200, DENIM_TIMESTAMP, 600),
+            (DENIM_TIMESTAMP, 800, DENIM_TIMESTAMP + 1, 200),
+            (DENIM_TIMESTAMP, 800, DENIM_TIMESTAMP, 800),
+            (DENIM_TIMESTAMP, 200, DENIM_TIMESTAMP + 1, 400),
         ] {
             let error = validate_base_time_progression(
                 parent_seconds,
@@ -865,9 +863,9 @@ mod tests {
     #[test]
     fn post_execution_progression_error_contains_full_timestamps() {
         for (parent_seconds, parent_millis, child_seconds, child_millis) in [
-            (ZENITH_TIMESTAMP, 200, ZENITH_TIMESTAMP, 600),
-            (ZENITH_TIMESTAMP, 800, ZENITH_TIMESTAMP + 1, 200),
-            (ZENITH_TIMESTAMP, 400, ZENITH_TIMESTAMP, 200),
+            (DENIM_TIMESTAMP, 200, DENIM_TIMESTAMP, 600),
+            (DENIM_TIMESTAMP, 800, DENIM_TIMESTAMP + 1, 200),
+            (DENIM_TIMESTAMP, 400, DENIM_TIMESTAMP, 200),
         ] {
             let error = validate_base_time_progression(
                 parent_seconds,
@@ -903,15 +901,15 @@ mod tests {
             ),
         ] {
             let block =
-                base_time_block_with_transactions(ZENITH_TIMESTAMP, EMPTY_ROOT_HASH, transactions);
+                base_time_block_with_transactions(DENIM_TIMESTAMP, EMPTY_ROOT_HASH, transactions);
             let parent = SealedHeader::seal_slow(Header {
-                timestamp: ZENITH_TIMESTAMP,
+                timestamp: DENIM_TIMESTAMP,
                 ..Default::default()
             });
             let state_updates = HashedPostState::default();
             let error = PayloadValidator::<BaseEngineTypes>::
                 validate_block_post_execution_with_hashed_state(
-                    &zenith_validator(),
+                    &denim_validator(),
                     || &state_updates,
                     &block,
                     &parent,
@@ -925,15 +923,15 @@ mod tests {
 
     #[test]
     fn post_execution_accepts_valid_claim_on_first_active_block() {
-        let block = base_time_block(ZENITH_TIMESTAMP, 400, EMPTY_ROOT_HASH);
+        let block = base_time_block(DENIM_TIMESTAMP, 400, EMPTY_ROOT_HASH);
         let parent = SealedHeader::seal_slow(Header {
-            timestamp: ZENITH_TIMESTAMP - 1,
+            timestamp: DENIM_TIMESTAMP - 1,
             ..Default::default()
         });
         let state_updates = HashedPostState::default();
 
         PayloadValidator::<BaseEngineTypes>::validate_block_post_execution_with_hashed_state(
-            &zenith_validator(),
+            &denim_validator(),
             || &state_updates,
             &block,
             &parent,
@@ -945,18 +943,18 @@ mod tests {
     #[test]
     fn post_execution_requires_claim_on_first_active_block() {
         let block = base_time_block_with_transactions(
-            ZENITH_TIMESTAMP,
+            DENIM_TIMESTAMP,
             EMPTY_ROOT_HASH,
             vec![TxDeposit::default().seal_slow().into()],
         );
         let parent = SealedHeader::seal_slow(Header {
-            timestamp: ZENITH_TIMESTAMP - 1,
+            timestamp: DENIM_TIMESTAMP - 1,
             ..Default::default()
         });
         let state_updates = HashedPostState::default();
         let error =
             PayloadValidator::<BaseEngineTypes>::validate_block_post_execution_with_hashed_state(
-                &zenith_validator(),
+                &denim_validator(),
                 || &state_updates,
                 &block,
                 &parent,
@@ -970,9 +968,9 @@ mod tests {
     #[test]
     fn post_execution_validates_isthmus_before_base_time() {
         let error = validate_base_time_progression(
-            ZENITH_TIMESTAMP,
+            DENIM_TIMESTAMP,
             200,
-            ZENITH_TIMESTAMP + 1,
+            DENIM_TIMESTAMP + 1,
             400,
             B256::ZERO,
         )

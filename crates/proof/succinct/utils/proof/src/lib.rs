@@ -10,7 +10,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use base_proof_succinct_elfs::AGGREGATION_ELF;
-use base_proof_succinct_host_utils::{fetcher::OPSuccinctDataFetcher, host::SuccinctHost};
+use base_proof_zk_witness::{fetcher::OPSuccinctDataFetcher, host::SuccinctHost};
 use serde::{Deserialize, Serialize};
 use sp1_cluster_artifact::{
     redis::RedisArtifactClient,

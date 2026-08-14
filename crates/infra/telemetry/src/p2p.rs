@@ -15,7 +15,7 @@ use axum::{
     routing::post,
 };
 use discv5::enr::{CombinedPublicKey, Enr, EnrPublicKey};
-use libp2p::PeerId;
+use libp2p::{Multiaddr, PeerId, multiaddr::Protocol};
 use reth_network_peers::{NodeRecord, id2pk};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -110,17 +110,25 @@ pub struct ElReachabilityResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClReachabilityRequest {
-    /// The node's advertised `enr:` record, as returned by `opp2p_self`.
+    /// The node's advertised `enr:` record, as returned by `opp2p_self`, or a
+    /// public `IPv4` `/ip4/.../tcp/.../p2p/<peer-id>` multiaddr.
+    #[serde(alias = "multiaddr")]
     pub enr: String,
 }
 
 impl ClReachabilityRequest {
     /// Validates the request and returns its advertised libp2p target.
     pub fn target(&self) -> Option<Libp2pProbeTarget> {
-        if !self.enr.starts_with("enr:") {
-            return None;
+        if self.enr.starts_with("enr:") {
+            Self::enr_target(&self.enr)
+        } else {
+            Self::multiaddr_target(&self.enr)
         }
-        let enr: Enr<discv5::enr::CombinedKey> = self.enr.parse().ok()?;
+    }
+
+    /// Parses a signed `enr:` record into a public `IPv4` libp2p probe target.
+    fn enr_target(enr: &str) -> Option<Libp2pProbeTarget> {
+        let enr: Enr<discv5::enr::CombinedKey> = enr.parse().ok()?;
         let socket = enr.tcp4_socket()?;
         let address = SocketAddr::from((*socket.ip(), socket.port()));
         if socket.port() == 0 || !ElReachabilityRequest::is_public_ip(address.ip()) {
@@ -133,6 +141,32 @@ impl ClReachabilityRequest {
             libp2p_identity::secp256k1::PublicKey::try_from_bytes(&public_key.encode()).ok()?;
         let peer_id = PeerId::from_public_key(&public_key.into());
         Some(Libp2pProbeTarget { address, peer_id })
+    }
+
+    /// Parses a `/ip4/<addr>/tcp/<port>/p2p/<peer-id>` multiaddr into a public
+    /// `IPv4` libp2p probe target. Extra protocols, `IPv6`, and non-public IPs are
+    /// rejected.
+    fn multiaddr_target(value: &str) -> Option<Libp2pProbeTarget> {
+        let addr: Multiaddr = value.parse().ok()?;
+        let mut protocols = addr.iter();
+        let ip = match protocols.next()? {
+            Protocol::Ip4(ip) => ip,
+            _ => return None,
+        };
+        let port = match protocols.next()? {
+            Protocol::Tcp(port) => port,
+            _ => return None,
+        };
+        let peer_id = match protocols.next()? {
+            Protocol::P2p(peer_id) => peer_id,
+            _ => return None,
+        };
+        if protocols.next().is_some() || port == 0 {
+            return None;
+        }
+        let address = SocketAddr::from((ip, port));
+        ElReachabilityRequest::is_public_ip(address.ip())
+            .then_some(Libp2pProbeTarget { address, peer_id })
     }
 }
 
@@ -388,6 +422,14 @@ mod tests {
 
     fn test_cl_request() -> ClReachabilityRequest {
         ClReachabilityRequest { enr: test_enr([8, 8, 8, 8], 9222) }
+    }
+
+    fn test_peer_id() -> libp2p::PeerId {
+        libp2p::identity::Keypair::generate_secp256k1().public().to_peer_id()
+    }
+
+    fn test_multiaddr(ip: [u8; 4], port: u16, peer_id: libp2p::PeerId) -> String {
+        format!("/ip4/{}.{}.{}.{}/tcp/{port}/p2p/{peer_id}", ip[0], ip[1], ip[2], ip[3])
     }
 
     #[test]
@@ -646,6 +688,50 @@ mod tests {
         assert_eq!(target.peer_id, expected);
     }
 
+    #[test]
+    fn validates_multiaddr_identity_address_and_port() {
+        let peer_id = test_peer_id();
+        let valid = ClReachabilityRequest { enr: test_multiaddr([8, 8, 8, 8], 9222, peer_id) };
+        let target = valid.target().unwrap();
+        assert_eq!(target.address, SocketAddr::from(([8, 8, 8, 8], 9222)));
+        assert_eq!(target.peer_id, peer_id);
+
+        let missing_peer_id = ClReachabilityRequest { enr: "/ip4/8.8.8.8/tcp/9222".to_string() };
+        assert!(missing_peer_id.target().is_none());
+
+        let udp_only =
+            ClReachabilityRequest { enr: format!("/ip4/8.8.8.8/udp/9222/p2p/{peer_id}") };
+        assert!(udp_only.target().is_none());
+
+        let ipv6 =
+            ClReachabilityRequest { enr: format!("/ip6/2001:db8::1/tcp/9222/p2p/{peer_id}") };
+        assert!(ipv6.target().is_none());
+
+        let extra_protocol =
+            ClReachabilityRequest { enr: format!("/ip4/8.8.8.8/tcp/9222/ws/p2p/{peer_id}") };
+        assert!(extra_protocol.target().is_none());
+
+        let zero_port = ClReachabilityRequest { enr: test_multiaddr([8, 8, 8, 8], 0, peer_id) };
+        assert!(zero_port.target().is_none());
+
+        let garbage = ClReachabilityRequest { enr: "/ip4/not-an-ip/tcp/9222/p2p/x".to_string() };
+        assert!(garbage.target().is_none());
+
+        for ip in [
+            [10, 0, 0, 1],
+            [127, 0, 0, 1],
+            [169, 254, 169, 254],
+            [100, 64, 0, 1],
+            [0, 0, 0, 0],
+            [198, 18, 0, 1],
+            [192, 0, 0, 8],
+            [240, 0, 0, 1],
+        ] {
+            let non_public = ClReachabilityRequest { enr: test_multiaddr(ip, 9222, peer_id) };
+            assert!(non_public.target().is_none(), "expected {ip:?} to be rejected");
+        }
+    }
+
     #[tokio::test]
     async fn probes_advertised_enr_address() {
         let request = test_cl_request();
@@ -680,6 +766,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn probes_advertised_multiaddr() {
+        let peer_id = test_peer_id();
+        let request = ClReachabilityRequest { enr: test_multiaddr([8, 8, 8, 8], 9222, peer_id) };
+        let expected = request.target().unwrap();
+        let mut prober = MockClReachabilityProber::new();
+        prober.expect_probe().times(1).withf(move |target| *target == expected).returning(|_| {
+            Libp2pProbeResult {
+                outcome: Libp2pProbeOutcome::Reachable,
+                stage: Libp2pProbeStage::Identify,
+                elapsed: Duration::from_millis(12),
+                client_version: Some("base".to_string()),
+            }
+        });
+        let router =
+            router_with_cl_prober(DEFAULT_P2P_REACHABILITY_MAX_CONCURRENT_PROBES, Arc::new(prober));
+        let (address, handle) = start_test_server(router).await;
+
+        let response = reqwest::Client::new()
+            .post(format!("http://{address}{P2P_REACHABILITY_CL_PATH}"))
+            .json(&std::collections::BTreeMap::from([("multiaddr", request.enr.as_str())]))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let response = response.json::<ClReachabilityResponse>().await.unwrap();
+        assert_eq!(response.outcome, Libp2pProbeOutcome::Reachable);
+        assert_eq!(response.observed_address, SocketAddr::from(([8, 8, 8, 8], 9222)));
+        assert_eq!(response.client_version.as_deref(), Some("base"));
+
+        handle.abort();
+    }
+
+    #[tokio::test]
     async fn rejects_private_cl_target() {
         // No expectations: any probe call panics and fails the status assert.
         let router = router_with_cl_prober(
@@ -688,6 +808,28 @@ mod tests {
         );
         let (address, handle) = start_test_server(router).await;
         let request = ClReachabilityRequest { enr: test_enr([10, 0, 0, 1], 9222) };
+
+        let response = reqwest::Client::new()
+            .post(format!("http://{address}{P2P_REACHABILITY_CL_PATH}"))
+            .json(&request)
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn rejects_private_cl_multiaddr() {
+        // No expectations: any probe call panics and fails the status assert.
+        let router = router_with_cl_prober(
+            DEFAULT_P2P_REACHABILITY_MAX_CONCURRENT_PROBES,
+            Arc::new(MockClReachabilityProber::new()),
+        );
+        let (address, handle) = start_test_server(router).await;
+        let request =
+            ClReachabilityRequest { enr: test_multiaddr([10, 0, 0, 1], 9222, test_peer_id()) };
 
         let response = reqwest::Client::new()
             .post(format!("http://{address}{P2P_REACHABILITY_CL_PATH}"))

@@ -2,7 +2,7 @@
 
 use alloy_primitives::Address;
 use base_common_consensus::{
-    AccountChange, ActorChange, ActorChangeType, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
+    AccountChange, ChangeType, Eip8130Constants, Eip8130Contracts, Eip8130Signed, SignedChange,
 };
 
 use crate::Eip8130GasSchedule;
@@ -326,17 +326,18 @@ impl IntrinsicGas {
                         Eip8130GasSchedule::CONFIG_CHANGE_STATE_COST
                     };
                     account_changes = account_changes.saturating_add(state_cost);
-                    // `cfg.auth` is always `authenticator || data` (never a bare
+                    // `signature` is always `authenticator || data` (never a bare
                     // signature); an implicit-EOA owner names itself explicitly as
                     // `K1_AUTHENTICATOR || sig` here.
-                    let auth = Self::auth_cost(cc.auth.as_ref(), AuthWireForm::Prefixed, false)?;
+                    let auth =
+                        Self::auth_cost(cc.signature.as_ref(), AuthWireForm::Prefixed, false)?;
                     account_changes = account_changes.saturating_add(auth);
-                    for actor_change in &cc.actor_changes {
-                        if actor_change.change_type == ActorChangeType::Revoke {
+                    for op in &cc.changes {
+                        if op.change_type == ChangeType::RevokeActor {
                             revoke_change_count = revoke_change_count.saturating_add(1);
                         }
-                        account_changes = account_changes
-                            .saturating_add(Self::actor_change_write_cost(actor_change));
+                        account_changes =
+                            account_changes.saturating_add(Self::actor_change_write_cost(op));
                     }
                 }
                 AccountChange::Delegation(_) => {
@@ -556,12 +557,12 @@ impl IntrinsicGas {
     /// Storage-write cost for one actor change: an authorize sets the
     /// `actor_config` slot (plus the two policy slots when it carries a policy);
     /// a revoke clears the actor config and both policy slots.
-    fn actor_change_write_cost(actor_change: &ActorChange) -> u64 {
-        match actor_change.change_type {
-            ActorChangeType::Revoke => Eip8130GasSchedule::ACTOR_REVOKE_COST,
-            ActorChangeType::Authorize => {
+    fn actor_change_write_cost(op: &SignedChange) -> u64 {
+        match op.change_type {
+            ChangeType::RevokeActor => Eip8130GasSchedule::ACTOR_REVOKE_COST,
+            ChangeType::AuthorizeActor => {
                 let mut cost = Eip8130GasSchedule::ACTOR_SLOT_SET_COST;
-                if Self::authorize_has_policy(actor_change.data.as_ref()) {
+                if Self::authorize_has_policy(op.payload.as_ref()) {
                     // policy_commitment + policy_manager.
                     cost = cost
                         .saturating_add(Eip8130GasSchedule::ACTOR_SLOT_SET_COST.saturating_mul(2));
@@ -570,28 +571,61 @@ impl IntrinsicGas {
                 }
                 cost
             }
+            // IncrementLocalEpoch carries no per-actor slot writes; it rewrites
+            // the packed account-state slot the config change's sequence advance
+            // already touched, priced as a warm dirty SSTORE.
+            ChangeType::IncrementLocalEpoch => Eip8130GasSchedule::INCREMENT_LOCAL_EPOCH_COST,
+            // Lock / Unlock apply handlers are not yet enshrined; priced when
+            // wired in.
+            ChangeType::Lock | ChangeType::Unlock => 0,
         }
     }
 
-    /// Whether an authorize's ABI-encoded `(ActorConfig, bytes)` `data` carries
-    /// `SCOPE_POLICY`. `ActorConfig` is `(address authenticator, uint48 expiry,
-    /// uint16 scope)`, so scope is the third 32-byte word, right-aligned in its
-    /// low 2 bytes.
-    fn authorize_has_policy(data: &[u8]) -> bool {
-        data.len() >= 96
-            && u16::from_be_bytes([data[94], data[95]]) & Eip8130Constants::SCOPE_POLICY != 0
+    /// Whether an authorize op's ABI-encoded
+    /// `(bytes32 actorId, ActorConfig, bytes)` `payload` carries `SCOPE_POLICY`.
+    /// The payload leads with the `actorId` word; `ActorConfig` is
+    /// `(address authenticator, uint48 expiry, uint16 scope)`, so scope is the
+    /// fourth 32-byte word, right-aligned in its low 2 bytes.
+    fn authorize_has_policy(payload: &[u8]) -> bool {
+        payload.len() >= 128
+            && u16::from_be_bytes([payload[126], payload[127]]) & Eip8130Constants::SCOPE_POLICY
+                != 0
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, Bytes, U256, address};
+    use alloy_primitives::{Address, B256, Bytes, U256, address};
+    use alloy_sol_types::SolValue;
     use base_common_consensus::{
-        AccountChange, ActorChange, ActorChangeType, ConfigChange, CreateEntry, Delegation,
-        InitialActor, TxEip8130,
+        AccountChange, AccountChangeChannel, ChangeType, CreateEntry, Delegation, InitialActor,
+        SignedAccountChanges, SignedChange, TxEip8130,
     };
 
     use super::*;
+
+    /// Builds an `AuthorizeActor` op payload `abi.encode(actorId, ActorConfig, policyData)`.
+    fn authorize_op(
+        actor_id: B256,
+        authenticator: Address,
+        scope: u16,
+        expiry: u64,
+    ) -> SignedChange {
+        let abi =
+            ActorConfigAbi { authenticator, scope, expiry: alloy_primitives::Uint::from(expiry) };
+        SignedChange {
+            change_type: ChangeType::AuthorizeActor,
+            payload: Bytes::from((actor_id, abi, Bytes::new()).abi_encode_params()),
+        }
+    }
+
+    /// Builds a `RevokeActor` op payload `abi.encode(actorId)`.
+    fn revoke_op(actor_id: B256) -> SignedChange {
+        SignedChange {
+            change_type: ChangeType::RevokeActor,
+            payload: Bytes::from((actor_id,).abi_encode_params()),
+        }
+    }
 
     const ACCOUNT: Address = address!("0x1111111111111111111111111111111111111111");
     const K1: Address = Eip8130Constants::K1_AUTHENTICATOR;
@@ -638,7 +672,12 @@ mod tests {
         // A call-only / `ConfigChange` transaction never installs sender code, so
         // execution may still auto-delegate — charge the ceiling.
         assert!(IntrinsicGasInput::sender_auto_delegated(&[AccountChange::ConfigChange(
-            ConfigChange { chain_id: 1, sequence: 0, actor_changes: vec![], auth: Bytes::new() }
+            SignedAccountChanges {
+                channel: AccountChangeChannel::Multichain,
+                sequence: 0,
+                changes: vec![],
+                signature: Bytes::new(),
+            }
         )]));
 
         // A `Create` always targets the sender account itself (EIP-8130 enforces
@@ -674,12 +713,13 @@ mod tests {
 
     #[test]
     fn authorize_has_policy_reads_the_scope_word() {
-        use alloy_sol_types::SolValue;
-
         // Drift tripwire: `authorize_has_policy` reads SCOPE_POLICY from the low
-        // 2 bytes of the third ABI word (ActorConfig is now `(authenticator,
-        // expiry, scope)`, so scope is the last of the three words).
+        // 2 bytes of the fourth ABI word. The payload leads with the `actorId`
+        // word, then `ActorConfig` (`authenticator, expiry, scope`), so scope is
+        // the fourth word.
+        let actor_id = B256::repeat_byte(0x11);
         let gated = (
+            actor_id,
             ActorConfigAbi {
                 authenticator: Address::ZERO,
                 scope: Eip8130Constants::SCOPE_POLICY,
@@ -689,6 +729,7 @@ mod tests {
         )
             .abi_encode_params();
         let ungated = (
+            actor_id,
             ActorConfigAbi {
                 authenticator: address!("0xffffffffffffffffffffffffffffffffffffffff"),
                 scope: Eip8130Constants::SCOPE_SENDER,
@@ -700,7 +741,7 @@ mod tests {
 
         assert!(IntrinsicGas::authorize_has_policy(&gated));
         assert!(!IntrinsicGas::authorize_has_policy(&ungated));
-        assert_eq!(u16::from_be_bytes([gated[94], gated[95]]), Eip8130Constants::SCOPE_POLICY);
+        assert_eq!(u16::from_be_bytes([gated[126], gated[127]]), Eip8130Constants::SCOPE_POLICY);
     }
 
     #[test]
@@ -849,22 +890,17 @@ mod tests {
     fn config_change_charges_auth_plus_slot_writes() {
         // One authorize without policy + one revoke, authorized by a configured k1.
         let mut authorize_data = vec![0u8; 128];
-        let cc = ConfigChange {
-            chain_id: 0,
+        let cc = SignedAccountChanges {
+            channel: AccountChangeChannel::Multichain,
             sequence: 0,
-            actor_changes: vec![
-                ActorChange {
-                    change_type: ActorChangeType::Authorize,
-                    actor_id: Default::default(),
-                    data: Bytes::from(authorize_data.clone()),
+            changes: vec![
+                SignedChange {
+                    change_type: ChangeType::AuthorizeActor,
+                    payload: Bytes::from(authorize_data.clone()),
                 },
-                ActorChange {
-                    change_type: ActorChangeType::Revoke,
-                    actor_id: Default::default(),
-                    data: Bytes::new(),
-                },
+                SignedChange { change_type: ChangeType::RevokeActor, payload: Bytes::new() },
             ],
-            auth: Bytes::from(configured_auth(K1)),
+            signature: Bytes::from(configured_auth(K1)),
         };
         let tx = TxEip8130 {
             sender: Some(ACCOUNT),
@@ -883,17 +919,17 @@ mod tests {
         assert_eq!(gas.account_changes, expected);
 
         // With SCOPE_POLICY, the authorize also writes the two policy slots. Scope
-        // is the third ABI word's low 2 bytes (bytes 94..96).
-        authorize_data[94..96].copy_from_slice(&Eip8130Constants::SCOPE_POLICY.to_be_bytes());
-        let cc = ConfigChange {
-            chain_id: 0,
+        // is the fourth ABI word's low 2 bytes (bytes 126..128; the payload leads
+        // with the actorId word).
+        authorize_data[126..128].copy_from_slice(&Eip8130Constants::SCOPE_POLICY.to_be_bytes());
+        let cc = SignedAccountChanges {
+            channel: AccountChangeChannel::Multichain,
             sequence: 0,
-            actor_changes: vec![ActorChange {
-                change_type: ActorChangeType::Authorize,
-                actor_id: Default::default(),
-                data: Bytes::from(authorize_data),
+            changes: vec![SignedChange {
+                change_type: ChangeType::AuthorizeActor,
+                payload: Bytes::from(authorize_data),
             }],
-            auth: Bytes::from(configured_auth(K1)),
+            signature: Bytes::from(configured_auth(K1)),
         };
         let tx = TxEip8130 {
             sender: Some(ACCOUNT),
@@ -910,19 +946,47 @@ mod tests {
     }
 
     #[test]
+    fn config_change_increment_local_epoch_charges_warm_state_bump() {
+        // A batch carrying a single IncrementLocalEpoch op (empty payload) pays the
+        // auth + first-state cost plus the marginal warm dirty-SSTORE for rewriting
+        // the packed account-state slot, and no per-actor slot writes.
+        let cc = SignedAccountChanges {
+            channel: AccountChangeChannel::Multichain,
+            sequence: 0,
+            changes: vec![SignedChange {
+                change_type: ChangeType::IncrementLocalEpoch,
+                payload: Bytes::new(),
+            }],
+            signature: Bytes::from(configured_auth(K1)),
+        };
+        let tx = TxEip8130 {
+            sender: Some(ACCOUNT),
+            account_changes: vec![AccountChange::ConfigChange(cc)],
+            ..Default::default()
+        };
+        let gas = intrinsic(&signed(tx, configured_auth(K1), vec![]), &EXISTING_KEY);
+        let auth_cost = Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD;
+        assert_eq!(
+            gas.account_changes,
+            auth_cost
+                + Eip8130GasSchedule::CONFIG_CHANGE_STATE_COST
+                + Eip8130GasSchedule::INCREMENT_LOCAL_EPOCH_COST
+        );
+    }
+
+    #[test]
     fn subsequent_same_account_config_changes_pay_warm_state_bump() {
         // Two config changes on the same (sender) account: the first pays the cold
         // zero-to-nonzero state write, the second only a warm SLOAD + reset because
         // the packed slot was already warmed and written by the first.
-        let cc = || ConfigChange {
-            chain_id: 0,
+        let cc = || SignedAccountChanges {
+            channel: AccountChangeChannel::Multichain,
             sequence: 0,
-            actor_changes: vec![ActorChange {
-                change_type: ActorChangeType::Authorize,
-                actor_id: alloy_primitives::B256::repeat_byte(0x07),
-                data: Bytes::from(vec![0u8; 128]),
+            changes: vec![SignedChange {
+                change_type: ChangeType::AuthorizeActor,
+                payload: Bytes::from(vec![0u8; 128]),
             }],
-            auth: Bytes::from(configured_auth(K1)),
+            signature: Bytes::from(configured_auth(K1)),
         };
         let one = TxEip8130 {
             sender: Some(ACCOUNT),
@@ -962,11 +1026,11 @@ mod tests {
     fn config_change_after_create_pays_warm_state_bump() {
         // A create bootstraps the packed account-state slot (cold set); a config
         // change in the same transaction then only pays the warm subsequent bump.
-        let cc = ConfigChange {
-            chain_id: 0,
+        let cc = SignedAccountChanges {
+            channel: AccountChangeChannel::Multichain,
             sequence: 0,
-            actor_changes: vec![],
-            auth: Bytes::from(configured_auth(K1)),
+            changes: vec![],
+            signature: Bytes::from(configured_auth(K1)),
         };
         let tx = TxEip8130 {
             sender: Some(ACCOUNT),
@@ -999,15 +1063,11 @@ mod tests {
         let mut bytes = [0u8; 32];
         bytes[12..].copy_from_slice(ACCOUNT.as_slice());
         let self_id = alloy_primitives::B256::from(bytes);
-        let cc = || ConfigChange {
-            chain_id: 0,
+        let cc = || SignedAccountChanges {
+            channel: AccountChangeChannel::Multichain,
             sequence: 0,
-            actor_changes: vec![ActorChange {
-                change_type: ActorChangeType::Revoke,
-                actor_id: self_id,
-                data: Bytes::new(),
-            }],
-            auth: Bytes::from(configured_auth(K1)),
+            changes: vec![revoke_op(self_id)],
+            signature: Bytes::from(configured_auth(K1)),
         };
         let tx = || TxEip8130 {
             sender: Some(ACCOUNT),
@@ -1049,15 +1109,11 @@ mod tests {
         let mut bytes = [0u8; 32];
         bytes[12..].copy_from_slice(ACCOUNT.as_slice());
         let self_id = alloy_primitives::B256::from(bytes);
-        let cc = ConfigChange {
-            chain_id: 0,
+        let cc = SignedAccountChanges {
+            channel: AccountChangeChannel::Multichain,
             sequence: 0,
-            actor_changes: vec![ActorChange {
-                change_type: ActorChangeType::Revoke,
-                actor_id: self_id,
-                data: Bytes::new(),
-            }],
-            auth: Bytes::from(configured_auth(K1)),
+            changes: vec![revoke_op(self_id)],
+            signature: Bytes::from(configured_auth(K1)),
         };
         let tx = TxEip8130 {
             sender: Some(ACCOUNT),
@@ -1095,15 +1151,14 @@ mod tests {
         let other_id = alloy_primitives::B256::repeat_byte(0x07);
 
         let account_changes = |actor_id, sender| {
-            let cc = ConfigChange {
-                chain_id: 0,
+            let cc = SignedAccountChanges {
+                channel: AccountChangeChannel::Multichain,
                 sequence: 0,
-                actor_changes: vec![ActorChange {
-                    change_type: ActorChangeType::Authorize,
-                    actor_id,
-                    data: Bytes::from(vec![0u8; 128]),
+                changes: vec![SignedChange {
+                    change_type: ChangeType::AuthorizeActor,
+                    payload: authorize_op(actor_id, K1, 0, 0).payload,
                 }],
-                auth: Bytes::from(configured_auth(K1)),
+                signature: Bytes::from(configured_auth(K1)),
             };
             let tx = TxEip8130 {
                 sender,
@@ -1138,15 +1193,14 @@ mod tests {
 
         // End-to-end: a config change authorized by the implicit-EOA owner is
         // priced (not rejected), charging k1 + SLOAD plus the authorized slot.
-        let cc = ConfigChange {
-            chain_id: 0,
+        let cc = SignedAccountChanges {
+            channel: AccountChangeChannel::Multichain,
             sequence: 0,
-            actor_changes: vec![ActorChange {
-                change_type: ActorChangeType::Authorize,
-                actor_id: Default::default(),
-                data: Bytes::from(vec![0u8; 128]),
+            changes: vec![SignedChange {
+                change_type: ChangeType::AuthorizeActor,
+                payload: Bytes::from(vec![0u8; 128]),
             }],
-            auth: Bytes::from(configured_auth(K1)),
+            signature: Bytes::from(configured_auth(K1)),
         };
         let tx = TxEip8130 {
             sender: Some(ACCOUNT),

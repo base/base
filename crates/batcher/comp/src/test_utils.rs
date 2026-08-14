@@ -13,6 +13,8 @@ pub struct MockCompressor {
     pub compressed: Option<Bytes>,
     /// Whether to throw a read error.
     pub read_error: bool,
+    /// Optional channel version prefix.
+    pub version_byte: Option<u8>,
 }
 
 impl CompressorWriter for MockCompressor {
@@ -44,13 +46,19 @@ impl CompressorWriter for MockCompressor {
             return Err(CompressorError::Full);
         }
         let len = self.compressed.as_ref().map(|b: &Bytes| b.len()).unwrap_or(0);
-        buf[..len].copy_from_slice(self.compressed.as_ref().unwrap());
+        buf[..len].copy_from_slice(
+            self.compressed.as_ref().expect("mock compressed output must be configured"),
+        );
         Ok(len)
     }
 }
 
 impl ChannelCompressor for MockCompressor {
     fn get_compressed(&self) -> Vec<u8> {
-        self.compressed.as_ref().unwrap().to_vec()
+        self.compressed.as_ref().expect("mock compressed output must be configured").to_vec()
+    }
+
+    fn channel_version_byte(&self) -> Option<u8> {
+        self.version_byte
     }
 }

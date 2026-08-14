@@ -57,6 +57,20 @@ impl ProverServiceClientError {
     /// JSON-RPC code used by the prover service for failed preconditions.
     pub const ERROR_FAILED_PRECONDITION: i32 = -32017;
 
+    /// Returns a bounded label suitable for logs that must not expose
+    /// transport URLs or server-provided error details.
+    pub const fn kind(&self) -> &'static str {
+        match self {
+            Self::RpcTransport(_) => "rpc_transport",
+            Self::ProofFailure { .. } => "proof_failure",
+            Self::WorkerLeaseRejected { .. } => "worker_lease_rejected",
+            Self::LeaseBudgetExceeded(_) => "lease_budget_exceeded",
+            Self::Timeout(_) => "timeout",
+            Self::MissingResult(_) => "missing_result",
+            Self::UnexpectedResultPayload(_) => "unexpected_result_payload",
+        }
+    }
+
     /// Returns `true` when retrying the same client operation may succeed.
     #[must_use]
     pub fn is_retryable(&self) -> bool {

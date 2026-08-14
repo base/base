@@ -111,6 +111,8 @@ pub struct MockEngineStorage {
     /// Storage for L1 blocks by stringified `BlockId`.
     /// L1 blocks use standard Ethereum transactions.
     pub l1_blocks_by_id: HashMap<String, Block<EthTransaction>>,
+    /// Number of executed L1 block requests by stringified `BlockId`.
+    pub l1_block_calls_by_id: HashMap<String, u64>,
     /// Storage for L2 blocks by stringified `BlockId`.
     /// L2 blocks use Base transactions.
     pub l2_blocks_by_id: HashMap<String, L2RpcBlock>,
@@ -489,7 +491,8 @@ impl EngineClient for MockEngineClient {
                 let block_key = block_key.clone();
 
                 ProviderCall::BoxedFuture(Box::pin(async move {
-                    let storage_guard = storage.read().await;
+                    let mut storage_guard = storage.write().await;
+                    *storage_guard.l1_block_calls_by_id.entry(block_key.clone()).or_default() += 1;
                     Ok(storage_guard.l1_blocks_by_id.get(&block_key).cloned())
                 }))
             }),

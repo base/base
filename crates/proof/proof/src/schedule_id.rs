@@ -12,10 +12,10 @@ impl ScheduleId {
     /// `link[i + 1] = keccak256(abi.encode(link[i], i, timestamp_i))`, committing the activated
     /// schedule prefix in contract registration order with 0 for unscheduled entries.
     ///
-    /// Genesis-active upgrades stored with the local-only zero timestamp convention are first
-    /// normalized to the config's genesis timestamp, matching the contract schedule
-    /// representation. Boot loading rejects a zero genesis timestamp before reaching this, so a
-    /// zero timestamp cannot survive normalization.
+    /// Genesis-active upgrades using the legacy zero timestamp convention are first normalized to
+    /// the config's genesis timestamp, matching the contract schedule representation. Boot loading
+    /// rejects a zero genesis timestamp before reaching this, so a zero timestamp cannot survive
+    /// normalization.
     pub fn pin(config: &mut RollupConfig, l2_timestamp: u64) -> B256 {
         for &upgrade in &BaseUpgrade::CONTRACT_VARIANTS {
             if config.upgrades.activation_timestamp(upgrade) == Some(0) {

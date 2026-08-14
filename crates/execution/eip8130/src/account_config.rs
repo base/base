@@ -183,6 +183,13 @@ impl AccountConfigurationStorage<'_> {
         Ok(self.get_account_state(account)?.is_locked(now))
     }
 
+    /// Mirrors `AccountConfiguration.isContractEstablished`: `true` once the
+    /// account has been keystore-established (create/import). Used to gate code
+    /// delegation onto an empty-code account (see [`crate::DelegationEffect`]).
+    pub fn is_contract_established(&self, account: Address) -> Result<bool> {
+        Ok(self.get_account_state(account)?.contract_established())
+    }
+
     /// Mirrors `AccountConfiguration.getLockStatus`.
     pub fn get_lock_status(&self, account: Address, now: u64) -> Result<LockStatus> {
         Ok(self.get_account_state(account)?.lock_status(now))
@@ -356,11 +363,14 @@ pub struct AccountState {
     /// invalidating every unlanded local signature at a prior epoch. A non-zero
     /// value also marks the account initialized.
     pub local_epoch: u64,
-    /// Account flags bitfield: bit 0 ([`Eip8130Constants::DEFAULT_EOA_REVOKED`])
-    /// disables the inline secp256k1 self key; bit 1
-    /// ([`Eip8130Constants::FLAG_LOCKED`]) freezes actor configuration; bit 2
-    /// ([`Eip8130Constants::FLAG_UNLOCK_INITIATED`]) selects the `lock_union`
-    /// interpretation.
+    /// Account flags bitfield: bit 0
+    /// ([`Eip8130Constants::FLAG_CONTRACT_ESTABLISHED`]) marks a
+    /// keystore-established account (create/import) that must not be treated as a
+    /// proven-key EOA even when its code is empty; bit 1
+    /// ([`Eip8130Constants::DEFAULT_EOA_REVOKED`]) disables the inline secp256k1
+    /// self key; bit 2 ([`Eip8130Constants::FLAG_LOCKED`]) freezes actor
+    /// configuration; bit 3 ([`Eip8130Constants::FLAG_UNLOCK_INITIATED`]) selects
+    /// the `lock_union` interpretation.
     pub flags: u8,
     /// `uint48` lock union: `unlock_delay` (seconds) while `FLAG_UNLOCK_INITIATED`
     /// is clear, else `unlocks_at` (Unix-seconds timestamp).
@@ -410,6 +420,14 @@ impl AccountState {
     #[must_use]
     pub const fn default_eoa_revoked(&self) -> bool {
         self.flags & Eip8130Constants::DEFAULT_EOA_REVOKED != 0
+    }
+
+    /// `true` when this account was keystore-established (create/import) and so
+    /// must not be treated as a proven-key EOA — even with empty code. Mirrors
+    /// `Keystore.isContractEstablished` (the `FLAG_CONTRACT_ESTABLISHED` bit).
+    #[must_use]
+    pub const fn contract_established(&self) -> bool {
+        self.flags & Eip8130Constants::FLAG_CONTRACT_ESTABLISHED != 0
     }
 
     /// Mirrors `AccountConfiguration._isLocked`: configuration is frozen while
