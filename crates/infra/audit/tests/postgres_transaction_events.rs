@@ -139,6 +139,26 @@ async fn transaction_events_ready_after_required_migration() -> anyhow::Result<(
 }
 
 #[tokio::test]
+async fn postgres_retention_index_is_applied() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS ( \
+            SELECT 1 FROM pg_indexes \
+            WHERE schemaname = 'public' \
+              AND indexname = 'transaction_events_event_type_ingested_at_idx' \
+        )",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert!(exists);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn postgres_sink_chunks_large_direct_inserts() -> anyhow::Result<()> {
     let harness = PostgresHarness::new().await?;
 

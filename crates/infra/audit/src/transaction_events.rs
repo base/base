@@ -56,9 +56,9 @@ pub const DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS: u32 = 7;
 /// Default days to keep failures, drops, inclusion, and flashblock events.
 pub const DEFAULT_TRANSACTION_EVENT_COLD_RETENTION_DAYS: u32 = 30;
 /// Default number of expired rows deleted in one statement.
-const DEFAULT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE: u32 = 10_000;
+pub const DEFAULT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE: u32 = 10_000;
 /// Default maximum delete statements per retention pass.
-const DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES: u32 = 100;
+pub const DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES: u32 = 1_000;
 const TRANSACTION_EVENT_RETENTION_LOCK_ID: i64 = 744_697_762_131_337_711;
 
 /// Retention class used to pick a delete cutoff for an event type.
@@ -569,6 +569,7 @@ impl PgTransactionEventSink {
                         TransactionEventRetentionClass::Warm => warm_rows_deleted += deleted,
                         TransactionEventRetentionClass::Cold => cold_rows_deleted += deleted,
                     }
+                    Metrics::transaction_events_expired(class.as_str()).increment(deleted);
                 }
             }
             Ok(TransactionEventRetentionOutcome {
@@ -589,17 +590,7 @@ impl PgTransactionEventSink {
             error!(error = %err, "failed to release transaction event retention lock");
         }
 
-        let outcome = outcome?;
-        for (class, deleted) in [
-            (TransactionEventRetentionClass::Hot, outcome.hot_rows_deleted),
-            (TransactionEventRetentionClass::Warm, outcome.warm_rows_deleted),
-            (TransactionEventRetentionClass::Cold, outcome.cold_rows_deleted),
-        ] {
-            if deleted > 0 {
-                Metrics::transaction_events_expired(class.as_str()).increment(deleted);
-            }
-        }
-        Ok(outcome)
+        outcome
     }
 
     /// Checks optional transaction event storage readiness.

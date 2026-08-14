@@ -8,8 +8,10 @@ use audit_archiver_lib::{
     DEFAULT_TRANSACTION_EVENT_COLD_RETENTION_DAYS, DEFAULT_TRANSACTION_EVENT_HOT_RETENTION_DAYS,
     DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE, DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES,
     DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
-    DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS, Metrics, PgTransactionEventSink, RpcEventReader,
-    S3EventReaderWriter, TransactionEventIngestConfig, TransactionEventRetentionConfig,
+    DEFAULT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE,
+    DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES, DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS,
+    Metrics, PgTransactionEventSink, RpcEventReader, S3EventReaderWriter,
+    TransactionEventIngestConfig, TransactionEventRetentionConfig,
 };
 use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
@@ -158,6 +160,22 @@ struct Args {
     )]
     transaction_event_cold_retention_days: u32,
 
+    /// Maximum rows deleted in one retention statement.
+    #[arg(
+        long,
+        env = "TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE",
+        default_value_t = DEFAULT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE
+    )]
+    transaction_event_retention_batch_size: u32,
+
+    /// Maximum delete statements in one locked retention pass.
+    #[arg(
+        long,
+        env = "TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES",
+        default_value_t = DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES
+    )]
+    transaction_event_retention_max_batches: u32,
+
     /// HTTP path for Vector transaction-event batch ingest.
     #[arg(
         long,
@@ -247,7 +265,8 @@ async fn run_server(args: Args) -> Result<()> {
         hot_days: args.transaction_event_hot_retention_days,
         warm_days: args.transaction_event_warm_retention_days,
         cold_days: args.transaction_event_cold_retention_days,
-        ..TransactionEventRetentionConfig::default()
+        delete_batch_size: args.transaction_event_retention_batch_size,
+        max_batches: args.transaction_event_retention_max_batches,
     }
     .validate()?;
     let retention_interval = Duration::from_secs(args.transaction_event_retention_interval_secs);
@@ -262,6 +281,8 @@ async fn run_server(args: Args) -> Result<()> {
         transaction_event_hot_retention_days = retention_config.hot_days,
         transaction_event_warm_retention_days = retention_config.warm_days,
         transaction_event_cold_retention_days = retention_config.cold_days,
+        transaction_event_retention_batch_size = retention_config.delete_batch_size,
+        transaction_event_retention_max_batches = retention_config.max_batches,
         transaction_event_retention_interval_secs = retention_interval.as_secs(),
         rpc_cache_capacity = args.rpc_cache_capacity,
         rpc_cache_ttl_secs = args.rpc_cache_ttl_secs,
