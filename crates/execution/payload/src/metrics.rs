@@ -15,10 +15,6 @@ base_metrics::define_metrics! {
     #[label(dimension)]
     #[label(scope)]
     throttled_total: counter,
-    #[describe("Resource-metering schedule replacements")]
-    schedule_updates_total: counter,
-    #[describe("Active resource-metering schedule revision")]
-    schedule_revision: gauge,
 }
 
 impl ResourceMeteringMetrics {
@@ -29,11 +25,6 @@ impl ResourceMeteringMetrics {
         if enforced {
             Self::throttled_total(error.dimension.clone(), scope).increment(1);
         }
-    }
-
-    /// Records the active schedule revision after a replacement or startup load.
-    pub fn record_schedule_revision(revision: u64) {
-        Self::schedule_revision().set(revision as f64);
     }
 }
 

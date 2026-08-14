@@ -6,8 +6,8 @@ use std::{
 };
 
 use crate::{
-    MemoryMeteringStore, NoopMeteringProvider, ResourceMeteringStore, ResourceThrottlingMode,
-    ResourceMeteringStoreError, SharedMeteringProvider, SharedResourceMeteringStore,
+    CompiledResourceMeteringSchedule, NoopMeteringProvider, ResourceMeteringError,
+    ResourceMeteringSchedule, ResourceThrottlingMode, SharedMeteringProvider,
 };
 
 /// Settings for the Base payload builder.
@@ -69,9 +69,9 @@ impl BaseBuilderConfig {
 pub struct ResourceMeteringConfig {
     /// Whether metered usage is ignored, observed, or used to throttle selection.
     pub throttling_mode: ResourceThrottlingMode,
-    /// Versioned schedule shared with the authenticated replacement RPC.
-    pub store: SharedResourceMeteringStore,
-    /// `meterBundle` results used to evaluate the snapped schedule.
+    /// Compiled startup schedule.
+    pub schedule: Arc<CompiledResourceMeteringSchedule>,
+    /// `meterBundle` results used to evaluate the schedule.
     pub provider: SharedMeteringProvider,
 }
 
@@ -79,7 +79,7 @@ impl std::fmt::Debug for ResourceMeteringConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ResourceMeteringConfig")
             .field("throttling_mode", &self.throttling_mode)
-            .field("store_revision", &self.store.revision())
+            .field("schedule_empty", &self.schedule.is_empty())
             .field("provider_enabled", &crate::MeteringProvider::is_enabled(self.provider.as_ref()))
             .finish()
     }
@@ -89,7 +89,10 @@ impl Default for ResourceMeteringConfig {
     fn default() -> Self {
         Self {
             throttling_mode: ResourceThrottlingMode::Off,
-            store: Arc::new(ResourceMeteringStore::default()),
+            schedule: Arc::new(
+                CompiledResourceMeteringSchedule::compile(ResourceMeteringSchedule::default())
+                    .expect("the default resource metering schedule is valid"),
+            ),
             provider: Arc::new(NoopMeteringProvider),
         }
     }
@@ -101,21 +104,19 @@ impl ResourceMeteringConfig {
         throttling_mode: ResourceThrottlingMode,
         schedule_path: Option<&Path>,
         provider: SharedMeteringProvider,
-    ) -> Result<Self, ResourceMeteringStoreError> {
-        let store = match schedule_path {
-            Some(path) => Arc::new(ResourceMeteringStore::from_file(path)?),
-            None => Arc::new(ResourceMeteringStore::default()),
+    ) -> Result<Self, ResourceMeteringError> {
+        let schedule = match schedule_path {
+            Some(path) => CompiledResourceMeteringSchedule::compile(
+                ResourceMeteringSchedule::from_file(path)?,
+            )?,
+            None => CompiledResourceMeteringSchedule::compile(ResourceMeteringSchedule::default())?,
         };
-        Ok(Self { throttling_mode, store, provider })
+        Ok(Self { throttling_mode, schedule: Arc::new(schedule), provider })
     }
 
-    /// Builds a config that uses an in-memory metering store enabled whenever throttling is active.
+    /// Builds a config that uses a no-op provider whenever `throttling_mode` is active.
     pub fn enabled(throttling_mode: ResourceThrottlingMode) -> Self {
-        Self {
-            throttling_mode,
-            store: Arc::new(ResourceMeteringStore::default()),
-            provider: Arc::new(MemoryMeteringStore::new(throttling_mode.is_enabled())),
-        }
+        Self { throttling_mode, ..Self::default() }
     }
 }
 

@@ -7,11 +7,10 @@
 //! the payload when that metered usage exceeds a budget. Neither changes
 //! protocol gas, fees, or validity.
 
-use std::{collections::HashMap, fmt, fs, path::Path, sync::Arc};
+use std::{collections::HashMap, fmt, fs, path::Path, str::FromStr};
 
 use alloy_primitives::TxHash;
 use base_bundles::{MeterBundleResponse, OpcodeGas};
-use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -46,6 +45,29 @@ impl ResourceThrottlingMode {
     /// Returns true if over-budget transactions should be included and only observed.
     pub const fn is_dry_run(self) -> bool {
         matches!(self, Self::DryRun)
+    }
+}
+
+impl fmt::Display for ResourceThrottlingMode {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Off => "off",
+            Self::DryRun => "dry-run",
+            Self::Enforce => "enforce",
+        })
+    }
+}
+
+impl FromStr for ResourceThrottlingMode {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "off" => Ok(Self::Off),
+            "dry-run" => Ok(Self::DryRun),
+            "enforce" => Ok(Self::Enforce),
+            other => Err(format!("invalid resource throttling mode: {other}")),
+        }
     }
 }
 
@@ -99,16 +121,6 @@ pub struct ResourceMeteringOperation {
     pub count_cost: u64,
 }
 
-/// A schedule together with the revision at which it became active.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct VersionedResourceMeteringSchedule {
-    /// Monotonically increasing schedule revision.
-    pub revision: u64,
-    /// Active schedule.
-    pub schedule: ResourceMeteringSchedule,
-}
-
 /// Resource-unit usage aligned with a compiled schedule's dimensions.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ResourceMeteringUsage {
@@ -147,8 +159,6 @@ impl ResourceMeteringUsage {
 /// A compiled schedule used by the builder's hot path.
 #[derive(Debug, Clone)]
 pub struct CompiledResourceMeteringSchedule {
-    /// Revision of the source schedule.
-    pub revision: u64,
     /// Validated source schedule.
     pub schedule: ResourceMeteringSchedule,
     /// Compiled dimensions in stable schedule order.
@@ -170,11 +180,8 @@ pub struct CompiledResourceMeteringDimension {
 }
 
 impl CompiledResourceMeteringSchedule {
-    /// Compiles a schedule at the supplied revision.
-    pub fn compile(
-        schedule: ResourceMeteringSchedule,
-        revision: u64,
-    ) -> Result<Self, ResourceMeteringError> {
+    /// Compiles a validated schedule for the builder hot path.
+    pub fn compile(schedule: ResourceMeteringSchedule) -> Result<Self, ResourceMeteringError> {
         schedule.validate()?;
 
         let mut dimensions = Vec::with_capacity(schedule.dimensions.len());
@@ -196,20 +203,12 @@ impl CompiledResourceMeteringSchedule {
             }
         }
 
-        Ok(Self { revision, schedule, dimensions, operation_index })
+        Ok(Self { schedule, dimensions, operation_index })
     }
 
     /// Returns whether the schedule has no metering dimensions.
     pub const fn is_empty(&self) -> bool {
         self.dimensions.is_empty()
-    }
-
-    /// Returns the raw schedule and revision.
-    pub fn versioned(&self) -> VersionedResourceMeteringSchedule {
-        VersionedResourceMeteringSchedule {
-            revision: self.revision,
-            schedule: self.schedule.clone(),
-        }
     }
 
     /// Calculates all dimension costs for one metered transaction.
@@ -270,7 +269,6 @@ impl CompiledResourceMeteringSchedule {
                         used: transaction_cost,
                         transaction_cost,
                         limit: transaction_limit,
-                        revision: self.revision,
                     },
                 ));
             }
@@ -289,7 +287,6 @@ impl CompiledResourceMeteringSchedule {
                         used,
                         transaction_cost,
                         limit: dimension.block_limit,
-                        revision: self.revision,
                     },
                 ));
             }
@@ -321,7 +318,7 @@ impl fmt::Display for ResourceThrottlingLimitScope {
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[error(
     "resource throttling {scope} limit exceeded: dimension={dimension} used={used} \
-     transaction_cost={transaction_cost} limit={limit} revision={revision}"
+     transaction_cost={transaction_cost} limit={limit}"
 )]
 pub struct ResourceThrottlingLimitExceeded {
     /// Dimension whose budget was exceeded.
@@ -334,8 +331,6 @@ pub struct ResourceThrottlingLimitExceeded {
     pub transaction_cost: u128,
     /// Configured budget.
     pub limit: u64,
-    /// Schedule revision used for the decision.
-    pub revision: u64,
 }
 
 /// Failure while checking a resource-throttling budget.
@@ -410,25 +405,6 @@ pub enum ResourceMeteringError {
     /// An arithmetic operation overflowed.
     #[error("resource metering arithmetic overflow")]
     ArithmeticOverflow,
-}
-
-/// Failure while replacing a shared resource-metering schedule.
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum ResourceMeteringStoreError {
-    /// The replacement schedule failed validation.
-    #[error("{0}")]
-    InvalidSchedule(#[from] ResourceMeteringError),
-    /// The caller attempted to replace a schedule based on a stale revision.
-    #[error("resource metering schedule revision conflict: expected={expected} actual={actual}")]
-    RevisionConflict {
-        /// Revision supplied by the caller.
-        expected: u64,
-        /// Current active revision.
-        actual: u64,
-    },
-    /// The active revision could not be incremented.
-    #[error("resource metering schedule revision overflow")]
-    RevisionOverflow,
     /// The schedule file could not be read.
     #[error("failed to read resource metering schedule: {0}")]
     ReadFile(String),
@@ -437,93 +413,23 @@ pub enum ResourceMeteringStoreError {
     ParseJson(String),
 }
 
-/// Shared, atomically replaceable resource-metering schedule.
-#[derive(Debug)]
-pub struct ResourceMeteringStore {
-    active: RwLock<Arc<CompiledResourceMeteringSchedule>>,
-}
-
-impl ResourceMeteringStore {
-    /// Creates a store with an empty schedule at revision zero.
-    pub fn empty() -> Self {
-        Self::from_schedule(ResourceMeteringSchedule::default())
-            .expect("the default resource metering schedule is valid")
-    }
-
-    /// Creates a store from a validated startup schedule.
-    pub fn from_schedule(
-        schedule: ResourceMeteringSchedule,
-    ) -> Result<Self, ResourceMeteringStoreError> {
-        let compiled = CompiledResourceMeteringSchedule::compile(schedule, 0)?;
-        Ok(Self { active: RwLock::new(Arc::new(compiled)) })
-    }
-
-    /// Creates a store from a JSON schedule.
-    pub fn from_json(json: &str) -> Result<Self, ResourceMeteringStoreError> {
-        let schedule = serde_json::from_str(json)
-            .map_err(|error| ResourceMeteringStoreError::ParseJson(error.to_string()))?;
-        Self::from_schedule(schedule)
-    }
-
-    /// Loads a store from a JSON schedule file.
-    pub fn from_file(path: &Path) -> Result<Self, ResourceMeteringStoreError> {
-        let json = fs::read_to_string(path)
-            .map_err(|error| ResourceMeteringStoreError::ReadFile(error.to_string()))?;
-        Self::from_json(&json)
-    }
-
-    /// Returns an immutable schedule snapshot.
-    pub fn snapshot(&self) -> Arc<CompiledResourceMeteringSchedule> {
-        self.active.read().clone()
-    }
-
-    /// Returns the active raw schedule and revision.
-    pub fn get(&self) -> VersionedResourceMeteringSchedule {
-        self.active.read().versioned()
-    }
-
-    /// Returns the active schedule revision.
-    pub fn revision(&self) -> u64 {
-        self.active.read().revision
-    }
-
-    /// Atomically replaces the schedule, optionally checking its current revision.
-    pub fn replace(
-        &self,
-        schedule: ResourceMeteringSchedule,
-        expected_revision: Option<u64>,
-    ) -> Result<u64, ResourceMeteringStoreError> {
-        // Compile before taking the write lock so schedule validation and indexing do not block
-        // payload jobs that only need to snapshot the active schedule.
-        let mut compiled = CompiledResourceMeteringSchedule::compile(schedule, 0)?;
-        let mut active = self.active.write();
-        let actual = active.revision;
-        if let Some(expected) = expected_revision
-            && expected != actual
-        {
-            return Err(ResourceMeteringStoreError::RevisionConflict { expected, actual });
-        }
-
-        let revision = actual.checked_add(1).ok_or(ResourceMeteringStoreError::RevisionOverflow)?;
-        compiled.revision = revision;
-        *active = Arc::new(compiled);
-        Ok(revision)
-    }
-}
-
-impl Default for ResourceMeteringStore {
-    fn default() -> Self {
-        Self::empty()
-    }
-}
-
-/// Type-erased shared resource-metering store.
-pub type SharedResourceMeteringStore = Arc<ResourceMeteringStore>;
-
 impl ResourceMeteringSchedule {
     /// Returns the current supported schema version.
     pub const fn current_version() -> u32 {
         CURRENT_SCHEDULE_VERSION
+    }
+
+    /// Parses a schedule from JSON.
+    pub fn from_json(json: &str) -> Result<Self, ResourceMeteringError> {
+        serde_json::from_str(json)
+            .map_err(|error| ResourceMeteringError::ParseJson(error.to_string()))
+    }
+
+    /// Loads a schedule from a JSON file.
+    pub fn from_file(path: &Path) -> Result<Self, ResourceMeteringError> {
+        let json = fs::read_to_string(path)
+            .map_err(|error| ResourceMeteringError::ReadFile(error.to_string()))?;
+        Self::from_json(&json)
     }
 
     /// Validates the schedule before it is compiled or activated.
@@ -617,8 +523,6 @@ impl ResourceMeteringSchedule {
 /// Builder throttling decision for one transaction's metered resource usage.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResourceThrottlingDecision {
-    /// Resource throttling is disabled or the schedule has no dimensions.
-    Inactive,
     /// The transaction may be included. Usage is zero when metering data is missing.
     Allow(ResourceMeteringUsage),
     /// The transaction exceeds a configured budget and should be throttled.
@@ -632,44 +536,44 @@ pub enum ResourceThrottlingDecision {
     CalculationFailed,
 }
 
-/// Meters one transaction against a snapped schedule and returns a throttling decision.
-///
-/// Missing metering data fails open with zero operation-specific usage.
-pub fn evaluate_transaction(
-    schedule: &CompiledResourceMeteringSchedule,
-    meter: Option<&MeterBundleResponse>,
-    tx_hash: &TxHash,
-    cumulative: &[u128],
-) -> ResourceThrottlingDecision {
-    let Some(meter) = meter else {
-        return ResourceThrottlingDecision::Allow(ResourceMeteringUsage::zero(
-            schedule.dimensions.len(),
-        ));
-    };
+impl CompiledResourceMeteringSchedule {
+    /// Meters one transaction and returns a throttling decision.
+    ///
+    /// Missing metering data fails open with zero operation-specific usage.
+    pub fn evaluate_transaction(
+        &self,
+        meter: Option<&MeterBundleResponse>,
+        tx_hash: &TxHash,
+        cumulative: &[u128],
+    ) -> ResourceThrottlingDecision {
+        let Some(meter) = meter else {
+            return ResourceThrottlingDecision::Allow(ResourceMeteringUsage::zero(
+                self.dimensions.len(),
+            ));
+        };
 
-    let result = meter.results.iter().find(|result| result.tx_hash == *tx_hash);
-    let gas_used = result.map_or(meter.total_gas_used, |result| result.gas_used);
-    let opcode_gas = result.map(|result| result.opcode_gas.as_slice()).unwrap_or_default();
-    let usage = match schedule.evaluate(gas_used, opcode_gas) {
-        Ok(usage) => usage,
-        Err(_) => return ResourceThrottlingDecision::CalculationFailed,
-    };
+        let result = meter.results.iter().find(|result| result.tx_hash == *tx_hash);
+        let gas_used = result.map_or(meter.total_gas_used, |result| result.gas_used);
+        let opcode_gas = result.map(|result| result.opcode_gas.as_slice()).unwrap_or_default();
+        let usage = match self.evaluate(gas_used, opcode_gas) {
+            Ok(usage) => usage,
+            Err(_) => return ResourceThrottlingDecision::CalculationFailed,
+        };
 
-    match schedule.check(&usage, cumulative) {
-        Ok(()) => ResourceThrottlingDecision::Allow(usage),
-        Err(ResourceThrottlingCheckError::LimitExceeded(error)) => {
-            ResourceThrottlingDecision::Throttle { error, usage }
-        }
-        Err(ResourceThrottlingCheckError::ArithmeticOverflow) => {
-            ResourceThrottlingDecision::CalculationFailed
+        match self.check(&usage, cumulative) {
+            Ok(()) => ResourceThrottlingDecision::Allow(usage),
+            Err(ResourceThrottlingCheckError::LimitExceeded(error)) => {
+                ResourceThrottlingDecision::Throttle { error, usage }
+            }
+            Err(ResourceThrottlingCheckError::ArithmeticOverflow) => {
+                ResourceThrottlingDecision::CalculationFailed
+            }
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::Arc, thread};
-
     use alloy_primitives::Address;
 
     use super::*;
@@ -699,11 +603,26 @@ mod tests {
     }
 
     #[test]
+    fn parses_throttling_mode_from_str() {
+        assert_eq!(ResourceThrottlingMode::from_str("off").unwrap(), ResourceThrottlingMode::Off);
+        assert_eq!(
+            ResourceThrottlingMode::from_str("dry-run").unwrap(),
+            ResourceThrottlingMode::DryRun
+        );
+        assert_eq!(
+            ResourceThrottlingMode::from_str("enforce").unwrap(),
+            ResourceThrottlingMode::Enforce
+        );
+        assert!(ResourceThrottlingMode::from_str("inactive").is_err());
+        assert_eq!(ResourceThrottlingMode::DryRun.to_string(), "dry-run");
+    }
+
+    #[test]
     fn default_schedule_is_empty_and_current() {
         let schedule = ResourceMeteringSchedule::default();
         assert_eq!(schedule.version, ResourceMeteringSchedule::current_version());
         assert!(schedule.dimensions.is_empty());
-        assert!(ResourceMeteringStore::default().snapshot().is_empty());
+        assert!(CompiledResourceMeteringSchedule::compile(schedule).unwrap().is_empty());
     }
 
     #[test]
@@ -718,7 +637,7 @@ mod tests {
             )],
             ..Default::default()
         };
-        let compiled = CompiledResourceMeteringSchedule::compile(schedule, 7).unwrap();
+        let compiled = CompiledResourceMeteringSchedule::compile(schedule).unwrap();
         let usage = compiled.evaluate(100, &[opcode_gas("sstore", 4, 10)]).unwrap();
 
         assert_eq!(usage.values, vec![250]);
@@ -736,7 +655,7 @@ mod tests {
             )],
             ..Default::default()
         };
-        let compiled = CompiledResourceMeteringSchedule::compile(schedule, 0).unwrap();
+        let compiled = CompiledResourceMeteringSchedule::compile(schedule).unwrap();
         let usage = compiled
             .evaluate(0, &[opcode_gas("TX_EFFECT_ETH_TRANSFER_TO_NONEXISTENT_ACCOUNT", 1, 0)])
             .unwrap();
@@ -753,7 +672,7 @@ mod tests {
             ],
             ..Default::default()
         };
-        let compiled = CompiledResourceMeteringSchedule::compile(schedule, 0).unwrap();
+        let compiled = CompiledResourceMeteringSchedule::compile(schedule).unwrap();
         let usage = compiled.evaluate(0, &[opcode_gas("CALL", 4, 10)]).unwrap();
 
         assert_eq!(usage.values, vec![20, 12]);
@@ -765,7 +684,7 @@ mod tests {
             dimensions: vec![dimension("cpu", 100, Some(30), 1, Vec::new())],
             ..Default::default()
         };
-        let compiled = CompiledResourceMeteringSchedule::compile(schedule, 4).unwrap();
+        let compiled = CompiledResourceMeteringSchedule::compile(schedule).unwrap();
         let usage = compiled.evaluate(40, &[]).unwrap();
 
         let error = compiled.check(&usage, &[]).unwrap_err();
@@ -833,7 +752,7 @@ mod tests {
             )],
             ..Default::default()
         };
-        let compiled = CompiledResourceMeteringSchedule::compile(schedule, 0).unwrap();
+        let compiled = CompiledResourceMeteringSchedule::compile(schedule).unwrap();
 
         assert_eq!(
             compiled.evaluate(u64::MAX, &[opcode_gas("CALL", 1, u64::MAX)]),
@@ -842,62 +761,8 @@ mod tests {
     }
 
     #[test]
-    fn replaces_schedule_atomically_with_revision_check() {
-        let store = ResourceMeteringStore::default();
-        let old_snapshot = store.snapshot();
-        let schedule = ResourceMeteringSchedule {
-            dimensions: vec![dimension("cpu", 100, None, 1, Vec::new())],
-            ..Default::default()
-        };
-
-        assert_eq!(store.revision(), 0);
-        assert_eq!(store.replace(schedule.clone(), Some(0)).unwrap(), 1);
-        assert_eq!(store.get().revision, 1);
-        assert_eq!(store.snapshot().dimensions[0].name, "cpu");
-        assert!(old_snapshot.is_empty());
-        assert!(matches!(
-            store.replace(schedule, Some(0)),
-            Err(ResourceMeteringStoreError::RevisionConflict { expected: 0, actual: 1 })
-        ));
-    }
-
-    #[test]
-    fn concurrent_replacements_allow_only_one_revision_match() {
-        let store = Arc::new(ResourceMeteringStore::default());
-        let schedule = ResourceMeteringSchedule {
-            dimensions: vec![dimension("cpu", 100, None, 1, Vec::new())],
-            ..Default::default()
-        };
-
-        let first_store = Arc::clone(&store);
-        let first_schedule = schedule.clone();
-        let first = thread::spawn(move || first_store.replace(first_schedule, Some(0)));
-        let second_store = Arc::clone(&store);
-        let second = thread::spawn(move || second_store.replace(schedule, Some(0)));
-
-        let results = [first.join().unwrap(), second.join().unwrap()];
-        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
-        assert_eq!(
-            results
-                .iter()
-                .filter(|result| {
-                    matches!(
-                        result,
-                        Err(ResourceMeteringStoreError::RevisionConflict {
-                            expected: 0,
-                            actual: 1
-                        })
-                    )
-                })
-                .count(),
-            1
-        );
-        assert_eq!(store.revision(), 1);
-    }
-
-    #[test]
     fn parses_versioned_camel_case_json() {
-        let store = ResourceMeteringStore::from_json(
+        let schedule = ResourceMeteringSchedule::from_json(
             r#"{
                 "version": 1,
                 "dimensions": [{
@@ -915,10 +780,8 @@ mod tests {
         )
         .unwrap();
 
-        let active = store.get();
-        assert_eq!(active.revision, 0);
-        assert_eq!(active.schedule.dimensions[0].transaction_limit, Some(50));
-        assert_eq!(active.schedule.dimensions[0].operations[0].count_cost, 4);
+        assert_eq!(schedule.dimensions[0].transaction_limit, Some(50));
+        assert_eq!(schedule.dimensions[0].operations[0].count_cost, 4);
     }
 
     #[test]
@@ -927,8 +790,8 @@ mod tests {
             dimensions: vec![dimension("cpu", 100, None, 1, Vec::new())],
             ..Default::default()
         };
-        let compiled = CompiledResourceMeteringSchedule::compile(schedule, 0).unwrap();
-        let decision = evaluate_transaction(&compiled, None, &TxHash::ZERO, &[]);
+        let compiled = CompiledResourceMeteringSchedule::compile(schedule).unwrap();
+        let decision = compiled.evaluate_transaction(None, &TxHash::ZERO, &[]);
         assert_eq!(decision, ResourceThrottlingDecision::Allow(ResourceMeteringUsage::zero(1)));
     }
 }

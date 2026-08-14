@@ -14,19 +14,15 @@ pub use builder::BasePayloadBuilder;
 pub mod config;
 pub mod error;
 mod metering;
-pub use metering::{
-    MemoryMeteringStore, MeteringProvider, NoopMeteringProvider, SharedMeteringProvider,
-};
+pub use metering::{MeteringProvider, NoopMeteringProvider, SharedMeteringProvider};
 mod metrics;
 pub use metrics::ResourceMeteringMetrics;
 mod resource_metering;
 pub use resource_metering::{
-    CompiledResourceMeteringDimension, CompiledResourceMeteringSchedule,
-    ResourceMeteringDimension, ResourceMeteringError, ResourceMeteringOperation,
-    ResourceMeteringSchedule, ResourceMeteringStore, ResourceMeteringStoreError,
+    CompiledResourceMeteringDimension, CompiledResourceMeteringSchedule, ResourceMeteringDimension,
+    ResourceMeteringError, ResourceMeteringOperation, ResourceMeteringSchedule,
     ResourceMeteringUsage, ResourceThrottlingCheckError, ResourceThrottlingDecision,
     ResourceThrottlingLimitExceeded, ResourceThrottlingLimitScope, ResourceThrottlingMode,
-    SharedResourceMeteringStore, VersionedResourceMeteringSchedule, evaluate_transaction,
 };
 pub mod payload;
 pub use payload::{BaseBuiltPayload, BasePayloadBuilderAttributes};

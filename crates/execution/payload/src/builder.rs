@@ -42,9 +42,9 @@ use revm::context::{Block, BlockEnv};
 use tracing::{debug, debug_span, instrument, trace, warn};
 
 use crate::{
-    Attributes, BasePayloadBuilderAttributes, PayloadPrimitives, ResourceThrottlingDecision,
-    ResourceMeteringMetrics, config::BaseBuilderConfig, error::BasePayloadBuilderError,
-    evaluate_transaction, payload::BaseBuiltPayload,
+    Attributes, BasePayloadBuilderAttributes, PayloadPrimitives, ResourceMeteringMetrics,
+    ResourceThrottlingDecision, config::BaseBuilderConfig, error::BasePayloadBuilderError,
+    payload::BaseBuiltPayload,
 };
 
 /// Base payload builder
@@ -769,7 +769,7 @@ where
         let block_timestamp = self.attributes().timestamp();
         let can_finalize_early = self.is_denim_active();
         let resource_metering = &self.builder_config.resource_metering;
-        let resource_schedule = resource_metering.store.snapshot();
+        let resource_schedule = resource_metering.schedule.as_ref();
         let resource_metering_active =
             resource_metering.throttling_mode.is_enabled() && !resource_schedule.is_empty();
         while let Some(tx) = best_txs.next(()) {
@@ -834,13 +834,11 @@ where
                 let meter =
                     crate::MeteringProvider::get(resource_metering.provider.as_ref(), &tx_hash);
 
-                match evaluate_transaction(
-                    resource_schedule.as_ref(),
+                match resource_schedule.evaluate_transaction(
                     meter.as_ref(),
                     &tx_hash,
                     &info.resource_metering_usage,
                 ) {
-                    ResourceThrottlingDecision::Inactive => {}
                     ResourceThrottlingDecision::Allow(usage) => {
                         pending_resource_usage = Some(usage);
                     }

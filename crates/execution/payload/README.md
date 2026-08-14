@@ -15,8 +15,8 @@ Resource metering is an optional native-builder admission guardrail. Metering
 converts `meterBundle` opcode, precompile, and pseudo-opcode aggregates into
 independent resource-unit dimensions. Resource throttling then excludes
 transactions whose metered usage exceeds a budget. Dry-run observes those
-over-budget transactions without excluding them. This does not change protocol
-gas, fees, or validity.
+over-budget transactions without excluding them. The startup schedule is a JSON
+file; this does not change protocol gas, fees, or validity.
 
 ## Usage
 

@@ -2,10 +2,12 @@
 
 use std::{env, path::PathBuf, sync::Arc, time::Duration};
 
+use base_builder_metering::{MeteringStore, MeteringStoreExtension};
 use base_bundle_extension::BundleExtension;
 use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
 use base_execution_payload_builder::{
-    MemoryMeteringStore, ResourceThrottlingMode, config::ResourceMeteringConfig,
+    NoopMeteringProvider, ResourceThrottlingMode, SharedMeteringProvider,
+    config::ResourceMeteringConfig,
 };
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
@@ -85,37 +87,13 @@ pub struct MeteringArgs {
     #[arg(
         long = "payload.resource-throttling-mode",
         env = "PAYLOAD_RESOURCE_THROTTLING_MODE",
-        value_enum,
-        default_value_t = ResourceThrottlingModeArg::Off
+        default_value_t = ResourceThrottlingMode::Off
     )]
-    pub resource_throttling_mode: ResourceThrottlingModeArg,
+    pub resource_throttling_mode: ResourceThrottlingMode,
 
     /// JSON file containing the startup resource-metering schedule.
     #[arg(long = "payload.resource-metering-schedule", env = "PAYLOAD_RESOURCE_METERING_SCHEDULE")]
     pub resource_metering_schedule: Option<PathBuf>,
-}
-
-/// CLI value for [`ResourceThrottlingMode`].
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
-#[value(rename_all = "kebab-case")]
-pub enum ResourceThrottlingModeArg {
-    /// Ignore metered usage and do not throttle.
-    #[default]
-    Off,
-    /// Record metrics for transactions that would be throttled, but still include them.
-    DryRun,
-    /// Exclude transactions that exceed a configured budget.
-    Enforce,
-}
-
-impl From<ResourceThrottlingModeArg> for ResourceThrottlingMode {
-    fn from(mode: ResourceThrottlingModeArg) -> Self {
-        match mode {
-            ResourceThrottlingModeArg::Off => Self::Off,
-            ResourceThrottlingModeArg::DryRun => Self::DryRun,
-            ResourceThrottlingModeArg::Enforce => Self::Enforce,
-        }
-    }
 }
 
 /// Default maximum number of open shadow indexer database connections.
@@ -502,12 +480,20 @@ impl StandardBaseRethNode {
         // Fail fast on an incomplete upgrade-signal configuration before installing extensions.
         Self::validate_upgrade_signal_args(&rollup_args)?;
         let mut runner = BaseNodeRunner::new(rollup_args.clone());
-        let resource_throttling_mode =
-            ResourceThrottlingMode::from(args.metering.resource_throttling_mode);
+        let resource_throttling_mode = args.metering.resource_throttling_mode;
+        let provider: SharedMeteringProvider = if resource_throttling_mode.is_enabled() {
+            // Match the builder CLI defaults for capacity and TTL.
+            let store: SharedMeteringProvider =
+                Arc::new(MeteringStore::new(true, 10_000, Duration::from_secs(30)));
+            runner.install_ext::<MeteringStoreExtension>(Arc::clone(&store));
+            store
+        } else {
+            Arc::new(NoopMeteringProvider)
+        };
         let resource_metering = ResourceMeteringConfig::from_parts(
             resource_throttling_mode,
             args.metering.resource_metering_schedule.as_deref(),
-            Arc::new(MemoryMeteringStore::new(resource_throttling_mode.is_enabled())),
+            provider,
         )?;
         runner = runner.with_resource_metering(resource_metering);
 
@@ -1024,7 +1010,7 @@ mod tests {
         ])
         .args;
 
-        assert_eq!(args.metering.resource_throttling_mode, ResourceThrottlingModeArg::DryRun);
+        assert_eq!(args.metering.resource_throttling_mode, ResourceThrottlingMode::DryRun);
         assert_eq!(
             args.metering.resource_metering_schedule.as_deref(),
             Some(std::path::Path::new("/tmp/resource-metering.json"))
