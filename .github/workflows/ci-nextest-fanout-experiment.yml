@@ -1,0 +1,118 @@
+name: CI Nextest Fanout Experiment
+
+on:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
+
+permissions:
+  checks: write
+  contents: read
+
+jobs:
+  build-test-archive:
+    name: Build Test Archive
+    runs-on:
+      group: BasePerfRunnerGroup
+    timeout-minutes: 45
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+      - uses: ./.github/actions/setup
+        with:
+          free-disk: "true"
+          native-deps: "true"
+          foundry: "true"
+          sp1: "true"
+          tools: cargo-nextest
+          rust-cache-shared-key: "stable"
+      - name: Build test contracts
+        run: just build::contracts
+      - name: Build nextest archive
+        run: |
+          cargo nextest archive -P ci --locked --workspace --all-features \
+            --exclude base-system-tests --cargo-profile ci \
+            --timings \
+            --archive-file "$RUNNER_TEMP/nextest-archive.tar.zst"
+          archive_bytes=$(stat --format=%s "$RUNNER_TEMP/nextest-archive.tar.zst")
+          echo "Archive size: $archive_bytes bytes"
+          echo "### Nextest archive" >> "$GITHUB_STEP_SUMMARY"
+          echo "Size: $archive_bytes bytes" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload Cargo timings
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cargo-timings
+          path: target/cargo-timings/cargo-timing.html
+          if-no-files-found: warn
+          retention-days: 1
+      - name: Upload nextest archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nextest-archive
+          path: ${{ runner.temp }}/nextest-archive.tar.zst
+          compression-level: 0
+          retention-days: 1
+
+  test-shards:
+    name: Test Shard ${{ matrix.shard }}/2
+    needs: build-test-archive
+    runs-on:
+      group: BasePerfRunnerGroup
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+      - uses: ./.github/actions/setup
+        with:
+          foundry: "true"
+          tools: cargo-nextest
+      - name: Build test contracts
+        run: just build::contracts
+      - name: Download nextest archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: nextest-archive
+          path: ${{ runner.temp }}
+      - name: Run test shard
+        run: |
+          cargo nextest run -P ci \
+            --archive-file "$RUNNER_TEMP/nextest-archive.tar.zst" \
+            --partition "hash:${{ matrix.shard }}/2"
+      - name: Check for JUnit testcases
+        if: always()
+        id: junit-results
+        shell: bash
+        run: |
+          if [ -f target/nextest/ci/test-results.xml ] && grep -q '<testcase[ >]' target/nextest/ci/test-results.xml; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Report test results
+        if: ${{ always() && steps.junit-results.outputs.present == 'true' }}
+        uses: mikepenz/action-junit-report@bccf2e31636835cf0874589931c4116687171386 # v6.4.0
+        with:
+          check_name: JUnit Test Report (shard ${{ matrix.shard }}/2)
+          report_paths: target/nextest/ci/test-results.xml
