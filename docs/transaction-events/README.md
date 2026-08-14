@@ -9,6 +9,15 @@ Vector tails these same JSONL files and ships newline-delimited event records to
 `audit-archiver`. The audit HTTP ingest endpoint is collector-facing and expects
 one event JSON object per line, not a wrapped JSON batch.
 
+## Postgres Retention
+
+`audit-archiver` stores events in Postgres for operational queries. Postgres is
+not the long-term archive. A background worker deletes rows by event type:
+high-volume proxy and builder-decision events default to 3 days, ingress and
+forwarding events default to 7 days, and failures, drops, inclusion, and
+flashblock events default to 30 days. Autovacuum reclaims the resulting table
+bloat.
+
 ## Configuration Fields
 
 Rust producers should expose these config fields directly or with a
