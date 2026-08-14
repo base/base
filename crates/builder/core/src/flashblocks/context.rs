@@ -1326,17 +1326,19 @@ impl BasePayloadBuilderCtx {
                 let mut predicate_read_failed = false;
                 let predicates_match =
                     parked.transaction.validity_predicates().iter().all(|predicate| {
-                        predicate.matches(evm.db_mut(), &predicate_context).unwrap_or_else(|error| {
-                            warn!(
-                                target: "payload_builder",
-                                tx_hash = ?parked_hash,
-                                predicate = ?predicate,
-                                error = ?error,
-                                "failed to re-read validity predicate state"
-                            );
-                            predicate_read_failed = true;
-                            false
-                        })
+                        predicate.matches(evm.db_mut(), &predicate_context).unwrap_or_else(
+                            |error| {
+                                warn!(
+                                    target: "payload_builder",
+                                    tx_hash = ?parked_hash,
+                                    predicate = ?predicate,
+                                    error = ?error,
+                                    "failed to re-read validity predicate state"
+                                );
+                                predicate_read_failed = true;
+                                false
+                            },
+                        )
                     });
                 if predicate_read_failed {
                     best_txs.discard_parked(parked_hash);

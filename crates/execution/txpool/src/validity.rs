@@ -427,10 +427,9 @@ mod tests {
 
     #[test]
     fn deserializes_block_number_and_flashblock_index_predicates() {
-        let block_number: ValidityPredicate = serde_json::from_str(
-            r#"{"type":"block_number","params":{"op":">=","value":"0x64"}}"#,
-        )
-        .unwrap();
+        let block_number: ValidityPredicate =
+            serde_json::from_str(r#"{"type":"block_number","params":{"op":">=","value":"0x64"}}"#)
+                .unwrap();
         let flashblock_index: ValidityPredicate = serde_json::from_str(
             r#"{"type":"flashblock_index","params":{"op":"<","value":"0x5"}}"#,
         )
@@ -455,7 +454,8 @@ mod tests {
     #[test]
     fn block_number_and_flashblock_index_predicates_reject_state_fields() {
         let block_number_with_address = r#"{"type":"block_number","params":{"address":"0x1111111111111111111111111111111111111111","op":"=","value":"0x0"}}"#;
-        let flashblock_index_with_slot = r#"{"type":"flashblock_index","params":{"slot":"0x1","op":"=","value":"0x0"}}"#;
+        let flashblock_index_with_slot =
+            r#"{"type":"flashblock_index","params":{"slot":"0x1","op":"=","value":"0x0"}}"#;
 
         assert!(serde_json::from_str::<ValidityPredicate>(block_number_with_address).is_err());
         assert!(serde_json::from_str::<ValidityPredicate>(flashblock_index_with_slot).is_err());
