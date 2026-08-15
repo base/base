@@ -133,57 +133,66 @@ where
         };
         let local_finalized = local.block_info(BlockNumberOrTag::Finalized).await?;
 
-        let source_safe =
-            source.get_block_number(BlockNumberOrTag::Safe).await?.min(latest.block_info.number);
-        let safe = if source_safe >= local_safe.block_info.number {
-            Self::verified_local_block_at(&local, &source, source_safe).await?
-        } else {
-            None
-        };
+        // Read number and hash from the same response, matching op-node's `L2BlockRefByLabel`.
+        let source_safe = source.get_block_info(BlockNumberOrTag::Safe).await?;
+        let safe = Self::verified_local_block(
+            &local,
+            &source_safe,
+            local_safe.block_info.number,
+            latest.block_info.number,
+        )
+        .await?;
 
         let safe_limit = safe.as_ref().unwrap_or(&local_safe).block_info.number;
-        let source_finalized = source
-            .get_block_number(BlockNumberOrTag::Finalized)
-            .await?
-            .min(latest.block_info.number)
-            .min(safe_limit);
-        let local_finalized_number = local_finalized.map(|block| block.block_info.number);
-        let should_update_finalized =
-            local_finalized_number.map(|number| source_finalized >= number).unwrap_or(true);
-        let finalized = if should_update_finalized {
-            Self::verified_local_block_at(&local, &source, source_finalized).await?
-        } else {
-            None
-        };
+
+        // Finalized floor at the local finalized head (never unwind), ceiling at the safe head.
+        let source_finalized = source.get_block_info(BlockNumberOrTag::Finalized).await?;
+        let local_finalized_number =
+            local_finalized.map(|block| block.block_info.number).unwrap_or_default();
+        let finalized = Self::verified_local_block(
+            &local,
+            &source_finalized,
+            local_finalized_number,
+            latest.block_info.number.min(safe_limit),
+        )
+        .await?;
 
         engine.update_safe_finalized_blocks(safe, finalized).await
     }
 
-    async fn verified_local_block_at(
+    /// Returns the local block at a coherent source label's height (`{number, hash}` from a single
+    /// read) when the number is within `[floor, ceiling]` and the local hash matches the source
+    /// hash. Labels outside the local range, or missing locally, are skipped. In-range hash
+    /// divergence returns `SourceBlockHashMismatch`.
+    async fn verified_local_block(
         local: &Local,
-        source: &Remote,
-        number: u64,
+        source_block: &BlockInfo,
+        floor: u64,
+        ceiling: u64,
     ) -> Result<Option<L2BlockInfo>, FollowError> {
+        let number = source_block.number;
+        if number < floor || number > ceiling {
+            debug!(
+                target: "follow",
+                number,
+                floor,
+                ceiling,
+                hash = %source_block.hash,
+                "Skipping source label outside local range"
+            );
+            return Ok(None);
+        }
         let Some(local_block) = local.block_info(number.into()).await? else {
             return Ok(None);
         };
-        let source_block = source.get_block_info(number.into()).await?;
-        Self::ensure_same_hash(local_block, source_block)?;
-        Ok(Some(local_block))
-    }
-
-    fn ensure_same_hash(
-        local_block: L2BlockInfo,
-        source_block: BlockInfo,
-    ) -> Result<(), FollowError> {
         if local_block.block_info.hash != source_block.hash {
             return Err(FollowError::SourceBlockHashMismatch {
-                number: local_block.block_info.number,
+                number,
                 local: local_block.block_info.hash,
                 remote: source_block.hash,
             });
         }
-        Ok(())
+        Ok(Some(local_block))
     }
 }
 
@@ -318,6 +327,10 @@ mod tests {
             safe: Option<L2BlockInfo>,
             finalized: Option<L2BlockInfo>,
         ) -> Result<(), FollowError> {
+            // Mirror the real engine: a no-op when there is nothing to update.
+            if safe.is_none() && finalized.is_none() {
+                return Ok(());
+            }
             self.labels
                 .lock()
                 .await
@@ -517,8 +530,6 @@ mod tests {
 
         let mut source = MockRemoteClient::new();
         source.expect_get_block_number().with(eq(BlockNumberOrTag::Latest)).returning(|_| Ok(20));
-        source.expect_get_block_number().with(eq(BlockNumberOrTag::Safe)).returning(|_| Ok(0));
-        source.expect_get_block_number().with(eq(BlockNumberOrTag::Finalized)).returning(|_| Ok(0));
         source.expect_get_block_info().returning(|tag| {
             Ok(match tag {
                 BlockNumberOrTag::Number(number) => source_block_info(number),
@@ -559,15 +570,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn safe_and_finalized_are_clamped_and_do_not_unwind() {
+    async fn safe_promotes_in_range_and_finalized_does_not_unwind() {
+        // local: latest=10, safe=8, finalized=7. Source safe=9 (in range, coherent with local);
+        // source finalized=6 (below local finalized, must not unwind).
         let local = Arc::new(local_client(10, 8, 7, 100));
         let mut source = MockRemoteClient::new();
-        source.expect_get_block_number().with(eq(BlockNumberOrTag::Safe)).returning(|_| Ok(20));
-        source.expect_get_block_number().with(eq(BlockNumberOrTag::Finalized)).returning(|_| Ok(6));
         source
             .expect_get_block_info()
-            .with(eq(BlockNumberOrTag::Number(10)))
-            .returning(|_| Ok(source_block_info(10)));
+            .with(eq(BlockNumberOrTag::Safe))
+            .returning(|_| Ok(source_block_info(9)));
+        source
+            .expect_get_block_info()
+            .with(eq(BlockNumberOrTag::Finalized))
+            .returning(|_| Ok(source_block_info(6)));
         let engine = Arc::new(RecordingEngine {
             inserted: Mutex::new(Vec::new()),
             labels: Mutex::new(Vec::new()),
@@ -582,7 +597,38 @@ mod tests {
         .await
         .expect("labels");
 
-        assert_eq!(*engine.labels.lock().await, vec![(Some(10), None)]);
+        assert_eq!(*engine.labels.lock().await, vec![(Some(9), None)]);
+    }
+
+    #[tokio::test]
+    async fn safe_skips_when_source_ahead_of_local_latest() {
+        // Source safe (20) is ahead of local latest (10), so block 20 is not locally verifiable.
+        // Finalized (6) is below local finalized (7) and is skipped.
+        let local = Arc::new(local_client(10, 8, 7, 100));
+        let mut source = MockRemoteClient::new();
+        source
+            .expect_get_block_info()
+            .with(eq(BlockNumberOrTag::Safe))
+            .returning(|_| Ok(source_block_info(20)));
+        source
+            .expect_get_block_info()
+            .with(eq(BlockNumberOrTag::Finalized))
+            .returning(|_| Ok(source_block_info(6)));
+        let engine = Arc::new(RecordingEngine {
+            inserted: Mutex::new(Vec::new()),
+            labels: Mutex::new(Vec::new()),
+            delay: Duration::ZERO,
+        });
+        let engine_for_update: Arc<dyn FollowEngine> = Arc::<RecordingEngine>::clone(&engine);
+        FollowRuntime::<MockFollowLocalClient, MockRemoteClient, NoopProofGate>::update_safe_and_finalized(
+            local,
+            Arc::new(source),
+            engine_for_update,
+        )
+        .await
+        .expect("labels");
+
+        assert!(engine.labels.lock().await.is_empty());
     }
 
     #[tokio::test]
@@ -614,10 +660,11 @@ mod tests {
 
     #[tokio::test]
     async fn safe_label_rejects_source_hash_mismatch() {
+        // A safe label whose hash disagrees with the local block surfaces SourceBlockHashMismatch
+        // and promotes nothing. `.times(1)` asserts there is exactly one source read for the label.
         let local = Arc::new(local_client(10, 8, 7, 100));
         let mut source = MockRemoteClient::new();
-        source.expect_get_block_number().with(eq(BlockNumberOrTag::Safe)).returning(|_| Ok(10));
-        source.expect_get_block_info().with(eq(BlockNumberOrTag::Number(10))).returning(|_| {
+        source.expect_get_block_info().with(eq(BlockNumberOrTag::Safe)).times(1).returning(|_| {
             Ok(BlockInfo { number: 10, hash: B256::from([99; 32]), ..Default::default() })
         });
         let engine = Arc::new(RecordingEngine {
@@ -637,6 +684,40 @@ mod tests {
             .expect_err("mismatched source hash");
 
         assert!(matches!(error, FollowError::SourceBlockHashMismatch { number: 10, .. }));
+        assert!(engine.labels.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn finalized_label_rejects_source_hash_mismatch() {
+        // The same coherent-read check applies to the finalized label. Here the safe label is
+        // consistent (so evaluation reaches the finalized read), but the in-range finalized block's
+        // hash disagrees with the local block: surface SourceBlockHashMismatch and promote nothing.
+        let local = Arc::new(local_client(10, 9, 7, 100));
+        let mut source = MockRemoteClient::new();
+        source
+            .expect_get_block_info()
+            .with(eq(BlockNumberOrTag::Safe))
+            .returning(|_| Ok(source_block_info(9)));
+        source.expect_get_block_info().with(eq(BlockNumberOrTag::Finalized)).times(1).returning(
+            |_| Ok(BlockInfo { number: 8, hash: B256::from([99; 32]), ..Default::default() }),
+        );
+        let engine = Arc::new(RecordingEngine {
+            inserted: Mutex::new(Vec::new()),
+            labels: Mutex::new(Vec::new()),
+            delay: Duration::ZERO,
+        });
+        let engine_for_update: Arc<dyn FollowEngine> = Arc::<RecordingEngine>::clone(&engine);
+
+        let error =
+            FollowRuntime::<MockFollowLocalClient, MockRemoteClient, NoopProofGate>::update_safe_and_finalized(
+                local,
+                Arc::new(source),
+                engine_for_update,
+            )
+            .await
+            .expect_err("mismatched finalized hash");
+
+        assert!(matches!(error, FollowError::SourceBlockHashMismatch { number: 8, .. }));
         assert!(engine.labels.lock().await.is_empty());
     }
 

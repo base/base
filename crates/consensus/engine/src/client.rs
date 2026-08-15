@@ -31,7 +31,7 @@ use thiserror::Error;
 use tower::ServiceBuilder;
 use url::Url;
 
-use crate::{JwtWsConnect, Metrics};
+use crate::{JwtWsConnect, Metrics, trace_layer::TraceContextLayer};
 
 /// An error that occurred in the [`EngineClient`].
 #[derive(Error, Debug)]
@@ -94,7 +94,7 @@ where
     engine: L2Provider,
     /// The L1 chain provider for reading L1 data.
     l1_provider: L1Provider,
-    /// The [`RollupConfig`] for determining Engine API versions based on hardfork activations.
+    /// The [`RollupConfig`] for determining Engine API versions based on upgrade activations.
     cfg: Arc<RollupConfig>,
 }
 
@@ -139,7 +139,10 @@ where
                 let hyper_client =
                     Client::builder(TokioExecutor::new()).build_http::<Full<Bytes>>();
                 let auth_layer = AuthLayer::new(jwt);
-                let service = ServiceBuilder::new().layer(auth_layer).service(hyper_client);
+                let service = ServiceBuilder::new()
+                    .layer(TraceContextLayer)
+                    .layer(auth_layer)
+                    .service(hyper_client);
                 let layer_transport = HyperClient::with_service(service);
                 let http_hyper = Http::with_client(layer_transport, addr);
                 let rpc_client = RpcClient::new(http_hyper, false);
@@ -164,7 +167,7 @@ pub struct EngineClientBuilder {
     pub l2_jwt: JwtSecret,
     /// The L1 RPC URL.
     pub l1_rpc: Url,
-    /// The [`RollupConfig`] for determining Engine API versions based on hardfork activations.
+    /// The [`RollupConfig`] for determining Engine API versions based on upgrade activations.
     pub cfg: Arc<RollupConfig>,
 }
 

@@ -5,7 +5,7 @@ Consensus implementation for Base.
 ## Overview
 
 Implements block validation following Base consensus rules for the execution layer. The
-`BaseBeaconConsensus` type validates block headers and bodies against hardfork-specific rules,
+`BaseBeaconConsensus` type validates block headers and bodies against upgrade-specific rules,
 including blob gas accounting, deposit ordering, Canyon EIP-1559, and Isthmus system contract
 upgrades. Also provides receipt root calculation and post-execution validation helpers.
 

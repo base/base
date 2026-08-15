@@ -20,9 +20,9 @@ base-execution-trie = { workspace = true }
 ```
 
 ```rust,ignore
-use base_execution_trie::{BaseProofStoragePruner, MdbxProofsStorage};
+use base_execution_trie::{BaseProofStoragePruner, RocksdbProofsStorage};
 
-let storage = MdbxProofsStorage::open(db_path)?;
+let storage = RocksdbProofsStorage::new(db_path)?;
 let pruner = BaseProofStoragePruner::new(storage.clone(), retention_blocks);
 ```
 

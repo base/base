@@ -121,11 +121,14 @@ impl SnarkE2e {
         // its state and batch data are guaranteed to be available for witness
         // generation.  This avoids "Data source exhausted" failures that occur
         // when the target block's L1 batch hasn't been fully posted yet.
-        let provider = ProviderBuilder::new().connect_http(l2_rpc.parse()?);
-        let latest_block = provider.get_block_number().await?;
+        let provider = ProviderBuilder::new()
+            .connect_http(l2_rpc.parse().context("invalid L2_NODE_ADDRESS URL")?);
+        let latest_block =
+            provider.get_block_number().await.context("failed to fetch latest L2 block number")?;
         let safe_block = provider
             .get_block_by_number(BlockNumberOrTag::Safe)
-            .await?
+            .await
+            .context("failed to fetch L2 safe block")?
             .context("L2 safe block not available")?;
         let safe_head_number = safe_block.header.number;
 
@@ -151,31 +154,38 @@ impl SnarkE2e {
         let l2_consensus_url = std::env::var("BASE_CONSENSUS_ADDRESS")
             .context("BASE_CONSENSUS_ADDRESS must be set")?;
 
-        let l1_provider = ProviderBuilder::new().connect_http(l1_url.parse()?);
-        let base_provider = ProviderBuilder::<Identity, Identity, Base>::default()
-            .connect_http(l2_consensus_url.parse()?);
+        let l1_provider = ProviderBuilder::new()
+            .connect_http(l1_url.parse().context("invalid L1_NODE_ADDRESS URL")?);
+        let op_provider = ProviderBuilder::<Identity, Identity, Base>::default()
+            .connect_http(l2_consensus_url.parse().context("invalid BASE_CONSENSUS_ADDRESS URL")?);
 
         let finalized_l1 = l1_provider
             .get_block(BlockId::Number(BlockNumberOrTag::Finalized))
-            .await?
+            .await
+            .context("failed to fetch finalized L1 block")?
             .context("L1 finalized block not available")?
             .header
             .number;
 
         let mut attempts = 0u64;
-        loop {
-            let l1_origin =
-                L1HeadCalculator::get_l1_origin_num(&base_provider, target_block).await?;
+        let selected_l1_origin = loop {
+            let l1_origin = L1HeadCalculator::get_l1_origin_num(&op_provider, target_block)
+                .await
+                .with_context(|| {
+                format!("failed to fetch L1 origin for target L2 block {target_block}")
+            })?;
 
             if l1_origin + SEQUENCE_WINDOW <= finalized_l1 {
                 info!(
                     target_block,
+                    safe_head,
                     l1_origin,
                     finalized_l1,
                     buffer = finalized_l1 - l1_origin,
+                    step_back_attempts = attempts,
                     "L1 finalized check passed"
                 );
-                break;
+                break l1_origin;
             }
 
             attempts += 1;
@@ -198,7 +208,7 @@ impl SnarkE2e {
             );
             target_block -= L2_BLOCK_STEP_BACK;
             safe_head = target_block - 1;
-        }
+        };
 
         // -- 2. Submit ProveBlock with proof_type=4 (SNARK Groth16) ---------------
         //
@@ -218,16 +228,31 @@ impl SnarkE2e {
                 l1_head: None,
                 intermediate_root_interval: None,
             })
-            .await?;
+            .await
+            .with_context(|| {
+                format!("failed to submit ProveBlock for start_block={safe_head}, target_block={target_block}")
+            })?;
 
         let session_id = prove_resp.into_inner().session_id;
-        info!(session_id = %session_id, "ProveBlock submitted");
+        info!(
+            session_id = %session_id,
+            start_block = safe_head,
+            target_block,
+            selected_l1_origin,
+            finalized_l1,
+            sequence_window = SEQUENCE_WINDOW,
+            step_back_attempts = attempts,
+            "ProveBlock submitted"
+        );
 
         // -- 3. Poll GetProof until SUCCEEDED or timeout --------------------------
         let start = std::time::Instant::now();
         let snark_receipt_bytes = loop {
             if start.elapsed().as_secs() > POLL_TIMEOUT_SECS {
-                bail!("timed out after {POLL_TIMEOUT_SECS}s waiting for SNARK proof to complete");
+                bail!(
+                    "timed out after {POLL_TIMEOUT_SECS}s waiting for SNARK proof to complete: \
+                     session_id={session_id}, start_block={safe_head}, target_block={target_block}"
+                );
             }
 
             tokio::time::sleep(std::time::Duration::from_secs(POLL_INTERVAL_SECS)).await;
@@ -237,27 +262,47 @@ impl SnarkE2e {
                     session_id: session_id.clone(),
                     receipt_type: Some(RECEIPT_TYPE_SNARK),
                 })
-                .await?;
+                .await
+                .with_context(|| format!("failed to poll GetProof for session_id={session_id}"))?;
 
             let inner = resp.into_inner();
             let status = get_proof_response::Status::try_from(inner.status)
                 .unwrap_or(get_proof_response::Status::Unspecified);
+            let error_message = inner.error_message.as_deref().unwrap_or("");
 
             info!(
+                session_id = %session_id,
+                start_block = safe_head,
+                target_block,
                 elapsed_secs = start.elapsed().as_secs(),
                 status = ?status,
+                receipt_bytes = inner.receipt.len(),
+                error_message,
                 "poll status"
             );
 
             match status {
                 get_proof_response::Status::Succeeded => {
                     if inner.receipt.is_empty() {
-                        bail!("SNARK receipt is empty on SUCCEEDED status");
+                        bail!(
+                            "SNARK receipt is empty on SUCCEEDED status: \
+                             session_id={session_id}, start_block={safe_head}, target_block={target_block}"
+                        );
                     }
                     break inner.receipt;
                 }
                 get_proof_response::Status::Failed => {
-                    bail!("proof generation FAILED for session_id: {session_id}");
+                    let prover_error = if error_message.is_empty() {
+                        "no error_message returned by prover"
+                    } else {
+                        error_message
+                    };
+                    bail!(
+                        "proof generation FAILED: session_id={session_id}, \
+                         start_block={safe_head}, target_block={target_block}, \
+                         elapsed_secs={}, prover_error={prover_error}",
+                        start.elapsed().as_secs()
+                    );
                 }
                 get_proof_response::Status::Created
                 | get_proof_response::Status::Pending
@@ -269,6 +314,9 @@ impl SnarkE2e {
         };
 
         info!(
+            session_id = %session_id,
+            start_block = safe_head,
+            target_block,
             elapsed_secs = start.elapsed().as_secs(),
             receipt_bytes = snark_receipt_bytes.len(),
             "SNARK proof completed"
@@ -276,7 +324,14 @@ impl SnarkE2e {
 
         // -- 4. Deserialize SNARK receipt -----------------------------------------
         let (snark_proof, _): (SP1ProofWithPublicValues, _) =
-            bincode::serde::decode_from_slice(&snark_receipt_bytes, bincode::config::standard())?;
+            bincode::serde::decode_from_slice(&snark_receipt_bytes, bincode::config::standard())
+                .with_context(|| {
+                    format!(
+                        "failed to deserialize SNARK receipt for session_id={session_id}, \
+                         receipt_bytes={}",
+                        snark_receipt_bytes.len()
+                    )
+                })?;
 
         info!("SNARK proof deserialized successfully");
 
@@ -291,7 +346,9 @@ impl SnarkE2e {
         // -- 6. Verify SNARK proof ------------------------------------------------
         let is_mock = std::env::var("BACKEND").map(|v| v == "mock").unwrap_or(false);
 
-        Self::verify_snark_proof(snark_proof, agg_vk, is_mock).await?;
+        Self::verify_snark_proof(snark_proof, agg_vk, is_mock)
+            .await
+            .with_context(|| format!("failed to verify SNARK proof for session_id={session_id}"))?;
 
         Ok(())
     }

@@ -1,0 +1,25 @@
+[package]
+name = "base-telemetry-bin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "base-telemetry"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+dotenvy.workspace = true
+tokio-util.workspace = true
+base-cli-utils.workspace = true
+base-telemetry-service.workspace = true
+anyhow = { workspace = true, features = ["std"] }
+clap = { workspace = true, features = ["derive", "env", "std"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

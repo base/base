@@ -18,13 +18,13 @@ pub struct SubmissionId(pub u64);
 /// Selects how batch frames are encoded for L1 submission.
 ///
 /// The driver uses this field on each [`BatchSubmission`] to determine whether
-/// frames should be packed into EIP-4844 blobs or sent as transaction calldata.
+/// frames should be sent as EIP-4844 blobs or transaction calldata.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 pub enum DaType {
-    /// Frames are packed into EIP-4844 blobs (default).
+    /// Frames are sent as EIP-4844 blobs (default).
     ///
-    /// Multiple submissions may be packed into a single blob payload per L1 transaction.
+    /// Each frame in a [`BatchSubmission`] maps to one blob in the L1 transaction.
     #[default]
     #[cfg_attr(feature = "clap", value(name = "blobs", alias = "blob"))]
     Blob,

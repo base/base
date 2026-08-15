@@ -25,6 +25,8 @@ pub trait PrecompileStorageProvider {
     fn beneficiary(&self) -> Address;
     /// Returns the current block number.
     fn block_number(&self) -> u64;
+    /// Returns the transaction origin (`tx.origin`).
+    fn origin(&self) -> Address;
 
     /// Sets the bytecode at the given address.
     fn set_code(&mut self, address: Address, code: Bytecode) -> Result<()>;

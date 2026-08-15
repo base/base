@@ -181,7 +181,7 @@ impl<EngineRpcClient_: EngineRpcClient + 'static> RollupNodeApiServer
             rpc_method = RPC_METHOD,
         );
 
-        info!(target: "rpc", request_id, rpc_method = RPC_METHOD, "Started rollup RPC request");
+        debug!(target: "rpc", request_id, rpc_method = RPC_METHOD, "Started rollup RPC request");
 
         let (l1_sync_status, l2_sync_status) = tokio::try_join!(
             async {
@@ -206,7 +206,7 @@ impl<EngineRpcClient_: EngineRpcClient + 'static> RollupNodeApiServer
             ErrorObject::from(ErrorCode::InternalError)
         })?;
 
-        info!(
+        debug!(
             target: "rpc",
             request_id,
             rpc_method = RPC_METHOD,

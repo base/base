@@ -41,32 +41,40 @@ base-flashblocks.workspace = true
 base-mev-trader.workspace = true
 base-node-runner.workspace = true
 base-common-chains.workspace = true
+base-common-genesis.workspace = true
 base-execution-evm.workspace = true
 base-tx-forwarding.workspace = true
 base-txpool-tracing.workspace = true
 base-flashblocks-node.workspace = true
 base-execution-trie.workspace = true
+base-execution-eip8130-rpc-node.workspace = true
 base-bundle-extension.workspace = true
 base-mev-emitter = { workspace = true, features = ["node"] }
 base-proofs-extension.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-consensus.workspace = true
+base-upgrade-signal = { workspace = true, features = ["metrics"] }
 
 # misc
-futures.workspace = true
-clap = { workspace = true, features = ["derive", "env"] }
-
+tar.workspace = true
+zstd.workspace = true
 eyre.workspace = true
 humantime.workspace = true
 url.workspace = true
-tokio.workspace = true
 backon.workspace = true
+futures.workspace = true
 tracing.workspace = true
+serde_json.workspace = true
+jsonrpsee = { workspace = true, features = ["server"] }
+reqwest = { workspace = true, features = ["json", "stream"] }
 alloy-eips.workspace = true
+alloy-provider.workspace = true
 secp256k1.workspace = true
 tokio-stream.workspace = true
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
+tokio = { workspace = true, features = ["macros", "time"] }
 
 # reth test-vectors
 proptest = { workspace = true, optional = true }
@@ -75,7 +83,6 @@ base-common-consensus = { workspace = true, features = ["reth"] }
 mev-trader-submit = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
 libc = { workspace = true, optional = true }
 revm.workspace = true
 reth-evm.workspace = true
@@ -85,6 +92,7 @@ base-common-evm.workspace = true
 reth-primitives-traits.workspace = true
 
 [dev-dependencies]
+alloy-primitives.workspace = true
 rstest.workspace = true
 tempfile.workspace = true
 base-common-flashblocks.workspace = true
@@ -95,6 +103,8 @@ reth-storage-api.workspace = true
 reth-primitives-traits.workspace = true
 base-flashblocks = { workspace = true, features = ["edge-measurement", "test-utils"] }
 base-mev-trader = { workspace = true, features = ["edge-measurement", "test-utils"] }
+axum = { workspace = true, features = ["tokio", "http1"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 [build-dependencies]
 base-execution-chainspec = { workspace = true, features = ["std"] }
@@ -134,21 +144,21 @@ serde = [
 	"alloy-eips/serde",
 	"base-common-chains/serde",
 	"base-common-consensus/serde",
+	"base-common-genesis/serde",
 	"base-execution-chainspec/serde",
 	"reth-network/serde",
 	"secp256k1/serde",
+	"url/serde",
 ]
 
 edge-measurement = [
 	"base-flashblocks/edge-measurement",
 	"base-mev-trader/edge-measurement",
-	"dep:serde_json",
 ]
 t4a-shadow = [
 	"base-mev-trader/t4a-shadow",
 	"dep:libc",
 	"dep:serde",
-	"dep:serde_json",
 ]
 priority-economics-capture = [
 	"t4b-shadow",
@@ -173,7 +183,6 @@ b5-dormant-presign = [
   "mev-trader-submit/presign",
   "dep:sha2",
   "dep:serde",
-  "dep:serde_json",
   "dep:libc",
 ]
 arm-sim = [

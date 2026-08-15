@@ -152,7 +152,7 @@ pub struct BootInfo {
     ///
     /// Contains all the network-specific parameters needed for proper L2 block
     /// derivation, including genesis configuration, system addresses, gas limits,
-    /// and hard fork activation heights.
+    /// and upgrade activation heights.
     ///
     /// **Security**: Loaded from built-in config (secure) or oracle (requires validation).
     pub rollup_config: RollupConfig,
@@ -246,7 +246,7 @@ impl BootInfo {
 
         let built_in_chain_config = base_common_chains::ChainConfig::by_chain_id(chain_id);
         let activation_admin_address =
-            built_in_chain_config.map(|config| config.activation_admin_address);
+            base_common_chains::ChainConfig::beryl_activation_admin_address_by_chain_id(chain_id);
 
         // Attempt to load the rollup config from the chain ID. If there is no config for the chain,
         // fall back to loading the config from the preimage oracle.
@@ -277,7 +277,7 @@ impl BootInfo {
         // The activation registry is installed at Beryl. For built-in chains, the admin comes from
         // `ChainConfig`; for oracle-provided rollup configs, do not infer an admin from untrusted
         // fallback data until the admin has an explicit committed source.
-        if activation_admin_address.is_none() && rollup_config.hardforks.base.beryl.is_some() {
+        if activation_admin_address.is_none() && rollup_config.upgrades.base.beryl.is_some() {
             return Err(OracleProviderError::MissingActivationAdminAddress { chain_id });
         }
 
@@ -423,7 +423,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn loads_activation_admin_address_from_builtin_chain_config() {
+    async fn loads_activation_admin_address_from_builtin_chain_id() {
         let chain_config = BaseChainConfig::ZERONET;
 
         let mut oracle = MockOracle::new();
@@ -435,7 +435,10 @@ mod tests {
 
         let boot_info = BootInfo::load(&oracle).await.expect("boot info should load");
 
-        assert_eq!(boot_info.activation_admin_address, Some(chain_config.activation_admin_address));
+        assert_eq!(
+            boot_info.activation_admin_address,
+            Some(base_common_chains::ZERONET_BERYL_ACTIVATION_ADMIN_ADDRESS)
+        );
     }
 
     #[tokio::test]

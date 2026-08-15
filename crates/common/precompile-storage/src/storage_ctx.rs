@@ -107,6 +107,10 @@ impl<'a> StorageCtx<'a> {
     pub fn block_number(&self) -> u64 {
         self.with_storage(|s| s.block_number())
     }
+    /// Returns the transaction origin (`tx.origin`).
+    pub fn origin(&self) -> Address {
+        self.with_storage(|s| s.origin())
+    }
 
     /// Sets the bytecode at the given address.
     pub fn set_code(&self, address: Address, code: Bytecode) -> Result<()> {

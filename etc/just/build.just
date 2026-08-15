@@ -31,7 +31,7 @@ affected-ci base="main": contracts
     cargo build --locked --all-targets --profile ci "${pkg_args[@]}"
 
 elfs:
-    just succinct ensure-elfs
+    just succinct build-elfs
 
 # Builds the workspace with maxperf
 maxperf:

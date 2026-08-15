@@ -345,7 +345,7 @@ mod tests {
         );
         assert_eq!(
             config_hash_for_chain(763360).unwrap(),
-            b256!("ab64b3118d2d030a3fd3fe3005239a2f332e48848bbedddca9e10df77ac7303e"),
+            b256!("d14ddabfc0ad1dd737d6e5917cf271fd479bd539c9b3d85a602589c679a9983a"),
         );
     }
 }

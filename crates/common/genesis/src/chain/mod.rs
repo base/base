@@ -3,8 +3,11 @@
 mod addresses;
 pub use addresses::AddressList;
 
-mod hardfork;
-pub use hardfork::{HardForkConfig, HardforkConfig};
+mod upgrade;
+pub use upgrade::{
+    BaseUpgrade, BaseUpgradeConfig, RuntimeUpgradeRegistry, UpgradeActivation,
+    UpgradeActivationOverrides, UpgradeActivationSink, UpgradeConfig,
+};
 
 mod roles;
 pub use roles::Roles;

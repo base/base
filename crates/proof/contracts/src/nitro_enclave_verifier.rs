@@ -1,13 +1,13 @@
 //! `NitroEnclaveVerifier` contract bindings.
 //!
 //! Used by the registrar to revoke intermediate certificates that appear on
-//! AWS Nitro CRL distribution lists, and to consult the on-chain durable
+//! AWS Nitro CRL distribution lists, and to consult the onchain durable
 //! revocation sentinel before submitting registrations. All other
 //! `NitroEnclaveVerifier` interactions happen through the `TEEProverRegistry`.
 
 use alloy_primitives::{Address, FixedBytes};
 use alloy_provider::RootProvider;
-use alloy_sol_types::sol;
+use alloy_sol_types::{SolError, sol};
 use async_trait::async_trait;
 
 use crate::ContractError;
@@ -18,6 +18,9 @@ sol! {
     /// `NitroEnclaveVerifier` contract interface (revocation subset).
     #[sol(rpc)]
     interface INitroEnclaveVerifier {
+        /// Thrown when the caller is neither the owner nor configured revoker.
+        error CallerNotOwnerOrRevoker();
+
         /// Revokes a cached intermediate certificate by its accumulated path digest.
         function revokeCert(bytes32 certHash) external;
 
@@ -27,16 +30,21 @@ sol! {
     }
 }
 
-/// Reads the durable revocation sentinel from the on-chain
+/// The 4-byte selector for `CallerNotOwnerOrRevoker()`.
+pub const fn caller_not_owner_or_revoker_selector() -> [u8; 4] {
+    INitroEnclaveVerifier::CallerNotOwnerOrRevoker::SELECTOR
+}
+
+/// Reads the durable revocation sentinel from the onchain
 /// `NitroEnclaveVerifier` (CHAIN-4194 / Immunefi #75608).
 #[async_trait]
-pub trait NitroEnclaveVerifierClient: Send + Sync {
-    /// Returns the on-chain address of the verifier contract this client
+pub trait NitroEnclaveVerifierClient: Send + Sync + std::fmt::Debug {
+    /// Returns the onchain address of the verifier contract this client
     /// is bound to.
     fn address(&self) -> Address;
 
     /// Returns `true` if the given accumulated-path-digest hash is currently
-    /// marked as revoked on-chain.
+    /// marked as revoked onchain.
     async fn is_revoked(&self, cert_hash: FixedBytes<32>) -> Result<bool, ContractError>;
 }
 
@@ -102,6 +110,7 @@ mod tests {
     #[rstest]
     fn revocation_selectors_are_nonzero_and_distinct() {
         let selectors = [
+            caller_not_owner_or_revoker_selector(),
             INitroEnclaveVerifier::revokeCertCall::SELECTOR,
             INitroEnclaveVerifier::revokedCertsCall::SELECTOR,
         ];

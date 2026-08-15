@@ -26,8 +26,3 @@ mod rpc;
 pub use rpc::{EnclaveApiClient, ProverApiClient};
 #[cfg(feature = "rpc-server")]
 pub use rpc::{EnclaveApiServer, ProverApiServer};
-
-#[cfg(feature = "rpc-client")]
-mod prover_client;
-#[cfg(feature = "rpc-client")]
-pub use prover_client::ProverClient;

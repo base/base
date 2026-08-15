@@ -1,7 +1,7 @@
 //! Integration tests for L1 reorg edge cases.
 //!
 //! Uses Anvil's `evm_snapshot` / `evm_revert` RPCs to simulate chain
-//! reorganizations and verifies that [`SimpleTxManager::query_receipt`],
+//! reorganizations and verifies that [`SimpleTxManager::<RootProvider>::query_receipt`],
 //! [`SendState`], and [`NonceManager`] behave correctly when blocks are
 //! reorged out.
 
@@ -66,7 +66,7 @@ async fn query(
     manager: &SimpleTxManager<RootProvider>,
     tx_hash: B256,
 ) -> Option<alloy_rpc_types_eth::TransactionReceipt> {
-    SimpleTxManager::query_receipt(
+    SimpleTxManager::<RootProvider>::query_receipt(
         send_state,
         manager.provider(),
         tx_hash,

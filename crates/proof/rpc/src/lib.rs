@@ -7,10 +7,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 mod config;
-pub use config::{
-    DEFAULT_CACHE_SIZE, DEFAULT_RETRY_INITIAL_DELAY, DEFAULT_RETRY_MAX_DELAY,
-    DEFAULT_RPC_MAX_RETRIES, RetryConfig,
-};
+pub use config::DEFAULT_CACHE_SIZE;
 
 mod cache;
 pub use cache::{CacheMetrics, MeteredCache};
@@ -20,9 +17,6 @@ pub use error::{RpcError, RpcResult};
 
 mod traits;
 pub use traits::{L1Provider, L2Provider, RollupProvider};
-
-mod provider_ext;
-pub use provider_ext::{DebugProviderExt, OptimismRollupProviderExt};
 
 mod l1_client;
 pub use l1_client::{L1Client, L1ClientConfig};
@@ -34,7 +28,4 @@ mod rollup_client;
 pub use rollup_client::{RollupClient, RollupClientConfig};
 
 mod types;
-pub use types::{
-    BaseBlock, GenesisL2BlockRef, HttpProvider, L1BlockId, L1BlockRef, L2BlockRef, L2HttpProvider,
-    OutputAtBlock, SyncStatus,
-};
+pub use types::{BaseBlock, HttpProvider, L2HttpProvider};

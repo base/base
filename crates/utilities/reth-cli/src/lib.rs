@@ -9,3 +9,6 @@
 
 mod version;
 pub use version::Version;
+
+mod snapshots;
+pub use snapshots::Snapshots;

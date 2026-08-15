@@ -4,10 +4,7 @@ use std::{fmt, sync::Arc};
 
 use alloy_primitives::B256;
 use anyhow::Result;
-use base_proof_succinct_ethereum_host_utils::host::SingleChainOPSuccinctHost;
-use base_proof_succinct_host_utils::{
-    fetcher::OPSuccinctDataFetcher, host::OPSuccinctHost, witness_generation::WitnessGenerator,
-};
+use base_proof_succinct_host_utils::{fetcher::OPSuccinctDataFetcher, host::SuccinctHost};
 use sp1_sdk::SP1Stdin;
 use tracing::{debug, info};
 
@@ -39,7 +36,7 @@ pub struct WitnessParams<'a> {
 /// Provider wrapping the Succinct host for witness generation and proving.
 #[derive(Clone)]
 pub struct OpSuccinctProvider {
-    host: Arc<SingleChainOPSuccinctHost>,
+    host: Arc<SuccinctHost>,
 }
 
 impl fmt::Debug for OpSuccinctProvider {
@@ -52,7 +49,7 @@ impl OpSuccinctProvider {
     /// Create a new provider with an initialized host.
     pub fn new(fetcher: Arc<OPSuccinctDataFetcher>) -> Self {
         info!("initializing Succinct provider with Ethereum DA");
-        let host = Arc::new(SingleChainOPSuccinctHost::new(fetcher));
+        let host = Arc::new(SuccinctHost::new(fetcher));
         Self { host }
     }
 

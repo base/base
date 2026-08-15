@@ -2,15 +2,15 @@
 
 ## Overview
 
-Provides `BaseChainSpec`, the chain specification type for Base nodes. Includes hardfork-specific
+Provides `BaseChainSpec`, the chain specification type for Base nodes. Includes upgrade-specific
 base fee computation helpers for Holocene and Jovian, and supported chain resolution from CLI
 strings.
 
 ## How it works
 
-`BaseChainSpec` wraps reth's `ChainSpec` and adds Base-specific hardfork awareness via the
+`BaseChainSpec` wraps reth's `ChainSpec` and adds Base-specific upgrade awareness via the
 `BaseUpgrades` trait. Network specs are converted from `base-common-chains` configs, which own the
-genesis JSON, hardfork schedule, base fee params, and other chain constants.
+genesis JSON, upgrade schedule, base fee params, and other chain constants.
 
 The genesis header is derived at startup from the genesis JSON using
 `BaseChainSpec::make_genesis_header`, which computes the correct state root, storage root, and
@@ -21,7 +21,7 @@ Chain names are resolved from CLI strings via `SUPPORTED_CHAINS`, which maps `"b
 
 ### Base fee computation
 
-Two helpers handle hardfork-specific base fee logic:
+Two helpers handle upgrade-specific base fee logic:
 
 - `decode_holocene_base_fee` - Reads the EIP-1559 elasticity and denominator packed into the
   parent block's `extra_data` field (per the Holocene spec). If both are zero, falls back to the

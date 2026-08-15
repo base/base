@@ -1,7 +1,7 @@
 //! Adapters between challenger proof types and the shared prover-service protocol.
 
 use alloy_primitives::{Address, B256, Bytes};
-use base_proof_primitives::{PROOF_TYPE_ZK, ProofEncoder, ProofRequest as PrimitiveProofRequest};
+use base_proof_primitives::{ProofEncoder, ProofRequest as PrimitiveProofRequest};
 use base_prover_service_protocol::{
     ProofRequest, ProofRequestKind, ProofResult, ProofSessionId, ProveBlockRangeRequest,
     SnarkGroth16ProofRequest, TeeKind, TeeProofRequest,
@@ -56,10 +56,7 @@ impl ChallengerProofAdapter {
     ) -> ProveBlockRangeRequest {
         let session_id = Self::snark_groth16_session_id(game_address, invalid_index);
         ProveBlockRangeRequest {
-            proof: ProofRequest {
-                session_id: Some(session_id),
-                request: ProofRequestKind::SnarkGroth16(request),
-            },
+            proof: ProofRequest { session_id, request: ProofRequestKind::SnarkGroth16(request) },
         }
     }
 
@@ -73,7 +70,7 @@ impl ChallengerProofAdapter {
         let session_id = Self::tee_session_id(game_address, invalid_index, tee_kind);
         ProveBlockRangeRequest {
             proof: ProofRequest {
-                session_id: Some(session_id),
+                session_id,
                 request: ProofRequestKind::Tee(TeeProofRequest { proof: request, tee_kind }),
             },
         }
@@ -91,10 +88,7 @@ impl ChallengerProofAdapter {
             }
         };
 
-        let mut raw = Vec::with_capacity(1 + proof.len());
-        raw.push(PROOF_TYPE_ZK);
-        raw.extend_from_slice(proof.as_ref());
-        Ok(Bytes::from(raw))
+        Ok(ProofEncoder::encode_zk_dispute_proof_bytes(proof))
     }
 
     /// Converts a prover-service TEE result into bytes accepted by `submit_dispute`.
@@ -213,7 +207,7 @@ mod tests {
             request,
         );
 
-        assert_eq!(wrapped.proof.session_id.as_deref(), Some(session_id.as_str()));
+        assert_eq!(wrapped.proof.session_id, session_id);
         match wrapped.proof.request {
             ProofRequestKind::SnarkGroth16(snark) => {
                 assert_eq!(snark.prover_address, prover_address);
@@ -244,7 +238,7 @@ mod tests {
             TeeKind::AwsNitro,
         );
 
-        assert_eq!(wrapped.proof.session_id.as_deref(), Some(session_id.as_str()));
+        assert_eq!(wrapped.proof.session_id, session_id);
         match wrapped.proof.request {
             ProofRequestKind::Tee(tee) => {
                 assert_eq!(tee.proof, request);
@@ -257,7 +251,11 @@ mod tests {
     #[test]
     fn snark_groth16_dispute_proof_bytes_prefixes_zk_type() {
         let result = ProofResult::SnarkGroth16(SnarkGroth16ProofResult {
-            proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: Bytes::from_static(&[0xab, 0xcd]) },
+            proof: ZkProofResult {
+                zk_vm: ZkVm::Sp1,
+                proof: Bytes::from_static(&[0xab, 0xcd]),
+                execution_stats: None,
+            },
         });
 
         let proof_bytes =

@@ -177,6 +177,114 @@ pub fn encode_extra_data(
     Bytes::from(data)
 }
 
+/// Values used to look up a dispute game by UUID.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GameLookupKey {
+    /// L2 block number encoded into `extraData`.
+    pub target_block: u64,
+    /// Final output root used as the factory `rootClaim`.
+    pub root_claim: B256,
+    /// Packed factory `extraData`.
+    pub extra_data: Bytes,
+}
+
+/// Error while building a dispute game lookup key.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum GameLookupError {
+    /// `BLOCK_INTERVAL` must not be zero.
+    #[error("block_interval must not be zero")]
+    ZeroBlockInterval,
+    /// `INTERMEDIATE_BLOCK_INTERVAL` must not be zero.
+    #[error("intermediate_block_interval must not be zero")]
+    ZeroIntermediateBlockInterval,
+    /// `BLOCK_INTERVAL` must be divisible by `INTERMEDIATE_BLOCK_INTERVAL`.
+    #[error(
+        "block_interval {block_interval} is not divisible by intermediate_block_interval {intermediate_block_interval}"
+    )]
+    InvalidInterval {
+        /// Number of L2 blocks between games.
+        block_interval: u64,
+        /// Number of L2 blocks between intermediate roots.
+        intermediate_block_interval: u64,
+    },
+    /// Arithmetic overflow while computing checkpoint blocks.
+    #[error("overflow computing game lookup block")]
+    BlockOverflow,
+    /// The supplied roots must cover every checkpoint, including the final root.
+    #[error("intermediate root count mismatch: expected {expected}, got {actual}")]
+    IntermediateRootCount {
+        /// Expected root count.
+        expected: usize,
+        /// Actual root count.
+        actual: usize,
+    },
+}
+
+/// Returns the number of roots needed to build a game UUID lookup key.
+pub fn game_lookup_count(
+    block_interval: u64,
+    intermediate_block_interval: u64,
+) -> Result<usize, GameLookupError> {
+    if block_interval == 0 {
+        return Err(GameLookupError::ZeroBlockInterval);
+    }
+    if intermediate_block_interval == 0 {
+        return Err(GameLookupError::ZeroIntermediateBlockInterval);
+    }
+    if !block_interval.is_multiple_of(intermediate_block_interval) {
+        return Err(GameLookupError::InvalidInterval {
+            block_interval,
+            intermediate_block_interval,
+        });
+    }
+
+    usize::try_from(block_interval / intermediate_block_interval)
+        .map_err(|_| GameLookupError::BlockOverflow)
+}
+
+/// Returns the checkpoint blocks used by a game UUID lookup.
+pub fn game_lookup_blocks(
+    starting_block_number: u64,
+    block_interval: u64,
+    intermediate_block_interval: u64,
+) -> Result<Vec<u64>, GameLookupError> {
+    let count = game_lookup_count(block_interval, intermediate_block_interval)?;
+
+    (1..=count)
+        .map(|i| {
+            let multiplier = u64::try_from(i).map_err(|_| GameLookupError::BlockOverflow)?;
+            let offset = intermediate_block_interval
+                .checked_mul(multiplier)
+                .ok_or(GameLookupError::BlockOverflow)?;
+            starting_block_number.checked_add(offset).ok_or(GameLookupError::BlockOverflow)
+        })
+        .collect()
+}
+
+/// Builds the key used by `DisputeGameFactory.games()`.
+pub fn game_lookup_key(
+    starting_block_number: u64,
+    parent_address: Address,
+    block_interval: u64,
+    intermediate_block_interval: u64,
+    intermediate_roots: &[B256],
+) -> Result<GameLookupKey, GameLookupError> {
+    let expected = game_lookup_count(block_interval, intermediate_block_interval)?;
+    if intermediate_roots.len() != expected {
+        return Err(GameLookupError::IntermediateRootCount {
+            expected,
+            actual: intermediate_roots.len(),
+        });
+    }
+
+    let target_block =
+        starting_block_number.checked_add(block_interval).ok_or(GameLookupError::BlockOverflow)?;
+    let root_claim = intermediate_roots[expected - 1];
+    let extra_data = encode_extra_data(target_block, parent_address, intermediate_roots);
+
+    Ok(GameLookupKey { target_block, root_claim, extra_data })
+}
+
 /// Encodes the calldata for `DisputeGameFactory.createWithInitData()`.
 pub fn encode_create_calldata(
     game_type: u32,
@@ -244,5 +352,47 @@ mod tests {
         assert_eq!(selector.len(), 4);
         // Just verify we get a non-zero selector
         assert_ne!(selector, [0u8; 4]);
+    }
+
+    #[test]
+    fn test_game_lookup_blocks() {
+        let blocks = game_lookup_blocks(100, 30, 10).unwrap();
+
+        assert_eq!(blocks, vec![110, 120, 130]);
+    }
+
+    #[test]
+    fn test_game_lookup_blocks_rejects_bad_intervals() {
+        assert_eq!(game_lookup_blocks(100, 0, 10).unwrap_err(), GameLookupError::ZeroBlockInterval);
+        assert_eq!(
+            game_lookup_blocks(100, 30, 0).unwrap_err(),
+            GameLookupError::ZeroIntermediateBlockInterval
+        );
+        assert_eq!(
+            game_lookup_blocks(100, 30, 20).unwrap_err(),
+            GameLookupError::InvalidInterval {
+                block_interval: 30,
+                intermediate_block_interval: 20
+            }
+        );
+    }
+
+    #[test]
+    fn test_game_lookup_key() {
+        let parent = Address::repeat_byte(0x42);
+        let roots = vec![B256::repeat_byte(0xAA), B256::repeat_byte(0xBB)];
+
+        let key = game_lookup_key(100, parent, 20, 10, &roots).unwrap();
+
+        assert_eq!(key.target_block, 120);
+        assert_eq!(key.root_claim, roots[1]);
+        assert_eq!(key.extra_data, encode_extra_data(120, parent, &roots));
+    }
+
+    #[test]
+    fn test_game_lookup_key_rejects_wrong_root_count() {
+        let err = game_lookup_key(100, Address::ZERO, 20, 10, &[B256::ZERO]).unwrap_err();
+
+        assert_eq!(err, GameLookupError::IntermediateRootCount { expected: 2, actual: 1 });
     }
 }

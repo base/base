@@ -19,7 +19,7 @@ pub struct FeeConfig {
         serde(rename = "eip1559Denominator", alias = "eip1559_denominator")
     )]
     pub eip1559_denominator: u64,
-    /// EIP 1559 Denominator for the Canyon hardfork
+    /// EIP 1559 Denominator for the Canyon upgrade
     #[cfg_attr(
         feature = "serde",
         serde(rename = "eip1559DenominatorCanyon", alias = "eip1559_denominator_canyon")
@@ -41,7 +41,7 @@ impl FeeConfig {
         Self::BASE_MAINNET
     }
 
-    /// Returns the [`BaseFeeParams`] before Canyon hardfork.
+    /// Returns the [`BaseFeeParams`] before Canyon upgrade.
     pub const fn pre_canyon_params(&self) -> BaseFeeParams {
         BaseFeeParams {
             max_change_denominator: self.eip1559_denominator as u128,
@@ -49,7 +49,7 @@ impl FeeConfig {
         }
     }
 
-    /// Returns the [`BaseFeeParams`] since Canyon hardfork.
+    /// Returns the [`BaseFeeParams`] since Canyon upgrade.
     pub const fn post_canyon_params(&self) -> BaseFeeParams {
         BaseFeeParams {
             max_change_denominator: self.eip1559_denominator_canyon as u128,

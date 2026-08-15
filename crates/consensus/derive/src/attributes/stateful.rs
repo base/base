@@ -171,6 +171,7 @@ where
             &sys_config,
             sequence_number,
             &l1_header,
+            l2_parent.block_info.timestamp,
             next_l2_time,
         )
         .map_err(|e| {
@@ -220,6 +221,7 @@ where
                 .is_jovian_active(next_l2_time)
                 .then(|| sys_config.min_base_fee.unwrap_or_default()), /* Default to zero if not
                                                                         * set at Jovian */
+            timestamp_millis_part: None,
         })
     }
 }
@@ -263,7 +265,7 @@ mod tests {
     use alloy_consensus::Header;
     use alloy_primitives::{B256, Log, LogData, U64, U256, address};
     use base_common_chains::Sepolia;
-    use base_common_genesis::{HardForkConfig, SystemConfig, SystemConfigUpdate};
+    use base_common_genesis::{SystemConfig, SystemConfigUpdate, UpgradeConfig};
     use base_protocol::{BlockInfo, DepositDecodeError};
 
     use super::*;
@@ -497,6 +499,7 @@ mod tests {
             )),
             eip_1559_params: None,
             min_base_fee: None,
+            timestamp_millis_part: None,
         };
         assert_eq!(payload, expected);
         assert_eq!(payload.transactions.unwrap().len(), 1);
@@ -508,7 +511,7 @@ mod tests {
         let timestamp = 100;
         let cfg = Arc::new(RollupConfig {
             block_time,
-            hardforks: HardForkConfig { canyon_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { canyon_time: Some(0), ..Default::default() },
             ..Default::default()
         });
         let l1_cfg = Arc::new(Sepolia::l1_config());
@@ -550,6 +553,7 @@ mod tests {
             )),
             eip_1559_params: None,
             min_base_fee: None,
+            timestamp_millis_part: None,
         };
         assert_eq!(payload, expected);
         assert_eq!(payload.transactions.unwrap().len(), 1);
@@ -561,7 +565,7 @@ mod tests {
         let timestamp = 100;
         let cfg = Arc::new(RollupConfig {
             block_time,
-            hardforks: HardForkConfig { ecotone_time: Some(102), ..Default::default() },
+            upgrades: UpgradeConfig { ecotone_time: Some(102), ..Default::default() },
             ..Default::default()
         });
         let l1_cfg = Arc::new(Sepolia::l1_config());
@@ -604,6 +608,7 @@ mod tests {
             )),
             eip_1559_params: None,
             min_base_fee: None,
+            timestamp_millis_part: None,
         };
         assert_eq!(payload, expected);
         assert_eq!(payload.transactions.unwrap().len(), 7);
@@ -615,7 +620,7 @@ mod tests {
         let timestamp = 100;
         let cfg = Arc::new(RollupConfig {
             block_time,
-            hardforks: HardForkConfig { fjord_time: Some(102), ..Default::default() },
+            upgrades: UpgradeConfig { fjord_time: Some(102), ..Default::default() },
             ..Default::default()
         });
         let l1_cfg = Arc::new(Sepolia::l1_config());
@@ -657,6 +662,7 @@ mod tests {
             )),
             eip_1559_params: None,
             min_base_fee: None,
+            timestamp_millis_part: None,
         };
         assert_eq!(payload.transactions.as_ref().unwrap().len(), 10);
         assert_eq!(payload, expected);

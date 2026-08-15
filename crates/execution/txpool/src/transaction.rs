@@ -11,8 +11,8 @@ use alloy_eips::{
     eip7594::BlobTransactionSidecarVariant,
     eip7702::SignedAuthorization,
 };
-use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256};
-use base_common_consensus::{BaseTransactionSigned, Eip8130Signed};
+use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256, keccak256};
+use base_common_consensus::{BaseTransactionSigned, Eip8130Constants, Eip8130Signed};
 use c_kzg::KzgSettings;
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
 use reth_transaction_pool::{
@@ -152,13 +152,13 @@ impl<Cons: SignedTransaction, Pooled> DataAvailabilitySized
     }
 }
 
-impl<Cons, Pooled> PoolTransaction for BasePooledTransaction<Cons, Pooled>
+impl<Pooled> PoolTransaction for BasePooledTransaction<BaseTransactionSigned, Pooled>
 where
-    Cons: SignedTransaction + From<Pooled>,
-    Pooled: SignedTransaction + TryFrom<Cons, Error: core::error::Error>,
+    BaseTransactionSigned: From<Pooled>,
+    Pooled: SignedTransaction + TryFrom<BaseTransactionSigned, Error: core::error::Error>,
 {
-    type TryFromConsensusError = <Pooled as TryFrom<Cons>>::Error;
-    type Consensus = Cons;
+    type TryFromConsensusError = <Pooled as TryFrom<BaseTransactionSigned>>::Error;
+    type Consensus = BaseTransactionSigned;
     type Pooled = Pooled;
 
     fn clone_into_consensus(&self) -> Recovered<Self::Consensus> {
@@ -184,7 +184,7 @@ where
     }
 
     fn hash(&self) -> &TxHash {
-        self.inner.transaction.tx_hash()
+        alloy_consensus::transaction::TxHashRef::tx_hash(self.inner.transaction.inner())
     }
 
     fn sender(&self) -> Address {
@@ -201,6 +201,10 @@ where
 
     fn encoded_length(&self) -> usize {
         self.inner.encoded_length
+    }
+
+    fn requires_nonce_check(&self) -> bool {
+        self.as_eip8130().is_none_or(|signed| signed.tx().nonce_key.is_zero())
     }
 }
 
@@ -290,11 +294,11 @@ where
     }
 }
 
-impl<Cons, Pooled> EthPoolTransaction for BasePooledTransaction<Cons, Pooled>
+impl<Pooled> EthPoolTransaction for BasePooledTransaction<BaseTransactionSigned, Pooled>
 where
-    Cons: SignedTransaction + From<Pooled>,
-    Pooled: SignedTransaction + TryFrom<Cons>,
-    <Pooled as TryFrom<Cons>>::Error: core::error::Error,
+    BaseTransactionSigned: From<Pooled>,
+    Pooled: SignedTransaction + TryFrom<BaseTransactionSigned>,
+    <Pooled as TryFrom<BaseTransactionSigned>>::Error: core::error::Error,
 {
     fn take_blob(&mut self) -> EthBlobTransactionSidecar {
         EthBlobTransactionSidecar::None
@@ -337,6 +341,17 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
     fn as_eip8130(&self) -> Option<&Eip8130Signed> {
         None
     }
+
+    /// Returns the EIP-8130 `nonce_key` when this transaction belongs to a
+    /// finite non-zero nonce channel handled by the 2D nonce pool.
+    fn eip8130_nonce_channel_key(&self) -> Option<U256> {
+        None
+    }
+
+    /// Returns the EIP-8130 nonce-free replay identifier, if applicable.
+    fn eip8130_nonce_free_replay_id(&self) -> Option<B256> {
+        None
+    }
 }
 
 impl<Pooled> BasePooledTx for BasePooledTransaction<BaseTransactionSigned, Pooled>
@@ -351,6 +366,22 @@ where
 
     fn as_eip8130(&self) -> Option<&Eip8130Signed> {
         self.inner.transaction().inner().as_eip8130()
+    }
+
+    fn eip8130_nonce_channel_key(&self) -> Option<U256> {
+        let signed = self.as_eip8130()?;
+        let nonce_key = signed.tx().nonce_key;
+        (!nonce_key.is_zero() && nonce_key != Eip8130Constants::NONCE_KEY_MAX).then_some(nonce_key)
+    }
+
+    fn eip8130_nonce_free_replay_id(&self) -> Option<B256> {
+        let signed = self.as_eip8130()?;
+        (signed.tx().nonce_key == Eip8130Constants::NONCE_KEY_MAX).then(|| {
+            let mut buf = Vec::with_capacity(52);
+            buf.extend_from_slice(self.sender().as_slice());
+            buf.extend_from_slice(signed.tx().sender_signature_hash().as_slice());
+            keccak256(buf)
+        })
     }
 }
 
@@ -443,17 +474,51 @@ mod tests {
 
     use alloy_consensus::transaction::Recovered;
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::{TxKind, U256};
-    use base_common_consensus::{BasePrimitives, BaseTransactionSigned, TxDeposit};
+    use alloy_primitives::{Bytes, TxKind, U256};
+    use alloy_signer::SignerSync;
+    use alloy_signer_local::PrivateKeySigner;
+    use base_common_chains::ChainConfig;
+    use base_common_consensus::{
+        BasePooledTransaction as ConsensusPooledTransaction, BasePrimitives, BaseTransactionSigned,
+        Eip8130Constants, Eip8130Signed, TxDeposit, TxEip8130,
+    };
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::BaseEvmConfig;
     use reth_provider::test_utils::MockEthProvider;
     use reth_transaction_pool::{
-        TransactionOrigin, TransactionValidationOutcome, blobstore::InMemoryBlobStore,
-        validate::EthTransactionValidatorBuilder,
+        PoolTransaction, TransactionOrigin, TransactionValidationOutcome,
+        blobstore::InMemoryBlobStore, validate::EthTransactionValidatorBuilder,
     };
 
     use crate::{BasePooledTransaction, BaseTransactionValidator};
+
+    fn signer() -> PrivateKeySigner {
+        PrivateKeySigner::random()
+    }
+
+    fn eip8130_pooled(nonce_key: U256) -> BasePooledTransaction {
+        let signer = signer();
+        let tx = TxEip8130 {
+            chain_id: ChainConfig::mainnet().chain_id,
+            sender: None,
+            nonce_key,
+            nonce_sequence: 0,
+            expiry: if nonce_key == Eip8130Constants::NONCE_KEY_MAX { 5 } else { 0 },
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 1,
+            gas_limit: 50_000,
+            account_changes: Vec::new(),
+            calls: Vec::new(),
+            metadata: Bytes::new(),
+            payer: None,
+        };
+        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+        let signed =
+            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
+        let pooled = ConsensusPooledTransaction::Eip8130(signed);
+        BasePooledTransaction::from_pooled(Recovered::new_unchecked(pooled, signer.address()))
+    }
+
     #[tokio::test]
     async fn validate_base_transaction() {
         let chain_spec = Arc::new(BaseChainSpec::mainnet());
@@ -490,5 +555,12 @@ mod tests {
             _ => panic!("Expected invalid transaction"),
         };
         assert_eq!(err.to_string(), "transaction type not supported");
+    }
+
+    #[test]
+    fn nonce_free_eip8130_skips_protocol_nonce_check() {
+        assert!(eip8130_pooled(U256::ZERO).requires_nonce_check());
+        assert!(!eip8130_pooled(U256::from(1)).requires_nonce_check());
+        assert!(!eip8130_pooled(Eip8130Constants::NONCE_KEY_MAX).requires_nonce_check());
     }
 }

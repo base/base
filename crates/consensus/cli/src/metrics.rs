@@ -1,6 +1,12 @@
 //! CLI Options Metrics
 
-use base_common_genesis::RollupConfig;
+use std::{
+    collections::BTreeSet,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
+
+use base_common_genesis::{BaseUpgrade, RollupConfig};
+use tokio::task::JoinHandle;
 
 use crate::{P2PArgs, bootnode::BootnodeP2PArgs};
 
@@ -39,11 +45,11 @@ impl CliMetrics {
     /// The advertised udp port via P2P.
     pub const P2P_ADVERTISE_UDP_PORT: &'static str = "base_node_advertise_udp";
 
-    /// The low-tide peer count.
-    pub const P2P_PEERS_LO: &'static str = "base_node_peers_lo";
-
     /// The high-tide peer count.
     pub const P2P_PEERS_HI: &'static str = "base_node_peers_hi";
+
+    /// The maximum number of outbound libp2p connections that may be pending at once.
+    pub const P2P_MAX_PENDING_OUTGOING: &'static str = "base_node_max_pending_outgoing";
 
     /// The identify peerstore size.
     pub const P2P_IDENTIFY_PEERSTORE_SIZE: &'static str = "base_node_identify_peerstore_size";
@@ -63,8 +69,11 @@ impl CliMetrics {
     /// The duration to ban peers.
     pub const P2P_BAN_DURATION: &'static str = "base_node_ban_duration";
 
-    /// Hardfork activation times.
-    pub const HARDFORK_ACTIVATION_TIMES: &'static str = "base_node_hardforks";
+    /// Upgrade activation times.
+    pub const UPGRADE_ACTIVATION_TIMES: &'static str = "base_node_upgrades";
+
+    /// Seconds until the next scheduled upgrade activation.
+    pub const SECONDS_UNTIL_NEXT_UPGRADE: &'static str = "base_node_seconds_until_next_upgrade";
 
     /// Top-level rollup config settings.
     pub const ROLLUP_CONFIG: &'static str = "base_node_rollup_config";
@@ -96,8 +105,8 @@ impl CliMetrics {
                     Self::P2P_ADVERTISE_UDP_PORT,
                     p2p.advertise_udp_port.map_or_else(|| "auto".to_string(), |p| p.to_string())
                 ),
-                (Self::P2P_PEERS_LO, p2p.peers_lo.to_string()),
                 (Self::P2P_PEERS_HI, p2p.peers_hi.to_string()),
+                (Self::P2P_MAX_PENDING_OUTGOING, p2p.max_pending_outgoing.to_string()),
                 (Self::P2P_IDENTIFY_PEERSTORE_SIZE, p2p.identify_peerstore_size.to_string()),
                 (Self::P2P_GOSSIP_MESH_D, p2p.gossip_mesh_d.to_string()),
                 (Self::P2P_GOSSIP_MESH_D_LO, p2p.gossip_mesh_dlo.to_string()),
@@ -137,8 +146,12 @@ impl CliMetrics {
     pub fn init_rollup_config(config: &RollupConfig) {
         metrics::describe_gauge!(Self::ROLLUP_CONFIG, "Rollup configuration settings for Base");
         metrics::describe_gauge!(
-            Self::HARDFORK_ACTIVATION_TIMES,
-            "Activation times for hardforks in Base"
+            Self::UPGRADE_ACTIVATION_TIMES,
+            "Activation times for upgrades in Base"
+        );
+        metrics::describe_gauge!(
+            Self::SECONDS_UNTIL_NEXT_UPGRADE,
+            "Seconds until the next scheduled Base upgrade activation"
         );
 
         metrics::gauge!(
@@ -162,10 +175,260 @@ impl CliMetrics {
         )
         .set(1);
 
-        for (fork_name, activation_time) in config.hardforks.iter() {
-            // Use `-1` as a signal that the fork is not scheduled.
+        for (upgrade_name, activation_time) in config.upgrades.iter() {
+            // Use `-1` as a signal that the upgrade is not scheduled.
             let time: f64 = activation_time.map(|t| t as f64).unwrap_or(-1f64);
-            metrics::gauge!(Self::HARDFORK_ACTIVATION_TIMES, "fork" => fork_name).set(time);
+            metrics::gauge!(Self::UPGRADE_ACTIVATION_TIMES, "upgrade" => upgrade_name).set(time);
         }
+    }
+
+    /// Starts the periodic recorder for the next scheduled upgrade countdown metric.
+    ///
+    /// This must be called from an active Tokio runtime. The static rollup config metrics are
+    /// initialized before the runtime exists in some CLI paths, so the dynamic countdown recorder is
+    /// started separately by the async command entrypoints. The recorder owns its rollup config so
+    /// it can re-query runtime-aware activation timestamps on each tick.
+    pub fn spawn_upgrade_countdown_recorder(config: RollupConfig) -> JoinHandle<()> {
+        tokio::spawn(async move {
+            let mut observed_upgrades = BTreeSet::new();
+            let mut interval = tokio::time::interval(UPGRADE_COUNTDOWN_REFRESH_INTERVAL);
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+            loop {
+                interval.tick().await;
+                let now = current_unix_timestamp();
+                let countdown_config = config.with_runtime_upgrade_overrides();
+                Self::record_seconds_until_next_upgrade(
+                    &countdown_config,
+                    now,
+                    &mut observed_upgrades,
+                );
+            }
+        })
+    }
+
+    fn record_seconds_until_next_upgrade(
+        config: &RollupConfig,
+        now: u64,
+        observed_upgrades: &mut BTreeSet<&'static str>,
+    ) {
+        let countdowns = seconds_until_next_upgrades(config, now);
+        let current_upgrades =
+            countdowns.iter().map(|(upgrade, _)| *upgrade).collect::<BTreeSet<_>>();
+
+        for (upgrade, seconds_until_activation) in countdowns {
+            observed_upgrades.insert(upgrade);
+            metrics::gauge!(Self::SECONDS_UNTIL_NEXT_UPGRADE, "upgrade" => upgrade)
+                .set(seconds_until_activation as f64);
+        }
+
+        let stale_upgrades =
+            observed_upgrades.difference(&current_upgrades).copied().collect::<Vec<_>>();
+
+        for upgrade in &stale_upgrades {
+            metrics::gauge!(Self::SECONDS_UNTIL_NEXT_UPGRADE, "upgrade" => *upgrade)
+                .set(NO_UPCOMING_UPGRADE_SECONDS);
+        }
+        for upgrade in stale_upgrades {
+            observed_upgrades.remove(upgrade);
+        }
+    }
+}
+
+const UPGRADE_COUNTDOWN_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+const UPGRADE_ACTIVATION_GRACE_SECONDS: u64 = 15 * 60;
+// Use a large reset value, not `-1`, so Datadog `<= 1d/1h/0` countdown monitors recover after the
+// activation grace window instead of alerting on an unscheduled sentinel.
+const NO_UPCOMING_UPGRADE_SECONDS: f64 = 4_294_967_295.0;
+
+fn current_unix_timestamp() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+}
+
+fn seconds_until_next_upgrades(config: &RollupConfig, now: u64) -> Vec<(&'static str, u64)> {
+    let next_activation = BaseUpgrade::CONTRACT_VARIANTS
+        .into_iter()
+        .filter_map(|upgrade| {
+            config
+                .contract_upgrade_activation_timestamp(upgrade)
+                .filter(|activation_time| {
+                    activation_time.saturating_add(UPGRADE_ACTIVATION_GRACE_SECONDS) >= now
+                })
+                .map(|activation_time| (upgrade, activation_time))
+        })
+        .min_by_key(|(_, activation_time)| *activation_time);
+
+    let Some((_, next_activation_time)) = next_activation else {
+        return Vec::new();
+    };
+
+    BaseUpgrade::CONTRACT_VARIANTS
+        .into_iter()
+        .filter_map(|upgrade| {
+            config
+                .contract_upgrade_activation_timestamp(upgrade)
+                .filter(|activation_time| *activation_time == next_activation_time)
+                .and_then(|activation_time| {
+                    upgrade_metric_label(upgrade)
+                        .map(|label| (label, activation_time.saturating_sub(now)))
+                })
+        })
+        .collect()
+}
+
+const UPGRADE_METRIC_LABELS: [(BaseUpgrade, &str); BaseUpgrade::CONTRACT_VARIANTS.len()] = [
+    (BaseUpgrade::Regolith, "Regolith"),
+    (BaseUpgrade::Canyon, "Canyon"),
+    (BaseUpgrade::Delta, "Delta"),
+    (BaseUpgrade::Ecotone, "Ecotone"),
+    (BaseUpgrade::Fjord, "Fjord"),
+    (BaseUpgrade::Granite, "Granite"),
+    (BaseUpgrade::Holocene, "Holocene"),
+    (BaseUpgrade::PectraBlobSchedule, "Pectra Blob Schedule"),
+    (BaseUpgrade::Isthmus, "Isthmus"),
+    (BaseUpgrade::Jovian, "Jovian"),
+    (BaseUpgrade::Azul, "Azul"),
+    (BaseUpgrade::Beryl, "Beryl"),
+    (BaseUpgrade::Cobalt, "Cobalt"),
+];
+
+fn upgrade_metric_label(upgrade: BaseUpgrade) -> Option<&'static str> {
+    UPGRADE_METRIC_LABELS
+        .iter()
+        .find_map(|(candidate, label)| (*candidate == upgrade).then_some(*label))
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_chains::Chain;
+    use base_common_genesis::{RuntimeUpgradeRegistry, UpgradeConfig};
+
+    use super::*;
+
+    fn upgrade_metric_labels() -> Vec<(BaseUpgrade, &'static str)> {
+        UPGRADE_METRIC_LABELS.to_vec()
+    }
+
+    #[test]
+    fn seconds_until_next_upgrades_returns_future_countdown() {
+        let config = RollupConfig {
+            upgrades: UpgradeConfig {
+                base: base_common_genesis::BaseUpgradeConfig {
+                    azul: Some(1_000),
+                    beryl: Some(2_000),
+                    cobalt: Some(3_000),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert_eq!(seconds_until_next_upgrades(&config, 800), vec![("Azul", 200)]);
+    }
+
+    #[test]
+    fn seconds_until_next_upgrades_returns_zero_during_activation_grace() {
+        let config = RollupConfig {
+            upgrades: UpgradeConfig {
+                base: base_common_genesis::BaseUpgradeConfig {
+                    beryl: Some(1_000),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert_eq!(seconds_until_next_upgrades(&config, 1_000), vec![("Beryl", 0)]);
+        assert_eq!(seconds_until_next_upgrades(&config, 1_100), vec![("Beryl", 0)]);
+    }
+
+    #[test]
+    fn seconds_until_next_upgrades_ignores_activations_after_grace() {
+        let config = RollupConfig {
+            upgrades: UpgradeConfig {
+                base: base_common_genesis::BaseUpgradeConfig {
+                    beryl: Some(1_000),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert!(
+            seconds_until_next_upgrades(&config, 1_000 + UPGRADE_ACTIVATION_GRACE_SECONDS + 1)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn seconds_until_next_upgrades_returns_all_simultaneous_next_upgrades() {
+        let config = RollupConfig {
+            upgrades: UpgradeConfig {
+                base: base_common_genesis::BaseUpgradeConfig {
+                    azul: Some(1_000),
+                    beryl: Some(1_000),
+                    cobalt: Some(2_000),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert_eq!(seconds_until_next_upgrades(&config, 900), vec![("Azul", 100), ("Beryl", 100)]);
+    }
+
+    #[test]
+    fn seconds_until_next_upgrades_reflects_runtime_registry_updates() {
+        let chain_id = 9_200_001;
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+        let config = RollupConfig { l2_chain_id: Chain::from_id(chain_id), ..Default::default() };
+
+        assert!(seconds_until_next_upgrades(&config, 900).is_empty());
+
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Beryl, 1_000);
+        assert_eq!(seconds_until_next_upgrades(&config, 900), vec![("Beryl", 100)]);
+
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Beryl, 2_000);
+        assert_eq!(seconds_until_next_upgrades(&config, 900), vec![("Beryl", 1_100)]);
+
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+    }
+
+    #[test]
+    fn record_seconds_until_next_upgrade_drains_stale_upgrades() {
+        let config = RollupConfig {
+            upgrades: UpgradeConfig {
+                base: base_common_genesis::BaseUpgradeConfig {
+                    beryl: Some(1_000),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut observed_upgrades = BTreeSet::new();
+
+        CliMetrics::record_seconds_until_next_upgrade(&config, 900, &mut observed_upgrades);
+        assert!(observed_upgrades.contains("Beryl"));
+
+        CliMetrics::record_seconds_until_next_upgrade(
+            &config,
+            1_000 + UPGRADE_ACTIVATION_GRACE_SECONDS + 1,
+            &mut observed_upgrades,
+        );
+        assert!(observed_upgrades.is_empty());
+    }
+
+    #[test]
+    fn upgrade_metric_label_matches_upgrade_activation_time_labels() {
+        let labels = upgrade_metric_labels();
+        assert_eq!(labels.len(), BaseUpgrade::CONTRACT_VARIANTS.len());
+
+        let config_labels =
+            UpgradeConfig::default().iter().map(|(label, _)| label).collect::<Vec<_>>();
+
+        assert_eq!(labels.iter().map(|(_, label)| *label).collect::<Vec<_>>(), config_labels);
     }
 }

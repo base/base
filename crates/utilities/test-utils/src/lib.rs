@@ -13,6 +13,7 @@ pub use accounts::Account;
 mod genesis;
 pub use genesis::{
     DEVNET_CHAIN_ID, GENESIS_GAS_LIMIT, build_test_genesis, build_test_genesis_azul,
+    build_test_genesis_cobalt,
 };
 
 mod contracts;

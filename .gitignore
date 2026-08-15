@@ -15,3 +15,5 @@ crates/proof/succinct/elf/aggregation-elf
 crates/proof/succinct/elf/*.bin
 /etc/scripts/local/__pycache__/
 .gjc/
+
+crates/infra/load-tests/examples/*.yaml

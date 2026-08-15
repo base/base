@@ -10,51 +10,17 @@ repository.workspace = true
 
 [dependencies]
 base-prover-service-db.workspace = true
-base-prover-service-outbox.workspace = true
 base-prover-service-protocol.workspace = true
-
-# Succinct / SP1
-sp1-sdk.workspace = true
-sp1-prover-types.workspace = true
-sp1-cluster-utils.workspace = true
-sp1-cluster-common.workspace = true
-sp1-cluster-artifact.workspace = true
-base-proof-succinct-elfs.workspace = true
-base-proof-succinct-host-utils.workspace = true
-base-proof-succinct-proof-utils.workspace = true
-base-proof-succinct-client-utils.workspace = true
-base-proof-succinct-ethereum-host-utils.workspace = true
-
-# Network
-alloy-provider.workspace = true
-base-proof-rpc.workspace = true
-alloy-rpc-types.workspace = true
-base-common-network.workspace = true
-alloy-primitives = { workspace = true, features = ["serde"] }
 
 # RPC
 jsonrpsee = { workspace = true, optional = true }
 
 # Async
-async-trait.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
-
-# HTTP
-reqwest = { workspace = true, features = ["json"] }
-tower-http = { workspace = true, features = ["trace"] }
-axum = { workspace = true, features = ["tokio", "http1"] }
-tower = { workspace = true, features = ["limit", "timeout"] }
-
-# Rate limiting
-governor.workspace = true
-nonzero_ext.workspace = true
 
 # Serialization
 serde_json.workspace = true
-serde = { workspace = true, features = ["derive"] }
-chrono = { workspace = true, features = ["serde"] }
-bincode = { workspace = true, features = ["serde"] }
-uuid = { workspace = true, features = ["v4", "serde"] }
+uuid = { workspace = true, features = ["v4"] }
 
 # Error handling
 anyhow.workspace = true
@@ -64,19 +30,18 @@ metrics.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-base-proof-primitives = { workspace = true, features = ["serde"] }
+rstest.workspace = true
+chrono.workspace = true
+jsonrpsee = { workspace = true, features = ["http-client"] }
+metrics-util = { workspace = true, features = ["debugging"] }
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+base-prover-service-protocol = { workspace = true, features = ["rpc-client"] }
 
 [lints]
 workspace = true
 
 [features]
-default = [ "rpc-client", "rpc-server" ]
-rpc-client = [
-	"base-prover-service-protocol/rpc-client",
-	"dep:jsonrpsee",
-	"jsonrpsee/http-client",
-]
+default = [ "rpc-server" ]
 rpc-server = [
 	"base-prover-service-protocol/rpc-server",
 	"dep:jsonrpsee",

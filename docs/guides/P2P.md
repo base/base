@@ -340,7 +340,7 @@ blocks_v4_topic: IdentTopic::new(format!("/optimism/{chain_id}/3/blocks")),
 ```
 
 For Base Mainnet (chain ID 8453), these resolve to `/optimism/8453/0/blocks` through
-`/optimism/8453/3/blocks`. The version is selected based on which hardfork (a protocol upgrade that
+`/optimism/8453/3/blocks`. The version is selected based on which upgrade (a protocol upgrade that
 changes the rules of the network, activated at a specific timestamp) is active at the block's
 timestamp. V1 is for pre-Canyon blocks, V2 for Canyon/Delta, V3 for Ecotone, and V4 for Isthmus.
 Each version uses a slightly different encoding for the execution payload envelope. When a node
@@ -484,7 +484,7 @@ the listener is up,
 and then returns. Its `publish()` method takes an execution payload envelope (the signed wrapper
 around a block's contents — transactions, state root, gas used, etc.), selects
 the appropriate topic
-based on the block's timestamp and active hardfork, encodes it with version-appropriate
+based on the block's timestamp and active upgrade, encodes it with version-appropriate
 serialization, and publishes it to gossipsub. Its `dial()` method takes an ENR from discovery,
 validates the chain ID, extracts the TCP multiaddr (a self-describing network address format used by
 libp2p, e.g. `/ip4/192.168.1.1/tcp/9222`), checks the connection gate, and initiates a connection.
@@ -865,7 +865,7 @@ mesh overlay for efficient message distribution.
 
 **GRAFT / PRUNE** — Gossipsub control messages for adding or removing a peer from the mesh.
 
-**Hardfork** — A protocol upgrade that changes the rules of the network, activated at a specific
+**Upgrade** — A protocol upgrade that changes the rules of the network, activated at a specific
 timestamp.
 
 **IHAVE / IWANT** — Gossipsub control messages for the lazy repair mechanism (advertising and

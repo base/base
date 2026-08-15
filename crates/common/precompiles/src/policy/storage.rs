@@ -58,7 +58,7 @@ impl PackedPolicy {
 
 /// Storage layout for the `PolicyRegistry` precompile.
 ///
-/// Slots are append-only — never reorder across hardforks.
+/// Slots are append-only — never reorder across upgrades.
 #[contract(addr = Self::ADDRESS)]
 #[namespace("base.policy_registry")]
 pub struct PolicyRegistryStorage {

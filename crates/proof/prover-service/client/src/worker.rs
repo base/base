@@ -1,12 +1,15 @@
 //! Client for prover worker JSON-RPC methods.
 
 use async_trait::async_trait;
+use backon::Retryable;
 use base_prover_service_protocol::{
-    GetNextProofRequest, GetNextProofResponse, HeartbeatRequest, HeartbeatResponse,
-    ProverWorkerApiClient, WorkerSubmitProofRequest, WorkerSubmitProofResponse,
+    GetNextProofRequest, GetNextProofResponse, GetProofSessionRequest, GetProofSessionResponse,
+    HeartbeatRequest, HeartbeatResponse, ProverWorkerApiClient, RecordProofSessionRequest,
+    RecordProofSessionResponse, WorkerSubmitProofRequest, WorkerSubmitProofResponse,
 };
+use base_retry::RetryConfig;
 use jsonrpsee::http_client::HttpClient;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::{ProverServiceClientBuildError, ProverServiceClientConfig, ProverServiceClientError};
 
@@ -34,25 +37,51 @@ pub trait ProverWorkerProvider: Send + Sync {
         &self,
         request: WorkerSubmitProofRequest,
     ) -> Result<WorkerSubmitProofResponse, ProverServiceClientError>;
+
+    /// Look up the active backend session recorded for a claimed proof job.
+    async fn get_proof_session(
+        &self,
+        request: GetProofSessionRequest,
+    ) -> Result<GetProofSessionResponse, ProverServiceClientError>;
+
+    /// Record (insert or update) the backend session for a claimed proof job.
+    async fn record_proof_session(
+        &self,
+        request: RecordProofSessionRequest,
+    ) -> Result<RecordProofSessionResponse, ProverServiceClientError>;
 }
 
 /// JSON-RPC client for prover worker methods.
+///
+/// Idempotent worker operations are wrapped in a `backon` exponential backoff that retries
+/// transient JSON-RPC failures (per [`ProverServiceClientError::is_retryable`]). Retry
+/// behavior is controlled by the [`RetryConfig`] passed at construction time, defaulting
+/// to [`RetryConfig::default`].
 #[derive(Clone, Debug)]
 pub struct ProverWorkerClient {
     inner: HttpClient,
+    retry: RetryConfig,
 }
 
 impl ProverWorkerClient {
-    /// Create a worker client from an existing JSON-RPC HTTP client.
-    pub const fn new(inner: HttpClient) -> Self {
-        Self { inner }
+    /// Create a worker client from an existing JSON-RPC HTTP client. Idempotent worker retries
+    /// use [`RetryConfig::default`]; call [`Self::with_retry_config`] to override.
+    pub fn new(inner: HttpClient) -> Self {
+        Self { inner, retry: RetryConfig::default() }
     }
 
     /// Connect a worker client using the provided configuration.
     pub fn connect(
         config: &ProverServiceClientConfig,
     ) -> Result<Self, ProverServiceClientBuildError> {
-        Ok(Self::new(config.build_http_client()?))
+        Ok(Self::new(config.build_http_client()?).with_retry_config(config.retry_config()))
+    }
+
+    /// Override the retry configuration applied to idempotent worker operations.
+    #[must_use]
+    pub const fn with_retry_config(mut self, retry: RetryConfig) -> Self {
+        self.retry = retry;
+        self
     }
 
     /// Return the underlying JSON-RPC HTTP client.
@@ -60,7 +89,15 @@ impl ProverWorkerClient {
         &self.inner
     }
 
+    /// Return the retry configuration applied to idempotent worker operations.
+    pub const fn retry_config(&self) -> RetryConfig {
+        self.retry
+    }
+
     /// Atomically claim the next available proof job for this worker.
+    ///
+    /// This call is issued exactly once because it mutates server-side job lock state and has no
+    /// idempotency key. Retrying after a lost response could claim and lock another job.
     pub async fn get_next_proof(
         &self,
         request: GetNextProofRequest,
@@ -88,7 +125,25 @@ impl ProverWorkerClient {
             lock_duration_seconds = request.lock_duration_seconds,
             "heartbeating proof job"
         );
-        Ok(self.inner.heartbeat(request).await?)
+        (|| {
+            let request = request.clone();
+
+            async move { Ok(self.inner.heartbeat(request).await?) }
+        })
+        .retry(self.retry.to_backoff_builder())
+        .when(ProverServiceClientError::is_retryable)
+        .notify(|error, delay| {
+            warn!(
+                session_id = %request.session_id,
+                lock_id = %request.lock_id,
+                worker_id = %request.worker_id,
+                lock_duration_seconds = request.lock_duration_seconds,
+                backoff_ms = delay.as_millis(),
+                error = %error,
+                "heartbeat failed; retrying"
+            );
+        })
+        .await
     }
 
     /// Submit a proof result for a proof job.
@@ -102,7 +157,88 @@ impl ProverWorkerClient {
             worker_id = %request.worker_id,
             "submitting proof job result"
         );
-        Ok(self.inner.submit_proof(request).await?)
+        (|| {
+            let request = request.clone();
+
+            async move { Ok(self.inner.submit_proof(request).await?) }
+        })
+        .retry(self.retry.to_backoff_builder())
+        .when(ProverServiceClientError::is_retryable)
+        .notify(|error, delay| {
+            warn!(
+                session_id = %request.session_id,
+                lock_id = %request.lock_id,
+                worker_id = %request.worker_id,
+                backoff_ms = delay.as_millis(),
+                error = %error,
+                "submit proof failed; retrying"
+            );
+        })
+        .await
+    }
+
+    /// Look up the active backend session recorded for a claimed proof job.
+    pub async fn get_proof_session(
+        &self,
+        request: GetProofSessionRequest,
+    ) -> Result<GetProofSessionResponse, ProverServiceClientError> {
+        debug!(
+            session_id = %request.session_id,
+            session_type = ?request.session_type,
+            "looking up backend session"
+        );
+        (|| {
+            let request = request.clone();
+
+            async move { Ok(self.inner.get_proof_session(request).await?) }
+        })
+        .retry(self.retry.to_backoff_builder())
+        .when(ProverServiceClientError::is_retryable)
+        .notify(|error, delay| {
+            warn!(
+                session_id = %request.session_id,
+                session_type = ?request.session_type,
+                backoff_ms = delay.as_millis(),
+                error = %error,
+                "get proof session failed; retrying"
+            );
+        })
+        .await
+    }
+
+    /// Record (insert or update) the backend session for a claimed proof job.
+    pub async fn record_proof_session(
+        &self,
+        request: RecordProofSessionRequest,
+    ) -> Result<RecordProofSessionResponse, ProverServiceClientError> {
+        debug!(
+            session_id = %request.session_id,
+            lock_id = %request.lock_id,
+            worker_id = %request.worker_id,
+            session_type = ?request.session_type,
+            backend_session_id = %request.backend_session_id,
+            "recording backend session"
+        );
+        (|| {
+            let request = request.clone();
+
+            async move { Ok(self.inner.record_proof_session(request).await?) }
+        })
+        .retry(self.retry.to_backoff_builder())
+        .when(ProverServiceClientError::is_retryable)
+        .notify(|error, delay| {
+            warn!(
+                session_id = %request.session_id,
+                lock_id = %request.lock_id,
+                worker_id = %request.worker_id,
+                session_type = ?request.session_type,
+                backend_session_id = %request.backend_session_id,
+                backoff_ms = delay.as_millis(),
+                error = %error,
+                "record proof session failed; retrying"
+            );
+        })
+        .await
     }
 }
 
@@ -128,25 +264,47 @@ impl ProverWorkerProvider for ProverWorkerClient {
     ) -> Result<WorkerSubmitProofResponse, ProverServiceClientError> {
         Self::submit_proof(self, request).await
     }
+
+    async fn get_proof_session(
+        &self,
+        request: GetProofSessionRequest,
+    ) -> Result<GetProofSessionResponse, ProverServiceClientError> {
+        Self::get_proof_session(self, request).await
+    }
+
+    async fn record_proof_session(
+        &self,
+        request: RecordProofSessionRequest,
+    ) -> Result<RecordProofSessionResponse, ProverServiceClientError> {
+        Self::record_proof_session(self, request).await
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::VecDeque,
         net::SocketAddr,
-        sync::{Arc, Mutex},
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicU32, Ordering},
+        },
+        time::Duration,
     };
 
     use base_prover_service_protocol::{
+        BackendSession, BackendSessionState, GetProofSessionRequest, GetProofSessionResponse,
         ProofJob, ProofJobStatus, ProofRequest, ProofRequestKind, ProofResult, ProofType,
-        ProverWorkerApiServer, ZkProofRequest, ZkProofResult, ZkVm,
+        ProverWorkerApiServer, RecordProofSessionRequest, RecordProofSessionResponse, SessionType,
+        ZkProofRequest, ZkProofResult, ZkVm,
     };
+    use base_retry::RetryConfig;
     use chrono::Utc;
     use jsonrpsee::{
         core::{RpcResult, async_trait, client::Error as JsonRpcClientError},
         http_client::HttpClientBuilder,
         server::{Server, ServerHandle},
-        types::ErrorObjectOwned,
+        types::{ErrorObjectOwned, error::ErrorCode},
     };
 
     use super::{
@@ -156,10 +314,27 @@ mod tests {
     };
     use crate::ProverServiceClientError;
 
+    #[derive(Debug)]
+    enum ScriptedOutcome {
+        Retryable,
+        Fatal,
+        Success,
+    }
+
     #[derive(Clone, Debug)]
     struct MockWorkerApi {
         state: Arc<Mutex<MockWorkerState>>,
         reject_heartbeat: bool,
+        get_next_script: Arc<Mutex<VecDeque<ScriptedOutcome>>>,
+        heartbeat_script: Arc<Mutex<VecDeque<ScriptedOutcome>>>,
+        submit_script: Arc<Mutex<VecDeque<ScriptedOutcome>>>,
+        get_session_script: Arc<Mutex<VecDeque<ScriptedOutcome>>>,
+        record_session_script: Arc<Mutex<VecDeque<ScriptedOutcome>>>,
+        get_next_calls: Arc<AtomicU32>,
+        heartbeat_calls: Arc<AtomicU32>,
+        submit_calls: Arc<AtomicU32>,
+        get_session_calls: Arc<AtomicU32>,
+        record_session_calls: Arc<AtomicU32>,
     }
 
     #[derive(Debug, Default)]
@@ -180,11 +355,66 @@ mod tests {
             Self {
                 state: Arc::new(Mutex::new(MockWorkerState::default())),
                 reject_heartbeat: false,
+                get_next_script: Arc::new(Mutex::new(VecDeque::new())),
+                heartbeat_script: Arc::new(Mutex::new(VecDeque::new())),
+                submit_script: Arc::new(Mutex::new(VecDeque::new())),
+                get_session_script: Arc::new(Mutex::new(VecDeque::new())),
+                record_session_script: Arc::new(Mutex::new(VecDeque::new())),
+                get_next_calls: Arc::new(AtomicU32::new(0)),
+                heartbeat_calls: Arc::new(AtomicU32::new(0)),
+                submit_calls: Arc::new(AtomicU32::new(0)),
+                get_session_calls: Arc::new(AtomicU32::new(0)),
+                record_session_calls: Arc::new(AtomicU32::new(0)),
             }
         }
 
         fn rejecting_heartbeat() -> Self {
-            Self { state: Arc::new(Mutex::new(MockWorkerState::default())), reject_heartbeat: true }
+            let mut api = Self::new();
+            api.reject_heartbeat = true;
+            api
+        }
+
+        fn queue_get_next_outcomes<I: IntoIterator<Item = ScriptedOutcome>>(&self, outcomes: I) {
+            self.get_next_script.lock().expect("script lock").extend(outcomes);
+        }
+
+        fn queue_heartbeat_outcomes<I: IntoIterator<Item = ScriptedOutcome>>(&self, outcomes: I) {
+            self.heartbeat_script.lock().expect("script lock").extend(outcomes);
+        }
+
+        fn queue_submit_outcomes<I: IntoIterator<Item = ScriptedOutcome>>(&self, outcomes: I) {
+            self.submit_script.lock().expect("script lock").extend(outcomes);
+        }
+
+        fn queue_get_session_outcomes<I: IntoIterator<Item = ScriptedOutcome>>(&self, outcomes: I) {
+            self.get_session_script.lock().expect("script lock").extend(outcomes);
+        }
+
+        fn queue_record_session_outcomes<I: IntoIterator<Item = ScriptedOutcome>>(
+            &self,
+            outcomes: I,
+        ) {
+            self.record_session_script.lock().expect("script lock").extend(outcomes);
+        }
+
+        fn get_next_calls(&self) -> u32 {
+            self.get_next_calls.load(Ordering::SeqCst)
+        }
+
+        fn heartbeat_calls(&self) -> u32 {
+            self.heartbeat_calls.load(Ordering::SeqCst)
+        }
+
+        fn submit_calls(&self) -> u32 {
+            self.submit_calls.load(Ordering::SeqCst)
+        }
+
+        fn get_session_calls(&self) -> u32 {
+            self.get_session_calls.load(Ordering::SeqCst)
+        }
+
+        fn record_session_calls(&self) -> u32 {
+            self.record_session_calls.load(Ordering::SeqCst)
         }
     }
 
@@ -194,8 +424,20 @@ mod tests {
             &self,
             request: GetNextProofRequest,
         ) -> RpcResult<GetNextProofResponse> {
+            self.get_next_calls.fetch_add(1, Ordering::SeqCst);
             self.state.lock().expect("state lock should not be poisoned").get_next_request =
                 Some(request.clone());
+
+            match self.get_next_script.lock().expect("script lock").pop_front() {
+                Some(ScriptedOutcome::Retryable) => {
+                    return Err(unavailable_error("scripted get_next_proof retryable failure"));
+                }
+                Some(ScriptedOutcome::Fatal) => {
+                    return Err(invalid_params_error("scripted get_next_proof fatal failure"));
+                }
+                None | Some(ScriptedOutcome::Success) => {}
+            }
+
             let session_id = format!("session-for-{}", request.worker_id);
 
             Ok(GetNextProofResponse {
@@ -210,8 +452,19 @@ mod tests {
         }
 
         async fn heartbeat(&self, request: HeartbeatRequest) -> RpcResult<HeartbeatResponse> {
+            self.heartbeat_calls.fetch_add(1, Ordering::SeqCst);
             self.state.lock().expect("state lock should not be poisoned").heartbeat_request =
                 Some(request.clone());
+
+            match self.heartbeat_script.lock().expect("script lock").pop_front() {
+                Some(ScriptedOutcome::Retryable) => {
+                    return Err(unavailable_error("scripted heartbeat retryable failure"));
+                }
+                Some(ScriptedOutcome::Fatal) => {
+                    return Err(invalid_params_error("scripted heartbeat fatal failure"));
+                }
+                None | Some(ScriptedOutcome::Success) => {}
+            }
 
             if self.reject_heartbeat {
                 return Err(ErrorObjectOwned::owned(
@@ -239,8 +492,19 @@ mod tests {
             &self,
             request: WorkerSubmitProofRequest,
         ) -> RpcResult<WorkerSubmitProofResponse> {
+            self.submit_calls.fetch_add(1, Ordering::SeqCst);
             self.state.lock().expect("state lock should not be poisoned").submit_request =
                 Some(request.clone());
+
+            match self.submit_script.lock().expect("script lock").pop_front() {
+                Some(ScriptedOutcome::Retryable) => {
+                    return Err(unavailable_error("scripted submit_proof retryable failure"));
+                }
+                Some(ScriptedOutcome::Fatal) => {
+                    return Err(invalid_params_error("scripted submit_proof fatal failure"));
+                }
+                None | Some(ScriptedOutcome::Success) => {}
+            }
 
             Ok(WorkerSubmitProofResponse {
                 job: proof_job(
@@ -252,10 +516,66 @@ mod tests {
                 ),
             })
         }
+
+        async fn get_proof_session(
+            &self,
+            request: GetProofSessionRequest,
+        ) -> RpcResult<GetProofSessionResponse> {
+            self.get_session_calls.fetch_add(1, Ordering::SeqCst);
+
+            match self.get_session_script.lock().expect("script lock").pop_front() {
+                Some(ScriptedOutcome::Retryable) => {
+                    return Err(unavailable_error("scripted get_proof_session retryable failure"));
+                }
+                Some(ScriptedOutcome::Fatal) => {
+                    return Err(invalid_params_error("scripted get_proof_session fatal failure"));
+                }
+                None | Some(ScriptedOutcome::Success) => {}
+            }
+
+            Ok(GetProofSessionResponse {
+                session: Some(BackendSession {
+                    backend_session_id: format!("backend-for-{}", request.session_id),
+                    state: BackendSessionState::Running,
+                }),
+            })
+        }
+
+        async fn record_proof_session(
+            &self,
+            request: RecordProofSessionRequest,
+        ) -> RpcResult<RecordProofSessionResponse> {
+            self.record_session_calls.fetch_add(1, Ordering::SeqCst);
+
+            match self.record_session_script.lock().expect("script lock").pop_front() {
+                Some(ScriptedOutcome::Retryable) => {
+                    return Err(unavailable_error(
+                        "scripted record_proof_session retryable failure",
+                    ));
+                }
+                Some(ScriptedOutcome::Fatal) => {
+                    return Err(invalid_params_error(
+                        "scripted record_proof_session fatal failure",
+                    ));
+                }
+                None | Some(ScriptedOutcome::Success) => {}
+            }
+
+            Ok(RecordProofSessionResponse {
+                session: BackendSession {
+                    backend_session_id: request.backend_session_id,
+                    state: request.state,
+                },
+            })
+        }
     }
 
     impl RunningWorkerServer {
         async fn spawn(api: MockWorkerApi) -> Self {
+            Self::spawn_with_retry(api, RetryConfig::default()).await
+        }
+
+        async fn spawn_with_retry(api: MockWorkerApi, retry: RetryConfig) -> Self {
             let addr: SocketAddr = "127.0.0.1:0".parse().expect("test address should parse");
             let server = Server::builder().build(addr).await.expect("server should bind");
             let local_addr = server.local_addr().expect("server should have local address");
@@ -263,12 +583,74 @@ mod tests {
             let endpoint = format!("http://{local_addr}");
             let inner = HttpClientBuilder::default().build(endpoint).expect("client should build");
 
-            Self { client: ProverWorkerClient::new(inner), handle }
+            Self { client: ProverWorkerClient::new(inner).with_retry_config(retry), handle }
         }
 
         async fn shutdown(self) {
             self.handle.stop().expect("server should stop");
             self.handle.stopped().await;
+        }
+    }
+
+    fn unavailable_error(message: impl Into<String>) -> ErrorObjectOwned {
+        ErrorObjectOwned::owned(
+            ProverServiceClientError::ERROR_UNAVAILABLE,
+            message.into(),
+            None::<()>,
+        )
+    }
+
+    fn invalid_params_error(message: impl Into<String>) -> ErrorObjectOwned {
+        ErrorObjectOwned::owned(ErrorCode::InvalidParams.code(), message.into(), None::<()>)
+    }
+
+    fn fast_retry_config() -> RetryConfig {
+        RetryConfig::new(3, Duration::from_millis(1), Duration::from_millis(1))
+    }
+
+    fn sample_get_next_request(worker_id: &str) -> GetNextProofRequest {
+        GetNextProofRequest {
+            worker_id: worker_id.to_owned(),
+            proof_type: ProofType::Compressed,
+            tee_kinds: Vec::new(),
+            zk_vms: vec![ZkVm::Sp1],
+            lock_duration_seconds: 60,
+        }
+    }
+
+    fn sample_heartbeat_request(session_id: &str) -> HeartbeatRequest {
+        HeartbeatRequest {
+            session_id: session_id.to_owned(),
+            lock_id: "lock-heartbeat".to_owned(),
+            worker_id: "worker-heartbeat".to_owned(),
+            lock_duration_seconds: 30,
+        }
+    }
+
+    fn sample_submit_request(session_id: &str) -> WorkerSubmitProofRequest {
+        WorkerSubmitProofRequest {
+            session_id: session_id.to_owned(),
+            lock_id: "lock-submit".to_owned(),
+            worker_id: "worker-submit".to_owned(),
+            result: proof_result(),
+        }
+    }
+
+    fn sample_get_session_request(session_id: &str) -> GetProofSessionRequest {
+        GetProofSessionRequest {
+            session_id: session_id.to_owned(),
+            session_type: SessionType::Stark,
+        }
+    }
+
+    fn sample_record_session_request(session_id: &str) -> RecordProofSessionRequest {
+        RecordProofSessionRequest {
+            session_id: session_id.to_owned(),
+            lock_id: "lock-record".to_owned(),
+            worker_id: "worker-record".to_owned(),
+            session_type: SessionType::Stark,
+            backend_session_id: "backend-record".to_owned(),
+            state: BackendSessionState::Running,
         }
     }
 
@@ -299,7 +681,7 @@ mod tests {
 
     fn proof_request(session_id: impl Into<String>) -> ProofRequest {
         ProofRequest {
-            session_id: Some(session_id.into()),
+            session_id: session_id.into(),
             request: ProofRequestKind::Compressed(ZkProofRequest {
                 start_block_number: 10,
                 number_of_blocks_to_prove: 2,
@@ -312,7 +694,11 @@ mod tests {
     }
 
     fn proof_result() -> ProofResult {
-        ProofResult::Compressed(ZkProofResult { zk_vm: ZkVm::Sp1, proof: vec![1, 2, 3].into() })
+        ProofResult::Compressed(ZkProofResult {
+            zk_vm: ZkVm::Sp1,
+            proof: vec![1, 2, 3].into(),
+            execution_stats: None,
+        })
     }
 
     #[tokio::test]
@@ -334,7 +720,7 @@ mod tests {
             .expect("get_next_proof should succeed");
         let claim_job = get_next_response.job.expect("get next response should include a job");
         assert_eq!(claim_job.session_id, "session-for-worker-claim");
-        assert_eq!(claim_job.request.session_id.as_deref(), Some("session-for-worker-claim"));
+        assert_eq!(claim_job.request.session_id, "session-for-worker-claim");
         assert_eq!(claim_job.status, ProofJobStatus::Claimed);
         assert_eq!(claim_job.lock_id.as_deref(), Some("lock-claim"));
         assert_eq!(claim_job.worker_id.as_deref(), Some("worker-claim"));
@@ -348,7 +734,7 @@ mod tests {
         let heartbeat_response =
             provider.heartbeat(heartbeat_request.clone()).await.expect("heartbeat should succeed");
         assert_eq!(heartbeat_response.job.session_id, "session-heartbeat");
-        assert_eq!(heartbeat_response.job.request.session_id.as_deref(), Some("session-heartbeat"));
+        assert_eq!(heartbeat_response.job.request.session_id, "session-heartbeat");
         assert_eq!(heartbeat_response.job.lock_id.as_deref(), Some("lock-heartbeat"));
         assert_eq!(heartbeat_response.job.worker_id.as_deref(), Some("worker-heartbeat"));
 
@@ -363,7 +749,7 @@ mod tests {
             .await
             .expect("submit_proof should succeed");
         assert_eq!(submit_response.job.session_id, "session-submit");
-        assert_eq!(submit_response.job.request.session_id.as_deref(), Some("session-submit"));
+        assert_eq!(submit_response.job.request.session_id, "session-submit");
         assert_eq!(submit_response.job.status, ProofJobStatus::Succeeded);
         assert_eq!(submit_response.job.lock_id.as_deref(), Some("lock-submit"));
         assert_eq!(submit_response.job.worker_id.as_deref(), Some("worker-submit"));
@@ -404,6 +790,144 @@ mod tests {
             }
             other => panic!("unexpected error variant: {other:?}"),
         }
+
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn worker_does_not_retry_retryable_get_next_proof() {
+        let api = MockWorkerApi::new();
+        api.queue_get_next_outcomes([ScriptedOutcome::Retryable, ScriptedOutcome::Success]);
+        let api_clone = api.clone();
+        let server = RunningWorkerServer::spawn_with_retry(api, fast_retry_config()).await;
+
+        let err = server
+            .client
+            .get_next_proof(sample_get_next_request("worker-retry"))
+            .await
+            .expect_err("get_next_proof retryable error should not be retried");
+
+        assert!(err.is_retryable());
+        assert_eq!(api_clone.get_next_calls(), 1);
+
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn worker_retries_retryable_heartbeat_until_success() {
+        let api = MockWorkerApi::new();
+        api.queue_heartbeat_outcomes([ScriptedOutcome::Retryable, ScriptedOutcome::Success]);
+        let api_clone = api.clone();
+        let server = RunningWorkerServer::spawn_with_retry(api, fast_retry_config()).await;
+
+        let response = server
+            .client
+            .heartbeat(sample_heartbeat_request("session-heartbeat-retry"))
+            .await
+            .expect("heartbeat should succeed after retry");
+
+        assert_eq!(response.job.session_id, "session-heartbeat-retry");
+        assert_eq!(api_clone.heartbeat_calls(), 2);
+
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn worker_retries_retryable_submit_proof_until_success() {
+        let api = MockWorkerApi::new();
+        api.queue_submit_outcomes([ScriptedOutcome::Retryable, ScriptedOutcome::Success]);
+        let api_clone = api.clone();
+        let server = RunningWorkerServer::spawn_with_retry(api, fast_retry_config()).await;
+
+        let response = server
+            .client
+            .submit_proof(sample_submit_request("session-submit-retry"))
+            .await
+            .expect("submit_proof should succeed after retry");
+
+        assert_eq!(response.job.session_id, "session-submit-retry");
+        assert_eq!(api_clone.submit_calls(), 2);
+
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn worker_retries_retryable_get_proof_session_until_success() {
+        let api = MockWorkerApi::new();
+        api.queue_get_session_outcomes([ScriptedOutcome::Retryable, ScriptedOutcome::Success]);
+        let api_clone = api.clone();
+        let server = RunningWorkerServer::spawn_with_retry(api, fast_retry_config()).await;
+
+        let response = server
+            .client
+            .get_proof_session(sample_get_session_request("session-get-session-retry"))
+            .await
+            .expect("get_proof_session should succeed after retry");
+
+        let session = response.session.expect("backend session should be returned");
+        assert_eq!(session.backend_session_id, "backend-for-session-get-session-retry");
+        assert_eq!(session.state, BackendSessionState::Running);
+        assert_eq!(api_clone.get_session_calls(), 2);
+
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn worker_retries_retryable_record_proof_session_until_success() {
+        let api = MockWorkerApi::new();
+        api.queue_record_session_outcomes([ScriptedOutcome::Retryable, ScriptedOutcome::Success]);
+        let api_clone = api.clone();
+        let server = RunningWorkerServer::spawn_with_retry(api, fast_retry_config()).await;
+
+        let response = server
+            .client
+            .record_proof_session(sample_record_session_request("session-record-retry"))
+            .await
+            .expect("record_proof_session should succeed after retry");
+
+        assert_eq!(response.session.backend_session_id, "backend-record");
+        assert_eq!(response.session.state, BackendSessionState::Running);
+        assert_eq!(api_clone.record_session_calls(), 2);
+
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn worker_propagates_final_error_when_retries_exhausted() {
+        let config = fast_retry_config();
+        let api = MockWorkerApi::new();
+        let total_calls = config.max_attempts.expect("fast retry config should be bounded") + 1;
+        api.queue_submit_outcomes((0..total_calls).map(|_| ScriptedOutcome::Retryable));
+        let api_clone = api.clone();
+        let server = RunningWorkerServer::spawn_with_retry(api, config).await;
+
+        let err = server
+            .client
+            .submit_proof(sample_submit_request("session-exhaust"))
+            .await
+            .expect_err("retries should be exhausted");
+
+        assert!(err.is_retryable());
+        assert_eq!(api_clone.submit_calls(), total_calls);
+
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn worker_does_not_retry_fatal_heartbeat() {
+        let api = MockWorkerApi::new();
+        api.queue_heartbeat_outcomes([ScriptedOutcome::Fatal]);
+        let api_clone = api.clone();
+        let server = RunningWorkerServer::spawn_with_retry(api, fast_retry_config()).await;
+
+        let err = server
+            .client
+            .heartbeat(sample_heartbeat_request("session-fatal"))
+            .await
+            .expect_err("fatal error should not be retried");
+
+        assert!(!err.is_retryable());
+        assert_eq!(api_clone.heartbeat_calls(), 1);
 
         server.shutdown().await;
     }

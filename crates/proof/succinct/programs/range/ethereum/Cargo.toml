@@ -18,7 +18,6 @@ sp1-zkvm.workspace = true
 
 # base-succinct
 base-proof-succinct-client-utils.workspace = true
-base-proof-succinct-ethereum-client-utils.workspace = true
 base-proof-succinct-range-utils.workspace = true
 
 # `tracing-subscriber` feature dependencies

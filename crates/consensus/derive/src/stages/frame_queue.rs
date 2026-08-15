@@ -216,7 +216,7 @@ pub(super) mod tests {
     use alloc::vec;
 
     use alloy_eips::BlockNumHash;
-    use base_common_genesis::{HardForkConfig, SystemConfig};
+    use base_common_genesis::{SystemConfig, UpgradeConfig};
 
     use super::*;
     use crate::test_utils::TestFrameQueueProvider;
@@ -322,7 +322,7 @@ pub(super) mod tests {
             crate::frame!(0xFF, 2, vec![0xDD; 50], true),
         ];
         let cfg = RollupConfig {
-            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { holocene_time: Some(0), ..Default::default() },
             ..Default::default()
         };
         let assert = crate::test_utils::FrameQueueBuilder::new()
@@ -339,7 +339,7 @@ pub(super) mod tests {
     async fn test_holocene_single_frame() {
         let frames = [crate::frame!(0xFF, 1, vec![0xDD; 50], true)];
         let cfg = RollupConfig {
-            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { holocene_time: Some(0), ..Default::default() },
             ..Default::default()
         };
         let assert = crate::test_utils::FrameQueueBuilder::new()
@@ -365,7 +365,7 @@ pub(super) mod tests {
             crate::frame!(0xFF, 1, vec![0xDD; 50], true),
         ];
         let cfg = RollupConfig {
-            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { holocene_time: Some(0), ..Default::default() },
             ..Default::default()
         };
         let assert = crate::test_utils::FrameQueueBuilder::new()
@@ -388,7 +388,7 @@ pub(super) mod tests {
             crate::frame!(0xEE, 4, vec![0xDD; 50], false), // Dropped
         ];
         let cfg = RollupConfig {
-            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { holocene_time: Some(0), ..Default::default() },
             ..Default::default()
         };
         let assert = crate::test_utils::FrameQueueBuilder::new()
@@ -414,7 +414,7 @@ pub(super) mod tests {
             crate::frame!(0xFF, 1, vec![0xDD; 50], true),
         ];
         let cfg = RollupConfig {
-            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { holocene_time: Some(0), ..Default::default() },
             ..Default::default()
         };
         let assert = crate::test_utils::FrameQueueBuilder::new()
@@ -443,7 +443,7 @@ pub(super) mod tests {
             crate::frame!(0xFF, 1, vec![0xDD; 50], true),
         ];
         let cfg = RollupConfig {
-            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { holocene_time: Some(0), ..Default::default() },
             ..Default::default()
         };
         let assert = crate::test_utils::FrameQueueBuilder::new()
@@ -469,7 +469,7 @@ pub(super) mod tests {
             crate::frame!(0xFF, 2, vec![0xDD; 50], true),  // Dropped
         ];
         let cfg = RollupConfig {
-            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { holocene_time: Some(0), ..Default::default() },
             ..Default::default()
         };
         let assert = crate::test_utils::FrameQueueBuilder::new()
@@ -496,7 +496,7 @@ pub(super) mod tests {
             crate::frame!(0xFF, 1, vec![0xDD; 50], true),
         ];
         let cfg = RollupConfig {
-            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { holocene_time: Some(0), ..Default::default() },
             ..Default::default()
         };
         let assert = crate::test_utils::FrameQueueBuilder::new()
@@ -523,7 +523,7 @@ pub(super) mod tests {
             crate::frame!(0xFF, 1, vec![0xDD; 50], true),
         ];
         let cfg = RollupConfig {
-            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { holocene_time: Some(0), ..Default::default() },
             ..Default::default()
         };
         let assert = crate::test_utils::FrameQueueBuilder::new()
@@ -550,7 +550,7 @@ pub(super) mod tests {
             crate::frame!(0xFF, 1, vec![0xDD; 50], true),
         ];
         let cfg = RollupConfig {
-            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { holocene_time: Some(0), ..Default::default() },
             ..Default::default()
         };
         let assert = crate::test_utils::FrameQueueBuilder::new()

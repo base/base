@@ -33,6 +33,8 @@ pub struct NetworkHandler {
     pub peer_score_inspector: tokio::time::Interval,
     /// Periodic pruner for expired connection gater state.
     pub gater_pruner: tokio::time::Interval,
+    /// Periodic pruner for pending outbound dials that have timed out.
+    pub pending_dial_pruner: tokio::time::Interval,
     /// A handler for the block signer.
     pub signer: Option<BlockSignerHandler>,
 }
@@ -163,6 +165,9 @@ impl GossipTransport for NetworkHandler {
                 _ = self.gater_pruner.tick() => {
                     self.gossip.connection_gate.prune();
                 }
+                _ = self.pending_dial_pruner.tick() => {
+                    self.gossip.clear_expired_pending_connections();
+                }
             }
         }
     }
@@ -171,6 +176,10 @@ impl GossipTransport for NetworkHandler {
         if self.unsafe_block_signer_sender.send(address).is_err() {
             warn!(target: "network", "Failed to update unsafe block signer address");
         }
+    }
+
+    fn clear_pending_connections(&mut self) -> usize {
+        self.gossip.clear_pending_connections()
     }
 
     fn handle_p2p_rpc(&mut self, request: P2pRpcRequest) {

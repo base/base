@@ -2,7 +2,8 @@ use alloc::string::String;
 
 use alloy_evm::precompiles::PrecompilesMap;
 use alloy_primitives::Address;
-use base_common_chains::BaseUpgrade;
+use base_common_chains::BaseUpgradeExt;
+use base_common_genesis::BaseUpgrade;
 use revm::{
     context::Cfg,
     context_interface::ContextTr,
@@ -13,8 +14,9 @@ use revm::{
 };
 
 use crate::{
-    ActivationRegistry, B20Factory, BasePrecompileSpec, BerylLookup, NoopPrecompileCallObserver,
-    PolicyRegistryPrecompile, PrecompileCallObserver, bls12_381, bn254_pair,
+    ActivationAdminConfig, ActivationRegistry, B20Factory, BasePrecompileSpec, BerylLookup,
+    NonceManager, NoopPrecompileCallObserver, PolicyRegistryPrecompile, PrecompileCallObserver,
+    TxContext, bls12_381, bn254_pair,
 };
 
 /// Base precompile provider.
@@ -36,14 +38,19 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
             BaseUpgrade::Bedrock
             | BaseUpgrade::Regolith
             | BaseUpgrade::Canyon
+            | BaseUpgrade::Delta
             | BaseUpgrade::Ecotone => Precompiles::new(Self::eth_spec(spec.upgrade()).into()),
             BaseUpgrade::Fjord => Self::fjord(),
-            BaseUpgrade::Granite | BaseUpgrade::Holocene => Self::granite(),
+            BaseUpgrade::Granite | BaseUpgrade::Holocene | BaseUpgrade::PectraBlobSchedule => {
+                Self::granite()
+            }
             BaseUpgrade::Isthmus => Self::isthmus(),
             BaseUpgrade::Jovian => Self::jovian(),
             BaseUpgrade::Azul => Self::azul(),
             BaseUpgrade::Beryl => Self::beryl(),
-            BaseUpgrade::Cobalt => Self::cobalt(),
+            // Zombie is a placeholder that never activates; it tracks the latest precompile set so
+            // it evolves with the newest hardfork (keep it grouped with the latest arm).
+            BaseUpgrade::Cobalt | BaseUpgrade::Zombie => Self::cobalt(),
             upgrade => panic!("unsupported Base precompile upgrade: {upgrade}"),
         };
 
@@ -70,7 +77,7 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
     }
 
     /// Converts a Base upgrade into its Ethereum precompile spec.
-    pub const fn eth_spec(upgrade: BaseUpgrade) -> SpecId {
+    pub fn eth_spec(upgrade: BaseUpgrade) -> SpecId {
         upgrade.into_eth_spec()
     }
 
@@ -191,15 +198,27 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
         O: PrecompileCallObserver,
     {
         let mut precompiles = PrecompilesMap::from_static(self.precompiles());
+        // The `observer` only applies to the dynamic, address-derived B-20 token
+        // precompiles resolved at call time via `BerylLookup`. Every directly
+        // installed precompile below — Beryl's factory/registries and Cobalt's
+        // EIP-8130 precompiles alike — uses plain `install`; none is observed, by
+        // design, since metrics are scoped to the B-20 token call path.
         if self.spec.upgrade() >= BaseUpgrade::Beryl {
             B20Factory::install_with_observer(&mut precompiles, observer.clone());
             BerylLookup::install_with_observer(&mut precompiles, observer.clone());
             PolicyRegistryPrecompile::install_with_observer(&mut precompiles, observer.clone());
             ActivationRegistry::install_with_observer(
                 &mut precompiles,
-                self.activation_admin_address,
+                ActivationAdminConfig::new(
+                    self.activation_admin_address,
+                    self.spec.upgrade() >= BaseUpgrade::Cobalt,
+                ),
                 observer,
             );
+        }
+        if self.spec.upgrade() >= BaseUpgrade::Cobalt {
+            TxContext::install(&mut precompiles);
+            NonceManager::install(&mut precompiles);
         }
         precompiles
     }
@@ -253,7 +272,7 @@ mod tests {
     use std::vec;
 
     use alloy_primitives::{Address, B256};
-    use base_common_chains::BaseUpgrade;
+    use base_common_genesis::BaseUpgrade;
     use revm::{
         precompile::{Precompiles, bls12_381_const, bn254, modexp, secp256r1},
         primitives::eip7823,
@@ -261,8 +280,8 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        ActivationRegistryStorage, B20FactoryStorage, B20Variant, BasePrecompiles, bls12_381,
-        bn254_pair,
+        ActivationRegistryStorage, B20FactoryStorage, B20Variant, BasePrecompiles,
+        NonceManagerStorage, TxContextStorage, bls12_381, bn254_pair,
     };
 
     type TestPrecompiles = BasePrecompiles<BaseUpgrade>;
@@ -335,49 +354,37 @@ mod tests {
         let mut bad_input_len = bn254_pair::JOVIAN_MAX_INPUT_SIZE + 1;
         assert!(bad_input_len < bn254_pair::GRANITE_MAX_INPUT_SIZE);
         let input = vec![0u8; bad_input_len];
-        assert!(
-            matches!(
-                bn254_pair_precompile.execute(&input, u64::MAX, 0),
-                Ok(output) if output.halt_reason().is_some()
-            ),
-            "expected halt for oversized bn254 pair input"
-        );
+        assert!(matches!(
+            bn254_pair_precompile.execute(&input, u64::MAX, 0),
+            Ok(output) if output.halt_reason().is_some()
+        ));
 
         let g1_msm = precompiles.precompiles().get(&bls12_381_const::G1_MSM_ADDRESS).unwrap();
         bad_input_len = bls12_381::JOVIAN_G1_MSM_MAX_INPUT_SIZE + 1;
         assert!(bad_input_len < bls12_381::ISTHMUS_G1_MSM_MAX_INPUT_SIZE);
         let input = vec![0u8; bad_input_len];
-        assert!(
-            matches!(
-                g1_msm.execute(&input, u64::MAX, 0),
-                Ok(output) if output.halt_reason().is_some()
-            ),
-            "expected halt for oversized BLS12-381 G1 MSM input"
-        );
+        assert!(matches!(
+            g1_msm.execute(&input, u64::MAX, 0),
+            Ok(output) if output.halt_reason().is_some()
+        ));
 
         let g2_msm = precompiles.precompiles().get(&bls12_381_const::G2_MSM_ADDRESS).unwrap();
         bad_input_len = bls12_381::JOVIAN_G2_MSM_MAX_INPUT_SIZE + 1;
         assert!(bad_input_len < bls12_381::ISTHMUS_G2_MSM_MAX_INPUT_SIZE);
         let input = vec![0u8; bad_input_len];
-        assert!(
-            matches!(
-                g2_msm.execute(&input, u64::MAX, 0),
-                Ok(output) if output.halt_reason().is_some()
-            ),
-            "expected halt for oversized BLS12-381 G2 MSM input"
-        );
+        assert!(matches!(
+            g2_msm.execute(&input, u64::MAX, 0),
+            Ok(output) if output.halt_reason().is_some()
+        ));
 
         let pairing = precompiles.precompiles().get(&bls12_381_const::PAIRING_ADDRESS).unwrap();
         bad_input_len = bls12_381::JOVIAN_PAIRING_MAX_INPUT_SIZE + 1;
         assert!(bad_input_len < bls12_381::ISTHMUS_PAIRING_MAX_INPUT_SIZE);
         let input = vec![0u8; bad_input_len];
-        assert!(
-            matches!(
-                pairing.execute(&input, u64::MAX, 0),
-                Ok(output) if output.halt_reason().is_some()
-            ),
-            "expected halt for oversized BLS12-381 pairing input"
-        );
+        assert!(matches!(
+            pairing.execute(&input, u64::MAX, 0),
+            Ok(output) if output.halt_reason().is_some()
+        ));
     }
 
     #[test]
@@ -574,5 +581,25 @@ mod tests {
         let precompiles = BasePrecompiles::new_with_spec(BaseUpgrade::Beryl).install();
 
         assert!(precompiles.get(&ActivationRegistryStorage::ADDRESS).is_some());
+    }
+
+    #[rstest]
+    #[case::azul(BaseUpgrade::Azul, false)]
+    #[case::beryl(BaseUpgrade::Beryl, false)]
+    #[case::cobalt(BaseUpgrade::Cobalt, true)]
+    fn tx_context_is_installed_at_cobalt(#[case] spec: BaseUpgrade, #[case] expected: bool) {
+        let precompiles = BasePrecompiles::new_with_spec(spec).install();
+
+        assert_eq!(precompiles.get(&TxContextStorage::ADDRESS).is_some(), expected);
+    }
+
+    #[rstest]
+    #[case::azul(BaseUpgrade::Azul, false)]
+    #[case::beryl(BaseUpgrade::Beryl, false)]
+    #[case::cobalt(BaseUpgrade::Cobalt, true)]
+    fn nonce_manager_is_installed_at_cobalt(#[case] spec: BaseUpgrade, #[case] expected: bool) {
+        let precompiles = BasePrecompiles::new_with_spec(spec).install();
+
+        assert_eq!(precompiles.get(&NonceManagerStorage::ADDRESS).is_some(), expected);
     }
 }

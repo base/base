@@ -8,7 +8,7 @@ use ratatui::{
 
 use crate::{
     app::{Action, Resources, View, views::TransactionPane},
-    commands::{
+    output::{
         COLOR_ACTIVE_BORDER, COLOR_ROW_HIGHLIGHTED, COLOR_ROW_SELECTED, block_color,
         block_color_bright, build_gas_bar, format_gas, format_gwei, render_gas_usage_bar,
         time_diff_color, truncate_block_number,

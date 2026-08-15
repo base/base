@@ -17,7 +17,7 @@ use base_prover_service_client::ProofRequesterProvider;
 use base_prover_service_protocol::{GetProofRequest, ProofStatus, SnarkGroth16ProofRequest};
 use tracing::warn;
 
-use crate::ChallengerProofAdapter;
+use crate::{ChallengerMetrics, ChallengerProofAdapter};
 
 /// The kind of proof being generated.
 #[derive(Debug, Clone)]
@@ -25,10 +25,9 @@ pub enum ProofKind {
     /// A TEE (Trusted Execution Environment) attestation proof.
     ///
     /// Carries an optional pre-built ZK fallback request and intent so the
-    /// driver can initiate a ZK proof if the TEE transaction submission fails
-    /// on-chain. The fallback is `None` when building the ZK request failed
-    /// (e.g. `checkpoint_start_block` error); in that case the driver drops
-    /// the entry on TEE submission failure instead of falling back.
+    /// driver can initiate a ZK proof after TEE proof or submission failures.
+    /// The fallback is `None` when building the ZK request failed (e.g.
+    /// `checkpoint_start_block` error); in that case no ZK fallback is possible.
     Tee {
         /// Pre-built ZK request for fallback if TEE submission fails.
         /// `None` when the fallback request could not be constructed.
@@ -51,6 +50,11 @@ impl ProofKind {
     /// Returns `true` if this is a TEE proof.
     pub const fn is_tee(&self) -> bool {
         matches!(self, Self::Tee { .. })
+    }
+
+    /// Returns `true` if this proof has a complete ZK fallback request.
+    pub const fn has_zk_fallback(&self) -> bool {
+        matches!(self, Self::Tee { zk_fallback_request: Some(_), zk_fallback_intent: Some(_) })
     }
 }
 
@@ -102,6 +106,8 @@ pub struct PendingProof {
     pub expected_root: B256,
     /// Number of times this proof has been retried after failure.
     pub retry_count: u32,
+    /// Number of retryable TEE submission failures already retried for this ready proof.
+    pub tee_submit_retry_count: u32,
     /// The intended on-chain dispute action once the proof is ready.
     pub intent: DisputeIntent,
 }
@@ -121,6 +127,7 @@ impl PendingProof {
             invalid_index,
             expected_root,
             retry_count: 0,
+            tee_submit_retry_count: 0,
             intent,
         }
     }
@@ -139,6 +146,7 @@ impl PendingProof {
             invalid_index,
             expected_root,
             retry_count: 0,
+            tee_submit_retry_count: 0,
             intent: DisputeIntent::Nullify,
         }
     }
@@ -157,6 +165,7 @@ impl PendingProof {
             invalid_index,
             expected_root,
             retry_count: 0,
+            tee_submit_retry_count: 0,
             intent,
         }
     }
@@ -260,6 +269,10 @@ impl PendingProofs {
                 limit = ?max_proof_duration,
                 "proof session timed out, will retry"
             );
+            ChallengerMetrics::proof_session_failures_total(
+                ChallengerMetrics::PROOF_FAILURE_TIMEOUT,
+            )
+            .increment(1);
             pending.retry_count += 1;
             pending.phase = ProofPhase::NeedsRetry;
             return Ok(Some(ProofUpdate::NeedsRetry));
@@ -279,6 +292,10 @@ impl PendingProofs {
             ProofStatus::Succeeded => {
                 let Some(result) = response.result else {
                     warn!(game = %game, "proof succeeded without result, treating as retryable failure");
+                    ChallengerMetrics::proof_session_failures_total(
+                        ChallengerMetrics::PROOF_FAILURE_MALFORMED,
+                    )
+                    .increment(1);
                     pending.retry_count += 1;
                     pending.phase = ProofPhase::NeedsRetry;
                     return Ok(Some(ProofUpdate::NeedsRetry));
@@ -299,6 +316,10 @@ impl PendingProofs {
                                     error = %e,
                                     "TEE proof validation failed, falling back to ZK"
                                 );
+                                ChallengerMetrics::proof_session_failures_total(
+                                    ChallengerMetrics::PROOF_FAILURE_TEE_VALIDATION,
+                                )
+                                .increment(1);
                                 pending.retry_count += 1;
                                 pending.phase = ProofPhase::NeedsRetry;
                                 return Ok(Some(ProofUpdate::NeedsRetry));
@@ -314,6 +335,10 @@ impl PendingProofs {
             }
             ProofStatus::Failed => {
                 warn!(game = %game, error_message = ?response.error_message, "proof job failed");
+                ChallengerMetrics::proof_session_failures_total(
+                    ChallengerMetrics::PROOF_FAILURE_FAILED,
+                )
+                .increment(1);
                 pending.retry_count += 1;
                 pending.phase = ProofPhase::NeedsRetry;
                 ProofUpdate::NeedsRetry

@@ -1,6 +1,6 @@
 # Optimistic async forwarding of eth_sendRawTransaction to ingress-rpc
 # (matches production topology where proxyd sends to mempool nodes and
-# optimistically copies to ingress)
+# optimistically copies to ingress for metering and audit)
 ingress_rpc = "http://ingress-rpc:8080"
 
 [server]
@@ -26,8 +26,9 @@ backends = ["builder"]
 backends = ["client"]
 
 [rpc_method_mappings]
-# Transaction submission routed to builder; proxyd optimistically forwards
-# eth_sendRawTransaction to ingress-rpc via the ingress_rpc config above.
+# Transaction submission routed to builder; proxyd optimistically copies
+# eth_sendRawTransaction to ingress-rpc for metering and audit via the
+# ingress_rpc config above.
 eth_sendRawTransaction = "builder"
 
 # All other methods routed to client

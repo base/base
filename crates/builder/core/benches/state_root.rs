@@ -10,7 +10,7 @@
 //! - `per_flashblock` (`calculate_state_root = true`) — state root
 //!   recomputed from scratch after every flashblock.
 //!
-//! The benchmarks use an MDBX-backed [`MdbxProofsStorage`] pre-populated with
+//! The benchmarks use a RocksDB-backed [`RocksdbProofsStorage`] pre-populated with
 //! 50k base-state accounts so that state root computation exercises real disk
 //! I/O through the production trie overlay path.
 //!
@@ -25,7 +25,7 @@ use std::{hint::black_box, sync::Arc};
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, U256, keccak256};
 use base_execution_trie::{
-    BaseProofsInitialStateStore, BaseProofsStorage, MdbxProofsStorage,
+    BaseProofsInitialStateStore, BaseProofsStorage, RocksdbProofsStorage,
     provider::BaseProofsStateProviderRef,
 };
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
@@ -41,7 +41,7 @@ const FLASHBLOCKS: usize = 10;
 /// Storage slots per account.
 const SLOTS_PER_ACCOUNT: usize = 5;
 
-/// Number of pre-existing accounts in the MDBX base state.
+/// Number of pre-existing accounts in the `RocksDB` base state.
 ///
 /// This simulates a realistic chain state where the trie already contains
 /// existing accounts before any flashblock deltas are applied.
@@ -105,12 +105,13 @@ fn setup_flashblock_data(
     (deltas, full_state)
 }
 
-/// Creates an MDBX-backed proofs storage pre-populated with [`BASE_STATE_ACCOUNTS`]
+/// Creates a RocksDB-backed proofs storage pre-populated with [`BASE_STATE_ACCOUNTS`]
 /// accounts and their storage slots. Returns the temp directory handle (must be
 /// kept alive) and the wrapped storage.
-fn create_populated_storage() -> (TempDir, BaseProofsStorage<Arc<MdbxProofsStorage>>) {
+fn create_populated_storage() -> (TempDir, BaseProofsStorage<Arc<RocksdbProofsStorage>>) {
     let dir = TempDir::new().expect("failed to create temp dir");
-    let mdbx = Arc::new(MdbxProofsStorage::new(dir.path()).expect("failed to create MDBX storage"));
+    let rocksdb =
+        Arc::new(RocksdbProofsStorage::new(dir.path()).expect("failed to create RocksDB storage"));
 
     // Generate base state accounts.
     let mut rng = StdRng::seed_from_u64(42);
@@ -119,19 +120,21 @@ fn create_populated_storage() -> (TempDir, BaseProofsStorage<Arc<MdbxProofsStora
     // Pre-populate hashed accounts.
     let hashed_accounts: Vec<(B256, Option<Account>)> =
         accounts.iter().map(|(addr, acct, _)| (*addr, Some(*acct))).collect();
-    mdbx.store_hashed_accounts(hashed_accounts).expect("failed to store hashed accounts");
+    rocksdb.store_hashed_accounts(hashed_accounts).expect("failed to store hashed accounts");
 
     // Pre-populate hashed storages.
     for (addr, _, slots) in &accounts {
         let slot_data: Vec<(B256, U256)> = slots.iter().map(|(k, v)| (*k, *v)).collect();
-        mdbx.store_hashed_storages(*addr, slot_data).expect("failed to store hashed storages");
+        rocksdb.store_hashed_storages(*addr, slot_data).expect("failed to store hashed storages");
     }
 
     // Set initial state anchor and commit.
-    mdbx.set_initial_state_anchor(BlockNumHash::new(0, B256::ZERO)).expect("failed to set anchor");
-    mdbx.commit_initial_state().expect("failed to commit initial state");
+    rocksdb
+        .set_initial_state_anchor(BlockNumHash::new(0, B256::ZERO))
+        .expect("failed to set anchor");
+    rocksdb.commit_initial_state().expect("failed to commit initial state");
 
-    let storage = BaseProofsStorage::from(mdbx);
+    let storage = BaseProofsStorage::from(rocksdb);
     (dir, storage)
 }
 

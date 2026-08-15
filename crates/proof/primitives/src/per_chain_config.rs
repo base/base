@@ -15,7 +15,7 @@ use alloy_chains::Chain;
 use alloy_eips::eip1898::BlockNumHash;
 use alloy_primitives::{Address, B256, U256, keccak256};
 use base_common_genesis::{
-    ChainGenesis, FeeConfig, HardForkConfig, HardforkConfig, RollupConfig, SystemConfig,
+    BaseUpgradeConfig, ChainGenesis, FeeConfig, RollupConfig, SystemConfig, UpgradeConfig,
 };
 
 const VERSION_0: u64 = 0;
@@ -86,7 +86,7 @@ pub struct Genesis {
 ///
 /// This is the core configuration type that gets hashed to produce a unique
 /// chain identifier. The hash is computed over a fixed 212-byte binary
-/// encoding via [`PerChainConfig::hash`], making it stable across hardfork
+/// encoding via [`PerChainConfig::hash`], making it stable across upgrade
 /// upgrades (which are not included in the encoding).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -185,7 +185,7 @@ impl PerChainConfig {
     /// Compute the `keccak256` hash of the binary-serialized config.
     ///
     /// This produces a deterministic hash suitable for on-chain verification.
-    /// The hash is stable across hardfork upgrades — only genesis anchoring
+    /// The hash is stable across network upgrades — only genesis anchoring
     /// fields and key contract addresses are included in the encoding.
     ///
     /// Note: call [`force_defaults`](Self::force_defaults) first to ensure
@@ -226,7 +226,7 @@ impl PerChainConfig {
             batch_inbox_address: Address::ZERO,
             protocol_versions_address: Address::ZERO,
             blobs_enabled_l1_timestamp: Some(0),
-            hardforks: HardForkConfig {
+            upgrades: UpgradeConfig {
                 regolith_time: Some(0),
                 canyon_time: Some(0),
                 delta_time: Some(0),
@@ -237,7 +237,7 @@ impl PerChainConfig {
                 pectra_blob_schedule_time: None,
                 isthmus_time: Some(0),
                 jovian_time: Some(0),
-                base: HardforkConfig { azul: Some(0), beryl: None, cobalt: None },
+                base: BaseUpgradeConfig { azul: Some(0), beryl: None, cobalt: None },
             },
             chain_op_config: FeeConfig::base_mainnet(),
         }
@@ -403,14 +403,14 @@ mod tests {
     #[test]
     fn test_to_rollup_config_forks_active_at_genesis() {
         let rollup_config = sample_config().to_rollup_config();
-        assert_eq!(rollup_config.hardforks.canyon_time, Some(0));
-        assert_eq!(rollup_config.hardforks.delta_time, Some(0));
-        assert_eq!(rollup_config.hardforks.ecotone_time, Some(0));
-        assert_eq!(rollup_config.hardforks.fjord_time, Some(0));
-        assert_eq!(rollup_config.hardforks.granite_time, Some(0));
-        assert_eq!(rollup_config.hardforks.holocene_time, Some(0));
-        assert_eq!(rollup_config.hardforks.isthmus_time, Some(0));
-        assert_eq!(rollup_config.hardforks.regolith_time, Some(0));
+        assert_eq!(rollup_config.upgrades.canyon_time, Some(0));
+        assert_eq!(rollup_config.upgrades.delta_time, Some(0));
+        assert_eq!(rollup_config.upgrades.ecotone_time, Some(0));
+        assert_eq!(rollup_config.upgrades.fjord_time, Some(0));
+        assert_eq!(rollup_config.upgrades.granite_time, Some(0));
+        assert_eq!(rollup_config.upgrades.holocene_time, Some(0));
+        assert_eq!(rollup_config.upgrades.isthmus_time, Some(0));
+        assert_eq!(rollup_config.upgrades.regolith_time, Some(0));
     }
 
     #[cfg(feature = "serde")]

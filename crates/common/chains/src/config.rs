@@ -4,8 +4,10 @@ use alloy_chains::Chain;
 use alloy_eips::eip1898::BlockNumHash;
 use alloy_primitives::{Address, B256, U256, address, b256, uint};
 use base_common_genesis::{
-    ChainGenesis, FeeConfig, HardForkConfig, HardforkConfig, RollupConfig, SystemConfig,
+    BaseUpgradeConfig, ChainGenesis, FeeConfig, RollupConfig, SystemConfig, UpgradeConfig,
 };
+
+use crate::BaseUpgrade;
 
 /// Complete configuration for a Base chain
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,13 +99,6 @@ pub struct ChainConfig {
     // Roles
     /// Unsafe block signer address.
     pub unsafe_block_signer: Option<Address>,
-    /// Activation registry admin address.
-    ///
-    /// Required and non-zero for all Base chains: every Base chain has Beryl scheduled, and
-    /// Beryl's activation registry precompile needs an admin at genesis. `Address::ZERO` is
-    /// rejected by chainspec validation.
-    pub activation_admin_address: Address,
-
     // Gas limits
     /// Maximum gas limit for L2 blocks.
     pub max_gas_limit: u64,
@@ -143,6 +138,18 @@ impl Bootnodes {
         self.execution.len() + self.consensus.len()
     }
 }
+
+/// Base Mainnet activation registry admin used by Beryl before Cobalt state-backed admin storage.
+pub const MAINNET_BERYL_ACTIVATION_ADMIN_ADDRESS: Address =
+    address!("cE3a3bEE7E72E2A24079f3c0Cb3b97740ED425A9");
+
+/// Base Sepolia activation registry admin used by Beryl before Cobalt state-backed admin storage.
+pub const SEPOLIA_BERYL_ACTIVATION_ADMIN_ADDRESS: Address =
+    address!("5F43072722f59964d886CBb507F6a85ca0759D42");
+
+/// Base Zeronet activation registry admin used by Beryl before Cobalt state-backed admin storage.
+pub const ZERONET_BERYL_ACTIVATION_ADMIN_ADDRESS: Address =
+    address!("F5969A85a555671EeD766C4ff0C61426AA626b11");
 
 impl ChainConfig {
     /// CLI chain name for Base Mainnet.
@@ -220,6 +227,42 @@ impl ChainConfig {
         }
     }
 
+    /// Returns the activation registry admin address seeded for a specific scheduled upgrade.
+    pub const fn activation_admin_address_for_upgrade_by_chain_id(
+        id: u64,
+        upgrade: BaseUpgrade,
+    ) -> Option<Address> {
+        match upgrade {
+            BaseUpgrade::Beryl | BaseUpgrade::Cobalt => {
+                Self::beryl_activation_admin_address_by_chain_id(id)
+            }
+            _ => None,
+        }
+    }
+
+    /// Returns the activation registry admin address seeded for a specific scheduled upgrade.
+    pub const fn activation_admin_address_for_upgrade(
+        &self,
+        upgrade: BaseUpgrade,
+    ) -> Option<Address> {
+        Self::activation_admin_address_for_upgrade_by_chain_id(self.chain_id, upgrade)
+    }
+
+    /// Returns the Beryl activation registry admin address for built-in chains that need one.
+    pub const fn beryl_activation_admin_address_by_chain_id(id: u64) -> Option<Address> {
+        match id {
+            8453 => Some(MAINNET_BERYL_ACTIVATION_ADMIN_ADDRESS),
+            84532 => Some(SEPOLIA_BERYL_ACTIVATION_ADMIN_ADDRESS),
+            763360 => Some(ZERONET_BERYL_ACTIVATION_ADMIN_ADDRESS),
+            _ => None,
+        }
+    }
+
+    /// Returns the Beryl activation registry admin address for this chain, if configured.
+    pub const fn beryl_activation_admin_address(&self) -> Option<Address> {
+        Self::beryl_activation_admin_address_by_chain_id(self.chain_id)
+    }
+
     /// Returns the full [`RollupConfig`] for the given L2 chain ID.
     pub fn rollup_config_by_chain_id(id: u64) -> Option<RollupConfig> {
         Self::by_chain_id(id).map(Self::rollup_config)
@@ -239,9 +282,9 @@ impl ChainConfig {
         }
     }
 
-    /// Returns the [`HardForkConfig`] (Base upgrade activation timestamps) for this chain.
-    pub const fn hardfork_config(&self) -> HardForkConfig {
-        HardForkConfig {
+    /// Returns the [`UpgradeConfig`] (Base upgrade activation timestamps) for this chain.
+    pub const fn upgrade_config(&self) -> UpgradeConfig {
+        UpgradeConfig {
             regolith_time: Some(self.regolith_timestamp),
             canyon_time: Some(self.canyon_timestamp),
             delta_time: Some(self.delta_timestamp),
@@ -252,7 +295,7 @@ impl ChainConfig {
             pectra_blob_schedule_time: self.pectra_blob_schedule_timestamp,
             isthmus_time: Some(self.isthmus_timestamp),
             jovian_time: Some(self.jovian_timestamp),
-            base: HardforkConfig {
+            base: BaseUpgradeConfig {
                 azul: self.azul_timestamp,
                 beryl: self.beryl_timestamp,
                 cobalt: self.cobalt_timestamp,
@@ -294,7 +337,7 @@ impl ChainConfig {
             granite_channel_timeout: RollupConfig::GRANITE_CHANNEL_TIMEOUT,
             l1_chain_id: self.l1_chain_id,
             l2_chain_id: Chain::from_id(self.chain_id),
-            hardforks: self.hardfork_config(),
+            upgrades: self.upgrade_config(),
             batch_inbox_address: self.batch_inbox_address,
             deposit_contract_address: self.deposit_contract_address,
             l1_system_config_address: self.system_config_address,
@@ -311,9 +354,9 @@ impl From<&ChainConfig> for FeeConfig {
     }
 }
 
-impl From<&ChainConfig> for HardForkConfig {
+impl From<&ChainConfig> for UpgradeConfig {
     fn from(cfg: &ChainConfig) -> Self {
-        cfg.hardfork_config()
+        cfg.upgrade_config()
     }
 }
 
@@ -373,7 +416,6 @@ const MAINNET: ChainConfig = ChainConfig {
     protocol_versions_address: address!("8062abc286f5e7d9428a0ccb9abd71e50d93b935"),
 
     unsafe_block_signer: Some(address!("Af6E19BE0F9cE7f8afd49a1824851023A8249e8a")),
-    activation_admin_address: address!("cE3a3bEE7E72E2A24079f3c0Cb3b97740ED425A9"),
 
     max_gas_limit: 105_000_000,
     prune_delete_limit: 20_000,
@@ -447,7 +489,6 @@ const SEPOLIA: ChainConfig = ChainConfig {
     protocol_versions_address: address!("79add5713b383daa0a138d3c4780c7a1804a8090"),
 
     unsafe_block_signer: Some(address!("b830b99c95Ea32300039624Cb567d324D4b1D83C")),
-    activation_admin_address: address!("5F43072722f59964d886CBb507F6a85ca0759D42"),
 
     max_gas_limit: 45_000_000,
     prune_delete_limit: 10_000,
@@ -512,7 +553,6 @@ const DEVNET: ChainConfig = ChainConfig {
     protocol_versions_address: Address::ZERO,
 
     unsafe_block_signer: None,
-    activation_admin_address: address!("9965507D1a55bcC2695C58ba16FB37d819B0A4dc"),
 
     max_gas_limit: 30_000_000,
     prune_delete_limit: 20_000,
@@ -542,15 +582,15 @@ const ZERONET: ChainConfig = ChainConfig {
     pectra_blob_schedule_timestamp: None,
     isthmus_timestamp: 0,
     jovian_timestamp: 0,
-    azul_timestamp: Some(1_775_152_800),
-    beryl_timestamp: Some(1_780_678_800),
+    azul_timestamp: Some(1_782_348_888),
+    beryl_timestamp: Some(1_782_349_188),
     cobalt_timestamp: None,
 
-    genesis_l1_hash: b256!("b7d4b69971ff31d5179be5e1b83f5a4f438f4cd1db886a6630623b7047f32cfd"),
-    genesis_l1_number: 2_450_277,
-    genesis_l2_hash: b256!("1842d6ef4c40e2a4794458e167f6d327269df919b626979111c37ad3a96047bf"),
+    genesis_l1_hash: b256!("acb2c60e3887888b5111b05c8d8f32e2761c7d4a0f10562d199253ab072c3a71"),
+    genesis_l1_number: 3_083_762,
+    genesis_l2_hash: b256!("572a15dd7e69df35913f7f2217376609fc20d59276169977de92c01684637162"),
     genesis_l2_number: 0,
-    genesis_l2_time: 1_773_959_340,
+    genesis_l2_time: 1_782_348_588,
     genesis_batcher_address: address!("4c810fec547f6c143db51953af51a1de79bead21"),
     genesis_overhead: U256::ZERO,
     genesis_scalar: uint!(0x010000000000000000000000000000000000000000000000000c3c9d00000558_U256),
@@ -561,12 +601,11 @@ const ZERONET: ChainConfig = ChainConfig {
     eip1559_denominator_canyon: 250,
 
     batch_inbox_address: address!("00975f9c430b216f84ec52374d7f5eb8eec3139a"),
-    deposit_contract_address: address!("7b9fb81a8e041814903c9385b22d88ac303df699"),
-    system_config_address: address!("cc7c76564bea74a963a0bd75e0bc9bce3ff0ea80"),
+    deposit_contract_address: address!("7e3b97c95c823f385ff6770411f6e12f8e09ac9b"),
+    system_config_address: address!("0a111c7980152bde41d71f48e2e1d8184f5f6187"),
     protocol_versions_address: address!("646c8604cf62b23e0cf094f2e790c6c75547ff85"),
 
     unsafe_block_signer: Some(address!("cf17274338d3128f6C96d9af54511a17e8b38a08")),
-    activation_admin_address: address!("F5969A85a555671EeD766C4ff0C61426AA626b11"),
 
     max_gas_limit: 25_000_000,
     prune_delete_limit: 10_000,
@@ -621,9 +660,28 @@ mod tests {
 
     #[test]
     fn zeronet_beryl_is_scheduled() {
-        assert_eq!(ChainConfig::zeronet().beryl_timestamp, Some(1_780_678_800));
-        assert_eq!(ChainConfig::zeronet().hardfork_config().base.beryl, Some(1_780_678_800));
+        assert_eq!(ChainConfig::zeronet().beryl_timestamp, Some(1_782_349_188));
+        assert_eq!(ChainConfig::zeronet().upgrade_config().base.beryl, Some(1_782_349_188));
         assert_eq!(ChainConfig::zeronet().cobalt_timestamp, None);
-        assert_eq!(ChainConfig::zeronet().hardfork_config().base.cobalt, None);
+        assert_eq!(ChainConfig::zeronet().upgrade_config().base.cobalt, None);
+    }
+
+    #[test]
+    fn generic_upgrade_admin_seed_matches_beryl_mapping() {
+        assert_eq!(
+            ChainConfig::activation_admin_address_for_upgrade_by_chain_id(8453, BaseUpgrade::Beryl),
+            ChainConfig::beryl_activation_admin_address_by_chain_id(8453)
+        );
+        assert_eq!(
+            ChainConfig::activation_admin_address_for_upgrade_by_chain_id(
+                8453,
+                BaseUpgrade::Cobalt
+            ),
+            ChainConfig::beryl_activation_admin_address_by_chain_id(8453)
+        );
+        assert_eq!(
+            ChainConfig::activation_admin_address_for_upgrade_by_chain_id(84532, BaseUpgrade::Azul),
+            None
+        );
     }
 }

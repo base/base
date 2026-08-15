@@ -13,18 +13,31 @@ base_metrics::define_metrics! {
     #[no_zero]
     last_proposed_block: gauge,
 
-    #[describe("Proof tasks currently in flight")]
-    inflight_proofs: gauge,
+    #[describe("Highest L2 block number for which a proof has been polled Ready by the collector")]
+    #[no_zero]
+    last_collected_block: gauge,
 
-    #[describe("Proved results awaiting sequential submission")]
-    proved_queue_depth: gauge,
+    #[describe("Total proof dispatch outcomes from the prover service")]
+    #[label(name = "outcome", default = ["accepted", "failed", "build_failed"])]
+    proof_dispatch_total: counter,
 
-    #[describe("Total pending retries across all target blocks")]
-    pipeline_retries: gauge,
+    #[describe("Total proof collection outcomes returned by the proof collector")]
+    #[label(name = "outcome", default = ["ready", "failed"])]
+    proof_collection_total: counter,
 
-    #[describe("Latest safe (or finalized) L2 block number")]
+    #[describe("Total proof statuses received when polling the prover service")]
+    #[label(name = "status", default = ["queued", "running", "succeeded", "failed"])]
+    proof_status_received_total: counter,
+
+    // `safe_head` is kept as a deprecated alias for a zero-downtime metric rename;
+    // drop it once every Datadog monitor/dashboard uses `finalized_head`.
+    #[describe("Deprecated alias of finalized_head. Latest finalized L2 block number")]
     #[no_zero]
     safe_head: gauge,
+
+    #[describe("Latest finalized L2 block number")]
+    #[no_zero]
+    finalized_head: gauge,
 
     #[describe("Total number of L2 output proposals submitted")]
     l2_output_proposals_total: counter,
@@ -43,7 +56,8 @@ base_metrics::define_metrics! {
             "config",
             "internal",
             "tx_manager",
-            "game_already_exists"
+            "game_already_exists",
+            "proof_already_verified"
         ]
     )]
     errors_total: counter,
@@ -51,11 +65,17 @@ base_metrics::define_metrics! {
     #[describe("Total output root mismatches detected at submit time")]
     root_mismatch_total: counter,
 
+    #[describe("Total inline submit attempts that exceeded the submit timeout")]
+    submit_timeouts_total: counter,
+
     #[describe("Time to generate a single proof (seconds)")]
     proof_duration_seconds: histogram,
 
     #[describe("Time for one pipeline tick (seconds)")]
     tick_duration_seconds: histogram,
+
+    #[describe("Time for one collector tick (seconds)")]
+    collector_tick_duration_seconds: histogram,
 
     #[describe("Total time to validate and submit a proposal (seconds)")]
     proposal_total_duration_seconds: histogram,
@@ -65,6 +85,36 @@ base_metrics::define_metrics! {
 }
 
 impl Metrics {
+    /// Label value for an accepted dispatch outcome.
+    pub const DISPATCH_OUTCOME_ACCEPTED: &str = "accepted";
+
+    /// Label value for a failed dispatch outcome.
+    pub const DISPATCH_OUTCOME_FAILED: &str = "failed";
+
+    /// Label value for a dispatch attempt that failed before reaching the
+    /// prover service (e.g. while building the request from L1/L2 RPC data).
+    /// Build failures are transient infrastructure errors and do not count
+    /// as prover-service dispatch failures.
+    pub const DISPATCH_OUTCOME_BUILD_FAILED: &str = "build_failed";
+
+    /// Label value for a ready (successfully collected) proof.
+    pub const COLLECTION_OUTCOME_READY: &str = "ready";
+
+    /// Label value for a failed proof collection.
+    pub const COLLECTION_OUTCOME_FAILED: &str = "failed";
+
+    /// Label value for a queued proof status response.
+    pub const PROOF_STATUS_QUEUED: &str = "queued";
+
+    /// Label value for a running proof status response.
+    pub const PROOF_STATUS_RUNNING: &str = "running";
+
+    /// Label value for a succeeded proof status response.
+    pub const PROOF_STATUS_SUCCEEDED: &str = "succeeded";
+
+    /// Label value for a failed proof status response.
+    pub const PROOF_STATUS_FAILED: &str = "failed";
+
     /// Records that the proposer service has started by setting the `up` gauge to 1.
     pub fn record_startup() {
         Self::up().set(1.0);

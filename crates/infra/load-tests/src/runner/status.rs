@@ -18,8 +18,6 @@ pub struct DisplaySnapshot {
     pub confirmed: usize,
     /// Total transactions failed.
     pub failed: u64,
-    /// Total confirmed transactions that reverted.
-    pub reverted: u64,
     /// Total in-flight (unconfirmed) transactions.
     pub in_flight: u64,
     /// Number of senders at the in-flight limit.
@@ -30,14 +28,10 @@ pub struct DisplaySnapshot {
     pub rolling_tps: f64,
     /// Rolling 30s GPS.
     pub rolling_gps: f64,
-    /// Rolling 30s p50 latency.
+    /// Rolling 30s p50 block landing latency.
     pub p50_latency: Duration,
-    /// Rolling 30s p99 latency.
+    /// Rolling 30s p99 block landing latency.
     pub p99_latency: Duration,
-    /// Rolling 30s block receipt delay p50.
-    pub block_receipt_delay_p50: Duration,
-    /// Rolling 30s block receipt delay p99.
-    pub block_receipt_delay_p99: Duration,
     /// Rolling 30s flashblocks p50 latency.
     pub flashblocks_p50_latency: Duration,
     /// Rolling 30s flashblocks p99 latency.
@@ -163,22 +157,12 @@ impl LoadTestDisplay {
             self.header.set_message(format!("Base Load Test  elapsed {elapsed_str}   continuous"));
         }
 
-        self.txs.set_message(if snap.reverted > 0 {
-            format!(
-                "txs     sub {}   conf {}   failed {}   reverted {}",
-                fmt_num(snap.submitted),
-                fmt_num(snap.confirmed as u64),
-                fmt_num(snap.failed),
-                fmt_num(snap.reverted),
-            )
-        } else {
-            format!(
-                "txs     sub {}   conf {}   failed {}",
-                fmt_num(snap.submitted),
-                fmt_num(snap.confirmed as u64),
-                fmt_num(snap.failed),
-            )
-        });
+        self.txs.set_message(format!(
+            "txs     sub {}   conf {}   failed {}",
+            fmt_num(snap.submitted),
+            fmt_num(snap.confirmed as u64),
+            fmt_num(snap.failed),
+        ));
 
         let success_rate = if snap.submitted > 0 {
             snap.confirmed as f64 / snap.submitted as f64 * 100.0
@@ -220,12 +204,10 @@ impl LoadTestDisplay {
         });
 
         self.gas_lat.set_message(format!(
-            "gas     {:.2} gwei   block latency p50 {}   p99 {}   receipt delay p50 {}   p99 {}",
+            "gas     {:.2} gwei   block latency p50 {}   p99 {}",
             snap.gas_price_gwei,
             fmt_latency(snap.p50_latency),
             fmt_latency(snap.p99_latency),
-            fmt_latency(snap.block_receipt_delay_p50),
-            fmt_latency(snap.block_receipt_delay_p99),
         ));
 
         if snap.flashblocks_p50_latency > Duration::ZERO

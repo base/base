@@ -862,7 +862,7 @@ mod tests {
 
         let mut cfg = RollupConfig::default();
         // Force the FCU-with-attrs codepath through V3 (Ecotone active at attr timestamp).
-        cfg.hardforks.ecotone_time = Some(attributes_timestamp);
+        cfg.upgrades.ecotone_time = Some(attributes_timestamp);
 
         let client = Arc::new(
             test_engine_client_builder()

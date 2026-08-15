@@ -106,11 +106,11 @@ async fn test_flashblock_metadata_balances_and_receipts() -> eyre::Result<()> {
     flashblocks_listener.stop().await
 }
 
-/// Verify that post-Base-Azul flashblock metadata contains `access_list` but
-/// omits `receipts` and `new_account_balances`.
+/// Verify that post-Base-Azul flashblock metadata omits `access_list`,
+/// `receipts`, and `new_account_balances`.
 ///
 /// After Base Azul activates the builder stops including per-transaction
-/// receipts and balance diffs, replacing them with a flashblock access list.
+/// receipts and balance diffs.
 #[tokio::test]
 async fn test_flashblock_metadata_post_base_azul() -> eyre::Result<()> {
     let config =

@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -12,12 +12,8 @@ use alloy_primitives::{Address, B256, Bytes, TxHash, U256, utils::format_ether};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
 use alloy_signer_local::PrivateKeySigner;
-use alloy_sol_types::{SolCall, SolValue, sol};
+use alloy_sol_types::{SolCall, sol};
 use base_common_network::Base;
-use base_common_precompiles::{
-    ActivationFeature, ActivationRegistryStorage, B20FactoryStorage, B20TokenRole, B20Variant,
-    IActivationRegistry, IB20, IB20Factory,
-};
 use base_tx_manager::NonceManager;
 use futures::{StreamExt, stream};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -27,12 +23,13 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, instrument, warn};
 
 /// Maximum number of concurrent RPC requests during funding/draining operations.
-const FUNDING_CONCURRENCY: usize = 32;
+pub(super) const FUNDING_CONCURRENCY: usize = 32;
 
 /// Maximum number of TXs to send before waiting for confirmation.
 /// Kept below typical per-sender txpool limits (e.g. reth default is 16) to
 /// avoid "txpool is full" rejections when all TXs originate from one funder.
-const BATCH_SIZE: usize = 16;
+const FUNDING_BATCH_SIZE: usize = 16;
+pub(super) const BATCH_SIZE: usize = FUNDING_BATCH_SIZE;
 
 use super::{
     BlockWatcher, DisplaySnapshot, FlashblockWatcher, LoadConfig, LoadTestDisplay, PreparedBatch,
@@ -44,36 +41,38 @@ use crate::{
     config::{OsakaTarget, WorkloadConfig},
     metrics::{ConfigSummary, MetricsCollector, MetricsSummary},
     rpc::{
-        BatchRpcClient, QueryProvider, RpcProviders, RpcResultExt, TxpoolAdminClient,
+        BaseFeeExt, BatchRpcClient, QueryProvider, RpcProviders, RpcResultExt, TxpoolAdminClient,
         create_wallet_provider,
     },
     workload::{
         AccountPool, AerodromeClPayload, B20TransferPayload, CalldataPayload, Erc20Payload,
-        OsakaPayload, PrecompilePayload, TransferPayload, UniswapV3Payload, WorkloadGenerator,
+        KeyStream, OsakaPayload, PrecompilePayload, SeededRng, StoragePayload, TransferPayload,
+        UniswapV3Payload, WorkloadGenerator,
     },
 };
 
 const NONCE_RPC_TIMEOUT: Duration = Duration::from_secs(10);
 const SUBMIT_DRAIN_TIMEOUT: Duration = Duration::from_secs(60);
 const SUBMIT_WORKER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(12);
-const PENDING_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(60);
-const CONFIRMATION_DRAIN_TIMEOUT: Duration = Duration::from_secs(65);
+const PENDING_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(200);
+const CONFIRMATION_DRAIN_TIMEOUT: Duration = Duration::from_secs(200);
 const TXPOOL_CLEAR_CONCURRENCY: usize = 64;
+const FRESH_RECIPIENT_RNG_SALT: u64 = 0x6672_6573_685f_7263; // "fresh_rc"
 
 /// Executes load tests by generating and submitting transactions at a target rate.
 pub struct LoadRunner {
-    config: LoadConfig,
+    pub(super) config: LoadConfig,
     config_summary: Option<ConfigSummary>,
-    client: QueryProvider,
-    accounts: AccountPool,
-    generator: WorkloadGenerator,
+    pub(super) client: QueryProvider,
+    pub(super) accounts: AccountPool,
+    pub(super) generator: WorkloadGenerator,
     collector: MetricsCollector,
     stop_flag: Arc<AtomicBool>,
     cancel_token: CancellationToken,
     nonce_managers: Arc<HashMap<Address, NonceManager<RootProvider<Ethereum>>>>,
     signers: Arc<HashMap<Address, PrivateKeySigner>>,
     submission_batch_rpcs: Arc<Vec<BatchRpcClient>>,
-    gas_price: u128,
+    base_fee: u128,
     display: Option<LoadTestDisplay>,
     snapshot_tx: Option<watch::Sender<DisplaySnapshot>>,
     last_total_eth: Option<String>,
@@ -81,6 +80,10 @@ pub struct LoadRunner {
     last_funds_low: bool,
     funder_address: Option<String>,
     sender_addresses: Vec<String>,
+    /// Per-run salt for deriving each sender's own B-20 token, set during B-20 setup.
+    pub(super) b20_run_salt: Option<B256>,
+    recipient_keys: Option<KeyStream>,
+    recipient_rng: SeededRng,
 }
 
 impl LoadRunner {
@@ -128,7 +131,7 @@ impl LoadRunner {
         let sender_addresses = accounts.accounts().iter().map(|a| a.address.to_string()).collect();
 
         let workload_config = WorkloadConfig::new("load-test").with_seed(config.seed);
-        let generator = Self::create_generator(workload_config, &config)?;
+        let generator = Self::create_generator(workload_config, &config, None)?;
 
         info!(
             account_count = config.account_count,
@@ -136,6 +139,37 @@ impl LoadRunner {
             submission_rpc_count = submission_batch_rpcs.len(),
             "load runner created"
         );
+
+        let recipient_keys = if config.fresh_recipient_ratio > 0.0 {
+            let offset =
+                config.sender_offset.checked_add(config.account_count).ok_or_else(|| {
+                    BaselineError::Config("sender_offset + account_count overflows usize".into())
+                })?;
+            let stream = if let Some(mnemonic) = &config.mnemonic {
+                let stream = KeyStream::from_mnemonic(mnemonic.clone(), offset)?;
+                info!(
+                    fresh_recipient_ratio = config.fresh_recipient_ratio,
+                    recipient_offset = offset,
+                    "fresh-recipient mode enabled; recover addresses with \
+                     AccountPool::from_mnemonic(mnemonic, n, recipient_offset)",
+                );
+                stream
+            } else {
+                let stream = KeyStream::from_seed(config.seed, offset)?;
+                info!(
+                    seed = config.seed,
+                    fresh_recipient_ratio = config.fresh_recipient_ratio,
+                    recipient_offset = offset,
+                    "fresh-recipient mode enabled; recover addresses with \
+                     AccountPool::with_offset(seed, n, recipient_offset)",
+                );
+                stream
+            };
+            Some(stream)
+        } else {
+            None
+        };
+        let recipient_rng = SeededRng::new(config.seed.wrapping_add(FRESH_RECIPIENT_RNG_SALT));
 
         Ok(Self {
             config,
@@ -149,7 +183,7 @@ impl LoadRunner {
             nonce_managers: Arc::new(HashMap::new()),
             signers,
             submission_batch_rpcs,
-            gas_price: 0,
+            base_fee: 0,
             display: None,
             snapshot_tx: None,
             last_total_eth: None,
@@ -157,7 +191,39 @@ impl LoadRunner {
             last_funds_low: false,
             funder_address: None,
             sender_addresses,
+            b20_run_salt: None,
+            recipient_keys,
+            recipient_rng,
         })
+    }
+
+    /// Builds the workload config used to (re)construct the transaction generator.
+    pub(super) fn workload_config(&self) -> WorkloadConfig {
+        WorkloadConfig::new("load-test").with_seed(self.config.seed)
+    }
+
+    /// Returns instructions for recovering recipients generated in fresh-recipient mode.
+    pub fn recovery_message(&self) -> Option<String> {
+        self.recipient_keys.as_ref().map(KeyStream::recovery_message)
+    }
+
+    /// Returns the number of fresh recipient keys generated so far.
+    pub fn fresh_recipient_count(&self) -> Option<u64> {
+        self.recipient_keys.as_ref().map(KeyStream::generated_count)
+    }
+
+    fn select_recipient(&mut self, sender_pool_recipient: Address) -> Result<Address> {
+        let Some(recipient_keys) = self.recipient_keys.as_mut() else {
+            return Ok(sender_pool_recipient);
+        };
+
+        if self.config.fresh_recipient_ratio >= 1.0
+            || self.recipient_rng.random::<f64>() < self.config.fresh_recipient_ratio
+        {
+            Ok(recipient_keys.next_signer()?.address())
+        } else {
+            Ok(sender_pool_recipient)
+        }
     }
 
     /// Sets the funder wallet address for inclusion in live snapshots.
@@ -175,13 +241,14 @@ impl LoadRunner {
         self.config.txpool_nodes.len()
     }
 
-    fn build_signers(accounts: &AccountPool) -> HashMap<Address, PrivateKeySigner> {
+    pub(super) fn build_signers(accounts: &AccountPool) -> HashMap<Address, PrivateKeySigner> {
         accounts.accounts().iter().map(|a| (a.address, a.signer.clone())).collect()
     }
 
-    fn create_generator(
+    pub(super) fn create_generator(
         workload_config: WorkloadConfig,
         config: &LoadConfig,
+        b20_run_salt: Option<B256>,
     ) -> Result<WorkloadGenerator> {
         let mut generator = WorkloadGenerator::new(workload_config);
 
@@ -207,6 +274,10 @@ impl LoadRunner {
                         weight_pct,
                     );
                 }
+                TxType::Storage { contract, slots_per_tx } => {
+                    generator = generator
+                        .with_payload(StoragePayload::new(*contract, *slots_per_tx), weight_pct);
+                }
                 TxType::Precompile { target, blake2f_rounds, iterations, looper_contract } => {
                     let payload = PrecompilePayload::with_options(
                         target.clone(),
@@ -216,10 +287,13 @@ impl LoadRunner {
                     );
                     generator = generator.with_payload(payload, weight_pct);
                 }
-                TxType::B20 { contract } => {
-                    if let Some(token) = contract {
+                TxType::B20 => {
+                    // Each sender transfers its own per-run token; the payload derives the token
+                    // from the run salt, which is only known after B-20 setup runs. Before setup
+                    // (salt None) the payload is intentionally not installed.
+                    if let Some(run_salt) = b20_run_salt {
                         generator = generator.with_payload(
-                            B20TransferPayload::new(*token, U256::from(1000), U256::from(10000)),
+                            B20TransferPayload::new(run_salt, U256::from(1000), U256::from(10000)),
                             weight_pct,
                         );
                     }
@@ -228,7 +302,16 @@ impl LoadRunner {
                     generator =
                         generator.with_payload(OsakaPayload::new(target.clone()), weight_pct);
                 }
-                TxType::UniswapV3 { router, token_in, token_out, fee, min_amount, max_amount } => {
+                TxType::UniswapV3 {
+                    router,
+                    token_in,
+                    token_out,
+                    fee,
+                    min_amount,
+                    max_amount,
+                    reverse_min_amount,
+                    reverse_max_amount,
+                } => {
                     generator = generator.with_payload(
                         UniswapV3Payload::new(
                             *router,
@@ -237,6 +320,7 @@ impl LoadRunner {
                             *fee,
                             *min_amount,
                             *max_amount,
+                            Some((*reverse_min_amount, *reverse_max_amount)),
                         ),
                         weight_pct,
                     );
@@ -248,6 +332,8 @@ impl LoadRunner {
                     tick_spacing,
                     min_amount,
                     max_amount,
+                    reverse_min_amount,
+                    reverse_max_amount,
                 } => {
                     generator = generator.with_payload(
                         AerodromeClPayload::new(
@@ -257,6 +343,7 @@ impl LoadRunner {
                             *tick_spacing,
                             *min_amount,
                             *max_amount,
+                            Some((*reverse_min_amount, *reverse_max_amount)),
                         ),
                         weight_pct,
                     );
@@ -283,7 +370,8 @@ impl LoadRunner {
                 TxType::Transfer => 21_000,
                 TxType::Calldata { max_size, .. } => 21_000 + (*max_size as u64 * 16),
                 TxType::Erc20 { .. } => 65_000,
-                TxType::B20 { .. } => 100_000,
+                TxType::Storage { slots_per_tx, .. } => u64::from(*slots_per_tx) * 22_000 + 21_000,
+                TxType::B20 => 100_000,
                 TxType::Precompile { target, iterations, blake2f_rounds, .. } => {
                     let per_call = match target {
                         PrecompileId::Identity | PrecompileId::Bn254Add => 22_000,
@@ -307,7 +395,7 @@ impl LoadRunner {
                     OsakaTarget::Clz => 80_000,
                     OsakaTarget::P256verifyOsaka | OsakaTarget::ModexpOsaka => 30_000,
                 },
-                TxType::UniswapV3 { .. } | TxType::AerodromeCl { .. } => 250_000,
+                TxType::UniswapV3 { .. } | TxType::AerodromeCl { .. } => 115_000,
             };
             weighted_gas += gas_estimate * tx_config.weight as u64;
         }
@@ -379,12 +467,10 @@ impl LoadRunner {
         let funder_provider =
             Arc::new(create_wallet_provider(primary_submission_rpc.clone(), wallet));
 
-        let gas_price = client.get_gas_price().await.rpc("get gas price")?;
-        let max_priority_fee = (gas_price / 10).max(1);
-        // Ensure max_fee >= max_priority_fee (EIP-1559 requirement).
-        // When gas_price is 0 (e.g. a fresh devnet), `gas_price * 2` would be 0
-        // while max_priority_fee=1, causing the transaction to be rejected.
-        let max_fee = gas_price.saturating_mul(2).max(max_priority_fee).min(max_gas_price);
+        let base_fee = client.get_base_fee().await?;
+        let max_priority_fee = (base_fee / 10).max(1);
+        let max_fee =
+            SubmissionPipeline::submission_max_fee(base_fee, max_priority_fee, max_gas_price);
 
         // Phase 2: Early balance validation — abort before sending any TXs if
         // the funder cannot cover the total cost.
@@ -480,7 +566,9 @@ impl LoadRunner {
                     }
                     Err(e) => {
                         let error_str = e.to_string();
-                        if error_str.contains("already known") {
+                        if error_str.contains("already known")
+                            || error_str.contains("replacement transaction underpriced")
+                        {
                             retries.push((address, deficit, nonce));
                         } else if error_str.contains("nonce too low") {
                             info!(to = %address, nonce, "nonce too low, will refresh and retry");
@@ -622,6 +710,8 @@ impl LoadRunner {
         let addr_to_idx: HashMap<Address, usize> =
             self.accounts.accounts().iter().enumerate().map(|(i, a)| (a.address, i)).collect();
 
+        let refresh_provider = RootProvider::<Ethereum>::new_http(self.config.query_rpc.clone());
+
         for result in refresh_results {
             let (addr, balance, account_nonce) = result?;
             let idx = addr_to_idx[&addr];
@@ -629,9 +719,9 @@ impl LoadRunner {
             account.balance = balance;
             account.nonce = account_nonce;
 
-            let provider = RootProvider::<Ethereum>::new_http(self.config.query_rpc.clone());
             let nonce_manager =
-                NonceManager::new(provider, addr, NONCE_RPC_TIMEOUT).with_pending_tag();
+                NonceManager::new(refresh_provider.clone(), addr, NONCE_RPC_TIMEOUT)
+                    .with_pending_tag();
             Arc::make_mut(&mut self.nonce_managers).insert(addr, nonce_manager);
 
             debug!(address = %addr, balance = %balance, nonce = account_nonce, "account state refreshed");
@@ -643,7 +733,7 @@ impl LoadRunner {
 
     /// Collects unique token addresses from configured swap transaction types.
     pub fn collect_swap_tokens(&self) -> Vec<Address> {
-        let mut tokens = std::collections::HashSet::new();
+        let mut tokens = HashSet::new();
         for tx_config in &self.config.transactions {
             match &tx_config.tx_type {
                 TxType::UniswapV3 { token_in, token_out, .. }
@@ -654,12 +744,33 @@ impl LoadRunner {
                 TxType::Transfer
                 | TxType::Calldata { .. }
                 | TxType::Erc20 { .. }
-                | TxType::B20 { .. }
+                | TxType::Storage { .. }
+                | TxType::B20
                 | TxType::Precompile { .. }
                 | TxType::Osaka { .. } => {}
             }
         }
         tokens.into_iter().collect()
+    }
+
+    /// Collects unique router addresses from configured swap transaction types.
+    pub fn collect_swap_routers(&self) -> Vec<Address> {
+        let mut routers = HashSet::new();
+        for tx_config in &self.config.transactions {
+            match &tx_config.tx_type {
+                TxType::UniswapV3 { router, .. } | TxType::AerodromeCl { router, .. } => {
+                    routers.insert(*router);
+                }
+                TxType::Transfer
+                | TxType::Calldata { .. }
+                | TxType::Erc20 { .. }
+                | TxType::Storage { .. }
+                | TxType::B20
+                | TxType::Precompile { .. }
+                | TxType::Osaka { .. } => {}
+            }
+        }
+        routers.into_iter().collect()
     }
 
     /// Clears pending transactions from all configured txpool nodes for every test sender.
@@ -829,9 +940,10 @@ impl LoadRunner {
         let chain_id = self.config.chain_id;
         let max_gas_price = self.config.max_gas_price;
 
-        let gas_price = self.client.get_gas_price().await.rpc("get gas price")?;
-        let max_priority_fee = (gas_price / 10).max(1);
-        let max_fee = gas_price.saturating_mul(2).max(max_priority_fee).min(max_gas_price);
+        let base_fee = self.client.get_base_fee().await?;
+        let max_priority_fee = (base_fee / 10).max(1);
+        let max_fee =
+            SubmissionPipeline::submission_max_fee(base_fee, max_priority_fee, max_gas_price);
 
         // Pre-flight balance check — abort before sending any TXs if the funder
         // cannot cover the total gas cost for needed token transfers.
@@ -936,489 +1048,30 @@ impl LoadRunner {
         Bytes::from(mintCall { to, amount }.abi_encode())
     }
 
-    fn encode_erc20_balance_of(account: Address) -> Bytes {
+    pub(super) fn encode_erc20_balance_of(account: Address) -> Bytes {
         sol! {
             function balanceOf(address account) external view returns (uint256);
         }
         Bytes::from(balanceOfCall { account }.abi_encode())
     }
 
-    /// Returns `true` if any configured transaction type is [`TxType::B20`].
-    pub fn needs_b20_setup(&self) -> bool {
-        self.config.transactions.iter().any(|t| matches!(t.tx_type, TxType::B20 { .. }))
-    }
-
-    /// Creates a B-20 token via the factory, grants `MINT_ROLE` and `BURN_ROLE` to all senders,
-    /// then mints tokens to every sender account.
-    ///
-    /// If all B-20 transaction configs already have a resolved `contract` address, this is a
-    /// no-op for creation but still handles role grants and minting.
-    #[instrument(skip(self, funding_key), fields(accounts = self.accounts.len()))]
-    pub async fn setup_b20_tokens(
-        &mut self,
-        funding_key: PrivateKeySigner,
-        amount_per_sender: U256,
-    ) -> Result<()> {
-        let funder_address = funding_key.address();
-        let wallet = EthereumWallet::from(funding_key);
-        let funder_provider =
-            Arc::new(create_wallet_provider(self.config.primary_submission_rpc().clone(), wallet));
-        let chain_id = self.config.chain_id;
-        let max_gas_price = self.config.max_gas_price;
-        let gas_price = self.client.get_gas_price().await.rpc("get gas price")?;
-        let max_priority_fee = (gas_price / 10).max(1);
-        let max_fee = gas_price.saturating_mul(2).max(max_priority_fee).min(max_gas_price);
-        let b20_gas_limit = 10_000_000u64;
-
-        let mut nonce = funder_provider
-            .get_transaction_count(funder_address)
-            .pending()
-            .await
-            .rpc("get pending transaction count")?;
-
-        // Phase 1: Create B-20 token if no contract address is configured.
-        let mut token_address: Option<Address> = None;
-        for tx_config in &self.config.transactions {
-            if let TxType::B20 { contract: Some(addr) } = &tx_config.tx_type {
-                token_address = Some(*addr);
-                break;
-            }
-        }
-
-        if token_address.is_none() {
-            // Activate B-20 features if not already active. Activation is idempotent on
-            // already-active features but reverts if the funder is not the activation admin.
-            let features = [ActivationFeature::B20Asset.id()];
-            for feature in &features {
-                let is_activated_call = IActivationRegistry::isActivatedCall { feature: *feature };
-                let check_result = self
-                    .client
-                    .call(
-                        TransactionRequest::default()
-                            .with_to(ActivationRegistryStorage::ADDRESS)
-                            .with_input(Bytes::from(is_activated_call.abi_encode()))
-                            .into(),
-                    )
-                    .await;
-
-                let already_active = check_result
-                    .ok()
-                    .and_then(|bytes| {
-                        IActivationRegistry::isActivatedCall::abi_decode_returns(bytes.as_ref())
-                            .ok()
-                    })
-                    .unwrap_or(false);
-
-                if !already_active {
-                    info!(feature = %feature, "activating B-20 feature");
-                    let activate_call = IActivationRegistry::activateCall { feature: *feature };
-                    let tx = TransactionRequest::default()
-                        .with_to(ActivationRegistryStorage::ADDRESS)
-                        .with_input(Bytes::from(activate_call.abi_encode()))
-                        .with_nonce(nonce)
-                        .with_chain_id(chain_id)
-                        .with_gas_limit(b20_gas_limit)
-                        .with_max_fee_per_gas(max_fee)
-                        .with_max_priority_fee_per_gas(max_priority_fee);
-                    nonce += 1;
-
-                    let pending = funder_provider.send_transaction(tx).await.map_err(|e| {
-                        BaselineError::Transaction(format!(
-                            "failed to activate B-20 feature {feature}: {e}. \
-                             The funder must be the activation admin (sequencer key on devnet)"
-                        ))
-                    })?;
-
-                    let receipt = pending.get_receipt().await.map_err(|e| {
-                        BaselineError::Transaction(format!(
-                            "B-20 feature activation receipt failed: {e}"
-                        ))
-                    })?;
-
-                    if !receipt.status() {
-                        return Err(BaselineError::Transaction(format!(
-                            "B-20 feature {feature} activation reverted. \
-                             The funder must be the activation admin (sequencer key on devnet)"
-                        )));
-                    }
-                }
-            }
-
-            info!("creating new B-20 token via factory");
-
-            let salt = B256::from(rand::random::<[u8; 32]>());
-            let predicted = B20Variant::Asset.compute_address(funder_address, salt).0;
-
-            let params = IB20Factory::B20AssetCreateParams {
-                version: B20Variant::Asset.supported_version(),
-                name: "Load Test B20".to_string(),
-                symbol: "LTB20".to_string(),
-                initialAdmin: funder_address,
-                decimals: 6,
-            };
-
-            let init_calls: Vec<Bytes> =
-                vec![IB20::updateSupplyCapCall { newSupplyCap: U256::MAX }.abi_encode().into()];
-
-            let create_call = IB20Factory::createB20Call {
-                variant: IB20Factory::B20Variant::ASSET,
-                salt,
-                params: params.abi_encode().into(),
-                initCalls: init_calls,
-            };
-
-            let tx = TransactionRequest::default()
-                .with_to(B20FactoryStorage::ADDRESS)
-                .with_input(Bytes::from(create_call.abi_encode()))
-                .with_nonce(nonce)
-                .with_chain_id(chain_id)
-                .with_gas_limit(b20_gas_limit)
-                .with_max_fee_per_gas(max_fee)
-                .with_max_priority_fee_per_gas(max_priority_fee);
-            nonce += 1;
-
-            let pending = funder_provider.send_transaction(tx).await.map_err(|e| {
-                BaselineError::Transaction(format!("failed to create B-20 token: {e}"))
-            })?;
-
-            let receipt = pending.get_receipt().await.map_err(|e| {
-                BaselineError::Transaction(format!("B-20 creation receipt failed: {e}"))
-            })?;
-
-            if !receipt.status() {
-                return Err(BaselineError::Transaction(
-                    "B-20 token creation transaction reverted".into(),
-                ));
-            }
-
-            info!(token = %predicted, "B-20 token created");
-            token_address = Some(predicted);
-        }
-
-        let token = token_address.ok_or_else(|| {
-            BaselineError::Config("b20 token address was not resolved during setup".into())
-        })?;
-
-        for tx_config in &mut self.config.transactions {
-            if let TxType::B20 { contract } = &mut tx_config.tx_type {
-                *contract = Some(token);
-            }
-        }
-
-        // Phase 2: Grant MINT_ROLE to funder + MINT_ROLE and BURN_ROLE to all senders.
-        let sender_addresses: Vec<Address> =
-            self.accounts.accounts().iter().map(|a| a.address).collect();
-        let roles = [B20TokenRole::Mint.id(), B20TokenRole::Burn.id()];
-
-        let total_grants = 1 + sender_addresses.len() * roles.len();
-        let pb = self.progress_bar(total_grants as u64, "Granting B-20 roles");
-
-        let mut grant_txs: Vec<TransactionRequest> = Vec::with_capacity(total_grants);
-
-        // Funder needs MINT_ROLE to execute Phase 3 mints.
-        let funder_mint_grant =
-            IB20::grantRoleCall { role: B20TokenRole::Mint.id(), account: funder_address };
-        grant_txs.push(
-            TransactionRequest::default()
-                .with_to(token)
-                .with_input(Bytes::from(funder_mint_grant.abi_encode()))
-                .with_nonce(nonce)
-                .with_chain_id(chain_id)
-                .with_gas_limit(b20_gas_limit)
-                .with_max_fee_per_gas(max_fee)
-                .with_max_priority_fee_per_gas(max_priority_fee),
-        );
-        nonce += 1;
-
-        for &sender in &sender_addresses {
-            for &role in &roles {
-                let call = IB20::grantRoleCall { role, account: sender };
-                grant_txs.push(
-                    TransactionRequest::default()
-                        .with_to(token)
-                        .with_input(Bytes::from(call.abi_encode()))
-                        .with_nonce(nonce)
-                        .with_chain_id(chain_id)
-                        .with_gas_limit(b20_gas_limit)
-                        .with_max_fee_per_gas(max_fee)
-                        .with_max_priority_fee_per_gas(max_priority_fee),
-                );
-                nonce += 1;
-            }
-        }
-
-        let mut grant_failed = 0usize;
-        let mut txs_remaining = grant_txs.into_iter().peekable();
-        while txs_remaining.peek().is_some() {
-            let batch: Vec<_> = txs_remaining.by_ref().take(BATCH_SIZE).collect();
-            let send_futs = batch.into_iter().map(|tx| {
-                let provider = Arc::clone(&funder_provider);
-                async move {
-                    let pending = provider.send_transaction(tx).await?;
-                    pending.get_receipt().await
-                }
-            });
-
-            let mut send_stream = stream::iter(send_futs).buffer_unordered(BATCH_SIZE);
-            while let Some(result) = send_stream.next().await {
-                match result {
-                    Ok(receipt) if receipt.status() => pb.inc(1),
-                    Ok(receipt) => {
-                        warn!(tx_hash = %receipt.transaction_hash, "B-20 role grant reverted");
-                        grant_failed += 1;
-                        pb.inc(1);
-                    }
-                    Err(e) => {
-                        warn!(error = %e, "B-20 role grant failed");
-                        grant_failed += 1;
-                        pb.inc(1);
-                    }
-                }
-            }
-        }
-
-        pb.finish_and_clear();
-        if grant_failed > 0 {
-            return Err(BaselineError::Transaction(format!(
-                "{grant_failed}/{total_grants} B-20 role grants failed"
-            )));
-        }
-
-        info!(roles = total_grants, "B-20 roles granted");
-
-        // Phase 3: Mint tokens to all senders.
-        let total_mints = sender_addresses.len();
-        let pb_mint = self.progress_bar(total_mints as u64, "Minting B-20 tokens");
-
-        let mint_txs: Vec<(TransactionRequest, Address)> = sender_addresses
-            .iter()
-            .map(|&sender| {
-                let call = IB20::mintCall { to: sender, amount: amount_per_sender };
-                let tx = TransactionRequest::default()
-                    .with_to(token)
-                    .with_input(Bytes::from(call.abi_encode()))
-                    .with_nonce(nonce)
-                    .with_chain_id(chain_id)
-                    .with_gas_limit(b20_gas_limit)
-                    .with_max_fee_per_gas(max_fee)
-                    .with_max_priority_fee_per_gas(max_priority_fee);
-                nonce += 1;
-                (tx, sender)
-            })
-            .collect();
-
-        let mut mint_failed = 0usize;
-        let mut txs_remaining = mint_txs.into_iter().peekable();
-
-        while txs_remaining.peek().is_some() {
-            let batch: Vec<_> = txs_remaining.by_ref().take(BATCH_SIZE).collect();
-            let send_futs = batch.into_iter().map(|(tx, sender)| {
-                let provider = Arc::clone(&funder_provider);
-                async move {
-                    match provider.send_transaction(tx).await {
-                        Ok(pending) => {
-                            let receipt = pending
-                                .get_receipt()
-                                .await
-                                .map_err(|e| eyre::eyre!("mint receipt failed: {e}"))?;
-                            Ok::<_, eyre::Report>((receipt, sender))
-                        }
-                        Err(e) => Err(eyre::eyre!("mint send failed: {e}")),
-                    }
-                }
-            });
-
-            let mut send_stream = stream::iter(send_futs).buffer_unordered(BATCH_SIZE);
-            while let Some(result) = send_stream.next().await {
-                match result {
-                    Ok((receipt, sender)) if receipt.status() => {
-                        debug!(to = %sender, tx_hash = %receipt.transaction_hash, "B-20 mint confirmed");
-                        pb_mint.inc(1);
-                    }
-                    Ok((receipt, sender)) => {
-                        warn!(to = %sender, tx_hash = %receipt.transaction_hash, "B-20 mint reverted");
-                        mint_failed += 1;
-                        pb_mint.inc(1);
-                    }
-                    Err(e) => {
-                        warn!(error = %e, "B-20 mint failed");
-                        mint_failed += 1;
-                        pb_mint.inc(1);
-                    }
-                }
-            }
-        }
-
-        pb_mint.finish_and_clear();
-        if mint_failed > 0 {
-            return Err(BaselineError::Transaction(format!(
-                "{mint_failed}/{total_mints} B-20 mints failed"
-            )));
-        }
-
-        // Rebuild the workload generator now that the B-20 contract address is resolved.
-        let workload_config = WorkloadConfig::new("load-test").with_seed(self.config.seed);
-        self.generator = Self::create_generator(workload_config, &self.config)?;
-
-        info!(
-            token = %token,
-            senders = total_mints,
-            amount = %amount_per_sender,
-            "B-20 token setup complete"
-        );
-        Ok(())
-    }
-
-    /// Burns remaining B-20 token balances from all sender accounts.
-    ///
-    /// Each sender calls `burn(uint256)` with their full balance. Requires senders to hold
-    /// `BURN_ROLE`, which is granted during [`Self::setup_b20_tokens`].
-    #[instrument(skip(self), fields(accounts = self.accounts.len()))]
-    pub async fn teardown_b20_tokens(&self) -> Result<()> {
-        let token = self.config.transactions.iter().find_map(|t| match &t.tx_type {
-            TxType::B20 { contract: Some(addr) } => Some(*addr),
-            _ => None,
-        });
-
-        let Some(token) = token else {
-            return Ok(());
-        };
-
-        let chain_id = self.config.chain_id;
-        let max_gas_price = self.config.max_gas_price;
-        let gas_price = self.client.get_gas_price().await.rpc("get gas price")?;
-        let max_priority_fee = (gas_price / 10).max(1);
-        let max_fee = gas_price.saturating_mul(2).max(max_priority_fee).min(max_gas_price);
-        let burn_gas_limit = 200_000u64;
-
-        let sender_addresses: Vec<Address> =
-            self.accounts.accounts().iter().map(|a| a.address).collect();
-
-        let signers = Self::build_signers(&self.accounts);
-        let client = &self.client;
-        let rpc_url = self.config.primary_submission_rpc().clone();
-
-        // Phase 1: Query all balances in parallel.
-        let balance_futs: Vec<_> = sender_addresses
-            .iter()
-            .map(|&sender| {
-                let client = client.clone();
-                let call_data = Self::encode_erc20_balance_of(sender);
-                async move {
-                    let balance = client
-                        .call(
-                            TransactionRequest::default()
-                                .with_to(token)
-                                .with_input(call_data)
-                                .into(),
-                        )
-                        .await
-                        .rpc("eth_call")
-                        .map(|bytes| U256::from_be_slice(bytes.as_ref()))
-                        .unwrap_or(U256::ZERO);
-                    (sender, balance)
-                }
-            })
-            .collect();
-
-        let balances: Vec<_> =
-            stream::iter(balance_futs).buffer_unordered(FUNDING_CONCURRENCY).collect().await;
-
-        let senders_with_balance: Vec<_> =
-            balances.into_iter().filter(|(_, balance)| !balance.is_zero()).collect();
-
-        if senders_with_balance.is_empty() {
-            info!("all B-20 balances are zero, skipping teardown");
-            return Ok(());
-        }
-
-        // Phase 2: Build burn txs — each sender burns their own balance.
-        let pb = self.progress_bar(senders_with_balance.len() as u64, "Burning B-20 tokens");
-        let mut burn_failed = 0usize;
-        let mut burn_count = 0usize;
-
-        let burn_futs: Vec<_> = senders_with_balance
-            .into_iter()
-            .filter_map(|(sender, balance)| {
-                let signer = signers.get(&sender)?.clone();
-                let wallet = EthereumWallet::from(signer);
-                let provider = create_wallet_provider(rpc_url.clone(), wallet);
-                Some(async move {
-                    let sender_nonce = match provider.get_transaction_count(sender).pending().await
-                    {
-                        Ok(n) => n,
-                        Err(e) => {
-                            return Err((sender, eyre::eyre!("nonce fetch failed: {e}")));
-                        }
-                    };
-
-                    let burn_call = IB20::burnCall { amount: balance };
-                    let tx = TransactionRequest::default()
-                        .with_to(token)
-                        .with_input(Bytes::from(burn_call.abi_encode()))
-                        .with_nonce(sender_nonce)
-                        .with_chain_id(chain_id)
-                        .with_gas_limit(burn_gas_limit)
-                        .with_max_fee_per_gas(max_fee)
-                        .with_max_priority_fee_per_gas(max_priority_fee);
-
-                    match provider.send_transaction(tx).await {
-                        Ok(pending) => match pending.get_receipt().await {
-                            Ok(receipt) => Ok((sender, balance, receipt)),
-                            Err(e) => Err((sender, eyre::eyre!("receipt failed: {e}"))),
-                        },
-                        Err(e) => Err((sender, eyre::eyre!("send failed: {e}"))),
-                    }
-                })
-            })
-            .collect();
-
-        let mut burn_stream = stream::iter(burn_futs).buffer_unordered(BATCH_SIZE);
-        while let Some(result) = burn_stream.next().await {
-            match result {
-                Ok((sender, balance, receipt)) if receipt.status() => {
-                    debug!(sender = %sender, amount = %balance, tx_hash = %receipt.transaction_hash, "B-20 burn confirmed");
-                    burn_count += 1;
-                }
-                Ok((sender, _, receipt)) => {
-                    warn!(sender = %sender, tx_hash = %receipt.transaction_hash, "B-20 burn reverted");
-                    burn_failed += 1;
-                }
-                Err((sender, e)) => {
-                    warn!(sender = %sender, error = %e, "B-20 burn failed");
-                    burn_failed += 1;
-                }
-            }
-            pb.inc(1);
-        }
-
-        pb.finish_and_clear();
-
-        if burn_failed > 0 {
-            warn!(failed = burn_failed, succeeded = burn_count, "some B-20 burns failed");
-        }
-
-        info!(burned = burn_count, failed = burn_failed, "B-20 teardown complete");
-        Ok(())
-    }
-
     /// Runs the load test and returns metrics summary.
     #[instrument(skip(self), fields(target_gps = self.config.target_gps, continuous = self.config.duration.is_none(), duration = ?self.config.duration))]
     pub async fn run(&mut self) -> Result<MetricsSummary> {
-        for tx_config in &self.config.transactions {
-            if let TxType::B20 { contract: None } = &tx_config.tx_type {
-                return Err(BaselineError::Config(
-                    "b20 contract address not resolved; call setup_b20_tokens first".into(),
-                ));
-            }
+        if self.b20_run_salt.is_none()
+            && self.config.transactions.iter().any(|t| matches!(t.tx_type, TxType::B20))
+        {
+            return Err(BaselineError::Config(
+                "b20 run salt not set; call setup_b20_tokens before run".into(),
+            ));
         }
 
         self.collector.reset();
         self.stop_flag.store(false, Ordering::SeqCst);
         self.cancel_token = CancellationToken::new();
 
-        self.gas_price = self.client.get_gas_price().await.rpc("get gas price")?;
-        info!(gas_price = self.gas_price, "fetched current gas price");
+        self.base_fee = self.client.get_base_fee().await?;
+        info!(base_fee = self.base_fee, "fetched current base fee");
 
         for account in self.accounts.accounts() {
             if !self.nonce_managers.contains_key(&account.address) {
@@ -1459,9 +1112,10 @@ impl LoadRunner {
         );
 
         info!(url = %self.config.query_rpc, "starting block watcher");
+        let receipt_provider = RootProvider::<Base>::new_http(self.config.query_rpc.clone());
         let block_watcher_task = Some(
             BlockWatcher::new(
-                RootProvider::<Base>::new_http(self.config.query_rpc.clone()),
+                receipt_provider.clone(),
                 results_tracker.clone(),
                 self.cancel_token.clone(),
             )
@@ -1471,6 +1125,9 @@ impl LoadRunner {
         let max_in_flight_per_sender = self.config.max_in_flight_per_sender;
 
         let initial_avg_gas = self.estimate_avg_gas();
+        // Seed the collector so live throughput (rolling GPS) and rate-limiter
+        // feedback have a non-zero gas figure before canonical receipt gas lands.
+        self.collector.set_estimated_gas(initial_avg_gas);
         let mut rate_limiter = RateLimiter::new(self.config.target_gps, initial_avg_gas);
         let start = Instant::now();
         let mut current_account_idx = 0usize;
@@ -1506,10 +1163,12 @@ impl LoadRunner {
         let mut queued_per_sender: HashMap<Address, u64> =
             self.accounts.accounts().iter().map(|a| (a.address, 0)).collect();
 
-        let mut last_gas_price_refresh = Instant::now();
+        let mut last_base_fee_refresh = Instant::now();
         let mut last_rate_limiter_update = Instant::now();
         let mut last_progress_report = Instant::now();
-        const GAS_PRICE_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+        // Refresh once per block so the cached base fee tracks the climb the load
+        // test itself induces; a stale fee mints underwater (unincludable) txs.
+        const BASE_FEE_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
         const RATE_LIMITER_UPDATE_INTERVAL: Duration = Duration::from_secs(2);
         const PROGRESS_REPORT_INTERVAL: Duration = Duration::from_secs(5);
         const DISPLAY_RENDER_INTERVAL: Duration = Duration::from_millis(500);
@@ -1540,14 +1199,14 @@ impl LoadRunner {
         {
             // --- Housekeeping (runs once per batch iteration) ---
 
-            if last_gas_price_refresh.elapsed() >= GAS_PRICE_REFRESH_INTERVAL {
-                if let Ok(new_price) = self.client.get_gas_price().await.rpc("get gas price")
-                    && new_price != self.gas_price
+            if last_base_fee_refresh.elapsed() >= BASE_FEE_REFRESH_INTERVAL {
+                if let Ok(new_base_fee) = self.client.get_base_fee().await
+                    && new_base_fee != self.base_fee
                 {
-                    debug!(old_price = self.gas_price, new_price, "gas price updated");
-                    self.gas_price = new_price;
+                    debug!(old_base_fee = self.base_fee, new_base_fee, "base fee updated");
+                    self.base_fee = new_base_fee;
                 }
-                last_gas_price_refresh = Instant::now();
+                last_base_fee_refresh = Instant::now();
             }
 
             if last_rate_limiter_update.elapsed() >= RATE_LIMITER_UPDATE_INTERVAL {
@@ -1596,12 +1255,11 @@ impl LoadRunner {
                 let submitted = self.collector.submitted_count();
                 let confirmed = self.collector.confirmed_count();
                 let failed = self.collector.failed_count();
-                let reverted = self.collector.reverted_count();
                 let in_flight = results_tracker.total_in_flight();
+                let pending = results_tracker.pending_count();
                 let senders_blocked = results_tracker.senders_at_limit(max_in_flight_per_sender);
+                let total_queued: u64 = queued_per_sender.values().sum();
                 let (p50, p99) = self.collector.rolling_p50_p99();
-                let (block_receipt_delay_p50, block_receipt_delay_p99) =
-                    self.collector.rolling_block_receipt_delay_p50_p99();
                 let (flashblocks_p50, flashblocks_p99) =
                     self.collector.rolling_flashblocks_p50_p99();
                 info!(
@@ -1609,14 +1267,13 @@ impl LoadRunner {
                     submitted,
                     confirmed,
                     failed,
-                    reverted,
                     in_flight,
+                    pending,
+                    total_queued,
                     senders_blocked,
-                    gas_price = self.gas_price,
+                    base_fee = self.base_fee,
                     p50_ms = p50.as_millis() as u64,
                     p99_ms = p99.as_millis() as u64,
-                    block_receipt_delay_p50_ms = block_receipt_delay_p50.as_millis() as u64,
-                    block_receipt_delay_p99_ms = block_receipt_delay_p99.as_millis() as u64,
                     flashblocks_p50_ms = flashblocks_p50.as_millis() as u64,
                     flashblocks_p99_ms = flashblocks_p99.as_millis() as u64,
                     "progress"
@@ -1657,9 +1314,15 @@ impl LoadRunner {
 
                 let from = account.address;
                 let to_idx = (current_account_idx + 1) % account_count;
-                let to = self.accounts.accounts()[to_idx].address;
+                let sender_pool_recipient = self.accounts.accounts()[to_idx].address;
+                let payload = self.generator.select_payload()?;
+                let to = if payload.uses_runner_recipient() {
+                    self.select_recipient(sender_pool_recipient)?
+                } else {
+                    sender_pool_recipient
+                };
 
-                let tx_request = self.generator.generate_payload(from, to)?;
+                let tx_request = self.generator.generate_selected_payload(&payload, from, to);
 
                 let to_addr = tx_request.to.and_then(|kind| kind.to().copied());
                 let value = tx_request.value.unwrap_or(U256::ZERO);
@@ -1695,8 +1358,7 @@ impl LoadRunner {
             let batch = std::mem::replace(&mut pending_batch, Vec::with_capacity(batch_size));
             let batch_id = next_submit_batch_id.fetch_add(1, Ordering::SeqCst);
             let batch_len = batch.len();
-            let submit_batch =
-                PreparedBatch { id: batch_id, gas_price: self.gas_price, txs: batch };
+            let submit_batch = PreparedBatch { id: batch_id, base_fee: self.base_fee, txs: batch };
             match submission_pipeline.enqueue_prepared(submit_batch).await {
                 Ok(()) => {
                     debug!(batch_id, batch_len, "queued submit batch");
@@ -1719,7 +1381,7 @@ impl LoadRunner {
             let final_batch_len = pending_batch.len();
             let batch_id = next_submit_batch_id.fetch_add(1, Ordering::SeqCst);
             let submit_batch =
-                PreparedBatch { id: batch_id, gas_price: self.gas_price, txs: pending_batch };
+                PreparedBatch { id: batch_id, base_fee: self.base_fee, txs: pending_batch };
             match submission_pipeline.enqueue_prepared(submit_batch).await {
                 Ok(()) => {
                     debug!(batch_id, batch_len = final_batch_len, "queued final submit batch");
@@ -1808,7 +1470,10 @@ impl LoadRunner {
                 }
             }
 
-            let expired = results_tracker.expire_pending(PENDING_CONFIRMATION_TIMEOUT);
+            // Use a shorter expiry during drain: the test is over, so any
+            // pending tx older than the drain window itself is stale.
+            let drain_expiry = PENDING_CONFIRMATION_TIMEOUT.saturating_sub(drain_start.elapsed());
+            let expired = results_tracker.expire_pending(drain_expiry);
             if expired > 0 {
                 self.collector.record_failures("expired without confirmation", expired);
             }
@@ -1844,7 +1509,39 @@ impl LoadRunner {
         let confirmed = self.collector.confirmed_count();
         info!(confirmed, submitted, "confirmation collection complete");
 
-        Ok(self.collector.summarize(last_confirmed_at, self.config_summary.clone()))
+        // Fetch canonical receipts in a single batch pass, scoped to only the blocks
+        // our transactions landed in, to backfill gas and revert status. This can be
+        // slow on large runs, so notify the user before starting.
+        let landed_blocks = results_tracker.landed_block_numbers();
+        if !landed_blocks.is_empty() {
+            println!(
+                "Fetching receipts for {} block(s) to compute gas and reverts (this may take a while)...",
+                landed_blocks.len()
+            );
+            let receipt_fetch_start = Instant::now();
+            let (receipts, failed_blocks) =
+                BlockWatcher::fetch_receipts(&receipt_provider, &landed_blocks).await;
+            let receipts_by_hash: HashMap<TxHash, _> =
+                receipts.into_iter().map(|receipt| (receipt.tx_hash, receipt)).collect();
+            self.collector.apply_receipts(&receipts_by_hash, landed_blocks.len(), failed_blocks);
+            info!(
+                blocks = landed_blocks.len(),
+                failed_blocks,
+                receipts = receipts_by_hash.len(),
+                elapsed_secs = receipt_fetch_start.elapsed().as_secs_f64(),
+                "end-of-run receipt pass complete"
+            );
+        }
+
+        let summary = self.collector.summarize_with_fresh_recipient_count(
+            last_confirmed_at,
+            self.config_summary.clone(),
+            self.fresh_recipient_count(),
+        );
+        if let Some(fresh_recipient_count) = summary.fresh_recipient_count {
+            info!(fresh_recipient_count, "fresh recipient generation complete");
+        }
+        Ok(summary)
     }
 
     fn build_snapshot(
@@ -1855,8 +1552,6 @@ impl LoadRunner {
         account_count: usize,
     ) -> DisplaySnapshot {
         let (p50, p99) = self.collector.rolling_p50_p99();
-        let (block_receipt_delay_p50, block_receipt_delay_p99) =
-            self.collector.rolling_block_receipt_delay_p50_p99();
         let (flashblocks_p50, flashblocks_p99) = self.collector.rolling_flashblocks_p50_p99();
         DisplaySnapshot {
             elapsed: start.elapsed(),
@@ -1864,7 +1559,6 @@ impl LoadRunner {
             submitted: self.collector.submitted_count(),
             confirmed: self.collector.confirmed_count(),
             failed: self.collector.failed_count(),
-            reverted: self.collector.reverted_count(),
             in_flight: results_tracker.total_in_flight(),
             senders_blocked: results_tracker.senders_at_limit(max_in_flight_per_sender),
             total_senders: account_count,
@@ -1872,11 +1566,9 @@ impl LoadRunner {
             rolling_gps: self.collector.rolling_gps(),
             p50_latency: p50,
             p99_latency: p99,
-            block_receipt_delay_p50,
-            block_receipt_delay_p99,
             flashblocks_p50_latency: flashblocks_p50,
             flashblocks_p99_latency: flashblocks_p99,
-            gas_price_gwei: self.gas_price as f64 / 1e9,
+            gas_price_gwei: self.base_fee as f64 / 1e9,
             total_eth: self.last_total_eth.clone(),
             min_eth: self.last_min_eth.clone(),
             funds_low: self.last_funds_low,
@@ -1931,11 +1623,13 @@ impl LoadRunner {
         let primary_submission_rpc = self.config.primary_submission_rpc().clone();
         let chain_id = self.config.chain_id;
 
-        let gas_price = client.get_gas_price().await.rpc("get gas price")?;
-        let max_priority_fee = (gas_price / 10).max(1);
-        // Ensure max_fee >= max_priority_fee (EIP-1559 requirement).
-        let max_fee =
-            gas_price.saturating_mul(2).max(max_priority_fee).min(self.config.max_gas_price);
+        let base_fee = client.get_base_fee().await?;
+        let max_priority_fee = (base_fee / 10).max(1);
+        let max_fee = SubmissionPipeline::submission_max_fee(
+            base_fee,
+            max_priority_fee,
+            self.config.max_gas_price,
+        );
         let drain_gas_limit = 21_000u128;
         // L1 data fee on Base can be significant (0.0001-0.001 ETH depending on L1 gas prices).
         // Use 0.001 ETH (1e15 wei) buffer to be safe. We may leave dust in accounts.
@@ -2043,7 +1737,7 @@ impl LoadRunner {
         Ok(total_drained)
     }
 
-    fn progress_bar(&self, total: u64, prefix: &str) -> ProgressBar {
+    pub(super) fn progress_bar(&self, total: u64, prefix: &str) -> ProgressBar {
         if self.snapshot_tx.is_some() {
             return ProgressBar::hidden();
         }
@@ -2103,7 +1797,7 @@ impl LoadRunner {
     }
 
     /// Waits for token balances to reach a target after mint/distribution transactions.
-    async fn await_token_balances(
+    pub(super) async fn await_token_balances(
         client: &QueryProvider,
         pending_accounts: &mut Vec<(Address, Address)>,
         target_balance: U256,
@@ -2154,6 +1848,57 @@ impl LoadRunner {
         }
 
         Ok(settled)
+    }
+
+    pub(super) async fn refresh_sender_state(&mut self) -> Result<()> {
+        let total_accounts = self.accounts.len();
+        let client = self.client.clone();
+        let pb_refresh = self.progress_bar(total_accounts as u64, "Refreshing account state");
+
+        let refresh_futs: Vec<_> = self
+            .accounts
+            .accounts()
+            .iter()
+            .map(|a| {
+                let client = client.clone();
+                let addr = a.address;
+                async move {
+                    let balance = client.get_balance(addr).await.rpc("get balance")?;
+                    let nonce =
+                        client.get_transaction_count(addr).await.rpc("get transaction count")?;
+                    Ok::<_, BaselineError>((addr, balance, nonce))
+                }
+            })
+            .collect();
+
+        let refresh_results: Vec<_> = stream::iter(refresh_futs)
+            .buffer_unordered(FUNDING_CONCURRENCY)
+            .inspect(|_| pb_refresh.inc(1))
+            .collect()
+            .await;
+        pb_refresh.finish_and_clear();
+
+        let addr_to_idx: HashMap<Address, usize> =
+            self.accounts.accounts().iter().enumerate().map(|(i, a)| (a.address, i)).collect();
+
+        let refresh_provider = RootProvider::<Ethereum>::new_http(self.config.query_rpc.clone());
+
+        for result in refresh_results {
+            let (addr, balance, account_nonce) = result?;
+            let idx = addr_to_idx[&addr];
+            let account = &mut self.accounts.accounts_mut()[idx];
+            account.balance = balance;
+            account.nonce = account_nonce;
+
+            let nonce_manager =
+                NonceManager::new(refresh_provider.clone(), addr, NONCE_RPC_TIMEOUT)
+                    .with_pending_tag();
+            Arc::make_mut(&mut self.nonce_managers).insert(addr, nonce_manager);
+
+            debug!(address = %addr, balance = %balance, nonce = account_nonce, "account state refreshed");
+        }
+
+        Ok(())
     }
 
     /// Waits for source account balances to drop to the post-drain dust threshold.

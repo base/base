@@ -16,8 +16,8 @@ pub use basefee::*;
 mod builder;
 pub use builder::BaseChainSpecBuilder;
 
-mod hardforks;
-pub use hardforks::ChainUpgradesExt;
+mod upgrades;
+pub use upgrades::ChainUpgradesExt;
 
 mod spec;
 pub use spec::{BaseChainSpec, BaseChainSpecError, GenesisInfo};

@@ -3,7 +3,7 @@
 use std::fmt::Debug;
 
 use alloy_primitives::keccak256;
-use derive_more::Constructor;
+use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 use reth_primitives_traits::{Account, Bytecode};
 use reth_provider::{
     AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, ProviderError,
@@ -34,7 +34,6 @@ use crate::{
 };
 
 /// State provider for external proofs storage.
-#[derive(Constructor)]
 pub struct BaseProofsStateProviderRef<'a, Storage: BaseProofsStore> {
     /// Historical state provider for non-state related tasks.
     latest: Box<dyn StateProvider + Send + 'a>,
@@ -44,6 +43,34 @@ pub struct BaseProofsStateProviderRef<'a, Storage: BaseProofsStore> {
 
     /// Max block number that can be used for state lookups.
     block_number: BlockNumber,
+
+    /// Lazily-acquired read-only transaction shared across all EVM state reads.
+    ///
+    /// Acquired once on the first [`basic_account`](AccountReader::basic_account) or
+    /// [`storage`](StateProvider::storage) call and reused for the lifetime of this provider,
+    /// so that all EVM state reads within a single execution context share one database snapshot
+    /// and avoid per-call transaction-acquisition contention.
+    lazy_tx: Mutex<Option<Storage::Tx<'a>>>,
+}
+
+impl<'a, Storage: BaseProofsStore> BaseProofsStateProviderRef<'a, Storage> {
+    /// Creates a new state provider.
+    pub fn new(
+        latest: Box<dyn StateProvider + Send + 'a>,
+        storage: &'a BaseProofsStorage<Storage>,
+        block_number: BlockNumber,
+    ) -> Self {
+        Self { latest, storage, block_number, lazy_tx: Mutex::new(None) }
+    }
+
+    fn ensure_tx(&self) -> ProviderResult<MappedMutexGuard<'_, Storage::Tx<'a>>> {
+        let mut guard = self.lazy_tx.lock();
+        if guard.is_none() {
+            *guard = Some(self.storage.ro_tx().map_err(Into::<ProviderError>::into)?);
+        }
+
+        Ok(MutexGuard::map(guard, |tx| tx.as_mut().expect("read-only transaction initialized")))
+    }
 }
 
 impl<'a, Storage> Debug for BaseProofsStateProviderRef<'a, Storage>
@@ -64,13 +91,14 @@ impl<'a, Storage: BaseProofsStore + Clone> BaseProofsStateProviderRef<'a, Storag
         address: Address,
         hashed_key: B256,
     ) -> ProviderResult<Option<StorageValue>> {
+        let tx = self.ensure_tx()?;
         Ok(self
             .storage
-            .storage_hashed_cursor(keccak256(address.0), self.block_number)
+            .storage_hashed_cursor_with_tx(&tx, keccak256(address.0), self.block_number)
             .map_err(Into::<ProviderError>::into)?
             .seek(hashed_key)
             .map_err(Into::<ProviderError>::into)?
-            .and_then(|(key, storage)| (key == hashed_key).then_some(storage)))
+            .and_then(|(key, val)| (key == hashed_key).then_some(val)))
     }
 }
 
@@ -206,9 +234,10 @@ impl<'a, Storage: BaseProofsStore> HashedPostStateProvider
 impl<'a, Storage: BaseProofsStore> AccountReader for BaseProofsStateProviderRef<'a, Storage> {
     fn basic_account(&self, address: &Address) -> ProviderResult<Option<Account>> {
         let hashed_key = keccak256(address.0);
+        let tx = self.ensure_tx()?;
         Ok(self
             .storage
-            .account_hashed_cursor(self.block_number)
+            .account_hashed_cursor_with_tx(&tx, self.block_number)
             .map_err(Into::<ProviderError>::into)?
             .seek(hashed_key)
             .map_err(Into::<ProviderError>::into)?

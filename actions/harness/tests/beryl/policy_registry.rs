@@ -90,15 +90,34 @@ async fn beryl_enables_policy_registry_singleton_precompile() {
         "policy registry view staticcall must succeed when POLICY_REGISTRY is deactivated"
     );
 
-    // Block6: re-activate POLICY_REGISTRY (committed state before block7).
+    // Block6: write calls must still fail while POLICY_REGISTRY is deactivated.
+    let write_while_deactivated = env.create_tx(
+        TxKind::Call(PolicyRegistryStorage::ADDRESS),
+        Bytes::from(
+            IPolicyRegistry::createPolicyCall {
+                admin: BerylTestEnv::alice(),
+                policyType: IPolicyRegistry::PolicyType::ALLOWLIST,
+            }
+            .abi_encode(),
+        ),
+        GAS_LIMIT,
+    );
+    let block6 =
+        env.sequencer.build_next_block_with_transactions(vec![write_while_deactivated]).await;
+    assert!(
+        !env.user_tx_succeeded(&block6, 0),
+        "policy registry write call must revert when POLICY_REGISTRY is deactivated"
+    );
+
+    // Block7: re-activate POLICY_REGISTRY (committed state before block8).
     let reactivate_registry = env.activate_feature_tx(BerylTestEnv::policy_registry_feature());
-    let block6 = env.sequencer.build_next_block_with_transactions(vec![reactivate_registry]).await;
+    let block7 = env.sequencer.build_next_block_with_transactions(vec![reactivate_registry]).await;
 
-    assert!(env.user_tx_succeeded(&block6, 0), "POLICY_REGISTRY re-activation must succeed");
+    assert!(env.user_tx_succeeded(&block7, 0), "POLICY_REGISTRY re-activation must succeed");
 
-    // Block7: probe's staticcall must succeed again after re-activation.
+    // Block8: probe's staticcall must succeed again after re-activation.
     let probe_after_reactivate = env.create_tx(TxKind::Call(probe), policy_exists_call, GAS_LIMIT);
-    let block7 =
+    let block8 =
         env.sequencer.build_next_block_with_transactions(vec![probe_after_reactivate]).await;
 
     assert_eq!(
@@ -122,8 +141,9 @@ async fn beryl_enables_policy_registry_singleton_precompile() {
             (block5, 6),
             (block6, 7),
             (block7, 8),
+            (block8, 9),
         ],
-        8,
+        9,
     )
     .await;
 }

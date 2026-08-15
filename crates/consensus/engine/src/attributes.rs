@@ -400,13 +400,13 @@ pub enum AttributesMismatch {
     FeeRecipient(Address, Address),
     /// A mismatch in the parent beacon block root.
     ParentBeaconBlockRoot(Option<B256>, Option<B256>),
-    /// After the canyon hardfork, withdrawals cannot be empty.
+    /// After the canyon upgrade, withdrawals cannot be empty.
     CanyonWithdrawalsNotEmpty,
-    /// After the canyon hardfork, the withdrawals root must be the empty hash.
+    /// After the canyon upgrade, the withdrawals root must be the empty hash.
     CanyonNotEmptyHash,
-    /// In the bedrock hardfork, the attributes must has empty withdrawals.
+    /// In the bedrock upgrade, the attributes must has empty withdrawals.
     BedrockWithdrawals,
-    /// In the isthmus hardfork, the withdrawals root must be set.
+    /// In the isthmus upgrade, the withdrawals root must be set.
     IsthmusMissingWithdrawalsRoot,
 }
 
@@ -765,7 +765,7 @@ mod tests {
 
         // We need to activate holocene to make sure it works! We set the activation time to zero to
         // make sure that it is activated by default.
-        cfg.hardforks.holocene_time = Some(0);
+        cfg.upgrades.holocene_time = Some(0);
 
         let mut attributes = default_attributes();
         attributes.attributes.gas_limit = Some(0);
@@ -958,7 +958,7 @@ mod tests {
     fn test_eip1559_parameters_invalid_jovian_encoding() {
         let (mut cfg, mut attributes, mut block) = eip1559_test_setup();
 
-        cfg.hardforks.jovian_time = Some(0);
+        cfg.upgrades.jovian_time = Some(0);
 
         let eip1559_extra_params = HoloceneExtraData::encode(
             Default::default(),
@@ -1023,7 +1023,7 @@ mod tests {
 
     fn jovian_test_setup() -> (RollupConfig, AttributesWithParent, Block<Transaction>) {
         let (mut cfg, mut attributes, block) = eip1559_test_setup();
-        cfg.hardforks.jovian_time = Some(0);
+        cfg.upgrades.jovian_time = Some(0);
 
         let eip1559_params: FixedBytes<8> = HoloceneExtraData::encode(
             Default::default(),

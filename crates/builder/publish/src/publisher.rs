@@ -7,7 +7,7 @@ use serde::Serialize;
 use tokio::sync::broadcast;
 use tokio_tungstenite::tungstenite::Utf8Bytes;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{Level, info, span};
 
 use crate::{Listener, PublisherMetrics, PublishingMetrics};
 
@@ -105,8 +105,18 @@ impl WebSocketPublisher {
         block_number: u64,
         flashblock_index: u64,
     ) -> Result<usize, serde_json::Error> {
+        let publish_span = span!(
+            Level::INFO,
+            "publish_flashblock",
+            block_number,
+            flashblock_index,
+            byte_size = tracing::field::Empty,
+        );
+        let _publish_span_guard = publish_span.enter();
+
         let json = serde_json::to_string(payload)?;
         let size = json.len();
+        publish_span.record("byte_size", size);
         let utf8_bytes = Utf8Bytes::from(json);
         let position = FlashblockPosition { block_number, flashblock_index };
 

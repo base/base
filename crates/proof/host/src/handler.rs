@@ -24,7 +24,7 @@ use base_proof_preimage::{PreimageKey, PreimageKeyType};
 use base_protocol::{BlockInfo, OutputRoot};
 use futures::FutureExt;
 use tokio::sync::Semaphore;
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 use crate::{
     HostConfig, HostError, HostProviders, Metrics, Result, SharedKeyValueStore, store_ordered_trie,
@@ -376,7 +376,7 @@ impl PayloadWitnessPrefetcher {
         {
             Ok(response) => response,
             Err(err) => {
-                warn!(
+                error!(
                     target: HOST_SERVER_TARGET,
                     block_number,
                     ?parent_block_hash,
@@ -1172,8 +1172,7 @@ async fn handle_hint_inner(
 
             let hash: B256 = hint.data.as_ref().try_into()?;
 
-            warn!(node_hash = %hash, "L2StateNode hint sent");
-            warn!("debug_executePayload failed to return a complete witness");
+            error!(node_hash = %hash, "debug_executePayload failed to return a complete witness");
 
             let preimage: Bytes = providers.l2.client().request("debug_dbGet", &[hash]).await?;
             let actual_hash = keccak256(preimage.as_ref());
@@ -1285,7 +1284,7 @@ async fn handle_hint_inner(
             {
                 Ok(response) => response,
                 Err(e) => {
-                    warn!(error = %e, "debug_executePayload failed");
+                    error!(error = %e, "debug_executePayload failed");
                     return Ok(());
                 }
             };

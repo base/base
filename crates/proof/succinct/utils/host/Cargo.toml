@@ -26,6 +26,7 @@ base-common-network.workspace = true
 # base proof/consensus
 base-consensus-derive.workspace = true
 base-common-genesis.workspace = true
+base-optimism-rpc.workspace = true
 base-proof-host.workspace = true
 base-proof-preimage.workspace = true
 base-proof-rpc.workspace = true

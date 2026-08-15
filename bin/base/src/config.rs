@@ -29,6 +29,8 @@ pub(crate) enum BuiltInChain {
     Sepolia,
     /// Base zeronet.
     Zeronet,
+    /// Local Base devnet.
+    Dev,
 }
 
 impl BuiltInChain {
@@ -38,6 +40,7 @@ impl BuiltInChain {
             Self::Mainnet => "mainnet",
             Self::Sepolia => "sepolia",
             Self::Zeronet => "zeronet",
+            Self::Dev => "dev",
         }
     }
 
@@ -47,6 +50,7 @@ impl BuiltInChain {
             Self::Mainnet => BuiltInChainConfig::mainnet(),
             Self::Sepolia => BuiltInChainConfig::sepolia(),
             Self::Zeronet => BuiltInChainConfig::zeronet(),
+            Self::Dev => BuiltInChainConfig::devnet(),
         }
     }
 }
@@ -65,8 +69,9 @@ impl FromStr for BuiltInChain {
             "mainnet" => Ok(Self::Mainnet),
             "sepolia" => Ok(Self::Sepolia),
             "zeronet" => Ok(Self::Zeronet),
+            "dev" => Ok(Self::Dev),
             _ => Err(format!(
-                "unsupported built-in chain `{value}`; expected one of mainnet, sepolia, zeronet"
+                "unsupported built-in chain `{value}`; expected one of mainnet, sepolia, zeronet, dev"
             )),
         }
     }
@@ -273,6 +278,22 @@ mod tests {
             assert_eq!(resolved.name, "zeronet");
             assert_eq!(resolved.l2_chain_id, 763360);
             assert_eq!(resolved.source, ResolvedChainSource::BuiltIn(BuiltInChain::Zeronet));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    #[allow(clippy::result_large_err)]
+    fn resolves_dev_builtin() {
+        with_cleared_env(|_| {
+            let resolved =
+                ChainResolver::new(ChainArg::BuiltIn(BuiltInChain::Dev)).resolve().unwrap();
+
+            assert_eq!(resolved.name, "dev");
+            assert_eq!(resolved.l2_chain_id, 1337);
+            assert_eq!(resolved.l1_chain_id, 900);
+            assert_eq!(resolved.source, ResolvedChainSource::BuiltIn(BuiltInChain::Dev));
 
             Ok(())
         });

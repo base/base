@@ -45,6 +45,7 @@ async-trait.workspace = true
 http-body-util.workspace = true
 serde = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["time"] }
 
 c-kzg.workspace = true
 tracing.workspace = true
@@ -61,6 +62,6 @@ metrics = [
 ]
 
 [dev-dependencies]
-tokio.workspace = true
+tokio = { workspace = true, features = ["macros", "test-util"] }
 httpmock.workspace = true
 serde_json = { workspace = true, features = ["std"] }

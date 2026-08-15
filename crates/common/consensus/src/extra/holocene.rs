@@ -5,7 +5,7 @@ use super::{EIP1559ParamEncoder, EIP1559ParamError};
 
 const VERSION_BYTE: u8 = 0;
 
-/// EIP-1559 extra data encoding for the Holocene hardfork.
+/// EIP-1559 extra data encoding for the Holocene upgrade.
 ///
 /// Holocene extra data is 9 bytes:
 /// - 1 byte version (always `0`)

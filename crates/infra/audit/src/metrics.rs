@@ -38,4 +38,20 @@ base_metrics::define_metrics! {
     #[describe("Bundle events dropped because the RPC reader channel could not accept them")]
     #[label(name = "kind", default = ["full", "closed"])]
     rpc_channel_send_failures: counter,
+    #[describe("Transaction observability events received over HTTP")]
+    transaction_events_received: counter,
+    #[describe("Transaction observability events newly persisted to Postgres")]
+    transaction_events_persisted: counter,
+    #[describe("Transaction observability events skipped as duplicates")]
+    transaction_events_duplicate: counter,
+    #[describe("Transaction observability events rejected before persistence")]
+    transaction_events_rejected: counter,
+    #[describe("Transaction observability event validation failures")]
+    transaction_events_validation_failures: counter,
+    #[describe("Transaction observability event database persistence failures")]
+    transaction_events_database_failures: counter,
+    #[describe("Transaction observability HTTP ingest batch size")]
+    transaction_event_batch_size: histogram,
+    #[describe("Duration of transaction observability Postgres batch writes")]
+    transaction_event_batch_write_duration: histogram,
 }

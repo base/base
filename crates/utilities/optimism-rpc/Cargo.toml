@@ -1,0 +1,24 @@
+[package]
+name = "base-optimism-rpc"
+description = "Typed Optimism rollup JSON-RPC provider extensions and response types."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# network
+alloy-eips.workspace = true
+alloy-network.workspace = true
+alloy-provider.workspace = true
+alloy-transport.workspace = true
+alloy-primitives.workspace = true
+
+# serialization
+serde_json.workspace = true
+serde = { workspace = true, features = ["derive"] }

@@ -19,7 +19,7 @@ pub struct L1BlockInfoBedrockBase {
     pub batcher_address: Address,
 }
 
-/// Accessors for Bedrock fields that still are available in latest hardfork.
+/// Accessors for Bedrock fields that still are available in latest upgrade.
 #[delegatable_trait]
 pub trait L1BlockInfoBedrockBaseFields {
     /// The current L1 origin block number

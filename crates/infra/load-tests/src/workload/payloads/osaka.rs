@@ -118,6 +118,10 @@ impl Payload for OsakaPayload {
         "osaka"
     }
 
+    fn uses_runner_recipient(&self) -> bool {
+        false
+    }
+
     fn generate(&self, rng: &mut SeededRng, _from: Address, _to: Address) -> TransactionRequest {
         match &self.target {
             OsakaTarget::Clz => Self::generate_clz(rng),

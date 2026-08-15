@@ -1,0 +1,24 @@
+[package]
+name = "base-sidecrush"
+description = "Block-production health-check sidecar library"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+cadence = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+alloy-provider = { workspace = true }
+alloy-rpc-types-eth = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["rt", "time", "macros"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

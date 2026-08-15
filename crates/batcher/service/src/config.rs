@@ -2,16 +2,18 @@
 
 use std::{net::SocketAddr, time::Duration};
 
-use alloy_signer_local::PrivateKeySigner;
+use alloy_primitives::Address;
 use base_batcher_core::ThrottleConfig;
 use base_batcher_encoder::EncoderConfig;
+use base_tx_manager::SignerConfig;
 use url::Url;
 
 /// Full batcher configuration combining RPC endpoints, identity, encoding
 /// parameters, submission limits, and optional throttling.
 ///
-/// The batch inbox address is sourced from the rollup config fetched at startup
-/// via `optimism_rollupConfig`, so it is not stored here.
+/// By default the batch inbox address is sourced from the rollup config fetched
+/// at startup via `optimism_rollupConfig`. Shadow deployments may set
+/// [`batch_inbox_override`](Self::batch_inbox_override) to submit to a non-canonical inbox.
 #[derive(Debug, Clone)]
 pub struct BatcherConfig {
     /// L1 RPC endpoint(s).
@@ -40,16 +42,39 @@ pub struct BatcherConfig {
     /// connection and falls back to polling [`l2_rpc_url`](Self::l2_rpc_url)
     /// only on failure. When absent, the batcher uses polling exclusively.
     pub l2_ws_url: Option<Url>,
+    /// Optional derived-parity validator L2 RPC endpoint.
+    ///
+    /// When set, shadow-mode deployments compare derived L2 block hashes
+    /// from this validator against the configured sequencer L2 RPC endpoint.
+    /// The validator is expected to derive from the shadow batch inbox and must
+    /// not be a follow-mode mirror of the sequencer.
+    pub parity_validator_l2_rpc_url: Option<Url>,
     /// Rollup node RPC endpoint(s).
     ///
     /// Same connection-time failover semantics as [`l1_rpc_url`](Self::l1_rpc_url).
     /// Must be non-empty.
     pub rollup_rpc_url: Vec<Url>,
-    /// Private key for signing L1 transactions.
+    /// Optional L1 beacon API endpoint.
+    ///
+    /// Used only by shadow-mode parity monitoring to fetch EIP-4844 blob sidecars
+    /// for canonical and shadow inbox submissions. Calldata parity does not require it.
+    pub l1_beacon_url: Option<Url>,
+    /// Signer configuration for signing L1 transactions.
     ///
     /// Must be `Some` before the batcher is started; a `None` value will cause
-    /// startup to fail with a clear error rather than proceeding with a random key.
-    pub batcher_private_key: Option<PrivateKeySigner>,
+    /// startup to fail with a clear error rather than proceeding without an L1 identity.
+    pub signer: Option<SignerConfig>,
+    /// Whether Prometheus metrics are enabled for this service.
+    ///
+    /// When enabled, the service starts the signer account balance monitor.
+    pub metrics_enabled: bool,
+    /// Dangerous shadow-mode batch inbox override.
+    ///
+    /// When set, the batcher still reads the canonical rollup config from the rollup
+    /// RPC, but submits L1 transactions to this address instead of
+    /// `rollup_config.batch_inbox_address`. This is only intended for explicit
+    /// shadow deployments; canonical deployments must leave it unset.
+    pub batch_inbox_override: Option<Address>,
     /// L2 block polling interval.
     pub poll_interval: Duration,
     /// Encoder configuration.
@@ -110,8 +135,12 @@ impl Default for BatcherConfig {
             l1_ws_url: None,
             l2_rpc_url: vec!["http://localhost:9545".parse().expect("valid default URL")],
             l2_ws_url: None,
+            parity_validator_l2_rpc_url: None,
             rollup_rpc_url: vec!["http://localhost:7545".parse().expect("valid default URL")],
-            batcher_private_key: None,
+            l1_beacon_url: None,
+            signer: None,
+            metrics_enabled: false,
+            batch_inbox_override: None,
             poll_interval: Duration::from_secs(1),
             encoder_config: EncoderConfig::default(),
             max_pending_transactions: 1,

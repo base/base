@@ -10,14 +10,15 @@ use alloy_rpc_types_eth::{BlockId, EIP1186AccountProofResponse, Header};
 use alloy_transport_http::{Http, reqwest::Client};
 use async_trait::async_trait;
 use backon::Retryable;
+use base_optimism_rpc::DebugProviderExt;
+use base_retry::RetryConfig;
 use url::Url;
 
 use super::{
     L2HttpProvider,
     cache::MeteredCache,
-    config::{DEFAULT_CACHE_SIZE, RetryConfig},
+    config::DEFAULT_CACHE_SIZE,
     error::{RpcError, RpcResult},
-    provider_ext::DebugProviderExt,
     traits::L2Provider,
     types::BaseBlock,
 };
@@ -237,9 +238,8 @@ impl L2Provider for L2Client {
         Ok(proof)
     }
 
-    async fn header_by_number(&self, number: Option<u64>) -> RpcResult<Header> {
-        let block_id: BlockId =
-            number.map_or(BlockNumberOrTag::Latest, BlockNumberOrTag::Number).into();
+    async fn header_by_number(&self, block: BlockNumberOrTag) -> RpcResult<Header> {
+        let block_id: BlockId = block.into();
 
         let backoff = self.retry_config.to_backoff_builder();
 
@@ -262,9 +262,8 @@ impl L2Provider for L2Client {
         Ok(header)
     }
 
-    async fn block_by_number(&self, number: Option<u64>) -> RpcResult<BaseBlock> {
-        let block_id: BlockId =
-            number.map_or(BlockNumberOrTag::Latest, BlockNumberOrTag::Number).into();
+    async fn block_by_number(&self, block: BlockNumberOrTag) -> RpcResult<BaseBlock> {
+        let block_id: BlockId = block.into();
 
         let backoff = self.retry_config.to_backoff_builder();
 

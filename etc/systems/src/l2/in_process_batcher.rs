@@ -8,6 +8,7 @@ use alloy_primitives::B256;
 use alloy_signer_local::PrivateKeySigner;
 use base_batcher_service::{BatcherConfig, BatcherService};
 use base_runtime::TokioRuntime;
+use base_tx_manager::SignerConfig;
 use eyre::Result;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -47,7 +48,7 @@ impl InProcessBatcher {
             l1_rpc_url: vec![config.l1_rpc_url],
             l2_rpc_url: vec![config.l2_rpc_url],
             rollup_rpc_url: vec![config.rollup_rpc_url],
-            batcher_private_key: Some(signer),
+            signer: Some(SignerConfig::local(signer)),
             // SystemTestStack defaults come from the shared batcher config:
             // poll_interval: 1s, num_confirmations: 1, resubmission_timeout: 48s —
             // all set by BatcherConfig::default().

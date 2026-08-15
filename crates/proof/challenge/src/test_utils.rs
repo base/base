@@ -10,6 +10,7 @@ use std::{
 use alloy_consensus::{
     Eip658Value, Header as ConsensusHeader, Receipt, ReceiptEnvelope, ReceiptWithBloom,
 };
+use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256, Bloom, Bytes, U256, keccak256};
 use alloy_rlp::Encodable;
 use alloy_rpc_types_eth::{EIP1186AccountProofResponse, Header as RpcHeader, TransactionReceipt};
@@ -24,8 +25,9 @@ use base_proof_contracts::{
 use base_proof_rpc::{L2Provider, RpcError, RpcResult};
 use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
 use base_prover_service_protocol::{
-    GetProofRequest, GetProofResponse, ProofResult as ApiProofResult, ProofStatus,
-    ProveBlockRangeRequest, ProveBlockRangeResponse, SnarkGroth16ProofResult, ZkProofResult, ZkVm,
+    DeleteProofRequest, GetProofRequest, GetProofResponse, ProofResult as ApiProofResult,
+    ProofStatus, ProveBlockRangeRequest, ProveBlockRangeResponse, SnarkGroth16ProofResult,
+    ZkProofResult, ZkVm,
 };
 use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager};
 
@@ -131,17 +133,30 @@ impl Default for MockGameState {
 pub struct MockDisputeGameFactory {
     /// Ordered list of games in the factory.
     pub games: Mutex<Vec<GameAtIndex>>,
+    /// Games keyed by `(game_type, root_claim, extra_data)` for UUID lookups.
+    pub uuid_games: Mutex<HashMap<(u32, B256, Bytes), Address>>,
 }
 
 impl MockDisputeGameFactory {
     /// Creates a new mock from an initial set of games.
-    pub const fn new(games: Vec<GameAtIndex>) -> Self {
-        Self { games: Mutex::new(games) }
+    pub fn new(games: Vec<GameAtIndex>) -> Self {
+        Self { games: Mutex::new(games), uuid_games: Mutex::new(HashMap::new()) }
     }
 
     /// Appends a single game to the factory.
     pub fn push(&self, game: GameAtIndex) {
         self.games.lock().unwrap().push(game);
+    }
+
+    /// Inserts a UUID-addressable game.
+    pub fn insert_uuid_game(
+        &self,
+        game_type: u32,
+        root_claim: B256,
+        extra_data: Bytes,
+        proxy: Address,
+    ) {
+        self.uuid_games.lock().unwrap().insert((game_type, root_claim, extra_data), proxy);
     }
 }
 
@@ -170,11 +185,17 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
 
     async fn games(
         &self,
-        _game_type: u32,
-        _root_claim: B256,
-        _extra_data: Bytes,
+        game_type: u32,
+        root_claim: B256,
+        extra_data: Bytes,
     ) -> Result<Address, ContractError> {
-        Ok(Address::ZERO)
+        Ok(self
+            .uuid_games
+            .lock()
+            .unwrap()
+            .get(&(game_type, root_claim, extra_data))
+            .copied()
+            .unwrap_or(Address::ZERO))
     }
 }
 
@@ -235,15 +256,42 @@ pub struct MockAggregateVerifier {
     /// Per-address game state lookup, wrapped in a `Mutex` for interior
     /// mutability in multi-step tests.
     pub games: Mutex<HashMap<Address, MockGameState>>,
+    /// Per-address count of status calls that should fail before reading state.
+    pub status_failures: Mutex<HashMap<Address, u64>>,
     /// Addresses passed to `bond_recipient`, used by tests that assert polling
     /// avoids redundant lifecycle reads.
     pub bond_recipient_reads: Mutex<Vec<Address>>,
+    /// Addresses passed to `game_info`, used by tests that assert cached reads.
+    pub game_info_reads: Mutex<Vec<Address>>,
+    /// Addresses passed to `status`, used by tests that assert cached reads.
+    pub status_reads: Mutex<Vec<Address>>,
+    /// Addresses passed to `zk_prover`, used by tests that assert cheap pending polls.
+    pub zk_prover_reads: Mutex<Vec<Address>>,
+    /// Addresses passed to `tee_prover`, used by tests that assert cheap pending polls.
+    pub tee_prover_reads: Mutex<Vec<Address>>,
+    /// Addresses passed to `countered_index`, used by tests that assert cheap pending polls.
+    pub countered_index_reads: Mutex<Vec<Address>>,
+    /// Addresses passed to `game_over`, used by tests that assert cheap pending polls.
+    pub game_over_reads: Mutex<Vec<Address>>,
+    /// Addresses passed to `anchor_state_registry`, used by tests that assert cached reads.
+    pub anchor_state_registry_reads: Mutex<Vec<Address>>,
 }
 
 impl MockAggregateVerifier {
     /// Creates a new mock verifier from a pre-built game state map.
-    pub const fn new(games: HashMap<Address, MockGameState>) -> Self {
-        Self { games: Mutex::new(games), bond_recipient_reads: Mutex::new(Vec::new()) }
+    pub fn new(games: HashMap<Address, MockGameState>) -> Self {
+        Self {
+            games: Mutex::new(games),
+            status_failures: Mutex::new(HashMap::new()),
+            bond_recipient_reads: Mutex::new(Vec::new()),
+            game_info_reads: Mutex::new(Vec::new()),
+            status_reads: Mutex::new(Vec::new()),
+            zk_prover_reads: Mutex::new(Vec::new()),
+            tee_prover_reads: Mutex::new(Vec::new()),
+            countered_index_reads: Mutex::new(Vec::new()),
+            game_over_reads: Mutex::new(Vec::new()),
+            anchor_state_registry_reads: Mutex::new(Vec::new()),
+        }
     }
 
     /// Updates the state for a specific game address.
@@ -254,9 +302,46 @@ impl MockAggregateVerifier {
         self.games.lock().unwrap().insert(address, state);
     }
 
+    /// Causes the next `count` status reads for a game to fail.
+    pub fn fail_status_reads(&self, address: Address, count: u64) {
+        if count > 0 {
+            self.status_failures.lock().unwrap().insert(address, count);
+        }
+    }
+
     /// Returns how many times `bond_recipient` was read for a game.
     pub fn bond_recipient_read_count(&self, game_address: Address) -> usize {
         self.bond_recipient_reads
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|&&read_address| read_address == game_address)
+            .count()
+    }
+
+    /// Returns how many times `game_info` was read for a game.
+    pub fn game_info_read_count(&self, game_address: Address) -> usize {
+        self.game_info_reads
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|&&read_address| read_address == game_address)
+            .count()
+    }
+
+    /// Returns how many times `status` was read for a game.
+    pub fn status_read_count(&self, game_address: Address) -> usize {
+        self.status_reads
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|&&read_address| read_address == game_address)
+            .count()
+    }
+
+    /// Returns how many times `anchor_state_registry` was read for a game.
+    pub fn anchor_state_registry_read_count(&self, game_address: Address) -> usize {
+        self.anchor_state_registry_reads
             .lock()
             .unwrap()
             .iter()
@@ -281,18 +366,32 @@ impl MockAggregateVerifier {
 #[async_trait]
 impl AggregateVerifierClient for MockAggregateVerifier {
     async fn game_info(&self, game_address: Address) -> Result<GameInfo, ContractError> {
+        self.game_info_reads.lock().unwrap().push(game_address);
         self.get(game_address, |s| s.game_info)
     }
 
     async fn status(&self, game_address: Address) -> Result<GameStatus, ContractError> {
+        self.status_reads.lock().unwrap().push(game_address);
+        let mut failures = self.status_failures.lock().unwrap();
+        if let Some(remaining) = failures.get_mut(&game_address) {
+            *remaining -= 1;
+            if *remaining == 0 {
+                failures.remove(&game_address);
+            }
+            return Err(ContractError::Validation(format!(
+                "simulated status error for game {game_address}"
+            )));
+        }
         self.get(game_address, |s| s.status)
     }
 
     async fn zk_prover(&self, game_address: Address) -> Result<Address, ContractError> {
+        self.zk_prover_reads.lock().unwrap().push(game_address);
         self.get(game_address, |s| s.zk_prover)
     }
 
     async fn tee_prover(&self, game_address: Address) -> Result<Address, ContractError> {
+        self.tee_prover_reads.lock().unwrap().push(game_address);
         self.get(game_address, |s| s.tee_prover)
     }
 
@@ -337,10 +436,12 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     }
 
     async fn countered_index(&self, game_address: Address) -> Result<u64, ContractError> {
+        self.countered_index_reads.lock().unwrap().push(game_address);
         self.get(game_address, |s| s.countered_index)
     }
 
     async fn game_over(&self, game_address: Address) -> Result<bool, ContractError> {
+        self.game_over_reads.lock().unwrap().push(game_address);
         self.get(game_address, |s| s.game_over)
     }
 
@@ -378,6 +479,7 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     }
 
     async fn anchor_state_registry(&self, game_address: Address) -> Result<Address, ContractError> {
+        self.anchor_state_registry_reads.lock().unwrap().push(game_address);
         self.get(game_address, |s| s.anchor_state_registry)
     }
 
@@ -555,7 +657,7 @@ pub struct RecordingDisputeGameFactory {
 
 impl RecordingDisputeGameFactory {
     /// Creates a new recording factory.
-    pub const fn new(games: Vec<GameAtIndex>, error_indices: Vec<u64>) -> Self {
+    pub fn new(games: Vec<GameAtIndex>, error_indices: Vec<u64>) -> Self {
         Self {
             inner: MockDisputeGameFactory::new(games),
             error_indices,
@@ -657,8 +759,11 @@ impl L2Provider for MockL2Provider {
             .ok_or_else(|| RpcError::ProofNotFound(format!("no proof for hash {block_hash}")))
     }
 
-    async fn header_by_number(&self, number: Option<u64>) -> RpcResult<RpcHeader> {
-        let block_number = number.unwrap_or(0);
+    async fn header_by_number(&self, block: BlockNumberOrTag) -> RpcResult<RpcHeader> {
+        let block_number = match block {
+            BlockNumberOrTag::Number(number) => number,
+            other => panic!("MockL2Provider::header_by_number does not support tag {other:?}"),
+        };
         if self.error_blocks.contains(&block_number) {
             return Err(RpcError::BlockNotFound(format!("block {block_number} not available")));
         }
@@ -668,7 +773,10 @@ impl L2Provider for MockL2Provider {
             .ok_or_else(|| RpcError::HeaderNotFound(format!("no header for block {block_number}")))
     }
 
-    async fn block_by_number(&self, _number: Option<u64>) -> RpcResult<base_proof_rpc::BaseBlock> {
+    async fn block_by_number(
+        &self,
+        _block: BlockNumberOrTag,
+    ) -> RpcResult<base_proof_rpc::BaseBlock> {
         Err(RpcError::BlockNotFound("not implemented in mock".into()))
     }
 
@@ -695,6 +803,10 @@ pub struct MockZkProofState {
     pub proof: Vec<u8>,
     /// Optional full prover-service result returned when status is [`ProofStatus::Succeeded`].
     pub result: Option<ApiProofResult>,
+    /// When `true`, [`get_proof`](ProofRequesterProvider::get_proof) returns `None` for
+    /// `result` even when `proof_status` is [`ProofStatus::Succeeded`]. Used to simulate
+    /// the "succeeded without result" malformed-response path.
+    pub omit_result_on_success: bool,
     /// Error message returned when status is `Failed`.
     pub error_message: Option<String>,
     /// Every [`ProveBlockRangeRequest`] received by `prove_block_range`, in call order.
@@ -707,6 +819,7 @@ impl Default for MockZkProofState {
             proof_status: ProofStatus::Queued,
             proof: Vec::new(),
             result: None,
+            omit_result_on_success: false,
             error_message: None,
             prove_block_range_log: Vec::new(),
         }
@@ -725,8 +838,7 @@ impl ProofRequesterProvider for MockZkProofProvider {
         &self,
         request: ProveBlockRangeRequest,
     ) -> Result<ProveBlockRangeResponse, ProverServiceClientError> {
-        let session_id =
-            request.proof.session_id.clone().unwrap_or_else(|| self.session_id.clone());
+        let session_id = request.proof.session_id.clone();
         self.state.lock().unwrap().prove_block_range_log.push(request);
         Ok(ProveBlockRangeResponse { session_id })
     }
@@ -737,11 +849,19 @@ impl ProofRequesterProvider for MockZkProofProvider {
     ) -> Result<GetProofResponse, ProverServiceClientError> {
         let state = self.state.lock().unwrap().clone();
         let result = if state.proof_status == ProofStatus::Succeeded {
-            state.result.or_else(|| {
-                Some(ApiProofResult::SnarkGroth16(SnarkGroth16ProofResult {
-                    proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: state.proof.into() },
-                }))
-            })
+            if state.omit_result_on_success {
+                None
+            } else {
+                state.result.or_else(|| {
+                    Some(ApiProofResult::SnarkGroth16(SnarkGroth16ProofResult {
+                        proof: ZkProofResult {
+                            zk_vm: ZkVm::Sp1,
+                            proof: state.proof.into(),
+                            execution_stats: None,
+                        },
+                    }))
+                })
+            }
         } else {
             None
         };
@@ -751,6 +871,16 @@ impl ProofRequesterProvider for MockZkProofProvider {
             result,
         })
     }
+
+    async fn delete_proof_request(
+        &self,
+        request: DeleteProofRequest,
+    ) -> Result<(), ProverServiceClientError> {
+        let mut state = self.state.lock().unwrap();
+        state.prove_block_range_log.retain(|entry| entry.proof.session_id != request.session_id);
+        Ok(())
+    }
+
     async fn list_proofs(
         &self,
         _request: base_prover_service_protocol::ListProofsRequest,
@@ -964,6 +1094,14 @@ mod tests {
 
     use super::*;
     use crate::scanner::{GameCategory, GameScanner};
+
+    #[tokio::test]
+    #[should_panic(expected = "MockL2Provider::header_by_number does not support tag finalized")]
+    async fn test_mock_l2_provider_rejects_block_tags() {
+        let provider = MockL2Provider::new();
+
+        let _ = provider.header_by_number(BlockNumberOrTag::Finalized).await;
+    }
 
     /// Happy path: mixed games, only `IN_PROGRESS` / non-nullified returned.
     #[tokio::test]

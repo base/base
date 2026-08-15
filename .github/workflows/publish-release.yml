@@ -9,6 +9,7 @@ on:
         type: string
 
 permissions:
+  actions: read
   contents: write
   packages: write
   id-token: write
@@ -81,19 +82,25 @@ jobs:
             exit 1
           fi
 
-          # Ensure no final git tag already exists
-          if git rev-parse "v${VERSION}" > /dev/null 2>&1; then
-            echo "::error::Tag v${VERSION} already exists"
-            exit 1
+          # Existing final tags are allowed so failed/partial publish runs can be retried.
+          if git rev-parse "refs/tags/${TAG}" > /dev/null 2>&1; then
+            TAG_SHA=$(git rev-parse "refs/tags/${TAG}^{}")
+            HEAD_SHA=$(git rev-parse HEAD)
+            if [[ "$TAG_SHA" == "$HEAD_SHA" ]]; then
+              echo "::notice::Tag ${TAG} already exists at release branch HEAD; reusing it"
+            else
+              echo "::error::Tag ${TAG} already exists at ${TAG_SHA}, not release branch HEAD ${HEAD_SHA}"
+              echo "::error::Refusing to move an existing release tag to a different commit"
+              exit 1
+            fi
           fi
 
-          # Ensure no final release already exists
+          # Existing releases are allowed because the publish job can fill in missing artifacts.
           if gh release view "$TAG" > /dev/null 2>&1; then
-            echo "::error::Release $TAG already exists"
-            exit 1
+            echo "::notice::Release $TAG already exists; build will reuse it"
           fi
 
-      - name: Create and push tag
+      - name: Create or reuse tag
         run: ./etc/scripts/release/create-tag.sh "releases/v${{ inputs.version }}" final
 
       - name: Read tag
@@ -112,7 +119,7 @@ jobs:
         run: |
           TAG="${{ steps.read-tag.outputs.tag }}"
 
-          echo "## Tag Created" >> $GITHUB_STEP_SUMMARY
+          echo "## Tag Ready" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Tag**: \`$TAG\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY

@@ -2,10 +2,10 @@
 
 use alloc::vec::Vec;
 
-use alloy_consensus::{Transaction, TxType, Typed2718};
+use alloy_consensus::{Transaction, Typed2718};
 use alloy_primitives::{B256, U256};
 use alloy_rlp::{Buf, Header};
-use base_common_consensus::{BaseBlock, HoloceneExtraData, JovianExtraData};
+use base_common_consensus::{BaseBlock, HoloceneExtraData, JovianExtraData, OpTxType};
 use base_common_genesis::{RollupConfig, SystemConfig};
 
 use crate::{
@@ -97,7 +97,7 @@ fn encode_scalar(blob_base_fee_scalar: u32, base_fee_scalar: u32) -> U256 {
 }
 
 /// Reads transaction data from a reader.
-pub fn read_tx_data(r: &mut &[u8]) -> Result<(Vec<u8>, TxType), SpanBatchError> {
+pub fn read_tx_data(r: &mut &[u8]) -> Result<(Vec<u8>, OpTxType), SpanBatchError> {
     let mut tx_data = Vec::new();
     let first_byte =
         *r.first().ok_or(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionData))?;
@@ -145,7 +145,7 @@ mod tests {
 
     use alloy_eips::eip1898::BlockNumHash;
     use alloy_primitives::{U256, address, bytes, uint};
-    use base_common_genesis::{ChainGenesis, HardForkConfig};
+    use base_common_genesis::{ChainGenesis, UpgradeConfig};
 
     use super::*;
     use crate::{
@@ -343,7 +343,7 @@ mod tests {
                 l2: BlockNumHash { hash: block_hash, ..Default::default() },
                 ..Default::default()
             },
-            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { holocene_time: Some(0), ..Default::default() },
             ..Default::default()
         };
         assert!(rollup_config.is_holocene_active(block.header.timestamp));
@@ -392,7 +392,7 @@ mod tests {
                 l2: BlockNumHash { hash: block_hash, ..Default::default() },
                 ..Default::default()
             },
-            hardforks: HardForkConfig {
+            upgrades: UpgradeConfig {
                 holocene_time: Some(0),
                 isthmus_time: Some(0),
                 ..Default::default()

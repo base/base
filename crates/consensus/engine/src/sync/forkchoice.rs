@@ -343,10 +343,9 @@ async fn find_earliest_unpruned_block<EngineClient_: EngineClient>(
     Ok(last_known_unpruned)
 }
 
-/// Wrapper function around [`EngineClient::get_l2_block`] to handle compatibility issues with geth
-/// and erigon. When serving a block-by-number request, these clients will return non-standard
-/// errors for the safe and finalized heads when the chain has just started and nothing is marked as
-/// safe or finalized yet.
+/// Wrapper function around [`EngineClient::get_l2_block`] to handle compatibility issues with clients.
+/// When serving a block-by-number request, these clients will return non-standard errors for the safe
+/// and finalized heads when the chain has just started and nothing is marked as safe or finalized yet.
 async fn get_block_compat<EngineClient_: EngineClient>(
     engine_client: &EngineClient_,
     block_id: BlockId,
@@ -354,6 +353,8 @@ async fn get_block_compat<EngineClient_: EngineClient>(
     match engine_client.get_l2_block(block_id).full().await {
         Err(e) => {
             let err_str = e.to_string();
+            // Known string-based "not found" responses from geth/erigon for safe/finalized when
+            // the chain has just started and nothing is marked safe or finalized yet.
             if err_str.contains("block not found") || err_str.contains("Unknown block") {
                 Ok(None)
             } else {
@@ -376,4 +377,71 @@ const PRUNED_HISTORY_ERROR_CODE: i64 = 4444;
 /// task queue and to survive any rewording of the human-readable message.
 fn is_pruned_history_error(e: &RpcError<TransportErrorKind>) -> bool {
     e.as_error_resp().is_some_and(|resp| resp.code == PRUNED_HISTORY_ERROR_CODE)
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_eips::BlockNumberOrTag;
+    use alloy_json_rpc::ErrorPayload;
+
+    use super::get_block_compat;
+    use crate::test_utils::{MockL2BlockError, test_engine_client_builder};
+
+    #[tokio::test]
+    async fn get_block_compat_eip4444_error_code_propagates() {
+        let client = test_engine_client_builder()
+            .with_l2_block_error(
+                BlockNumberOrTag::Finalized.into(),
+                MockL2BlockError::ErrorResp(ErrorPayload {
+                    code: 4444,
+                    message: "history unavailable".into(),
+                    data: None,
+                }),
+            )
+            .build();
+
+        let error = get_block_compat(&client, BlockNumberOrTag::Finalized.into())
+            .await
+            .expect_err("pruned-history errors must remain distinguishable from a missing label");
+        assert_eq!(error.as_error_resp().map(|response| response.code), Some(4444));
+    }
+
+    #[tokio::test]
+    async fn get_block_compat_block_not_found_string_returns_none() {
+        let client = test_engine_client_builder()
+            .with_l2_block_error(
+                BlockNumberOrTag::Safe.into(),
+                MockL2BlockError::Custom("block not found".into()),
+            )
+            .build();
+
+        let result = get_block_compat(&client, BlockNumberOrTag::Safe.into()).await.unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn get_block_compat_unknown_block_string_returns_none() {
+        let client = test_engine_client_builder()
+            .with_l2_block_error(
+                BlockNumberOrTag::Safe.into(),
+                MockL2BlockError::Custom("Unknown block".into()),
+            )
+            .build();
+
+        let result = get_block_compat(&client, BlockNumberOrTag::Safe.into()).await.unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn get_block_compat_unrecognized_error_propagates() {
+        let client = test_engine_client_builder()
+            .with_l2_block_error(
+                BlockNumberOrTag::Latest.into(),
+                MockL2BlockError::Custom("connection refused".into()),
+            )
+            .build();
+
+        let err = get_block_compat(&client, BlockNumberOrTag::Latest.into()).await.unwrap_err();
+        assert!(err.to_string().contains("connection refused"));
+    }
 }

@@ -35,12 +35,12 @@ impl From<TxEnvBuildError> for BuildError {
 pub enum BaseTransactionError {
     /// Base transaction error.
     Base(InvalidTransaction),
-    /// System transactions are not supported post-regolith hardfork.
+    /// System transactions are not supported post-regolith upgrade.
     ///
-    /// Before the Regolith hardfork, there was a special field in the `Deposit` transaction
+    /// Before the Regolith upgrade, there was a special field in the `Deposit` transaction
     /// type that differentiated between `system` and `user` deposit transactions. This field
-    /// was deprecated in the Regolith hardfork, and this error is thrown if a `Deposit` transaction
-    /// is found with this field set to `true` after the hardfork activation.
+    /// was deprecated in the Regolith upgrade, and this error is thrown if a `Deposit` transaction
+    /// is found with this field set to `true` after the upgrade activation.
     ///
     /// In addition, this error is internal, and bubbles up into a [`BaseHaltReason::FailedDeposit`][crate::BaseHaltReason::FailedDeposit] error
     /// in the `revm` handler for the consumer to easily handle. This is due to a state transition
@@ -54,7 +54,7 @@ pub enum BaseTransactionError {
     /// only increasing the nonce + persisting the mint value.
     ///
     /// This is a catch-all error for any deposit transaction that results in a [`BaseHaltReason`][crate::BaseHaltReason] error
-    /// post-regolith hardfork. This allows for a consumer to easily handle special cases where
+    /// post-regolith upgrade. This allows for a consumer to easily handle special cases where
     /// a deposit transaction fails during validation, but must still be included in the block.
     ///
     /// In addition, this error is internal, and bubbles up into a [`BaseHaltReason::FailedDeposit`][crate::BaseHaltReason::FailedDeposit] error
@@ -70,6 +70,24 @@ pub enum BaseTransactionError {
     /// Non-deposit transactions on Base must have `enveloped_tx` field set
     /// to properly calculate L1 costs.
     MissingEnvelopedTx,
+    /// An EIP-8130 (account-abstraction) transaction was rejected during its
+    /// enshrined execution pipeline (authorization, nonce, intrinsic gas, fee,
+    /// or account-change apply). The string is the underlying rejection reason.
+    ///
+    /// As an [`EVMError::Transaction`] error this is cause for non-inclusion, so
+    /// the transaction's journal writes are reverted and it is not added to the
+    /// block.
+    Eip8130(alloc::string::String),
+}
+
+impl BaseTransactionError {
+    /// Wraps an EIP-8130 pipeline rejection (any [`Display`] error from the
+    /// authorize / nonce / intrinsic-gas / fee / apply stages) as
+    /// [`BaseTransactionError::Eip8130`]. Keeps the call sites a single
+    /// `.map_err(BaseTransactionError::eip8130)?`.
+    pub fn eip8130(reason: impl Display) -> Self {
+        Self::Eip8130(alloc::string::ToString::to_string(&reason))
+    }
 }
 
 impl TransactionError for BaseTransactionError {}
@@ -79,7 +97,7 @@ impl Display for BaseTransactionError {
         match self {
             Self::Base(error) => error.fmt(f),
             Self::DepositSystemTxPostRegolith => {
-                write!(f, "deposit system transactions post regolith hardfork are not supported")
+                write!(f, "deposit system transactions post regolith upgrade are not supported")
             }
             Self::HaltedDepositPostRegolith => {
                 write!(
@@ -89,6 +107,9 @@ impl Display for BaseTransactionError {
             }
             Self::MissingEnvelopedTx => {
                 write!(f, "missing enveloped transaction bytes for non-deposit transaction")
+            }
+            Self::Eip8130(reason) => {
+                write!(f, "EIP-8130 transaction rejected: {reason}")
             }
         }
     }
@@ -132,7 +153,7 @@ mod tests {
         );
         assert_eq!(
             BaseTransactionError::DepositSystemTxPostRegolith.to_string(),
-            "deposit system transactions post regolith hardfork are not supported"
+            "deposit system transactions post regolith upgrade are not supported"
         );
         assert_eq!(
             BaseTransactionError::HaltedDepositPostRegolith.to_string(),
@@ -141,6 +162,10 @@ mod tests {
         assert_eq!(
             BaseTransactionError::MissingEnvelopedTx.to_string(),
             "missing enveloped transaction bytes for non-deposit transaction"
+        );
+        assert_eq!(
+            BaseTransactionError::eip8130("nonce too low").to_string(),
+            "EIP-8130 transaction rejected: nonce too low"
         );
     }
 
@@ -151,5 +176,17 @@ mod tests {
 
         let base_transaction_error: BaseTransactionError = serde_json::from_str(response).unwrap();
         assert_eq!(base_transaction_error, BaseTransactionError::DepositSystemTxPostRegolith);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_serialize_json_eip8130_error() {
+        let error = BaseTransactionError::Eip8130("payer balance too low".to_string());
+
+        let serialized = serde_json::to_string(&error).unwrap();
+        assert_eq!(serialized, r#"{"Eip8130":"payer balance too low"}"#);
+
+        let round_trip: BaseTransactionError = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(round_trip, error);
     }
 }

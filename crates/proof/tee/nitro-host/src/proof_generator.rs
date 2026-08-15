@@ -10,7 +10,7 @@ use base_prover_service_protocol::{
 use thiserror::Error;
 use tokio::{task::JoinHandle, time::sleep};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use crate::{
     NitroEnclavePool, NitroEnclavePoolError, ProofSubmitter, ProofSubmitterError,
@@ -28,9 +28,6 @@ pub const DEFAULT_PROOF_GENERATOR_HEARTBEAT_INTERVAL: Duration = Duration::from_
 /// A value of zero asks the prover service to use its server-side default.
 pub const DEFAULT_PROOF_GENERATOR_HEARTBEAT_LOCK_DURATION_SECONDS: u32 = 0;
 
-/// Default maximum consecutive retryable heartbeat failures before aborting proof generation.
-pub const DEFAULT_PROOF_GENERATOR_MAX_CONSECUTIVE_HEARTBEAT_FAILURES: u32 = 5;
-
 /// Heartbeat settings used while the enclave pool is generating a proof.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProofGeneratorHeartbeatConfig {
@@ -38,37 +35,17 @@ pub struct ProofGeneratorHeartbeatConfig {
     pub interval: Duration,
     /// Requested lock duration in seconds. Zero uses the server default.
     pub lock_duration_seconds: u32,
-    /// Maximum consecutive retryable heartbeat failures before aborting proof generation.
-    pub max_consecutive_failures: u32,
 }
 
 impl ProofGeneratorHeartbeatConfig {
     /// Creates a proof-generation heartbeat config.
     pub const fn new(interval: Duration, lock_duration_seconds: u32) -> Self {
-        Self::with_max_consecutive_failures(
-            interval,
-            lock_duration_seconds,
-            DEFAULT_PROOF_GENERATOR_MAX_CONSECUTIVE_HEARTBEAT_FAILURES,
-        )
-    }
-
-    /// Creates a proof-generation heartbeat config with an explicit retryable failure limit.
-    pub const fn with_max_consecutive_failures(
-        interval: Duration,
-        lock_duration_seconds: u32,
-        max_consecutive_failures: u32,
-    ) -> Self {
-        Self { interval, lock_duration_seconds, max_consecutive_failures }
+        Self { interval, lock_duration_seconds }
     }
 
     /// Returns the configured interval clamped to the minimum allowed delay.
     pub fn normalized_interval(&self) -> Duration {
         self.interval.max(MIN_PROOF_GENERATOR_HEARTBEAT_INTERVAL)
-    }
-
-    /// Returns the configured retryable failure limit clamped to at least one.
-    pub const fn normalized_max_consecutive_failures(&self) -> u32 {
-        if self.max_consecutive_failures == 0 { 1 } else { self.max_consecutive_failures }
     }
 }
 
@@ -247,7 +224,7 @@ where
         })?;
 
         let submit_handle =
-            self.submitter.spawn_until_delivered(submit_request, self.submission_cancel.clone());
+            self.submitter.spawn_submit(submit_request, self.submission_cancel.clone());
 
         info!(
             session_id = %request.session_id,
@@ -272,17 +249,21 @@ where
     where
         Generate: Future<Output = Result<Output, NitroEnclavePoolError>>,
     {
-        let heartbeat = self.heartbeat_until_failure(request);
+        let heartbeat_cancel = CancellationToken::new();
+        let _heartbeat_cancel_guard = heartbeat_cancel.clone().drop_guard();
+        let mut heartbeat_failure =
+            self.spawn_heartbeat_until_failure(request.clone(), heartbeat_cancel.clone());
         tokio::pin!(generate);
-        tokio::pin!(heartbeat);
 
         tokio::select! {
             biased;
-            result = &mut generate => result.map_err(|source| ProofGeneratorError::Generate {
-                session_id: request.session_id.clone(),
-                source,
-            }),
-            source = &mut heartbeat => {
+            result = &mut heartbeat_failure => {
+                let source = result
+                    .unwrap_or_else(|error| {
+                        warn!(error = %error, "proof heartbeat task stopped unexpectedly");
+                        Some(Self::stopped_heartbeat_error())
+                    })
+                    .unwrap_or_else(Self::stopped_heartbeat_error);
                 match generate.await {
                     Ok(_) => {
                         info!(
@@ -309,62 +290,92 @@ where
                     source,
                 })
             },
+            result = &mut generate => {
+                heartbeat_cancel.cancel();
+                if let Some(source) = heartbeat_failure
+                    .await
+                    .unwrap_or_else(|error| {
+                        warn!(error = %error, "proof heartbeat task stopped unexpectedly");
+                        Some(Self::stopped_heartbeat_error())
+                    })
+                {
+                    return Err(ProofGeneratorError::Heartbeat {
+                        session_id: request.session_id.clone(),
+                        source,
+                    });
+                }
+
+                result.map_err(|source| ProofGeneratorError::Generate {
+                    session_id: request.session_id.clone(),
+                    source,
+                })
+            }
         }
     }
 
-    async fn heartbeat_until_failure(
+    fn spawn_heartbeat_until_failure(
         &self,
-        request: &ProofGeneratorRequest,
-    ) -> ProverServiceClientError {
-        let max_consecutive_failures = self.heartbeat.normalized_max_consecutive_failures();
-        let mut consecutive_failures = 0;
+        request: ProofGeneratorRequest,
+        cancel: CancellationToken,
+    ) -> JoinHandle<Option<ProverServiceClientError>> {
+        let submitter = self.submitter.clone();
+        let heartbeat_config = self.heartbeat;
 
+        tokio::task::spawn_blocking(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build proof heartbeat runtime");
+
+            runtime.block_on(Self::heartbeat_until_failure(
+                submitter,
+                heartbeat_config,
+                request,
+                cancel,
+            ))
+        })
+    }
+
+    fn stopped_heartbeat_error() -> ProverServiceClientError {
+        ProverServiceClientError::MissingResult(
+            "proof generator heartbeat thread stopped unexpectedly".to_owned(),
+        )
+    }
+
+    async fn heartbeat_until_failure(
+        submitter: ProofSubmitter<Client>,
+        heartbeat_config: ProofGeneratorHeartbeatConfig,
+        request: ProofGeneratorRequest,
+        cancel: CancellationToken,
+    ) -> Option<ProverServiceClientError> {
         loop {
-            sleep(self.heartbeat.normalized_interval()).await;
+            tokio::select! {
+                biased;
+                () = cancel.cancelled() => return None,
+                () = sleep(heartbeat_config.normalized_interval()) => {}
+            }
 
             let heartbeat = HeartbeatRequest {
                 session_id: request.session_id.clone(),
                 lock_id: request.lock_id.clone(),
                 worker_id: request.worker_id.clone(),
-                lock_duration_seconds: self.heartbeat.lock_duration_seconds,
+                lock_duration_seconds: heartbeat_config.lock_duration_seconds,
             };
 
-            match self.submitter.heartbeat(heartbeat).await {
-                Ok(response) => {
-                    consecutive_failures = 0;
+            let result = tokio::select! {
+                biased;
+                result = submitter.heartbeat(heartbeat) => result,
+                () = cancel.cancelled() => return None,
+            };
 
-                    debug!(
+            match result {
+                Ok(response) => {
+                    info!(
                         session_id = %request.session_id,
                         lock_id = %request.lock_id,
                         worker_id = %request.worker_id,
                         lock_expires_at = ?response.job.lock_expires_at,
                         "proof job heartbeat accepted"
-                    );
-                }
-                Err(error) if error.is_retryable() => {
-                    consecutive_failures += 1;
-
-                    if consecutive_failures >= max_consecutive_failures {
-                        warn!(
-                            session_id = %request.session_id,
-                            lock_id = %request.lock_id,
-                            worker_id = %request.worker_id,
-                            consecutive_failures,
-                            max_consecutive_failures,
-                            error = %error,
-                            "proof job heartbeat retryable failures exceeded limit"
-                        );
-                        return error;
-                    }
-
-                    warn!(
-                        session_id = %request.session_id,
-                        lock_id = %request.lock_id,
-                        worker_id = %request.worker_id,
-                        consecutive_failures,
-                        max_consecutive_failures,
-                        error = %error,
-                        "proof job heartbeat failed; retrying on next interval"
                     );
                 }
                 Err(error) => {
@@ -373,9 +384,9 @@ where
                         lock_id = %request.lock_id,
                         worker_id = %request.worker_id,
                         error = %error,
-                        "proof job heartbeat failed permanently"
+                        "proof job heartbeat failed"
                     );
-                    return error;
+                    return Some(error);
                 }
             }
         }
@@ -443,8 +454,10 @@ mod tests {
     use base_proof_tee_nitro_enclave::Server as EnclaveServer;
     use base_prover_service_client::ProverServiceClientError;
     use base_prover_service_protocol::{
-        GetNextProofRequest, GetNextProofResponse, HeartbeatRequest, HeartbeatResponse,
-        ProofJobStatus, ProofRequest, TeeKind, TeeProofRequest, WorkerSubmitProofRequest,
+        GetNextProofRequest, GetNextProofResponse, GetProofSessionRequest, GetProofSessionResponse,
+        HeartbeatRequest, HeartbeatResponse, ProofJobStatus, ProofRequest,
+        RecordProofSessionRequest, RecordProofSessionResponse, TeeKind, TeeProofRequest,
+        WorkerSubmitProofRequest,
     };
     use chrono::Utc;
     use tokio::time::sleep;
@@ -554,6 +567,20 @@ mod tests {
                 ),
             })
         }
+
+        async fn get_proof_session(
+            &self,
+            _request: GetProofSessionRequest,
+        ) -> Result<GetProofSessionResponse, ProverServiceClientError> {
+            panic!("get_proof_session is not used by proof generator tests")
+        }
+
+        async fn record_proof_session(
+            &self,
+            _request: RecordProofSessionRequest,
+        ) -> Result<RecordProofSessionResponse, ProverServiceClientError> {
+            panic!("record_proof_session is not used by proof generator tests")
+        }
     }
 
     #[derive(Debug, Clone, Copy)]
@@ -620,7 +647,7 @@ mod tests {
         ProofJob {
             session_id: session_id.clone(),
             status,
-            request: ProofRequest { session_id: Some(session_id), request },
+            request: ProofRequest { session_id, request },
             attempt: 1,
             lock_id,
             worker_id,
@@ -662,6 +689,18 @@ mod tests {
             client,
             ProofGeneratorHeartbeatConfig::new(interval, TEST_HEARTBEAT_LOCK_DURATION_SECONDS),
         )
+    }
+
+    async fn wait_for_heartbeats(client: &MockWorkerClient, count: usize) {
+        for _ in 0..50 {
+            if client.heartbeats().len() >= count {
+                return;
+            }
+
+            sleep(Duration::from_millis(1)).await;
+        }
+
+        panic!("expected at least {count} heartbeat(s)");
     }
 
     #[test]
@@ -721,6 +760,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn heartbeat_failure_wins_after_generation_poll_blocks_runtime_thread() {
+        let client = MockWorkerClient::with_heartbeat_failure(MockHeartbeatFailure::NonRetryable);
+        let generator = generator_with_heartbeat_interval(client.clone(), Duration::from_millis(5));
+        let request = claimed_tee_request();
+
+        let err = generator
+            .with_heartbeat_while_generating(&request, async {
+                std::thread::sleep(Duration::from_millis(50));
+                Ok::<(), NitroEnclavePoolError>(())
+            })
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, ProofGeneratorError::Heartbeat { .. }));
+        assert!(
+            !client.heartbeats().is_empty(),
+            "heartbeat task should run independently of the busy generation task"
+        );
+    }
+
+    #[tokio::test]
+    async fn heartbeat_stops_when_generation_future_is_aborted() {
+        let client = MockWorkerClient::default();
+        let generator = generator_with_heartbeat_interval(client.clone(), Duration::from_millis(5));
+        let request = claimed_tee_request();
+
+        let handle = tokio::spawn(async move {
+            generator
+                .with_heartbeat_while_generating(
+                    &request,
+                    std::future::pending::<Result<(), NitroEnclavePoolError>>(),
+                )
+                .await
+        });
+
+        wait_for_heartbeats(&client, 1).await;
+        handle.abort();
+        assert!(handle.await.expect_err("generation task should be aborted").is_cancelled());
+
+        let heartbeat_count = client.heartbeats().len();
+        sleep(Duration::from_millis(25)).await;
+        assert_eq!(client.heartbeats().len(), heartbeat_count);
+    }
+
+    #[tokio::test]
     async fn short_generation_failure_does_not_heartbeat() {
         let client = MockWorkerClient::default();
         let generator =
@@ -736,11 +820,12 @@ mod tests {
             .unwrap_err();
 
         assert!(matches!(err, ProofGeneratorError::Generate { .. }));
+        sleep(Duration::from_millis(75)).await;
         assert!(client.heartbeats().is_empty());
     }
 
     #[tokio::test]
-    async fn retryable_heartbeat_failure_does_not_abort_generation_before_limit() {
+    async fn retryable_heartbeat_failure_aborts_generation() {
         let client = MockWorkerClient::with_heartbeat_failure(MockHeartbeatFailure::Retryable);
         let generator = generator_with_heartbeat_interval(client.clone(), Duration::from_millis(5));
         let request = claimed_tee_request();
@@ -753,33 +838,8 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(matches!(err, ProofGeneratorError::Generate { .. }));
-        assert!(client.heartbeats().len() >= 2);
-    }
-
-    #[tokio::test]
-    async fn retryable_heartbeat_failures_abort_generation_after_limit() {
-        let client = MockWorkerClient::with_heartbeat_failure(MockHeartbeatFailure::Retryable);
-        let generator = generator_with_heartbeat(
-            client.clone(),
-            ProofGeneratorHeartbeatConfig::with_max_consecutive_failures(
-                Duration::from_millis(1),
-                TEST_HEARTBEAT_LOCK_DURATION_SECONDS,
-                3,
-            ),
-        );
-        let request = claimed_tee_request();
-
-        let err = generator
-            .with_heartbeat_while_generating(&request, async {
-                sleep(Duration::from_millis(50)).await;
-                Err::<(), NitroEnclavePoolError>(NitroEnclavePoolError::Busy)
-            })
-            .await
-            .unwrap_err();
-
         assert!(matches!(err, ProofGeneratorError::Heartbeat { .. }));
-        assert_eq!(client.heartbeats().len(), 3);
+        assert_eq!(client.heartbeats().len(), 1);
     }
 
     #[tokio::test]

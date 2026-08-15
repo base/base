@@ -10,6 +10,8 @@
 mod validator;
 pub use validator::{BaseL1BlockInfo, BaseTransactionValidator, BaseTxPoolError};
 
+mod best;
+
 mod transaction;
 pub use transaction::{
     BLOCK_TIME_SECS, BasePooledTransaction, BasePooledTx, BundleTransaction,
@@ -26,6 +28,9 @@ pub use consumer::{Consumer, ConsumerConfig, ConsumerMetrics, RecentlySent, Spaw
 mod forwarder;
 pub use forwarder::{Forwarder, ForwarderConfig, ForwarderMetrics, SpawnedForwarder};
 
+mod pool;
+pub use pool::BaseTransactionPool;
+
 mod pool_error_label;
 pub use pool_error_label::PoolRejectionLabel;
 
@@ -41,10 +46,6 @@ pub use bundle::{
 mod wire;
 pub use wire::ValidatedTransaction;
 
+mod two_d_nonce_pool;
+
 pub mod estimated_da_size;
-
-use reth_transaction_pool::{Pool, TransactionValidationTaskExecutor};
-
-/// Type alias for default Base transaction pool
-pub type BaseTransactionPool<Client, S, Evm, T = BasePooledTransaction, O = BaseOrdering<T>> =
-    Pool<TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T, Evm>>, O, S>;

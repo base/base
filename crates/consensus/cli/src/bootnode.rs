@@ -73,6 +73,8 @@ impl Bootnode {
 
     /// Runs the discovery-only bootnode.
     pub async fn exec(self, cfg: RollupConfig) -> eyre::Result<()> {
+        let _upgrade_countdown_metrics =
+            self.metrics.enabled.then(|| CliMetrics::spawn_upgrade_countdown_recorder(cfg.clone()));
         let chain_id = cfg.l2_chain_id.id();
         self.p2p.check_ports()?;
 

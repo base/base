@@ -60,7 +60,7 @@ pub fn encode_set_anchor_state_calldata(game: Address) -> Bytes {
 }
 
 /// Anchor root returned by `AnchorStateRegistry.getAnchorRoot()`.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AnchorRoot {
     /// The output root hash.
     pub root: B256,
@@ -69,7 +69,7 @@ pub struct AnchorRoot {
 }
 
 /// Consistent snapshot of the anchor root and anchor game.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AnchorSnapshot {
     /// Current anchor root in the registry.
     pub anchor_root: AnchorRoot,

@@ -16,7 +16,7 @@ FROM --platform=linux/amd64 rust:1.93-alpine3.21@sha256:3d805575c739eafbec6e0e81
 WORKDIR /app
 
 ENV SOURCE_DATE_EPOCH=0
-ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-C target-feature=+crt-static -C link-self-contained=yes -C link-arg=-fuse-ld=mold"
+ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-C target-feature=+crt-static -C link-self-contained=yes"
 
 ENV OPENSSL_STATIC=1
 ENV OPENSSL_LIB_DIR=/usr/lib
@@ -32,7 +32,6 @@ RUN apk add --no-cache \
     clang \
     clang-dev \
     git \
-    mold \
     protobuf-dev \
     zlib-dev \
     zlib-static

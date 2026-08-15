@@ -79,7 +79,7 @@ impl EngineQueries {
 
         match self {
             Self::Config(sender) => sender
-                .send((**rollup_config).clone())
+                .send(rollup_config.with_runtime_upgrade_overrides())
                 .map_err(|_| EngineQueriesError::OutputChannelClosed),
             Self::State(sender) => {
                 trace!(target: "engine", "Preparing engine state RPC response");

@@ -5,14 +5,16 @@ use std::{path::PathBuf, sync::Arc};
 use base_common_consensus::BasePrimitives;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_trie::{
-    BaseProofsStorage, BaseProofsStore, InitializationJob, db::MdbxProofsStorage,
+    BaseProofsInitialStateStore, BaseProofsStorage, BaseProofsStore, InitializationJob,
+    MdbxProofsStorage, RethTrieStorageLayout, RocksdbProofsStorage,
 };
+use base_node_core::args::{ProofsHistoryDbBackend, ProofsHistoryRocksdbArgs};
 use clap::Parser;
 use reth_chainspec::ChainInfo;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::common::{AccessRights, CliNodeTypes, Environment, EnvironmentArgs};
 use reth_node_core::version::version_metadata;
-use reth_provider::{BlockNumReader, DBProvider, DatabaseProviderFactory};
+use reth_provider::{BlockNumReader, DBProvider, DatabaseProviderFactory, StorageSettingsCache};
 use tracing::info;
 
 /// Initializes the proofs storage with the current state of the chain.
@@ -34,6 +36,14 @@ pub struct InitCommand<C: ChainSpecParser> {
         required = true
     )]
     pub storage_path: PathBuf,
+
+    /// The on-disk database backend for proofs history.
+    #[arg(long = "proofs-history.db", value_name = "PROOFS_HISTORY_DB", default_value = "mdbx")]
+    pub proofs_history_db: ProofsHistoryDbBackend,
+
+    /// Runtime tuning options for the `RocksDB` proofs history backend.
+    #[command(flatten)]
+    pub proofs_history_rocksdb: ProofsHistoryRocksdbArgs,
 }
 
 impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> InitCommand<C> {
@@ -42,19 +52,53 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> InitCommand<C> {
         self,
         runtime: reth_tasks::Runtime,
     ) -> eyre::Result<()> {
+        let Self { env, storage_path, proofs_history_db, proofs_history_rocksdb } = self;
+
         info!(target: "reth::cli", version = %version_metadata().short_version, "reth starting");
-        info!(target: "reth::cli", path = ?self.storage_path, "Initializing Base proofs storage");
+        info!(
+            target: "reth::cli",
+            path = ?storage_path,
+            backend = ?proofs_history_db,
+            "Initializing Base proofs storage"
+        );
+        proofs_history_db.ensure_storage_path_matches(&storage_path)?;
 
         // Initialize the environment with read-only access
-        let Environment { provider_factory, .. } = self.env.init::<N>(AccessRights::RO, runtime)?;
+        let Environment { provider_factory, .. } = env.init::<N>(AccessRights::RO, runtime)?;
 
-        // Create the proofs storage
-        let storage: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::new(
-            MdbxProofsStorage::new(&self.storage_path)
-                .map_err(|e| eyre::eyre!("Failed to create MdbxProofsStorage: {e}"))?,
-        )
-        .into();
+        match proofs_history_db {
+            ProofsHistoryDbBackend::Rocksdb => {
+                let storage: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::new(
+                    RocksdbProofsStorage::new_with_options(
+                        &storage_path,
+                        proofs_history_rocksdb.storage_options()?,
+                    )
+                    .map_err(|e| eyre::eyre!("Failed to create RocksdbProofsStorage: {e}"))?,
+                )
+                .into();
+                Self::initialize_storage(storage, &provider_factory)?;
+            }
+            ProofsHistoryDbBackend::Mdbx => {
+                let storage: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::new(
+                    MdbxProofsStorage::new(&storage_path)
+                        .map_err(|e| eyre::eyre!("Failed to create MdbxProofsStorage: {e}"))?,
+                )
+                .into();
+                Self::initialize_storage(storage, &provider_factory)?;
+            }
+        }
 
+        Ok(())
+    }
+
+    fn initialize_storage<S, F>(
+        storage: BaseProofsStorage<Arc<S>>,
+        provider_factory: &F,
+    ) -> eyre::Result<()>
+    where
+        S: BaseProofsInitialStateStore + BaseProofsStore + 'static,
+        F: BlockNumReader + DatabaseProviderFactory + StorageSettingsCache,
+    {
         // Check if already initialized
         if let Some((block_number, block_hash)) = storage.get_earliest_block_number()? {
             info!(
@@ -78,11 +122,16 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> InitCommand<C> {
 
         // Run the backfill job
         {
+            let trie_layout = if provider_factory.cached_storage_settings().is_v2() {
+                RethTrieStorageLayout::Packed
+            } else {
+                RethTrieStorageLayout::Legacy
+            };
             let db_provider =
                 provider_factory.database_provider_ro()?.disable_long_read_transaction_safety();
             let db_tx = db_provider.into_tx();
 
-            InitializationJob::new(storage, db_tx).run(best_number, best_hash)?;
+            InitializationJob::new(storage, db_tx, trie_layout).run(best_number, best_hash)?;
         }
 
         info!(

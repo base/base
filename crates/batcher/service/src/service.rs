@@ -1,32 +1,41 @@
 //! Batcher service startup and wiring.
 
-use std::sync::Arc;
+use std::{future::pending, sync::Arc};
 
-use alloy_provider::{Provider, ProviderBuilder, RootProvider};
+use alloy_provider::{Provider, ProviderBuilder, ProviderLayer, RootProvider};
 use alloy_rpc_types_eth::BlockNumberOrTag;
+use base_balance_monitor::BalanceMonitorLayer;
 use base_batcher_admin::AdminServer;
 use base_batcher_core::{
     AdminHandle, BatchDriver, DaThrottle, NoopThrottleClient, ThrottleClient, ThrottleConfig,
     ThrottleController, ThrottleStrategy,
 };
-use base_batcher_encoder::BatchEncoder;
+use base_batcher_encoder::{BatchEncoder, BatcherMetrics};
 use base_batcher_source::{BlockSubscription, HybridBlockSource, HybridL1HeadSource, SourceError};
 use base_common_consensus::BaseBlock;
 use base_common_network::Base;
 use base_consensus_rpc::RollupNodeApiClient;
 use base_runtime::TokioRuntime;
-use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
-use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
+use base_tx_manager::{BaseTxMetrics, SimpleTxManager, TxManagerConfig};
+use futures::{
+    StreamExt,
+    future::BoxFuture,
+    stream::{BoxStream, FuturesUnordered},
+};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
-use tokio::sync::watch;
+use tokio::{sync::watch, task::JoinHandle};
+use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 use url::Url;
 
 use crate::{
-    BatcherConfig, MAX_CHECK_RECENT_TXS_DEPTH, NullL1HeadSubscription, NullSubscription,
-    RecentTxScanner, RpcL1HeadPollingSource, RpcPollingSource, RpcThrottleClient, SafeHeadPoller,
-    WsBlockSubscription, WsL1HeadSubscription,
+    BatcherConfig, L2BlockParityMonitor, L2BlockParityMonitorConfig, MAX_CHECK_RECENT_TXS_DEPTH,
+    NullL1HeadSubscription, NullSubscription, RecentTxScanner, RpcL1HeadPollingSource,
+    RpcL2BlockProvider, RpcPollingSource, RpcThrottleClient, SafeHeadPoller, ShadowParityMonitor,
+    ShadowParityMonitorConfig, WsBlockSubscription, WsL1HeadSubscription,
 };
+
+const WEI_PER_ETHER: f64 = 1_000_000_000_000_000_000.0;
 
 /// Service-internal throttle client variant: either a no-op or an RPC client.
 ///
@@ -92,7 +101,7 @@ type ServiceDriver = BatchDriver<
     HybridBlockSource<Subscription, RpcPollingSource, TokioRuntime>,
     SimpleTxManager<RootProvider>,
     ServiceThrottle,
-    HybridL1HeadSource<L1Subscription, RpcL1HeadPollingSource>,
+    HybridL1HeadSource<L1Subscription, RpcL1HeadPollingSource, TokioRuntime>,
 >;
 
 /// A fully-initialised batcher ready to run the submission loop.
@@ -106,25 +115,79 @@ pub struct ReadyBatcher {
     driver: ServiceDriver,
     #[debug(skip)]
     admin_server: Option<AdminServer>,
+    #[debug(skip)]
+    background_tasks: Vec<(&'static str, JoinHandle<()>)>,
+    #[debug(skip)]
+    cancellation: CancellationToken,
 }
 
 impl ReadyBatcher {
     /// Run the batch submission loop until the runtime is cancelled.
     pub async fn run(self) -> eyre::Result<()> {
         info!("batcher driver running");
-        match self.admin_server {
-            Some(admin) => {
-                let driver_run = self.driver.run();
-                tokio::pin!(driver_run);
-                tokio::select! {
-                    r = &mut driver_run => { r?; }
-                    () = admin.stopped() => {
-                        warn!("admin server stopped unexpectedly; batcher continues without admin API");
-                        driver_run.await?;
+        let Self { driver, admin_server, background_tasks, cancellation } = self;
+        let background_cancellation = cancellation.clone();
+        let background_task_exit = async move {
+            let mut background_tasks = background_tasks
+                .into_iter()
+                .map(|(task_name, handle)| async move { (task_name, handle.await) })
+                .collect::<FuturesUnordered<_>>();
+            tokio::select! {
+                biased;
+                () = background_cancellation.cancelled() => {}
+                Some((task_name, result)) = background_tasks.next(), if !background_tasks.is_empty() => {
+                    match result {
+                        Ok(()) => eyre::bail!("{task_name} exited unexpectedly"),
+                        Err(error) => eyre::bail!("{task_name} task failed: {error}"),
                     }
                 }
             }
-            None => self.driver.run().await?,
+
+            while let Some((task_name, result)) = background_tasks.next().await {
+                if let Err(error) = result {
+                    warn!(
+                        task = task_name,
+                        error = %error,
+                        "background task failed during shutdown"
+                    );
+                }
+            }
+
+            Ok::<_, eyre::Report>(())
+        };
+        tokio::pin!(background_task_exit);
+        let driver_run = driver.run();
+        tokio::pin!(driver_run);
+        let admin_stopped = async {
+            match admin_server.as_ref() {
+                Some(admin) => admin.stopped().await,
+                None => pending().await,
+            }
+        };
+        tokio::pin!(admin_stopped);
+        let mut admin_active = admin_server.is_some();
+
+        loop {
+            tokio::select! {
+                r = &mut driver_run => {
+                    cancellation.cancel();
+                    let driver_result = r;
+                    let background_result = background_task_exit.as_mut().await;
+                    driver_result?;
+                    background_result?;
+                    break;
+                }
+                r = &mut background_task_exit => {
+                    cancellation.cancel();
+                    r?;
+                    driver_run.await?;
+                    break;
+                }
+                () = &mut admin_stopped, if admin_active => {
+                    admin_active = false;
+                    warn!("admin server stopped unexpectedly; batcher continues without admin API");
+                }
+            }
         }
         info!("batcher service shutting down");
         Ok(())
@@ -376,6 +439,8 @@ impl BatcherService {
     /// The runtime's cancellation token is forwarded to the safe-head poller
     /// spawned here so it stops cleanly when the batcher shuts down.
     pub async fn setup(self, runtime: TokioRuntime) -> eyre::Result<ReadyBatcher> {
+        let cancellation = runtime.token().clone();
+        let mut background_tasks = Vec::new();
         self.config.encoder_config.validate()?;
 
         if self.config.stopped && self.config.admin_addr.is_none() {
@@ -393,6 +458,13 @@ impl BatcherService {
         if self.config.rollup_rpc_url.is_empty() {
             eyre::bail!("at least one rollup RPC endpoint is required");
         }
+
+        let signer_config = self
+            .config
+            .signer
+            .clone()
+            .ok_or_else(|| eyre::eyre!("signer must be set before starting"))?;
+        let signer_address = signer_config.address();
 
         info!(
             l1_rpc_count = self.config.l1_rpc_url.len(),
@@ -456,10 +528,20 @@ impl BatcherService {
                 .await
                 .map_err(|e| eyre::eyre!("optimism_rollupConfig RPC failed: {e}"))?,
         );
-        info!(
-            inbox = %rollup_config.batch_inbox_address,
-            "rollup config loaded"
-        );
+        let effective_batch_inbox =
+            self.config.batch_inbox_override.unwrap_or(rollup_config.batch_inbox_address);
+        if self.config.batch_inbox_override.is_some() {
+            warn!(
+                configured_inbox = %effective_batch_inbox,
+                rollup_config_inbox = %rollup_config.batch_inbox_address,
+                "using dangerous shadow batch inbox override"
+            );
+        } else {
+            info!(
+                inbox = %effective_batch_inbox,
+                "rollup config loaded"
+            );
+        }
 
         // Optionally block startup until the rollup node reports a non-zero
         // sync status. Mirrors the reference batcher's `--wait-node-sync`.
@@ -503,21 +585,145 @@ impl BatcherService {
             })
             .await?;
 
+        if self.config.metrics_enabled {
+            let (layer, mut balance_rx) = BalanceMonitorLayer::new(
+                signer_address,
+                runtime.token().clone(),
+                BalanceMonitorLayer::DEFAULT_POLL_INTERVAL,
+            );
+            // `layer()` spawns the polling task and moves cloned state into it.
+            let _ = layer.layer(l1_provider.clone());
+            let balance_cancellation = runtime.token().clone();
+            let balance_handle = tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        biased;
+                        () = balance_cancellation.cancelled() => break,
+                        changed = balance_rx.changed() => {
+                            if changed.is_err() {
+                                break;
+                            }
+                            // Prometheus gauges are f64, so large U256 wei balances lose integer
+                            // precision during conversion. This is acceptable for an ether gauge.
+                            let balance_ether =
+                                f64::from(*balance_rx.borrow_and_update()) / WEI_PER_ETHER;
+                            BatcherMetrics::balance().set(balance_ether);
+                        }
+                    }
+                }
+            });
+            background_tasks.push(("balance monitor relay", balance_handle));
+            info!(
+                address = %signer_address,
+                "batcher balance monitor started"
+            );
+        }
+
+        if let Some(shadow_inbox) = self.config.batch_inbox_override {
+            if shadow_inbox == rollup_config.batch_inbox_address {
+                warn!(
+                    inbox = %shadow_inbox,
+                    "shadow parity monitor disabled because shadow inbox matches canonical inbox"
+                );
+            } else {
+                let channel_timeout_depth = rollup_config.channel_timeout(next_l2_timestamp);
+                let start_depth = self
+                    .config
+                    .check_recent_txs_depth
+                    .max(channel_timeout_depth)
+                    .clamp(1, MAX_CHECK_RECENT_TXS_DEPTH);
+                let monitor_config = ShadowParityMonitorConfig {
+                    canonical_inbox: rollup_config.batch_inbox_address,
+                    canonical_batcher: rollup_config
+                        .genesis
+                        .system_config
+                        .as_ref()
+                        .map(|config| config.batcher_address),
+                    shadow_inbox,
+                    shadow_batcher: signer_address,
+                    poll_interval: self.config.poll_interval,
+                    start_depth,
+                    rollup_config: Arc::clone(&rollup_config),
+                    l1_beacon_url: self.config.l1_beacon_url.clone(),
+                };
+                match ShadowParityMonitor::new(l1_provider.clone(), monitor_config).await {
+                    Ok(monitor) => {
+                        let handle = monitor.spawn(cancellation.clone());
+                        background_tasks.push(("shadow parity monitor", handle));
+                    }
+                    Err(e) => {
+                        warn!(
+                            error = %e,
+                            "shadow parity monitor failed to initialize; continuing without parity monitoring"
+                        );
+                    }
+                }
+            }
+        }
+
+        if let Some(parity_validator_l2_rpc_url) = &self.config.parity_validator_l2_rpc_url {
+            if self.config.batch_inbox_override.is_none() {
+                eyre::bail!(
+                    "parity validator L2 RPC URL requires shadow mode batch inbox override"
+                );
+            }
+
+            match Self::connect_first(
+                std::slice::from_ref(parity_validator_l2_rpc_url),
+                "parity-validator-l2-rpc",
+                |url| {
+                    let url = url.clone();
+                    async move {
+                        let provider = ProviderBuilder::new()
+                            .disable_recommended_fillers()
+                            .network::<Base>()
+                            .connect(url.as_str())
+                            .await
+                            .map_err(|e| {
+                                eyre::eyre!("failed to connect parity validator L2 RPC: {e}")
+                            })?;
+                        provider.get_block_number().await.map_err(|e| {
+                            eyre::eyre!("parity validator eth_blockNumber probe failed: {e}")
+                        })?;
+                        eyre::Ok(provider)
+                    }
+                },
+            )
+            .await
+            {
+                Ok(provider) => {
+                    let validator_provider: Arc<dyn Provider<Base> + Send + Sync> =
+                        Arc::new(provider);
+                    let handle = L2BlockParityMonitor::new(
+                        RpcL2BlockProvider::new(Arc::clone(&l2_provider)),
+                        RpcL2BlockProvider::new(validator_provider),
+                        L2BlockParityMonitorConfig::new(
+                            safe_l2_number.saturating_add(1),
+                            self.config.poll_interval,
+                        ),
+                    )
+                    .spawn(cancellation.clone());
+                    background_tasks.push(("derived L2 block parity monitor", handle));
+                }
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        "derived L2 block parity monitor failed to connect; continuing without parity monitoring"
+                    );
+                }
+            }
+        }
+
         // Optionally scan recent L1 blocks to find the highest L2 block already
         // submitted but not yet reflected in the safe head, preventing re-submissions
         // after an unclean restart. Peek at the batcher address from the private key
         // (without consuming it) only when the scan is requested.
         let scanned_highest = if self.config.check_recent_txs_depth > 0 {
-            let batcher_address = self
-                .config
-                .batcher_private_key
-                .as_ref()
-                .ok_or_else(|| eyre::eyre!("batcher_private_key must be set before starting"))?
-                .address();
+            let batcher_address = signer_address;
             RecentTxScanner::highest_submitted_l2_block(
                 &l1_provider,
                 batcher_address,
-                rollup_config.batch_inbox_address,
+                effective_batch_inbox,
                 self.config.check_recent_txs_depth,
                 &rollup_config,
             )
@@ -590,16 +796,10 @@ impl BatcherService {
             .await?,
         ));
         let l1_head_source = HybridL1HeadSource::new(
+            TokioRuntime::new(),
             l1_head_subscription,
             l1_head_poller,
             self.config.poll_interval,
-        );
-
-        // Build the signer config from the configured private key.
-        let signer_config = SignerConfig::local(
-            self.config
-                .batcher_private_key
-                .ok_or_else(|| eyre::eyre!("batcher_private_key must be set before starting"))?,
         );
 
         // Fetch L1 chain ID and construct the tx manager.
@@ -628,10 +828,8 @@ impl BatcherService {
         // Spawn the safe-head poller. It polls `optimism_syncStatus` at the
         // configured interval and advances the watch when the safe L2 head
         // moves forward, allowing the encoder to prune confirmed blocks.
-        // Extract the raw token so the poller can use it before the runtime
-        // moves into the driver below.
         SafeHeadPoller::new(rollup_client, self.config.poll_interval, safe_head_tx)
-            .spawn(runtime.token().clone());
+            .spawn(runtime.clone());
 
         // Build the driver — all fallible setup is complete at this point.
         let mut driver = BatchDriver::new(
@@ -640,7 +838,7 @@ impl BatcherService {
             source,
             tx_manager,
             base_batcher_core::BatchDriverConfig {
-                inbox: rollup_config.batch_inbox_address,
+                inbox: effective_batch_inbox,
                 max_pending_transactions: self.config.max_pending_transactions,
                 drain_timeout: self.config.resubmission_timeout * 2,
                 force_blobs_when_throttling: self.config.force_blobs_when_throttling,
@@ -661,6 +859,6 @@ impl BatcherService {
         };
 
         info!("batcher service components initialized");
-        Ok(ReadyBatcher { driver, admin_server })
+        Ok(ReadyBatcher { driver, admin_server, background_tasks, cancellation })
     }
 }

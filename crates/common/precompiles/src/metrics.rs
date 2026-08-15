@@ -292,6 +292,12 @@ impl BerylErrorKind {
             return Self::InternalCallFailed;
         }
         if BerylErrorClassifier::is_error_selector::<IB20Factory::InvalidVariant>(selector)
+            || BerylErrorClassifier::is_error_selector::<IActivationRegistry::AdminStorageNotEnabled>(
+                selector,
+            )
+            || BerylErrorClassifier::is_error_selector::<IActivationRegistry::ZeroAdminAddress>(
+                selector,
+            )
             || BerylErrorClassifier::is_error_selector::<IB20Factory::UnsupportedVersion>(selector)
             || BerylErrorClassifier::is_error_selector::<IB20Factory::MissingRequiredField>(
                 selector,
@@ -421,6 +427,7 @@ impl BerylMetricLabels {
                 Cow::Borrowed("checkActivated")
             }
             Some(IActivationRegistry::adminCall::SELECTOR) => Cow::Borrowed("admin"),
+            Some(IActivationRegistry::setAdminCall::SELECTOR) => Cow::Borrowed("setAdmin"),
             Some(IActivationRegistry::activateCall::SELECTOR) => Cow::Borrowed("activate"),
             Some(IActivationRegistry::deactivateCall::SELECTOR) => Cow::Borrowed("deactivate"),
             _ => Self::unknown(),
@@ -654,7 +661,8 @@ mod tests {
 
     use crate::{
         BerylCallOutcome, BerylCallRecorder, BerylErrorKind, BerylMetricLabels, BerylSelector,
-        CALLDATA_WORD_GAS, IB20, IB20Factory, IPolicyRegistry, NoopPrecompileCallObserver,
+        CALLDATA_WORD_GAS, IActivationRegistry, IB20, IB20Factory, IPolicyRegistry,
+        NoopPrecompileCallObserver,
     };
 
     #[test]
@@ -699,6 +707,16 @@ mod tests {
             BerylErrorKind::from_revert_bytes(&policy_not_found),
             BerylErrorKind::PolicyMissing
         );
+
+        let admin_storage_disabled =
+            IActivationRegistry::AdminStorageNotEnabled {}.abi_encode().into();
+        assert_eq!(
+            BerylErrorKind::from_revert_bytes(&admin_storage_disabled),
+            BerylErrorKind::InvalidInput
+        );
+
+        let zero_admin = IActivationRegistry::ZeroAdminAddress {}.abi_encode().into();
+        assert_eq!(BerylErrorKind::from_revert_bytes(&zero_admin), BerylErrorKind::InvalidInput);
     }
 
     #[test]

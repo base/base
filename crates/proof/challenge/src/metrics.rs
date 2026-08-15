@@ -48,8 +48,23 @@ base_metrics::define_metrics! {
     #[describe("Total number of proof retries after failure")]
     proof_retries_total: counter,
 
+    #[describe(
+        "Total number of proof sessions dropped after exceeding the maximum retry count"
+    )]
+    proof_retries_exhausted_total: counter,
+
+    #[describe("Total number of retryable proof session failures by reason")]
+    #[label(
+        name = "reason",
+        default = ["timeout", "malformed", "failed", "tee_validation_failed"]
+    )]
+    proof_session_failures_total: counter,
+
     #[describe("Number of in-flight proof sessions")]
     pending_proofs: gauge,
+
+    #[describe("Number of games ignored after terminal proof-submission reverts")]
+    ignored_games: gauge,
 
     #[describe("Total number of TEE proof attempts")]
     tee_proof_attempts_total: counter,
@@ -111,16 +126,6 @@ base_metrics::define_metrics! {
     anchor_update_tx_outcome_total: counter,
 
     #[describe(
-        "Number of otherwise-removable games currently retained while awaiting anchor state update"
-    )]
-    anchor_update_retained_games: gauge,
-
-    #[describe(
-        "Total games retained past bond lifecycle completion while awaiting anchor state update"
-    )]
-    anchor_update_retained_games_total: counter,
-
-    #[describe(
         "L2 block number of the most recent anchor state successfully advanced by this challenger. \
          Monotonically increases as the challenger drives the anchor forward; absent until the \
          first successful setAnchorState() observation."
@@ -143,7 +148,7 @@ impl ChallengerMetrics {
     pub const STATUS_ERROR: &str = "error";
 
     /// Label value when a resolve was skipped because the game was already
-    /// resolved on-chain (e.g. by another actor).
+    /// resolved onchain (e.g. by another actor).
     pub const STATUS_ALREADY_RESOLVED: &str = "already_resolved";
 
     /// Label value when an anchor update was skipped (game not eligible).
@@ -157,4 +162,19 @@ impl ChallengerMetrics {
 
     /// Label value for a bond phase determination failure.
     pub const EVAL_ERROR_PHASE_READ: &str = "phase_read";
+
+    /// Label value for a proof session that exceeded its time budget.
+    pub const PROOF_FAILURE_TIMEOUT: &str = "timeout";
+
+    /// Label value for a proof session that returned `Succeeded` without a
+    /// usable result payload.
+    pub const PROOF_FAILURE_MALFORMED: &str = "malformed";
+
+    /// Label value for a proof session that explicitly reported `Failed`.
+    pub const PROOF_FAILURE_FAILED: &str = "failed";
+
+    /// Label value for a TEE proof whose result failed local validation
+    /// (e.g. signature or root mismatch) and is being retried via the ZK
+    /// fallback path.
+    pub const PROOF_FAILURE_TEE_VALIDATION: &str = "tee_validation_failed";
 }

@@ -2,14 +2,10 @@
 
 use std::sync::Arc;
 
-use base_proof::{OracleL1ChainProvider, OracleL2ChainProvider};
 use base_proof_succinct_client_utils::{
     BlobStore,
     boot::BootInfoStruct,
-    witness::{
-        executor::{WitnessExecutor, get_inputs_for_pipeline},
-        preimage_store::PreimageStore,
-    },
+    witness::{WitnessExecutor, executor::get_inputs_for_pipeline, preimage_store::PreimageStore},
 };
 
 /// Sets up tracing for the range program
@@ -23,22 +19,9 @@ pub fn setup_tracing() {
 }
 
 /// Runs the range program.
-pub async fn run_range_program<E>(
-    executor: E,
-    oracle: Arc<PreimageStore>,
-    beacon: BlobStore,
-) where
-    E: WitnessExecutor<
-            O = PreimageStore,
-            B = BlobStore,
-            L1 = OracleL1ChainProvider<PreimageStore>,
-            L2 = OracleL2ChainProvider<PreimageStore>,
-        > + Send
-        + Sync,
-{
-    ////////////////////////////////////////////////////////////////
-    //                          PROLOGUE                          //
-    ////////////////////////////////////////////////////////////////
+pub async fn run_range_program(oracle: Arc<PreimageStore>, beacon: BlobStore) {
+    let executor = WitnessExecutor::<PreimageStore, BlobStore>::new();
+
     let (boot_info, input, l2_pre_block_number) =
         get_inputs_for_pipeline(Arc::clone(&oracle)).await.unwrap();
     let (cursor, l1_provider, l2_provider) = input;

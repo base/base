@@ -12,8 +12,9 @@ use url::Url;
 
 use super::{Action, Resources, Router, View, ViewId, runner::start_background_services};
 use crate::{
-    commands::{COLOR_BASE_BLUE, EVENT_POLL_TIMEOUT},
+    app::EVENT_POLL_TIMEOUT,
     config::MonitoringConfig,
+    output::COLOR_BASE_BLUE,
     tui::{AppFrame, Toast, restore_terminal, setup_terminal},
 };
 
@@ -109,6 +110,7 @@ impl App {
             self.resources.conductor.poll();
             self.resources.validators.poll();
             self.resources.proofs.poll();
+            self.resources.pods.poll();
             // When a conductor cluster is configured, bridge the Raft leader's
             // safe head into the DA tracker each tick.  The conductor poller
             // already queries `sync_status` from every node's CL, so the
@@ -250,10 +252,12 @@ impl App {
         let conductor_rpc = self.conductor_rpc.clone();
         tokio::spawn(async move {
             let mut load = MonitoringConfig::load(&name).await;
-            if let (Ok(config), Some(bootstrap)) = (load.as_mut(), conductor_rpc.as_ref())
+            if let Ok(config) = load.as_mut()
                 && config.conductors.is_none()
+                && let Some(source) = config.conductor_source(conductor_rpc)
+                && let crate::config::ConductorSource::Discover { bootstrap, .. } = source
             {
-                let detect_rpc = config.detect_rpc_for(Some(bootstrap));
+                let detect_rpc = config.detect_rpc_for(Some(&bootstrap));
                 if let Some(detected) = MonitoringConfig::detect_name_from_rpc(&detect_rpc).await {
                     config.name = detected;
                 }

@@ -136,6 +136,7 @@ impl SequencerEngineClient for QueuedSequencerEngineClient {
             .send(EngineActorRequest::BuildRequest(Box::new(BuildRequest {
                 attributes,
                 result_tx: payload_id_tx,
+                otel_cx: opentelemetry::Context::current(),
             })))
             .await
             .is_err()
@@ -172,6 +173,7 @@ impl SequencerEngineClient for QueuedSequencerEngineClient {
                 payload_id,
                 attributes,
                 result_tx,
+                otel_cx: opentelemetry::Context::current(),
             })))
             .await
             .map_err(|_| EngineClientError::RequestError("request channel closed.".to_string()))?;
@@ -201,7 +203,11 @@ impl SequencerEngineClient for QueuedSequencerEngineClient {
         trace!(target: "sequencer", "Sending insert unsafe payload request to engine.");
         self.engine_actor_request_tx
             .send(EngineActorRequest::ProcessLocalUnsafeL2BlockRequest(Box::new(
-                InsertUnsafePayloadRequest { envelope: payload, result_tx: Some(result_tx) },
+                InsertUnsafePayloadRequest {
+                    envelope: payload,
+                    result_tx: Some(result_tx),
+                    otel_cx: opentelemetry::Context::current(),
+                },
             )))
             .await
             .map_err(|_| EngineClientError::RequestError("request channel closed.".to_string()))?;

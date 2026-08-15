@@ -1,7 +1,8 @@
 //! Contains the `[BaseSpecId]` type and its implementation.
 
 use alloy_consensus::BlockHeader;
-use base_common_chains::{BaseUpgrade, Upgrades};
+use base_common_chains::{BaseUpgradeExt, Upgrades};
+use base_common_genesis::BaseUpgrade;
 use revm::primitives::hardfork::SpecId;
 
 /// EVM-facing Base spec id.
@@ -24,7 +25,7 @@ impl BaseSpecId {
     }
 
     /// Converts the [`BaseSpecId`] into a [`SpecId`].
-    pub const fn into_eth_spec(self) -> SpecId {
+    pub fn into_eth_spec(self) -> SpecId {
         self.0.into_eth_spec()
     }
 
@@ -42,7 +43,7 @@ impl BaseSpecId {
     ///
     /// # Note
     ///
-    /// This is only intended to be used after the Bedrock, when hardforks are activated by
+    /// This is only intended to be used after Bedrock, when upgrades are activated by
     /// timestamp.
     pub fn from_timestamp(chain_spec: impl Upgrades, timestamp: u64) -> Self {
         Self(BaseUpgrade::from_timestamp(chain_spec, timestamp))

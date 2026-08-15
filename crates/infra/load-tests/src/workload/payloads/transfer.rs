@@ -37,6 +37,10 @@ impl Payload for TransferPayload {
         "transfer"
     }
 
+    fn uses_runner_recipient(&self) -> bool {
+        true
+    }
+
     fn generate(&self, rng: &mut SeededRng, _from: Address, to: Address) -> TransactionRequest {
         let value = if self.min_value == self.max_value {
             self.min_value

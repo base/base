@@ -376,6 +376,9 @@ mod tests {
                     contract_address: None,
                 },
                 l1_block_info: L1BlockInfo::default(),
+                payer: None,
+                phase_statuses: Vec::new(),
+                metadata: None,
             };
 
             let flashblock = Flashblock {

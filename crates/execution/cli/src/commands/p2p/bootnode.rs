@@ -41,10 +41,6 @@ pub struct Command {
     /// Run a discv5 topic discovery bootnode in addition to discv4.
     #[arg(long)]
     pub v5: bool,
-
-    /// Enable the Base discv5 protocol identity.
-    #[arg(long = "v5.base-protocol", default_value_t = true, action = clap::ArgAction::Set)]
-    pub base_protocol: bool,
 }
 
 impl Command {
@@ -144,12 +140,10 @@ impl Command {
     pub fn discv5_config(&self) -> Config {
         let mut inner_builder = Discv5ConfigBuilder::new(DEFAULT_DISCOVERY_V5_LISTEN_CONFIG);
 
-        if self.base_protocol {
-            inner_builder.protocol_identity(ProtocolIdentity {
-                protocol_id: BASE_V0_PROTOCOL_VERSION,
-                ..Default::default()
-            });
-        }
+        inner_builder.protocol_identity(ProtocolIdentity {
+            protocol_id: BASE_V0_PROTOCOL_VERSION,
+            ..Default::default()
+        });
 
         Config::builder(self.v5_addr).discv5_config(inner_builder.build()).build()
     }
@@ -176,7 +170,6 @@ mod tests {
             p2p_secret_key: None,
             nat: NatResolver::None,
             v5: false,
-            base_protocol: true,
         }
     }
 

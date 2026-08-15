@@ -1,5 +1,5 @@
 //! Contains trait [`DefaultBase`] used to create a default context.
-use base_common_chains::BaseUpgrade;
+use base_common_genesis::BaseUpgrade;
 use revm::{
     Context, Journal, MainContext,
     context::{BlockEnv, CfgEnv, TxEnv},

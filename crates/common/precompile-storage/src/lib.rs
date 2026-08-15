@@ -36,6 +36,9 @@ pub use types::{
 mod evm;
 pub use evm::EvmPrecompileStorageProvider;
 
+mod journal;
+pub use journal::JournalStorageProvider;
+
 #[cfg(any(test, feature = "test-utils"))]
 mod hashmap;
 #[cfg(any(test, feature = "test-utils"))]

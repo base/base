@@ -8,7 +8,6 @@ use ExecutionMeteringLimitExceeded::{
     BlockStateRootGas, FlashblockExecutionTime, TransactionExecutionTime,
 };
 use alloy_primitives::{Address, U256};
-use base_access_lists::FlashblockAccessListBuilder;
 use base_bundles::RejectedTransaction;
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned};
 use base_common_evm::BaseTransactionError;
@@ -214,15 +213,11 @@ pub enum TxnOutcome {
 
 /// Execution information specific to flashblocks.
 ///
-/// Tracks the last consumed flashblock index and manages the
-/// flashblock-level access list builder for progressive block construction.
+/// Tracks the last consumed flashblock index for progressive block construction.
 #[derive(Debug, Default, Clone)]
 pub struct FlashblocksExecutionInfo {
     /// Index of the last consumed flashblock
     pub(crate) last_flashblock_index: usize,
-
-    /// Flashblock-level access list builder
-    pub(crate) access_list_builder: FlashblockAccessListBuilder,
 }
 
 /// Accumulated execution state for the current block being built.

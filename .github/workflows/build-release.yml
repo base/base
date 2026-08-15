@@ -15,13 +15,12 @@ on:
 
 env:
   REGISTRY_IMAGE: ghcr.io/${{ github.repository_owner }}/node-reth-dev
-  RELEASE_BINS: |
-    base
-    base-reth-node
-    base-consensus
-    basectl
+  CARGO_TERM_COLOR: always
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
 
 permissions:
+  actions: read
   contents: write
   packages: write
   id-token: write
@@ -31,6 +30,7 @@ jobs:
   # Build native binaries for release artifacts
   build-binaries:
     strategy:
+      fail-fast: false
       matrix:
         target:
           - triple: x86_64-unknown-linux-gnu
@@ -42,6 +42,11 @@ jobs:
           - triple: aarch64-apple-darwin
             runner: macos-14
             os: macos
+        binary:
+          - base
+          - base-reth-node
+          - base-consensus
+          - basectl
 
     runs-on: ${{ matrix.target.runner }}
 
@@ -64,49 +69,36 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libclang-dev pkg-config
 
-      - name: Install mold linker (Linux)
-        if: matrix.target.os == 'linux'
-        uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
-
-      - name: Install lld linker (macOS)
-        if: matrix.target.os == 'macos'
-        run: |
-          # llvm@15 is pre-installed on GH runners and includes ld64.lld.
-          # Create a symlink so .cargo/config.toml's /opt/homebrew/opt/lld/ path resolves.
-          LLD_BIN="$(brew --prefix llvm@15)/bin/ld64.lld"
-          if [ -x "$LLD_BIN" ]; then
-            sudo mkdir -p /opt/homebrew/opt/lld/bin
-            sudo ln -sf "$LLD_BIN" /opt/homebrew/opt/lld/bin/ld64.lld
-          else
-            brew install lld
-          fi
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
 
-      - name: Build binaries
-        run: |
-          cargo_args=()
-          while IFS= read -r bin; do
-            [[ -n "$bin" ]] || continue
-            cargo_args+=(--bin "$bin")
-          done <<< "${RELEASE_BINS}"
-          cargo build --locked --profile maxperf "${cargo_args[@]}"
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
 
-      - name: Package binaries
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          cache-on-failure: true
+          shared-key: release-${{ matrix.target.triple }}
+          save-if: ${{ true }}
+          cache-targets: "false"
+
+      - name: Build binary
+        run: |
+          cargo build --locked --profile maxperf --bin "${{ matrix.binary }}"
+
+      - name: Package binary
         run: |
           TAG="${{ inputs.tag }}"
           TARGET="${{ matrix.target.triple }}"
-          while IFS= read -r bin; do
-            [[ -n "$bin" ]] || continue
-            ARCHIVE="${bin}-${TAG}-${TARGET}.tar.gz"
-            tar -czf "$ARCHIVE" -C target/maxperf "$bin"
-            if command -v sha256sum &>/dev/null; then
-              sha256sum "$ARCHIVE" > "${ARCHIVE}.sha256"
-            else
-              shasum -a 256 "$ARCHIVE" > "${ARCHIVE}.sha256"
-            fi
-          done <<< "${RELEASE_BINS}"
+          BIN="${{ matrix.binary }}"
+          ARCHIVE="${BIN}-${TAG}-${TARGET}.tar.gz"
+          tar -czf "$ARCHIVE" -C target/maxperf "$BIN"
+          if command -v sha256sum &>/dev/null; then
+            sha256sum "$ARCHIVE" > "${ARCHIVE}.sha256"
+          else
+            shasum -a 256 "$ARCHIVE" > "${ARCHIVE}.sha256"
+          fi
 
       - name: Sign archives
         env:
@@ -136,7 +128,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: binaries-${{ matrix.target.triple }}
+          name: binaries-${{ matrix.binary }}-${{ matrix.target.triple }}
           path: |
             *.tar.gz
             *.tar.gz.sha256
@@ -147,6 +139,7 @@ jobs:
   # Build multi-arch Docker images
   build-and-push:
     strategy:
+      fail-fast: false
       matrix:
         settings:
           - arch: linux/amd64
@@ -193,21 +186,21 @@ jobs:
 
       - name: Build and push Docker image
         run: |
-          docker buildx bake -f etc/docker/docker-bake.hcl client \
-            --set client.tags=${{ env.REGISTRY_IMAGE }} \
-            --set client.platform=${{ matrix.settings.arch }} \
-            --set client.output=type=image,push-by-digest=true,name-canonical=true,push=true \
-            --set client.cache-to=type=registry,ref=${{ env.REGISTRY_IMAGE }}:cache-${{ env.PLATFORM_PAIR }},mode=max \
-            --set client.labels.org.opencontainers.image.source=${{ steps.image-labels.outputs.source }} \
-            --set client.labels.org.opencontainers.image.revision=${{ steps.image-labels.outputs.revision }} \
-            --set client.labels.org.opencontainers.image.created=${{ steps.image-labels.outputs.created }} \
-            --set client.labels.org.opencontainers.image.version=${{ steps.image-labels.outputs.version }} \
-            --metadata-file ${{ runner.temp }}/client-metadata.json
+          docker buildx bake -f etc/docker/docker-bake.hcl base \
+            --set base.tags=${{ env.REGISTRY_IMAGE }} \
+            --set base.platform=${{ matrix.settings.arch }} \
+            --set base.output=type=image,push-by-digest=true,name-canonical=true,push=true \
+            --set base.cache-to=type=registry,ref=${{ env.REGISTRY_IMAGE }}:cache-${{ env.PLATFORM_PAIR }},mode=max \
+            --set base.labels.org.opencontainers.image.source=${{ steps.image-labels.outputs.source }} \
+            --set base.labels.org.opencontainers.image.revision=${{ steps.image-labels.outputs.revision }} \
+            --set base.labels.org.opencontainers.image.created=${{ steps.image-labels.outputs.created }} \
+            --set base.labels.org.opencontainers.image.version=${{ steps.image-labels.outputs.version }} \
+            --metadata-file ${{ runner.temp }}/base-metadata.json
 
       - name: Export digest
         run: |
           mkdir -p ${{ runner.temp }}/digests
-          digest="$(jq -er '."client"."containerimage.digest"' ${{ runner.temp }}/client-metadata.json)"
+          digest="$(jq -er '."base"."containerimage.digest"' ${{ runner.temp }}/base-metadata.json)"
           touch "${{ runner.temp }}/digests/${digest#sha256:}"
 
       - name: Upload digest
@@ -218,9 +211,49 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # Merge manifests and publish
-  publish:
+  # Check which release artifacts exist after partial matrix failures
+  find-release-artifacts:
     needs: [build-and-push, build-binaries]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    outputs:
+      has_digests: ${{ steps.artifacts.outputs.has_digests }}
+      has_binaries: ${{ steps.artifacts.outputs.has_binaries }}
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Find release artifacts
+        id: artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          GH_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          artifact_names=$(gh api "repos/$GH_REPO/actions/runs/$GH_RUN_ID/artifacts" --paginate --jq '.artifacts[].name')
+
+          has_digests=false
+          has_binaries=false
+
+          while IFS= read -r name; do
+            case "$name" in
+              digests-*) has_digests=true ;;
+              binaries-*) has_binaries=true ;;
+            esac
+          done <<< "$artifact_names"
+
+          echo "has_digests=$has_digests" >> "$GITHUB_OUTPUT"
+          echo "has_binaries=$has_binaries" >> "$GITHUB_OUTPUT"
+
+  # Merge Docker manifests and publish
+  publish:
+    needs: [find-release-artifacts]
+    if: ${{ !cancelled() && (needs.find-release-artifacts.outputs.has_digests == 'true' || (inputs.is_final && needs.find-release-artifacts.outputs.has_binaries == 'true')) }}
     runs-on: ubuntu-latest
 
     steps:
@@ -237,6 +270,7 @@ jobs:
           fetch-tags: true
 
       - name: Download digests
+        if: needs.find-release-artifacts.outputs.has_digests == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: ${{ runner.temp }}/digests
@@ -244,6 +278,7 @@ jobs:
           merge-multiple: true
 
       - name: Login to GHCR
+        if: needs.find-release-artifacts.outputs.has_digests == 'true'
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
           registry: ghcr.io
@@ -251,9 +286,11 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
+        if: needs.find-release-artifacts.outputs.has_digests == 'true'
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
 
       - name: Determine Docker tags
+        if: needs.find-release-artifacts.outputs.has_digests == 'true'
         id: tags
         run: |
           TAG="${{ inputs.tag }}"
@@ -268,30 +305,39 @@ jobs:
           fi
 
       - name: Create manifest list and push
-        working-directory: ${{ runner.temp }}/digests
+        if: needs.find-release-artifacts.outputs.has_digests == 'true'
+        id: create-manifest
         run: |
           shopt -s nullglob
-          DIGESTS=(*)
+          DIGEST_DIR="${{ runner.temp }}/digests"
+          DIGESTS=("$DIGEST_DIR"/*)
           if [[ ${#DIGESTS[@]} -eq 0 ]]; then
-            echo "::error::No digests found — build-and-push may have failed"
-            exit 1
+            echo "::warning::No Docker digests found — all Docker builds may have failed, skipping manifest push"
+            echo "pushed=false" >> $GITHUB_OUTPUT
+            exit 0
           fi
 
           IFS=',' read -ra TAGS <<< "${{ steps.tags.outputs.docker_tags }}"
-          TAG_ARGS=""
+          TAG_ARGS=()
           for tag in "${TAGS[@]}"; do
-            TAG_ARGS="$TAG_ARGS -t $tag"
+            TAG_ARGS+=(-t "$tag")
           done
 
-          docker buildx imagetools create $TAG_ARGS \
-            $(printf '${{ env.REGISTRY_IMAGE }}@sha256:%s ' "${DIGESTS[@]}")
+          SOURCES=()
+          for digest in "${DIGESTS[@]}"; do
+            SOURCES+=("${{ env.REGISTRY_IMAGE }}@sha256:${digest##*/}")
+          done
+
+          docker buildx imagetools create "${TAG_ARGS[@]}" "${SOURCES[@]}"
+          echo "pushed=true" >> $GITHUB_OUTPUT
 
       - name: Inspect image
+        if: needs.find-release-artifacts.outputs.has_digests == 'true' && steps.create-manifest.outputs.pushed == 'true'
         run: |
           docker buildx imagetools inspect ${{ env.REGISTRY_IMAGE }}:${{ steps.tags.outputs.tag }}
 
       - name: Create GitHub Release
-        if: inputs.is_final
+        if: inputs.is_final && (steps.create-manifest.outputs.pushed == 'true' || needs.find-release-artifacts.outputs.has_binaries == 'true')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -299,11 +345,11 @@ jobs:
           if gh release view "$TAG" > /dev/null 2>&1; then
             echo "GitHub Release $TAG already exists, skipping creation"
           else
-            gh release create "$TAG" --title "$TAG" --generate-notes --draft
+            gh release create "$TAG" --title "$TAG" --notes "" --draft
           fi
 
       - name: Download binary artifacts
-        if: inputs.is_final
+        if: inputs.is_final && needs.find-release-artifacts.outputs.has_binaries == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: ${{ runner.temp }}/binaries
@@ -311,12 +357,20 @@ jobs:
           merge-multiple: true
 
       - name: Upload binaries to GitHub Release
-        if: inputs.is_final
+        if: inputs.is_final && needs.find-release-artifacts.outputs.has_binaries == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${{ inputs.tag }}"
-          gh release upload "$TAG" ${{ runner.temp }}/binaries/*.tar.gz ${{ runner.temp }}/binaries/*.tar.gz.sha256 ${{ runner.temp }}/binaries/*.tar.gz.asc
+          BINARY_DIR="${{ runner.temp }}/binaries"
+          mkdir -p "$BINARY_DIR"
+          shopt -s nullglob
+          files=("$BINARY_DIR"/*.tar.gz "$BINARY_DIR"/*.tar.gz.sha256 "$BINARY_DIR"/*.tar.gz.asc)
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "::warning::No binary artifacts found — all binary builds may have failed, skipping upload"
+          else
+            gh release upload --clobber "$TAG" "${files[@]}"
+          fi
 
       - name: Summary
         run: |
@@ -330,9 +384,11 @@ jobs:
           else
             echo "**Type**: Release Candidate" >> $GITHUB_STEP_SUMMARY
           fi
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Docker Images" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
-          echo "docker pull ${{ env.REGISTRY_IMAGE }}:${TAG}" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          if [[ "${{ steps.create-manifest.outputs.pushed }}" == "true" ]]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Docker Images" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+            echo "docker pull ${{ env.REGISTRY_IMAGE }}:${TAG}" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          fi

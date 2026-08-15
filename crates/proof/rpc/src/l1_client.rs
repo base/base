@@ -12,12 +12,13 @@ use alloy_rpc_types_eth::{
 use alloy_transport_http::{Http, reqwest::Client};
 use async_trait::async_trait;
 use backon::Retryable;
+use base_retry::RetryConfig;
 use url::Url;
 
 use super::{
     HttpProvider,
     cache::MeteredCache,
-    config::{DEFAULT_CACHE_SIZE, RetryConfig},
+    config::DEFAULT_CACHE_SIZE,
     error::{RpcError, RpcResult},
     traits::L1Provider,
 };
@@ -161,9 +162,8 @@ impl L1Provider for L1Client {
             .await
     }
 
-    async fn header_by_number(&self, number: Option<u64>) -> RpcResult<Header> {
-        let block_id: BlockId =
-            number.map_or(BlockNumberOrTag::Latest, BlockNumberOrTag::Number).into();
+    async fn header_by_number(&self, block: BlockNumberOrTag) -> RpcResult<Header> {
+        let block_id: BlockId = block.into();
 
         let backoff = self.retry_config.to_backoff_builder();
 
@@ -243,10 +243,8 @@ impl L1Provider for L1Client {
         Ok(receipts)
     }
 
-    async fn code_at(&self, address: Address, block_number: Option<u64>) -> RpcResult<Bytes> {
-        let block_id = BlockId::Number(
-            block_number.map_or(BlockNumberOrTag::Latest, BlockNumberOrTag::Number),
-        );
+    async fn code_at(&self, address: Address, block: BlockNumberOrTag) -> RpcResult<Bytes> {
+        let block_id = BlockId::Number(block);
 
         let backoff = self.retry_config.to_backoff_builder();
 
@@ -265,11 +263,9 @@ impl L1Provider for L1Client {
         &self,
         to: Address,
         data: Bytes,
-        block_number: Option<u64>,
+        block: BlockNumberOrTag,
     ) -> RpcResult<Bytes> {
-        let block_id = BlockId::Number(
-            block_number.map_or(BlockNumberOrTag::Latest, BlockNumberOrTag::Number),
-        );
+        let block_id = BlockId::Number(block);
 
         let backoff = self.retry_config.to_backoff_builder();
 

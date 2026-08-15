@@ -36,7 +36,6 @@ jobs:
           free-disk: "true"
           toolchain: nightly
           native-deps: "true"
-          mold: "true"
           foundry: "true"
           tools: cargo-udeps
           rust-cache-shared-key: "nightly-udeps-report"

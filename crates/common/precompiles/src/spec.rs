@@ -1,4 +1,4 @@
-use base_common_chains::BaseUpgrade;
+use base_common_genesis::BaseUpgrade;
 
 /// A chain spec that can select Base precompile sets.
 pub trait BasePrecompileSpec: Copy + Eq + From<BaseUpgrade> + Into<BaseUpgrade> {

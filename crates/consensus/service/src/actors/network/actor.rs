@@ -200,10 +200,24 @@ where
                         return Err(NetworkActorError::ChannelClosed);
                     }
                 }
-                Some(NetworkAdminQuery::PostUnsafePayload { payload }) = self.admin_rpc.recv(), if !self.admin_rpc.is_closed() => {
-                    debug!(target: "node::p2p", "Forwarding unsafe payload from admin api to engine");
-                    if self.engine_client.send_unsafe_block(payload).await.is_err() {
-                        warn!(target: "node::p2p", "Failed to forward admin api unsafe block to engine");
+                Some(query) = self.admin_rpc.recv(), if !self.admin_rpc.is_closed() => {
+                    match query {
+                        NetworkAdminQuery::PostUnsafePayload { payload } => {
+                            debug!(target: "node::p2p", "Forwarding unsafe payload from admin api to engine");
+                            if self.engine_client.send_unsafe_block(*payload).await.is_err() {
+                                warn!(target: "node::p2p", "Failed to forward admin api unsafe block to engine");
+                            }
+                        }
+                        NetworkAdminQuery::ClearPendingP2pConnections { out } => {
+                            let cleared = self.transport.clear_pending_connections();
+                            if out.send(cleared).is_err() {
+                                warn!(
+                                    target: "node::p2p",
+                                    cleared,
+                                    "Failed to send clear pending P2P connections response"
+                                );
+                            }
+                        }
                     }
                 }
                 Some(req) = self.p2p_rpc.recv(), if !self.p2p_rpc.is_closed() => {

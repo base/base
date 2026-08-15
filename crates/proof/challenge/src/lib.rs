@@ -9,6 +9,9 @@
 mod cli;
 pub use cli::{ChallengerArgs, Cli, HealthArgs, LogArgs, MetricsArgs, SignerCli, TxManagerCli};
 
+mod anchor;
+pub use anchor::AnchorUpdater;
+
 mod config;
 pub use config::{ChallengerConfig, ConfigError, UrlValidationError, Validated};
 

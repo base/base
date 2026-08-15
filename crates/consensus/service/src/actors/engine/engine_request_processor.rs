@@ -11,6 +11,7 @@ use base_consensus_engine::{
     NoopForkchoiceCheckpointReader, SealTaskError,
 };
 use base_protocol::L2BlockInfo;
+use opentelemetry::context::FutureExt as OtelFutureExt;
 use tokio::{
     sync::{mpsc, watch},
     task::JoinHandle,
@@ -396,8 +397,11 @@ where
         );
     }
 
-    fn handle_local_unsafe_l2_block(&mut self, request: InsertUnsafePayloadRequest) {
-        let InsertUnsafePayloadRequest { envelope, result_tx } = request;
+    fn handle_local_unsafe_l2_block(
+        &mut self,
+        envelope: BaseExecutionPayloadEnvelope,
+        result_tx: Option<mpsc::Sender<InsertTaskResult>>,
+    ) {
         debug!(
             target: "engine",
             block_number = envelope.execution_payload.block_number(),
@@ -462,6 +466,7 @@ where
         self.rollup.log_upgrade_activation(
             envelope.execution_payload.block_number(),
             envelope.execution_payload.timestamp(),
+            envelope.execution_payload.timestamp().saturating_sub(self.rollup.block_time),
         );
     }
 
@@ -744,12 +749,13 @@ where
 
                 match request {
                     EngineActorRequest::BuildRequest(build_request) => {
-                        let BuildRequest { attributes, result_tx } = *build_request;
-                        match self
+                        let BuildRequest { attributes, result_tx, otel_cx } = *build_request;
+                        let build_result = self
                             .engine
                             .build(Arc::clone(&self.client), Arc::clone(&self.rollup), attributes)
-                            .await
-                        {
+                            .with_context(otel_cx)
+                            .await;
+                        match build_result {
                             Ok(payload_id) => {
                                 result_tx
                                     .send(Ok(payload_id))
@@ -768,7 +774,7 @@ where
                         }
                     }
                     EngineActorRequest::GetPayloadRequest(get_payload_request) => {
-                        let GetPayloadRequest { payload_id, attributes, result_tx } =
+                        let GetPayloadRequest { payload_id, attributes, result_tx, otel_cx } =
                             *get_payload_request;
                         let result = self
                             .engine
@@ -778,6 +784,7 @@ where
                                 payload_id,
                                 attributes,
                             )
+                            .with_context(otel_cx)
                             .await;
 
                         let error =
@@ -812,7 +819,10 @@ where
                         self.handle_external_unsafe_l2_block(*envelope);
                     }
                     EngineActorRequest::ProcessLocalUnsafeL2BlockRequest(envelope) => {
-                        self.handle_local_unsafe_l2_block(*envelope);
+                        let InsertUnsafePayloadRequest { envelope, result_tx, otel_cx } = *envelope;
+                        // Attach for the synchronous enqueue call only — no await, no Send issue.
+                        let _guard = otel_cx.attach();
+                        self.handle_local_unsafe_l2_block(envelope, result_tx);
                     }
                     EngineActorRequest::ResetRequest(reset_request) => {
                         // Do not reset the engine while the EL is still syncing. A Reset sends a
@@ -885,9 +895,8 @@ mod tests {
 
     use crate::{
         BuildRequest, EngineActorRequest, EngineClientError, EngineProcessor,
-        EngineProcessorOptions, EngineRequestReceiver, InsertUnsafePayloadRequest, MockConductor,
-        NodeMode, NoopCheckpointWriter, ResetRequest,
-        actors::engine::client::MockEngineDerivationClient,
+        EngineProcessorOptions, EngineRequestReceiver, MockConductor, NodeMode,
+        NoopCheckpointWriter, ResetRequest, actors::engine::client::MockEngineDerivationClient,
     };
 
     /// Test-only [`ForkchoiceCheckpointReader`] that returns pre-seeded safe/finalized heads.
@@ -1146,10 +1155,7 @@ mod tests {
             unsafe_payload_processor(node_mode, el_sync_finished, unsafe_head, safe_head);
 
         if local_payload {
-            processor.handle_local_unsafe_l2_block(InsertUnsafePayloadRequest {
-                envelope,
-                result_tx: None,
-            });
+            processor.handle_local_unsafe_l2_block(envelope, None);
         } else {
             processor.handle_external_unsafe_l2_block(envelope);
         }
@@ -1936,7 +1942,7 @@ mod tests {
         let attributes_timestamp = unsafe_block.block_info.timestamp;
 
         let mut cfg = RollupConfig::default();
-        cfg.hardforks.ecotone_time = Some(attributes_timestamp);
+        cfg.upgrades.ecotone_time = Some(attributes_timestamp);
         let cfg = Arc::new(cfg);
 
         let invalid_fcu = ForkchoiceUpdated {
@@ -2004,6 +2010,7 @@ mod tests {
             .send(EngineActorRequest::BuildRequest(Box::new(BuildRequest {
                 attributes,
                 result_tx: build_result_tx,
+                otel_cx: opentelemetry::Context::new(),
             })))
             .await
             .expect("failed to send build request");

@@ -14,7 +14,9 @@ use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_eth::state::StateOverride;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BasePrimitives, BaseReceipt, BaseTxEnvelope, Predeploys};
-use base_common_evm::{BaseHaltReason, L1BlockInfo, ensure_create2_deployer};
+use base_common_evm::{
+    BaseHaltReason, L1BlockInfo, ensure_create2_deployer, ensure_eip8130_system_accounts,
+};
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_common_rpc_types::{BaseTransactionReceipt, Transaction};
 use base_execution_rpc::BaseReceiptBuilder as BaseRpcReceiptBuilder;
@@ -190,6 +192,13 @@ where
             .map_err(|e| ExecutionError::EvmEnv(e.to_string()))?;
 
         ensure_create2_deployer(spec, self.pending_block.timestamp, self.evm.db_mut())
+            .map_err(|e| ExecutionError::EvmEnv(e.to_string()))?;
+
+        // At the Cobalt (EIP-8130) transition, plant a code stub on the code-less
+        // enshrined system accounts (the 2D nonce manager) so the persistent state
+        // the enshrined path writes to them is not reaped by EIP-161 end-of-block
+        // state clearing.
+        ensure_eip8130_system_accounts(spec, self.pending_block.timestamp, self.evm.db_mut())
             .map_err(|e| ExecutionError::EvmEnv(e.to_string()))?;
 
         Ok(())

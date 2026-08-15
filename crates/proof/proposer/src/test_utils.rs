@@ -1,36 +1,57 @@
 //! Shared test utilities: reusable mock stubs for L1/L2 clients, contract clients, and proposer.
 
 use std::{
-    collections::{HashMap, HashSet},
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
-    time::Duration,
+    collections::{HashMap, VecDeque},
+    sync::Mutex,
 };
 
+use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256, Bytes, U256};
-use alloy_rpc_types_eth::EIP1186AccountProofResponse;
+use alloy_rpc_types_eth::{EIP1186AccountProofResponse, Header};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
+use base_optimism_rpc::{L1BlockId, L1BlockRef, L2BlockRef, OutputAtBlock, SyncStatus};
 use base_proof_contracts::{
     AggregateVerifierClient, AnchorPreflight, AnchorRoot, AnchorSnapshot,
     AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameInfo,
     GameStatus,
 };
-use base_proof_primitives::{ProofResult, Proposal, ProverClient};
-use base_proof_rpc::{
-    BaseBlock, L1BlockId, L1BlockRef, L1Provider, L2BlockRef, L2Provider, OutputAtBlock,
-    RollupProvider, RpcError, RpcResult, SyncStatus,
+use base_proof_primitives::Proposal;
+use base_proof_rpc::{BaseBlock, L1Provider, L2Provider, RollupProvider, RpcError, RpcResult};
+use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
+use base_prover_service_protocol::{
+    DeleteProofRequest, GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
+    PROOF_REQUEST_NOT_FOUND_MESSAGE, ProofRequestIdCollisionMessage,
+    ProofRequestKind as ApiProofRequestKind, ProofResult as ApiProofResult, ProofStatus,
+    ProveBlockRangeRequest, ProveBlockRangeResponse, TeeKind, TeeProofResult,
 };
+use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorObjectOwned};
 
 use crate::{error::ProposerError, output_proposer::OutputProposer};
 
+const TEST_SIGNATURE: [u8; 65] = {
+    let mut signature = [0xab; 65];
+    signature[64] = 1;
+    signature
+};
+
 /// Mock L1 provider for tests.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct MockL1 {
     /// The block number returned by `block_number()`.
     pub latest_block_number: u64,
+    /// Headers returned by `header_by_hash()`.
+    pub headers_by_hash: HashMap<B256, Header>,
+}
+
+impl MockL1 {
+    /// Creates a mock L1 provider with the default test L1 head registered.
+    pub fn new(latest_block_number: u64) -> Self {
+        Self {
+            latest_block_number,
+            headers_by_hash: [(B256::ZERO, test_l1_header(B256::ZERO, latest_block_number))].into(),
+        }
+    }
 }
 
 #[async_trait]
@@ -38,11 +59,17 @@ impl L1Provider for MockL1 {
     async fn block_number(&self) -> RpcResult<u64> {
         Ok(self.latest_block_number)
     }
-    async fn header_by_number(&self, _: Option<u64>) -> RpcResult<alloy_rpc_types_eth::Header> {
-        Ok(alloy_rpc_types_eth::Header { hash: B256::repeat_byte(0x11), ..Default::default() })
+    async fn header_by_number(
+        &self,
+        _: BlockNumberOrTag,
+    ) -> RpcResult<alloy_rpc_types_eth::Header> {
+        Ok(test_l1_header(B256::repeat_byte(0x11), self.latest_block_number))
     }
-    async fn header_by_hash(&self, _: B256) -> RpcResult<alloy_rpc_types_eth::Header> {
-        unimplemented!()
+    async fn header_by_hash(&self, hash: B256) -> RpcResult<alloy_rpc_types_eth::Header> {
+        self.headers_by_hash
+            .get(&hash)
+            .cloned()
+            .ok_or_else(|| RpcError::HeaderNotFound(format!("mock: no header for hash {hash}")))
     }
     async fn block_receipts(
         &self,
@@ -50,10 +77,10 @@ impl L1Provider for MockL1 {
     ) -> RpcResult<Vec<alloy_rpc_types_eth::TransactionReceipt>> {
         unimplemented!()
     }
-    async fn code_at(&self, _: Address, _: Option<u64>) -> RpcResult<Bytes> {
+    async fn code_at(&self, _: Address, _: BlockNumberOrTag) -> RpcResult<Bytes> {
         unimplemented!()
     }
-    async fn call_contract(&self, _: Address, _: Bytes, _: Option<u64>) -> RpcResult<Bytes> {
+    async fn call_contract(&self, _: Address, _: Bytes, _: BlockNumberOrTag) -> RpcResult<Bytes> {
         unimplemented!()
     }
     async fn get_balance(&self, _: Address) -> RpcResult<U256> {
@@ -63,13 +90,7 @@ impl L1Provider for MockL1 {
 
 /// Mock L2 provider for tests.
 #[derive(Debug)]
-pub struct MockL2 {
-    /// When true, `block_by_number` returns a `BlockNotFound` error.
-    pub block_not_found: bool,
-    /// If set, `header_by_number` returns a header with this hash.
-    /// Used for reorg detection tests.
-    pub canonical_hash: Option<B256>,
-}
+pub struct MockL2;
 
 #[async_trait]
 impl L2Provider for MockL2 {
@@ -79,16 +100,14 @@ impl L2Provider for MockL2 {
     async fn get_proof(&self, _: Address, _: B256) -> RpcResult<EIP1186AccountProofResponse> {
         unimplemented!()
     }
-    async fn header_by_number(&self, _: Option<u64>) -> RpcResult<alloy_rpc_types_eth::Header> {
-        let hash = self.canonical_hash.unwrap_or(B256::repeat_byte(0x30));
-        Ok(alloy_rpc_types_eth::Header { hash, ..Default::default() })
+    async fn header_by_number(
+        &self,
+        _: BlockNumberOrTag,
+    ) -> RpcResult<alloy_rpc_types_eth::Header> {
+        Ok(alloy_rpc_types_eth::Header { hash: B256::repeat_byte(0x30), ..Default::default() })
     }
-    async fn block_by_number(&self, _: Option<u64>) -> RpcResult<BaseBlock> {
-        if self.block_not_found {
-            Err(RpcError::BlockNotFound("mock: no blocks".into()))
-        } else {
-            unimplemented!()
-        }
+    async fn block_by_number(&self, _: BlockNumberOrTag) -> RpcResult<BaseBlock> {
+        unimplemented!()
     }
     async fn block_by_hash(&self, _: B256) -> RpcResult<BaseBlock> {
         unimplemented!()
@@ -162,46 +181,32 @@ impl AnchorStateRegistryClient for MockAnchorStateRegistry {
 ///
 /// When `games_should_fail` is `true`, all `games()` calls return a
 /// `ContractError::Validation` to simulate RPC failures.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct MockDisputeGameFactory {
-    /// The list of games returned by `game_at_index()`.
-    pub games: Vec<GameAtIndex>,
-    /// If set, overrides the game count returned by `game_count()`.
-    pub game_count_override: Option<u64>,
+    /// The game count returned by `game_count()`.
+    pub game_count: u64,
     /// UUID-keyed game proxy lookups for `games()`.
     pub uuid_games: HashMap<(u32, B256, Bytes), Address>,
+    /// Ordered responses for repeated `games()` calls.
+    pub uuid_game_responses: Mutex<VecDeque<Address>>,
     /// When true, all `games()` calls return an error.
     pub games_should_fail: bool,
-    /// Optional counter incremented on every `game_count()` call.
-    pub game_count_calls: Option<Arc<AtomicUsize>>,
 }
 
 impl MockDisputeGameFactory {
-    /// Creates a new mock with the given games and no count override.
-    pub fn with_games(games: Vec<GameAtIndex>) -> Self {
-        Self {
-            games,
-            game_count_override: None,
-            uuid_games: HashMap::new(),
-            games_should_fail: false,
-            game_count_calls: None,
-        }
+    /// Creates a mock whose `games()` calls pop from the given responses.
+    pub fn with_uuid_game_responses(responses: impl IntoIterator<Item = Address>) -> Self {
+        Self { uuid_game_responses: Mutex::new(responses.into_iter().collect()), ..Self::default() }
     }
 }
 
 #[async_trait]
 impl DisputeGameFactoryClient for MockDisputeGameFactory {
     async fn game_count(&self) -> Result<u64, ContractError> {
-        if let Some(calls) = &self.game_count_calls {
-            calls.fetch_add(1, Ordering::SeqCst);
-        }
-        Ok(self.game_count_override.unwrap_or(self.games.len() as u64))
+        Ok(self.game_count)
     }
-    async fn game_at_index(&self, index: u64) -> Result<GameAtIndex, ContractError> {
-        self.games
-            .get(index as usize)
-            .copied()
-            .ok_or_else(|| ContractError::Validation(format!("index {index} out of bounds")))
+    async fn game_at_index(&self, _: u64) -> Result<GameAtIndex, ContractError> {
+        unimplemented!("unused in proposer tests")
     }
     async fn init_bonds(&self, _: u32) -> Result<U256, ContractError> {
         Ok(U256::ZERO)
@@ -218,121 +223,91 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
         if self.games_should_fail {
             return Err(ContractError::Validation("mock: simulated games() RPC failure".into()));
         }
-        let key = (game_type, root_claim, extra_data);
-        Ok(self.uuid_games.get(&key).copied().unwrap_or(Address::ZERO))
+        if let Some(response) = self.uuid_game_responses.lock().unwrap().pop_front() {
+            return Ok(response);
+        }
+        Ok(self
+            .uuid_games
+            .get(&(game_type, root_claim, extra_data))
+            .copied()
+            .unwrap_or(Address::ZERO))
     }
 }
 
 /// Mock aggregate verifier contract client for tests.
 #[derive(Debug, Default)]
 pub struct MockAggregateVerifier {
-    /// Map of game address to game info returned by `game_info()`.
-    pub game_info_map: HashMap<Address, GameInfo>,
-    /// Map of game address to status returned by `status()`.
-    pub status_map: HashMap<Address, GameStatus>,
-    /// Addresses for which `game_info()` returns an error.
-    pub failing_addresses: HashSet<Address>,
-    /// Map of game address to intermediate output roots.
-    pub intermediate_roots_map: HashMap<Address, Vec<B256>>,
-}
-
-impl MockAggregateVerifier {
-    /// Creates a new mock with the given game info map.
-    pub fn with_game_info(map: HashMap<Address, GameInfo>) -> Self {
-        Self { game_info_map: map, ..Default::default() }
-    }
+    /// L1 head returned by `l1_head()`.
+    pub l1_head: B256,
 }
 
 #[async_trait]
 impl AggregateVerifierClient for MockAggregateVerifier {
-    async fn game_info(&self, addr: Address) -> Result<GameInfo, ContractError> {
-        if self.failing_addresses.contains(&addr) {
-            return Err(ContractError::Validation(format!(
-                "mock: simulated game_info failure for {addr}"
-            )));
-        }
-        Ok(self.game_info_map.get(&addr).copied().unwrap_or(GameInfo {
-            root_claim: B256::ZERO,
-            l2_block_number: 0,
-            parent_address: Address::ZERO,
-        }))
+    async fn game_info(&self, _: Address) -> Result<GameInfo, ContractError> {
+        unimplemented!("unused in proposer tests")
     }
-    async fn status(&self, addr: Address) -> Result<GameStatus, ContractError> {
-        Ok(self.status_map.get(&addr).copied().unwrap_or(GameStatus::InProgress))
+    async fn status(&self, _: Address) -> Result<GameStatus, ContractError> {
+        unimplemented!("unused in proposer tests")
     }
     async fn zk_prover(&self, _: Address) -> Result<Address, ContractError> {
-        Ok(Address::ZERO)
+        unimplemented!("unused in proposer tests")
     }
     async fn tee_prover(&self, _: Address) -> Result<Address, ContractError> {
-        Ok(Address::ZERO)
+        unimplemented!("unused in proposer tests")
     }
     async fn starting_block_number(&self, _: Address) -> Result<u64, ContractError> {
-        Ok(0)
+        unimplemented!("unused in proposer tests")
     }
     async fn l1_head(&self, _: Address) -> Result<B256, ContractError> {
-        Ok(B256::ZERO)
+        Ok(self.l1_head)
     }
     async fn read_block_interval(&self, _: Address) -> Result<u64, ContractError> {
-        Ok(512)
+        unimplemented!("unused in proposer tests")
     }
     async fn read_intermediate_block_interval(&self, _: Address) -> Result<u64, ContractError> {
-        Ok(512)
+        unimplemented!("unused in proposer tests")
     }
-    async fn intermediate_output_roots(&self, addr: Address) -> Result<Vec<B256>, ContractError> {
-        if let Some(roots) = self.intermediate_roots_map.get(&addr) {
-            return Ok(roots.clone());
-        }
-        if let Some(info) = self.game_info_map.get(&addr) {
-            return Ok(vec![info.root_claim]);
-        }
-        Ok(vec![B256::ZERO])
+    async fn intermediate_output_roots(&self, _: Address) -> Result<Vec<B256>, ContractError> {
+        unimplemented!("unused in proposer tests")
     }
-    async fn intermediate_output_root(
-        &self,
-        addr: Address,
-        index: u64,
-    ) -> Result<B256, ContractError> {
-        let roots = self.intermediate_output_roots(addr).await?;
-        Ok(roots
-            .get(index as usize)
-            .copied()
-            .expect("intermediate_output_root: index out of bounds"))
+    async fn intermediate_output_root(&self, _: Address, _: u64) -> Result<B256, ContractError> {
+        unimplemented!("unused in proposer tests")
     }
     async fn countered_index(&self, _: Address) -> Result<u64, ContractError> {
-        Ok(0)
+        unimplemented!("unused in proposer tests")
     }
     async fn game_over(&self, _: Address) -> Result<bool, ContractError> {
-        Ok(false)
+        unimplemented!("unused in proposer tests")
     }
     async fn resolved_at(&self, _: Address) -> Result<u64, ContractError> {
-        Ok(0)
+        unimplemented!("unused in proposer tests")
     }
     async fn bond_recipient(&self, _: Address) -> Result<Address, ContractError> {
-        Ok(Address::ZERO)
+        unimplemented!("unused in proposer tests")
     }
     async fn bond_unlocked(&self, _: Address) -> Result<bool, ContractError> {
-        Ok(false)
+        unimplemented!("unused in proposer tests")
     }
     async fn bond_claimed(&self, _: Address) -> Result<bool, ContractError> {
-        Ok(false)
+        unimplemented!("unused in proposer tests")
     }
     async fn expected_resolution(&self, _: Address) -> Result<u64, ContractError> {
-        Ok(0)
+        unimplemented!("unused in proposer tests")
     }
     async fn proof_count(&self, _: Address) -> Result<u8, ContractError> {
-        Ok(0)
+        unimplemented!("unused in proposer tests")
     }
     async fn created_at(&self, _: Address) -> Result<u64, ContractError> {
-        Ok(0)
+        unimplemented!("unused in proposer tests")
     }
     async fn delayed_weth(&self, _: Address) -> Result<Address, ContractError> {
-        Ok(Address::ZERO)
+        unimplemented!("unused in proposer tests")
     }
     async fn anchor_state_registry(&self, _: Address) -> Result<Address, ContractError> {
-        Ok(Address::ZERO)
+        unimplemented!("unused in proposer tests")
     }
     async fn is_game_finalized(&self, _: Address, _: Address) -> Result<bool, ContractError> {
-        Ok(true)
+        unimplemented!("unused in proposer tests")
     }
 
     async fn anchor_preflight(
@@ -340,13 +315,16 @@ impl AggregateVerifierClient for MockAggregateVerifier {
         _: Address,
         _: Address,
     ) -> Result<AnchorPreflight, ContractError> {
-        Ok(AnchorPreflight {
-            blacklisted: false,
-            retired: false,
-            respected: true,
-            paused: false,
-            anchor_root: AnchorRoot { root: B256::ZERO, l2_block_number: 0 },
-        })
+        unimplemented!("unused in proposer tests")
+    }
+}
+
+/// Creates a test L1 RPC header with the given block hash and number.
+pub fn test_l1_header(hash: B256, number: u64) -> Header {
+    Header {
+        hash,
+        inner: alloy_consensus::Header { number, ..Default::default() },
+        ..Default::default()
     }
 }
 
@@ -369,8 +347,10 @@ pub fn test_l2_block_ref(number: u64, hash: B256) -> L2BlockRef {
 
 /// Creates a test [`SyncStatus`] with the given safe block number and hash.
 pub fn test_sync_status(safe_number: u64, safe_hash: B256) -> SyncStatus {
-    let l1 = test_l1_block_ref(100);
-    let l2 = test_l2_block_ref(safe_number, safe_hash);
+    let l1 = test_l1_block_ref(1000);
+    let mut l2 = test_l2_block_ref(safe_number, safe_hash);
+    l2.l1origin.hash = l1.hash;
+    l2.l1origin.number = l1.number;
     SyncStatus {
         current_l1: l1,
         current_l1_finalized: None,
@@ -393,7 +373,7 @@ pub fn test_anchor_root(block_number: u64) -> AnchorRoot {
 pub fn test_proposal(block_number: u64) -> Proposal {
     Proposal {
         output_root: B256::repeat_byte(block_number as u8),
-        signature: Bytes::from_static(&[0xab; 65]),
+        signature: Bytes::from_static(&TEST_SIGNATURE),
         l1_origin_hash: B256::repeat_byte(0x02),
         l1_origin_number: 100 + block_number,
         l2_block_number: block_number,
@@ -402,35 +382,140 @@ pub fn test_proposal(block_number: u64) -> Proposal {
     }
 }
 
-/// Mock prover client for tests.
-#[derive(Debug)]
-pub struct MockProver {
-    /// Simulated proving delay.
-    pub delay: Duration,
-    /// Block interval used to generate intermediate proposals.
-    pub block_interval: u64,
+/// Mock prover-service requester for pipeline tests.
+#[derive(Debug, Default)]
+pub struct MockProofRequester {
+    /// Requests accepted through `prove_block_range`.
+    pub requests: Mutex<HashMap<String, ProveBlockRangeRequest>>,
+    /// Sessions that should return a terminal failed status from `get_proof`.
+    pub failed_sessions: Mutex<HashMap<String, String>>,
+    /// Reject every `prove_block_range` call with an L1 head conflict.
+    pub reject_l1_head_conflict: bool,
+    /// Return a mismatched session id from `prove_block_range`.
+    pub return_wrong_session_id: bool,
+    /// Reject every `delete_proof_request` call with a timeout.
+    pub reject_delete: bool,
 }
 
 #[async_trait]
-impl ProverClient for MockProver {
-    async fn prove(
+impl ProofRequesterProvider for MockProofRequester {
+    async fn prove_block_range(
         &self,
-        request: base_proof_primitives::ProofRequest,
-    ) -> Result<ProofResult, Box<dyn std::error::Error + Send + Sync>> {
-        tokio::time::sleep(self.delay).await;
+        request: ProveBlockRangeRequest,
+    ) -> Result<ProveBlockRangeResponse, ProverServiceClientError> {
+        let session_id = request.proof.session_id.clone();
+        if self.reject_l1_head_conflict {
+            return Err(ProverServiceClientError::from(JsonRpcClientError::Call(
+                ErrorObjectOwned::owned(
+                    ProverServiceClientError::ERROR_FAILED_PRECONDITION,
+                    ProofRequestIdCollisionMessage::for_field(session_id, "l1_head"),
+                    None::<()>,
+                ),
+            )));
+        }
 
-        let block_number = request.claimed_l2_block_number;
+        self.requests.lock().unwrap().insert(session_id.clone(), request);
+        if self.return_wrong_session_id {
+            return Ok(ProveBlockRangeResponse { session_id: "wrong-session".to_owned() });
+        }
 
-        let start = block_number.saturating_sub(self.block_interval);
-        let proposals: Vec<Proposal> = ((start + 1)..=block_number).map(test_proposal).collect();
+        Ok(ProveBlockRangeResponse { session_id })
+    }
 
-        Ok(ProofResult::Tee { aggregate_proposal: test_proposal(block_number), proposals })
+    async fn get_proof(
+        &self,
+        request: GetProofRequest,
+    ) -> Result<GetProofResponse, ProverServiceClientError> {
+        if let Some(message) = self.failed_sessions.lock().unwrap().get(&request.session_id) {
+            return Ok(GetProofResponse {
+                status: ProofStatus::Failed,
+                error_message: Some(message.clone()),
+                result: None,
+            });
+        }
+
+        let requests = self.requests.lock().unwrap();
+        let request = requests.get(&request.session_id).ok_or_else(|| {
+            // Mirror the production prover-service: an unknown session_id surfaces
+            // as a JSON-RPC NotFound error. The proposer pipeline relies
+            // on this to distinguish "no session yet, dispatch needed" from other
+            // transient or terminal errors.
+            ProverServiceClientError::RpcTransport(JsonRpcClientError::Call(
+                ErrorObjectOwned::owned(
+                    ProverServiceClientError::ERROR_NOT_FOUND,
+                    PROOF_REQUEST_NOT_FOUND_MESSAGE,
+                    None::<()>,
+                ),
+            ))
+        })?;
+        let ApiProofRequestKind::Tee(tee_request) = &request.proof.request else {
+            return Err(ProverServiceClientError::UnexpectedResultPayload(
+                "expected TEE request".to_owned(),
+            ));
+        };
+        let target = tee_request.proof.claimed_l2_block_number;
+        let interval = tee_request.proof.intermediate_block_interval.max(1);
+        let start = target.saturating_sub(interval);
+        let proposals = ((start + 1)..=target).map(test_proposal).collect::<Vec<_>>();
+        let aggregate_proposal = Proposal {
+            output_root: tee_request.proof.claimed_l2_output_root,
+            l1_origin_hash: tee_request.proof.l1_head,
+            l1_origin_number: tee_request.proof.l1_head_number,
+            l2_block_number: target,
+            prev_output_root: tee_request.proof.agreed_l2_output_root,
+            ..test_proposal(target)
+        };
+        Ok(GetProofResponse {
+            status: ProofStatus::Succeeded,
+            error_message: None,
+            result: Some(ApiProofResult::Tee(TeeProofResult {
+                aggregate_proposal,
+                proposals,
+                tee_kind: TeeKind::AwsNitro,
+            })),
+        })
+    }
+
+    async fn delete_proof_request(
+        &self,
+        request: DeleteProofRequest,
+    ) -> Result<(), ProverServiceClientError> {
+        if self.reject_delete {
+            return Err(ProverServiceClientError::Timeout("simulated delete failure".into()));
+        }
+
+        self.requests.lock().unwrap().remove(&request.session_id);
+        self.failed_sessions.lock().unwrap().remove(&request.session_id);
+        Ok(())
+    }
+
+    async fn list_proofs(
+        &self,
+        _request: ListProofsRequest,
+    ) -> Result<ListProofsResponse, ProverServiceClientError> {
+        unimplemented!("tests do not list proofs")
     }
 }
 
-/// Mock output proposer that always succeeds.
-#[derive(Debug)]
-pub struct MockOutputProposer;
+/// Mock output proposer that succeeds unless configured with a create error.
+#[derive(Debug, Default)]
+pub struct MockOutputProposer {
+    /// Number of `propose_output()` calls.
+    pub created: Mutex<u32>,
+    /// Game addresses passed to `verify_proposal_proof()`.
+    pub verified: Mutex<Vec<Address>>,
+    /// Error returned by the next `propose_output` call.
+    pub create_error: Mutex<Option<ProposerError>>,
+    /// Error returned by the next `verify_proposal_proof` call.
+    pub verify_error: Mutex<Option<ProposerError>>,
+}
+
+impl MockOutputProposer {
+    /// Creates a mock that fails the next output proposal.
+    pub fn with_create_error(error: ProposerError) -> Self {
+        Self { create_error: Mutex::new(Some(error)), ..Default::default() }
+    }
+}
 
 #[async_trait]
 impl OutputProposer for MockOutputProposer {
@@ -440,6 +525,22 @@ impl OutputProposer for MockOutputProposer {
         _parent_address: Address,
         _intermediate_roots: &[B256],
     ) -> Result<(), ProposerError> {
+        *self.created.lock().unwrap() += 1;
+        if let Some(error) = self.create_error.lock().unwrap().take() {
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    async fn verify_proposal_proof(
+        &self,
+        game_address: Address,
+        _proposal: &Proposal,
+    ) -> Result<(), ProposerError> {
+        self.verified.lock().unwrap().push(game_address);
+        if let Some(error) = self.verify_error.lock().unwrap().take() {
+            return Err(error);
+        }
         Ok(())
     }
 }

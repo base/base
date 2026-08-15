@@ -208,7 +208,7 @@ mod tests {
     use alloc::vec;
 
     use alloy_eips::BlockNumHash;
-    use base_common_genesis::{HardForkConfig, SystemConfig};
+    use base_common_genesis::{SystemConfig, UpgradeConfig};
 
     use super::*;
     use crate::{errors::PipelineErrorKind, test_utils::TestChannelReaderProvider};
@@ -292,7 +292,7 @@ mod tests {
     async fn test_flush_post_holocene() {
         let raw = new_compressed_batch_data();
         let config = Arc::new(RollupConfig {
-            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { holocene_time: Some(0), ..Default::default() },
             ..Default::default()
         });
         let mock = TestChannelReaderProvider::new(vec![Ok(Some(raw))]);

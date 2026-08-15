@@ -6,8 +6,11 @@ use alloy_eips::eip7840::BlobParams;
 use alloy_genesis::Genesis;
 use alloy_hardforks::Hardfork;
 use alloy_primitives::{Address, B256, U256};
-use base_common_chains::{BaseUpgrade, ChainConfig, Upgrades};
+use base_common_chains::{BaseUpgradeExt, ChainConfig, Upgrades};
 use base_common_consensus::Predeploys;
+use base_common_genesis::{
+    BaseUpgrade, RuntimeUpgradeRegistry, UpgradeActivation, UpgradeActivationSink,
+};
 use derive_more::{Constructor, Deref, Into};
 use reth_chainspec::{
     BaseFeeParams, BaseFeeParamsKind, ChainSpec, DepositContract, DisplayHardforks, EthChainSpec,
@@ -132,8 +135,8 @@ impl BaseChainSpec {
         let genesis_info = base_genesis_info.base_chain_info.genesis_info.unwrap_or_default();
         let activation_admin_address = genesis_info.activation_admin_address;
 
-        // Block-based hardforks in canonical fork ID order.
-        let hardfork_opts = [
+        // Block-based upgrades in canonical fork ID order.
+        let block_upgrade_opts = [
             (EthereumHardfork::Frontier.boxed(), Some(0)),
             (EthereumHardfork::Homestead.boxed(), genesis.config.homestead_block),
             (EthereumHardfork::Tangerine.boxed(), genesis.config.eip150_block),
@@ -148,13 +151,13 @@ impl BaseChainSpec {
             (EthereumHardfork::ArrowGlacier.boxed(), genesis.config.arrow_glacier_block),
             (EthereumHardfork::GrayGlacier.boxed(), genesis.config.gray_glacier_block),
         ];
-        let mut hardforks = hardfork_opts
+        let mut upgrades = block_upgrade_opts
             .into_iter()
-            .filter_map(|(hardfork, opt)| opt.map(|block| (hardfork, ForkCondition::Block(block))))
+            .filter_map(|(upgrade, opt)| opt.map(|block| (upgrade, ForkCondition::Block(block))))
             .collect::<Vec<_>>();
 
-        // We set the paris hardfork for Base networks to zero
-        hardforks.push((
+        // We set the paris upgrade for Base networks to zero
+        upgrades.push((
             EthereumHardfork::Paris.boxed(),
             ForkCondition::TTD {
                 activation_block_number: 0,
@@ -164,15 +167,15 @@ impl BaseChainSpec {
         ));
 
         if let Some(block) = genesis_info.bedrock_block {
-            hardforks.push((BaseUpgrade::Bedrock.boxed(), ForkCondition::Block(block)));
+            upgrades.push((BaseUpgrade::Bedrock.boxed(), ForkCondition::Block(block)));
         }
 
-        // Time-based hardforks
-        // L1 hardforks are mapped to the activation timestamps of the corresponding Base hardforks
+        // Time-based upgrades
+        // L1 upgrades are mapped to the activation timestamps of the corresponding Base upgrades
         let azul_time = genesis_info.base.azul;
         let beryl_time = genesis_info.base.beryl;
         let cobalt_time = genesis_info.base.cobalt;
-        let time_hardfork_opts = [
+        let time_upgrade_opts = [
             (BaseUpgrade::Regolith.boxed(), genesis_info.regolith_time),
             (EthereumHardfork::Shanghai.boxed(), genesis_info.canyon_time),
             (BaseUpgrade::Canyon.boxed(), genesis_info.canyon_time),
@@ -190,27 +193,25 @@ impl BaseChainSpec {
             (BaseUpgrade::Cobalt.boxed(), cobalt_time),
         ];
 
-        let mut time_hardforks = time_hardfork_opts
+        let mut time_upgrades = time_upgrade_opts
             .into_iter()
-            .filter_map(|(hardfork, opt)| {
-                opt.map(|time| (hardfork, ForkCondition::Timestamp(time)))
-            })
+            .filter_map(|(upgrade, opt)| opt.map(|time| (upgrade, ForkCondition::Timestamp(time))))
             .collect::<Vec<_>>();
 
-        hardforks.append(&mut time_hardforks);
+        upgrades.append(&mut time_upgrades);
 
-        let hardforks = ChainHardforks::new(hardforks);
+        let upgrades = ChainHardforks::new(upgrades);
         let chain_id = genesis.config.chain_id;
-        Self::validate_beryl_activation_admin(&hardforks, activation_admin_address, chain_id)?;
+        Self::validate_beryl_activation_admin(&upgrades, activation_admin_address, chain_id)?;
         let genesis_header =
-            SealedHeader::seal_slow(Self::make_genesis_header(&genesis, &hardforks));
+            SealedHeader::seal_slow(Self::make_genesis_header(&genesis, &upgrades));
 
         Ok(Self {
             inner: ChainSpec {
                 chain: chain_id.into(),
                 genesis_header,
                 genesis,
-                hardforks,
+                hardforks: upgrades,
                 paris_block_and_final_difficulty: Some((0, U256::ZERO)),
                 base_fee_params: base_genesis_info.base_fee_params,
                 ..Default::default()
@@ -235,11 +236,11 @@ impl BaseChainSpec {
     /// Validates that Beryl-enabled chains have a valid activation registry admin address:
     /// present (not `None`) and non-zero.
     pub fn validate_beryl_activation_admin(
-        hardforks: &ChainHardforks,
+        upgrades: &ChainHardforks,
         activation_admin_address: Option<Address>,
         chain_id: u64,
     ) -> Result<(), BaseChainSpecError> {
-        let beryl_scheduled = !matches!(hardforks.fork(BaseUpgrade::Beryl), ForkCondition::Never);
+        let beryl_scheduled = !matches!(upgrades.fork(BaseUpgrade::Beryl), ForkCondition::Never);
 
         if activation_admin_address.is_none() && beryl_scheduled {
             return Err(BaseChainSpecError::MissingActivationAdminAddress { chain_id });
@@ -257,10 +258,10 @@ impl BaseChainSpec {
     /// Extends [`reth_chainspec::make_genesis_header`] with Isthmus-specific withdrawals root
     /// logic: if Isthmus is active at the genesis timestamp, the withdrawals root is set to the
     /// storage root of the `L2ToL1MessagePasser` predeploy.
-    pub fn make_genesis_header(genesis: &Genesis, hardforks: &ChainHardforks) -> Header {
-        let mut header = reth_chainspec::make_genesis_header(genesis, hardforks);
+    pub fn make_genesis_header(genesis: &Genesis, upgrades: &ChainHardforks) -> Header {
+        let mut header = reth_chainspec::make_genesis_header(genesis, upgrades);
 
-        if hardforks.fork(BaseUpgrade::Isthmus).active_at_timestamp(header.timestamp)
+        if upgrades.fork(BaseUpgrade::Isthmus).active_at_timestamp(header.timestamp)
             && let Some(predeploy) = genesis.alloc.get(&Predeploys::L2_TO_L1_MESSAGE_PASSER)
             && let Some(storage) = &predeploy.storage
         {
@@ -281,9 +282,200 @@ impl BaseChainSpec {
         ))
     }
 
-    /// Activates or updates the given hardfork condition in-place.
+    /// Activates or updates the given upgrade condition in-place.
     pub fn set_fork<H: Hardfork>(&mut self, fork: H, condition: ForkCondition) {
         self.inner.hardforks.insert(fork, condition);
+    }
+
+    /// Returns the runtime-aware activation condition for a hardfork.
+    pub fn fork<H: Hardfork>(&self, fork: H) -> ForkCondition {
+        self.runtime_fork_condition(&fork).unwrap_or_else(|| self.inner.fork(fork))
+    }
+
+    /// Returns a runtime upgrade override for an execution fork condition.
+    pub fn runtime_fork_condition<H: Hardfork + ?Sized>(&self, fork: &H) -> Option<ForkCondition> {
+        let upgrade_id = BaseUpgrade::from_contract_fork_name(fork.name())?;
+        RuntimeUpgradeRegistry::activation(self.chain().id(), upgrade_id).map(|activation| {
+            match activation {
+                UpgradeActivation::Never => ForkCondition::Never,
+                UpgradeActivation::Timestamp(timestamp) => ForkCondition::Timestamp(timestamp),
+            }
+        })
+    }
+
+    /// Returns hardforks with runtime overrides materialized into the schedule.
+    pub fn runtime_hardforks(&self) -> ChainHardforks {
+        let mut hardforks = self.inner.hardforks.clone();
+        if let Some(overrides) = RuntimeUpgradeRegistry::overrides(self.chain().id()) {
+            for (hardfork_id, activation) in overrides.activations {
+                let condition = match activation {
+                    UpgradeActivation::Never => ForkCondition::Never,
+                    UpgradeActivation::Timestamp(timestamp) => ForkCondition::Timestamp(timestamp),
+                };
+                Self::set_hardfork_activation_condition_for(&mut hardforks, hardfork_id, condition);
+            }
+        }
+
+        hardforks
+    }
+
+    /// Returns the inner chain spec with runtime hardfork overrides materialized.
+    pub fn runtime_chain_spec(&self) -> ChainSpec {
+        let mut inner = self.inner.clone();
+        inner.hardforks = self.runtime_hardforks();
+        inner
+    }
+
+    /// Get an iterator of all hardforks with runtime-aware activation conditions.
+    pub fn forks_iter(&self) -> impl Iterator<Item = (&dyn Hardfork, ForkCondition)> {
+        self.inner.forks_iter().map(|(fork, condition)| {
+            let condition = self.runtime_fork_condition(fork).unwrap_or(condition);
+            (fork, condition)
+        })
+    }
+
+    /// Returns the runtime-aware fork ID for the given head.
+    pub fn fork_id(&self, head: &Head) -> ForkId {
+        self.runtime_chain_spec().fork_id(head)
+    }
+
+    /// Returns the runtime-aware fork ID for the latest fork.
+    pub fn latest_fork_id(&self) -> ForkId {
+        self.runtime_chain_spec().latest_fork_id()
+    }
+
+    /// Creates a runtime-aware fork filter for the block described by `head`.
+    pub fn fork_filter(&self, head: Head) -> ForkFilter {
+        self.runtime_chain_spec().fork_filter(head)
+    }
+
+    /// Returns the runtime-aware fork ID for the given hardfork.
+    pub fn hardfork_fork_id<HF: Hardfork + Clone>(&self, fork: HF) -> Option<ForkId> {
+        self.runtime_chain_spec().hardfork_fork_id(fork)
+    }
+
+    /// Recomputes the sealed genesis header from the current genesis and hardfork schedule.
+    pub fn refresh_genesis_header(&mut self) {
+        self.inner.genesis_header = SealedHeader::seal_slow(Self::make_genesis_header(
+            &self.inner.genesis,
+            &self.inner.hardforks,
+        ));
+    }
+
+    /// Clears all timestamp-based Base hardfork activation conditions.
+    pub fn clear_hardfork_activation_timestamps(&mut self) {
+        for hardfork_id in BaseUpgrade::CONTRACT_VARIANTS {
+            Self::set_hardfork_activation_condition_for(
+                &mut self.inner.hardforks,
+                hardfork_id,
+                ForkCondition::Never,
+            );
+        }
+    }
+
+    /// Clears a timestamp-based hardfork activation condition by contract hardfork ID.
+    pub fn clear_hardfork_activation_timestamp(&mut self, hardfork_id: BaseUpgrade) -> bool {
+        self.try_clear_hardfork_activation_timestamp(hardfork_id).unwrap_or(false)
+    }
+
+    /// Clears a timestamp-based hardfork activation condition by contract hardfork ID.
+    pub fn try_clear_hardfork_activation_timestamp(
+        &mut self,
+        hardfork_id: BaseUpgrade,
+    ) -> Result<bool, BaseChainSpecError> {
+        self.try_set_hardfork_activation_condition(hardfork_id, ForkCondition::Never)
+    }
+
+    /// Sets a timestamp-based hardfork activation condition by contract hardfork ID.
+    pub fn set_hardfork_activation_timestamp(
+        &mut self,
+        hardfork_id: BaseUpgrade,
+        timestamp: u64,
+    ) -> bool {
+        self.try_set_hardfork_activation_timestamp(hardfork_id, timestamp).unwrap_or(false)
+    }
+
+    /// Sets a timestamp-based hardfork activation condition by contract hardfork ID.
+    pub fn try_set_hardfork_activation_timestamp(
+        &mut self,
+        hardfork_id: BaseUpgrade,
+        timestamp: u64,
+    ) -> Result<bool, BaseChainSpecError> {
+        self.try_set_hardfork_activation_condition(hardfork_id, ForkCondition::Timestamp(timestamp))
+    }
+
+    /// Sets a hardfork activation condition by contract hardfork ID.
+    pub fn set_hardfork_activation_condition(
+        &mut self,
+        hardfork_id: BaseUpgrade,
+        condition: ForkCondition,
+    ) -> bool {
+        self.try_set_hardfork_activation_condition(hardfork_id, condition).unwrap_or(false)
+    }
+
+    /// Sets a hardfork activation condition by contract hardfork ID after validating invariants.
+    pub fn try_set_hardfork_activation_condition(
+        &mut self,
+        hardfork_id: BaseUpgrade,
+        condition: ForkCondition,
+    ) -> Result<bool, BaseChainSpecError> {
+        let mut hardforks = self.inner.hardforks.clone();
+        if !Self::set_hardfork_activation_condition_for(&mut hardforks, hardfork_id, condition) {
+            return Ok(false);
+        }
+
+        Self::validate_beryl_activation_admin(
+            &hardforks,
+            self.activation_admin_address,
+            self.inner.chain.id(),
+        )?;
+        self.inner.hardforks = hardforks;
+
+        Ok(true)
+    }
+
+    /// Sets a hardfork activation condition by contract hardfork ID on a hardfork collection.
+    pub fn set_hardfork_activation_condition_for(
+        hardforks: &mut ChainHardforks,
+        hardfork_id: BaseUpgrade,
+        condition: ForkCondition,
+    ) -> bool {
+        let mut inserted = false;
+
+        if let Some(execution_hardfork) = hardfork_id.execution_hardfork() {
+            hardforks.insert(execution_hardfork, condition);
+            inserted = true;
+        }
+        // Only execution-ladder upgrades enter the reth hardfork schedule; contract-only
+        // upgrades (Delta, PectraBlobSchedule) and the permanently-off Zombie gate are ignored.
+        if hardfork_id.is_execution() {
+            hardforks.insert(hardfork_id, condition);
+            inserted = true;
+        }
+
+        inserted
+    }
+}
+
+impl UpgradeActivationSink for BaseChainSpec {
+    type Error = BaseChainSpecError;
+
+    fn apply_activation(
+        &mut self,
+        hardfork_id: BaseUpgrade,
+        activation: UpgradeActivation,
+    ) -> Result<bool, Self::Error> {
+        match activation {
+            UpgradeActivation::Timestamp(timestamp) => {
+                self.try_set_hardfork_activation_timestamp(hardfork_id, timestamp)
+            }
+            UpgradeActivation::Never => self.try_clear_hardfork_activation_timestamp(hardfork_id),
+        }
+    }
+
+    fn finalize(&mut self) -> Result<(), Self::Error> {
+        self.refresh_genesis_header();
+        Ok(())
     }
 }
 
@@ -292,16 +484,13 @@ impl TryFrom<&ChainConfig> for BaseChainSpec {
 
     fn try_from(cfg: &ChainConfig) -> Result<Self, Self::Error> {
         let genesis = serde_json::from_str(cfg.genesis_json)?;
-        let hardforks = base_common_chains::ChainUpgrades::new(BaseUpgrade::forks_for(cfg))
-            .to_chain_hardforks();
-        Self::validate_beryl_activation_admin(
-            &hardforks,
-            Some(cfg.activation_admin_address),
-            cfg.chain_id,
-        )?;
+        let upgrades =
+            base_common_chains::ChainUpgrades::new(BaseUpgrade::forks_for(cfg)).to_chain_upgrades();
+        let activation_admin_address = cfg.beryl_activation_admin_address();
+        Self::validate_beryl_activation_admin(&upgrades, activation_admin_address, cfg.chain_id)?;
         let genesis_header = match cfg.genesis_l2_hash {
-            B256::ZERO => SealedHeader::seal_slow(Self::make_genesis_header(&genesis, &hardforks)),
-            hash => SealedHeader::new(Self::make_genesis_header(&genesis, &hardforks), hash),
+            B256::ZERO => SealedHeader::seal_slow(Self::make_genesis_header(&genesis, &upgrades)),
+            hash => SealedHeader::new(Self::make_genesis_header(&genesis, &upgrades), hash),
         };
         let fee_config = cfg.fee_config();
         let base_fee_params = BaseFeeParamsKind::Variable(
@@ -330,12 +519,12 @@ impl TryFrom<&ChainConfig> for BaseChainSpec {
                 genesis_header,
                 genesis,
                 paris_block_and_final_difficulty: Some((0, U256::ZERO)),
-                hardforks,
+                hardforks: upgrades,
                 base_fee_params,
                 prune_delete_limit: cfg.prune_delete_limit,
                 ..Default::default()
             },
-            activation_admin_address: Some(cfg.activation_admin_address),
+            activation_admin_address,
         })
     }
 }
@@ -348,11 +537,11 @@ impl EthChainSpec for BaseChainSpec {
     }
 
     fn base_fee_params_at_timestamp(&self, timestamp: u64) -> BaseFeeParams {
-        self.inner.base_fee_params_at_timestamp(timestamp)
+        self.runtime_chain_spec().base_fee_params_at_timestamp(timestamp)
     }
 
     fn blob_params_at_timestamp(&self, timestamp: u64) -> Option<BlobParams> {
-        self.inner.blob_params_at_timestamp(timestamp)
+        self.runtime_chain_spec().blob_params_at_timestamp(timestamp)
     }
 
     fn deposit_contract(&self) -> Option<&DepositContract> {
@@ -368,7 +557,8 @@ impl EthChainSpec for BaseChainSpec {
     }
 
     fn display_hardforks(&self) -> Box<dyn core::fmt::Display> {
-        let base_forks = self.inner.hardforks.forks_iter().filter(|(fork, _)| {
+        let hardforks = self.runtime_hardforks();
+        let base_forks = hardforks.forks_iter().filter(|(fork, _)| {
             !EthereumHardfork::VARIANTS.iter().any(|h| h.name() == (*fork).name())
         });
 
@@ -401,30 +591,30 @@ impl EthChainSpec for BaseChainSpec {
         } else if Upgrades::is_holocene_active_at_timestamp(self, parent.timestamp()) {
             decode_holocene_base_fee(self, parent, target_timestamp).ok()
         } else {
-            self.inner.next_block_base_fee(parent, target_timestamp)
+            self.runtime_chain_spec().next_block_base_fee(parent, target_timestamp)
         }
     }
 }
 
 impl Hardforks for BaseChainSpec {
     fn fork<H: Hardfork>(&self, fork: H) -> ForkCondition {
-        self.inner.fork(fork)
+        Self::fork(self, fork)
     }
 
     fn forks_iter(&self) -> impl Iterator<Item = (&dyn Hardfork, ForkCondition)> {
-        self.inner.forks_iter()
+        Self::forks_iter(self)
     }
 
     fn fork_id(&self, head: &Head) -> ForkId {
-        self.inner.fork_id(head)
+        self.runtime_chain_spec().fork_id(head)
     }
 
     fn latest_fork_id(&self) -> ForkId {
-        self.inner.latest_fork_id()
+        self.runtime_chain_spec().latest_fork_id()
     }
 
     fn fork_filter(&self, head: Head) -> ForkFilter {
-        self.inner.fork_filter(head)
+        self.runtime_chain_spec().fork_filter(head)
     }
 }
 
@@ -466,11 +656,13 @@ mod tests {
     };
     use core::str::FromStr;
 
+    use alloy_chains::Chain;
     use alloy_consensus::proofs::storage_root_unhashed;
     use alloy_genesis::{ChainConfig as AlloyChainConfig, Genesis};
     use alloy_hardforks::Hardfork;
     use alloy_primitives::{Address, B256, U256, address, b256};
-    use base_common_chains::{BaseUpgrade, ChainConfig, Upgrades};
+    use base_common_chains::{ChainConfig, Upgrades};
+    use base_common_genesis::{BaseUpgrade, RuntimeUpgradeRegistry};
     use base_common_rpc_types::FeeInfo;
     use reth_chainspec::{
         BaseFeeParams, BaseFeeParamsKind, ChainSpec, EthChainSpec, EthereumHardforks, test_fork_ids,
@@ -652,6 +844,133 @@ mod tests {
     }
 
     #[test]
+    fn runtime_registry_overrides_execution_fork_conditions() {
+        let chain_id = 9_100_003;
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+        let spec = BaseChainSpecBuilder::default()
+            .chain(Chain::from_id(chain_id))
+            .genesis(Genesis::default())
+            .with_fork(EthereumHardfork::Osaka, ForkCondition::Never)
+            .with_fork(BaseUpgrade::Azul, ForkCondition::Never)
+            .build();
+        let chain_id = spec.chain().id();
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+
+        assert_eq!(spec.fork(EthereumHardfork::Osaka), ForkCondition::Never);
+        assert_eq!(spec.fork(BaseUpgrade::Azul), ForkCondition::Never);
+        assert_eq!(spec.fork(BaseUpgrade::Cobalt), ForkCondition::Never);
+
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Azul, 42);
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Cobalt, 84);
+
+        assert_eq!(spec.fork(EthereumHardfork::Osaka), ForkCondition::Timestamp(42));
+        assert_eq!(spec.fork(BaseUpgrade::Azul), ForkCondition::Timestamp(42));
+        assert_eq!(spec.fork(BaseUpgrade::Cobalt), ForkCondition::Timestamp(84));
+
+        RuntimeUpgradeRegistry::clear_activation_timestamp(chain_id, BaseUpgrade::Azul);
+        RuntimeUpgradeRegistry::clear_activation_timestamp(chain_id, BaseUpgrade::Cobalt);
+
+        assert_eq!(spec.fork(EthereumHardfork::Osaka), ForkCondition::Never);
+        assert_eq!(spec.fork(BaseUpgrade::Azul), ForkCondition::Never);
+        assert_eq!(spec.fork(BaseUpgrade::Cobalt), ForkCondition::Never);
+
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+    }
+
+    #[test]
+    fn runtime_registry_overrides_execution_fork_ids() {
+        let chain_id = 9_100_004;
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+        let spec = BaseChainSpecBuilder::default()
+            .chain(Chain::from_id(chain_id))
+            .genesis(Genesis::default())
+            .with_fork(EthereumHardfork::Osaka, ForkCondition::Never)
+            .with_fork(BaseUpgrade::Azul, ForkCondition::Never)
+            .with_fork(BaseUpgrade::Cobalt, ForkCondition::Never)
+            .build();
+
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Azul, 42);
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Cobalt, 84);
+
+        assert_eq!(spec.fork_id(&Head { number: 0, timestamp: 41, ..Default::default() }).next, 42);
+        assert_eq!(spec.fork(BaseUpgrade::Cobalt), ForkCondition::Timestamp(84));
+
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+    }
+
+    #[test]
+    fn runtime_registry_overrides_regolith_execution_paths() {
+        let chain_id = 9_100_005;
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+        let spec = BaseChainSpecBuilder::default()
+            .chain(Chain::from_id(chain_id))
+            .genesis(Genesis::default())
+            .with_fork(BaseUpgrade::Regolith, ForkCondition::Never)
+            .build();
+
+        assert_eq!(spec.fork(BaseUpgrade::Regolith), ForkCondition::Never);
+        assert!(!spec.is_regolith_active_at_timestamp(42));
+
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Regolith, 42);
+
+        assert_eq!(spec.fork(BaseUpgrade::Regolith), ForkCondition::Timestamp(42));
+        assert!(!spec.is_regolith_active_at_timestamp(41));
+        assert!(spec.is_regolith_active_at_timestamp(42));
+
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+    }
+
+    #[test]
+    fn runtime_registry_overrides_execution_fee_and_blob_params() {
+        let chain_id = 9_100_006;
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+        let mut config = ChainConfig::mainnet().clone();
+        config.chain_id = chain_id;
+        config.beryl_timestamp = None;
+        config.cobalt_timestamp = None;
+        let spec = BaseChainSpec::try_from(&config).unwrap();
+        let timestamp = 42;
+        let parent = spec.genesis_header();
+        let static_base_fee = spec.inner.base_fee_params_at_timestamp(timestamp);
+        let static_blob_params = spec.inner.blob_params_at_timestamp(timestamp);
+        let static_next_base_fee = spec.inner.next_block_base_fee(parent, timestamp);
+
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Canyon, timestamp);
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Ecotone, timestamp);
+
+        let runtime_chain_spec = spec.runtime_chain_spec();
+
+        assert_eq!(
+            spec.base_fee_params_at_timestamp(timestamp),
+            runtime_chain_spec.base_fee_params_at_timestamp(timestamp)
+        );
+        assert_ne!(spec.base_fee_params_at_timestamp(timestamp), static_base_fee);
+        assert_eq!(
+            spec.blob_params_at_timestamp(timestamp),
+            runtime_chain_spec.blob_params_at_timestamp(timestamp)
+        );
+        assert_ne!(spec.blob_params_at_timestamp(timestamp), static_blob_params);
+        assert_eq!(
+            spec.next_block_base_fee(parent, timestamp),
+            runtime_chain_spec.next_block_base_fee(parent, timestamp)
+        );
+        assert_ne!(spec.next_block_base_fee(parent, timestamp), static_next_base_fee);
+
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+    }
+
+    #[test]
+    fn builtin_chain_specs_never_activate_zombie() {
+        // Zombie is a permanently-off gate: it never enters any chain's fork schedule, so it is
+        // always `Never` and never active.
+        for spec in [BaseChainSpec::mainnet(), BaseChainSpec::sepolia(), BaseChainSpec::devnet()] {
+            assert_eq!(spec.fork(BaseUpgrade::Zombie), ForkCondition::Never);
+            assert!(!spec.is_fork_active_at_timestamp(BaseUpgrade::Zombie, 0));
+            assert!(!spec.is_fork_active_at_timestamp(BaseUpgrade::Zombie, u64::MAX));
+        }
+    }
+
+    #[test]
     fn base_mainnet_genesis() {
         let base_mainnet_spec = BaseChainSpec::mainnet();
         let genesis = base_mainnet_spec.genesis_header();
@@ -664,14 +983,18 @@ mod tests {
     }
 
     #[test]
-    fn activation_admin_matches_chain_config() {
+    fn activation_admin_matches_beryl_constants() {
         assert_eq!(
             BaseChainSpec::mainnet().activation_admin_address(),
-            Some(address!("cE3a3bEE7E72E2A24079f3c0Cb3b97740ED425A9"))
+            Some(base_common_chains::MAINNET_BERYL_ACTIVATION_ADMIN_ADDRESS)
         );
         assert_eq!(
             BaseChainSpec::sepolia().activation_admin_address(),
-            Some(address!("5F43072722f59964d886CBb507F6a85ca0759D42"))
+            Some(base_common_chains::SEPOLIA_BERYL_ACTIVATION_ADMIN_ADDRESS)
+        );
+        assert_eq!(
+            BaseChainSpec::zeronet().activation_admin_address(),
+            Some(base_common_chains::ZERONET_BERYL_ACTIVATION_ADMIN_ADDRESS)
         );
     }
 
@@ -742,15 +1065,15 @@ mod tests {
     }
 
     #[test]
-    fn beryl_chain_config_with_zero_activation_admin_is_rejected() {
+    fn beryl_chain_config_without_known_activation_admin_is_rejected() {
         let mut config = ChainConfig::devnet().clone();
+        config.chain_id = 987_654;
         config.beryl_timestamp = Some(0);
-        config.activation_admin_address = Address::ZERO;
 
         let err = BaseChainSpec::try_from(&config)
-            .expect_err("Beryl chain config with zero activation admin should be rejected");
+            .expect_err("Beryl chain config without activation admin should be rejected");
         assert!(
-            matches!(err, BaseChainSpecError::ZeroActivationAdminAddress { chain_id } if chain_id == config.chain_id)
+            matches!(err, BaseChainSpecError::MissingActivationAdminAddress { chain_id } if chain_id == config.chain_id)
         );
     }
 
@@ -802,7 +1125,7 @@ mod tests {
         let genesis = base_zeronet_spec.genesis_header();
         assert_eq!(
             genesis.hash_slow(),
-            b256!("0x1842d6ef4c40e2a4794458e167f6d327269df919b626979111c37ad3a96047bf")
+            b256!("0x572a15dd7e69df35913f7f2217376609fc20d59276169977de92c01684637162")
         );
     }
 
@@ -875,7 +1198,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_base_hardforks() {
+    fn parse_base_upgrades() {
         let geth_genesis = r#"
     {
       "config": {
@@ -890,7 +1213,8 @@ mod tests {
         "jovianTime": 54,
         "base": {
           "v1": 55,
-          "v2": 60
+          "v2": 60,
+          "v3": 65
         },
         "activationAdminAddress": "0xcb00000000000000000000000000000000000000",
         "optimism": {
@@ -931,6 +1255,61 @@ mod tests {
         assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Azul, 55));
         assert!(!chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Beryl, 59));
         assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Beryl, 60));
+        assert!(!chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Cobalt, 64));
+        assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Cobalt, 65));
+
+        // Zombie is a permanently-off gate: never scheduled, always Never.
+        assert_eq!(chain_spec.fork(BaseUpgrade::Zombie), ForkCondition::Never);
+        assert!(!chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Zombie, 9999));
+    }
+
+    #[test]
+    fn set_hardfork_activation_timestamp_updates_matching_eth_fork() {
+        let mut chain_spec = BaseChainSpec::devnet();
+
+        chain_spec.set_fork(EthereumHardfork::Osaka, ForkCondition::Never);
+        chain_spec.set_fork(BaseUpgrade::Azul, ForkCondition::Never);
+        chain_spec.set_fork(BaseUpgrade::Cobalt, ForkCondition::Never);
+        assert!(chain_spec.set_hardfork_activation_timestamp(BaseUpgrade::Azul, 42));
+        assert!(chain_spec.set_hardfork_activation_timestamp(BaseUpgrade::Cobalt, 84));
+
+        assert_eq!(chain_spec.fork(EthereumHardfork::Osaka), ForkCondition::Timestamp(42));
+        assert_eq!(chain_spec.fork(BaseUpgrade::Azul), ForkCondition::Timestamp(42));
+        assert_eq!(chain_spec.fork(BaseUpgrade::Cobalt), ForkCondition::Timestamp(84));
+
+        chain_spec.clear_hardfork_activation_timestamps();
+
+        assert_eq!(chain_spec.fork(EthereumHardfork::Osaka), ForkCondition::Never);
+        assert_eq!(chain_spec.fork(BaseUpgrade::Azul), ForkCondition::Never);
+        assert_eq!(chain_spec.fork(BaseUpgrade::Cobalt), ForkCondition::Never);
+    }
+
+    #[test]
+    fn set_hardfork_activation_timestamp_ignores_rollup_only_contract_ids() {
+        let mut chain_spec = BaseChainSpec::devnet();
+        let ecotone = chain_spec.fork(BaseUpgrade::Ecotone);
+
+        assert!(!chain_spec.set_hardfork_activation_timestamp(BaseUpgrade::Delta, 42));
+        assert!(
+            !chain_spec.set_hardfork_activation_timestamp(BaseUpgrade::PectraBlobSchedule, 84,)
+        );
+        assert!(!chain_spec.clear_hardfork_activation_timestamp(BaseUpgrade::Delta));
+        assert!(!chain_spec.clear_hardfork_activation_timestamp(BaseUpgrade::PectraBlobSchedule));
+
+        assert_eq!(chain_spec.fork(BaseUpgrade::Ecotone), ecotone);
+    }
+
+    #[test]
+    fn set_beryl_activation_timestamp_without_activation_admin_is_rejected() {
+        let mut chain_spec = BaseChainSpec::from(ChainSpec::default());
+
+        let err = chain_spec
+            .try_set_hardfork_activation_timestamp(BaseUpgrade::Beryl, 42)
+            .expect_err("Beryl schedule without activation admin should be rejected");
+
+        assert!(matches!(err, BaseChainSpecError::MissingActivationAdminAddress { .. }));
+        assert!(!chain_spec.set_hardfork_activation_timestamp(BaseUpgrade::Beryl, 42));
+        assert_eq!(chain_spec.fork(BaseUpgrade::Beryl), ForkCondition::Never);
     }
 
     #[test]
@@ -1086,7 +1465,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fork_order_base_hardforks() {
+    fn test_fork_order_base_upgrades() {
         let genesis = Genesis {
             config: AlloyChainConfig {
                 chain_id: 0,
@@ -1136,8 +1515,8 @@ mod tests {
 
         let chain_spec: BaseChainSpec = genesis.into();
 
-        let hardforks: Vec<_> = chain_spec.hardforks.forks_iter().map(|(h, _)| h).collect();
-        let expected_hardforks = vec![
+        let upgrades: Vec<_> = chain_spec.hardforks.forks_iter().map(|(h, _)| h).collect();
+        let expected_upgrades = vec![
             EthereumHardfork::Frontier.boxed(),
             EthereumHardfork::Homestead.boxed(),
             EthereumHardfork::Tangerine.boxed(),
@@ -1170,10 +1549,10 @@ mod tests {
             BaseUpgrade::Cobalt.boxed(),
         ];
 
-        for (expected, actual) in expected_hardforks.iter().zip(hardforks.iter()) {
+        for (expected, actual) in expected_upgrades.iter().zip(upgrades.iter()) {
             assert_eq!(&**expected, &**actual);
         }
-        assert_eq!(expected_hardforks.len(), hardforks.len());
+        assert_eq!(expected_upgrades.len(), upgrades.len());
     }
 
     #[test]

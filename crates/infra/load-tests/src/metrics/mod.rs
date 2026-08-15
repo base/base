@@ -3,7 +3,8 @@
 mod types;
 pub use types::{
     BlockRange, ConfigSummary, FlashblocksLatencyMetrics, GasMetrics, LatencyMetrics,
-    ThroughputMetrics, ThroughputPercentiles, ThroughputSample, TransactionMetrics,
+    SubmissionStats, ThroughputMetrics, ThroughputPercentiles, ThroughputSample,
+    TransactionMetrics,
 };
 
 mod rolling_window;
@@ -13,4 +14,4 @@ mod collector;
 pub use collector::MetricsCollector;
 
 mod aggregator;
-pub use aggregator::{MetricsAggregator, MetricsSummary};
+pub use aggregator::{MetricsAggregator, MetricsSummary, ReceiptCoverage};

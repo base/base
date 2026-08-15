@@ -1,0 +1,29 @@
+[package]
+name = "base-l1-head"
+description = "Shared L1 head calculation helpers."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# base
+base-optimism-rpc.workspace = true
+base-common-network.workspace = true
+
+# network
+url.workspace = true
+alloy-provider.workspace = true
+alloy-rpc-types.workspace = true
+alloy-primitives.workspace = true
+
+# error handling
+thiserror.workspace = true
+
+# observability
+tracing.workspace = true

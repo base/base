@@ -52,6 +52,32 @@ impl RpcProviders {
     }
 }
 
+/// Extension trait for reading the latest base fee from a query provider.
+pub trait BaseFeeExt {
+    /// Returns the `baseFeePerGas` of the latest block.
+    ///
+    /// Base fee is the value that determines whether a `maxFeePerGas` is
+    /// includable, so fee estimation reads it directly rather than relying on
+    /// `eth_gasPrice` (which can lag or smooth on some clients).
+    fn get_base_fee(&self) -> impl std::future::Future<Output = Result<u128>> + Send;
+}
+
+impl BaseFeeExt for QueryProvider {
+    async fn get_base_fee(&self) -> Result<u128> {
+        let block = self
+            .get_block_by_number(alloy_rpc_types::BlockNumberOrTag::Latest)
+            .hashes()
+            .await
+            .rpc("get latest block for base fee")?
+            .ok_or_else(|| BaselineError::Rpc("latest block not found".to_string()))?;
+        block
+            .header
+            .base_fee_per_gas
+            .map(u128::from)
+            .ok_or_else(|| BaselineError::Rpc("latest block missing base fee".to_string()))
+    }
+}
+
 /// Extension trait for converting Alloy RPC results into load-test errors.
 pub trait RpcResultExt<T> {
     /// Converts an RPC result into the load-test result type with context.

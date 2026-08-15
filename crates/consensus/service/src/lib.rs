@@ -42,7 +42,7 @@ pub use actors::{
     RpcActor, RpcActorError, RpcContext, ScheduledTicker, SealState, SealStepError,
     SealStepOutcome, SequencerActor, SequencerActorError, SequencerAdminQuery, SequencerConfig,
     SequencerEngineClient, UnsafePayloadGossipClient, UnsafePayloadGossipClientError,
-    UnsealedPayloadHandle,
+    UnsealedPayloadHandle, UpgradeSignalMetricsActor, UpgradeSignalNodeConfig,
 };
 
 mod metrics;

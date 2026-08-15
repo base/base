@@ -1,5 +1,6 @@
 /// Pipeline construction and block execution.
 pub mod executor;
+pub use executor::WitnessExecutor;
 /// In-memory preimage oracle for the zkVM.
 pub mod preimage_store;
 

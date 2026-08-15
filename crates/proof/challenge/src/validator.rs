@@ -8,6 +8,7 @@
 
 use std::sync::Arc;
 
+use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256};
 use base_common_consensus::Predeploys;
 use base_proof_rpc::{L2Provider, RpcError};
@@ -137,17 +138,17 @@ struct Checkpoint {
 ///
 /// Fetches L2 block headers and `L2ToL1MessagePasser` storage proofs to
 /// recompute expected output roots and compare them against onchain claims.
-pub struct OutputValidator<L2: L2Provider> {
+pub struct OutputValidator<L2: L2Provider + ?Sized> {
     l2_provider: Arc<L2>,
 }
 
-impl<L2: L2Provider> std::fmt::Debug for OutputValidator<L2> {
+impl<L2: L2Provider + ?Sized> std::fmt::Debug for OutputValidator<L2> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OutputValidator").finish_non_exhaustive()
     }
 }
 
-impl<L2: L2Provider> OutputValidator<L2> {
+impl<L2: L2Provider + ?Sized> OutputValidator<L2> {
     /// Maximum number of intermediate output roots to validate concurrently.
     pub const VALIDATION_CONCURRENCY: usize = 32;
 
@@ -176,8 +177,11 @@ impl<L2: L2Provider> OutputValidator<L2> {
         &self,
         block_number: u64,
     ) -> Result<(B256, B256), ValidatorError> {
-        let rpc_header =
-            self.l2_provider.header_by_number(Some(block_number)).await.map_err(|e| match &e {
+        let rpc_header = self
+            .l2_provider
+            .header_by_number(BlockNumberOrTag::Number(block_number))
+            .await
+            .map_err(|e| match &e {
                 RpcError::HeaderNotFound(_) | RpcError::BlockNotFound(_) => {
                     ValidatorError::BlockNotAvailable { block_number }
                 }
@@ -261,18 +265,18 @@ impl<L2: L2Provider> OutputValidator<L2> {
         Ok(None)
     }
 
-    /// Validates the final output root of a candidate dispute game.
+    /// Validates one claimed output root at a specific L2 block.
     ///
     /// Fetches the L2 header and `L2ToL1MessagePasser` storage proof at the
-    /// game's L2 block number, computes the expected output root, and compares
-    /// it against the game's `rootClaim`.
-    pub async fn validate_final_root(
+    /// provided L2 block number, computes the expected output root, and compares
+    /// it against the claimed root.
+    pub async fn validate_claimed_root_at_block(
         &self,
         game_address: Address,
         l2_block_number: u64,
         claimed_root: B256,
     ) -> Result<ValidationResult, ValidatorError> {
-        info!(game = %game_address, block = l2_block_number, "validating final output root");
+        info!(game = %game_address, block = l2_block_number, "validating claimed output root");
 
         let checkpoint = Checkpoint { block: l2_block_number, claimed_root };
         let mismatch = self.validate_output_roots(game_address, &[checkpoint]).await?;
@@ -397,6 +401,11 @@ mod tests {
     use alloy_consensus::Header as ConsensusHeader;
     use alloy_primitives::{Address, B256};
     use alloy_rpc_types_eth::Header as RpcHeader;
+    #[cfg(feature = "metrics")]
+    use metrics_util::{
+        MetricKind,
+        debugging::{DebugValue, DebuggingRecorder},
+    };
     use rstest::rstest;
 
     use super::*;
@@ -427,7 +436,7 @@ mod tests {
     #[case::valid(None, true)]
     #[case::invalid(Some(B256::repeat_byte(0xFF)), false)]
     #[tokio::test]
-    async fn test_validate_final_root(
+    async fn test_validate_claimed_root_at_block(
         #[case] wrong_root: Option<B256>,
         #[case] expect_valid: bool,
     ) {
@@ -437,7 +446,10 @@ mod tests {
         let game_address = Address::repeat_byte(0x01);
         let claimed_root = wrong_root.unwrap_or(expected_root);
 
-        let result = validator.validate_final_root(game_address, 100, claimed_root).await.unwrap();
+        let result = validator
+            .validate_claimed_root_at_block(game_address, 100, claimed_root)
+            .await
+            .unwrap();
 
         assert_eq!(result.is_valid, expect_valid);
         assert_eq!(result.expected_root, expected_root);
@@ -515,7 +527,7 @@ mod tests {
 
         // Final root validation succeeds
         let final_result =
-            validator.validate_final_root(game_address, 100, roots[1]).await.unwrap();
+            validator.validate_claimed_root_at_block(game_address, 100, roots[1]).await.unwrap();
         assert!(final_result.is_valid);
 
         // Intermediate root validation fails (corrupt index 0)
@@ -550,7 +562,7 @@ mod tests {
         let validator = OutputValidator::new(Arc::new(provider));
         let game_address = Address::repeat_byte(0x06);
 
-        let result = validator.validate_final_root(game_address, 100, B256::ZERO).await;
+        let result = validator.validate_claimed_root_at_block(game_address, 100, B256::ZERO).await;
 
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -768,7 +780,7 @@ mod tests {
         let validator = OutputValidator::new(Arc::new(provider));
         let game_address = Address::repeat_byte(0x0B);
 
-        let result = validator.validate_final_root(game_address, 100, B256::ZERO).await;
+        let result = validator.validate_claimed_root_at_block(game_address, 100, B256::ZERO).await;
 
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -808,7 +820,7 @@ mod tests {
         let validator = OutputValidator::new(Arc::new(provider));
         let game_address = Address::repeat_byte(0x0F);
 
-        let result = validator.validate_final_root(game_address, 100, B256::ZERO).await;
+        let result = validator.validate_claimed_root_at_block(game_address, 100, B256::ZERO).await;
 
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -835,7 +847,8 @@ mod tests {
         let validator = OutputValidator::new(Arc::new(provider));
         let game_address = Address::repeat_byte(0x10);
 
-        let result = validator.validate_final_root(game_address, 100, substituted_root).await;
+        let result =
+            validator.validate_claimed_root_at_block(game_address, 100, substituted_root).await;
 
         let err = result.expect_err("substituted account proof should be rejected");
         match err {
@@ -848,5 +861,54 @@ mod tests {
             }
             other => panic!("expected AccountProofFailed, got: {other:?}"),
         }
+    }
+
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn validate_claimed_root_at_block_emits_shared_validation_metrics() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let (provider, roots) = mock_with_blocks(&[100]);
+        let validator = OutputValidator::new(Arc::new(provider));
+        let game_address = Address::repeat_byte(0x11);
+        let wrong_root = B256::repeat_byte(0xFF);
+
+        metrics::with_local_recorder(&recorder, || {
+            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            rt.block_on(async {
+                let result = validator
+                    .validate_claimed_root_at_block(game_address, 100, wrong_root)
+                    .await
+                    .expect("validation should complete");
+
+                assert!(!result.is_valid);
+                assert_eq!(result.expected_root, roots[0]);
+                assert_eq!(result.invalid_intermediate_index, None);
+            });
+        });
+
+        let snapshot = snapshotter.snapshot().into_vec();
+        assert_eq!(
+            snapshot.iter().find_map(|(ck, _, _, value)| {
+                if ck.kind() != MetricKind::Counter
+                    || ck.key().name() != "base_challenger.games_invalid_total"
+                {
+                    return None;
+                }
+                match value {
+                    DebugValue::Counter(value) => Some(*value),
+                    _ => None,
+                }
+            }),
+            Some(1),
+        );
+        assert!(
+            snapshot.iter().any(|(ck, _, _, value)| {
+                ck.kind() == MetricKind::Histogram
+                    && ck.key().name() == "base_challenger.validation_latency_seconds"
+                    && matches!(value, DebugValue::Histogram(_))
+            }),
+            "checkpoint validation should record latency",
+        );
     }
 }

@@ -8,7 +8,10 @@ use alloy_primitives::{
     map::{HashMap, HashSet},
 };
 use base_bundles::{BundleExtensions, BundleTxs, OpcodeGas, ParsedBundle, TransactionResult};
-use base_common_evm::L1BlockInfo;
+use base_common_evm::{BaseSpecId, BaseUpgrade, L1BlockInfo};
+use base_common_precompiles::{
+    ActivationRegistryStorage, B20FactoryStorage, B20Variant, PolicyRegistryStorage,
+};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use eyre::{Result as EyreResult, eyre};
@@ -178,12 +181,19 @@ fn add_state_root_trie_update_counts(
 }
 
 /// Opcodes and precompiles to track during bundle metering.
+///
+/// This is for targeted transaction and bundle simulation. It is not the primary production
+/// failure-rate monitoring path for Beryl precompiles.
 #[derive(Debug, Clone, Default)]
 pub struct MeteredOpcodes {
     /// EVM opcodes to track.
     pub opcodes: HashSet<OpCode>,
     /// Precompile addresses to track, keyed by address with display name.
     pub precompiles: HashMap<Address, String>,
+    /// Whether to track dynamic Beryl B-20 asset-token precompile addresses.
+    pub beryl_b20_asset_precompiles: bool,
+    /// Whether to track dynamic Beryl B-20 stablecoin-token precompile addresses.
+    pub beryl_b20_stablecoin_precompiles: bool,
 }
 
 /// Constructs a precompile address from a `u16` value.
@@ -216,30 +226,103 @@ const PRECOMPILES: &[(&str, Address)] = &[
     ("P256VERIFY", precompile_addr(0x100)),
 ];
 
+const BERYL_B20_FACTORY_PRECOMPILE: &str = "BERYL_B20_FACTORY";
+const BERYL_ACTIVATION_REGISTRY_PRECOMPILE: &str = "BERYL_ACTIVATION_REGISTRY";
+const BERYL_POLICY_REGISTRY_PRECOMPILE: &str = "BERYL_POLICY_REGISTRY";
+const BERYL_B20_ASSET_PRECOMPILE: &str = "BERYL_B20_ASSET";
+const BERYL_B20_STABLECOIN_PRECOMPILE: &str = "BERYL_B20_STABLECOIN";
+
+/// Beryl singleton precompile names and their fixed addresses.
+const BERYL_PRECOMPILES: &[(&str, Address)] = &[
+    (BERYL_B20_FACTORY_PRECOMPILE, B20FactoryStorage::ADDRESS),
+    (BERYL_ACTIVATION_REGISTRY_PRECOMPILE, ActivationRegistryStorage::ADDRESS),
+    (BERYL_POLICY_REGISTRY_PRECOMPILE, PolicyRegistryStorage::ADDRESS),
+];
+
 impl MeteredOpcodes {
     /// Returns true if no opcodes or precompiles are configured.
     pub fn is_empty(&self) -> bool {
-        self.opcodes.is_empty() && self.precompiles.is_empty()
+        self.opcodes.is_empty()
+            && self.precompiles.is_empty()
+            && !self.beryl_b20_asset_precompiles
+            && !self.beryl_b20_stablecoin_precompiles
     }
 
-    /// Adds all known precompiles to the metered set.
+    /// Returns true if any fixed or dynamic precompile metering is configured.
+    pub fn meters_any_precompile(&self) -> bool {
+        !self.precompiles.is_empty()
+            || self.beryl_b20_asset_precompiles
+            || self.beryl_b20_stablecoin_precompiles
+    }
+
+    /// Adds all known standard and Beryl precompiles to the metered set.
     pub fn with_all_precompiles(mut self) -> Self {
         for &(name, addr) in PRECOMPILES {
             self.precompiles.insert(addr, name.to_string());
         }
+        for &(name, addr) in BERYL_PRECOMPILES {
+            self.precompiles.insert(addr, name.to_string());
+        }
+        self.beryl_b20_asset_precompiles = true;
+        self.beryl_b20_stablecoin_precompiles = true;
         self
+    }
+
+    /// Filters the precompile set to those active in `spec`, consuming `self`.
+    pub fn for_spec(mut self, spec: BaseSpecId) -> Self {
+        if spec.is_enabled_in(BaseUpgrade::Beryl) {
+            return self;
+        }
+
+        for &(_, addr) in BERYL_PRECOMPILES {
+            self.precompiles.remove(&addr);
+        }
+        self.beryl_b20_asset_precompiles = false;
+        self.beryl_b20_stablecoin_precompiles = false;
+        self
+    }
+
+    /// Returns the configured display name for a metered precompile address.
+    pub fn precompile_name(&self, address: Address) -> Option<&str> {
+        self.precompiles
+            .get(&address)
+            .map(String::as_str)
+            .or_else(|| self.beryl_b20_token_precompile_name(address))
+    }
+
+    /// Returns true when `address` is in the metered precompile set.
+    pub fn meters_precompile(&self, address: Address) -> bool {
+        self.precompile_name(address).is_some()
+    }
+
+    /// Returns the dynamic Beryl B-20 token precompile name for `address`, when enabled.
+    pub fn beryl_b20_token_precompile_name(&self, address: Address) -> Option<&'static str> {
+        match B20Variant::from_address(address) {
+            Some(B20Variant::Asset) if self.beryl_b20_asset_precompiles => {
+                Some(BERYL_B20_ASSET_PRECOMPILE)
+            }
+            Some(B20Variant::Stablecoin) if self.beryl_b20_stablecoin_precompiles => {
+                Some(BERYL_B20_STABLECOIN_PRECOMPILE)
+            }
+            _ => None,
+        }
     }
 
     /// Parses opcode and precompile name strings into a [`MeteredOpcodes`] filter.
     ///
-    /// Recognizes EVM opcode names (e.g., `SSTORE`, `CALL`) and precompile names
-    /// (e.g., `ECREC`, `BLAKE2F`). Matching is case-insensitive.
+    /// Recognizes EVM opcode names (e.g., `SSTORE`, `CALL`), fixed precompile
+    /// names (e.g., `ECREC`, `BLAKE2F`, `BERYL_B20_FACTORY`), and dynamic Beryl
+    /// B-20 token address family names (`BERYL_B20_ASSET`, `BERYL_B20_STABLECOIN`).
+    /// Matching is case-insensitive.
     pub fn parse(names: &[String]) -> EyreResult<Self> {
         let opcode_lookup: HashMap<&str, OpCode> =
             (0..=255u8).filter_map(|byte| OpCode::new(byte).map(|op| (op.as_str(), op))).collect();
 
-        let precompile_lookup: HashMap<&str, (Address, &str)> =
-            PRECOMPILES.iter().map(|&(name, addr)| (name, (addr, name))).collect();
+        let precompile_lookup: HashMap<&str, (Address, &str)> = PRECOMPILES
+            .iter()
+            .chain(BERYL_PRECOMPILES.iter())
+            .map(|&(name, addr)| (name, (addr, name)))
+            .collect();
 
         let mut result = Self::default();
         for name in names {
@@ -248,6 +331,10 @@ impl MeteredOpcodes {
                 result.opcodes.insert(opcode);
             } else if let Some(&(addr, display_name)) = precompile_lookup.get(upper.as_str()) {
                 result.precompiles.insert(addr, display_name.to_string());
+            } else if upper == BERYL_B20_ASSET_PRECOMPILE {
+                result.beryl_b20_asset_precompiles = true;
+            } else if upper == BERYL_B20_STABLECOIN_PRECOMPILE {
+                result.beryl_b20_stablecoin_precompiles = true;
             } else {
                 return Err(eyre!("unknown opcode or precompile: {name}"));
             }
@@ -414,8 +501,8 @@ where
         let evm_config = BaseEvmConfig::base(chain_spec);
         let evm_env = evm_config.next_evm_env(header, &attributes)?;
         let spec = evm_env.cfg_env.spec;
-        let precompile_addrs = metered_opcodes.precompiles.keys().copied().collect();
-        let inspector = MeteringInspector::new(precompile_addrs, metered_opcodes.opcodes.clone());
+        let metered_opcodes = Arc::new(metered_opcodes.clone().for_spec(spec));
+        let inspector = MeteringInspector::new(Arc::clone(&metered_opcodes));
         let evm = evm_config.evm_with_env_and_inspector(&mut db, evm_env, inspector);
         let ctx = evm_config.context_for_next_block(header, attributes)?;
         let mut builder = evm_config.create_block_builder(evm, header, ctx);
@@ -450,34 +537,35 @@ where
 
             // Extract per-transaction opcode and precompile gas, then reset for next tx.
             let inspector = builder.evm_mut().inspector_mut();
-            let opcode_data = inspector.take_opcode_inspector();
+            let opcode_data = inspector.take_opcode_gas();
             let precompile_data = inspector.take_precompile_gas();
 
-            let mut opcode_gas: Vec<OpcodeGas> = metered_opcodes
-                .opcodes
+            let mut opcode_gas: Vec<OpcodeGas> = opcode_data
                 .iter()
-                .filter_map(|&opcode| {
-                    let count = opcode_data.opcode_counts().get(&opcode).copied().unwrap_or(0);
-                    if count > 0 {
-                        let gas_used = opcode_data.opcode_gas().get(&opcode).copied().unwrap_or(0);
-                        Some(OpcodeGas { opcode: opcode.as_str().to_string(), count, gas_used })
-                    } else {
-                        None
-                    }
+                .filter(|(_, usage)| usage.count > 0)
+                .map(|(&(contract_address, opcode), usage)| OpcodeGas {
+                    contract_address,
+                    opcode: opcode.as_str().to_string(),
+                    count: usage.count,
+                    gas_used: usage.gas_used,
                 })
                 .collect();
 
             for (addr, usage) in &precompile_data {
-                if let Some(name) = metered_opcodes.precompiles.get(addr)
+                if let Some(name) = metered_opcodes.precompile_name(*addr)
                     && usage.count > 0
                 {
                     opcode_gas.push(OpcodeGas {
-                        opcode: name.clone(),
+                        contract_address: *addr,
+                        opcode: name.to_string(),
                         count: usage.count,
                         gas_used: usage.gas_used,
                     });
                 }
             }
+            opcode_gas.sort_by(|a, b| {
+                a.contract_address.cmp(&b.contract_address).then_with(|| a.opcode.cmp(&b.opcode))
+            });
 
             results.push(TransactionResult {
                 coinbase_diff: gas_fees,
@@ -578,11 +666,17 @@ where
 mod tests {
     use alloy_eips::Encodable2718;
     use alloy_primitives::{Address, Bytes, keccak256, utils::Unit};
-    use alloy_sol_types::SolCall;
+    use alloy_sol_types::{SolCall, SolValue};
     use base_bundles::{Bundle, ParsedBundle};
     use base_common_consensus::BaseTransactionSigned;
+    use base_common_precompiles::{
+        ActivationFeature, IActivationRegistry, IB20, IB20Factory, IB20Stablecoin, IPolicyRegistry,
+    };
+    use base_execution_chainspec::BaseChainSpecBuilder;
     use base_node_runner::test_utils::TestHarness;
-    use base_test_utils::{Account, ContractFactory, SimpleStorage};
+    use base_test_utils::{
+        Account, ContractFactory, DEVNET_CHAIN_ID, SimpleStorage, build_test_genesis,
+    };
     use eyre::Context;
     use reth_provider::StateProviderFactory;
     use reth_revm::{bytecode::Bytecode, state::AccountInfo};
@@ -606,6 +700,49 @@ mod tests {
         };
 
         ParsedBundle::try_from(bundle).map_err(|e| eyre::eyre!(e))
+    }
+
+    fn create_call_tx(
+        chain_id: u64,
+        nonce: u64,
+        to: Address,
+        input: impl Into<Bytes>,
+        gas_limit: u64,
+    ) -> BaseTransactionSigned {
+        let signed_tx = TransactionBuilder::default()
+            .signer(Account::Alice.signer_b256())
+            .chain_id(chain_id)
+            .nonce(nonce)
+            .to(to)
+            .gas_limit(gas_limit)
+            .max_fee_per_gas(MIN_BASEFEE as u128)
+            .max_priority_fee_per_gas(0)
+            .input(input.into())
+            .into_eip1559();
+
+        BaseTransactionSigned::Eip1559(signed_tx.as_eip1559().expect("eip1559 transaction").clone())
+    }
+
+    fn assert_precompile_gas(
+        output: &MeterBundleOutput,
+        tx_index: usize,
+        address: Address,
+        opcode: &str,
+    ) {
+        let tx_result = output.results.get(tx_index).expect("transaction result should exist");
+        let entry = tx_result
+            .opcode_gas
+            .iter()
+            .find(|entry| entry.contract_address == address && entry.opcode == opcode)
+            .unwrap_or_else(|| {
+                panic!(
+                    "tx {tx_index} should report {opcode} gas for {address}; got {:?}",
+                    tx_result.opcode_gas
+                )
+            });
+
+        assert!(entry.count > 0, "{opcode} count should be non-zero");
+        assert!(entry.gas_used > 0, "{opcode} gas_used should be non-zero");
     }
 
     #[tokio::test]
@@ -826,8 +963,86 @@ mod tests {
         let sstore = tx_opcodes.iter().find(|o| o.opcode == "SSTORE");
         assert!(sstore.is_some(), "SSTORE should appear in opcode gas results");
         let sstore = sstore.unwrap();
+        assert_eq!(sstore.contract_address, contract_address);
         assert!(sstore.count > 0, "SSTORE count should be non-zero");
         assert!(sstore.gas_used > 0, "SSTORE gas_used should be non-zero");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn meter_bundle_opcode_gas_splits_by_contract() -> eyre::Result<()> {
+        let harness = TestHarness::new().await?;
+
+        let (deployment_tx_1, contract_address_1, _) =
+            Account::Deployer.create_deployment_tx(SimpleStorage::BYTECODE.clone(), 0)?;
+        let (deployment_tx_2, contract_address_2, _) =
+            Account::Deployer.create_deployment_tx(SimpleStorage::BYTECODE.clone(), 1)?;
+        harness.build_block_from_transactions(vec![deployment_tx_1, deployment_tx_2]).await?;
+
+        let latest = harness.latest_block();
+        let header = latest.sealed_header().clone();
+
+        let tx_1 = TransactionBuilder::default()
+            .signer(Account::Alice.signer_b256())
+            .chain_id(harness.chain_id())
+            .nonce(0)
+            .to(contract_address_1)
+            .gas_limit(100_000)
+            .max_fee_per_gas(MIN_BASEFEE as u128)
+            .max_priority_fee_per_gas(0)
+            .input(SimpleStorage::setValueCall { v: U256::from(1) }.abi_encode())
+            .into_eip1559();
+        let tx_1 =
+            BaseTransactionSigned::Eip1559(tx_1.as_eip1559().expect("eip1559 transaction").clone());
+
+        let tx_2 = TransactionBuilder::default()
+            .signer(Account::Alice.signer_b256())
+            .chain_id(harness.chain_id())
+            .nonce(1)
+            .to(contract_address_2)
+            .gas_limit(100_000)
+            .max_fee_per_gas(MIN_BASEFEE as u128)
+            .max_priority_fee_per_gas(0)
+            .input(SimpleStorage::setValueCall { v: U256::from(2) }.abi_encode())
+            .into_eip1559();
+        let tx_2 =
+            BaseTransactionSigned::Eip1559(tx_2.as_eip1559().expect("eip1559 transaction").clone());
+
+        let state_provider = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
+            .context("getting state provider")?;
+
+        let parsed_bundle = create_parsed_bundle(vec![tx_1, tx_2])?;
+        let metered = MeteredOpcodes::parse(&["SSTORE".to_string()]).unwrap();
+
+        let output = meter_bundle(MeterBundleInput {
+            state_provider,
+            chain_spec: harness.chain_spec(),
+            bundle: parsed_bundle,
+            header: header.clone(),
+            parent_beacon_block_root: header.parent_beacon_block_root(),
+            pending_state: None,
+            l1_block_info: L1BlockInfo::default(),
+            metered_opcodes: Arc::new(metered),
+        })?;
+
+        assert_eq!(output.results.len(), 2);
+        let sstore_1 = output.results[0]
+            .opcode_gas
+            .iter()
+            .find(|entry| entry.opcode == "SSTORE")
+            .expect("first contract should report SSTORE gas");
+        let sstore_2 = output.results[1]
+            .opcode_gas
+            .iter()
+            .find(|entry| entry.opcode == "SSTORE")
+            .expect("second contract should report SSTORE gas");
+
+        assert_eq!(sstore_1.contract_address, contract_address_1);
+        assert_eq!(sstore_2.contract_address, contract_address_2);
+        assert_ne!(sstore_1.contract_address, sstore_2.contract_address);
 
         Ok(())
     }
@@ -889,6 +1104,82 @@ mod tests {
             .expect("CREATE should appear in opcode gas results for a factory deployment");
         assert!(create.count > 0, "CREATE count should be non-zero");
         assert!(create.gas_used > 0, "CREATE gas_used should be non-zero");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn meter_bundle_opcode_gas_subtracts_nested_call_gas() -> eyre::Result<()> {
+        let harness = TestHarness::new().await?;
+
+        let (factory_deployment_tx, factory_address, _) =
+            Account::Deployer.create_deployment_tx(ContractFactory::BYTECODE.clone(), 0)?;
+        harness.build_block_from_transactions(vec![factory_deployment_tx]).await?;
+
+        let latest = harness.latest_block();
+        let header = latest.sealed_header().clone();
+
+        let signed_tx = TransactionBuilder::default()
+            .signer(Account::Alice.signer_b256())
+            .chain_id(harness.chain_id())
+            .nonce(0)
+            .to(factory_address)
+            .gas_limit(1_000_000)
+            .max_fee_per_gas(MIN_BASEFEE as u128)
+            .max_priority_fee_per_gas(0)
+            .input(
+                ContractFactory::deployAndCallCall {
+                    bytecode: SimpleStorage::BYTECODE.clone(),
+                    callData: SimpleStorage::setValueCall { v: U256::from(42) }.abi_encode().into(),
+                }
+                .abi_encode(),
+            )
+            .into_eip1559();
+
+        let tx = BaseTransactionSigned::Eip1559(
+            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+        );
+
+        let state_provider = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
+            .context("getting state provider")?;
+
+        let parsed_bundle = create_parsed_bundle(vec![tx])?;
+        let metered = MeteredOpcodes::parse(&["CALL".to_string(), "SSTORE".to_string()]).unwrap();
+
+        let output = meter_bundle(MeterBundleInput {
+            state_provider,
+            chain_spec: harness.chain_spec(),
+            bundle: parsed_bundle,
+            header: header.clone(),
+            parent_beacon_block_root: header.parent_beacon_block_root(),
+            pending_state: None,
+            l1_block_info: L1BlockInfo::default(),
+            metered_opcodes: Arc::new(metered),
+        })?;
+
+        assert_eq!(output.results.len(), 1);
+        let tx_opcodes = &output.results[0].opcode_gas;
+        let call = tx_opcodes
+            .iter()
+            .find(|entry| entry.opcode == "CALL" && entry.contract_address == factory_address)
+            .expect("factory should report CALL gas");
+        let sstore = tx_opcodes
+            .iter()
+            .find(|entry| entry.opcode == "SSTORE" && entry.contract_address != factory_address)
+            .expect("callee should report SSTORE gas");
+
+        assert_eq!(call.count, 1, "factory should execute one CALL into SimpleStorage");
+        assert_eq!(sstore.count, 1, "callee should execute one SSTORE");
+        assert!(call.gas_used > 0, "CALL gas_used should be non-zero");
+        assert!(sstore.gas_used > 0, "SSTORE gas_used should be non-zero");
+        assert!(
+            call.gas_used < sstore.gas_used,
+            "CALL gas should exclude nested callee gas: CALL={} SSTORE={}",
+            call.gas_used,
+            sstore.gas_used
+        );
 
         Ok(())
     }
@@ -997,6 +1288,157 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn meter_bundle_precompile_gas_for_beryl_calls() -> eyre::Result<()> {
+        let chain_spec = Arc::new(
+            BaseChainSpecBuilder::default()
+                .chain(DEVNET_CHAIN_ID.into())
+                .genesis(build_test_genesis())
+                .activation_admin_address(Account::Alice.address())
+                .beryl_activated()
+                .build(),
+        );
+        let harness = TestHarness::builder().with_chain_spec(chain_spec).build().await?;
+        let chain_id = harness.chain_id();
+        let sender = Account::Alice.address();
+        let asset_salt = B256::repeat_byte(0x11);
+        let stablecoin_salt = B256::repeat_byte(0x22);
+        let (asset_address, _) = B20Variant::Asset.compute_address(sender, asset_salt);
+        let (stablecoin_address, _) =
+            B20Variant::Stablecoin.compute_address(sender, stablecoin_salt);
+
+        let asset_params = IB20Factory::B20AssetCreateParams {
+            version: B20Variant::Asset.supported_version(),
+            name: "Metered Asset".to_string(),
+            symbol: "MTA".to_string(),
+            initialAdmin: sender,
+            decimals: 6,
+        };
+        let stablecoin_params = IB20Factory::B20StablecoinCreateParams {
+            version: B20Variant::Stablecoin.supported_version(),
+            name: "Metered Stablecoin".to_string(),
+            symbol: "MTS".to_string(),
+            initialAdmin: sender,
+            currency: "USD".to_string(),
+        };
+
+        let txs = vec![
+            create_call_tx(
+                chain_id,
+                0,
+                ActivationRegistryStorage::ADDRESS,
+                IActivationRegistry::activateCall { feature: ActivationFeature::B20Asset.id() }
+                    .abi_encode(),
+                100_000,
+            ),
+            create_call_tx(
+                chain_id,
+                1,
+                ActivationRegistryStorage::ADDRESS,
+                IActivationRegistry::activateCall {
+                    feature: ActivationFeature::B20Stablecoin.id(),
+                }
+                .abi_encode(),
+                100_000,
+            ),
+            create_call_tx(
+                chain_id,
+                2,
+                B20FactoryStorage::ADDRESS,
+                IB20Factory::createB20Call {
+                    variant: IB20Factory::B20Variant::ASSET,
+                    salt: asset_salt,
+                    params: asset_params.abi_encode().into(),
+                    initCalls: Vec::new(),
+                }
+                .abi_encode(),
+                2_000_000,
+            ),
+            create_call_tx(
+                chain_id,
+                3,
+                asset_address,
+                IB20::totalSupplyCall {}.abi_encode(),
+                200_000,
+            ),
+            create_call_tx(
+                chain_id,
+                4,
+                B20FactoryStorage::ADDRESS,
+                IB20Factory::createB20Call {
+                    variant: IB20Factory::B20Variant::STABLECOIN,
+                    salt: stablecoin_salt,
+                    params: stablecoin_params.abi_encode().into(),
+                    initCalls: Vec::new(),
+                }
+                .abi_encode(),
+                2_000_000,
+            ),
+            create_call_tx(
+                chain_id,
+                5,
+                stablecoin_address,
+                IB20Stablecoin::currencyCall {}.abi_encode(),
+                200_000,
+            ),
+            create_call_tx(
+                chain_id,
+                6,
+                PolicyRegistryStorage::ADDRESS,
+                IPolicyRegistry::policyExistsCall {
+                    policyId: PolicyRegistryStorage::ALWAYS_ALLOW_ID,
+                }
+                .abi_encode(),
+                200_000,
+            ),
+        ];
+
+        let latest = harness.latest_block();
+        let header = latest.sealed_header().clone();
+        let state_provider = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
+            .context("getting state provider")?;
+        let parsed_bundle = create_parsed_bundle(txs)?;
+
+        let output = meter_bundle(MeterBundleInput {
+            state_provider,
+            chain_spec: harness.chain_spec(),
+            bundle: parsed_bundle,
+            header: header.clone(),
+            parent_beacon_block_root: header.parent_beacon_block_root(),
+            pending_state: None,
+            l1_block_info: L1BlockInfo::default(),
+            metered_opcodes: Arc::new(MeteredOpcodes::default().with_all_precompiles()),
+        })?;
+
+        assert_eq!(output.results.len(), 7);
+        assert_precompile_gas(
+            &output,
+            0,
+            ActivationRegistryStorage::ADDRESS,
+            BERYL_ACTIVATION_REGISTRY_PRECOMPILE,
+        );
+        assert_precompile_gas(
+            &output,
+            1,
+            ActivationRegistryStorage::ADDRESS,
+            BERYL_ACTIVATION_REGISTRY_PRECOMPILE,
+        );
+        assert_precompile_gas(&output, 2, B20FactoryStorage::ADDRESS, BERYL_B20_FACTORY_PRECOMPILE);
+        assert_precompile_gas(&output, 3, asset_address, BERYL_B20_ASSET_PRECOMPILE);
+        assert_precompile_gas(&output, 4, B20FactoryStorage::ADDRESS, BERYL_B20_FACTORY_PRECOMPILE);
+        assert_precompile_gas(&output, 5, stablecoin_address, BERYL_B20_STABLECOIN_PRECOMPILE);
+        assert_precompile_gas(
+            &output,
+            6,
+            PolicyRegistryStorage::ADDRESS,
+            BERYL_POLICY_REGISTRY_PRECOMPILE,
+        );
+
+        Ok(())
+    }
+
     #[test]
     fn metered_opcodes_parse_rejects_unknown() {
         let result = MeteredOpcodes::parse(&["NOTAREALOPCODE".to_string()]);
@@ -1033,6 +1475,84 @@ mod tests {
         let result = MeteredOpcodes::parse(&["CLZ".to_string(), "P256VERIFY".to_string()]).unwrap();
         assert_eq!(result.opcodes.len(), 1, "CLZ should be recognized as an opcode");
         assert!(result.precompiles.values().any(|n| n == "P256VERIFY"));
+    }
+
+    #[test]
+    fn metered_opcodes_parse_recognizes_beryl_precompiles() {
+        let result = MeteredOpcodes::parse(&[
+            "BERYL_B20_FACTORY".to_string(),
+            "beryl_b20_asset".to_string(),
+            "Beryl_B20_Stablecoin".to_string(),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            result.precompile_name(B20FactoryStorage::ADDRESS),
+            Some(BERYL_B20_FACTORY_PRECOMPILE)
+        );
+        assert!(result.beryl_b20_asset_precompiles);
+        assert!(result.beryl_b20_stablecoin_precompiles);
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn metered_opcodes_with_all_precompiles_includes_beryl_precompiles() {
+        let result = MeteredOpcodes::default().with_all_precompiles();
+        let (asset, _) =
+            B20Variant::Asset.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22));
+        let (stablecoin, _) = B20Variant::Stablecoin
+            .compute_address(Address::repeat_byte(0x33), B256::repeat_byte(0x44));
+        let (unsupported, _) = B20Variant::compute_address_for_discriminant(
+            Address::repeat_byte(0x55),
+            2,
+            B256::repeat_byte(0x66),
+        );
+
+        assert_eq!(
+            result.precompile_name(B20FactoryStorage::ADDRESS),
+            Some(BERYL_B20_FACTORY_PRECOMPILE)
+        );
+        assert_eq!(
+            result.precompile_name(ActivationRegistryStorage::ADDRESS),
+            Some(BERYL_ACTIVATION_REGISTRY_PRECOMPILE)
+        );
+        assert_eq!(
+            result.precompile_name(PolicyRegistryStorage::ADDRESS),
+            Some(BERYL_POLICY_REGISTRY_PRECOMPILE)
+        );
+        assert_eq!(result.precompile_name(asset), Some(BERYL_B20_ASSET_PRECOMPILE));
+        assert_eq!(result.precompile_name(stablecoin), Some(BERYL_B20_STABLECOIN_PRECOMPILE));
+        assert_eq!(result.precompile_name(unsupported), None);
+    }
+
+    #[test]
+    fn metered_opcodes_for_spec_filters_beryl_before_activation() {
+        let result = MeteredOpcodes::default()
+            .with_all_precompiles()
+            .for_spec(BaseSpecId::new(BaseUpgrade::Azul));
+        let (asset, _) =
+            B20Variant::Asset.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22));
+
+        assert_eq!(result.precompile_name(B20FactoryStorage::ADDRESS), None);
+        assert_eq!(result.precompile_name(ActivationRegistryStorage::ADDRESS), None);
+        assert_eq!(result.precompile_name(PolicyRegistryStorage::ADDRESS), None);
+        assert_eq!(result.precompile_name(asset), None);
+        assert!(result.precompile_name(precompile_addr(0x01)).is_some());
+    }
+
+    #[test]
+    fn metered_opcodes_for_spec_keeps_beryl_after_activation() {
+        let result = MeteredOpcodes::default()
+            .with_all_precompiles()
+            .for_spec(BaseSpecId::new(BaseUpgrade::Beryl));
+        let (asset, _) =
+            B20Variant::Asset.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22));
+
+        assert_eq!(
+            result.precompile_name(B20FactoryStorage::ADDRESS),
+            Some(BERYL_B20_FACTORY_PRECOMPILE)
+        );
+        assert_eq!(result.precompile_name(asset), Some(BERYL_B20_ASSET_PRECOMPILE));
     }
 
     #[tokio::test]

@@ -1,0 +1,105 @@
+name: Generate Succinct VKeys
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag, or commit SHA to generate vkeys for
+        required: true
+        default: main
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: succinct-vkeys-${{ github.event.inputs.ref }}
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    name: Generate Succinct VKeys
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Resolve ref
+        id: resolve-ref
+        shell: bash
+        env:
+          INPUT_REF: ${{ inputs.ref }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}.git
+        run: |
+          set -euo pipefail
+
+          if git ls-remote --exit-code "$REPO_URL" "refs/heads/$INPUT_REF" >/dev/null 2>&1; then
+            echo "ref=$INPUT_REF" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if git ls-remote --exit-code "$REPO_URL" "refs/tags/$INPUT_REF" >/dev/null 2>&1; then
+            echo "ref=$INPUT_REF" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$INPUT_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            sha_check_dir="$(mktemp -d)"
+            git -C "$sha_check_dir" init -q
+            if git -C "$sha_check_dir" fetch --depth=1 "$REPO_URL" "$INPUT_REF" >/dev/null 2>&1; then
+              rm -rf "$sha_check_dir"
+              echo "ref=$INPUT_REF" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            rm -rf "$sha_check_dir"
+            echo "::error::Commit SHA '$INPUT_REF' was not found in this repository."
+            exit 1
+          fi
+
+          echo "::error::Ref '$INPUT_REF' was not found as a branch, tag, or full commit SHA."
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ steps.resolve-ref.outputs.ref }}
+          fetch-depth: 1
+
+      - uses: ./.github/actions/setup
+        with:
+          free-disk: "true"
+          native-deps: "true"
+          sp1: "true"
+          rust-cache-shared-key: "manual-succinct-vkeys"
+          rust-cache-save: "false"
+
+      - name: Build fresh ELFs and generate vkeys
+        env:
+          REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          output_dir="${{ runner.temp }}/succinct-vkeys"
+          mkdir -p "$output_dir"
+
+          just succinct vkeys --build | tee "$output_dir/succinct-vkeys.md"
+
+          {
+            echo "## Succinct Verification Keys"
+            echo ""
+            echo "**Ref**: \`${REF}\`"
+            echo "**Commit**: \`$(git rev-parse HEAD)\`"
+            echo ""
+            cat "$output_dir/succinct-vkeys.md"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload vkeys
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: succinct-vkeys
+          path: ${{ runner.temp }}/succinct-vkeys/succinct-vkeys.md
+          if-no-files-found: error
+          retention-days: 30

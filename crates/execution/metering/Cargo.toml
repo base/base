@@ -16,6 +16,7 @@ workspace = true
 base-bundles.workspace = true
 base-flashblocks.workspace = true
 base-node-runner.workspace = true
+base-common-precompiles.workspace = true
 
 # reth
 reth-evm.workspace = true
@@ -30,7 +31,6 @@ base-execution-chainspec.workspace = true
 # revm
 revm.workspace = true
 revm-database.workspace = true
-revm-inspectors.workspace = true
 revm-bytecode.workspace = true
 
 # alloy
@@ -97,4 +97,9 @@ serde_json.workspace = true
 
 [features]
 default = [ "metrics" ]
-metrics = [ "base-metrics/metrics", "dep:metrics", "reth-evm/metrics" ]
+metrics = [
+	"base-common-evm/metrics",
+	"base-metrics/metrics",
+	"dep:metrics",
+	"reth-evm/metrics",
+]

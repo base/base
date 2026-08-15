@@ -121,14 +121,14 @@ where
         self.inner.chain_spec()
     }
 
-    /// Verifies hardfork-gated post-execution rules against the supplied parent state.
+    /// Verifies upgrade-gated post-execution rules against the supplied parent state.
     ///
     /// Authoritative implementation of all Base-specific post-execution checks that require
     /// access to parent state (currently: Isthmus' L2-to-L1 message-passer storage root).
     /// Callers supply `parent_state` explicitly so engine pipelines can pass in-memory-aware
     /// overlay providers when the parent block isn't canonical yet.
     ///
-    /// To add a check for a future hardfork, extend the body with another
+    /// To add a check for a future upgrade, extend the body with another
     /// `if chain_spec.is_<X>_active_at_timestamp(...)` arm.
     pub fn validate_block_post_execution_with_state<DB, H>(
         &self,
@@ -325,6 +325,13 @@ where
             ));
         }
 
+        // TODO(200ms): update to real hard fork gate.
+        if attributes.timestamp_millis_part.is_some() {
+            return Err(EngineObjectValidationError::InvalidParams(
+                "TimestampMillisPartNotAllowed".to_string().into(),
+            ));
+        }
+
         Ok(())
     }
 }
@@ -421,6 +428,7 @@ mod tests {
                 min_base_fee,
                 transactions: None,
                 no_tx_pool: None,
+                timestamp_millis_part: None,
                 payload_attributes: PayloadAttributes {
                     timestamp,
                     prev_randao: B256::ZERO,
@@ -574,5 +582,19 @@ mod tests {
             &validator, EngineApiMessageVersion::V3, &attributes
         );
         assert_invalid_params_error!(result, "MissingMinBaseFeeInPayloadAttributes");
+    }
+
+    #[test]
+    fn test_malformed_attributes_with_timestamp_millis_part() {
+        let validator = validator();
+        let mut attributes = get_attributes(None, None, 1732633199);
+        attributes.timestamp_millis_part = Some(200);
+
+        let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
+            BaseEngineTypes,
+        >>::ensure_well_formed_attributes(
+            &validator, EngineApiMessageVersion::V3, &attributes
+        );
+        assert_invalid_params_error!(result, "TimestampMillisPartNotAllowed");
     }
 }

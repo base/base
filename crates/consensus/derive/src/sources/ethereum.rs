@@ -39,13 +39,13 @@ where
         calldata_source: CalldataSource<C>,
         cfg: &RollupConfig,
     ) -> Self {
-        Self { ecotone_timestamp: cfg.hardforks.ecotone_time, blob_source, calldata_source }
+        Self { ecotone_timestamp: cfg.upgrades.ecotone_time, blob_source, calldata_source }
     }
 
     /// Instantiates a new [`EthereumDataSource`] from parts.
     pub fn new_from_parts(provider: C, blobs: B, cfg: &RollupConfig) -> Self {
         Self {
-            ecotone_timestamp: cfg.hardforks.ecotone_time,
+            ecotone_timestamp: cfg.upgrades.ecotone_time,
             blob_source: BlobSource::new(provider.clone(), blobs, cfg.batch_inbox_address),
             calldata_source: CalldataSource::new(provider, cfg.batch_inbox_address),
         }
@@ -87,7 +87,7 @@ mod tests {
     use alloy_consensus::TxEnvelope;
     use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::{Address, address};
-    use base_common_genesis::{HardForkConfig, RollupConfig, SystemConfig};
+    use base_common_genesis::{RollupConfig, SystemConfig, UpgradeConfig};
     use base_protocol::BlockInfo;
 
     use super::*;
@@ -131,7 +131,7 @@ mod tests {
         blob.data.push(BlobData { data: None, calldata: Some(Bytes::default()) });
         let calldata = CalldataSource::new(chain.clone(), Address::ZERO);
         let cfg = RollupConfig {
-            hardforks: HardForkConfig { ecotone_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { ecotone_time: Some(0), ..Default::default() },
             ..Default::default()
         };
 

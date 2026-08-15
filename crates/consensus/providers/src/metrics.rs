@@ -26,6 +26,8 @@ base_metrics::define_metrics! {
     #[describe("Number of errors in L2 chain provider requests")]
     #[label(name = "method", default = ["l2_block_ref_by_label", "l2_block_ref_by_hash", "l2_block_ref_by_number"])]
     l2_chain_errors: counter,
+    #[describe("Number of L2 block-by-number visibility retries")]
+    l2_block_visibility_retries: counter,
     #[describe("Number of blob sidecar fetches")]
     blob_fetches: counter,
     #[describe("Number of blob sidecar fetch errors")]

@@ -39,6 +39,7 @@ pub struct EvmPrecompileStorageProvider<'a> {
     timestamp: U256,
     chain_id: u64,
     beneficiary: Address,
+    origin: Address,
     state_gas_used: u64,
 }
 
@@ -54,6 +55,7 @@ impl<'a> EvmPrecompileStorageProvider<'a> {
         let timestamp = internals.block_env().timestamp();
         let chain_id = internals.chain_id();
         let beneficiary = internals.block_env().beneficiary();
+        let origin = internals.tx_origin();
 
         Self {
             internals,
@@ -66,6 +68,7 @@ impl<'a> EvmPrecompileStorageProvider<'a> {
             timestamp,
             chain_id,
             beneficiary,
+            origin,
             state_gas_used: 0,
         }
     }
@@ -88,6 +91,10 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
         self.block_number
     }
 
+    fn origin(&self) -> Address {
+        self.origin
+    }
+
     fn set_code(&mut self, address: Address, code: Bytecode) -> Result<()> {
         if self.is_static {
             return Err(BasePrecompileError::StaticCallViolation);
@@ -98,31 +105,24 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
         // Yellow Paper G_codedeposit: 200 gas per byte of deployed bytecode.
         self.deduct_gas(self.gas_params.code_deposit_cost(code_len))?;
 
-        let (is_new_account, has_empty_code) = {
+        // Charge CREATE equivalent costs whenever code is written to an account that had no code,
+        // regardless of its balance. A prefunded account (balance > 0, no code) passes the
+        // factory's collision check (which only rejects accounts that already have code), but
+        // must still pay G_create and the keccak hash cost.
+        let is_new_code = {
             let state_load = self
                 .internals
                 .load_account(address)
                 .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
-            let info = &state_load.data.info;
-            (info.is_empty(), info.is_empty_code_hash())
+            state_load.data.info.is_empty_code_hash()
         };
 
-        if has_empty_code {
+        if is_new_code {
             // Yellow Paper G_create: base cost for creating a new contract account.
             self.deduct_gas(self.gas_params.create_cost())?;
             // Yellow Paper G_sha3 + G_sha3word: cost of computing the stored code hash.
             let num_words = code_len.div_ceil(32) as u64;
             self.deduct_gas(KECCAK256.saturating_add(KECCAK256WORD.saturating_mul(num_words)))?;
-        }
-        if is_new_account {
-            // EIP-8037: charge for the new account entry in the state trie.
-            self.deduct_state_gas(self.gas_params.create_state_gas())?;
-        }
-        if has_empty_code {
-            // EIP-8037: charge for depositing code into an account whose code slot is
-            // currently empty. Applies to both new accounts and existent accounts that
-            // have only a nonzero balance or nonce (no prior code).
-            self.deduct_state_gas(self.gas_params.code_deposit_state_gas(code_len))?;
         }
 
         self.internals
@@ -136,6 +136,9 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
         f: &mut dyn FnMut(&AccountInfo),
     ) -> Result<()> {
         // Extract is_cold and clone AccountInfo before releasing the internals borrow.
+        // load_account is sufficient: every caller only needs code_hash — never info.code.
+        // code_hash is always eagerly populated; load_account_code would fetch bytecode from
+        // the database unnecessarily.
         let (info, is_cold) = {
             let state_load = self
                 .internals
@@ -339,7 +342,8 @@ mod tests {
     };
 
     use crate::{
-        BasePrecompileError, hashmap::HashMapStorageProvider, provider::PrecompileStorageProvider,
+        error::BasePrecompileError, hashmap::HashMapStorageProvider,
+        provider::PrecompileStorageProvider,
     };
 
     fn amsterdam_provider() -> HashMapStorageProvider {
@@ -348,21 +352,78 @@ mod tests {
         provider
     }
 
-    /// The EIP-2200 stipend guard in [`super::EvmPrecompileStorageProvider::sstore`] compares
-    /// `gas.remaining()` against `gas_params.call_stipend()`. This test verifies that the
-    /// call stipend constant returned by `GasParams` is exactly 2300, as required by EIP-2200.
-    ///
-    /// Unit tests cannot directly instantiate [`super::EvmPrecompileStorageProvider`] because
-    /// it requires a live EVM journal via `PrecompileInput`. The stipend guard is therefore not
-    /// exercisable in isolation here. Full coverage of the guard at runtime is provided by the
-    /// B20 fork tests that forward exactly 2300 gas into a stateful precompile call.
+    fn make_evm_provider<'a>(
+        ctx: &'a mut EthEvmContext<EmptyDB>,
+        gas_params: GasParams,
+        gas: u64,
+        is_static: bool,
+    ) -> super::EvmPrecompileStorageProvider<'a> {
+        let input = PrecompileInput {
+            data: &[],
+            gas,
+            reservoir: 0,
+            caller: Address::ZERO,
+            value: U256::ZERO,
+            target_address: Address::ZERO,
+            is_static,
+            bytecode_address: Address::ZERO,
+            internals: EvmInternals::from_context(ctx),
+        };
+        super::EvmPrecompileStorageProvider::new(input, gas_params)
+    }
+
+    /// EIP-2200 stipend boundary: `remaining == call_stipend` (2300) must block.
     #[test]
-    fn eip_2200_stipend_guard_constant_is_2300() {
-        let gas_params = GasParams::new_spec(SpecId::AMSTERDAM);
+    fn sstore_oog_at_call_stipend_boundary() {
+        let gas_params = GasParams::default();
+        let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
+        let mut provider =
+            make_evm_provider(&mut ctx, gas_params.clone(), gas_params.call_stipend(), false);
+
         assert_eq!(
-            gas_params.call_stipend(),
-            2300,
-            "call_stipend must equal 2300 as required by EIP-2200"
+            provider.sstore(Address::ZERO, U256::ZERO, U256::from(1u64)),
+            Err(BasePrecompileError::OutOfGas),
+        );
+    }
+
+    /// Below the stipend (2299): also blocked.
+    #[test]
+    fn sstore_oog_below_call_stipend() {
+        let gas_params = GasParams::default();
+        let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
+        let mut provider =
+            make_evm_provider(&mut ctx, gas_params.clone(), gas_params.call_stipend() - 1, false);
+
+        assert_eq!(
+            provider.sstore(Address::ZERO, U256::ZERO, U256::from(1u64)),
+            Err(BasePrecompileError::OutOfGas),
+        );
+    }
+
+    /// Strictly above the stipend: guard passes, sstore completes.
+    #[test]
+    fn sstore_allowed_above_call_stipend() {
+        let gas_params = GasParams::default();
+        let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
+        // Large margin covers the stipend guard + cold sstore costs (~2600 gas).
+        let gas = gas_params.call_stipend() + 1_000_000;
+        let mut provider = make_evm_provider(&mut ctx, gas_params, gas, false);
+
+        assert!(provider.sstore(Address::ZERO, U256::ZERO, U256::from(1u64)).is_ok());
+    }
+
+    /// Static-call violation is checked before the stipend guard.
+    #[test]
+    fn sstore_static_violation_checked_before_stipend_guard() {
+        let gas_params = GasParams::default();
+        let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
+        // Gas at stipend boundary — both guards would fire, static takes priority.
+        let mut provider =
+            make_evm_provider(&mut ctx, gas_params.clone(), gas_params.call_stipend(), true);
+
+        assert_eq!(
+            provider.sstore(Address::ZERO, U256::ZERO, U256::from(1u64)),
+            Err(BasePrecompileError::StaticCallViolation),
         );
     }
 
@@ -478,49 +539,25 @@ mod tests {
         }
     }
 
-    /// `set_code` on a brand-new account must charge both `create_state_gas` and
-    /// `code_deposit_state_gas` against the state-gas counter.
+    /// `set_code` in a static context returns `StaticCallViolation` before any gas is charged.
     #[test]
-    fn set_code_new_account_charges_create_and_deposit_state_gas() {
-        let mut provider = amsterdam_provider();
-        let addr = Address::from([0x42u8; 20]);
-        let code = Bytecode::new_raw([0x60u8, 0x00].as_ref().into());
-        let code_len = code.len();
-        let gas_params = GasParams::new_spec(SpecId::AMSTERDAM);
+    fn set_code_static_violation_before_gas_charge() {
+        let gas_params = GasParams::default();
+        let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
+        let gas = 1_000_000;
+        let mut provider = make_evm_provider(&mut ctx, gas_params, gas, true);
 
-        provider.set_code(addr, code).unwrap();
-
-        let expected = gas_params.create_state_gas() + gas_params.code_deposit_state_gas(code_len);
-        assert!(expected > 0, "AMSTERDAM state gas must be non-zero");
-        assert_eq!(provider.state_gas_used(), expected);
-    }
-
-    /// `set_code` on a balance-only account (nonzero balance, no code) must charge
-    /// `code_deposit_state_gas` but not `create_state_gas`. This covers the attack where
-    /// a caller prefunds a future token address before calling the factory.
-    #[test]
-    fn set_code_balance_only_account_charges_code_deposit_state_gas_only() {
-        let mut provider = amsterdam_provider();
-        let addr = Address::from([0x42u8; 20]);
-        let code = Bytecode::new_raw([0x60u8, 0x00].as_ref().into());
-        let code_len = code.len();
-        let gas_params = GasParams::new_spec(SpecId::AMSTERDAM);
-
-        // Simulate a prefunded account: has balance but no code.
-        provider.set_balance(addr, U256::from(1u64));
-
-        provider.set_code(addr, code).unwrap();
-
-        let expected = gas_params.code_deposit_state_gas(code_len);
         assert_eq!(
-            provider.state_gas_used(),
-            expected,
-            "balance-only account must pay code_deposit_state_gas but not create_state_gas"
+            provider.set_code(Address::ZERO, Bytecode::new_raw([0x60u8, 0x00].as_ref().into())),
+            Err(BasePrecompileError::StaticCallViolation),
         );
+        // No gas must have been consumed.
+        assert_eq!(provider.gas_used(), 0);
     }
 
-    /// `set_code` on a prefunded account (balance > 0, no code) must charge the same regular gas
-    /// as a fully empty account.
+    /// `set_code` on a prefunded account (balance > 0, no code) must charge the same gas
+    /// as a fully empty account. Before the fix, `is_empty()` returned false for prefunded
+    /// accounts, silently skipping `G_create` and the keccak hash cost (~32 036 gas).
     #[test]
     fn set_code_prefunded_account_charges_same_gas_as_empty_account() {
         let addr = Address::from([0x43u8; 20]);
@@ -538,34 +575,31 @@ mod tests {
         assert!(gas_for_empty > 0, "set_code must charge non-zero gas");
         assert_eq!(
             gas_for_empty, gas_for_prefunded,
-            "prefunded account must pay identical regular gas to an empty account"
+            "prefunded account must pay identical gas to an empty account"
         );
     }
 
-    /// `set_code` on an already-initialised account must NOT charge any additional
-    /// state gas (the account and its metadata already exist in the trie).
+    /// `set_code` on an account that already has code must replace it without error.
     #[test]
-    fn set_code_existing_account_skips_state_gas() {
+    fn set_code_existing_account_replaces_code() {
         let mut provider = amsterdam_provider();
         let addr = Address::from([0x42u8; 20]);
-        let code = Bytecode::new_raw([0x60u8, 0x00].as_ref().into());
+        let code1 = Bytecode::new_raw([0x60u8, 0x00].as_ref().into());
+        let code2 = Bytecode::new_raw([0x60u8, 0x01].as_ref().into());
+        let expected_hash = code2.hash_slow();
 
-        // First call creates the account and charges state gas.
-        provider.set_code(addr, code.clone()).unwrap();
-        let after_first = provider.state_gas_used();
-        assert!(after_first > 0);
+        provider.set_code(addr, code1).unwrap();
+        provider.set_code(addr, code2).unwrap();
 
-        // Second call updates an existing account; state gas must not increase.
-        provider.set_code(addr, code).unwrap();
         assert_eq!(
-            provider.state_gas_used(),
-            after_first,
-            "state_gas_used must not increase for an existing account"
+            provider.get_account_info(addr).map(|i| i.code_hash),
+            Some(expected_hash),
+            "second set_code must replace the stored code hash"
         );
     }
 
     #[test]
-    fn set_code_static_context_reverts_before_state_gas_or_code_mutation() {
+    fn set_code_static_context_reverts_before_code_mutation() {
         let mut provider = amsterdam_provider();
         provider.set_static(true);
         let addr = Address::from([0x42u8; 20]);
@@ -574,7 +608,6 @@ mod tests {
         let err = provider.set_code(addr, code).unwrap_err();
 
         assert_eq!(err, BasePrecompileError::StaticCallViolation);
-        assert_eq!(provider.state_gas_used(), 0);
         assert!(provider.get_account_info(addr).is_none());
     }
 }

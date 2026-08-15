@@ -13,26 +13,31 @@ workspace = true
 
 [dependencies]
 # Alloy
+alloy-eips.workspace = true
 alloy-provider.workspace = true
-alloy-sol-types.workspace = true
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
 
 # Tx Manager
 base-tx-manager.workspace = true
 
+# Retry
+base-retry.workspace = true
+
 # Balance Monitor
 base-balance-monitor.workspace = true
 
 # Proof
 base-proof-rpc.workspace = true
+base-optimism-rpc.workspace = true
 base-proof-contracts.workspace = true
+base-proof-submission.workspace = true
 base-prover-service-client.workspace = true
 base-prover-service-protocol.workspace = true
 base-proof-primitives = { workspace = true, features = ["rpc-client"] }
 
 # JSON-RPC
-jsonrpsee = { workspace = true, features = ["server", "macros"] }
+jsonrpsee = { workspace = true, features = ["server"] }
 
 # Async
 tokio.workspace = true
@@ -69,11 +74,9 @@ url.workspace = true
 humantime.workspace = true
 
 [dev-dependencies]
-rstest.workspace = true
 serde_json.workspace = true
 alloy-consensus.workspace = true
 alloy-rpc-types-eth.workspace = true
-reqwest = { workspace = true, features = ["json"] }
 tokio = { workspace = true, features = ["test-util"] }
 metrics-util = { workspace = true, features = ["debugging"] }
 base-common-genesis = { workspace = true, features = ["serde"] }

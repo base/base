@@ -1,9 +1,10 @@
 //! Chainless execution-node arguments and launch helpers.
 
-use std::{path::PathBuf, sync::Arc};
+use std::{net::Ipv4Addr, path::PathBuf, sync::Arc};
 
 use base_execution_chainspec::BaseChainSpec;
-use base_node_runner::LaunchedBaseNode;
+use base_node_runner::{BaseNodeBuilder, LaunchedBaseNode};
+use base_upgrade_signal::UpgradeSignalStartupMode;
 use clap::{Args, value_parser};
 use reth_cli_runner::CliContext;
 use reth_db::init_db;
@@ -16,17 +17,20 @@ use reth_node_core::{
     node_config::NodeConfig,
     version,
 };
-use reth_rpc_server_types::{LenientRpcModuleValidator, RpcModuleValidator};
+use reth_rpc_server_types::{
+    LenientRpcModuleValidator, RpcModuleValidator, constants::DEFAULT_ENGINE_API_IPC_ENDPOINT,
+};
 use tracing::info;
 
-use crate::{RpcStandardNodeArgs, StandardNodeArgs};
+use crate::{MeteringArgs, RpcStandardNodeArgs, StandardNodeArgs};
 
 const DEFAULT_BASE_MAX_INBOUND_EL_PEERS: usize = 80;
 const DEFAULT_BASE_MAX_OUTBOUND_EL_PEERS: usize = 80;
+const DEFAULT_UNIFIED_AUTH_IPC_FILENAME: &str = "engine.ipc";
 
-/// Execution node arguments shared by binaries that provide chain selection themselves.
+/// Chainless execution-node arguments shared by embedded Base commands.
 #[derive(Debug, Clone, Args)]
-pub struct ExecutionNodeArgs {
+pub struct ExecutionNodeConfigArgs {
     /// The path to the configuration file to use.
     #[arg(long, value_name = "FILE", verbatim_doc_comment)]
     pub config: Option<PathBuf>,
@@ -95,15 +99,11 @@ pub struct ExecutionNodeArgs {
     /// All storage related arguments with --storage prefix.
     #[command(flatten, next_help_heading = "Storage")]
     pub storage: StorageArgs,
-
-    /// Standard Base execution-node extension arguments.
-    #[command(flatten)]
-    pub standard: RpcStandardNodeArgs,
 }
 
-impl ExecutionNodeArgs {
-    /// Converts parsed args into a launchable execution node configuration.
-    pub fn into_launch_config(self, chain: Arc<BaseChainSpec>) -> ExecutionNodeLaunchConfig {
+impl ExecutionNodeConfigArgs {
+    /// Converts parsed args into a chain-injected execution runtime config.
+    pub fn into_runtime_config(self, chain: Arc<BaseChainSpec>) -> ExecutionNodeRuntimeConfig {
         let Self {
             config,
             metrics,
@@ -121,7 +121,6 @@ impl ExecutionNodeArgs {
             era,
             static_files,
             storage,
-            standard,
         } = self;
 
         let mut node_config = NodeConfig {
@@ -152,35 +151,107 @@ impl ExecutionNodeArgs {
             node_config.network.max_outbound_peers = Some(DEFAULT_BASE_MAX_OUTBOUND_EL_PEERS);
         }
 
-        ExecutionNodeLaunchConfig { node_config, standard: standard.into(), with_unused_ports }
+        ExecutionNodeRuntimeConfig {
+            node_config,
+            with_unused_ports,
+            upgrade_signal_startup: UpgradeSignalStartupMode::ReadAndApply,
+        }
     }
 }
 
-/// A chain-injected execution node configuration ready to launch.
-#[derive(Debug, Clone)]
-pub struct ExecutionNodeLaunchConfig {
-    /// Reth node configuration.
-    pub node_config: NodeConfig<BaseChainSpec>,
+/// Execution node arguments shared by RPC-style binaries that provide chain selection themselves.
+#[derive(Debug, Clone, Args)]
+pub struct ExecutionNodeArgs {
+    /// Shared execution node arguments.
+    #[command(flatten)]
+    pub node: ExecutionNodeConfigArgs,
+
     /// Standard Base execution-node extension arguments.
-    pub standard: StandardNodeArgs,
-    /// Whether all ports should be assigned by the OS.
-    pub with_unused_ports: bool,
+    #[command(flatten)]
+    pub standard: RpcStandardNodeArgs,
+
+    /// Metering RPC and priority-fee resource budget arguments.
+    #[command(flatten)]
+    pub metering: MeteringArgs,
 }
 
-impl ExecutionNodeLaunchConfig {
+impl ExecutionNodeArgs {
+    /// Converts parsed args into a launchable standard execution node configuration.
+    pub fn into_launch_config(self, chain: Arc<BaseChainSpec>) -> ExecutionNodeLaunchConfig {
+        let runtime = self.node.into_runtime_config(chain);
+        ExecutionNodeLaunchConfig {
+            node_config: runtime.node_config,
+            standard: StandardNodeArgs::from(self.standard).with_metering(self.metering),
+            with_unused_ports: runtime.with_unused_ports,
+            upgrade_signal_startup: runtime.upgrade_signal_startup,
+        }
+    }
+}
+
+/// A chain-injected execution-node runtime configuration.
+#[derive(Debug, Clone)]
+pub struct ExecutionNodeRuntimeConfig {
+    /// Reth node configuration.
+    pub node_config: NodeConfig<BaseChainSpec>,
+    /// Whether all ports should be assigned by the OS.
+    pub with_unused_ports: bool,
+    /// Whether this launch should perform its own upgrade-signal startup read.
+    pub upgrade_signal_startup: UpgradeSignalStartupMode,
+}
+
+impl ExecutionNodeRuntimeConfig {
+    /// Enables authenticated Engine API over IPC on the supplied node config.
+    pub const fn enable_auth_ipc(node_config: &mut NodeConfig<BaseChainSpec>) {
+        node_config.rpc.auth_ipc = true;
+    }
+
+    /// Configures the embedded execution node auth endpoint used by unified Base binaries.
+    pub fn configure_unified_auth_endpoint(node_config: &mut NodeConfig<BaseChainSpec>) {
+        let auth_ipc_path = if node_config.rpc.auth_ipc_path == DEFAULT_ENGINE_API_IPC_ENDPOINT {
+            Some(node_config.datadir().data_dir().join(DEFAULT_UNIFIED_AUTH_IPC_FILENAME))
+        } else {
+            None
+        };
+
+        node_config.rpc.auth_ipc = true;
+        node_config.rpc.auth_port = 0;
+        node_config.rpc.auth_addr = Ipv4Addr::LOCALHOST.into();
+
+        if let Some(auth_ipc_path) = auth_ipc_path {
+            node_config.rpc.auth_ipc_path = auth_ipc_path.to_string_lossy().into_owned();
+        }
+    }
+
+    /// Returns the configured authenticated Engine API IPC path from the supplied node config.
+    pub const fn auth_ipc_path_for(node_config: &NodeConfig<BaseChainSpec>) -> &str {
+        node_config.rpc.auth_ipc_path.as_str()
+    }
+
     /// Enables authenticated Engine API over IPC.
     pub const fn with_auth_ipc(mut self) -> Self {
-        self.node_config.rpc.auth_ipc = true;
+        Self::enable_auth_ipc(&mut self.node_config);
+        self
+    }
+
+    /// Marks the upgrade-signal startup schedule as already applied by the caller.
+    pub const fn with_upgrade_signal_startup_already_applied(mut self) -> Self {
+        self.upgrade_signal_startup = UpgradeSignalStartupMode::AlreadyApplied;
+        self
+    }
+
+    /// Configures authenticated Engine API access for unified Base binaries.
+    pub fn with_unified_auth_endpoint(mut self) -> Self {
+        Self::configure_unified_auth_endpoint(&mut self.node_config);
         self
     }
 
     /// Returns the configured authenticated Engine API IPC path.
     pub const fn auth_ipc_path(&self) -> &str {
-        self.node_config.rpc.auth_ipc_path.as_str()
+        Self::auth_ipc_path_for(&self.node_config)
     }
 
-    /// Launches the execution node and returns its handle.
-    pub async fn launch<Rpc>(mut self, ctx: CliContext) -> eyre::Result<LaunchedBaseNode>
+    /// Converts the runtime config into a reth node builder.
+    pub fn into_node_builder<Rpc>(mut self, ctx: CliContext) -> eyre::Result<BaseNodeBuilder>
     where
         Rpc: RpcModuleValidator,
     {
@@ -205,14 +276,81 @@ impl ExecutionNodeLaunchConfig {
         let data_dir = self.node_config.datadir();
         let db_path = data_dir.db();
         info!(target: "reth::cli", path = ?db_path, "Opening database");
-        let database =
-            init_db(db_path.clone(), self.node_config.db.database_args())?.with_metrics();
+        let database = init_db(db_path, self.node_config.db.database_args())?.with_metrics();
 
         let builder = NodeBuilder::new(self.node_config)
             .with_database(database)
             .with_launch_context(ctx.task_executor);
 
-        crate::StandardBaseRethNode::launch(builder, self.standard).await
+        Ok(builder)
+    }
+
+    /// Converts the runtime config into a reth node builder with the default RPC validator.
+    pub fn into_default_node_builder(self, ctx: CliContext) -> eyre::Result<BaseNodeBuilder> {
+        self.into_node_builder::<LenientRpcModuleValidator>(ctx)
+    }
+}
+
+/// A chain-injected standard execution node configuration ready to launch.
+#[derive(Debug, Clone)]
+pub struct ExecutionNodeLaunchConfig {
+    /// Reth node configuration.
+    pub node_config: NodeConfig<BaseChainSpec>,
+    /// Standard Base execution-node extension arguments.
+    pub standard: StandardNodeArgs,
+    /// Whether all ports should be assigned by the OS.
+    pub with_unused_ports: bool,
+    /// Whether this launch should perform its own upgrade-signal startup read.
+    pub upgrade_signal_startup: UpgradeSignalStartupMode,
+}
+
+impl ExecutionNodeLaunchConfig {
+    /// Converts this standard launch config into the shared runtime config plus standard args.
+    pub fn into_runtime_config(self) -> (ExecutionNodeRuntimeConfig, StandardNodeArgs) {
+        let Self { node_config, standard, with_unused_ports, upgrade_signal_startup } = self;
+        (
+            ExecutionNodeRuntimeConfig { node_config, with_unused_ports, upgrade_signal_startup },
+            standard,
+        )
+    }
+
+    /// Enables authenticated Engine API over IPC.
+    pub const fn with_auth_ipc(mut self) -> Self {
+        ExecutionNodeRuntimeConfig::enable_auth_ipc(&mut self.node_config);
+        self
+    }
+
+    /// Marks the upgrade-signal startup schedule as already applied by the caller.
+    pub const fn with_upgrade_signal_startup_already_applied(mut self) -> Self {
+        self.upgrade_signal_startup = UpgradeSignalStartupMode::AlreadyApplied;
+        self
+    }
+
+    /// Configures authenticated Engine API access for unified Base binaries.
+    pub fn with_unified_auth_endpoint(mut self) -> Self {
+        ExecutionNodeRuntimeConfig::configure_unified_auth_endpoint(&mut self.node_config);
+        self
+    }
+
+    /// Returns the configured authenticated Engine API IPC path.
+    pub const fn auth_ipc_path(&self) -> &str {
+        ExecutionNodeRuntimeConfig::auth_ipc_path_for(&self.node_config)
+    }
+
+    /// Launches the execution node and returns its handle.
+    pub async fn launch<Rpc>(self, ctx: CliContext) -> eyre::Result<LaunchedBaseNode>
+    where
+        Rpc: RpcModuleValidator,
+    {
+        let (execution, standard) = self.into_runtime_config();
+        let upgrade_signal_startup = execution.upgrade_signal_startup;
+        let builder = execution.into_node_builder::<Rpc>(ctx)?;
+        crate::StandardBaseRethNode::launch_with_upgrade_signal_startup(
+            builder,
+            standard,
+            upgrade_signal_startup,
+        )
+        .await
     }
 
     /// Launches the execution node with the default RPC module validator.
@@ -224,6 +362,7 @@ impl ExecutionNodeLaunchConfig {
 #[cfg(test)]
 mod tests {
     use clap::Parser;
+    use url::Url;
 
     use super::*;
 
@@ -234,18 +373,130 @@ mod tests {
     }
 
     #[test]
-    fn launch_config_sets_base_default_el_peer_limits() {
-        let args = CommandParser::<ExecutionNodeArgs>::parse_from(["reth"]).args;
+    fn shared_execution_args_parse_without_standard_node_args() {
+        let args = CommandParser::<ExecutionNodeConfigArgs>::parse_from([
+            "reth",
+            "--port",
+            "30333",
+            "--auth-ipc.path=/tmp/engine.ipc",
+        ])
+        .args;
 
-        let launch = args.into_launch_config(Arc::new(BaseChainSpec::devnet()));
+        assert_eq!(args.network.port, 30333);
 
-        assert_eq!(launch.node_config.network.max_inbound_peers, Some(80));
-        assert_eq!(launch.node_config.network.max_outbound_peers, Some(80));
+        let runtime = args.into_runtime_config(Arc::new(BaseChainSpec::devnet()));
+        assert_eq!(runtime.node_config.rpc.auth_ipc_path, "/tmp/engine.ipc");
+        assert!(!runtime.node_config.rpc.auth_ipc);
     }
 
     #[test]
-    fn launch_config_preserves_explicit_el_peer_limits() {
+    fn standard_execution_args_keep_base_extension_args_separate() {
         let args = CommandParser::<ExecutionNodeArgs>::parse_from([
+            "reth",
+            "--port",
+            "30333",
+            "--flashblocks-url",
+            "wss://example.com/ws",
+        ])
+        .args;
+
+        assert_eq!(args.node.network.port, 30333);
+        assert_eq!(
+            args.standard.flashblocks_url.as_ref().map(Url::as_str),
+            Some("wss://example.com/ws")
+        );
+        assert!(!args.metering.enable_metering);
+    }
+
+    #[test]
+    fn standard_execution_args_parse_metering_separately() {
+        let args = CommandParser::<ExecutionNodeArgs>::parse_from([
+            "reth",
+            "--enable-metering",
+            "--metering.execution-time-us",
+            "5000000",
+        ])
+        .args;
+
+        assert!(args.metering.enable_metering);
+        assert_eq!(args.metering.metering_execution_time_us, Some(5_000_000));
+
+        let launch_config = args.into_launch_config(Arc::new(BaseChainSpec::devnet()));
+        assert!(launch_config.standard.metering.enable_metering);
+        assert_eq!(launch_config.standard.metering.metering_execution_time_us, Some(5_000_000));
+    }
+
+    #[test]
+    fn runtime_config_can_enable_auth_ipc_without_standard_node_args() {
+        let args = CommandParser::<ExecutionNodeConfigArgs>::parse_from([
+            "reth",
+            "--auth-ipc.path=/tmp/engine.ipc",
+        ])
+        .args;
+
+        let runtime = args.into_runtime_config(Arc::new(BaseChainSpec::devnet())).with_auth_ipc();
+
+        assert!(runtime.node_config.rpc.auth_ipc);
+        assert_eq!(runtime.auth_ipc_path(), "/tmp/engine.ipc");
+    }
+
+    #[test]
+    fn runtime_config_uses_datadir_auth_ipc_path_for_unified_defaults() {
+        let args = CommandParser::<ExecutionNodeConfigArgs>::parse_from([
+            "reth",
+            "--datadir=/tmp/base-node-a",
+        ])
+        .args;
+
+        let runtime = args
+            .into_runtime_config(Arc::new(BaseChainSpec::devnet()))
+            .with_unified_auth_endpoint();
+        let expected = runtime
+            .node_config
+            .datadir()
+            .data_dir()
+            .join(DEFAULT_UNIFIED_AUTH_IPC_FILENAME)
+            .to_string_lossy()
+            .into_owned();
+
+        assert!(runtime.node_config.rpc.auth_ipc);
+        assert_eq!(runtime.node_config.rpc.auth_port, 0);
+        assert_eq!(runtime.node_config.rpc.auth_addr, Ipv4Addr::LOCALHOST);
+        assert_eq!(runtime.auth_ipc_path(), expected);
+    }
+
+    #[test]
+    fn runtime_config_preserves_explicit_auth_ipc_path_for_unified() {
+        let args = CommandParser::<ExecutionNodeConfigArgs>::parse_from([
+            "reth",
+            "--datadir=/tmp/base-node-a",
+            "--auth-ipc.path=/tmp/custom-engine.ipc",
+        ])
+        .args;
+
+        let runtime = args
+            .into_runtime_config(Arc::new(BaseChainSpec::devnet()))
+            .with_unified_auth_endpoint();
+
+        assert!(runtime.node_config.rpc.auth_ipc);
+        assert_eq!(runtime.node_config.rpc.auth_port, 0);
+        assert_eq!(runtime.node_config.rpc.auth_addr, Ipv4Addr::LOCALHOST);
+        assert_eq!(runtime.auth_ipc_path(), "/tmp/custom-engine.ipc");
+    }
+
+    #[test]
+    fn runtime_config_sets_base_default_el_peer_limits() {
+        let args = CommandParser::<ExecutionNodeConfigArgs>::parse_from(["reth"]).args;
+
+        let runtime = args.into_runtime_config(Arc::new(BaseChainSpec::devnet()));
+
+        assert_eq!(runtime.node_config.network.max_inbound_peers, Some(80));
+        assert_eq!(runtime.node_config.network.max_outbound_peers, Some(80));
+    }
+
+    #[test]
+    fn runtime_config_preserves_explicit_el_peer_limits() {
+        let args = CommandParser::<ExecutionNodeConfigArgs>::parse_from([
             "reth",
             "--max-inbound-peers",
             "12",
@@ -254,9 +505,27 @@ mod tests {
         ])
         .args;
 
-        let launch = args.into_launch_config(Arc::new(BaseChainSpec::devnet()));
+        let runtime = args.into_runtime_config(Arc::new(BaseChainSpec::devnet()));
 
-        assert_eq!(launch.node_config.network.max_inbound_peers, Some(12));
-        assert_eq!(launch.node_config.network.max_outbound_peers, Some(34));
+        assert_eq!(runtime.node_config.network.max_inbound_peers, Some(12));
+        assert_eq!(runtime.node_config.network.max_outbound_peers, Some(34));
+    }
+
+    #[test]
+    fn launch_config_delegates_auth_ipc_to_runtime_config() {
+        let args = CommandParser::<ExecutionNodeArgs>::parse_from([
+            "reth",
+            "--auth-ipc.path=/tmp/engine.ipc",
+        ])
+        .args;
+
+        let launch = args.into_launch_config(Arc::new(BaseChainSpec::devnet())).with_auth_ipc();
+
+        assert!(launch.node_config.rpc.auth_ipc);
+        assert_eq!(launch.auth_ipc_path(), "/tmp/engine.ipc");
+
+        let (runtime, _standard) = launch.into_runtime_config();
+        assert!(runtime.node_config.rpc.auth_ipc);
+        assert_eq!(runtime.auth_ipc_path(), "/tmp/engine.ipc");
     }
 }

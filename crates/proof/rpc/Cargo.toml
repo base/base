@@ -23,11 +23,15 @@ alloy-rpc-types-eth.workspace = true
 alloy-transport-http.workspace = true
 
 # Base Alloy
+base-optimism-rpc.workspace = true
 base-common-network.workspace = true
 base-common-rpc-types.workspace = true
 
 # Consensus
 base-common-genesis = { workspace = true, features = ["serde"] }
+
+# Retry
+base-retry.workspace = true
 
 # Async
 async-trait.workspace = true

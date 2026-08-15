@@ -15,7 +15,6 @@ use alloy_consensus::{
 use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_evm::Database;
 use alloy_primitives::{Address, B256, Bloom, U256, logs_bloom, map::foldhash::HashMap};
-use base_access_lists::FlashblockAccessList;
 use base_builder_publish::WebSocketPublisher;
 use base_bundles::RejectedTransaction;
 use base_common_chains::Upgrades;
@@ -261,8 +260,9 @@ where
         } = args;
 
         // We log only every Nth block based on sampling ratio to reduce usage
+        let block_number = config.parent_header.number + 1;
         let span = if config.parent_header.number.is_multiple_of(self.config.sampling_ratio) {
-            span!(Level::INFO, "build_payload")
+            span!(Level::INFO, "build_payload", block_number)
         } else {
             tracing::Span::none()
         };
@@ -462,6 +462,7 @@ where
 
         // Process flashblocks in a blocking loop
         loop {
+            let flashblock_index = ctx.flashblock_index();
             let fb_span = if span.is_none() {
                 tracing::Span::none()
             } else {
@@ -469,6 +470,7 @@ where
                     parent: &span,
                     Level::INFO,
                     "build_flashblock",
+                    flashblock_index,
                 )
             };
             let _entered = fb_span.enter();
@@ -960,8 +962,6 @@ struct FlashblocksMetadata {
     receipts: Option<HashMap<B256, BaseReceipt>>,
     /// Changed account balances (removed in Base 1.0)
     new_account_balances: Option<HashMap<Address, U256>>,
-    /// The flashblock access list
-    access_list: Option<FlashblockAccessList>,
 }
 
 pub(crate) fn execute_pre_steps<DB>(
@@ -1030,6 +1030,14 @@ where
     let mut hashed_state = HashedPostState::default();
 
     if calculate_state_root {
+        let state_root_span = span!(
+            Level::INFO,
+            "calculate_state_root",
+            block_number = ctx.block_number(),
+            parent_hash = %ctx.parent().hash(),
+        );
+        let _state_root_span_guard = state_root_span.enter();
+
         let state_provider = state.database.as_ref();
         hashed_state = state_provider.hashed_post_state(&state.bundle_state);
         (state_root, trie_output) =
@@ -1144,9 +1152,6 @@ where
     let new_transactions_encoded =
         new_transactions.clone().into_iter().map(|tx| tx.encoded_2718().into()).collect::<Vec<_>>();
 
-    let min_tx_index = info.extra.last_flashblock_index as u64;
-    let max_tx_index = min_tx_index + new_transactions_encoded.len() as u64;
-
     let new_receipts = info.receipts[info.extra.last_flashblock_index..].to_vec();
     info.extra.last_flashblock_index = info.executed_transactions.len();
 
@@ -1156,22 +1161,16 @@ where
         .map(|(tx, receipt)| (tx.tx_hash(), receipt.clone()))
         .collect::<HashMap<B256, BaseReceipt>>();
 
-    // finalize and build the FAL
-    let fal_builder = std::mem::take(&mut info.extra.access_list_builder);
-    let _access_list = fal_builder.build(min_tx_index, max_tx_index);
-
     let metadata: FlashblocksMetadata =
         if ctx.chain_spec.is_azul_active_at_timestamp(ctx.attributes().timestamp()) {
             FlashblocksMetadata {
                 metadata: Metadata { block_number: ctx.parent().number + 1, prev_flashblock_id },
-                access_list: None,
                 receipts: None,
                 new_account_balances: None,
             }
         } else {
             FlashblocksMetadata {
                 metadata: Metadata { block_number: ctx.parent().number + 1, prev_flashblock_id },
-                access_list: None,
                 new_account_balances: Some(new_account_balances),
                 receipts: Some(receipts_with_hash),
             }
@@ -1247,8 +1246,8 @@ mod tests {
     use super::{FlashblocksMetadata, build_block};
     use crate::{ExecutionInfo, flashblocks::context::BasePayloadBuilderCtx};
 
-    /// Creates a minimal [`BaseChainSpec`] with all L1 hardforks through Cancun
-    /// active at genesis but **no** inherited rollup hardforks (Bedrock, Canyon,
+    /// Creates a minimal [`BaseChainSpec`] with all L1 upgrades through Cancun
+    /// active at genesis but **no** inherited rollup upgrades (Bedrock, Canyon,
     /// Ecotone, Holocene, Isthmus, Jovian are all absent).
     ///
     /// This keeps `build_block` on the simplest code paths: no blob fields,
@@ -1447,7 +1446,6 @@ mod tests {
                 block_number: 42,
                 prev_flashblock_id: FlashblockId { block_number: 41, index: 10 },
             },
-            access_list: None,
         };
 
         let json = serde_json::to_value(&metadata).unwrap();
@@ -1492,7 +1490,6 @@ mod tests {
                 block_number: 99,
                 prev_flashblock_id: FlashblockId { block_number: 98, index: 10 },
             },
-            access_list: None,
         };
 
         let json = serde_json::to_value(&metadata).unwrap();

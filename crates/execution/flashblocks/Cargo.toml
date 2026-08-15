@@ -16,6 +16,7 @@ workspace = true
 base-common-flashblocks.workspace = true
 alloy-evm = { workspace = true, features = ["std"] }
 base-common-evm = { workspace = true, features = ["std"] }
+base-execution-eip8130-rpc.workspace = true
 
 # reth
 reth-rpc.workspace = true
@@ -95,4 +96,9 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 default = [ "metrics" ]
 edge-measurement = []
 test-utils = ["edge-measurement"]
-metrics = [ "base-metrics/metrics", "dep:metrics", "reth-evm/metrics" ]
+metrics = [
+	"base-common-evm/metrics",
+	"base-metrics/metrics",
+	"dep:metrics",
+	"reth-evm/metrics",
+]

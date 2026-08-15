@@ -1,4 +1,4 @@
-//! Action tests for Base Beryl hardfork activation.
+//! Action tests for Base Beryl upgrade activation.
 
 mod activation;
 mod b20;

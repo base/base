@@ -155,9 +155,11 @@ impl SingleBatch {
             }
         }
 
-        // If this is the first block in the jovian hardfork, and the batch contains any
+        // If this is the first block in the jovian upgrade, and the batch contains any
         // transactions, it must be dropped.
-        if cfg.is_first_jovian_block(self.timestamp) && !self.transactions.is_empty() {
+        if cfg.is_first_jovian_block(self.timestamp, l2_safe_head.block_info.timestamp)
+            && !self.transactions.is_empty()
+        {
             warn!(
                 target: "single_batch",
                 "Sequencer included user transactions in jovian transition block. Dropping batch."
@@ -179,6 +181,12 @@ impl SingleBatch {
             {
                 return BatchValidity::Drop(BatchDropReason::Eip7702PreIsthmus);
             }
+            // If cobalt is not active yet and the transaction is an 8130, drop the batch.
+            if !cfg.is_cobalt_active(self.timestamp)
+                && tx.as_ref().first() == Some(&(OpTxType::Eip8130 as u8))
+            {
+                return BatchValidity::Drop(BatchDropReason::Eip8130PreCobalt);
+            }
         }
 
         BatchValidity::Accept
@@ -191,10 +199,10 @@ mod tests {
 
     use alloy_consensus::{SignableTransaction, TxEip1559, TxEip7702, TxEnvelope};
     use alloy_eips::eip2718::{Decodable2718, Encodable2718};
-    use alloy_primitives::{Address, Sealed, Signature, TxKind, U256};
+    use alloy_primitives::{Address, Bytes, Sealed, Signature, TxKind, U256};
     use alloy_rlp::{Decodable, Encodable};
     use base_common_consensus::{BaseTxEnvelope, TxDeposit};
-    use base_common_genesis::HardForkConfig;
+    use base_common_genesis::{BaseUpgradeConfig, UpgradeConfig};
     use tracing::Level;
 
     use super::*;
@@ -262,7 +270,7 @@ mod tests {
     #[test]
     fn test_check_batch_timestamp_holocene_active_drop() {
         let cfg = RollupConfig {
-            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { holocene_time: Some(0), ..Default::default() },
             ..Default::default()
         };
         let l2_safe_head = L2BlockInfo {
@@ -280,7 +288,7 @@ mod tests {
     #[test]
     fn test_check_batch_timestamp_holocene_active_past() {
         let cfg = RollupConfig {
-            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { holocene_time: Some(0), ..Default::default() },
             ..Default::default()
         };
         let l2_safe_head = L2BlockInfo {
@@ -507,7 +515,75 @@ mod tests {
         // Notice: Isthmus is active.
         let cfg = RollupConfig {
             max_sequencer_drift: 1,
-            hardforks: HardForkConfig { isthmus_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { isthmus_time: Some(0), ..Default::default() },
+            ..Default::default()
+        };
+        let l1_blocks = vec![BlockInfo::default(), BlockInfo::default()];
+        let l2_safe_head = L2BlockInfo {
+            block_info: BlockInfo { timestamp: 1, ..Default::default() },
+            ..Default::default()
+        };
+        let inclusion_block = BlockInfo::default();
+        assert_eq!(
+            single_batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block),
+            BatchValidity::Accept
+        );
+    }
+
+    /// Minimal batch tx bytes whose leading 2718 type byte marks an EIP-8130
+    /// transaction. Batch validation keys the Cobalt gate on this type byte, so
+    /// a fully formed envelope is unnecessary here.
+    fn eip_8130_tx_bytes() -> Bytes {
+        Bytes::from(vec![OpTxType::Eip8130 as u8, 0x00])
+    }
+
+    #[test]
+    fn test_check_batch_drop_8130_pre_cobalt() {
+        let mut transactions = example_transactions();
+        transactions.push(eip_8130_tx_bytes());
+
+        let single_batch = SingleBatch {
+            parent_hash: BlockHash::ZERO,
+            epoch_num: 1,
+            epoch_hash: BlockHash::ZERO,
+            timestamp: 1,
+            transactions,
+        };
+
+        // Notice: Cobalt is _not_ active yet.
+        let cfg = RollupConfig { max_sequencer_drift: 1, ..Default::default() };
+        let l1_blocks = vec![BlockInfo::default(), BlockInfo::default()];
+        let l2_safe_head = L2BlockInfo {
+            block_info: BlockInfo { timestamp: 1, ..Default::default() },
+            ..Default::default()
+        };
+        let inclusion_block = BlockInfo::default();
+        assert_eq!(
+            single_batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block),
+            BatchValidity::Drop(BatchDropReason::Eip8130PreCobalt)
+        );
+    }
+
+    #[test]
+    fn test_check_batch_accept_8130_post_cobalt() {
+        let mut transactions = example_transactions();
+        transactions.push(eip_8130_tx_bytes());
+
+        let single_batch = SingleBatch {
+            parent_hash: BlockHash::ZERO,
+            epoch_num: 1,
+            epoch_hash: BlockHash::ZERO,
+            timestamp: 1,
+            transactions,
+        };
+
+        // Notice: Cobalt is active.
+        let cfg = RollupConfig {
+            max_sequencer_drift: 1,
+            upgrades: UpgradeConfig {
+                base: BaseUpgradeConfig { cobalt: Some(0), ..Default::default() },
+                ..Default::default()
+            },
             ..Default::default()
         };
         let l1_blocks = vec![BlockInfo::default(), BlockInfo::default()];
@@ -614,7 +690,7 @@ mod tests {
         let cfg = RollupConfig {
             max_sequencer_drift: 1,
             block_time: 1,
-            hardforks: HardForkConfig { jovian_time: Some(1), ..Default::default() },
+            upgrades: UpgradeConfig { jovian_time: Some(1), ..Default::default() },
             ..Default::default()
         };
         let l1_blocks = vec![BlockInfo::default(), BlockInfo::default()];

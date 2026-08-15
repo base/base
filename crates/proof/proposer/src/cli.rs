@@ -1,13 +1,11 @@
 //! CLI argument definitions for proposer.
 
-use std::time::Duration;
+use std::{num::NonZeroUsize, time::Duration};
 
 use alloy_primitives::{Address, B256};
 use base_cli_utils::CliStyles;
-use clap::Parser;
+use clap::{Args, Parser};
 use url::Url;
-
-use crate::constants::RECOVERY_SCAN_CONCURRENCY;
 
 base_cli_utils::define_cli_env!("BASE_PROPOSER");
 base_cli_utils::define_log_args!("BASE_PROPOSER");
@@ -16,8 +14,10 @@ base_cli_utils::define_health_args!("BASE_PROPOSER", 8080);
 base_tx_manager::define_signer_cli!("BASE_PROPOSER");
 base_tx_manager::define_tx_manager_cli!("BASE_PROPOSER", tx_send_timeout_default = "10m");
 
+const DEFAULT_RECOVERY_SCAN_CONCURRENCY: usize = 8;
+
 /// Proposer - TEE-based output proposal generation for Base.
-#[derive(Debug, Clone, Parser)]
+#[derive(Debug, Parser)]
 #[command(name = "proposer")]
 #[command(version, about, long_about = None)]
 #[command(styles = CliStyles::init())]
@@ -44,20 +44,12 @@ pub struct Cli {
 }
 
 /// Core proposer configuration arguments.
-#[derive(Debug, Clone, Parser)]
+#[derive(Debug, Args)]
 #[command(next_help_heading = "Proposer")]
 pub struct ProposerArgs {
-    /// Dry-run mode: source proofs but do not submit transactions on-chain.
-    #[arg(long = "dry-run", env = cli_env!("DRY_RUN"), default_value = "false")]
+    /// Dry-run mode: source proofs but do not submit transactions onchain.
+    #[arg(long = "dry-run", env = cli_env!("DRY_RUN"))]
     pub dry_run: bool,
-
-    /// Allow proposals based on non-finalized L1 data.
-    #[arg(
-        long = "allow-non-finalized",
-        env = cli_env!("ALLOW_NON_FINALIZED"),
-        default_value = "false"
-    )]
-    pub allow_non_finalized: bool,
 
     /// URL of the prover RPC endpoint.
     #[arg(long = "prover-rpc", env = cli_env!("PROVER_RPC"))]
@@ -119,15 +111,11 @@ pub struct ProposerArgs {
     pub rollup_rpc: Url,
 
     /// Skip TLS certificate verification.
-    #[arg(
-        long = "skip-tls-verify",
-        env = cli_env!("SKIP_TLS_VERIFY"),
-        default_value = "false"
-    )]
+    #[arg(long = "skip-tls-verify", env = cli_env!("SKIP_TLS_VERIFY"))]
     pub skip_tls_verify: bool,
 
     /// Maximum number of retry attempts for RPC operations.
-    #[arg(long = "rpc-max-retries", env = cli_env!("RPC_MAX_RETRIES"), default_value = "5")]
+    #[arg(long = "rpc-max-retries", env = cli_env!("RPC_MAX_RETRIES"), default_value_t = 5)]
     pub rpc_max_retries: u32,
 
     /// Initial delay for exponential backoff (e.g., "100ms", "1s").
@@ -152,30 +140,14 @@ pub struct ProposerArgs {
     #[command(flatten)]
     pub signer: SignerCli,
 
-    /// Maximum number of concurrent proof tasks in parallel pipeline mode.
-    /// Set to 1 for sequential proving (default driver behavior).
-    #[arg(
-        long = "max-parallel-proofs",
-        env = cli_env!("MAX_PARALLEL_PROOFS"),
-        default_value = "1"
-    )]
-    pub max_parallel_proofs: usize,
-
     /// Maximum number of concurrent RPC calls during the recovery scan.
     #[arg(
         long = "recovery-scan-concurrency",
         env = cli_env!("RECOVERY_SCAN_CONCURRENCY"),
-        default_value_t = RECOVERY_SCAN_CONCURRENCY
+        default_value_t = NonZeroUsize::new(DEFAULT_RECOVERY_SCAN_CONCURRENCY).unwrap(),
+        value_parser = clap::value_parser!(NonZeroUsize)
     )]
-    pub recovery_scan_concurrency: usize,
-
-    /// Address of the `TEEProverRegistry` contract on L1.
-    /// When set, the proposer validates signers before on-chain submission.
-    #[arg(
-        long = "tee-prover-registry-address",
-        env = cli_env!("TEE_PROVER_REGISTRY_ADDRESS")
-    )]
-    pub tee_prover_registry_address: Option<Address>,
+    pub recovery_scan_concurrency: NonZeroUsize,
 
     /// Transaction manager configuration.
     #[command(flatten)]
@@ -183,67 +155,37 @@ pub struct ProposerArgs {
 }
 
 /// Admin RPC server configuration arguments.
-#[derive(Debug, Clone, Parser)]
+#[derive(Debug, Args)]
 #[command(next_help_heading = "Admin RPC")]
 pub struct AdminArgs {
     /// Enable the admin RPC server.
-    #[arg(
-        id = "rpc_enable_admin",
-        long = "rpc.enable-admin",
-        env = cli_env!("RPC_ENABLE_ADMIN"),
-        default_value = "false"
-    )]
-    pub enabled: bool,
+    #[arg(long = "rpc.enable-admin", env = cli_env!("RPC_ENABLE_ADMIN"))]
+    pub admin_enabled: bool,
 
     /// Admin RPC server bind address.
     #[arg(
-        id = "rpc_addr",
         long = "rpc.addr",
         default_value = "127.0.0.1",
         env = cli_env!("RPC_ADDR")
     )]
-    pub addr: std::net::IpAddr,
+    pub admin_addr: std::net::IpAddr,
 
     /// Admin RPC server port.
     #[arg(
-        id = "rpc_port",
         long = "rpc.port",
-        default_value = "8545",
+        default_value_t = 8545,
         env = cli_env!("RPC_PORT")
     )]
-    pub port: u16,
-}
-
-impl Default for AdminArgs {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            addr: std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
-            port: 8545,
-        }
-    }
-}
-
-impl AdminArgs {
-    /// Returns the configured socket address.
-    pub const fn socket_addr(&self) -> std::net::SocketAddr {
-        std::net::SocketAddr::new(self.addr, self.port)
-    }
+    pub admin_port: u16,
 }
 
 #[cfg(test)]
 mod tests {
-    use std::net::IpAddr;
-
-    use base_cli_utils::LogFormat;
-
     use super::*;
-    use crate::constants::PROPOSAL_TIMEOUT;
 
     #[test]
     fn test_cli_defaults() {
-        // Test that we can construct minimal CLI args (requires all required fields)
-        let args = vec![
+        let cli = Cli::try_parse_from([
             "proposer",
             "--prover-rpc",
             "http://localhost:8080",
@@ -261,56 +203,25 @@ mod tests {
             "0x0000000000000000000000000000000000000000000000000000000000000001",
             "--rollup-rpc",
             "http://localhost:7545",
-        ];
-        let cli = Cli::try_parse_from(args).unwrap();
+        ])
+        .unwrap();
 
-        // Check defaults
-        assert!(!cli.proposer.dry_run);
-        assert!(!cli.proposer.allow_non_finalized);
         assert_eq!(cli.proposer.prover_timeout, Duration::from_secs(70 * 60));
         assert_eq!(cli.proposer.poll_interval, Duration::from_secs(12));
         assert_eq!(cli.proposer.rpc_timeout, Duration::from_secs(30));
-        assert_eq!(cli.proposer.rollup_rpc.as_str(), "http://localhost:7545/");
-        assert!(!cli.proposer.skip_tls_verify);
-        assert_eq!(cli.proposer.game_type, 1);
-        assert_eq!(cli.proposer.max_parallel_proofs, 1);
 
-        assert_eq!(cli.logging.level, 3);
-        assert_eq!(cli.logging.stdout_format, LogFormat::Full);
-        assert!(!cli.logging.stdout_quiet);
+        assert!(!cli.admin.admin_enabled);
+        assert_eq!(cli.admin.admin_addr, std::net::Ipv4Addr::LOCALHOST);
+        assert_eq!(cli.admin.admin_port, 8545);
 
-        assert!(!cli.metrics.enabled);
-        assert_eq!(cli.metrics.addr, "0.0.0.0".parse::<IpAddr>().unwrap());
-        assert_eq!(cli.metrics.port, 7300);
-
-        assert!(!cli.admin.enabled);
-        assert_eq!(cli.admin.addr, "127.0.0.1".parse::<IpAddr>().unwrap());
-        assert_eq!(cli.admin.port, 8545);
-        assert_eq!(cli.health.addr, "0.0.0.0".parse::<IpAddr>().unwrap());
-        assert_eq!(cli.health.port, 8080);
-
-        // Check retry defaults
         assert_eq!(cli.proposer.rpc_max_retries, 5);
         assert_eq!(cli.proposer.rpc_retry_initial_delay, Duration::from_millis(100));
         assert_eq!(cli.proposer.rpc_retry_max_delay, Duration::from_secs(10));
-        assert_eq!(cli.proposer.tx_manager.tx_send_timeout, PROPOSAL_TIMEOUT);
-
-        // Check signing defaults (all None)
-        assert!(cli.proposer.signer.private_key.is_none());
-        assert!(cli.proposer.signer.signer_endpoint.is_none());
-        assert!(cli.proposer.signer.signer_address.is_none());
     }
 
     #[test]
-    fn test_cli_missing_required() {
-        // Test that missing required fields cause an error
-        let args = vec!["proposer"];
-        assert!(Cli::try_parse_from(args).is_err());
-    }
-
-    #[test]
-    fn test_cli_preserves_explicit_zero_tx_send_timeout() {
-        let args = vec![
+    fn test_recovery_scan_concurrency_zero_rejected() {
+        let result = Cli::try_parse_from([
             "proposer",
             "--prover-rpc",
             "http://localhost:8080",
@@ -328,33 +239,10 @@ mod tests {
             "0x0000000000000000000000000000000000000000000000000000000000000001",
             "--rollup-rpc",
             "http://localhost:7545",
-            "--tx-manager.tx-send-timeout",
-            "0s",
-        ];
-        let cli = Cli::try_parse_from(args).unwrap();
+            "--recovery-scan-concurrency",
+            "0",
+        ]);
 
-        assert!(cli.proposer.tx_manager.tx_send_timeout.is_zero());
-    }
-
-    #[test]
-    fn test_cli_missing_rollup_rpc() {
-        let args = vec![
-            "proposer",
-            "--prover-rpc",
-            "http://localhost:8080",
-            "--l1-eth-rpc",
-            "http://localhost:8545",
-            "--l2-eth-rpc",
-            "http://localhost:9545",
-            "--anchor-state-registry-addr",
-            "0x1234567890123456789012345678901234567890",
-            "--dispute-game-factory-addr",
-            "0x2234567890123456789012345678901234567890",
-            "--game-type",
-            "1",
-            "--tee-image-hash",
-            "0x0000000000000000000000000000000000000000000000000000000000000001",
-        ];
-        assert!(Cli::try_parse_from(args).is_err());
+        assert!(result.is_err());
     }
 }

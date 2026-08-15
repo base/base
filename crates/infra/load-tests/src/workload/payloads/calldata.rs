@@ -54,6 +54,10 @@ impl Payload for CalldataPayload {
         "calldata"
     }
 
+    fn uses_runner_recipient(&self) -> bool {
+        true
+    }
+
     fn generate(&self, rng: &mut SeededRng, _from: Address, to: Address) -> TransactionRequest {
         let size = if self.min_size == self.max_size {
             self.max_size

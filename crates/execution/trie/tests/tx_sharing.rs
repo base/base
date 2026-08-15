@@ -27,7 +27,8 @@ use base_execution_trie::{
 };
 use reth_primitives_traits::Account;
 use reth_provider::{
-    StateProofProvider, StateRootProvider, StorageRootProvider, noop::NoopProvider,
+    AccountReader, StateProofProvider, StateProvider, StateRootProvider, StorageRootProvider,
+    noop::NoopProvider,
 };
 use reth_trie_common::{
     ExecutionWitnessMode, HashedPostState, HashedStorage, MultiProofTargets, TrieInput,
@@ -236,6 +237,19 @@ fn storage_root_acquires_one_tx_per_call() {
         provider
             .storage_multiproof(address, &slots, hashed_storage.clone())
             .expect("storage_multiproof");
+    });
+}
+
+#[test]
+fn evm_state_reads_share_one_lazy_tx_per_provider() {
+    let (_dir, storage) = setup();
+    let provider = BaseProofsStateProviderRef::new(Box::<NoopProvider>::default(), &storage, 0);
+    let (address, slots) = seed_layout().into_iter().next().expect("seed");
+
+    assert_tx_acquisitions(&storage, 1, "evm_state_reads", || {
+        provider.basic_account(&address).expect("account");
+        provider.storage(address, slots[0]).expect("storage 0");
+        provider.storage(address, slots[1]).expect("storage 1");
     });
 }
 

@@ -1,15 +1,18 @@
 use base_prover_service_protocol::{
     ProofResult as ProtocolProofResult, SnarkGroth16ProofResult, ZkProofResult, ZkVm,
 };
+use chrono::Utc;
 use sqlx::{PgPool, Result, Row};
 use uuid::Uuid;
 
 use crate::{
-    ApiProofType, CompleteProofResult, CreateOutboxEntry, CreateProofRequest,
-    CreateProofRequestError, CreateProofRequestOutcome, CreateProofRequestValidationError,
-    CreateProofSession, MarkOutboxError, MarkOutboxProcessed, OutboxEntry, ProofRequest,
-    ProofRequestListItem, ProofRequestPage, ProofSession, ProofStatus, ProofType, RetryOutcome,
-    SessionStatus, SessionType, TeeKind, UpdateProofSession, UpdateReceipt, ZkVmKind,
+    ApiProofType, ClaimAuth, ClaimProofJob, CompleteClaimedProofJob, CompleteProofResult,
+    CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome,
+    CreateProofRequestValidationError, CreateProofSession, DeleteProofRequestOutcome,
+    FailExpiredProofJobs, HeartbeatOutcome, HeartbeatProofJob, JobLockState, ProofJob,
+    ProofJobStatus, ProofRequest, ProofRequestListItem, ProofRequestPage, ProofSession,
+    ProofStatus, ProofType, RecordSessionOutcome, RetryOutcome, SessionStatus, SessionType,
+    SubmitProofOutcome, TeeKind, UpdateProofSession, UpdateReceipt, WorkerSessionUpsert, ZkVmKind,
     canonical_session_id,
 };
 
@@ -62,37 +65,13 @@ impl ProofRequestRepo {
         Ok(prepared.id)
     }
 
-    /// Atomically create a proof request and outbox entry in a transaction.
-    ///
-    /// On `id` conflict, lock the row `FOR UPDATE` and branch on state:
-    /// parameter mismatch → [`CreateProofRequestError::IdCollision`];
-    /// `CREATED` / `PENDING` / `RUNNING` / `SUCCEEDED` → [`CreateProofRequestOutcome::Replayed`];
-    /// `FAILED` with room under `max_retries` → reset, bump `retry_count`, new outbox row
-    /// ([`CreateProofRequestOutcome::Requeued`]); `FAILED` at cap → [`CreateProofRequestOutcome::RetryExhausted`].
-    ///
-    /// Use the same `max_retries` as [`Self::retry_or_fail_stuck_request`] (shared `retry_count` cap).
-    pub async fn create_with_outbox(
+    /// Atomically create or replay a proof request for the worker API queue.
+    pub async fn create_for_worker_queue(
         &self,
         req: CreateProofRequest,
         max_retries: i32,
     ) -> std::result::Result<CreateProofRequestOutcome, CreateProofRequestError> {
         let prepared = PreparedProofRequest::try_from(req)?;
-        let Some(proof_type) = prepared.proof_type else {
-            return Err(CreateProofRequestError::UnsupportedOutboxProofType {
-                api_proof_type: prepared.api_proof_type,
-            });
-        };
-
-        let request_params = build_outbox_params(
-            prepared.start_block_number,
-            prepared.number_of_blocks_to_prove,
-            prepared.sequence_window,
-            Some(proof_type.as_str()),
-            prepared.prover_address.as_deref(),
-            prepared.l1_head.as_deref(),
-            prepared.intermediate_root_interval,
-        );
-
         let mut tx = self.pool.begin().await?;
 
         let insert_result = sqlx::query(
@@ -115,7 +94,7 @@ impl ProofRequestRepo {
         .bind(prepared.start_block_number)
         .bind(prepared.number_of_blocks_to_prove)
         .bind(prepared.sequence_window)
-        .bind(Some(proof_type.as_str()))
+        .bind(prepared.proof_type.map(|proof_type| proof_type.as_str()))
         .bind(ProofStatus::Created.as_str())
         .bind(&prepared.prover_address)
         .bind(&prepared.l1_head)
@@ -124,22 +103,11 @@ impl ProofRequestRepo {
         .await?;
 
         if insert_result.rows_affected() > 0 {
-            sqlx::query(
-                r#"
-                INSERT INTO proof_request_outbox (proof_request_id, request_params)
-                VALUES ($1, $2)
-                "#,
-            )
-            .bind(prepared.id)
-            .bind(&request_params)
-            .execute(&mut *tx)
-            .await?;
-
             tx.commit().await?;
             return Ok(CreateProofRequestOutcome::Created(prepared.id));
         }
 
-        // Conflict path: `FOR UPDATE` serializes with stuck recovery and workers.
+        // Conflict path: `FOR UPDATE` serializes with retries and workers.
         let row = sqlx::query(
             r#"
             SELECT id, COALESCE(session_id, id::text) AS session_id,
@@ -164,7 +132,7 @@ impl ProofRequestRepo {
         };
 
         let existing_id: Uuid = row.get("id");
-        let params = CreateOutboxRequestParams {
+        let params = CreateRequestParams {
             request_payload: &prepared.request_payload,
             api_proof_type: prepared.api_proof_type.as_str(),
             zk_vm: prepared.zk_vm.map(|zk_vm| zk_vm.as_str()),
@@ -177,15 +145,23 @@ impl ProofRequestRepo {
             l1_head: prepared.l1_head.as_deref(),
             intermediate_root_interval: prepared.intermediate_root_interval,
         };
-        if let Some(field) = params.first_mismatch(&row) {
-            tx.rollback().await?;
-            return Err(CreateProofRequestError::IdCollision { id: existing_id, field });
-        }
-
         let status_str: &str = row.get("status");
         let status = ProofStatus::try_from(status_str).map_err(|e| {
             sqlx::Error::Protocol(format!("Unknown proof status '{status_str}': {e}"))
         })?;
+
+        let mismatch = match status {
+            ProofStatus::Failed => params.first_mismatch_allowing_l1_head_replacement(&row),
+            // Non-failed existing requests are replay-only; l1_head replacement is only for failed retries.
+            ProofStatus::Created
+            | ProofStatus::Pending
+            | ProofStatus::Running
+            | ProofStatus::Succeeded => params.first_mismatch(&row),
+        };
+        if let Some(field) = mismatch {
+            tx.rollback().await?;
+            return Err(CreateProofRequestError::IdCollision { id: existing_id, field });
+        }
 
         match status {
             ProofStatus::Created
@@ -202,9 +178,6 @@ impl ProofRequestRepo {
                     return Ok(CreateProofRequestOutcome::RetryExhausted(existing_id));
                 }
 
-                // Fail any active sessions before resetting so the requeued run cannot
-                // collide with `idx_proof_sessions_request_type_active_unique`. Mirrors
-                // the cleanup in `retry_or_fail_stuck_request`.
                 sqlx::query(
                     r#"
                     UPDATE proof_sessions
@@ -215,7 +188,7 @@ impl ProofRequestRepo {
                     "#,
                 )
                 .bind(SessionStatus::Failed.as_str())
-                .bind("cleared during create_with_outbox requeue")
+                .bind("cleared during worker-queue requeue")
                 .bind(existing_id)
                 .bind(SessionStatus::Submitting.as_str())
                 .bind(SessionStatus::Running.as_str())
@@ -226,6 +199,9 @@ impl ProofRequestRepo {
                     r#"
                     UPDATE proof_requests
                     SET status = $1,
+                        request_payload = $2,
+                        l1_head = $3,
+                        job_status = 'PENDING',
                         retry_count = retry_count + 1,
                         error_message = NULL,
                         stark_receipt = NULL,
@@ -233,23 +209,20 @@ impl ProofRequestRepo {
                         result_payload = NULL,
                         submitted_by_worker_id = NULL,
                         submitted_lock_id = NULL,
-                        completed_at = NULL
-                    WHERE id = $2
+                        completed_at = NULL,
+                        worker_id = NULL,
+                        lock_id = NULL,
+                        lock_expires_at = NULL,
+                        claimed_at = NULL,
+                        last_heartbeat_at = NULL,
+                        attempt = 0
+                    WHERE id = $4
                     "#,
                 )
                 .bind(ProofStatus::Created.as_str())
+                .bind(&prepared.request_payload)
+                .bind(&prepared.l1_head)
                 .bind(existing_id)
-                .execute(&mut *tx)
-                .await?;
-
-                sqlx::query(
-                    r#"
-                    INSERT INTO proof_request_outbox (proof_request_id, request_params)
-                    VALUES ($1, $2)
-                    "#,
-                )
-                .bind(existing_id)
-                .bind(&request_params)
                 .execute(&mut *tx)
                 .await?;
 
@@ -257,6 +230,53 @@ impl ProofRequestRepo {
                 Ok(CreateProofRequestOutcome::Requeued(existing_id))
             }
         }
+    }
+
+    /// Delete a terminal proof request by public session id.
+    pub async fn delete_proof_request_by_session_id(
+        &self,
+        session_id: &str,
+    ) -> Result<DeleteProofRequestOutcome> {
+        let session_id = canonical_session_id(session_id)
+            .map_err(|e| sqlx::Error::InvalidArgument(e.to_string()))?;
+        let mut tx = self.pool.begin().await?;
+
+        let row = sqlx::query(
+            r#"
+            SELECT id, status
+            FROM proof_requests
+            WHERE COALESCE(session_id, id::text) = $1
+            FOR UPDATE
+            "#,
+        )
+        .bind(&session_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        let Some(row) = row else {
+            tx.rollback().await?;
+            return Ok(DeleteProofRequestOutcome::NotFound);
+        };
+
+        let status_str: &str = row.get("status");
+        let status = ProofStatus::try_from(status_str).map_err(|e| {
+            sqlx::Error::Protocol(format!("Unknown proof status '{status_str}': {e}"))
+        })?;
+        if !matches!(status, ProofStatus::Succeeded | ProofStatus::Failed) {
+            tx.rollback().await?;
+            return Ok(DeleteProofRequestOutcome::NotCompleted(status));
+        }
+
+        let id: Uuid = row.get("id");
+        // Outbox rows do not cascade; proof_sessions rows cascade from proof_requests.
+        sqlx::query("DELETE FROM proof_request_outbox WHERE proof_request_id = $1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM proof_requests WHERE id = $1").bind(id).execute(&mut *tx).await?;
+
+        tx.commit().await?;
+        Ok(DeleteProofRequestOutcome::Deleted)
     }
 
     /// Get a proof request by ID
@@ -545,12 +565,277 @@ impl ProofRequestRepo {
         Ok(result.rows_affected() > 0)
     }
 
+    // ========== Worker Job API Methods ==========
+
+    /// Atomically claim the next eligible worker proof job (`getNextProof`).
+    ///
+    /// Expired claims are reclaimable while `attempt < max_attempts`. Rows are
+    /// locked with `FOR UPDATE SKIP LOCKED` so concurrent workers do not double-claim.
+    pub async fn claim_next_proof_job(&self, req: ClaimProofJob) -> Result<Option<ProofJob>> {
+        let lock_id = Uuid::new_v4();
+        let sql = claim_query(req.api_proof_type);
+        let cap_values = worker_capability_values(&req);
+
+        let row = sqlx::query(&sql)
+            .bind(&req.worker_id)
+            .bind(lock_id)
+            .bind(i64::from(req.lock_duration_seconds))
+            .bind(req.api_proof_type.as_str())
+            .bind(&cap_values)
+            .bind(i64::from(req.max_attempts))
+            .fetch_optional(&self.pool)
+            .await?;
+
+        row.as_ref().map(row_to_proof_job).transpose()
+    }
+
+    /// Fetch a worker-visible proof job by protocol `session_id`.
+    pub async fn get_proof_job_by_session_id(&self, session_id: &str) -> Result<Option<ProofJob>> {
+        let session_id = canonical_session_id(session_id)
+            .map_err(|e| sqlx::Error::InvalidArgument(e.to_string()))?;
+        self.get_proof_job_by_canonical_session_id(&session_id).await
+    }
+
+    async fn get_proof_job_by_canonical_session_id(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<ProofJob>> {
+        let columns = PROOF_JOB_RETURNING_COLUMNS;
+        let sql = format!(
+            r#"
+            SELECT {columns}
+            FROM proof_requests
+            WHERE COALESCE(session_id, id::text) = $1
+            "#
+        );
+
+        let row = sqlx::query(&sql).bind(session_id).fetch_optional(&self.pool).await?;
+
+        row.as_ref().map(row_to_proof_job).transpose()
+    }
+
+    /// Extend the lock for the currently owned worker proof job (`heartbeat`).
+    pub async fn heartbeat_proof_job(&self, req: HeartbeatProofJob) -> Result<HeartbeatOutcome> {
+        let session_id = canonical_session_id(&req.session_id)
+            .map_err(|e| sqlx::Error::InvalidArgument(e.to_string()))?;
+        let columns = PROOF_JOB_RETURNING_COLUMNS;
+        let sql = format!(
+            r#"
+            UPDATE proof_requests
+            SET last_heartbeat_at = NOW(),
+                lock_expires_at = NOW() + ($4)::double precision * INTERVAL '1 second'
+            WHERE COALESCE(session_id, id::text) = $1
+              AND job_status = 'CLAIMED'
+              AND lock_id = $2
+              AND worker_id = $3
+              AND lock_expires_at > NOW()
+            RETURNING {columns}
+            "#
+        );
+
+        let row = sqlx::query(&sql)
+            .bind(&session_id)
+            .bind(req.lock_id)
+            .bind(&req.worker_id)
+            .bind(i64::from(req.lock_duration_seconds))
+            .fetch_optional(&self.pool)
+            .await?;
+
+        if let Some(row) = row {
+            return row_to_proof_job(&row).map(HeartbeatOutcome::Updated);
+        }
+
+        let Some(job) = self.get_proof_job_by_canonical_session_id(&session_id).await? else {
+            return Ok(HeartbeatOutcome::NotFound);
+        };
+
+        match ClaimAuth::classify(
+            JobLockState {
+                status: job.job_status,
+                lock_id: job.lock_id,
+                worker_id: job.worker_id.as_deref(),
+                lock_expires_at: job.lock_expires_at,
+            },
+            req.lock_id,
+            &req.worker_id,
+            Utc::now(),
+        ) {
+            ClaimAuth::Authorized => Ok(HeartbeatOutcome::Unknown(job)),
+            ClaimAuth::Terminal => Ok(HeartbeatOutcome::Terminal(job)),
+            ClaimAuth::NotClaimed => Ok(HeartbeatOutcome::NotClaimed(job)),
+            ClaimAuth::StaleLock => Ok(HeartbeatOutcome::StaleLock(job)),
+            ClaimAuth::Expired => Ok(HeartbeatOutcome::Expired(job)),
+        }
+    }
+
+    /// Complete the currently owned worker proof job (`submitProof`).
+    pub async fn complete_claimed_proof_job(
+        &self,
+        req: CompleteClaimedProofJob,
+    ) -> Result<SubmitProofOutcome> {
+        let session_id = canonical_session_id(&req.session_id)
+            .map_err(|e| sqlx::Error::InvalidArgument(e.to_string()))?;
+
+        // Read first to classify ownership state and detect idempotent retries.
+        let Some(existing) = self.get_proof_job_by_canonical_session_id(&session_id).await? else {
+            return Ok(SubmitProofOutcome::NotFound);
+        };
+
+        // Idempotent retry by the owning worker/lock; a differing payload conflicts.
+        if existing.job_status == ProofJobStatus::Succeeded
+            && existing.lock_id == Some(req.lock_id)
+            && existing.worker_id.as_deref() == Some(req.worker_id.as_str())
+        {
+            if let Err(reason) = existing.validate_submitted_result(&req.result) {
+                return Ok(SubmitProofOutcome::ResultMismatch { job: existing, reason });
+            }
+
+            let result_payload =
+                serde_json::to_value(&req.result).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
+
+            return Ok(if existing.result_payload.as_ref() == Some(&result_payload) {
+                SubmitProofOutcome::AlreadyCompleted(existing)
+            } else {
+                SubmitProofOutcome::ResultConflict { job: existing }
+            });
+        }
+        if matches!(existing.job_status, ProofJobStatus::Succeeded | ProofJobStatus::Failed) {
+            return Ok(SubmitProofOutcome::Terminal(existing));
+        }
+        if existing.job_status != ProofJobStatus::Claimed {
+            return Ok(SubmitProofOutcome::NotClaimed(existing));
+        }
+        if existing.lock_id != Some(req.lock_id)
+            || existing.worker_id.as_deref() != Some(req.worker_id.as_str())
+        {
+            return Ok(SubmitProofOutcome::StaleLock(existing));
+        }
+        if existing.lock_expires_at.is_none_or(|expires_at| expires_at <= Utc::now()) {
+            return Ok(SubmitProofOutcome::Expired(existing));
+        }
+
+        if let Err(reason) = existing.validate_submitted_result(&req.result) {
+            return Ok(SubmitProofOutcome::ResultMismatch { job: existing, reason });
+        }
+
+        let result_payload =
+            serde_json::to_value(&req.result).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
+
+        let (stark_receipt, snark_receipt) = compatibility_receipts_for_result(&req.result);
+        let submitted_lock_id = req.lock_id.to_string();
+        let columns = PROOF_JOB_RETURNING_COLUMNS;
+        let sql = format!(
+            r#"
+            UPDATE proof_requests
+            SET job_status = 'SUCCEEDED',
+                status = 'SUCCEEDED',
+                result_payload = $4,
+                submitted_by_worker_id = $3,
+                submitted_lock_id = $5,
+                stark_receipt = COALESCE($6, stark_receipt),
+                snark_receipt = COALESCE($7, snark_receipt),
+                error_message = NULL,
+                completed_at = NOW()
+            WHERE COALESCE(session_id, id::text) = $1
+              AND job_status = 'CLAIMED'
+              AND lock_id = $2
+              AND worker_id = $3
+              AND lock_expires_at > NOW()
+            RETURNING {columns}
+            "#
+        );
+
+        let row = sqlx::query(&sql)
+            .bind(&session_id)
+            .bind(req.lock_id)
+            .bind(&req.worker_id)
+            .bind(&result_payload)
+            .bind(&submitted_lock_id)
+            .bind(&stark_receipt)
+            .bind(&snark_receipt)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        if let Some(row) = row {
+            return row_to_proof_job(&row).map(SubmitProofOutcome::Completed);
+        }
+
+        let Some(job) = self.get_proof_job_by_canonical_session_id(&session_id).await? else {
+            return Ok(SubmitProofOutcome::NotFound);
+        };
+
+        // Re-check idempotency after a concurrent submit wins the row lock.
+        if job.job_status == ProofJobStatus::Succeeded
+            && job.lock_id == Some(req.lock_id)
+            && job.worker_id.as_deref() == Some(req.worker_id.as_str())
+        {
+            if let Err(reason) = job.validate_submitted_result(&req.result) {
+                return Ok(SubmitProofOutcome::ResultMismatch { job, reason });
+            }
+
+            return Ok(if job.result_payload.as_ref() == Some(&result_payload) {
+                SubmitProofOutcome::AlreadyCompleted(job)
+            } else {
+                SubmitProofOutcome::ResultConflict { job }
+            });
+        }
+        if matches!(job.job_status, ProofJobStatus::Succeeded | ProofJobStatus::Failed) {
+            return Ok(SubmitProofOutcome::Terminal(job));
+        }
+        if job.job_status != ProofJobStatus::Claimed {
+            return Ok(SubmitProofOutcome::NotClaimed(job));
+        }
+        if job.lock_id != Some(req.lock_id) || job.worker_id.as_deref() != Some(&req.worker_id) {
+            return Ok(SubmitProofOutcome::StaleLock(job));
+        }
+        if job.lock_expires_at.is_none_or(|expires_at| expires_at <= Utc::now()) {
+            return Ok(SubmitProofOutcome::Expired(job));
+        }
+
+        Ok(SubmitProofOutcome::Unknown(job))
+    }
+
+    /// Terminally fail expired worker jobs with `attempt >= max_attempts`.
+    pub async fn fail_expired_proof_jobs(
+        &self,
+        req: FailExpiredProofJobs<'_>,
+    ) -> Result<Vec<ProofJob>> {
+        let columns = PROOF_JOB_RETURNING_COLUMNS;
+        let sql = format!(
+            r#"
+            UPDATE proof_requests
+            SET job_status = 'FAILED',
+                status = 'FAILED',
+                error_message = $2,
+                completed_at = NOW()
+            WHERE id IN (
+                SELECT id
+                FROM proof_requests
+                WHERE job_status = 'CLAIMED'
+                  AND lock_expires_at < NOW()
+                  AND attempt >= $1
+                ORDER BY lock_expires_at ASC, start_block_number ASC, created_at ASC, id ASC
+                LIMIT $3
+                FOR UPDATE SKIP LOCKED
+            )
+            RETURNING {columns}
+            "#
+        );
+
+        let rows = sqlx::query(&sql)
+            .bind(i64::from(req.max_attempts))
+            .bind(req.error_message)
+            .bind(i64::from(req.batch_size))
+            .fetch_all(&self.pool)
+            .await?;
+
+        rows.iter().map(row_to_proof_job).collect()
+    }
+
     /// Retry a stuck PENDING request if under the retry limit, otherwise fail it permanently.
     ///
     /// If `retry_count < max_retries`: atomically resets to CREATED, increments `retry_count`,
-    /// and creates a new outbox entry for backend-backed requests so a worker picks it up again.
-    /// Requests without a backend `proof_type` are left unchanged because the legacy outbox cannot
-    /// make progress on them.
+    /// and resets the worker job lifecycle so the request can be claimed again.
     /// If `retry_count >= max_retries`: transitions to FAILED.
     pub async fn retry_or_fail_stuck_request(
         &self,
@@ -562,7 +847,8 @@ impl ProofRequestRepo {
 
         let maybe_row = sqlx::query(
             r#"
-            SELECT retry_count, status, start_block_number, number_of_blocks_to_prove,
+            SELECT retry_count, status, job_status, lock_expires_at,
+                   start_block_number, number_of_blocks_to_prove,
                    sequence_window, proof_type, prover_address, l1_head,
                    intermediate_root_interval
             FROM proof_requests
@@ -580,17 +866,19 @@ impl ProofRequestRepo {
         };
 
         let status_str: &str = row.get("status");
-        if status_str != ProofStatus::Pending.as_str() {
+        let job_status_str: &str = row.get("job_status");
+        let lock_expires_at: Option<chrono::DateTime<Utc>> = row.get("lock_expires_at");
+        let is_pending = status_str == ProofStatus::Pending.as_str();
+        let is_migration_parked_running = status_str == ProofStatus::Running.as_str()
+            && job_status_str == ProofJobStatus::Claimed.as_str()
+            && lock_expires_at.is_none();
+
+        if !is_pending && !is_migration_parked_running {
             tx.rollback().await?;
             return Ok(RetryOutcome::Skipped);
         }
 
         let retry_count: i32 = row.get("retry_count");
-        let proof_type = row.get::<Option<&str>, _>("proof_type");
-        if proof_type.is_none() {
-            tx.rollback().await?;
-            return Ok(RetryOutcome::Unsupported);
-        }
 
         // Fail any active sessions before resetting so the retried run cannot collide with
         // `idx_proof_sessions_request_type_active_unique`. No-op on the normal reaper path,
@@ -613,29 +901,43 @@ impl ProofRequestRepo {
         .await?;
 
         if retry_count >= max_retries {
-            sqlx::query(
+            let columns = PROOF_JOB_RETURNING_COLUMNS;
+            let sql = format!(
                 r#"
                 UPDATE proof_requests
                 SET status = $1,
+                    job_status = 'FAILED',
                     error_message = $2,
-                    completed_at = NOW()
+                    completed_at = NOW(),
+                    worker_id = NULL,
+                    lock_id = NULL,
+                    lock_expires_at = NULL,
+                    claimed_at = NULL,
+                    last_heartbeat_at = NULL
                 WHERE id = $3
+                RETURNING {columns}
                 "#,
-            )
-            .bind(ProofStatus::Failed.as_str())
-            .bind(format!("{error_message} (max retries exceeded after {retry_count} attempts)"))
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
+            );
+
+            let row = sqlx::query(&sql)
+                .bind(ProofStatus::Failed.as_str())
+                .bind(format!(
+                    "{error_message} (max retries exceeded after {retry_count} attempts)"
+                ))
+                .bind(id)
+                .fetch_one(&mut *tx)
+                .await?;
+            let job = row_to_proof_job(&row)?;
 
             tx.commit().await?;
-            return Ok(RetryOutcome::PermanentlyFailed);
+            return Ok(RetryOutcome::PermanentlyFailed(Box::new(job)));
         }
 
         sqlx::query(
             r#"
             UPDATE proof_requests
             SET status = $1,
+                job_status = 'PENDING',
                 retry_count = retry_count + 1,
                 error_message = NULL,
                 stark_receipt = NULL,
@@ -643,7 +945,13 @@ impl ProofRequestRepo {
                 result_payload = NULL,
                 submitted_by_worker_id = NULL,
                 submitted_lock_id = NULL,
-                completed_at = NULL
+                completed_at = NULL,
+                worker_id = NULL,
+                lock_id = NULL,
+                lock_expires_at = NULL,
+                claimed_at = NULL,
+                last_heartbeat_at = NULL,
+                attempt = 0
             WHERE id = $2
             "#,
         )
@@ -651,46 +959,6 @@ impl ProofRequestRepo {
         .bind(id)
         .execute(&mut *tx)
         .await?;
-
-        // Copy the most recent outbox entry for this request. If the outbox was
-        // already cleaned up (0 rows), reconstruct request_params from the
-        // proof_request row we hold under FOR UPDATE.
-        let outbox_copy = sqlx::query(
-            r#"
-            INSERT INTO proof_request_outbox (proof_request_id, request_params)
-            SELECT proof_request_id, request_params
-            FROM proof_request_outbox
-            WHERE proof_request_id = $1
-            ORDER BY sequence_id DESC
-            LIMIT 1
-            "#,
-        )
-        .bind(id)
-        .execute(&mut *tx)
-        .await?;
-
-        if outbox_copy.rows_affected() == 0 {
-            let request_params = build_outbox_params(
-                row.get::<i64, _>("start_block_number"),
-                row.get::<i64, _>("number_of_blocks_to_prove"),
-                row.get::<Option<i64>, _>("sequence_window"),
-                proof_type,
-                row.get::<Option<&str>, _>("prover_address"),
-                row.get::<Option<&str>, _>("l1_head"),
-                row.get::<Option<i64>, _>("intermediate_root_interval"),
-            );
-
-            sqlx::query(
-                r#"
-                INSERT INTO proof_request_outbox (proof_request_id, request_params)
-                VALUES ($1, $2)
-                "#,
-            )
-            .bind(id)
-            .bind(&request_params)
-            .execute(&mut *tx)
-            .await?;
-        }
 
         tx.commit().await?;
         Ok(RetryOutcome::Retried)
@@ -872,6 +1140,199 @@ impl ProofRequestRepo {
         rows.iter().map(row_to_proof_session).collect()
     }
 
+    /// Get the active (`SUBMITTING` or `RUNNING`) backend session for a public
+    /// proof `session_id` and `session_type`, so a worker can resume an in-flight
+    /// backend job instead of starting a new one. Migration `009`'s partial unique
+    /// index guarantees at most one active row per `(proof_request_id, session_type)`.
+    pub async fn get_active_session(
+        &self,
+        session_id: &str,
+        session_type: SessionType,
+    ) -> Result<Option<ProofSession>> {
+        let session_id = canonical_session_id(session_id)
+            .map_err(|e| sqlx::Error::InvalidArgument(e.to_string()))?;
+
+        let row = sqlx::query(
+            r#"
+            SELECT ps.id, ps.proof_request_id, ps.session_type, ps.backend_session_id,
+                   ps.status, ps.error_message, ps.metadata, ps.created_at, ps.completed_at
+            FROM proof_sessions ps
+            JOIN proof_requests pr ON pr.id = ps.proof_request_id
+            WHERE COALESCE(pr.session_id, pr.id::text) = $1
+              AND ps.session_type = $2
+              AND ps.status IN ('SUBMITTING', 'RUNNING')
+            "#,
+        )
+        .bind(&session_id)
+        .bind(session_type.as_str())
+        .fetch_optional(&self.pool)
+        .await?;
+
+        row.map(|r| row_to_proof_session(&r)).transpose()
+    }
+
+    /// Record (insert or update) the backend session for a claimed worker job.
+    ///
+    /// Authorized via the worker fencing token like [`Self::heartbeat_proof_job`],
+    /// then upserts the single active `(proof_request_id, session_type)` row
+    /// guarded by migration `009`'s partial unique index.
+    pub async fn record_worker_proof_session(
+        &self,
+        req: WorkerSessionUpsert,
+    ) -> Result<RecordSessionOutcome> {
+        if req.status.is_terminal() {
+            return Ok(RecordSessionOutcome::TerminalSessionStatus);
+        }
+
+        let session_id = canonical_session_id(&req.session_id)
+            .map_err(|e| sqlx::Error::InvalidArgument(e.to_string()))?;
+
+        // Captured before the `FOR UPDATE` read, which can block under contention,
+        // so the expiry comparison can't drift past `lock_expires_at` while waiting.
+        let now = Utc::now();
+        let mut tx = self.pool.begin().await?;
+
+        let claim = sqlx::query(
+            r#"
+            SELECT id, job_status, lock_id, worker_id, lock_expires_at
+            FROM proof_requests
+            WHERE COALESCE(session_id, id::text) = $1
+            FOR UPDATE
+            "#,
+        )
+        .bind(&session_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        let Some(claim) = claim else {
+            return Ok(RecordSessionOutcome::NotFound);
+        };
+
+        let proof_request_id: Uuid = claim.get("id");
+        let job_status_str: &str = claim.get("job_status");
+        let job_status = ProofJobStatus::try_from(job_status_str).map_err(|e| {
+            sqlx::Error::Protocol(format!("Unknown job_status '{job_status_str}': {e}"))
+        })?;
+        let lock_id: Option<Uuid> = claim.get("lock_id");
+        let worker_id: Option<String> = claim.get("worker_id");
+        let lock_expires_at: Option<chrono::DateTime<Utc>> = claim.get("lock_expires_at");
+
+        match ClaimAuth::classify(
+            JobLockState {
+                status: job_status,
+                lock_id,
+                worker_id: worker_id.as_deref(),
+                lock_expires_at,
+            },
+            req.lock_id,
+            &req.worker_id,
+            now,
+        ) {
+            ClaimAuth::Authorized => {}
+            ClaimAuth::Terminal => return Ok(RecordSessionOutcome::Terminal),
+            ClaimAuth::NotClaimed => return Ok(RecordSessionOutcome::NotClaimed),
+            ClaimAuth::StaleLock => return Ok(RecordSessionOutcome::StaleLock),
+            ClaimAuth::Expired => return Ok(RecordSessionOutcome::Expired),
+        }
+
+        let existing_backend_sessions = sqlx::query(
+            r#"
+            SELECT id, proof_request_id, session_type, backend_session_id,
+                   status, error_message, metadata, created_at, completed_at
+            FROM proof_sessions
+            WHERE proof_request_id = $1
+              AND session_type = $2
+              AND backend_session_id = $3
+            ORDER BY id DESC
+            FOR UPDATE
+            "#,
+        )
+        .bind(proof_request_id)
+        .bind(req.session_type.as_str())
+        .bind(&req.backend_session_id)
+        .fetch_all(&mut *tx)
+        .await?;
+
+        for row in existing_backend_sessions {
+            let session = row_to_proof_session(&row)?;
+            if session.status.is_terminal() {
+                return Ok(RecordSessionOutcome::TerminalBackendSession(session));
+            }
+        }
+
+        // The proof request row lock serializes worker writers, while this
+        // session row lock prevents pollers from terminalizing the selected row
+        // before the update below.
+        let active_id: Option<i64> = sqlx::query(
+            r#"
+            SELECT id
+            FROM proof_sessions
+            WHERE proof_request_id = $1
+              AND session_type = $2
+              AND status IN ('SUBMITTING', 'RUNNING')
+            FOR UPDATE
+            "#,
+        )
+        .bind(proof_request_id)
+        .bind(req.session_type.as_str())
+        .fetch_optional(&mut *tx)
+        .await?
+        .map(|r| r.get("id"));
+
+        let row = if let Some(active_id) = active_id {
+            sqlx::query(
+                r#"
+                UPDATE proof_sessions
+                SET backend_session_id = $1,
+                    status = $2,
+                    error_message = $4
+                WHERE id = $3
+                  AND status IN ('SUBMITTING', 'RUNNING')
+                RETURNING id, proof_request_id, session_type, backend_session_id,
+                          status, error_message, metadata, created_at, completed_at
+                "#,
+            )
+            .bind(&req.backend_session_id)
+            .bind(req.status.as_str())
+            .bind(active_id)
+            .bind(&req.error_message)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(|| {
+                sqlx::Error::Protocol(
+                    "active proof session status changed between SELECT FOR UPDATE and UPDATE"
+                        .into(),
+                )
+            })?
+        } else {
+            sqlx::query(
+                r#"
+                INSERT INTO proof_sessions (
+                    proof_request_id, session_type, backend_session_id, status, error_message,
+                    metadata, completed_at
+                )
+                VALUES (
+                    $1, $2, $3, $4, $5, NULL, NULL
+                )
+                RETURNING id, proof_request_id, session_type, backend_session_id,
+                          status, error_message, metadata, created_at, completed_at
+                "#,
+            )
+            .bind(proof_request_id)
+            .bind(req.session_type.as_str())
+            .bind(&req.backend_session_id)
+            .bind(req.status.as_str())
+            .bind(&req.error_message)
+            .fetch_one(&mut *tx)
+            .await?
+        };
+
+        let session = row_to_proof_session(&row)?;
+        tx.commit().await?;
+
+        Ok(RecordSessionOutcome::Recorded(session))
+    }
+
     /// Get all running sessions (for polling)
     pub async fn get_running_sessions(&self) -> Result<Vec<ProofSession>> {
         let rows = sqlx::query(
@@ -914,8 +1375,9 @@ impl ProofRequestRepo {
         rows.iter().map(row_to_proof_request).collect()
     }
 
-    /// Get proof requests that are stuck in PENDING without a running session.
-    /// These are likely orphaned due to crashes before session creation.
+    /// Get proof requests that are stuck in PENDING without a running session,
+    /// or migration-parked RUNNING requests that were never claimed by a worker.
+    /// PENDING requests are likely orphaned due to crashes before session creation.
     /// Only checks for active (RUNNING) sessions so that retried requests
     /// with old COMPLETED/FAILED sessions are still detected as stuck.
     pub async fn get_stuck_requests(&self, stuck_timeout_mins: i32) -> Result<Vec<ProofRequest>> {
@@ -931,13 +1393,21 @@ impl ProofRequestRepo {
                 pr.intermediate_root_interval,
                 pr.created_at, pr.updated_at, pr.completed_at, pr.retry_count
             FROM proof_requests pr
-            WHERE pr.status = 'PENDING'
-              AND pr.proof_type IS NOT NULL
-              AND pr.updated_at < NOW() - INTERVAL '1 minute' * $1
-              AND NOT EXISTS (
-                  SELECT 1 FROM proof_sessions ps
-                  WHERE ps.proof_request_id = pr.id
-                    AND ps.status IN ('SUBMITTING', 'RUNNING')
+            WHERE pr.updated_at < NOW() - INTERVAL '1 minute' * $1
+              AND (
+                  (
+                      pr.status = 'PENDING'
+                      AND NOT EXISTS (
+                          SELECT 1 FROM proof_sessions ps
+                          WHERE ps.proof_request_id = pr.id
+                            AND ps.status IN ('SUBMITTING', 'RUNNING')
+                      )
+                  )
+                  OR (
+                      pr.status = 'RUNNING'
+                      AND pr.job_status = 'CLAIMED'
+                      AND pr.lock_expires_at IS NULL
+                  )
               )
             ORDER BY pr.created_at ASC
             "#,
@@ -1275,109 +1745,6 @@ impl ProofRequestRepo {
 
         Ok((rows, count.0.max(0) as u64))
     }
-
-    // ========== Outbox Methods ==========
-
-    /// Create an outbox entry for background task processing.
-    /// This should be called in the same transaction as creating the proof request.
-    pub async fn create_outbox_entry(&self, entry: CreateOutboxEntry) -> Result<i64> {
-        let row = sqlx::query(
-            r#"
-            INSERT INTO proof_request_outbox (proof_request_id, request_params)
-            VALUES ($1, $2)
-            RETURNING sequence_id
-            "#,
-        )
-        .bind(entry.proof_request_id)
-        .bind(&entry.request_params)
-        .fetch_one(&self.pool)
-        .await?;
-
-        let sequence_id: i64 = row.get("sequence_id");
-
-        Ok(sequence_id)
-    }
-
-    /// Get the next batch of unprocessed outbox entries.
-    ///
-    /// Returns entries in order by `sequence_id` (FIFO), excluding entries that
-    /// have exceeded `max_retries` attempts.
-    pub async fn get_unprocessed_outbox_entries(
-        &self,
-        limit: i64,
-        max_retries: i32,
-    ) -> Result<Vec<OutboxEntry>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT sequence_id, proof_request_id, request_params,
-                   processed, processed_at, retry_count, last_error, created_at
-            FROM proof_request_outbox
-            WHERE processed = FALSE
-              AND retry_count < $2
-            ORDER BY sequence_id ASC
-            LIMIT $1
-            "#,
-        )
-        .bind(limit)
-        .bind(max_retries)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(rows.iter().map(row_to_outbox_entry).collect())
-    }
-
-    /// Mark an outbox entry as processed
-    pub async fn mark_outbox_processed(&self, mark: MarkOutboxProcessed) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE proof_request_outbox
-            SET processed = TRUE,
-                processed_at = NOW()
-            WHERE sequence_id = $1
-            "#,
-        )
-        .bind(mark.sequence_id)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
-
-    /// Record an error for an outbox entry and increment retry count
-    pub async fn mark_outbox_error(&self, mark: MarkOutboxError) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE proof_request_outbox
-            SET retry_count = retry_count + 1,
-                last_error = $1
-            WHERE sequence_id = $2
-            "#,
-        )
-        .bind(&mark.error_message)
-        .bind(mark.sequence_id)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
-
-    /// Delete old processed outbox entries (for cleanup)
-    pub async fn delete_old_processed_outbox_entries(&self, older_than_days: i32) -> Result<u64> {
-        let result = sqlx::query(
-            r#"
-            DELETE FROM proof_request_outbox
-            WHERE processed = TRUE
-              AND processed_at < NOW() - INTERVAL '1 day' * $1
-            "#,
-        )
-        .bind(older_than_days)
-        .execute(&self.pool)
-        .await?;
-
-        let rows_deleted = result.rows_affected();
-
-        Ok(rows_deleted)
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -1403,10 +1770,8 @@ impl TryFrom<CreateProofRequest> for PreparedProofRequest {
     fn try_from(mut req: CreateProofRequest) -> std::result::Result<Self, Self::Error> {
         req.validate()?;
 
-        let (id, session_id) = canonical_request_ids(
-            req.session_id.as_deref().or(req.request_payload.session_id.as_deref()),
-        )?;
-        req.request_payload.session_id = Some(session_id.clone());
+        let (id, session_id) = canonical_request_ids(&req.session_id)?;
+        req.request_payload.session_id = session_id.clone();
 
         let start_block_number = i64::try_from(req.start_block_number).map_err(|_| {
             CreateProofRequestValidationError::ValueOutOfRange { field: "start_block_number" }
@@ -1456,19 +1821,14 @@ impl TryFrom<CreateProofRequest> for PreparedProofRequest {
 }
 
 fn canonical_request_ids(
-    session_id: Option<&str>,
+    session_id: &str,
 ) -> std::result::Result<(Uuid, String), CreateProofRequestValidationError> {
-    match session_id {
-        Some("") => Err(CreateProofRequestValidationError::EmptySessionId),
-        Some(session_id) => Uuid::parse_str(session_id).map_or_else(
-            |_| Ok((Uuid::new_v4(), session_id.to_owned())),
-            |id| Ok((id, id.to_string())),
-        ),
-        None => {
-            let id = Uuid::new_v4();
-            Ok((id, id.to_string()))
-        }
+    if session_id.is_empty() {
+        return Err(CreateProofRequestValidationError::EmptySessionId);
     }
+
+    Uuid::parse_str(session_id)
+        .map_or_else(|_| Ok((Uuid::new_v4(), session_id.to_owned())), |id| Ok((id, id.to_string())))
 }
 
 const fn validate_backend_proof_type(
@@ -1509,7 +1869,11 @@ fn proof_result_from_receipt_update(update: &UpdateReceipt) -> Option<ProtocolPr
     // stores SP1 receipts. Protocol-native completions carry their own ZK VM.
     if let Some(snark_receipt) = &update.snark_receipt {
         return Some(ProtocolProofResult::SnarkGroth16(SnarkGroth16ProofResult {
-            proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: snark_receipt.clone().into() },
+            proof: ZkProofResult {
+                zk_vm: ZkVm::Sp1,
+                proof: snark_receipt.clone().into(),
+                execution_stats: None,
+            },
         }));
     }
 
@@ -1517,6 +1881,7 @@ fn proof_result_from_receipt_update(update: &UpdateReceipt) -> Option<ProtocolPr
         ProtocolProofResult::Compressed(ZkProofResult {
             zk_vm: ZkVm::Sp1,
             proof: stark_receipt.clone().into(),
+            execution_stats: None,
         })
     })
 }
@@ -1637,6 +2002,14 @@ fn strip_null_object_fields(value: &mut serde_json::Value) {
     }
 }
 
+fn ensure_protocol_session_id(value: &mut serde_json::Value, session_id: &str) {
+    if let serde_json::Value::Object(map) = value
+        && map.get("session_id").is_none_or(|value| value.is_null())
+    {
+        map.insert("session_id".to_owned(), serde_json::Value::String(session_id.to_owned()));
+    }
+}
+
 /// Helper function to convert a database row to `ProofRequest`
 fn row_to_proof_request(row: &sqlx::postgres::PgRow) -> Result<ProofRequest> {
     let id = row.get("id");
@@ -1673,7 +2046,7 @@ fn row_to_proof_request(row: &sqlx::postgres::PgRow) -> Result<ProofRequest> {
         .transpose()?
         .or_else(|| fallback_zk_vm_for_request(api_proof_type));
     let tee_kind = row.get::<Option<&str>, _>("tee_kind").map(parse_tee_kind).transpose()?;
-    let request_payload =
+    let mut request_payload =
         row.get::<Option<serde_json::Value>, _>("request_payload").unwrap_or_else(|| {
             ProtocolRequestPayloadParams {
                 session_id: &session_id,
@@ -1688,6 +2061,7 @@ fn row_to_proof_request(row: &sqlx::postgres::PgRow) -> Result<ProofRequest> {
             }
             .build()
         });
+    ensure_protocol_session_id(&mut request_payload, &session_id);
 
     Ok(ProofRequest {
         id,
@@ -1727,6 +2101,126 @@ fn parse_tee_kind(value: &str) -> Result<TeeKind> {
         .map_err(|e| sqlx::Error::Protocol(format!("Unknown tee_kind '{value}': {e}")))
 }
 
+/// Columns returned by the claim query.
+const PROOF_JOB_RETURNING_COLUMNS: &str = "id, COALESCE(session_id, id::text) AS session_id, \
+     request_payload, api_proof_type, zk_vm, tee_kind, \
+     start_block_number, number_of_blocks_to_prove, sequence_window, proof_type, \
+     stark_receipt, snark_receipt, result_payload, \
+     submitted_by_worker_id, submitted_lock_id, status, error_message, \
+     prover_address, l1_head, intermediate_root_interval, \
+     created_at, updated_at, completed_at, retry_count, \
+     job_status, worker_id, lock_id, lock_expires_at, claimed_at, attempt, last_heartbeat_at";
+
+/// Capability values bound (as `$5`) into the claim query.
+///
+/// TEE workers contribute their `tee_kinds`, ZK workers their `zk_vms`. An empty
+/// list binds `ANY('{}')`, which matches no rows, so a worker that advertises no
+/// matching capabilities simply claims nothing.
+fn worker_capability_values(req: &ClaimProofJob) -> Vec<String> {
+    match req.api_proof_type {
+        ApiProofType::Tee => req.tee_kinds.iter().map(|kind| kind.as_str().to_owned()).collect(),
+        ApiProofType::Compressed | ApiProofType::SnarkGroth16 => {
+            req.zk_vms.iter().map(|vm| vm.as_str().to_owned()).collect()
+        }
+    }
+}
+
+/// Build the atomic claim query for a proof type.
+///
+/// The capability column (`tee_kind` for TEE, `zk_vm` for ZK) is hardcoded as a
+/// literal in each variant rather than interpolated from a value, so no
+/// caller-derived string can ever reach the SQL as a column name. The only
+/// interpolated token is the fixed [`PROOF_JOB_RETURNING_COLUMNS`] constant.
+fn claim_query(api_proof_type: ApiProofType) -> String {
+    let columns = PROOF_JOB_RETURNING_COLUMNS;
+    match api_proof_type {
+        ApiProofType::Tee => format!(
+            r#"
+            UPDATE proof_requests
+            SET job_status = 'CLAIMED',
+                status = 'RUNNING',
+                worker_id = $1,
+                lock_id = $2,
+                attempt = attempt + 1,
+                claimed_at = NOW(),
+                last_heartbeat_at = NOW(),
+                lock_expires_at = NOW() + ($3)::double precision * INTERVAL '1 second'
+            WHERE id = (
+                SELECT id FROM proof_requests
+                WHERE api_proof_type = $4
+                  AND tee_kind = ANY($5::text[])
+                  AND (
+                      job_status = 'PENDING'
+                      OR (job_status = 'CLAIMED' AND lock_expires_at < NOW() AND attempt < $6)
+                  )
+                ORDER BY start_block_number ASC, created_at ASC, id ASC
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1
+            )
+            RETURNING {columns}
+            "#,
+        ),
+        ApiProofType::Compressed | ApiProofType::SnarkGroth16 => format!(
+            r#"
+            UPDATE proof_requests
+            SET job_status = 'CLAIMED',
+                status = 'RUNNING',
+                worker_id = $1,
+                lock_id = $2,
+                attempt = attempt + 1,
+                claimed_at = NOW(),
+                last_heartbeat_at = NOW(),
+                lock_expires_at = NOW() + ($3)::double precision * INTERVAL '1 second'
+            WHERE id = (
+                SELECT id FROM proof_requests
+                WHERE api_proof_type = $4
+                  AND zk_vm = ANY($5::text[])
+                  AND (
+                      job_status = 'PENDING'
+                      OR (job_status = 'CLAIMED' AND lock_expires_at < NOW() AND attempt < $6)
+                  )
+                ORDER BY start_block_number ASC, created_at ASC, id ASC
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1
+            )
+            RETURNING {columns}
+            "#,
+        ),
+    }
+}
+
+/// Convert a database row into a [`ProofJob`], reusing [`row_to_proof_request`]
+/// for the requester fields (including protocol payload synthesis for legacy rows).
+fn row_to_proof_job(row: &sqlx::postgres::PgRow) -> Result<ProofJob> {
+    let base = row_to_proof_request(row)?;
+
+    let job_status_str: &str = row.get("job_status");
+    let job_status = ProofJobStatus::try_from(job_status_str).map_err(|e| {
+        sqlx::Error::Protocol(format!("Unknown job_status '{job_status_str}': {e}"))
+    })?;
+
+    Ok(ProofJob {
+        id: base.id,
+        session_id: base.session_id,
+        request_payload: base.request_payload,
+        api_proof_type: base.api_proof_type,
+        zk_vm: base.zk_vm,
+        tee_kind: base.tee_kind,
+        job_status,
+        attempt: row.get("attempt"),
+        worker_id: row.get("worker_id"),
+        lock_id: row.get("lock_id"),
+        lock_expires_at: row.get("lock_expires_at"),
+        claimed_at: row.get("claimed_at"),
+        last_heartbeat_at: row.get("last_heartbeat_at"),
+        error_message: base.error_message,
+        result_payload: base.result_payload,
+        created_at: base.created_at,
+        updated_at: base.updated_at,
+        completed_at: base.completed_at,
+    })
+}
+
 /// Helper function to convert a database row to `ProofSession`
 fn row_to_proof_session(row: &sqlx::postgres::PgRow) -> Result<ProofSession> {
     let status_str: &str = row.get("status");
@@ -1754,7 +2248,7 @@ fn row_to_proof_session(row: &sqlx::postgres::PgRow) -> Result<ProofSession> {
 
 /// Incoming fields compared to a locked `proof_requests` row for idempotency checks.
 #[derive(Debug, Clone)]
-struct CreateOutboxRequestParams<'a> {
+struct CreateRequestParams<'a> {
     request_payload: &'a serde_json::Value,
     api_proof_type: &'a str,
     zk_vm: Option<&'a str>,
@@ -1768,9 +2262,25 @@ struct CreateOutboxRequestParams<'a> {
     intermediate_root_interval: Option<i64>,
 }
 
-impl CreateOutboxRequestParams<'_> {
+impl CreateRequestParams<'_> {
     /// First field name that disagrees with `row`, or `None`. Stable for [`CreateProofRequestError::IdCollision`].
     fn first_mismatch(&self, row: &sqlx::postgres::PgRow) -> Option<&'static str> {
+        self.first_mismatch_with(row, RequestMismatchMode::Strict)
+    }
+
+    /// First non-L1-head field name that disagrees with `row`, or `None`.
+    fn first_mismatch_allowing_l1_head_replacement(
+        &self,
+        row: &sqlx::postgres::PgRow,
+    ) -> Option<&'static str> {
+        self.first_mismatch_with(row, RequestMismatchMode::AllowL1HeadReplacement)
+    }
+
+    fn first_mismatch_with(
+        &self,
+        row: &sqlx::postgres::PgRow,
+        mode: RequestMismatchMode,
+    ) -> Option<&'static str> {
         if row.get::<i64, _>("start_block_number") != self.start_block_number {
             return Some("start_block_number");
         }
@@ -1786,7 +2296,9 @@ impl CreateOutboxRequestParams<'_> {
         if row.get::<Option<&str>, _>("prover_address") != self.prover_address {
             return Some("prover_address");
         }
-        if row.get::<Option<&str>, _>("l1_head") != self.l1_head {
+        if mode == RequestMismatchMode::Strict
+            && row.get::<Option<&str>, _>("l1_head") != self.l1_head
+        {
             return Some("l1_head");
         }
         if row.get::<Option<i64>, _>("intermediate_root_interval")
@@ -1810,7 +2322,7 @@ impl CreateOutboxRequestParams<'_> {
             return Some("tee_kind");
         }
         if let Some(request_payload) = row.get::<Option<serde_json::Value>, _>("request_payload")
-            && request_payload != *self.request_payload
+            && !request_payload_matches(&request_payload, self.request_payload, mode)
         {
             return Some("request_payload");
         }
@@ -1818,42 +2330,42 @@ impl CreateOutboxRequestParams<'_> {
     }
 }
 
-/// Build the canonical JSON payload for outbox entries.
-///
-/// Both [`ProofRequestRepo::create_with_outbox`] and
-/// [`ProofRequestRepo::retry_or_fail_stuck_request`] must produce the same
-/// shape so the downstream worker can parse either identically.
-fn build_outbox_params(
-    start_block_number: i64,
-    number_of_blocks_to_prove: i64,
-    sequence_window: Option<i64>,
-    proof_type: Option<&str>,
-    prover_address: Option<&str>,
-    l1_head: Option<&str>,
-    intermediate_root_interval: Option<i64>,
-) -> serde_json::Value {
-    serde_json::json!({
-        "start_block_number": start_block_number,
-        "number_of_blocks_to_prove": number_of_blocks_to_prove,
-        "sequence_window": sequence_window,
-        "proof_type": proof_type,
-        "prover_address": prover_address,
-        "l1_head": l1_head,
-        "intermediate_root_interval": intermediate_root_interval,
-    })
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum RequestMismatchMode {
+    Strict,
+    AllowL1HeadReplacement,
 }
 
-/// Helper function to convert a database row to `OutboxEntry`
-fn row_to_outbox_entry(row: &sqlx::postgres::PgRow) -> OutboxEntry {
-    OutboxEntry {
-        sequence_id: row.get("sequence_id"),
-        proof_request_id: row.get("proof_request_id"),
-        request_params: row.get("request_params"),
-        processed: row.get("processed"),
-        processed_at: row.get("processed_at"),
-        retry_count: row.get("retry_count"),
-        last_error: row.get("last_error"),
-        created_at: row.get("created_at"),
+fn request_payload_matches(
+    existing: &serde_json::Value,
+    incoming: &serde_json::Value,
+    mode: RequestMismatchMode,
+) -> bool {
+    match mode {
+        RequestMismatchMode::Strict => existing == incoming,
+        RequestMismatchMode::AllowL1HeadReplacement => {
+            payload_without_l1_head_fields(existing) == payload_without_l1_head_fields(incoming)
+        }
+    }
+}
+
+fn payload_without_l1_head_fields(value: &serde_json::Value) -> serde_json::Value {
+    let mut value = value.clone();
+    remove_l1_head_fields(&mut value);
+    value
+}
+
+fn remove_l1_head_fields(value: &mut serde_json::Value) {
+    if let Some(map) =
+        value.pointer_mut("/request/payload").and_then(serde_json::Value::as_object_mut)
+    {
+        map.remove("l1_head");
+    }
+    if let Some(map) =
+        value.pointer_mut("/request/payload/proof").and_then(serde_json::Value::as_object_mut)
+    {
+        map.remove("l1_head");
+        map.remove("l1_head_number");
     }
 }
 
@@ -1870,7 +2382,7 @@ mod tests {
     fn prepared_request_uses_uuid_session_id_and_builds_protocol_payload() {
         let session_id = Uuid::new_v4();
         let create = CreateProofRequest::new(ProtocolProofRequest {
-            session_id: Some(session_id.to_string()),
+            session_id: session_id.to_string(),
             request: ProofRequestKind::Compressed(ZkProofRequest {
                 start_block_number: 100,
                 number_of_blocks_to_prove: 5,
@@ -1891,7 +2403,7 @@ mod tests {
         let protocol_request: ProtocolProofRequest =
             serde_json::from_value(prepared.request_payload).expect("payload should deserialize");
         let session_id = session_id.to_string();
-        assert_eq!(protocol_request.session_id.as_deref(), Some(session_id.as_str()));
+        assert_eq!(protocol_request.session_id, session_id);
         let ProofRequestKind::Compressed(zk_request) = protocol_request.request else {
             panic!("expected compressed protocol request");
         };
@@ -1905,7 +2417,7 @@ mod tests {
     #[test]
     fn prepared_request_omits_absent_optional_protocol_payload_fields() {
         let create = CreateProofRequest::new(ProtocolProofRequest {
-            session_id: Some(Uuid::new_v4().to_string()),
+            session_id: Uuid::new_v4().to_string(),
             request: ProofRequestKind::Compressed(ZkProofRequest {
                 start_block_number: 100,
                 number_of_blocks_to_prove: 5,
@@ -1954,7 +2466,7 @@ mod tests {
         let protocol_request: ProtocolProofRequest =
             serde_json::from_value(payload).expect("fallback TEE payload should deserialize");
 
-        assert_eq!(protocol_request.session_id.as_deref(), Some("tee-session"));
+        assert_eq!(protocol_request.session_id, "tee-session");
         let ProofRequestKind::Tee(request) = protocol_request.request else {
             panic!("expected TEE protocol request");
         };
@@ -1966,7 +2478,7 @@ mod tests {
     #[test]
     fn prepared_request_represents_tee_protocol_request() {
         let create = CreateProofRequest::new(ProtocolProofRequest {
-            session_id: Some("tee-session".to_owned()),
+            session_id: "tee-session".to_owned(),
             request: ProofRequestKind::Tee(TeeProofRequest {
                 proof: Default::default(),
                 tee_kind: ProtocolTeeKind::AwsNitro,
@@ -1984,14 +2496,84 @@ mod tests {
 
         let protocol_request: ProtocolProofRequest =
             serde_json::from_value(prepared.request_payload).expect("payload should deserialize");
-        assert_eq!(protocol_request.session_id.as_deref(), Some("tee-session"));
+        assert_eq!(protocol_request.session_id, "tee-session");
         assert!(matches!(protocol_request.request, ProofRequestKind::Tee(_)));
+    }
+
+    #[test]
+    fn failed_requeue_payload_match_allows_only_l1_head_fields() {
+        let mut old = tee_protocol_request("tee-session");
+        let mut new_l1_head = tee_protocol_request("tee-session");
+        let mut new_image_hash = tee_protocol_request("tee-session");
+
+        let ProofRequestKind::Tee(request) = &mut old.request else {
+            panic!("expected TEE request");
+        };
+        request.proof.l1_head =
+            "0x0101010101010101010101010101010101010101010101010101010101010101".parse().unwrap();
+        request.proof.l1_head_number = 1;
+
+        let ProofRequestKind::Tee(request) = &mut new_l1_head.request else {
+            panic!("expected TEE request");
+        };
+        request.proof.l1_head =
+            "0x0202020202020202020202020202020202020202020202020202020202020202".parse().unwrap();
+        request.proof.l1_head_number = 2;
+
+        let ProofRequestKind::Tee(request) = &mut new_image_hash.request else {
+            panic!("expected TEE request");
+        };
+        request.proof.image_hash =
+            "0x0303030303030303030303030303030303030303030303030303030303030303".parse().unwrap();
+
+        let old = prepared_payload(old);
+        let new_l1_head = prepared_payload(new_l1_head);
+        let new_image_hash = prepared_payload(new_image_hash);
+        let mut old_unrelated_l1_head = old.clone();
+        let mut new_unrelated_l1_head = new_l1_head.clone();
+
+        old_unrelated_l1_head["request"]["payload"]["metadata"] =
+            serde_json::json!({ "l1_head": "old" });
+        new_unrelated_l1_head["request"]["payload"]["metadata"] =
+            serde_json::json!({ "l1_head": "new" });
+
+        assert!(request_payload_matches(
+            &old,
+            &new_l1_head,
+            RequestMismatchMode::AllowL1HeadReplacement,
+        ));
+        assert!(!request_payload_matches(&old, &new_l1_head, RequestMismatchMode::Strict,));
+        assert!(!request_payload_matches(
+            &old,
+            &new_image_hash,
+            RequestMismatchMode::AllowL1HeadReplacement,
+        ));
+        assert!(!request_payload_matches(
+            &old_unrelated_l1_head,
+            &new_unrelated_l1_head,
+            RequestMismatchMode::AllowL1HeadReplacement,
+        ));
+    }
+
+    fn tee_protocol_request(session_id: &str) -> ProtocolProofRequest {
+        ProtocolProofRequest {
+            session_id: session_id.to_owned(),
+            request: ProofRequestKind::Tee(TeeProofRequest {
+                proof: Default::default(),
+                tee_kind: ProtocolTeeKind::AwsNitro,
+            }),
+        }
+    }
+
+    fn prepared_payload(request: ProtocolProofRequest) -> serde_json::Value {
+        let create = CreateProofRequest::new(request).expect("request should validate");
+        PreparedProofRequest::try_from(create).expect("request should prepare").request_payload
     }
 
     #[test]
     fn prepared_request_rejects_unsupported_protocol_combination() {
         let mut create = CreateProofRequest::new(ProtocolProofRequest {
-            session_id: Some("bad-tee-session".to_owned()),
+            session_id: "bad-tee-session".to_owned(),
             request: ProofRequestKind::Tee(TeeProofRequest {
                 proof: Default::default(),
                 tee_kind: ProtocolTeeKind::AwsNitro,
@@ -2009,7 +2591,7 @@ mod tests {
     #[test]
     fn prepared_request_rejects_database_range_overflow() {
         let create = CreateProofRequest::new(ProtocolProofRequest {
-            session_id: Some(Uuid::new_v4().to_string()),
+            session_id: Uuid::new_v4().to_string(),
             request: ProofRequestKind::Compressed(ZkProofRequest {
                 start_block_number: (i64::MAX as u64) + 1,
                 number_of_blocks_to_prove: 5,
@@ -2050,7 +2632,8 @@ mod tests {
             result,
             ProtocolProofResult::Compressed(ZkProofResult {
                 zk_vm: ZkVm::Sp1,
-                proof: vec![1, 2, 3].into()
+                proof: vec![1, 2, 3].into(),
+                execution_stats: None,
             })
         );
     }
@@ -2091,7 +2674,11 @@ mod tests {
         assert_eq!(
             result,
             ProtocolProofResult::SnarkGroth16(SnarkGroth16ProofResult {
-                proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: vec![4, 5, 6].into() }
+                proof: ZkProofResult {
+                    zk_vm: ZkVm::Sp1,
+                    proof: vec![4, 5, 6].into(),
+                    execution_stats: None
+                }
             })
         );
     }

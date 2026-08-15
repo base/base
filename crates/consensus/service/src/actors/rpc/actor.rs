@@ -11,6 +11,7 @@ use base_consensus_rpc::{
 };
 use base_consensus_safedb::SafeDBReader;
 use base_health::EthHealthCheckLayer;
+use base_upgrade_signal::UpgradeSignalRefresher;
 use derive_more::Constructor;
 use http::StatusCode;
 use jsonrpsee::{
@@ -36,6 +37,7 @@ where
     engine_rpc_client: EngineRpcClient_,
     sequencer_admin_rpc_client: Option<SequencerAdminApiClient_>,
     safe_db_reader: Arc<dyn SafeDBReader>,
+    upgrade_signal_refresher: Option<UpgradeSignalRefresher>,
 }
 
 /// The communication context used by the RPC actor.
@@ -120,8 +122,11 @@ where
         if self.config.admin_enabled()
             && let Some(network_admin) = network_admin
         {
-            modules
-                .merge(AdminRpc::new(self.sequencer_admin_rpc_client, network_admin).into_rpc())?;
+            modules.merge(
+                AdminRpc::new(self.sequencer_admin_rpc_client, network_admin)
+                    .with_upgrade_signal_refresher(self.upgrade_signal_refresher)
+                    .into_rpc(),
+            )?;
         }
 
         // Create context for communication between actors.

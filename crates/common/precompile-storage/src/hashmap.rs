@@ -23,6 +23,7 @@ pub struct HashMapStorageProvider {
     timestamp: U256,
     beneficiary: Address,
     block_number: u64,
+    origin: Address,
     caller: Address,
     call_value: U256,
     is_static: bool,
@@ -68,6 +69,7 @@ impl HashMapStorageProvider {
             ),
             beneficiary: Address::ZERO,
             block_number: 0,
+            origin: Address::ZERO,
             caller: Address::ZERO,
             call_value: U256::ZERO,
             is_static: false,
@@ -99,27 +101,23 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         self.block_number
     }
 
+    fn origin(&self) -> Address {
+        self.origin
+    }
+
     fn set_code(&mut self, address: Address, code: Bytecode) -> Result<(), BasePrecompileError> {
         if self.is_static {
             return Err(BasePrecompileError::StaticCallViolation);
         }
 
         let code_len = code.len();
-        let is_new_account = self.accounts.get(&address).is_none_or(AccountInfo::is_empty);
-        let has_empty_code =
-            self.accounts.get(&address).is_none_or(|info| info.is_empty_code_hash());
         self.deduct_gas(self.gas_params.code_deposit_cost(code_len))?;
 
-        if has_empty_code {
+        let is_new_code = self.accounts.get(&address).is_none_or(|info| info.is_empty_code_hash());
+        if is_new_code {
             self.deduct_gas(self.gas_params.create_cost())?;
             let num_words = code_len.div_ceil(32) as u64;
             self.deduct_gas(KECCAK256.saturating_add(KECCAK256WORD.saturating_mul(num_words)))?;
-        }
-        if is_new_account {
-            self.deduct_state_gas(self.gas_params.create_state_gas())?;
-        }
-        if has_empty_code {
-            self.deduct_state_gas(self.gas_params.code_deposit_state_gas(code_len))?;
         }
 
         let account = self.accounts.entry(address).or_default();
@@ -341,6 +339,11 @@ impl HashMapStorageProvider {
         self.call_value = value;
     }
 
+    /// Overrides the transaction origin (`tx.origin`) (test-utils only).
+    pub const fn set_origin(&mut self, origin: Address) {
+        self.origin = origin;
+    }
+
     /// Sets whether the current call is static (test-utils only).
     pub const fn set_static(&mut self, is_static: bool) {
         self.is_static = is_static;
@@ -414,6 +417,17 @@ mod tests {
 
     const ADDR: Address = Address::ZERO;
     const KEY: U256 = U256::ZERO;
+
+    #[test]
+    fn set_code_static_violation_before_state_gas_charge() {
+        let mut p = HashMapStorageProvider::new(1);
+        p.set_static(true);
+        let code = Bytecode::new_raw([0x60u8, 0x00].as_ref().into());
+
+        assert_eq!(p.set_code(Address::ZERO, code), Err(BasePrecompileError::StaticCallViolation),);
+        // No state gas must have been charged.
+        assert_eq!(p.state_gas_used(), 0);
+    }
 
     #[test]
     fn refund_gas_accumulates_positive() {

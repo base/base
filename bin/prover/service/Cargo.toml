@@ -1,0 +1,37 @@
+[package]
+name = "base-prover-service-bin"
+description = "Prover service JSON-RPC binary"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "base-prover-service"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+# Workspace – prover service
+base-prover-service.workspace = true
+base-prover-service-db.workspace = true
+base-prover-service-protocol = { workspace = true, features = ["rpc-server"] }
+
+# CLI
+eyre.workspace = true
+base-cli-utils.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
+serde = { workspace = true, features = ["derive", "std"] }
+
+# RPC
+jsonrpsee = { workspace = true, features = ["server"] }
+
+# Async
+tokio = { workspace = true, features = ["full"] }
+
+# Tracing
+tracing.workspace = true

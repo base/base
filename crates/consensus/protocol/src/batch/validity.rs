@@ -42,11 +42,13 @@ pub enum BatchDropReason {
     DepositTransaction,
     /// EIP-7702 transaction included before Isthmus activation.
     Eip7702PreIsthmus,
+    /// EIP-8130 transaction included before Cobalt activation.
+    Eip8130PreCobalt,
     /// Non-empty batch in Jovian transition block.
     NonEmptyTransitionBlock,
 
     // === Span batch specific drops ===
-    /// Span batch received before Delta hard fork.
+    /// Span batch received before Delta upgrade.
     SpanBatchPreDelta,
     /// Span batch has no new blocks after safe head (Holocene inactive).
     SpanBatchNoNewBlocksPreHolocene,
@@ -93,8 +95,9 @@ impl core::fmt::Display for BatchDropReason {
             Self::EmptyTransaction => write!(f, "batch contains empty transaction"),
             Self::DepositTransaction => write!(f, "batch contains deposit transaction"),
             Self::Eip7702PreIsthmus => write!(f, "EIP-7702 transaction before Isthmus activation"),
+            Self::Eip8130PreCobalt => write!(f, "EIP-8130 transaction before Cobalt activation"),
             Self::NonEmptyTransitionBlock => write!(f, "non-empty batch in transition block"),
-            Self::SpanBatchPreDelta => write!(f, "span batch received before Delta hard fork"),
+            Self::SpanBatchPreDelta => write!(f, "span batch received before Delta upgrade"),
             Self::SpanBatchNoNewBlocksPreHolocene => {
                 write!(f, "span batch has no new blocks after safe head")
             }

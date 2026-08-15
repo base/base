@@ -39,7 +39,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use alloy_consensus::TxEnvelope;
@@ -55,6 +55,8 @@ use alloy_provider::Provider;
 use alloy_rpc_types_eth::{TransactionReceipt, TransactionRequest};
 use alloy_transport::TransportError;
 use backon::{ConstantBuilder, Retryable};
+use base_runtime::{Runtime, RuntimeTimeout, TokioRuntime};
+use futures::StreamExt;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
@@ -155,15 +157,17 @@ impl BumpState {
 /// (nonce, gas, fees) are set manually on [`TransactionRequest`] without
 /// alloy fillers or `PendingTransactionBuilder`.
 #[derive(Debug, Clone)]
-pub struct SimpleTxManager<P> {
+pub struct SimpleTxManager<P, R = TokioRuntime> {
     /// RPC provider for chain queries and transaction submission.
     provider: P,
+    /// Runtime used for timers and spawned background tasks.
+    runtime: R,
     /// Wallet used for signing transactions.
     wallet: EthereumWallet,
     /// Validated runtime configuration.
     config: TxManagerConfig,
     /// Nonce manager for sequential nonce allocation.
-    nonce_manager: NonceManager<P>,
+    nonce_manager: NonceManager<P, R>,
     /// Chain ID for transaction construction.
     chain_id: u64,
     /// Shutdown flag shared across the manager and any spawned background
@@ -175,16 +179,10 @@ pub struct SimpleTxManager<P> {
     metrics: Arc<dyn TxMetrics>,
 }
 
-impl<P> SimpleTxManager<P>
+impl<P> SimpleTxManager<P, TokioRuntime>
 where
     P: Provider + Clone + Debug + Send + Sync + 'static,
 {
-    /// Maximum number of retry attempts for [`Self::prepare`].
-    pub const PREPARE_MAX_RETRIES: usize = 30;
-
-    /// Fixed delay between retry attempts in [`Self::prepare`].
-    pub const PREPARE_RETRY_DELAY: Duration = Duration::from_secs(2);
-
     /// Creates a new [`SimpleTxManager`] from a [`SignerConfig`].
     ///
     /// Builds the [`EthereumWallet`] from `signer_config`, then delegates
@@ -227,12 +225,62 @@ where
         chain_id: u64,
         metrics: Arc<dyn TxMetrics>,
     ) -> TxManagerResult<Self> {
+        Self::from_wallet_with_runtime(
+            TokioRuntime::new(),
+            provider,
+            wallet,
+            config,
+            chain_id,
+            metrics,
+        )
+        .await
+    }
+}
+
+impl<P, R> SimpleTxManager<P, R>
+where
+    P: Provider + Clone + Debug + Send + Sync + 'static,
+    R: Runtime,
+{
+    /// Maximum number of retry attempts for [`Self::prepare`].
+    pub const PREPARE_MAX_RETRIES: usize = 30;
+
+    /// Fixed delay between retry attempts in [`Self::prepare`].
+    pub const PREPARE_RETRY_DELAY: Duration = Duration::from_secs(2);
+
+    /// Creates a new [`SimpleTxManager`] with an injected runtime.
+    ///
+    /// This mirrors [`Self::new`] but lets deterministic tests control
+    /// timers and spawned tasks through `base-runtime`.
+    pub async fn new_with_runtime(
+        runtime: R,
+        provider: P,
+        signer_config: SignerConfig,
+        config: TxManagerConfig,
+        chain_id: u64,
+        metrics: Arc<dyn TxMetrics>,
+    ) -> TxManagerResult<Self> {
+        let wallet = signer_config.build_wallet()?;
+        Self::from_wallet_with_runtime(runtime, provider, wallet, config, chain_id, metrics).await
+    }
+
+    /// Creates a new [`SimpleTxManager`] from a pre-built wallet and runtime.
+    ///
+    /// See [`Self::from_wallet`] for the production Tokio-backed constructor.
+    pub async fn from_wallet_with_runtime(
+        runtime: R,
+        provider: P,
+        wallet: EthereumWallet,
+        config: TxManagerConfig,
+        chain_id: u64,
+        metrics: Arc<dyn TxMetrics>,
+    ) -> TxManagerResult<Self> {
         config.validate().map_err(|e| TxManagerError::InvalidConfig(e.to_string()))?;
 
         // Cross-validate chain_id against the provider to catch
         // misconfiguration early rather than failing at tx submission.
         let provider_chain_id =
-            tokio::time::timeout(config.network_timeout, provider.get_chain_id())
+            RuntimeTimeout::run(&runtime, config.network_timeout, provider.get_chain_id())
                 .await
                 .map_err(|_| TxManagerError::Rpc("get_chain_id timed out".into()))?
                 .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e))?;
@@ -244,9 +292,15 @@ where
         }
 
         let address = <EthereumWallet as NetworkWallet<Ethereum>>::default_signer_address(&wallet);
-        let nonce_manager = NonceManager::new(provider.clone(), address, config.network_timeout);
+        let nonce_manager = NonceManager::with_runtime(
+            runtime.clone(),
+            provider.clone(),
+            address,
+            config.network_timeout,
+        );
         Ok(Self {
             provider,
+            runtime,
             wallet,
             config,
             nonce_manager,
@@ -272,7 +326,7 @@ where
     }
 
     /// Returns a reference to the nonce manager.
-    pub const fn nonce_manager(&self) -> &NonceManager<P> {
+    pub const fn nonce_manager(&self) -> &NonceManager<P, R> {
         &self.nonce_manager
     }
 
@@ -481,17 +535,20 @@ where
     /// Returns [`TxManagerError::Rpc`] if any provider call fails.
     async fn suggest_gas_price_caps_for(&self, is_blob: bool) -> TxManagerResult<GasPriceCaps> {
         // Query tip cap, latest block, and (optionally) blob base fee concurrently.
-        let tip_fut = tokio::time::timeout(
+        let tip_fut = RuntimeTimeout::run(
+            &self.runtime,
             self.config.network_timeout,
             self.provider.get_max_priority_fee_per_gas(),
         );
-        let block_fut = tokio::time::timeout(
+        let block_fut = RuntimeTimeout::run(
+            &self.runtime,
             self.config.network_timeout,
             self.provider.get_block_by_number(BlockNumberOrTag::Latest),
         );
 
         let (tip_result, block_result, blob_fee_result) = if is_blob {
-            let blob_fut = tokio::time::timeout(
+            let blob_fut = RuntimeTimeout::run(
+                &self.runtime,
                 self.config.network_timeout,
                 self.provider.get_blob_base_fee(),
             );
@@ -746,7 +803,8 @@ where
         self.check_fee_limits(fee_cap, blob_fee_cap, &caps)?;
 
         // Step 4: Build TransactionRequest.
-        let from = self.sender_address();
+        let from =
+            <EthereumWallet as NetworkWallet<Ethereum>>::default_signer_address(&self.wallet);
         let mut tx_request = TransactionRequest::default()
             .with_max_fee_per_gas(fee_cap)
             .with_max_priority_fee_per_gas(tip_cap)
@@ -790,7 +848,8 @@ where
         // `max_fee_per_blob_gas` remain so intrinsic-gas accounting is
         // correct.
         let sidecar_stash = tx_request.sidecar.take();
-        let estimated = tokio::time::timeout(
+        let estimated = RuntimeTimeout::run(
+            &self.runtime,
             self.config.network_timeout,
             self.provider.estimate_gas(tx_request.clone()),
         )
@@ -920,16 +979,19 @@ where
 
         // Set mempool deadline if configured.
         if !self.config.tx_not_in_mempool_timeout.is_zero() {
-            send_state.set_mempool_deadline(Instant::now() + self.config.tx_not_in_mempool_timeout);
+            send_state.set_runtime_mempool_deadline(
+                self.runtime.now() + self.config.tx_not_in_mempool_timeout,
+            );
         }
 
-        let start = Instant::now();
+        let start = self.runtime.now();
 
         // Wrap the event loop in a send timeout if configured.
         let result = if self.config.tx_send_timeout.is_zero() {
             self.send_event_loop(&candidate, &send_state, nonce_override).await
         } else {
-            tokio::time::timeout(
+            RuntimeTimeout::run(
+                &self.runtime,
                 self.config.tx_send_timeout,
                 self.send_event_loop(&candidate, &send_state, nonce_override),
             )
@@ -943,7 +1005,8 @@ where
             })
         };
 
-        let latency_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let latency_ms =
+            u64::try_from(self.runtime.now().saturating_sub(start).as_millis()).unwrap_or(u64::MAX);
         self.metrics.record_send_latency(latency_ms);
 
         if result.is_ok() {
@@ -1057,26 +1120,19 @@ where
         let (receipt_tx, mut receipt_rx) = mpsc::channel::<TransactionReceipt>(1);
 
         // Spawn background receipt polling for the initial tx hash.
-        Self::wait_for_tx(
-            Arc::clone(send_state),
-            self.provider.clone(),
-            bump.tx_hash,
-            self.config.clone(),
-            receipt_tx.clone(),
-            Arc::clone(&self.closed),
-        );
+        self.spawn_wait_for_tx(Arc::clone(send_state), bump.tx_hash, receipt_tx.clone());
 
         // Resubmission timer for fee bumping.
-        let mut bump_ticker = tokio::time::interval(self.config.resubmission_timeout);
+        let mut bump_ticker = self.runtime.interval(self.config.resubmission_timeout);
         // Consume the first immediate tick.
-        bump_ticker.tick().await;
+        bump_ticker.next().await;
 
         loop {
             // Check shutdown and critical errors before blocking.
             if self.is_closed() {
                 return Err(TxManagerError::ChannelClosed);
             }
-            if let Some(err) = send_state.critical_error() {
+            if let Some(err) = send_state.critical_error_at(self.runtime.now()) {
                 error!(error = %err, "critical error, aborting send");
                 return Err(err);
             }
@@ -1105,7 +1161,8 @@ where
                 }
                 // Reset the bump ticker so we get a full interval
                 // before the next timer-driven bump.
-                bump_ticker.reset();
+                bump_ticker = self.runtime.interval(self.config.resubmission_timeout);
+                bump_ticker.next().await;
                 continue;
             }
 
@@ -1133,7 +1190,7 @@ where
                         }
                     }
                 }
-                _ = bump_ticker.tick() => {}
+                _ = bump_ticker.next() => {}
             };
 
             // Bump tick fired — run fee bump logic.
@@ -1142,7 +1199,8 @@ where
             {
                 return Err(abort);
             }
-            bump_ticker.reset();
+            bump_ticker = self.runtime.interval(self.config.resubmission_timeout);
+            bump_ticker.next().await;
         }
     }
 
@@ -1276,14 +1334,7 @@ where
         );
 
         // Spawn a new receipt polling task for the bumped tx.
-        Self::wait_for_tx(
-            Arc::clone(send_state),
-            self.provider.clone(),
-            new_hash,
-            self.config.clone(),
-            receipt_tx.clone(),
-            Arc::clone(&self.closed),
-        );
+        self.spawn_wait_for_tx(Arc::clone(send_state), new_hash, receipt_tx.clone());
 
         Ok(BumpState::from_prepared(prepared, new_hash))
     }
@@ -1336,7 +1387,8 @@ where
         raw_tx: &Bytes,
         last_tx_hash: Option<B256>,
     ) -> TxManagerResult<B256> {
-        let result = tokio::time::timeout(
+        let result = RuntimeTimeout::run(
+            &self.runtime,
             self.config.network_timeout,
             self.provider.send_raw_transaction(raw_tx),
         )
@@ -1435,6 +1487,43 @@ where
         })
     }
 
+    /// Spawns a receipt polling task on the configured runtime.
+    fn spawn_wait_for_tx(
+        &self,
+        send_state: Arc<SendState>,
+        tx_hash: B256,
+        receipt_tx: mpsc::Sender<TransactionReceipt>,
+    ) {
+        let manager = self.clone();
+        self.runtime.spawn(async move {
+            debug!(tx_hash = %tx_hash, "starting receipt polling");
+
+            let receipt = manager.wait_mined_for_tx(&send_state, tx_hash).await;
+            if let Some(receipt) = receipt {
+                let _ = receipt_tx.send(receipt).await;
+            }
+
+            debug!(tx_hash = %tx_hash, "receipt polling ended");
+        });
+    }
+
+    /// Polls for a transaction receipt using this manager's configured runtime.
+    async fn wait_mined_for_tx(
+        &self,
+        send_state: &SendState,
+        tx_hash: B256,
+    ) -> Option<TransactionReceipt> {
+        Self::wait_mined_using_runtime(
+            &self.runtime,
+            send_state,
+            &self.provider,
+            tx_hash,
+            &self.config,
+            &self.closed,
+        )
+        .await
+    }
+
     /// Polls for a transaction receipt at `receipt_query_interval` until
     /// the transaction is mined and confirmed to the required depth.
     ///
@@ -1448,14 +1537,43 @@ where
         config: &TxManagerConfig,
         closed: &AtomicBool,
     ) -> Option<TransactionReceipt> {
-        let deadline = Instant::now() + config.confirmation_timeout;
-        let mut poll_interval = tokio::time::interval(config.receipt_query_interval);
-        poll_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        Self::wait_mined_using_runtime(
+            &TokioRuntime::new(),
+            send_state,
+            provider,
+            tx_hash,
+            config,
+            closed,
+        )
+        .await
+    }
+
+    /// Runtime-backed implementation of [`wait_mined`](Self::wait_mined).
+    async fn wait_mined_using_runtime<Rt>(
+        runtime: &Rt,
+        send_state: &SendState,
+        provider: &P,
+        tx_hash: B256,
+        config: &TxManagerConfig,
+        closed: &AtomicBool,
+    ) -> Option<TransactionReceipt>
+    where
+        Rt: Runtime,
+    {
+        let deadline = runtime.now() + config.confirmation_timeout;
+        let mut poll_immediately = true;
 
         loop {
-            poll_interval.tick().await;
+            if poll_immediately {
+                poll_immediately = false;
+            } else {
+                // Keep the previous MissedTickBehavior::Delay semantics:
+                // slow receipt queries do not accumulate immediate catch-up ticks.
+                runtime.sleep(config.receipt_query_interval).await;
+            }
 
-            match Self::query_receipt(
+            match Self::query_receipt_using_runtime(
+                runtime,
                 send_state,
                 provider,
                 tx_hash,
@@ -1473,7 +1591,7 @@ where
                 }
             }
 
-            if Instant::now() >= deadline {
+            if runtime.now() >= deadline {
                 warn!(
                     tx_hash = %tx_hash,
                     timeout = ?config.confirmation_timeout,
@@ -1510,12 +1628,39 @@ where
         num_confirmations: u64,
         network_timeout: Duration,
     ) -> TxManagerResult<Option<TransactionReceipt>> {
+        Self::query_receipt_using_runtime(
+            &TokioRuntime::new(),
+            send_state,
+            provider,
+            tx_hash,
+            num_confirmations,
+            network_timeout,
+        )
+        .await
+    }
+
+    /// Runtime-backed implementation of [`query_receipt`](Self::query_receipt).
+    async fn query_receipt_using_runtime<Rt>(
+        runtime: &Rt,
+        send_state: &SendState,
+        provider: &P,
+        tx_hash: B256,
+        num_confirmations: u64,
+        network_timeout: Duration,
+    ) -> TxManagerResult<Option<TransactionReceipt>>
+    where
+        Rt: Runtime,
+    {
         // Fetch tip and receipt in parallel. The canonical block hash check
         // below ensures the receipt is on the canonical chain, so call order
         // no longer matters for reorg safety.
         let (tip_result, receipt_result) = tokio::join!(
-            tokio::time::timeout(network_timeout, provider.get_block_number()),
-            tokio::time::timeout(network_timeout, provider.get_transaction_receipt(tx_hash)),
+            RuntimeTimeout::run(runtime, network_timeout, provider.get_block_number()),
+            RuntimeTimeout::run(
+                runtime,
+                network_timeout,
+                provider.get_transaction_receipt(tx_hash)
+            ),
         );
 
         let tip_height = tip_result
@@ -1555,7 +1700,8 @@ where
             }
         };
 
-        let canonical_block = tokio::time::timeout(
+        let canonical_block = RuntimeTimeout::run(
+            runtime,
             network_timeout,
             provider.get_block_by_number(BlockNumberOrTag::Number(tx_block)),
         )
@@ -1603,9 +1749,10 @@ where
     }
 }
 
-impl<P> TxManager for SimpleTxManager<P>
+impl<P, R> TxManager for SimpleTxManager<P, R>
 where
     P: Provider + Clone + Debug + Send + Sync + 'static,
+    R: Runtime + Debug,
 {
     async fn send(&self, candidate: TxCandidate) -> SendResponse {
         self.send_tx(candidate, None).await
@@ -1631,7 +1778,7 @@ where
         // be observed by the background task.
         let manager = self.clone();
 
-        tokio::spawn(async move {
+        self.runtime.spawn(async move {
             let result = manager.send_tx(candidate, nonce).await;
             let _ = tx.send(result);
         });
@@ -1646,19 +1793,28 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{
+        sync::{Arc, atomic::AtomicBool},
+        time::Duration,
+    };
 
     use alloy_consensus::TxEip1559;
     use alloy_network::EthereumWallet;
     use alloy_node_bindings::Anvil;
     use alloy_primitives::{Address, B256, TxKind, U256};
-    use alloy_provider::RootProvider;
+    use alloy_provider::{ProviderBuilder, RootProvider};
     use alloy_signer_local::PrivateKeySigner;
+    use alloy_transport::mock::Asserter;
+    use base_runtime::{
+        Clock,
+        deterministic::{Config, Runner},
+    };
     use rstest::rstest;
 
     use super::{BumpState, PreparedTx, SimpleTxManager, TxEnvelope};
     use crate::{
-        GasPriceCaps, NoopTxMetrics, SendState, TxCandidate, TxManagerConfig, TxManagerError,
+        GasPriceCaps, NonceManager, NoopTxMetrics, SendState, TxCandidate, TxManagerConfig,
+        TxManagerError,
     };
 
     async fn setup() -> (SimpleTxManager<RootProvider>, alloy_node_bindings::AnvilInstance) {
@@ -1685,6 +1841,47 @@ mod tests {
             TxEnvelope::Eip1559(signed) => signed.strip_signature(),
             other => panic!("expected EIP-1559, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn wait_mined_confirmation_timeout_uses_virtual_time() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let asserter = Asserter::new();
+            for _ in 0..5 {
+                asserter.push_success(&1u64);
+                asserter.push_success(&Option::<alloy_rpc_types_eth::TransactionReceipt>::None);
+            }
+            let provider = ProviderBuilder::new().connect_mocked_client(asserter);
+            let send_state = SendState::new(3).expect("send state should be valid");
+            let config = TxManagerConfig {
+                receipt_query_interval: Duration::from_secs(1),
+                confirmation_timeout: Duration::from_secs(3),
+                network_timeout: Duration::from_secs(30),
+                ..TxManagerConfig::default()
+            };
+            let wallet = EthereumWallet::from(PrivateKeySigner::random());
+            let nonce_manager = NonceManager::with_runtime(
+                ctx.clone(),
+                provider.clone(),
+                Address::ZERO,
+                config.network_timeout,
+            );
+            let manager = SimpleTxManager {
+                provider,
+                runtime: ctx.clone(),
+                wallet,
+                config,
+                nonce_manager,
+                chain_id: 1,
+                closed: Arc::new(AtomicBool::new(false)),
+                metrics: Arc::new(NoopTxMetrics),
+            };
+
+            let receipt = manager.wait_mined_for_tx(&send_state, B256::with_last_byte(1)).await;
+
+            assert!(receipt.is_none(), "receipt polling should stop at confirmation timeout");
+            assert_eq!(ctx.now(), Duration::from_secs(3));
+        });
     }
 
     // ── apply_bump_result ─────────────────────────────────────────────

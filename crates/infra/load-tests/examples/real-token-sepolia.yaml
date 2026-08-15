@@ -1,0 +1,57 @@
+# Load Test Configuration - Base Sepolia Real-Token WETH/USDC Swaps
+#
+# Requires FUNDER_KEY with enough Base Sepolia ETH to fund deterministic
+# sender accounts. WETH, USDC, and the Uniswap pool are expected to already
+# be deployed on the network.
+#
+# Aerodrome Slipstream is intentionally omitted for this WETH/USDC config:
+# the Base Sepolia Slipstream router from the generic Sepolia example is
+# deployed, but its factory does not currently have a WETH/USDC pool.
+
+transaction_submission_rpcs:
+  - "https://sepolia.base.org/"
+# Must point at an RPC that supports eth_getBlockReceipts for confirmation tracking.
+query_rpc: "https://base-sepolia-rpc.publicnode.com"
+txpool_nodes: []
+flashblocks_ws: "wss://sepolia.flashblocks.base.org/ws"
+
+chain_id: 84532
+sender_count: 5
+target_gps: 20000000
+in_flight_per_sender: 64
+batch_size: 20
+batch_timeout: "10ms"
+duration: "30s"
+seed: 654789
+
+# 0.1 ETH per account covers WETH setup plus swap gas.
+funding_amount: "100000000000000000"
+
+real_token_setup:
+  enabled: true
+  weth: "0x4200000000000000000000000000000000000006"
+  # Target WETH balance left after pair-token acquisition.
+  weth_amount_per_sender: "50000000000000000" # 0.05 WETH
+  pair_token:
+    token: "0x036CbD53842c5426634e7929541eC2318f3dCF7e" # Base Sepolia USDC
+    amount_per_sender: "5000000" # 5 USDC raw units
+    acquisition:
+      type: uniswap_v3_exact_input
+      router: "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4"
+      fee: 3000
+      amount_in: "10000000000000000" # 0.01 WETH
+      min_amount_out: "0"
+
+transactions:
+  - weight: 100
+    type: uniswap_v3
+    router: "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4"
+    token_in: "0x4200000000000000000000000000000000000006"
+    token_out: "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+    fee: 3000
+    # WETH -> USDC amount range, denominated in WETH wei.
+    min_amount: "10000000000000"
+    max_amount: "100000000000000"
+    # USDC -> WETH amount range, denominated in USDC raw units.
+    reverse_min_amount: "10000"
+    reverse_max_amount: "100000"

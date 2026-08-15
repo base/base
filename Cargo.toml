@@ -1,5 +1,5 @@
 [workspace.package]
-version = "1.1.1"
+version = "1.2.0"
 edition = "2024"
 rust-version = "1.94"
 license = "MIT"
@@ -14,8 +14,10 @@ members = [
   "bin/*",
   "bin/prover/nitro-host",
   "bin/prover/nitro-enclave",
-  "bin/prover/zk",
   "bin/prover/snark-e2e",
+  "bin/prover/zk",
+  "bin/prover/zk-host",
+  "bin/prover/service",
   "crates/consensus/*",
   "crates/proof/mpt",
   "crates/proof/proof",
@@ -29,30 +31,28 @@ members = [
   "crates/proof/prover-service/client",
   "crates/proof/prover-service/protocol",
   "crates/proof/prover-service/db",
-  "crates/proof/prover-service/outbox",
+  "crates/proof/worker",
   "crates/proof/tee/nitro-host",
   "crates/proof/tee/nitro-enclave",
   "crates/proof/tee/registrar",
   "crates/proof/tee/nitro-verifier",
   "crates/proof/tee/nitro-attestation-prover",
+  "crates/proof/zk/host",
+  "crates/proof/zk/backend",
   "crates/proof/zk/client",
   "crates/proof/zk/db",
   "crates/proof/zk/outbox",
   "crates/proof/zk/service",
   "crates/proof/contracts",
+  "crates/proof/submission",
   "crates/proof/rpc",
   "crates/proof/proposer",
   "crates/proof/challenge",
   "crates/proof/succinct/utils/client",
   "crates/proof/succinct/utils/host",
-  "crates/proof/succinct/utils/build",
   "crates/proof/succinct/utils/proof",
-  "crates/proof/succinct/utils/signer",
   "crates/proof/succinct/utils/elfs",
-  "crates/proof/succinct/utils/ethereum/client",
-  "crates/proof/succinct/utils/ethereum/host",
-  "crates/proof/succinct/scripts/*",
-  "crates/proof/succinct/validity",
+  "crates/proof/succinct/scripts",
 
   "crates/utilities/*",
   "crates/batcher/*",
@@ -70,6 +70,7 @@ default-members = [
   "bin/prover/nitro-enclave",
   "bin/prover/zk",
   "bin/prover/snark-e2e",
+  "bin/prover/service",
   "bin/prover-registrar",
 ]
 
@@ -164,7 +165,6 @@ base-bundles = { path = "crates/common/bundles" }
 base-common-signer = { path = "crates/common/signer" }
 base-common-chains = { path = "crates/common/chains" }
 base-common-network = { path = "crates/common/network" }
-base-access-lists = { path = "crates/common/access-lists" }
 base-common-rpc-types = { path = "crates/common/rpc-types" }
 base-common-flashblocks = { path = "crates/common/flashblocks" }
 base-common-evm = { path = "crates/common/evm", default-features = false }
@@ -175,8 +175,10 @@ base-common-consensus = { path = "crates/common/consensus", default-features = f
 base-precompile-storage = { path = "crates/common/precompile-storage", default-features = false }
 base-common-precompiles = { path = "crates/common/precompiles", default-features = false }
 base-common-rpc-types-engine = { path = "crates/common/rpc-types-engine", default-features = false }
+base-observability-events = { path = "crates/common/observability-events", default-features = false }
 
 # Builder
+base-builder-cli = { path = "crates/builder/cli" }
 base-builder-core = { path = "crates/builder/core" }
 base-builder-publish = { path = "crates/builder/publish" }
 base-builder-metering = { path = "crates/builder/metering" }
@@ -220,15 +222,20 @@ base-txpool-tracing = { path = "crates/execution/txpool-tracing" }
 mev-trader-submit = { path = "crates/execution/mev-trader-submit" }
 base-execution-payload-builder = { path = "crates/execution/payload" }
 base-flashblocks-node = { path = "crates/execution/flashblocks-node" }
+base-execution-eip8130 = { path = "crates/execution/eip8130", default-features = false }
+base-execution-eip8130-rpc = { path = "crates/execution/eip8130-rpc" }
+base-execution-eip8130-rpc-node = { path = "crates/execution/eip8130-rpc-node" }
 
 # Infra
-based = { path = "crates/infra/based" }
 basectl-cli = { path = "crates/infra/basectl" }
+base-sidecrush = { path = "crates/infra/sidecrush" }
 audit-archiver-lib = { path = "crates/infra/audit" }
 base-load-tests = { path = "crates/infra/load-tests" }
 ingress-rpc-lib = { path = "crates/infra/ingress-rpc" }
 base-snapshotter = { path = "crates/infra/snapshotter" }
+base-telemetry-service = { path = "crates/infra/telemetry" }
 websocket-proxy = { path = "crates/infra/websocket-proxy" }
+base-zk-benchmarks = { path = "crates/infra/zk-benchmarks" }
 
 # Proof
 base-proof-rpc = { path = "crates/proof/rpc" }
@@ -236,9 +243,13 @@ base-proposer = { path = "crates/proof/proposer" }
 base-zk-client = { path = "crates/proof/zk/client" }
 base-zk-db = { path = "crates/proof/zk/db" }
 base-zk-outbox = { path = "crates/proof/zk/outbox" }
+base-proof-worker = { path = "crates/proof/worker" }
 base-zk-service = { path = "crates/proof/zk/service" }
 base-challenger = { path = "crates/proof/challenge" }
+base-proof-zk-host = { path = "crates/proof/zk/host" }
 base-proof-contracts = { path = "crates/proof/contracts" }
+base-proof-submission = { path = "crates/proof/submission" }
+base-proof-zk-backend = { path = "crates/proof/zk/backend" }
 base-prover-service = { path = "crates/proof/prover-service" }
 base-proof-tee-registrar = { path = "crates/proof/tee/registrar" }
 base-prover-service-db = { path = "crates/proof/prover-service/db" }
@@ -248,7 +259,6 @@ base-proof-mpt = { path = "crates/proof/mpt", default-features = false }
 base-proof-tee-nitro-enclave = { path = "crates/proof/tee/nitro-enclave" }
 base-proof-host = { path = "crates/proof/host", default-features = false }
 base-prover-service-client = { path = "crates/proof/prover-service/client" }
-base-prover-service-outbox = { path = "crates/proof/prover-service/outbox" }
 base-proof-tee-nitro-verifier = { path = "crates/proof/tee/nitro-verifier" }
 base-proof-client = { path = "crates/proof/client", default-features = false }
 base-proof-driver = { path = "crates/proof/driver", default-features = false }
@@ -260,16 +270,10 @@ base-proof-tee-nitro-attestation-prover = { path = "crates/proof/tee/nitro-attes
 
 # Succinct (OP Succinct / SP1 proving)
 base-proof-succinct-elfs = { path = "crates/proof/succinct/utils/elfs" }
-base-proof-succinct-prove = { path = "crates/proof/succinct/scripts/prove" }
-base-proof-succinct-scripts = { path = "crates/proof/succinct/scripts/utils" }
-base-proof-succinct-validity = { path = "crates/proof/succinct/validity" }
+base-proof-succinct-scripts = { path = "crates/proof/succinct/scripts" }
 base-proof-succinct-host-utils = { path = "crates/proof/succinct/utils/host" }
-base-proof-succinct-build-utils = { path = "crates/proof/succinct/utils/build" }
 base-proof-succinct-proof-utils = { path = "crates/proof/succinct/utils/proof" }
 base-proof-succinct-client-utils = { path = "crates/proof/succinct/utils/client" }
-base-proof-succinct-signer-utils = { path = "crates/proof/succinct/utils/signer" }
-base-proof-succinct-ethereum-host-utils = { path = "crates/proof/succinct/utils/ethereum/host" }
-base-proof-succinct-ethereum-client-utils = { path = "crates/proof/succinct/utils/ethereum/client" }
 
 # Actions
 base-action-harness = { path = "actions/harness" }
@@ -285,12 +289,16 @@ base-comp = { path = "crates/batcher/comp", default-features = false }
 
 # Utilities
 base-jwt = { path = "crates/utilities/jwt" }
+base-retry = { path = "crates/utilities/retry" }
 base-health = { path = "crates/utilities/health" }
 base-cli-utils = { path = "crates/utilities/cli" }
+base-l1-head = { path = "crates/utilities/l1-head" }
 base-reth-cli = { path = "crates/utilities/reth-cli" }
 base-test-utils = { path = "crates/utilities/test-utils" }
 base-tx-manager = { path = "crates/utilities/tx-manager" }
 base-ring-buffer = { path = "crates/utilities/ring-buffer" }
+base-optimism-rpc = { path = "crates/utilities/optimism-rpc" }
+base-upgrade-signal = { path = "crates/utilities/upgrade-signal" }
 base-balance-monitor = { path = "crates/utilities/balance-monitor" }
 base-metrics = { path = "crates/utilities/metrics", default-features = false }
 base-runtime = { path = "crates/utilities/runtime", default-features = false }
@@ -334,6 +342,7 @@ alloy-consensus = { version = "2.0.5", default-features = false }
 alloy-sol-types = { version = "1.6.0", default-features = false }
 alloy-primitives = { version = "1.6.0", default-features = false }
 alloy-rpc-types-eth = { version = "2.0.5", default-features = false }
+alloy-rpc-types-txpool = { version = "2.0.5", default-features = false }
 alloy-rpc-types-debug = { version = "2.0.5", default-features = false }
 alloy-rpc-types-engine = { version = "2.0.5", default-features = false }
 alloy-network-primitives = { version = "2.0.5", default-features = false }
@@ -390,6 +399,7 @@ reth-rpc-engine-api = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3
 reth-e2e-test-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-execution-types = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
+reth-eth-wire-types = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-exex-test-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-rpc-server-types = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-transaction-pool = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
@@ -443,6 +453,7 @@ tracing-subscriber = "0.3.22"
 tracing = { version = "0.1.43", default-features = false }
 
 # Metrics
+cadence = "1.5"
 ordered-float = "5"
 metrics = { version = "0.24.3", default-features = false }
 metrics-util = { version = "0.20.1", default-features = false }
@@ -462,17 +473,17 @@ boundless-market = "1.1"
 risc0-ethereum-contracts = "3.0.1"
 risc0-zkvm = { version = "^3.0", default-features = false }
 
-# SP1 v6.2.1 (Hypercube) — used by crates/proof/succinct
-sp1-build = "=6.2.1"
-sp1-prover-types = "=6.2.1"
-sp1-sdk = { version = "=6.2.1" }
-sp1-cluster-utils = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.3.2" }
-sp1-cluster-common = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.3.2" }
-sp1-cluster-artifact = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.3.2" }
+# SP1 v6.3.0 (Hypercube) — used by crates/proof/succinct
+sp1-prover-types = "=6.3.0"
+sp1-sdk = { version = "=6.3.0" }
+sp1-cluster-utils = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.5.1" }
+sp1-cluster-common = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.5.1" }
+sp1-cluster-artifact = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.5.1" }
 
 # crypto
 sha3 = "0.10"
 k256 = "0.13"
+p256 = "0.13"
 p384 = "0.13"
 ciborium = "0.2"
 rustls = "0.23.35"
@@ -560,7 +571,6 @@ base64 = "0.22"
 rlimit = "0.11"
 dashmap = "6.1"
 bytes = "1.11.1"
-cadence = "1.7.0"
 arboard = "3.6.1"
 chrono = "0.4.42"
 backoff = "0.4.0"
@@ -583,6 +593,7 @@ ambassador = "0.4.2"
 miniz_oxide = "0.9.0"
 parking_lot = "0.12.3"
 opentelemetry = "0.31"
+opentelemetry-http = { version = "0.31", default-features = false }
 cargo_metadata = "0.18.1"
 tracing-indicatif = "0.3"
 tikv-jemallocator = "0.6"
@@ -603,6 +614,7 @@ kzg-rs = { version = "0.2.8", default-features = false }
 dotenvy = { version = "0.15.7", default-features = false }
 derive_more = { version = "2.1.0", default-features = false }
 figment = { version = "0.10.19", default-features = false }
+static_assertions = { version = "1.1.0" }
 
 # database
 sqlx = { version = "0.8", default-features = false }

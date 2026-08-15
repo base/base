@@ -28,14 +28,22 @@ pub(crate) struct BootnodeCommand {
 
 impl BootnodeCommand {
     /// Runs both discovery-only bootnodes.
-    pub(crate) fn run(self, resolved_chain: ResolvedChainConfig) -> eyre::Result<()> {
+    pub(crate) fn run(
+        self,
+        resolved_chain: ResolvedChainConfig,
+        metrics_enabled: bool,
+    ) -> eyre::Result<()> {
         let consensus_chain = resolved_chain.consensus_chain_args();
         let rollup_config = self.l2_config.load(&consensus_chain.l2_chain_id)?;
 
-        CliMetrics::init_rollup_config(&rollup_config);
-        CliMetrics::init_bootnode_p2p(&self.consensus);
+        if metrics_enabled {
+            CliMetrics::init_rollup_config(&rollup_config);
+            CliMetrics::init_bootnode_p2p(&self.consensus);
+        }
 
         CliRunner::try_default_runtime()?.run_command_until_exit(|_| async move {
+            let _upgrade_countdown_metrics = metrics_enabled
+                .then(|| CliMetrics::spawn_upgrade_countdown_recorder(rollup_config.clone()));
             let chain_id = rollup_config.l2_chain_id.id();
             self.consensus.check_ports()?;
 

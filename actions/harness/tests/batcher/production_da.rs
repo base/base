@@ -40,7 +40,7 @@ async fn production_da_calldata_uses_signed_l1_transactions() {
     assert_eq!(tx.to(), Some(batcher_cfg.inbox_address));
 
     let mut pre_ecotone_cfg = h.rollup_config.clone();
-    pre_ecotone_cfg.hardforks.ecotone_time = None;
+    pre_ecotone_cfg.upgrades.ecotone_time = None;
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut dap = EthereumDataSource::new_from_parts(
         ActionL1ChainProvider::new(l1_chain.clone()),

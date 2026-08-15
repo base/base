@@ -41,9 +41,9 @@ pub enum L1BlockInfoError {
     /// DA foootprint gas scalar constant conversion error
     #[error("could not convert DA footprint gas scalar constant")]
     DaFootprintGasScalarConversion,
-    /// Base hardforks not active
-    #[error("Base hardforks are not active")]
-    HardforksNotActive,
+    /// Base upgrades not active
+    #[error("Base upgrades are not active")]
+    UpgradesNotActive,
 }
 
 /// Base Block Executor Errors

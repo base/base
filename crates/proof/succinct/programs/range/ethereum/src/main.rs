@@ -10,7 +10,6 @@
 sp1_zkvm::entrypoint!(main);
 
 use base_proof_succinct_client_utils::witness::{DefaultWitnessData, WitnessData};
-use base_proof_succinct_ethereum_client_utils::executor::ETHDAWitnessExecutor;
 use base_proof_succinct_range_utils::run_range_program;
 #[cfg(feature = "tracing-subscriber")]
 use base_proof_succinct_range_utils::setup_tracing;
@@ -30,6 +29,6 @@ fn main() {
             .await
             .expect("Failed to load oracle and blob provider");
 
-        run_range_program(ETHDAWitnessExecutor::new(), oracle, beacon).await;
+        run_range_program(oracle, beacon).await;
     });
 }

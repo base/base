@@ -6,6 +6,19 @@ use tracing::instrument;
 use super::{Payload, SeededRng};
 use crate::{BaselineError, config::WorkloadConfig, utils::Result};
 
+/// Selected payload plus whether it consumes the runner-supplied recipient.
+#[derive(Debug, Clone)]
+pub(crate) struct SelectedPayload {
+    payload: Arc<dyn Payload>,
+}
+
+impl SelectedPayload {
+    /// Returns true when this payload uses the runner-supplied recipient address.
+    pub(crate) fn uses_runner_recipient(&self) -> bool {
+        self.payload.uses_runner_recipient()
+    }
+}
+
 /// Generates transaction workloads from configured payloads.
 pub struct WorkloadGenerator {
     config: WorkloadConfig,
@@ -39,10 +52,11 @@ impl WorkloadGenerator {
         to: alloy_primitives::Address,
     ) -> Result<TransactionRequest> {
         let payload = self.select_payload()?;
-        Ok(payload.generate(&mut self.rng, from, to))
+        Ok(self.generate_selected_payload(&payload, from, to))
     }
 
-    fn select_payload(&mut self) -> Result<Arc<dyn Payload>> {
+    /// Selects a payload according to configured weights.
+    pub(crate) fn select_payload(&mut self) -> Result<SelectedPayload> {
         if self.payloads.is_empty() {
             return Err(BaselineError::Workload("no payloads configured".into()));
         }
@@ -53,11 +67,23 @@ impl WorkloadGenerator {
         for (payload, share) in &self.payloads {
             target -= share;
             if target <= 0.0 {
-                return Ok(Arc::clone(payload));
+                return Ok(SelectedPayload { payload: Arc::clone(payload) });
             }
         }
 
-        Ok(Arc::clone(&self.payloads.last().expect("non-empty checked above").0))
+        Ok(SelectedPayload {
+            payload: Arc::clone(&self.payloads.last().expect("non-empty checked above").0),
+        })
+    }
+
+    /// Generates a transaction request for a preselected payload.
+    pub(crate) fn generate_selected_payload(
+        &mut self,
+        selected: &SelectedPayload,
+        from: alloy_primitives::Address,
+        to: alloy_primitives::Address,
+    ) -> TransactionRequest {
+        selected.payload.generate(&mut self.rng, from, to)
     }
 
     /// Resets the generator to its initial state.

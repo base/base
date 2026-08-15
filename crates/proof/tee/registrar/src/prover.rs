@@ -1,74 +1,45 @@
 //! JSON-RPC client for polling prover instance signer endpoints.
 
-use std::{collections::HashMap, sync::Mutex, time::Duration};
+use std::time::Duration;
 
 use alloy_primitives::Address;
 use alloy_signer::utils::public_key_to_address;
-use async_trait::async_trait;
 use base_proof_primitives::EnclaveApiClient;
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use k256::ecdsa::VerifyingKey;
 use tracing::debug;
 use url::Url;
 
-use crate::{RegistrarError, Result, SignerClient};
+use crate::{EnclaveEndpointClient, RegistrarError, Result};
 
 /// JSON-RPC client for prover instance signer endpoints.
 ///
-/// Implements [`SignerClient`] by making HTTP JSON-RPC calls to the prover's
+/// Implements [`EnclaveEndpointClient`] by making HTTP JSON-RPC calls to the prover's
 /// `enclave_signerPublicKey` and `enclave_signerAttestation` endpoints.
 ///
-/// HTTP clients are cached per endpoint so that TCP connections are reused
-/// across poll cycles. The `timeout` is configured once at construction and
-/// applied to all requests.
-///
+/// The `timeout` is configured once at construction and applied to all requests.
+#[derive(Debug)]
 pub struct ProverClient {
     /// Timeout applied to all JSON-RPC requests.
     timeout: Duration,
-    /// Cached HTTP clients keyed by endpoint URL.
-    ///
-    /// Note: this cache is append-only — entries are never evicted. With
-    /// ephemeral instances (e.g. ASG scale events assigning new IPs), stale
-    /// entries accumulate over the process lifetime. The fleet is small enough
-    /// that this is not a practical concern; if it ever becomes one, a
-    /// `retain_active` method could prune entries not in the current discovered
-    /// set after each poll cycle.
-    clients: Mutex<HashMap<Url, HttpClient>>,
-}
-
-impl std::fmt::Debug for ProverClient {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ProverClient")
-            .field("timeout", &self.timeout)
-            .field("cached_clients", &self.clients.lock().map(|c| c.len()).unwrap_or(0))
-            .finish()
-    }
 }
 
 impl ProverClient {
     /// Creates a new client with the given request timeout.
-    pub fn new(timeout: Duration) -> Self {
-        Self { timeout, clients: Mutex::new(HashMap::new()) }
+    pub const fn new(timeout: Duration) -> Self {
+        Self { timeout }
     }
 
-    /// Returns a cached `jsonrpsee` HTTP client for `endpoint`, building one
-    /// on first access.
+    /// Builds a `jsonrpsee` HTTP client for `endpoint`.
     ///
     /// The URL must include a scheme (e.g. `http://10.0.1.5:8000`).
-    fn get_or_build_client(&self, endpoint: &Url) -> Result<HttpClient> {
-        let mut cache = self.clients.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(client) = cache.get(endpoint) {
-            return Ok(client.clone());
-        }
-        let client = HttpClientBuilder::default()
-            .request_timeout(self.timeout)
-            .build(endpoint.as_str())
-            .map_err(|e| RegistrarError::ProverClient {
+    fn build_client(&self, endpoint: &Url) -> Result<HttpClient> {
+        HttpClientBuilder::default().request_timeout(self.timeout).build(endpoint.as_str()).map_err(
+            |e| RegistrarError::ProverClient {
                 instance: endpoint.to_string(),
                 source: Box::new(e),
-            })?;
-        cache.insert(endpoint.clone(), client.clone());
-        Ok(client)
+            },
+        )
     }
 
     /// Derives an Ethereum [`Address`] from a SEC1-encoded public key.
@@ -81,11 +52,10 @@ impl ProverClient {
     }
 }
 
-#[async_trait]
-impl SignerClient for ProverClient {
+impl EnclaveEndpointClient for ProverClient {
     async fn signer_public_key(&self, endpoint: &Url) -> Result<Vec<Vec<u8>>> {
         debug!(endpoint = %endpoint, "fetching signer public keys");
-        let client = self.get_or_build_client(endpoint)?;
+        let client = self.build_client(endpoint)?;
         client.signer_public_key().await.map_err(|e| RegistrarError::ProverClient {
             instance: endpoint.to_string(),
             source: Box::new(e),
@@ -95,13 +65,13 @@ impl SignerClient for ProverClient {
     async fn signer_attestation(
         &self,
         endpoint: &Url,
-        user_data: Option<Vec<u8>>,
-        nonce: Option<Vec<u8>>,
+        nonces: Option<Vec<Vec<u8>>>,
     ) -> Result<Vec<Vec<u8>>> {
         debug!(endpoint = %endpoint, "fetching signer attestations");
-        let client = self.get_or_build_client(endpoint)?;
-        client.signer_attestation(user_data, nonce).await.map_err(|e| {
-            RegistrarError::ProverClient { instance: endpoint.to_string(), source: Box::new(e) }
+        let client = self.build_client(endpoint)?;
+        client.signer_attestation(None, nonces).await.map_err(|e| RegistrarError::ProverClient {
+            instance: endpoint.to_string(),
+            source: Box::new(e),
         })
     }
 }
@@ -110,63 +80,30 @@ impl SignerClient for ProverClient {
 mod tests {
     use alloy_primitives::address;
     use hex_literal::hex;
-    use k256::ecdsa::SigningKey;
-    use rstest::rstest;
 
     use super::*;
+    use crate::test_utils::{HARDHAT_KEY_0, public_key_from_private};
 
-    /// Well-known Hardhat / Anvil account #0 private key.
-    const HARDHAT_PRIVATE_KEY: [u8; 32] =
-        hex!("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+    const HARDHAT_COMPRESSED_PUBLIC_KEY: [u8; 33] =
+        hex!("038318535b54105d4a7aae60c08fc45f9687181b4fdfc625bd1a753fa7397fed75");
 
-    /// Returns the 65-byte uncompressed public key for the Hardhat account #0.
-    fn hardhat_public_key() -> Vec<u8> {
-        let signing_key = SigningKey::from_slice(&HARDHAT_PRIVATE_KEY).unwrap();
-        let verifying_key = signing_key.verifying_key();
-        verifying_key.to_encoded_point(false).as_bytes().to_vec()
+    #[test]
+    fn derive_address_hardhat_account_zero_public_keys() {
+        let uncompressed = public_key_from_private(&HARDHAT_KEY_0);
+
+        for public_key in [uncompressed.as_slice(), HARDHAT_COMPRESSED_PUBLIC_KEY.as_slice()] {
+            let derived = ProverClient::derive_address(public_key).unwrap();
+            assert_eq!(derived, address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"));
+        }
     }
 
     #[test]
-    fn derive_address_hardhat_account_zero() {
-        let public_key = hardhat_public_key();
-        let derived = ProverClient::derive_address(&public_key).unwrap();
-        assert_eq!(derived, address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"));
-    }
+    fn derive_address_rejects_invalid_bytes() {
+        let mut prefix_length_mismatch = public_key_from_private(&HARDHAT_KEY_0);
+        prefix_length_mismatch[0] = 0x02;
 
-    #[test]
-    fn derive_address_validates_correct_format() {
-        let public_key = hardhat_public_key();
-        assert_eq!(public_key.len(), 65);
-        assert_eq!(public_key[0], 0x04);
-        assert!(ProverClient::derive_address(&public_key).is_ok());
-    }
-
-    #[rstest]
-    #[case::empty(0)]
-    #[case::invalid_33_bytes(33)]
-    #[case::too_long(66)]
-    fn derive_address_rejects_invalid_bytes(#[case] len: usize) {
-        let key = vec![0x04; len];
-        assert!(ProverClient::derive_address(&key).is_err());
-    }
-
-    #[test]
-    fn derive_address_rejects_prefix_length_mismatch() {
-        // 0x02 = compressed prefix expects 33 bytes, but key is 65 bytes.
-        let mut key = hardhat_public_key();
-        key[0] = 0x02;
-        assert!(ProverClient::derive_address(&key).is_err());
-    }
-
-    #[test]
-    fn derive_address_compressed_matches_uncompressed() {
-        let signing_key = SigningKey::from_slice(&HARDHAT_PRIVATE_KEY).unwrap();
-        let verifying_key = signing_key.verifying_key();
-        let compressed = verifying_key.to_encoded_point(true).as_bytes().to_vec();
-        let uncompressed = hardhat_public_key();
-
-        let addr_compressed = ProverClient::derive_address(&compressed).unwrap();
-        let addr_uncompressed = ProverClient::derive_address(&uncompressed).unwrap();
-        assert_eq!(addr_compressed, addr_uncompressed);
+        for key in [vec![], vec![0x04; 33], vec![0x04; 66], prefix_length_mismatch] {
+            assert!(ProverClient::derive_address(&key).is_err());
+        }
     }
 }

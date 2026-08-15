@@ -13,3 +13,4 @@ workspace = true
 
 [dependencies]
 reth-node-core.workspace = true
+reth-cli-commands.workspace = true

@@ -13565,10 +13565,7 @@ mod tests {
             .map(|member| member.trim().trim_matches('"'))
             .filter(|member| !member.is_empty())
             .collect::<Vec<_>>();
-        assert_eq!(
-            selected_members,
-            ["base-mev-trader/t4a-shadow", "dep:libc", "dep:serde", "dep:serde_json",]
-        );
+        assert_eq!(selected_members, ["base-mev-trader/t4a-shadow", "dep:libc", "dep:serde",]);
         assert!(cli_feature.contains("\"base-mev-trader/t4a-shadow\""));
         for forbidden in ["mev-trader-submit", "reqwest", "signer", "assembly", "arm", "egress"] {
             assert!(
@@ -13823,7 +13820,7 @@ mod tests {
         ];
 
         for (result, expected_outcome, expected_terminal) in cases {
-            let (outcome, terminal) = T4dShadowAuthority::handoff_outcome(result);
+            let (outcome, terminal) = T4dShadowAuthority::<()>::handoff_outcome(result);
             assert_eq!((outcome, terminal), (expected_outcome, expected_terminal));
             t4b_counters.record(outcome);
             t4d_counters.record(terminal);

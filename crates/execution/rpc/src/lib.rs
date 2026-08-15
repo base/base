@@ -16,6 +16,11 @@ pub mod metrics;
 pub mod miner;
 pub mod sequencer;
 pub mod state;
+mod trace_middleware;
+pub use trace_middleware::{
+    InboundOtelContext, OtelHttpMiddleware, OtelHttpMiddlewareLayer, OtelRpcMiddleware,
+    OtelRpcMiddlewareLayer,
+};
 pub mod witness;
 
 pub use config::{BaseEthConfigApiServer, BaseEthConfigHandler};

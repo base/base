@@ -1,17 +1,32 @@
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 use alloy_primitives::TxHash;
 use serde::{Deserialize, Serialize};
+
+/// Submission outcome counts collected during a load test, passed as a single
+/// input bundle to `MetricsAggregator::summarize`.
+#[derive(Debug, Clone, Copy)]
+pub struct SubmissionStats<'a> {
+    /// Total transactions submitted.
+    pub submitted: u64,
+    /// Total transactions that failed (e.g. rejected, expired without
+    /// confirmation).
+    pub failed: u64,
+    /// Failure reason counts, used to surface the top-N reasons in the summary.
+    pub failure_reasons: &'a HashMap<String, u64>,
+}
 
 /// Metrics for a single transaction.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionMetrics {
     /// Transaction hash.
     pub tx_hash: TxHash,
-    /// Time from submission to block production.
+    /// Time from submission to first observation in a polled block (includes the
+    /// block poll + scan cost).
     pub block_latency: Option<Duration>,
-    /// Time from block production to receipt observation by the block watcher.
-    pub block_receipt_delay: Option<Duration>,
     /// Time from submission to sequencer acceptance.
     pub flashblocks_latency: Option<Duration>,
     /// Gas used by the transaction.
@@ -40,7 +55,6 @@ impl TransactionMetrics {
         Self {
             tx_hash,
             block_latency,
-            block_receipt_delay: None,
             flashblocks_latency,
             gas_used,
             gas_price,
@@ -148,7 +162,7 @@ pub struct ThroughputSample {
 }
 
 /// L2 block interval (2 seconds per block).
-const BLOCK_INTERVAL: Duration = Duration::from_secs(2);
+pub(crate) const BLOCK_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Range of block numbers in which test transactions were included.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -221,10 +235,17 @@ pub struct ConfigSummary {
     pub chain_id: Option<u64>,
     /// Transaction type configuration.
     pub transactions: serde_json::Value,
+    /// Fraction of transactions targeting freshly derived recipient addresses.
+    #[serde(default)]
+    pub fresh_recipient_ratio: f64,
     /// Address of the precompile looper contract.
     pub looper_contract: Option<String>,
     /// Amount of each swap token per sender (in wei, as string).
     pub swap_token_amount: String,
     /// Amount of B-20 tokens to mint per sender (in wei, as string).
     pub b20_mint_amount: String,
+
+    /// Real-token setup configuration, when enabled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub real_token_setup: Option<serde_json::Value>,
 }

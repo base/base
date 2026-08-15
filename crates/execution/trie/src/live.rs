@@ -128,6 +128,13 @@ where
 
         info!(
             block_number = block.number(),
+            block_hash = ?block.hash(),
+            parent_block_number,
+            parent_block_hash = ?block.parent_hash(),
+            earliest_proof_before = earliest,
+            latest_proof_before = latest,
+            latest_proof_after = block.number(),
+            state_root = ?state_root,
             ?operation_durations,
             ?update_result,
             "Block executed and trie updates stored successfully",

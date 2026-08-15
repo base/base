@@ -31,6 +31,7 @@ pub use aerodrome::AerodromeClPayload;
 
 mod b20;
 pub use b20::B20TransferPayload;
+pub(crate) use b20::{b20_salt_for, b20_token_for};
 
 mod osaka;
 pub use osaka::OsakaPayload;
@@ -39,6 +40,9 @@ pub use osaka::OsakaPayload;
 pub trait Payload: Send + Sync + std::fmt::Debug {
     /// Returns the name of this payload type.
     fn name(&self) -> &'static str;
+
+    /// Returns true when this payload uses the runner-supplied recipient address.
+    fn uses_runner_recipient(&self) -> bool;
 
     /// Generates a transaction request.
     fn generate(&self, rng: &mut SeededRng, from: Address, to: Address) -> TransactionRequest;

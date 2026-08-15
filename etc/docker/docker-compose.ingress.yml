@@ -55,7 +55,6 @@ services:
       - TIPS_INGRESS_HEALTH_CHECK_ADDR=0.0.0.0:${L2_INGRESS_HEALTH_PORT}
       - TIPS_INGRESS_METRICS_ADDR=0.0.0.0
       - TIPS_INGRESS_METRICS_PORT=${L2_INGRESS_METRICS_PORT}
-      - TIPS_INGRESS_RPC_MEMPOOL=http://base-builder:${L2_BUILDER_HTTP_PORT}
       - TIPS_INGRESS_RPC_SIMULATION=http://base-client:${L2_CLIENT_HTTP_PORT}
       # Fan out metering data to both builder and client; both expose
       # `base_setMeteringInformation` for trusted ingestion.

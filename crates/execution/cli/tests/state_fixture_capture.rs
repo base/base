@@ -1,5 +1,6 @@
+//! Raw-free default-off priority-economics fixture capture tests.
+
 #![cfg(feature = "priority-economics-capture")]
-#![doc = "Raw-free default-off priority-economics fixture capture tests."]
 
 use std::{cell::Cell, fs};
 

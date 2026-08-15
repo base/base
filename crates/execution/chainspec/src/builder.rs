@@ -2,7 +2,7 @@ use alloy_chains::Chain;
 use alloy_genesis::Genesis;
 use alloy_hardforks::Hardfork;
 use alloy_primitives::Address;
-use base_common_chains::BaseUpgrade;
+use base_common_genesis::BaseUpgrade;
 use reth_chainspec::ChainSpecBuilder;
 use reth_ethereum_forks::{ChainHardforks, EthereumHardfork, ForkCondition};
 use reth_primitives_traits::SealedHeader;
@@ -149,6 +149,13 @@ impl BaseChainSpecBuilder {
     pub fn beryl_activated(mut self) -> Self {
         self = self.azul_activated();
         self.inner = self.inner.with_fork(BaseUpgrade::Beryl, ForkCondition::Timestamp(0));
+        self
+    }
+
+    /// Enable Cobalt at genesis.
+    pub fn cobalt_activated(mut self) -> Self {
+        self = self.beryl_activated();
+        self.inner = self.inner.with_fork(BaseUpgrade::Cobalt, ForkCondition::Timestamp(0));
         self
     }
 

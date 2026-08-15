@@ -16,6 +16,9 @@ pub use clock::Clock;
 mod runtime;
 pub use runtime::Runtime;
 
+mod runtime_timeout;
+pub use runtime_timeout::RuntimeTimeout;
+
 mod spawner;
 pub use spawner::{Spawner, TaskError, TaskHandle};
 

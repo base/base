@@ -7,7 +7,7 @@ use ratatui::{
 
 use crate::{
     app::{Action, Resources, View, ViewId},
-    commands::COLOR_BASE_BLUE,
+    output::COLOR_BASE_BLUE,
     tui::Keybinding,
 };
 
@@ -68,6 +68,13 @@ const MENU_ITEMS: &[MenuItem] = &[
         view_id: Some(ViewId::Conductor),
     },
     MenuItem {
+        key: 'o',
+        label: "Pods",
+        description: "Monitor Kubernetes pod status",
+        badge: Some("config-required"),
+        view_id: Some(ViewId::Pods),
+    },
+    MenuItem {
         key: 'p',
         label: "Proofs",
         description: "Monitor dispute games and anchor state",
@@ -90,6 +97,7 @@ const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "d", description: "DA Monitor" },
     Keybinding { key: "f", description: "Flashblocks" },
     Keybinding { key: "h", description: "HA Conductor" },
+    Keybinding { key: "o", description: "Pods" },
     Keybinding { key: "p", description: "Proofs" },
     Keybinding { key: "u", description: "Upgrades" },
     Keybinding { key: "j/k", description: "Navigate" },
@@ -130,6 +138,7 @@ impl View for HomeView {
             KeyCode::Char('d') => Action::SwitchView(ViewId::DaMonitor),
             KeyCode::Char('f') => Action::SwitchView(ViewId::Flashblocks),
             KeyCode::Char('h') => Action::SwitchView(ViewId::Conductor),
+            KeyCode::Char('o') => Action::SwitchView(ViewId::Pods),
             KeyCode::Char('p') => Action::SwitchView(ViewId::Proofs),
             KeyCode::Char('u') => Action::SwitchView(ViewId::Upgrades),
             KeyCode::Up | KeyCode::Char('k') => {

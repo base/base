@@ -10,6 +10,7 @@ use alloy_rpc_types_engine::PayloadId;
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::{AttributesBuilder, PipelineErrorKind};
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
+use tracing::instrument;
 
 use crate::{
     Metrics, PoolActivation,
@@ -71,6 +72,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
     ///
     /// Returns `Ok(None)` for temporary or reset conditions that should be retried on the
     /// next tick.
+    #[instrument(skip_all, fields(parent_num = parent.block_info.number, l1_origin_num = tracing::field::Empty))]
     pub async fn build_on(
         &mut self,
         parent: L2BlockInfo,
@@ -78,6 +80,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
         let Some(l1_origin) = self.get_next_payload_l1_origin(parent).await? else {
             return Ok(None);
         };
+        tracing::Span::current().record("l1_origin_num", l1_origin.number);
 
         info!(
             target: "sequencer",
@@ -202,10 +205,15 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
         self.rollup_config.log_upgrade_activation(
             unsafe_head.block_info.number.saturating_add(1),
             attributes.payload_attributes.timestamp,
+            unsafe_head.block_info.timestamp,
         );
         let activator = PoolActivation::new(Arc::clone(&self.rollup_config));
-        attributes.no_tx_pool =
-            Some(!activator.is_enabled(self.recovery_mode.get(), l1_origin, &attributes));
+        attributes.no_tx_pool = Some(!activator.is_enabled(
+            self.recovery_mode.get(),
+            l1_origin,
+            unsafe_head.block_info.timestamp,
+            &attributes,
+        ));
 
         let attrs_with_parent = AttributesWithParent::new(attributes, unsafe_head, None, false);
         Ok(Some(attrs_with_parent))

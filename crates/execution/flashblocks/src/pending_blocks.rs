@@ -1016,6 +1016,9 @@ mod tests {
                 contract_address: None,
             },
             l1_block_info: L1BlockInfo::default(),
+            payer: None,
+            phase_statuses: Vec::new(),
+            metadata: None,
         }
     }
 
@@ -1070,6 +1073,9 @@ mod tests {
                 contract_address: None,
             },
             l1_block_info: Default::default(),
+            payer: None,
+            phase_statuses: Vec::new(),
+            metadata: None,
         }
     }
 
@@ -1354,6 +1360,9 @@ mod tests {
                 contract_address: None,
             },
             l1_block_info: Default::default(),
+            payer: None,
+            phase_statuses: Vec::new(),
+            metadata: None,
         }
     }
 
@@ -1492,6 +1501,9 @@ mod tests {
                 contract_address: None,
             },
             l1_block_info: Default::default(),
+            payer: None,
+            phase_statuses: Vec::new(),
+            metadata: None,
         };
 
         let header = Sealed::new_unchecked(Header::default(), B256::ZERO);

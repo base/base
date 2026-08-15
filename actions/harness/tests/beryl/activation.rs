@@ -112,17 +112,98 @@ async fn beryl_enables_activation_registry_admin_and_feature_lifecycle() {
     .await;
 }
 
+#[tokio::test]
+async fn cobalt_enables_state_backed_activation_admin_rotation() {
+    let mut env = BerylTestEnv::new_with_cobalt();
+    let (probe, deploy_probe) = env.deploy_staticcall_probe_tx(ActivationRegistryStorage::ADDRESS);
+
+    let pre_beryl = env.sequencer.build_next_block_with_transactions(vec![deploy_probe]).await;
+    assert!(env.user_tx_succeeded(&pre_beryl, 0), "activation-registry probe must deploy");
+
+    let beryl_boundary = env.sequencer.build_empty_block().await;
+
+    let pre_cobalt_set_admin = env.set_activation_admin_tx(BerylTestEnv::bob());
+    let pre_cobalt =
+        env.sequencer.build_next_block_with_transactions(vec![pre_cobalt_set_admin]).await;
+    assert!(
+        !env.user_tx_succeeded(&pre_cobalt, 0),
+        "setAdmin(newAdmin) must revert after Beryl but before Cobalt"
+    );
+
+    let cobalt_boundary = env.sequencer.build_empty_block().await;
+
+    let set_admin = env.set_activation_admin_tx(BerylTestEnv::bob());
+    let set_admin_block = env.sequencer.build_next_block_with_transactions(vec![set_admin]).await;
+    assert!(
+        env.user_tx_succeeded(&set_admin_block, 0),
+        "setAdmin(newAdmin) must succeed at Cobalt"
+    );
+    assert_admin_changed_log(&env, &set_admin_block);
+
+    let admin_call = Bytes::from(IActivationRegistry::adminCall {}.abi_encode());
+    let admin_probe =
+        env.call_staticcall_probe_tx(probe, admin_call, BerylTestEnv::B20_PROBE_GAS_LIMIT);
+    let admin_probe_block =
+        env.sequencer.build_next_block_with_transactions(vec![admin_probe]).await;
+    assert!(env.probe_call_succeeded(probe), "admin() staticcall must succeed after rotation");
+    assert_eq!(
+        env.probe_return_word(probe),
+        word_from_address(BerylTestEnv::bob()),
+        "admin() must return the state-backed activation admin"
+    );
+
+    let old_admin_activate = env.activate_feature_tx(FEATURE);
+    let old_admin_block =
+        env.sequencer.build_next_block_with_transactions(vec![old_admin_activate]).await;
+    assert!(
+        !env.user_tx_succeeded(&old_admin_block, 0),
+        "previous admin must not activate features after rotation"
+    );
+
+    let new_admin_activate = env.create_bob_tx(
+        TxKind::Call(ActivationRegistryStorage::ADDRESS),
+        Bytes::from(IActivationRegistry::activateCall { feature: FEATURE }.abi_encode()),
+        GAS_LIMIT,
+    );
+    let new_admin_block =
+        env.sequencer.build_next_block_with_transactions(vec![new_admin_activate]).await;
+    assert!(env.user_tx_succeeded(&new_admin_block, 0), "new admin must activate features");
+    assert_activation_log_from(&env, &new_admin_block, true, BerylTestEnv::bob());
+
+    env.derive_blocks(
+        [
+            (pre_beryl, 1),
+            (beryl_boundary, 2),
+            (pre_cobalt, 3),
+            (cobalt_boundary, 4),
+            (set_admin_block, 5),
+            (admin_probe_block, 6),
+            (old_admin_block, 7),
+            (new_admin_block, 8),
+        ],
+        8,
+    )
+    .await;
+}
+
 fn assert_activation_log(
     env: &BerylTestEnv,
     block: &base_common_consensus::BaseBlock,
     active: bool,
 ) {
+    assert_activation_log_from(env, block, active, BerylTestEnv::alice());
+}
+
+fn assert_activation_log_from(
+    env: &BerylTestEnv,
+    block: &base_common_consensus::BaseBlock,
+    active: bool,
+    caller: Address,
+) {
     let expected = if active {
-        IActivationRegistry::FeatureActivated { feature: FEATURE, caller: BerylTestEnv::alice() }
-            .encode_log_data()
+        IActivationRegistry::FeatureActivated { feature: FEATURE, caller }.encode_log_data()
     } else {
-        IActivationRegistry::FeatureDeactivated { feature: FEATURE, caller: BerylTestEnv::alice() }
-            .encode_log_data()
+        IActivationRegistry::FeatureDeactivated { feature: FEATURE, caller }.encode_log_data()
     };
     assert!(
         env.user_tx_receipt(block, 0)
@@ -130,6 +211,22 @@ fn assert_activation_log(
             .iter()
             .any(|log| log.address == ActivationRegistryStorage::ADDRESS && log.data == expected),
         "activation transition must emit the expected event"
+    );
+}
+
+fn assert_admin_changed_log(env: &BerylTestEnv, block: &base_common_consensus::BaseBlock) {
+    let expected = IActivationRegistry::AdminChanged {
+        previousAdmin: BerylTestEnv::alice(),
+        newAdmin: BerylTestEnv::bob(),
+        caller: BerylTestEnv::alice(),
+    }
+    .encode_log_data();
+    assert!(
+        env.user_tx_receipt(block, 0)
+            .logs()
+            .iter()
+            .any(|log| log.address == ActivationRegistryStorage::ADDRESS && log.data == expected),
+        "admin rotation must emit the expected event"
     );
 }
 

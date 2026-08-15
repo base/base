@@ -4,7 +4,8 @@ use std::{future::Future, pin::Pin, sync::Arc};
 
 use alloy_primitives::{Address, Bytes, U256};
 use base_batcher_encoder::{BatchPipeline, BatcherMetrics, DaType, FrameEncoder, SubmissionId};
-use base_blobs::BlobEncoder;
+use base_blobs::{BlobEncodeError, BlobEncoder};
+use base_protocol::Frame;
 use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 use futures::stream::{FuturesUnordered, StreamExt};
 use tokio::sync::Semaphore;
@@ -15,6 +16,41 @@ use crate::TxOutcome;
 /// Type alias for the in-flight receipt future collection.
 type InFlight =
     FuturesUnordered<Pin<Box<dyn Future<Output = (Vec<SubmissionId>, TxOutcome)> + Send>>>;
+
+/// Builds L1 transaction candidates for batch submissions.
+#[derive(Debug)]
+pub struct BatchTxCandidateBuilder;
+
+impl BatchTxCandidateBuilder {
+    /// Build a blob transaction candidate from batch frames.
+    ///
+    /// Each frame is encoded as one Base blob payload and the returned byte
+    /// count is the total payload bytes submitted across all blobs.
+    pub fn blob_tx_candidate(
+        inbox: Address,
+        frames: &[Arc<Frame>],
+    ) -> Result<(TxCandidate, u64), BlobEncodeError> {
+        let mut blobs = Vec::with_capacity(frames.len());
+        let mut payload_size = 0usize;
+
+        for frame in frames {
+            let data = FrameEncoder::to_calldata(frame);
+            payload_size += data.len();
+            blobs.push(BlobEncoder::encode(data.as_ref())?);
+        }
+
+        Ok((
+            TxCandidate {
+                to: Some(inbox),
+                tx_data: Bytes::new(),
+                value: U256::ZERO,
+                gas_limit: 0,
+                blobs: Arc::from(blobs),
+            },
+            payload_size as u64,
+        ))
+    }
+}
 
 /// Manages the full submission lifecycle for the batch driver.
 ///
@@ -44,11 +80,11 @@ impl<TM: TxManager> SubmissionQueue<TM> {
 
     /// Submit all ready frames that fit within semaphore capacity.
     ///
-    /// For each available semaphore permit (= one L1 transaction), packs as many
-    /// pending frames as fit into a single blob payload (up to
-    /// [`BlobEncoder::BLOB_MAX_DATA_SIZE`] bytes), then submits one L1 tx carrying
-    /// that blob. Loops until the semaphore is exhausted, the pipeline has no
-    /// ready submissions, or the txpool is blocked.
+    /// For each available semaphore permit (= one L1 transaction), dequeues one
+    /// ready submission and encodes it as a blob or calldata transaction. Blob
+    /// submissions map each frame to one blob, matching op-batcher's blob-tx shape.
+    /// Loops until the semaphore is exhausted, the pipeline has no ready submissions,
+    /// or the txpool is blocked.
     pub async fn submit_pending<P: BatchPipeline>(&mut self, pipeline: &mut P) {
         loop {
             if self.txpool_blocked {
@@ -58,94 +94,73 @@ impl<TM: TxManager> SubmissionQueue<TM> {
                 break;
             };
 
-            // Collect as many submissions as fit into one blob payload.
-            // payload_size tracks: 1 (DERIVATION_VERSION_0) + sum of frame.encode() sizes.
-            let mut ids: Vec<SubmissionId> = Vec::new();
-            let mut frames = Vec::new();
-            let mut payload_size: usize = 1; // DERIVATION_VERSION_0 prefix
-            let mut frame_bytes: usize = 0;
-            let mut da_type = DaType::Blob;
-
-            while let Some(sub) = pipeline.next_submission() {
-                // Calculate the encoded byte cost of this submission's frames.
-                let sub_frame_size: usize =
-                    sub.frames.iter().map(|f| BlobEncoder::FRAME_OVERHEAD + f.data.len()).sum();
-
-                // If the blob already has at least one submission and this one doesn't fit,
-                // put it back and stop packing.
-                if !ids.is_empty()
-                    && payload_size + sub_frame_size > BlobEncoder::BLOB_MAX_DATA_SIZE
-                {
-                    pipeline.requeue(sub.id);
-                    break;
-                }
-
-                if ids.is_empty() {
-                    da_type = sub.da_type;
-                } else if sub.da_type != da_type {
-                    pipeline.requeue(sub.id);
-                    break;
-                }
-                frame_bytes += sub.frames.iter().map(|f| f.data.len()).sum::<usize>();
-                payload_size += sub_frame_size;
-                ids.push(sub.id);
-                frames.extend(sub.frames);
-
-                // Calldata mode: exactly one frame per L1 transaction (protocol requirement).
-                if matches!(da_type, DaType::Calldata) {
-                    break;
-                }
-            }
-
-            if ids.is_empty() {
+            let Some(sub) = pipeline.next_submission() else {
                 drop(permit);
                 break;
+            };
+            debug_assert!(!sub.frames.is_empty(), "batch submissions must contain frames");
+            if sub.frames.is_empty() {
+                warn!(submission = ?sub.id, "skipping empty batch submission");
+                BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_FAILED).increment(1);
+                drop(permit);
+                continue;
             }
 
-            let da_type_label = match da_type {
+            let da_type_label = match sub.da_type {
                 DaType::Blob => BatcherMetrics::DA_TYPE_BLOB,
                 DaType::Calldata => BatcherMetrics::DA_TYPE_CALLDATA,
             };
-            let candidate = match da_type {
-                DaType::Blob => match BlobEncoder::encode_packed(&frames) {
-                    Ok(blob) => TxCandidate {
+            let blob_payload_bytes;
+            let candidate = match sub.da_type {
+                DaType::Blob => {
+                    match BatchTxCandidateBuilder::blob_tx_candidate(self.inbox, &sub.frames) {
+                        Ok((candidate, payload_size)) => {
+                            blob_payload_bytes = Some(payload_size);
+                            candidate
+                        }
+                        Err(e) => {
+                            warn!(error = %e, "failed to encode frames to blob, requeueing");
+                            pipeline.requeue(sub.id);
+                            drop(permit);
+                            break;
+                        }
+                    }
+                }
+                DaType::Calldata => {
+                    debug_assert!(
+                        sub.frames.len() == 1,
+                        "calldata submissions must contain exactly one frame"
+                    );
+                    if sub.frames.len() > 1 {
+                        warn!(
+                            submission = ?sub.id,
+                            frame_count = %sub.frames.len(),
+                            "calldata submission has multiple frames; only first will be submitted"
+                        );
+                    }
+                    blob_payload_bytes = None;
+                    TxCandidate {
                         to: Some(self.inbox),
-                        tx_data: Bytes::new(),
+                        tx_data: FrameEncoder::to_calldata(&sub.frames[0]),
                         value: U256::ZERO,
                         gas_limit: 0,
-                        blobs: Arc::from(vec![blob]),
-                    },
-                    Err(e) => {
-                        warn!(error = %e, "failed to encode frames to blob, requeueing");
-                        for id in ids {
-                            pipeline.requeue(id);
-                        }
-                        drop(permit);
-                        break;
+                        blobs: vec![].into(),
                     }
-                },
-                DaType::Calldata => TxCandidate {
-                    to: Some(self.inbox),
-                    tx_data: FrameEncoder::to_calldata(&frames[0]),
-                    value: U256::ZERO,
-                    gas_limit: 0,
-                    blobs: vec![].into(),
-                },
+                }
             };
+            let frame_bytes = sub.frames.iter().map(|f| f.data.len()).sum::<usize>();
             info!(
-                submissions = %ids.len(),
+                submissions = 1,
                 da_type = %da_type_label,
                 frame_bytes = %frame_bytes,
-                "submitting packed batch frames to L1"
+                "submitting batch frames to L1"
             );
-            BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_SUBMITTED)
-                .increment(ids.len() as u64);
+            BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_SUBMITTED).increment(1);
             BatcherMetrics::da_bytes_submitted_total(da_type_label).increment(frame_bytes as u64);
             BatcherMetrics::in_flight_submissions().increment(1.0);
             // Capture for the post-confirm metric: blob_used_bytes_total counts
             // payload bytes that actually landed on L1, not bytes attempted, so
             // we only increment after the tx confirms.
-            let blob_payload_bytes = matches!(da_type, DaType::Blob).then_some(payload_size as u64);
             let handle = self.tx_manager.send_async(candidate).await;
             let fut: Pin<Box<dyn Future<Output = (Vec<SubmissionId>, TxOutcome)> + Send>> =
                 Box::pin(async move {
@@ -170,7 +185,7 @@ impl<TM: TxManager> SubmissionQueue<TM> {
                         }
                     };
                     drop(permit);
-                    (ids, outcome)
+                    (vec![sub.id], outcome)
                 });
             self.in_flight.push(fut);
         }
@@ -197,7 +212,7 @@ impl<TM: TxManager> SubmissionQueue<TM> {
 
     /// Handle a settled in-flight receipt.
     ///
-    /// On confirmation, calls `pipeline.confirm` for each packed submission and
+    /// On confirmation, calls `pipeline.confirm` for each submitted id and
     /// `pipeline.advance_l1_head` once. On failure, requeues all. On txpool
     /// blockage, requeues all and sets the blocked flag.
     pub fn handle_outcome<P: BatchPipeline>(

@@ -68,7 +68,7 @@ If you want to work on something that doesn't have an issue yet, open an issue f
 ### Developer Setup
 
 - Rust `1.94` or newer
-- [`just`](https://github.com/casey/just)
+- [`just`](https://github.com/casey/just) `1.51.0` or newer
 - Foundry (`forge`) for Solidity-based test fixtures
 - Bun and Node.js `22+` if you want to run the spec site locally
 - Docker if you want to use the local devnet or build container images

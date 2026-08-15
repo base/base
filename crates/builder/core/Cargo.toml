@@ -15,7 +15,6 @@ workspace = true
 # workspace
 base-bundles.workspace = true
 base-node-runner.workspace = true
-base-access-lists.workspace = true
 base-builder-publish.workspace = true
 base-common-flashblocks.workspace = true
 
@@ -188,6 +187,7 @@ http-body-util.workspace = true
 [features]
 default = [ "jemalloc", "metrics" ]
 metrics = [
+	"base-common-evm/metrics",
 	"base-metrics/metrics",
 	"dep:metrics",
 	"reth-evm/metrics",

@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use alloy_primitives::{Address, TxHash, TxKind, U256};
 use base_load_tests::{
-    AccountPool, MetricsCollector, Payload, SeededRng, TransactionMetrics, TransferPayload,
-    WorkloadConfig, WorkloadGenerator,
+    AccountPool, KeyStream, MetricsCollector, Payload, SeededRng, TransactionMetrics,
+    TransferPayload, WorkloadConfig, WorkloadGenerator,
 };
 
 #[test]
@@ -133,19 +133,52 @@ fn metrics_summary_latency() {
 
     let fb_latency = &summary.flashblocks_latency;
     assert_eq!(fb_latency.p50, Duration::from_millis(150));
+}
 
-    let mut metrics = TransactionMetrics::new(
-        TxHash::repeat_byte(99),
-        Some(Duration::from_millis(600)),
-        None,
-        21000,
-        1_000_000_000,
-        Some(99),
-    );
-    metrics.block_receipt_delay = Some(Duration::from_millis(75));
-    collector.record_confirmed(metrics);
-    let summary = collector.summarize(Duration::from_secs(10), None);
-    assert_eq!(summary.block_receipt_delay.p50, Duration::from_millis(75));
+#[test]
+fn metrics_summary_full_run_throughput_and_block_range() {
+    let mut collector = MetricsCollector::new();
+
+    // 30 txs across blocks 100..=129, each with block + FB latency.
+    for i in 0..30u64 {
+        collector.record_confirmed(TransactionMetrics::new(
+            TxHash::repeat_byte(i as u8),
+            Some(Duration::from_millis(100 + i * 10)),
+            Some(Duration::from_millis(50 + i * 5)),
+            21_000,
+            1_000_000_000,
+            Some(100 + i),
+        ));
+    }
+
+    let summary = collector.summarize(Duration::from_secs(60), None);
+
+    assert_eq!(summary.throughput.total_confirmed, 30);
+    assert_eq!(summary.block_range.first_block, Some(100));
+    assert_eq!(summary.block_range.last_block, Some(129));
+    assert_eq!(summary.block_range.block_count, 30);
+    assert_eq!(summary.block_latency.min, Duration::from_millis(100), "tx 0 block latency");
+    assert_eq!(summary.block_latency.max, Duration::from_millis(390), "tx 29 block latency");
+    assert_eq!(summary.flashblocks_latency.count, 30);
+}
+
+#[test]
+fn metrics_summary_empty_when_no_confirms() {
+    let collector = MetricsCollector::new();
+    let summary = collector.summarize(Duration::from_secs(60), None);
+
+    assert_eq!(summary.throughput.total_confirmed, 0);
+    assert_eq!(summary.block_range.block_count, 0);
+    assert_eq!(summary.throughput.tps, 0.0);
+}
+
+#[test]
+fn metrics_summary_includes_fresh_recipient_count() {
+    let collector = MetricsCollector::new();
+    let summary =
+        collector.summarize_with_fresh_recipient_count(Duration::from_secs(60), None, Some(7));
+
+    assert_eq!(summary.fresh_recipient_count, Some(7));
 }
 
 #[test]
@@ -193,9 +226,70 @@ fn metrics_summary_json_serialization() {
     let json = summary.to_json().unwrap();
 
     assert!(json.contains("block_latency"));
-    assert!(json.contains("block_receipt_delay"));
+    assert!(
+        !json.contains("block_receipt_delay"),
+        "receipt delay is internal-only and must not be serialized to JSON"
+    );
     assert!(json.contains("throughput"));
     assert!(json.contains("gas"));
+}
+
+#[test]
+fn key_stream_seed_is_reproducible() {
+    let mut s1 = KeyStream::from_seed(7, 0).unwrap();
+    let mut s2 = KeyStream::from_seed(7, 0).unwrap();
+    for _ in 0..32 {
+        assert_eq!(s1.next_signer().unwrap().address(), s2.next_signer().unwrap().address());
+    }
+    assert_eq!(s1.generated_count(), 32);
+}
+
+#[test]
+fn key_stream_seed_addresses_are_unique() {
+    let mut stream = KeyStream::from_seed(99, 0).unwrap();
+    let mut seen = std::collections::HashSet::new();
+    for _ in 0..256 {
+        let addr = stream.next_signer().unwrap().address();
+        assert!(seen.insert(addr), "duplicate fresh recipient address: {addr}");
+    }
+}
+
+#[test]
+fn key_stream_seed_matches_account_pool() {
+    // Recovery contract: recipients produced by KeyStream::from_seed(seed, offset)
+    // match AccountPool::with_offset(seed, count, offset).
+    let seed = 4242;
+    let offset = 5;
+    let count = 8;
+
+    let mut stream = KeyStream::from_seed(seed, offset).unwrap();
+    let from_stream: Vec<_> = (0..count).map(|_| stream.next_signer().unwrap().address()).collect();
+
+    let from_pool = AccountPool::with_offset(seed, count, offset).unwrap().addresses();
+
+    assert_eq!(from_stream, from_pool);
+}
+
+#[test]
+fn key_stream_seed_rejects_pathological_offset() {
+    let err = KeyStream::from_seed(99, usize::MAX).unwrap_err();
+    assert!(err.to_string().contains("seed key stream offset"));
+}
+
+#[test]
+fn key_stream_mnemonic_matches_account_pool() {
+    // Recovery contract for the mnemonic path: stream addresses match
+    // AccountPool::from_mnemonic(mnemonic, count, offset).
+    let mnemonic = "test test test test test test test test test test test junk";
+    let offset = 5;
+    let count = 4;
+
+    let mut stream = KeyStream::from_mnemonic(mnemonic, offset).unwrap();
+    let from_stream: Vec<_> = (0..count).map(|_| stream.next_signer().unwrap().address()).collect();
+
+    let from_pool = AccountPool::from_mnemonic(mnemonic, count, offset).unwrap().addresses();
+
+    assert_eq!(from_stream, from_pool);
 }
 
 #[test]

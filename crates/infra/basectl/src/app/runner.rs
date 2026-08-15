@@ -9,21 +9,21 @@ use url::Url;
 use super::{App, Resources, SourceLabel, ViewId, views::create_view};
 use crate::{
     config::{ConductorSource, MonitoringConfig},
-    l1_client::fetch_full_system_config,
     rpc::{
         BacklogFetchResult, BlockDaInfo, ConductorPollUpdate, L1BlockInfo, L1ConnectionMode,
-        ProofsSnapshot, TimestampedFlashblock, ValidatorNodeStatus,
-        fetch_initial_backlog_with_progress, run_block_fetcher, run_conductor_poller,
-        run_flashblock_ws, run_flashblock_ws_timestamped, run_l1_blob_watcher, run_proofs_poller,
-        run_safe_head_poller, run_validator_poller,
+        PodsSnapshot, ProofsSnapshot, TimestampedFlashblock, ValidatorNodeStatus,
+        fetch_full_system_config, fetch_initial_backlog_with_progress, run_block_fetcher,
+        run_conductor_poller, run_flashblock_ws, run_flashblock_ws_timestamped,
+        run_l1_blob_watcher, run_pods_poller, run_proofs_poller, run_safe_head_poller,
+        run_validator_poller,
     },
     tui::Toast,
 };
 
 /// Launches the TUI application starting from the specified view and network.
 ///
-/// `conductor_rpc` is the optional `--conductor-rpc` CLI override; when set it
-/// forces the conductor source into `Discover` mode regardless of config.
+/// `conductor_rpc` is the optional `--conductor-rpc` CLI override. Static
+/// conductor config takes precedence over the override.
 pub async fn run_app(
     initial_view: ViewId,
     network: &str,
@@ -31,9 +31,10 @@ pub async fn run_app(
 ) -> Result<()> {
     let mut config = MonitoringConfig::load(network).await?;
     if config.conductors.is_none()
-        && let Some(bootstrap) = conductor_rpc.as_ref()
+        && let Some(source) = config.conductor_source(conductor_rpc.clone())
+        && let ConductorSource::Discover { bootstrap, .. } = source
     {
-        let detect_rpc = config.detect_rpc_for(Some(bootstrap));
+        let detect_rpc = config.detect_rpc_for(Some(&bootstrap));
         if let Some(detected) = MonitoringConfig::detect_name_from_rpc(&detect_rpc).await {
             config.name = detected;
         }
@@ -42,32 +43,6 @@ pub async fn run_app(
     start_background_services(&config, &mut resources, conductor_rpc.clone());
     let app = App::new(resources, initial_view, conductor_rpc);
     app.run(create_view).await
-}
-
-/// Resolves the active conductor source from CLI flag and config.
-///
-/// Precedence: hand-configured `conductors` list > CLI `--conductor-rpc` flag >
-/// `discovery.bootstrap_rpc` from config. Static config wins so local devnet
-/// (which ships with a hardcoded 3-node list) isn't accidentally clobbered by
-/// the default `--conductor-rpc` value. Returns `None` when no source is
-/// configured (conductor view will simply show no nodes).
-fn resolve_conductor_source(
-    cli_flag: Option<Url>,
-    config: &MonitoringConfig,
-) -> Option<ConductorSource> {
-    if let Some(nodes) = config.conductors.clone() {
-        return Some(ConductorSource::Static(nodes));
-    }
-    if let Some(bootstrap) = cli_flag {
-        let ports = config.discovery.as_ref().map(|d| d.ports.clone()).unwrap_or_default();
-        return Some(ConductorSource::Discover { bootstrap, ports });
-    }
-    if let Some(d) = config.discovery.as_ref()
-        && let Some(bootstrap) = d.bootstrap_rpc.clone()
-    {
-        return Some(ConductorSource::Discover { bootstrap, ports: d.ports.clone() });
-    }
-    None
 }
 
 /// Starts all background data-fetching services, wiring their channels into `resources`.
@@ -152,7 +127,7 @@ pub fn start_background_services(
         }
     });
 
-    if let Some(source) = resolve_conductor_source(conductor_rpc, config) {
+    if let Some(source) = config.conductor_source(conductor_rpc) {
         let (conductor_tx, conductor_rx) = mpsc::channel::<ConductorPollUpdate>(8);
         resources.conductor.set_channel(conductor_rx);
         resources.conductor.set_source_label(match &source {
@@ -200,6 +175,12 @@ pub fn start_background_services(
             proofs_tx,
             proofs_toast_tx,
         ));
+    }
+
+    if let Some(pods_config) = config.pods.clone() {
+        let (pods_tx, pods_rx) = mpsc::channel::<PodsSnapshot>(4);
+        resources.pods.set_channel(pods_rx);
+        tokio::spawn(run_pods_poller(pods_config, pods_tx));
     }
 }
 

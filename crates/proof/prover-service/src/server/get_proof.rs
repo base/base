@@ -1,57 +1,27 @@
 use base_prover_service_db::{
-    ProofRequest, ProofStatus as DbProofStatus, ProofType as DbProofType,
-    SessionStatus as DbSessionStatus, canonical_session_id,
+    ProofRequest, ProofStatus as DbProofStatus, SessionStatus as DbSessionStatus,
+    canonical_session_id,
 };
 use base_prover_service_protocol::{
-    GetProofRequest, GetProofResponse, ProofResult, ProofStatus, SnarkGroth16ProofResult,
-    ZkProofResult, ZkVm,
+    ExecutionStats, GetProofRequest, GetProofResponse, PROOF_REQUEST_NOT_FOUND_MESSAGE,
+    ProofResult, ProofStatus, ZkProofResult, ZkVm,
 };
 use jsonrpsee::core::RpcResult;
-use tracing::{Instrument, info};
+use tracing::info;
 use uuid::Uuid;
 
 use crate::{
-    backends::{OP_SUCCINCT_DRY_RUN_METADATA_KEY, OP_SUCCINCT_EXECUTION_STATS_METADATA_KEY},
+    OP_SUCCINCT_DRY_RUN_METADATA_KEY, OP_SUCCINCT_EXECUTION_STATS_METADATA_KEY,
     server::{ProverServiceServer, internal, invalid_argument, not_found, record_rpc_result},
 };
 
-fn is_dry_run_metadata(metadata: &serde_json::Value) -> bool {
+fn execution_stats_from_metadata(metadata: &serde_json::Value) -> Option<ExecutionStats> {
     metadata
         .get(OP_SUCCINCT_DRY_RUN_METADATA_KEY)
         .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false)
-        && metadata.get(OP_SUCCINCT_EXECUTION_STATS_METADATA_KEY).is_some()
-}
-
-fn proof_result_for_request(proof_req: &ProofRequest) -> RpcResult<ProofResult> {
-    if let Some(result_payload) = &proof_req.result_payload {
-        return serde_json::from_value(result_payload.clone()).map_err(|e| {
-            internal(format!(
-                "stored proof result payload for session_id {} is invalid: {e}",
-                proof_req.session_id
-            ))
-        });
-    }
-
-    match proof_req.proof_type {
-        Some(DbProofType::OpSuccinctSp1ClusterCompressed) => {
-            let proof = proof_req
-                .stark_receipt
-                .clone()
-                .ok_or_else(|| not_found("compressed proof receipt not available"))?;
-            Ok(ProofResult::Compressed(ZkProofResult { zk_vm: ZkVm::Sp1, proof: proof.into() }))
-        }
-        Some(DbProofType::OpSuccinctSp1ClusterSnarkGroth16) => {
-            let proof = proof_req
-                .snark_receipt
-                .clone()
-                .ok_or_else(|| not_found("SNARK Groth16 proof receipt not available"))?;
-            Ok(ProofResult::SnarkGroth16(SnarkGroth16ProofResult {
-                proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: proof.into() },
-            }))
-        }
-        None => Err(not_found("proof result not available for request without backend proof_type")),
-    }
+        .unwrap_or_default()
+        .then_some(())?;
+    serde_json::from_value(metadata.get(OP_SUCCINCT_EXECUTION_STATS_METADATA_KEY)?.clone()).ok()
 }
 
 const fn should_use_dry_run_result(proof_req: &ProofRequest) -> bool {
@@ -70,7 +40,10 @@ impl ProverServiceServer {
         result
     }
 
-    async fn request_is_dry_run(&self, proof_request_id: Uuid) -> RpcResult<bool> {
+    async fn dry_run_execution_stats_for_request(
+        &self,
+        proof_request_id: Uuid,
+    ) -> RpcResult<Option<ExecutionStats>> {
         let sessions = self
             .repo
             .get_sessions_for_request(proof_request_id)
@@ -81,18 +54,27 @@ impl ProverServiceServer {
             .iter()
             .filter(|session| session.status == DbSessionStatus::Completed)
             .filter_map(|session| session.metadata.as_ref())
-            .any(is_dry_run_metadata))
+            .find_map(execution_stats_from_metadata))
     }
 
-    async fn succeeded_result(&self, proof_req: &ProofRequest) -> RpcResult<Option<ProofResult>> {
-        if should_use_dry_run_result(proof_req) && self.request_is_dry_run(proof_req.id).await? {
+    async fn succeeded_result(&self, proof_req: ProofRequest) -> RpcResult<Option<ProofResult>> {
+        if should_use_dry_run_result(&proof_req)
+            && let Some(execution_stats) =
+                self.dry_run_execution_stats_for_request(proof_req.id).await?
+        {
             return Ok(Some(ProofResult::Compressed(ZkProofResult {
                 zk_vm: ZkVm::Sp1,
                 proof: Vec::new().into(),
+                execution_stats: Some(execution_stats),
             })));
         }
 
-        Ok(Some(proof_result_for_request(proof_req)?))
+        let result = proof_req
+            .stored_proof_result()
+            .map_err(|e| internal(e.to_string()))?
+            .ok_or_else(|| not_found("proof result not available"))?;
+
+        Ok(Some(result))
     }
 
     async fn get_proof_inner(&self, request: GetProofRequest) -> RpcResult<GetProofResponse> {
@@ -103,7 +85,7 @@ impl ProverServiceServer {
             .get_by_session_id(&session_id)
             .await
             .map_err(|e| internal(format!("Database error: {e}")))?
-            .ok_or_else(|| not_found("Proof request not found"))?;
+            .ok_or_else(|| not_found(PROOF_REQUEST_NOT_FOUND_MESSAGE))?;
         let proof_request_id = proof_req.id;
 
         info!(
@@ -114,38 +96,9 @@ impl ProverServiceServer {
 
         let (status, result, error_message) = match proof_req.status {
             DbProofStatus::Created | DbProofStatus::Pending => (ProofStatus::Queued, None, None),
-            DbProofStatus::Running => {
-                let sync_span = tracing::info_span!(
-                    "sync_proof_status",
-                    proof_request_id = %proof_request_id,
-                );
-                self.manager
-                    .sync_and_update_proof_status(&proof_req)
-                    .instrument(sync_span)
-                    .await
-                    .map_err(|e| internal(format!("Failed to sync proof status: {e}")))?;
-
-                let updated_proof_req = self
-                    .repo
-                    .get(proof_request_id)
-                    .await
-                    .map_err(|e| internal(format!("Database error: {e}")))?
-                    .ok_or_else(|| not_found("Proof request not found"))?;
-
-                match updated_proof_req.status {
-                    DbProofStatus::Succeeded => (
-                        ProofStatus::Succeeded,
-                        self.succeeded_result(&updated_proof_req).await?,
-                        None,
-                    ),
-                    DbProofStatus::Failed => {
-                        (ProofStatus::Failed, None, updated_proof_req.error_message)
-                    }
-                    _ => (ProofStatus::Running, None, None),
-                }
-            }
+            DbProofStatus::Running => (ProofStatus::Running, None, None),
             DbProofStatus::Succeeded => {
-                (ProofStatus::Succeeded, self.succeeded_result(&proof_req).await?, None)
+                (ProofStatus::Succeeded, self.succeeded_result(proof_req).await?, None)
             }
             DbProofStatus::Failed => (ProofStatus::Failed, None, proof_req.error_message),
         };
@@ -156,14 +109,11 @@ impl ProverServiceServer {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use base_prover_service_db::{ApiProofType, ProofRequest, ProofType, ZkVmKind};
     use chrono::Utc;
     use uuid::Uuid;
 
     use super::*;
-    use crate::OpSuccinctStoredExecutionStats;
 
     fn metadata_with_execution_stats(stats: serde_json::Value) -> serde_json::Value {
         let mut metadata = serde_json::Map::new();
@@ -212,97 +162,54 @@ mod tests {
     }
 
     #[test]
-    fn dry_run_metadata_requires_marker_and_stats() {
-        let stored_stats = OpSuccinctStoredExecutionStats {
-            total_instruction_cycles: 100,
-            total_sp1_gas: 200,
-            cycle_tracker: HashMap::from([("range".to_string(), 42)]),
-            witness_generation_ms: 12.5,
-            execution_ms: 34.5,
-        };
-        let metadata =
-            metadata_with_execution_stats(serde_json::to_value(stored_stats).expect("serialize"));
+    fn dry_run_execution_stats_from_metadata_deserializes_integer_stats() {
+        let metadata = metadata_with_execution_stats(serde_json::json!({
+            "total_instruction_cycles": 100,
+            "total_sp1_gas": 200,
+            "cycle_tracker": {
+                "range": 42
+            },
+            "witness_generation_ms": 12,
+            "execution_ms": 34
+        }));
 
-        assert!(is_dry_run_metadata(&metadata));
-        assert!(!is_dry_run_metadata(&serde_json::json!({ "dry_run": true })));
+        let stats = execution_stats_from_metadata(&metadata).expect("execution stats");
+
+        assert_eq!(stats.total_instruction_cycles, 100);
+        assert_eq!(stats.total_sp1_gas, 200);
+        assert_eq!(stats.cycle_tracker.get("range"), Some(&42));
+        assert_eq!(stats.witness_generation_ms, 12);
+        assert_eq!(stats.execution_ms, 34);
     }
 
     #[test]
-    fn proof_result_for_compressed_returns_stark_bytes() {
-        let stark_bytes = vec![0xDE, 0xAD, 0xBE, 0xEF];
-        let req = make_proof_request(
-            ProofType::OpSuccinctSp1ClusterCompressed,
-            Some(stark_bytes.clone()),
-            None,
-        );
+    fn dry_run_execution_stats_from_metadata_rejects_fractional_milliseconds() {
+        let metadata = metadata_with_execution_stats(serde_json::json!({
+            "total_instruction_cycles": 100,
+            "total_sp1_gas": 200,
+            "cycle_tracker": {
+                "range": 42
+            },
+            "witness_generation_ms": 12.5,
+            "execution_ms": 34.9
+        }));
 
-        let result = proof_result_for_request(&req).unwrap();
-        assert_eq!(
-            result,
-            ProofResult::Compressed(ZkProofResult { zk_vm: ZkVm::Sp1, proof: stark_bytes.into() })
-        );
+        assert!(execution_stats_from_metadata(&metadata).is_none());
     }
 
     #[test]
-    fn proof_result_for_snark_returns_snark_bytes() {
-        let snark_bytes = vec![0xCA, 0xFE];
-        let req = make_proof_request(
-            ProofType::OpSuccinctSp1ClusterSnarkGroth16,
-            None,
-            Some(snark_bytes.clone()),
-        );
+    fn dry_run_execution_stats_from_metadata_requires_marker_and_valid_stats() {
+        assert!(execution_stats_from_metadata(&serde_json::json!({ "dry_run": true })).is_none());
 
-        let result = proof_result_for_request(&req).unwrap();
-        assert_eq!(
-            result,
-            ProofResult::SnarkGroth16(SnarkGroth16ProofResult {
-                proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: snark_bytes.into() },
-            })
-        );
-    }
+        let metadata = metadata_with_execution_stats(serde_json::json!({
+            "total_instruction_cycles": "100",
+            "total_sp1_gas": 200,
+            "cycle_tracker": {},
+            "witness_generation_ms": 12,
+            "execution_ms": 34
+        }));
 
-    #[test]
-    fn proof_result_prefers_stored_result_payload() {
-        let stored_result = ProofResult::Compressed(ZkProofResult {
-            zk_vm: ZkVm::Sp1,
-            proof: vec![0xAA, 0xBB].into(),
-        });
-        let mut req = make_proof_request(
-            ProofType::OpSuccinctSp1ClusterCompressed,
-            Some(vec![0xDE, 0xAD]),
-            None,
-        );
-        req.result_payload =
-            Some(serde_json::to_value(&stored_result).expect("proof result should serialize"));
-
-        let result = proof_result_for_request(&req).unwrap();
-        assert_eq!(result, stored_result);
-    }
-
-    #[test]
-    fn proof_result_for_tee_returns_stored_result_payload() {
-        let stored_result = serde_json::json!({
-            "proof_type": "tee",
-            "payload": {
-                "aggregate_proposal": {
-                    "output_root": "0x0000000000000000000000000000000000000000000000000000000000000000",
-                    "signature": "0x",
-                    "l1_origin_hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
-                    "l1_origin_number": 0,
-                    "l2_block_number": 0,
-                    "prev_output_root": "0x0000000000000000000000000000000000000000000000000000000000000000",
-                    "config_hash": "0x0000000000000000000000000000000000000000000000000000000000000000"
-                },
-                "proposals": [],
-                "tee_kind": "aws_nitro"
-            }
-        });
-        let mut req = make_proof_request(ProofType::OpSuccinctSp1ClusterCompressed, None, None);
-        req.proof_type = None;
-        req.result_payload = Some(stored_result);
-
-        let result = proof_result_for_request(&req).unwrap();
-        assert!(matches!(result, ProofResult::Tee(_)));
+        assert!(execution_stats_from_metadata(&metadata).is_none());
     }
 
     #[test]
@@ -310,6 +217,7 @@ mod tests {
         let stored_result = ProofResult::Compressed(ZkProofResult {
             zk_vm: ZkVm::Sp1,
             proof: vec![0xAA, 0xBB].into(),
+            execution_stats: None,
         });
         let mut req = make_proof_request(ProofType::OpSuccinctSp1ClusterCompressed, None, None);
         req.result_payload =

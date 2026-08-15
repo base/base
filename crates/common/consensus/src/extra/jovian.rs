@@ -5,7 +5,7 @@ use super::{EIP1559ParamEncoder, EIP1559ParamError};
 
 const VERSION_BYTE: u8 = 1;
 
-/// EIP-1559 extra data encoding for the Jovian hardfork.
+/// EIP-1559 extra data encoding for the Jovian upgrade.
 ///
 /// Jovian extra data is 17 bytes:
 /// - 1 byte version (always `1`)

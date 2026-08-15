@@ -13,16 +13,16 @@ workspace = true
 [dependencies]
 # Alloy
 alloy-signer.workspace = true
+alloy-provider.workspace = true
 alloy-sol-types.workspace = true
 alloy-primitives.workspace = true
-boundless-market.workspace = true
 
 # AWS
 aws-sdk-ec2.workspace = true
 aws-sdk-elasticloadbalancingv2.workspace = true
+aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
 
 # Crypto
-rand.workspace = true
 k256 = { workspace = true, features = ["ecdsa"] }
 
 # X.509 / CRL
@@ -36,7 +36,7 @@ base-proof-contracts.workspace = true
 
 # Proving
 base-proof-tee-nitro-verifier.workspace = true
-base-proof-tee-nitro-attestation-prover.workspace = true
+base-proof-tee-nitro-attestation-prover = { workspace = true, features = ["prove"] }
 
 # Transaction management
 base-tx-manager.workspace = true
@@ -48,15 +48,24 @@ base-proof-primitives = { workspace = true, features = ["rpc-client"] }
 # Async
 futures.workspace = true
 tokio-util.workspace = true
-async-trait.workspace = true
 tokio = { workspace = true, features = ["rt", "sync", "net", "time", "macros"] }
 
 # Error
 thiserror.workspace = true
 
+# CLI
+base-cli-utils.workspace = true
+
 # Metrics
 base-metrics.workspace = true
+base-balance-monitor.workspace = true
 metrics = { workspace = true, optional = true }
+
+# TLS
+rustls = { workspace = true, features = ["ring"] }
+
+# Health
+base-health = { workspace = true, features = ["axum-server"] }
 
 # Tracing
 tracing.workspace = true
@@ -66,14 +75,16 @@ url.workspace = true
 hex.workspace = true
 
 [dev-dependencies]
-sha2.workspace = true
-rstest.workspace = true
-metrics.workspace = true
 hex-literal.workspace = true
+async-trait.workspace = true
 alloy-consensus.workspace = true
 alloy-rpc-types-eth.workspace = true
-metrics-exporter-prometheus.workspace = true
 tokio = { workspace = true, features = ["rt", "macros", "test-util"] }
 
 [features]
-metrics = [ "base-metrics/metrics", "base-tx-manager/metrics", "dep:metrics" ]
+metrics = [
+	"base-metrics/metrics",
+	"base-proof-tee-nitro-attestation-prover/metrics",
+	"base-tx-manager/metrics",
+	"dep:metrics",
+]

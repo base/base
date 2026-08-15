@@ -172,6 +172,7 @@ impl ExecutorTestFixtureCreator {
                     .map(u64::from_be_bytes)
                     .expect("Invalid header format for Jovian")
             }),
+            timestamp_millis_part: None,
         };
 
         let fixture_path = self.data_dir.join("fixture.json");

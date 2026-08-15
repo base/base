@@ -34,6 +34,7 @@ use crate::{
     QueuedEngineDerivationClient, QueuedEngineRpcClient, QueuedL1WatcherDerivationClient,
     QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient,
     RecoveryModeGuard, RpcActor, RpcContext, SequencerActor, SequencerConfig,
+    UpgradeSignalNodeConfig,
     actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
 };
 
@@ -118,6 +119,8 @@ pub struct RollupNode {
     /// If the path is set but the database cannot be opened (e.g., bad permissions, disk
     /// error, or corrupted file), the node **fails to start** with an error.
     pub safedb_path: Option<PathBuf>,
+    /// Optional upgrade signal configuration for the consensus node.
+    pub upgrade_signal_config: Option<UpgradeSignalNodeConfig>,
 }
 
 /// A RollupNode-level derivation actor wrapper.
@@ -532,9 +535,13 @@ impl RollupNode {
             derivation_origin_rx,
             cancellation.clone(),
         );
-
+        let upgrade_signal_metrics_actor =
+            self.upgrade_signal_config.as_ref().map(|c| c.metrics_actor(cancellation.clone()));
+        let upgrade_signal_refresher =
+            self.upgrade_signal_config.as_ref().and_then(|c| c.refresher());
+        let node_mode = self.mode();
         // Create the sequencer if needed
-        let (sequencer_actor, sequencer_admin_client) = if self.mode().is_sequencer() {
+        let (sequencer_actor, sequencer_admin_client) = if node_mode.is_sequencer() {
             let sequencer_engine_client = QueuedSequencerEngineClient {
                 engine_actor_request_tx: engine_actor_request_tx.clone(),
                 unsafe_head_rx,
@@ -585,6 +592,7 @@ impl RollupNode {
                 QueuedEngineRpcClient::new(engine_rpc_request_tx),
                 sequencer_admin_client,
                 safe_db_reader,
+                upgrade_signal_refresher,
             )
         });
 
@@ -604,6 +612,7 @@ impl RollupNode {
                 Some((network, ())),
                 Some((l1_watcher, ())),
                 Some((l1_query_processor, ())),
+                upgrade_signal_metrics_actor.map(|actor| (actor, ())),
                 Some((derivation, ())),
                 Some((checkpoint_actor, cancellation.clone())),
                 Some((engine_actor, ())),

@@ -26,7 +26,6 @@ alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 # base
 base-tx-manager.workspace = true
 base-common-network.workspace = true
-base-common-consensus.workspace = true
 base-common-flashblocks.workspace = true
 base-common-precompiles = { workspace = true, default-features = false }
 

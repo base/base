@@ -31,6 +31,7 @@ base-runtime = { workspace = true, features = ["tokio"] }
 # misc
 url.workspace = true
 backon.workspace = true
+futures.workspace = true
 thiserror.workspace = true
 metrics = { workspace = true, optional = true }
 tracing = { workspace = true, features = ["std"] }

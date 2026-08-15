@@ -72,6 +72,17 @@ impl EngineSyncState {
         }
     }
 
+    /// Computes the new sync state using the current state values when the update is not
+    /// specified.
+    pub fn updated(self, sync_state_update: EngineSyncStateUpdate) -> Self {
+        Self {
+            unsafe_head: sync_state_update.unsafe_head.unwrap_or(self.unsafe_head),
+            local_safe_head: sync_state_update.local_safe_head.unwrap_or(self.local_safe_head),
+            safe_head: sync_state_update.safe_head.unwrap_or(self.safe_head),
+            finalized_head: sync_state_update.finalized_head.unwrap_or(self.finalized_head),
+        }
+    }
+
     /// Applies the update to the provided sync state, using the current state values if the update
     /// is not specified. Returns the new sync state.
     pub fn apply_update(self, sync_state_update: EngineSyncStateUpdate) -> Self {
@@ -100,12 +111,7 @@ impl EngineSyncState {
                 .set(now_secs - finalized_head.block_info.timestamp as f64);
         }
 
-        Self {
-            unsafe_head: sync_state_update.unsafe_head.unwrap_or(self.unsafe_head),
-            local_safe_head: sync_state_update.local_safe_head.unwrap_or(self.local_safe_head),
-            safe_head: sync_state_update.safe_head.unwrap_or(self.safe_head),
-            finalized_head: sync_state_update.finalized_head.unwrap_or(self.finalized_head),
-        }
+        self.updated(sync_state_update)
     }
 }
 

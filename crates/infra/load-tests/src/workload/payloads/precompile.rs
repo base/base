@@ -185,6 +185,10 @@ impl Payload for PrecompilePayload {
         "precompile"
     }
 
+    fn uses_runner_recipient(&self) -> bool {
+        false
+    }
+
     fn generate(&self, rng: &mut SeededRng, _from: Address, _to: Address) -> TransactionRequest {
         let (precompile_data, single_gas) = match self.id {
             PrecompileId::Identity => (Self::encode_identity_data(rng), 100_000u64),

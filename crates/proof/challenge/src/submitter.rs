@@ -189,6 +189,8 @@ impl DisputeIntent {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Address;
+    use base_proof_contracts::l1_origin_too_old_selector;
+    use base_proof_submission::KnownRevert;
     use base_tx_manager::TxManagerError;
 
     use super::*;
@@ -255,6 +257,31 @@ mod tests {
         assert!(
             matches!(err, ChallengeSubmitError::TxManager(TxManagerError::NonceTooLow)),
             "expected TxManager(NonceTooLow), got {err:?}",
+        );
+    }
+
+    #[tokio::test]
+    async fn submit_dispute_classifies_known_revert_error() {
+        let mock = MockTxManager::new(Err(TxManagerError::ExecutionReverted {
+            reason: None,
+            data: Some(Bytes::from(l1_origin_too_old_selector().to_vec())),
+        }));
+        let submitter = ChallengeSubmitter::new(mock);
+
+        let result = submitter
+            .submit_dispute(
+                Address::repeat_byte(0x01),
+                Bytes::from(vec![0x01]),
+                0,
+                B256::ZERO,
+                DisputeIntent::Challenge,
+            )
+            .await;
+
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, ChallengeSubmitError::KnownRevert(KnownRevert::L1OriginTooOld)),
+            "expected L1OriginTooOld, got {err:?}",
         );
     }
 

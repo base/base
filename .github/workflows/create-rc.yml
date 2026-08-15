@@ -6,6 +6,7 @@ on:
       - 'releases/v*'
 
 permissions:
+  actions: read
   contents: write
   packages: write
   id-token: write

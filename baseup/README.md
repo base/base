@@ -20,6 +20,8 @@ baseup --bin base-reth-node           # Install only the node binary
 baseup --bin base-consensus           # Install only the consensus binary
 baseup --bin basectl                  # Install only basectl
 baseup --bin all                      # Install all published binaries
+baseup verify-release                 # Verify latest published release archive signatures without installing
+baseup verify-release -i v1.0.0       # Verify published archive signatures for a specific release tag
 baseup -v                             # Print the baseup installer version
 baseup --update                       # Update baseup itself
 baseup --help                         # Show help
@@ -40,10 +42,19 @@ By default, `baseup` installs every binary this repo publishes in GitHub release
 
 - downloads `<binary>-<version>-<target>.tar.gz`
 - checks `<archive>.sha256`
-- verifies `<archive>.asc` with GPG
+- imports the pinned Base Releases public key into a temporary GPG keyring
+- verifies `<archive>.asc` with GPG and requires fingerprint `5EFE7BCFCD85682711F9FC30904841FFEBD38BAD`
 - verifies GitHub SLSA provenance when `gh` is installed and authenticated
 
 Use `--unsafe-skip-verify` only for local testing; checksum verification is still required.
+
+To validate release artifacts without installing binaries, run:
+
+```bash
+baseup verify-release
+```
+
+By default, `verify-release` fetches the GitHub release asset list and checks every published archive matching the binaries and targets that `baseup` supports. Missing binary/target archives are skipped. If an archive is published, its `.sha256` and `.asc` sidecars are required and must verify. Use `--bin` or `--target` to narrow the check; the command fails if the filters match no published archives.
 
 ## Supported Targets
 

@@ -175,9 +175,9 @@ pub fn compute_receipts_root(
     config: &RollupConfig,
     timestamp: u64,
 ) -> B256 {
-    // There is a minor bug in op-geth and op-erigon where in the Regolith hardfork,
+    // There is a minor bug in op-geth and op-erigon where in the Regolith upgrade,
     // the receipt root calculation does not include the deposit nonce in the
-    // receipt encoding. In the Regolith hardfork, we must strip the deposit nonce
+    // receipt encoding. In the Regolith upgrade, we must strip the deposit nonce
     // from the receipt encoding to match the receipt root calculation.
     if config.is_regolith_active(timestamp) && !config.is_canyon_active(timestamp) {
         let receipts = receipts

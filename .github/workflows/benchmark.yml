@@ -49,7 +49,6 @@ jobs:
         uses: ./.github/actions/setup
         with:
           native-deps: "true"
-          mold: "true"
           foundry: "true"
           rust-cache-shared-key: "benchmark"
           rust-cache-save: "true"

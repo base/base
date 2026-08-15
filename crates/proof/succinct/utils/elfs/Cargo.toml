@@ -10,8 +10,3 @@ build = "build.rs"
 
 [lints]
 workspace = true
-
-[build-dependencies]
-sha2 = { workspace = true, default-features = true }
-toml = { workspace = true, features = ["parse", "serde"] }
-serde = { workspace = true, features = ["derive", "std"] }

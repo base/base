@@ -3,7 +3,7 @@
 use std::time::{Duration, Instant};
 
 use alloy_primitives::Address;
-use base_zk_client::{ExecutionStats, ProofJobStatus};
+use base_prover_service_protocol::{ExecutionStats, ProofStatus};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 use super::{CycleReport, OperationReport};
@@ -123,7 +123,7 @@ impl BenchDisplay {
     }
 
     /// Updates proof polling progress.
-    pub fn proof_progress(&self, status: &ProofJobStatus, elapsed: Duration) {
+    pub fn proof_progress(&self, status: &ProofStatus, elapsed: Duration) {
         self.proof.set_message(format!(
             "status {status:?}   elapsed {}",
             CycleReport::fmt_duration(elapsed)

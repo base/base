@@ -80,9 +80,9 @@ build-enclave *args="":
 # docker-based workflows.
 #
 # Expected environment:
-#   build-host-inline:                rust toolchain + libclang/pkg-config/mold/protobuf-compiler
+#   build-host-inline:                rust toolchain + libclang/pkg-config/protobuf-compiler
 #   build-enclave-binary-and-ramdisks (alpine/musl): rust + musl-dev + openssl-libs-static
-#                                                    + clang/mold/protobuf-dev
+#                                                    + clang/protobuf-dev
 #                                                    + linuxkit v1.8.2 (PCR0-affecting; pinned via linuxkit_required_version, asserted in recipe)
 #   build-enclave-eif-and-cli         (debian/glibc): rust + git + pkg-config + libssl-dev
 
@@ -119,7 +119,7 @@ build-enclave-binary-and-ramdisks BOOTSTRAP_DIR OUT_DIR:
 
     # Reproducibility: pin source date and force static musl linking.
     export SOURCE_DATE_EPOCH=0
-    export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-C target-feature=+crt-static -C link-self-contained=yes -C link-arg=-fuse-ld=mold"
+    export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-C target-feature=+crt-static -C link-self-contained=yes"
     export OPENSSL_STATIC=1
     export OPENSSL_LIB_DIR=/usr/lib
     export OPENSSL_INCLUDE_DIR=/usr/include

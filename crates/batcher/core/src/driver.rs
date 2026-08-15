@@ -228,7 +228,9 @@ where
         loop {
             match self.pipeline.step() {
                 Ok(StepResult::Idle) => break,
-                Ok(StepResult::BlockEncoded | StepResult::ChannelClosed) => {
+                Ok(
+                    StepResult::BlockEncoded | StepResult::SpanFlushed | StepResult::ChannelClosed,
+                ) => {
                     steps += 1;
                     budget -= 1;
                     if budget == 0 {
@@ -424,6 +426,7 @@ where
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::VecDeque,
         sync::{
             Arc, Mutex,
             atomic::{AtomicU64, Ordering},
@@ -431,34 +434,154 @@ mod tests {
         time::Duration,
     };
 
-    use alloy_primitives::Address;
-    use base_batcher_encoder::{BatchSubmission, DaType, SubmissionId};
-    use base_blobs::BlobEncoder;
+    use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
+    use alloy_primitives::{Address, B256, Bloom, Bytes};
+    use alloy_rpc_types_eth::TransactionReceipt;
+    use base_batcher_encoder::{BatchSubmission, DaType, FrameEncoder, SubmissionId};
+    use base_batcher_source::{
+        L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource,
+    };
+    use base_blobs::{BlobDecoder, BlobEncoder};
     use base_protocol::{ChannelId, Frame};
     use base_runtime::{
         Cancellation, Clock, Spawner,
         deterministic::{Config, Runner},
     };
     use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError};
-    use tokio::sync::oneshot;
+    use tokio::sync::{mpsc, oneshot, watch};
 
-    use crate::test_utils::{
-        DriverFixture, ImmediateConfirmTxManager, ImmediateFailTxManager, NeverConfirmTxManager,
-        Recorded, SubmissionStub, TrackingPipeline,
+    use crate::{
+        AdminCommand, BatchDriver, BatchDriverConfig, DaThrottle, NoopThrottleClient,
+        ThrottleController,
+        event::DriverEvent,
+        test_utils::{
+            DriverFixture, ImmediateConfirmTxManager, ImmediateFailTxManager,
+            NeverConfirmTxManager, Recorded, SubmissionStub, TrackingPipeline,
+        },
     };
+
+    #[derive(Debug)]
+    struct QueuedSource {
+        events: VecDeque<Result<L2BlockEvent, SourceError>>,
+    }
+
+    impl QueuedSource {
+        fn new(events: impl IntoIterator<Item = Result<L2BlockEvent, SourceError>>) -> Self {
+            Self { events: events.into_iter().collect() }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl UnsafeBlockSource for QueuedSource {
+        async fn next(&mut self) -> Result<L2BlockEvent, SourceError> {
+            match self.events.pop_front() {
+                Some(event) => event,
+                None => std::future::pending().await,
+            }
+        }
+
+        fn reset_catchup(&mut self, _: u64) {}
+    }
+
+    #[derive(Debug)]
+    struct QueuedL1HeadSource {
+        events: VecDeque<Result<L1HeadEvent, SourceError>>,
+    }
+
+    impl QueuedL1HeadSource {
+        fn new(events: impl IntoIterator<Item = Result<L1HeadEvent, SourceError>>) -> Self {
+            Self { events: events.into_iter().collect() }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl L1HeadSource for QueuedL1HeadSource {
+        async fn next(&mut self) -> Result<L1HeadEvent, SourceError> {
+            match self.events.pop_front() {
+                Some(event) => event,
+                None => std::future::pending().await,
+            }
+        }
+    }
 
     /// Build a [`BatchSubmission`] whose single frame exactly fills one blob payload,
     /// leaving no room for any additional frame alongside it.
     ///
     /// `payload = 1 (DERIVATION_VERSION_0) + FRAME_OVERHEAD + data.len() = BLOB_MAX_DATA_SIZE`
     fn blob_filling_submission(id: u64) -> BatchSubmission {
+        blob_filling_submission_with_frames(id, 1)
+    }
+
+    fn blob_filling_submission_with_frames(id: u64, frame_count: usize) -> BatchSubmission {
         let data_len = BlobEncoder::BLOB_MAX_DATA_SIZE - 1 - BlobEncoder::FRAME_OVERHEAD;
         BatchSubmission {
             id: SubmissionId(id),
             channel_id: ChannelId::default(),
             da_type: DaType::Blob,
-            frames: vec![Arc::new(Frame { data: vec![0u8; data_len], ..Frame::default() })],
+            frames: (0..frame_count)
+                .map(|number| {
+                    Arc::new(Frame {
+                        number: number.try_into().unwrap(),
+                        data: vec![0u8; data_len],
+                        ..Frame::default()
+                    })
+                })
+                .collect(),
         }
+    }
+
+    const fn stub_receipt(block_number: u64) -> TransactionReceipt {
+        let inner = ReceiptEnvelope::Legacy(ReceiptWithBloom {
+            receipt: Receipt {
+                status: Eip658Value::Eip658(true),
+                cumulative_gas_used: 21_000,
+                logs: vec![],
+            },
+            logs_bloom: Bloom::ZERO,
+        });
+        TransactionReceipt {
+            inner,
+            transaction_hash: B256::ZERO,
+            transaction_index: Some(0),
+            block_hash: Some(B256::ZERO),
+            block_number: Some(block_number),
+            gas_used: 21_000,
+            effective_gas_price: 1_000_000_000,
+            blob_gas_used: None,
+            blob_gas_price: None,
+            from: Address::ZERO,
+            to: Some(Address::ZERO),
+            contract_address: None,
+        }
+    }
+
+    fn driver_for_next_event<R: base_runtime::Runtime, TM: TxManager>(
+        runtime: R,
+        source_events: impl IntoIterator<Item = Result<L2BlockEvent, SourceError>>,
+        l1_events: impl IntoIterator<Item = Result<L1HeadEvent, SourceError>>,
+        tx_manager: TM,
+    ) -> BatchDriver<
+        R,
+        TrackingPipeline,
+        QueuedSource,
+        TM,
+        Arc<NoopThrottleClient>,
+        QueuedL1HeadSource,
+    > {
+        BatchDriver::new(
+            runtime,
+            TrackingPipeline::new(Arc::new(Mutex::new(Recorded::default()))),
+            QueuedSource::new(source_events),
+            tx_manager,
+            BatchDriverConfig {
+                inbox: Address::ZERO,
+                max_pending_transactions: 1,
+                drain_timeout: Duration::from_millis(10),
+                force_blobs_when_throttling: true,
+            },
+            DaThrottle::new(ThrottleController::noop(), Arc::new(NoopThrottleClient)),
+            QueuedL1HeadSource::new(l1_events),
+        )
     }
 
     #[derive(Debug, Default)]
@@ -501,6 +624,161 @@ mod tests {
         fn sender_address(&self) -> Address {
             Address::ZERO
         }
+    }
+
+    #[derive(Debug)]
+    struct RecordedCandidate {
+        tx_data: Bytes,
+        decoded_blob_payloads: Vec<Bytes>,
+    }
+
+    #[derive(Debug, Clone)]
+    struct RecordingConfirmTxManager {
+        l1_block: u64,
+        candidates: Arc<Mutex<Vec<RecordedCandidate>>>,
+    }
+
+    impl TxManager for RecordingConfirmTxManager {
+        async fn send(&self, _: TxCandidate) -> SendResponse {
+            unreachable!()
+        }
+
+        fn send_async(
+            &self,
+            candidate: TxCandidate,
+        ) -> impl std::future::Future<Output = SendHandle> + Send {
+            let decoded_blob_payloads = candidate
+                .blobs
+                .iter()
+                .map(|blob| BlobDecoder::decode(blob).expect("blob payload should decode"))
+                .collect();
+            self.candidates
+                .lock()
+                .unwrap()
+                .push(RecordedCandidate { tx_data: candidate.tx_data, decoded_blob_payloads });
+            let l1_block = self.l1_block;
+            let (tx, rx) = oneshot::channel();
+            let _ = tx.send(Ok(stub_receipt(l1_block)));
+            std::future::ready(SendHandle::new(rx))
+        }
+
+        fn sender_address(&self) -> Address {
+            Address::ZERO
+        }
+    }
+
+    #[test]
+    fn next_event_prioritizes_cancellation_over_ready_admin() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let (admin_tx, admin_rx) = mpsc::channel(1);
+            admin_tx.send(AdminCommand::Flush).await.expect("admin receiver should be open");
+
+            let mut driver = driver_for_next_event(
+                ctx.clone(),
+                [Ok(L2BlockEvent::Flush)],
+                [Ok(L1HeadEvent::NewHead(9))],
+                ImmediateConfirmTxManager { l1_block: 1 },
+            )
+            .with_admin_rx(admin_rx);
+
+            ctx.cancel();
+
+            let event = driver.next_event().await.expect("next_event should succeed");
+            assert!(matches!(event, DriverEvent::Shutdown));
+        });
+    }
+
+    #[test]
+    fn next_event_prioritizes_admin_before_source() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let (admin_tx, admin_rx) = mpsc::channel(1);
+            admin_tx.send(AdminCommand::Flush).await.expect("admin receiver should be open");
+
+            let mut driver = driver_for_next_event(
+                ctx,
+                [Ok(L2BlockEvent::Block(Box::default()))],
+                [Ok(L1HeadEvent::NewHead(9))],
+                ImmediateConfirmTxManager { l1_block: 1 },
+            )
+            .with_admin_rx(admin_rx);
+
+            let event = driver.next_event().await.expect("next_event should succeed");
+            assert!(matches!(event, DriverEvent::Flush));
+        });
+    }
+
+    #[test]
+    fn next_event_prioritizes_source_before_receipts_and_heads() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let (_safe_tx, safe_rx) = watch::channel(0);
+            let mut driver = driver_for_next_event(
+                ctx,
+                [Ok(L2BlockEvent::Flush)],
+                [Ok(L1HeadEvent::NewHead(9))],
+                ImmediateConfirmTxManager { l1_block: 1 },
+            )
+            .with_safe_head_rx(safe_rx);
+            driver.pipeline.submissions.push_back(SubmissionStub::stub());
+            driver.submissions.submit_pending(&mut driver.pipeline).await;
+
+            let event = driver.next_event().await.expect("next_event should succeed");
+            assert!(matches!(event, DriverEvent::Flush));
+        });
+    }
+
+    #[test]
+    fn next_event_prioritizes_receipts_before_l1_head_and_safe_head() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let (safe_tx, safe_rx) = watch::channel(0);
+            safe_tx.send(5).expect("safe-head receiver should be open");
+
+            let mut driver = driver_for_next_event(
+                ctx,
+                [],
+                [Ok(L1HeadEvent::NewHead(9))],
+                ImmediateConfirmTxManager { l1_block: 42 },
+            )
+            .with_safe_head_rx(safe_rx);
+            driver.pipeline.submissions.push_back(SubmissionStub::stub());
+            driver.submissions.submit_pending(&mut driver.pipeline).await;
+
+            let event = driver.next_event().await.expect("next_event should succeed");
+            assert!(matches!(event, DriverEvent::Receipt(_, _)));
+        });
+    }
+
+    #[test]
+    fn next_event_prioritizes_l1_head_before_safe_head() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let (safe_tx, safe_rx) = watch::channel(0);
+            safe_tx.send(5).expect("safe-head receiver should be open");
+
+            let mut driver = driver_for_next_event(
+                ctx,
+                [],
+                [Ok(L1HeadEvent::NewHead(9))],
+                ImmediateConfirmTxManager { l1_block: 1 },
+            )
+            .with_safe_head_rx(safe_rx);
+
+            let event = driver.next_event().await.expect("next_event should succeed");
+            assert!(matches!(event, DriverEvent::L1Head(9)));
+        });
+    }
+
+    #[test]
+    fn next_event_returns_safe_head_when_only_safe_head_is_ready() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let (safe_tx, safe_rx) = watch::channel(0);
+            safe_tx.send(7).expect("safe-head receiver should be open");
+
+            let mut driver =
+                driver_for_next_event(ctx, [], [], ImmediateConfirmTxManager { l1_block: 1 })
+                    .with_safe_head_rx(safe_rx);
+
+            let event = driver.next_event().await.expect("next_event should succeed");
+            assert!(matches!(event, DriverEvent::SafeHead(7)));
+        });
     }
 
     /// `advance_l1_head` must be called with the confirmed L1 block on every
@@ -562,8 +840,8 @@ mod tests {
     /// never pruned. The driver must call requeue so the encoder can unwind that state.
     #[test]
     fn test_blob_encoding_failure_requeues_submission() {
-        // encode_packed feeds: DERIVATION_VERSION_0 (1) + frame.encode() (23 + data.len())
-        // = 24 + data.len() bytes into BlobEncoder::encode. It fails when > BLOB_MAX_DATA_SIZE
+        // Blob submission encoding feeds DERIVATION_VERSION_0 (1) + frame.encode()
+        // (23 + data.len()) into BlobEncoder::encode. It fails when > BLOB_MAX_DATA_SIZE
         // (130_044), so data.len() >= 130_021 guarantees DataTooLarge.
         const OVERSIZED: usize = 130_021;
 
@@ -604,13 +882,14 @@ mod tests {
         });
     }
 
-    /// The submission loop must pack small frames together. With `max_pending_transactions`=2
-    /// and two tiny frames ready, both must be packed into a single blob and confirmed in
-    /// one L1 transaction — not submitted as two separate transactions.
+    /// The submission loop must submit each pipeline submission as one L1 tx. The
+    /// pipeline is responsible for choosing the frames that belong in a tx, matching
+    /// op-batcher's `NextTxData` boundary.
     #[test]
-    fn test_submission_loop_packs_multiple_frames_into_one_blob() {
+    fn test_submission_loop_submits_each_pipeline_submission_as_one_tx() {
         Runner::start(Config::seeded(0), |ctx| async move {
             let recorded = Arc::new(Mutex::new(Recorded::default()));
+            let candidates = Arc::new(Mutex::new(Vec::new()));
             let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
             pipeline.submissions.push_back(SubmissionStub::with_id(0));
             pipeline.submissions.push_back(SubmissionStub::with_id(1));
@@ -619,7 +898,7 @@ mod tests {
                 DriverFixture::build_with_max_pending(
                     ctx.clone(),
                     pipeline,
-                    ImmediateConfirmTxManager { l1_block: 10 },
+                    RecordingConfirmTxManager { l1_block: 10, candidates: Arc::clone(&candidates) },
                     2,
                 )
                 .run(),
@@ -631,19 +910,73 @@ mod tests {
             assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
             let recorded = recorded.lock().unwrap();
             assert_eq!(recorded.dequeued.len(), 2, "both submissions must be dequeued");
-            // Both tiny frames fit in one blob → one L1 tx → one advance_l1_head call.
+            assert_eq!(
+                recorded.l1_heads,
+                vec![10, 10],
+                "each pipeline submission should produce its own confirmation"
+            );
+            assert_eq!(
+                candidates.lock().unwrap().len(),
+                2,
+                "separate pipeline submissions must not be coalesced into one L1 tx"
+            );
+        });
+    }
+
+    /// A single submission may contain multiple blob-filling frames when
+    /// `target_num_frames > 1`. Matching op-batcher, each frame becomes its own
+    /// blob in the same L1 transaction.
+    #[test]
+    fn test_multi_frame_blob_submission_maps_frames_to_blobs() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let recorded = Arc::new(Mutex::new(Recorded::default()));
+            let candidates = Arc::new(Mutex::new(Vec::new()));
+            let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+            let submission = blob_filling_submission_with_frames(0, 3);
+            let expected_blob_payloads: Vec<_> =
+                submission.frames.iter().map(|frame| FrameEncoder::to_calldata(frame)).collect();
+            pipeline.submissions.push_back(submission);
+
+            let handle = ctx.spawn(
+                DriverFixture::build(
+                    ctx.clone(),
+                    pipeline,
+                    RecordingConfirmTxManager { l1_block: 10, candidates: Arc::clone(&candidates) },
+                )
+                .run(),
+            );
+
+            ctx.sleep(Duration::from_millis(50)).await;
+            ctx.cancel();
+
+            assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
+            let recorded = recorded.lock().unwrap();
+            assert_eq!(recorded.dequeued, vec![SubmissionId(0)], "submission must be dequeued");
+            assert!(
+                recorded.requeued.is_empty(),
+                "multi-frame blob submission must not be requeued by blob encoding"
+            );
             assert_eq!(
                 recorded.l1_heads,
                 vec![10],
-                "both frames packed into one blob; one confirmation"
+                "multi-frame blob submission should confirm in one L1 tx"
+            );
+            let candidates = candidates.lock().unwrap();
+            assert_eq!(candidates.len(), 1, "multi-frame submission should use one L1 tx");
+            assert!(
+                candidates[0].tx_data.is_empty(),
+                "blob transactions must not also carry calldata"
+            );
+            assert_eq!(
+                candidates[0].decoded_blob_payloads, expected_blob_payloads,
+                "each frame in the submission must become its own blob payload"
             );
         });
     }
 
     /// The semaphore must prevent more concurrent in-flight L1 txs than
-    /// `max_pending_transactions`. With max=1 and two blob-filling submissions
-    /// (each requiring its own tx), the second submission is peeked and requeued
-    /// (no room in the full blob), and the semaphore blocks any further tx attempt.
+    /// `max_pending_transactions`. With max=1 and two submissions, the second
+    /// submission must not be dequeued while the first tx still holds the permit.
     #[test]
     fn test_semaphore_prevents_excess_concurrent_submissions() {
         Runner::start(Config::seeded(0), |ctx| async move {
@@ -667,12 +1000,8 @@ mod tests {
 
             assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
             let recorded = recorded.lock().unwrap();
-            // sub(0) fills the blob; sub(1) is peeked, doesn't fit, and is requeued.
-            assert_eq!(
-                recorded.requeued,
-                vec![SubmissionId(1)],
-                "second submission requeued: blob full"
-            );
+            assert_eq!(recorded.dequeued, vec![SubmissionId(0)], "only one permit is available");
+            assert!(recorded.requeued.is_empty(), "blocked submissions must not be dequeued");
             // The semaphore (max=1) is occupied by blob 1 — no second tx was submitted.
             assert!(recorded.l1_heads.is_empty(), "no confirmation while semaphore is full");
         });
@@ -680,14 +1009,11 @@ mod tests {
 
     /// With `max_pending_transactions`=1 and blob-filling submissions, the second
     /// blob tx is only submitted once the first is confirmed (freeing the permit).
-    /// Uses 3 submissions so sub(1) (requeued from blob 1) gives way to sub(2) for blob 2.
     #[test]
     fn test_second_blob_tx_submitted_after_permit_freed() {
         Runner::start(Config::seeded(0), |ctx| async move {
             let recorded = Arc::new(Mutex::new(Recorded::default()));
             let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-            // sub(0) fills blob 1; sub(1) is peeked and requeued (doesn't fit);
-            // sub(2) is available as the first candidate for blob 2.
             pipeline.submissions.push_back(blob_filling_submission(0));
             pipeline.submissions.push_back(blob_filling_submission(1));
             pipeline.submissions.push_back(blob_filling_submission(2));
@@ -708,8 +1034,8 @@ mod tests {
             assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
             assert_eq!(
                 recorded.lock().unwrap().l1_heads,
-                vec![7, 7],
-                "blob 2 must be confirmed once blob 1 frees the permit"
+                vec![7, 7, 7],
+                "each queued submission must confirm as permits are freed"
             );
         });
     }

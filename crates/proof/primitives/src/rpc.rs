@@ -59,11 +59,12 @@ pub trait EnclaveApi {
 
     /// Return the raw Nitro attestation document (`COSE_Sign1` bytes) for each enclave signer.
     ///
-    /// Optional `user_data` and `nonce` bind the attestation to a specific request.
+    /// Optional `user_data` and per-signer `nonces` bind attestations to a specific request.
+    /// When supplied, `nonces` must have one entry per signer in signer order.
     #[method(name = "signerAttestation")]
     async fn signer_attestation(
         &self,
         user_data: Option<Vec<u8>>,
-        nonce: Option<Vec<u8>>,
+        nonces: Option<Vec<Vec<u8>>>,
     ) -> RpcResult<Vec<Vec<u8>>>;
 }

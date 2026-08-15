@@ -21,6 +21,8 @@ use alloy_eips::{
 use alloy_primitives::{Address, B256, Bytes, ChainId, TxKind, U256, bytes::BufMut, keccak256};
 use alloy_rlp::{Decodable, Encodable, Header, length_of_length};
 #[cfg(feature = "reth")]
+use reth_codecs::Compact;
+#[cfg(feature = "reth")]
 use reth_primitives_traits::transaction::error::InvalidTransactionError;
 
 use crate::transaction::eip8130::{constants::Eip8130Constants, tx::TxEip8130};
@@ -39,13 +41,13 @@ pub struct Eip8130Signed {
     ///
     /// On the EOA path (`tx.sender == None`) this is a 65-byte ECDSA signature
     /// (`r || s || v`) over [`TxEip8130::sender_signature_hash`].
-    /// On the configured-owner path (`tx.sender == Some(_)`) this is
-    /// `verifier(20) || verifier_data`.
+    /// On the configured-actor path (`tx.sender == Some(_)`) this is
+    /// `authenticator(20) || authenticator_data`.
     sender_auth: Bytes,
     /// Payer authentication payload, or empty for self-pay.
     ///
     /// When `tx.payer.is_some()` this carries the payer's authorization,
-    /// formatted as `verifier(20) || verifier_data` and validated against
+    /// formatted as `authenticator(20) || authenticator_data` and validated against
     /// [`TxEip8130::payer_signature_hash`] (with the resolved sender substituted).
     /// When `tx.payer.is_none()` this is empty.
     payer_auth: Bytes,
@@ -187,7 +189,7 @@ impl Eip8130Signed {
     }
 
     /// Returns the sender address if it is explicitly provided by the
-    /// transaction body (configured-owner path).
+    /// transaction body (configured-actor path).
     pub const fn explicit_sender(&self) -> Option<Address> {
         self.tx.sender
     }
@@ -197,7 +199,7 @@ impl Eip8130Signed {
     /// EIP-2).
     ///
     /// Returns `Ok(None)` when [`Self::explicit_sender`] is `Some(_)` — the
-    /// configured-owner path does not require ecrecover because the sender
+    /// configured-actor path does not require ecrecover because the sender
     /// address is already in the transaction body.
     ///
     /// Returns `Ok(Some(addr))` when [`TxEip8130::sender`] is `None`: parses
@@ -229,7 +231,7 @@ impl Eip8130Signed {
     }
 
     /// Recovers the sender of this signed transaction by short-circuiting to
-    /// [`Self::explicit_sender`] for the configured-owner path and otherwise
+    /// [`Self::explicit_sender`] for the configured-actor path and otherwise
     /// running checked EOA ecrecover. Flattens the [`Self::recover_eoa_sender`]
     /// `Option` so call sites in the pooled and envelope `SignerRecoverable`
     /// implementations stay one-liners and cannot drift.
@@ -344,6 +346,43 @@ impl Decodable for Eip8130Signed {
             return Err(alloy_rlp::Error::Custom("trailing bytes in EIP-8130 envelope"));
         }
         Ok(decoded)
+    }
+}
+
+#[cfg(feature = "reth")]
+impl Compact for Eip8130Signed {
+    fn to_compact<B>(&self, buf: &mut B) -> usize
+    where
+        B: BufMut + AsMut<[u8]>,
+    {
+        let start = buf.as_mut().len();
+        self.tx.to_compact(buf);
+
+        let auth_payload_length = self.sender_auth.length() + self.payer_auth.length();
+        Header { list: true, payload_length: auth_payload_length }.encode(buf);
+        self.sender_auth.encode(buf);
+        self.payer_auth.encode(buf);
+
+        buf.as_mut().len() - start
+    }
+
+    fn from_compact(buf: &[u8], len: usize) -> (Self, &[u8]) {
+        let (tx, buf) = TxEip8130::from_compact(buf, len);
+        let mut auth_buf = buf;
+        let header =
+            Header::decode(&mut auth_buf).expect("invalid compact-encoded EIP-8130 auth tail");
+        assert!(header.list, "compact-encoded EIP-8130 auth tail must be an RLP list");
+        let started = auth_buf.len();
+        let sender_auth =
+            Bytes::decode(&mut auth_buf).expect("invalid compact-encoded EIP-8130 sender auth");
+        let payer_auth =
+            Bytes::decode(&mut auth_buf).expect("invalid compact-encoded EIP-8130 payer auth");
+        let consumed = started - auth_buf.len();
+        assert_eq!(
+            consumed, header.payload_length,
+            "compact-encoded EIP-8130 auth tail length mismatch"
+        );
+        (Self::new(tx, sender_auth, payer_auth), auth_buf)
     }
 }
 
@@ -470,6 +509,8 @@ impl Transaction for Eip8130Signed {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{address, bytes};
+    #[cfg(feature = "reth")]
+    use reth_codecs::Compact;
 
     use super::*;
     use crate::transaction::eip8130::{
@@ -492,6 +533,7 @@ mod tests {
                 to: address!("0x00000000000000000000000000000000000000bb"),
                 data: bytes!("01020304"),
             }]],
+            metadata: bytes!("c0ffee"),
             payer: if payer_present {
                 Some(address!("0x00000000000000000000000000000000000000cc"))
             } else {
@@ -535,6 +577,33 @@ mod tests {
         assert_eq!(signed, decoded);
     }
 
+    #[cfg(feature = "reth")]
+    #[test]
+    fn compact_roundtrip() {
+        let signed = sample_signed(true);
+        let mut buf = Vec::new();
+        let len = signed.to_compact(&mut buf);
+        let (decoded, remaining) = Eip8130Signed::from_compact(&buf, len);
+
+        assert_eq!(decoded, signed);
+        assert!(remaining.is_empty());
+    }
+
+    #[cfg(feature = "reth")]
+    #[test]
+    fn compact_decode_preserves_trailing_bytes() {
+        let signed = sample_signed(true);
+        let trailing = [0xDE, 0xAD, 0xBE, 0xEF];
+        let mut buf = Vec::new();
+        let _ = signed.to_compact(&mut buf);
+        buf.extend_from_slice(&trailing);
+
+        let (decoded, remaining) = Eip8130Signed::from_compact(&buf, buf.len());
+
+        assert_eq!(decoded, signed);
+        assert_eq!(remaining, trailing);
+    }
+
     #[test]
     fn hash_is_keccak_of_eip2718_payload() {
         let signed = sample_signed(false);
@@ -576,7 +645,7 @@ mod tests {
 
     #[cfg(feature = "k256")]
     #[test]
-    fn recover_eoa_sender_returns_none_for_configured_owner() {
+    fn recover_eoa_sender_returns_none_for_configured_actor() {
         let signed = sample_signed(false);
         assert!(signed.explicit_sender().is_some());
         assert_eq!(signed.recover_eoa_sender().unwrap(), None);
@@ -650,7 +719,7 @@ mod tests {
 
     #[cfg(feature = "k256")]
     #[test]
-    fn recover_eoa_sender_unchecked_returns_none_for_configured_owner() {
+    fn recover_eoa_sender_unchecked_returns_none_for_configured_actor() {
         let signed = sample_signed(false);
         assert!(signed.explicit_sender().is_some());
         assert_eq!(signed.recover_eoa_sender_unchecked().unwrap(), None);

@@ -21,6 +21,10 @@ tokio-util.workspace = true
 async-trait.workspace = true
 alloy-primitives.workspace = true
 
+# Metrics
+metrics = { workspace = true, optional = true }
+base-metrics = { workspace = true, optional = true }
+
 # Proving backends (behind `prove` feature). This serves two purposes:
 # 1. Avoids pulling in risc0-sys and its Metal kernel build on macOS
 # 2. Reduces compile times for consumers that only need the trait/types/errors
@@ -38,7 +42,9 @@ rstest.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [features]
+metrics = [ "base-metrics/metrics", "dep:base-metrics", "dep:metrics" ]
 prove = [
+	"dep:base-metrics",
 	"dep:boundless-market",
 	"dep:risc0-ethereum-contracts",
 	"dep:risc0-zkvm",

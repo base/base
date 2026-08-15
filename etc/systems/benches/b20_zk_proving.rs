@@ -6,7 +6,8 @@
 //! cargo bench -p base-system-tests --bench b20_zk_proving
 //! ```
 //!
-//! Requires local L2, rollup, and ZK prover RPC endpoints with `SP1_PROVER=dry-run` mode.
+//! Requires local L2, rollup, and prover-service requester JSON-RPC endpoints with
+//! `ZK_BACKEND=dry_run` mode.
 
 use std::time::Duration;
 
@@ -62,7 +63,7 @@ pub struct B20ZkProvingConfig {
     /// Rollup RPC URL.
     #[arg(long, default_value = "http://localhost:8649")]
     pub rollup_rpc_url: Url,
-    /// ZK prover RPC URL.
+    /// Prover-service requester JSON-RPC URL.
     #[arg(long, default_value = "http://localhost:9000")]
     pub zk_prover_url: Url,
     /// Local benchmark L2 chain ID.

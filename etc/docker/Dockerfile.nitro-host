@@ -9,7 +9,7 @@ WORKDIR /app
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-      git libclang-dev pkg-config curl build-essential mold protobuf-compiler && \
+      git libclang-dev pkg-config curl build-essential protobuf-compiler && \
     rm -rf /var/lib/apt/lists/*
 
 COPY . .

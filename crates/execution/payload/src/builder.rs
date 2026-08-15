@@ -36,7 +36,7 @@ use reth_storage_api::{StateProvider, StateProviderFactory, errors::ProviderErro
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction, TransactionPool};
 use reth_trie_common::ExecutionWitnessMode;
 use revm::context::{Block, BlockEnv};
-use tracing::{debug, trace, warn};
+use tracing::{debug, debug_span, instrument, trace, warn};
 
 use crate::{
     Attributes, BasePayloadBuilderAttributes, PayloadPrimitives, config::BaseBuilderConfig,
@@ -171,6 +171,10 @@ where
     /// Given build arguments including a Base client, transaction pool,
     /// and configuration, this function creates a transaction payload. Returns
     /// a result indicating success with the payload or an error in case of failure.
+    #[instrument(
+        skip_all,
+        fields(payload_id = tracing::field::Empty, parent_num = tracing::field::Empty)
+    )]
     fn build_payload<'a, Txs>(
         &self,
         args: BuildArguments<Attrs, BaseBuiltPayload<N>>,
@@ -191,6 +195,8 @@ where
             cancel,
             best_payload,
         };
+        tracing::Span::current().record("payload_id", tracing::field::display(ctx.payload_id()));
+        tracing::Span::current().record("parent_num", ctx.parent().number());
 
         let builder = Builder::new(best);
 
@@ -374,13 +380,15 @@ impl<Txs> Builder<'_, Txs> {
             }
         }
 
+        let block_num = ctx.parent().number().saturating_add(1);
         let BlockBuilderOutcome {
             execution_result,
             hashed_state,
             trie_updates,
             block,
             block_access_list,
-        } = builder.finish(state_provider, None)?;
+        } = debug_span!("finish_payload", block_num)
+            .in_scope(|| builder.finish(state_provider, None))?;
 
         let sealed_block = Arc::new(block.sealed_block().clone());
         debug!(target: "payload_builder", id=%ctx.payload_id(), sealed_block_header = ?sealed_block.header(), "sealed built block");
@@ -641,6 +649,7 @@ where
     /// When `no_tx_pool` is `false` the builder is composing a new block from mempool plus
     /// attribute pre-includes; pre-includes there may legitimately be skipped on `InvalidTx`,
     /// so the historical skip-and-continue behavior is preserved.
+    #[instrument(skip_all, fields(phase = "sequencer_txs"))]
     pub fn execute_sequencer_transactions(
         &self,
         builder: &mut impl BlockBuilder<Primitives = Evm::Primitives>,
@@ -687,6 +696,7 @@ where
     /// Executes the given best transactions and updates the execution info.
     ///
     /// Returns `Ok(Some(()))` if the job was cancelled.
+    #[instrument(skip_all, fields(phase = "mempool_txs"))]
     pub fn execute_best_transactions<Builder>(
         &self,
         info: &mut ExecutionInfo,

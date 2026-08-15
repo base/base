@@ -1,0 +1,24 @@
+[package]
+name = "base-sidecrush-bin"
+description = "Base Sidecrush Binary - block-production health-check sidecar"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "sidecrush"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+cadence = { workspace = true }
+tracing = { workspace = true }
+base-sidecrush = { workspace = true }
+clap = { workspace = true, features = ["derive", "env"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal"] }
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt", "ansi", "json"] }

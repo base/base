@@ -9,6 +9,3 @@
 
 mod monitor;
 pub use monitor::BalanceMonitorLayer;
-
-#[cfg(test)]
-mod tests;

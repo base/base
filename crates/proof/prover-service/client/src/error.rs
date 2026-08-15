@@ -1,5 +1,8 @@
 //! Shared prover-service client error types.
 
+use base_prover_service_protocol::{
+    PROOF_REQUEST_NOT_FOUND_MESSAGE, ProofRequestIdCollisionMessage,
+};
 use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorCode};
 use thiserror::Error;
 
@@ -38,6 +41,9 @@ pub enum ProverServiceClientError {
 }
 
 impl ProverServiceClientError {
+    /// JSON-RPC code used by the prover service when the requested session does not exist.
+    pub const ERROR_NOT_FOUND: i32 = -32004;
+
     /// JSON-RPC code used by the prover service when a dependency is unavailable.
     pub const ERROR_UNAVAILABLE: i32 = -32014;
 
@@ -58,6 +64,26 @@ impl ProverServiceClientError {
             | Self::MissingResult(_)
             | Self::UnexpectedResultPayload(_) => false,
         }
+    }
+
+    /// Returns `true` when the prover service responded that the session does not exist.
+    ///
+    /// The proposer uses this to distinguish "no session yet, dispatch needed"
+    /// from other `NOT_FOUND` cases, such as a succeeded session whose result
+    /// payload is unexpectedly unavailable.
+    #[must_use]
+    pub fn is_not_found(&self) -> bool {
+        let Self::RpcTransport(JsonRpcClientError::Call(call)) = self else { return false };
+        call.code() == Self::ERROR_NOT_FOUND && call.message() == PROOF_REQUEST_NOT_FOUND_MESSAGE
+    }
+
+    /// Returns `true` when prover-service rejected a replay because the same
+    /// session id is already bound to a request with a different L1 head.
+    #[must_use]
+    pub fn is_l1_head_conflict_for_session(&self, session_id: &str) -> bool {
+        let Self::RpcTransport(JsonRpcClientError::Call(call)) = self else { return false };
+        call.code() == Self::ERROR_FAILED_PRECONDITION
+            && call.message() == ProofRequestIdCollisionMessage::for_field(session_id, "l1_head")
     }
 
     /// Returns `true` when the JSON-RPC error is classified as transient.
@@ -146,5 +172,44 @@ mod tests {
         #[case] expected_retryable: bool,
     ) {
         assert_eq!(error.is_retryable(), expected_retryable);
+    }
+
+    #[test]
+    fn is_not_found_matches_only_missing_session_not_found() {
+        let not_found = rpc_call_error(
+            ProverServiceClientError::ERROR_NOT_FOUND,
+            PROOF_REQUEST_NOT_FOUND_MESSAGE,
+        );
+        assert!(not_found.is_not_found());
+
+        let missing_result =
+            rpc_call_error(ProverServiceClientError::ERROR_NOT_FOUND, "proof result not available");
+        assert!(!missing_result.is_not_found());
+
+        let other_call = rpc_call_error(ProverServiceClientError::ERROR_UNAVAILABLE, "down");
+        assert!(!other_call.is_not_found());
+
+        let transport: ProverServiceClientError =
+            JsonRpcClientError::Transport(io::Error::other("connection refused").into()).into();
+        assert!(!transport.is_not_found());
+
+        let timeout = ProverServiceClientError::Timeout("not ready".into());
+        assert!(!timeout.is_not_found());
+    }
+
+    #[test]
+    fn is_l1_head_conflict_matches_only_exact_session_conflict() {
+        let session_id = "e89da79a-8b92-5274-ba97-54a90170cee7";
+        let conflict = rpc_call_error(
+            ProverServiceClientError::ERROR_FAILED_PRECONDITION,
+            &ProofRequestIdCollisionMessage::for_field(session_id, "l1_head"),
+        );
+
+        assert!(conflict.is_l1_head_conflict_for_session(session_id));
+        assert!(!conflict.is_l1_head_conflict_for_session("other-session"));
+
+        let other_precondition =
+            rpc_call_error(ProverServiceClientError::ERROR_FAILED_PRECONDITION, "lease mismatch");
+        assert!(!other_precondition.is_l1_head_conflict_for_session(session_id));
     }
 }

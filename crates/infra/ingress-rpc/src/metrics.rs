@@ -10,8 +10,6 @@ base_metrics::define_metrics! {
     successful_simulations: counter,
     #[describe("Number of bundles that failed simulation")]
     failed_simulations: counter,
-    #[describe("Number of transactions sent to mempool")]
-    sent_to_mempool: counter,
     #[describe("Duration of validate_tx")]
     validate_tx_duration: histogram,
     #[describe("Duration of validate_bundle")]
@@ -20,8 +18,6 @@ base_metrics::define_metrics! {
     meter_bundle_duration: histogram,
     #[describe("Duration of send_raw_transaction")]
     send_raw_transaction_duration: histogram,
-    #[describe("Total raw transactions forwarded to additional endpoint")]
-    raw_tx_forwards_total: counter,
     #[describe("Number of bundles that exceeded the metering time")]
     bundles_exceeded_metering_time: counter,
     #[describe("Size of buffered meter bundle responses")]

@@ -5,7 +5,10 @@
 //! [`std::sync::Mutex`] (not `tokio`) since critical sections are CPU-bound
 //! with no `.await` points.
 
-use std::{sync::Mutex, time::Instant};
+use std::{
+    sync::Mutex,
+    time::{Duration, Instant},
+};
 
 use alloy_primitives::B256;
 
@@ -31,7 +34,13 @@ struct SendStateInner {
     already_reserved: bool,
     bump_fees: bool,
     bump_count: u64,
-    mempool_deadline: Option<Instant>,
+    mempool_deadline: Option<MempoolDeadline>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum MempoolDeadline {
+    Runtime(Duration),
+    WallClock(Instant),
 }
 
 impl SendState {
@@ -141,7 +150,16 @@ impl SendState {
     /// 7. Otherwise, returns `None`.
     #[must_use]
     pub fn critical_error(&self) -> Option<TxManagerError> {
-        let now = Instant::now();
+        self.critical_error_with(None)
+    }
+
+    /// Returns the critical error using a runtime-relative timestamp.
+    #[must_use]
+    pub fn critical_error_at(&self, now: Duration) -> Option<TxManagerError> {
+        self.critical_error_with(Some(now))
+    }
+
+    fn critical_error_with(&self, runtime_now: Option<Duration>) -> Option<TxManagerError> {
         let inner = self.inner.lock().expect("SendState mutex poisoned");
 
         if !inner.mined_txs.is_empty() {
@@ -161,9 +179,17 @@ impl SendState {
         }
         if !inner.has_published
             && let Some(deadline) = inner.mempool_deadline
-            && now >= deadline
         {
-            return Some(TxManagerError::MempoolDeadlineExpired);
+            let expired = match deadline {
+                MempoolDeadline::Runtime(deadline) => match runtime_now {
+                    Some(now) => now >= deadline,
+                    None => return Some(TxManagerError::RuntimeMempoolDeadlineMissingTimestamp),
+                },
+                MempoolDeadline::WallClock(deadline) => Instant::now() >= deadline,
+            };
+            if expired {
+                return Some(TxManagerError::MempoolDeadlineExpired);
+            }
         }
 
         None
@@ -205,10 +231,20 @@ impl SendState {
         std::mem::take(&mut inner.bump_fees)
     }
 
-    /// Sets the mempool inclusion deadline.
-    pub fn set_mempool_deadline(&self, deadline: Instant) {
+    /// Sets the runtime-relative mempool inclusion deadline.
+    ///
+    /// `absolute_deadline` is an absolute timestamp from the runtime clock,
+    /// not a relative timeout duration. Callers should pass `runtime.now() +
+    /// timeout`.
+    pub fn set_runtime_mempool_deadline(&self, absolute_deadline: Duration) {
         let mut inner = self.inner.lock().expect("SendState mutex poisoned");
-        inner.mempool_deadline = Some(deadline);
+        inner.mempool_deadline = Some(MempoolDeadline::Runtime(absolute_deadline));
+    }
+
+    /// Sets the mempool inclusion deadline from wall-clock time.
+    pub fn set_wall_clock_mempool_deadline(&self, deadline: Instant) {
+        let mut inner = self.inner.lock().expect("SendState mutex poisoned");
+        inner.mempool_deadline = Some(MempoolDeadline::WallClock(deadline));
     }
 
     /// Returns `true` if at least one transaction was successfully published.
@@ -333,7 +369,7 @@ mod tests {
     #[test]
     fn mined_tx_suppresses_mempool_deadline_abort() {
         let state = SendState::new(3).unwrap();
-        state.set_mempool_deadline(Instant::now() - Duration::from_secs(1));
+        state.set_wall_clock_mempool_deadline(Instant::now() - Duration::from_secs(1));
         assert_eq!(state.critical_error(), Some(TxManagerError::MempoolDeadlineExpired));
 
         state.tx_mined(B256::with_last_byte(1));
@@ -432,14 +468,14 @@ mod tests {
     #[test]
     fn expired_mempool_deadline_triggers_abort() {
         let state = SendState::new(3).unwrap();
-        state.set_mempool_deadline(Instant::now() - Duration::from_secs(1));
+        state.set_wall_clock_mempool_deadline(Instant::now() - Duration::from_secs(1));
         assert_eq!(state.critical_error(), Some(TxManagerError::MempoolDeadlineExpired));
     }
 
     #[test]
     fn future_mempool_deadline_does_not_abort() {
         let state = SendState::new(3).unwrap();
-        state.set_mempool_deadline(Instant::now() + Duration::from_secs(60));
+        state.set_wall_clock_mempool_deadline(Instant::now() + Duration::from_secs(60));
         assert!(state.critical_error().is_none());
     }
 
@@ -456,7 +492,7 @@ mod tests {
         // must no longer fire. Otherwise the send loop aborts while the
         // pre-reserved nonce stays live on L1, stalling subsequent sends.
         let state = SendState::new(3).unwrap();
-        state.set_mempool_deadline(Instant::now() - Duration::from_secs(1));
+        state.set_wall_clock_mempool_deadline(Instant::now() - Duration::from_secs(1));
         state.record_successful_publish();
         assert!(state.critical_error().is_none());
     }
@@ -466,8 +502,25 @@ mod tests {
         // Negative case: with no successful publish, the expired deadline
         // remains a terminal abort condition.
         let state = SendState::new(3).unwrap();
-        state.set_mempool_deadline(Instant::now() - Duration::from_secs(1));
+        state.set_wall_clock_mempool_deadline(Instant::now() - Duration::from_secs(1));
         assert_eq!(state.critical_error(), Some(TxManagerError::MempoolDeadlineExpired));
+    }
+
+    #[test]
+    fn runtime_mempool_deadline_without_runtime_timestamp_returns_error() {
+        let state = SendState::new(3).unwrap();
+        state.set_runtime_mempool_deadline(Duration::from_secs(1));
+
+        assert_eq!(
+            state.critical_error(),
+            Some(TxManagerError::RuntimeMempoolDeadlineMissingTimestamp),
+        );
+        assert!(!state.take_bump_fees(), "state remains usable after the configuration error",);
+        assert!(state.critical_error_at(Duration::ZERO).is_none());
+        assert_eq!(
+            state.critical_error_at(Duration::from_secs(1)),
+            Some(TxManagerError::MempoolDeadlineExpired),
+        );
     }
 
     // ── Pre-publish immediate abort ─────────────────────────────────────
@@ -551,7 +604,7 @@ mod tests {
     fn already_reserved_takes_priority_over_expired_deadline() {
         let state = SendState::new(3).unwrap();
         state.process_send_error(&TxManagerError::AlreadyReserved);
-        state.set_mempool_deadline(Instant::now() - Duration::from_secs(1));
+        state.set_wall_clock_mempool_deadline(Instant::now() - Duration::from_secs(1));
 
         // AlreadyReserved (priority 2) wins over MempoolDeadlineExpired
         // (priority 6).
@@ -563,7 +616,7 @@ mod tests {
         let state = SendState::new(3).unwrap();
         // No successful publish.
         state.process_send_error(&TxManagerError::NonceTooLow);
-        state.set_mempool_deadline(Instant::now() - Duration::from_secs(1));
+        state.set_wall_clock_mempool_deadline(Instant::now() - Duration::from_secs(1));
 
         // Pre-publish NonceTooLow (priority 4) wins over
         // MempoolDeadlineExpired (priority 6).

@@ -1,4 +1,4 @@
-//! Helper function for Receipt root calculation for Base hardforks.
+//! Helper function for Receipt root calculation for Base upgrades.
 
 use alloc::vec::Vec;
 
@@ -15,11 +15,11 @@ pub fn calculate_receipt_root<R: DepositReceiptExt>(
     chain_spec: impl Upgrades,
     timestamp: u64,
 ) -> B256 {
-    // There is a minor bug in op-geth and op-erigon where in the Regolith hardfork,
+    // There is a minor bug in op-geth and op-erigon where in the Regolith upgrade,
     // the receipt root calculation does not include the deposit nonce in the receipt
-    // encoding. In the Regolith Hardfork, we must strip the deposit nonce from the
+    // encoding. In the Regolith Upgrade, we must strip the deposit nonce from the
     // receipts before calculating the receipt root. This was corrected in the Canyon
-    // hardfork.
+    // upgrade.
     if chain_spec.is_regolith_active_at_timestamp(timestamp)
         && !chain_spec.is_canyon_active_at_timestamp(timestamp)
     {
@@ -48,11 +48,11 @@ pub fn calculate_receipt_root_no_memo<R: DepositReceiptExt>(
     chain_spec: impl Upgrades,
     timestamp: u64,
 ) -> B256 {
-    // There is a minor bug in op-geth and op-erigon where in the Regolith hardfork,
+    // There is a minor bug in op-geth and op-erigon where in the Regolith upgrade,
     // the receipt root calculation does not include the deposit nonce in the receipt
-    // encoding. In the Regolith Hardfork, we must strip the deposit nonce from the
+    // encoding. In the Regolith Upgrade, we must strip the deposit nonce from the
     // receipts before calculating the receipt root. This was corrected in the Canyon
-    // hardfork.
+    // upgrade.
     if chain_spec.is_regolith_active_at_timestamp(timestamp)
         && !chain_spec.is_canyon_active_at_timestamp(timestamp)
     {
@@ -88,7 +88,7 @@ mod tests {
 
     /// Tests that the receipt root is computed correctly for the regolith block.
     /// This was implemented due to a minor bug in op-geth and op-erigon where in
-    /// the Regolith hardfork, the receipt root calculation does not include the
+    /// the Regolith upgrade, the receipt root calculation does not include the
     /// deposit nonce in the receipt encoding.
     /// To fix this, a downstream patch was applied to the receipt root calculation
     /// to strip the deposit nonce from each receipt before calculating the root.

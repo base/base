@@ -94,7 +94,7 @@ pub enum ExecutorError {
     /// # Common Causes
     /// - Holocene upgrade not properly implemented in payload construction
     /// - Missing fee parameter calculation
-    /// - Incorrect hard fork activation detection
+    /// - Incorrect upgrade activation detection
     #[error("Missing EIP-1559 parameters in execution payload post-Holocene")]
     MissingEIP1559Params,
     /// Parent beacon block root not provided in the payload attributes.

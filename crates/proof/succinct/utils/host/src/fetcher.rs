@@ -18,8 +18,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use base_common_consensus::BaseBlock;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
+use base_optimism_rpc::DebugProviderExt;
 use base_proof_host::HostConfig;
-use base_proof_rpc::DebugProviderExt;
 use base_proof_succinct_client_utils::boot::BootInfoStruct;
 use base_protocol::L2BlockInfo;
 use futures::{StreamExt, stream};
@@ -191,7 +191,7 @@ impl OPSuccinctDataFetcher {
         let unix_timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
         if !rollup_config.is_holocene_active(unix_timestamp) {
             tracing::warn!(
-                "Chain is not using Holocene hard fork. This will cause significant performance degradation compared to chains that have activated Holocene."
+                "Chain is not using Holocene upgrade. This will cause significant performance degradation compared to chains that have activated Holocene."
             );
         }
 
@@ -284,7 +284,7 @@ impl OPSuccinctDataFetcher {
         if let Some(block) = block {
             Ok(block.header.inner)
         } else {
-            bail!("Failed to get L1 header for block {block_number}");
+            bail!("Failed to get L2 header for block {block_number}");
         }
     }
 

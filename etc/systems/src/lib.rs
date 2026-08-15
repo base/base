@@ -49,7 +49,8 @@ mod l2;
 pub use l2::{
     InProcessBatcher, InProcessBatcherConfig, InProcessBuilder, InProcessBuilderConfig,
     InProcessClient, InProcessClientConfig, InProcessConsensus, InProcessConsensusConfig,
-    L2ContainerConfig, L2Stack, L2StackConfig,
+    InProcessFollowConsensus, InProcessFollowConsensusConfig, L2ClientConsensus,
+    L2ClientConsensusMode, L2ContainerConfig, L2Stack, L2StackConfig,
 };
 
 mod network;
@@ -62,6 +63,7 @@ mod setup;
 pub use setup::{
     BUILDER_ENODE_ID, CL_BOOTNODE_ENR_PATH, CL_BOOTNODE_P2P_KEY, EL_BOOTNODE_ENODE,
     EL_BOOTNODE_ENODE_ID, EL_BOOTNODE_P2P_KEY, L1GenesisOutput, L2DeploymentOutput, SetupContainer,
+    SetupImage,
 };
 
 mod smoke;

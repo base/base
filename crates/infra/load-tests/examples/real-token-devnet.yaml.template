@@ -1,0 +1,65 @@
+# Load Test Configuration - Local Devnet Real-Token WETH/USDC Swaps
+#
+# This template is rendered by `just load-test real-token`.
+# The command deploys a devnet USDC token plus Uniswap/Aerodrome router shims,
+# substitutes the addresses below, and runs the rendered config.
+
+transaction_submission_rpcs:
+  - "http://localhost:7545"
+query_rpc: "http://localhost:8545"
+txpool_nodes:
+  - "http://localhost:7545"
+  - "http://localhost:8545"
+flashblocks_ws: "ws://localhost:7111"
+
+sender_count: 10
+target_gps: 20000000
+in_flight_per_sender: 64
+batch_size: 20
+batch_timeout: "10ms"
+duration: "30s"
+seed: 654789
+
+# 0.2 ETH per account covers WETH setup plus local devnet setup and swap gas.
+funding_amount: "200000000000000000"
+
+real_token_setup:
+  enabled: true
+  weth: "0x4200000000000000000000000000000000000006"
+  # Target WETH balance left after pair-token acquisition.
+  weth_amount_per_sender: "50000000000000000" # 0.05 WETH
+  pair_token:
+    token: "__USDC__"
+    amount_per_sender: "10000000" # 10 USDC raw units
+    acquisition:
+      type: uniswap_v3_exact_input
+      router: "__UNISWAP_ROUTER__"
+      fee: 500
+      amount_in: "10000000000000000" # 0.01 WETH
+      min_amount_out: "0"
+
+transactions:
+  - weight: 50
+    type: uniswap_v3
+    router: "__UNISWAP_ROUTER__"
+    token_in: "0x4200000000000000000000000000000000000006"
+    token_out: "__USDC__"
+    fee: 500
+    # WETH -> USDC amount range, denominated in WETH wei.
+    min_amount: "10000000000000"
+    max_amount: "100000000000000"
+    # USDC -> WETH amount range, denominated in USDC raw units.
+    reverse_min_amount: "10000"
+    reverse_max_amount: "100000"
+  - weight: 50
+    type: aerodrome_cl
+    router: "__AERODROME_ROUTER__"
+    token_in: "0x4200000000000000000000000000000000000006"
+    token_out: "__USDC__"
+    tick_spacing: 100
+    # WETH -> USDC amount range, denominated in WETH wei.
+    min_amount: "10000000000000"
+    max_amount: "100000000000000"
+    # USDC -> WETH amount range, denominated in USDC raw units.
+    reverse_min_amount: "10000"
+    reverse_max_amount: "100000"

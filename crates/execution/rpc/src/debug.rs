@@ -173,7 +173,7 @@ where
     P: BaseProofsStore + Clone + 'static,
     Attrs: Attributes<Transaction = TxTy<EvmConfig::Primitives>>,
     Attrs::RpcPayloadAttributes: Send + Sync + 'static,
-    N: PayloadPrimitives,
+    N: PayloadPrimitives<_TX = base_common_consensus::BaseTransactionSigned>,
     EvmConfig: ConfigureEvm<
             Primitives = N,
             NextBlockEnvCtx: BuildNextEnv<Attrs, N::BlockHeader, Provider::ChainSpec>,
@@ -185,9 +185,6 @@ where
         + HeaderProvider<Header = N::BlockHeader>
         + Clone
         + 'static,
-    base_common_consensus::BasePooledTransaction:
-        TryFrom<<N as PayloadPrimitives>::_TX, Error: core::error::Error>,
-    <N as PayloadPrimitives>::_TX: From<base_common_consensus::BasePooledTransaction>,
 {
     async fn execute_payload(
         &self,
@@ -226,12 +223,7 @@ where
                         .map_err(PayloadBuilderError::other)?;
 
                     let builder = Builder::new(|_| {
-                        NoopPayloadTransactions::<
-                            BasePooledTransaction<
-                                <N as PayloadPrimitives>::_TX,
-                                base_common_consensus::BasePooledTransaction,
-                            >,
-                        >::default()
+                        NoopPayloadTransactions::<BasePooledTransaction>::default()
                     });
 
                     builder.witness(state_provider, &ctx).map_err(PayloadBuilderError::other)
