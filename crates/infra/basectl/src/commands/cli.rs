@@ -423,6 +423,29 @@ mod tests {
             ])
             .is_ok()
         );
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "protocol",
+                "--l1-rpc",
+                "http://127.0.0.1:8545",
+                "--factory",
+                "0xffffffffffffffffffffffffffffffffffffffff",
+            ])
+            .is_ok()
+        );
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "protocol",
+                "--game",
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "--json",
+            ])
+            .is_ok()
+        );
     }
 
     #[test]

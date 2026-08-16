@@ -101,6 +101,8 @@ pub struct PendingProof {
     pub tee_submit_retry_count: u32,
     /// The intended on-chain dispute action once the proof is ready.
     pub intent: DisputeIntent,
+    /// Opaque prover-service routing version required for retries.
+    pub protocol_version: u32,
 }
 
 impl PendingProof {
@@ -111,6 +113,7 @@ impl PendingProof {
         expected_root: B256,
         prove_request: SnarkPlonkProofRequest,
         intent: DisputeIntent,
+        protocol_version: u32,
     ) -> Self {
         Self {
             phase: ProofPhase::AwaitingProof { session_id, started_at: Instant::now() },
@@ -120,6 +123,7 @@ impl PendingProof {
             retry_count: 0,
             tee_submit_retry_count: 0,
             intent,
+            protocol_version,
         }
     }
 
@@ -129,6 +133,7 @@ impl PendingProof {
         invalid_index: u64,
         expected_root: B256,
         zk_fallback: Option<(SnarkPlonkProofRequest, DisputeIntent)>,
+        protocol_version: u32,
     ) -> Self {
         Self {
             phase: ProofPhase::AwaitingProof { session_id, started_at: Instant::now() },
@@ -138,6 +143,7 @@ impl PendingProof {
             retry_count: 0,
             tee_submit_retry_count: 0,
             intent: DisputeIntent::Nullify,
+            protocol_version,
         }
     }
 
@@ -148,6 +154,7 @@ impl PendingProof {
         expected_root: B256,
         prove_request: SnarkPlonkProofRequest,
         intent: DisputeIntent,
+        protocol_version: u32,
     ) -> Self {
         Self {
             phase: ProofPhase::ReadyToSubmit { proof_bytes },
@@ -157,6 +164,7 @@ impl PendingProof {
             retry_count: 0,
             tee_submit_retry_count: 0,
             intent,
+            protocol_version,
         }
     }
 }
@@ -382,6 +390,7 @@ mod tests {
             B256::ZERO,
             minimal_prove_request(),
             DisputeIntent::Challenge,
+            1,
         )
     }
 
@@ -509,6 +518,7 @@ mod tests {
                         0,
                         expected_root,
                         Some((minimal_prove_request(), DisputeIntent::Challenge)),
+                        1,
                     ),
                     MockZkProofState {
                         proof_status: ProofStatus::Succeeded,

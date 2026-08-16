@@ -51,6 +51,10 @@ pub struct ProofProposeRequest {
     /// derived from the network name, game, block range, checkpoint stride,
     /// and prover address.
     pub session_id: Option<String>,
+    /// Prover-service routing version required by this proof job.
+    ///
+    /// Defaults to `0` so existing propose/finalize flows stay on the inert compatibility route.
+    pub protocol_version: u32,
 }
 
 impl ProofProposeRequest {
@@ -98,6 +102,7 @@ impl ProofProposeRequest {
             prover_address,
             zk_backend,
             session_id,
+            protocol_version: 0,
         })
     }
 
@@ -238,6 +243,7 @@ impl ProofProposeRequest {
         ProveBlockRangeRequest {
             proof: ProofRequest {
                 session_id: self.effective_session_id(network),
+                protocol_version: self.protocol_version,
                 request: ProofRequestKind::SnarkPlonk(SnarkPlonkProofRequest {
                     proof: ZkProofRequest {
                         start_block_number: self.pre_state_block,
@@ -680,6 +686,7 @@ mod tests {
         let prove = propose_request().to_prove_request("devnet", false);
 
         assert!(!prove.retry_failed);
+        assert_eq!(prove.proof.protocol_version, 0);
         match prove.proof.request {
             ProofRequestKind::SnarkPlonk(snark) => {
                 assert_eq!(snark.prover_address, Address::repeat_byte(0xDD));

@@ -137,8 +137,31 @@ impl StatusPoller {
         }
 
         self.reap_expired_claims().await;
+        self.record_pending_jobs().await;
 
         Ok(())
+    }
+
+    /// Publish the pending-jobs gauge, grouped by required prover protocol version.
+    ///
+    /// The repository returns every stored version, including zero pending jobs, so drained
+    /// versions do not freeze at their last gauge value. That relies on completed and failed rows
+    /// staying in `proof_requests`: the version is only discoverable while it still has rows. A
+    /// future retention job that prunes them would make a fully pruned version's gauge freeze,
+    /// because this service is deliberately version-agnostic and has no configured version list to
+    /// seed zeros from.
+    async fn record_pending_jobs(&self) {
+        let counts = match self.repo.count_pending_jobs_by_protocol_version().await {
+            Ok(counts) => counts,
+            Err(e) => {
+                error!(error = %e, "Failed to count pending jobs by protocol version");
+                return;
+            }
+        };
+
+        for (protocol_version, count) in counts {
+            metrics::set_pending_jobs(protocol_version, count);
+        }
     }
 
     /// Fail claimed jobs whose lock expired after exhausting the reclaim budget.

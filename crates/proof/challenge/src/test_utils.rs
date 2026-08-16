@@ -20,7 +20,7 @@ use base_common_consensus::Predeploys;
 use base_proof_contracts::{
     AggregateVerifierClient, AnchorPreflight, AnchorRoot, AnchorSnapshot,
     AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameInfo,
-    GameStatus,
+    GameStatus, ProofProtocolDescriptor, ProofScheduleKind,
 };
 use base_proof_rpc::{BaseHeader, L1Provider, L2Provider, RpcError, RpcResult};
 use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
@@ -33,6 +33,27 @@ use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager};
 
 /// Discovery interval used in tests (5 minutes).
 pub const TEST_DISCOVERY_INTERVAL: Duration = Duration::from_secs(300);
+
+/// Returns deterministic proof commitments for scanner and driver tests.
+pub fn mock_proof_protocol(schedule_kind: ProofScheduleKind) -> ProofProtocolDescriptor {
+    ProofProtocolDescriptor {
+        schedule_kind,
+        schedule_id: if schedule_kind == ProofScheduleKind::Full {
+            B256::repeat_byte(1)
+        } else {
+            B256::ZERO
+        },
+        config_hash: B256::repeat_byte(2),
+        tee_image_hash: B256::repeat_byte(3),
+        zk_range_hash: B256::repeat_byte(4),
+        zk_aggregate_hash: B256::repeat_byte(5),
+    }
+}
+
+/// Returns a routing mapping for the mock prover artifacts.
+pub fn mock_protocol_versions() -> HashMap<B256, u32> {
+    HashMap::from([(mock_proof_protocol(ProofScheduleKind::None).fingerprint(), 0)])
+}
 
 /// Per-game state for the mock verifier.
 #[derive(Debug, Clone)]
@@ -49,6 +70,8 @@ pub struct MockGameState {
     pub starting_block_number: u64,
     /// L1 head block hash stored at game creation time.
     pub l1_head: B256,
+    /// Proof commitments exposed by this game.
+    pub proof_protocol: ProofProtocolDescriptor,
     /// Intermediate output roots for this game.
     pub intermediate_output_roots: Vec<B256>,
     /// 1-based index of the challenged intermediate root (`0` = unchallenged).
@@ -86,6 +109,7 @@ impl Default for MockGameState {
             },
             starting_block_number: 0,
             l1_head: B256::ZERO,
+            proof_protocol: mock_proof_protocol(ProofScheduleKind::Activated),
             intermediate_output_roots: vec![],
             countered_index: 0,
             game_over: false,
@@ -311,6 +335,13 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     async fn status(&self, game_address: Address) -> Result<GameStatus, ContractError> {
         self.status_reads.lock().unwrap().push(game_address);
         self.get(game_address, |s| s.status)
+    }
+
+    async fn proof_protocol_descriptor(
+        &self,
+        game_address: Address,
+    ) -> Result<ProofProtocolDescriptor, ContractError> {
+        self.get(game_address, |s| s.proof_protocol)
     }
 
     async fn zk_prover(&self, game_address: Address) -> Result<Address, ContractError> {

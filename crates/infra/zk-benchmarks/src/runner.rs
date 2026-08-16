@@ -114,7 +114,13 @@ impl ZkBenchRunner {
         let client = ProofRequesterClient::connect(&client_config)
             .wrap_err_with(|| format!("failed to connect prover service {}", config.prover_url))?;
         let session_id = format!("zk-benchmarks-{}-{}", zk_backend.as_str(), nanoid!());
-        let request = Self::proof_request(session_id, start_block_number, l1_head, zk_backend);
+        let request = Self::proof_request(
+            session_id,
+            start_block_number,
+            l1_head,
+            zk_backend,
+            config.protocol_version,
+        );
         let proof_started = Instant::now();
         let response =
             client.prove_block_range(request).await.wrap_err("prove-block-range request failed")?;
@@ -144,10 +150,12 @@ impl ZkBenchRunner {
         start_block_number: u64,
         l1_head: B256,
         zk_backend: ZkBackend,
+        protocol_version: u32,
     ) -> ProveBlockRangeRequest {
         ProveBlockRangeRequest {
             proof: ProofRequest {
                 session_id,
+                protocol_version,
                 request: ProofRequestKind::Compressed(ZkProofRequest {
                     start_block_number,
                     number_of_blocks_to_prove: 1,
@@ -273,7 +281,9 @@ mod tests {
             9,
             B256::repeat_byte(0xaa),
             ZkBackend::Cluster,
+            7,
         );
+        assert_eq!(request.proof.protocol_version, 7);
         let ProofRequestKind::Compressed(proof) = request.proof.request else {
             panic!("expected compressed proof request");
         };

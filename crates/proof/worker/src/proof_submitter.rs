@@ -441,6 +441,7 @@ mod tests {
             status: ProofJobStatus::Succeeded,
             request: ProofRequest {
                 session_id: request.session_id.clone(),
+                protocol_version: 1,
                 request: ProofRequestKind::Compressed(ZkProofRequest {
                     start_block_number: 1,
                     number_of_blocks_to_prove: 1,

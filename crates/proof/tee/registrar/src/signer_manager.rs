@@ -1257,6 +1257,13 @@ mod tests {
             Ok(self.chain.0.lock().unwrap().registered.contains(&signer))
         }
 
+        async fn signer_image_hash(
+            &self,
+            _signer: Address,
+        ) -> std::result::Result<B256, ContractError> {
+            Ok(B256::ZERO)
+        }
+
         async fn get_registered_signers(&self) -> std::result::Result<Vec<Address>, ContractError> {
             if self.stall_get_registered.load(Ordering::SeqCst) {
                 std::future::pending::<()>().await;

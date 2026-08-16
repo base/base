@@ -25,6 +25,8 @@ pub struct Config {
     pub l2_provider: L2HttpProvider,
     /// Prover-service JSON-RPC endpoint.
     pub prover_service_url: Url,
+    /// Prover-service routing version required by the selected game.
+    pub proof_protocol_version: u32,
     /// `DisputeGameFactory` address.
     pub dispute_game_factory: Address,
     /// Selected dispute game proxy.
@@ -69,6 +71,7 @@ impl Config {
             l1_rpc_url: args.l1_rpc_url,
             l2_provider: RootProvider::new_http(args.l2_rpc_url),
             prover_service_url: args.prover_service_url,
+            proof_protocol_version: args.proof_protocol_version,
             dispute_game_factory: args.dispute_game_factory,
             game_address,
             game_type,

@@ -13,6 +13,23 @@ base_metrics::define_metrics! {
     #[describe("Latest factory index scanned by the game scanner")]
     scan_head: gauge,
 
+    #[describe("In-progress games that may still require proofs, by prover protocol version")]
+    #[label(name = "protocol_version")]
+    open_games: gauge,
+
+    #[describe(
+        "Total games skipped because their capability fingerprint has no configured protocol \
+         version. Non-zero means a deployed verifier is missing from --proof-protocol-version and \
+         its games are going unchallenged."
+    )]
+    unmapped_fingerprint_games_total: counter,
+
+    #[describe(
+        "Total games skipped because they commit a proof schedule this challenger cannot \
+         reproduce. Non-zero means full-schedule-era games are live and going unchallenged."
+    )]
+    unsupported_schedule_games_total: counter,
+
     #[describe("Total number of games found to be invalid during validation")]
     games_invalid_total: counter,
 

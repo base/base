@@ -99,6 +99,10 @@ impl SnarkE2e {
     /// 6. Verify the SNARK proof with `CpuProver`
     pub async fn run() -> Result<()> {
         let l2_rpc = std::env::var("L2_NODE_ADDRESS").context("L2_NODE_ADDRESS must be set")?;
+        let protocol_version = std::env::var("PROVER_PROTOCOL_VERSION")
+            .context("PROVER_PROTOCOL_VERSION must be set")?
+            .parse()
+            .context("PROVER_PROTOCOL_VERSION must be a u32")?;
 
         // -- 1. Query L2 safe head -----------------------------------------------
         //
@@ -208,6 +212,7 @@ impl SnarkE2e {
             .prove_block_range(ProveBlockRangeRequest {
                 proof: ProofRequest {
                     session_id: session_id.clone(),
+                    protocol_version,
                     request: ProofRequestKind::SnarkPlonk(SnarkPlonkProofRequest {
                         proof: ZkProofRequest {
                             start_block_number: safe_head,
