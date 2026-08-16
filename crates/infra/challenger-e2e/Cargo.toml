@@ -26,4 +26,4 @@ base-proof-contracts.workspace = true
 base-zk-fork-dispute.workspace = true
 base-prover-service-protocol.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+tokio = { workspace = true, features = ["time"] }
