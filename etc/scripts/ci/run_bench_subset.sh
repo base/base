@@ -29,3 +29,9 @@ run cargo bench -p base-builder-core --bench tx_selection \
   -- --save-baseline current --noplot
 run cargo bench -p base-flashblocks-node --bench sender_recovery \
   -- --save-baseline current sequential --noplot
+run cargo bench -p base-common-flz --bench flz \
+  -- --save-baseline current --noplot
+run cargo bench -p base-common-flashblocks --bench flashblock_decode \
+  -- --save-baseline current --noplot
+run cargo bench -p base-protocol --bench frame_parse \
+  -- --save-baseline current --noplot
