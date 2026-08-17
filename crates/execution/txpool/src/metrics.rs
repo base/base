@@ -13,7 +13,15 @@ base_metrics::define_metrics! {
     #[describe("EIP-8130 transactions invalidated and evicted ahead of the builder")]
     #[label(
         name = "cause",
-        default = ["state_diff", "balance_update", "expiry", "reorg", "feed_gap", "reconcile"]
+        default = [
+            "state_diff",
+            "balance_update",
+            "expiry",
+            "block_expiry",
+            "reorg",
+            "feed_gap",
+            "reconcile"
+        ]
     )]
     invalidated: counter,
     #[describe("Occupied expiry buckets fired on canonical state updates")]
@@ -54,6 +62,14 @@ impl GuardMetrics {
     pub fn record_expiry_invalidations(count: usize) {
         if count > 0 {
             Self::invalidated("expiry").increment(count as u64);
+        }
+    }
+
+    /// Records validity-predicate transactions evicted once the chain advanced
+    /// past their last valid block.
+    pub fn record_block_expiry_invalidations(count: usize) {
+        if count > 0 {
+            Self::invalidated("block_expiry").increment(count as u64);
         }
     }
 

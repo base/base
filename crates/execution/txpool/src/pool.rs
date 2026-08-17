@@ -91,6 +91,10 @@ pub struct BaseTransactionPool<
     listeners: Arc<RwLock<SidecarListeners<T>>>,
     /// Shared admission and invalidation ledger for EIP-8130 transactions.
     guard: Arc<RwLock<MempoolGuard>>,
+    /// Block-height expiry index for validity-predicate transactions, evicted as
+    /// the chain advances past a transaction's last valid block. Not gated on
+    /// transaction type, so it also covers the EIP-1559 advanced-submission path.
+    block_expiry: Arc<RwLock<crate::BlockExpiryIndex>>,
     /// Serializes the short protocol-pool insertion/admission section so a
     /// concurrent same-nonce replacement cannot leave a stale guard record.
     /// Validation remains outside this lock.
@@ -127,6 +131,7 @@ where
             nonce_pool: Arc::clone(&self.nonce_pool),
             listeners: Arc::clone(&self.listeners),
             guard: Arc::clone(&self.guard),
+            block_expiry: Arc::clone(&self.block_expiry),
             protocol_admission_lock: Arc::clone(&self.protocol_admission_lock),
         }
     }
@@ -168,6 +173,7 @@ where
             nonce_pool: Arc::new(RwLock::new(TwoDNoncePool::new(price_bump_config))),
             listeners: Arc::new(RwLock::new(SidecarListeners::default())),
             guard: Arc::new(RwLock::new(MempoolGuard::unlimited())),
+            block_expiry: Arc::new(RwLock::new(crate::BlockExpiryIndex::new())),
             protocol_admission_lock: Arc::new(Mutex::new(())),
         }
     }
@@ -335,6 +341,45 @@ where
         }
     }
 
+    /// Returns the block-expiry bound for a validated transaction's validity
+    /// predicates, or `None` when they impose no finite block bound.
+    fn validity_block_expiry_bound(validated: &TransactionValidationOutcome<T>) -> Option<u64> {
+        let transaction = validated.as_valid_transaction()?;
+        crate::ValidityPredicate::block_expiry_bound(
+            transaction.transaction().validity_predicates(),
+        )
+    }
+
+    /// Records a transaction's last valid block in the block-expiry index.
+    fn register_block_expiry(&self, hash: TxHash, last_valid_block: Option<u64>) {
+        if let Some(last_valid_block) = last_valid_block {
+            self.block_expiry.write().insert(hash, last_valid_block);
+        }
+    }
+
+    /// Evicts validity-predicate transactions whose last valid block is before
+    /// the newly committed `block_number`.
+    ///
+    /// This is the pool-side, block-granular half of validity expiry (the
+    /// builder enforces the finer flashblock deadline). Driven from
+    /// `on_canonical_state_change`, so eviction rides block cadence. Entries for
+    /// transactions removed by other paths (inclusion, replacement) are cleaned
+    /// up lazily when their own expiry block is reached, bounding index growth to
+    /// the furthest live block bound.
+    fn expire_by_block(&self, block_number: u64) {
+        let _admission_guard = self.protocol_admission_lock.lock();
+        let expired = self.block_expiry.write().drain_expired(block_number);
+        let removed = self.remove_dropped_across_pools(expired);
+        if !removed.is_empty() {
+            GuardMetrics::record_block_expiry_invalidations(removed.len());
+            debug!(
+                count = removed.len(),
+                block = block_number,
+                "validity transactions invalidated by block expiry"
+            );
+        }
+    }
+
     fn reconcile_guard(&self) {
         let tracked = self.guard.read().tracked_hashes();
         if tracked.is_empty() {
@@ -438,6 +483,8 @@ where
         // tracked replacement bypasses this check and is reaccounted after the
         // protocol pool atomically accepts the fee bump.
         let pre_admitted = self.pre_admit_protocol_transaction(hash, replaced, &validated)?;
+        // Capture the block-expiry bound before `validated` is consumed below.
+        let block_expiry_bound = Self::validity_block_expiry_bound(&validated);
         let mut outcomes =
             self.protocol_pool.inner().add_transactions(origin, std::iter::once(validated));
         let outcome = match outcomes.pop() {
@@ -459,6 +506,7 @@ where
             }
         };
         self.gate_protocol_admission(hash, replaced, pre_admitted)?;
+        self.register_block_expiry(hash, block_expiry_bound);
         Ok(outcome)
     }
 
@@ -776,6 +824,8 @@ where
             self.ensure_protocol_classification_current(hash, &validated)?;
             let replaced = self.protocol_replacement_hash(sender, nonce);
             let pre_admitted = self.pre_admit_protocol_transaction(hash, replaced, &validated)?;
+            // Capture the block-expiry bound before `validated` is consumed below.
+            let block_expiry_bound = Self::validity_block_expiry_bound(&validated);
             let events =
                 match self.protocol_pool.inner().add_transaction_and_subscribe(origin, validated) {
                     Ok(events) => events,
@@ -787,6 +837,7 @@ where
                     }
                 };
             self.gate_protocol_admission(hash, replaced, pre_admitted)?;
+            self.register_block_expiry(hash, block_expiry_bound);
             return Ok(events);
         }
 
@@ -1381,6 +1432,7 @@ where
     ) {
         let block_hash = update.hash();
         let now = update.timestamp();
+        let block_number = update.number();
         let mined_transactions = update.mined_transactions.clone();
         // Free mined capacity atomically with admission before the heavier pool
         // maintenance. The transaction is already canonical, so it no longer
@@ -1390,6 +1442,10 @@ where
             let mut guard = self.guard.write();
             for hash in &mined_transactions {
                 guard.release(hash);
+            }
+            let mut block_expiry = self.block_expiry.write();
+            for hash in &mined_transactions {
+                block_expiry.remove(hash);
             }
         }
         self.protocol_pool.on_canonical_state_change(update);
@@ -1416,6 +1472,7 @@ where
             }
         }
         self.expire_due_buckets(now);
+        self.expire_by_block(block_number);
         self.reconcile_guard();
         GuardMetrics::tracked().set(self.guard.read().len() as f64);
     }
