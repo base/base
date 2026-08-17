@@ -1,10 +1,11 @@
 //! Benchmarks for the [`TrieNode`].
 
+use std::hint::black_box;
+
 use alloy_trie::Nibbles;
 use base_proof_mpt::{NoopTrieProvider, TrieNode};
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use rand::{Rng, SeedableRng, rngs::StdRng, seq::IteratorRandom};
-use std::hint::black_box;
 
 fn trie(c: &mut Criterion) {
     let mut g = c.benchmark_group("execution");
@@ -45,7 +46,7 @@ fn trie(c: &mut Criterion) {
         let keys = (0..2usize.pow(12))
             .map(|_| Nibbles::unpack(rng.random::<[u8; 32]>()))
             .collect::<Vec<_>>();
-        let keys_to_delete = keys.iter().cloned().choose_multiple(&mut rng, 16);
+        let keys_to_delete = keys.iter().copied().choose_multiple(&mut rng, 16);
 
         let mut trie = TrieNode::Empty;
         for key in &keys {
@@ -69,7 +70,7 @@ fn trie(c: &mut Criterion) {
         let keys = (0..2usize.pow(16))
             .map(|_| Nibbles::unpack(rng.random::<[u8; 32]>()))
             .collect::<Vec<_>>();
-        let keys_to_delete = keys.iter().cloned().choose_multiple(&mut rng, 16);
+        let keys_to_delete = keys.iter().copied().choose_multiple(&mut rng, 16);
 
         let mut trie = TrieNode::Empty;
         for key in &keys {
@@ -91,7 +92,7 @@ fn trie(c: &mut Criterion) {
         let keys = (0..2usize.pow(12))
             .map(|_| Nibbles::unpack(rng.random::<[u8; 32]>()))
             .collect::<Vec<_>>();
-        let keys_to_retrieve = keys.iter().cloned().choose_multiple(&mut rng, 1024);
+        let keys_to_retrieve = keys.iter().copied().choose_multiple(&mut rng, 1024);
 
         let mut trie = TrieNode::Empty;
         for key in &keys {
@@ -109,7 +110,7 @@ fn trie(c: &mut Criterion) {
         let keys = (0..2usize.pow(16))
             .map(|_| Nibbles::unpack(rng.random::<[u8; 32]>()))
             .collect::<Vec<_>>();
-        let keys_to_retrieve = keys.iter().cloned().choose_multiple(&mut rng, 1024);
+        let keys_to_retrieve = keys.iter().copied().choose_multiple(&mut rng, 1024);
 
         let mut trie = TrieNode::Empty;
         for key in &keys {
