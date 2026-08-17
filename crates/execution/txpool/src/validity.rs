@@ -47,15 +47,30 @@ impl ValidityOperator {
     }
 }
 
-/// A declared state condition for a transaction.
+/// Block-level context evaluated by non-state [`ValidityPredicate`] variants.
+///
+/// Carries the properties of the block and flashblock currently being built so
+/// that predicates such as [`ValidityPredicate::BlockNumber`] and
+/// [`ValidityPredicate::FlashblockIndex`] can be checked without reading state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PredicateContext {
+    /// Number of the block currently being built.
+    pub block_number: u64,
+    /// Index of the flashblock currently being built.
+    pub flashblock_index: u64,
+}
+
+/// A declared condition for a transaction.
 ///
 /// The JSON representation uses a `type` tag and a `params` object, accepting
-/// either `balance` or `storage`. A `storage` predicate compares
-/// `storage(address, slot) & mask` with `value`; omitted masks default to
-/// [`U256::MAX`]. A `balance` predicate has the same comparison fields but
-/// does not accept `slot` or `mask`.
+/// `balance`, `storage`, `block_number`, or `flashblock_index`. A `storage`
+/// predicate compares `storage(address, slot) & mask` with `value`; omitted
+/// masks default to [`U256::MAX`]. A `balance` predicate has the same
+/// comparison fields but does not accept `slot` or `mask`. The `block_number`
+/// and `flashblock_index` predicates compare the block or flashblock currently
+/// being built against `value` and accept only `op` and `value`.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
-#[serde(tag = "type", content = "params", rename_all = "lowercase", deny_unknown_fields)]
+#[serde(tag = "type", content = "params", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ValidityPredicate {
     /// Compares an account balance with a value.
     Balance {
@@ -80,6 +95,20 @@ pub enum ValidityPredicate {
         /// Right-hand comparison value.
         value: U256,
     },
+    /// Compares the number of the block being built with a value.
+    BlockNumber {
+        /// Comparison to apply to the block number.
+        op: ValidityOperator,
+        /// Right-hand comparison value.
+        value: U256,
+    },
+    /// Compares the index of the flashblock being built with a value.
+    FlashblockIndex {
+        /// Comparison to apply to the flashblock index.
+        op: ValidityOperator,
+        /// Right-hand comparison value.
+        value: U256,
+    },
 }
 
 impl ValidityPredicate {
@@ -89,12 +118,19 @@ impl ValidityPredicate {
         U256::MAX
     }
 
-    /// Returns whether this predicate holds against the current database state.
+    /// Returns whether this predicate holds against the current build.
     ///
-    /// An absent account has a zero balance. Storage values are masked before
-    /// comparison. Callers must treat database errors as an inability to verify
-    /// the predicate rather than as a successful match.
-    pub fn matches_state<DB: Database>(&self, db: &mut DB) -> Result<bool, DB::Error> {
+    /// State-reading variants ([`Self::Balance`], [`Self::Storage`]) query
+    /// `db`; block-level variants ([`Self::BlockNumber`],
+    /// [`Self::FlashblockIndex`]) read `context` instead. An absent account has
+    /// a zero balance. Storage values are masked before comparison. Callers must
+    /// treat database errors as an inability to verify the predicate rather than
+    /// as a successful match.
+    pub fn matches<DB: Database>(
+        &self,
+        db: &mut DB,
+        context: &PredicateContext,
+    ) -> Result<bool, DB::Error> {
         match self {
             Self::Balance { address, op, value } => {
                 let balance = db.basic(*address)?.map_or(U256::ZERO, |account| account.balance);
@@ -103,6 +139,12 @@ impl ValidityPredicate {
             Self::Storage { address, slot, mask, op, value } => {
                 let storage = db.storage(*address, *slot)? & *mask;
                 Ok(op.matches(storage, *value))
+            }
+            Self::BlockNumber { op, value } => {
+                Ok(op.matches(U256::from(context.block_number), *value))
+            }
+            Self::FlashblockIndex { op, value } => {
+                Ok(op.matches(U256::from(context.flashblock_index), *value))
             }
         }
     }
@@ -149,6 +191,11 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    /// A predicate context with arbitrary block and flashblock coordinates.
+    fn test_context() -> PredicateContext {
+        PredicateContext { block_number: 100, flashblock_index: 3 }
+    }
 
     #[test]
     fn deserializes_storage_predicate_with_default_mask() {
@@ -270,8 +317,8 @@ mod tests {
             value: U256::from(0xcd),
         };
 
-        assert!(balance.matches_state(&mut db).unwrap());
-        assert!(storage.matches_state(&mut db).unwrap());
+        assert!(balance.matches(&mut db, &test_context()).unwrap());
+        assert!(storage.matches(&mut db, &test_context()).unwrap());
     }
 
     #[test]
@@ -282,7 +329,7 @@ mod tests {
             value: U256::ZERO,
         };
 
-        assert!(predicate.matches_state(&mut InMemoryDB::default()).unwrap());
+        assert!(predicate.matches(&mut InMemoryDB::default(), &test_context()).unwrap());
     }
 
     #[test]
@@ -376,5 +423,117 @@ mod tests {
         let error = extension.apply(transaction).unwrap_err();
 
         assert!(error.to_string().contains("too many validity predicates"));
+    }
+
+    #[test]
+    fn deserializes_block_number_and_flashblock_index_predicates() {
+        let block_number: ValidityPredicate =
+            serde_json::from_str(r#"{"type":"block_number","params":{"op":">=","value":"0x64"}}"#)
+                .unwrap();
+        let flashblock_index: ValidityPredicate = serde_json::from_str(
+            r#"{"type":"flashblock_index","params":{"op":"<","value":"0x5"}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            block_number,
+            ValidityPredicate::BlockNumber {
+                op: ValidityOperator::GreaterThanOrEqual,
+                value: U256::from(100),
+            }
+        );
+        assert_eq!(
+            flashblock_index,
+            ValidityPredicate::FlashblockIndex {
+                op: ValidityOperator::LessThan,
+                value: U256::from(5),
+            }
+        );
+    }
+
+    #[test]
+    fn block_number_and_flashblock_index_predicates_reject_state_fields() {
+        let block_number_with_address = r#"{"type":"block_number","params":{"address":"0x1111111111111111111111111111111111111111","op":"=","value":"0x0"}}"#;
+        let flashblock_index_with_slot =
+            r#"{"type":"flashblock_index","params":{"slot":"0x1","op":"=","value":"0x0"}}"#;
+
+        assert!(serde_json::from_str::<ValidityPredicate>(block_number_with_address).is_err());
+        assert!(serde_json::from_str::<ValidityPredicate>(flashblock_index_with_slot).is_err());
+    }
+
+    #[test]
+    fn block_level_predicates_match_context_without_reading_state() {
+        let context = PredicateContext { block_number: 100, flashblock_index: 3 };
+        let mut db = InMemoryDB::default();
+
+        let block_number = ValidityPredicate::BlockNumber {
+            op: ValidityOperator::GreaterThanOrEqual,
+            value: U256::from(100),
+        };
+        let block_number_too_low = ValidityPredicate::BlockNumber {
+            op: ValidityOperator::LessThan,
+            value: U256::from(100),
+        };
+        let flashblock_index = ValidityPredicate::FlashblockIndex {
+            op: ValidityOperator::Equal,
+            value: U256::from(3),
+        };
+        let flashblock_index_mismatch = ValidityPredicate::FlashblockIndex {
+            op: ValidityOperator::GreaterThan,
+            value: U256::from(3),
+        };
+
+        assert!(block_number.matches(&mut db, &context).unwrap());
+        assert!(!block_number_too_low.matches(&mut db, &context).unwrap());
+        assert!(flashblock_index.matches(&mut db, &context).unwrap());
+        assert!(!flashblock_index_mismatch.matches(&mut db, &context).unwrap());
+    }
+
+    #[test]
+    fn flashblock_index_predicate_round_trips() {
+        let predicate = ValidityPredicate::FlashblockIndex {
+            op: ValidityOperator::LessThanOrEqual,
+            value: U256::from(7),
+        };
+
+        assert_eq!(
+            serde_json::to_value(&predicate).unwrap(),
+            json!({
+                "type": "flashblock_index",
+                "params": {
+                    "op": "<=",
+                    "value": "0x7",
+                },
+            })
+        );
+        assert_eq!(
+            serde_json::from_value::<ValidityPredicate>(serde_json::to_value(&predicate).unwrap())
+                .unwrap(),
+            predicate
+        );
+    }
+
+    #[test]
+    fn block_number_predicate_round_trips() {
+        let predicate = ValidityPredicate::BlockNumber {
+            op: ValidityOperator::GreaterThanOrEqual,
+            value: U256::from(0x1234),
+        };
+
+        assert_eq!(
+            serde_json::to_value(&predicate).unwrap(),
+            json!({
+                "type": "block_number",
+                "params": {
+                    "op": ">=",
+                    "value": "0x1234",
+                },
+            })
+        );
+        assert_eq!(
+            serde_json::from_value::<ValidityPredicate>(serde_json::to_value(&predicate).unwrap())
+                .unwrap(),
+            predicate
+        );
     }
 }

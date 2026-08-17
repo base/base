@@ -22,7 +22,7 @@ use base_execution_payload_builder::{
     BasePayloadBuilderAttributes, error::BasePayloadBuilderError,
 };
 use base_execution_txpool::{
-    BasePooledTx, BundleTransaction, GuardMetrics, TimestampedTransaction,
+    BasePooledTx, BundleTransaction, GuardMetrics, PredicateContext, TimestampedTransaction,
     estimated_da_size::DataAvailabilitySized,
 };
 use base_observability_events::TransactionEventType;
@@ -676,6 +676,8 @@ impl BasePayloadBuilderCtx {
         let block_number = as_u64_saturated!(self.evm_env.block_env.number);
         let block_timestamp = self.attributes().timestamp();
         let payload_id = self.payload_id().to_string();
+        let predicate_context =
+            PredicateContext { block_number, flashblock_index: self.flashblock_index() };
 
         while let Some(tx) = best_txs.next(()) {
             if tx.is_bundle_expired(block_number, block_timestamp) {
@@ -774,7 +776,7 @@ impl BasePayloadBuilderCtx {
             let predicates_match = {
                 let db = evm.db_mut();
                 tx.validity_predicates().iter().all(|predicate| {
-                    predicate.matches_state(db).unwrap_or_else(|error| {
+                    predicate.matches(db, &predicate_context).unwrap_or_else(|error| {
                         warn!(
                             target: "payload_builder",
                             tx_hash = ?tx_hash,
@@ -1324,17 +1326,19 @@ impl BasePayloadBuilderCtx {
                 let mut predicate_read_failed = false;
                 let predicates_match =
                     parked.transaction.validity_predicates().iter().all(|predicate| {
-                        predicate.matches_state(evm.db_mut()).unwrap_or_else(|error| {
-                            warn!(
-                                target: "payload_builder",
-                                tx_hash = ?parked_hash,
-                                predicate = ?predicate,
-                                error = ?error,
-                                "failed to re-read validity predicate state"
-                            );
-                            predicate_read_failed = true;
-                            false
-                        })
+                        predicate.matches(evm.db_mut(), &predicate_context).unwrap_or_else(
+                            |error| {
+                                warn!(
+                                    target: "payload_builder",
+                                    tx_hash = ?parked_hash,
+                                    predicate = ?predicate,
+                                    error = ?error,
+                                    "failed to re-read validity predicate state"
+                                );
+                                predicate_read_failed = true;
+                                false
+                            },
+                        )
                     });
                 if predicate_read_failed {
                     best_txs.discard_parked(parked_hash);
