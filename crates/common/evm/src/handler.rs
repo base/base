@@ -23,8 +23,8 @@ use revm::{
         pre_execution::{calculate_caller_fee, validate_account_nonce_and_code_with_components},
     },
     inspector::{Inspector, InspectorEvmTr, InspectorHandler},
-    interpreter::{Gas, interpreter::EthInterpreter, interpreter_action::FrameInit},
-    primitives::{U256, hardfork::SpecId},
+    interpreter::{GasTracker, interpreter::EthInterpreter, interpreter_action::FrameInit},
+    primitives::U256,
 };
 
 use crate::{
@@ -185,42 +185,82 @@ where
     fn last_frame_result(
         &mut self,
         evm: &mut Self::Evm,
-        _original_reservoir: u64,
         frame_result: &mut <<Self::Evm as EvmTr>::Frame as FrameTr>::FrameResult,
+        parent_gas: &mut GasTracker,
     ) -> Result<(), Self::Error> {
-        let ctx = evm.ctx();
-        let tx = ctx.tx();
-        let is_deposit = tx.tx_type() == DEPOSIT_TRANSACTION_TYPE;
-        let tx_gas_limit = tx.gas_limit();
-        let is_regolith = ctx.cfg().spec().is_enabled_in(BaseUpgrade::Regolith);
+        let is_deposit = evm.ctx().tx().tx_type() == DEPOSIT_TRANSACTION_TYPE;
+        let is_regolith = evm.ctx().cfg().spec().is_enabled_in(BaseUpgrade::Regolith);
 
-        let instruction_result = frame_result.interpreter_result().result;
-        let gas = frame_result.gas_mut();
-        let remaining = gas.remaining();
-        let refunded = gas.refunded();
-        let reservoir = gas.reservoir();
-        let state_gas_spent = gas.state_gas_spent();
+        let tx_gas_limit = evm.ctx().tx().gas_limit();
+        let instruction_result = frame_result.instruction_result();
 
-        // Spend the gas limit. Gas is reimbursed when the tx returns successfully.
-        *gas = Gas::new_spent_with_reservoir(tx_gas_limit, reservoir);
+        // All regular gas was forwarded to the first frame: consume it on the
+        // transaction-level gas; the settle below returns the frame's unused
+        // part.
+        parent_gas.spend_all();
 
+        let child_gas = frame_result.gas_mut().tracker_mut();
+
+        // Settle the child's own gas for its stop reason.
+        if !instruction_result.is_ok() {
+            child_gas.rollback_state_gas();
+            child_gas.set_refunded(0);
+        }
+        if instruction_result.is_halt() {
+            // Exceptional halt consumes the child's regular gas (including the spill
+            // just credited back by `rollback_state_gas`); the reservoir is left
+            // restored to the inherited value for the parent.
+            child_gas.spend_all();
+        }
+
+        // Base: this is commented for pre-regolith deposit behavior
+        // Merge the settled child into the parent.
+        // if instruction_result.is_ok_or_revert() {
+        //     parent_gas.erase_cost(child_gas.remaining());
+        // }
+
+        parent_gas.set_reservoir(child_gas.reservoir());
         if instruction_result.is_ok() {
             if !is_deposit || is_regolith {
-                gas.erase_cost(remaining);
-                gas.record_refund(refunded);
-            } else if is_deposit && tx.is_system_transaction() {
-                gas.erase_cost(tx_gas_limit);
+                parent_gas.erase_cost(child_gas.remaining());
+                parent_gas.record_refund(child_gas.refunded());
+            } else if is_deposit && evm.ctx().tx().is_system_transaction() {
+                // Base: is_regolith = false, so this is the legacy behavior
+                parent_gas.erase_cost(tx_gas_limit);
             }
         } else if instruction_result.is_revert() && (!is_deposit || is_regolith) {
-            gas.erase_cost(remaining);
+            // Base: this handles the commented out erase_cost above when reverting
+            parent_gas.erase_cost(child_gas.remaining());
         }
 
         if instruction_result.is_ok() {
-            gas.set_state_gas_spent(state_gas_spent);
-        } else {
-            gas.set_state_gas_spent(0);
-            gas.set_reservoir(reservoir.saturating_add_signed(state_gas_spent));
+            // Parent may have already charged state gas (e.g. new_account + create)
+            // before creating the child frame, so add rather than overwrite. The
+            // child's `state_gas_spent` can be negative (EIP-8037 issue #2) when it
+            // did more 0→x→0 restorations than 0→x creations; the negative
+            // contribution is the parent's matching charge flowing back out.
+            parent_gas.set_state_gas_spent(
+                parent_gas.state_gas_spent().saturating_add(child_gas.state_gas_spent()),
+            );
+            parent_gas.add_state_gas_spilled(child_gas.state_gas_spilled());
         }
+
+        // Refund the EIP-2780 refundable first-frame charge when no account
+        // leaf was created, exactly like `EthFrame::return_result` refunds
+        // the upfront CALL/CREATE state charges of inner frames.
+        if let Some(charge) = frame_result.refundable_state_gas(evm.ctx().cfg().gas_params()) {
+            parent_gas.refill_reservoir(charge);
+            // Unlike an inner frame's caller, the transaction ends here: an
+            // exceptional halt consumes all regular gas, including the
+            // spilled portion the refill just credited back to `remaining`.
+            if instruction_result.is_halt() {
+                parent_gas.spend_all();
+            }
+        }
+
+        // The frame result carries the transaction-level gas onward to the
+        // post-execution phase.
+        *frame_result.gas_mut().tracker_mut() = *parent_gas;
 
         Ok(())
     }
@@ -247,7 +287,7 @@ where
         evm: &mut Self::Evm,
         frame_result: &mut <<Self::Evm as EvmTr>::Frame as FrameTr>::FrameResult,
         eip7702_refund: i64,
-    ) {
+    ) -> Result<(), Self::Error> {
         frame_result.gas_mut().record_refund(eip7702_refund);
 
         let is_deposit = evm.ctx().tx().tx_type() == DEPOSIT_TRANSACTION_TYPE;
@@ -256,10 +296,13 @@ where
         // Prior to Regolith, deposit transactions did not receive gas refunds.
         let is_gas_refund_disabled = is_deposit && !is_regolith;
         if !is_gas_refund_disabled {
-            frame_result.gas_mut().set_final_refund(
-                evm.ctx().cfg().spec().into_eth_spec().is_enabled_in(SpecId::LONDON),
-            );
+            // `max_refund_quotient` is spec-derived (EIP-3529): 5 post-London,
+            // 2 pre-London, so the London refund-cap change is preserved.
+            let max_refund_quotient = evm.ctx().cfg().gas_params().max_refund_quotient();
+            frame_result.gas_mut().set_final_refund(max_refund_quotient);
         }
+
+        Ok(())
     }
 
     fn reward_beneficiary(
@@ -423,7 +466,7 @@ mod tests {
         database_interface::EmptyDB,
         handler::{EthFrame, Handler},
         inspector::NoOpInspector,
-        interpreter::{CallOutcome, InstructionResult, InterpreterResult},
+        interpreter::{CallOutcome, Gas, InstructionResult, InterpreterResult},
         primitives::{Address, B256, Bytes, TxKind, bytes, hardfork::SpecId},
         state::AccountInfo,
     };
@@ -447,8 +490,11 @@ mod tests {
         let mut handler =
             BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
 
-        handler.last_frame_result(&mut evm, 0, &mut exec_result).unwrap();
-        handler.refund(&mut evm, &mut exec_result, 0);
+        let tx_gas_limit = evm.ctx().tx().gas_limit();
+        let mut parent_gas = GasTracker::new(tx_gas_limit, tx_gas_limit, 0);
+
+        handler.last_frame_result(&mut evm, &mut exec_result, &mut parent_gas).unwrap();
+        handler.refund(&mut evm, &mut exec_result, 0).unwrap();
         *exec_result.gas()
     }
 
@@ -532,6 +578,119 @@ mod tests {
         assert_eq!(gas.remaining(), 100);
         assert_eq!(gas.total_gas_spent(), 0);
         assert_eq!(gas.refunded(), 0);
+    }
+
+    #[test]
+    fn test_halt_gas_non_deposit() {
+        let ctx = Context::base()
+            .with_tx(BaseTransaction::builder().base(TxEnv::builder().gas_limit(100)).build_fill())
+            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Regolith)));
+
+        let gas = call_last_frame_return(ctx, InstructionResult::OutOfGas, Gas::new(90));
+        assert_eq!(gas.remaining(), 0);
+        assert_eq!(gas.total_gas_spent(), 100);
+        assert_eq!(gas.refunded(), 0);
+    }
+
+    #[test]
+    fn test_consume_gas_deposit_revert_pre_regolith() {
+        let ctx = Context::base()
+            .with_tx(
+                BaseTransaction::builder()
+                    .base(TxEnv::builder().gas_limit(100))
+                    .source_hash(B256::from([1u8; 32]))
+                    .build_fill(),
+            )
+            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Bedrock)));
+
+        let gas = call_last_frame_return(ctx, InstructionResult::Revert, Gas::new(90));
+        assert_eq!(gas.remaining(), 0);
+        assert_eq!(gas.total_gas_spent(), 100);
+        assert_eq!(gas.refunded(), 0);
+    }
+
+    #[test]
+    fn test_consume_gas_deposit_halt_pre_regolith() {
+        let ctx = Context::base()
+            .with_tx(
+                BaseTransaction::builder()
+                    .base(TxEnv::builder().gas_limit(100))
+                    .source_hash(B256::from([1u8; 32]))
+                    .build_fill(),
+            )
+            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Bedrock)));
+
+        let gas = call_last_frame_return(ctx, InstructionResult::OutOfGas, Gas::new(90));
+        assert_eq!(gas.remaining(), 0);
+        assert_eq!(gas.total_gas_spent(), 100);
+        assert_eq!(gas.refunded(), 0);
+    }
+
+    #[test]
+    fn test_consume_gas_deposit_ok_regolith_matches_non_deposit() {
+        let ctx = Context::base()
+            .with_tx(
+                BaseTransaction::builder()
+                    .base(TxEnv::builder().gas_limit(100))
+                    .source_hash(B256::from([1u8; 32]))
+                    .build_fill(),
+            )
+            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Regolith)));
+
+        let gas = call_last_frame_return(ctx, InstructionResult::Stop, Gas::new(90));
+        assert_eq!(gas.remaining(), 90);
+        assert_eq!(gas.total_gas_spent(), 10);
+        assert_eq!(gas.refunded(), 0);
+    }
+
+    fn eip8037_child_gas() -> Gas {
+        let mut gas = Gas::new(100);
+        let tracker = gas.tracker_mut();
+        tracker.set_remaining(50);
+        tracker.set_reservoir(30);
+        tracker.set_state_gas_spent(20);
+        tracker.set_state_gas_spilled(10);
+        gas
+    }
+
+    #[test]
+    fn test_reservoir_spill_recovered_on_revert() {
+        let ctx = Context::base()
+            .with_tx(BaseTransaction::builder().base(TxEnv::builder().gas_limit(100)).build_fill())
+            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Regolith)));
+
+        // rollback_state_gas: reservoir = 30 + 20 - 10 = 40, spill (10) credited
+        // back to remaining (50 -> 60), then erased onto the parent.
+        let gas = call_last_frame_return(ctx, InstructionResult::Revert, eip8037_child_gas());
+        assert_eq!(gas.reservoir(), 40);
+        assert_eq!(gas.remaining(), 60);
+        assert_eq!(gas.total_gas_spent(), 40);
+    }
+
+    #[test]
+    fn test_reservoir_recovered_but_spill_burned_on_halt() {
+        let ctx = Context::base()
+            .with_tx(BaseTransaction::builder().base(TxEnv::builder().gas_limit(100)).build_fill())
+            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Regolith)));
+
+        // Reservoir is still recovered (40) for the parent, but the halt's
+        // spend_all burns the spill credit, so remaining collapses to 0.
+        let gas = call_last_frame_return(ctx, InstructionResult::OutOfGas, eip8037_child_gas());
+        assert_eq!(gas.reservoir(), 40);
+        assert_eq!(gas.remaining(), 0);
+    }
+
+    #[test]
+    fn test_state_gas_propagated_to_parent_on_ok() {
+        let ctx = Context::base()
+            .with_tx(BaseTransaction::builder().base(TxEnv::builder().gas_limit(100)).build_fill())
+            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Regolith)));
+
+        let gas = call_last_frame_return(ctx, InstructionResult::Stop, eip8037_child_gas());
+        assert_eq!(gas.state_gas_spent(), 20);
+        assert_eq!(gas.state_gas_spilled(), 10);
+        assert_eq!(gas.reservoir(), 30);
+        assert_eq!(gas.remaining(), 50);
     }
 
     #[test]
