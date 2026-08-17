@@ -6,6 +6,7 @@ use std::{
 };
 
 use base_consensus_node::SequencerConfig;
+use base_protocol::DEFAULT_SEAL_OFFSET;
 use clap::Parser;
 use url::Url;
 
@@ -101,6 +102,7 @@ impl SequencerArgs {
             conductor_rpc_timeout: self.conductor_rpc_timeout,
             l1_conf_delay: self.l1_confs,
             l1_rpc_timeout: self.l1_rpc_timeout,
+            seal_offset: DEFAULT_SEAL_OFFSET,
         }
     }
 }

@@ -617,6 +617,7 @@ impl RollupNode {
                     shadow_blocks_per_cycle: self.sequencer_config.shadow_blocks_per_cycle,
                     recovery_mode,
                     rollup_config: Arc::clone(&self.config),
+                    seal_offset: self.sequencer_config.seal_offset,
                     unsafe_payload_gossip_client: queued_gossip_client,
                     sealer: None,
                     pending_stop: None,
