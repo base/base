@@ -20,12 +20,10 @@ workspace = true
 base-cli-utils.workspace = true
 base-tx-manager.workspace = true
 base-proof-tee-registrar = { workspace = true, features = ["metrics"] }
-base-proof-tee-nitro-attestation-prover = { workspace = true, features = ["prove"] }
 
 # Alloy
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
-boundless-market.workspace = true
 
 # CLI / runtime
 url.workspace = true
