@@ -1,11 +1,3 @@
-# On macOS, skip risc0-sys kernel compilation for check/clippy commands.
-# The kernels require Xcode (Metal) on macOS but are only needed for linking
-# (cargo build), not for type-checking (cargo check/clippy). CI builds run
-# on Linux where CPU kernels compile without issue.
-
-[private]
-_skip_kernels := if os() == "macos" { "RISC0_SKIP_BUILD_KERNELS=1" } else { "" }
-
 _sccache := `command -v sccache 2>/dev/null || true`
 # Cache compiled artifacts with sccache when it is installed, otherwise fall
 # back to the plain compiler.
@@ -156,12 +148,12 @@ hack:
 
 # Fixes any formatting issues
 format-fix:
-    {{ _skip_kernels }} BASE_SUCCINCT_ELF_STUB=1 cargo fix --allow-dirty --allow-staged --workspace
+    BASE_SUCCINCT_ELF_STUB=1 cargo fix --allow-dirty --allow-staged --workspace
     cargo +nightly fmt --all
 
 # Fixes any clippy issues
 clippy-fix:
-    {{ _skip_kernels }} BASE_SUCCINCT_ELF_STUB=1 cargo clippy --workspace --all-features --all-targets --fix --allow-dirty --allow-staged
+    BASE_SUCCINCT_ELF_STUB=1 cargo clippy --workspace --all-features --all-targets --fix --allow-dirty --allow-staged
 
 # Cleans the workspace
 clean:
