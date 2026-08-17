@@ -80,7 +80,7 @@ base_metrics::define_metrics! {
     #[label(name = "stage", default = ["already_registered", "proof_started", "proof_succeeded", "proof_failed", "proof_cancelled", "proof_invalid", "proof_stale", "tx_submitted", "tx_retry", "tx_succeeded", "tx_failed", "tx_reverted", "tx_observed_registered"])]
     registration_stage_total: counter,
 
-    #[describe("Generated P-384 inverse-hint stream size in bytes")]
+    #[describe("P-384 inverse-hint stream size in bytes, sampled once per registration attempt")]
     #[label(name = "kind", default = ["ca", "leaf", "attestation"])]
     hint_size_bytes: histogram,
 
@@ -162,7 +162,7 @@ impl RegistrarMetrics {
     pub const TX_OUTCOME_REVERTED: &'static str = "reverted";
     /// Registrar scheduled a retry after a retryable cache-transaction failure.
     pub const TX_OUTCOME_RETRY: &'static str = "retry";
-    /// Cache transaction submission failed permanently, or the receipt succeeded without a usable cert.
+    /// Cache transaction failed permanently, or its receipt succeeded without a usable certificate.
     pub const TX_OUTCOME_FAILED: &'static str = "failed";
     /// Certificate was observed cached after an ambiguous cache transaction.
     pub const TX_OUTCOME_OBSERVED_CACHED: &'static str = "observed_cached";
