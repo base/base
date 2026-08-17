@@ -44,6 +44,3 @@ jobs:
         run: just actions::lint-ci
       - name: Run action tests
         run: just actions::test-ci
-      - name: Report sccache stats
-        if: always()
-        uses: ./.github/actions/sccache-report

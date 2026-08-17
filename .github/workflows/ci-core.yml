@@ -134,9 +134,6 @@ jobs:
           rust-cache-save: ${{ inputs.save_rust_cache }}
       - name: Run build
         run: ${{ inputs.build_command }}
-      - name: Report sccache stats
-        if: always()
-        uses: ./.github/actions/sccache-report
 
   clippy:
     name: Clippy
@@ -165,9 +162,6 @@ jobs:
           rust-cache-save: ${{ inputs.save_rust_cache }}
       - name: Run clippy
         run: ${{ inputs.clippy_command }}
-      - name: Report sccache stats
-        if: always()
-        uses: ./.github/actions/sccache-report
 
   test:
     name: Test
@@ -215,9 +209,6 @@ jobs:
         uses: mikepenz/action-junit-report@bccf2e31636835cf0874589931c4116687171386 # v6.4.0
         with:
           report_paths: target/nextest/ci/test-results.xml
-      - name: Report sccache stats
-        if: always()
-        uses: ./.github/actions/sccache-report
 
   bench:
     name: Benchmarks
@@ -236,9 +227,6 @@ jobs:
           native-deps: "true"
           rust-cache-shared-key: "stable"
       - run: cargo bench --locked -p base-proof-mpt --bench trie_node -- --test
-      - name: Report sccache stats
-        if: always()
-        uses: ./.github/actions/sccache-report
 
   docker:
     name: Docker
@@ -334,6 +322,3 @@ jobs:
         uses: mikepenz/action-junit-report@bccf2e31636835cf0874589931c4116687171386 # v6.4.0
         with:
           report_paths: target/nextest/ci/test-results.xml
-      - name: Report sccache stats
-        if: always()
-        uses: ./.github/actions/sccache-report

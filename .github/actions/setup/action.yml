@@ -116,9 +116,6 @@ runs:
       env:
         SCCACHE_WRITE: ${{ inputs.sccache-write }}
       run: |
-        error_log="${RUNNER_TEMP}/sccache-error.log"
-        : > "$error_log"
-        echo "SCCACHE_ERROR_LOG=$error_log" >> "$GITHUB_ENV"
         if [ "$SCCACHE_WRITE" = "true" ]; then
           echo "SCCACHE_GHA_RW_MODE=READ_WRITE" >> "$GITHUB_ENV"
           echo "sccache mode: READ_WRITE (designated writer)"
@@ -131,7 +128,6 @@ runs:
       uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
       env:
         SCCACHE_GHA_RW_MODE: ${{ inputs.sccache-write == 'true' && 'READ_WRITE' || 'READ_ONLY' }}
-        SCCACHE_ERROR_LOG: ${{ runner.temp }}/sccache-error.log
 
     - name: Rust cache
       if: inputs.rust-cache-shared-key != ''
