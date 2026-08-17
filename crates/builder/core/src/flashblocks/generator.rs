@@ -553,7 +553,7 @@ mod tests {
             // job resolve triggers cancellations from the build task
             let parent_hash = attr.payload_attributes.parent;
             let cache = SavedCache::new(parent_hash, ExecutionCache::new(1_000));
-            let payload_builder_resources = PayloadBuilderResources::new(Some(cache), None);
+            let payload_builder_resources = PayloadBuilderResources::new(Some(cache.clone()), None);
             let input = BuildNewPayload {
                 attributes: attr.clone(),
                 parent_hash,
@@ -567,6 +567,7 @@ mod tests {
 
             let events = builder.get_events();
             assert_eq!(events, vec![BlockEvent::Started(Some(parent_hash)), BlockEvent::Cancelled]);
+            assert!(cache.is_available(), "builder must release the execution cache after exit");
         }
 
         Ok(())
