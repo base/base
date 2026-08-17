@@ -35,6 +35,12 @@ inputs:
   just:
     description: Install just
     default: "true"
+  sccache-write:
+    description: >
+      Whether this job may write to the shared GHA sccache. Default is read-only
+      so only designated writers (CI Test, main cache warmer) compete for the
+      200 uploads/min repo limit.
+    default: "false"
 
 runs:
   using: composite
@@ -105,8 +111,23 @@ runs:
       with:
         components: ${{ inputs.components }}
 
+    - name: Configure sccache
+      shell: bash
+      env:
+        SCCACHE_WRITE: ${{ inputs.sccache-write }}
+      run: |
+        if [ "$SCCACHE_WRITE" = "true" ]; then
+          echo "SCCACHE_GHA_RW_MODE=READ_WRITE" >> "$GITHUB_ENV"
+          echo "sccache mode: READ_WRITE (designated writer)"
+        else
+          echo "SCCACHE_GHA_RW_MODE=READ_ONLY" >> "$GITHUB_ENV"
+          echo "sccache mode: READ_ONLY"
+        fi
+
     - name: Setup sccache
       uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+      env:
+        SCCACHE_GHA_RW_MODE: ${{ inputs.sccache-write == 'true' && 'READ_WRITE' || 'READ_ONLY' }}
 
     - name: Rust cache
       if: inputs.rust-cache-shared-key != ''

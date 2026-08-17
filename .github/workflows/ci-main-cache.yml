@@ -37,6 +37,7 @@ jobs:
           sp1: "true"
           rust-cache-shared-key: "stable"
           rust-cache-save: "true"
+          sccache-write: "true"
       - name: Build CI cache
         run: just build::ci
 
