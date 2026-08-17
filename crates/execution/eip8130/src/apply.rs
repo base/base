@@ -135,23 +135,30 @@ pub enum ApplyError {
     #[error("create bytecode is empty")]
     EmptyBytecode,
 
-    /// A create entry's bytecode exceeds the 0xFFFF deployment limit. Mirrors
-    /// `require(n <= 0xFFFF)`.
+    /// A create entry's bytecode exceeds the 0xFFFF deployment-loader limit.
+    /// Mirrors `_buildDeploymentCode`'s `require(n <= 0xFFFF)` (the PUSH2 loader
+    /// bound). The stricter [`Self::CreateCodeExceedsMaxSize`] EIP-170 cap is
+    /// enforced first on the create path.
     #[error("create bytecode exceeds the 65535-byte limit")]
     BytecodeTooLarge,
 
-    /// A create entry's runtime code cannot be deployed. Mirrors `createAccount`'s
-    /// `AccountDeploymentFailed`: on the contract, `CREATE2` returns `address(0)`
-    /// when the runtime code is over the EIP-170 [`Eip8130Constants::MAX_CODE_SIZE`]
-    /// cap or leads with the EIP-3541 reserved `0xEF` byte. The enshrined apply
-    /// path deploys the code directly (`set_code`) rather than via `CREATE2`, so it
-    /// must reject those payloads explicitly — a leading-`0xEF` payload would
-    /// otherwise panic in `Bytecode::new_raw` instead of failing the transaction.
-    #[error("account {account} runtime code is not deployable (EIP-170 size / EIP-3541 prefix)")]
-    AccountDeploymentFailed {
-        /// The counterfactual address whose runtime code cannot be deployed.
-        account: Address,
-    },
+    /// A create entry's runtime bytecode exceeds EIP-170's `MAX_CODE_SIZE`
+    /// (24576). The reference contract deploys the runtime with a real `CREATE2`,
+    /// whose returned code is subject to EIP-170; the enshrined path installs the
+    /// runtime directly with `set_code`, so this bound must be enforced here or
+    /// an inclusion path that bypasses mempool admission would install
+    /// oversized code the reference implementation would reject.
+    #[error("create bytecode exceeds the EIP-170 MAX_CODE_SIZE limit")]
+    CreateCodeExceedsMaxSize,
+
+    /// A create entry's runtime bytecode begins with the `0xEF` byte, which
+    /// EIP-3541 forbids for deployed code. Real `CREATE2` in the reference
+    /// contract rejects such runtimes; the enshrined path installs the runtime
+    /// directly, so it must reject them too. This also prevents a `0xEF01`-
+    /// prefixed runtime from reaching a panicking `Bytecode` constructor or from
+    /// being silently reinterpreted as an EIP-7702 delegation designator.
+    #[error("create bytecode begins with the EIP-3541-forbidden 0xEF byte")]
+    CreateCodeStartsWithEf,
 
     /// The account targeted by a create entry already has EIP-8130 state. Mirrors
     /// the CREATE2 collision that makes `createAccount` unrepeatable.
@@ -769,6 +776,11 @@ impl AccountChangeApplier {
         storage: &mut AccountConfigurationStorage<'_>,
         entry: &CreateEntry,
     ) -> Result<CreatedAccount, ApplyError> {
+        // Validate the runtime before deriving the address so every caller (pool
+        // admission and block inclusion) rejects the same set of malformed
+        // runtimes at the shared choke point, matching the reference contract's
+        // CREATE2 deploy (EIP-170 size, EIP-3541 leading-byte).
+        Self::validate_create_runtime(&entry.code)?;
         let address = Self::compute_address(entry.user_salt, &entry.code, &entry.initial_actors)?;
         // Block re-initialization of an account that already holds EIP-8130 state.
         // `local_sequence` doubles as the created/imported flag; `local_epoch`
@@ -782,18 +794,6 @@ impl AccountChangeApplier {
         let mut state = storage.get_account_state(address)?;
         if state.is_initialized() {
             return Err(ApplyError::AlreadyCreated { account: address });
-        }
-
-        // Mirror `createAccount`'s `CREATE2` deploy, which returns `address(0)`
-        // (→ `AccountDeploymentFailed`) for runtime code over the EIP-170 cap or
-        // leading with the EIP-3541 reserved `0xEF` byte. This path deploys via
-        // `set_code(Bytecode::new_raw(..))` instead of `CREATE2`, so it enforces
-        // both here — a leading-`0xEF` payload would otherwise panic in
-        // `Bytecode::new_raw`. Checked after the already-created guard so a
-        // collision still reports `AlreadyCreated` first, and before any state
-        // write so a rejected create leaves no partially-initialized account.
-        if entry.code.len() > Eip8130Constants::MAX_CODE_SIZE || entry.code.first() == Some(&0xEF) {
-            return Err(ApplyError::AccountDeploymentFailed { account: address });
         }
 
         // Mark initialized, disable the implicit default-EOA path by default
@@ -949,6 +949,31 @@ impl AccountChangeApplier {
             packed_leaves.extend_from_slice(keccak256(&leaf).as_slice());
         }
         keccak256(packed_leaves)
+    }
+
+    /// Validates a create entry's runtime bytecode against the constraints the
+    /// reference contract's real `CREATE2` deploy enforces, which the enshrined
+    /// path — installing the runtime directly with `set_code` rather than
+    /// deploying it — would otherwise skip:
+    ///
+    /// - non-empty ([`ApplyError::EmptyBytecode`]): a codeless create would leave
+    ///   an account with actor config but no code, breaking the EOA invariant.
+    /// - at most EIP-170 `MAX_CODE_SIZE` ([`ApplyError::CreateCodeExceedsMaxSize`]).
+    /// - not `0xEF`-prefixed per EIP-3541 ([`ApplyError::CreateCodeStartsWithEf`]),
+    ///   which also keeps a `0xEF01`-prefixed runtime away from the panicking
+    ///   `Bytecode` designator constructor and from being reinterpreted as an
+    ///   EIP-7702 delegation.
+    pub fn validate_create_runtime(bytecode: &[u8]) -> Result<(), ApplyError> {
+        if bytecode.is_empty() {
+            return Err(ApplyError::EmptyBytecode);
+        }
+        if bytecode.len() > Eip8130Constants::MAX_CODE_SIZE {
+            return Err(ApplyError::CreateCodeExceedsMaxSize);
+        }
+        if bytecode[0] == 0xEF {
+            return Err(ApplyError::CreateCodeStartsWithEf);
+        }
+        Ok(())
     }
 
     /// Builds an account's deployment code: a 14-byte EVM loader header that
@@ -1647,6 +1672,43 @@ mod tests {
     }
 
     #[test]
+    fn validate_create_runtime_enforces_create2_deploy_rules() {
+        // Empty runtime is rejected (codeless create).
+        assert_eq!(
+            AccountChangeApplier::validate_create_runtime(&[]),
+            Err(ApplyError::EmptyBytecode)
+        );
+        // A runtime at exactly MAX_CODE_SIZE is allowed; one byte over is not.
+        assert!(
+            AccountChangeApplier::validate_create_runtime(&vec![
+                0x00u8;
+                Eip8130Constants::MAX_CODE_SIZE
+            ])
+            .is_ok()
+        );
+        assert_eq!(
+            AccountChangeApplier::validate_create_runtime(&vec![
+                0x00u8;
+                Eip8130Constants::MAX_CODE_SIZE + 1
+            ]),
+            Err(ApplyError::CreateCodeExceedsMaxSize)
+        );
+        // EIP-3541: any runtime beginning with 0xEF is rejected, including the
+        // 3-byte 0xEF0100 prefix that would otherwise panic the EIP-7702
+        // designator constructor, and a full 0xEF0100||target designator.
+        assert_eq!(
+            AccountChangeApplier::validate_create_runtime(&[0xEF, 0x00]),
+            Err(ApplyError::CreateCodeStartsWithEf)
+        );
+        assert_eq!(
+            AccountChangeApplier::validate_create_runtime(&[0xEF, 0x01, 0x00]),
+            Err(ApplyError::CreateCodeStartsWithEf)
+        );
+        // An ordinary runtime is accepted.
+        assert!(AccountChangeApplier::validate_create_runtime(&[0x60, 0x00]).is_ok());
+    }
+
+    #[test]
     fn actors_commitment_hashes_leaves_then_list() {
         // Golden values cross-checked against the contract's leaves-then-list
         // scheme (#74) with `cast keccak`: each actor hashes to
@@ -1847,14 +1909,14 @@ mod tests {
             .unwrap();
             assert_eq!(
                 AccountChangeApplier::apply_create(acc, &entry),
-                Err(ApplyError::AccountDeploymentFailed { account: expected })
+                Err(ApplyError::CreateCodeStartsWithEf)
             );
             // No partially-initialized account is left behind on rejection.
             assert!(!acc.get_account_state(expected).unwrap().is_initialized());
         });
 
         // EIP-170: runtime code over `MAX_CODE_SIZE` (but under the 0xFFFF
-        // deployment-code cap) computes an address but is not deployable.
+        // deployment-code cap) is rejected before any state is written.
         with_storage(|acc| {
             let entry = CreateEntry {
                 user_salt: B256::ZERO,
@@ -1869,8 +1931,9 @@ mod tests {
             .unwrap();
             assert_eq!(
                 AccountChangeApplier::apply_create(acc, &entry),
-                Err(ApplyError::AccountDeploymentFailed { account: expected })
+                Err(ApplyError::CreateCodeExceedsMaxSize)
             );
+            assert!(!acc.get_account_state(expected).unwrap().is_initialized());
         });
 
         // Exactly `MAX_CODE_SIZE` deploys (boundary, non-`0xEF` lead).
