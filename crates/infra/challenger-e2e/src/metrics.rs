@@ -58,8 +58,9 @@ impl Scrape {
             .map(str::trim)
             .filter(|line| !line.is_empty() && !line.starts_with('#'))
             .filter_map(|line| {
-                let (key, value) = line.rsplit_once(' ')?;
-                let value = value.parse::<f64>().ok()?;
+                // Prometheus allows an optional timestamp after the value.
+                let (key, rest) = line.split_once(' ')?;
+                let value = rest.split_whitespace().next()?.parse::<f64>().ok()?;
                 let (name, labels) = key
                     .split_once('{')
                     .map_or((key, ""), |(name, labels)| (name, labels.trim_end_matches('}')));
@@ -93,5 +94,11 @@ mod tests {
         assert_eq!(scrape.label_sum("base_challenger_nullify_tx_outcome_total", "reverted"), 2.0);
         // A counter that never fired is not exported, and reads as zero.
         assert_eq!(scrape.sum("base_challenger_challenge_tx_submitted_total"), 0.0);
+    }
+
+    #[test]
+    fn ignores_optional_prometheus_timestamp() {
+        let scrape = Scrape::parse("base_challenger_up 1 1710000000000\n");
+        assert_eq!(scrape.sum("base_challenger_up"), 1.0);
     }
 }

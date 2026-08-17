@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use alloy_node_bindings::{Anvil, AnvilInstance};
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, U256, hex};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer_local::PrivateKeySigner;
 use base_proof_contracts::{
@@ -187,7 +187,7 @@ impl ChallengerE2e {
         let contents = format!(
             "export BASE_CHALLENGER_L1_ETH_RPC={fork_url}\n\
              export BASE_CHALLENGER_PRIVATE_KEY={}\n",
-            signer.to_bytes()
+            hex::encode_prefixed(signer.to_bytes())
         );
 
         let path = &config.challenger_env_file;
@@ -376,19 +376,48 @@ impl ChallengerE2e {
         F: FnMut() -> Fut,
         Fut: Future<Output = Result<Option<T>>>,
     {
-        tokio::time::timeout(budget, async {
+        let mut last_error = None;
+        match tokio::time::timeout(budget, async {
             loop {
                 match check().await {
                     Ok(Some(value)) => return Ok(value),
                     Ok(None) => {}
                     // The fork and the challenger are both starting up; a read
                     // that fails now routinely succeeds on the next tick.
-                    Err(error) => warn!(error = %error, "poll failed; retrying"),
+                    Err(error) => {
+                        warn!(error = %error, "poll failed; retrying");
+                        last_error = Some(error);
+                    }
                 }
                 tokio::time::sleep(config.poll_interval).await;
             }
         })
         .await
-        .unwrap_or_else(|_| bail!("timed out after {budget:?} waiting for {waiting_for}"))
+        {
+            Ok(result) => result,
+            Err(_) => {
+                let msg = format!("timed out after {budget:?} waiting for {waiting_for}");
+                match last_error {
+                    Some(error) => Err(error.wrap_err(msg)),
+                    None => bail!("{msg}"),
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn private_key_env_is_0x_hex_and_round_trips() {
+        let signer = PrivateKeySigner::random();
+        let encoded = hex::encode_prefixed(signer.to_bytes());
+        assert!(encoded.starts_with("0x"), "{encoded}");
+        assert_eq!(encoded.len(), 66);
+        assert!(encoded[2..].chars().all(|c| c.is_ascii_hexdigit()));
+        let parsed: PrivateKeySigner = encoded.parse().expect("challenger clap parse");
+        assert_eq!(parsed.address(), signer.address());
     }
 }
