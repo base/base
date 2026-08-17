@@ -192,7 +192,9 @@ mod phase_statuses_serde {
         S: Serializer,
     {
         match value {
-            Some(statuses) => alloy_serde::quantity::vec::serialize(statuses.as_slice(), serializer),
+            Some(statuses) => {
+                alloy_serde::quantity::vec::serialize(statuses.as_slice(), serializer)
+            }
             None => serializer.serialize_none(),
         }
     }
