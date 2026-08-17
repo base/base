@@ -241,7 +241,6 @@ impl<R, C, T> SignerManager<R, C, T> {
             RegistrarMetrics::record_registration_stage(
                 RegistrarMetrics::REGISTRATION_STAGE_PROOF_STALE,
             );
-            RegistrarMetrics::record_final_registration(RegistrarMetrics::TX_OUTCOME_STALE);
             return Err(RegistrarError::StaleAttestationProof {
                 signer,
                 age,
@@ -921,7 +920,12 @@ where
             if signer_cancel.is_cancelled() {
                 return Ok(());
             }
-            self.ensure_attestation_fresh(signer, plan.timestamp)?;
+            if let Err(error) = self.ensure_attestation_fresh(signer, plan.timestamp) {
+                if matches!(error, RegistrarError::StaleAttestationProof { .. }) {
+                    RegistrarMetrics::record_final_registration(RegistrarMetrics::TX_OUTCOME_STALE);
+                }
+                return Err(error);
+            }
             let Some(registered) = signer_cancel
                 .run_until_cancelled(self.registry.is_registered_signer(signer))
                 .await
@@ -1042,6 +1046,9 @@ where
         if registered {
             RegistrarMetrics::record_registration_stage(
                 RegistrarMetrics::REGISTRATION_STAGE_TX_OBSERVED_REGISTERED,
+            );
+            RegistrarMetrics::record_final_registration(
+                RegistrarMetrics::TX_OUTCOME_OBSERVED_REGISTERED,
             );
             RegistrarMetrics::registrations_total().increment(1);
         }
