@@ -248,7 +248,7 @@ impl SetupContainer {
             output_dir: output_dir.into(),
             chain_id: 1337,
             l2_chain_id: 84538453,
-            slot_duration: 2,
+            slot_duration: 1,
             isthmus_activation_block: None,
             base_azul_activation_block: None,
             base_beryl_activation_block: None,

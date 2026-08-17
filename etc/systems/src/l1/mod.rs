@@ -22,4 +22,4 @@ pub use reorg::{L1ReorgDriver, L1ReplacementBranch};
 
 /// L1 stack orchestration.
 mod stack;
-pub use stack::{L1Stack, L1StackConfig};
+pub use stack::{L1Execution, L1Stack, L1StackConfig};
