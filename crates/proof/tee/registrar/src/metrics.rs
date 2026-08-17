@@ -91,7 +91,7 @@ base_metrics::define_metrics! {
 
     #[describe("Certificate cache transactions by kind and outcome")]
     #[label(name = "kind", default = ["ca", "leaf"])]
-    #[label(name = "outcome", default = ["submitted", "succeeded", "reverted", "retry", "failed", "observed_cached"])]
+    #[label(name = "outcome", default = ["submitted", "succeeded", "reverted", "retry", "failed", "observed_cached", "cancelled"])]
     cert_cache_tx_total: counter,
 }
 
@@ -166,6 +166,8 @@ impl RegistrarMetrics {
     pub const TX_OUTCOME_FAILED: &'static str = "failed";
     /// Certificate was observed cached after an ambiguous cache transaction.
     pub const TX_OUTCOME_OBSERVED_CACHED: &'static str = "observed_cached";
+    /// Cache transaction was abandoned because the signer task was cancelled after send.
+    pub const TX_OUTCOME_CANCELLED: &'static str = "cancelled";
 
     /// Returns the bounded cache-kind label for `kind`.
     pub const fn cert_kind_label(kind: CertKind) -> &'static str {

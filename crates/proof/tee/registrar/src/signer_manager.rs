@@ -722,12 +722,24 @@ where
                     }
                     return Ok(true);
                 }
-                Ok(None) => return Ok(false),
+                Ok(None) => {
+                    RegistrarMetrics::record_cache_tx(
+                        cert.kind,
+                        RegistrarMetrics::TX_OUTCOME_CANCELLED,
+                    );
+                    return Ok(false);
+                }
                 Err(
                     error @ (RegistrarError::ExpiredCertificate { .. }
                     | RegistrarError::RevokedCertificate { .. }
                     | RegistrarError::InvalidAttestationProof(_)),
-                ) => return Err(error),
+                ) => {
+                    RegistrarMetrics::record_cache_tx(
+                        cert.kind,
+                        RegistrarMetrics::TX_OUTCOME_FAILED,
+                    );
+                    return Err(error);
+                }
                 Err(error) => {
                     warn!(
                         error = %error,
