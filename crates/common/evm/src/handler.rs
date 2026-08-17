@@ -316,7 +316,8 @@ where
     ) -> Result<ExecutionResult<Self::HaltReason>, Self::Error> {
         take_error::<Self::Error, _>(evm.ctx().error())?;
 
-        let exec_result = post_execution::output(evm.ctx(), result, result_gas);
+        let exec_result = post_execution::output(evm.ctx(), result, result_gas)
+            .map_haltreason(BaseHaltReason::Base);
 
         if exec_result.is_halt() && evm.ctx().tx().tx_type() == DEPOSIT_TRANSACTION_TYPE {
             return Err(ERROR::from(BaseTransactionError::HaltedDepositPostRegolith));
@@ -346,7 +347,6 @@ where
             let tx = ctx.tx();
             let caller = tx.caller();
             let mint = tx.mint();
-            let is_system_tx = tx.is_system_transaction();
             let gas_limit = tx.gas_limit();
             let journal = evm.ctx().journal_mut();
 
