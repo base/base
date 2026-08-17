@@ -150,6 +150,9 @@ jobs:
               gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
                 --field body="$body" > /dev/null
             fi
-          elif [ -n "$existing_id" ]; then
+          elif [ "$SHOULD_COMMENT" = "false" ] && [ -n "$existing_id" ]; then
+            # Only clear a stale comment when the render step explicitly decided this
+            # PR is unremarkable. If render never ran (e.g. it crashed) SHOULD_COMMENT
+            # is empty, and we must not delete a legitimate warning from a prior run.
             gh api "repos/${REPO}/issues/comments/${existing_id}" -X DELETE > /dev/null
           fi

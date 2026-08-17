@@ -113,6 +113,10 @@ class BenchCompare:
     def render_row(self, bench_id: str, base: Measurement | None, head: Measurement | None) -> str:
         """Render a single Markdown table row for one benchmark."""
         if base is None:
+            # bench_ids is built from set(base) | set(head), so a missing base side
+            # guarantees head is present; assert it so a future refactor can't turn
+            # this into a silent AttributeError.
+            assert head is not None
             return f"| `{bench_id}` | — (new) | {self.humanize_ns(head.median)} | — |"
         if head is None:
             return f"| `{bench_id}` | {self.humanize_ns(base.median)} | — (missing) | — |"
