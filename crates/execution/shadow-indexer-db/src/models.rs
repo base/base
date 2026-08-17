@@ -3,40 +3,49 @@ use chrono::{DateTime, Utc};
 use reth_primitives_traits::RecoveredBlock;
 use serde::{Deserialize, Serialize};
 
-/// Row representation for a shadow indexer block.
-///
-/// Only the columns required for identity, reorg bookkeeping, and range scans are
-/// materialized as real columns. The full executed block and its receipts live in a
-/// single JSONB `payload`, so downstream consumers can evolve the shape they read
-/// without a database migration.
+use crate::ShadowBlockCursor;
+
+/// Persisted shadow block row.
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct ShadowBlockRow {
     /// Block number.
     pub number: i64,
-    /// Block hash, stored as its raw 32 bytes.
+    /// Raw block hash.
     pub hash: Vec<u8>,
-    /// Whether the block was reorged out.
+    /// Whether block was reorged out.
     pub reorged_out: bool,
-    /// Canonical block hash at the same height after reorg, stored as its raw 32 bytes.
+    /// Replacement block hash after reorg.
     pub canonical_hash: Option<Vec<u8>>,
-    /// Row creation time.
+    /// Creation time.
     pub created_at: DateTime<Utc>,
-    /// Full executed block and receipts persisted as JSONB.
+    /// Database-maintained update time.
+    pub updated_at: DateTime<Utc>,
+    /// Typed JSONB payload.
+    ///
+    /// Incompatible serde changes fail the whole fetch and stall the reader; this risk is accepted.
     #[sqlx(json)]
     pub payload: ShadowBlockPayload,
 }
 
-/// Block payload persisted as JSONB.
-///
-/// The recovered block and its receipts are stored as the node's own consensus types, so
-/// downstream consumers read fully typed values while the underlying column stays a single
-/// JSONB blob that evolves with the types without a schema migration.
+impl ShadowBlockRow {
+    /// Returns this row's stream position.
+    #[must_use]
+    pub fn cursor(&self) -> ShadowBlockCursor {
+        ShadowBlockCursor {
+            updated_at: self.updated_at,
+            number: self.number,
+            hash: self.hash.clone(),
+        }
+    }
+}
+
+/// Shadow block JSONB payload.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ShadowBlockPayload {
-    /// Builder version string, injected by the writer before persistence.
+    /// Writer-stamped builder version.
     pub builder_version: String,
-    /// Recovered block: sealed header, body, and recovered senders.
+    /// Recovered block.
     pub block: RecoveredBlock<BaseBlock>,
-    /// Execution receipts for the block, in transaction order.
+    /// Transaction-ordered receipts.
     pub receipts: Vec<BaseReceipt>,
 }

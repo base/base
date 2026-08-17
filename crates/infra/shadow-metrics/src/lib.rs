@@ -7,5 +7,17 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-mod sink;
-pub use sink::{ShadowMetricsSchemaReadinessError, ShadowMetricsSink};
+mod metrics;
+pub use metrics::ShadowMetrics;
+
+mod reader;
+pub use reader::{
+    DEFAULT_MAX_ROWS_PER_POLL, DEFAULT_POLL_INTERVAL_SECS, ShadowMetricsReader,
+    ShadowMetricsReaderConfig,
+};
+
+mod stats;
+pub use stats::ShadowBlockStats;
+
+mod store;
+pub use store::{ShadowMetricsSchemaReadinessError, ShadowMetricsStore};
