@@ -15,6 +15,7 @@ on:
 
 env:
   REGISTRY_IMAGE: ghcr.io/${{ github.repository_owner }}/node-reth-dev
+  NODE_RETH_IMAGE: ghcr.io/${{ github.repository_owner }}/node-reth
   CARGO_TERM_COLOR: always
   SCCACHE_GHA_ENABLED: "true"
   RUSTC_WRAPPER: "sccache"
@@ -146,6 +147,11 @@ jobs:
             runs-on: ubuntu-24.04
           - arch: linux/arm64
             runs-on: ubuntu-24.04-arm
+        image:
+          - target: base
+            name: node-reth-dev
+          - target: node-reth
+            name: node-reth
 
     runs-on: ${{ matrix.settings.runs-on }}
 
@@ -185,28 +191,33 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push Docker image
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.image.name }}
+          TARGET: ${{ matrix.image.target }}
         run: |
-          docker buildx bake -f etc/docker/docker-bake.hcl base \
-            --set base.tags=${{ env.REGISTRY_IMAGE }} \
-            --set base.platform=${{ matrix.settings.arch }} \
-            --set base.output=type=image,push-by-digest=true,name-canonical=true,push=true \
-            --set base.cache-to=type=registry,ref=${{ env.REGISTRY_IMAGE }}:cache-${{ env.PLATFORM_PAIR }},mode=max \
-            --set base.labels.org.opencontainers.image.source=${{ steps.image-labels.outputs.source }} \
-            --set base.labels.org.opencontainers.image.revision=${{ steps.image-labels.outputs.revision }} \
-            --set base.labels.org.opencontainers.image.created=${{ steps.image-labels.outputs.created }} \
-            --set base.labels.org.opencontainers.image.version=${{ steps.image-labels.outputs.version }} \
-            --metadata-file ${{ runner.temp }}/base-metadata.json
+          docker buildx bake -f etc/docker/docker-bake.hcl "$TARGET" \
+            --set "${TARGET}.tags=${IMAGE}" \
+            --set "${TARGET}.platform=${{ matrix.settings.arch }}" \
+            --set "${TARGET}.output=type=image,push-by-digest=true,name-canonical=true,push=true" \
+            --set "${TARGET}.cache-to=type=registry,ref=${IMAGE}:cache-${{ env.PLATFORM_PAIR }},mode=max" \
+            --set "${TARGET}.labels.org.opencontainers.image.source=${{ steps.image-labels.outputs.source }}" \
+            --set "${TARGET}.labels.org.opencontainers.image.revision=${{ steps.image-labels.outputs.revision }}" \
+            --set "${TARGET}.labels.org.opencontainers.image.created=${{ steps.image-labels.outputs.created }}" \
+            --set "${TARGET}.labels.org.opencontainers.image.version=${{ steps.image-labels.outputs.version }}" \
+            --metadata-file ${{ runner.temp }}/metadata.json
 
       - name: Export digest
+        env:
+          TARGET: ${{ matrix.image.target }}
         run: |
           mkdir -p ${{ runner.temp }}/digests
-          digest="$(jq -er '."base"."containerimage.digest"' ${{ runner.temp }}/base-metadata.json)"
+          digest="$(jq -er --arg t "$TARGET" '.[$t]."containerimage.digest"' ${{ runner.temp }}/metadata.json)"
           touch "${{ runner.temp }}/digests/${digest#sha256:}"
 
       - name: Upload digest
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: digests-${{ env.PLATFORM_PAIR }}
+          name: digests-${{ matrix.image.target }}-${{ env.PLATFORM_PAIR }}
           path: ${{ runner.temp }}/digests/*
           if-no-files-found: error
           retention-days: 1
@@ -269,12 +280,22 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Download digests
+      - name: Download node-reth-dev digests
         if: needs.find-release-artifacts.outputs.has_digests == 'true'
+        continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          path: ${{ runner.temp }}/digests
-          pattern: digests-*
+          path: ${{ runner.temp }}/digests-base
+          pattern: digests-base-*
+          merge-multiple: true
+
+      - name: Download node-reth digests
+        if: needs.find-release-artifacts.outputs.has_digests == 'true'
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: ${{ runner.temp }}/digests-node-reth
+          pattern: digests-node-reth-*
           merge-multiple: true
 
       - name: Login to GHCR
@@ -289,52 +310,63 @@ jobs:
         if: needs.find-release-artifacts.outputs.has_digests == 'true'
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
 
-      - name: Determine Docker tags
-        if: needs.find-release-artifacts.outputs.has_digests == 'true'
-        id: tags
-        run: |
-          TAG="${{ inputs.tag }}"
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-
-          if [[ "$TAG" =~ -rc\. ]]; then
-            echo "docker_tags=${{ env.REGISTRY_IMAGE }}:${TAG}" >> $GITHUB_OUTPUT
-          else
-            VERSION="${TAG#v}"
-            IFS='.' read -r major minor patch <<< "$VERSION"
-            echo "docker_tags=${{ env.REGISTRY_IMAGE }}:${TAG},${{ env.REGISTRY_IMAGE }}:${major}.${minor},${{ env.REGISTRY_IMAGE }}:${major},${{ env.REGISTRY_IMAGE }}:latest" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Create manifest list and push
+      - name: Create manifest lists and push
         if: needs.find-release-artifacts.outputs.has_digests == 'true'
         id: create-manifest
         run: |
+          set -euo pipefail
           shopt -s nullglob
-          DIGEST_DIR="${{ runner.temp }}/digests"
-          DIGESTS=("$DIGEST_DIR"/*)
-          if [[ ${#DIGESTS[@]} -eq 0 ]]; then
-            echo "::warning::No Docker digests found — all Docker builds may have failed, skipping manifest push"
-            echo "pushed=false" >> $GITHUB_OUTPUT
-            exit 0
+
+          TAG="${{ inputs.tag }}"
+          image_tags() {
+            local image="$1"
+            if [[ "$TAG" =~ -rc\. ]]; then
+              echo "${image}:${TAG}"
+            else
+              local version="${TAG#v}"
+              IFS='.' read -r major minor patch <<< "$version"
+              echo "${image}:${TAG},${image}:${major}.${minor},${image}:${major},${image}:latest"
+            fi
+          }
+
+          publish_image() {
+            local image="$1"
+            local digest_dir="$2"
+            local digests=("$digest_dir"/*)
+            if [[ ${#digests[@]} -eq 0 ]]; then
+              echo "No digests in $digest_dir — skipping $image"
+              return 1
+            fi
+
+            local tag_args=()
+            IFS=',' read -ra tags <<< "$(image_tags "$image")"
+            for tag in "${tags[@]}"; do
+              tag_args+=(-t "$tag")
+            done
+
+            local sources=()
+            for digest in "${digests[@]}"; do
+              sources+=("${image}@sha256:${digest##*/}")
+            done
+
+            docker buildx imagetools create "${tag_args[@]}" "${sources[@]}"
+            docker buildx imagetools inspect "${image}:${TAG}"
+          }
+
+          pushed=false
+          if publish_image "${{ env.REGISTRY_IMAGE }}" "${{ runner.temp }}/digests-base"; then
+            pushed=true
+          fi
+          if publish_image "${{ env.NODE_RETH_IMAGE }}" "${{ runner.temp }}/digests-node-reth"; then
+            pushed=true
           fi
 
-          IFS=',' read -ra TAGS <<< "${{ steps.tags.outputs.docker_tags }}"
-          TAG_ARGS=()
-          for tag in "${TAGS[@]}"; do
-            TAG_ARGS+=(-t "$tag")
-          done
-
-          SOURCES=()
-          for digest in "${DIGESTS[@]}"; do
-            SOURCES+=("${{ env.REGISTRY_IMAGE }}@sha256:${digest##*/}")
-          done
-
-          docker buildx imagetools create "${TAG_ARGS[@]}" "${SOURCES[@]}"
-          echo "pushed=true" >> $GITHUB_OUTPUT
-
-      - name: Inspect image
-        if: needs.find-release-artifacts.outputs.has_digests == 'true' && steps.create-manifest.outputs.pushed == 'true'
-        run: |
-          docker buildx imagetools inspect ${{ env.REGISTRY_IMAGE }}:${{ steps.tags.outputs.tag }}
+          if [[ "$pushed" != "true" ]]; then
+            echo "::warning::No Docker digests found — all Docker builds may have failed, skipping manifest push"
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         if: inputs.is_final && (steps.create-manifest.outputs.pushed == 'true' || needs.find-release-artifacts.outputs.has_binaries == 'true')
@@ -390,5 +422,6 @@ jobs:
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
             echo "docker pull ${{ env.REGISTRY_IMAGE }}:${TAG}" >> $GITHUB_STEP_SUMMARY
+            echo "docker pull ${{ env.NODE_RETH_IMAGE }}:${TAG}" >> $GITHUB_STEP_SUMMARY
             echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           fi

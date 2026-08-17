@@ -65,6 +65,11 @@ jobs:
             docker:
               - 'etc/docker/Dockerfile.*'
               - 'etc/docker/docker-bake.hcl'
+              - 'etc/scripts/node/**'
+              - 'etc/docker/docker-compose.node.yml'
+              - 'docker-compose.yml'
+              - '.env.mainnet'
+              - '.env.sepolia'
               - '.dockerignore'
 
   metadata-checks:
@@ -87,6 +92,10 @@ jobs:
         run: cargo deny check bans --hide-inclusion-graph
       - name: Check crate dependencies
         run: ./etc/scripts/ci/check-crate-deps.sh
+      - name: Validate operator compose
+        run: |
+          docker compose config -q
+          docker compose -f etc/docker/docker-compose.node.yml config -q
 
   format:
     name: Format

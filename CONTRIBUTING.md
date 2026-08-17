@@ -74,6 +74,8 @@ If you want to work on something that doesn't have an issue yet, open an issue f
 - Docker if you want to use the local devnet or build container images
 - Run `just setup` to install other deps
 
+`docker compose up` from the repository root pulls the **public operator node** (`ghcr.io/base/node-reth`). Use `just devnet up` for the local developer stack.
+
 
 ### Making Changes
 

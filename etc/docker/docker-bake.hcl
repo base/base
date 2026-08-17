@@ -18,6 +18,10 @@ variable "REGISTRY_IMAGE" {
   default = "ghcr.io/base/node-reth-dev"
 }
 
+variable "NODE_RETH_IMAGE" {
+  default = "ghcr.io/base/node-reth"
+}
+
 variable "PLATFORM_PAIR" {
   default = "linux-amd64"
 }
@@ -185,4 +189,11 @@ target "zk-host" {
     "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
     "type=registry,ref=${REGISTRY_IMAGE}:cache-zk-host-${PLATFORM_PAIR}",
   ]
+}
+
+target "node-reth" {
+  context = "."
+  dockerfile = "etc/docker/Dockerfile.node-reth"
+  tags = ["ghcr.io/base/node-reth:local"]
+  cache-from = ["type=registry,ref=${NODE_RETH_IMAGE}:cache-${PLATFORM_PAIR}"]
 }

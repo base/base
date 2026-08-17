@@ -31,7 +31,7 @@ Every commit pushed to the release branch triggers the **Create RC** workflow, w
 - Skips silently if `Cargo.toml` is still `0.0.0` (version sync PR not yet merged)
 - Otherwise creates the next RC tag (e.g., `v0.6.0-rc.1`, `v0.6.0-rc.2`, …)
 - Builds multi-arch Docker images and native binaries
-- Pushes the Docker image tagged with the RC tag only (not `latest`)
+- Pushes the Docker images tagged with the RC tag only (not `latest`)
 
 To create additional RCs, simply push more commits (bug fixes, backports) to the release branch.
 
@@ -42,7 +42,7 @@ Once you are satisfied with an RC, run the **Publish Release** workflow (`Action
 - Enter the version number (e.g., `0.6.0` — no `v` prefix, no `releases/` prefix)
 - The workflow validates that the release branch exists and `Cargo.toml` is not `0.0.0`
 - Creates the final tag `vX.Y.Z` on the release branch
-- Builds Docker images tagged as `vX.Y.Z`, `X.Y`, `X`, and `latest`
+- Builds Docker images tagged as `vX.Y.Z`, `X.Y`, `X`, and `latest` for both `ghcr.io/base/node-reth-dev` and `ghcr.io/base/node-reth`
 - Creates a draft GitHub release with auto-generated changelog and uploads binaries
 - Review and publish the draft release on GitHub
 

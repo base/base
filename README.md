@@ -26,6 +26,28 @@ Use [`baseup`](baseup/README.md) to install the GitHub release binaries for this
 curl -fsSL https://raw.githubusercontent.com/base/base/main/baseup/install | bash
 ```
 
+## Run a Node
+
+This repository now hosts the public Base node previously published from [`base/node`](https://github.com/base/node). Root `docker-compose.yml` pulls `ghcr.io/base/node-reth` and does not compile this repo. `just devnet up` is the local developer stack.
+
+1. Set `BASE_NODE_L1_ETH_RPC` and `BASE_NODE_L1_BEACON` in `.env.mainnet` or `.env.sepolia`.
+2. Start the node:
+
+```bash
+# Mainnet (default):
+docker compose up
+
+# Testnet:
+NETWORK_ENV=.env.sepolia docker compose up
+
+# Pin a release:
+NODE_TAG=v1.2.6 docker compose up
+```
+
+To build the image from this tree instead of pulling, use `docker compose -f etc/docker/docker-compose.node.yml up --build`.
+
+See the [docs](https://docs.base.org/base-chain/node-operators/run-a-base-node) for hardware requirements, snapshots, Flashblocks, and historical proofs.
+
 ## Base Anvil Package
 
 Every push to `main` publishes patched `anvil` and `forge` binaries to GHCR
