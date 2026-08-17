@@ -103,7 +103,7 @@ base_metrics::define_metrics! {
     registration_recovery_total: counter,
 
     #[describe("Final hinted registration transactions by outcome")]
-    #[label(name = "outcome", default = ["submitted", "succeeded", "reverted", "retry", "failed", "observed_registered", "stale"])]
+    #[label(name = "outcome", default = ["submitted", "succeeded", "reverted", "retry", "failed", "observed_registered", "stale", "cancelled"])]
     final_registration_total: counter,
 }
 
@@ -191,6 +191,8 @@ impl RegistrarMetrics {
     pub const TX_OUTCOME_OBSERVED_REGISTERED: &'static str = "observed_registered";
     /// Final registration was abandoned because the attestation became stale.
     pub const TX_OUTCOME_STALE: &'static str = "stale";
+    /// Final registration was cancelled after a transaction was submitted.
+    pub const TX_OUTCOME_CANCELLED: &'static str = "cancelled";
 
     /// Recovery after an ambiguous certificate-cache transaction.
     pub const RECOVERY_CACHE: &'static str = "cache";

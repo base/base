@@ -761,6 +761,10 @@ where
 
             match result {
                 Ok(receipt) if receipt.inner.status() => {
+                    RegistrarMetrics::record_cache_tx(
+                        cert.kind,
+                        RegistrarMetrics::TX_OUTCOME_FAILED,
+                    );
                     if let Some(error) = state_error {
                         return Err(error);
                     }
@@ -972,7 +976,12 @@ where
                             RegistrarMetrics::record_recovery(RegistrarMetrics::RECOVERY_FINAL);
                             return Ok(());
                         }
-                        None => return Ok(()),
+                        None => {
+                            RegistrarMetrics::record_final_registration(
+                                RegistrarMetrics::TX_OUTCOME_CANCELLED,
+                            );
+                            return Ok(());
+                        }
                         Some(false) => {}
                     }
                     RegistrarMetrics::record_registration_stage(
@@ -996,7 +1005,12 @@ where
                             RegistrarMetrics::record_recovery(RegistrarMetrics::RECOVERY_FINAL);
                             return Ok(());
                         }
-                        None => return Ok(()),
+                        None => {
+                            RegistrarMetrics::record_final_registration(
+                                RegistrarMetrics::TX_OUTCOME_CANCELLED,
+                            );
+                            return Ok(());
+                        }
                         Some(false) => {}
                     }
                     if !error.is_retryable() || retry == self.max_tx_retries {
