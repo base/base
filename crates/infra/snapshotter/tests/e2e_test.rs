@@ -321,7 +321,7 @@ fn manifest_with_seeded_hashes(
                 chunk_sizes: vec![100u64; num_chunks as usize],
                 chunk_decompressed_sizes: vec![200u64; num_chunks as usize],
                 chunk_output_files,
-                chunk_files: vec![], // TODO: fix before merging
+                chunk_files: vec![],
             }),
         );
     }
