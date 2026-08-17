@@ -4,7 +4,8 @@ use core::{net::SocketAddr, time::Duration};
 use std::path::PathBuf;
 
 use base_builder_core::{
-    BuilderConfig, ExecutionMeteringMode, RejectionCache, SharedMeteringProvider,
+    BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES, ExecutionMeteringMode, RejectionCache,
+    SharedMeteringProvider,
 };
 use base_builder_metering::MeteringStore;
 use base_execution_cli::ShadowIndexerArgs;
@@ -190,6 +191,14 @@ pub struct Args {
     #[arg(long = "builder.enable-experimental-validity-transactions", default_value = "false")]
     pub enable_experimental_validity_transactions: bool,
 
+    /// Maximum validity predicates accepted per experimental transaction.
+    #[arg(
+        long = "builder.experimental-validity-max-predicates",
+        default_value_t = DEFAULT_MAX_VALIDITY_PREDICATES,
+        requires = "enable_experimental_validity_transactions"
+    )]
+    pub experimental_validity_max_predicates: usize,
+
     /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes
     #[arg(long = "builder.max-uncompressed-block-size")]
     pub max_uncompressed_block_size: Option<u64>,
@@ -287,6 +296,7 @@ impl Default for Args {
             extra_block_deadline_secs: 20,
             enable_resource_metering: false,
             enable_experimental_validity_transactions: false,
+            experimental_validity_max_predicates: DEFAULT_MAX_VALIDITY_PREDICATES,
             max_uncompressed_block_size: None,
             metering_wait_duration_ms: None,
             audit_archiver_url: None,
@@ -388,6 +398,7 @@ mod tests {
     fn default_args_produce_valid_config() {
         let args = Args::default();
         assert!(!args.enable_experimental_validity_transactions);
+        assert_eq!(args.experimental_validity_max_predicates, DEFAULT_MAX_VALIDITY_PREDICATES);
         let config = convert(args);
         assert_eq!(config.block_time, Duration::from_millis(1000));
         assert!(config.max_gas_per_txn.is_none());
@@ -399,9 +410,12 @@ mod tests {
         let parsed = CommandParser::parse_from([
             "builder",
             "--builder.enable-experimental-validity-transactions",
+            "--builder.experimental-validity-max-predicates",
+            "8",
         ]);
 
         assert!(parsed.args.enable_experimental_validity_transactions);
+        assert_eq!(parsed.args.experimental_validity_max_predicates, 8);
     }
 
     #[rstest]

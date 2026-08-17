@@ -15,4 +15,7 @@ pub use rpc::{
 };
 
 mod extension;
-pub use extension::{SendRawTransactionValidityExtension, TxPoolRpcConfig, TxPoolRpcExtension};
+pub use extension::{
+    DEFAULT_MAX_VALIDITY_PREDICATES, SendRawTransactionValidityExtension, TxPoolRpcConfig,
+    TxPoolRpcExtension,
+};

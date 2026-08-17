@@ -20,7 +20,10 @@ use base_tx_forwarding::{
     DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS, DEFAULT_RESEND_AFTER_MS, TxForwardingConfig,
     TxForwardingExtension,
 };
-use base_txpool_rpc::{SendRawTransactionValidityExtension, TxPoolRpcConfig, TxPoolRpcExtension};
+use base_txpool_rpc::{
+    DEFAULT_MAX_VALIDITY_PREDICATES, SendRawTransactionValidityExtension, TxPoolRpcConfig,
+    TxPoolRpcExtension,
+};
 use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
 use base_upgrade_signal::UpgradeSignalStartupMode;
 use tracing::warn;
@@ -161,6 +164,14 @@ pub struct StandardNodeArgs {
     #[arg(long = "enable-experimental-validity-transactions", requires = "enable_tx_forwarding")]
     pub enable_experimental_validity_transactions: bool,
 
+    /// Maximum validity predicates accepted per experimental transaction.
+    #[arg(
+        long = "experimental-validity-max-predicates",
+        default_value_t = DEFAULT_MAX_VALIDITY_PREDICATES,
+        requires = "enable_experimental_validity_transactions"
+    )]
+    pub experimental_validity_max_predicates: usize,
+
     /// Builder RPC endpoints for transaction forwarding (one forwarder per URL), used by mempool nodes
     #[arg(
         long = "builder-rpc-urls",
@@ -278,6 +289,7 @@ impl From<RpcStandardNodeArgs> for StandardNodeArgs {
             shadow_indexer: ShadowIndexerArgs::default(),
             enable_tx_forwarding: false,
             enable_experimental_validity_transactions: false,
+            experimental_validity_max_predicates: DEFAULT_MAX_VALIDITY_PREDICATES,
             builder_rpc_urls: Vec::new(),
             tx_forwarding_resend_after_ms: DEFAULT_RESEND_AFTER_MS,
             tx_forwarding_batch_size: DEFAULT_MAX_BATCH_SIZE,
@@ -534,7 +546,9 @@ impl StandardBaseRethNode {
                     "experimental validity transactions require enabled transaction forwarding"
                 );
             }
-            runner.install_ext::<SendRawTransactionValidityExtension>(());
+            runner.install_ext::<SendRawTransactionValidityExtension>(
+                args.experimental_validity_max_predicates,
+            );
         }
         runner.install_ext::<TxForwardingExtension>(tx_forwarding_config);
         runner.install_ext::<ProofsHistoryExtension>(rollup_args.clone());
@@ -822,6 +836,10 @@ mod tests {
 
         assert_eq!(standard_args.rpc.rollup_args.sequencer, None);
         assert!(!standard_args.enable_experimental_validity_transactions);
+        assert_eq!(
+            standard_args.experimental_validity_max_predicates,
+            DEFAULT_MAX_VALIDITY_PREDICATES
+        );
         assert!(!config.enabled);
         assert!(config.builder_urls.is_empty());
     }
@@ -845,11 +863,14 @@ mod tests {
             "--builder-rpc-urls",
             "http://localhost:8545",
             "--enable-experimental-validity-transactions",
+            "--experimental-validity-max-predicates",
+            "8",
         ])
         .args;
 
         assert!(args.enable_tx_forwarding);
         assert!(args.enable_experimental_validity_transactions);
+        assert_eq!(args.experimental_validity_max_predicates, 8);
         assert_eq!(args.builder_rpc_urls.len(), 1);
     }
 

@@ -11,6 +11,7 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{
     ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalRuntimeExtension,
 };
+use base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES;
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
 use base_node_core::args::RollupArgs;
@@ -320,7 +321,9 @@ impl InProcessClient {
                 && tx_fwd_config.enabled
                 && !tx_fwd_config.builder_urls.is_empty()
             {
-                extensions.push(Box::new(SendRawTransactionValidityExtension::from_config(())));
+                extensions.push(Box::new(SendRawTransactionValidityExtension::from_config(
+                    DEFAULT_MAX_VALIDITY_PREDICATES,
+                )));
             }
             extensions.push(Box::new(TxForwardingExtension::from_config(tx_fwd_config.clone())));
         }

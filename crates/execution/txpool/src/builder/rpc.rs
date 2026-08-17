@@ -47,6 +47,7 @@ pub trait BuilderApi<E> {
 pub struct BuilderApiImpl<P, E = NoExtensions> {
     pool: P,
     accept_extensions: bool,
+    max_extension_items: usize,
     _extensions: PhantomData<E>,
 }
 
@@ -59,7 +60,7 @@ impl<P> BuilderApiImpl<P, NoExtensions> {
     /// call site (`E0282`), because type-parameter defaults do not participate
     /// in inference for associated-function calls.
     pub const fn new(pool: P) -> Self {
-        Self { pool, accept_extensions: false, _extensions: PhantomData }
+        Self { pool, accept_extensions: false, max_extension_items: 0, _extensions: PhantomData }
     }
 }
 
@@ -67,9 +68,14 @@ impl<P, E> BuilderApiImpl<P, E> {
     /// Creates a new handler carrying the wire extension payload `E`.
     ///
     /// Non-empty extension payloads are rejected unless `accept_extensions` is
-    /// explicitly enabled.
-    pub const fn with_extensions(pool: P, accept_extensions: bool) -> Self {
-        Self { pool, accept_extensions, _extensions: PhantomData }
+    /// explicitly enabled. Extension payloads validate `max_extension_items`
+    /// according to their own item semantics.
+    pub const fn with_extensions(
+        pool: P,
+        accept_extensions: bool,
+        max_extension_items: usize,
+    ) -> Self {
+        Self { pool, accept_extensions, max_extension_items, _extensions: PhantomData }
     }
 }
 
@@ -95,6 +101,11 @@ where
                 None::<()>,
             ));
         }
+
+        tx.extensions.validate(self.max_extension_items).map_err(|e| {
+            BuilderApiMetrics::extension_errors().increment(1);
+            ErrorObjectOwned::owned(ErrorCode::InvalidParams.code(), e.to_string(), None::<()>)
+        })?;
 
         // Decode the EIP-2718 transaction bytes
         let consensus_tx =
@@ -302,6 +313,7 @@ mod tests {
         BuilderApiImpl::<_, TestExtensions>::with_extensions(
             NoopTransactionPool::<BasePooledTransaction>::new(),
             accept_extensions,
+            usize::MAX,
         )
     }
 

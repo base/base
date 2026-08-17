@@ -38,6 +38,14 @@ pub trait ValidatedTransactionExtensions<T: PoolTransaction>:
         false
     }
 
+    /// Validates the payload against the configured maximum number of extension items.
+    ///
+    /// Called by the builder before decoding and applying the payload. Each extension
+    /// type defines what constitutes one item.
+    fn validate(&self, _max_items: usize) -> Result<(), ExtensionError> {
+        Ok(())
+    }
+
     /// Extracts extension data from an outbound pooled transaction.
     ///
     /// Called by the forwarder for each transaction it relays to a builder.
