@@ -56,47 +56,21 @@ jobs:
 
       # Advisory only: a bench that fails to compile or run must not fail the job.
       # A bench that runs on base but breaks on head simply produces no head result,
-      # which the comparison step surfaces as lost coverage. The curated subset is the
-      # deterministic, CPU-bound benches; I/O-heavy, async, and multi-threaded benches
-      # are left out because their wall-clock time is too noisy to read per-PR.
+      # which the comparison step surfaces as lost coverage. The curated subset lives
+      # in run_bench_subset.sh so a single list runs against both trees — see that
+      # script for why these particular benches were chosen. Both steps invoke the
+      # *head* checkout's copy (via GITHUB_WORKSPACE) so the base run cannot use a
+      # stale list from the base commit; only the working directory differs.
       - name: Run benchmark subset (base)
         continue-on-error: true
         working-directory: base-src
         shell: bash
-        run: |
-          set -uo pipefail
-          run() { echo "::group::$*"; "$@"; echo "::endgroup::"; }
-          run cargo bench -p base-proof-mpt --bench trie_node \
-            -- --save-baseline current --noplot
-          run cargo bench -p base-protocol --bench batch_transaction \
-            -- --save-baseline current --noplot
-          run cargo bench -p base-consensus-derive --bench batch_queue --features test-utils \
-            -- --save-baseline current --noplot
-          run cargo bench -p base-common-precompiles --bench base_precompiles --features test-utils \
-            -- --save-baseline current --noplot
-          run cargo bench -p base-builder-core --bench tx_selection \
-            -- --save-baseline current --noplot
-          run cargo bench -p base-flashblocks-node --bench sender_recovery \
-            -- --save-baseline current sequential --noplot
+        run: bash "$GITHUB_WORKSPACE/etc/scripts/ci/run_bench_subset.sh"
 
       - name: Run benchmark subset (head)
         continue-on-error: true
         shell: bash
-        run: |
-          set -uo pipefail
-          run() { echo "::group::$*"; "$@"; echo "::endgroup::"; }
-          run cargo bench -p base-proof-mpt --bench trie_node \
-            -- --save-baseline current --noplot
-          run cargo bench -p base-protocol --bench batch_transaction \
-            -- --save-baseline current --noplot
-          run cargo bench -p base-consensus-derive --bench batch_queue --features test-utils \
-            -- --save-baseline current --noplot
-          run cargo bench -p base-common-precompiles --bench base_precompiles --features test-utils \
-            -- --save-baseline current --noplot
-          run cargo bench -p base-builder-core --bench tx_selection \
-            -- --save-baseline current --noplot
-          run cargo bench -p base-flashblocks-node --bench sender_recovery \
-            -- --save-baseline current sequential --noplot
+        run: bash "$GITHUB_WORKSPACE/etc/scripts/ci/run_bench_subset.sh"
 
       - name: Set up Python 3.13
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
