@@ -93,8 +93,8 @@ test-utils = [
 	"alloy-consensus",
 	"alloy-rpc-types-eth",
 	"async-trait",
+	"base-proof-submission/test-utils",
 	"base-protocol/test-utils",
 	"base-runtime/test-utils",
 	"serde_json",
-	"base-proof-submission/test-utils"
 ]

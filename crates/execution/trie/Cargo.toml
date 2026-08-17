@@ -107,6 +107,6 @@ metrics = [
 	"dep:eyre",
 	"dep:metrics",
 	"reth-evm/metrics",
+	"reth-trie-db/metrics",
 	"reth-trie/metrics",
-	"reth-trie-db/metrics"
 ]

@@ -74,7 +74,7 @@ default = [ "metrics" ]
 metrics = [
 	"base-common-evm/metrics",
 	"base-metrics/metrics",
+	"base-observability-events/metrics",
 	"dep:metrics",
 	"reth-evm/metrics",
-	"base-observability-events/metrics"
 ]

@@ -76,8 +76,8 @@ serde = [
 	"tracing-subscriber?/serde",
 ]
 test-utils = [
+	"base-common-genesis/test-utils",
 	"base-protocol/test-utils",
 	"dep:spin",
 	"dep:tracing-subscriber",
-	"base-common-genesis/test-utils"
 ]

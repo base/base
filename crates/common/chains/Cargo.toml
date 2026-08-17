@@ -60,6 +60,4 @@ serde = [
 	"base-common-genesis/serde",
 	"revm/serde",
 ]
-test-utils = [
-	"base-common-genesis/test-utils"
-]
+test-utils = [ "base-common-genesis/test-utils" ]

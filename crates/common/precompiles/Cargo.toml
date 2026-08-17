@@ -83,6 +83,6 @@ optional_balance_check = [ "revm/optional_balance_check" ]
 optional_block_gas_limit = [ "revm/optional_block_gas_limit" ]
 test-utils = [
 	"base-common-chains/test-utils",
+	"base-common-genesis/test-utils",
 	"base-precompile-storage/test-utils",
-	"base-common-genesis/test-utils"
 ]

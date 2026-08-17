@@ -51,9 +51,9 @@ std = [
 	"thiserror/std",
 ]
 test-utils = [
+	"base-common-genesis/test-utils",
 	"base-protocol/test-utils",
-	"dep:alloy-primitives", 
-	"base-common-genesis/test-utils"
+	"dep:alloy-primitives",
 ]
 serde = [
 	"alloy-eips/serde",

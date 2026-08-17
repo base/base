@@ -134,6 +134,7 @@ test-utils = [
 	"base-execution-exex/test-utils",
 	"base-node-core/test-utils",
 	"base-protocol/test-utils",
+	"reth-chain-state/test-utils",
 	"reth-chainspec/test-utils",
 	"reth-codec",
 	"reth-consensus/test-utils",
@@ -153,7 +154,6 @@ test-utils = [
 	"reth-trie-common/test-utils",
 	"reth-trie-db/test-utils",
 	"serde_json",
-	"reth-chain-state/test-utils"
 ]
 reth-codec = []
 
