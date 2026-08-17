@@ -1,33 +1,16 @@
-//! A variant over the different implementations of [`ChannelCompressor`].
-
-use alloc::vec::Vec;
-
-use base_common_genesis::RollupConfig;
+//! A variant over the channel [`CompressorWriter`] implementations.
 
 use crate::{
-    BrotliCompressor, ChannelCompressor, CompressionAlgo, CompressorResult, CompressorWriter,
-    ZlibCompressor,
+    BrotliCompressor, CompressionAlgo, CompressorResult, CompressorWriter, ZlibCompressor,
 };
 
-/// The channel compressor wraps the brotli and zlib compressor types,
-/// implementing the [`ChannelCompressor`] trait itself.
+/// Dispatches [`CompressorWriter`] operations to Brotli or zlib.
 #[derive(Debug, Clone)]
 pub enum VariantCompressor {
     /// The brotli compressor.
     Brotli(BrotliCompressor),
     /// The zlib compressor.
     Zlib(ZlibCompressor),
-}
-
-impl VariantCompressor {
-    /// Constructs a [`VariantCompressor`] using the given [`RollupConfig`] and timestamp.
-    pub fn from_timestamp(config: &RollupConfig, timestamp: u64) -> Self {
-        if config.is_fjord_active(timestamp) {
-            Self::Brotli(BrotliCompressor::new(CompressionAlgo::Brotli10))
-        } else {
-            Self::Zlib(ZlibCompressor::new())
-        }
-    }
 }
 
 impl From<CompressionAlgo> for VariantCompressor {
@@ -49,20 +32,6 @@ impl CompressorWriter for VariantCompressor {
         }
     }
 
-    fn flush(&mut self) -> CompressorResult<()> {
-        match self {
-            Self::Brotli(c) => c.flush(),
-            Self::Zlib(c) => c.flush(),
-        }
-    }
-
-    fn close(&mut self) -> CompressorResult<()> {
-        match self {
-            Self::Brotli(c) => c.close(),
-            Self::Zlib(c) => c.close(),
-        }
-    }
-
     fn reset(&mut self) {
         match self {
             Self::Brotli(c) => c.reset(),
@@ -70,10 +39,10 @@ impl CompressorWriter for VariantCompressor {
         }
     }
 
-    fn len(&self) -> usize {
+    fn compressed_len(&self) -> CompressorResult<usize> {
         match self {
-            Self::Brotli(c) => c.len(),
-            Self::Zlib(c) => c.len(),
+            Self::Brotli(c) => c.compressed_len(),
+            Self::Zlib(c) => c.compressed_len(),
         }
     }
 
@@ -81,15 +50,6 @@ impl CompressorWriter for VariantCompressor {
         match self {
             Self::Brotli(c) => c.read(buf),
             Self::Zlib(c) => c.read(buf),
-        }
-    }
-}
-
-impl ChannelCompressor for VariantCompressor {
-    fn get_compressed(&self) -> Vec<u8> {
-        match self {
-            Self::Brotli(c) => c.get_compressed(),
-            Self::Zlib(c) => c.get_compressed(),
         }
     }
 

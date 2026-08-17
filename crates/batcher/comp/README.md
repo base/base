@@ -29,7 +29,7 @@ use std::sync::Arc;
 use alloy_primitives::BlockHash;
 use base_comp::{ChannelOut, CompressionAlgo, VariantCompressor};
 use base_common_genesis::RollupConfig;
-use base_protocol::{Batch, ChannelId, SingleBatch};
+use base_protocol::{ChannelId, SingleBatch};
 
 // Use the example transaction
 let transactions = vec![];
@@ -40,7 +40,6 @@ let epoch_num = 1;
 let epoch_hash = BlockHash::ZERO;
 let timestamp = 1;
 let single_batch = SingleBatch { parent_hash, epoch_num, epoch_hash, timestamp, transactions };
-let batch = Batch::Single(single_batch);
 
 // Create a new channel.
 let id = ChannelId::default();
@@ -48,19 +47,13 @@ let config = Arc::new(RollupConfig::default());
 let compressor: VariantCompressor = CompressionAlgo::Brotli10.into();
 let mut channel_out = ChannelOut::new(id, config, compressor);
 
-// Add the compressed batch to the `ChannelOut`.
-channel_out.add_batch(batch).unwrap();
+// Encode and compress the batch into the channel.
+channel_out.add_single_batch(single_batch).unwrap();
 
-// Output frames
-while channel_out.ready_bytes() > 0 {
-    let frame = channel_out.output_frame(100).expect("outputs frame");
+// Finalize and output frames
+for frame in channel_out.into_frames(100).expect("outputs frames") {
     println!("Frame: {}", alloy_primitives::hex::encode(frame.encode()));
-    if channel_out.ready_bytes() <= 100 {
-        channel_out.close();
-    }
 }
-
-assert!(channel_out.closed);
 ```
 
 ## Features

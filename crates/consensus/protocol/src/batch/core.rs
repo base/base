@@ -71,9 +71,7 @@ impl Batch {
             }
             Self::Span(sb) => {
                 out.put_u8(BatchType::Span as u8);
-                let raw_span_batch =
-                    sb.to_raw_span_batch().map_err(BatchEncodingError::SpanBatchError)?;
-                raw_span_batch.encode(out).map_err(BatchEncodingError::SpanBatchError)?;
+                sb.encode(out).map_err(BatchEncodingError::SpanBatchError)?;
             }
         }
         Ok(())
