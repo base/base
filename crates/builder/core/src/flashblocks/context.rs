@@ -22,7 +22,7 @@ use base_execution_payload_builder::{
     BasePayloadBuilderAttributes, error::BasePayloadBuilderError,
 };
 use base_execution_txpool::{
-    BasePooledTx, BundleTransaction, GuardMetrics, TimestampedTransaction,
+    BasePooledTx, BundleTransaction, GuardMetrics, PredicateContext, TimestampedTransaction,
     estimated_da_size::DataAvailabilitySized,
 };
 use base_observability_events::TransactionEventType;
@@ -678,6 +678,8 @@ impl BasePayloadBuilderCtx {
         let block_timestamp = self.attributes().timestamp();
         let payload_id = self.payload_id().to_string();
         let mut predicate_index = ParkedPredicateIndex::default();
+        let predicate_context =
+            PredicateContext { block_number, flashblock_index: self.flashblock_index() };
 
         while let Some(tx) = best_txs.next(()) {
             if tx.is_bundle_expired(block_number, block_timestamp) {
@@ -776,6 +778,7 @@ impl BasePayloadBuilderCtx {
             let blocking_predicate = match ValidityPredicateKey::first_unsatisfied(
                 tx.validity_predicates(),
                 evm.db_mut(),
+                &predicate_context,
             ) {
                 Ok(blocking_predicate) => blocking_predicate,
                 Err(error) => {
@@ -1342,6 +1345,7 @@ impl BasePayloadBuilderCtx {
                 let blocking_predicate = match ValidityPredicateKey::first_unsatisfied(
                     parked_transaction.validity_predicates(),
                     evm.db_mut(),
+                    &predicate_context,
                 ) {
                     Ok(blocking_predicate) => blocking_predicate,
                     Err(error) => {

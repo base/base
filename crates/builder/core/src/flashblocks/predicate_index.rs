@@ -4,37 +4,49 @@ use alloy_primitives::{
     Address, TxHash, U256,
     map::{HashMap, HashSet},
 };
-use base_execution_txpool::ValidityPredicate;
+use base_execution_txpool::{PredicateContext, ValidityPredicate};
 use revm::{Database, state::EvmState};
 
-/// State location read by a validity predicate.
+/// Location that currently blocks a parked validity predicate.
+///
+/// State keys ([`Self::Balance`], [`Self::Storage`]) are woken by
+/// [`ParkedPredicateIndex::affected_by_state`]. Context keys
+/// ([`Self::BlockNumber`], [`Self::FlashblockIndex`]) do not change during a
+/// flashblock, so they stay parked until the next iterator refresh.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ValidityPredicateKey {
     /// Account balance.
     Balance(Address),
     /// Contract storage slot.
     Storage(Address, U256),
+    /// Number of the block currently being built.
+    BlockNumber,
+    /// Index of the flashblock currently being built.
+    FlashblockIndex,
 }
 
 impl ValidityPredicateKey {
-    /// Returns the state location read by a predicate.
+    /// Returns the location read by a predicate.
     pub const fn for_predicate(predicate: &ValidityPredicate) -> Self {
         match predicate {
             ValidityPredicate::Balance { address, .. } => Self::Balance(*address),
             ValidityPredicate::Storage { address, slot, .. } => Self::Storage(*address, *slot),
+            ValidityPredicate::BlockNumber { .. } => Self::BlockNumber,
+            ValidityPredicate::FlashblockIndex { .. } => Self::FlashblockIndex,
         }
     }
 
-    /// Returns the first predicate that does not hold against `db`.
+    /// Returns the first predicate that does not hold against `db` and `context`.
     ///
     /// `Ok(None)` means every predicate matches. `Err` means a predicate's state could not be
     /// read; callers must treat that as an inability to verify rather than a successful match.
     pub fn first_unsatisfied<DB: Database>(
         predicates: &[ValidityPredicate],
         db: &mut DB,
+        context: &PredicateContext,
     ) -> Result<Option<Self>, DB::Error> {
         for predicate in predicates {
-            match predicate.matches_state(db) {
+            match predicate.matches(db, context) {
                 Ok(true) => {}
                 Ok(false) => return Ok(Some(Self::for_predicate(predicate))),
                 Err(error) => return Err(error),
@@ -152,7 +164,7 @@ impl<T> ParkedPredicateIndex<T> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256};
-    use base_execution_txpool::{ValidityOperator, ValidityPredicate};
+    use base_execution_txpool::{PredicateContext, ValidityOperator, ValidityPredicate};
     use revm::{
         database::InMemoryDB,
         state::{Account, EvmState, EvmStorageSlot},
@@ -162,6 +174,10 @@ mod tests {
 
     fn balance_predicate(address: Address, value: U256) -> ValidityPredicate {
         ValidityPredicate::Balance { address, op: ValidityOperator::Equal, value }
+    }
+
+    fn test_context() -> PredicateContext {
+        PredicateContext { block_number: 0, flashblock_index: 0 }
     }
 
     #[test]
@@ -222,14 +238,58 @@ mod tests {
         let failing = balance_predicate(Address::with_last_byte(2), U256::ONE);
 
         let predicates = [passing, failing];
-        assert_eq!(ValidityPredicateKey::first_unsatisfied(&[], &mut db).unwrap(), None);
+        let context = test_context();
+        assert_eq!(ValidityPredicateKey::first_unsatisfied(&[], &mut db, &context).unwrap(), None);
         assert_eq!(
-            ValidityPredicateKey::first_unsatisfied(&predicates[..1], &mut db).unwrap(),
+            ValidityPredicateKey::first_unsatisfied(&predicates[..1], &mut db, &context).unwrap(),
             None
         );
         assert_eq!(
-            ValidityPredicateKey::first_unsatisfied(&predicates, &mut db).unwrap(),
+            ValidityPredicateKey::first_unsatisfied(&predicates, &mut db, &context).unwrap(),
             Some(ValidityPredicateKey::Balance(Address::with_last_byte(2)))
         );
+    }
+
+    #[test]
+    fn first_unsatisfied_indexes_context_predicates() {
+        let mut db = InMemoryDB::default();
+        let context = PredicateContext { block_number: 1, flashblock_index: 0 };
+        let block_number =
+            ValidityPredicate::BlockNumber { op: ValidityOperator::Equal, value: U256::from(2) };
+        let flashblock_index = ValidityPredicate::FlashblockIndex {
+            op: ValidityOperator::Equal,
+            value: U256::from(1),
+        };
+
+        assert_eq!(
+            ValidityPredicateKey::first_unsatisfied(&[block_number], &mut db, &context).unwrap(),
+            Some(ValidityPredicateKey::BlockNumber)
+        );
+        assert_eq!(
+            ValidityPredicateKey::first_unsatisfied(&[flashblock_index], &mut db, &context)
+                .unwrap(),
+            Some(ValidityPredicateKey::FlashblockIndex)
+        );
+
+        let passing =
+            ValidityPredicate::BlockNumber { op: ValidityOperator::Equal, value: U256::from(1) };
+        assert_eq!(
+            ValidityPredicateKey::first_unsatisfied(&[passing], &mut db, &context).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn context_blockers_are_not_woken_by_state() {
+        let hash = B256::with_last_byte(1);
+        let mut index = ParkedPredicateIndex::default();
+        index.park(hash, (), ValidityPredicateKey::BlockNumber);
+
+        let mut state = EvmState::default();
+        let mut account = Account::default();
+        account.info.balance = U256::ONE;
+        state.insert(Address::with_last_byte(1), account);
+
+        assert!(index.affected_by_state(&state).is_empty());
     }
 }

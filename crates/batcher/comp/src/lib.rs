@@ -17,13 +17,10 @@ mod composer;
 pub use composer::{BatchComposeError, BatchComposer};
 
 mod traits;
-pub use traits::{ChannelCompressor, CompressorWriter};
-
-mod config;
-pub use config::Config;
+pub use traits::CompressorWriter;
 
 mod types;
-pub use types::{CompressionAlgo, CompressorError, CompressorResult, CompressorType};
+pub use types::{CompressionAlgo, CompressorError, CompressorResult};
 
 mod zlib;
 pub use zlib::ZlibCompressor;
@@ -42,11 +39,6 @@ pub use variant::VariantCompressor;
 mod shadow;
 #[cfg(feature = "std")]
 pub use shadow::ShadowCompressor;
-
-#[cfg(feature = "std")]
-mod ratio;
-#[cfg(feature = "std")]
-pub use ratio::RatioCompressor;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;

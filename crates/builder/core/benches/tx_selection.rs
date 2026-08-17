@@ -15,8 +15,8 @@ use base_builder_core::{
 };
 use base_common_consensus::{BaseTransactionSigned, BaseTxEnvelope};
 use base_execution_txpool::{
-    BaseOrdering, BasePooledTransaction, ParkedBestTransactions, ValidityOperator,
-    ValidityPredicate,
+    BaseOrdering, BasePooledTransaction, ParkedBestTransactions, PredicateContext,
+    ValidityOperator, ValidityPredicate,
 };
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use reth_payload_util::PayloadTransactions;
@@ -234,11 +234,16 @@ fn run_predicate_selection(pool: &Pool, db: &mut InMemoryDB) -> usize {
     let mut best = parkable(pool);
     let mut predicate_index = ParkedPredicateIndex::default();
     let mut selected = 0;
+    // These benchmarks exercise state predicates, so the build position is irrelevant.
+    let context = PredicateContext { block_number: 0, flashblock_index: 0 };
 
     while let Some(transaction) = best.next(()) {
-        let blocking_predicate =
-            ValidityPredicateKey::first_unsatisfied(transaction.validity_predicates(), db)
-                .expect("in-memory reads cannot fail");
+        let blocking_predicate = ValidityPredicateKey::first_unsatisfied(
+            transaction.validity_predicates(),
+            db,
+            &context,
+        )
+        .expect("in-memory reads cannot fail");
         if let Some(blocking_predicate) = blocking_predicate {
             let transaction_hash = *transaction.hash();
             assert!(best.park_current());

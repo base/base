@@ -5,6 +5,16 @@ Batcher encoding pipeline: `BatchPipeline` trait and `BatchEncoder` state machin
 The encoder is a synchronous, pure state machine that transforms L2 blocks into
 L1 submission frames. No async, no I/O, no tokio dependency.
 
+## Span channel sizing
+
+The Span producer keeps accepted and candidate RLP state transactionally. The
+protocol RLP limit is always exact. A conservative size check avoids full
+recompression while the candidate is clearly below the compressed-output
+target; near the boundary, the complete candidate is compressed to make the
+exact decision. Candidates above the target are rejected unless the channel is
+empty, which guarantees forward progress. Rejected blocks remain at the encoder
+cursor and are retried in a fresh channel.
+
 ## Usage
 
 ```rust,ignore

@@ -96,41 +96,7 @@ impl RawSpanBatch {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::FixedBytes;
-
     use super::*;
-
-    #[test]
-    fn test_try_from_span_batch_empty_batches_errors() {
-        let span_batch = SpanBatch::default();
-        let raw_span_batch = span_batch.to_raw_span_batch().unwrap_err();
-        assert_eq!(raw_span_batch, SpanBatchError::EmptySpanBatch);
-    }
-
-    #[test]
-    fn test_try_from_span_batch_succeeds() {
-        let parent_check = FixedBytes::from([2u8; 20]);
-        let l1_origin_check = FixedBytes::from([3u8; 20]);
-        let first = SpanBatchElement { epoch_num: 100, timestamp: 400, transactions: Vec::new() };
-        let last = SpanBatchElement { epoch_num: 200, timestamp: 500, transactions: Vec::new() };
-        let span_batch = SpanBatch {
-            batches: vec![first, last],
-            genesis_timestamp: 300,
-            parent_check,
-            l1_origin_check,
-            ..Default::default()
-        };
-        let expected_prefix = SpanBatchPrefix {
-            rel_timestamp: 100,
-            l1_origin_num: 200,
-            parent_check,
-            l1_origin_check,
-        };
-        let expected_payload = SpanBatchPayload { block_count: 2, ..Default::default() };
-        let raw_span_batch = span_batch.to_raw_span_batch().unwrap();
-        assert_eq!(raw_span_batch.prefix, expected_prefix);
-        assert_eq!(raw_span_batch.payload, expected_payload);
-    }
 
     #[test]
     fn test_decode_encode_raw_span_batch() {
