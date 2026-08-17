@@ -1257,10 +1257,8 @@ where
         // matching the inclusive actor expiry.
         // Store the last timestamp at which all three remain valid so
         // `WatchManifest` can use one boundary.
-        let manifest_expiry = [transaction_expiry, sender_expiry, payer_expiry]
-            .into_iter()
-            .min()
-            .unwrap_or(u64::MAX);
+        let manifest_expiry =
+            [transaction_expiry, sender_expiry, payer_expiry].into_iter().min().unwrap_or(u64::MAX);
         let manifest = WatchManifest::new(config_reads, payer, payer_max_cost, manifest_expiry);
 
         Ok(Eip8130ValidationState {
@@ -2966,10 +2964,7 @@ mod tests {
         // Lock / Unlock apply handlers are not yet enshrined, so a batch carrying
         // one is rejected structurally.
         let cfg = SignedAccountChanges {
-            changes: vec![SignedChange {
-                change_type: ChangeType::Lock,
-                payload: Bytes::new(),
-            }],
+            changes: vec![SignedChange { change_type: ChangeType::Lock, payload: Bytes::new() }],
             ..make_valid_config_change()
         };
         let tx = TxEip8130 {

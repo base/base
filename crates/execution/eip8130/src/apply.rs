@@ -320,12 +320,7 @@ impl AccountChangeApplier {
     ) -> Result<u32, ApplyError> {
         let mut state = storage.get_account_state(account)?;
         let revoke_discount_slots = Self::apply_config_change_with_account_state(
-            storage,
-            account,
-            changes,
-            channel,
-            sequence,
-            &mut state,
+            storage, account, changes, channel, sequence, &mut state,
         )?;
         storage.set_account_state(account, state)?;
         Ok(revoke_discount_slots)
@@ -412,9 +407,8 @@ impl AccountChangeApplier {
                 );
                 let seq = sequence as u32;
                 if seq != Eip8130Constants::UNSEQUENCED {
-                    state.local_sequence = u64::from(seq)
-                        .checked_add(1)
-                        .ok_or(ApplyError::SequenceOverflow)?;
+                    state.local_sequence =
+                        u64::from(seq).checked_add(1).ok_or(ApplyError::SequenceOverflow)?;
                 } else if !state.is_initialized() {
                     state.local_sequence = 1;
                 }
@@ -910,9 +904,7 @@ mod tests {
             scope: config.scope,
             expiry: alloy_primitives::aliases::U48::from(config.expiry),
         };
-        Bytes::from(
-            (actor_id, abi, Bytes::copy_from_slice(policy_data)).abi_encode_params(),
-        )
+        Bytes::from((actor_id, abi, Bytes::copy_from_slice(policy_data)).abi_encode_params())
     }
 
     /// An `AuthorizeActor` [`SignedChange`] op.
@@ -1465,11 +1457,8 @@ mod tests {
         // (covered by `create_rejects_codeless_account`).
         let code = Bytes::from_static(&[0x60, 0x01]);
         with_storage(|acc| {
-            let empty = CreateEntry {
-                user_salt: B256::ZERO,
-                code: code.clone(),
-                initial_actors: vec![],
-            };
+            let empty =
+                CreateEntry { user_salt: B256::ZERO, code: code.clone(), initial_actors: vec![] };
             assert_eq!(
                 AccountChangeApplier::apply_create(acc, &empty),
                 Err(ApplyError::NoInitialActors)

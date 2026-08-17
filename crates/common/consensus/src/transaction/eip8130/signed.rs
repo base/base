@@ -229,7 +229,8 @@ impl Eip8130Signed {
             if tx.valid_before <= now {
                 return Err(Eip8130TimestampError::NonceFreeExpired);
             }
-            if tx.valid_before > now.saturating_add(Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW) {
+            if tx.valid_before > now.saturating_add(Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW)
+            {
                 return Err(Eip8130TimestampError::NonceFreeExpiryTooFar);
             }
         } else {

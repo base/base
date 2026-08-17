@@ -458,8 +458,7 @@ mod tests {
         // A Local-channel batch committing local epoch 0 against an account whose
         // local epoch has advanced to 1: rejected at the epoch gate.
         let change = signed_change(account, K1, &k, AccountChangeChannel::Local, 0, vec![]);
-        let signed =
-            eoa_signed(tx_with(None, None, vec![AccountChange::ConfigChange(change)]), &k);
+        let signed = eoa_signed(tx_with(None, None, vec![AccountChange::ConfigChange(change)]), &k);
         with_storage(|acc| {
             // localEpoch = 1 (uint32 at bytes 16..20 of the packed slot).
             let mut b = [0u8; 32];
@@ -856,7 +855,8 @@ mod tests {
         let ck = key(0x44);
         let cid = actor_id(addr(&ck));
 
-        let cc = signed_change(sender_account, K1, &ck, AccountChangeChannel::Multichain, 0, vec![]);
+        let cc =
+            signed_change(sender_account, K1, &ck, AccountChangeChannel::Multichain, 0, vec![]);
         let tx = tx_with(
             Some(sender_account),
             Some(payer_account),

@@ -560,9 +560,7 @@ mod tests {
             sequence: 7,
             changes: vec![SignedChange {
                 change_type: ChangeType::RevokeActor,
-                payload: bytes!(
-                    "0000000000000000000000000000000000000000000000000000000000000044"
-                ),
+                payload: bytes!("0000000000000000000000000000000000000000000000000000000000000044"),
             }],
             signature: bytes!("aabbcc"),
         });

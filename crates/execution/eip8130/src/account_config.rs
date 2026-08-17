@@ -498,7 +498,10 @@ impl AccountState {
     /// misuse.
     #[must_use]
     pub fn to_word(&self) -> U256 {
-        debug_assert!(self.local_sequence >> 32 == 0, "local_sequence exceeds uint32 storage width");
+        debug_assert!(
+            self.local_sequence >> 32 == 0,
+            "local_sequence exceeds uint32 storage width"
+        );
         debug_assert!(self.local_epoch >> 32 == 0, "local_epoch exceeds uint32 storage width");
         debug_assert!(self.lock_union >> 48 == 0, "lock_union exceeds uint48 storage width");
         debug_assert!(

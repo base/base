@@ -605,12 +605,14 @@ mod tests {
     use super::*;
 
     /// Builds an `AuthorizeActor` op payload `abi.encode(actorId, ActorConfig, policyData)`.
-    fn authorize_op(actor_id: B256, authenticator: Address, scope: u16, expiry: u64) -> SignedChange {
-        let abi = ActorConfigAbi {
-            authenticator,
-            scope,
-            expiry: alloy_primitives::Uint::from(expiry),
-        };
+    fn authorize_op(
+        actor_id: B256,
+        authenticator: Address,
+        scope: u16,
+        expiry: u64,
+    ) -> SignedChange {
+        let abi =
+            ActorConfigAbi { authenticator, scope, expiry: alloy_primitives::Uint::from(expiry) };
         SignedChange {
             change_type: ChangeType::AuthorizeActor,
             payload: Bytes::from((actor_id, abi, Bytes::new()).abi_encode_params()),
@@ -896,10 +898,7 @@ mod tests {
                     change_type: ChangeType::AuthorizeActor,
                     payload: Bytes::from(authorize_data.clone()),
                 },
-                SignedChange {
-                    change_type: ChangeType::RevokeActor,
-                    payload: Bytes::new(),
-                },
+                SignedChange { change_type: ChangeType::RevokeActor, payload: Bytes::new() },
             ],
             signature: Bytes::from(configured_auth(K1)),
         };

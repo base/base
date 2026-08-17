@@ -250,9 +250,7 @@ mod tests {
             for byte in [0x00u8, 0x03, 0xff] {
                 let auth = envelope(byte, K1, &[]);
                 assert_eq!(
-                    SignatureVerifier::validate_signature(
-                        acc, ACCOUNT, HASH, &auth, CHAIN_ID, NOW,
-                    ),
+                    SignatureVerifier::validate_signature(acc, ACCOUNT, HASH, &auth, CHAIN_ID, NOW,),
                     Err(SignatureError::UnknownSignatureType(byte)),
                 );
             }
@@ -269,10 +267,9 @@ mod tests {
         let auth = envelope(SignatureType::Local as u8, K1, &sig(&k, digest));
         with_storage(|acc| {
             acc.actor_config.at_mut(&id).at_mut(&ACCOUNT).write(pack(K1, scope, 0)).unwrap();
-            let resolved = SignatureVerifier::validate_signature(
-                acc, ACCOUNT, HASH, &auth, CHAIN_ID, NOW,
-            )
-            .unwrap();
+            let resolved =
+                SignatureVerifier::validate_signature(acc, ACCOUNT, HASH, &auth, CHAIN_ID, NOW)
+                    .unwrap();
             assert_eq!(resolved.scope, scope);
             assert_eq!(resolved.actor_id, id);
         });
@@ -290,10 +287,9 @@ mod tests {
         with_storage(|acc| {
             acc.actor_config.at_mut(&id).at_mut(&ACCOUNT).write(pack(K1, 0, 0)).unwrap();
             let other_chain = CHAIN_ID + 1;
-            let resolved = SignatureVerifier::validate_signature(
-                acc, ACCOUNT, HASH, &auth, other_chain, NOW,
-            )
-            .unwrap();
+            let resolved =
+                SignatureVerifier::validate_signature(acc, ACCOUNT, HASH, &auth, other_chain, NOW)
+                    .unwrap();
             assert_eq!(resolved.actor_id, id);
             assert!(resolved.is_admin());
         });
@@ -312,14 +308,7 @@ mod tests {
             acc.actor_config.at_mut(&id).at_mut(&ACCOUNT).write(pack(K1, 0, 0)).unwrap();
             // Recovers a different actor id than the one bound: NotBound.
             assert!(matches!(
-                SignatureVerifier::validate_signature(
-                    acc,
-                    ACCOUNT,
-                    HASH,
-                    &auth,
-                    CHAIN_ID + 1,
-                    NOW,
-                ),
+                SignatureVerifier::validate_signature(acc, ACCOUNT, HASH, &auth, CHAIN_ID + 1, NOW,),
                 Err(SignatureError::Authenticate(AuthorizeError::NotBound { .. })),
             ));
         });

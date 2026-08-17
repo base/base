@@ -188,9 +188,7 @@ impl ConfigChangeAuthorizer {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Bytes, U256, address};
-    use base_common_consensus::{
-        AccountChangeChannel, ChangeType, Eip8130Constants, SignedChange,
-    };
+    use base_common_consensus::{AccountChangeChannel, ChangeType, Eip8130Constants, SignedChange};
     use base_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
     use k256::ecdsa::SigningKey as K256SigningKey;
 
@@ -259,7 +257,13 @@ mod tests {
     }
 
     /// [`pack_state`] with an explicit local epoch (uint32 at bytes `16..20`).
-    fn pack_state_epoch(multichain: u64, local: u64, epoch: u64, flags: u8, lock_union: u64) -> U256 {
+    fn pack_state_epoch(
+        multichain: u64,
+        local: u64,
+        epoch: u64,
+        flags: u8,
+        lock_union: u64,
+    ) -> U256 {
         let mut b = [0u8; 32];
         b[24..32].copy_from_slice(&multichain.to_be_bytes());
         b[20..24].copy_from_slice(&local.to_be_bytes()[4..]); // uint32 localSequence
