@@ -30,6 +30,8 @@ pub use extension::{MeteringConfig, MeteringExtension, MeteringResourceLimits};
 
 mod inspector;
 
+mod metrics;
+
 mod meter;
 pub use meter::{
     MeterBundleInput, MeterBundleOutput, MeteredOpcodes, PendingState, PseudoOpcode, meter_bundle,
