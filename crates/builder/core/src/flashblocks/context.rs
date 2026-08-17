@@ -855,6 +855,14 @@ impl BasePayloadBuilderCtx {
                 // position predicate is terminal too — no later position can satisfy it — so both
                 // are dropped rather than parked; only recoverable state mismatches are parked.
                 if predicate_read_failed || predicate_expired {
+                    // A passed position bound can never be satisfied in any later
+                    // block, so an expired predicate is permanently terminal:
+                    // record it for the rejection cache and pool eviction so it is
+                    // not re-evaluated on subsequent flashblock rebuilds. A read
+                    // failure is only terminal for this scan, so it is not cached.
+                    if predicate_expired {
+                        diag.permanently_rejected_txs.push(tx_hash);
+                    }
                     best_txs.mark_invalid(tx.sender(), tx.nonce());
                 } else if let Some(blocking_predicate) = blocking_predicate
                     && best_txs.park_current()

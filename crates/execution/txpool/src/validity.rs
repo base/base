@@ -234,21 +234,14 @@ impl ValidityPredicate {
         let current_flashblock = U256::from(context.flashblock_index);
 
         // Tightest inclusive upper bound implied by each monotonic target.
-        // `None` means unbounded; the `_impossible` flags mark a comparison no
-        // value can satisfy (e.g. `< 0`).
+        // `None` means unbounded.
         let mut block_upper: Option<U256> = None;
-        let mut block_impossible = false;
         let mut flashblock_upper: Option<U256> = None;
-        let mut flashblock_impossible = false;
 
         for predicate in predicates {
-            let (op, value, upper, impossible) = match predicate {
-                Self::BlockNumber { op, value } => {
-                    (op, value, &mut block_upper, &mut block_impossible)
-                }
-                Self::FlashblockIndex { op, value } => {
-                    (op, value, &mut flashblock_upper, &mut flashblock_impossible)
-                }
+            let (op, value, upper) = match predicate {
+                Self::BlockNumber { op, value } => (op, value, &mut block_upper),
+                Self::FlashblockIndex { op, value } => (op, value, &mut flashblock_upper),
                 // State predicates are recoverable and never expire a batch.
                 Self::Balance { .. } | Self::Storage { .. } => continue,
             };
@@ -256,10 +249,10 @@ impl ValidityPredicate {
             let candidate = match op {
                 ValidityOperator::LessThan => match value.checked_sub(U256::from(1)) {
                     Some(max) => max,
-                    None => {
-                        *impossible = true;
-                        continue;
-                    }
+                    // `< 0` can never hold at any position — block number and
+                    // flashblock index are both non-negative — so the batch is
+                    // permanently expired.
+                    None => return true,
                 },
                 ValidityOperator::LessThanOrEqual | ValidityOperator::Equal => *value,
                 ValidityOperator::NotEqual
@@ -270,10 +263,7 @@ impl ValidityPredicate {
         }
 
         // No block at or after the current one can satisfy the block predicates.
-        if block_impossible || block_upper.is_some_and(|max| max < current_block) {
-            return true;
-        }
-        if flashblock_impossible {
+        if block_upper.is_some_and(|max| max < current_block) {
             return true;
         }
         // The flashblock index resets each block, so a passed flashblock bound is
