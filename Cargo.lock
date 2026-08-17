@@ -4552,6 +4552,7 @@ dependencies = [
  "alloy-eips 2.4.1",
  "alloy-genesis",
  "alloy-primitives",
+ "alloy-rpc-types-debug",
  "auto_impl",
  "base-metrics",
  "bincode 2.0.1",

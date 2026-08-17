@@ -58,6 +58,7 @@ rocksdb = { workspace = true, features = ["lz4", "zstd"] }
 static_assertions.workspace = true
 
 [dev-dependencies]
+alloy-rpc-types-debug.workspace = true
 eyre.workspace = true
 mockall.workspace = true
 rand_08.workspace = true
