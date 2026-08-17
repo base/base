@@ -79,4 +79,5 @@ test-utils = [
 	"base-protocol/test-utils",
 	"dep:spin",
 	"dep:tracing-subscriber",
+	"base-common-genesis/test-utils"
 ]

@@ -196,6 +196,7 @@ metrics = [
 	"dep:metrics",
 	"reth-evm/metrics",
 	"reth-trie/metrics",
+	"base-observability-events/metrics"
 ]
 jemalloc = [ "dep:tikv-jemallocator", "reth-cli-util/jemalloc" ]
 jemalloc-prof = [
@@ -235,6 +236,8 @@ test-utils = [
 	"reth-trie/test-utils",
 	"rlimit",
 	"testcontainers",
+	"base-execution-eip8130/test-utils",
+	"reth-execution-cache/test-utils"
 ]
 
 [[bench]]

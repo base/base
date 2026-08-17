@@ -153,6 +153,7 @@ test-utils = [
 	"reth-trie-common/test-utils",
 	"reth-trie-db/test-utils",
 	"serde_json",
+	"reth-chain-state/test-utils"
 ]
 reth-codec = []
 

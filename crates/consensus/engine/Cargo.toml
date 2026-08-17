@@ -66,5 +66,12 @@ rand = {workspace = true, features = ["thread_rng"]}
 base-common-rpc-types = {workspace = true, features = ["arbitrary", "k256"]}
 
 [features]
-metrics = [ "base-metrics/metrics", "dep:metrics" ]
-test-utils = [ "base-protocol/test-utils" ]
+metrics = [
+	"base-metrics/metrics",
+	"dep:metrics", 
+	"base-consensus-providers/metrics"
+]
+test-utils = [
+	"base-protocol/test-utils", 
+	"base-common-genesis/test-utils"
+]

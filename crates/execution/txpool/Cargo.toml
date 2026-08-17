@@ -76,4 +76,5 @@ metrics = [
 	"base-metrics/metrics",
 	"dep:metrics",
 	"reth-evm/metrics",
+	"base-observability-events/metrics"
 ]

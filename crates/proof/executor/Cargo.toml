@@ -98,4 +98,5 @@ test-utils = [
 	"dep:tempfile",
 	"dep:tokio",
 	"std",
+	"base-common-genesis/test-utils"
 ]

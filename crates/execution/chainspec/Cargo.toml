@@ -79,4 +79,5 @@ serde = [
 	"base-common-rpc-types/serde",
 	"reth-ethereum-forks/serde",
 	"reth-primitives-traits/serde",
+	"base-protocol/serde"
 ]

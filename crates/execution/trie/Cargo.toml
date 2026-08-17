@@ -108,4 +108,5 @@ metrics = [
 	"dep:metrics",
 	"reth-evm/metrics",
 	"reth-trie/metrics",
+	"reth-trie-db/metrics"
 ]
