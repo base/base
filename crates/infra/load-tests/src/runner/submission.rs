@@ -29,7 +29,7 @@ use tracing::{debug, warn};
 use super::{ResultsTracker, SentTransaction};
 use crate::{
     BaselineError, Result,
-    rpc::{BatchRpcClient, BatchSendResult},
+    rpc::{BatchRpcClient, BatchSendResult, SubmitItem},
 };
 
 /// Number of signer tasks per submission RPC.
@@ -826,10 +826,11 @@ impl SubmissionPipeline {
             }
 
             let attempt = batch.attempt;
-            let raw_list: Vec<Bytes> = batch.txs.iter().map(|s| s.raw.clone()).collect();
+            let submit_items: Vec<SubmitItem> =
+                batch.txs.iter().map(|s| SubmitItem::plain(s.raw.clone())).collect();
             let rpc_index = batch_id as usize % ctx.submission_batch_rpcs.len();
             let batch_results = match ctx.submission_batch_rpcs[rpc_index]
-                .send_raw_transactions(&raw_list, ctx.submit_request_limiter.as_deref())
+                .send_raw_transactions(&submit_items, ctx.submit_request_limiter.as_deref())
                 .await
             {
                 Ok(results) => results,
@@ -897,7 +898,7 @@ impl SubmissionPipeline {
                     BatchSendResult::Success(hash) => {
                         submitted += Self::record_submitted(&ctx, signed, hash, measured).await;
                     }
-                    BatchSendResult::Error(msg) => match Self::classify_batch_error(msg) {
+                    BatchSendResult::Error(err) => match Self::classify_batch_error(err.message) {
                         BatchTxError::AlreadyKnown => {
                             let tx_hash = signed.tx_hash;
                             submitted +=

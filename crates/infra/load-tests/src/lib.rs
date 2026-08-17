@@ -19,8 +19,9 @@ pub use utils::{BaselineError, Result};
 
 mod rpc;
 pub use rpc::{
-    BaseFeeExt, BatchRpcClient, BatchSendResult, MAX_BATCH_RPC_SIZE, QueryProvider, RPC_TIMEOUT,
-    RpcProviders, RpcResultExt, TxpoolAdminClient, WalletProvider, create_wallet_provider,
+    BaseFeeExt, BatchRpcClient, BatchSendError, BatchSendResult, JSON_RPC_METHOD_NOT_FOUND,
+    MAX_BATCH_RPC_SIZE, QueryProvider, RPC_TIMEOUT, RpcProviders, RpcResultExt, SubmitItem,
+    TxpoolAdminClient, WalletProvider, create_wallet_provider,
 };
 
 mod metrics;
