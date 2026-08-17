@@ -59,8 +59,6 @@ pub struct RegistrarConfig {
     pub max_tx_retries: u32,
     /// Initial delay between transaction submission retries.
     pub tx_retry_delay: Duration,
-    /// Optional Nitro verifier address for CRL checks. Providing this enables CRL checks.
-    pub crl_nitro_verifier_address: Option<Address>,
     /// Health server bind address.
     pub health_addr: SocketAddr,
     /// Logging configuration.
@@ -86,7 +84,6 @@ impl fmt::Debug for RegistrarConfig {
             .field("instance_cache_ttl_cycles", &self.instance_cache_ttl_cycles)
             .field("max_tx_retries", &self.max_tx_retries)
             .field("tx_retry_delay", &self.tx_retry_delay)
-            .field("crl_nitro_verifier_address", &self.crl_nitro_verifier_address)
             .field("health_addr", &self.health_addr)
             .field("log_config", &self.log_config)
             .field("metrics_config", &self.metrics_config)
@@ -211,7 +208,7 @@ impl RegistrarConfig {
                 max_tx_retries: self.max_tx_retries,
                 tx_retry_delay: self.tx_retry_delay,
                 max_attestation_age: self.max_attestation_age,
-                crl_checks_enabled: self.crl_nitro_verifier_address.is_some(),
+                crl_checks_enabled: true,
             },
         )?);
         let driver = RegistrationDriver::new(
@@ -287,7 +284,6 @@ mod tests {
             instance_cache_ttl_cycles: crate::INSTANCE_CACHE_TTL_CYCLES,
             max_tx_retries: 1,
             tx_retry_delay: Duration::from_secs(1),
-            crl_nitro_verifier_address: None,
             health_addr: "127.0.0.1:0".parse().unwrap(),
             log_config: base_cli_utils::LogConfig::default(),
             metrics_config: base_cli_utils::MetricsConfig::default(),

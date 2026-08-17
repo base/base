@@ -235,7 +235,6 @@ base-prover-service-protocol = { path = "crates/proof/prover-service/protocol" }
 base-proof-executor = { path = "crates/proof/executor", default-features = false }
 base-proof-preimage = { path = "crates/proof/preimage", default-features = false }
 base-proof-primitives = { path = "crates/proof/primitives", default-features = false }
-base-proof-tee-nitro-attestation-prover = { path = "crates/proof/tee/nitro-attestation-prover" }
 
 # Succinct (OP Succinct / SP1 proving)
 base-proof-succinct-elfs = { path = "crates/proof/succinct/utils/elfs" }
@@ -436,11 +435,6 @@ aws-sdk-s3 = { version = "1.106.0", default-features = false }
 aws-sdk-ec2 = { version = "1.217.0", default-features = false }
 aws-credential-types = { version = "1.1.7", default-features = false }
 aws-sdk-elasticloadbalancingv2 = { version = "1.109.0", default-features = false }
-
-# risc0 / boundless
-boundless-market = "1.1"
-risc0-ethereum-contracts = "3.0.1"
-risc0-zkvm = { version = "^3.0", default-features = false }
 
 # SP1 v6.3.0 (Hypercube) — used by crates/proof/succinct
 sp1-prover-types = "=6.3.0"

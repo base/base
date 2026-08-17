@@ -110,10 +110,6 @@ pub(crate) struct Cli {
     )]
     tx_retry_delay: u64,
 
-    /// `NitroEnclaveVerifier` contract address for CRL checks. Providing this enables CRL checks.
-    #[arg(long, env = cli_env!("CRL_NITRO_VERIFIER_ADDRESS"))]
-    crl_nitro_verifier_address: Option<Address>,
-
     #[command(flatten)]
     health: HealthArgs,
 
@@ -145,7 +141,6 @@ impl Cli {
             instance_cache_ttl_cycles: self.instance_cache_ttl_cycles,
             max_tx_retries: self.max_tx_retries,
             tx_retry_delay: Duration::from_secs(self.tx_retry_delay),
-            crl_nitro_verifier_address: self.crl_nitro_verifier_address,
             health_addr: self.health.socket_addr(),
             log_config: self.log.into(),
             metrics_config: self.metrics.into(),
@@ -229,20 +224,11 @@ mod tests {
     }
 
     #[test]
-    fn crl_address_enables_crl() {
+    fn legacy_crl_nitro_verifier_address_is_rejected() {
         let mut args = required_args();
         args.extend(["--crl-nitro-verifier-address", "0x0000000000000000000000000000000000000099"]);
 
-        let config = Cli::parse_from(args).config().unwrap();
-
-        assert!(config.crl_nitro_verifier_address.is_some());
-    }
-
-    #[test]
-    fn crl_omitted_disables_crl() {
-        let config = Cli::parse_from(required_args()).config().unwrap();
-
-        assert!(config.crl_nitro_verifier_address.is_none());
+        assert!(Cli::try_parse_from(args).is_err());
     }
 
     #[test]

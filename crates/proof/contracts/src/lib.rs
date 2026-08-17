@@ -51,11 +51,5 @@ pub use cert_manager::{
     encode_verify_ca_cert_with_hints_calldata, encode_verify_client_cert_with_hints_calldata,
 };
 
-mod nitro_enclave_verifier;
-pub use nitro_enclave_verifier::{
-    INitroEnclaveVerifier, NitroEnclaveVerifierClient, NitroEnclaveVerifierContractClient,
-    caller_not_owner_or_revoker_selector,
-};
-
 mod error;
 pub use error::ContractError;
