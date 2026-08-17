@@ -80,10 +80,6 @@ base_metrics::define_metrics! {
     #[label(name = "stage", default = ["already_registered", "proof_started", "proof_succeeded", "proof_failed", "proof_cancelled", "proof_invalid", "proof_stale", "tx_submitted", "tx_retry", "tx_succeeded", "tx_failed", "tx_reverted", "tx_observed_registered"])]
     registration_stage_total: counter,
 
-    #[describe("Total hint-generation attempts by outcome")]
-    #[label(name = "outcome", default = ["started", "succeeded", "failed", "cancelled"])]
-    hint_generation_total: counter,
-
     #[describe("Generated P-384 inverse-hint stream size in bytes")]
     #[label(name = "kind", default = ["ca", "leaf", "attestation"])]
     hint_size_bytes: histogram,
@@ -97,14 +93,6 @@ base_metrics::define_metrics! {
     #[label(name = "kind", default = ["ca", "leaf"])]
     #[label(name = "outcome", default = ["submitted", "succeeded", "reverted", "retry", "failed", "observed_cached"])]
     cert_cache_tx_total: counter,
-
-    #[describe("Recoveries from ambiguous onchain state after a cache or final-registration transaction")]
-    #[label(name = "kind", default = ["cache", "final"])]
-    registration_recovery_total: counter,
-
-    #[describe("Final hinted registration transactions by outcome")]
-    #[label(name = "outcome", default = ["submitted", "succeeded", "reverted", "retry", "failed", "observed_registered", "stale", "cancelled"])]
-    final_registration_total: counter,
 }
 
 impl RegistrarMetrics {
@@ -161,43 +149,23 @@ impl RegistrarMetrics {
     /// Bounded label for the attestation signature hint stream.
     pub const HINT_KIND_ATTESTATION: &'static str = "attestation";
 
-    /// Hint generation started.
-    pub const HINT_GENERATION_STARTED: &'static str = "started";
-    /// Hint generation completed successfully.
-    pub const HINT_GENERATION_SUCCEEDED: &'static str = "succeeded";
-    /// Hint generation failed.
-    pub const HINT_GENERATION_FAILED: &'static str = "failed";
-    /// Hint generation was cancelled.
-    pub const HINT_GENERATION_CANCELLED: &'static str = "cancelled";
-
     /// Cache lookup found a usable cached certificate.
     pub const CACHE_LOOKUP_HIT: &'static str = "hit";
     /// Cache lookup found no usable cached certificate.
     pub const CACHE_LOOKUP_MISS: &'static str = "miss";
 
-    /// Cache or final-registration transaction was submitted.
+    /// Cache transaction was submitted.
     pub const TX_OUTCOME_SUBMITTED: &'static str = "submitted";
-    /// Transaction succeeded and produced the expected onchain state.
+    /// Cache transaction succeeded and produced a usable cached certificate.
     pub const TX_OUTCOME_SUCCEEDED: &'static str = "succeeded";
-    /// Transaction was included but reverted.
+    /// Cache transaction was included but reverted.
     pub const TX_OUTCOME_REVERTED: &'static str = "reverted";
-    /// Registrar scheduled a retry after a retryable submission failure.
+    /// Registrar scheduled a retry after a retryable cache-transaction failure.
     pub const TX_OUTCOME_RETRY: &'static str = "retry";
-    /// Transaction submission failed permanently.
+    /// Cache transaction submission failed permanently, or the receipt succeeded without a usable cert.
     pub const TX_OUTCOME_FAILED: &'static str = "failed";
     /// Certificate was observed cached after an ambiguous cache transaction.
     pub const TX_OUTCOME_OBSERVED_CACHED: &'static str = "observed_cached";
-    /// Signer was observed registered after an ambiguous final transaction.
-    pub const TX_OUTCOME_OBSERVED_REGISTERED: &'static str = "observed_registered";
-    /// Final registration was abandoned because the attestation became stale.
-    pub const TX_OUTCOME_STALE: &'static str = "stale";
-    /// Final registration was cancelled after a transaction was submitted.
-    pub const TX_OUTCOME_CANCELLED: &'static str = "cancelled";
-
-    /// Recovery after an ambiguous certificate-cache transaction.
-    pub const RECOVERY_CACHE: &'static str = "cache";
-    /// Recovery after an ambiguous final-registration transaction.
-    pub const RECOVERY_FINAL: &'static str = "final";
 
     /// Returns the bounded cache-kind label for `kind`.
     pub const fn cert_kind_label(kind: CertKind) -> &'static str {
@@ -205,11 +173,6 @@ impl RegistrarMetrics {
             CertKind::Ca => Self::CERT_KIND_CA,
             CertKind::Leaf => Self::CERT_KIND_LEAF,
         }
-    }
-
-    /// Records a hint-generation outcome.
-    pub fn record_hint_generation(outcome: &'static str) {
-        Self::hint_generation_total(outcome).increment(1);
     }
 
     /// Records one hint-stream size sample.
@@ -229,15 +192,5 @@ impl RegistrarMetrics {
     /// Records a certificate-cache transaction outcome.
     pub fn record_cache_tx(kind: CertKind, outcome: &'static str) {
         Self::cert_cache_tx_total(Self::cert_kind_label(kind), outcome).increment(1);
-    }
-
-    /// Records a recovery from ambiguous onchain state.
-    pub fn record_recovery(kind: &'static str) {
-        Self::registration_recovery_total(kind).increment(1);
-    }
-
-    /// Records a final hinted-registration transaction outcome.
-    pub fn record_final_registration(outcome: &'static str) {
-        Self::final_registration_total(outcome).increment(1);
     }
 }
