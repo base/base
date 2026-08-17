@@ -1,9 +1,7 @@
 //! Top-level attestation verification orchestrating COSE parsing, certificate
 //! chain validation, signature verification, and content validation.
 //!
-//! [`AttestationVerifier::verify`] is the ZK guest entry point — called from the
-//! RISC Zero guest program in CHAIN-3560. It must be deterministic with no
-//! side effects.
+//! The end-to-end verification path is deterministic and has no side effects.
 
 use alloy_primitives::Bytes;
 use p384::ecdsa::{Signature, VerifyingKey, signature::Verifier};
