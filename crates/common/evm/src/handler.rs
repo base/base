@@ -318,8 +318,13 @@ where
 
         let exec_result = post_execution::output(evm.ctx(), result, result_gas);
 
+        if exec_result.is_halt() && evm.ctx().tx().tx_type() == DEPOSIT_TRANSACTION_TYPE {
+            return Err(ERROR::from(BaseTransactionError::HaltedDepositPostRegolith));
+        }
+
         // commit transaction
         evm.ctx().journal_mut().commit_tx();
+        evm.ctx().chain_mut().clear_tx_l1_cost();
         evm.ctx().local_mut().clear();
         evm.frame_stack().clear();
 
@@ -358,13 +363,10 @@ where
             // We can now commit the changes.
             journal.commit_tx();
 
-            // Base: removed pre-Regolith deposit handling from here since Regolith always has been enabled
-            let gas_used = if !is_system_tx { gas_limit } else { 0 };
-
             // clear the journal
             output = Ok(ExecutionResult::Halt {
                 reason: BaseHaltReason::FailedDeposit,
-                gas: ResultGas::new_with_state_gas(gas_used, 0, 0, 0),
+                gas: ResultGas::new_with_state_gas(gas_limit, 0, 0, 0),
                 logs: Vec::new(),
             })
         } else {
