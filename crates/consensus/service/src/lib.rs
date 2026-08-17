@@ -24,7 +24,8 @@ pub use actors::{
     AlloyL1BlockFetcher, BlockStream, BuildOutcome, BuildPipelineState, BuildRequest,
     CancellableContext, CanonicalReconciliationInputs, CanonicalUnsafeCatchup, CheckpointActor,
     CheckpointClient, CheckpointDB, CheckpointError, CheckpointRequest, CheckpointWriter,
-    Conductor, ConductorClient, ConductorError, DelayedL1OriginSelectorProvider,
+    ComparisonOutcome, Conductor, ConductorClient, ConductorError, ConsensusProposer,
+    ConsensusStatus, ConsensusStatusReader, DelayedL1OriginSelectorProvider,
     DelegateDerivationActor, DerivationActor, DerivationActorRequest, DerivationClientError,
     DerivationClientResult, DerivationDelegateClient, DerivationDelegateClientError,
     DerivationEngineClient, DerivationError, DerivationState, DerivationStateMachine,
@@ -45,8 +46,9 @@ pub use actors::{
     RecoveryModeGuard, ResetOrigin, ResetOutcome, ResetReason, ResetRequest, ResetRequestOutcome,
     RpcActor, RpcActorError, RpcContext, ScheduledTicker, SealState, SealStepError,
     SealStepOutcome, SequencerActor, SequencerActorError, SequencerAdminQuery, SequencerConfig,
-    SequencerEngineClient, SequencerEngineRequestCoordinator, SequencerEngineState, ShadowCycle,
-    ShadowReconciliationGate, ShadowReconciliationTask, ShadowSequencingState,
+    SequencerEngineClient, SequencerEngineRequestCoordinator, SequencerEngineState,
+    ShadowComparator, ShadowCycle, ShadowReconciliationGate, ShadowReconciliationTask,
+    ShadowSequencingState, SimplexActor, SimplexClient, SimplexError, SimplexMode, SimplexRequest,
     UnsafePayloadGossipClient, UnsafePayloadGossipClientError, UnsealedPayloadHandle,
     UpgradeSignalMetricsActor, UpgradeSignalNodeConfig, ValidatorEngineRequestHandler,
 };
@@ -56,8 +58,15 @@ mod metrics;
 pub mod test_utils;
 #[cfg(test)]
 pub use actors::{
-    MockConductor, MockEngineDerivationClient, MockOriginSelector, MockSequencerEngineClient,
-    MockUnsafePayloadGossipClient,
+    MockConductor, MockConsensusProposer, MockConsensusStatusReader, MockEngineDerivationClient,
+    MockOriginSelector, MockSequencerEngineClient, MockUnsafePayloadGossipClient,
+};
+#[cfg(feature = "simplex")]
+pub use actors::{
+    PinnedLeaderConfig, PinnedLeaderElector, SIMPLEX_CERTIFICATE_CHANNEL, SIMPLEX_RESOLVER_CHANNEL,
+    SIMPLEX_VOTE_CHANNEL, SimplexActivity, SimplexCertificate, SimplexConfig, SimplexConfigBuilder,
+    SimplexDigest, SimplexNetReceiver, SimplexNetSender, SimplexPublicKey, SimplexRuntimeContext,
+    SimplexScheme, SimplexStrategy, StatusReporter, StubAutomaton, StubBlocker, StubRelay,
 };
 #[cfg(test)]
 pub use follow::MockRemoteClient;

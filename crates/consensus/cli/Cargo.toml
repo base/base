@@ -79,3 +79,5 @@ tokio = { workspace = true, features = ["test-util"] }
 [features]
 default = [ "otlp" ]
 otlp = [ "base-cli-utils/otlp", "reth-node-core/otlp" ]
+# Pass-through: enables the in-process simplex consensus actor in the node. Off by default.
+simplex = [ "base-consensus-node/simplex" ]

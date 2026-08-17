@@ -27,16 +27,16 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     AlloyL1BlockFetcher, CheckpointActor, CheckpointClient, CheckpointDB, CheckpointWriter,
-    Conductor, ConductorClient, DelayedL1OriginSelectorProvider, DelegateDerivationActor,
-    DerivationActor, DerivationDelegateClient, DerivationError, EngineActor, EngineActorRequest,
-    EngineConfig, EngineProcessor, EngineRequestReceiver, EngineRpcProcessor, L1OriginSelector,
-    L1WatcherActor, L1WatcherQueryProcessor, NetworkActor, NetworkBuilder, NetworkConfig,
-    NodeActor, NodeMode, PayloadBuilder, PrefetchedChainProvider, PreparedL1Origin,
-    QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
-    QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient,
-    QueuedSequencerEngineClient, RecoveryModeGuard, RpcActor, RpcContext, SequencerActor,
-    SequencerConfig, SequencerEngineRequestCoordinator, UpgradeSignalNodeConfig,
-    ValidatorEngineRequestHandler,
+    Conductor, ConductorClient, ConsensusStatus, DelayedL1OriginSelectorProvider,
+    DelegateDerivationActor, DerivationActor, DerivationDelegateClient, DerivationError,
+    EngineActor, EngineActorRequest, EngineConfig, EngineProcessor, EngineRequestReceiver,
+    EngineRpcProcessor, L1OriginSelector, L1WatcherActor, L1WatcherQueryProcessor, NetworkActor,
+    NetworkBuilder, NetworkConfig, NodeActor, NodeMode, PayloadBuilder, PrefetchedChainProvider,
+    PreparedL1Origin, QueuedDerivationEngineClient, QueuedEngineDerivationClient,
+    QueuedEngineRpcClient, QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient,
+    QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient, RecoveryModeGuard, RpcActor,
+    RpcContext, SequencerActor, SequencerConfig, SequencerEngineRequestCoordinator, SimplexActor,
+    SimplexClient, SimplexMode, UpgradeSignalNodeConfig, ValidatorEngineRequestHandler,
     actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
 };
 
@@ -145,6 +145,13 @@ pub struct RollupNode {
     pub safedb_path: Option<PathBuf>,
     /// Optional upgrade signal configuration for the consensus node.
     pub upgrade_signal_config: Option<UpgradeSignalNodeConfig>,
+    /// Operating mode for the in-process simplex consensus actor.
+    ///
+    /// Defaults to [`SimplexMode::Off`], in which the actor is not spawned at all
+    /// and the node behaves exactly as before (op-conductor remains the sole
+    /// leadership/commit authority). Non-`Off` modes spawn the experimental
+    /// consensus actor alongside the live path; see `docs/consensus-simplex/`.
+    pub simplex_mode: SimplexMode,
 }
 
 /// A RollupNode-level derivation actor wrapper.
@@ -444,6 +451,34 @@ impl RollupNode {
         let checkpoint_actor = CheckpointActor::new(checkpoint_db, checkpoint_request_rx);
         let checkpoint_client = CheckpointClient::new(checkpoint_request_tx);
 
+        // Optional in-process simplex consensus actor. Built (and spawned) only
+        // when `simplex_mode != Off`; when `Off` this is `None`, so the actor is
+        // never added to the spawn list and the node behaves exactly as before —
+        // op-conductor remains the sole authority. The actor coexists behind this
+        // flag and never touches the live op-conductor path. The client is not yet
+        // consumed (Phase 1 skeleton); dropping it closes the request channel,
+        // which the actor handles by idling in non-authoritative modes.
+        let simplex_mode = self.simplex_mode;
+        // Phase 1 skeleton: no consumer holds the SimplexClient yet, so it is
+        // dropped below. In non-authoritative modes the actor tolerates the
+        // resulting request-channel closure by idling. In authoritative modes
+        // (`Active`/`Primary`) the actor's lifecycle tracks consensus, so a closed
+        // channel would make it return and — via `spawn_and_wait!`'s drop-guard —
+        // cancel the whole node. Those modes are not wired until Phase 3; reject
+        // them fast with a clear error rather than self-terminating at startup.
+        if simplex_mode.is_authoritative() {
+            return Err(format!(
+                "simplex_mode {simplex_mode:?} is not supported yet (authoritative modes land in Phase 3); use Off/Passive/Shadow"
+            ));
+        }
+        let simplex = (simplex_mode != SimplexMode::Off).then(|| {
+            let (simplex_request_tx, simplex_request_rx) = mpsc::channel(1024);
+            let (simplex_status_tx, simplex_status_rx) = watch::channel(ConsensusStatus::default());
+            let actor = SimplexActor::new(simplex_mode, simplex_request_rx, simplex_status_tx);
+            let client = SimplexClient::new(simplex_request_tx, simplex_status_rx);
+            (actor, client)
+        });
+
         // Create the conductor client early — the engine processor needs it for the
         // bootstrap leadership check and the sequencer actor needs it for block building.
         // When `conductor_binary_commit` is set, commit_unsafe_payload uses the
@@ -663,7 +698,11 @@ impl RollupNode {
                 Some((checkpoint_actor, cancellation.clone())),
                 Some((engine_actor, ())),
                 engine_rpc_actor,
-            ]
+            ],
+            // Non-fatal: the experimental simplex actor must have zero blast radius on the live
+            // path. Placed here (no drop guard, errors swallowed) so that in non-authoritative
+            // modes it cannot cancel the node — the framework owns isolation, not the actor.
+            non_fatal = [simplex.map(|(actor, _client)| (actor, cancellation.clone())),]
         );
         Ok(())
     }

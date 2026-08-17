@@ -15,7 +15,7 @@ use base_upgrade_signal::UpgradeSignalConfig;
 use url::Url;
 
 use crate::{
-    EngineConfig, NetworkConfig, RollupNode, SequencerConfig, UpgradeSignalNodeConfig,
+    EngineConfig, NetworkConfig, RollupNode, SequencerConfig, SimplexMode, UpgradeSignalNodeConfig,
     actors::DerivationDelegateClient, service::node::L1Config,
 };
 
@@ -81,6 +81,9 @@ pub struct RollupNodeBuilder {
     pub rpc_config: Option<RpcBuilder>,
     /// The [`SequencerConfig`].
     pub sequencer_config: Option<SequencerConfig>,
+    /// Operating mode for the in-process simplex consensus actor. Defaults to
+    /// [`SimplexMode::Off`] (actor not spawned).
+    pub simplex_mode: SimplexMode,
     /// Optional configuration for Derivation Delegate mode.
     /// When present, the node does not run derivation, instead trusting the configured delegate.
     pub derivation_delegate_config: Option<DerivationDelegateConfig>,
@@ -134,6 +137,7 @@ impl RollupNodeBuilder {
             p2p_config,
             rpc_config,
             sequencer_config: None,
+            simplex_mode: SimplexMode::Off,
             derivation_delegate_config: None,
             finalized_poll_interval: None,
             checkpoint_path: None,
@@ -158,6 +162,12 @@ impl RollupNodeBuilder {
     /// Appends the [`SequencerConfig`] to the builder.
     pub fn with_sequencer_config(self, sequencer_config: SequencerConfig) -> Self {
         Self { sequencer_config: Some(sequencer_config), ..self }
+    }
+
+    /// Sets the [`SimplexMode`] for the in-process simplex consensus actor.
+    /// Defaults to [`SimplexMode::Off`] (actor not spawned) when unset.
+    pub fn with_simplex_mode(self, simplex_mode: SimplexMode) -> Self {
+        Self { simplex_mode, ..self }
     }
 
     /// Overrides the finalized-block poll interval.
@@ -275,6 +285,7 @@ impl RollupNodeBuilder {
             checkpoint_path,
             safedb_path: self.safedb_path,
             upgrade_signal_config,
+            simplex_mode: self.simplex_mode,
         })
     }
 
@@ -370,5 +381,24 @@ mod tests {
             test_builder(Url::parse("ws://127.0.0.1:8551").unwrap()).build().await.unwrap();
 
         assert_eq!(rollup_node.engine_config.l2_url.scheme(), "ws");
+    }
+
+    #[tokio::test]
+    async fn build_defaults_simplex_mode_off() {
+        let rollup_node =
+            test_builder(Url::parse("http://127.0.0.1:8551").unwrap()).build().await.unwrap();
+
+        assert_eq!(rollup_node.simplex_mode, SimplexMode::Off);
+    }
+
+    #[tokio::test]
+    async fn with_simplex_mode_threads_through_build() {
+        let rollup_node = test_builder(Url::parse("http://127.0.0.1:8551").unwrap())
+            .with_simplex_mode(SimplexMode::Shadow)
+            .build()
+            .await
+            .unwrap();
+
+        assert_eq!(rollup_node.simplex_mode, SimplexMode::Shadow);
     }
 }

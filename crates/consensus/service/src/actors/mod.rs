@@ -57,6 +57,21 @@ pub use network::{
     UnsafePayloadGossipClient, UnsafePayloadGossipClientError,
 };
 
+mod simplex;
+pub use simplex::{
+    ComparisonOutcome, ConsensusProposer, ConsensusStatus, ConsensusStatusReader, ShadowComparator,
+    SimplexActor, SimplexClient, SimplexError, SimplexMode, SimplexRequest,
+};
+#[cfg(test)]
+pub use simplex::{MockConsensusProposer, MockConsensusStatusReader};
+#[cfg(feature = "simplex")]
+pub use simplex::{
+    PinnedLeaderConfig, PinnedLeaderElector, SIMPLEX_CERTIFICATE_CHANNEL, SIMPLEX_RESOLVER_CHANNEL,
+    SIMPLEX_VOTE_CHANNEL, SimplexActivity, SimplexCertificate, SimplexConfig, SimplexConfigBuilder,
+    SimplexDigest, SimplexNetReceiver, SimplexNetSender, SimplexPublicKey, SimplexRuntimeContext,
+    SimplexScheme, SimplexStrategy, StatusReporter, StubAutomaton, StubBlocker, StubRelay,
+};
+
 mod sequencer;
 pub use sequencer::{
     BuildOutcome, BuildPipelineState, CanonicalReconciliationInputs, CanonicalUnsafeCatchup,

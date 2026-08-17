@@ -150,6 +150,12 @@ base_metrics::define_metrics! {
     l1_verifier_derivation_head: counter,
     #[describe("Failed attempts to fetch a delayed L1 block for verifier confirmation")]
     l1_verifier_delayed_fetch_errors: counter,
+    #[describe("Leadership decision divergences observed in simplex shadow mode (read-only comparison against op-conductor)")]
+    #[label(name = "source", default = ["simplex_vs_conductor"])]
+    leadership_divergence_total: counter,
+    #[describe("Whether simplex and op-conductor currently agree on this node's leadership in shadow mode (1 = agree, 0 = diverged). No zero-init: absent until the first comparison so a pre-comparison series is not misread as diverged")]
+    #[no_zero]
+    simplex_conductor_agreement: gauge,
 }
 
 impl Metrics {

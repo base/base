@@ -82,6 +82,18 @@ reqwest.workspace = true
 # metrics
 metrics = { workspace = true, optional = true }
 
+# simplex consensus (optional; gated by the `simplex` feature, off by default).
+# Pinned to a git rev on commonware `main` for the stable-leader `Elector`
+# (`Terms::stable`), which the last crates.io release (=2026.7.0) does not have.
+commonware-p2p = { git = "https://github.com/commonwarexyz/monorepo", rev = "5fde115a25f4eb496d584a725c2c1dedfbe10398", optional = true }
+commonware-actor = { git = "https://github.com/commonwarexyz/monorepo", rev = "5fde115a25f4eb496d584a725c2c1dedfbe10398", optional = true }
+commonware-utils = { git = "https://github.com/commonwarexyz/monorepo", rev = "5fde115a25f4eb496d584a725c2c1dedfbe10398", optional = true }
+commonware-codec = { git = "https://github.com/commonwarexyz/monorepo", rev = "5fde115a25f4eb496d584a725c2c1dedfbe10398", optional = true }
+commonware-runtime = { git = "https://github.com/commonwarexyz/monorepo", rev = "5fde115a25f4eb496d584a725c2c1dedfbe10398", optional = true }
+commonware-parallel = { git = "https://github.com/commonwarexyz/monorepo", rev = "5fde115a25f4eb496d584a725c2c1dedfbe10398", optional = true }
+commonware-consensus = { git = "https://github.com/commonwarexyz/monorepo", rev = "5fde115a25f4eb496d584a725c2c1dedfbe10398", optional = true }
+commonware-cryptography = { git = "https://github.com/commonwarexyz/monorepo", rev = "5fde115a25f4eb496d584a725c2c1dedfbe10398", optional = true }
+
 [dev-dependencies]
 rand.workspace = true
 rstest.workspace = true
@@ -103,6 +115,19 @@ alloy-rpc-types-engine = { workspace = true, features = ["arbitrary", "std"] }
 
 [features]
 default = []
+# Enables the in-process simplex consensus actor and pulls in the commonware
+# dependency. Off by default; when disabled the crate carries no commonware code
+# and the actor is never spawned (runtime `simplex_mode` also defaults to Off).
+simplex = [
+	"dep:commonware-consensus",
+	"dep:commonware-cryptography",
+	"dep:commonware-runtime",
+	"dep:commonware-parallel",
+	"dep:commonware-actor",
+	"dep:commonware-codec",
+	"dep:commonware-utils",
+	"dep:commonware-p2p",
+]
 metrics = [
 	"base-consensus-derive/metrics",
 	"base-consensus-disc/metrics",

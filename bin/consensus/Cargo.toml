@@ -22,3 +22,7 @@ base-consensus-cli.workspace = true
 
 # cli
 clap = { workspace = true, features = ["env"] }
+
+[features]
+# Pass-through: enables the in-process simplex consensus actor. Off by default.
+simplex = [ "base-consensus-cli/simplex" ]
