@@ -370,6 +370,11 @@ where
         let _admission_guard = self.protocol_admission_lock.lock();
         let expired = self.block_expiry.write().drain_expired(block_number);
         let removed = self.remove_dropped_across_pools(expired);
+        // Release any guard slots directly rather than deferring to the
+        // reconciliation sweep: an EIP-8130 transaction may carry block_number
+        // validity predicates, so an evicted tx can also hold guard capacity.
+        // `release` is a no-op for the common EIP-1559 case that is not tracked.
+        self.release_from_guard(&removed);
         if !removed.is_empty() {
             GuardMetrics::record_block_expiry_invalidations(removed.len());
             debug!(
