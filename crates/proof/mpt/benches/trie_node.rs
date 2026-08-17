@@ -1,16 +1,18 @@
-#![allow(missing_docs)]
 //! Benchmarks for the [`TrieNode`].
 
 use alloy_trie::Nibbles;
 use base_proof_mpt::{NoopTrieProvider, TrieNode};
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use rand::{Rng, SeedableRng, rngs::StdRng, seq::IteratorRandom};
+use std::hint::black_box;
 
 fn trie(c: &mut Criterion) {
     let mut g = c.benchmark_group("execution");
     g.sample_size(10);
 
-    // Use pseudo-randomness for reproducibility
+    // Use pseudo-randomness for reproducibility. Both the key set and the deleted /
+    // retrieved subsets are drawn from this seeded generator so a base-vs-head
+    // comparison exercises the identical workload on each side.
     let mut rng = StdRng::seed_from_u64(42);
 
     g.bench_function("Insertion - 4096 nodes", |b| {
@@ -43,58 +45,62 @@ fn trie(c: &mut Criterion) {
         let keys = (0..2usize.pow(12))
             .map(|_| Nibbles::unpack(rng.random::<[u8; 32]>()))
             .collect::<Vec<_>>();
+        let keys_to_delete = keys.iter().cloned().choose_multiple(&mut rng, 16);
+
         let mut trie = TrieNode::Empty;
-
-        let rng = &mut rand::rng();
-        let keys_to_delete = keys.clone().into_iter().choose_multiple(rng, 16);
-
         for key in &keys {
             trie.insert(key, key.to_vec().into(), &NoopTrieProvider).unwrap();
         }
 
-        b.iter(|| {
-            let trie = &mut trie.clone();
-            for key in &keys_to_delete {
-                trie.delete(key, &NoopTrieProvider).unwrap();
-            }
-        });
+        // Clone the populated trie in the setup closure so the deep-clone cost is
+        // excluded from the measured deletion work.
+        b.iter_batched(
+            || trie.clone(),
+            |mut trie| {
+                for key in &keys_to_delete {
+                    trie.delete(key, &NoopTrieProvider).unwrap();
+                }
+            },
+            BatchSize::LargeInput,
+        );
     });
 
     g.bench_function("Delete 16 nodes - 65,536 nodes", |b| {
         let keys = (0..2usize.pow(16))
             .map(|_| Nibbles::unpack(rng.random::<[u8; 32]>()))
             .collect::<Vec<_>>();
+        let keys_to_delete = keys.iter().cloned().choose_multiple(&mut rng, 16);
+
         let mut trie = TrieNode::Empty;
         for key in &keys {
             trie.insert(key, key.to_vec().into(), &NoopTrieProvider).unwrap();
         }
 
-        let rng = &mut rand::rng();
-        let keys_to_delete = keys.into_iter().choose_multiple(rng, 16);
-
-        b.iter(|| {
-            let trie = &mut trie.clone();
-            for key in &keys_to_delete {
-                trie.delete(key, &NoopTrieProvider).unwrap();
-            }
-        });
+        b.iter_batched(
+            || trie.clone(),
+            |mut trie| {
+                for key in &keys_to_delete {
+                    trie.delete(key, &NoopTrieProvider).unwrap();
+                }
+            },
+            BatchSize::LargeInput,
+        );
     });
 
     g.bench_function("Open 1024 nodes - 4096 nodes", |b| {
         let keys = (0..2usize.pow(12))
             .map(|_| Nibbles::unpack(rng.random::<[u8; 32]>()))
             .collect::<Vec<_>>();
+        let keys_to_retrieve = keys.iter().cloned().choose_multiple(&mut rng, 1024);
+
         let mut trie = TrieNode::Empty;
         for key in &keys {
             trie.insert(key, key.to_vec().into(), &NoopTrieProvider).unwrap();
         }
 
-        let rng = &mut rand::rng();
-        let keys_to_retrieve = keys.into_iter().choose_multiple(rng, 1024);
-
         b.iter(|| {
             for key in &keys_to_retrieve {
-                trie.open(key, &NoopTrieProvider).unwrap();
+                black_box(trie.open(key, &NoopTrieProvider).unwrap());
             }
         });
     });
@@ -103,17 +109,16 @@ fn trie(c: &mut Criterion) {
         let keys = (0..2usize.pow(16))
             .map(|_| Nibbles::unpack(rng.random::<[u8; 32]>()))
             .collect::<Vec<_>>();
+        let keys_to_retrieve = keys.iter().cloned().choose_multiple(&mut rng, 1024);
+
         let mut trie = TrieNode::Empty;
         for key in &keys {
             trie.insert(key, key.to_vec().into(), &NoopTrieProvider).unwrap();
         }
 
-        let rng = &mut rand::rng();
-        let keys_to_retrieve = keys.into_iter().choose_multiple(rng, 1024);
-
         b.iter(|| {
             for key in &keys_to_retrieve {
-                trie.open(key, &NoopTrieProvider).unwrap();
+                black_box(trie.open(key, &NoopTrieProvider).unwrap());
             }
         });
     });
@@ -127,9 +132,10 @@ fn trie(c: &mut Criterion) {
             trie.insert(key, key.to_vec().into(), &NoopTrieProvider).unwrap();
         }
 
+        // `blind` takes `&self` and returns the root hash, so no clone is needed;
+        // black-box the result so the computation is not optimized away.
         b.iter(|| {
-            let trie = &mut trie.clone();
-            trie.blind();
+            black_box(trie.blind());
         });
     });
 
@@ -143,8 +149,7 @@ fn trie(c: &mut Criterion) {
         }
 
         b.iter(|| {
-            let trie = &mut trie.clone();
-            trie.blind();
+            black_box(trie.blind());
         });
     });
 }
