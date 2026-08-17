@@ -6,6 +6,14 @@
 [private]
 _skip_kernels := if os() == "macos" { "RISC0_SKIP_BUILD_KERNELS=1" } else { "" }
 
+_sccache := `command -v sccache 2>/dev/null || true`
+# Cache compiled artifacts with sccache when it is installed, otherwise fall
+# back to the plain compiler.
+export RUSTC_WRAPPER := if _sccache != "" { "sccache" } else { "" }
+# sccache cannot cache incrementally-compiled crates, so disable incremental
+# compilation only when sccache is active.
+export CARGO_INCREMENTAL := if _sccache != "" { "0" } else { "1" }
+
 set positional-arguments := true
 
 mod tee 'crates/proof/tee'
@@ -44,6 +52,17 @@ load-test-continuous network='devnet':
 setup:
     #!/usr/bin/env bash
     set -euo pipefail
+
+    if ! command -v sccache >/dev/null 2>&1; then
+        echo "Installing sccache..."
+        if command -v brew >/dev/null 2>&1; then
+            brew install sccache
+        elif command -v cargo-binstall >/dev/null 2>&1; then
+            cargo binstall --no-confirm sccache
+        else
+            cargo install sccache --locked
+        fi
+    fi
 
     just build contracts
     echo "Setup complete!"
