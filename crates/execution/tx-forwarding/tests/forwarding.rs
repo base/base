@@ -10,7 +10,9 @@ use alloy_provider::Provider;
 use alloy_signer::SignerSync;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_txpool::{TransactionValidity, ValidatedTransaction};
+use base_execution_txpool::{
+    DEFAULT_MAX_VALIDITY_PREDICATES, TransactionValidity, ValidatedTransaction,
+};
 use base_node_runner::test_utils::TestHarness;
 use base_test_utils::{Account, DEVNET_CHAIN_ID, build_test_genesis};
 use base_tx_forwarding::{TxForwardingConfig, TxForwardingExtension};
@@ -153,7 +155,7 @@ async fn forwards_validity_to_every_builder() -> Result<()> {
     let config = TxForwardingConfig::new(vec![first.url.clone(), second.url.clone()]);
     let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis()));
     let harness = TestHarness::builder()
-        .with_ext::<SendRawTransactionValidityExtension>(())
+        .with_ext::<SendRawTransactionValidityExtension>(DEFAULT_MAX_VALIDITY_PREDICATES)
         .with_ext::<TxForwardingExtension>(config)
         .with_chain_spec(chain_spec)
         .build()

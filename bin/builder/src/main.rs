@@ -6,7 +6,9 @@
 use std::sync::Arc;
 
 use base_builder_cli::Args;
-use base_builder_core::{BuilderApiExtension, FlashblocksServiceBuilder};
+use base_builder_core::{
+    BuilderApiExtension, BuilderApiExtensionConfig, FlashblocksServiceBuilder,
+};
 use base_builder_metering::MeteringStoreExtension;
 use base_execution_cli::{Cli, StandardBaseRethNode};
 use base_node_runner::BaseNodeRunner;
@@ -40,6 +42,7 @@ fn main() {
 
         let accept_validity_transactions = builder_args.enable_experimental_validity_transactions;
         let shadow_indexer_config = ShadowIndexerConfig::try_from(&builder_args.shadow_indexer)?;
+        let max_validity_predicates = builder_args.experimental_validity_max_predicates;
         let builder_config = builder_args
             .into_builder_config(Arc::clone(&metering_provider))
             .expect("Failed to convert rollup args to builder config");
@@ -54,7 +57,10 @@ fn main() {
             .with_service_builder(FlashblocksServiceBuilder::new(builder_config));
         runner.install_ext::<MeteringStoreExtension>(metering_provider);
         runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig::default());
-        runner.install_ext::<BuilderApiExtension>(accept_validity_transactions);
+        runner.install_ext::<BuilderApiExtension>(BuilderApiExtensionConfig::new(
+            accept_validity_transactions,
+            max_validity_predicates,
+        ));
         runner.install_ext::<ShadowIndexerExtension>(shadow_indexer_config);
         StandardBaseRethNode::install_upgrade_signal_runtime_extension(&mut runner, &rollup_args)?;
         runner.add_started_callback(|| {

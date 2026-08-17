@@ -1,7 +1,9 @@
 //! RPC implementation for transaction submission, status queries, and pool management.
 
 use alloy_primitives::{Address, Bytes, TxHash};
-use base_execution_txpool::{BasePooledTransaction, MAX_VALIDITY_PREDICATES, ValidityPredicate};
+use base_execution_txpool::{
+    BasePooledTransaction, DEFAULT_MAX_VALIDITY_PREDICATES, ValidityPredicate,
+};
 use jsonrpsee::{
     core::{RpcResult, async_trait, client::ClientT},
     http_client::{HttpClient, HttpClientBuilder},
@@ -86,12 +88,18 @@ pub struct TransactionStatusApiImpl<Pool: TransactionPool> {
 #[derive(Debug, Clone)]
 pub struct SendRawTransactionValidityApiImpl<Pool> {
     pool: Pool,
+    max_validity_predicates: usize,
 }
 
 impl<Pool> SendRawTransactionValidityApiImpl<Pool> {
-    /// Creates a validity transaction ingress backed by the given pool.
+    /// Creates a validity transaction ingress backed by the given pool and default predicate limit.
     pub const fn new(pool: Pool) -> Self {
-        Self { pool }
+        Self { pool, max_validity_predicates: DEFAULT_MAX_VALIDITY_PREDICATES }
+    }
+
+    /// Creates a validity transaction ingress with a predicate limit.
+    pub const fn with_max_validity_predicates(pool: Pool, max_validity_predicates: usize) -> Self {
+        Self { pool, max_validity_predicates }
     }
 }
 
@@ -154,12 +162,13 @@ where
         &self,
         request: SendRawTransactionValidityRequest,
     ) -> RpcResult<TxHash> {
-        if request.validity.len() > MAX_VALIDITY_PREDICATES {
+        if request.validity.len() > self.max_validity_predicates {
             return Err(ErrorObjectOwned::owned(
                 ErrorCode::InvalidParams.code(),
                 format!(
-                    "too many validity predicates: {} (maximum {MAX_VALIDITY_PREDICATES})",
-                    request.validity.len()
+                    "too many validity predicates: {} (maximum {})",
+                    request.validity.len(),
+                    self.max_validity_predicates
                 ),
                 None::<()>,
             ));
@@ -280,12 +289,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_raw_transaction_validity_rejects_too_many_predicates() {
-        let rpc = SendRawTransactionValidityApiImpl::new(NoopTransactionPool::<
-            BasePooledTransaction,
-        >::new());
+    async fn send_raw_transaction_validity_enforces_configured_predicate_limit() {
+        let rpc = SendRawTransactionValidityApiImpl::with_max_validity_predicates(
+            NoopTransactionPool::<BasePooledTransaction>::new(),
+            2,
+        );
         let mut request = validity_request(Bytes::from_static(&[0x02]));
-        request.validity = vec![request.validity[0].clone(); MAX_VALIDITY_PREDICATES + 1];
+        request.validity = vec![request.validity[0].clone(); 3];
 
         let error = rpc
             .send_raw_transaction_validity(request)
@@ -294,6 +304,7 @@ mod tests {
 
         assert_eq!(error.code(), ErrorCode::InvalidParams.code());
         assert!(error.message().contains("too many validity predicates"));
+        assert!(error.message().contains("maximum 2"));
     }
 
     #[tokio::test]

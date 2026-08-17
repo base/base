@@ -6,7 +6,7 @@ use alloy_network::TransactionResponse;
 use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;
 use base_builder_core::{
-    BuilderApiExtension, BuilderConfig,
+    BuilderApiExtension, BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
     test_utils::{ChainDriverExt, LocalInstanceBuilder, ONE_ETH, setup_test_instance},
 };
 use base_execution_txpool::{
@@ -94,7 +94,10 @@ async fn fee_priority_ordering() -> eyre::Result<()> {
 #[tokio::test]
 async fn predicates_delay_priority_without_blocking_nonce_descendants() -> eyre::Result<()> {
     let instance = LocalInstanceBuilder::new(BuilderConfig::for_tests())
-        .install_ext::<BuilderApiExtension>(true)
+        .install_ext::<BuilderApiExtension>(BuilderApiExtensionConfig::new(
+            true,
+            DEFAULT_MAX_VALIDITY_PREDICATES,
+        ))
         .build()
         .await?;
     let driver = instance.driver().await?;

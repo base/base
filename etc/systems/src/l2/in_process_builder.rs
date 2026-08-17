@@ -11,7 +11,9 @@ use alloy_primitives::hex::ToHexExt;
 use alloy_rpc_types_engine::JwtSecret;
 use base_builder_core::{BuilderConfig, FlashblocksServiceBuilder, test_utils::get_available_port};
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_txpool::{BasePooledTransaction, BuilderApiImpl, BuilderApiServer};
+use base_execution_txpool::{
+    BasePooledTransaction, BuilderApiImpl, BuilderApiServer, DEFAULT_MAX_VALIDITY_PREDICATES,
+};
 use base_node_core::{args::RollupArgs, node::BasePoolBuilder};
 use base_node_runner::{BaseNode, BaseNodeExtension, NodeHooks};
 use eyre::{Result, WrapErr, eyre};
@@ -163,6 +165,7 @@ impl InProcessBuilder {
                 let api = BuilderApiImpl::<_, base_execution_txpool::TransactionValidity>::with_extensions(
                     ctx.pool().clone(),
                     accept_validity_transactions,
+                    DEFAULT_MAX_VALIDITY_PREDICATES,
                 );
                 ctx.modules.merge_configured(api.into_rpc())?;
                 Ok(())
