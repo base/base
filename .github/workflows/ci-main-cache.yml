@@ -37,8 +37,12 @@ jobs:
           sp1: "true"
           rust-cache-shared-key: "stable"
           rust-cache-save: "true"
+          sccache-write: "true"
       - name: Build CI cache
         run: just build::ci
+      - name: Report sccache stats
+        if: always()
+        uses: ./.github/actions/sccache-report
 
   warm-test-cache:
     name: Warm Test Cache
@@ -65,3 +69,6 @@ jobs:
           just build::contracts
           cargo nextest run -P ci --locked --workspace --all-features \
             --exclude base-system-tests --cargo-profile ci --no-run
+      - name: Report sccache stats
+        if: always()
+        uses: ./.github/actions/sccache-report
