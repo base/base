@@ -49,7 +49,7 @@ impl Devnet {
             parlia: None,
             extra_fields: Default::default(),
             terminal_total_difficulty_passed: false,
-            _non_exhaustive: (),
+            ..Default::default()
         }
     }
 }
