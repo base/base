@@ -274,9 +274,7 @@ impl ValidityPredicate {
 }
 
 /// Experimental validity predicates carried with a validated transaction.
-///
-/// The builder transport preserves these predicates but does not currently
-/// evaluate them during block construction.
+/// The builder evaluates these predicates against each candidate insertion point.
 #[derive(Clone, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct TransactionValidity {
     /// Predicates intended to control when the transaction is valid for inclusion.

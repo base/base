@@ -38,8 +38,6 @@ pub struct SendRawTransactionValidityRequest {
     /// EIP-2718 encoded signed transaction.
     pub tx: Bytes,
     /// Experimental predicates transported to builders alongside the transaction.
-    ///
-    /// Predicates are not currently evaluated during block construction.
     pub validity: Vec<ValidityPredicate>,
 }
 
@@ -181,7 +179,7 @@ where
             })?;
         let tx_hash = *transaction.hash();
 
-        // Retain the currently unenforced predicates for canonical forwarding to builders.
+        // Retain predicates for canonical forwarding to builders.
         self.pool
             .add_transaction(
                 TransactionOrigin::Private,

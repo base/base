@@ -774,6 +774,7 @@ impl BasePayloadBuilderCtx {
             }
 
             let tx_hash = *tx.hash();
+            let has_validity_predicates = !tx.validity_predicates().is_empty();
             let mut predicate_read_failed = false;
             let blocking_predicate = match ValidityPredicateKey::first_unsatisfied(
                 tx.validity_predicates(),
@@ -792,6 +793,16 @@ impl BasePayloadBuilderCtx {
                     None
                 }
             };
+            if has_validity_predicates {
+                let outcome = if predicate_read_failed {
+                    "read_error"
+                } else if blocking_predicate.is_some() {
+                    "not_satisfied"
+                } else {
+                    "matched"
+                };
+                BuilderMetrics::validity_predicate_evaluations_total(outcome).increment(1);
+            }
             if predicate_read_failed || blocking_predicate.is_some() {
                 num_txs_considered += 1;
                 let ordering_position = num_txs_considered;
@@ -1382,6 +1393,14 @@ impl BasePayloadBuilderCtx {
                         None
                     }
                 };
+                let outcome = if predicate_read_failed {
+                    "rescan_read_error"
+                } else if blocking_predicate.is_some() {
+                    "rescan_not_satisfied"
+                } else {
+                    "rescan_matched"
+                };
+                BuilderMetrics::validity_predicate_evaluations_total(outcome).increment(1);
                 if predicate_read_failed {
                     predicate_index.remove(*parked_hash);
                     best_txs.discard_parked(*parked_hash);

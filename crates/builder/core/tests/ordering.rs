@@ -7,6 +7,7 @@ use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;
 use base_builder_core::{
     BuilderApiExtension, BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
+    MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS, ShadowValidityConfig,
     test_utils::{ChainDriverExt, LocalInstanceBuilder, ONE_ETH, setup_test_instance},
 };
 use base_execution_txpool::{
@@ -174,6 +175,68 @@ async fn predicates_delay_priority_without_blocking_nonce_descendants() -> eyre:
     assert!(
         [50u128, 100, 90, 1].windows(2).any(|fees| fees[0] < fees[1]),
         "predicate-delayed order must intentionally violate descending priority fee order"
+    );
+
+    Ok(())
+}
+
+/// Shadow injection adds only builder-local metadata: the original signed transaction executes
+/// with the same hash, encoding, and state transition.
+#[tokio::test]
+async fn shadow_validity_injection_preserves_forwarded_transaction() -> eyre::Result<()> {
+    let shadow =
+        ShadowValidityConfig::enabled(MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS).expect("valid rate");
+    let api_config = BuilderApiExtensionConfig::new(true, DEFAULT_MAX_VALIDITY_PREDICATES)
+        .with_shadow_validity(shadow)?;
+    let instance = LocalInstanceBuilder::new(BuilderConfig::for_tests())
+        .install_ext::<BuilderApiExtension>(api_config)
+        .build()
+        .await?;
+    let driver = instance.driver().await?;
+    let accounts = driver.fund_accounts(1, ONE_ETH).await?;
+    let recipient = Address::random();
+    let value = 7;
+    let recipient_balance_before = driver.provider().get_balance(recipient).await?;
+
+    let signed = driver
+        .create_transaction()
+        .with_signer(&accounts[0])
+        .with_to(recipient)
+        .with_value(value)
+        .build()
+        .await;
+    let tx_hash = signed.tx_hash();
+    let raw = signed.encoded_2718();
+    let forwarded = ValidatedTransaction {
+        sender: accounts[0].address(),
+        raw: raw.clone().into(),
+        min_block_number: None,
+        max_block_number: None,
+        min_timestamp: None,
+        max_timestamp: None,
+        extensions: TransactionValidity::default(),
+    };
+    driver
+        .provider()
+        .raw_request::<_, ()>("base_insertValidatedTransaction".into(), (forwarded,))
+        .await?;
+
+    let block = driver.build_new_block().await?;
+    let included = block
+        .transactions
+        .into_transactions()
+        .find(|transaction| transaction.tx_hash() == tx_hash)
+        .expect("forwarded transaction must be included");
+
+    assert_eq!(
+        included.inner.inner.encoded_2718(),
+        raw,
+        "validity metadata must not alter consensus bytes"
+    );
+    assert_eq!(
+        driver.provider().get_balance(recipient).await?,
+        recipient_balance_before + U256::from(value),
+        "the original state transition must execute"
     );
 
     Ok(())

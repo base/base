@@ -53,6 +53,12 @@ pub use extension::{
     BuilderApiExtension, BuilderApiExtensionConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
 };
 
+mod shadow_validity;
+pub use shadow_validity::{
+    MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS, ShadowValidityBuilderApi, ShadowValidityConfig,
+    ShadowValidityConfigError,
+};
+
 /// Shared test infrastructure: local node instances, chain drivers, transaction builders, and pool observers.
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
