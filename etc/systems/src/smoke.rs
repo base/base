@@ -29,7 +29,7 @@ use url::Url;
 use crate::upgrade_signal::{MockProtocolVersionsClient, UpgradeSignalStackOptions};
 use crate::{
     BATCHER, BUILDER, SEQUENCER,
-    l1::{L1ContainerConfig, L1Execution, L1RpcProxy, L1Stack, L1StackConfig},
+    l1::{L1ContainerConfig, L1RpcProxy, L1Stack, L1StackConfig},
     l2::{
         L2ClientConsensusMode, L2ContainerConfig, L2Stack, L2StackConfig, ShadowSequencersConfig,
     },
@@ -589,20 +589,17 @@ impl SystemTestStackBuilder {
             container_config: l1_container_config,
         };
 
-        // Start Reth first, then overlap live L2 deployment with Lighthouse
-        // startup. `op-deployer apply` only needs the EL RPC; its transactions
-        // sit in the mempool until the validator begins producing blocks.
-        let l1_execution =
-            L1Execution::start(l1_config).await.wrap_err("Failed to start L1 execution layer")?;
-        let l1_internal_rpc_url = l1_execution.reth().internal_rpc_url();
-        let deploy_handle =
-            tokio::task::spawn_blocking(move || setup.deploy_l2_contracts(&l1_internal_rpc_url));
-        let l1_stack =
-            l1_execution.start_consensus().await.wrap_err("Failed to start L1 consensus")?;
-        let l2_deployment = deploy_handle
-            .await
-            .wrap_err("L2 deployment task panicked")?
-            .wrap_err("Failed to deploy L2 contracts")?;
+        // Start the full L1 stack before live L2 deploy. Overlapping
+        // `op-deployer` with Lighthouse made every concurrent stack run reth,
+        // beacon, validator, and the setup container at once and OOM the 32 GiB
+        // CI runner.
+        let l1_stack = L1Stack::start(l1_config).await.wrap_err("Failed to start L1 stack")?;
+        let l1_internal_rpc_url = l1_stack.reth().internal_rpc_url();
+        let l2_deployment =
+            tokio::task::spawn_blocking(move || setup.deploy_l2_contracts(&l1_internal_rpc_url))
+                .await
+                .wrap_err("L2 deployment task panicked")?
+                .wrap_err("Failed to deploy L2 contracts")?;
 
         let jwt_secret = JwtSecret::random();
 
