@@ -277,9 +277,7 @@ where
                 })
                 .map_err(EthApiError::from)?;
 
-            let witness = witness
-                .expect("state closure is called after successful execution")
-                .map_err(EthApiError::from)?;
+            let witness = witness.unwrap().map_err(EthApiError::from)?;
 
             Ok(witness)
         })
