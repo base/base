@@ -147,13 +147,22 @@ impl ValidityPredicate {
         U256::MAX
     }
 
-    /// Returns whether this predicate's parameters are internally consistent.
+    /// Validates that this predicate's parameters are internally consistent.
     ///
     /// A storage predicate's comparison value must not set any bits outside its
-    /// mask, since the loaded value is masked before comparison.
-    #[must_use]
-    pub fn has_valid_params(&self) -> bool {
-        !matches!(self, Self::Storage { mask, value, .. } if (*value & !*mask) != U256::ZERO)
+    /// mask, since the loaded value is masked before comparison. `index` is the
+    /// predicate's position within its submitted batch and is embedded into any
+    /// returned error so callers can report which predicate failed. Returning the
+    /// specific [`ValidityPredicateError`] keeps the diagnosis with the predicate
+    /// itself, so new failure modes surface as distinct errors instead of
+    /// collapsing into a single caller-assigned variant.
+    pub fn validate_params(&self, index: usize) -> Result<(), ValidityPredicateError> {
+        if let Self::Storage { mask, value, .. } = self
+            && (*value & !*mask) != U256::ZERO
+        {
+            return Err(ValidityPredicateError::StorageValueOutsideMask { index });
+        }
+        Ok(())
     }
 
     /// Validates a batch of predicates submitted at ingress.
@@ -168,9 +177,7 @@ impl ValidityPredicate {
             return Err(ValidityPredicateError::TooMany { count: predicates.len(), max });
         }
         for (index, predicate) in predicates.iter().enumerate() {
-            if !predicate.has_valid_params() {
-                return Err(ValidityPredicateError::StorageValueOutsideMask { index });
-            }
+            predicate.validate_params(index)?;
         }
         Ok(())
     }
@@ -247,11 +254,7 @@ impl ValidatedTransactionExtensions<BasePooledTransaction> for TransactionValidi
     /// receives ordinary transactions that carry no predicates.
     fn apply(self, tx: BasePooledTransaction) -> Result<BasePooledTransaction, ExtensionError> {
         for (index, predicate) in self.validity.iter().enumerate() {
-            if !predicate.has_valid_params() {
-                return Err(ExtensionError(format!(
-                    "storage predicate at index {index} has value bits set outside its mask"
-                )));
-            }
+            predicate.validate_params(index).map_err(|e| ExtensionError(e.to_string()))?;
         }
         Ok(tx.with_validity_predicates(self.validity))
     }
@@ -657,7 +660,7 @@ mod tests {
     }
 
     #[test]
-    fn has_valid_params_accepts_storage_value_within_mask() {
+    fn validate_params_accepts_storage_value_within_mask() {
         let predicate = ValidityPredicate::Storage {
             address: Address::repeat_byte(0x11),
             slot: U256::from(1),
@@ -666,11 +669,11 @@ mod tests {
             value: U256::from(0xab),
         };
 
-        assert!(predicate.has_valid_params());
+        assert_eq!(predicate.validate_params(0), Ok(()));
     }
 
     #[test]
-    fn has_valid_params_rejects_storage_value_outside_mask() {
+    fn validate_params_rejects_storage_value_outside_mask_reporting_its_index() {
         let predicate = ValidityPredicate::Storage {
             address: Address::repeat_byte(0x11),
             slot: U256::from(1),
@@ -679,18 +682,21 @@ mod tests {
             value: U256::from(0x1ff),
         };
 
-        assert!(!predicate.has_valid_params());
+        assert_eq!(
+            predicate.validate_params(3),
+            Err(ValidityPredicateError::StorageValueOutsideMask { index: 3 })
+        );
     }
 
     #[test]
-    fn has_valid_params_ignores_mask_for_non_storage_predicates() {
+    fn validate_params_ignores_mask_for_non_storage_predicates() {
         let predicate = ValidityPredicate::Balance {
             address: Address::repeat_byte(0x11),
             op: ValidityOperator::Equal,
             value: U256::MAX,
         };
 
-        assert!(predicate.has_valid_params());
+        assert_eq!(predicate.validate_params(0), Ok(()));
     }
 
     #[test]
