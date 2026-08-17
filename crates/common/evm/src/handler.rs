@@ -464,6 +464,22 @@ mod tests {
     }
 
     #[test]
+    fn test_consume_gas_deposit_tx() {
+        let ctx = Context::base()
+            .with_tx(
+                BaseTransaction::builder()
+                    .base(TxEnv::builder().gas_limit(100))
+                    .source_hash(B256::from([1u8; 32]))
+                    .build_fill(),
+            )
+            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Regolith)));
+        let gas = call_last_frame_return(ctx, InstructionResult::Stop, Gas::new(90));
+        assert_eq!(gas.remaining(), 90);
+        assert_eq!(gas.total_gas_spent(), 10);
+        assert_eq!(gas.refunded(), 0);
+    }
+
+    #[test]
     fn test_consume_gas_with_refund() {
         let ctx = Context::base()
             .with_tx(
@@ -485,22 +501,6 @@ mod tests {
         let gas = call_last_frame_return(ctx, InstructionResult::Revert, ret_gas);
         assert_eq!(gas.remaining(), 90);
         assert_eq!(gas.total_gas_spent(), 10);
-        assert_eq!(gas.refunded(), 0);
-    }
-
-    #[test]
-    fn test_consume_gas_deposit_tx() {
-        let ctx = Context::base()
-            .with_tx(
-                BaseTransaction::builder()
-                    .base(TxEnv::builder().gas_limit(100))
-                    .source_hash(B256::from([1u8; 32]))
-                    .build_fill(),
-            )
-            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Bedrock)));
-        let gas = call_last_frame_return(ctx, InstructionResult::Stop, Gas::new(90));
-        assert_eq!(gas.remaining(), 0);
-        assert_eq!(gas.total_gas_spent(), 100);
         assert_eq!(gas.refunded(), 0);
     }
 
