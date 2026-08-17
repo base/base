@@ -152,6 +152,11 @@ impl<C: Clock> BondManager<C> {
             .is_none_or(|last_scan| now.saturating_sub(last_scan) >= self.discovery_interval)
     }
 
+    /// Evaluates the range concurrently but yields actions in **ascending game index order**.
+    ///
+    /// Ordering is load-bearing: `resolve()` reverts `ParentGameNotResolved` unless the parent game
+    /// has already resolved, so a child processed before its parent is a guaranteed revert. Using
+    /// `buffered` rather than `buffer_unordered` keeps the concurrency while preserving that order.
     async fn bond_actions(
         &self,
         range: std::ops::Range<u64>,
@@ -159,7 +164,7 @@ impl<C: Clock> BondManager<C> {
     ) -> Vec<BondAction> {
         stream::iter(range)
             .map(|i| self.evaluate_game_for_bonds(i, verifier_client))
-            .buffer_unordered(GameScanner::SCAN_CONCURRENCY)
+            .buffered(GameScanner::SCAN_CONCURRENCY)
             .filter_map(std::future::ready)
             .collect()
             .await
@@ -819,5 +824,92 @@ mod tests {
 
         assert_eq!(verifier.delayed_weth_reads.lock().unwrap().len(), 1);
         assert_eq!(tx_manager.recorded_calls().len(), 1);
+    }
+
+    /// Factory whose `game_at_index` completes in reverse index order, reproducing the condition
+    /// under which an unordered scan yields child games before their parents.
+    #[derive(Debug)]
+    struct ReverseLatencyFactory {
+        inner: MockDisputeGameFactory,
+        game_count: u64,
+    }
+
+    #[async_trait::async_trait]
+    impl DisputeGameFactoryClient for ReverseLatencyFactory {
+        async fn game_count(&self) -> Result<u64, base_proof_contracts::ContractError> {
+            self.inner.game_count().await
+        }
+
+        async fn game_at_index(
+            &self,
+            index: u64,
+        ) -> Result<base_proof_contracts::GameAtIndex, base_proof_contracts::ContractError>
+        {
+            let delay = self.game_count.saturating_sub(index).saturating_mul(20);
+            tokio::time::sleep(Duration::from_millis(delay)).await;
+            self.inner.game_at_index(index).await
+        }
+
+        async fn init_bonds(
+            &self,
+            game_type: u32,
+        ) -> Result<alloy_primitives::U256, base_proof_contracts::ContractError> {
+            self.inner.init_bonds(game_type).await
+        }
+
+        async fn game_impls(
+            &self,
+            game_type: u32,
+        ) -> Result<Address, base_proof_contracts::ContractError> {
+            self.inner.game_impls(game_type).await
+        }
+
+        async fn games(
+            &self,
+            game_type: u32,
+            root_claim: B256,
+            extra_data: alloy_primitives::Bytes,
+        ) -> Result<Address, base_proof_contracts::ContractError> {
+            self.inner.games(game_type, root_claim, extra_data).await
+        }
+    }
+
+    /// `resolve()` reverts `ParentGameNotResolved` unless the parent resolved first, so the scan
+    /// must hand back actions in ascending game order even when the reads complete out of order.
+    #[tokio::test]
+    async fn bond_actions_are_ordered_by_game_index() {
+        let claim_addr = claim_addr();
+        let game_count = 5;
+        let games = (0..game_count).map(|i| factory_game(i, 0)).collect::<Vec<_>>();
+        let factory = Arc::new(ReverseLatencyFactory {
+            inner: MockDisputeGameFactory::new(games),
+            game_count,
+        });
+        let states = (0..game_count)
+            .map(|i| (addr(i), game_state(claim_addr, Address::ZERO, 0, false)))
+            .collect::<HashMap<_, _>>();
+        let verifier = MockAggregateVerifier::new(states);
+
+        let mgr = BondManager::new(
+            BondManagerConfig {
+                claim_addresses: vec![claim_addr],
+                l1_rpc_url: url::Url::parse("http://127.0.0.1:1").unwrap(),
+                lookback: 1000,
+                discovery_interval: TEST_DISCOVERY_INTERVAL,
+                metrics_enabled: false,
+            },
+            factory,
+            Arc::new(MockL2Provider::default()),
+            fixed_clock(1_000),
+        );
+
+        let actions = mgr.bond_actions(0..game_count, &verifier).await;
+
+        let ordered = actions.iter().map(|action| action.game_address()).collect::<Vec<_>>();
+        assert_eq!(
+            ordered,
+            (0..game_count).map(addr).collect::<Vec<_>>(),
+            "actions must be ascending by game index so parents resolve before children",
+        );
     }
 }
