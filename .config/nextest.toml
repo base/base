@@ -20,6 +20,14 @@ retries = 1
 filter = 'package(base-action-harness)'
 slow-timeout = { period = "90s", terminate-after = 2 }
 
+# Nextest profiles do not inherit default-profile overrides. Without this, CI
+# starts every Docker-backed system test at once and the runner gets OOM-killed.
+[[profile.ci.overrides]]
+filter = 'package(base-system-tests)'
+test-group = 'system-tests'
+retries = 1
+slow-timeout = { period = "120s", terminate-after = 3 }
+
 [[profile.default.overrides]]
 filter = 'test(system_test_)'
 test-group = 'system-test-serial'

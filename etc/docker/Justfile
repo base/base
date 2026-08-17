@@ -178,7 +178,7 @@ tests: _install-nextest _build-contracts
 
 # Runs system tests with ci profile for minimal disk usage
 tests-ci: _install-nextest _build-contracts
-    cargo nextest run -P ci --locked -p base-system-tests --cargo-profile ci
+    cargo nextest run -P ci --locked -p base-system-tests --cargo-profile ci --no-fail-fast
 
 # Runs system test benchmarks
 bench name:
