@@ -66,6 +66,22 @@ default-features: _build-contracts
 default-features-ci: _build-contracts
     {{_skip_kernels}} {{_elf_stub}} cargo check --locked --workspace --all-targets --profile ci
 
+# Typechecks the default feature set for only affected packages with ci profile
+default-features-affected-ci base="main": _build-contracts
+    #!/usr/bin/env bash
+    set -euo pipefail
+    pkg_args_output="$(python3 {{justfile_directory()}}/etc/scripts/local/affected-crates.py {{ base }} --cargo-args)"
+    pkg_args=()
+    while IFS= read -r line; do
+        [ -n "$line" ] && pkg_args+=("$line")
+    done <<< "$pkg_args_output"
+    if [ "${#pkg_args[@]}" -eq 0 ]; then
+        echo "No affected crates to check."
+        exit 0
+    fi
+    echo "Checking affected crates:${pkg_args[*]}"
+    {{_skip_kernels}} {{_elf_stub}} cargo check --locked --all-targets --profile ci "${pkg_args[@]}"
+
 [private]
 _build-contracts:
     cd {{justfile_directory()}}/crates/utilities/test-utils/contracts && forge soldeer install && forge build

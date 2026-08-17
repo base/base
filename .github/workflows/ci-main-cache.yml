@@ -40,6 +40,8 @@ jobs:
           sccache-write: "true"
       - name: Build CI cache
         run: just build::ci
+      - name: Warm default-features check cache
+        run: just check::default-features-ci
       - name: Report sccache stats
         if: always()
         uses: ./.github/actions/sccache-report

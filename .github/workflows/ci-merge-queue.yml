@@ -22,6 +22,7 @@ jobs:
       base_ref: ""
       build_command: just build::ci
       clippy_command: just check::clippy-ci
+      check_command: just check::default-features-ci
       run_system_tests: true
       run_sigsegv: false
       save_rust_cache: false

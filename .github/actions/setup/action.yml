@@ -41,11 +41,6 @@ inputs:
       so only designated writers (CI Test, main cache warmer) compete for the
       200 uploads/min repo limit.
     default: "false"
-  sccache-log:
-    description: >
-      Write SCCACHE_LOG=info into SCCACHE_ERROR_LOG. Enable on the writer and
-      one reader so write-error reasons are attributable without flooding every job.
-    default: "false"
 
 runs:
   using: composite
@@ -120,7 +115,6 @@ runs:
       shell: bash
       env:
         SCCACHE_WRITE: ${{ inputs.sccache-write }}
-        SCCACHE_LOG_ENABLED: ${{ inputs.sccache-log }}
       run: |
         error_log="${RUNNER_TEMP}/sccache-error.log"
         : > "$error_log"
@@ -132,17 +126,12 @@ runs:
           echo "SCCACHE_GHA_RW_MODE=READ_ONLY" >> "$GITHUB_ENV"
           echo "sccache mode: READ_ONLY"
         fi
-        if [ "$SCCACHE_LOG_ENABLED" = "true" ]; then
-          echo "SCCACHE_LOG=info" >> "$GITHUB_ENV"
-          echo "sccache log: info -> $error_log"
-        fi
 
     - name: Setup sccache
       uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
       env:
         SCCACHE_GHA_RW_MODE: ${{ inputs.sccache-write == 'true' && 'READ_WRITE' || 'READ_ONLY' }}
         SCCACHE_ERROR_LOG: ${{ runner.temp }}/sccache-error.log
-        SCCACHE_LOG: ${{ inputs.sccache-log == 'true' && 'info' || '' }}
 
     - name: Rust cache
       if: inputs.rust-cache-shared-key != ''

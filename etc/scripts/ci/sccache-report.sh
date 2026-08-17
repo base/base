@@ -101,7 +101,7 @@ summary="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
     echo
   fi
   if [[ "$write_errors" != "0" && "$classified_lines" -eq 0 ]]; then
-    echo "Stats reported write errors but \`SCCACHE_ERROR_LOG\` was empty. Enable \`sccache-log: true\` on this job, or the GHA backend is incrementing the counter without logging (typical for 200/min rate limits)."
+    echo "Stats reported write errors but \`SCCACHE_ERROR_LOG\` was empty. Typical for the GHA 200 uploads/min rate limit, and for read-only jobs that count skipped writes as errors."
     echo
   fi
   echo "<details><summary>sccache --show-stats</summary>"

@@ -24,6 +24,8 @@ jobs:
         just build::affected-ci "origin/${{ github.base_ref || 'main' }}"
       clippy_command: >-
         just check::clippy-affected-ci "origin/${{ github.base_ref || 'main' }}"
+      check_command: >-
+        just check::default-features-affected-ci "origin/${{ github.base_ref || 'main' }}"
       run_system_tests: false
       run_sigsegv: false
       save_rust_cache: false
