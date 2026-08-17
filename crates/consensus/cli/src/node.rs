@@ -11,7 +11,6 @@ use base_consensus_node::{
     EngineConfig, L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder,
     UpgradeSignalBuilderConfig,
 };
-use base_consensus_providers::L1RpcProvider;
 use base_upgrade_signal::{
     UpgradeSignalArgs, UpgradeSignalConfig, UpgradeSignalMetricLayer, UpgradeSignalRuntimeApplier,
     UpgradeSignalSchedule, UpgradeSignalStartupMode,
@@ -527,10 +526,10 @@ impl ConsensusNodeArgs {
         signal_config: &UpgradeSignalConfig,
         upgrade_signal_l1_rpc: Option<&Url>,
     ) -> eyre::Result<()> {
-        let reader = signal_config.reader(L1RpcProvider::new_http_with_timeout(
-            self.resolved_upgrade_signal_l1_rpc(upgrade_signal_l1_rpc),
-            self.config.l1_rpc_args.l1_rpc_timeout,
-        ));
+        let mut signal_config = signal_config.clone();
+        signal_config.request_timeout = self.config.l1_rpc_args.l1_rpc_timeout;
+        let reader =
+            signal_config.reader(self.resolved_upgrade_signal_l1_rpc(upgrade_signal_l1_rpc))?;
         let schedule = signal_config
             .read_validated_schedule(
                 &reader,

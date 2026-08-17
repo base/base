@@ -5,7 +5,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 use alloy_genesis::ChainConfig;
 use alloy_primitives::Address;
 use alloy_provider::RootProvider;
-use alloy_transport::TransportResult;
+use alloy_transport::{TransportErrorKind, TransportResult};
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_consensus_engine::BaseEngineClient;
@@ -251,15 +251,20 @@ impl RollupNodeBuilder {
             )
         });
 
-        let upgrade_signal_config = self.upgrade_signal_config.metrics_config.map(|config| {
-            UpgradeSignalNodeConfig::resolve(
-                config,
-                self.upgrade_signal_config.l1_rpc.as_ref(),
-                l1_config.engine_provider.clone(),
-                self.l1_config_builder.rpc_timeout,
-                rollup_config.l2_chain_id.id(),
-            )
-        });
+        let upgrade_signal_config = self
+            .upgrade_signal_config
+            .metrics_config
+            .map(|mut config| {
+                config.request_timeout = self.l1_config_builder.rpc_timeout;
+                UpgradeSignalNodeConfig::resolve(
+                    config,
+                    self.upgrade_signal_config.l1_rpc.as_ref(),
+                    self.l1_config_builder.rpc_url.clone(),
+                    rollup_config.l2_chain_id.id(),
+                )
+            })
+            .transpose()
+            .map_err(TransportErrorKind::non_retryable)?;
 
         Ok(RollupNode {
             config: rollup_config,
@@ -370,5 +375,34 @@ mod tests {
             test_builder(Url::parse("ws://127.0.0.1:8551").unwrap()).build().await.unwrap();
 
         assert_eq!(rollup_node.engine_config.l2_url.scheme(), "ws");
+    }
+
+    #[tokio::test]
+    async fn build_applies_l1_request_timeout_to_upgrade_signal_reads() {
+        let request_timeout = Duration::from_millis(2_500);
+        let mut builder = test_builder(Url::parse("ws://127.0.0.1:8551").unwrap());
+        builder.l1_config_builder.rpc_timeout = request_timeout;
+        let builder = builder.with_upgrade_signal_config(UpgradeSignalBuilderConfig {
+            metrics_config: Some(UpgradeSignalConfig::new(Address::ZERO)),
+            l1_rpc: None,
+        });
+
+        let rollup_node = builder.build().await.unwrap();
+        let upgrade_signal_config = rollup_node.upgrade_signal_config.unwrap();
+
+        assert_eq!(upgrade_signal_config.config.request_timeout, request_timeout);
+    }
+
+    #[tokio::test]
+    async fn build_returns_error_for_unsupported_upgrade_signal_rpc() {
+        let builder = test_builder(Url::parse("ws://127.0.0.1:8551").unwrap())
+            .with_upgrade_signal_config(UpgradeSignalBuilderConfig {
+                metrics_config: Some(UpgradeSignalConfig::new(Address::ZERO)),
+                l1_rpc: Some(Url::parse("ws://127.0.0.1:8545").unwrap()),
+            });
+
+        let error = builder.build().await.expect_err("unsupported URL should fail");
+
+        assert!(error.to_string().contains("build upgrade signal HTTP client failed"));
     }
 }

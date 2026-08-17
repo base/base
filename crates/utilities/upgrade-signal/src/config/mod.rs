@@ -18,11 +18,17 @@ pub use types::{UpgradeSignalBlockTag, UpgradeSignalMode, UpgradeSignalStartupMo
 pub struct UpgradeSignalDefaults;
 
 impl UpgradeSignalDefaults {
+    /// Default total deadline for each upgrade signal JSON-RPC request.
+    pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+
     /// Default number of attempts to read the L1 upgrade signal schedule before failing startup.
     pub const READ_ATTEMPTS: u32 = 3;
 
-    /// Default backoff between L1 upgrade signal schedule read attempts.
+    /// Initial backoff between L1 upgrade signal schedule read attempts.
     pub const READ_BACKOFF: Duration = Duration::from_secs(2);
+
+    /// Maximum jittered backoff between L1 upgrade signal schedule read attempts.
+    pub const READ_MAX_BACKOFF: Duration = Duration::from_secs(10);
 
     /// Node protocol version supported by this binary for contract-backed upgrade signals.
     ///

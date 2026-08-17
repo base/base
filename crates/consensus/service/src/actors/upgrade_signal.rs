@@ -2,8 +2,6 @@
 
 use core::time::Duration;
 
-use alloy_provider::RootProvider;
-use base_consensus_providers::L1RpcProvider;
 use base_upgrade_signal::{
     AlloyUpgradeSignalReader, UpgradeSignalConfig, UpgradeSignalError, UpgradeSignalMetricLayer,
     UpgradeSignalMonitor, UpgradeSignalRefresher,
@@ -19,8 +17,8 @@ use crate::NodeActor;
 pub struct UpgradeSignalNodeConfig {
     /// Schedule read configuration.
     pub config: UpgradeSignalConfig,
-    /// L1 provider used for upgrade signal reads.
-    pub l1_provider: RootProvider,
+    /// Shared L1 upgrade signal reader.
+    pub reader: AlloyUpgradeSignalReader,
     /// L2 chain ID.
     pub chain_id: u64,
 }
@@ -28,18 +26,16 @@ pub struct UpgradeSignalNodeConfig {
 impl UpgradeSignalNodeConfig {
     /// Builds consensus upgrade signal config from builder inputs.
     ///
-    /// Uses `l1_rpc` when provided, otherwise falls back to the node's L1 provider.
+    /// Uses `l1_rpc` when provided, otherwise falls back to the node's L1 RPC URL.
     pub fn resolve(
         config: UpgradeSignalConfig,
         l1_rpc: Option<&Url>,
-        default_l1_provider: RootProvider,
-        l1_rpc_timeout: Duration,
+        default_l1_rpc: Url,
         chain_id: u64,
-    ) -> Self {
-        let l1_provider = l1_rpc
-            .map(|url| L1RpcProvider::new_http_with_timeout(url.clone(), l1_rpc_timeout))
-            .unwrap_or(default_l1_provider);
-        Self { config, l1_provider, chain_id }
+    ) -> Result<Self, UpgradeSignalError> {
+        let l1_rpc = l1_rpc.cloned().unwrap_or(default_l1_rpc);
+        let reader = config.reader(l1_rpc)?;
+        Ok(Self { config, reader, chain_id })
     }
 
     /// Builds the consensus metrics actor, with live auto-apply when runtime refresh is enabled.
@@ -49,8 +45,8 @@ impl UpgradeSignalNodeConfig {
         cancellation: CancellationToken,
     ) -> UpgradeSignalMetricsActor {
         UpgradeSignalMetricsActor::new(
-            self.config.clone(),
-            self.l1_provider.clone(),
+            self.reader.clone(),
+            self.config.l1_block_tag.poll_interval(),
             refresher,
             cancellation,
         )
@@ -61,7 +57,7 @@ impl UpgradeSignalNodeConfig {
         self.config.mode.allows_runtime_admin().then(|| {
             UpgradeSignalRefresher::new(
                 self.config.clone(),
-                self.l1_provider.clone(),
+                self.reader.clone(),
                 self.chain_id,
                 UpgradeSignalMetricLayer::Consensus,
             )
@@ -88,13 +84,11 @@ pub struct UpgradeSignalMetricsActor {
 impl UpgradeSignalMetricsActor {
     /// Creates a new upgrade signal metrics actor.
     pub fn new(
-        config: UpgradeSignalConfig,
-        l1_provider: RootProvider,
+        reader: AlloyUpgradeSignalReader,
+        poll_interval: Duration,
         refresher: Option<UpgradeSignalRefresher>,
         cancellation: CancellationToken,
     ) -> Self {
-        let poll_interval = config.l1_block_tag.poll_interval();
-        let reader = config.reader(l1_provider);
         let monitor = UpgradeSignalMonitor::new(UpgradeSignalMetricLayer::Consensus);
 
         Self { reader, monitor, poll_interval, refresher, cancellation }

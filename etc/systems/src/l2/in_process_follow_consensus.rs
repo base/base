@@ -80,7 +80,7 @@ impl InProcessFollowConsensus {
         if let Some(signal_config) = &upgrade_signal
             && signal_config.mode.applies_at_startup()
         {
-            let reader = signal_config.reader(RootProvider::new_http(l1_rpc_url.clone()));
+            let reader = signal_config.reader(l1_rpc_url.clone())?;
             let schedule = signal_config
                 .read_validated_schedule(
                     &reader,
@@ -167,9 +167,11 @@ impl InProcessFollowConsensus {
 
         // Spawn the live monitor only after the node is up, so no error path above has to
         // clean it up.
-        let upgrade_signal_handle = upgrade_signal.map(|signal_config| {
-            Self::spawn_upgrade_signal_monitor(signal_config, l1_rpc_url, l2_chain_id)
-        });
+        let upgrade_signal_handle = upgrade_signal
+            .map(|signal_config| {
+                Self::spawn_upgrade_signal_monitor(signal_config, l1_rpc_url, l2_chain_id)
+            })
+            .transpose()?;
 
         Ok(Self { rpc_addr, rollup_config, handle: Some(handle), upgrade_signal_handle })
     }
@@ -178,14 +180,13 @@ impl InProcessFollowConsensus {
         signal_config: UpgradeSignalConfig,
         l1_rpc_url: Url,
         l2_chain_id: u64,
-    ) -> JoinHandle<()> {
-        tokio::spawn(async move {
-            let l1_provider = RootProvider::new_http(l1_rpc_url);
-            let reader = signal_config.reader(l1_provider.clone());
+    ) -> Result<JoinHandle<()>> {
+        let reader = signal_config.reader(l1_rpc_url)?;
+        Ok(tokio::spawn(async move {
             let refresher = signal_config.mode.allows_runtime_admin().then(|| {
                 UpgradeSignalRefresher::new(
                     signal_config.clone(),
-                    l1_provider,
+                    reader.clone(),
                     l2_chain_id,
                     UpgradeSignalMetricLayer::Consensus,
                 )
@@ -209,7 +210,7 @@ impl InProcessFollowConsensus {
                     );
                 }
             }
-        })
+        }))
     }
 
     /// Returns the RPC URL for this consensus node.

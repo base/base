@@ -41,6 +41,7 @@ impl UpgradeSignalArgs {
             mode: self.mode,
             l1_block_tag: self.l1_block_tag,
             node_protocol_version: UpgradeSignalDefaults::node_protocol_version(),
+            request_timeout: UpgradeSignalDefaults::REQUEST_TIMEOUT,
         })
     }
 

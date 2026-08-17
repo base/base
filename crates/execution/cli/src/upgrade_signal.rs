@@ -1,6 +1,5 @@
 //! Execution-node upgrade signal schedule application.
 
-use alloy_provider::RootProvider;
 use base_execution_chainspec::BaseChainSpec;
 use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
 use base_upgrade_signal::{
@@ -32,7 +31,7 @@ impl ExecutionUpgradeSignal {
         config: &ExecutionUpgradeSignalConfig,
         chain_spec: &mut BaseChainSpec,
     ) -> eyre::Result<()> {
-        let reader = config.signal_config.reader(RootProvider::new_http(config.l1_rpc.clone()));
+        let reader = config.signal_config.reader(config.l1_rpc.clone())?;
         let schedule = config
             .signal_config
             .read_validated_schedule(
@@ -94,9 +93,10 @@ impl ExecutionUpgradeSignal {
         }
 
         let chain_id = ctx.config().chain.chain().id();
+        let reader = config.signal_config.reader(config.l1_rpc)?;
         let refresher = UpgradeSignalRefresher::new(
             config.signal_config,
-            RootProvider::new_http(config.l1_rpc),
+            reader,
             chain_id,
             UpgradeSignalMetricLayer::Execution,
         );
@@ -140,15 +140,14 @@ impl BaseNodeExtension for ExecutionUpgradeSignalRuntimeExtension {
         };
 
         hooks.add_node_started_hook(move |ctx| {
-            let l1_provider = RootProvider::new_http(config.l1_rpc.clone());
             let poll_interval = config.signal_config.l1_block_tag.poll_interval();
-            let reader = config.signal_config.reader(l1_provider.clone());
+            let reader = config.signal_config.reader(config.l1_rpc.clone())?;
             // Live updates are re-applied automatically, matching the manual
             // `admin_refreshUpgradeSignal` path.
             let auto_refresher = config.signal_config.mode.allows_runtime_admin().then(|| {
                 UpgradeSignalRefresher::new(
                     config.signal_config.clone(),
-                    l1_provider,
+                    reader.clone(),
                     ctx.chain_spec().chain().id(),
                     UpgradeSignalMetricLayer::Execution,
                 )
@@ -211,12 +210,9 @@ mod tests {
     use super::*;
 
     fn runtime_refresher(chain_id: u64) -> UpgradeSignalRefresher {
-        UpgradeSignalRefresher::new(
-            UpgradeSignalConfig::new(Address::ZERO),
-            RootProvider::new_http("http://127.0.0.1:1".parse().unwrap()),
-            chain_id,
-            UpgradeSignalMetricLayer::Execution,
-        )
+        let config = UpgradeSignalConfig::new(Address::ZERO);
+        let reader = config.reader("http://127.0.0.1:1".parse().unwrap()).unwrap();
+        UpgradeSignalRefresher::new(config, reader, chain_id, UpgradeSignalMetricLayer::Execution)
     }
 
     fn versioned_schedule(

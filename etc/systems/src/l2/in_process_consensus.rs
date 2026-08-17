@@ -13,7 +13,6 @@ use std::{
 
 use alloy_genesis::ChainConfig;
 use alloy_primitives::B256;
-use alloy_provider::RootProvider;
 use alloy_rpc_types_engine::JwtSecret;
 use alloy_signer_local::PrivateKeySigner;
 use base_builder_core::test_utils::get_available_port;
@@ -122,7 +121,7 @@ impl InProcessConsensus {
         if let Some(signal_config) = &config.upgrade_signal
             && signal_config.mode.applies_at_startup()
         {
-            let reader = signal_config.reader(RootProvider::new_http(config.l1_rpc_url.clone()));
+            let reader = signal_config.reader(config.l1_rpc_url.clone())?;
             let schedule = signal_config
                 .read_validated_schedule(
                     &reader,

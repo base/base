@@ -1,5 +1,6 @@
+use core::time::Duration;
+
 use alloy_primitives::{Address, U256};
-use alloy_provider::RootProvider;
 use base_common_genesis::UpgradeActivationSink;
 use tracing::info;
 use url::Url;
@@ -24,6 +25,8 @@ pub struct UpgradeSignalConfig {
     pub l1_block_tag: UpgradeSignalBlockTag,
     /// Node protocol version supported by this binary.
     pub node_protocol_version: U256,
+    /// Total deadline applied to every L1 schedule request.
+    pub request_timeout: Duration,
 }
 
 impl UpgradeSignalConfig {
@@ -34,13 +37,15 @@ impl UpgradeSignalConfig {
             mode: UpgradeSignalMode::MetricsOnly,
             l1_block_tag: UpgradeSignalBlockTag::Finalized,
             node_protocol_version: UpgradeSignalDefaults::node_protocol_version(),
+            request_timeout: UpgradeSignalDefaults::REQUEST_TIMEOUT,
         }
     }
 
-    /// Creates a contract reader using this configuration's contract address and block tag.
-    pub const fn reader(&self, l1_provider: RootProvider) -> AlloyUpgradeSignalReader {
-        AlloyUpgradeSignalReader::new(l1_provider, self.contract_address)
-            .with_block_tag(self.l1_block_tag.block_number_or_tag())
+    /// Creates a hardened contract reader using this configuration's contract address and block
+    /// tag.
+    pub fn reader(&self, l1_rpc: Url) -> Result<AlloyUpgradeSignalReader, UpgradeSignalError> {
+        Ok(AlloyUpgradeSignalReader::new(l1_rpc, self.contract_address, self.request_timeout)?
+            .with_block_tag(self.l1_block_tag.block_number_or_tag()))
     }
 
     /// Returns true if this node supports the minimum protocol version attached to `signal`.
@@ -127,7 +132,7 @@ impl UpgradeSignalConfig {
         CL: UpgradeActivationSink + Clone,
         CL::Error: std::error::Error + Send + Sync + 'static,
     {
-        let reader = self.reader(RootProvider::new_http(l1_rpc));
+        let reader = self.reader(l1_rpc)?;
         let schedule = self
             .read_validated_schedule(
                 &reader,
@@ -158,6 +163,7 @@ impl UpgradeSignalConfig {
             .read_schedule_with_retries(
                 UpgradeSignalDefaults::READ_ATTEMPTS,
                 UpgradeSignalDefaults::READ_BACKOFF,
+                UpgradeSignalDefaults::READ_MAX_BACKOFF,
                 metrics_layers,
             )
             .await?;
@@ -218,6 +224,7 @@ mod tests {
         let config = UpgradeSignalConfig::new(address!("0000000000000000000000000000000000000001"));
 
         assert_eq!(config.l1_block_tag, UpgradeSignalBlockTag::Finalized);
+        assert_eq!(config.request_timeout, UpgradeSignalDefaults::REQUEST_TIMEOUT);
     }
 
     fn signal(protocol_version: U256) -> UpgradeSignal {
