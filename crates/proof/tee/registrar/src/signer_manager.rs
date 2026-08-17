@@ -424,6 +424,9 @@ where
                     return Ok(());
                 };
                 let permit = permit.map_err(|_| {
+                    RegistrarMetrics::record_registration_stage(
+                        RegistrarMetrics::REGISTRATION_STAGE_PROOF_FAILED,
+                    );
                     RegistrarError::Service("hint-generation semaphore closed unexpectedly".into())
                 })?;
                 let hint_plan = plan.clone();
@@ -439,9 +442,17 @@ where
                 };
                 let hints = hints
                     .map_err(|e| {
+                        RegistrarMetrics::record_registration_stage(
+                            RegistrarMetrics::REGISTRATION_STAGE_PROOF_FAILED,
+                        );
                         RegistrarError::Service(format!("hint-generation task failed: {e}"))
                     })?
-                    .map_err(crate::PlannerError::from)?;
+                    .map_err(|e| {
+                        RegistrarMetrics::record_registration_stage(
+                            RegistrarMetrics::REGISTRATION_STAGE_PROOF_FAILED,
+                        );
+                        crate::PlannerError::from(e)
+                    })?;
                 RegistrarMetrics::record_registration_stage(
                     RegistrarMetrics::REGISTRATION_STAGE_PROOF_SUCCEEDED,
                 );

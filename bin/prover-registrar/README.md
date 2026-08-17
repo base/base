@@ -2,9 +2,9 @@
 
 Automated TEE prover signer registration service.
 
-Discovers new TEE prover instances via AWS ALB target group, generates ZK proofs
-of their Nitro attestation certificates via the Boundless Network, and registers
-their signers on-chain via `TEEProverRegistry`.
+Discovers TEE prover instances via an AWS ALB target group, validates their Nitro
+attestations, generates P-384 inverse hints, and submits certificate-cache and
+signer-registration transactions onchain.
 
 ## Discovery Cache TTL
 

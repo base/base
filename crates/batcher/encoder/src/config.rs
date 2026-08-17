@@ -13,7 +13,10 @@ use crate::DaType;
 /// Configuration for the [`BatchEncoder`](crate::BatchEncoder).
 #[derive(Debug, Clone)]
 pub struct EncoderConfig {
-    /// Target compressed output size per channel. Drives `ShadowCompressor` closure.
+    /// Target serialized size of each frame used to derive the channel output limit.
+    ///
+    /// Frame metadata and the optional Brotli version byte are reserved before
+    /// compression begins.
     /// Default: 130,043 bytes (`MAX_BLOB_FRAME_SIZE`).
     pub target_frame_size: usize,
 
@@ -43,7 +46,7 @@ pub struct EncoderConfig {
     /// Default: 0.
     pub sub_safety_margin: u64,
 
-    /// Number of frames to pack into a single L1 transaction.
+    /// Target number of frames per channel and per L1 transaction.
     ///
     /// Each frame maps to one EIP-4844 blob, so setting this to N submits N blobs
     /// per transaction. Cancun supports up to 6; Isthmus (EIP-7892) up to 21.
@@ -53,14 +56,16 @@ pub struct EncoderConfig {
 
     /// Maximum number of L2 blocks to accumulate into one span batch.
     ///
-    /// When unset, span batches close only on size and channel-duration thresholds.
+    /// Reaching the limit seals the current span batch and starts another in the
+    /// same channel. It does not close the channel. When unset, a channel contains
+    /// one span batch.
     ///
     /// Default: `None`.
     pub max_blocks_per_span_batch: Option<usize>,
 
     /// Whether to encode blocks as individual
     /// [`SingleBatch`](base_protocol::batch::SingleBatch)es
-    /// or accumulate them into a single [`SpanBatch`](base_protocol::SpanBatch).
+    /// or group them into [`SpanBatch`](base_protocol::SpanBatch)es.
     ///
     /// Default: [`BatchType::Single`].
     pub batch_type: BatchType,
@@ -75,16 +80,6 @@ pub struct EncoderConfig {
     ///
     /// [`target_num_frames`]: EncoderConfig::target_num_frames
     pub da_type: DaType,
-
-    /// Approximate compression ratio used when estimating span batch compressed size.
-    ///
-    /// Applied as `raw_bytes * approx_compr_ratio` to predict compressed output size
-    /// without actually compressing. Should be slightly below the typical observed ratio
-    /// to avoid creating a small leftover frame. Also passed to the `ShadowCompressor`
-    /// as the ratio hint used when operating in [`BatchType::Single`] mode.
-    ///
-    /// Default: `0.6`.
-    pub approx_compr_ratio: f64,
 
     /// Compression algorithm used for newly opened channels.
     ///
@@ -122,7 +117,6 @@ impl Default for EncoderConfig {
             max_blocks_per_span_batch: None,
             batch_type: BatchType::Single,
             da_type: DaType::Blob,
-            approx_compr_ratio: 0.6,
             compression_algo: CompressionAlgo::Brotli10,
             max_l1_tx_size_bytes: None,
         }
@@ -139,6 +133,22 @@ impl EncoderConfig {
     /// Largest serialized frame that can fit in one blob after reserving the
     /// derivation-version prefix.
     pub const MAX_BLOB_FRAME_SIZE: usize = PROTOCOL_MAX_BLOB_FRAME_SIZE;
+
+    /// Returns the compressed channel bytes that fit in the target frames.
+    ///
+    /// Frame metadata is reserved in every frame. Brotli's channel-version byte
+    /// is reserved once at the start of the first frame. The Span producer uses
+    /// this value as its channel-size boundary.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the configuration has not passed [`Self::validate`].
+    pub fn target_output_size(&self) -> usize {
+        let channel_version_size =
+            usize::from(!matches!(self.compression_algo, CompressionAlgo::Zlib));
+        (self.target_frame_size - Frame::ENCODED_OVERHEAD) * self.target_num_frames
+            - channel_version_size
+    }
 
     /// Validate the configuration, returning an error if any constraint is violated.
     ///
@@ -167,14 +177,33 @@ impl EncoderConfig {
             });
         }
 
+        if self.target_frame_size < min_frame_size {
+            return Err(EncoderConfigError::TargetFrameSizeTooSmall {
+                target_frame_size: self.target_frame_size,
+                min_frame_size,
+            });
+        }
+
+        if self.target_num_frames == 0 {
+            return Err(EncoderConfigError::TargetNumFramesZero);
+        }
+
+        let target_payload_bytes = self.target_frame_size - Frame::ENCODED_OVERHEAD;
+        if target_payload_bytes.checked_mul(self.target_num_frames).is_none() {
+            return Err(EncoderConfigError::TargetOutputSizeOverflow {
+                target_frame_size: self.target_frame_size,
+                target_num_frames: self.target_num_frames,
+            });
+        }
+
         if matches!(self.da_type, DaType::Calldata) && self.target_num_frames != 1 {
             return Err(EncoderConfigError::CalldataRequiresSingleFrame {
                 target_num_frames: self.target_num_frames,
             });
         }
 
-        if matches!(self.max_blocks_per_span_batch, Some(0 | 1)) {
-            return Err(EncoderConfigError::InvalidMaxBlocksPerSpanBatch);
+        if matches!(self.max_blocks_per_span_batch, Some(0)) {
+            return Err(EncoderConfigError::MaxBlocksPerSpanBatchZero);
         }
 
         if matches!(self.da_type, DaType::Blob) && self.max_frame_size > Self::MAX_BLOB_FRAME_SIZE {
@@ -190,12 +219,6 @@ impl EncoderConfig {
             return Err(EncoderConfigError::BlobTargetFrameSizeTooLarge {
                 target_frame_size: self.target_frame_size,
                 max_blob_frame_size: Self::MAX_BLOB_FRAME_SIZE,
-            });
-        }
-
-        if self.approx_compr_ratio <= 0.0 || self.approx_compr_ratio > 1.0 {
-            return Err(EncoderConfigError::InvalidApproxComprRatio {
-                approx_compr_ratio: self.approx_compr_ratio,
             });
         }
 
@@ -264,6 +287,31 @@ pub enum EncoderConfigError {
         /// The minimum frame size for the configured compression algorithm.
         min_frame_size: usize,
     },
+    /// `target_frame_size` cannot carry one compressed byte and any required channel version.
+    #[error(
+        "target_frame_size ({target_frame_size}) must be at least {min_frame_size} bytes \
+         to carry frame metadata and payload"
+    )]
+    TargetFrameSizeTooSmall {
+        /// The configured target frame size.
+        target_frame_size: usize,
+        /// The minimum frame size for the configured compression algorithm.
+        min_frame_size: usize,
+    },
+    /// `target_num_frames == 0`.
+    #[error("target_num_frames must be greater than zero")]
+    TargetNumFramesZero,
+    /// The total target output size does not fit in a `usize`.
+    #[error(
+        "target output size overflows usize for target_frame_size {target_frame_size} \
+         and target_num_frames {target_num_frames}"
+    )]
+    TargetOutputSizeOverflow {
+        /// The configured target frame size.
+        target_frame_size: usize,
+        /// The configured target number of frames.
+        target_num_frames: usize,
+    },
     /// `da_type == DaType::Calldata` but `target_num_frames != 1`.
     ///
     /// Calldata mode submits one frame per L1 transaction. Set
@@ -273,9 +321,9 @@ pub enum EncoderConfigError {
         /// The configured target number of frames.
         target_num_frames: usize,
     },
-    /// `max_blocks_per_span_batch <= 1`.
-    #[error("max_blocks_per_span_batch must be greater than one when set")]
-    InvalidMaxBlocksPerSpanBatch,
+    /// `max_blocks_per_span_batch == 0`.
+    #[error("max_blocks_per_span_batch must be greater than zero when set")]
+    MaxBlocksPerSpanBatchZero,
     /// `da_type == DaType::Blob` but `max_frame_size` leaves no room for the
     /// derivation-version prefix.
     #[error(
@@ -299,19 +347,6 @@ pub enum EncoderConfigError {
         target_frame_size: usize,
         /// The maximum frame size that leaves room for the derivation-version prefix.
         max_blob_frame_size: usize,
-    },
-    /// `approx_compr_ratio <= 0.0 || approx_compr_ratio > 1.0`.
-    ///
-    /// A ratio ≤ 0.0 causes `compressed_estimate` to always be 0, so the span
-    /// accumulator never triggers a size-based channel close, growing unboundedly in
-    /// memory until timeout. A ratio > 1.0 overestimates compressed size, causing
-    /// channels to close after a single block and producing many tiny span batches.
-    ///
-    /// Use a value in the range `(0.0, 1.0]`.
-    #[error("approx_compr_ratio ({approx_compr_ratio}) must be in the range (0.0, 1.0]")]
-    InvalidApproxComprRatio {
-        /// The configured approximate compression ratio.
-        approx_compr_ratio: f64,
     },
     /// `batch_type == BatchType::Span` before Fjord activates.
     #[error(
@@ -366,6 +401,23 @@ mod tests {
             EncoderConfig::BLOB_MAX_DATA_SIZE
         );
         assert_eq!(cfg.max_blocks_per_span_batch, None);
+    }
+
+    #[rstest]
+    #[case(CompressionAlgo::Zlib, 154)]
+    #[case(CompressionAlgo::Brotli10, 153)]
+    fn target_output_size_reserves_frame_overhead(
+        #[case] compression_algo: CompressionAlgo,
+        #[case] expected: usize,
+    ) {
+        let cfg = EncoderConfig {
+            target_frame_size: 100,
+            target_num_frames: 2,
+            compression_algo,
+            ..EncoderConfig::default()
+        };
+
+        assert_eq!(cfg.target_output_size(), expected);
     }
 
     #[rstest]
@@ -428,6 +480,46 @@ mod tests {
         assert!(cfg.validate().is_ok());
     }
 
+    #[rstest]
+    #[case(CompressionAlgo::Zlib, Frame::ENCODED_OVERHEAD, Frame::ENCODED_OVERHEAD + 1)]
+    #[case(CompressionAlgo::Brotli10, Frame::ENCODED_OVERHEAD + 1, Frame::ENCODED_OVERHEAD + 2)]
+    fn validate_rejects_target_without_payload_capacity(
+        #[case] compression_algo: CompressionAlgo,
+        #[case] target_frame_size: usize,
+        #[case] min_frame_size: usize,
+    ) {
+        let cfg = EncoderConfig { compression_algo, target_frame_size, ..EncoderConfig::default() };
+
+        assert!(matches!(
+            cfg.validate().unwrap_err(),
+            EncoderConfigError::TargetFrameSizeTooSmall {
+                target_frame_size: actual,
+                min_frame_size: minimum,
+            } if actual == target_frame_size && minimum == min_frame_size
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_zero_target_frames() {
+        let cfg = EncoderConfig { target_num_frames: 0, ..EncoderConfig::default() };
+
+        assert!(matches!(cfg.validate().unwrap_err(), EncoderConfigError::TargetNumFramesZero));
+    }
+
+    #[test]
+    fn validate_rejects_target_output_size_overflow() {
+        let cfg = EncoderConfig {
+            target_frame_size: usize::MAX,
+            target_num_frames: 2,
+            ..EncoderConfig::default()
+        };
+
+        assert!(matches!(
+            cfg.validate().unwrap_err(),
+            EncoderConfigError::TargetOutputSizeOverflow { .. }
+        ));
+    }
+
     #[test]
     fn validate_rejects_blob_frame_size_that_leaves_no_prefix_room() {
         let cfg = EncoderConfig {
@@ -479,37 +571,18 @@ mod tests {
     }
 
     #[test]
-    fn validate_rejects_tiny_max_blocks_per_span_batch() {
-        for max_blocks_per_span_batch in [0, 1] {
-            let cfg = EncoderConfig {
-                max_blocks_per_span_batch: Some(max_blocks_per_span_batch),
-                ..EncoderConfig::default()
-            };
+    fn validate_rejects_zero_max_blocks_per_span_batch() {
+        let cfg = EncoderConfig { max_blocks_per_span_batch: Some(0), ..EncoderConfig::default() };
 
-            let err = cfg.validate().unwrap_err();
-            assert!(matches!(err, EncoderConfigError::InvalidMaxBlocksPerSpanBatch));
-        }
-    }
-
-    #[rstest]
-    #[case(0.1)] // low but valid
-    #[case(0.6)] // default
-    #[case(1.0)] // exactly 1.0: upper bound is inclusive
-    fn validate_approx_compr_ratio_ok(#[case] approx_compr_ratio: f64) {
-        let cfg = EncoderConfig { approx_compr_ratio, ..EncoderConfig::default() };
-        assert!(cfg.validate().is_ok());
-    }
-
-    #[rstest]
-    #[case(0.0)] // exactly 0: compressed_estimate always 0
-    #[case(-1.0)] // negative: nonsensical ratio
-    #[case(1.1)] // above 1: overestimates compressed size
-    #[case(f64::INFINITY)]
-    fn validate_approx_compr_ratio_err(#[case] approx_compr_ratio: f64) {
-        let cfg = EncoderConfig { approx_compr_ratio, ..EncoderConfig::default() };
         let err = cfg.validate().unwrap_err();
-        assert!(matches!(err, EncoderConfigError::InvalidApproxComprRatio { .. }));
-        assert!(err.to_string().contains("approx_compr_ratio"));
+        assert!(matches!(err, EncoderConfigError::MaxBlocksPerSpanBatchZero));
+    }
+
+    #[test]
+    fn validate_allows_one_block_per_span_batch() {
+        let cfg = EncoderConfig { max_blocks_per_span_batch: Some(1), ..EncoderConfig::default() };
+
+        assert!(cfg.validate().is_ok());
     }
 
     fn rollup_config_with(block_time: u64, fjord_time: Option<u64>) -> RollupConfig {

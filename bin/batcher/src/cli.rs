@@ -155,13 +155,6 @@ pub(crate) struct BatcherArgs {
     )]
     da_type: base_batcher_encoder::DaType,
 
-    /// Approximate compression ratio used for span batch size estimation.
-    ///
-    /// Only relevant when `--batch-type=span`. Should be slightly below the
-    /// typical observed ratio to avoid creating a small leftover frame.
-    #[arg(long = "approx-compr-ratio", default_value = "0.6", env = "BATCHER_APPROX_COMPR_RATIO")]
-    pub approx_compr_ratio: f64,
-
     /// Maximum number of in-flight (unconfirmed) transactions.
     #[arg(
         long = "max-pending-transactions",
@@ -304,7 +297,6 @@ impl BatcherArgs {
             max_blocks_per_span_batch: self.max_blocks_per_span_batch,
             batch_type: self.batch_type.into(),
             da_type: self.da_type,
-            approx_compr_ratio: self.approx_compr_ratio,
             // The batcher binary only targets post-Fjord chains, so it always uses Brotli.
             compression_algo: base_batcher_encoder::CompressionAlgo::Brotli10,
             max_l1_tx_size_bytes: self.max_l1_tx_size_bytes,
@@ -503,11 +495,11 @@ mod tests {
     }
 
     #[test]
-    fn into_config_rejects_one_max_blocks_per_span_batch() {
+    fn into_config_accepts_one_max_blocks_per_span_batch() {
         let cli = parse_cli(&["--max-blocks-per-span-batch", "1"]);
-        let err = cli.args.into_config().expect_err("one-block span batch cap should fail");
+        let config = cli.args.into_config().expect("one-block span batch cap should be valid");
 
-        assert!(err.to_string().contains("max_blocks_per_span_batch"));
+        assert_eq!(config.encoder_config.max_blocks_per_span_batch, Some(1));
     }
 
     #[test]

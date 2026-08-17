@@ -171,6 +171,7 @@ mod tests {
             reorged_out: false,
             canonical_hash: None,
             created_at,
+            updated_at: created_at,
             payload: ShadowBlockPayload {
                 builder_version: String::new(),
                 block: RecoveredBlock::default(),

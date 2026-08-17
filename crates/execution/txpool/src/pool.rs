@@ -645,11 +645,7 @@ where
         nonce_pool: &mut TwoDNoncePool<T>,
     ) -> ValidPoolTransaction<T> {
         let transaction = transaction.into_transaction();
-        let sender_id = nonce_pool
-            .transactions_by_sender(transaction.sender())
-            .first()
-            .map(|transaction| transaction.sender_id())
-            .unwrap_or_else(|| nonce_pool.sender_id_or_create(transaction.sender()));
+        let sender_id = nonce_pool.sender_id_or_create(transaction.sender());
         let authority_ids = authorities.map(|authorities| {
             authorities
                 .into_iter()

@@ -15,7 +15,7 @@ workspace = true
 # ethereum
 alloy-eips.workspace = true
 alloy-consensus.workspace = true
-alloy-primitives.workspace = true
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 
 # reth
 reth-evm.workspace = true

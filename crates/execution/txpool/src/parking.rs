@@ -61,12 +61,6 @@ where
     /// Temporarily parks a transaction that was yielded by this iterator.
     fn park(&mut self, transaction: &Arc<ValidPoolTransaction<T>>);
 
-    /// Returns a snapshot of the currently predicate-parked transactions.
-    ///
-    /// The snapshot owns cloned transaction handles so callers can promote or discard entries
-    /// while scanning it without retaining an immutable borrow of the iterator.
-    fn parked_transactions(&self) -> Vec<Arc<ValidPoolTransaction<T>>>;
-
     /// Makes a parked transaction eligible to compete by priority again.
     fn promote(&mut self, transaction_hash: TxHash) -> bool;
 
@@ -330,10 +324,6 @@ where
     fn park(&mut self, transaction: &Arc<ValidPoolTransaction<T>>) {
         let hash = *transaction.hash();
         self.parked.insert(hash, Arc::clone(transaction));
-    }
-
-    fn parked_transactions(&self) -> Vec<Arc<ValidPoolTransaction<T>>> {
-        self.parked.values().cloned().collect()
     }
 
     fn promote(&mut self, transaction_hash: TxHash) -> bool {

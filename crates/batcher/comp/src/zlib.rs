@@ -5,7 +5,7 @@ use core::cell::{Cell, RefCell};
 
 use miniz_oxide::inflate::{DecompressError, decompress_to_vec_zlib};
 
-use crate::{ChannelCompressor, CompressorResult, CompressorWriter};
+use crate::{CompressorResult, CompressorWriter};
 
 /// The best compression level for ZLIB.
 const BEST_ZLIB_COMPRESSION: u8 = 9;
@@ -13,13 +13,12 @@ const BEST_ZLIB_COMPRESSION: u8 = 9;
 /// The ZLIB compressor.
 ///
 /// Raw input bytes are accumulated on every [`CompressorWriter::write`] call
-/// without compressing them.  Compression is deferred until [`len`],
-/// [`ChannelCompressor::get_compressed`], or [`CompressorWriter::read`] is
-/// called, at which point the entire accumulated buffer is compressed once and
-/// the result is cached.  Subsequent queries return the cached value in O(1)
-/// until the next write invalidates it.
+/// without compressing them. Compression is deferred until [`compressed_len`]
+/// or
+/// [`CompressorWriter::read`] is called, at which point the entire accumulated
+/// buffer is compressed once and cached until the next write invalidates it.
 ///
-/// [`len`]: CompressorWriter::len
+/// [`compressed_len`]: CompressorWriter::compressed_len
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
 pub struct ZlibCompressor {
@@ -78,14 +77,6 @@ impl CompressorWriter for ZlibCompressor {
         Ok(data.len())
     }
 
-    fn flush(&mut self) -> CompressorResult<()> {
-        Ok(())
-    }
-
-    fn close(&mut self) -> CompressorResult<()> {
-        Ok(())
-    }
-
     fn reset(&mut self) {
         self.buffer.clear();
         self.compressed.borrow_mut().clear();
@@ -93,9 +84,9 @@ impl CompressorWriter for ZlibCompressor {
         self.read_offset.set(0);
     }
 
-    fn len(&self) -> usize {
+    fn compressed_len(&self) -> CompressorResult<usize> {
         self.ensure_compressed();
-        self.compressed.borrow().len().saturating_sub(self.read_offset.get())
+        Ok(self.compressed.borrow().len().saturating_sub(self.read_offset.get()))
     }
 
     fn read(&mut self, buf: &mut [u8]) -> CompressorResult<usize> {
@@ -106,13 +97,6 @@ impl CompressorWriter for ZlibCompressor {
         buf[..len].copy_from_slice(&compressed[offset..offset + len]);
         self.read_offset.set(offset + len);
         Ok(len)
-    }
-}
-
-impl ChannelCompressor for ZlibCompressor {
-    fn get_compressed(&self) -> Vec<u8> {
-        self.ensure_compressed();
-        self.compressed.borrow()[self.read_offset.get()..].to_vec()
     }
 }
 
@@ -129,14 +113,14 @@ mod tests {
         compressor.write(input).unwrap();
 
         let mut compressed = Vec::new();
-        while compressor.len() > 0 {
+        while compressor.compressed_len().unwrap() > 0 {
             let mut chunk = vec![0; 3];
             let read = compressor.read(&mut chunk).unwrap();
             compressed.extend_from_slice(&chunk[..read]);
         }
 
         assert_eq!(compressor.read(&mut [0; 1]).unwrap(), 0);
-        assert!(compressor.get_compressed().is_empty());
+        assert_eq!(compressor.compressed_len(), Ok(0));
         assert_eq!(ZlibCompressor::decompress(&compressed).unwrap(), input);
     }
 }

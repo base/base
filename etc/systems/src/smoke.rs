@@ -29,7 +29,7 @@ use url::Url;
 use crate::upgrade_signal::{MockProtocolVersionsClient, UpgradeSignalStackOptions};
 use crate::{
     BATCHER, BUILDER, SEQUENCER,
-    l1::{L1ContainerConfig, L1RpcProxy, L1Stack, L1StackConfig},
+    l1::{L1ContainerConfig, L1Execution, L1RpcProxy, L1Stack, L1StackConfig},
     l2::{
         L2ClientConsensusMode, L2ContainerConfig, L2Stack, L2StackConfig, ShadowSequencersConfig,
     },
@@ -39,7 +39,9 @@ use crate::{
 
 const DEFAULT_L1_CHAIN_ID: u64 = 1337;
 const DEFAULT_L2_CHAIN_ID: u64 = 84538453;
-const DEFAULT_SLOT_DURATION: u64 = 2;
+/// L1 beacon slot duration. Live `op-deployer` confirms one transaction per L1
+/// slot, so this dominates stack startup time.
+const DEFAULT_SLOT_DURATION: u64 = 1;
 const DEFAULT_SHADOW_BLOCKS_PER_CYCLE: NonZeroU64 = NonZeroU64::new(3).unwrap();
 
 /// Longest wait for a live L1 schedule change to be re-applied by a runtime-admin node (the
@@ -319,7 +321,7 @@ impl SystemTestStackBuilder {
         self
     }
 
-    /// Sets the slot duration.
+    /// Sets the L1 beacon slot duration in seconds.
     pub const fn with_slot_duration(mut self, slot_duration: u64) -> Self {
         self.slot_duration = Some(slot_duration);
         self
@@ -587,14 +589,20 @@ impl SystemTestStackBuilder {
             container_config: l1_container_config,
         };
 
-        let l1_stack = L1Stack::start(l1_config).await.wrap_err("Failed to start L1 stack")?;
-
-        let l1_internal_rpc_url = l1_stack.reth().internal_rpc_url();
-        let l2_deployment =
-            tokio::task::spawn_blocking(move || setup.deploy_l2_contracts(&l1_internal_rpc_url))
-                .await
-                .wrap_err("L2 deployment task panicked")?
-                .wrap_err("Failed to deploy L2 contracts")?;
+        // Start Reth first, then overlap live L2 deployment with Lighthouse
+        // startup. `op-deployer apply` only needs the EL RPC; its transactions
+        // sit in the mempool until the validator begins producing blocks.
+        let l1_execution =
+            L1Execution::start(l1_config).await.wrap_err("Failed to start L1 execution layer")?;
+        let l1_internal_rpc_url = l1_execution.reth().internal_rpc_url();
+        let deploy_handle =
+            tokio::task::spawn_blocking(move || setup.deploy_l2_contracts(&l1_internal_rpc_url));
+        let l1_stack =
+            l1_execution.start_consensus().await.wrap_err("Failed to start L1 consensus")?;
+        let l2_deployment = deploy_handle
+            .await
+            .wrap_err("L2 deployment task panicked")?
+            .wrap_err("Failed to deploy L2 contracts")?;
 
         let jwt_secret = JwtSecret::random();
 
@@ -673,6 +681,7 @@ impl SystemTestStackBuilder {
             batcher_key: BATCHER.private_key,
             l1_rpc_url: l2_l1_rpc_url,
             l1_beacon_url: l1_stack.beacon().beacon_url().await?,
+            l1_slot_duration: slot_duration,
             container_config: l2_container_config,
             tx_forwarding_config: self.tx_forwarding_config,
             enable_experimental_validity_transactions: self

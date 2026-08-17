@@ -44,8 +44,8 @@ pub use flashblocks::{
     BasePayloadBuilderCtx, BestFlashblocksTxs, BlockPayloadJob, BlockPayloadJobGenerator,
     BuildArguments, FlashblockDiagnostics, FlashblockSelectionOutcome, FlashblocksExtraCtx,
     FlashblocksServiceBuilder, ParkableBestPayloadTransactions, ParkablePayloadTransactions,
-    PayloadBuilder, PayloadHandler, PayloadJobDeadline, PayloadTransactionInvalidated,
-    ResolvePayload,
+    ParkedPredicateIndex, PayloadBuilder, PayloadHandler, PayloadJobDeadline,
+    PayloadTransactionInvalidated, ResolvePayload, ValidityPredicateKey,
 };
 
 mod extension;

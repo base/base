@@ -22,7 +22,7 @@ use base_execution_payload_builder::{
     BasePayloadBuilderAttributes, error::BasePayloadBuilderError,
 };
 use base_execution_txpool::{
-    BasePooledTx, BundleTransaction, GuardMetrics, TimestampedTransaction,
+    BasePooledTx, BundleTransaction, GuardMetrics, PredicateContext, TimestampedTransaction,
     estimated_da_size::DataAvailabilitySized,
 };
 use base_observability_events::TransactionEventType;
@@ -44,8 +44,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Level, debug, span, trace, warn};
 
 use crate::{
-    BuilderConfig, BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded, PayloadTxsBounds,
-    ResourceLimits, TxResources, TxnExecutionError, TxnOutcome,
+    BuilderConfig, BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded,
+    ParkedPredicateIndex, PayloadTxsBounds, ResourceLimits, TxResources, TxnExecutionError,
+    TxnOutcome, ValidityPredicateKey,
     transaction_events::{
         BuilderAcceptedEventData, BuilderConsideredEventData, BuilderRejectedEventData,
         BuilderTransactionEventContext, emit_builder_transaction_event, rejection_reason_code,
@@ -676,6 +677,9 @@ impl BasePayloadBuilderCtx {
         let block_number = as_u64_saturated!(self.evm_env.block_env.number);
         let block_timestamp = self.attributes().timestamp();
         let payload_id = self.payload_id().to_string();
+        let mut predicate_index = ParkedPredicateIndex::default();
+        let predicate_context =
+            PredicateContext { block_number, flashblock_index: self.flashblock_index() };
 
         while let Some(tx) = best_txs.next(()) {
             if tx.is_bundle_expired(block_number, block_timestamp) {
@@ -771,23 +775,24 @@ impl BasePayloadBuilderCtx {
 
             let tx_hash = *tx.hash();
             let mut predicate_read_failed = false;
-            let predicates_match = {
-                let db = evm.db_mut();
-                tx.validity_predicates().iter().all(|predicate| {
-                    predicate.matches_state(db).unwrap_or_else(|error| {
-                        warn!(
-                            target: "payload_builder",
-                            tx_hash = ?tx_hash,
-                            predicate = ?predicate,
-                            error = ?error,
-                            "failed to read validity predicate state"
-                        );
-                        predicate_read_failed = true;
-                        false
-                    })
-                })
+            let blocking_predicate = match ValidityPredicateKey::first_unsatisfied(
+                tx.validity_predicates(),
+                evm.db_mut(),
+                &predicate_context,
+            ) {
+                Ok(blocking_predicate) => blocking_predicate,
+                Err(error) => {
+                    warn!(
+                        target: "payload_builder",
+                        tx_hash = ?tx_hash,
+                        error = ?error,
+                        "failed to read validity predicate state"
+                    );
+                    predicate_read_failed = true;
+                    None
+                }
             };
-            if !predicates_match {
+            if predicate_read_failed || blocking_predicate.is_some() {
                 num_txs_considered += 1;
                 let ordering_position = num_txs_considered;
                 let (rejection_reason, rejection_detail) = if predicate_read_failed {
@@ -834,8 +839,13 @@ impl BasePayloadBuilderCtx {
                 // A read failure cannot be retried at a later ordering position: including the
                 // transaction there could place it behind a lower-priority transaction even though
                 // its predicate may have already been satisfied at its first position.
-                let should_invalidate = predicate_read_failed || !best_txs.park_current();
-                if should_invalidate {
+                if predicate_read_failed {
+                    best_txs.mark_invalid(tx.sender(), tx.nonce());
+                } else if let Some(blocking_predicate) = blocking_predicate
+                    && best_txs.park_current()
+                {
+                    predicate_index.park(tx_hash, tx, blocking_predicate);
+                } else {
                     best_txs.mark_invalid(tx.sender(), tx.nonce());
                 }
                 continue;
@@ -1310,39 +1320,56 @@ impl BasePayloadBuilderCtx {
             };
             info.receipts.push(self.build_receipt(ctx, None));
 
+            let affected_parked = if predicate_index.is_empty() {
+                Vec::new()
+            } else {
+                predicate_index.affected_by_state(&state)
+            };
+
             // commit changes
             evm.db_mut().commit(state);
 
-            // The committed state can satisfy transactions that were previously predicate-invalid.
-            // Release the committed transaction's lane first, then naively rescan all parked heads.
+            // Release the committed transaction's lane before promoting predicate-unblocked heads.
             best_txs.mark_current_committed();
             let predicate_rescan_start = Instant::now();
-            let parked_transactions = best_txs.parked_transactions();
-            let rescanned_predicates = !parked_transactions.is_empty();
-            for parked in parked_transactions {
-                let parked_hash = *parked.hash();
+            for parked_hash in &affected_parked {
                 let mut predicate_read_failed = false;
-                let predicates_match =
-                    parked.transaction.validity_predicates().iter().all(|predicate| {
-                        predicate.matches_state(evm.db_mut()).unwrap_or_else(|error| {
-                            warn!(
-                                target: "payload_builder",
-                                tx_hash = ?parked_hash,
-                                predicate = ?predicate,
-                                error = ?error,
-                                "failed to re-read validity predicate state"
-                            );
-                            predicate_read_failed = true;
-                            false
-                        })
-                    });
+                let Some(parked_transaction) = predicate_index.transaction(*parked_hash) else {
+                    warn!(
+                        target: "payload_builder",
+                        tx_hash = ?parked_hash,
+                        "affected transaction is no longer predicate-indexed"
+                    );
+                    continue;
+                };
+                let blocking_predicate = match ValidityPredicateKey::first_unsatisfied(
+                    parked_transaction.validity_predicates(),
+                    evm.db_mut(),
+                    &predicate_context,
+                ) {
+                    Ok(blocking_predicate) => blocking_predicate,
+                    Err(error) => {
+                        warn!(
+                            target: "payload_builder",
+                            tx_hash = ?parked_hash,
+                            error = ?error,
+                            "failed to re-read validity predicate state"
+                        );
+                        predicate_read_failed = true;
+                        None
+                    }
+                };
                 if predicate_read_failed {
-                    best_txs.discard_parked(parked_hash);
-                } else if predicates_match {
-                    best_txs.promote(parked_hash);
+                    predicate_index.remove(*parked_hash);
+                    best_txs.discard_parked(*parked_hash);
+                } else if let Some(blocking_predicate) = blocking_predicate {
+                    predicate_index.reindex(*parked_hash, blocking_predicate);
+                } else {
+                    predicate_index.remove(*parked_hash);
+                    best_txs.promote(*parked_hash);
                 }
             }
-            if rescanned_predicates {
+            if !affected_parked.is_empty() {
                 BuilderMetrics::validity_predicate_rescan_duration()
                     .record(predicate_rescan_start.elapsed().as_secs_f64());
             }

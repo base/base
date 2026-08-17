@@ -19,7 +19,6 @@ use base_proof_contracts::{
     CertManagerContractClient, NitroValidatorClient, NitroValidatorContractClient,
     TEEProverRegistryClient, TEEProverRegistryContractClient,
 };
-use base_proof_tee_nitro_attestation_prover::BoundlessProverConfig;
 use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -46,9 +45,8 @@ pub struct RegistrarConfig {
     pub signing: SignerConfig,
     /// Transaction manager configuration.
     pub tx_manager_config: TxManagerConfig,
-    /// Legacy Boundless configuration retained until O6 removes deployment requirements.
-    /// O5 never constructs or invokes a Boundless proof client.
-    pub boundless_prover_config: BoundlessProverConfig,
+    /// Maximum accepted attestation age.
+    pub max_attestation_age: Duration,
     /// Interval between discovery and registration poll cycles.
     pub poll_interval: Duration,
     /// Timeout for JSON-RPC calls to prover instances.
@@ -81,7 +79,7 @@ impl fmt::Debug for RegistrarConfig {
             .field("prover_port", &self.prover_port)
             .field("signing", &self.signing)
             .field("tx_manager_config", &self.tx_manager_config)
-            .field("boundless_prover_config", &self.boundless_prover_config)
+            .field("max_attestation_age", &self.max_attestation_age)
             .field("poll_interval", &self.poll_interval)
             .field("prover_timeout", &self.prover_timeout)
             .field("max_concurrency", &self.max_concurrency)
@@ -148,32 +146,6 @@ impl RegistrarConfig {
                 }
             }));
 
-            let boundless_address = self.boundless_prover_config.signer.address();
-            let (boundless_layer, mut boundless_balance_rx) = BalanceMonitorLayer::new(
-                boundless_address,
-                cancel.clone(),
-                BalanceMonitorLayer::DEFAULT_POLL_INTERVAL,
-            );
-            // The balance monitor layer starts polling when it is applied.
-            let _boundless_provider = ProviderBuilder::new()
-                .layer(boundless_layer)
-                .connect_http(self.boundless_prover_config.rpc_url.clone());
-            let boundless_balance_cancel = cancel.clone();
-            balance_monitor_handles.push(tokio::spawn(async move {
-                loop {
-                    tokio::select! {
-                        () = boundless_balance_cancel.cancelled() => break,
-                        changed = boundless_balance_rx.changed() => {
-                            if changed.is_err() {
-                                break;
-                            }
-                            RegistrarMetrics::boundless_balance_wei()
-                                .set(f64::from(*boundless_balance_rx.borrow_and_update()));
-                        }
-                    }
-                }
-            }));
-
             ProviderBuilder::new().layer(layer).connect_http(self.l1_rpc_url.clone())
         } else {
             ProviderBuilder::new().connect_http(self.l1_rpc_url.clone())
@@ -229,7 +201,6 @@ impl RegistrarConfig {
         let health_handle =
             tokio::spawn(HealthServer::serve(self.health_addr, Arc::clone(&ready), cancel.clone()));
 
-        let max_attestation_age = self.boundless_prover_config.max_attestation_age;
         let signer_manager = Arc::new(SignerManager::new(
             registry,
             cert_manager,
@@ -239,7 +210,7 @@ impl RegistrarConfig {
                 max_concurrency: self.max_concurrency,
                 max_tx_retries: self.max_tx_retries,
                 tx_retry_delay: self.tx_retry_delay,
-                max_attestation_age,
+                max_attestation_age: self.max_attestation_age,
                 crl_checks_enabled: self.crl_nitro_verifier_address.is_some(),
             },
         )?);
@@ -309,24 +280,7 @@ mod tests {
                     .unwrap(),
             ),
             tx_manager_config: TxManagerConfig::default(),
-            boundless_prover_config: BoundlessProverConfig {
-                rpc_url: Url::parse("https://boundless.example/v3/BOUNDLESS_SECRET").unwrap(),
-                signer: "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
-                    .parse()
-                    .unwrap(),
-                verifier_program_url: Url::parse("https://program.example/ipfs/PROGRAM_SECRET")
-                    .unwrap(),
-                image_id: [0; 8],
-                poll_interval: Duration::from_secs(1),
-                timeout: Duration::from_secs(1),
-                max_recovery_attempts: 1,
-                max_attestation_age: Duration::from_secs(1),
-                offer_min_price: None,
-                offer_max_price: None,
-                offer_ramp_up_period_secs: None,
-                offer_lock_timeout_secs: None,
-                offer_bidding_start_delay_secs: 0,
-            },
+            max_attestation_age: Duration::from_secs(1),
             poll_interval: Duration::from_secs(1),
             prover_timeout: Duration::from_secs(1),
             max_concurrency: 1,
