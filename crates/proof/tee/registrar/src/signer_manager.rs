@@ -238,6 +238,10 @@ impl<R, C, T> SignerManager<R, C, T> {
                 timestamp_ms,
                 "pre-submission freshness check failed"
             );
+            RegistrarMetrics::record_registration_stage(
+                RegistrarMetrics::REGISTRATION_STAGE_PROOF_STALE,
+            );
+            RegistrarMetrics::record_final_registration(RegistrarMetrics::TX_OUTCOME_STALE);
             return Err(RegistrarError::StaleAttestationProof {
                 signer,
                 age,
@@ -414,6 +418,7 @@ where
                 RegistrarMetrics::record_registration_stage(
                     RegistrarMetrics::REGISTRATION_STAGE_PROOF_STARTED,
                 );
+                RegistrarMetrics::record_hint_generation(RegistrarMetrics::HINT_GENERATION_STARTED);
                 let Some(permit) = signer_cancel
                     .run_until_cancelled(Arc::clone(&self.hint_semaphore).acquire_owned())
                     .await
@@ -421,11 +426,17 @@ where
                     RegistrarMetrics::record_registration_stage(
                         RegistrarMetrics::REGISTRATION_STAGE_PROOF_CANCELLED,
                     );
+                    RegistrarMetrics::record_hint_generation(
+                        RegistrarMetrics::HINT_GENERATION_CANCELLED,
+                    );
                     return Ok(());
                 };
                 let permit = permit.map_err(|_| {
                     RegistrarMetrics::record_registration_stage(
                         RegistrarMetrics::REGISTRATION_STAGE_PROOF_FAILED,
+                    );
+                    RegistrarMetrics::record_hint_generation(
+                        RegistrarMetrics::HINT_GENERATION_FAILED,
                     );
                     RegistrarError::Service("hint-generation semaphore closed unexpectedly".into())
                 })?;
@@ -438,6 +449,9 @@ where
                     RegistrarMetrics::record_registration_stage(
                         RegistrarMetrics::REGISTRATION_STAGE_PROOF_CANCELLED,
                     );
+                    RegistrarMetrics::record_hint_generation(
+                        RegistrarMetrics::HINT_GENERATION_CANCELLED,
+                    );
                     return Ok(());
                 };
                 let hints = hints
@@ -445,16 +459,25 @@ where
                         RegistrarMetrics::record_registration_stage(
                             RegistrarMetrics::REGISTRATION_STAGE_PROOF_FAILED,
                         );
+                        RegistrarMetrics::record_hint_generation(
+                            RegistrarMetrics::HINT_GENERATION_FAILED,
+                        );
                         RegistrarError::Service(format!("hint-generation task failed: {e}"))
                     })?
                     .map_err(|e| {
                         RegistrarMetrics::record_registration_stage(
                             RegistrarMetrics::REGISTRATION_STAGE_PROOF_FAILED,
                         );
+                        RegistrarMetrics::record_hint_generation(
+                            RegistrarMetrics::HINT_GENERATION_FAILED,
+                        );
                         crate::PlannerError::from(e)
                     })?;
                 RegistrarMetrics::record_registration_stage(
                     RegistrarMetrics::REGISTRATION_STAGE_PROOF_SUCCEEDED,
+                );
+                RegistrarMetrics::record_hint_generation(
+                    RegistrarMetrics::HINT_GENERATION_SUCCEEDED,
                 );
                 hints
             }
@@ -467,6 +490,16 @@ where
                 hints.cert_signature_hints.len()
             )));
         }
+        for (cert, cert_hints) in plan.certs.iter().zip(&hints.cert_signature_hints) {
+            RegistrarMetrics::record_hint_size(
+                RegistrarMetrics::cert_kind_label(cert.kind),
+                cert_hints.len(),
+            );
+        }
+        RegistrarMetrics::record_hint_size(
+            RegistrarMetrics::HINT_KIND_ATTESTATION,
+            hints.attestation_hints.len(),
+        );
         for (cert, cert_hints) in plan.certs.iter().zip(&hints.cert_signature_hints) {
             if !self
                 .ensure_cert_cached(cert, cert_hints, signer_address, plan.timestamp, signer_cancel)
@@ -663,8 +696,11 @@ where
 
         match self.validate_cached_cert(cert, signer_cancel).await? {
             None => return Ok(false),
-            Some(true) => return Ok(true),
-            Some(false) => {}
+            Some(true) => {
+                RegistrarMetrics::record_cache_lookup(cert.kind, true);
+                return Ok(true);
+            }
+            Some(false) => RegistrarMetrics::record_cache_lookup(cert.kind, false),
         }
 
         let tx_data = match cert.kind {
@@ -687,11 +723,26 @@ where
                 return Ok(false);
             }
             self.ensure_attestation_fresh(signer, timestamp_ms)?;
+            RegistrarMetrics::record_cache_tx(cert.kind, RegistrarMetrics::TX_OUTCOME_SUBMITTED);
             let result = self.tx_manager.send(candidate.clone()).await;
             let state = self.validate_cached_cert(cert, signer_cancel).await;
             let mut state_error = None;
             match state {
-                Ok(Some(true)) => return Ok(true),
+                Ok(Some(true)) => {
+                    if result.as_ref().is_ok_and(|receipt| receipt.inner.status()) {
+                        RegistrarMetrics::record_cache_tx(
+                            cert.kind,
+                            RegistrarMetrics::TX_OUTCOME_SUCCEEDED,
+                        );
+                    } else {
+                        RegistrarMetrics::record_cache_tx(
+                            cert.kind,
+                            RegistrarMetrics::TX_OUTCOME_OBSERVED_CACHED,
+                        );
+                        RegistrarMetrics::record_recovery(RegistrarMetrics::RECOVERY_CACHE);
+                    }
+                    return Ok(true);
+                }
                 Ok(None) => return Ok(false),
                 Err(
                     error @ (RegistrarError::ExpiredCertificate { .. }
@@ -720,6 +771,10 @@ where
                     )));
                 }
                 Ok(receipt) => {
+                    RegistrarMetrics::record_cache_tx(
+                        cert.kind,
+                        RegistrarMetrics::TX_OUTCOME_REVERTED,
+                    );
                     return Err(RegistrarError::CertificateCacheReverted {
                         cert_hash: cert.cert_hash,
                         tx_hash: receipt.transaction_hash,
@@ -727,6 +782,10 @@ where
                 }
                 Err(error) if error.is_retryable() && retry < self.max_tx_retries => {
                     let retry = retry + 1;
+                    RegistrarMetrics::record_cache_tx(
+                        cert.kind,
+                        RegistrarMetrics::TX_OUTCOME_RETRY,
+                    );
                     if !self
                         .sleep_before_retry(
                             retry,
@@ -740,7 +799,13 @@ where
                         return Ok(false);
                     }
                 }
-                Err(error) => return Err(error.into()),
+                Err(error) => {
+                    RegistrarMetrics::record_cache_tx(
+                        cert.kind,
+                        RegistrarMetrics::TX_OUTCOME_FAILED,
+                    );
+                    return Err(error.into());
+                }
             }
         }
         unreachable!("bounded certificate retry loop must return")
@@ -868,6 +933,9 @@ where
                 RegistrarMetrics::record_registration_stage(
                     RegistrarMetrics::REGISTRATION_STAGE_TX_OBSERVED_REGISTERED,
                 );
+                RegistrarMetrics::record_final_registration(
+                    RegistrarMetrics::TX_OUTCOME_OBSERVED_REGISTERED,
+                );
                 return Ok(());
             }
 
@@ -880,6 +948,7 @@ where
             RegistrarMetrics::record_registration_stage(
                 RegistrarMetrics::REGISTRATION_STAGE_TX_SUBMITTED,
             );
+            RegistrarMetrics::record_final_registration(RegistrarMetrics::TX_OUTCOME_SUBMITTED);
             let result = self.tx_manager.send(candidate.clone()).await;
             match result {
                 Ok(receipt) if receipt.inner.status() => {
@@ -887,16 +956,26 @@ where
                     RegistrarMetrics::record_registration_stage(
                         RegistrarMetrics::REGISTRATION_STAGE_TX_SUCCEEDED,
                     );
+                    RegistrarMetrics::record_final_registration(
+                        RegistrarMetrics::TX_OUTCOME_SUCCEEDED,
+                    );
                     RegistrarMetrics::registrations_total().increment(1);
                     return Ok(());
                 }
                 Ok(receipt) => {
                     match self.observed_registered(signer, signer_cancel).await {
-                        Some(true) | None => return Ok(()),
+                        Some(true) => {
+                            RegistrarMetrics::record_recovery(RegistrarMetrics::RECOVERY_FINAL);
+                            return Ok(());
+                        }
+                        None => return Ok(()),
                         Some(false) => {}
                     }
                     RegistrarMetrics::record_registration_stage(
                         RegistrarMetrics::REGISTRATION_STAGE_TX_REVERTED,
+                    );
+                    RegistrarMetrics::record_final_registration(
+                        RegistrarMetrics::TX_OUTCOME_REVERTED,
                     );
                     return Err(RegistrarError::ReceiptReverted {
                         tx_hash: receipt.transaction_hash,
@@ -910,6 +989,7 @@ where
                                 error = %error,
                                 "registration transaction errored but signer is registered"
                             );
+                            RegistrarMetrics::record_recovery(RegistrarMetrics::RECOVERY_FINAL);
                             return Ok(());
                         }
                         None => return Ok(()),
@@ -919,12 +999,16 @@ where
                         RegistrarMetrics::record_registration_stage(
                             RegistrarMetrics::REGISTRATION_STAGE_TX_FAILED,
                         );
+                        RegistrarMetrics::record_final_registration(
+                            RegistrarMetrics::TX_OUTCOME_FAILED,
+                        );
                         return Err(error.into());
                     }
                     let retry = retry + 1;
                     RegistrarMetrics::record_registration_stage(
                         RegistrarMetrics::REGISTRATION_STAGE_TX_RETRY,
                     );
+                    RegistrarMetrics::record_final_registration(RegistrarMetrics::TX_OUTCOME_RETRY);
                     if !self
                         .sleep_before_retry(retry, signer, "registration", &error, signer_cancel)
                         .await
