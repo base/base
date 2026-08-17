@@ -99,7 +99,6 @@ string-lit-as-bytes = "warn"
 
 [profile.dev]
 debug = "line-tables-only"
-incremental = true
 
 [profile.release]
 opt-level = 3
