@@ -7,8 +7,11 @@ max-threads = 1
 [test-groups.builder-integration]
 max-threads = 1
 
+# Each stack is a full L1 (reth + lighthouse + validator) plus in-process L2.
+# Six concurrent stacks OOM the 32 GiB BasePerfRunnerGroup even after
+# serializing L2 deploy behind L1 startup (base/base#4479).
 [test-groups.system-tests]
-max-threads = 6
+max-threads = 2
 
 [profile.ci]
 junit = { path = "test-results.xml" }
