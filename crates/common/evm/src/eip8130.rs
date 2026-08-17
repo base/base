@@ -209,6 +209,24 @@ impl Eip8130Executor {
 
         let ctx = evm.ctx_mut();
         let chain_id = ctx.cfg().chain_id();
+
+        // Consensus-critical cross-chain-replay guard. The sender and payer
+        // signature hashes commit to the transaction body's *embedded* `chain_id`,
+        // not the local chain, so a signature produced for another chain verifies
+        // bit-for-bit when the identical bytes are executed here. `validate_static`
+        // rejects a chain-id mismatch at pool admission, but block inclusion
+        // (direct build / Engine delivery / singular-batch derivation, which
+        // preserves the original raw bytes) bypasses the pool. The equality MUST be
+        // enforced here — the enshrined pipeline is the only choke point every
+        // inclusion path shares — so a foreign-chain envelope cannot advance the
+        // sender's nonce or charge their balance locally. Unlike ordinary typed
+        // transactions, the 8130 path bypasses revm's
+        // `validate_against_state_and_deduct_caller` (see the L1BlockInfo refresh
+        // below), so it does not inherit that path's chain-id check.
+        if signed.tx().chain_id != chain_id {
+            return Err(BaseTransactionError::eip8130("chain id mismatch").into());
+        }
+
         let spec = ctx.cfg().spec();
         // Consensus-critical: a clamped timestamp would silently shift the expiry
         // validation in the authorizer and nonce validator, so reject rather than
@@ -1971,6 +1989,53 @@ mod tests {
         // Fees were routed: base fee to the vault, priority tip to the beneficiary.
         assert!(outcome.state.contains_key(&Predeploys::BASE_FEE_VAULT));
         assert!(outcome.state.contains_key(&BENEFICIARY));
+    }
+
+    /// Cross-chain-replay guard: an EIP-8130 envelope signed for a foreign chain
+    /// must be rejected at inclusion, not just at pool admission. The sender and
+    /// payer signature hashes commit to the transaction's embedded `chain_id`, so
+    /// the same bytes verify on any chain; only `Eip8130Executor::execute`'s
+    /// chain-id equality check stops it from advancing the nonce or charging the
+    /// balance locally. Regression for the txpool-only `validate_static` gate.
+    #[test]
+    fn foreign_chain_id_is_rejected_at_inclusion() {
+        let key = signing_key(0xa1);
+        let sender = eoa_address(&key);
+        let mut tx = base_tx();
+        tx.chain_id = 1;
+        let signed = eoa_signed(tx, &key);
+        assert_eq!(signed.tx().chain_id, 1);
+
+        let initial_balance = U256::from(10u64).pow(U256::from(18u64));
+        let mut evm = evm_with(initial_balance, sender);
+        assert_eq!(evm.ctx().cfg().chain_id(), CHAIN_ID);
+
+        let err = evm.transact_raw(into_base_tx(&signed)).unwrap_err();
+        let EVMError::Transaction(BaseTransactionError::Eip8130(reason)) = err else {
+            panic!("foreign-chain 8130 tx must be rejected as a validity error, got {err:?}");
+        };
+        assert!(reason.contains("chain id mismatch"), "unexpected reason: {reason}");
+    }
+
+    /// The chain-id guard rejects only mismatches: an envelope whose embedded
+    /// `chain_id` equals the local chain still executes normally.
+    #[test]
+    fn matching_chain_id_still_executes() {
+        let key = signing_key(0xa2);
+        let sender = eoa_address(&key);
+        let mut tx = base_tx();
+        tx.chain_id = CHAIN_ID;
+        let signed = eoa_signed(tx, &key);
+
+        let initial_balance = U256::from(10u64).pow(U256::from(18u64));
+        let mut evm = evm_with(initial_balance, sender);
+        let outcome =
+            evm.transact_raw(into_base_tx(&signed)).expect("local-chain 8130 tx should execute");
+
+        assert!(outcome.result.is_success());
+        let sender_acc = outcome.state.get(&sender).expect("sender in state");
+        assert_eq!(sender_acc.info.nonce, 1);
+        assert!(sender_acc.info.balance < initial_balance);
     }
 
     #[test]
