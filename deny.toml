@@ -145,6 +145,8 @@ skip = [
     "prost-derive",
     "prost",
     "prost-types",
+    "redox_syscall",
+    "ripemd",
     "rustc-hash",
     "shlex",
     "strum",

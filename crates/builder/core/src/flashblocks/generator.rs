@@ -146,7 +146,7 @@ where
             publish_guard,
             deadline,
             cached_reads: self.maybe_pre_cached(parent_hash),
-            execution_cache: resources.execution_cache().map(|c| c.clone()),
+            execution_cache: resources.execution_cache().cloned(),
         };
 
         job.spawn_build_job();
