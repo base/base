@@ -44,7 +44,6 @@ base-execution-payload-builder.workspace = true
 
 # ethereum
 revm.workspace = true
-alloy-rlp.workspace = true
 alloy-eips.workspace = true
 alloy-serde.workspace = true
 alloy-json-rpc.workspace = true

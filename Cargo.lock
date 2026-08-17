@@ -4483,7 +4483,6 @@ dependencies = [
  "alloy-eips 2.4.1",
  "alloy-json-rpc 2.4.1",
  "alloy-primitives",
- "alloy-rlp",
  "alloy-rpc-client",
  "alloy-rpc-types-debug",
  "alloy-rpc-types-engine",

@@ -458,7 +458,7 @@ impl ActionEngineClient {
             let hashed_state = HashedPostStateProvider::hashed_post_state(
                 &LatestStateProviderRef::new(&state_provider),
                 &execution_output.state,
-            );
+            )?;
             drop(state_provider);
 
             let provider_rw = inner.provider_factory.provider_rw().map_err(|e| {
