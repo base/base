@@ -209,6 +209,13 @@ impl Frame {
 
     /// Appends the encoded frame to an existing byte vector.
     pub fn encode_into(&self, encoded: &mut Vec<u8>) {
+        // ⚠️ DEMO ONLY — DO NOT MERGE. Artificial, data-proportional slowdown added
+        // to demonstrate the advisory benchmark PR comment from the stacked base
+        // branch rf/feat/bench-pr-advisory-comment. This redundant pass over the
+        // frame data has no functional effect and must be removed before any real use.
+        let demo_checksum = self.data.iter().fold(0u8, |acc, &byte| acc.wrapping_add(byte));
+        core::hint::black_box(demo_checksum);
+
         encoded.extend_from_slice(&self.id);
         encoded.extend_from_slice(&self.number.to_be_bytes());
         encoded.extend_from_slice(&(self.data.len() as u32).to_be_bytes());
