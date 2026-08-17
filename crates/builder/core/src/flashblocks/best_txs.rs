@@ -44,11 +44,6 @@ where
     /// Commits and clears the current transaction, if any.
     fn mark_current_committed(&mut self);
 
-    /// Returns a snapshot of all predicate-parked transactions.
-    ///
-    /// The snapshot permits callers to mutate the underlying iterator while scanning it.
-    fn parked_transactions(&self) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>>;
-
     /// Promotes a predicate-parked transaction back into priority competition.
     fn promote(&mut self, transaction_hash: TxHash) -> bool;
 
@@ -66,10 +61,6 @@ where
     }
 
     fn mark_current_committed(&mut self) {}
-
-    fn parked_transactions(&self) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
-        Vec::new()
-    }
 
     fn promote(&mut self, _transaction_hash: TxHash) -> bool {
         false
@@ -160,10 +151,6 @@ where
         if let Some(transaction) = self.current.take() {
             self.inner.mark_committed(&transaction);
         }
-    }
-
-    fn parked_transactions(&self) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
-        self.inner.parked_transactions()
     }
 
     fn promote(&mut self, transaction_hash: TxHash) -> bool {
@@ -314,10 +301,6 @@ where
         if let Some((transaction_hash, _, _)) = self.current_transaction.take() {
             self.committed_transactions.insert(transaction_hash);
         }
-    }
-
-    fn parked_transactions(&self) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
-        self.inner.parked_transactions()
     }
 
     fn promote(&mut self, transaction_hash: TxHash) -> bool {
