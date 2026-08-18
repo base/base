@@ -733,8 +733,6 @@ impl BasePayloadBuilderCtx {
                             limits,
                             None,
                         )
-                        .with_bundle_block_window(min_block_number, max_block_number)
-                        .with_block_timestamp(block_timestamp)
                     },
                 );
                 best_txs.mark_invalid(tx.sender(), tx.nonce());
