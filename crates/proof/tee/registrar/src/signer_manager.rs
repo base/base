@@ -60,6 +60,40 @@ pub struct SignerManagerConfig {
     pub crl_checks_enabled: bool,
 }
 
+/// What one certificate-cache transaction attempt did onchain.
+///
+/// Each variant maps to exactly one terminal `cert_cache_tx_total` outcome, so the retry loop can
+/// record the counter from this value instead of at each of its exits.
+#[derive(Debug)]
+pub enum CacheTxAttempt {
+    /// The submitted transaction cached a usable certificate.
+    Cached,
+    /// The certificate is cached, but not by this attempt's successful receipt.
+    ObservedCached,
+    /// The signer task was cancelled before the onchain state could be confirmed.
+    Cancelled,
+    /// The transaction was included but reverted.
+    Reverted(RegistrarError),
+    /// The attempt failed permanently.
+    Failed(RegistrarError),
+    /// The submission failed with a retryable error and retries remain.
+    Retry(TxManagerError),
+}
+
+impl CacheTxAttempt {
+    /// Returns the bounded `cert_cache_tx_total` outcome label for this attempt.
+    pub const fn outcome(&self) -> &'static str {
+        match self {
+            Self::Cached => RegistrarMetrics::TX_OUTCOME_SUCCEEDED,
+            Self::ObservedCached => RegistrarMetrics::TX_OUTCOME_OBSERVED_CACHED,
+            Self::Cancelled => RegistrarMetrics::TX_OUTCOME_CANCELLED,
+            Self::Reverted(_) => RegistrarMetrics::TX_OUTCOME_REVERTED,
+            Self::Failed(_) => RegistrarMetrics::TX_OUTCOME_FAILED,
+            Self::Retry(_) => RegistrarMetrics::TX_OUTCOME_RETRY,
+        }
+    }
+}
+
 /// State for a registration task currently in flight.
 ///
 /// One entry per signer address. The pending map is keyed by [`Address`] so
@@ -368,6 +402,28 @@ where
         prepared_hints: Option<RegistrationHints>,
         signer_cancel: &CancellationToken,
     ) -> Result<()> {
+        let result = self
+            .register_plan_attempt(instance_id, signer_address, plan, prepared_hints, signer_cancel)
+            .await;
+        // `proof_stale` counts registration attempts abandoned because the attestation aged out.
+        // The freshness check itself also runs on the CRL revocation path, which swallows its
+        // error once per revoked certificate, so classify the terminal error here instead.
+        if matches!(result, Err(RegistrarError::StaleAttestationProof { .. })) {
+            RegistrarMetrics::record_registration_stage(
+                RegistrarMetrics::REGISTRATION_STAGE_PROOF_STALE,
+            );
+        }
+        result
+    }
+
+    async fn register_plan_attempt(
+        &self,
+        instance_id: &str,
+        signer_address: Address,
+        plan: RegistrationPlan,
+        prepared_hints: Option<RegistrationHints>,
+        signer_cancel: &CancellationToken,
+    ) -> Result<()> {
         if self.registry.address() != self.registry_address {
             return Err(RegistrarError::Config(format!(
                 "registry client address {} does not match configured address {}",
@@ -467,6 +523,16 @@ where
                 hints.cert_signature_hints.len()
             )));
         }
+        for (cert, cert_hints) in plan.certs.iter().zip(&hints.cert_signature_hints) {
+            RegistrarMetrics::record_hint_size(
+                RegistrarMetrics::cert_kind_label(cert.kind),
+                cert_hints.len(),
+            );
+        }
+        RegistrarMetrics::record_hint_size(
+            RegistrarMetrics::HINT_KIND_ATTESTATION,
+            hints.attestation_hints.len(),
+        );
         for (cert, cert_hints) in plan.certs.iter().zip(&hints.cert_signature_hints) {
             if !self
                 .ensure_cert_cached(cert, cert_hints, signer_address, plan.timestamp, signer_cancel)
@@ -663,8 +729,11 @@ where
 
         match self.validate_cached_cert(cert, signer_cancel).await? {
             None => return Ok(false),
-            Some(true) => return Ok(true),
-            Some(false) => {}
+            Some(true) => {
+                RegistrarMetrics::record_cache_lookup(cert.kind, true);
+                return Ok(true);
+            }
+            Some(false) => RegistrarMetrics::record_cache_lookup(cert.kind, false),
         }
 
         let tx_data = match cert.kind {
@@ -687,49 +756,19 @@ where
                 return Ok(false);
             }
             self.ensure_attestation_fresh(signer, timestamp_ms)?;
-            let result = self.tx_manager.send(candidate.clone()).await;
-            let state = self.validate_cached_cert(cert, signer_cancel).await;
-            let mut state_error = None;
-            match state {
-                Ok(Some(true)) => return Ok(true),
-                Ok(None) => return Ok(false),
-                Err(
-                    error @ (RegistrarError::ExpiredCertificate { .. }
-                    | RegistrarError::RevokedCertificate { .. }
-                    | RegistrarError::InvalidAttestationProof(_)),
-                ) => return Err(error),
-                Err(error) => {
-                    warn!(
-                        error = %error,
-                        cert_hash = %cert.cert_hash,
-                        "failed to reread certificate state after transaction"
-                    );
-                    state_error = Some(error);
+            RegistrarMetrics::record_cache_tx(cert.kind, RegistrarMetrics::TX_OUTCOME_SUBMITTED);
+            let attempt = self.cache_tx_attempt(cert, &candidate, retry, signer_cancel).await;
+            RegistrarMetrics::record_cache_tx(cert.kind, attempt.outcome());
+            match attempt {
+                CacheTxAttempt::Cached | CacheTxAttempt::ObservedCached => return Ok(true),
+                CacheTxAttempt::Cancelled => return Ok(false),
+                CacheTxAttempt::Reverted(error) | CacheTxAttempt::Failed(error) => {
+                    return Err(error);
                 }
-                Ok(Some(false)) => {}
-            }
-
-            match result {
-                Ok(receipt) if receipt.inner.status() => {
-                    if let Some(error) = state_error {
-                        return Err(error);
-                    }
-                    return Err(RegistrarError::InvalidAttestationProof(format!(
-                        "certificate {} was not usable after successful cache transaction {}",
-                        cert.label, receipt.transaction_hash
-                    )));
-                }
-                Ok(receipt) => {
-                    return Err(RegistrarError::CertificateCacheReverted {
-                        cert_hash: cert.cert_hash,
-                        tx_hash: receipt.transaction_hash,
-                    });
-                }
-                Err(error) if error.is_retryable() && retry < self.max_tx_retries => {
-                    let retry = retry + 1;
+                CacheTxAttempt::Retry(error) => {
                     if !self
                         .sleep_before_retry(
-                            retry,
+                            retry + 1,
                             signer,
                             "certificate cache",
                             &error,
@@ -740,10 +779,66 @@ where
                         return Ok(false);
                     }
                 }
-                Err(error) => return Err(error.into()),
             }
         }
         unreachable!("bounded certificate retry loop must return")
+    }
+
+    /// Sends one certificate-cache transaction and classifies what it did onchain.
+    ///
+    /// The outcome is returned rather than recorded here so that every exit of the retry loop
+    /// pairs its `submitted` count with exactly one terminal `cert_cache_tx_total` outcome.
+    async fn cache_tx_attempt(
+        &self,
+        cert: &CertPlan,
+        candidate: &TxCandidate,
+        retry: u32,
+        signer_cancel: &CancellationToken,
+    ) -> CacheTxAttempt {
+        let result = self.tx_manager.send(candidate.clone()).await;
+        let state_error = match self.validate_cached_cert(cert, signer_cancel).await {
+            Ok(Some(true)) => {
+                return if result.as_ref().is_ok_and(|receipt| receipt.inner.status()) {
+                    CacheTxAttempt::Cached
+                } else {
+                    CacheTxAttempt::ObservedCached
+                };
+            }
+            Ok(None) => return CacheTxAttempt::Cancelled,
+            Err(
+                error @ (RegistrarError::ExpiredCertificate { .. }
+                | RegistrarError::RevokedCertificate { .. }
+                | RegistrarError::InvalidAttestationProof(_)),
+            ) => return CacheTxAttempt::Failed(error),
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    cert_hash = %cert.cert_hash,
+                    "failed to reread certificate state after transaction"
+                );
+                Some(error)
+            }
+            Ok(Some(false)) => None,
+        };
+
+        match result {
+            Ok(receipt) if receipt.inner.status() => {
+                CacheTxAttempt::Failed(state_error.unwrap_or_else(|| {
+                    RegistrarError::InvalidAttestationProof(format!(
+                        "certificate {} was not usable after successful cache transaction {}",
+                        cert.label, receipt.transaction_hash
+                    ))
+                }))
+            }
+            Ok(receipt) => CacheTxAttempt::Reverted(RegistrarError::CertificateCacheReverted {
+                cert_hash: cert.cert_hash,
+                tx_hash: receipt.transaction_hash,
+            }),
+            Err(error) if error.is_retryable() && retry < self.max_tx_retries => {
+                CacheTxAttempt::Retry(error)
+            }
+            Err(error) => CacheTxAttempt::Failed(error.into()),
+        }
     }
 
     async fn validate_cached_cert(
@@ -1107,6 +1202,11 @@ mod tests {
     use async_trait::async_trait;
     use base_proof_contracts::{ContractError, ICertManager, VerifiedCert};
     use base_tx_manager::{SendHandle, TxManagerError};
+    #[cfg(feature = "metrics")]
+    use metrics_util::{
+        MetricKind,
+        debugging::{DebugValue, DebuggingRecorder},
+    };
 
     use super::*;
     use crate::{
@@ -1766,6 +1866,75 @@ mod tests {
         assert_eq!(chain.tx_count_to(TEST_CERT_MANAGER_ADDRESS), 5);
         let sent = chain.sent();
         assert_eq!(sent[0], sent[1]);
+    }
+
+    /// Every cache transaction counted as `submitted` must also report exactly one terminal
+    /// outcome, otherwise `cert_cache_tx_total` cannot be reconciled on a dashboard.
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn cache_tx_submitted_count_matches_terminal_outcomes() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+
+        metrics::with_local_recorder(&recorder, || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .start_paused(true)
+                .build()
+                .unwrap();
+            runtime.block_on(async {
+                for outcome in [
+                    MockTxOutcome::Success,
+                    MockTxOutcome::Error(TxManagerError::Rpc("temporary".into())),
+                    MockTxOutcome::ApplyThenError(TxManagerError::Rpc("receipt timeout".into())),
+                    MockTxOutcome::ApplyThenRevert,
+                ] {
+                    let plan = synthetic_plan(SIGNER_A);
+                    let (manager, chain) = manager_with_plan(&plan);
+                    chain.set_outcomes([outcome]);
+                    register_prepared(&manager, plan).await.unwrap();
+                }
+            });
+        });
+
+        let snapshot = snapshotter.snapshot().into_vec();
+        let count = |outcome: &str| -> u64 {
+            snapshot
+                .iter()
+                .filter(|(key, _, _, _)| {
+                    key.kind() == MetricKind::Counter
+                        && key.key().name() == "base_registrar.cert_cache_tx_total"
+                        && key
+                            .key()
+                            .labels()
+                            .any(|label| label.key() == "outcome" && label.value() == outcome)
+                })
+                .map(|(_, _, _, value)| match value {
+                    DebugValue::Counter(count) => *count,
+                    other => panic!("expected a counter, got {other:?}"),
+                })
+                .sum()
+        };
+
+        let submitted = count(RegistrarMetrics::TX_OUTCOME_SUBMITTED);
+        let terminal: u64 = [
+            RegistrarMetrics::TX_OUTCOME_SUCCEEDED,
+            RegistrarMetrics::TX_OUTCOME_OBSERVED_CACHED,
+            RegistrarMetrics::TX_OUTCOME_REVERTED,
+            RegistrarMetrics::TX_OUTCOME_RETRY,
+            RegistrarMetrics::TX_OUTCOME_FAILED,
+            RegistrarMetrics::TX_OUTCOME_CANCELLED,
+        ]
+        .into_iter()
+        .map(count)
+        .sum();
+
+        assert_eq!(submitted, terminal, "submitted cache transactions must all reach a terminal");
+        assert!(count(RegistrarMetrics::TX_OUTCOME_RETRY) > 0, "retry exit was not exercised");
+        assert!(
+            count(RegistrarMetrics::TX_OUTCOME_OBSERVED_CACHED) > 0,
+            "ambiguous-receipt exit was not exercised"
+        );
     }
 
     #[tokio::test(start_paused = true)]

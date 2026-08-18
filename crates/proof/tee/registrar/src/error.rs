@@ -59,14 +59,12 @@ pub enum RegistrarError {
     #[error(transparent)]
     Planning(#[from] PlannerError),
 
-    /// Generated proof is too old for on-chain registration.
-    #[error(
-        "attestation proof for signer {signer} is too old: age {age:?} exceeds max {max_age:?}"
-    )]
+    /// Attestation is too old for on-chain registration.
+    #[error("attestation for signer {signer} is too old: age {age:?} exceeds max {max_age:?}")]
     StaleAttestationProof {
-        /// Signer whose registration proof was stale.
+        /// Signer whose attestation was stale.
         signer: Address,
-        /// Proof age at the final pre-submission check.
+        /// Attestation age at the final pre-submission check.
         age: Duration,
         /// Maximum age configured for registrar-side submission.
         max_age: Duration,

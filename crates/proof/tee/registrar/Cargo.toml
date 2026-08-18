@@ -83,6 +83,7 @@ hex-literal.workspace = true
 async-trait.workspace = true
 alloy-consensus.workspace = true
 alloy-rpc-types-eth.workspace = true
+metrics-util = { workspace = true, features = ["debugging"] }
 tokio = { workspace = true, features = ["rt", "macros", "test-util"] }
 
 [features]
