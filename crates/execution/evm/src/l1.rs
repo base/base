@@ -75,7 +75,7 @@ pub fn parse_l1_info(input: &[u8]) -> Result<L1BlockInfo, BaseBlockExecutionErro
 
 /// Parses the calldata of the [`L1BlockInfo`] transaction pre-Ecotone upgrade.
 pub fn parse_l1_info_tx_bedrock(data: &[u8]) -> Result<L1BlockInfo, BaseBlockExecutionError> {
-    // The setL1BlockValues tx calldata must be exactly 260 bytes long, considering that
+    // The setL1BlockValues tx calldata must be exactly 256 bytes long, considering that
     // we already removed the first 4 bytes (the function selector). Detailed breakdown:
     //   32 bytes for the block number
     // + 32 bytes for the block timestamp
