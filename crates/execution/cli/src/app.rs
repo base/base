@@ -13,7 +13,7 @@ use reth_rpc_server_types::RpcModuleValidator;
 use reth_tracing::{Layers, TracingGuards};
 use tracing::{info, warn};
 
-use crate::{Cli, Commands};
+use crate::{Cli, commands::Commands};
 
 /// A wrapper around a parsed CLI that handles command execution.
 #[derive(Debug)]

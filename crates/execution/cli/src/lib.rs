@@ -9,202 +9,30 @@
 
 /// A configurable app on top of the CLI parser.
 pub mod app;
+pub use app::CliApp;
+
 /// Base chain specification parser.
 pub mod chainspec;
+
 /// Base CLI commands.
 pub mod commands;
+
+mod cli;
+pub use cli::Cli;
+
 mod node;
 pub use node::{
     ExecutionNodeArgs, ExecutionNodeConfigArgs, ExecutionNodeLaunchConfig,
     ExecutionNodeRuntimeConfig,
 };
+
 /// Standard Base execution-node runner wiring.
 mod standard_node;
-use std::{ffi::OsString, fmt, marker::PhantomData};
-
-pub use app::CliApp;
-use base_execution_chainspec::BaseChainSpec;
-use base_node_core::args::RollupArgs;
-use chainspec::BaseChainSpecParser;
-use clap::Parser;
-use commands::Commands;
-use futures::Future;
-use reth_cli_commands::launcher::FnLauncher;
-use reth_cli_runner::CliRunner;
-use reth_db::DatabaseEnv;
-use reth_node_builder::{NodeBuilder, WithLaunchContext};
-use reth_node_core::{
-    args::{LogArgs, TraceArgs},
-    version::version_metadata,
-};
-// This allows us to manually enable node metrics features, required for proper jemalloc metric
-// reporting
-use reth_node_metrics as _;
-use reth_rpc_server_types::{LenientRpcModuleValidator, RpcModuleValidator};
 pub use standard_node::{
     MeteringArgs, RpcStandardNodeArgs, ShadowIndexerArgs, StandardBaseRethNode, StandardNodeArgs,
 };
+
 mod upgrade_signal;
 pub use upgrade_signal::{
     ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalRuntimeExtension,
 };
-
-/// The main base-reth cli interface.
-///
-/// This is the entry point to the executable.
-#[derive(Debug, Parser)]
-#[command(author, name = version_metadata().name_client.as_ref(), version = version_metadata().short_version.as_ref(), long_version = version_metadata().long_version.as_ref(), about = "Reth", long_about = None)]
-pub struct Cli<
-    Ext: clap::Args + fmt::Debug = RollupArgs,
-    Rpc: RpcModuleValidator = LenientRpcModuleValidator,
-> {
-    /// The command to run
-    #[command(subcommand)]
-    pub command: Commands<Ext>,
-
-    /// The logging configuration for the CLI.
-    #[command(flatten)]
-    pub logs: LogArgs,
-
-    /// The metrics configuration for the CLI.
-    #[command(flatten)]
-    pub traces: TraceArgs,
-
-    /// Type marker for the RPC module validator
-    #[arg(skip)]
-    _phantom: PhantomData<Rpc>,
-}
-
-impl Cli {
-    /// Parses only the default CLI arguments.
-    pub fn parse_args() -> Self {
-        Self::parse()
-    }
-
-    /// Parses only the default CLI arguments from the given iterator.
-    pub fn try_parse_args_from<I, T>(itr: I) -> Result<Self, clap::error::Error>
-    where
-        I: IntoIterator<Item = T>,
-        T: Into<OsString> + Clone,
-    {
-        Self::try_parse_from(itr)
-    }
-}
-
-impl<Ext, Rpc> Cli<Ext, Rpc>
-where
-    Ext: clap::Args + fmt::Debug,
-    Rpc: RpcModuleValidator,
-{
-    /// Configures the CLI and returns a [`CliApp`] instance.
-    ///
-    /// This method is used to prepare the CLI for execution by wrapping it in a
-    /// [`CliApp`] that can be further configured before running.
-    pub fn configure(self) -> CliApp<Ext, Rpc> {
-        CliApp::new(self)
-    }
-
-    /// Execute the configured cli command.
-    ///
-    /// This accepts a closure that is used to launch the node via the
-    /// [`NodeCommand`](reth_cli_commands::node::NodeCommand).
-    pub fn run<L, Fut>(self, launcher: L) -> eyre::Result<()>
-    where
-        L: FnOnce(WithLaunchContext<NodeBuilder<DatabaseEnv, BaseChainSpec>>, Ext) -> Fut,
-        Fut: Future<Output = eyre::Result<()>>,
-    {
-        self.with_runner(CliRunner::try_default_runtime()?, launcher)
-    }
-
-    /// Execute the configured cli command with the provided [`CliRunner`].
-    pub fn with_runner<L, Fut>(self, runner: CliRunner, launcher: L) -> eyre::Result<()>
-    where
-        L: FnOnce(WithLaunchContext<NodeBuilder<DatabaseEnv, BaseChainSpec>>, Ext) -> Fut,
-        Fut: Future<Output = eyre::Result<()>>,
-    {
-        let mut this = self.configure();
-        this.set_runner(runner);
-        this.run(FnLauncher::new::<BaseChainSpecParser, Ext>(async move |builder, chain_spec| {
-            launcher(builder, chain_spec).await
-        }))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use base_execution_chainspec::BaseChainSpec;
-    use base_node_core::args::RollupArgs;
-    use clap::Parser;
-    use reth_cli_commands::{NodeCommand, node::NoArgs};
-
-    use crate::{Cli, chainspec::BaseChainSpecParser, commands::Commands};
-
-    #[test]
-    fn parse_dev() {
-        let cmd = NodeCommand::<BaseChainSpecParser, NoArgs>::parse_from(["base-reth", "--dev"]);
-        let chain = BaseChainSpec::devnet();
-        assert_eq!(cmd.chain.chain, chain.chain);
-        assert_eq!(cmd.chain.genesis_hash(), chain.genesis_hash());
-        assert_eq!(
-            cmd.chain.paris_block_and_final_difficulty,
-            chain.paris_block_and_final_difficulty
-        );
-        assert_eq!(cmd.chain.hardforks, chain.hardforks);
-
-        assert!(cmd.rpc.http);
-        assert!(cmd.network.discovery.disable_discovery);
-
-        assert!(cmd.dev.dev);
-    }
-
-    #[test]
-    fn parse_node() {
-        // clap 4.x validates env var values even when the CLI arg is explicitly provided.
-        // Override OTEL_EXPORTER_OTLP_PROTOCOL (which may be set to `http/protobuf` in CI)
-        // to a value accepted by reth's OtlpProtocol enum.
-        // SAFETY: this is a single-test context; no other thread concurrently reads this var.
-        unsafe { std::env::set_var("OTEL_EXPORTER_OTLP_PROTOCOL", "http") };
-        let cmd = Cli::<RollupArgs>::parse_from([
-            "base-reth",
-            "node",
-            "--chain",
-            "base",
-            "--datadir",
-            "/mnt/datadirs/base",
-            "--instance",
-            "2",
-            "--http",
-            "--http.addr",
-            "0.0.0.0",
-            "--ws",
-            "--ws.addr",
-            "0.0.0.0",
-            "--http.api",
-            "admin,debug,eth,net,trace,txpool,web3,rpc,reth,ots",
-            "--rollup.sequencer-http",
-            "https://mainnet-sequencer.base.org",
-            "--rpc-max-tracing-requests",
-            "1000000",
-            "--rpc.gascap",
-            "18446744073709551615",
-            "--rpc.max-connections",
-            "429496729",
-            "--rpc.max-logs-per-response",
-            "0",
-            "--rpc.max-subscriptions-per-connection",
-            "10000",
-            "--metrics",
-            "9003",
-            "--tracing-otlp=http://localhost:4318/v1/traces",
-            "--log.file.max-size",
-            "100",
-        ]);
-
-        match cmd.command {
-            Commands::Node(command) => {
-                assert_eq!(command.chain.as_ref(), &BaseChainSpec::mainnet());
-            }
-            _ => panic!("unexpected command"),
-        }
-    }
-}

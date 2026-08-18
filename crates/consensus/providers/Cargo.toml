@@ -53,6 +53,12 @@ tracing.workspace = true
 # `metrics` feature
 metrics = { workspace = true, optional = true }
 
+[dev-dependencies]
+alloy-rpc-types-eth.workspace = true
+tokio = { workspace = true, features = ["macros", "test-util"] }
+httpmock.workspace = true
+serde_json = { workspace = true, features = ["std"] }
+
 [features]
 default = []
 metrics = [
@@ -60,9 +66,3 @@ metrics = [
 	"base-metrics/metrics",
 	"dep:metrics",
 ]
-
-[dev-dependencies]
-alloy-rpc-types-eth.workspace = true
-tokio = { workspace = true, features = ["macros", "test-util"] }
-httpmock.workspace = true
-serde_json = { workspace = true, features = ["std"] }

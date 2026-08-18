@@ -41,8 +41,8 @@ serde = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["full"] }
 serde_json = { workspace = true, features = ["std"] }
 
-[features]
-default = []
-
 [dev-dependencies]
 tokio.workspace = true
+
+[features]
+default = []
