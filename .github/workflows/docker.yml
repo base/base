@@ -7,7 +7,7 @@ on:
   workflow_dispatch: {}
 
 env:
-  REGISTRY_IMAGE: ghcr.io/${{ github.repository_owner }}/node-reth-dev
+  REGISTRY_IMAGE: ghcr.io/${{ github.repository_owner }}/node
 
 permissions:
   contents: read
@@ -23,9 +23,7 @@ jobs:
             runs-on: ubuntu-24.04-arm
         image:
           - target: base
-            name: node-reth-dev
-          - target: node-reth
-            name: node-reth
+            name: node
 
     runs-on: ${{ matrix.settings.runs-on }}
 
@@ -69,12 +67,14 @@ jobs:
         env:
           IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.image.name }}
           TARGET: ${{ matrix.image.target }}
+          PROFILE: maxperf
         run: |
           docker buildx bake -f etc/docker/docker-bake.hcl "$TARGET" \
             --set "${TARGET}.tags=${IMAGE}" \
             --set "${TARGET}.platform=${{ matrix.settings.arch }}" \
             --set "${TARGET}.output=type=image,push-by-digest=true,name-canonical=true,push=true" \
-            --set "${TARGET}.cache-to=type=registry,ref=${IMAGE}:cache-${{ env.PLATFORM_PAIR }},mode=max" \
+            --set "${TARGET}.cache-from=type=registry,ref=${{ env.REGISTRY_IMAGE }}:cache-maxperf-${{ env.PLATFORM_PAIR }}" \
+            --set "${TARGET}.cache-to=type=registry,ref=${{ env.REGISTRY_IMAGE }}:cache-maxperf-${{ env.PLATFORM_PAIR }},mode=max" \
             --set "${TARGET}.labels.org.opencontainers.image.source=${{ steps.image-labels.outputs.source }}" \
             --set "${TARGET}.labels.org.opencontainers.image.revision=${{ steps.image-labels.outputs.revision }}" \
             --set "${TARGET}.labels.org.opencontainers.image.created=${{ steps.image-labels.outputs.created }}" \
@@ -148,9 +148,7 @@ jobs:
       matrix:
         image:
           - target: base
-            name: node-reth-dev
-          - target: node-reth
-            name: node-reth
+            name: node
     env:
       IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.image.name }}
     steps:

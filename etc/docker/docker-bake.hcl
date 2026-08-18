@@ -15,11 +15,7 @@ variable "ZK_HOST_PROFILE" {
 }
 
 variable "REGISTRY_IMAGE" {
-  default = "ghcr.io/base/node-reth-dev"
-}
-
-variable "NODE_RETH_IMAGE" {
-  default = "ghcr.io/base/node-reth"
+  default = "ghcr.io/base/node"
 }
 
 variable "PLATFORM_PAIR" {
@@ -189,15 +185,4 @@ target "zk-host" {
     "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
     "type=registry,ref=${REGISTRY_IMAGE}:cache-zk-host-${PLATFORM_PAIR}",
   ]
-}
-
-target "node-reth" {
-  context = "."
-  dockerfile = "etc/docker/Dockerfile.rust-services"
-  target = "node-reth"
-  args = {
-    RUST_VERSION = "${RUST_VERSION}"
-  }
-  tags = ["ghcr.io/base/node-reth:local"]
-  cache-from = ["type=registry,ref=${NODE_RETH_IMAGE}:cache-${PLATFORM_PAIR}"]
 }

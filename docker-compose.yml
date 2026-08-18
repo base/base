@@ -1,12 +1,14 @@
-# Public operator node. `docker compose up` pulls ghcr.io/base/node-reth.
-# Pass --build to compile this tree. Pin a published image with NODE_TAG=vX.Y.Z.
+# Public operator node. `docker compose up` pulls ghcr.io/base/node.
+# Pass --build to compile this tree (PROFILE=maxperf, same as base/node). Pin with NODE_TAG=vX.Y.Z.
 services:
   execution:
-    image: ghcr.io/base/node-reth:${NODE_TAG:-latest}
+    image: ghcr.io/base/node:${NODE_TAG:-latest}
     build:
       context: .
       dockerfile: etc/docker/Dockerfile.rust-services
-      target: node-reth
+      target: base
+      args:
+        PROFILE: ${PROFILE:-maxperf}
     restart: unless-stopped
     ports:
       - "8545:8545" # RPC
@@ -20,11 +22,13 @@ services:
     env_file:
       - ${NETWORK_ENV:-.env.mainnet} # Use .env.mainnet by default, override with .env.sepolia for testnet
   node:
-    image: ghcr.io/base/node-reth:${NODE_TAG:-latest}
+    image: ghcr.io/base/node:${NODE_TAG:-latest}
     build:
       context: .
       dockerfile: etc/docker/Dockerfile.rust-services
-      target: node-reth
+      target: base
+      args:
+        PROFILE: ${PROFILE:-maxperf}
     restart: unless-stopped
     depends_on:
       - execution

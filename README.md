@@ -28,7 +28,7 @@ curl -fsSL https://raw.githubusercontent.com/base/base/main/baseup/install | bas
 
 ## Run a Node
 
-This repository now hosts the public Base node previously published from [`base/node`](https://github.com/base/node). Root `docker-compose.yml` pulls `ghcr.io/base/node-reth`. Pass `--build` to compile this tree. `just devnet up` is the local developer stack.
+This repository now hosts the public Base node previously published from [`base/node`](https://github.com/base/node). Root `docker-compose.yml` pulls `ghcr.io/base/node`. Pass `--build` to compile this tree. `just devnet up` is the local developer stack.
 
 1. Set `BASE_NODE_L1_ETH_RPC` and `BASE_NODE_L1_BEACON` in `.env.mainnet` or `.env.sepolia`.
 2. Start the node:

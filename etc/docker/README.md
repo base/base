@@ -2,11 +2,11 @@
 
 This directory contains the Dockerfiles and Compose configuration for the **local devnet** and internal Rust services.
 
-The public operator image (`ghcr.io/base/node-reth`) is the `node-reth` target in `Dockerfile.rust-services`. Entrypoints and supervisord live in `etc/scripts/node/`; operators edit `.env.mainnet` / `.env.sepolia` at the repo root. Root `docker-compose.yml` pulls the published image, or compiles this tree with `--build`. `just devnet up` uses this directory's `docker-compose.yml` (and the HA overlay).
+The public operator image (`ghcr.io/base/node`) is the `base` target in `Dockerfile.rust-services`. Published images and operator `--build` use `PROFILE=maxperf` (same as `base/node`). The bake/Dockerfile default stays `release`; `just devnet` builds `dev`. Operator entrypoints live in `etc/scripts/node/`; operators edit `.env.mainnet` / `.env.sepolia` at the repo root. Root `docker-compose.yml` pulls the published image, or compiles this tree with `--build`. `just devnet up` overrides the entrypoint to `./base`.
 
 ## Dockerfiles
 
-`Dockerfile.rust-services` is the shared multi-target Dockerfile for the Debian-based Rust services and the public `node-reth` operator image. The local devnet builds the unified `base` image for L2 bootnode, sequencer, and validator/RPC nodes. The `node-reth` target is published as `ghcr.io/base/node-reth`.
+`Dockerfile.rust-services` is the shared multi-target Dockerfile for the Debian-based Rust services. The `base` target is published as `ghcr.io/base/node` and is also the local devnet image. Devnet compose overrides the default supervisord CMD.
 
 `Dockerfile.devnet` builds a utility image containing genesis generation tools (`eth-genesis-state-generator`, `eth2-val-tools`, `op-deployer`) and setup scripts. This image bootstraps L1 and L2 chain configurations for local development.
 
