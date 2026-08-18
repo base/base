@@ -110,6 +110,22 @@ class BenchCompare:
             and self.is_significant(base, head)
         )
 
+    def is_notable(self, base: Measurement | None, head: Measurement | None) -> bool:
+        """Whether a benchmark earns a table row.
+
+        A row is shown for a coverage change (a new or dropped bench) or when the
+        median delta clears the threshold in either direction — regardless of the
+        noise band, so a within-noise move that crossed the threshold is still
+        visible with its `· within noise` caveat. Everything comfortably within the
+        threshold is omitted to keep the comment small.
+        """
+        if base is None or head is None:
+            return True
+        delta = self.delta_pct(base, head)
+        return delta is not None and (
+            delta >= self.threshold_pct or delta <= -self.improvement_pct
+        )
+
     def render_row(self, bench_id: str, base: Measurement | None, head: Measurement | None) -> str:
         """Render a single Markdown table row for one benchmark."""
         if base is None:
@@ -179,23 +195,40 @@ class BenchCompare:
                 f"{self.summarize(base, head, improved)}.",
                 "",
             ]
+        # Only the notable benches get a row; unchanged ones are the bulk of the
+        # subset and only add noise. The rest are summarized as an omitted count so
+        # the trim is never silent.
+        notable = [b for b in bench_ids if self.is_notable(base.get(b), head.get(b))]
+        omitted = len(bench_ids) - len(notable)
+
         lines += [
             "### Benchmark results (advisory)",
             "",
             f"Median time on the PR head versus the base branch, measured on the same "
             f"host. Wall-clock, so a change is only flagged when it clears ±"
             f"{self.threshold_pct:.0f}% *and* the confidence intervals do not overlap. "
-            f"This check never blocks a merge.",
+            f"Only benchmarks past the ±{self.threshold_pct:.0f}% threshold (plus new or "
+            f"dropped ones) are listed. This check never blocks a merge.",
             "",
             "| Benchmark | Base | Head | Δ median |",
             "|---|---:|---:|---:|",
         ]
         if not bench_ids:
             lines.append("| _no benchmark results were produced_ | — | — | — |")
+        elif not notable:
+            lines.append(
+                f"| _all {len(bench_ids)} benchmark(s) within ±{self.threshold_pct:.0f}%_ "
+                f"| — | — | — |"
+            )
         else:
             lines.extend(
-                self.render_row(b, base.get(b), head.get(b)) for b in bench_ids
+                self.render_row(b, base.get(b), head.get(b)) for b in notable
             )
+        if omitted:
+            lines += [
+                "",
+                f"_{omitted} benchmark(s) within ±{self.threshold_pct:.0f}% omitted._",
+            ]
         lines += ["", f"[View run]({run_url}) · [Re-run benchmarks]({run_url})"]
         return "\n".join(lines) + "\n", bool(regressed or improved or dropped)
 

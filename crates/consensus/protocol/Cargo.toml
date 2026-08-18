@@ -66,6 +66,10 @@ alloy-primitives = { workspace = true, features = ["arbitrary"] }
 name = "batch_transaction"
 harness = false
 
+[[bench]]
+name = "frame_parse"
+harness = false
+
 [features]
 default = [ "std" ]
 test-utils = [ "dep:spin", "dep:tracing-subscriber" ]

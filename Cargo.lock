@@ -3551,6 +3551,7 @@ dependencies = [
  "alloy-serde 2.2.0",
  "brotli",
  "bytes",
+ "criterion",
  "rstest",
  "serde",
  "serde_json",
@@ -3561,6 +3562,7 @@ dependencies = [
 name = "base-common-flz"
 version = "0.0.0"
 dependencies = [
+ "criterion",
  "hex-literal 1.1.0",
  "rstest",
 ]
