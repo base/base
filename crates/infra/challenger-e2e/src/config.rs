@@ -23,6 +23,11 @@ pub struct Config {
     #[arg(long = "l2-eth-rpc", env = "BASE_CHALLENGER_L2_ETH_RPC")]
     pub l2_eth_rpc: Url,
 
+    /// Live prover-service JSON-RPC. Used to request a real SNARK of canonical
+    /// roots; never the Anvil fork URL.
+    #[arg(long = "zk-rpc-url", env = "BASE_CHALLENGER_ZK_RPC_URL")]
+    pub zk_rpc_url: Url,
+
     /// Address of the `DisputeGameFactory` contract on L1.
     #[arg(long = "dispute-game-factory-addr", env = "BASE_CHALLENGER_DISPUTE_GAME_FACTORY_ADDR")]
     pub dispute_game_factory_addr: Address,

@@ -23,6 +23,8 @@ alloy-signer-local.workspace = true
 alloy-node-bindings.workspace = true
 base-proof-rpc.workspace = true
 base-proof-contracts.workspace = true
+base-proof-submission.workspace = true
+base-tx-manager.workspace = true
 base-zk-fork-dispute.workspace = true
 base-prover-service-protocol.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }

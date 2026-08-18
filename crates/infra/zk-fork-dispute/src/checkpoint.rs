@@ -21,11 +21,19 @@ use crate::config::Config;
 #[derive(Debug, Clone, Copy)]
 pub struct Checkpoint {
     /// 0-based invalid intermediate index.
+    ///
+    /// Unused by the proof journal for a full-game [`Self::proposal`] proof;
+    /// kept so session IDs stay unique per constructed checkpoint.
     pub index: u64,
     /// Inclusive L2 start block for the proof range.
     pub start_block: u64,
     /// Number of L2 blocks to prove.
     pub block_count: u64,
+    /// Intermediate root interval committed by the proof.
+    ///
+    /// Equal to [`Self::block_count`] for a single-checkpoint dispute proof.
+    /// Smaller than `block_count` when proving a full game for `verifyProposalProof`.
+    pub interval: u64,
     /// Canonical output root expected by the dispute call.
     pub expected_root: B256,
 }
@@ -33,8 +41,8 @@ pub struct Checkpoint {
 impl Checkpoint {
     /// Exclusive end block of the proof range.
     ///
-    /// Unchecked add is safe: values are only constructed via [`Self::from_roots`],
-    /// which validates the sum with `checked_add`.
+    /// Unchecked add is safe: values are only constructed via [`Self::from_roots`]
+    /// and [`Self::proposal`], which validate the sum with `checked_add`.
     pub const fn target_block(self) -> u64 {
         self.start_block + self.block_count
     }
@@ -117,6 +125,37 @@ impl Checkpoint {
         bail!("no invalid intermediate root found for game {}", config.game_address)
     }
 
+    /// Builds a checkpoint covering the game's full canonical range, unpatched.
+    ///
+    /// The proof journal matches the roots already stored on the game, which is
+    /// what `verifyProposalProof` reconstructs.
+    pub async fn proposal(
+        config: &Config,
+        verifier: &AggregateVerifierContractClient,
+    ) -> Result<Self> {
+        let roots = verifier.intermediate_output_roots(config.game_address).await?;
+        if roots.is_empty() {
+            bail!("game {} has no intermediate output roots", config.game_address);
+        }
+
+        let starting_block = verifier.starting_block_number(config.game_address).await?;
+        let interval =
+            Self::infer_interval(config.game_address, verifier, starting_block, roots.len())
+                .await?;
+        let root_count = u64::try_from(roots.len())
+            .map_err(|_| eyre!("intermediate root count does not fit u64"))?;
+        let block_count =
+            interval.checked_mul(root_count).ok_or_else(|| eyre!("proposal range overflow"))?;
+
+        Ok(Self {
+            index: 0,
+            start_block: starting_block,
+            block_count,
+            interval,
+            expected_root: roots[roots.len() - 1],
+        })
+    }
+
     /// Requests a SNARK PLONK proof for this checkpoint and returns dispute-ready bytes.
     ///
     /// Pins the schedule to the game's final L2 block, which may be after [`Self::target_block`],
@@ -140,6 +179,7 @@ impl Checkpoint {
             prover_service_url = %config.prover_service_url,
             start_block = self.start_block,
             target_block = self.target_block(),
+            interval = self.interval,
             l1_head = %l1_head,
             schedule_l2_block_number = game_l2_block_number,
             "requesting SNARK PLONK proof"
@@ -151,7 +191,7 @@ impl Checkpoint {
                 number_of_blocks_to_prove: self.block_count,
                 sequence_window: None,
                 l1_head: Some(l1_head),
-                intermediate_root_interval: Some(self.block_count),
+                intermediate_root_interval: Some(self.interval),
                 schedule_l2_block_number: Some(game_l2_block_number),
                 zk_vm: ZkVm::Sp1,
                 zk_backend: config.zk_backend,
@@ -232,7 +272,7 @@ impl Checkpoint {
             .ok_or_else(|| eyre!("target block overflow"))?;
         let start_block =
             target_block.checked_sub(interval).ok_or_else(|| eyre!("start block underflow"))?;
-        Ok(Self { index, start_block, block_count: interval, expected_root })
+        Ok(Self { index, start_block, block_count: interval, interval, expected_root })
     }
 
     async fn infer_interval(
