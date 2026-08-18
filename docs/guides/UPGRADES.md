@@ -189,7 +189,7 @@ For **cascading** upgrades, replace the previous arm's `unwrap_or(ForkCondition:
 ```rust
 /// Returns `true` if [`Azul`](BaseUpgrade::Azul) is active at given block timestamp.
 fn is_azul_active_at_timestamp(&self, timestamp: u64) -> bool {
-    self.upgrade_activation(BaseUpgrade::Azul).active_at_timestamp(timestamp)
+    self.fork_condition(BaseUpgrade::Azul).active_at_timestamp(timestamp)
 }
 ```
 
