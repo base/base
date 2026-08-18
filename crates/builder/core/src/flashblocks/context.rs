@@ -93,6 +93,12 @@ pub struct FlashblockDiagnostics {
     pub txs_considered: u64,
     /// Number of transactions included in the flashblock.
     pub txs_included: u64,
+    /// Number of successful park decisions in this flashblock.
+    ///
+    /// Incremented once per `park_current()` and never decremented. A later
+    /// promote-and-reselect of the same transaction is a new consideration
+    /// round and does not unwind this count.
+    pub txs_deferred: u64,
     /// Number rejected by gas limit.
     pub txs_rejected_gas: u64,
     /// Number rejected by DA size limits (tx or block).
@@ -155,6 +161,14 @@ impl FlashblockDiagnostics {
             + self.txs_rejected_uncompressed_size
             + self.txs_rejected_metering_data_pending
             + self.txs_rejected_other
+    }
+
+    /// Rejected plus deferred consideration outcomes.
+    ///
+    /// Completes `txs_considered == txs_included + txs_not_included_total()`
+    /// when `txs_considered` is counted per selection attempt.
+    pub const fn txs_not_included_total(&self) -> u64 {
+        self.txs_rejected_total() + self.txs_deferred
     }
 
     /// Records a rejected transaction into the appropriate rejection bucket.
@@ -894,6 +908,7 @@ impl BasePayloadBuilderCtx {
                             )
                         },
                     );
+                    diag.txs_deferred += 1;
                     predicate_index.park(tx_hash, tx, blocking_predicate);
                 } else {
                     self.emit_builder_decision_event(
@@ -1666,6 +1681,21 @@ mod tests {
 
         assert_eq!(diag.txs_considered, 5);
         assert_eq!(diag.txs_included, 2);
+    }
+
+    #[test]
+    fn diagnostics_count_deferred_outside_rejected_total() {
+        let diag = FlashblockDiagnostics {
+            txs_considered: 5,
+            txs_included: 2,
+            txs_deferred: 2,
+            txs_rejected_other: 1,
+            ..Default::default()
+        };
+
+        assert_eq!(diag.txs_rejected_total(), 1);
+        assert_eq!(diag.txs_not_included_total(), 3);
+        assert_eq!(diag.txs_considered, diag.txs_included + diag.txs_not_included_total());
     }
 
     /// [`FlashblocksExtraCtx::next`] must increment the flashblock index,
