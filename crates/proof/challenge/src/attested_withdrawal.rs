@@ -303,6 +303,105 @@ pub fn attested_withdrawal_storage_slot(auth_hash: B256) -> B256 {
     keccak256(encoded)
 }
 
+/// Decoded attested-withdrawal event fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttestedWithdrawalEvent {
+    /// Authorization hash emitted by the L2 message passer.
+    pub auth_hash: B256,
+    /// L1 recipient.
+    pub recipient: Address,
+    /// Withdrawal amount in wei.
+    pub amount: U256,
+    /// Per-message-passer authorization nonce.
+    pub nonce: U256,
+    /// Calldata executed with the L1 ETH transfer.
+    pub data: Bytes,
+}
+
+/// Decodes and validates one `AttestedWithdrawalInitiated` log.
+pub fn decode_attested_withdrawal_log(
+    log: &alloy_rpc_types_eth::Log,
+    l2_chain_id: u64,
+) -> Result<AttestedWithdrawalEvent, AttestedWithdrawalRelayError> {
+    let event = IL2ToL1MessagePasser::AttestedWithdrawalInitiated::decode_log_data(&log.inner.data)
+        .map_err(|error| AttestedWithdrawalRelayError::InvalidEvent(error.to_string()))?;
+    if event.token != Address::ZERO {
+        return Err(AttestedWithdrawalRelayError::UnsupportedToken(event.token));
+    }
+    let expected = attested_withdrawal_auth_hash(
+        l2_chain_id,
+        event.recipient,
+        event.amount,
+        event.nonce,
+        &event.data,
+    );
+    if event.authHash != expected {
+        return Err(AttestedWithdrawalRelayError::AuthorizationHashMismatch {
+            expected,
+            actual: event.authHash,
+        });
+    }
+    Ok(AttestedWithdrawalEvent {
+        auth_hash: event.authHash,
+        recipient: event.recipient,
+        amount: event.amount,
+        nonce: event.nonce,
+        data: event.data,
+    })
+}
+
+/// Errors raised while validating a withdrawal relay record.
+#[derive(Debug, thiserror::Error)]
+pub enum AttestedWithdrawalRelayError {
+    /// The event payload was not a valid attested-withdrawal event.
+    #[error("invalid attested withdrawal event: {0}")]
+    InvalidEvent(String),
+    /// The event requested a non-ETH transfer.
+    #[error("unsupported attested withdrawal token: {0}")]
+    UnsupportedToken(Address),
+    /// The event hash does not match its authorization fields.
+    #[error("attested withdrawal authorization hash mismatch: expected {expected}, got {actual}")]
+    AuthorizationHashMismatch {
+        /// Expected hash.
+        expected: B256,
+        /// Hash emitted by L2.
+        actual: B256,
+    },
+    /// The log did not include an L2 block number.
+    #[error("attested withdrawal log is missing its block number")]
+    MissingBlockNumber,
+    /// The log did not include an L2 block hash.
+    #[error("attested withdrawal log is missing its block hash")]
+    MissingBlockHash,
+    /// The account proof did not contain exactly the requested storage proof.
+    #[error("invalid attested withdrawal storage proof")]
+    InvalidStorageProof,
+    /// The enclave returned a signature with the wrong length.
+    #[error("invalid attested withdrawal signature length: {0}")]
+    InvalidSignatureLength(usize),
+    /// The enclave returned an unsupported ECDSA recovery ID.
+    #[error("invalid attested withdrawal signature recovery ID: {0}")]
+    InvalidRecoveryId(u8),
+    /// An L2 RPC request failed.
+    #[error("L2 RPC error: {0}")]
+    L2Rpc(String),
+    /// An enclave signer request failed.
+    #[error("enclave signer error: {0}")]
+    Signer(String),
+    /// A portal read failed.
+    #[error("portal RPC error: {0}")]
+    Portal(String),
+    /// L1 transaction submission failed.
+    #[error("L1 transaction error: {0}")]
+    Transaction(String),
+    /// The portal redemption transaction reverted.
+    #[error("attested withdrawal redemption transaction reverted: {tx_hash}")]
+    TransactionReverted {
+        /// Hash of the reverted L1 transaction.
+        tx_hash: B256,
+    },
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
@@ -473,106 +572,4 @@ mod tests {
         );
         assert_eq!(calls[0].value, U256::ZERO);
     }
-}
-
-/// Decoded attested-withdrawal event fields.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AttestedWithdrawalEvent {
-    /// Authorization hash emitted by the L2 message passer.
-    pub auth_hash: B256,
-    /// L1 recipient.
-    pub recipient: Address,
-    /// Withdrawal amount in wei.
-    pub amount: U256,
-    /// Per-message-passer authorization nonce.
-    pub nonce: U256,
-    /// Calldata executed with the L1 ETH transfer.
-    pub data: Bytes,
-}
-
-/// Decodes and validates one `AttestedWithdrawalInitiated` log.
-pub fn decode_attested_withdrawal_log(
-    log: &alloy_rpc_types_eth::Log,
-    l2_chain_id: u64,
-) -> Result<AttestedWithdrawalEvent, AttestedWithdrawalRelayError> {
-    use alloy_sol_types::SolEvent;
-    use base_proof_contracts::IL2ToL1MessagePasser;
-
-    let event = IL2ToL1MessagePasser::AttestedWithdrawalInitiated::decode_log_data(&log.inner.data)
-        .map_err(|error| AttestedWithdrawalRelayError::InvalidEvent(error.to_string()))?;
-    if event.token != Address::ZERO {
-        return Err(AttestedWithdrawalRelayError::UnsupportedToken(event.token));
-    }
-    let expected = attested_withdrawal_auth_hash(
-        l2_chain_id,
-        event.recipient,
-        event.amount,
-        event.nonce,
-        &event.data,
-    );
-    if event.authHash != expected {
-        return Err(AttestedWithdrawalRelayError::AuthorizationHashMismatch {
-            expected,
-            actual: event.authHash,
-        });
-    }
-    Ok(AttestedWithdrawalEvent {
-        auth_hash: event.authHash,
-        recipient: event.recipient,
-        amount: event.amount,
-        nonce: event.nonce,
-        data: event.data,
-    })
-}
-
-/// Errors raised while validating a withdrawal relay record.
-#[derive(Debug, thiserror::Error)]
-pub enum AttestedWithdrawalRelayError {
-    /// The event payload was not a valid attested-withdrawal event.
-    #[error("invalid attested withdrawal event: {0}")]
-    InvalidEvent(String),
-    /// The event requested a non-ETH transfer.
-    #[error("unsupported attested withdrawal token: {0}")]
-    UnsupportedToken(Address),
-    /// The event hash does not match its authorization fields.
-    #[error("attested withdrawal authorization hash mismatch: expected {expected}, got {actual}")]
-    AuthorizationHashMismatch {
-        /// Expected hash.
-        expected: B256,
-        /// Hash emitted by L2.
-        actual: B256,
-    },
-    /// The log did not include an L2 block number.
-    #[error("attested withdrawal log is missing its block number")]
-    MissingBlockNumber,
-    /// The log did not include an L2 block hash.
-    #[error("attested withdrawal log is missing its block hash")]
-    MissingBlockHash,
-    /// The account proof did not contain exactly the requested storage proof.
-    #[error("invalid attested withdrawal storage proof")]
-    InvalidStorageProof,
-    /// The enclave returned a signature with the wrong length.
-    #[error("invalid attested withdrawal signature length: {0}")]
-    InvalidSignatureLength(usize),
-    /// The enclave returned an unsupported ECDSA recovery ID.
-    #[error("invalid attested withdrawal signature recovery ID: {0}")]
-    InvalidRecoveryId(u8),
-    /// An L2 RPC request failed.
-    #[error("L2 RPC error: {0}")]
-    L2Rpc(String),
-    /// An enclave signer request failed.
-    #[error("enclave signer error: {0}")]
-    Signer(String),
-    /// A portal read failed.
-    #[error("portal RPC error: {0}")]
-    Portal(String),
-    /// L1 transaction submission failed.
-    #[error("L1 transaction error: {0}")]
-    Transaction(String),
-    /// The portal redemption transaction reverted.
-    #[error("attested withdrawal redemption transaction reverted: {tx_hash}")]
-    TransactionReverted {
-        /// Hash of the reverted L1 transaction.
-        tx_hash: B256,
-    },
 }
