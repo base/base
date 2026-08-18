@@ -5,7 +5,8 @@ services:
     image: ghcr.io/base/node-reth:${NODE_TAG:-latest}
     build:
       context: .
-      dockerfile: etc/docker/Dockerfile.node-reth
+      dockerfile: etc/docker/Dockerfile.rust-services
+      target: node-reth
     restart: unless-stopped
     ports:
       - "8545:8545" # RPC
@@ -22,7 +23,8 @@ services:
     image: ghcr.io/base/node-reth:${NODE_TAG:-latest}
     build:
       context: .
-      dockerfile: etc/docker/Dockerfile.node-reth
+      dockerfile: etc/docker/Dockerfile.rust-services
+      target: node-reth
     restart: unless-stopped
     depends_on:
       - execution

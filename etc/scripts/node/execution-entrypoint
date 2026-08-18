@@ -51,22 +51,6 @@ case "$LOG_LEVEL" in
         ;;
 esac
 
-wait_for_pid() {
-    local pid="$1"
-
-    # Check if the process exists at all before waiting
-    if [[ ! -e "/proc/$pid" ]]; then
-        echo "Process $pid does not exist." >&2
-        return 1
-    fi
-
-    echo "Waiting for process $pid to exit..."
-    while [[ -e "/proc/$pid" ]]; do
-        sleep 1
-    done
-    echo "Process $pid has exited."
-}
-
 # Add pruning for base
 if [[ "${RETH_PRUNING_ARGS+x}" = x ]]; then
     echo "Adding pruning arguments: $RETH_PRUNING_ARGS"
@@ -74,48 +58,6 @@ if [[ "${RETH_PRUNING_ARGS+x}" = x ]]; then
 fi
 
 if [[ "$RETH_HISTORICAL_PROOFS" == "true" && -n "$RETH_HISTORICAL_PROOFS_STORAGE_PATH" ]]; then
-    # reth doesn't like starting an old database in RO mode, so we have to start the reth node, wait for it to start up, then shut it down first
-    "$BINARY" node \
-        -$LOG_LEVEL \
-        --datadir="$RETH_DATA_DIR" \
-        --log.stdout.format json \
-        --http \
-        --http.addr=127.0.0.1 \
-        --http.port="$RPC_PORT" \
-        --http.api=eth \
-        --chain "$RETH_CHAIN" &
-
-    PID=$!
-
-    MAX_WAIT=$((60 * 60 * 6)) # 6 hours (static file manager init is slow)
-
-    # wait for json-rpc to return a block number greater than 0 (synced beyond genesis)
-    while true; do
-        RESPONSE=$(curl -s -X POST -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", false],"id":1}' http://127.0.0.1:"$RPC_PORT" 2>/dev/null || true)
-
-        if echo "$RESPONSE" | grep -q '"number":"0x0"'; then
-            echo "waiting for reth node to sync beyond genesis block"
-        elif echo "$RESPONSE" | grep -q '"result"'; then
-            # curl succeeded and returned a valid result with block number != 0x0
-            break
-        else
-            echo "waiting for reth node to start up"
-        fi
-
-        sleep 1
-        MAX_WAIT=$((MAX_WAIT - 1))
-        if [ "$MAX_WAIT" -eq 0 ]; then
-            echo "timed out waiting for reth node to start up"
-            kill "$PID"
-            exit 1
-        fi
-    done
-
-    # shut down gracefully
-    kill "$PID"
-
-    (wait_for_pid "$PID" && echo "reth node initialized") || echo "warning: reth node exited with code $?"
-
     ADDITIONAL_ARGS="$ADDITIONAL_ARGS --proofs-history --proofs-history.storage-path=$RETH_HISTORICAL_PROOFS_STORAGE_PATH"
 
     # in this case, we need to run the init script first (idempotent)

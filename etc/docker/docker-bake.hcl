@@ -193,7 +193,11 @@ target "zk-host" {
 
 target "node-reth" {
   context = "."
-  dockerfile = "etc/docker/Dockerfile.node-reth"
+  dockerfile = "etc/docker/Dockerfile.rust-services"
+  target = "node-reth"
+  args = {
+    RUST_VERSION = "${RUST_VERSION}"
+  }
   tags = ["ghcr.io/base/node-reth:local"]
   cache-from = ["type=registry,ref=${NODE_RETH_IMAGE}:cache-${PLATFORM_PAIR}"]
 }
