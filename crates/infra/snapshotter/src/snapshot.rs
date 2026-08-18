@@ -63,9 +63,6 @@ pub trait SnapshotManifestExt {
 
     /// Returns whether `filename` is the latest chunk for its component.
     fn is_latest_chunk_file(&self, filename: &str) -> bool;
-
-    /// Returns the archive names for the latest chunks of all present components.
-    fn latest_chunk_filenames(&self) -> Vec<String>;
 }
 
 impl SnapshotManifestExt for SnapshotManifest {
@@ -110,33 +107,6 @@ impl SnapshotManifestExt for SnapshotManifest {
 
         start == latest_start && end == latest_end
     }
-
-    fn latest_chunk_filenames(&self) -> Vec<String> {
-        let mut filenames = self
-            .components
-            .iter()
-            .filter_map(|(component, manifest)| {
-                let ComponentManifest::Chunked(meta) = manifest else {
-                    return None;
-                };
-                let (latest_start, latest_end) = latest_chunk_range(meta)?;
-                Some(ChunkFilename::format(component, latest_start, latest_end))
-            })
-            .collect::<Vec<_>>();
-        filenames.sort_unstable();
-        filenames
-    }
-}
-
-/// Returns the block range for a chunked component's latest archive.
-fn latest_chunk_range(meta: &ChunkedArchive) -> Option<(u64, u64)> {
-    let latest_start = meta
-        .total_blocks
-        .checked_sub(1)?
-        .checked_div(meta.blocks_per_file)?
-        .checked_mul(meta.blocks_per_file)?;
-    let latest_end = latest_start.checked_add(meta.blocks_per_file - 1)?;
-    Some((latest_start, latest_end))
 }
 
 /// Inputs for [`SnapshotGenerator::generate_manifest`].
@@ -516,6 +486,17 @@ impl ChunkFilename {
         let start = parts[1].parse::<u64>().ok()?;
         Some((parts[2].to_string(), start, end))
     }
+}
+
+/// Returns the block range for a chunked component's latest archive.
+fn latest_chunk_range(meta: &ChunkedArchive) -> Option<(u64, u64)> {
+    let latest_start = meta
+        .total_blocks
+        .checked_sub(1)?
+        .checked_div(meta.blocks_per_file)?
+        .checked_mul(meta.blocks_per_file)?;
+    let latest_end = latest_start.checked_add(meta.blocks_per_file - 1)?;
+    Some((latest_start, latest_end))
 }
 
 /// Infers the snapshot block from the highest header static file range.
@@ -999,21 +980,19 @@ mod tests {
     }
 
     #[test]
-    fn latest_chunk_filenames_are_sorted_and_identify_only_final_chunks() {
+    fn is_latest_chunk_file_identifies_only_the_final_chunk() {
         let mut components = BTreeMap::new();
-        for component in ["headers", "transactions"] {
-            components.insert(
-                component.to_string(),
-                ComponentManifest::Chunked(ChunkedArchive {
-                    blocks_per_file: 500_000,
-                    total_blocks: 1_000_000,
-                    chunk_sizes: vec![1, 1],
-                    chunk_decompressed_sizes: vec![1, 1],
-                    chunk_output_files: vec![vec![], vec![]],
-                    chunk_files: vec![],
-                }),
-            );
-        }
+        components.insert(
+            "headers".to_string(),
+            ComponentManifest::Chunked(ChunkedArchive {
+                blocks_per_file: 500_000,
+                total_blocks: 1_000_000,
+                chunk_sizes: vec![1, 1],
+                chunk_decompressed_sizes: vec![1, 1],
+                chunk_output_files: vec![vec![], vec![]],
+                chunk_files: vec![],
+            }),
+        );
         let manifest = SnapshotManifest {
             block: 1_000_000,
             chain_id: 8453,
@@ -1024,14 +1003,6 @@ mod tests {
             components,
         };
 
-        assert_eq!(
-            manifest.latest_chunk_filenames(),
-            vec![
-                "headers-500000-999999.tar.zst".to_string(),
-                "transactions-500000-999999.tar.zst".to_string(),
-            ],
-            "manifest should identify one latest archive per chunked component"
-        );
         assert!(
             manifest.is_latest_chunk_file("headers-500000-999999.tar.zst"),
             "latest chunk should be identified"

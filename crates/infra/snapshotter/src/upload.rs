@@ -29,7 +29,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     progress::{UploadProgress, UploadStage},
-    snapshot::{ChunkFilename, SnapshotManifest, SnapshotManifestExt},
+    snapshot::{ChunkFilename, ComponentManifest, SnapshotManifest, SnapshotManifestExt},
 };
 
 /// Maximum number of concurrent file uploads.
@@ -1033,8 +1033,6 @@ fn build_published_manifest(
     public_snapshot_base_url: Option<&str>,
     timestamp: u64,
 ) -> Result<Vec<u8>> {
-    use reth_cli_commands::download::manifest::ComponentManifest;
-
     let mut manifest = local_manifest.clone();
     manifest.base_url = public_snapshot_base_url.map(str::to_owned);
 
@@ -1050,7 +1048,9 @@ fn build_published_manifest(
                 let mut chunk_files = Vec::with_capacity(num_chunks as usize);
                 for i in 0..num_chunks {
                     let start = i * chunked.blocks_per_file;
-                    let end = start + chunked.blocks_per_file - 1;
+                    let end = start
+                        .checked_add(chunked.blocks_per_file - 1)
+                        .context("block range overflow in published chunk_files")?;
                     let archive_name = ChunkFilename::format(component_name, start, end);
                     if i + 1 == num_chunks {
                         chunk_files.push(format!("{timestamp}/{archive_name}"));
@@ -1112,12 +1112,10 @@ mod tests {
     }
 
     #[test]
-    fn build_published_manifest_leaves_proofs_file_as_sibling() {
+    fn build_published_manifest_sets_chunk_files_and_leaves_proofs_as_sibling() {
         use std::collections::BTreeMap;
 
-        use reth_cli_commands::download::manifest::{
-            ComponentManifest, SingleArchive, SnapshotManifest,
-        };
+        use crate::snapshot::{ChunkedArchive, SingleArchive};
 
         let mut components = BTreeMap::new();
         components.insert(
@@ -1140,9 +1138,20 @@ mod tests {
                 output_files: vec![],
             }),
         );
+        components.insert(
+            "headers".to_string(),
+            ComponentManifest::Chunked(ChunkedArchive {
+                blocks_per_file: 500_000,
+                total_blocks: 1_000_000,
+                chunk_sizes: vec![100, 200],
+                chunk_decompressed_sizes: vec![1_000, 2_000],
+                chunk_output_files: vec![vec![], vec![]],
+                chunk_files: vec![],
+            }),
+        );
 
         let local = SnapshotManifest {
-            block: 1,
+            block: 1_000_000,
             chain_id: 8453,
             storage_version: 2,
             timestamp: 1_700_000_000,
@@ -1170,6 +1179,14 @@ mod tests {
         assert_eq!(
             manifest["components"]["proofs"]["file"], "proofs.tar.zst",
             "proofs must remain a sibling of manifest.json for ProofsDownloader"
+        );
+        assert_eq!(
+            manifest["components"]["headers"]["chunk_files"],
+            serde_json::json!([
+                "static_files/headers-0-499999.tar.zst",
+                "1700000000/headers-500000-999999.tar.zst",
+            ]),
+            "headers chunk_files should split finalized and tip paths under root base_url"
         );
     }
 
