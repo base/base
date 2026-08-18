@@ -4,32 +4,22 @@ use base_action_harness::{
     ActionTestHarness, BatcherConfig, L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder,
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
-use base_protocol::BatchType;
+use base_common_consensus::BaseBlock;
 
 /// Shared setup helpers for Holocene span-batch action tests.
 #[derive(Debug)]
 struct HoloceneSpanFixture;
 
 impl HoloceneSpanFixture {
-    /// Returns a calldata span-batch configuration for deterministic action tests.
-    fn span_batcher_config() -> BatcherConfig {
+    /// Returns a calldata batcher configuration for deterministic action tests.
+    fn batcher_config() -> BatcherConfig {
         BatcherConfig {
-            batch_type: BatchType::Span,
             encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
             ..BatcherConfig::default()
         }
     }
 
-    /// Returns a calldata singular-batch configuration for mixed-format tests.
-    fn singular_batcher_config() -> BatcherConfig {
-        BatcherConfig {
-            batch_type: BatchType::Single,
-            encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
-            ..BatcherConfig::default()
-        }
-    }
-
-    /// Returns a harness with span batches enabled but Holocene inactive.
+    /// Returns a pre-Holocene harness for protocol-level Span fixtures.
     fn pre_holocene_harness(batcher: &BatcherConfig) -> ActionTestHarness {
         let rollup_cfg = TestRollupConfigBuilder::base_mainnet(batcher).through_granite().build();
         ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg)
@@ -42,12 +32,23 @@ impl HoloceneSpanFixture {
     }
 }
 
+fn submit_span_fixture(
+    harness: &mut ActionTestHarness,
+    chain: &SharedL1Chain,
+    config: &BatcherConfig,
+    blocks: &[BaseBlock],
+    nonce: u64,
+) {
+    harness.submit_span_batch_calldata(config, blocks, nonce).expect("span fixture submission");
+    chain.push(harness.l1.tip().clone());
+}
+
 /// Post-Holocene span derivation accepts a valid multi-block span batch.
 #[tokio::test]
 async fn post_holocene_multi_block_span_derives() {
     const BLOCK_COUNT: u64 = 3;
 
-    let batcher_cfg = HoloceneSpanFixture::span_batcher_config();
+    let batcher_cfg = HoloceneSpanFixture::batcher_config();
     let mut harness = HoloceneSpanFixture::post_holocene_harness(&batcher_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(harness.l1.chain().to_vec());
@@ -58,7 +59,7 @@ async fn post_holocene_multi_block_span_derives() {
         &mut sequencer,
         SharedL1Chain::from_blocks(harness.l1.chain().to_vec()),
     );
-    harness.submit_l2_blocks(&chain, batcher_cfg, blocks).await;
+    submit_span_fixture(&mut harness, &chain, &batcher_cfg, &blocks, 0);
 
     node.initialize().await;
     let derived = node.run_until_idle().await;
@@ -72,7 +73,7 @@ async fn post_holocene_multi_block_span_derives() {
 async fn post_holocene_span_crossing_l1_epoch_boundary_derives() {
     const BLOCK_COUNT: u64 = 6;
 
-    let batcher_cfg = HoloceneSpanFixture::span_batcher_config();
+    let batcher_cfg = HoloceneSpanFixture::batcher_config();
     let mut harness = HoloceneSpanFixture::post_holocene_harness(&batcher_cfg);
 
     harness.mine_l1_blocks(1);
@@ -85,7 +86,7 @@ async fn post_holocene_span_crossing_l1_epoch_boundary_derives() {
         &mut sequencer,
         SharedL1Chain::from_blocks(harness.l1.chain().to_vec()),
     );
-    harness.submit_l2_blocks(&chain, batcher_cfg, blocks).await;
+    submit_span_fixture(&mut harness, &chain, &batcher_cfg, &blocks, 0);
 
     node.initialize().await;
     let derived = node.run_until_idle().await;
@@ -100,7 +101,7 @@ async fn post_holocene_span_crossing_l1_epoch_boundary_derives() {
 async fn post_holocene_stale_span_l1_origin_check_after_reorg_is_rejected() {
     const BLOCK_COUNT: u64 = 6;
 
-    let batcher_cfg = HoloceneSpanFixture::span_batcher_config();
+    let batcher_cfg = HoloceneSpanFixture::batcher_config();
     let mut harness = HoloceneSpanFixture::post_holocene_harness(&batcher_cfg);
 
     harness.mine_l1_blocks(1);
@@ -119,7 +120,7 @@ async fn post_holocene_stale_span_l1_origin_check_after_reorg_is_rejected() {
         &mut sequencer,
         SharedL1Chain::from_blocks(harness.l1.chain().to_vec()),
     );
-    harness.submit_l2_blocks(&chain, batcher_cfg, blocks).await;
+    submit_span_fixture(&mut harness, &chain, &batcher_cfg, &blocks, 0);
 
     node.initialize().await;
     let derived = node.run_until_idle().await;
@@ -131,7 +132,7 @@ async fn post_holocene_stale_span_l1_origin_check_after_reorg_is_rejected() {
 /// Pre-Holocene `BatchQueue` buffers a future span batch and derives it after the gap is filled.
 #[tokio::test]
 async fn pre_holocene_future_span_is_buffered_by_batch_queue() {
-    let batcher_cfg = HoloceneSpanFixture::span_batcher_config();
+    let batcher_cfg = HoloceneSpanFixture::batcher_config();
     let mut harness = HoloceneSpanFixture::pre_holocene_harness(&batcher_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(harness.l1.chain().to_vec());
@@ -146,12 +147,12 @@ async fn pre_holocene_future_span_is_buffered_by_batch_queue() {
     );
     node.initialize().await;
 
-    harness.submit_l2_blocks(&chain, batcher_cfg.clone(), vec![block_2.clone()]).await;
+    submit_span_fixture(&mut harness, &chain, &batcher_cfg, &[block_2.clone()], 0);
     let derived = node.run_until_idle().await;
     assert_eq!(derived, 0, "future pre-Holocene span should wait for the missing parent");
     assert_eq!(node.l2_safe_number(), 0, "safe head should remain at genesis");
 
-    harness.submit_l2_blocks(&chain, batcher_cfg, vec![block_1]).await;
+    submit_span_fixture(&mut harness, &chain, &batcher_cfg, &[block_1], 100);
     let derived = node.run_until_idle().await;
 
     assert_eq!(derived, 2, "pre-Holocene BatchQueue should derive the new and buffered spans");
@@ -161,7 +162,7 @@ async fn pre_holocene_future_span_is_buffered_by_batch_queue() {
 /// Post-Holocene strict ordering drops a future span batch instead of buffering it.
 #[tokio::test]
 async fn post_holocene_future_span_is_dropped_not_buffered() {
-    let batcher_cfg = HoloceneSpanFixture::span_batcher_config();
+    let batcher_cfg = HoloceneSpanFixture::batcher_config();
     let mut harness = HoloceneSpanFixture::post_holocene_harness(&batcher_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(harness.l1.chain().to_vec());
@@ -176,17 +177,17 @@ async fn post_holocene_future_span_is_dropped_not_buffered() {
     );
     node.initialize().await;
 
-    harness.submit_l2_blocks(&chain, batcher_cfg.clone(), vec![block_2.clone()]).await;
+    submit_span_fixture(&mut harness, &chain, &batcher_cfg, &[block_2.clone()], 0);
     let derived = node.run_until_idle().await;
     assert_eq!(derived, 0, "future post-Holocene span should be dropped");
     assert_eq!(node.l2_safe_number(), 0, "safe head should remain at genesis");
 
-    harness.submit_l2_blocks(&chain, batcher_cfg.clone(), vec![block_1]).await;
+    submit_span_fixture(&mut harness, &chain, &batcher_cfg, &[block_1], 100);
     let derived = node.run_until_idle().await;
     assert_eq!(derived, 1, "only the expected next span should derive");
     assert_eq!(node.l2_safe_number(), 1, "future span must not have been buffered");
 
-    harness.submit_l2_blocks(&chain, batcher_cfg, vec![block_2]).await;
+    submit_span_fixture(&mut harness, &chain, &batcher_cfg, &[block_2], 200);
     let derived = node.run_until_idle().await;
     assert_eq!(derived, 1, "resubmitted span should derive after its parent is safe");
     assert_eq!(node.l2_safe_number(), 2, "safe head should advance after resubmission");
@@ -195,7 +196,7 @@ async fn post_holocene_future_span_is_dropped_not_buffered() {
 /// Post-Holocene strict ordering also drops future singular batches instead of buffering them.
 #[tokio::test]
 async fn post_holocene_future_singular_is_dropped_not_buffered() {
-    let batcher_cfg = HoloceneSpanFixture::singular_batcher_config();
+    let batcher_cfg = HoloceneSpanFixture::batcher_config();
     let mut harness = HoloceneSpanFixture::post_holocene_harness(&batcher_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(harness.l1.chain().to_vec());
@@ -229,7 +230,7 @@ async fn post_holocene_future_singular_is_dropped_not_buffered() {
 /// Post-Holocene past singular batches are ignored without flushing following batches.
 #[tokio::test]
 async fn post_holocene_past_singular_does_not_flush_channel() {
-    let batcher_cfg = HoloceneSpanFixture::singular_batcher_config();
+    let batcher_cfg = HoloceneSpanFixture::batcher_config();
     let mut harness = HoloceneSpanFixture::post_holocene_harness(&batcher_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(harness.l1.chain().to_vec());
@@ -259,7 +260,7 @@ async fn post_holocene_past_singular_does_not_flush_channel() {
 /// Pre-Holocene past singular replays are ignored without poisoning following batches.
 #[tokio::test]
 async fn pre_holocene_past_singular_does_not_poison_channel() {
-    let batcher_cfg = HoloceneSpanFixture::singular_batcher_config();
+    let batcher_cfg = HoloceneSpanFixture::batcher_config();
     let mut harness = HoloceneSpanFixture::pre_holocene_harness(&batcher_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(harness.l1.chain().to_vec());
@@ -288,9 +289,8 @@ async fn pre_holocene_past_singular_does_not_poison_channel() {
 /// Post-Holocene derivation accepts singular and span batches in the same L1 stream.
 #[tokio::test]
 async fn post_holocene_mixed_singular_and_span_batches_derive() {
-    let span_cfg = HoloceneSpanFixture::span_batcher_config();
-    let singular_cfg = HoloceneSpanFixture::singular_batcher_config();
-    let mut harness = HoloceneSpanFixture::post_holocene_harness(&span_cfg);
+    let batcher_cfg = HoloceneSpanFixture::batcher_config();
+    let mut harness = HoloceneSpanFixture::post_holocene_harness(&batcher_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(harness.l1.chain().to_vec());
     let mut sequencer = harness.create_l2_sequencer(l1_chain);
@@ -302,8 +302,8 @@ async fn post_holocene_mixed_singular_and_span_batches_derive() {
         &mut sequencer,
         SharedL1Chain::from_blocks(harness.l1.chain().to_vec()),
     );
-    harness.submit_l2_blocks(&chain, singular_cfg, vec![block_1]).await;
-    harness.submit_l2_blocks(&chain, span_cfg, vec![block_2]).await;
+    harness.submit_l2_blocks(&chain, batcher_cfg.clone(), vec![block_1]).await;
+    submit_span_fixture(&mut harness, &chain, &batcher_cfg, &[block_2], 100);
 
     node.initialize().await;
     let derived = node.run_until_idle().await;

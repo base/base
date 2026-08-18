@@ -11,7 +11,7 @@ use base_batcher_service::{BatcherConfig, BatcherService};
 use base_cli_utils::{LogConfig, RuntimeManager};
 use base_runtime::TokioRuntime;
 use base_tx_manager::SignerConfig;
-use clap::{Args, Parser, ValueEnum};
+use clap::{Args, Parser};
 use tracing::info;
 use url::Url;
 
@@ -135,16 +135,6 @@ pub(crate) struct BatcherArgs {
     #[arg(long = "target-num-frames", default_value = "1", env = "BATCHER_TARGET_NUM_FRAMES")]
     pub target_num_frames: usize,
 
-    /// Maximum number of L2 blocks to accumulate into one span batch.
-    #[arg(long = "max-blocks-per-span-batch", env = "BATCHER_MAX_BLOCKS_PER_SPAN_BATCH")]
-    pub max_blocks_per_span_batch: Option<usize>,
-
-    /// Batch encoding mode.
-    ///
-    /// Accepts `single` / `0` and `span` / `1`. Span batches require Fjord
-    /// to be active for the next L2 block at startup.
-    #[arg(long = "batch-type", default_value = "single", env = "BATCHER_BATCH_TYPE")]
-    batch_type: BatchTypeArg,
     /// Data availability mode for L1 submissions.
     ///
     /// Accepts `blobs` (default) or `calldata`.
@@ -294,8 +284,6 @@ impl BatcherArgs {
             max_channel_duration: self.max_channel_duration,
             sub_safety_margin: self.sub_safety_margin,
             target_num_frames: self.target_num_frames,
-            max_blocks_per_span_batch: self.max_blocks_per_span_batch,
-            batch_type: self.batch_type.into(),
             da_type: self.da_type,
             // The batcher binary only targets post-Fjord chains, so it always uses Brotli.
             compression_algo: base_batcher_encoder::CompressionAlgo::Brotli10,
@@ -352,22 +340,6 @@ impl BatcherArgs {
     }
 }
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
-enum BatchTypeArg {
-    #[value(alias = "0")]
-    Single,
-    #[value(alias = "1")]
-    Span,
-}
-
-impl From<BatchTypeArg> for base_protocol::BatchType {
-    fn from(value: BatchTypeArg) -> Self {
-        match value {
-            BatchTypeArg::Single => Self::Single,
-            BatchTypeArg::Span => Self::Span,
-        }
-    }
-}
 #[cfg(test)]
 mod tests {
     use clap::Parser;
@@ -399,14 +371,6 @@ mod tests {
         let mut args = base_args();
         args.extend_from_slice(extra);
         Cli::try_parse_from(args).expect("CLI should parse")
-    }
-
-    #[test]
-    fn into_config_defaults_to_single_batches_and_blobs() {
-        let cli = parse_cli(&[]);
-        let config = cli.args.into_config().expect("config should build");
-
-        assert_eq!(config.encoder_config.batch_type, base_protocol::BatchType::Single);
     }
 
     #[test]
@@ -468,38 +432,6 @@ mod tests {
         let config = cli.args.into_config().expect("config should build");
 
         assert_eq!(config.batch_inbox_override, Some(Address::repeat_byte(0x11)));
-    }
-
-    #[test]
-    fn into_config_accepts_numeric_span_alias() {
-        let cli = parse_cli(&["--batch-type", "1"]);
-        let config = cli.args.into_config().expect("config should build");
-
-        assert_eq!(config.encoder_config.batch_type, base_protocol::BatchType::Span);
-    }
-
-    #[test]
-    fn into_config_accepts_max_blocks_per_span_batch() {
-        let cli = parse_cli(&["--max-blocks-per-span-batch", "2"]);
-        let config = cli.args.into_config().expect("config should build");
-
-        assert_eq!(config.encoder_config.max_blocks_per_span_batch, Some(2));
-    }
-
-    #[test]
-    fn into_config_rejects_zero_max_blocks_per_span_batch() {
-        let cli = parse_cli(&["--max-blocks-per-span-batch", "0"]);
-        let err = cli.args.into_config().expect_err("zero span batch block cap should fail");
-
-        assert!(err.to_string().contains("max_blocks_per_span_batch"));
-    }
-
-    #[test]
-    fn into_config_accepts_one_max_blocks_per_span_batch() {
-        let cli = parse_cli(&["--max-blocks-per-span-batch", "1"]);
-        let config = cli.args.into_config().expect("one-block span batch cap should be valid");
-
-        assert_eq!(config.encoder_config.max_blocks_per_span_batch, Some(1));
     }
 
     #[test]

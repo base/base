@@ -24,9 +24,8 @@ pub enum ChannelOutError {
 
 /// Owns compression and final framing for one derivation channel.
 ///
-/// The Single producer writes batches through [`Self::add_single_batch`]. The
-/// Span producer supplies an already-populated compressor and uses only
-/// [`Self::into_frames`] for the terminal framing step.
+/// The batcher writes Single batches through [`Self::add_single_batch`] and
+/// consumes the result through [`Self::into_frames`].
 #[derive(derive_more::Debug)]
 pub struct ChannelOut<C>
 where

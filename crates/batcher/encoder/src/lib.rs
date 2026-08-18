@@ -24,8 +24,8 @@ pub use pipeline::{BatchPipeline, DerivationReconciliation};
 
 mod channel;
 pub use channel::{
-    ChannelAddOutcome, ChannelFullReason, FrameState, OpenChannel, OpenChannelError,
-    OpenChannelKind, PendingRef, ReadyChannel, SpanChannel,
+    ChannelAddOutcome, ChannelFullReason, FrameState, OpenChannel, OpenChannelError, PendingRef,
+    ReadyChannel,
 };
 
 mod encoder;
