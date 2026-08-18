@@ -88,6 +88,8 @@ pub struct BatcherConfig {
     pub num_confirmations: usize,
     /// Timeout before resubmitting a transaction.
     pub resubmission_timeout: Duration,
+    /// Interval between receipt polls for a submitted transaction.
+    pub receipt_query_interval: Duration,
     /// Throttle configuration (optional).
     pub throttle: Option<ThrottleConfig>,
     /// Number of recent L1 blocks to scan on startup for already-submitted batcher frames.
@@ -157,6 +159,7 @@ impl Default for BatcherConfig {
             max_pending_transactions: 1,
             num_confirmations: 1,
             resubmission_timeout: Duration::from_secs(48),
+            receipt_query_interval: Duration::from_secs(12),
             throttle: Some(ThrottleConfig::default()),
             check_recent_txs_depth: 0,
             admin_addr: None,
