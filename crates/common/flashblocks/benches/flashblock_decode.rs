@@ -42,8 +42,7 @@ impl Fixture {
     /// A representative first flashblock: base header, a full transaction set, and
     /// v0.5.0-style metadata carrying one receipt per transaction.
     fn payload() -> FlashblocksPayloadV1 {
-        let transactions =
-            (0..Self::TRANSACTION_COUNT).map(Self::transaction).collect::<Vec<_>>();
+        let transactions = (0..Self::TRANSACTION_COUNT).map(Self::transaction).collect::<Vec<_>>();
 
         FlashblocksPayloadV1 {
             payload_id: PayloadId::default(),
