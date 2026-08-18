@@ -130,7 +130,7 @@ where
 
         // Extract hash before moving parent_header into Arc to avoid cloning
         let parent_hash = parent_header.hash();
-        let execution_cache = input.cache;
+        let resources = input.resources;
         let config = PayloadConfig::new(Arc::new(parent_header), input.attributes, id);
 
         // Create shared mutex for synchronizing cancellation with payload publishing
@@ -146,7 +146,7 @@ where
             publish_guard,
             deadline,
             cached_reads: self.maybe_pre_cached(parent_hash),
-            execution_cache,
+            execution_cache: resources.execution_cache().cloned(),
         };
 
         job.spawn_build_job();
@@ -407,6 +407,7 @@ mod tests {
     use rand::rng;
     use reth_execution_cache::{ExecutionCache, SavedCache};
     use reth_node_api::{BuiltPayloadExecutedBlock, NodePrimitives};
+    use reth_payload_builder::PayloadBuilderResources;
     use reth_primitives_traits::SealedBlock;
     use reth_provider::test_utils::MockEthProvider;
     use reth_tasks::Runtime;
@@ -536,8 +537,7 @@ mod tests {
             let input = BuildNewPayload {
                 attributes: attr.clone(),
                 parent_hash,
-                cache: None,
-                state_root_handle: None,
+                resources: PayloadBuilderResources::default(),
             };
             let job = generator.new_payload_job(input, attr.payload_id(&parent_hash))?;
             let _ = job.await;
@@ -553,11 +553,11 @@ mod tests {
             // job resolve triggers cancellations from the build task
             let parent_hash = attr.payload_attributes.parent;
             let cache = SavedCache::new(parent_hash, ExecutionCache::new(1_000));
+            let payload_builder_resources = PayloadBuilderResources::new(Some(cache.clone()), None);
             let input = BuildNewPayload {
                 attributes: attr.clone(),
                 parent_hash,
-                cache: Some(cache.clone()),
-                state_root_handle: None,
+                resources: payload_builder_resources,
             };
             let mut job = generator.new_payload_job(input, attr.payload_id(&parent_hash))?;
             let _ = job.resolve();

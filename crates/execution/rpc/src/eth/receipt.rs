@@ -13,7 +13,7 @@ use base_common_rpc_types::{BaseTransactionReceipt, L1BlockInfo, TransactionRece
 use base_execution_evm::RethL1BlockInfo;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_node_api::NodePrimitives;
-use reth_primitives_traits::SealedBlock;
+use reth_primitives_traits::{SealedBlock, SealedHeaderFor};
 use reth_rpc_eth_api::{
     RpcConvert,
     helpers::LoadReceipt,
@@ -51,7 +51,17 @@ where
         BlockReader<Block = N::Block> + ChainSpecProvider<ChainSpec: Upgrades> + Debug + 'static,
 {
     type RpcReceipt = BaseTransactionReceipt;
+    type RpcLog = Log;
     type Error = BaseEthApiError;
+
+    fn convert_log(
+        &self,
+        log: Log,
+        _receipt: &N::Receipt,
+        _header: &SealedHeaderFor<N>,
+    ) -> Result<Self::RpcLog, Self::Error> {
+        Ok(log)
+    }
 
     fn convert_receipts(
         &self,

@@ -129,7 +129,7 @@ fn full_post_state() -> HashedPostState {
             .into_iter()
             .enumerate()
             .map(|(i, slot)| (keccak256(slot), U256::from(42 + i as u64)));
-        state.storages.insert(hashed_address, HashedStorage::from_iter(false, hashed_slots));
+        state.storages.insert(hashed_address, HashedStorage::from_iter(hashed_slots));
     }
     state
 }
@@ -221,7 +221,6 @@ fn storage_root_acquires_one_tx_per_call() {
     let provider = BaseProofsStateProviderRef::new(Box::<NoopProvider>::default(), &storage, 0);
     let (address, slots) = seed_layout().into_iter().next().expect("seed");
     let hashed_storage = HashedStorage::from_iter(
-        false,
         slots.iter().enumerate().map(|(i, slot)| (keccak256(slot), U256::from(42 + i as u64))),
     );
 

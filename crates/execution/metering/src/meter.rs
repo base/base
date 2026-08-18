@@ -22,6 +22,7 @@ use reth_revm::{
     database::StateProviderDatabase, db::State, primitives::KECCAK_EMPTY,
     revm::context_interface::cfg::GasParams,
 };
+use revm::primitives::hardfork::SpecId;
 use revm_bytecode::opcode::OpCode;
 use revm_database::states::{BundleState, CacheState};
 
@@ -443,12 +444,21 @@ fn intrinsic_gas_entries<T: alloy_consensus::Transaction>(
     let per_empty_account_cost = gas_params.tx_eip7702_per_empty_account_cost();
     let authorization_gas = authorization_count.saturating_mul(per_empty_account_cost);
 
+    let eip2780 = spec.into_eth_spec().is_enabled_in(SpecId::AMSTERDAM).then(|| {
+        revm::context_interface::cfg::gas_params::Eip2780TxInfo {
+            value: tx.value(),
+            // Self-transfer: a `Call` whose recipient is the sender itself.
+            is_self_transfer: tx.kind().to() == Some(tx.signer_ref()),
+        }
+    });
+
     let initial_gas = gas_params.initial_tx_gas(
         tx.input(),
         is_create,
         access_list_addresses,
         access_list_storage_keys,
         authorization_count,
+        eip2780,
     );
     let intrinsic_gas = initial_gas.initial_total_gas();
     let floor_gas = initial_gas.floor_gas();

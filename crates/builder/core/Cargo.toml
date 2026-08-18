@@ -193,6 +193,7 @@ default = [ "jemalloc", "metrics" ]
 metrics = [
 	"base-common-evm/metrics",
 	"base-metrics/metrics",
+	"base-observability-events/metrics",
 	"dep:metrics",
 	"reth-evm/metrics",
 	"reth-trie/metrics",
@@ -211,6 +212,7 @@ min-trace-logs = [ "tracing/release_max_level_trace" ]
 test-utils = [
 	"base-bundles/test-utils",
 	"base-common-chains/test-utils",
+	"base-execution-eip8130/test-utils",
 	"base-execution-rpc/client",
 	"base-node-core/test-utils",
 	"base-node-runner/test-utils",
@@ -223,6 +225,7 @@ test-utils = [
 	"reth-chainspec/test-utils",
 	"reth-db/test-utils",
 	"reth-evm/test-utils",
+	"reth-execution-cache/test-utils",
 	"reth-ipc",
 	"reth-node-builder/test-utils",
 	"reth-node-ethereum/test-utils",
