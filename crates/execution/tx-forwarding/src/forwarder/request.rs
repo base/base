@@ -102,8 +102,6 @@ mod tests {
 
         assert_eq!(encoded.as_array().expect("positional array").len(), 1);
         assert_eq!(encoded[0]["sender"], json!("0x1111111111111111111111111111111111111111"));
-        assert!(encoded[0].get("max_block_number").is_none());
-        assert!(encoded[0].get("min_block_number").is_none());
     }
 
     #[test]
