@@ -5,7 +5,7 @@ set -e
 # Downloads release binaries from GitHub releases and installs them locally.
 
 # NOTE: If you change this script, increment the version below.
-BASEUP_INSTALLER_VERSION="0.1.8"
+BASEUP_INSTALLER_VERSION="0.1.9"
 
 BASEUP_REPO="${BASEUP_REPO:-base/base}"
 BASEUP_REPO_REF="${BASEUP_REPO_REF:-main}"
@@ -28,10 +28,12 @@ COMMAND="install"
 VERSION=""
 VERSION_EXPLICIT=0
 UNSAFE_SKIP_VERIFY=0
+FORCE_INSTALL=0
 UPDATE_TMP_FILE=""
 MAIN_TMP_DIR=""
 UPDATE_CHECK_CACHE_FILE="$BASEUP_HOME/baseup-update-check"
 UPDATE_CHECK_TTL_SECONDS="${BASEUP_UPDATE_CHECK_TTL_SECONDS:-86400}"
+INSTALLED_VERSIONS_FILE="$BASEUP_HOME/installed-versions"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -788,6 +790,60 @@ release_asset_exists() {
     array_contains "$name" "${RELEASE_ASSETS[@]}"
 }
 
+installed_version_key() {
+    local binary_name="$1"
+    local target="$2"
+
+    printf '%s:%s' "$binary_name" "$target"
+}
+
+get_installed_version() {
+    local binary_name="$1"
+    local target="$2"
+    local key
+    local line
+
+    [[ -f "$INSTALLED_VERSIONS_FILE" ]] || return 1
+
+    key="$(installed_version_key "$binary_name" "$target")"
+    line="$(grep -m 1 "^${key}=" "$INSTALLED_VERSIONS_FILE" 2>/dev/null || true)"
+    [[ -n "$line" ]] || return 1
+
+    printf '%s\n' "${line#"${key}"=}"
+}
+
+record_installed_version() {
+    local binary_name="$1"
+    local target="$2"
+    local version="$3"
+    local key
+    local tmp_file
+
+    ensure_dir "$BASEUP_HOME" "BASEUP_HOME"
+    key="$(installed_version_key "$binary_name" "$target")"
+    tmp_file="$INSTALLED_VERSIONS_FILE.new"
+
+    {
+        if [[ -f "$INSTALLED_VERSIONS_FILE" ]]; then
+            grep -v "^${key}=" "$INSTALLED_VERSIONS_FILE" 2>/dev/null
+        fi
+        printf '%s=%s\n' "$key" "$version"
+    } > "$tmp_file" 2>/dev/null && mv -f "$tmp_file" "$INSTALLED_VERSIONS_FILE" || rm -f "$tmp_file" 2>/dev/null || true
+}
+
+binary_up_to_date() {
+    local binary_name="$1"
+    local version="$2"
+    local target="$3"
+    local installed_version
+
+    [[ "$FORCE_INSTALL" -eq 0 ]] || return 1
+    [[ -f "$BIN_DIR/$binary_name" ]] || return 1
+
+    installed_version="$(get_installed_version "$binary_name" "$target")" || return 1
+    [[ "$installed_version" == "$version" ]]
+}
+
 install_binary() {
     local src="$1"
     local binary_name="$2"
@@ -888,6 +944,7 @@ Options:
   -b, --bin <NAME>      Install only one binary (base, base-reth-node, base-consensus, basectl, all)
   -t, --target <TRIPLE> Verify a release target triple (verify-release only; repeatable; default: all published targets)
   -U, --update          Update baseup itself
+  -f, --force           Reinstall even if the target version is already installed
       --unsafe-skip-verify
                          Skip GPG signature and SLSA attestation verification
   -h, --help            Show this help message
@@ -940,6 +997,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --unsafe-skip-verify)
             UNSAFE_SKIP_VERIFY=1
+            shift
+            ;;
+        -f | --force)
+            FORCE_INSTALL=1
             shift
             ;;
         -h | --help)
@@ -1017,6 +1078,11 @@ main() {
                 local extract_dir
                 local binary_path
 
+                if binary_up_to_date "$binary_name" "$VERSION" "$selected_target"; then
+                    info "$binary_name is already up to date (version $VERSION)"
+                    continue
+                fi
+
                 verify_release_artifact "$binary_name" "$VERSION" "$selected_target"
 
                 archive_name="${binary_name}-${VERSION}-${selected_target}.tar.gz"
@@ -1032,6 +1098,7 @@ main() {
                 fi
 
                 install_binary "$binary_path" "$binary_name"
+                record_installed_version "$binary_name" "$selected_target" "$VERSION"
             done
         done
     fi
