@@ -18,6 +18,7 @@ workspace = true
 [dependencies]
 url.workspace = true
 eyre.workspace = true
+humantime.workspace = true
 async-trait.workspace = true
 base-alt-da.workspace = true
 base-protocol.workspace = true
