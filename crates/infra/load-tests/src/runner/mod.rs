@@ -31,8 +31,11 @@ pub use submission::{
     MIN_PRIORITY_FEE, PipelineQueue, PipelineStartConfig, PreparedBatch, PreparedTransaction,
     QueuedSubmitFailures, SENDER_WORKERS_PER_RPC, SIGNER_WORKERS_PER_RPC,
     SUBMIT_BATCH_QUEUE_BUFFER, SUBMIT_MAX_ATTEMPTS, SenderContext, SignedBatch, SignedTransaction,
-    SignerContext, SubmissionPipeline, SubmitEvent,
+    SignerContext, SubmissionPipeline, SubmitCohort, SubmitEvent,
 };
+
+mod validity_router;
+pub use validity_router::ValidityRouter;
 
 mod status;
 pub use status::{DisplaySnapshot, LoadTestDisplay, LoadTestStage};
