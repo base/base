@@ -6,9 +6,10 @@
 //! deterministic-deployment proxy ([`Eip8130Contracts::CREATE2_FACTORY`]) with a
 //! **per-contract mined salt**, so each address is a pure function of the
 //! contract init code (under its own salt) and is identical on every chain that
-//! deploys the same bytecode. Each salt is mined individually so that every
-//! contract shares the `0x8130…` vanity prefix (except
-//! [`Self::ALWAYS_VALID_AUTHENTICATOR`], a test/keyless helper deployed under the
+//! deploys the same bytecode. Most salts are mined individually so the contract
+//! shares the `0x8130…` vanity prefix; the exceptions are
+//! [`Self::DELEGATE_AUTHENTICATOR`] (deployed under a non-vanity salt) and
+//! [`Self::ALWAYS_VALID_AUTHENTICATOR`] (a test/keyless helper deployed under the
 //! zero salt).
 //!
 //! # ⚠️ These values track the contract bytecode
@@ -47,46 +48,46 @@ impl Eip8130Contracts {
 
     /// Account Configuration system contract (`ACCOUNT_CONFIG_ADDRESS`). The
     /// protocol reads actor/account state directly from this contract's storage.
-    pub const ACCOUNT_CONFIG: Address = address!("0x8130f09E345cE43531DF25966017710030Dc00AC");
+    pub const ACCOUNT_CONFIG: Address = address!("0x813037e2A05629fc16c548Bd804a8EF6a13900aC");
 
     /// Per-contract mined CREATE2 salt for [`Self::ACCOUNT_CONFIG`], yielding its
     /// `0x8130…` vanity address.
     pub const ACCOUNT_CONFIG_SALT: B256 =
-        b256!("0x4847a3c1f90e8e059e4fcbff364840e808c9428b06f7fa554c9eb5c3ce84ef3d");
+        b256!("0x45bad482b56864e546f102ee290204d998c71cc33cfcfa09af9505dfe6c8f85d");
 
     /// keccak256 of the `ACCOUNT_CONFIG` deployment init code (for CREATE2
     /// derivation and bytecode-drift detection).
     pub const ACCOUNT_CONFIG_INIT_CODE_HASH: B256 =
-        b256!("0x1003b78a130c81a58005546dc6cd50b2fdce87dea3ed6d76f673bd7f6ad74924");
+        b256!("0x4f6a13702bd4e9eeaee96388a05a6d88d1e243e26a0faa69d166d462009a45ca");
 
     // ─────────────────────────────────────────────────────────────────────────
     // Account implementations (init code embeds `ACCOUNT_CONFIG`)
     // ─────────────────────────────────────────────────────────────────────────
 
     /// Default wallet implementation, used as the target of default EOA delegation.
-    pub const DEFAULT_ACCOUNT: Address = address!("0x81301D5aFE1DE3B255781876FC07eD45C150AdEF");
+    pub const DEFAULT_ACCOUNT: Address = address!("0x81301FDc46B78367F31aD76b1dF7d8E0A4CbadEF");
 
     /// Per-contract mined CREATE2 salt for [`Self::DEFAULT_ACCOUNT`].
     pub const DEFAULT_ACCOUNT_SALT: B256 =
-        b256!("0x0000000000000000000000000000000000000000000000000000000127875101");
+        b256!("0x0000000000000000000000000000000000000000000000000000000022bdc0ff");
 
     /// keccak256 of the `DEFAULT_ACCOUNT` deployment init code.
     pub const DEFAULT_ACCOUNT_INIT_CODE_HASH: B256 =
-        b256!("0x26732faf476ef298864801bfae35d16ee2558ec1875991b8a48cb21e6266ba0f");
+        b256!("0xc6dfedbd21379331d7679560f8e8aefc45d6e8e6294126481abc5879aad10465");
 
     /// Canonical high-rate payer account implementation
     /// (`CanonicalHighRatePayerAccount`). Wallets that block ETH transfers when
     /// locked, granting higher EIP-8130 mempool access (rate limits).
     pub const CANONICAL_HIGH_RATE_PAYER_ACCOUNT: Address =
-        address!("0x81301B078907cad978E37E8Cf7F91d44f305fA57");
+        address!("0x81308c85356B65c0c9864c6bc252F10eE628Fa57");
 
     /// Per-contract mined CREATE2 salt for [`Self::CANONICAL_HIGH_RATE_PAYER_ACCOUNT`].
     pub const CANONICAL_HIGH_RATE_PAYER_ACCOUNT_SALT: B256 =
-        b256!("0x000000000000000000000000000000000000000000000000000000000bd502ec");
+        b256!("0x000000000000000000000000000000000000000000000000000000009f692906");
 
     /// keccak256 of the `CANONICAL_HIGH_RATE_PAYER_ACCOUNT` deployment init code.
     pub const CANONICAL_HIGH_RATE_PAYER_ACCOUNT_INIT_CODE_HASH: B256 =
-        b256!("0xd1f4c1746f9e1705b80a98f9b38a20a0a79c719c8a14f96faa42ece39cdd9fcf");
+        b256!("0xbddb752ec04efde4f2f463e3515c0474235dd0285971808e1d12e84c19d325de");
 
     /// keccak256 of the ERC-1167 minimal-proxy *runtime* bytecode whose
     /// implementation is [`Self::CANONICAL_HIGH_RATE_PAYER_ACCOUNT`]:
@@ -98,7 +99,7 @@ impl Eip8130Contracts {
     /// Used to recognize high-rate payer accounts by codehash (e.g. mempool
     /// admission) without resolving an EIP-7702 delegation target.
     pub const CANONICAL_HIGH_RATE_PAYER_PROXY_CODE_HASH: B256 =
-        b256!("0x451cac58300c361966fd9b7a415f5aa960bd9cdeaf1b49ed687cee71ab995ee2");
+        b256!("0xe8e6da3209c72a5495a70e6ef2f67e9ddfe05718ee168ee5d55050e51c1ad577");
 
     // ─────────────────────────────────────────────────────────────────────────
     // Canonical authenticators (accepted on the EIP-8130 block-validation path)
@@ -133,17 +134,18 @@ impl Eip8130Contracts {
         b256!("0x92bc05424ceb5ef1f1ad17e1d462d45fff83f76daebeef2d5ff1cf0b80733a26");
 
     /// Delegated-validation (1-hop) authenticator contract (init code embeds
-    /// `ACCOUNT_CONFIG`).
+    /// `ACCOUNT_CONFIG`). Unlike the other canonical contracts its salt is not
+    /// vanity-mined, so its address does not carry the `0x8130…` prefix.
     pub const DELEGATE_AUTHENTICATOR: Address =
-        address!("0x81302CC9e53aB471abf9c5924aDD6CF0A3eBADE1");
+        address!("0xbE28120a621a91ea61B58441dA6C630e021FDaDe");
 
-    /// Per-contract mined CREATE2 salt for [`Self::DELEGATE_AUTHENTICATOR`].
+    /// Per-contract CREATE2 salt for [`Self::DELEGATE_AUTHENTICATOR`].
     pub const DELEGATE_AUTHENTICATOR_SALT: B256 =
-        b256!("0x00000000000000000000000000000000000000000000000000000000866efb2d");
+        b256!("0x000000000000000000000000000000000000000000000000000000005f7bb101");
 
     /// keccak256 of the `DELEGATE_AUTHENTICATOR` deployment init code.
     pub const DELEGATE_AUTHENTICATOR_INIT_CODE_HASH: B256 =
-        b256!("0x44078deaea4d3468a0534f81bc1abee8d5c395c317ebeaf404b2baeeb310f4b7");
+        b256!("0x71dbcb7e845f81f45f3519a3d7b75a6fd879cff001f71414b742ff77b96915f2");
 
     /// Always-valid authenticator (keyless relay / test). Deployed alongside the
     /// canonical set under the zero salt (no vanity prefix) but **not** on the
