@@ -258,7 +258,7 @@ impl ChallengerFort {
                 Ok(Some(ObservedGame { index, address, path, kind }))
             }
             Err(error) => {
-                skip_validation(address, index, &error);
+                skip_or_fail(address, index, error)?;
                 Ok(None)
             }
         }
@@ -303,7 +303,7 @@ impl ChallengerFort {
                 Ok(None)
             }
             Err(error) => {
-                skip_validation(address, index, &error);
+                skip_or_fail(address, index, error)?;
                 Ok(None)
             }
         }
@@ -359,7 +359,7 @@ impl ChallengerFort {
         if all_good && let Some(before) = baseline {
             for metric in ACTION_METRICS {
                 let delta = scrape.sum(metric) - before.sum(metric);
-                if delta != 0.0 {
+                if delta.round() as i64 != 0 {
                     return Eval::Fail(eyre::eyre!(
                         "{metric} advanced by {delta} while every observed game was good"
                     ));
@@ -496,10 +496,12 @@ fn game_was_scanned(scrape: &Scrape, index: u64) -> bool {
     // `scan_head` (sum 0) still counts as coverage when the counter moved:
     // one scan evaluates the whole post-anchor range, which includes the
     // lookback tail FORT inspects.
-    head >= index as f64 || head == 0.0
+    head == 0.0 || head as u64 >= index
 }
 
-fn skip_validation(address: Address, index: u64, error: &ValidatorError) {
+/// Skips only L2 prune / transient RPC. Other validator errors are real
+/// divergence and fail the run.
+fn skip_or_fail(address: Address, index: u64, error: ValidatorError) -> Result<()> {
     match error {
         ValidatorError::BlockNotAvailable { .. } | ValidatorError::Rpc(_) => {
             info!(
@@ -508,10 +510,11 @@ fn skip_validation(address: Address, index: u64, error: &ValidatorError) {
                 error = %error,
                 "L2 prune or block not available; skipping game"
             );
+            Ok(())
         }
-        _ => {
-            info!(game = %address, factory_index = index, error = %error, "skipping game");
-        }
+        other => Err(other).wrap_err(format!(
+            "validation failed for game {address} at factory index {index}"
+        )),
     }
 }
 
