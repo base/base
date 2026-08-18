@@ -156,6 +156,20 @@ mod tests {
         assert!(ticker.target().is_some_and(|target| target <= SystemTime::now()));
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn reset_at_past_target_fires_immediately() {
+        let mut ticker = ScheduledTicker::new(Duration::from_secs(2));
+        ticker.tick().await;
+
+        // A seal target already in the past (e.g. the previous block overran its slot) must
+        // make the ticker immediately runnable rather than waiting a full period.
+        ticker.reset_at(SystemTime::now() - Duration::from_secs(1));
+
+        tokio::time::timeout(Duration::from_millis(1), ticker.tick())
+            .await
+            .expect("past target must fire immediately");
+    }
+
     #[tokio::test]
     async fn l1_origin_retry_backs_off_after_immediate_retry_budget() {
         let mut ticker = ScheduledTicker::new(Duration::from_secs(2));

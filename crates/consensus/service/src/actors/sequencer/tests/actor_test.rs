@@ -10,7 +10,7 @@ use std::{
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::ExecutionPayloadV1;
 use alloy_transport::TransportErrorKind;
-use base_common_genesis::{ChainGenesis, RollupConfig};
+use base_common_genesis::{BaseUpgradeConfig, ChainGenesis, RollupConfig, UpgradeConfig};
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BasePayloadAttributes,
 };
@@ -23,7 +23,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::{
     ConductorError, L1OriginSelectorError, NodeActor, ResetReason, ScheduledTicker, SealState,
-    SealStepError, SealStepOutcome, SequencerActorError, SequencerAdminQuery,
+    SealStepError, SealStepOutcome, SequencerActor, SequencerActorError, SequencerAdminQuery,
     UnsafePayloadGossipClientError, UnsealedPayloadHandle,
     actors::{
         MockConductor, MockOriginSelector, MockSequencerEngineClient,
@@ -930,4 +930,90 @@ async fn test_sealer_insert_failure_stays_gossiped() {
     assert!(result.is_err());
     assert!(matches!(result.unwrap_err(), SealStepError::Insert(_)));
     assert_eq!(sealer.state, SealState::Gossiped);
+}
+
+/// A [`SequencerActor`] instantiated over the test mocks.
+type TestSequencerActor = SequencerActor<
+    TestAttributesBuilder,
+    MockConductor,
+    MockOriginSelector,
+    MockSequencerEngineClient,
+    MockUnsafePayloadGossipClient,
+>;
+
+/// Returns a test actor whose rollup config anchors L2 genesis at 100s with 2s blocks and
+/// activates Denim at 102s (block 1) via genesis config. Block timestamps:
+/// block 0 → `100_000ms`, block 1 → `102_000ms` (first Denim block), block 2 → `102_200ms`, …
+fn denim_seal_target_actor() -> TestSequencerActor {
+    let mut actor = test_actor();
+    actor.rollup_config = Arc::new(RollupConfig {
+        block_time: 2,
+        genesis: ChainGenesis { l2_time: 100, ..Default::default() },
+        upgrades: UpgradeConfig {
+            base: BaseUpgradeConfig { denim: Some(102), ..Default::default() },
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    actor
+}
+
+#[test]
+fn denim_seal_target_is_fixed_offset_into_slot() {
+    let actor = denim_seal_target_actor();
+
+    // Block 2's slot starts at T_1 = 102_000ms; the fixed target is T_1 + 150ms
+    // (equivalently T_2 − 50ms).
+    let expected = UNIX_EPOCH + Duration::from_millis(102_150);
+    assert_eq!(actor.block_seal_target(2, Duration::ZERO), expected);
+}
+
+#[test]
+fn denim_seal_target_ignores_last_seal_duration() {
+    let actor = denim_seal_target_actor();
+
+    // Never grant minimum build time when behind: a slow previous seal must not move the
+    // target. A target already in the past makes the ticker fire immediately instead.
+    let expected = UNIX_EPOCH + Duration::from_millis(102_150);
+    assert_eq!(actor.block_seal_target(2, Duration::from_secs(5)), expected);
+    assert_eq!(actor.block_seal_target(2, Duration::from_millis(1)), expected);
+}
+
+#[test]
+fn first_denim_block_seal_target_is_relative_to_own_timestamp() {
+    let actor = denim_seal_target_actor();
+
+    // Block 1 is the first Denim-active block; its parent slot spans a full legacy block
+    // time, so the target is T_1 − (interval − seal_offset) = 102_000 − 50, not
+    // T_0 + 150 = 100_150.
+    let expected = UNIX_EPOCH + Duration::from_millis(101_950);
+    assert_eq!(actor.block_seal_target(1, Duration::ZERO), expected);
+}
+
+#[test]
+fn denim_seal_target_uses_configured_offset() {
+    let mut actor = denim_seal_target_actor();
+    actor.seal_offset = Duration::from_millis(100);
+
+    let expected = UNIX_EPOCH + Duration::from_millis(102_100);
+    assert_eq!(actor.block_seal_target(2, Duration::ZERO), expected);
+}
+
+#[test]
+fn pre_denim_seal_target_keeps_adaptive_compensation() {
+    let mut actor = test_actor();
+    actor.rollup_config = Arc::new(RollupConfig {
+        block_time: 2,
+        genesis: ChainGenesis { l2_time: 100, ..Default::default() },
+        ..Default::default()
+    });
+
+    // Block 5's timestamp is 110s; the target leads it by the previous seal duration.
+    let base = UNIX_EPOCH + Duration::from_millis(110_000);
+    assert_eq!(
+        actor.block_seal_target(5, Duration::from_millis(300)),
+        base - Duration::from_millis(300)
+    );
+    // The compensation is capped at half the block interval.
+    assert_eq!(actor.block_seal_target(5, Duration::from_secs(5)), base - Duration::from_secs(1));
 }

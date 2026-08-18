@@ -76,6 +76,11 @@ pub struct SequencerActor<
     pub recovery_mode: RecoveryModeGuard,
     /// The rollup configuration.
     pub rollup_config: Arc<RollupConfig>,
+    /// Fixed offset into each subsecond slot at which the sealed payload is requested from
+    /// the engine once Denim is active. See [`SequencerConfig::seal_offset`].
+    ///
+    /// [`SequencerConfig::seal_offset`]: crate::SequencerConfig::seal_offset
+    pub seal_offset: Duration,
     /// A client to asynchronously sign and gossip built payloads to the network actor.
     pub unsafe_payload_gossip_client: UnsafePayloadGossipClient_,
     /// In-flight seal pipeline. [`Some`] while a sealed payload is being committed,
@@ -317,29 +322,30 @@ where
             .inspect_err(|_| self.cancellation_token.cancel())
     }
 
-    /// Wall-clock time at which `block_number` should be sealed, compensating for the time already
-    /// spent sealing the previous block.
+    /// Wall-clock time at which `block_number` should be sealed.
     ///
-    /// The compensation is capped at half the block interval so a single slow seal cannot
-    /// collapse the next block's build window to zero. Uncapped, a seal that overruns the
-    /// interval schedules the next seal in the past (immediate build, near-empty block, fast
-    /// seal), which then grants the following block a full build window — a self-sustaining
-    /// fat/thin oscillation. Clamping guarantees every block at least `block_interval / 2` of
-    /// build time and damps that loop. The raw `last_seal_duration` is still recorded for
-    /// metrics; only the scheduling compensation is clamped.
-    fn block_seal_target(&self, block_number: u64, last_seal_duration: Duration) -> SystemTime {
+    /// Denim-active blocks seal at a fixed offset into their 200ms slot, computed as
+    /// `T_N − (interval − seal_offset)` so the first Denim block still seals relative to
+    /// its own timestamp. The target ignores how long the previous seal took: lateness
+    /// shrinks the current build window instead of shifting the schedule.
+    ///
+    /// Pre-Denim blocks compensate for the previous seal duration, capped at half the
+    /// block interval so one slow seal cannot collapse the next build window to zero and
+    /// trigger a fat/thin block oscillation.
+    pub(super) fn block_seal_target(
+        &self,
+        block_number: u64,
+        last_seal_duration: Duration,
+    ) -> SystemTime {
         let target = UNIX_EPOCH
             + Duration::from_millis(self.rollup_config.l2_block_timestamp_millis(block_number));
-        let block_interval = if self
-            .rollup_config
-            .is_denim_active(self.rollup_config.l2_block_timestamp(block_number))
-        {
-            Duration::from_millis(RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS)
-        } else {
-            Duration::from_secs(self.rollup_config.block_time)
-        };
-        let compensation = last_seal_duration.min(block_interval / 2);
-        target - compensation
+        if self.rollup_config.is_denim_active(self.rollup_config.l2_block_timestamp(block_number)) {
+            let interval =
+                Duration::from_millis(RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS);
+            return target - interval.saturating_sub(self.seal_offset);
+        }
+        let block_interval = Duration::from_secs(self.rollup_config.block_time);
+        target - last_seal_duration.min(block_interval / 2)
     }
 
     fn next_block_seal_target(

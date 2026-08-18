@@ -39,7 +39,7 @@ reqwest.workspace = true
 # Contracts
 base-proof-contracts.workspace = true
 
-# Proving
+# Attestation parsing and validation
 base-proof-tee-nitro-verifier.workspace = true
 
 # Transaction management
