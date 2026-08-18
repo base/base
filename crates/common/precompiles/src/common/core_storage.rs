@@ -4,7 +4,7 @@ use alloc::string::String;
 
 use alloy_primitives::{Address, B256, FixedBytes, U256};
 use base_precompile_macros::Storable;
-use base_precompile_storage::{Mapping, Result, StorageOps, extract_from_word};
+use base_precompile_storage::{Mapping, Result, StorageOps, Word};
 
 use crate::TransferPolicyIds;
 
@@ -105,17 +105,17 @@ impl B20CoreStorageHandler<'_> {
         let slot = self.transfer_sender_policy_id.slot();
         let word = StorageOps::load(&self.transfer_sender_policy_id, slot)?;
         Ok(TransferPolicyIds {
-            sender: extract_from_word::<u64>(
+            sender: Word::extract_from_word::<u64>(
                 word,
                 __packing_b20_core_storage::TRANSFER_SENDER_POLICY_ID_LOC.offset_bytes,
                 size_of::<u64>(),
             )?,
-            receiver: extract_from_word::<u64>(
+            receiver: Word::extract_from_word::<u64>(
                 word,
                 __packing_b20_core_storage::TRANSFER_RECEIVER_POLICY_ID_LOC.offset_bytes,
                 size_of::<u64>(),
             )?,
-            executor: extract_from_word::<u64>(
+            executor: Word::extract_from_word::<u64>(
                 word,
                 __packing_b20_core_storage::TRANSFER_EXECUTOR_POLICY_ID_LOC.offset_bytes,
                 size_of::<u64>(),

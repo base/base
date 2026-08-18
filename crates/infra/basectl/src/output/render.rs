@@ -5,13 +5,9 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState},
 };
 
-use super::format::lerp_rgb;
 use crate::{
     app::{DaTracker, FlashblockEntry, L1Block, L1BlockFilter, LoadingState},
-    output::{
-        COLOR_BASE_BLUE, COLOR_GAS_FILL, COLOR_ROW_SELECTED, COLOR_TARGET, backlog_size_color,
-        block_color, format_bytes, format_duration, target_usage_color, truncate_block_number,
-    },
+    output::{COLOR_BASE_BLUE, COLOR_GAS_FILL, COLOR_ROW_SELECTED, COLOR_TARGET, Format},
     rpc::L1ConnectionMode,
 };
 
@@ -42,7 +38,7 @@ pub fn build_gas_bar(
 
     let excess_color = |char_idx: usize| -> Color {
         let t = (char_idx - target_char) as f64 / excess_chars as f64;
-        lerp_rgb(GAS_COLOR_WARM, GAS_COLOR_HOT, t.clamp(0.0, 1.0))
+        Format::lerp_rgb(GAS_COLOR_WARM, GAS_COLOR_HOT, t.clamp(0.0, 1.0))
     };
 
     let mut spans = Vec::new();
@@ -167,11 +163,11 @@ pub fn render_l1_blocks_table<'a>(
             };
 
             Row::new(vec![
-                Cell::from(truncate_block_number(l1_block.block_number, l1_col_width)),
+                Cell::from(Format::truncate_block_number(l1_block.block_number, l1_col_width)),
                 Cell::from(l1_block.blobs_display()).style(blobs_style),
                 Cell::from(l1_block.l2_blocks_display()),
                 Cell::from(l1_block.compression_display()),
-                Cell::from(format_duration(Duration::from_secs(l1_block.age_seconds()))),
+                Cell::from(Format::duration(Duration::from_secs(l1_block.age_seconds()))),
             ])
             .style(style)
         })
@@ -247,7 +243,7 @@ pub fn render_da_backlog_bar(
 
     if backlog_blocks.is_empty() || tracker.da_backlog_bytes == 0 {
         let empty_bar = "░".repeat(bar_width);
-        let text = format!("{empty_bar} {:>8}", format_bytes(0));
+        let text = format!("{empty_bar} {:>8}", Format::bytes(0));
         let para = Paragraph::new(text).style(Style::default().fg(Color::DarkGray));
         f.render_widget(para, inner);
         return;
@@ -258,7 +254,7 @@ pub fn render_da_backlog_bar(
     let mut chars_used = 0usize;
 
     for contrib in backlog_blocks.iter().rev() {
-        let color = block_color(contrib.block_number);
+        let color = Format::block_color(contrib.block_number);
         let is_highlighted = highlighted_block == Some(contrib.block_number);
 
         let proportion = contrib.da_bytes as f64 / total_backlog as f64;
@@ -288,9 +284,9 @@ pub fn render_da_backlog_bar(
         ));
     }
 
-    let backlog_color = backlog_size_color(total_backlog);
+    let backlog_color = Format::backlog_size_color(total_backlog);
     spans.push(Span::styled(
-        format!(" {:>8}", format_bytes(total_backlog)),
+        format!(" {:>8}", Format::bytes(total_backlog)),
         Style::default().fg(backlog_color).add_modifier(Modifier::BOLD),
     ));
 
@@ -374,7 +370,7 @@ pub fn render_gas_usage_bar(
             break;
         }
 
-        let color = block_color(block_number);
+        let color = Format::block_color(block_number);
         let is_highlighted = highlighted_block == Some(block_number);
 
         let pos_before = gas_to_chars(cumulative_gas).round() as usize;
@@ -419,7 +415,7 @@ pub fn render_gas_usage_bar(
     let usage_ratio = if total_target > 0 { total_gas as f64 / total_target as f64 } else { 0.0 };
     spans.push(Span::styled(
         format!(" {:>5.0}%", usage_ratio * 100.0),
-        Style::default().fg(target_usage_color(usage_ratio)).add_modifier(Modifier::BOLD),
+        Style::default().fg(Format::target_usage_color(usage_ratio)).add_modifier(Modifier::BOLD),
     ));
 
     let line = Line::from(spans);
