@@ -687,8 +687,7 @@ where
     }
 
     // Set up next block attributes
-    // Use bundle.min_timestamp if provided, otherwise use header timestamp + BLOCK_TIME
-    let timestamp = bundle.min_timestamp.unwrap_or_else(|| header.timestamp() + BLOCK_TIME);
+    let timestamp = header.timestamp() + BLOCK_TIME;
     // Pending flashblock headers may omit parent_beacon_block_root; prefer the explicit value
     // provided by the caller (e.g., flashblock base payload) to keep EIP-4788 happy.
     let attributes = BaseNextBlockEnvAttributes {
@@ -852,19 +851,7 @@ mod tests {
     fn create_parsed_bundle(txs: Vec<BaseTransactionSigned>) -> eyre::Result<ParsedBundle> {
         let txs: Vec<Bytes> = txs.iter().map(|tx| Bytes::from(tx.encoded_2718())).collect();
 
-        let bundle = Bundle {
-            txs,
-            block_number: None,
-            min_block_number: None,
-            max_block_number: None,
-            flashblock_number_min: None,
-            flashblock_number_max: None,
-            min_timestamp: None,
-            max_timestamp: None,
-            reverting_tx_hashes: vec![],
-            replacement_uuid: None,
-            dropping_tx_hashes: vec![],
-        };
+        let bundle = Bundle { txs };
 
         ParsedBundle::try_from(bundle).map_err(|e| eyre::eyre!(e))
     }

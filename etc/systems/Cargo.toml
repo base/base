@@ -25,7 +25,6 @@ base-txpool-tracing.workspace = true
 base-upgrade-signal.workspace = true
 base-batcher-encoder.workspace = true
 base-batcher-service.workspace = true
-base-bundle-extension.workspace = true
 base-flashblocks-node.workspace = true
 base-consensus-rpc = { workspace = true, features = ["client"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }

@@ -81,10 +81,6 @@ mod tests {
             transaction: ValidatedTransaction {
                 sender: Address::repeat_byte(0x11),
                 raw: Bytes::from_static(&[0x02, 0x03]),
-                min_block_number: None,
-                max_block_number: Some(42),
-                min_timestamp: None,
-                max_timestamp: None,
                 extensions: NoExtensions {},
             },
             tx_hash,
@@ -106,8 +102,8 @@ mod tests {
 
         assert_eq!(encoded.as_array().expect("positional array").len(), 1);
         assert_eq!(encoded[0]["sender"], json!("0x1111111111111111111111111111111111111111"));
-        assert_eq!(encoded[0]["max_block_number"], json!(42));
-        assert_eq!(encoded[0].get("min_block_number"), None, "absent bounds must stay absent");
+        assert!(encoded[0].get("max_block_number").is_none());
+        assert!(encoded[0].get("min_block_number").is_none());
     }
 
     #[test]

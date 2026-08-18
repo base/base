@@ -444,10 +444,6 @@ mod tests {
             transaction: ValidatedTransaction {
                 sender: Address::repeat_byte((nonce + 1) as u8),
                 raw: Bytes::from(vec![nonce as u8]),
-                min_block_number: None,
-                max_block_number: None,
-                min_timestamp: None,
-                max_timestamp: None,
                 extensions: E::default(),
             },
             tx_hash: B256::with_last_byte(nonce as u8),

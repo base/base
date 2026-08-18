@@ -21,19 +21,6 @@ use reth_transaction_pool::{
 
 use crate::estimated_da_size::DataAvailabilitySized;
 
-/// Assumed L2 block time in seconds, used to convert block-based bundle windows
-/// to time-based bounds.
-pub const BLOCK_TIME_SECS: u64 = 2;
-
-/// Maximum allowed advance window for bundle parameters (seconds).
-pub const MAX_BUNDLE_ADVANCE_SECS: u64 = 60;
-
-/// Maximum allowed advance window for bundle parameters (milliseconds).
-pub const MAX_BUNDLE_ADVANCE_MILLIS: u64 = MAX_BUNDLE_ADVANCE_SECS * 1000;
-
-/// Maximum allowed advance window in blocks.
-pub const MAX_BUNDLE_ADVANCE_BLOCKS: u64 = MAX_BUNDLE_ADVANCE_SECS / BLOCK_TIME_SECS;
-
 /// Returns current time as milliseconds since Unix epoch.
 pub fn unix_time_millis() -> u128 {
     match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
@@ -65,16 +52,6 @@ pub struct BasePooledTransaction<
     encoded_2718: OnceLock<Bytes>,
     /// Timestamp (millis since Unix epoch) when this transaction was received.
     received_at: u128,
-    /// Optional minimum block number from bundle submission.
-    min_block_number: Option<u64>,
-    /// Optional maximum block number from bundle submission.
-    max_block_number: Option<u64>,
-    /// Optional minimum timestamp (millis since Unix epoch) from bundle submission.
-    /// The transaction should not be included before this time.
-    min_timestamp: Option<u64>,
-    /// Optional maximum timestamp (millis since Unix epoch) from bundle submission.
-    /// The transaction should be evicted after this time.
-    max_timestamp: Option<u64>,
     /// State predicates that must hold before this transaction is eligible for
     /// inclusion.
     validity_predicates: Vec<crate::ValidityPredicate>,
@@ -113,30 +90,11 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
             _pd: core::marker::PhantomData,
             encoded_2718: Default::default(),
             received_at,
-            min_block_number: None,
-            max_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
             validity_predicates: Vec::new(),
             watch_set: OnceLock::new(),
             limit_class: OnceLock::new(),
             watch_manifest: OnceLock::new(),
         }
-    }
-
-    /// Sets bundle metadata on this transaction, returning the modified instance.
-    pub const fn with_bundle_metadata(
-        mut self,
-        min_block_number: Option<u64>,
-        max_block_number: Option<u64>,
-        min_timestamp: Option<u64>,
-        max_timestamp: Option<u64>,
-    ) -> Self {
-        self.min_block_number = min_block_number;
-        self.max_block_number = max_block_number;
-        self.min_timestamp = min_timestamp;
-        self.max_timestamp = max_timestamp;
-        self
     }
 
     /// Sets the state predicates required for this transaction's inclusion.
@@ -522,86 +480,6 @@ where
 {
     fn received_at(&self) -> u128 {
         self.received_at
-    }
-}
-
-/// Trait for transactions that may carry bundle metadata.
-///
-/// All timestamp values are in milliseconds since Unix epoch. Block-timestamp
-/// arguments (which arrive in seconds) are converted internally.
-pub trait BundleTransaction {
-    /// Returns the minimum block number, if set.
-    fn min_block_number(&self) -> Option<u64>;
-
-    /// Returns the maximum block number, if set.
-    fn max_block_number(&self) -> Option<u64>;
-
-    /// Returns the minimum timestamp in milliseconds.
-    fn min_timestamp_millis(&self) -> Option<u64>;
-
-    /// Returns the maximum timestamp in milliseconds.
-    fn max_timestamp_millis(&self) -> Option<u64>;
-
-    /// Returns `true` if this transaction's bundle constraints have expired
-    /// relative to the given block number and block timestamp (in seconds).
-    fn is_bundle_expired(&self, block_number: u64, block_timestamp_secs: u64) -> bool {
-        let block_timestamp_millis = block_timestamp_secs.saturating_mul(1000);
-
-        if let Some(max_ts) = self.max_timestamp_millis()
-            && block_timestamp_millis > max_ts
-        {
-            return true;
-        }
-
-        if let Some(max_block) = self.max_block_number()
-            && block_number > max_block
-        {
-            return true;
-        }
-
-        false
-    }
-
-    /// Returns `true` if this transaction's bundle validity window has not yet
-    /// started. `block_timestamp_secs` is the block timestamp in seconds.
-    fn is_bundle_not_yet_valid(&self, block_number: u64, block_timestamp_secs: u64) -> bool {
-        if let Some(min_block) = self.min_block_number()
-            && block_number < min_block
-        {
-            return true;
-        }
-
-        let block_timestamp_millis = block_timestamp_secs.saturating_mul(1000);
-
-        if let Some(min_ts) = self.min_timestamp_millis()
-            && block_timestamp_millis < min_ts
-        {
-            return true;
-        }
-
-        false
-    }
-}
-
-impl<Cons, Pooled> BundleTransaction for BasePooledTransaction<Cons, Pooled>
-where
-    Cons: Send + Sync,
-    Pooled: Send + Sync + 'static,
-{
-    fn min_block_number(&self) -> Option<u64> {
-        self.min_block_number
-    }
-
-    fn max_block_number(&self) -> Option<u64> {
-        self.max_block_number
-    }
-
-    fn min_timestamp_millis(&self) -> Option<u64> {
-        self.min_timestamp
-    }
-
-    fn max_timestamp_millis(&self) -> Option<u64> {
-        self.max_timestamp
     }
 }
 

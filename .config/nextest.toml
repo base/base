@@ -38,7 +38,7 @@ filter = 'binary(e2e_testsuite)'
 test-group = 'e2e-tests'
 
 [[profile.default.overrides]]
-filter = 'package(base-builder-core) & (binary(data_availability) | binary(flashblocks) | binary(txpool) | binary(bundles))'
+filter = 'package(base-builder-core) & (binary(data_availability) | binary(flashblocks) | binary(txpool))'
 test-group = 'builder-integration'
 retries = 1
 

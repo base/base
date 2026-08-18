@@ -139,50 +139,6 @@ async fn builder_backed_sequencer_selects_pool_transaction() -> eyre::Result<()>
     Ok(())
 }
 
-/// A bundle transaction whose validity window includes the block being built is selected by the
-/// production builder — exercising bundle-window enforcement through the harness sequencer.
-#[tokio::test(flavor = "multi_thread")]
-async fn builder_backed_sequencer_includes_in_window_bundle() -> eyre::Result<()> {
-    let (h, mut sequencer, _batcher_cfg) = wall_clock_builder_sequencer().await?;
-    let chain_id = h.rollup_config.l2_chain_id.id();
-    let tx = sequencer.test_account().lock().expect("test account").create_eip1559_tx(chain_id);
-
-    // Valid from block 1 onward — the next block is block 1, so it is in-window.
-    sequencer.engine_client().inject_bundle_transaction(tx, Some(1), None, None, None).await?;
-    let block = sequencer.build_empty_block().await;
-
-    assert_eq!(block.header.number, 1, "block 1 must be produced");
-    assert!(
-        block.body.transactions.len() >= 2,
-        "in-window bundle tx must be selected alongside the L1-info deposit, got {} tx(s)",
-        block.body.transactions.len(),
-    );
-
-    Ok(())
-}
-
-/// A bundle transaction whose validity window starts in the future is deferred (not selected) by
-/// the production builder for the current block.
-#[tokio::test(flavor = "multi_thread")]
-async fn builder_backed_sequencer_excludes_future_bundle() -> eyre::Result<()> {
-    let (h, mut sequencer, _batcher_cfg) = wall_clock_builder_sequencer().await?;
-    let chain_id = h.rollup_config.l2_chain_id.id();
-    let tx = sequencer.test_account().lock().expect("test account").create_eip1559_tx(chain_id);
-
-    // Only valid from block 100 onward — must be excluded from block 1.
-    sequencer.engine_client().inject_bundle_transaction(tx, Some(100), None, None, None).await?;
-    let block = sequencer.build_empty_block().await;
-
-    assert_eq!(block.header.number, 1, "block 1 must be produced");
-    assert_eq!(
-        block.body.transactions.len(),
-        1,
-        "future bundle tx must be excluded; only the L1-info deposit should remain",
-    );
-
-    Ok(())
-}
-
 /// A block produced by the real builder is batched to L1 and re-derived by the verifier. The
 /// verifier re-executes the derived block and — via the block-hash registry shared with the builder
 /// backend — asserts its state root matches the builder-produced one, validating full

@@ -12,8 +12,6 @@ base_metrics::define_metrics! {
     failed_simulations: counter,
     #[describe("Duration of validate_tx")]
     validate_tx_duration: histogram,
-    #[describe("Duration of validate_bundle")]
-    validate_bundle_duration: histogram,
     #[describe("Duration of meter_bundle")]
     meter_bundle_duration: histogram,
     #[describe("Duration of send_raw_transaction")]

@@ -117,10 +117,6 @@ async fn predicates_delay_priority_without_blocking_nonce_descendants() -> eyre:
     let validated_parent = ValidatedTransaction {
         sender: accounts[0].address(),
         raw: parent.encoded_2718().into(),
-        min_block_number: None,
-        max_block_number: None,
-        min_timestamp: None,
-        max_timestamp: None,
         extensions: TransactionValidity {
             validity: vec![ValidityPredicate::Balance {
                 address: watched,
