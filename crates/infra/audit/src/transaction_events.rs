@@ -169,7 +169,9 @@ impl TransactionEventRetentionClass {
             | TransactionEventType::TxpoolBuilderForwardAttempt
             | TransactionEventType::TxpoolBuilderForwardSuccess
             | TransactionEventType::TxpoolBuilderConsumed
-            | TransactionEventType::TxpoolValidatedInsertAccepted => Self::Warm,
+            | TransactionEventType::TxpoolValidatedInsertAccepted
+            | TransactionEventType::TxpoolSendRawTransaction
+            | TransactionEventType::TxpoolSendRawTransactionValidity => Self::Warm,
             TransactionEventType::ProxyRejected
             | TransactionEventType::ProxyValidationRejected
             | TransactionEventType::ProxyBackendFailure
@@ -1328,6 +1330,12 @@ mod tests {
         );
         assert_eq!(
             TransactionEventRetentionClass::for_event_type(TransactionEventType::IngressReceived),
+            TransactionEventRetentionClass::Warm
+        );
+        assert_eq!(
+            TransactionEventRetentionClass::for_event_type(
+                TransactionEventType::TxpoolSendRawTransactionValidity
+            ),
             TransactionEventRetentionClass::Warm
         );
         assert_eq!(

@@ -4,6 +4,9 @@ use alloy_primitives::{Address, Bytes, TxHash};
 use base_execution_txpool::{
     BasePooledTransaction, DEFAULT_MAX_VALIDITY_PREDICATES, ValidityPredicate,
 };
+use base_observability_events::{
+    TransactionEventProducer, TransactionEventType, transaction_event,
+};
 use jsonrpsee::{
     core::{RpcResult, async_trait, client::ClientT},
     http_client::{HttpClient, HttpClientBuilder},
@@ -180,6 +183,15 @@ where
                 )
             })?;
         let tx_hash = *transaction.hash();
+        let _ = transaction_event!(
+            producer: TransactionEventProducer::BaseRethNode,
+            event_type: TransactionEventType::TxpoolSendRawTransactionValidity,
+            tx_hash: tx_hash,
+            data: {
+                "rpc_method" => "base_sendRawTransactionValidity",
+                "validity_predicates" => &request.validity,
+            },
+        );
 
         // Retain the currently unenforced predicates for canonical forwarding to builders.
         self.pool
@@ -227,6 +239,7 @@ impl<Pool: TransactionPool + 'static> AdminTxPoolApiServer for AdminTxPoolApiImp
 #[cfg(test)]
 mod tests {
     use alloy_primitives::U256;
+    use base_observability_events::{TransactionEventBuilder, TransactionEventProducer};
     use httpmock::prelude::*;
     use reth_transaction_pool::{
         PoolTransaction, TransactionOrigin,
@@ -250,6 +263,31 @@ mod tests {
         }
     }
 
+    fn all_predicate_variants() -> Vec<ValidityPredicate> {
+        vec![
+            ValidityPredicate::Balance {
+                address: Address::repeat_byte(0x11),
+                op: base_execution_txpool::ValidityOperator::GreaterThanOrEqual,
+                value: U256::from(1),
+            },
+            ValidityPredicate::Storage {
+                address: Address::repeat_byte(0xab),
+                slot: U256::from(1),
+                mask: U256::MAX,
+                op: base_execution_txpool::ValidityOperator::Equal,
+                value: U256::from(0x789),
+            },
+            ValidityPredicate::BlockNumber {
+                op: base_execution_txpool::ValidityOperator::GreaterThanOrEqual,
+                value: U256::from(100),
+            },
+            ValidityPredicate::FlashblockIndex {
+                op: base_execution_txpool::ValidityOperator::LessThan,
+                value: U256::from(5),
+            },
+        ]
+    }
+
     #[test]
     fn send_raw_transaction_validity_request_uses_top_level_keys() {
         let request = validity_request(Bytes::from_static(&[0x02]));
@@ -258,6 +296,65 @@ mod tests {
         assert_eq!(value["tx"], "0x02");
         assert_eq!(value["validity"][0]["type"], "storage");
         assert_eq!(value["validity"][0]["params"]["slot"], "0x1");
+    }
+
+    #[test]
+    fn send_raw_transaction_validity_event_data_serializes_all_predicate_variants() {
+        assert_eq!(
+            serde_json::to_value(all_predicate_variants()).unwrap(),
+            json!([
+                {
+                    "type": "balance",
+                    "params": {
+                        "address": "0x1111111111111111111111111111111111111111",
+                        "op": ">=",
+                        "value": "0x1",
+                    },
+                },
+                {
+                    "type": "storage",
+                    "params": {
+                        "address": "0xabababababababababababababababababababab",
+                        "slot": "0x1",
+                        "mask": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                        "op": "=",
+                        "value": "0x789",
+                    },
+                },
+                {
+                    "type": "block_number",
+                    "params": {
+                        "op": ">=",
+                        "value": "0x64",
+                    },
+                },
+                {
+                    "type": "flashblock_index",
+                    "params": {
+                        "op": "<",
+                        "value": "0x5",
+                    },
+                },
+            ])
+        );
+    }
+
+    #[test]
+    fn send_raw_transaction_validity_event_envelope_joins_on_tx_hash() {
+        let tx_hash = TxHash::repeat_byte(0x11);
+        let event = TransactionEventBuilder::new(
+            TransactionEventProducer::BaseRethNode,
+            TransactionEventType::TxpoolSendRawTransactionValidity,
+        )
+        .tx_hash(tx_hash)
+        .data_field("rpc_method", json!("base_sendRawTransactionValidity"))
+        .data_field("validity_predicates", json!(all_predicate_variants()))
+        .build_with_network("base-devnet");
+
+        event.validate().expect("admission event should be valid");
+        assert_eq!(event.event_type.to_string(), "TXPOOL_SEND_RAW_TRANSACTION_VALIDITY");
+        assert_eq!(event.tx_hash, Some(tx_hash));
+        assert!(event.data.contains_key("validity_predicates"));
     }
 
     #[test]
