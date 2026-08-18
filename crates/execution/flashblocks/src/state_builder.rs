@@ -318,7 +318,11 @@ where
                     let existing_override = self.state_overrides.entry(*addr).or_default();
                     existing_override.balance = Some(acc.info.balance);
                     existing_override.nonce = Some(acc.info.nonce);
-                    existing_override.code = acc.info.code.clone().map(|code| code.bytes());
+                    // `bytes()` is REVM's execution-padded form (empty code becomes a
+                    // trailing STOP / `0x00`). Pending RPC overrides must use the
+                    // unpadded original so `EXTCODESIZE` stays 0 for code-less EOAs.
+                    existing_override.code =
+                        acc.info.code.clone().map(|code| code.original_bytes());
 
                     let existing =
                         existing_override.state_diff.get_or_insert_with(Default::default);
@@ -425,7 +429,7 @@ mod tests {
 
     use alloy_consensus::{Block, BlockBody, Header, Signed};
     use alloy_eips::eip4788::{BEACON_ROOTS_ADDRESS, BEACON_ROOTS_CODE};
-    use alloy_primitives::{Address, B256, TxKind, U256, address, uint};
+    use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, keccak256, uint};
     use alloy_rpc_types_engine::PayloadId;
     use base_common_consensus::BaseTxEnvelope;
     use base_common_evm::L1BlockInfo;
@@ -992,6 +996,133 @@ mod tests {
         assert_eq!(
             sender_nonce_after_cached_tx_a, 1,
             "cached tx A must commit state so the sender nonce is 1 (not 0)"
+        );
+    }
+
+    fn create_legacy_call(
+        sender: Address,
+        to: Address,
+        value: U256,
+        gas_limit: u64,
+        nonce: u64,
+    ) -> alloy_consensus::transaction::Recovered<BaseTxEnvelope> {
+        let tx = alloy_consensus::TxLegacy {
+            chain_id: Some(8453),
+            nonce,
+            gas_price: 1_000_000_000,
+            gas_limit,
+            to: TxKind::Call(to),
+            value,
+            input: Default::default(),
+        };
+
+        let envelope = BaseTxEnvelope::Legacy(Signed::new_unchecked(
+            tx,
+            alloy_primitives::Signature::test_signature(),
+            B256::ZERO,
+        ));
+
+        alloy_consensus::transaction::Recovered::new_unchecked(envelope, sender)
+    }
+
+    /// CHAIN-4786: a Flashblock tx that touches a code-less EOA must not serialize
+    /// REVM's padded empty bytecode (`0x00` / STOP) into the pending `StateOverride`.
+    /// That made later `pending` `eth_call` / `eth_estimateGas` / `eth_simulateV1`
+    /// see `EXTCODESIZE = 1` and take the ERC-1271 path for an EOA.
+    #[test]
+    fn pending_overrides_serialize_original_bytecode_not_padded_empty() {
+        let sender = address!("0x1111111111111111111111111111111111111111");
+        let recipient = address!("0x2222222222222222222222222222222222222222");
+        let contract = address!("0x3333333333333333333333333333333333333333");
+        // PUSH1 0x00 — does not end in STOP, so REVM analysis appends padding.
+        let original_contract_code = Bytes::from_static(&[0x60, 0x00]);
+        let analyzed_contract = Bytecode::new_legacy(original_contract_code.clone());
+        assert_eq!(
+            analyzed_contract.bytes().as_ref(),
+            &[0x60, 0x00, 0x00],
+            "test fixture assumes REVM pads a missing trailing STOP"
+        );
+        assert_eq!(analyzed_contract.original_bytes(), original_contract_code);
+
+        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().build());
+        let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(
+            sender,
+            AccountInfo {
+                balance: U256::from(1_000_000_000_000_000_000u128),
+                ..Default::default()
+            },
+        );
+        db.insert_account_info(recipient, AccountInfo::default());
+        db.insert_account_info(
+            contract,
+            AccountInfo {
+                code: Some(analyzed_contract.clone()),
+                code_hash: analyzed_contract.hash_slow(),
+                nonce: 1,
+                ..Default::default()
+            },
+        );
+
+        let header = Header {
+            timestamp: 100,
+            gas_limit: 30_000_000,
+            base_fee_per_gas: Some(1_000_000_000),
+            ..Default::default()
+        };
+        let evm_env = evm_config.evm_env(&header).expect("failed to create evm env");
+        let evm = evm_config.evm_with_env(db, evm_env);
+        let pending_block = Block { header, body: Default::default() };
+        let mut builder = PendingStateBuilder::new(
+            (*chain_spec).clone(),
+            evm,
+            pending_block,
+            None,
+            L1BlockInfo::default(),
+            StateOverride::default(),
+        );
+
+        builder
+            .execute_transaction(
+                0,
+                create_legacy_call(sender, recipient, U256::from(1), 21_000, 0),
+            )
+            .expect("value transfer to code-less recipient should succeed");
+        builder
+            .execute_transaction(1, create_legacy_call(sender, contract, U256::ZERO, 50_000, 1))
+            .expect("call to contract that does not end in STOP should succeed");
+
+        let (_, state_overrides) = builder.into_db_and_state_overrides();
+
+        let recipient_override = state_overrides
+            .get(&recipient)
+            .expect("touched recipient EOA must be present in pending overrides");
+        let recipient_code = recipient_override.code.as_ref();
+        assert!(
+            recipient_code.is_none_or(|code| code.is_empty()),
+            "code-less EOA override must be empty, not padded STOP; got {recipient_code:?}"
+        );
+        assert_ne!(
+            recipient_code.map(Bytes::as_ref),
+            Some(&[0x00][..]),
+            "REVM padded empty bytecode must not be serialized as 0x00"
+        );
+        if let Some(code) = recipient_code {
+            assert_eq!(
+                keccak256(code),
+                keccak256(Bytes::new()),
+                "empty-code override must hash to keccak256(\"\") so EXTCODEHASH matches a code-less EOA"
+            );
+        }
+
+        let contract_override = state_overrides
+            .get(&contract)
+            .expect("touched contract must be present in pending overrides");
+        assert_eq!(
+            contract_override.code.as_ref(),
+            Some(&original_contract_code),
+            "contract override must store original_bytes(), not REVM padding"
         );
     }
 }
