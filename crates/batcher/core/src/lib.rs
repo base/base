@@ -22,7 +22,7 @@ mod throttle_client;
 pub use throttle_client::{NoopThrottleClient, ThrottleClient};
 
 mod submissions;
-pub use submissions::{BatchTxCandidateBuilder, SubmissionQueue};
+pub use submissions::{BatchTxCandidateBuilder, BatchTxCandidateError, SubmissionQueue};
 
 mod config;
 pub use config::BatchDriverConfig;
@@ -39,6 +39,6 @@ pub use admin::{
 };
 
 mod driver;
-pub use driver::BatchDriver;
+pub use driver::{BatchDriver, BatchDriverHeads};
 
 pub mod test_utils;

@@ -2,7 +2,7 @@
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, BatcherError, L1MinerConfig,
-    SharedL1Chain, TestRollupConfigBuilder,
+    NodeStepResult, SharedL1Chain, TestRollupConfigBuilder,
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
 
@@ -36,6 +36,50 @@ async fn batcher_errors_when_no_l2_blocks_async() {
     let mut batcher = Batcher::new(source, &h.rollup_config, cfg);
     let err = batcher.try_advance(&mut h.l1).await.expect_err("should fail with no blocks");
     assert!(matches!(err, BatcherError::NoBlocks));
+}
+
+#[tokio::test]
+async fn batcher_soft_channel_target_derives_exact_blocks() {
+    const BLOCK_COUNT: u64 = 4;
+
+    let mut batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut sequencer = h.create_l2_sequencer(l1_chain);
+    let blocks = sequencer.build_next_blocks_with_single_transactions(BLOCK_COUNT).await;
+
+    // Force each accepted batch to cross the soft target and close its channel.
+    batcher_cfg.encoder.compressed_size_target = Some(1);
+
+    let mut source = ActionL2Source::new();
+    for block in &blocks {
+        source.push(block.clone());
+    }
+    Batcher::new(source, &h.rollup_config, batcher_cfg).advance(&mut h.l1).await;
+
+    let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
+        &mut sequencer,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
+    node.initialize().await;
+
+    let mut derived = 0;
+    loop {
+        match node.step().await {
+            NodeStepResult::DerivationProgress => {
+                let expected = blocks[derived].header.hash_slow();
+                assert_eq!(node.l2_safe().block_info.hash, expected);
+                derived += 1;
+            }
+            NodeStepResult::AdvancedOrigin => {}
+            NodeStepResult::Idle => break,
+        }
+    }
+    assert_eq!(derived, BLOCK_COUNT as usize);
 }
 
 // ---------------------------------------------------------------------------

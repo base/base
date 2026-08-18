@@ -12,6 +12,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+alloy-rlp.workspace = true
 base-metrics.workspace = true
 metrics = { workspace = true, optional = true }
 tracing = { workspace = true, features = ["std"] }

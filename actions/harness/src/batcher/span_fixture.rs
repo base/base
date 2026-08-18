@@ -4,12 +4,9 @@
 //! protocol-level Span payloads so action tests can continue covering Span
 //! decoding and derivation without retaining a Span producer.
 
-use std::sync::Arc;
-
 use alloy_rlp::Encodable;
-use base_batcher_encoder::FrameEncoder;
+use base_batcher_encoder::{BatchComposer, FrameEncoder, test_utils::ChannelFramer};
 use base_common_consensus::BaseBlock;
-use base_comp::{BatchComposer, ChannelOut, CompressorWriter, VariantCompressor};
 use base_protocol::{BatchType, L1BlockInfoTx, SpanBatch};
 
 use crate::{ActionTestHarness, BatcherConfig, L1TxBuilder};
@@ -44,10 +41,8 @@ impl ActionTestHarness {
         let mut channel_input = Vec::new();
         encoded_span.as_slice().encode(&mut channel_input);
 
-        let mut compressor = VariantCompressor::from(config.encoder.compression_algo);
-        compressor.write(&channel_input)?;
-        let frames = ChannelOut::new(channel_id, Arc::new(self.rollup_config.clone()), compressor)
-            .into_frames(config.encoder.max_frame_size)?;
+        let channel_data = config.encoder.compression_algo.compress_channel(&channel_input)?;
+        let frames = ChannelFramer::split(channel_id, channel_data, config.encoder.max_frame_size)?;
 
         for (offset, frame) in frames.iter().enumerate() {
             let transaction = L1TxBuilder::signed_calldata(

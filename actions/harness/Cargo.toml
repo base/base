@@ -63,7 +63,6 @@ base-consensus-engine.workspace = true
 base-execution-txpool.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-payload-builder.workspace = true
-base-comp = { workspace = true, features = ["std"] }
 base-protocol = { workspace = true, features = ["std"] }
 base-common-genesis = { workspace = true, features = ["std"] }
 base-consensus-derive = { workspace = true, features = ["test-utils"] }

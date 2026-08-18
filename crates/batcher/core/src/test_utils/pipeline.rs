@@ -23,8 +23,8 @@ pub struct Recorded {
     pub resets: usize,
     /// Safe L2 block numbers passed to `reconcile_derivation` in order.
     pub safe_numbers: Vec<u64>,
-    /// Number of times `force_close_channel()` was called.
-    pub force_close_count: usize,
+    /// Number of times `flush()` was called.
+    pub flush_count: usize,
 }
 
 /// [`BatchPipeline`] that records every significant method call into a shared [`Recorded`].
@@ -101,8 +101,9 @@ impl BatchPipeline for TrackingPipeline {
         self.recorded.lock().unwrap().requeued.push(id);
     }
 
-    fn force_close_channel(&mut self) {
-        self.recorded.lock().unwrap().force_close_count += 1;
+    fn flush(&mut self) -> Result<(), StepError> {
+        self.recorded.lock().unwrap().flush_count += 1;
+        Ok(())
     }
 
     fn advance_l1_head(&mut self, l1_block: u64) {
@@ -173,7 +174,9 @@ impl BatchPipeline for ReorgPipeline {
 
     fn confirm(&mut self, _: SubmissionId, _: u64) {}
     fn requeue(&mut self, _: SubmissionId) {}
-    fn force_close_channel(&mut self) {}
+    fn flush(&mut self) -> Result<(), StepError> {
+        Ok(())
+    }
     fn advance_l1_head(&mut self, _: u64) {}
     fn reconcile_derivation(&mut self, _: BlockInfo, _: Option<u64>) -> DerivationReconciliation {
         DerivationReconciliation::Consistent

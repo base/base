@@ -50,18 +50,18 @@ fn test_source_exhaustion_shuts_down_driver_gracefully() {
         let result = handle.await.unwrap();
         assert!(result.is_ok(), "driver must exit cleanly when source exhausts");
         assert_eq!(
-            recorded.lock().unwrap().force_close_count,
+            recorded.lock().unwrap().flush_count,
             1,
-            "force_close_channel must be called once on source exhaustion shutdown"
+            "flush must be called once on source exhaustion shutdown"
         );
     });
 }
 
 /// When the source delivers `L2BlockEvent::Flush`, the driver must call
-/// `force_close_channel` immediately. On subsequent shutdown it is called once
+/// `flush` immediately. On subsequent shutdown it is called once
 /// more, giving a total of two calls.
 #[test]
-fn test_flush_event_calls_force_close_channel() {
+fn test_flush_event_calls_pipeline_flush() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let recorded = Arc::new(Mutex::new(Recorded::default()));
         let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
@@ -90,9 +90,9 @@ fn test_flush_event_calls_force_close_channel() {
         assert!(handle.await.unwrap().is_ok());
         // Flush arm: +1; Shutdown arm: +1 → total 2
         assert_eq!(
-            recorded.lock().unwrap().force_close_count,
+            recorded.lock().unwrap().flush_count,
             2,
-            "force_close_channel must be called for Flush and again on shutdown"
+            "flush must be called for the event and again on shutdown"
         );
     });
 }
@@ -120,6 +120,6 @@ fn test_drain_timeout_exits_with_in_flight_submissions() {
         );
         let r = recorded.lock().unwrap();
         assert_eq!(r.dequeued, vec![SubmissionId(0)], "submission must have been dequeued");
-        assert_eq!(r.force_close_count, 1, "force_close_channel must be called on shutdown");
+        assert_eq!(r.flush_count, 1, "flush must be called on shutdown");
     });
 }

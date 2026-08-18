@@ -1,9 +1,63 @@
-//! The batcher pipeline trait.
+//! Batcher pipeline trait and the types that drive it.
 
+use alloy_primitives::B256;
 use base_common_consensus::BaseBlock;
 use base_protocol::BlockInfo;
 
-use crate::{BatchSubmission, ReorgError, StepError, StepResult, SubmissionId};
+use crate::{BatchComposeError, BatchSubmission, ChannelError, ChannelLimit, SubmissionId};
+
+/// Result of a [`BatchPipeline::step`] call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StepResult {
+    /// One block was encoded into the current channel.
+    BlockEncoded,
+    /// The writable channel reached a closure trigger and finalized its compression stream.
+    ChannelClosed,
+    /// No transition is available: no block is pending and no channel must close.
+    Idle,
+}
+
+/// Returned by [`BatchPipeline::step`] when a block cannot be encoded and the
+/// pipeline cannot continue.
+///
+/// Encoding failures are fatal. Continuing after a composition, compression, or framing
+/// error could omit part of the contiguous L2 block sequence required by the derivation spec.
+#[derive(Debug, thiserror::Error)]
+pub enum StepError {
+    /// The block could not be converted to a [`SingleBatch`].
+    #[error("batch composition failed for block at cursor {cursor}: {source}")]
+    CompositionFailed {
+        /// Index of the block in the encoder's input queue.
+        cursor: usize,
+        /// Underlying composition error.
+        #[source]
+        source: BatchComposeError,
+    },
+    /// A block cannot fit in an empty derivation channel.
+    #[error("block at cursor {cursor} exceeds a derivation channel limit: {limit}")]
+    BlockExceedsChannelLimit {
+        /// Index of the block in the encoder's input queue.
+        cursor: usize,
+        /// Limit that the block exceeded in an otherwise empty channel.
+        limit: ChannelLimit,
+    },
+    /// Channel state transition failed.
+    #[error(transparent)]
+    Channel(#[from] ChannelError),
+}
+
+/// Returned by [`BatchPipeline::add_block`] when a reorg is detected.
+#[derive(Debug, thiserror::Error)]
+pub enum ReorgError {
+    /// The block's parent hash does not match the current tip.
+    #[error("parent hash mismatch: expected {expected}, got {got}")]
+    ParentMismatch {
+        /// The expected parent hash (current tip).
+        expected: B256,
+        /// The actual parent hash from the incoming block.
+        got: B256,
+    },
+}
 
 /// Result of reconciling buffered batcher state with derivation progress.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -19,7 +73,7 @@ pub enum DerivationReconciliation {
 /// The batcher pipeline -- inverse of the derivation pipeline.
 ///
 /// Where the derivation pipeline accepts L1 data and produces L2 payload attributes,
-/// the batcher pipeline accepts L2 blocks and produces L1 submission data (frames -> blobs).
+/// the batcher pipeline accepts L2 blocks and produces framed L1 submissions.
 ///
 /// The pipeline is a synchronous state machine. Callers drive it by:
 /// 1. Feeding L2 blocks via [`add_block`](Self::add_block).
@@ -38,8 +92,9 @@ pub trait BatchPipeline: Send {
 
     /// Advance the pipeline by one step.
     ///
-    /// A step encodes one pending block into the current channel, or closes a full channel
-    /// and moves it to the submission queue. Call repeatedly until [`StepResult::Idle`].
+    /// A step encodes one pending block into the writable FIFO tail, or closes
+    /// that channel at a configured boundary. Streaming egress may make full
+    /// artifacts available before closure. Call repeatedly until [`StepResult::Idle`].
     ///
     /// Returns [`StepError`] if batch composition or channel finalization fails. This is
     /// fatal: continuing could silently break the contiguous L2 block sequence required
@@ -48,9 +103,12 @@ pub trait BatchPipeline: Send {
 
     /// Returns the next [`BatchSubmission`] ready for L1 submission, if any.
     ///
-    /// Each submission is one L1 transaction's worth of data (currently one frame -> one blob).
-    /// Returns `None` if no submission is ready. Assigns a unique [`SubmissionId`] for
-    /// tracking via [`confirm`](Self::confirm) / [`requeue`](Self::requeue).
+    /// Each submission is one L1 transaction's worth of frames. Blob submissions may
+    /// contain several blobs, each packed with one or more frames; calldata submissions
+    /// contain one frame.
+    ///
+    /// Returns `None` if no submission is ready. Assigns a unique [`SubmissionId`]
+    /// for tracking via [`confirm`](Self::confirm) / [`requeue`](Self::requeue).
     fn next_submission(&mut self) -> Option<BatchSubmission>;
 
     /// Returns `true` if a call to [`next_submission`](Self::next_submission) would
@@ -77,18 +135,12 @@ pub trait BatchPipeline: Send {
     /// whose confirmation window expires.
     fn advance_l1_head(&mut self, l1_block: u64);
 
-    /// Force-close the current channel, moving it to the submission queue.
+    /// Flushes the pipeline without changing its L1 head.
     ///
-    /// Unlike [`advance_l1_head`](Self::advance_l1_head) with `u64::MAX`, this does not
-    /// mutate the L1 head tracker, so subsequent real [`advance_l1_head`](Self::advance_l1_head)
-    /// calls continue to work correctly.
-    ///
-    /// Intended for test harnesses that need to flush the current channel without
-    /// simulating L1 time progression.
-    ///
-    /// Implementations that encounter a fatal close error surface it from the next
-    /// [`step`](Self::step) call because this method cannot return a result.
-    fn force_close_channel(&mut self);
+    /// Closes the writable channel and releases every retained partial artifact.
+    /// Returns the compression error directly so callers never observe a deferred
+    /// failure from an unrelated later operation.
+    fn flush(&mut self) -> Result<(), StepError>;
 
     /// Reset buffered encoding and submission state.
     ///
