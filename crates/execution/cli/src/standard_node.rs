@@ -228,8 +228,10 @@ pub struct RpcStandardNodeArgs {
 
     /// Enable the experimental validity transaction RPC.
     ///
-    /// Validity predicates are forwarded to builders but are not yet enforced.
-    #[arg(long = "enable-experimental-validity-transactions", requires = "enable_tx_forwarding")]
+    /// When transaction forwarding is enabled, validity predicates are forwarded to builders, but
+    /// they are not yet enforced. This can also be enabled on a standalone sequencer (e.g. a local
+    /// devnet) that builds blocks itself, in which case forwarding is not required.
+    #[arg(long = "enable-experimental-validity-transactions")]
     pub enable_experimental_validity_transactions: bool,
 
     /// Maximum validity predicates accepted per experimental transaction.
@@ -534,11 +536,6 @@ impl StandardBaseRethNode {
         runner.install_ext::<BundleExtension>(());
         let tx_forwarding_config: TxForwardingConfig = (&args).into();
         if args.rpc.enable_experimental_validity_transactions {
-            if !tx_forwarding_config.enabled || tx_forwarding_config.builder_urls.is_empty() {
-                eyre::bail!(
-                    "experimental validity transactions require enabled transaction forwarding"
-                );
-            }
             runner.install_ext::<SendRawTransactionValidityExtension>(
                 args.rpc.experimental_validity_max_predicates,
             );
@@ -845,14 +842,15 @@ mod tests {
     }
 
     #[test]
-    fn experimental_validity_transactions_require_forwarding() {
-        let error = CommandParser::<StandardNodeArgs>::try_parse_from([
+    fn experimental_validity_transactions_parse_without_forwarding() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
             "base-reth",
             "--enable-experimental-validity-transactions",
         ])
-        .expect_err("validity transactions should require forwarding");
+        .args;
 
-        assert!(error.to_string().contains("--enable-tx-forwarding"));
+        assert!(args.rpc.enable_experimental_validity_transactions);
+        assert!(!args.rpc.enable_tx_forwarding);
     }
 
     #[test]
@@ -875,16 +873,12 @@ mod tests {
     }
 
     #[test]
-    fn programmatic_validity_config_requires_forwarding() {
+    fn programmatic_validity_config_without_forwarding_is_valid() {
         let mut args = StandardNodeArgs::from(default_rpc_standard_node_args());
         args.rpc.enable_experimental_validity_transactions = true;
 
-        let error = match StandardBaseRethNode::runner(args) {
-            Ok(_) => panic!("invalid programmatic validity config should fail"),
-            Err(error) => error,
-        };
-
-        assert!(error.to_string().contains("require enabled transaction forwarding"));
+        StandardBaseRethNode::runner(args)
+            .expect("validity transactions should not require forwarding");
     }
 
     #[test]
