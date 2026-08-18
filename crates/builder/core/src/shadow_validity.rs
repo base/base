@@ -1,13 +1,12 @@
 //! Shadow-builder validity predicate injection for forwarded transactions.
 
-use alloy_primitives::{TxHash, U256, keccak256};
+use alloy_primitives::U256;
 use base_execution_txpool::{
     BasePooledTransaction, BuilderApiImpl, BuilderApiServer, TransactionValidity,
     ValidatedTransaction, ValidityOperator, ValidityPredicate,
 };
 use jsonrpsee::core::RpcResult;
 use reth_transaction_pool::TransactionPool;
-use tracing::debug;
 
 use crate::{BuilderApiExtensionConfig, BuilderMetrics};
 
@@ -83,8 +82,7 @@ impl ShadowValidityConfig {
             return InjectionOutcome::UnsupportedType;
         }
 
-        let tx_hash = keccak256(&tx.raw);
-        if !self.samples(tx_hash) {
+        if !self.samples(&tx.raw) {
             return InjectionOutcome::NotSampled;
         }
 
@@ -93,12 +91,19 @@ impl ShadowValidityConfig {
             op: ValidityOperator::GreaterThan,
             value: U256::ZERO,
         });
-        InjectionOutcome::Injected(tx_hash)
+        InjectionOutcome::Injected
     }
 
-    fn samples(&self, tx_hash: TxHash) -> bool {
-        let bytes: [u8; 8] = tx_hash[..8].try_into().expect("transaction hash has eight bytes");
-        u64::from_be_bytes(bytes) % u64::from(MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS)
+    fn samples(&self, raw: &[u8]) -> bool {
+        // Signed EIP-1559 transactions end with the signature's `s` scalar. Its low bytes provide
+        // stable per-transaction entropy without hashing bytes that the inner handler hashes after
+        // decoding anyway.
+        let sample = raw
+            .iter()
+            .rev()
+            .take(size_of::<u64>())
+            .fold(0_u64, |sample, byte| (sample << 8) | u64::from(*byte));
+        sample % u64::from(MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS)
             < u64::from(self.sample_rate_basis_points)
     }
 }
@@ -143,9 +148,6 @@ where
         if self.config.is_enabled() {
             BuilderMetrics::shadow_validity_injection_total(outcome.label()).increment(1);
         }
-        if let InjectionOutcome::Injected(tx_hash) = outcome {
-            debug!(tx_hash = %tx_hash, sender = %tx.sender, "injected shadow validity predicate");
-        }
         self.inner.insert_validated_transaction(tx).await
     }
 }
@@ -157,7 +159,7 @@ enum InjectionOutcome {
     BundleValidity,
     UnsupportedType,
     NotSampled,
-    Injected(TxHash),
+    Injected,
 }
 
 impl InjectionOutcome {
@@ -168,7 +170,7 @@ impl InjectionOutcome {
             Self::BundleValidity => "bundle_validity",
             Self::UnsupportedType => "unsupported_type",
             Self::NotSampled => "not_sampled",
-            Self::Injected(_) => "injected",
+            Self::Injected => "injected",
         }
     }
 }
@@ -197,7 +199,7 @@ mod tests {
         let mut tx = transaction(Bytes::from_static(&[0x02, 0x01, 0x02]));
         let original = tx.clone();
 
-        assert!(matches!(config.inject(&mut tx), InjectionOutcome::Injected(_)));
+        assert_eq!(config.inject(&mut tx), InjectionOutcome::Injected);
         assert_eq!(tx.sender, original.sender);
         assert_eq!(tx.raw, original.raw);
         assert_eq!(tx.min_block_number, original.min_block_number);
