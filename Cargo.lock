@@ -3060,6 +3060,7 @@ dependencies = [
  "base-tx-manager",
  "clap",
  "eyre",
+ "humantime",
  "serde",
  "tracing",
  "url",
@@ -5932,20 +5933,6 @@ dependencies = [
  "sqlx",
  "thiserror 2.0.19",
  "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "base-prover-service-outbox"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "base-prover-service-db",
- "serde_json",
- "tokio",
- "tokio-util",
  "tracing",
  "uuid",
 ]

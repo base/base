@@ -619,9 +619,11 @@ impl BatcherService {
             .map_err(|e| eyre::eyre!("failed to fetch L1 chain ID: {e}"))?;
         let tx_manager_config = TxManagerConfig {
             resubmission_timeout: self.config.resubmission_timeout,
+            receipt_query_interval: self.config.receipt_query_interval,
             num_confirmations: self.config.num_confirmations as u64,
             ..TxManagerConfig::default()
         };
+        tx_manager_config.validate().map_err(|e| eyre::eyre!("invalid tx manager config: {e}"))?;
         let tx_manager = SimpleTxManager::new(
             l1_provider,
             signer_config,

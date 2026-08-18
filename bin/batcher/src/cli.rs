@@ -184,6 +184,21 @@ pub(crate) struct BatcherArgs {
     )]
     pub resubmission_timeout_secs: u64,
 
+    /// Interval between receipt query attempts (e.g. "2s").
+    ///
+    /// A submitted transaction is only observed as mined on a poll tick, so
+    /// this also bounds how long an already-mined transaction still looks
+    /// pending. While it stays well above the L1 block time, the fee bump at
+    /// `--resubmission-timeout` can fire against a transaction that is already
+    /// mined, which surfaces as `nonce too low`.
+    #[arg(
+        long = "receipt-query-interval",
+        default_value = "12s",
+        env = "BATCHER_RECEIPT_QUERY_INTERVAL",
+        value_parser = humantime::parse_duration
+    )]
+    pub receipt_query_interval: Duration,
+
     /// DA backlog threshold in bytes at which throttling activates.
     ///
     /// When the estimated unsubmitted DA backlog exceeds this value, the batcher
@@ -343,6 +358,7 @@ impl BatcherArgs {
             max_pending_transactions: self.max_pending_transactions,
             num_confirmations: self.num_confirmations,
             resubmission_timeout: Duration::from_secs(self.resubmission_timeout_secs),
+            receipt_query_interval: self.receipt_query_interval,
             throttle: if self.no_throttle {
                 None
             } else {
@@ -706,6 +722,22 @@ mod tests {
         assert_eq!(config.l1_rpc_url[0].as_str(), "http://localhost:8545/");
         assert_eq!(config.l1_rpc_url[1].as_str(), "http://l1-a:8545/");
         assert_eq!(config.l1_rpc_url[3].as_str(), "http://l1-c:8545/");
+    }
+
+    #[test]
+    fn receipt_query_interval_defaults_to_the_tx_manager_default() {
+        let cli = parse_cli(&[]);
+        let config = cli.args.into_config().expect("config should build");
+
+        assert_eq!(config.receipt_query_interval, Duration::from_secs(12));
+    }
+
+    #[test]
+    fn into_config_accepts_receipt_query_interval() {
+        let cli = parse_cli(&["--receipt-query-interval", "2s"]);
+        let config = cli.args.into_config().expect("config should build");
+
+        assert_eq!(config.receipt_query_interval, Duration::from_secs(2));
     }
 
     #[test]
