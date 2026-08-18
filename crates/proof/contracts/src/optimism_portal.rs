@@ -47,6 +47,9 @@ pub fn encode_redeem_attested_withdrawal_calldata(
 #[async_trait]
 pub trait OptimismPortalClient: Send + Sync {
     /// Returns whether an authorization has already been redeemed.
+    ///
+    /// This is one RPC attempt. The relay retries failures on its next poll
+    /// without advancing the scan cursor.
     async fn attest_redeemed(&self, auth_hash: B256) -> Result<bool, ContractError>;
 }
 

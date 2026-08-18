@@ -5,7 +5,7 @@ use std::{sync::Arc, time::Duration};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_rpc_types_eth::Filter;
-use alloy_sol_types::SolEvent;
+use alloy_sol_types::{SolEvent, SolValue};
 use async_trait::async_trait;
 use base_common_consensus::Predeploys;
 use base_proof_contracts::{
@@ -69,6 +69,9 @@ impl AttestedWithdrawalSigner for HttpClient {
 }
 
 /// Polls L2 attested-withdrawal logs and redeems them on L1.
+///
+/// The scan cursor is in memory. A restart rescans from `start_block`; portal
+/// replay protection makes that safe while durable progress remains deferred.
 #[derive(Debug)]
 pub struct AttestedWithdrawalRelayer<L2, S, P, T>
 where
@@ -281,17 +284,10 @@ pub fn attested_withdrawal_auth_hash(
     nonce: U256,
     data: &Bytes,
 ) -> B256 {
-    let data_length = data.len();
-    let padded_data_length = data_length + (32 - data_length % 32) % 32;
-    let mut encoded = vec![0_u8; 224 + padded_data_length];
-    encoded[24..32].copy_from_slice(&l2_chain_id.to_be_bytes());
-    encoded[44..64].copy_from_slice(recipient.as_slice());
-    encoded[96..128].copy_from_slice(&amount.to_be_bytes::<32>());
-    encoded[128..160].copy_from_slice(&nonce.to_be_bytes::<32>());
-    encoded[160..192].copy_from_slice(&U256::from(192).to_be_bytes::<32>());
-    encoded[192..224].copy_from_slice(&U256::from(data_length).to_be_bytes::<32>());
-    encoded[224..224 + data_length].copy_from_slice(data);
-    keccak256(encoded)
+    keccak256(
+        (U256::from(l2_chain_id), recipient, Address::ZERO, amount, nonce, data.clone())
+            .abi_encode_params(),
+    )
 }
 
 /// Computes the `attestedWithdrawals` mapping key for an authorization hash.
