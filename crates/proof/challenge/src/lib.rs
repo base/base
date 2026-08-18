@@ -15,8 +15,9 @@ pub use anchor::AnchorUpdater;
 mod attested_withdrawal;
 pub use attested_withdrawal::{
     AttestedWithdrawalEvent, AttestedWithdrawalRelayConfig, AttestedWithdrawalRelayError,
-    attested_withdrawal_auth_hash, attested_withdrawal_storage_slot,
-    decode_attested_withdrawal_log,
+    AttestedWithdrawalRelayer, AttestedWithdrawalSigner, attested_withdrawal_auth_hash,
+    attested_withdrawal_signer_client, attested_withdrawal_storage_slot,
+    decode_attested_withdrawal_log, normalize_attested_withdrawal_signature,
 };
 
 mod config;

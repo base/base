@@ -122,6 +122,7 @@ impl NitroProverServer {
             }
         };
 
+        let attested_withdrawal_checker = checker.as_ref().map(Arc::clone);
         if let Some(checker) = checker {
             pool = pool
                 .with_registration_checker(checker)
@@ -130,7 +131,13 @@ impl NitroProverServer {
         module.merge(NitroProverRpc { pool: Arc::new(pool) }.into_rpc())?;
 
         module.merge(NitroSignerRpc { transports: transports.clone() }.into_rpc())?;
-        module.merge(NitroAttestedWithdrawalRpc { transports }.into_rpc())?;
+        module.merge(
+            NitroAttestedWithdrawalRpc {
+                transports,
+                registration_checker: attested_withdrawal_checker,
+            }
+            .into_rpc(),
+        )?;
 
         Ok(server.start(module))
     }
@@ -148,10 +155,11 @@ impl NitroProverServer {
         info!(addr = %addr, "nitro registrar rpc server started");
 
         let mut module = RpcModule::new(());
-        match registration_checker {
+        match registration_checker.as_ref() {
             Some(checker) => {
                 module.merge(
-                    RegistrationHealthzRpc::new(env!("CARGO_PKG_VERSION"), checker).into_rpc(),
+                    RegistrationHealthzRpc::new(env!("CARGO_PKG_VERSION"), Arc::clone(checker))
+                        .into_rpc(),
                 )?;
             }
             None => {
@@ -159,6 +167,36 @@ impl NitroProverServer {
             }
         }
         module.merge(NitroSignerRpc { transports }.into_rpc())?;
+
+        Ok(server.start(module))
+    }
+
+    /// Start the private signer API used for attested-withdrawal authorizations.
+    pub async fn run_attested_withdrawal_rpc_server(
+        addr: SocketAddr,
+        transports: Vec<Arc<NitroTransport>>,
+        registration_checker: Option<Arc<RegistrationChecker>>,
+    ) -> eyre::Result<ServerHandle> {
+        let middleware = tower::ServiceBuilder::new()
+            .layer(ProxyGetRequestLayer::new([("/healthz", "healthz")])?);
+        let server = Server::builder().set_http_middleware(middleware).build(addr).await?;
+        let addr = server.local_addr()?;
+        info!(addr = %addr, "nitro attested-withdrawal rpc server started");
+
+        let mut module = RpcModule::new(());
+        match registration_checker.as_ref() {
+            Some(checker) => {
+                module.merge(
+                    RegistrationHealthzRpc::new(env!("CARGO_PKG_VERSION"), Arc::clone(checker))
+                        .into_rpc(),
+                )?;
+            }
+            None => {
+                module.merge(HealthzRpc::new(env!("CARGO_PKG_VERSION")).into_rpc())?;
+            }
+        }
+        module.merge(NitroSignerRpc { transports: transports.clone() }.into_rpc())?;
+        module.merge(NitroAttestedWithdrawalRpc { transports, registration_checker }.into_rpc())?;
 
         Ok(server.start(module))
     }
@@ -264,6 +302,28 @@ impl EnclaveApiServer for NitroSignerRpc {
 /// transport even when the deployment has multiple enclaves.
 struct NitroAttestedWithdrawalRpc {
     transports: Vec<Arc<NitroTransport>>,
+    registration_checker: Option<Arc<RegistrationChecker>>,
+}
+
+impl NitroAttestedWithdrawalRpc {
+    async fn select_transport(
+        &self,
+    ) -> Result<&Arc<NitroTransport>, jsonrpsee::types::ErrorObjectOwned> {
+        let index = if let Some(checker) = &self.registration_checker {
+            checker
+                .select_all_valid_enclaves()
+                .await
+                .map_err(|error| NitroProverServer::rpc_err(-32001, error))?
+                .first()
+                .expect("select_all_valid_enclaves returns at least one signer")
+                .index
+        } else {
+            0
+        };
+        self.transports.get(index).ok_or_else(|| {
+            NitroProverServer::rpc_err(-32001, "selected enclave transport is unavailable")
+        })
+    }
 }
 
 #[async_trait]
@@ -293,9 +353,7 @@ impl AttestedWithdrawalApiServer for NitroAttestedWithdrawalRpc {
             }
         }
 
-        let transport = self.transports.first().ok_or_else(|| {
-            NitroProverServer::rpc_err(-32001, "no enclave transports configured")
-        })?;
+        let transport = self.select_transport().await?;
         transport
             .sign_attested_withdrawal(auth_hash, message_passer_storage_root, storage_proof)
             .await
@@ -305,14 +363,16 @@ impl AttestedWithdrawalApiServer for NitroAttestedWithdrawalRpc {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::Ordering;
+    use std::{collections::HashMap, sync::atomic::Ordering};
 
+    use alloy_signer::utils::public_key_to_address;
     use base_proof_primitives::{AttestedWithdrawalApiServer, EnclaveApiServer};
     use base_proof_tee_nitro_enclave::Server as EnclaveServer;
     use jsonrpsee::core::client::ClientT as _;
+    use k256::ecdsa::VerifyingKey;
 
     use super::*;
-    use crate::test_utils::MockRegistry;
+    use crate::test_utils::{AddressBasedMockRegistry, MockRegistry};
 
     #[tokio::test]
     async fn signer_public_key_routed_to_transport() {
@@ -390,6 +450,7 @@ mod tests {
         let server = Arc::new(EnclaveServer::new_local().unwrap());
         let rpc = NitroAttestedWithdrawalRpc {
             transports: vec![Arc::new(NitroTransport::local(server))],
+            registration_checker: None,
         };
         let storage_proof = vec![alloy_primitives::Bytes::new(); MAX_STORAGE_PROOF_NODES + 1];
 
@@ -403,6 +464,30 @@ mod tests {
         .unwrap_err();
         assert_eq!(error.code(), -32602);
         assert!(error.message().contains("storage proof"));
+    }
+
+    #[tokio::test]
+    async fn attested_withdrawal_rpc_selects_a_registered_signer() {
+        let first_server = Arc::new(EnclaveServer::new_local().unwrap());
+        let second_server = Arc::new(EnclaveServer::new_local().unwrap());
+        let first = Arc::new(NitroTransport::local(first_server));
+        let second = Arc::new(NitroTransport::local(second_server));
+        let second_key = second.signer_public_key().await.unwrap();
+        let second_address =
+            public_key_to_address(&VerifyingKey::from_sec1_bytes(&second_key).unwrap());
+        let checker = Arc::new(
+            RegistrationChecker::new(
+                vec![Arc::clone(&first), Arc::clone(&second)],
+                AddressBasedMockRegistry::new(HashMap::from([(second_address, true)])),
+            )
+            .unwrap(),
+        );
+        let rpc = NitroAttestedWithdrawalRpc {
+            transports: vec![first, Arc::clone(&second)],
+            registration_checker: Some(checker),
+        };
+
+        assert!(Arc::ptr_eq(rpc.select_transport().await.unwrap(), &second));
     }
 
     #[tokio::test]

@@ -1,4 +1,4 @@
-//! Bindings for attested withdrawal redemption on OptimismPortal2.
+//! Bindings for attested withdrawal redemption on `OptimismPortal2`.
 
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::RootProvider;
@@ -10,15 +10,15 @@ use crate::ContractError;
 sol! {
     /// L2 message-passer event emitted for attested ETH withdrawals.
     interface IL2ToL1MessagePasser {
-        event AttestedWithdrawalInitiated(bytes32 indexed authHash, address indexed recipient, address indexed token, uint256 amount, uint256 nonce);
+        event AttestedWithdrawalInitiated(bytes32 indexed authHash, address indexed recipient, address indexed token, uint256 amount, uint256 nonce, bytes data);
     }
 
     /// Minimal `OptimismPortal2` interface used by the attested-withdrawal relay.
     #[sol(rpc)]
     interface IOptimismPortal2 {
         function attestRedeemed(bytes32 authHash) external view returns (bool);
-        function redeemAttestedWithdrawal(address recipient, uint256 amount, uint256 nonce, bytes sig) external;
-        event AttestedWithdrawalRedeemed(bytes32 indexed authHash, address indexed recipient, uint256 amount, uint256 nonce, address signer);
+        function redeemAttestedWithdrawal(address recipient, uint256 amount, uint256 nonce, bytes data, bytes sig) external;
+        event AttestedWithdrawalRedeemed(bytes32 indexed authHash, address indexed recipient, uint256 amount, uint256 nonce, address signer, bytes data);
     }
 }
 
@@ -28,11 +28,18 @@ pub fn encode_redeem_attested_withdrawal_calldata(
     recipient: Address,
     amount: U256,
     nonce: U256,
+    data: Bytes,
     signature: Bytes,
 ) -> Bytes {
     Bytes::from(
-        IOptimismPortal2::redeemAttestedWithdrawalCall { recipient, amount, nonce, sig: signature }
-            .abi_encode(),
+        IOptimismPortal2::redeemAttestedWithdrawalCall {
+            recipient,
+            amount,
+            nonce,
+            data,
+            sig: signature,
+        }
+        .abi_encode(),
     )
 }
 
@@ -83,20 +90,16 @@ mod tests {
             recipient,
             U256::from(42),
             U256::from(7),
+            bytes!("deadbeef"),
             signature.clone(),
         );
-        let expected = bytes!(
-            "53520b650000000000000000000000001234567890123456789012345678901234567890"
-            "000000000000000000000000000000000000000000000000000000000000002a"
-            "0000000000000000000000000000000000000000000000000000000000000007"
-            "0000000000000000000000000000000000000000000000000000000000000080"
-            "0000000000000000000000000000000000000000000000000000000000000041"
-            "0000000000000000000000000000000000000000000000000000000000000000"
-            "000000000000000000000000000000000000000000000000000000000000001b"
-            "00000000000000000000000000000000000000000000000000000000000000"
-        );
-        assert_eq!(encoded, expected);
         assert_eq!(&encoded[..4], &IOptimismPortal2::redeemAttestedWithdrawalCall::SELECTOR);
+        let decoded = IOptimismPortal2::redeemAttestedWithdrawalCall::abi_decode(&encoded).unwrap();
+        assert_eq!(decoded.recipient, recipient);
+        assert_eq!(decoded.amount, U256::from(42));
+        assert_eq!(decoded.nonce, U256::from(7));
+        assert_eq!(decoded.data, bytes!("deadbeef"));
+        assert_eq!(decoded.sig, signature);
         assert_ne!(IOptimismPortal2::attestRedeemedCall::SELECTOR, [0; 4]);
     }
 }

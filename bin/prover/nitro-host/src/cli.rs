@@ -359,6 +359,7 @@ impl ServerArgs {
             transports,
             WorkerTransportMode::Vsock,
             Some(self.listen_addr),
+            false,
             cancel,
         )
         .await
@@ -375,6 +376,10 @@ struct LocalArgs {
     #[command(flatten)]
     worker: WorkerArgs,
 
+    /// Socket address for the private signer JSON-RPC API.
+    #[arg(long, env = "LISTEN_ADDR", default_value = "0.0.0.0:8000")]
+    listen_addr: SocketAddr,
+
     /// Number of local enclave instances to run (minimum 1).
     #[arg(long, env = "LOCAL_ENCLAVE_COUNT", default_value = "1")]
     local_enclave_count: usize,
@@ -388,8 +393,16 @@ impl LocalArgs {
         }
 
         let transports = local_transports(self.local_enclave_count)?;
-        run_worker(self.runtime, self.worker, transports, WorkerTransportMode::Local, None, cancel)
-            .await
+        run_worker(
+            self.runtime,
+            self.worker,
+            transports,
+            WorkerTransportMode::Local,
+            Some(self.listen_addr),
+            true,
+            cancel,
+        )
+        .await
     }
 }
 
@@ -415,6 +428,7 @@ async fn run_worker(
     transports: Vec<Arc<NitroTransport>>,
     transport_mode: WorkerTransportMode,
     registrar_listen_addr: Option<SocketAddr>,
+    attested_withdrawal_signing: bool,
     cancel: CancellationToken,
 ) -> eyre::Result<()> {
     let registration_health = runtime.registration_health_config();
@@ -477,14 +491,25 @@ async fn run_worker(
         .with_max_concurrent_jobs(worker.job_discovery_max_concurrent_jobs);
     let discovery = JobDiscovery::new(client, proof_generator, discovery_config);
     let registrar_handle = if let Some(addr) = registrar_listen_addr {
-        Some(
-            NitroProverServer::run_registrar_rpc_server(
-                addr,
-                registrar_transports,
-                registration_checker,
+        if attested_withdrawal_signing {
+            Some(
+                NitroProverServer::run_attested_withdrawal_rpc_server(
+                    addr,
+                    registrar_transports,
+                    registration_checker,
+                )
+                .await?,
             )
-            .await?,
-        )
+        } else {
+            Some(
+                NitroProverServer::run_registrar_rpc_server(
+                    addr,
+                    registrar_transports,
+                    registration_checker,
+                )
+                .await?,
+            )
+        }
     } else {
         None
     };

@@ -13,20 +13,39 @@ use base_health::HealthServer;
 use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryClient,
     AnchorStateRegistryContractClient, DisputeGameFactoryClient, DisputeGameFactoryContractClient,
+    OptimismPortalContractClient,
 };
 use base_proof_rpc::{L1Client, L1ClientConfig, L2Client, L2ClientConfig, L2Provider};
 use base_prover_service_client::{ProofRequesterClient, ProverServiceClientConfig};
 use base_runtime::TokioRuntime;
-use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
+use base_tx_manager::{BaseTxMetrics, SendHandle, SimpleTxManager, TxCandidate, TxManager};
 use eyre::Result;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::{
-    AnchorUpdater, BondManager, BondManagerConfig, ChallengeSubmitter, ChallengerConfig,
-    ChallengerMetrics, DisputeComponents, Driver, DriverComponents, GameScanner, L1HeadProvider,
-    OutputValidator,
+    AnchorUpdater, AttestedWithdrawalRelayer, BondManager, BondManagerConfig, ChallengeSubmitter,
+    ChallengerConfig, ChallengerMetrics, DisputeComponents, Driver, DriverComponents, GameScanner,
+    L1HeadProvider, OutputValidator, attested_withdrawal_signer_client,
 };
+
+/// Shares the managed L1 sender between the challenger and withdrawal relay.
+#[derive(Debug, Clone)]
+struct SharedTxManager<T>(Arc<T>);
+
+impl<T: TxManager> TxManager for SharedTxManager<T> {
+    async fn send(&self, candidate: TxCandidate) -> base_tx_manager::SendResponse {
+        self.0.send(candidate).await
+    }
+
+    async fn send_async(&self, candidate: TxCandidate) -> SendHandle {
+        self.0.send_async(candidate).await
+    }
+
+    fn sender_address(&self) -> Address {
+        self.0.sender_address()
+    }
+}
 
 /// Top-level challenger service.
 #[derive(Debug)]
@@ -100,7 +119,8 @@ impl ChallengerService {
         )
         .await
         .map_err(|e| eyre::eyre!("failed to construct tx manager: {e}"))?;
-        let submitter = ChallengeSubmitter::new(tx_manager);
+        let tx_manager = SharedTxManager(Arc::new(tx_manager));
+        let submitter = ChallengeSubmitter::new(tx_manager.clone());
 
         // ── 4. Contract clients and onchain config ───────────────────────────
         let factory_client = DisputeGameFactoryContractClient::new(
@@ -230,7 +250,27 @@ impl ChallengerService {
             })
         };
 
-        // ── 8. Start health HTTP server ──────────────────────────────────────
+        // ── 8. Start the optional attested-withdrawal relay ──────────────────
+        let relay_handle = if let Some(relay_config) = config.attested_withdrawal_relay {
+            let signer = attested_withdrawal_signer_client(&relay_config.enclave_rpc_url)?;
+            let portal =
+                OptimismPortalContractClient::new(relay_config.portal_address, l1_rpc_url.clone());
+            let relayer = AttestedWithdrawalRelayer::new(
+                relay_config,
+                Arc::clone(&l2_client),
+                signer,
+                portal,
+                tx_manager.clone(),
+            )
+            .await?;
+            let relay_cancel = cancel.child_token();
+            info!("attested withdrawal relay started");
+            Some(tokio::spawn(relayer.run(relay_cancel)))
+        } else {
+            None
+        };
+
+        // ── 9. Start health HTTP server ──────────────────────────────────────
         let ready = Arc::new(AtomicBool::new(false));
         let health_handle = tokio::spawn(HealthServer::serve(
             config.health_addr,
@@ -238,7 +278,7 @@ impl ChallengerService {
             cancel.clone(),
         ));
 
-        // ── 9. Run driver ────────────────────────────────────────────────────
+        // ── 10. Run driver ───────────────────────────────────────────────────
         let driver = Driver::new(DriverComponents {
             dispute,
             submitter,
@@ -259,9 +299,15 @@ impl ChallengerService {
         driver.run().await;
         drop(cancel_guard);
 
-        // ── 10. Graceful shutdown ─────────────────────────────────────────────
+        // ── 11. Graceful shutdown ─────────────────────────────────────────────
         info!("Driver stopped, shutting down...");
         ready.store(false, Ordering::SeqCst);
+
+        if let Some(relay_handle) = relay_handle
+            && let Err(error) = relay_handle.await
+        {
+            warn!(error = %error, "attested withdrawal relay task panicked");
+        }
 
         match health_handle.await {
             Ok(Ok(())) => {}

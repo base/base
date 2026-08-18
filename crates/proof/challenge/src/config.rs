@@ -81,7 +81,7 @@ impl ChallengerConfig {
                 "--zk-rpc-url must not be set in --no-dispute mode"
             );
             ensure!(
-                !challenger.bond_claim_addresses.is_empty(),
+                challenger.attested_withdrawal_relay || !challenger.bond_claim_addresses.is_empty(),
                 "--bond-claim-addresses is required in --no-dispute mode"
             );
         } else {
