@@ -43,6 +43,8 @@ pub struct DriverConfig {
     pub intermediate_block_interval: u64,
     /// Game type ID for `AggregateVerifier` dispute games.
     pub game_type: u32,
+    /// Prover-service routing version required by newly proposed games.
+    pub proof_protocol_version: u32,
     /// Address of the proposer that submits proof transactions onchain.
     /// Included in the proof journal so the enclave signs over the correct `msg.sender`.
     pub proposer_address: Address,
@@ -60,6 +62,7 @@ impl Default for DriverConfig {
             block_interval: 512,
             intermediate_block_interval: 512,
             game_type: 0,
+            proof_protocol_version: 0,
             proposer_address: Address::ZERO,
             anchor_state_registry_address: Address::ZERO,
         }

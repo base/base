@@ -41,6 +41,13 @@ impl<Client> NitroHost<Client> {
         self
     }
 
+    /// Sets the proof protocol versions announced by this worker.
+    #[must_use]
+    pub fn with_protocol_versions(mut self, protocol_versions: impl Into<Vec<u32>>) -> Self {
+        self.discovery = self.discovery.with_protocol_versions(protocol_versions);
+        self
+    }
+
     /// Sets the requested claim lock duration in seconds.
     #[must_use]
     pub fn with_lock_duration_seconds(mut self, lock_duration_seconds: u32) -> Self {

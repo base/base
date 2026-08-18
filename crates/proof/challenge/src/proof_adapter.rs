@@ -42,10 +42,15 @@ impl ChallengerProofAdapter {
         game_address: Address,
         invalid_index: u64,
         request: SnarkPlonkProofRequest,
+        protocol_version: u32,
     ) -> ProveBlockRangeRequest {
         let session_id = Self::snark_plonk_session_id(game_address, invalid_index);
         ProveBlockRangeRequest {
-            proof: ProofRequest { session_id, request: ProofRequestKind::SnarkPlonk(request) },
+            proof: ProofRequest {
+                session_id,
+                protocol_version,
+                request: ProofRequestKind::SnarkPlonk(request),
+            },
             retry_failed: true,
         }
     }
@@ -55,11 +60,13 @@ impl ChallengerProofAdapter {
         game_address: Address,
         invalid_index: u64,
         request: PrimitiveProofRequest,
+        protocol_version: u32,
     ) -> ProveBlockRangeRequest {
         let session_id = Self::tee_session_id(game_address, invalid_index);
         ProveBlockRangeRequest {
             proof: ProofRequest {
                 session_id,
+                protocol_version,
                 request: ProofRequestKind::Tee(TeeProofRequest {
                     proof: request,
                     tee_kind: TeeKind::AwsNitro,
@@ -189,10 +196,38 @@ mod tests {
             game_address,
             invalid_index,
             request.clone(),
+            0,
         );
 
         assert_eq!(wrapped.proof.session_id, session_id);
+        assert_eq!(wrapped.proof.protocol_version, 0);
         assert_eq!(wrapped.proof.request, ProofRequestKind::SnarkPlonk(request));
+    }
+
+    #[test]
+    fn snark_plonk_uses_requested_protocol() {
+        let request = SnarkPlonkProofRequest {
+            proof: ZkProofRequest {
+                start_block_number: 100,
+                number_of_blocks_to_prove: 300,
+                sequence_window: None,
+                l1_head: None,
+                intermediate_root_interval: None,
+                schedule_l2_block_number: Some(600),
+                zk_vm: ZkVm::Sp1,
+                zk_backend: ZkBackend::Cluster,
+            },
+            prover_address: Address::repeat_byte(0x11),
+        };
+
+        let wrapped = ChallengerProofAdapter::snark_plonk_prove_block_range_request(
+            Address::repeat_byte(0xaa),
+            1,
+            request,
+            7,
+        );
+
+        assert_eq!(wrapped.proof.protocol_version, 7);
     }
 
     #[test]
@@ -209,6 +244,7 @@ mod tests {
             proposer: Address::repeat_byte(0x04),
             intermediate_block_interval: 300,
             l1_head_number: 1200,
+            image_hash: B256::repeat_byte(0x06),
             schedule_l2_block_number: None,
         };
         let session_id = ChallengerProofAdapter::tee_session_id(game_address, invalid_index);
@@ -217,13 +253,40 @@ mod tests {
             game_address,
             invalid_index,
             request.clone(),
+            0,
         );
 
         assert_eq!(wrapped.proof.session_id, session_id);
+        assert_eq!(wrapped.proof.protocol_version, 0);
         assert_eq!(
             wrapped.proof.request,
             ProofRequestKind::Tee(TeeProofRequest { proof: request, tee_kind: TeeKind::AwsNitro })
         );
+    }
+
+    #[test]
+    fn tee_uses_requested_protocol() {
+        let request = ProofRequest {
+            l1_head: B256::repeat_byte(0x01),
+            agreed_l2_head_hash: B256::repeat_byte(0x02),
+            agreed_l2_output_root: B256::repeat_byte(0x03),
+            claimed_l2_output_root: B256::repeat_byte(0x04),
+            claimed_l2_block_number: 600,
+            proposer: Address::repeat_byte(0x05),
+            intermediate_block_interval: 300,
+            l1_head_number: 1200,
+            image_hash: B256::repeat_byte(0x06),
+            schedule_l2_block_number: Some(600),
+        };
+
+        let wrapped = ChallengerProofAdapter::tee_prove_block_range_request(
+            Address::repeat_byte(0xaa),
+            1,
+            request,
+            9,
+        );
+
+        assert_eq!(wrapped.proof.protocol_version, 9);
     }
 
     #[test]

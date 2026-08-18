@@ -23,6 +23,8 @@ use crate::{
 pub struct ProofDispatcherConfig {
     /// Number of L2 blocks between proof targets.
     pub block_interval: u64,
+    /// Prover-service routing version for proposal jobs.
+    pub protocol_version: u32,
     /// Address of the proposer that will submit the proof onchain.
     pub proposer_address: Address,
     /// Number of L2 blocks between intermediate output root checkpoints.
@@ -33,6 +35,7 @@ impl From<&DriverConfig> for ProofDispatcherConfig {
     fn from(config: &DriverConfig) -> Self {
         Self {
             block_interval: config.block_interval,
+            protocol_version: config.proof_protocol_version,
             proposer_address: config.proposer_address,
             intermediate_block_interval: config.intermediate_block_interval,
         }
@@ -108,6 +111,10 @@ impl ProofDispatcher {
             proposer: self.config.proposer_address,
             intermediate_block_interval: self.config.intermediate_block_interval,
             l1_head_number: l1_header.number,
+            // Proposals are always created at the current image, so they pin none: any registered
+            // enclave can serve them. Only the challenger, which disputes games created under
+            // possibly-retired images, names one.
+            image_hash: B256::ZERO,
             schedule_l2_block_number: None,
         })
     }
@@ -136,7 +143,10 @@ impl ProofDispatcher {
     }
 
     async fn dispatch_request(&self, request: ProofRequest) -> Result<String, ProposerError> {
-        let request = ProposerProofAdapter::tee_prove_block_range_request(request);
+        let request = ProposerProofAdapter::tee_prove_block_range_request(
+            request,
+            self.config.protocol_version,
+        );
         let session_id = request.proof.session_id.clone();
         match self.proof_requester.prove_block_range(request).await {
             Ok(response) if response.session_id == session_id => Ok(response.session_id),
@@ -304,6 +314,7 @@ mod tests {
             }),
             ProofDispatcherConfig {
                 block_interval: 100,
+                protocol_version: 1,
                 proposer_address: Address::repeat_byte(0x04),
                 intermediate_block_interval: 300,
             },

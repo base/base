@@ -10,14 +10,20 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256};
+use alloy_provider::RootProvider;
 use anyhow::Result;
+use base_proof_contracts::{
+    AggregateVerifierClient, AggregateVerifierContractClient, DisputeGameFactoryClient,
+    DisputeGameFactoryContractClient, ProofProtocolDescriptor, ProofScheduleKind,
+};
 use base_prover_service_protocol::{
     ExecutionStats, GetProofResponse, ListProofsRequest, ProofResult, ProofStatus, ProofSummary,
     ProofType, TeeKind, ZkBackend, ZkVm,
 };
 use clap::{Args, Subcommand, ValueEnum};
+use futures::{StreamExt, TryStreamExt, stream};
 use serde::{Serialize, Serializer};
-use tracing::info;
+use tracing::{info, warn};
 use url::Url;
 
 use crate::{
@@ -57,6 +63,36 @@ pub enum ProofsCommands {
     Propose(ProofsProposeArgs),
     /// Submit a completed PLONK proposal proof to its L1 dispute game.
     Submit(ProofsSubmitArgs),
+    /// Print the proof capability fingerprint of historical dispute games.
+    ///
+    /// Reads each game proxy and fingerprints the prover artifact hashes
+    /// (`TEE_IMAGE_HASH`, `ZK_RANGE_HASH`, `ZK_AGGREGATE_HASH`) so
+    /// `--proof-protocol-version <fingerprint>=<version>` mappings can be written from observed
+    /// state. Read-only.
+    Protocol(ProofsProtocolArgs),
+}
+
+/// Flags for `basectl proofs protocol`.
+#[derive(Debug, Args)]
+pub struct ProofsProtocolArgs {
+    /// L1 RPC URL (overrides config `l1_rpc`).
+    #[arg(long = "l1-rpc", env = "BASECTL_L1_RPC", value_name = "URL")]
+    pub l1_rpc: Option<Url>,
+    /// `DisputeGameFactory` address (overrides config `proofs.dispute_game_factory`).
+    #[arg(long = "factory", value_name = "ADDRESS", required_unless_present = "game")]
+    pub factory: Option<Address>,
+    /// First factory index to read. Defaults to 0.
+    #[arg(long = "from", value_name = "INDEX", default_value_t = 0)]
+    pub from: u64,
+    /// Last factory index to read. Defaults to the newest game.
+    #[arg(long = "to", value_name = "INDEX")]
+    pub to: Option<u64>,
+    /// Explicit game proxy address. Repeatable; skips factory enumeration.
+    #[arg(long = "game", value_name = "ADDRESS")]
+    pub game: Vec<Address>,
+    /// Emit JSON instead of a table.
+    #[arg(long = "json")]
+    pub json: bool,
 }
 
 /// Flags for `basectl proofs status`.
@@ -407,6 +443,7 @@ impl ProofsCommand {
             ProofsCommands::Games(args) => run_games(config, args).await,
             ProofsCommands::Propose(args) => run_propose(config, args).await,
             ProofsCommands::Submit(args) => run_submit(config, args).await,
+            ProofsCommands::Protocol(args) => run_protocol(config, args).await,
         }
     }
 }
@@ -431,6 +468,182 @@ async fn existing_proof_session(
         Err(ProofsCommandError::Rpc { ref source, .. }) if source.is_not_found() => Ok(None),
         Err(error) => Err(error),
     }
+}
+
+/// One game's capability descriptor, flattened for display.
+#[derive(Debug, Serialize)]
+struct GameProtocolRow {
+    /// Factory index, absent when the game was named explicitly.
+    index: Option<u64>,
+    /// Game proxy address.
+    game: Address,
+    /// Current onchain game status.
+    status: &'static str,
+    /// Journal schedule era.
+    era: &'static str,
+    /// Rollup configuration hash committed by both journal types.
+    config_hash: B256,
+    /// Nitro enclave image hash committed by TEE journals.
+    tee_image_hash: B256,
+    /// SP1 range verification key committed by ZK journals.
+    zk_range_hash: B256,
+    /// SP1 aggregation verification key used by the ZK verifier.
+    zk_aggregate_hash: B256,
+    /// Canonical fingerprint the challenger maps to a routing version.
+    fingerprint: B256,
+}
+
+impl GameProtocolRow {
+    fn new(
+        index: Option<u64>,
+        game: Address,
+        status: GameStatus,
+        descriptor: &ProofProtocolDescriptor,
+    ) -> Self {
+        Self {
+            index,
+            game,
+            status: match status {
+                GameStatus::InProgress => "in-progress",
+                GameStatus::ChallengerWins => "challenger-wins",
+                GameStatus::DefenderWins => "defender-wins",
+            },
+            era: match descriptor.schedule_kind {
+                ProofScheduleKind::None => "no-schedule",
+                ProofScheduleKind::Full => "full-schedule",
+                ProofScheduleKind::Activated => "activated-prefix",
+            },
+            config_hash: descriptor.config_hash,
+            tee_image_hash: descriptor.tee_image_hash,
+            zk_range_hash: descriptor.zk_range_hash,
+            zk_aggregate_hash: descriptor.zk_aggregate_hash,
+            fingerprint: descriptor.fingerprint(),
+        }
+    }
+}
+
+async fn run_protocol(
+    config: MonitoringConfig,
+    args: ProofsProtocolArgs,
+) -> Result<CommandOutcome> {
+    const CONCURRENCY: usize = 32;
+
+    let ProofsProtocolArgs { l1_rpc, factory, from, to, game, json } = args;
+    let l1_rpc = l1_rpc.unwrap_or_else(|| config.l1_rpc.clone());
+    let provider = RootProvider::new_http(l1_rpc.clone());
+    let verifier = AggregateVerifierContractClient::new(provider.clone());
+
+    let targets: Vec<(Option<u64>, Address)> = if game.is_empty() {
+        let factory_address = resolve_factory(&config, factory)?;
+        let factory_client = DisputeGameFactoryContractClient::new(factory_address, provider);
+        let count = factory_client.game_count().await?;
+        let end = to.unwrap_or_else(|| count.saturating_sub(1));
+        info!(factory = %factory_address, from, end, count, "enumerating dispute games");
+
+        let mut targets: Vec<_> = if count == 0 {
+            Vec::new()
+        } else {
+            stream::iter(from..=end.min(count - 1))
+                .map(|index| {
+                    let factory_client = &factory_client;
+                    async move {
+                        Ok::<_, anyhow::Error>((
+                            Some(index),
+                            factory_client.game_at_index(index).await?.proxy,
+                        ))
+                    }
+                })
+                .buffer_unordered(CONCURRENCY)
+                .try_collect()
+                .await?
+        };
+        targets.sort_unstable_by_key(|(index, _)| *index);
+        targets
+    } else {
+        game.into_iter().map(|address| (None, address)).collect()
+    };
+
+    let results: Vec<_> = stream::iter(targets)
+        .map(|(index, address)| {
+            let verifier = &verifier;
+            async move {
+                let result = futures::try_join!(
+                    verifier.status(address),
+                    verifier.proof_protocol_descriptor(address)
+                );
+                (index, address, result)
+            }
+        })
+        .buffer_unordered(CONCURRENCY)
+        .collect()
+        .await;
+
+    let mut rows = Vec::with_capacity(results.len());
+    let mut unreadable = 0;
+    for (index, address, result) in results {
+        match result {
+            Ok((status, descriptor)) => {
+                rows.push(GameProtocolRow::new(index, address, status, &descriptor))
+            }
+            Err(error) => {
+                unreadable += 1;
+                warn!(game = %address, error = %error, "skipping unreadable game");
+            }
+        }
+    }
+    rows.sort_unstable_by_key(|row| row.index);
+
+    if json {
+        JsonOutput::print(&rows)?;
+    } else {
+        print_protocol_pretty_to(&mut io::stdout().lock(), &rows)?;
+    }
+
+    if unreadable > 0 {
+        anyhow::bail!("{unreadable} game(s) could not be classified; fingerprint dump incomplete");
+    }
+
+    Ok(CommandOutcome::Success)
+}
+
+fn print_protocol_pretty_to(out: &mut impl Write, rows: &[GameProtocolRow]) -> io::Result<()> {
+    for row in rows {
+        let mut table = KeyValueTable::new();
+        if let Some(index) = row.index {
+            table.row("Index", index.to_string());
+        }
+        table.row("Game", row.game.to_string());
+        table.row("Status", row.status.to_owned());
+        table.row("Era", row.era.to_owned());
+        table.row("Config hash", row.config_hash.to_string());
+        table.row("TEE image hash", row.tee_image_hash.to_string());
+        table.row("ZK range hash", row.zk_range_hash.to_string());
+        table.row("ZK aggregate hash", row.zk_aggregate_hash.to_string());
+        table.row("Fingerprint", row.fingerprint.to_string());
+        table.render(out)?;
+        writeln!(out)?;
+    }
+
+    let mut distinct: Vec<B256> =
+        rows.iter().filter(|row| row.status == "in-progress").map(|row| row.fingerprint).collect();
+    distinct.sort_unstable();
+    distinct.dedup();
+
+    writeln!(
+        out,
+        "{} in-progress game(s), {} distinct capability fingerprint(s):",
+        rows.iter().filter(|row| row.status == "in-progress").count(),
+        distinct.len()
+    )?;
+    for fingerprint in distinct {
+        let games = rows
+            .iter()
+            .filter(|row| row.status == "in-progress" && row.fingerprint == fingerprint)
+            .count();
+        writeln!(out, "  {fingerprint}  ({games} game(s))  -> assign a version")?;
+    }
+
+    Ok(())
 }
 
 async fn run_status(config: MonitoringConfig, args: ProofsStatusArgs) -> Result<CommandOutcome> {
@@ -1758,11 +1971,14 @@ mod tests {
     };
     use url::Url;
 
+    use base_proof_contracts::{ProofProtocolDescriptor, ProofScheduleKind};
+
     use super::{
-        FinalizeTarget, GameDetailsJson, GamesListJson, ProofResultJson, ProofsListJson,
-        ProofsProposeJson, ProofsStatusJson, ProofsSubmitJson, display_rpc_url,
+        FinalizeTarget, GameDetailsJson, GameProtocolRow, GamesListJson, ProofResultJson,
+        ProofsListJson, ProofsProposeJson, ProofsStatusJson, ProofsSubmitJson, display_rpc_url,
         print_game_details_pretty_to, print_games_list_pretty_to, print_list_pretty_to,
-        print_propose_pretty_to, print_status_pretty_to, print_submit_pretty_to,
+        print_propose_pretty_to, print_protocol_pretty_to, print_status_pretty_to,
+        print_submit_pretty_to,
     };
     use crate::{
         EXPECTED_RESOLUTION_NEVER, GameDetails, GameStatus, GameSummary, ProofProposeRequest,
@@ -1770,6 +1986,51 @@ mod tests {
 
     fn prover_rpc() -> Url {
         Url::parse("http://127.0.0.1:9000").unwrap()
+    }
+
+    fn protocol_descriptor(tee_image_hash: u8) -> ProofProtocolDescriptor {
+        ProofProtocolDescriptor {
+            schedule_kind: ProofScheduleKind::Activated,
+            schedule_id: B256::ZERO,
+            config_hash: B256::repeat_byte(1),
+            tee_image_hash: B256::repeat_byte(tee_image_hash),
+            zk_range_hash: B256::repeat_byte(3),
+            zk_aggregate_hash: B256::repeat_byte(4),
+        }
+    }
+
+    /// Games sharing a capability collapse to one mapping line; a differing commitment does not.
+    #[test]
+    fn protocol_summary_groups_games_by_fingerprint() {
+        let rows = vec![
+            GameProtocolRow::new(
+                Some(0),
+                Address::repeat_byte(0xa1),
+                GameStatus::InProgress,
+                &protocol_descriptor(2),
+            ),
+            GameProtocolRow::new(
+                Some(1),
+                Address::repeat_byte(0xa2),
+                GameStatus::InProgress,
+                &protocol_descriptor(2),
+            ),
+            GameProtocolRow::new(
+                Some(2),
+                Address::repeat_byte(0xa3),
+                GameStatus::DefenderWins,
+                &protocol_descriptor(9),
+            ),
+        ];
+
+        let mut out = Vec::new();
+        print_protocol_pretty_to(&mut out, &rows).expect("summary should render");
+        let rendered = String::from_utf8(out).expect("summary should be utf8");
+
+        assert!(rendered.contains("2 in-progress game(s), 1 distinct capability fingerprint(s)"));
+        assert!(rendered.contains("(2 game(s))"), "shared capability should group");
+        assert!(rendered.contains("defender-wins"), "resolved games should remain visible");
+        assert!(rendered.contains("activated-prefix"));
     }
 
     #[test]

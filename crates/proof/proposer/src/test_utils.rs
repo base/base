@@ -256,6 +256,12 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     async fn status(&self, _: Address) -> Result<GameStatus, ContractError> {
         unimplemented!("unused in proposer tests")
     }
+    async fn proof_protocol_descriptor(
+        &self,
+        _: Address,
+    ) -> Result<base_proof_contracts::ProofProtocolDescriptor, ContractError> {
+        unimplemented!("unused in proposer tests")
+    }
     async fn zk_prover(&self, _: Address) -> Result<Address, ContractError> {
         unimplemented!("unused in proposer tests")
     }

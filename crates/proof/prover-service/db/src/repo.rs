@@ -37,16 +37,18 @@ impl ProofRequestRepo {
         sqlx::query(
             r#"
             INSERT INTO proof_requests (
-                id, session_id, request_payload, api_proof_type, zk_vm, tee_kind, zk_backend,
+                id, session_id, request_payload, request_protocol_version,
+                api_proof_type, zk_vm, tee_kind, zk_backend,
                 start_block_number, number_of_blocks_to_prove, sequence_window, proof_type, status,
                 prover_address, l1_head, intermediate_root_interval
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
             "#,
         )
         .bind(prepared.id)
         .bind(&prepared.session_id)
         .bind(&prepared.request_payload)
+        .bind(prepared.protocol_version)
         .bind(prepared.api_proof_type.as_str())
         .bind(prepared.zk_vm.map(|zk_vm| zk_vm.as_str()))
         .bind(prepared.tee_kind.map(|tee_kind| tee_kind.as_str()))
@@ -79,17 +81,19 @@ impl ProofRequestRepo {
         let insert_result = sqlx::query(
             r#"
             INSERT INTO proof_requests (
-                id, session_id, request_payload, api_proof_type, zk_vm, tee_kind, zk_backend,
+                id, session_id, request_payload, request_protocol_version,
+                api_proof_type, zk_vm, tee_kind, zk_backend,
                 start_block_number, number_of_blocks_to_prove, sequence_window, proof_type, status,
                 prover_address, l1_head, intermediate_root_interval
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
             ON CONFLICT ((COALESCE(session_id, id::text))) DO NOTHING
             "#,
         )
         .bind(prepared.id)
         .bind(&prepared.session_id)
         .bind(&prepared.request_payload)
+        .bind(prepared.protocol_version)
         .bind(prepared.api_proof_type.as_str())
         .bind(prepared.zk_vm.map(|zk_vm| zk_vm.as_str()))
         .bind(prepared.tee_kind.map(|tee_kind| tee_kind.as_str()))
@@ -114,7 +118,8 @@ impl ProofRequestRepo {
         let row = sqlx::query(
             r#"
             SELECT id, COALESCE(session_id, id::text) AS session_id,
-                   request_payload, api_proof_type, zk_vm, tee_kind, zk_backend,
+                   request_payload, request_protocol_version,
+                   api_proof_type, zk_vm, tee_kind, zk_backend,
                    start_block_number, number_of_blocks_to_prove, sequence_window,
                    proof_type, status, prover_address, l1_head,
                    intermediate_root_interval, retry_count
@@ -137,6 +142,7 @@ impl ProofRequestRepo {
         let existing_id: Uuid = row.get("id");
         let params = CreateRequestParams {
             request_payload: &prepared.request_payload,
+            protocol_version: prepared.protocol_version,
             api_proof_type: prepared.api_proof_type.as_str(),
             zk_vm: prepared.zk_vm.map(|zk_vm| zk_vm.as_str()),
             tee_kind: prepared.tee_kind.map(|tee_kind| tee_kind.as_str()),
@@ -209,8 +215,9 @@ impl ProofRequestRepo {
                     UPDATE proof_requests
                     SET status = $1,
                         request_payload = $2,
-                        l1_head = $3,
-                        zk_backend = $4,
+                        request_protocol_version = $3,
+                        l1_head = $4,
+                        zk_backend = $5,
                         job_status = 'PENDING',
                         retry_count = retry_count + 1,
                         error_message = NULL,
@@ -227,11 +234,12 @@ impl ProofRequestRepo {
                         claimed_at = NULL,
                         last_heartbeat_at = NULL,
                         attempt = 0
-                    WHERE id = $5
+                    WHERE id = $6
                     "#,
                 )
                 .bind(ProofStatus::Created.as_str())
                 .bind(&prepared.request_payload)
+                .bind(prepared.protocol_version)
                 .bind(&prepared.l1_head)
                 .bind(prepared.zk_backend.map(|backend| backend.as_str()))
                 .bind(existing_id)
@@ -581,6 +589,12 @@ impl ProofRequestRepo {
     pub async fn claim_next_proof_job(&self, req: ClaimProofJob) -> Result<Option<ProofJob>> {
         let lock_id = Uuid::new_v4();
         let sql = claim_query(req.api_proof_type);
+        // An empty announcement is a pre-versioning worker, which only ever produced version 0.
+        let protocol_versions: Vec<i64> = if req.protocol_versions.is_empty() {
+            vec![0]
+        } else {
+            req.protocol_versions.iter().copied().map(i64::from).collect()
+        };
 
         let row = match req.api_proof_type {
             ApiProofType::Tee => {
@@ -592,6 +606,7 @@ impl ProofRequestRepo {
                     .bind(i64::from(req.lock_duration_seconds))
                     .bind(req.api_proof_type.as_str())
                     .bind(&tee_kinds)
+                    .bind(&protocol_versions)
                     .bind(i64::from(req.max_attempts))
                     .fetch_optional(&self.pool)
                     .await?
@@ -613,6 +628,7 @@ impl ProofRequestRepo {
                     .bind(req.api_proof_type.as_str())
                     .bind(&zk_vms)
                     .bind(&zk_backends)
+                    .bind(&protocol_versions)
                     .bind(i64::from(req.max_attempts))
                     .fetch_optional(&self.pool)
                     .await?
@@ -1305,6 +1321,26 @@ impl ProofRequestRepo {
         rows.iter().map(row_to_proof_request).collect()
     }
 
+    /// Counts queued (unclaimed) worker jobs grouped by required prover protocol version.
+    /// Feeds the pending-jobs gauge that surfaces jobs stranded at a version no worker claims.
+    pub async fn count_pending_jobs_by_protocol_version(&self) -> Result<Vec<(i64, i64)>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT request_protocol_version,
+                   COUNT(*) FILTER (WHERE job_status = 'PENDING') AS pending_count
+            FROM proof_requests
+            GROUP BY request_protocol_version
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.get("request_protocol_version"), row.get("pending_count")))
+            .collect())
+    }
+
     /// Get proof requests that are stuck in PENDING without a running session,
     /// or migration-parked RUNNING requests that were never claimed by a worker.
     /// PENDING requests are likely orphaned due to crashes before session creation.
@@ -1682,6 +1718,7 @@ struct PreparedProofRequest {
     id: Uuid,
     session_id: String,
     request_payload: serde_json::Value,
+    protocol_version: i64,
     api_proof_type: ApiProofType,
     zk_vm: Option<ZkVmKind>,
     tee_kind: Option<TeeKind>,
@@ -1737,6 +1774,7 @@ impl TryFrom<CreateProofRequest> for PreparedProofRequest {
             id,
             session_id,
             request_payload,
+            protocol_version: i64::from(req.request_payload.protocol_version),
             api_proof_type: req.api_proof_type,
             zk_vm: req.zk_vm,
             tee_kind: req.tee_kind,
@@ -2068,6 +2106,15 @@ const PROOF_JOB_RETURNING_COLUMNS: &str = "id, COALESCE(session_id, id::text) AS
 /// hardcoded as literals in each variant rather than interpolated from a value,
 /// so no caller-derived string can ever reach the SQL as a column name. The only
 /// interpolated token is the fixed [`PROOF_JOB_RETURNING_COLUMNS`] constant.
+///
+/// `request_protocol_version = ANY(...)` lets one worker fleet serve several protocol versions.
+/// The fingerprint still mixes TEE and ZK hashes, so a ZK-only program rotation mints a new
+/// version for an otherwise unchanged TEE image; exact match would force a new Nitro fleet.
+///
+// ponytail: single-element arrays keep the `idx_proof_requests_*_by_version` index scan; multi-
+// element arrays may add a sort for `ORDER BY start_block_number`. Queue depth is small enough
+// that this is not worth optimizing. If it ever is, split into a per-version `UNION ALL` with
+// `LIMIT 1` per branch and take the minimum.
 fn claim_query(api_proof_type: ApiProofType) -> String {
     let columns = PROOF_JOB_RETURNING_COLUMNS;
     match api_proof_type {
@@ -2086,9 +2133,10 @@ fn claim_query(api_proof_type: ApiProofType) -> String {
                 SELECT id FROM proof_requests
                 WHERE api_proof_type = $4
                   AND tee_kind = ANY($5::text[])
+                  AND request_protocol_version = ANY($6::bigint[])
                   AND (
                       job_status = 'PENDING'
-                      OR (job_status = 'CLAIMED' AND lock_expires_at < NOW() AND attempt < $6)
+                      OR (job_status = 'CLAIMED' AND lock_expires_at < NOW() AND attempt < $7)
                   )
                 ORDER BY start_block_number ASC, created_at ASC, id ASC
                 FOR UPDATE SKIP LOCKED
@@ -2113,9 +2161,10 @@ fn claim_query(api_proof_type: ApiProofType) -> String {
                 WHERE api_proof_type = $4
                   AND zk_vm = ANY($5::text[])
                   AND COALESCE(zk_backend, 'cluster') = ANY($6::text[])
+                  AND request_protocol_version = ANY($7::bigint[])
                   AND (
                       job_status = 'PENDING'
-                      OR (job_status = 'CLAIMED' AND lock_expires_at < NOW() AND attempt < $7)
+                      OR (job_status = 'CLAIMED' AND lock_expires_at < NOW() AND attempt < $8)
                   )
                 ORDER BY start_block_number ASC, created_at ASC, id ASC
                 FOR UPDATE SKIP LOCKED
@@ -2188,6 +2237,7 @@ fn row_to_proof_session(row: &sqlx::postgres::PgRow) -> Result<ProofSession> {
 #[derive(Debug, Clone)]
 struct CreateRequestParams<'a> {
     request_payload: &'a serde_json::Value,
+    protocol_version: i64,
     api_proof_type: &'a str,
     zk_vm: Option<&'a str>,
     tee_kind: Option<&'a str>,
@@ -2220,6 +2270,9 @@ impl CreateRequestParams<'_> {
         row: &sqlx::postgres::PgRow,
         mode: RequestMismatchMode,
     ) -> Option<&'static str> {
+        if row.get::<i64, _>("request_protocol_version") != self.protocol_version {
+            return Some("protocol_version");
+        }
         if row.get::<i64, _>("start_block_number") != self.start_block_number {
             return Some("start_block_number");
         }
@@ -2297,6 +2350,11 @@ fn comparable_request_payload(
     mode: RequestMismatchMode,
 ) -> serde_json::Value {
     let mut value = value.clone();
+    if let Some(map) = value.as_object_mut() {
+        // The dedicated request_protocol_version column is compared before the payload. Exclude
+        // this duplicated field so payloads written before protocol versioning compare as v0.
+        map.remove("protocol_version");
+    }
     let zk_backend_path =
         match value.pointer("/request/proof_type").and_then(serde_json::Value::as_str) {
             Some("compressed") => Some("/request/payload"),
@@ -2340,6 +2398,7 @@ mod tests {
         let session_id = Uuid::new_v4();
         let create = CreateProofRequest::new(ProtocolProofRequest {
             session_id: session_id.to_string(),
+            protocol_version: 1,
             request: ProofRequestKind::Compressed(ZkProofRequest {
                 start_block_number: 100,
                 number_of_blocks_to_prove: 5,
@@ -2377,6 +2436,7 @@ mod tests {
     fn prepared_request_omits_absent_optional_protocol_payload_fields() {
         let create = CreateProofRequest::new(ProtocolProofRequest {
             session_id: Uuid::new_v4().to_string(),
+            protocol_version: 0,
             request: ProofRequestKind::Compressed(ZkProofRequest {
                 start_block_number: 100,
                 number_of_blocks_to_prove: 5,
@@ -2442,6 +2502,7 @@ mod tests {
     fn prepared_request_represents_tee_protocol_request() {
         let create = CreateProofRequest::new(ProtocolProofRequest {
             session_id: "tee-session".to_owned(),
+            protocol_version: 1,
             request: ProofRequestKind::Tee(TeeProofRequest {
                 proof: Default::default(),
                 tee_kind: ProtocolTeeKind::AwsNitro,
@@ -2554,9 +2615,25 @@ mod tests {
         }
     }
 
+    #[test]
+    fn legacy_payload_without_protocol_version_matches_v0_payload() {
+        let legacy = serde_json::json!({
+            "session_id": "session",
+            "request": {
+                "proof_type": "compressed",
+                "payload": {"start_block_number": 1, "zk_backend": "cluster"}
+            }
+        });
+        let mut current = legacy.clone();
+        current["protocol_version"] = serde_json::json!(0);
+
+        assert!(request_payload_matches(&legacy, &current, RequestMismatchMode::Strict));
+    }
+
     fn tee_protocol_request(session_id: &str) -> ProtocolProofRequest {
         ProtocolProofRequest {
             session_id: session_id.to_owned(),
+            protocol_version: 1,
             request: ProofRequestKind::Tee(TeeProofRequest {
                 proof: Default::default(),
                 tee_kind: ProtocolTeeKind::AwsNitro,
@@ -2573,6 +2650,7 @@ mod tests {
     fn prepared_request_rejects_unsupported_protocol_combination() {
         let mut create = CreateProofRequest::new(ProtocolProofRequest {
             session_id: "bad-tee-session".to_owned(),
+            protocol_version: 1,
             request: ProofRequestKind::Tee(TeeProofRequest {
                 proof: Default::default(),
                 tee_kind: ProtocolTeeKind::AwsNitro,
@@ -2591,6 +2669,7 @@ mod tests {
     fn prepared_request_rejects_database_range_overflow() {
         let create = CreateProofRequest::new(ProtocolProofRequest {
             session_id: Uuid::new_v4().to_string(),
+            protocol_version: 1,
             request: ProofRequestKind::Compressed(ZkProofRequest {
                 start_block_number: (i64::MAX as u64) + 1,
                 number_of_blocks_to_prove: 5,

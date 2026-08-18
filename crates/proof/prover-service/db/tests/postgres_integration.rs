@@ -13,7 +13,7 @@
 //! They run sequentially (`--test-threads=1`) because they share the same database;
 //! each test creates unique UUIDs so they don't collide.
 
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 
 use alloy_primitives::Address;
 use base_proof_primitives::Proposal;
@@ -68,6 +68,7 @@ fn compressed_request_at_with_backend(
 ) -> CreateProofRequest {
     CreateProofRequest::new(ProtocolProofRequest {
         session_id: Uuid::new_v4().to_string(),
+        protocol_version: 1,
         request: ProtocolProofRequestKind::Compressed(ZkProofRequest {
             start_block_number,
             number_of_blocks_to_prove: 5,
@@ -85,6 +86,7 @@ fn compressed_request_at_with_backend(
 fn compressed_request_with_l1_head(l1_head: &str) -> CreateProofRequest {
     CreateProofRequest::new(ProtocolProofRequest {
         session_id: Uuid::new_v4().to_string(),
+        protocol_version: 1,
         request: ProtocolProofRequestKind::Compressed(ZkProofRequest {
             start_block_number: 100,
             number_of_blocks_to_prove: 5,
@@ -102,6 +104,7 @@ fn compressed_request_with_l1_head(l1_head: &str) -> CreateProofRequest {
 fn snark_request() -> CreateProofRequest {
     CreateProofRequest::new(ProtocolProofRequest {
         session_id: Uuid::new_v4().to_string(),
+        protocol_version: 1,
         request: ProtocolProofRequestKind::SnarkPlonk(SnarkPlonkProofRequest {
             proof: ZkProofRequest {
                 start_block_number: 200,
@@ -128,6 +131,7 @@ fn snark_request() -> CreateProofRequest {
 fn tee_request() -> CreateProofRequest {
     CreateProofRequest::new(ProtocolProofRequest {
         session_id: Uuid::new_v4().to_string(),
+        protocol_version: 1,
         request: ProtocolProofRequestKind::Tee(TeeProofRequest {
             proof: Default::default(),
             tee_kind: ProtocolTeeKind::AwsNitro,
@@ -261,6 +265,7 @@ async fn test_legacy_rollout_request_without_protocol_storage_is_readable_and_re
 
     let explicit_id = Uuid::new_v4();
     let mut req = compressed_request();
+    req.request_payload.protocol_version = 0;
     set_request_session_id(&mut req, explicit_id.to_string());
 
     sqlx::query(
@@ -288,8 +293,9 @@ async fn test_legacy_rollout_request_without_protocol_storage_is_readable_and_re
     let fetched = repo.get(explicit_id).await.unwrap().expect("should synthesize protocol fields");
     assert_eq!(fetched.api_proof_type, ApiProofType::Compressed);
     assert_eq!(fetched.zk_vm, Some(ZkVmKind::Sp1));
-    serde_json::from_value::<ProtocolProofRequest>(fetched.request_payload)
+    let fetched_payload = serde_json::from_value::<ProtocolProofRequest>(fetched.request_payload)
         .expect("synthesized protocol request payload should deserialize");
+    assert_eq!(fetched_payload.protocol_version, 0);
 
     let (proofs, _) = repo
         .list_with_offset(&[ProofStatus::Created], ProofRequestPage::try_new(10_000, 0).unwrap())
@@ -304,6 +310,76 @@ async fn test_legacy_rollout_request_without_protocol_storage_is_readable_and_re
 
     let outcome = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES, true).await.unwrap();
     assert_eq!(outcome, CreateProofRequestOutcome::Replayed(explicit_id));
+
+    let mut current = compressed_request();
+    set_request_session_id(&mut current, explicit_id.to_string());
+    let err = repo
+        .create_for_worker_queue(current, TEST_MAX_PROOF_RETRIES)
+        .await
+        .expect_err("current protocol must not replay a legacy row");
+    assert!(matches!(
+        err,
+        CreateProofRequestError::IdCollision { id, field: "protocol_version" }
+            if id == explicit_id
+    ));
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_legacy_rollout_pre_migration_row_claimable_only_by_legacy_worker() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool.clone());
+
+    drain_claimable_compressed_jobs(&repo).await;
+
+    // Insert a row WITHOUT the request_protocol_version column, simulating a
+    // pre-migration row. The migration's DEFAULT 0 ensures it reads as v0.
+    let explicit_id = Uuid::new_v4();
+    let mut req = compressed_request();
+    req.request_payload.protocol_version = 0;
+    set_request_session_id(&mut req, explicit_id.to_string());
+
+    sqlx::query(
+        r#"
+        INSERT INTO proof_requests (
+            id, start_block_number, number_of_blocks_to_prove, sequence_window, proof_type, status,
+            prover_address, l1_head, intermediate_root_interval,
+            api_proof_type, zk_vm, zk_backend
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        "#,
+    )
+    .bind(explicit_id)
+    .bind(i64::try_from(req.start_block_number).unwrap())
+    .bind(i64::try_from(req.number_of_blocks_to_prove).unwrap())
+    .bind(req.sequence_window.map(|value| i64::try_from(value).unwrap()))
+    .bind(req.proof_type.expect("compressed request has proof_type").as_str())
+    .bind(ProofStatus::Created.as_str())
+    .bind(&req.prover_address)
+    .bind(&req.l1_head)
+    .bind(req.intermediate_root_interval.map(|value| i64::try_from(value).unwrap()))
+    .bind(req.api_proof_type.as_str())
+    .bind(req.zk_vm.expect("compressed request has zk_vm").as_str())
+    .bind(req.zk_backend.as_ref().map(|b| b.as_str()))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // A v1 (current-protocol) worker must not claim the pre-migration row.
+    assert!(
+        repo.claim_next_proof_job(compressed_claim("current-worker", 3)).await.unwrap().is_none(),
+        "a current-protocol worker must not claim a pre-migration (v0) row"
+    );
+
+    // A v0 (legacy) worker can claim it.
+    let mut legacy = compressed_claim("legacy-worker", 3);
+    legacy.protocol_versions = vec![0];
+    let legacy_job = repo
+        .claim_next_proof_job(legacy)
+        .await
+        .unwrap()
+        .expect("a legacy worker should claim the pre-migration row");
+    assert_eq!(legacy_job.id, explicit_id);
 }
 
 #[tokio::test]
@@ -1556,6 +1632,7 @@ fn claim_job(
 ) -> ClaimProofJob {
     ClaimProofJob {
         worker_id: worker_id.to_owned(),
+        protocol_versions: vec![1],
         api_proof_type,
         tee_kinds,
         zk_vms,
@@ -1584,8 +1661,10 @@ fn compressed_claim(worker_id: &str, max_attempts: u32) -> ClaimProofJob {
 /// an unexpired lock (rather than completing them) keeps this independent of the
 /// worker submit API.
 async fn drain_claimable_tee_jobs(repo: &ProofRequestRepo) {
+    let mut claim = tee_claim("drain-worker", u32::MAX);
+    claim.protocol_versions = vec![0, 1];
     while repo
-        .claim_next_proof_job(tee_claim("drain-worker", u32::MAX))
+        .claim_next_proof_job(claim.clone())
         .await
         .expect("drain claim should not error")
         .is_some()
@@ -1595,8 +1674,10 @@ async fn drain_claimable_tee_jobs(repo: &ProofRequestRepo) {
 /// Drain every currently claimable compressed job for tests that need to claim a
 /// freshly inserted ZK request deterministically.
 async fn drain_claimable_compressed_jobs(repo: &ProofRequestRepo) {
+    let mut claim = compressed_claim("drain-zk-worker", u32::MAX);
+    claim.protocol_versions = vec![0, 1];
     while repo
-        .claim_next_proof_job(compressed_claim("drain-zk-worker", u32::MAX))
+        .claim_next_proof_job(claim.clone())
         .await
         .expect("drain claim should not error")
         .is_some()
@@ -1718,6 +1799,94 @@ async fn test_claim_next_proof_job_orders_by_start_block_number() {
     assert_eq!(job.id, low_block_id);
     assert_ne!(job.id, high_block_id);
     assert_eq!(job.api_proof_type, ApiProofType::Compressed);
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_claim_next_proof_job_matches_request_protocol_version() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool);
+
+    drain_claimable_compressed_jobs(&repo).await;
+    let mut legacy_request = compressed_request();
+    legacy_request.request_payload.protocol_version = 0;
+    let legacy_id = repo.create(legacy_request).await.unwrap();
+    let current_id = repo.create(compressed_request()).await.unwrap();
+
+    let current_job = repo
+        .claim_next_proof_job(compressed_claim("current-worker", 3))
+        .await
+        .unwrap()
+        .expect("a current worker should claim the current-protocol job");
+    assert_eq!(current_job.id, current_id);
+    assert!(
+        repo.claim_next_proof_job(compressed_claim("current-worker", 3)).await.unwrap().is_none(),
+        "a current worker must not claim a legacy request"
+    );
+
+    let mut legacy = compressed_claim("legacy-worker", 3);
+    legacy.protocol_versions = vec![0];
+    let legacy_job = repo
+        .claim_next_proof_job(legacy)
+        .await
+        .unwrap()
+        .expect("a legacy worker should claim the legacy job");
+    assert_eq!(legacy_job.id, legacy_id);
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_claim_next_proof_job_matches_any_announced_protocol_version() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool);
+
+    drain_claimable_compressed_jobs(&repo).await;
+    let mut legacy_request = compressed_request();
+    legacy_request.request_payload.protocol_version = 0;
+    let legacy_id = repo.create(legacy_request).await.unwrap();
+    let current_id = repo.create(compressed_request()).await.unwrap();
+
+    let mut multi = compressed_claim("multi-version-worker", 3);
+    multi.protocol_versions = vec![0, 1];
+
+    let mut claimed = Vec::new();
+    while let Some(job) = repo.claim_next_proof_job(multi.clone()).await.unwrap() {
+        claimed.push(job.id);
+    }
+    claimed.sort();
+
+    let mut expected = vec![legacy_id, current_id];
+    expected.sort();
+    assert_eq!(claimed, expected, "a worker announcing [0, 1] should claim both versions");
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_count_pending_jobs_by_protocol_version() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool);
+
+    let baseline: HashMap<i64, i64> =
+        repo.count_pending_jobs_by_protocol_version().await.unwrap().into_iter().collect();
+
+    let mut legacy_request = compressed_request();
+    legacy_request.request_payload.protocol_version = 0;
+    repo.create(legacy_request).await.unwrap();
+    repo.create(compressed_request()).await.unwrap();
+
+    let counts: HashMap<i64, i64> =
+        repo.count_pending_jobs_by_protocol_version().await.unwrap().into_iter().collect();
+    assert_eq!(counts.get(&0).copied().unwrap_or(0), baseline.get(&0).copied().unwrap_or(0) + 1);
+    assert_eq!(counts.get(&1).copied().unwrap_or(0), baseline.get(&1).copied().unwrap_or(0) + 1);
+
+    // Claiming the current-protocol job removes it from the pending counts.
+    repo.claim_next_proof_job(compressed_claim("count-worker", 3))
+        .await
+        .unwrap()
+        .expect("the current-protocol job should be claimable");
+    let after_claim: HashMap<i64, i64> =
+        repo.count_pending_jobs_by_protocol_version().await.unwrap().into_iter().collect();
+    assert_eq!(after_claim.get(&1).copied().unwrap_or(0), baseline.get(&1).copied().unwrap_or(0));
 }
 
 #[tokio::test]
