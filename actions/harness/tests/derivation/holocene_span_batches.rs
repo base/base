@@ -147,7 +147,7 @@ async fn pre_holocene_future_span_is_buffered_by_batch_queue() {
     );
     node.initialize().await;
 
-    submit_span_fixture(&mut harness, &chain, &batcher_cfg, &[block_2.clone()], 0);
+    submit_span_fixture(&mut harness, &chain, &batcher_cfg, std::slice::from_ref(&block_2), 0);
     let derived = node.run_until_idle().await;
     assert_eq!(derived, 0, "future pre-Holocene span should wait for the missing parent");
     assert_eq!(node.l2_safe_number(), 0, "safe head should remain at genesis");
@@ -177,7 +177,7 @@ async fn post_holocene_future_span_is_dropped_not_buffered() {
     );
     node.initialize().await;
 
-    submit_span_fixture(&mut harness, &chain, &batcher_cfg, &[block_2.clone()], 0);
+    submit_span_fixture(&mut harness, &chain, &batcher_cfg, std::slice::from_ref(&block_2), 0);
     let derived = node.run_until_idle().await;
     assert_eq!(derived, 0, "future post-Holocene span should be dropped");
     assert_eq!(node.l2_safe_number(), 0, "safe head should remain at genesis");
