@@ -350,10 +350,24 @@ where
         )
     }
 
-    /// Records a transaction's last valid block in the block-expiry index.
-    fn register_block_expiry(&self, hash: TxHash, last_valid_block: Option<u64>) {
+    /// Records a transaction's last valid block in the block-expiry index,
+    /// dropping any replaced transaction's stale entry in the same pass so a
+    /// fee-bump replacement does not orphan the old hash until its expiry block.
+    fn register_block_expiry(
+        &self,
+        hash: TxHash,
+        last_valid_block: Option<u64>,
+        replaced: Option<TxHash>,
+    ) {
+        if last_valid_block.is_none() && replaced.is_none() {
+            return;
+        }
+        let mut block_expiry = self.block_expiry.write();
+        if let Some(replaced) = replaced {
+            block_expiry.remove(&replaced);
+        }
         if let Some(last_valid_block) = last_valid_block {
-            self.block_expiry.write().insert(hash, last_valid_block);
+            block_expiry.insert(hash, last_valid_block);
         }
     }
 
@@ -511,7 +525,7 @@ where
             }
         };
         self.gate_protocol_admission(hash, replaced, pre_admitted)?;
-        self.register_block_expiry(hash, block_expiry_bound);
+        self.register_block_expiry(hash, block_expiry_bound, replaced);
         Ok(outcome)
     }
 
@@ -842,7 +856,7 @@ where
                     }
                 };
             self.gate_protocol_admission(hash, replaced, pre_admitted)?;
-            self.register_block_expiry(hash, block_expiry_bound);
+            self.register_block_expiry(hash, block_expiry_bound, replaced);
             return Ok(events);
         }
 
@@ -2385,5 +2399,40 @@ mod tests {
         }]);
         assert!(pool.get(&hash).is_none());
         assert!(!pool.guard.read().contains(&hash));
+    }
+
+    #[test]
+    fn register_block_expiry_drops_the_replaced_entry() {
+        let (pool, _) = build_integration_pool();
+        let replaced = TxHash::repeat_byte(0x11);
+        let new_hash = TxHash::repeat_byte(0x22);
+
+        // Seed the index with the soon-to-be-replaced transaction.
+        pool.register_block_expiry(replaced, Some(100), None);
+        assert_eq!(pool.block_expiry.read().len(), 1);
+
+        // A fee-bump replacement must evict the stale entry rather than
+        // accumulate it, so the index does not grow per replacement.
+        pool.register_block_expiry(new_hash, Some(200), Some(replaced));
+        assert_eq!(pool.block_expiry.read().len(), 1);
+
+        // Only the new hash remains, tracked at its own bound.
+        let mut index = pool.block_expiry.write();
+        assert!(index.drain_expired(150).is_empty());
+        assert_eq!(index.drain_expired(201), vec![new_hash]);
+    }
+
+    #[test]
+    fn register_block_expiry_drops_a_replaced_entry_without_a_new_bound() {
+        let (pool, _) = build_integration_pool();
+        let replaced = TxHash::repeat_byte(0x33);
+        let new_hash = TxHash::repeat_byte(0x44);
+
+        pool.register_block_expiry(replaced, Some(100), None);
+        assert_eq!(pool.block_expiry.read().len(), 1);
+
+        // An unbounded replacement still clears the replaced hash's stale entry.
+        pool.register_block_expiry(new_hash, None, Some(replaced));
+        assert!(pool.block_expiry.read().is_empty());
     }
 }
