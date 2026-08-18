@@ -73,6 +73,34 @@ pub struct ChallengerArgs {
     )]
     pub poll_interval: Duration,
 
+    /// Enable relaying attested ETH withdrawals from L2 to L1.
+    #[arg(long = "attested-withdrawal-relay", env = cli_env!("ATTESTED_WITHDRAWAL_RELAY"), default_value_t = false)]
+    pub attested_withdrawal_relay: bool,
+
+    /// L1 `OptimismPortal2` address. Required when the relay is enabled.
+    #[arg(long = "attested-withdrawal-portal-addr", env = cli_env!("ATTESTED_WITHDRAWAL_PORTAL_ADDR"))]
+    pub attested_withdrawal_portal_addr: Option<Address>,
+
+    /// Private enclave JSON-RPC URL. Required when the relay is enabled.
+    #[arg(long = "attested-withdrawal-enclave-rpc-url", env = cli_env!("ATTESTED_WITHDRAWAL_ENCLAVE_RPC_URL"))]
+    pub attested_withdrawal_enclave_rpc_url: Option<Url>,
+
+    /// First L2 block scanned by the relay. Required when the relay is enabled.
+    #[arg(long = "attested-withdrawal-start-block", env = cli_env!("ATTESTED_WITHDRAWAL_START_BLOCK"))]
+    pub attested_withdrawal_start_block: Option<u64>,
+
+    /// Relay polling interval. Defaults to `--poll-interval`.
+    #[arg(long = "attested-withdrawal-poll-interval", env = cli_env!("ATTESTED_WITHDRAWAL_POLL_INTERVAL"), value_parser = humantime::parse_duration)]
+    pub attested_withdrawal_poll_interval: Option<Duration>,
+
+    /// L2 confirmations required before relaying a log.
+    #[arg(long = "attested-withdrawal-confirmations", env = cli_env!("ATTESTED_WITHDRAWAL_CONFIRMATIONS"), default_value_t = 0)]
+    pub attested_withdrawal_confirmations: u64,
+
+    /// Maximum number of L2 blocks per relay log query.
+    #[arg(long = "attested-withdrawal-scan-batch-size", env = cli_env!("ATTESTED_WITHDRAWAL_SCAN_BATCH_SIZE"), default_value_t = 100)]
+    pub attested_withdrawal_scan_batch_size: u64,
+
     /// URL of the ZK RPC endpoint. Required unless `--no-dispute` is set.
     #[arg(long = "zk-rpc-url", env = cli_env!("ZK_RPC_URL"))]
     pub zk_rpc_url: Option<Url>,

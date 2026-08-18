@@ -12,6 +12,13 @@ pub use cli::{ChallengerArgs, Cli, HealthArgs, LogArgs, MetricsArgs, SignerCli, 
 mod anchor;
 pub use anchor::AnchorUpdater;
 
+mod attested_withdrawal;
+pub use attested_withdrawal::{
+    AttestedWithdrawalEvent, AttestedWithdrawalRelayConfig, AttestedWithdrawalRelayError,
+    attested_withdrawal_auth_hash, attested_withdrawal_storage_slot,
+    decode_attested_withdrawal_log,
+};
+
 mod config;
 pub use config::ChallengerConfig;
 
