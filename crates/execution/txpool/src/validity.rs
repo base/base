@@ -9,6 +9,35 @@ use crate::{BasePooledTransaction, ExtensionError, ValidatedTransactionExtension
 /// Default maximum number of experimental validity predicates carried by one transaction.
 pub const DEFAULT_MAX_VALIDITY_PREDICATES: usize = 64;
 
+/// Error returned when a batch of validity predicates fails ingress validation.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ValidityPredicateError {
+    /// The submission carried no predicates.
+    ///
+    /// A predicate-less submission has no advanced semantics to enforce, so it is
+    /// rejected rather than treated as a plain private transaction.
+    #[error("validity predicates must not be empty")]
+    Empty,
+    /// The submission carried more predicates than the configured maximum.
+    #[error("too many validity predicates: {count} (maximum {max})")]
+    TooMany {
+        /// Number of predicates supplied.
+        count: usize,
+        /// Maximum number of predicates permitted.
+        max: usize,
+    },
+    /// A storage predicate's comparison value has bits set outside its mask.
+    ///
+    /// Because the loaded storage value is masked before comparison, bits set in
+    /// `value` outside `mask` could never match and indicate a malformed request.
+    /// `index` is the position of the offending predicate within the batch.
+    #[error("storage predicate at index {index} has value bits set outside its mask")]
+    StorageValueOutsideMask {
+        /// Position of the offending predicate within the batch.
+        index: usize,
+    },
+}
+
 /// A comparison used by a [`ValidityPredicate`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub enum ValidityOperator {
@@ -118,6 +147,41 @@ impl ValidityPredicate {
         U256::MAX
     }
 
+    /// Validates that this predicate's parameters are internally consistent.
+    ///
+    /// A storage predicate's comparison value must not set any bits outside its
+    /// mask, since the loaded value is masked before comparison. `index` is the
+    /// predicate's position within its submitted batch and is embedded into any
+    /// returned error so callers can report which predicate failed. Returning the
+    /// specific [`ValidityPredicateError`] keeps the diagnosis with the predicate
+    /// itself, so new failure modes surface as distinct errors instead of
+    /// collapsing into a single caller-assigned variant.
+    pub fn validate_params(&self, index: usize) -> Result<(), ValidityPredicateError> {
+        if let Self::Storage { mask, value, .. } = self
+            && (*value & !*mask) != U256::ZERO
+        {
+            return Err(ValidityPredicateError::StorageValueOutsideMask { index });
+        }
+        Ok(())
+    }
+
+    /// Validates a batch of predicates submitted at ingress.
+    ///
+    /// Rejects an empty batch, a batch larger than `max`, and any predicate
+    /// whose parameters are internally inconsistent.
+    pub fn validate_batch(predicates: &[Self], max: usize) -> Result<(), ValidityPredicateError> {
+        if predicates.is_empty() {
+            return Err(ValidityPredicateError::Empty);
+        }
+        if predicates.len() > max {
+            return Err(ValidityPredicateError::TooMany { count: predicates.len(), max });
+        }
+        for (index, predicate) in predicates.iter().enumerate() {
+            predicate.validate_params(index)?;
+        }
+        Ok(())
+    }
+
     /// Returns whether this predicate holds against the current build.
     ///
     /// State-reading variants ([`Self::Balance`], [`Self::Storage`]) query
@@ -180,7 +244,18 @@ impl ValidatedTransactionExtensions<BasePooledTransaction> for TransactionValidi
         Self { validity: tx.transaction.validity_predicates().to_vec() }
     }
 
+    /// Applies the predicates to the builder-inbound transaction.
+    ///
+    /// This is the builder RPC ingress path, distinct from the mempool node's
+    /// `base_sendRawTransactionValidity`. The count bound is enforced separately
+    /// by [`Self::validate`]; here each predicate's parameters are re-checked as
+    /// defense-in-depth against a misbehaving upstream. Unlike the mempool
+    /// ingress, an empty predicate set is not rejected: the builder legitimately
+    /// receives ordinary transactions that carry no predicates.
     fn apply(self, tx: BasePooledTransaction) -> Result<BasePooledTransaction, ExtensionError> {
+        for (index, predicate) in self.validity.iter().enumerate() {
+            predicate.validate_params(index).map_err(|e| ExtensionError(e.to_string()))?;
+        }
         Ok(tx.with_validity_predicates(self.validity))
     }
 }
@@ -522,6 +597,176 @@ mod tests {
             serde_json::from_value::<ValidityPredicate>(serde_json::to_value(&predicate).unwrap())
                 .unwrap(),
             predicate
+        );
+    }
+
+    #[test]
+    fn apply_rejects_storage_value_outside_mask() {
+        let signed: BaseTransactionSigned = TxDeposit {
+            source_hash: Default::default(),
+            from: Address::ZERO,
+            to: TxKind::Create,
+            mint: 0,
+            value: U256::ZERO,
+            gas_limit: 21_000,
+            is_system_transaction: false,
+            input: Default::default(),
+        }
+        .into();
+        let encoded_length = signed.encode_2718_len();
+        let transaction = BasePooledTransaction::new(
+            Recovered::new_unchecked(signed, Address::ZERO),
+            encoded_length,
+        );
+        let extension = TransactionValidity {
+            validity: vec![ValidityPredicate::Storage {
+                address: Address::repeat_byte(0x22),
+                slot: U256::from(7),
+                mask: U256::from(0xff),
+                op: ValidityOperator::Equal,
+                value: U256::from(0x100),
+            }],
+        };
+
+        let error = extension.apply(transaction).unwrap_err();
+
+        assert!(error.to_string().contains("outside its mask"));
+    }
+
+    #[test]
+    fn apply_accepts_empty_predicates() {
+        let signed: BaseTransactionSigned = TxDeposit {
+            source_hash: Default::default(),
+            from: Address::ZERO,
+            to: TxKind::Create,
+            mint: 0,
+            value: U256::ZERO,
+            gas_limit: 21_000,
+            is_system_transaction: false,
+            input: Default::default(),
+        }
+        .into();
+        let encoded_length = signed.encode_2718_len();
+        let transaction = BasePooledTransaction::new(
+            Recovered::new_unchecked(signed, Address::ZERO),
+            encoded_length,
+        );
+
+        // The builder path legitimately receives ordinary transactions with no
+        // predicates; unlike the mempool ingress, `apply` must not reject them.
+        let transaction = TransactionValidity::default().apply(transaction).unwrap();
+
+        assert!(transaction.validity_predicates().is_empty());
+    }
+
+    #[test]
+    fn validate_params_accepts_storage_value_within_mask() {
+        let predicate = ValidityPredicate::Storage {
+            address: Address::repeat_byte(0x11),
+            slot: U256::from(1),
+            mask: U256::from(0xff),
+            op: ValidityOperator::Equal,
+            value: U256::from(0xab),
+        };
+
+        assert_eq!(predicate.validate_params(0), Ok(()));
+    }
+
+    #[test]
+    fn validate_params_rejects_storage_value_outside_mask_reporting_its_index() {
+        let predicate = ValidityPredicate::Storage {
+            address: Address::repeat_byte(0x11),
+            slot: U256::from(1),
+            mask: U256::from(0xff),
+            op: ValidityOperator::Equal,
+            value: U256::from(0x1ff),
+        };
+
+        assert_eq!(
+            predicate.validate_params(3),
+            Err(ValidityPredicateError::StorageValueOutsideMask { index: 3 })
+        );
+    }
+
+    #[test]
+    fn validate_params_ignores_mask_for_non_storage_predicates() {
+        let predicate = ValidityPredicate::Balance {
+            address: Address::repeat_byte(0x11),
+            op: ValidityOperator::Equal,
+            value: U256::MAX,
+        };
+
+        assert_eq!(predicate.validate_params(0), Ok(()));
+    }
+
+    #[test]
+    fn validate_batch_rejects_empty() {
+        assert_eq!(
+            ValidityPredicate::validate_batch(&[], DEFAULT_MAX_VALIDITY_PREDICATES),
+            Err(ValidityPredicateError::Empty)
+        );
+    }
+
+    #[test]
+    fn validate_batch_rejects_too_many() {
+        let predicate = ValidityPredicate::Balance {
+            address: Address::ZERO,
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
+        let predicates = vec![predicate; DEFAULT_MAX_VALIDITY_PREDICATES + 1];
+
+        assert_eq!(
+            ValidityPredicate::validate_batch(&predicates, DEFAULT_MAX_VALIDITY_PREDICATES),
+            Err(ValidityPredicateError::TooMany {
+                count: DEFAULT_MAX_VALIDITY_PREDICATES + 1,
+                max: DEFAULT_MAX_VALIDITY_PREDICATES,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_batch_accepts_valid_predicates() {
+        let predicates = vec![
+            ValidityPredicate::Balance {
+                address: Address::repeat_byte(0x11),
+                op: ValidityOperator::GreaterThanOrEqual,
+                value: U256::from(1),
+            },
+            ValidityPredicate::Storage {
+                address: Address::repeat_byte(0x22),
+                slot: U256::from(7),
+                mask: U256::from(0xff),
+                op: ValidityOperator::Equal,
+                value: U256::from(0xcd),
+            },
+        ];
+
+        assert_eq!(
+            ValidityPredicate::validate_batch(&predicates, DEFAULT_MAX_VALIDITY_PREDICATES),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn validate_batch_rejects_malformed_predicate_reporting_its_index() {
+        let valid = ValidityPredicate::Balance {
+            address: Address::repeat_byte(0x11),
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
+        let malformed = ValidityPredicate::Storage {
+            address: Address::repeat_byte(0x22),
+            slot: U256::from(7),
+            mask: U256::from(0xff),
+            op: ValidityOperator::Equal,
+            value: U256::from(0x100),
+        };
+        let predicates = vec![valid, malformed];
+
+        assert_eq!(
+            ValidityPredicate::validate_batch(&predicates, DEFAULT_MAX_VALIDITY_PREDICATES),
+            Err(ValidityPredicateError::StorageValueOutsideMask { index: 1 })
         );
     }
 }

@@ -162,17 +162,14 @@ where
         &self,
         request: SendRawTransactionValidityRequest,
     ) -> RpcResult<TxHash> {
-        if request.validity.len() > self.max_validity_predicates {
-            return Err(ErrorObjectOwned::owned(
-                ErrorCode::InvalidParams.code(),
-                format!(
-                    "too many validity predicates: {} (maximum {})",
-                    request.validity.len(),
-                    self.max_validity_predicates
-                ),
-                None::<()>,
-            ));
-        }
+        ValidityPredicate::validate_batch(&request.validity, self.max_validity_predicates)
+            .map_err(|error| {
+                ErrorObjectOwned::owned(
+                    ErrorCode::InvalidParams.code(),
+                    error.to_string(),
+                    None::<()>,
+                )
+            })?;
 
         let transaction = BasePooledTransaction::recover_raw_transaction(request.tx.as_ref())
             .map_err(|error| {
@@ -305,6 +302,46 @@ mod tests {
         assert_eq!(error.code(), ErrorCode::InvalidParams.code());
         assert!(error.message().contains("too many validity predicates"));
         assert!(error.message().contains("maximum 2"));
+    }
+
+    #[tokio::test]
+    async fn send_raw_transaction_validity_rejects_empty_predicates() {
+        let rpc = SendRawTransactionValidityApiImpl::new(NoopTransactionPool::<
+            BasePooledTransaction,
+        >::new());
+        let mut request = validity_request(Bytes::from_static(&[0x02]));
+        request.validity.clear();
+
+        let error = rpc
+            .send_raw_transaction_validity(request)
+            .await
+            .expect_err("empty validity should be rejected before transaction decoding");
+
+        assert_eq!(error.code(), ErrorCode::InvalidParams.code());
+        assert!(error.message().contains("must not be empty"));
+    }
+
+    #[tokio::test]
+    async fn send_raw_transaction_validity_rejects_storage_value_outside_mask() {
+        let rpc = SendRawTransactionValidityApiImpl::new(NoopTransactionPool::<
+            BasePooledTransaction,
+        >::new());
+        let mut request = validity_request(Bytes::from_static(&[0x02]));
+        request.validity = vec![ValidityPredicate::Storage {
+            address: Address::repeat_byte(0xab),
+            slot: U256::from(1),
+            mask: U256::from(0xff),
+            op: base_execution_txpool::ValidityOperator::Equal,
+            value: U256::from(0x1ff),
+        }];
+
+        let error = rpc
+            .send_raw_transaction_validity(request)
+            .await
+            .expect_err("storage value outside its mask should be rejected");
+
+        assert_eq!(error.code(), ErrorCode::InvalidParams.code());
+        assert!(error.message().contains("outside its mask"));
     }
 
     #[tokio::test]
