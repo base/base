@@ -1,0 +1,22 @@
+[package]
+name = "base-challenger-fort-bin"
+description = "Standalone challenger FORT observer for K8s Job execution"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "base-challenger-fort"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+tracing = { workspace = true }
+base-challenger-fort = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+tracing-subscriber = { workspace = true, features = ["fmt", "json", "env-filter"] }
