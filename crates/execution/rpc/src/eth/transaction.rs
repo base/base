@@ -13,6 +13,9 @@ use base_common_chains::Upgrades;
 use base_common_consensus::{
     BaseTransaction, BaseTransactionInfo, DepositInfo, DepositReceiptExt, EIP8130_TX_TYPE_ID,
 };
+use base_observability_events::{
+    TransactionEventProducer, TransactionEventType, transaction_event,
+};
 use futures::StreamExt;
 use reth_chain_state::CanonStateSubscriptions;
 use reth_chainspec::ChainSpecProvider;
@@ -65,6 +68,16 @@ where
         {
             return Err(BaseInvalidTransactionError::Eip8130NotAccepted.into());
         }
+
+        let tx_hash = *pool_transaction.hash();
+        let _ = transaction_event!(
+            producer: TransactionEventProducer::BaseRethNode,
+            event_type: TransactionEventType::TxpoolSendRawTransaction,
+            tx_hash: tx_hash,
+            data: {
+                "rpc_method" => "eth_sendRawTransaction",
+            },
+        );
 
         // broadcast raw transaction to subscribers if there is any.
         self.eth_api().broadcast_raw_transaction(tx.clone());
