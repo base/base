@@ -870,7 +870,7 @@ where
                     txs_included = diag.txs_included,
                     txs_deferred = diag.txs_deferred,
                     txs_rejected = diag.txs_rejected_total(),
-                    txs_not_included = diag.txs_not_included_total(),
+                    txs_excluded = diag.txs_excluded_total(),
                     min_priority_fee_wei = diag.min_priority_fee.unwrap_or(0),
                     current_gas = info.cumulative_gas_used,
                     target_gas = limits.block_gas_limit,

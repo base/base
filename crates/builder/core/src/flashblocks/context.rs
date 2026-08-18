@@ -165,9 +165,9 @@ impl FlashblockDiagnostics {
 
     /// Rejected plus deferred consideration outcomes.
     ///
-    /// Completes `txs_considered == txs_included + txs_not_included_total()`
+    /// Completes `txs_considered == txs_included + txs_excluded_total()`
     /// when `txs_considered` is counted per selection attempt.
-    pub const fn txs_not_included_total(&self) -> u64 {
+    pub const fn txs_excluded_total(&self) -> u64 {
         self.txs_rejected_total() + self.txs_deferred
     }
 
@@ -1694,8 +1694,8 @@ mod tests {
         };
 
         assert_eq!(diag.txs_rejected_total(), 1);
-        assert_eq!(diag.txs_not_included_total(), 3);
-        assert_eq!(diag.txs_considered, diag.txs_included + diag.txs_not_included_total());
+        assert_eq!(diag.txs_excluded_total(), 3);
+        assert_eq!(diag.txs_considered, diag.txs_included + diag.txs_excluded_total());
     }
 
     /// [`FlashblocksExtraCtx::next`] must increment the flashblock index,
