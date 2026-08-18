@@ -28,7 +28,7 @@ pub enum SlotTemplate {
     /// A static slot index.
     Fixed(U256),
     /// A Solidity mapping slot `keccak256(key ++ mapping_slot)`.
-    MappingBalanceOf {
+    Mapping {
         /// Declared position of the mapping in contract storage.
         mapping_slot: U256,
         /// Mapping key address, resolved per transaction.
@@ -39,7 +39,7 @@ pub enum SlotTemplate {
 /// A runtime validity predicate template with literal values pre-parsed.
 ///
 /// Addresses and slots may remain symbolic ([`PredicateAddress::Sender`],
-/// [`SlotTemplate::MappingBalanceOf`]) and are resolved into concrete
+/// [`SlotTemplate::Mapping`]) and are resolved into concrete
 /// `ValidityPredicate` values against each transaction at prepare time.
 #[derive(Debug, Clone)]
 pub enum ValidityPredicateTemplate {
@@ -230,10 +230,6 @@ pub struct LoadConfig {
     pub validity_ratio: f64,
     /// Predicate templates attached to each validity-bearing transaction.
     pub validity_predicates: Vec<ValidityPredicateTemplate>,
-    /// Whether some validity senders emit empty-predicate control transactions.
-    pub validity_empty_control: bool,
-    /// Fraction `0.0..=1.0` of validity senders emitting empty-predicate control transactions.
-    pub validity_control_ratio: f64,
 }
 
 impl LoadConfig {
@@ -265,8 +261,6 @@ impl LoadConfig {
             fresh_recipient_ratio: 0.0,
             validity_ratio: 0.0,
             validity_predicates: Vec::new(),
-            validity_empty_control: false,
-            validity_control_ratio: 0.0,
         }
     }
 
@@ -318,16 +312,16 @@ impl LoadConfig {
         if !(0.0..=1.0).contains(&self.validity_ratio) {
             return Err(BaselineError::Config("validity_ratio must be between 0.0 and 1.0".into()));
         }
-        if !(0.0..=1.0).contains(&self.validity_control_ratio) {
-            return Err(BaselineError::Config(
-                "validity_control_ratio must be between 0.0 and 1.0".into(),
-            ));
-        }
-        if self.validity_predicates.len() > base_execution_txpool::MAX_VALIDITY_PREDICATES {
+        if self.validity_predicates.len() > base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES {
             return Err(BaselineError::Config(format!(
                 "validity_predicates exceeds the maximum of {}",
-                base_execution_txpool::MAX_VALIDITY_PREDICATES
+                base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES
             )));
+        }
+        if self.validity_ratio > 0.0 && self.validity_predicates.is_empty() {
+            return Err(BaselineError::Config(
+                "validity_predicates must be non-empty when validity_ratio > 0".into(),
+            ));
         }
         if self.transactions.is_empty() {
             return Err(BaselineError::Config("transactions must not be empty".into()));

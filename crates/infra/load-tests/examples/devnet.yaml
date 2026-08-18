@@ -85,8 +85,6 @@ transactions:
 #
 # validity:
 #   ratio: 0.25                 # fraction of senders routed to the validity endpoint
-#   empty_predicate_control: true
-#   control_ratio: 0.2          # of validity senders, fraction sending empty-predicate control txs
 #   predicates:
 #     - type: balance
 #       address: sender          # sender | recipient | 0x-literal
@@ -104,7 +102,7 @@ transactions:
 #     - type: storage
 #       address: "0xTOKEN000000000000000000000000000000000000"
 #       slot:
-#         kind: mapping_balance_of
+#         kind: mapping
 #         mapping_slot: "0x0"
 #         key: sender
 #       op: ">="

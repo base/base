@@ -598,7 +598,6 @@ impl TestConfig {
             fresh_recipient_ratio: self.fresh_recipient_ratio,
             validity_ratio: self.validity.ratio,
             validity_predicate_count: self.validity.predicates.len(),
-            validity_control_ratio: self.validity.control_ratio,
             looper_contract: self.looper_contract.clone(),
             swap_token_amount: self.swap_token_amount.clone(),
             b20_mint_amount: self.b20_mint_amount.clone(),
@@ -667,8 +666,6 @@ impl TestConfig {
             fresh_recipient_ratio: self.fresh_recipient_ratio,
             validity_ratio: self.validity.ratio,
             validity_predicates: self.validity.to_templates()?,
-            validity_empty_control: self.validity.empty_predicate_control,
-            validity_control_ratio: self.validity.control_ratio,
         })
     }
 
@@ -1343,8 +1340,6 @@ transaction_submission_rpcs: http://localhost:8545
 flashblocks_ws: ws://localhost:7111
 validity:
   ratio: 0.25
-  empty_predicate_control: true
-  control_ratio: 0.2
   predicates:
     - type: balance
       address: sender
@@ -1353,7 +1348,7 @@ validity:
     - type: storage
       address: "0x1234567890123456789012345678901234567890"
       slot:
-        kind: mapping_balance_of
+        kind: mapping
         mapping_slot: "0x0"
         key: sender
       op: ">="
@@ -1365,8 +1360,6 @@ validity:
 
         let load_config = config.to_load_config(Some(1337)).unwrap();
         assert_eq!(load_config.validity_ratio, 0.25);
-        assert!(load_config.validity_empty_control);
-        assert_eq!(load_config.validity_control_ratio, 0.2);
         assert_eq!(load_config.validity_predicates.len(), 2);
 
         let summary = config.to_summary();

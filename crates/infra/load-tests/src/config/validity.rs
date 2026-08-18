@@ -1,4 +1,4 @@
-use base_execution_txpool::{MAX_VALIDITY_PREDICATES, ValidityOperator};
+use base_execution_txpool::{DEFAULT_MAX_VALIDITY_PREDICATES, ValidityOperator};
 use serde::{Deserialize, Serialize};
 
 use super::parsing::{parse_address, parse_u256_hex_or_dec};
@@ -21,19 +21,9 @@ pub struct ValidityConfig {
 
     /// Predicate templates attached to each validity-bearing transaction.
     ///
-    /// Must be non-empty when `ratio > 0` unless `empty_predicate_control` is
-    /// set, and must contain at most [`MAX_VALIDITY_PREDICATES`] entries.
+    /// Must be non-empty when `ratio > 0`, and must contain at most
+    /// [`DEFAULT_MAX_VALIDITY_PREDICATES`] entries.
     pub predicates: Vec<ValidityPredicateConfig>,
-
-    /// When true, a fraction of validity-path transactions carry an empty
-    /// predicate list. These isolate the origin/forwarding cost of the validity
-    /// endpoint from the cost of predicate evaluation.
-    pub empty_predicate_control: bool,
-
-    /// Fraction `0.0..=1.0` of validity senders that emit empty-predicate
-    /// control transactions. Only meaningful when `empty_predicate_control` is
-    /// set.
-    pub control_ratio: f64,
 }
 
 /// A configured validity predicate template.
@@ -123,7 +113,7 @@ pub enum PredicateSlotConfig {
     },
     /// A Solidity mapping slot `keccak256(key ++ mapping_slot)`, e.g. the
     /// `balanceOf` slot for a given key address.
-    MappingBalanceOf {
+    Mapping {
         /// Declared position of the mapping in contract storage (hex or decimal).
         mapping_slot: String,
         /// Mapping key address, resolved per transaction.
@@ -138,20 +128,15 @@ impl ValidityConfig {
         if !(0.0..=1.0).contains(&self.ratio) {
             return Err(BaselineError::Config("validity.ratio must be between 0.0 and 1.0".into()));
         }
-        if !(0.0..=1.0).contains(&self.control_ratio) {
-            return Err(BaselineError::Config(
-                "validity.control_ratio must be between 0.0 and 1.0".into(),
-            ));
-        }
-        if self.predicates.len() > MAX_VALIDITY_PREDICATES {
+        if self.predicates.len() > DEFAULT_MAX_VALIDITY_PREDICATES {
             return Err(BaselineError::Config(format!(
-                "validity.predicates has {} entries, exceeding the maximum of {MAX_VALIDITY_PREDICATES}",
+                "validity.predicates has {} entries, exceeding the maximum of {DEFAULT_MAX_VALIDITY_PREDICATES}",
                 self.predicates.len()
             )));
         }
-        if self.ratio > 0.0 && self.predicates.is_empty() && !self.empty_predicate_control {
+        if self.ratio > 0.0 && self.predicates.is_empty() {
             return Err(BaselineError::Config(
-                "validity.predicates must be non-empty when validity.ratio > 0 (or set validity.empty_predicate_control)".into(),
+                "validity.predicates must be non-empty when validity.ratio > 0".into(),
             ));
         }
         // Surface parse errors (operators, addresses, values) eagerly.
@@ -214,7 +199,7 @@ impl PredicateSlotConfig {
             Self::Fixed { value } => {
                 Ok(SlotTemplate::Fixed(parse_u256_hex_or_dec(value, "validity storage slot")?))
             }
-            Self::MappingBalanceOf { mapping_slot, key } => Ok(SlotTemplate::MappingBalanceOf {
+            Self::Mapping { mapping_slot, key } => Ok(SlotTemplate::Mapping {
                 mapping_slot: parse_u256_hex_or_dec(mapping_slot, "validity mapping_slot")?,
                 key: key.to_template()?,
             }),
@@ -299,13 +284,13 @@ mod tests {
     }
 
     #[test]
-    fn mapping_balance_of_slot_to_template() {
-        let config = PredicateSlotConfig::MappingBalanceOf {
+    fn mapping_slot_to_template() {
+        let config = PredicateSlotConfig::Mapping {
             mapping_slot: "0".into(),
             key: PredicateAddressConfig::Sender,
         };
         match config.to_template().unwrap() {
-            SlotTemplate::MappingBalanceOf { mapping_slot, key } => {
+            SlotTemplate::Mapping { mapping_slot, key } => {
                 assert_eq!(mapping_slot, U256::ZERO);
                 assert!(matches!(key, PredicateAddress::Sender));
             }
@@ -320,20 +305,15 @@ mod tests {
     }
 
     #[test]
-    fn validate_rejects_empty_predicates_without_control() {
+    fn validate_rejects_empty_predicates_when_enabled() {
         let config = ValidityConfig { ratio: 0.5, ..Default::default() };
         let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("validity.predicates must be non-empty"));
     }
 
     #[test]
-    fn validate_allows_empty_predicates_with_control() {
-        let config = ValidityConfig {
-            ratio: 0.5,
-            empty_predicate_control: true,
-            control_ratio: 1.0,
-            ..Default::default()
-        };
+    fn validate_allows_empty_predicates_when_disabled() {
+        let config = ValidityConfig { ratio: 0.0, ..Default::default() };
         assert!(config.validate().is_ok());
     }
 
@@ -346,8 +326,7 @@ mod tests {
         };
         let config = ValidityConfig {
             ratio: 1.0,
-            predicates: vec![predicate; MAX_VALIDITY_PREDICATES + 1],
-            ..Default::default()
+            predicates: vec![predicate; DEFAULT_MAX_VALIDITY_PREDICATES + 1],
         };
         let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("exceeding the maximum"));
@@ -362,7 +341,6 @@ mod tests {
                 op: "==".into(),
                 value: "0".into(),
             }],
-            ..Default::default()
         };
         assert!(config.validate().is_err());
     }
