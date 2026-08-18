@@ -51,7 +51,7 @@ pub use l2::{
     InProcessClient, InProcessClientConfig, InProcessConsensus, InProcessConsensusConfig,
     InProcessFollowConsensus, InProcessFollowConsensusConfig, L2ClientConsensus,
     L2ClientConsensusMode, L2ContainerConfig, L2Stack, L2StackConfig, ShadowSequencer,
-    ShadowSequencerConfig, ShadowSequencersConfig,
+    ShadowSequencerConfig, ShadowSequencersConfig, TestNodeRuntime,
 };
 
 mod network;

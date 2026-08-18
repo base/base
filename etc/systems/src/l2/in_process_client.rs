@@ -30,8 +30,10 @@ use reth_node_core::{
     exit::NodeExitFuture,
 };
 use reth_provider::providers::BlockchainProvider;
-use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
+use reth_tasks::{Runtime, RuntimeBuilder};
 use url::Url;
+
+use super::TestNodeRuntime;
 
 /// Configuration for starting an in-process client node.
 #[derive(Debug)]
@@ -107,7 +109,7 @@ impl std::fmt::Debug for InProcessClient {
 impl InProcessClient {
     /// Starts an in-process client node with the provided configuration.
     pub async fn start(config: InProcessClientConfig) -> Result<Self> {
-        let runtime = RuntimeBuilder::new(RuntimeConfig::default()).build()?;
+        let runtime = RuntimeBuilder::new(TestNodeRuntime::config()).build()?;
 
         // Parse genesis JSON to chain spec
         let genesis: alloy_genesis::Genesis = serde_json::from_slice(&config.genesis_json)

@@ -28,10 +28,11 @@ use reth_node_core::{
     dirs::{DataDirPath, MaybePlatformPath},
     exit::NodeExitFuture,
 };
-use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
+use reth_tasks::{Runtime, RuntimeBuilder};
 use tracing::warn;
 use url::Url;
 
+use super::TestNodeRuntime;
 use crate::{config::BUILDER, setup::BUILDER_ENODE_ID};
 
 /// Configuration for starting an in-process builder.
@@ -110,7 +111,7 @@ impl InProcessBuilder {
         std::fs::write(&jwt_path, config.jwt_secret.as_bytes().encode_hex().as_bytes())
             .wrap_err("Failed to write JWT secret")?;
 
-        let runtime = RuntimeBuilder::new(RuntimeConfig::default()).build()?;
+        let runtime = RuntimeBuilder::new(TestNodeRuntime::config()).build()?;
 
         let chain_spec = parse_genesis(&config.genesis_json)?;
 
