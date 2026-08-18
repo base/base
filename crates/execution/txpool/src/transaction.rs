@@ -210,7 +210,6 @@ impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Po
         let validity_predicates_size = core::mem::size_of_val(self.validity_predicates.as_slice());
         self.inner.size()
             + core::mem::size_of::<u128>()
-            + core::mem::size_of::<Option<u64>>() * 4
             + core::mem::size_of::<Vec<crate::ValidityPredicate>>()
             + core::mem::size_of::<OnceLock<crate::WatchSet>>()
             + watch_keys_size
