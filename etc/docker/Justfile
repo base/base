@@ -238,7 +238,12 @@ _up-devnet compose_profile mode:
     esac
 
     case "$compose_profile" in
-      ha) compose_files=({{ _ha }}) ;;
+      ha)
+        compose_files=({{ _ha }})
+        # Any of the three conductor-managed sequencers can be the leader/builder,
+        # so ingress nodes fan validity (advanced) txs out to all of them.
+        export VALIDITY_BUILDER_RPC_URLS="http://base-builder:${L2_BUILDER_HTTP_PORT},http://base-sequencer-1:${L2_SEQ1_HTTP_PORT},http://base-sequencer-2:${L2_SEQ2_HTTP_PORT}"
+        ;;
       base) compose_files=({{ _base }}) ;;
       *)
         echo "ERROR: compose profile must be 'ha' or 'base' (got '${compose_profile}')" >&2

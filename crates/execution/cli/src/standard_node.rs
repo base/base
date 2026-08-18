@@ -149,64 +149,6 @@ pub struct StandardNodeArgs {
     /// Shadow indexer `ExEx` arguments.
     #[command(flatten)]
     pub shadow_indexer: ShadowIndexerArgs,
-
-    /// Enable transaction forwarding for mempool nodes to builder RPC endpoints
-    #[arg(
-        long = "enable-tx-forwarding",
-        value_name = "ENABLE_TX_FORWARDING",
-        requires = "builder_rpc_urls"
-    )]
-    pub enable_tx_forwarding: bool,
-
-    /// Enable the experimental validity transaction RPC.
-    ///
-    /// Validity predicates are forwarded to builders but are not yet enforced.
-    #[arg(long = "enable-experimental-validity-transactions", requires = "enable_tx_forwarding")]
-    pub enable_experimental_validity_transactions: bool,
-
-    /// Maximum validity predicates accepted per experimental transaction.
-    #[arg(
-        long = "experimental-validity-max-predicates",
-        default_value_t = DEFAULT_MAX_VALIDITY_PREDICATES,
-        requires = "enable_experimental_validity_transactions"
-    )]
-    pub experimental_validity_max_predicates: usize,
-
-    /// Builder RPC endpoints for transaction forwarding (one forwarder per URL), used by mempool nodes
-    #[arg(
-        long = "builder-rpc-urls",
-        value_name = "BUILDER_RPC_URLS",
-        value_delimiter = ',',
-        requires = "enable_tx_forwarding"
-    )]
-    pub builder_rpc_urls: Vec<Url>,
-
-    /// Resend transactions that haven't been included after this duration in ms (default: 2 blocks)
-    #[arg(
-        long = "tx-forwarding-resend-after-ms",
-        value_name = "TX_FORWARDING_RESEND_AFTER_MS",
-        default_value_t = DEFAULT_RESEND_AFTER_MS,
-        requires = "enable_tx_forwarding"
-    )]
-    pub tx_forwarding_resend_after_ms: u64,
-
-    /// Maximum number of transactions per forwarding batch
-    #[arg(
-        long = "tx-forwarding-batch-size",
-        value_name = "TX_FORWARDING_BATCH_SIZE",
-        default_value_t = DEFAULT_MAX_BATCH_SIZE,
-        requires = "enable_tx_forwarding"
-    )]
-    pub tx_forwarding_batch_size: usize,
-
-    /// Maximum RPC requests per second per forwarder (0 = unlimited).
-    #[arg(
-        long = "tx-forwarding-max-rps",
-        value_name = "TX_FORWARDING_MAX_RPS",
-        default_value_t = DEFAULT_MAX_RPS,
-        requires = "enable_tx_forwarding"
-    )]
-    pub tx_forwarding_max_rps: u32,
 }
 
 /// CLI arguments for a Base execution node embedded by the unified RPC command.
@@ -275,6 +217,64 @@ pub struct RpcStandardNodeArgs {
         requires = "enable_transaction_event_journal"
     )]
     pub transaction_event_journal_path: Option<PathBuf>,
+
+    /// Enable transaction forwarding for mempool nodes to builder RPC endpoints
+    #[arg(
+        long = "enable-tx-forwarding",
+        value_name = "ENABLE_TX_FORWARDING",
+        requires = "builder_rpc_urls"
+    )]
+    pub enable_tx_forwarding: bool,
+
+    /// Enable the experimental validity transaction RPC.
+    ///
+    /// Validity predicates are forwarded to builders but are not yet enforced.
+    #[arg(long = "enable-experimental-validity-transactions", requires = "enable_tx_forwarding")]
+    pub enable_experimental_validity_transactions: bool,
+
+    /// Maximum validity predicates accepted per experimental transaction.
+    #[arg(
+        long = "experimental-validity-max-predicates",
+        default_value_t = DEFAULT_MAX_VALIDITY_PREDICATES,
+        requires = "enable_experimental_validity_transactions"
+    )]
+    pub experimental_validity_max_predicates: usize,
+
+    /// Builder RPC endpoints for transaction forwarding (one forwarder per URL), used by mempool nodes
+    #[arg(
+        long = "builder-rpc-urls",
+        value_name = "BUILDER_RPC_URLS",
+        value_delimiter = ',',
+        requires = "enable_tx_forwarding"
+    )]
+    pub builder_rpc_urls: Vec<Url>,
+
+    /// Resend transactions that haven't been included after this duration in ms (default: 2 blocks)
+    #[arg(
+        long = "tx-forwarding-resend-after-ms",
+        value_name = "TX_FORWARDING_RESEND_AFTER_MS",
+        default_value_t = DEFAULT_RESEND_AFTER_MS,
+        requires = "enable_tx_forwarding"
+    )]
+    pub tx_forwarding_resend_after_ms: u64,
+
+    /// Maximum number of transactions per forwarding batch
+    #[arg(
+        long = "tx-forwarding-batch-size",
+        value_name = "TX_FORWARDING_BATCH_SIZE",
+        default_value_t = DEFAULT_MAX_BATCH_SIZE,
+        requires = "enable_tx_forwarding"
+    )]
+    pub tx_forwarding_batch_size: usize,
+
+    /// Maximum RPC requests per second per forwarder (0 = unlimited).
+    #[arg(
+        long = "tx-forwarding-max-rps",
+        value_name = "TX_FORWARDING_MAX_RPS",
+        default_value_t = DEFAULT_MAX_RPS,
+        requires = "enable_tx_forwarding"
+    )]
+    pub tx_forwarding_max_rps: u32,
 }
 
 impl From<RpcStandardNodeArgs> for StandardNodeArgs {
@@ -287,13 +287,6 @@ impl From<RpcStandardNodeArgs> for StandardNodeArgs {
             rpc: args,
             metering: MeteringArgs::default(),
             shadow_indexer: ShadowIndexerArgs::default(),
-            enable_tx_forwarding: false,
-            enable_experimental_validity_transactions: false,
-            experimental_validity_max_predicates: DEFAULT_MAX_VALIDITY_PREDICATES,
-            builder_rpc_urls: Vec::new(),
-            tx_forwarding_resend_after_ms: DEFAULT_RESEND_AFTER_MS,
-            tx_forwarding_batch_size: DEFAULT_MAX_BATCH_SIZE,
-            tx_forwarding_max_rps: DEFAULT_MAX_RPS,
         }
     }
 }
@@ -356,14 +349,14 @@ impl From<&StandardNodeArgs> for Option<FlashblocksConfig> {
 
 impl From<&StandardNodeArgs> for TxForwardingConfig {
     fn from(args: &StandardNodeArgs) -> Self {
-        if !args.enable_tx_forwarding || args.builder_rpc_urls.is_empty() {
+        if !args.rpc.enable_tx_forwarding || args.rpc.builder_rpc_urls.is_empty() {
             return Self::default();
         }
 
-        Self::new(args.builder_rpc_urls.clone())
-            .with_resend_after_ms(args.tx_forwarding_resend_after_ms)
-            .with_max_batch_size(args.tx_forwarding_batch_size)
-            .with_max_rps(args.tx_forwarding_max_rps)
+        Self::new(args.rpc.builder_rpc_urls.clone())
+            .with_resend_after_ms(args.rpc.tx_forwarding_resend_after_ms)
+            .with_max_batch_size(args.rpc.tx_forwarding_batch_size)
+            .with_max_rps(args.rpc.tx_forwarding_max_rps)
     }
 }
 
@@ -540,14 +533,14 @@ impl StandardBaseRethNode {
         runner.install_ext::<ShadowIndexerExtension>((&args.shadow_indexer).try_into()?);
         runner.install_ext::<BundleExtension>(());
         let tx_forwarding_config: TxForwardingConfig = (&args).into();
-        if args.enable_experimental_validity_transactions {
+        if args.rpc.enable_experimental_validity_transactions {
             if !tx_forwarding_config.enabled || tx_forwarding_config.builder_urls.is_empty() {
                 eyre::bail!(
                     "experimental validity transactions require enabled transaction forwarding"
                 );
             }
             runner.install_ext::<SendRawTransactionValidityExtension>(
-                args.experimental_validity_max_predicates,
+                args.rpc.experimental_validity_max_predicates,
             );
         }
         runner.install_ext::<TxForwardingExtension>(tx_forwarding_config);
@@ -718,6 +711,13 @@ mod tests {
             enable_transaction_tracing_logs: false,
             enable_transaction_event_journal: false,
             transaction_event_journal_path: None,
+            enable_tx_forwarding: false,
+            enable_experimental_validity_transactions: false,
+            experimental_validity_max_predicates: DEFAULT_MAX_VALIDITY_PREDICATES,
+            builder_rpc_urls: Vec::new(),
+            tx_forwarding_resend_after_ms: DEFAULT_RESEND_AFTER_MS,
+            tx_forwarding_batch_size: DEFAULT_MAX_BATCH_SIZE,
+            tx_forwarding_max_rps: DEFAULT_MAX_RPS,
         }
     }
 
@@ -835,9 +835,9 @@ mod tests {
         let config = TxForwardingConfig::from(&standard_args);
 
         assert_eq!(standard_args.rpc.rollup_args.sequencer, None);
-        assert!(!standard_args.enable_experimental_validity_transactions);
+        assert!(!standard_args.rpc.enable_experimental_validity_transactions);
         assert_eq!(
-            standard_args.experimental_validity_max_predicates,
+            standard_args.rpc.experimental_validity_max_predicates,
             DEFAULT_MAX_VALIDITY_PREDICATES
         );
         assert!(!config.enabled);
@@ -868,16 +868,16 @@ mod tests {
         ])
         .args;
 
-        assert!(args.enable_tx_forwarding);
-        assert!(args.enable_experimental_validity_transactions);
-        assert_eq!(args.experimental_validity_max_predicates, 8);
-        assert_eq!(args.builder_rpc_urls.len(), 1);
+        assert!(args.rpc.enable_tx_forwarding);
+        assert!(args.rpc.enable_experimental_validity_transactions);
+        assert_eq!(args.rpc.experimental_validity_max_predicates, 8);
+        assert_eq!(args.rpc.builder_rpc_urls.len(), 1);
     }
 
     #[test]
     fn programmatic_validity_config_requires_forwarding() {
         let mut args = StandardNodeArgs::from(default_rpc_standard_node_args());
-        args.enable_experimental_validity_transactions = true;
+        args.rpc.enable_experimental_validity_transactions = true;
 
         let error = match StandardBaseRethNode::runner(args) {
             Ok(_) => panic!("invalid programmatic validity config should fail"),

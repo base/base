@@ -70,6 +70,10 @@ L1_CL_P2P_PORT=4900
 L2_EL_BOOTNODE_P2P_PORT=9303
 L2_CL_BOOTNODE_P2P_PORT=9003
 L2_BUILDER_HTTP_PORT=7545
+# Builder RPC endpoint(s) that ingress nodes forward validity (advanced) txs to.
+# Single-sequencer default targets base-builder; the HA `up` recipe overrides
+# this to fan out to all three conductor-managed sequencers.
+VALIDITY_BUILDER_RPC_URLS=http://base-builder:7545
 L2_BUILDER_WS_PORT=7546
 L2_BUILDER_AUTH_PORT=7551
 L2_BUILDER_P2P_PORT=7303
