@@ -61,4 +61,8 @@ jsonrpsee = { workspace = true, features = ["server"] }
 
 [features]
 default = [ "metrics" ]
-metrics = [ "base-metrics/metrics", "dep:metrics" ]
+metrics = [
+	"base-metrics/metrics",
+	"base-observability-events/metrics",
+	"dep:metrics",
+]

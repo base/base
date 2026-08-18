@@ -293,6 +293,7 @@ impl SnapshotGenerator {
                         chunk_sizes,
                         chunk_decompressed_sizes: chunk_decompressed,
                         chunk_output_files,
+                        chunk_files: vec![],
                     }),
                 );
             }

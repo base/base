@@ -40,7 +40,9 @@ use eyre::Result;
 use reth_chain_state::CanonStateSubscriptions;
 use reth_chainspec::EthChainSpec;
 use reth_primitives_traits::{Account as RethAccount, Block as BlockT, RecoveredBlock};
-use reth_provider::{AccountReader, BlockNumReader, BlockReader, ChainSpecProvider};
+use reth_provider::{
+    AccountReader, BlockNumReader, BlockReader, ChainSpecProvider, StateProviderFactory,
+};
 use reth_transaction_pool::test_utils::TransactionBuilder;
 use tokio::{
     sync::{mpsc, oneshot},
@@ -376,6 +378,8 @@ impl FlashblocksBuilderTestHarness {
     /// Get the canonical account state.
     pub fn canonical_account(&self, account: Account) -> RethAccount {
         self.provider
+            .latest()
+            .expect("can lookup chain state")
             .basic_account(&account.address())
             .expect("can lookup account state")
             .expect("should be existing account state")

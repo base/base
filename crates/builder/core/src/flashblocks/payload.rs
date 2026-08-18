@@ -1172,7 +1172,7 @@ where
         let _state_root_span_guard = state_root_span.enter();
 
         let state_provider = state.database.as_ref();
-        hashed_state = state_provider.hashed_post_state(&state.bundle_state);
+        hashed_state = state_provider.hashed_post_state(&state.bundle_state)?;
         (state_root, trie_output) =
             state_provider.state_root_with_updates(hashed_state.clone()).inspect_err(|err| {
                 warn!(target: "payload_builder",

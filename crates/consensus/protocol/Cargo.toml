@@ -72,7 +72,11 @@ harness = false
 
 [features]
 default = [ "std" ]
-test-utils = [ "dep:spin", "dep:tracing-subscriber" ]
+test-utils = [
+	"base-common-genesis/test-utils",
+	"dep:spin",
+	"dep:tracing-subscriber",
+]
 std = [
 	"alloy-consensus/std",
 	"alloy-eips/std",

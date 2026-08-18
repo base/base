@@ -4,8 +4,9 @@
 
 mod config;
 pub use config::{
-    OsakaTarget, PrecompileTarget, RealTokenAcquisitionConfig, RealTokenPairTokenConfig,
-    RealTokenSetupConfig, TestConfig, TxTypeConfig, WeightedTxType, WorkloadConfig,
+    OsakaTarget, PrecompileTarget, PredicateAddressConfig, PredicateSlotConfig,
+    RealTokenAcquisitionConfig, RealTokenPairTokenConfig, RealTokenSetupConfig, TestConfig,
+    TxTypeConfig, ValidityConfig, ValidityPredicateConfig, WeightedTxType, WorkloadConfig,
 };
 
 mod executor;
@@ -49,8 +50,9 @@ pub use runner::{
     FlashblockWatcher, GasPricer, InclusionPulse, InclusionSource, InjectLimit, InjectPlan,
     LoadConfig, LoadRunner, LoadTestDisplay, LoadTestStage, MAX_FEE_BASE_FEE_MULTIPLIER,
     MAX_SENDER_WORKER_COUNT, MAX_SIGNER_WORKER_COUNT, MIN_PRIORITY_FEE, MempoolDepthController,
-    PipelineQueue, PipelineStartConfig, PreparedBatch, PreparedTransaction, PresignBuffer,
-    QueuedSubmitFailures, ResultsTracker, SENDER_WORKERS_PER_RPC, SIGNER_WORKERS_PER_RPC,
-    SUBMIT_BATCH_QUEUE_BUFFER, SUBMIT_MAX_ATTEMPTS, SenderContext, SentTransaction, SignedBatch,
-    SignedTransaction, SignerContext, SubmissionPipeline, SubmitEvent, TxConfig, TxType,
+    PipelineQueue, PipelineStartConfig, PredicateAddress, PreparedBatch, PreparedTransaction,
+    PresignBuffer, QueuedSubmitFailures, ResultsTracker, SENDER_WORKERS_PER_RPC,
+    SIGNER_WORKERS_PER_RPC, SUBMIT_BATCH_QUEUE_BUFFER, SUBMIT_MAX_ATTEMPTS, SenderContext,
+    SentTransaction, SignedBatch, SignedTransaction, SignerContext, SlotTemplate,
+    SubmissionPipeline, SubmitEvent, TxConfig, TxType, ValidityPredicateTemplate,
 };

@@ -346,13 +346,19 @@ async fn test_nonce_uses_pending_canon_block_instead_of_latest() {
     )
     .await;
 
-    let pending_nonce =
-        test.provider.basic_account(&Account::Alice.address()).unwrap().unwrap().nonce
-            + test
-                .flashblocks
-                .get_pending_blocks()
-                .get_transaction_count(Account::Alice.address())
-                .to::<u64>();
+    let pending_nonce = test
+        .provider
+        .latest()
+        .unwrap()
+        .basic_account(&Account::Alice.address())
+        .unwrap()
+        .unwrap()
+        .nonce
+        + test
+            .flashblocks
+            .get_pending_blocks()
+            .get_transaction_count(Account::Alice.address())
+            .to::<u64>();
     assert_eq!(pending_nonce, 1);
 
     test.new_canonical_block_without_processing(vec![
@@ -360,13 +366,19 @@ async fn test_nonce_uses_pending_canon_block_instead_of_latest() {
     ])
     .await;
 
-    let pending_nonce =
-        test.provider.basic_account(&Account::Alice.address()).unwrap().unwrap().nonce
-            + test
-                .flashblocks
-                .get_pending_blocks()
-                .get_transaction_count(Account::Alice.address())
-                .to::<u64>();
+    let pending_nonce = test
+        .provider
+        .latest()
+        .unwrap()
+        .basic_account(&Account::Alice.address())
+        .unwrap()
+        .unwrap()
+        .nonce
+        + test
+            .flashblocks
+            .get_pending_blocks()
+            .get_transaction_count(Account::Alice.address())
+            .to::<u64>();
 
     // This is 2, because canon block has reached the underlying chain
     // but the StateProcessor hasn't processed it

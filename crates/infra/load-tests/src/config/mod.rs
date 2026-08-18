@@ -13,3 +13,8 @@ pub use real_token::{RealTokenAcquisitionConfig, RealTokenPairTokenConfig, RealT
 
 mod test_config;
 pub use test_config::{OsakaTarget, TestConfig, TxTypeConfig, WeightedTxType};
+
+mod validity;
+pub use validity::{
+    PredicateAddressConfig, PredicateSlotConfig, ValidityConfig, ValidityPredicateConfig,
+};

@@ -34,7 +34,7 @@ use reth_revm::{
     cancelled::CancelOnDrop, database::StateProviderDatabase, db::State,
     witness::ExecutionWitnessRecord,
 };
-use reth_storage_api::{StateProvider, StateProviderFactory, errors::ProviderError};
+use reth_storage_api::{BlockReader, StateProvider, StateProviderFactory, errors::ProviderError};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction, TransactionPool};
 use reth_trie_common::ExecutionWitnessMode;
 use reth_trie_parallel::state_root_task::PayloadStateRootHandle;
@@ -129,7 +129,7 @@ impl<Pool, Client, Evm, Txs, Attrs> BasePayloadBuilder<Pool, Client, Evm, Txs, A
 impl<Pool, Client, Evm, N, T, Attrs> BasePayloadBuilder<Pool, Client, Evm, T, Attrs>
 where
     Pool: TransactionPool<Transaction: BasePooledTx<Consensus = N::SignedTx>>,
-    Client: StateProviderFactory + ChainSpecProvider<ChainSpec: Upgrades>,
+    Client: StateProviderFactory + ChainSpecProvider<ChainSpec: Upgrades> + BlockReader,
     N: PayloadPrimitives,
     Evm: ConfigureEvm<
             Primitives = N,
@@ -231,7 +231,7 @@ where
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
 
         let builder = Builder::new(|_| NoopPayloadTransactions::<Pool::Transaction>::default());
-        builder.witness(state_provider, &ctx)
+        builder.witness(state_provider, &self.client, &ctx)
     }
 }
 
@@ -240,7 +240,7 @@ impl<Pool, Client, Evm, N, Txs, Attrs> PayloadBuilder
     for BasePayloadBuilder<Pool, Client, Evm, Txs, Attrs>
 where
     N: PayloadPrimitives,
-    Client: StateProviderFactory + ChainSpecProvider<ChainSpec: Upgrades> + Clone,
+    Client: StateProviderFactory + ChainSpecProvider<ChainSpec: Upgrades> + BlockReader + Clone,
     Pool: TransactionPool<Transaction: BasePooledTx<Consensus = N::SignedTx>>,
     Evm: ConfigureEvm<
             Primitives = N,
@@ -451,6 +451,7 @@ impl<Txs> Builder<'_, Txs> {
     pub fn witness<Evm, ChainSpec, N, Attrs>(
         self,
         state_provider: impl StateProvider,
+        header_provider: impl reth_storage_api::HeaderProvider,
         ctx: &BasePayloadBuilderCtx<Evm, ChainSpec, Attrs>,
     ) -> Result<ExecutionWitness, PayloadBuilderError>
     where
@@ -468,6 +469,8 @@ impl<Txs> Builder<'_, Txs> {
             .with_bundle_update()
             .build();
         let mut builder = ctx.block_builder(&mut db)?;
+        let block_number =
+            builder.evm().block().number().try_into().expect("block_number must be < u64::MAX");
 
         builder.apply_pre_execution_changes()?;
         ctx.execute_sequencer_transactions(&mut builder)?;
@@ -480,15 +483,13 @@ impl<Txs> Builder<'_, Txs> {
         }
 
         let mode = ExecutionWitnessMode::default();
-        let ExecutionWitnessRecord { hashed_state, codes, keys, lowest_block_number: _ } =
-            ExecutionWitnessRecord::from_executed_state(&db, mode);
-        let state = state_provider.witness(Default::default(), hashed_state, mode)?;
-        Ok(ExecutionWitness {
-            state: state.into_iter().collect(),
-            codes,
-            keys,
-            ..Default::default()
-        })
+        let witness = ExecutionWitnessRecord::new(&db).into_execution_witness(
+            &db.database.0,
+            &header_provider,
+            block_number,
+            mode,
+        )?;
+        Ok(witness)
     }
 }
 

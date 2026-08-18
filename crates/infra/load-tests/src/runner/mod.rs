@@ -2,7 +2,8 @@
 
 mod config;
 pub use config::{
-    DEFAULT_MAX_GAS_PRICE, DEFAULT_MAX_IN_FLIGHT_PER_SENDER, LoadConfig, TxConfig, TxType,
+    DEFAULT_MAX_GAS_PRICE, DEFAULT_MAX_IN_FLIGHT_PER_SENDER, LoadConfig, PredicateAddress,
+    SlotTemplate, TxConfig, TxType, ValidityPredicateTemplate,
 };
 
 mod backoff;

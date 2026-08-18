@@ -35,6 +35,7 @@ impl Devnet {
             prague_time: Some(0),
             osaka_time: Some(0),
             amsterdam_time: None,
+            bogota_time: None,
             bpo1_time: Some(0),
             bpo2_time: Some(0),
             bpo3_time: None,
