@@ -1,6 +1,7 @@
 use std::{path::PathBuf, time::Duration};
 
 use alloy_primitives::{Address, U256};
+use base_execution_txpool::ValidityOperator;
 use revm::precompile::PrecompileId;
 use url::Url;
 
@@ -8,6 +9,63 @@ use crate::{
     config::OsakaTarget,
     utils::{BaselineError, Result},
 };
+
+/// Source for a validity predicate's address, resolved per transaction at
+/// prepare time (the concrete `from`/`to` are only known then).
+#[derive(Debug, Clone)]
+pub enum PredicateAddress {
+    /// The transaction's sender (`from`).
+    Sender,
+    /// The transaction's recipient (`to`).
+    Recipient,
+    /// A fixed, pre-resolved address.
+    Fixed(Address),
+}
+
+/// Source for a validity predicate's storage slot, resolved per transaction.
+#[derive(Debug, Clone)]
+pub enum SlotTemplate {
+    /// A static slot index.
+    Fixed(U256),
+    /// A Solidity mapping slot `keccak256(key ++ mapping_slot)`.
+    Mapping {
+        /// Declared position of the mapping in contract storage.
+        mapping_slot: U256,
+        /// Mapping key address, resolved per transaction.
+        key: PredicateAddress,
+    },
+}
+
+/// A runtime validity predicate template with literal values pre-parsed.
+///
+/// Addresses and slots may remain symbolic ([`PredicateAddress::Sender`],
+/// [`SlotTemplate::Mapping`]) and are resolved into concrete
+/// `ValidityPredicate` values against each transaction at prepare time.
+#[derive(Debug, Clone)]
+pub enum ValidityPredicateTemplate {
+    /// Balance comparison template.
+    Balance {
+        /// Account whose balance is read.
+        address: PredicateAddress,
+        /// Comparison operator.
+        op: ValidityOperator,
+        /// Right-hand comparison value.
+        value: U256,
+    },
+    /// Storage comparison template.
+    Storage {
+        /// Contract whose storage is read.
+        address: PredicateAddress,
+        /// Storage slot source.
+        slot: SlotTemplate,
+        /// Optional bit mask; `None` uses the server default (all ones).
+        mask: Option<U256>,
+        /// Comparison operator.
+        op: ValidityOperator,
+        /// Right-hand comparison value.
+        value: U256,
+    },
+}
 
 /// Configuration for a single transaction type with its weight.
 #[derive(Debug, Clone)]
@@ -168,6 +226,10 @@ pub struct LoadConfig {
     /// Fraction of transactions that draw a fresh recipient address instead of cycling through
     /// the sender pool. Used to drive account-trie fan-out for account-create workloads.
     pub fresh_recipient_ratio: f64,
+    /// Fraction `0.0..=1.0` of senders routed through `base_sendRawTransactionValidity`.
+    pub validity_ratio: f64,
+    /// Predicate templates attached to each validity-bearing transaction.
+    pub validity_predicates: Vec<ValidityPredicateTemplate>,
 }
 
 impl LoadConfig {
@@ -197,6 +259,8 @@ impl LoadConfig {
             max_gas_price: DEFAULT_MAX_GAS_PRICE,
             flashblocks_ws: None,
             fresh_recipient_ratio: 0.0,
+            validity_ratio: 0.0,
+            validity_predicates: Vec::new(),
         }
     }
 
@@ -243,6 +307,20 @@ impl LoadConfig {
         if !(0.0..=1.0).contains(&self.fresh_recipient_ratio) {
             return Err(BaselineError::Config(
                 "fresh_recipient_ratio must be between 0.0 and 1.0".into(),
+            ));
+        }
+        if !(0.0..=1.0).contains(&self.validity_ratio) {
+            return Err(BaselineError::Config("validity_ratio must be between 0.0 and 1.0".into()));
+        }
+        if self.validity_predicates.len() > base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES {
+            return Err(BaselineError::Config(format!(
+                "validity_predicates exceeds the maximum of {}",
+                base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES
+            )));
+        }
+        if self.validity_ratio > 0.0 && self.validity_predicates.is_empty() {
+            return Err(BaselineError::Config(
+                "validity_predicates must be non-empty when validity_ratio > 0".into(),
             ));
         }
         if self.transactions.is_empty() {

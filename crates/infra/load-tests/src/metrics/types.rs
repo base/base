@@ -356,6 +356,12 @@ pub struct ConfigSummary {
     /// Fraction of transactions targeting freshly derived recipient addresses.
     #[serde(default)]
     pub fresh_recipient_ratio: f64,
+    /// Fraction of senders routed through the validity submission endpoint.
+    #[serde(default)]
+    pub validity_ratio: f64,
+    /// Number of predicate templates attached to validity transactions.
+    #[serde(default)]
+    pub validity_predicate_count: usize,
     /// Address of the precompile looper contract.
     pub looper_contract: Option<String>,
     /// Amount of each swap token per sender (in wei, as string).
