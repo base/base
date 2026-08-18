@@ -283,16 +283,13 @@ impl ValidityPredicate {
     #[must_use]
     pub fn block_expiry_bound(predicates: &[Self]) -> Option<u64> {
         let mut upper: Option<U256> = None;
-        let mut impossible = false;
         for predicate in predicates {
             let Self::BlockNumber { op, value } = predicate else { continue };
             let candidate = match op {
                 ValidityOperator::LessThan => match value.checked_sub(U256::from(1)) {
                     Some(max) => max,
-                    None => {
-                        impossible = true;
-                        continue;
-                    }
+                    // `< 0` can never hold, so the batch is permanently expired.
+                    None => return Some(0),
                 },
                 ValidityOperator::LessThanOrEqual | ValidityOperator::Equal => *value,
                 ValidityOperator::NotEqual
@@ -300,9 +297,6 @@ impl ValidityPredicate {
                 | ValidityOperator::GreaterThanOrEqual => continue,
             };
             upper = Some(upper.map_or(candidate, |current| current.min(candidate)));
-        }
-        if impossible {
-            return Some(0);
         }
         upper.and_then(|bound| u64::try_from(bound).ok())
     }
