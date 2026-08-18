@@ -289,6 +289,32 @@ impl BuilderRejectedEventData {
     }
 }
 
+/// Fields emitted when the builder defers a transaction for later re-evaluation.
+#[derive(Debug, Serialize)]
+pub(crate) struct BuilderDeferredEventData {
+    #[serde(flatten)]
+    budget: BuilderBudgetFields,
+    defer_reason: &'static str,
+    defer_detail: String,
+}
+
+impl BuilderDeferredEventData {
+    /// Creates a deferred-event payload with an explicit reason and detail.
+    pub(crate) fn new(
+        defer_reason: &'static str,
+        defer_detail: impl Into<String>,
+        info: &ExecutionInfo,
+        limits: &ResourceLimits,
+        resources: Option<&TxResources>,
+    ) -> Self {
+        Self {
+            budget: BuilderBudgetFields::new(info, limits, resources),
+            defer_reason,
+            defer_detail: defer_detail.into(),
+        }
+    }
+}
+
 /// Fields emitted when the builder accepts a transaction.
 #[derive(Debug, Serialize)]
 pub(crate) struct BuilderAcceptedEventData {
@@ -629,6 +655,24 @@ mod tests {
         assert_eq!(ctx.payload_id, "0x0102030405060708");
         assert_eq!(data["parent_hash"], format!("{:#x}", B256::repeat_byte(0xaa)));
         assert_eq!(data["transaction_count"], 0);
+    }
+
+    #[test]
+    fn deferred_event_data_is_distinct_from_rejection() {
+        let data = serialize_builder_event_data(BuilderEventData {
+            context: context().event_data(),
+            event: BuilderDeferredEventData::new(
+                "validity_predicate_not_satisfied",
+                "a validity predicate is not satisfied by the current build state",
+                &ExecutionInfo { cumulative_gas_used: 21_000, ..Default::default() },
+                &ResourceLimits { block_gas_limit: 30_000_000, ..Default::default() },
+                None,
+            ),
+        });
+
+        assert_eq!(data["defer_reason"], "validity_predicate_not_satisfied");
+        assert!(data.get("rejection_reason").is_none());
+        assert!(data.get("permanent").is_none());
     }
 
     #[test]
