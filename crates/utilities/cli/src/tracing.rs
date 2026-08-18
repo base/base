@@ -195,15 +195,22 @@ fn build_stdout_layer<S>(
 where
     S: Subscriber + for<'a> LookupSpan<'a> + Send + Sync,
 {
+    // Log collectors tailing stdout do not strip escape sequences, so the machine-parsed
+    // formats must stay uncolored or the raw `\x1b[..m` bytes are indexed as message text.
+    let colorize =
+        matches!(config.format, LogFormat::Full | LogFormat::Compact | LogFormat::Pretty);
+
     let base = tracing_subscriber::fmt::layer()
         .with_writer(io::stdout)
-        .with_ansi(true)
+        .with_ansi(colorize)
         .with_timer(SystemTime);
 
     match config.format {
         LogFormat::Full => Box::new(base.with_filter(filter)),
         LogFormat::Compact => Box::new(base.compact().with_filter(filter)),
-        LogFormat::Json => Box::new(base.json().with_filter(filter)),
+        // Datadog only reads `message` as a root key; without flattening it stays nested
+        // under `fields` and the whole JSON object is indexed as the log body instead.
+        LogFormat::Json => Box::new(base.json().flatten_event(true).with_filter(filter)),
         LogFormat::Pretty => Box::new(base.pretty().with_filter(filter)),
         LogFormat::Logfmt => Box::new(base.event_format(LogfmtFormatter).with_filter(filter)),
     }
@@ -236,7 +243,7 @@ where
     match config.format {
         LogFormat::Full => Box::new(base.with_filter(filter)),
         LogFormat::Compact => Box::new(base.compact().with_filter(filter)),
-        LogFormat::Json => Box::new(base.json().with_filter(filter)),
+        LogFormat::Json => Box::new(base.json().flatten_event(true).with_filter(filter)),
         LogFormat::Pretty => Box::new(base.pretty().with_filter(filter)),
         LogFormat::Logfmt => Box::new(base.event_format(LogfmtFormatter).with_filter(filter)),
     }
