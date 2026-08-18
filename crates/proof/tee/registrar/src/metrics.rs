@@ -1,5 +1,7 @@
 //! Registrar metrics constants.
 
+use crate::CertKind;
+
 base_metrics::define_metrics! {
     base_registrar,
     struct = RegistrarMetrics,
@@ -77,6 +79,20 @@ base_metrics::define_metrics! {
     #[describe("Total number of Registrar registration lifecycle stage observations")]
     #[label(name = "stage", default = ["already_registered", "proof_started", "proof_succeeded", "proof_failed", "proof_cancelled", "proof_invalid", "proof_stale", "tx_submitted", "tx_retry", "tx_succeeded", "tx_failed", "tx_reverted", "tx_observed_registered"])]
     registration_stage_total: counter,
+
+    #[describe("P-384 inverse-hint stream size in bytes, sampled once per registration attempt")]
+    #[label(name = "kind", default = ["ca", "leaf", "attestation"])]
+    hint_size_bytes: histogram,
+
+    #[describe("Certificate cache lookups by kind and outcome")]
+    #[label(name = "kind", default = ["ca", "leaf"])]
+    #[label(name = "outcome", default = ["hit", "miss"])]
+    cert_cache_lookup_total: counter,
+
+    #[describe("Certificate cache transactions by kind and outcome")]
+    #[label(name = "kind", default = ["ca", "leaf"])]
+    #[label(name = "outcome", default = ["submitted", "succeeded", "reverted", "retry", "failed", "observed_cached", "cancelled"])]
+    cert_cache_tx_total: counter,
 }
 
 impl RegistrarMetrics {
@@ -124,5 +140,59 @@ impl RegistrarMetrics {
     /// Records a registration lifecycle stage.
     pub fn record_registration_stage(stage: &'static str) {
         Self::registration_stage_total(stage).increment(1);
+    }
+
+    /// Bounded label for a certificate-cache kind.
+    pub const CERT_KIND_CA: &'static str = "ca";
+    /// Bounded label for a leaf certificate.
+    pub const CERT_KIND_LEAF: &'static str = "leaf";
+    /// Bounded label for the attestation signature hint stream.
+    pub const HINT_KIND_ATTESTATION: &'static str = "attestation";
+
+    /// Cache lookup found a usable cached certificate.
+    pub const CACHE_LOOKUP_HIT: &'static str = "hit";
+    /// Cache lookup found no usable cached certificate.
+    pub const CACHE_LOOKUP_MISS: &'static str = "miss";
+
+    /// Cache transaction was submitted.
+    pub const TX_OUTCOME_SUBMITTED: &'static str = "submitted";
+    /// Cache transaction succeeded and produced a usable cached certificate.
+    pub const TX_OUTCOME_SUCCEEDED: &'static str = "succeeded";
+    /// Cache transaction was included but reverted.
+    pub const TX_OUTCOME_REVERTED: &'static str = "reverted";
+    /// Registrar scheduled a retry after a retryable cache-transaction failure.
+    pub const TX_OUTCOME_RETRY: &'static str = "retry";
+    /// Cache transaction failed permanently, or its receipt succeeded without a usable certificate.
+    pub const TX_OUTCOME_FAILED: &'static str = "failed";
+    /// Certificate was observed cached after an ambiguous cache transaction.
+    pub const TX_OUTCOME_OBSERVED_CACHED: &'static str = "observed_cached";
+    /// Cache transaction was abandoned because the signer task was cancelled after send.
+    pub const TX_OUTCOME_CANCELLED: &'static str = "cancelled";
+
+    /// Returns the bounded cache-kind label for `kind`.
+    pub const fn cert_kind_label(kind: CertKind) -> &'static str {
+        match kind {
+            CertKind::Ca => Self::CERT_KIND_CA,
+            CertKind::Leaf => Self::CERT_KIND_LEAF,
+        }
+    }
+
+    /// Records one hint-stream size sample.
+    pub fn record_hint_size(kind: &'static str, size_bytes: usize) {
+        Self::hint_size_bytes(kind).record(size_bytes as f64);
+    }
+
+    /// Records a certificate-cache lookup.
+    pub fn record_cache_lookup(kind: CertKind, hit: bool) {
+        Self::cert_cache_lookup_total(
+            Self::cert_kind_label(kind),
+            if hit { Self::CACHE_LOOKUP_HIT } else { Self::CACHE_LOOKUP_MISS },
+        )
+        .increment(1);
+    }
+
+    /// Records a certificate-cache transaction outcome.
+    pub fn record_cache_tx(kind: CertKind, outcome: &'static str) {
+        Self::cert_cache_tx_total(Self::cert_kind_label(kind), outcome).increment(1);
     }
 }
