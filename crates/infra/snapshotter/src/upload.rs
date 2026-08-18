@@ -1027,7 +1027,7 @@ fn retry_delay_secs(attempt: usize) -> u64 {
 /// `base_url` points at the snapshot root (`{public_base}/{prefix}`). Finalized static-file
 /// chunks use `static_files/{archive}` in [`ChunkedArchive::chunk_files`]; tip chunks and
 /// state/rocksdb use `{timestamp}/{archive}`. Proofs stays a bare sibling filename for
-/// ProofsDownloader.
+/// `ProofsDownloader`.
 fn build_published_manifest(
     local_manifest: &SnapshotManifest,
     public_snapshot_base_url: Option<&str>,
@@ -1047,12 +1047,16 @@ fn build_published_manifest(
                 let num_chunks = chunked.num_chunks();
                 let mut chunk_files = Vec::with_capacity(num_chunks as usize);
                 for i in 0..num_chunks {
-                    let start = i * chunked.blocks_per_file;
-                    let end = start
-                        .checked_add(chunked.blocks_per_file - 1)
+                    let start = i
+                        .checked_mul(chunked.blocks_per_file)
+                        .context("block range overflow in published chunk_files")?;
+                    let end = chunked
+                        .blocks_per_file
+                        .checked_sub(1)
+                        .and_then(|offset| start.checked_add(offset))
                         .context("block range overflow in published chunk_files")?;
                     let archive_name = ChunkFilename::format(component_name, start, end);
-                    if i + 1 == num_chunks {
+                    if i.checked_add(1) == Some(num_chunks) {
                         chunk_files.push(format!("{timestamp}/{archive_name}"));
                     } else {
                         chunk_files.push(format!("static_files/{archive_name}"));
@@ -1160,12 +1164,9 @@ mod tests {
             components,
         };
 
-        let published = build_published_manifest(
-            &local,
-            Some("https://example.com/mainnet"),
-            1_700_000_000,
-        )
-        .unwrap();
+        let published =
+            build_published_manifest(&local, Some("https://example.com/mainnet"), 1_700_000_000)
+                .unwrap();
         let manifest: serde_json::Value = serde_json::from_slice(&published).unwrap();
 
         assert_eq!(
