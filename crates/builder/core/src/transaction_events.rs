@@ -315,6 +315,58 @@ impl BuilderDeferredEventData {
     }
 }
 
+/// Fields emitted when the builder discards a transaction that can no longer become valid.
+#[derive(Debug, Serialize)]
+pub(crate) struct BuilderExpiredEventData {
+    #[serde(flatten)]
+    budget: BuilderBudgetFields,
+    expire_reason: &'static str,
+    expire_detail: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bundle_min_block: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bundle_max_block: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    block_timestamp: Option<u64>,
+}
+
+impl BuilderExpiredEventData {
+    /// Creates an expired-event payload with an explicit reason and detail.
+    pub(crate) fn new(
+        expire_reason: &'static str,
+        expire_detail: impl Into<String>,
+        info: &ExecutionInfo,
+        limits: &ResourceLimits,
+        resources: Option<&TxResources>,
+    ) -> Self {
+        Self {
+            budget: BuilderBudgetFields::new(info, limits, resources),
+            expire_reason,
+            expire_detail: expire_detail.into(),
+            bundle_min_block: None,
+            bundle_max_block: None,
+            block_timestamp: None,
+        }
+    }
+
+    /// Adds the block window associated with a bundle transaction.
+    pub(crate) const fn with_bundle_block_window(
+        mut self,
+        min_block_number: Option<u64>,
+        max_block_number: Option<u64>,
+    ) -> Self {
+        self.bundle_min_block = min_block_number;
+        self.bundle_max_block = max_block_number;
+        self
+    }
+
+    /// Adds the block timestamp associated with a bundle expiry.
+    pub(crate) const fn with_block_timestamp(mut self, timestamp: u64) -> Self {
+        self.block_timestamp = Some(timestamp);
+        self
+    }
+}
+
 /// Fields emitted when the builder accepts a transaction.
 #[derive(Debug, Serialize)]
 pub(crate) struct BuilderAcceptedEventData {
@@ -673,6 +725,25 @@ mod tests {
         assert_eq!(data["defer_reason"], "validity_predicate_not_satisfied");
         assert!(data.get("rejection_reason").is_none());
         assert!(data.get("permanent").is_none());
+    }
+
+    #[test]
+    fn expired_event_data_is_distinct_from_rejection() {
+        let data = serialize_builder_event_data(BuilderEventData {
+            context: context().event_data(),
+            event: BuilderExpiredEventData::new(
+                "validity_predicate_expired",
+                "a validity predicate can no longer be satisfied at or after the current build position",
+                &ExecutionInfo { cumulative_gas_used: 21_000, ..Default::default() },
+                &ResourceLimits { block_gas_limit: 30_000_000, ..Default::default() },
+                None,
+            ),
+        });
+
+        assert_eq!(data["expire_reason"], "validity_predicate_expired");
+        assert!(data.get("rejection_reason").is_none());
+        assert!(data.get("permanent").is_none());
+        assert!(data.get("defer_reason").is_none());
     }
 
     #[test]
