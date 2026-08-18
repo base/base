@@ -6,10 +6,9 @@
 //! deterministic-deployment proxy ([`Eip8130Contracts::CREATE2_FACTORY`]) with a
 //! **per-contract mined salt**, so each address is a pure function of the
 //! contract init code (under its own salt) and is identical on every chain that
-//! deploys the same bytecode. Most salts are mined individually so the contract
-//! shares the `0x8130…` vanity prefix; the exceptions are
-//! [`Self::DELEGATE_AUTHENTICATOR`] (deployed under a non-vanity salt) and
-//! [`Self::ALWAYS_VALID_AUTHENTICATOR`] (a test/keyless helper deployed under the
+//! deploys the same bytecode. Each salt is mined individually so that every
+//! contract shares the `0x8130…` vanity prefix (except
+//! [`Self::ALWAYS_VALID_AUTHENTICATOR`], a test/keyless helper deployed under the
 //! zero salt).
 //!
 //! # ⚠️ These values track the contract bytecode
@@ -134,18 +133,17 @@ impl Eip8130Contracts {
         b256!("0x92bc05424ceb5ef1f1ad17e1d462d45fff83f76daebeef2d5ff1cf0b80733a26");
 
     /// Delegated-validation (1-hop) authenticator contract (init code embeds
-    /// `ACCOUNT_CONFIG`). Unlike the other canonical contracts its salt is not
-    /// vanity-mined, so its address does not carry the `0x8130…` prefix.
+    /// `ACCOUNT_CONFIG`).
     pub const DELEGATE_AUTHENTICATOR: Address =
-        address!("0xbE28120a621a91ea61B58441dA6C630e021FDaDe");
+        address!("0x813055C4f7cBfb8ebB5E2E5CB3eF4Eb2E2b4aDE1");
 
-    /// Per-contract CREATE2 salt for [`Self::DELEGATE_AUTHENTICATOR`].
+    /// Per-contract mined CREATE2 salt for [`Self::DELEGATE_AUTHENTICATOR`].
     pub const DELEGATE_AUTHENTICATOR_SALT: B256 =
         b256!("0x000000000000000000000000000000000000000000000000000000005f7bb101");
 
     /// keccak256 of the `DELEGATE_AUTHENTICATOR` deployment init code.
     pub const DELEGATE_AUTHENTICATOR_INIT_CODE_HASH: B256 =
-        b256!("0x71dbcb7e845f81f45f3519a3d7b75a6fd879cff001f71414b742ff77b96915f2");
+        b256!("0x8f807018b205427375b3783a5ee81e88818a25534a14ff0048ab68c907e3dc5e");
 
     /// Always-valid authenticator (keyless relay / test). Deployed alongside the
     /// canonical set under the zero salt (no vanity prefix) but **not** on the
