@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Render a criterion base-vs-head benchmark comparison into a PR comment body.
 
-Reads two trees of criterion output (one benchmarked on the PR base commit, one
-on the PR head commit), matches benchmarks by their criterion id, and emits an
-advisory Markdown table of the median-time delta. This never gates a merge; it is
-visibility only.
+Reads two named baselines from a single criterion tree (one saved on the PR base
+commit, one on the PR head commit — the workflow builds both into one shared target
+dir), matches benchmarks by their criterion id, and emits an advisory Markdown table
+of the median-time delta. This never gates a merge; it is visibility only.
 
 A wall-clock delta is only flagged as a regression or improvement when it clears
 the percentage threshold *and* the two medians' confidence intervals do not
@@ -40,16 +40,18 @@ class BenchCompare:
         self.improvement_pct = improvement_pct
 
     @staticmethod
-    def collect(root: Path) -> dict[str, Measurement]:
-        """Map criterion benchmark id -> Measurement under root.
+    def collect(root: Path, baseline: str) -> dict[str, Measurement]:
+        """Map criterion benchmark id -> Measurement for one baseline under root.
 
-        A criterion result lives at `<root>/<id...>/current/estimates.json`. The id
-        is every path component between the artifact root and the `current` baseline
-        directory, so ids are identical across the two trees regardless of how the
-        upload step stripped any shared path prefix.
+        A criterion result lives at `<root>/<id...>/<baseline>/estimates.json`. The
+        id is every path component between the artifact root and the baseline
+        directory, so ids are identical across the two baselines and the comparison
+        lines up regardless of how deep each bench nests under the tree.
         """
         results: dict[str, Measurement] = {}
-        for estimates in root.rglob("current/estimates.json"):
+        for estimates in root.rglob("estimates.json"):
+            if estimates.parent.name != baseline:
+                continue
             bench_id = "/".join(estimates.relative_to(root).parts[:-2])
             if not bench_id:
                 continue
@@ -156,10 +158,16 @@ class BenchCompare:
         """Render a `bench (+d%)` list for an alert summary."""
         return ", ".join(f"`{b}` ({self.delta_pct(base[b], head[b]):+.1f}%)" for b in ids)
 
-    def render(self, base_dir: Path, head_dir: Path, run_url: str) -> tuple[str, bool]:
+    def render(
+        self,
+        criterion_dir: Path,
+        base_baseline: str,
+        head_baseline: str,
+        run_url: str,
+    ) -> tuple[str, bool]:
         """Render the comment body, returning it and whether it warrants a comment."""
-        base = self.collect(base_dir)
-        head = self.collect(head_dir)
+        base = self.collect(criterion_dir, base_baseline)
+        head = self.collect(criterion_dir, head_baseline)
         bench_ids = sorted(set(base) | set(head))
         regressed = [b for b in bench_ids if self.is_regression(base.get(b), head.get(b))]
         improved = [b for b in bench_ids if self.is_improvement(base.get(b), head.get(b))]
@@ -236,8 +244,9 @@ class BenchCompare:
 def parse_args() -> argparse.Namespace:
     """Parse CLI arguments."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base-dir", type=Path, required=True)
-    parser.add_argument("--head-dir", type=Path, required=True)
+    parser.add_argument("--criterion-dir", type=Path, required=True)
+    parser.add_argument("--base-baseline", default="pr-base")
+    parser.add_argument("--head-baseline", default="pr-head")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--run-url", required=True)
     parser.add_argument("--threshold-pct", type=float, default=10.0)
@@ -250,7 +259,7 @@ def main() -> int:
     """Entry point for the benchmark comparison renderer."""
     args = parse_args()
     body, should_comment = BenchCompare(args.threshold_pct, args.improvement_pct).render(
-        args.base_dir, args.head_dir, args.run_url
+        args.criterion_dir, args.base_baseline, args.head_baseline, args.run_url
     )
     args.output.write_text(body, encoding="utf-8")
     if args.github_output is not None:
