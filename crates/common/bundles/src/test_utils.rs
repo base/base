@@ -23,7 +23,7 @@ pub const TXN_HASH: TxHash =
 /// Creates a test bundle from the sample transaction data.
 pub fn create_bundle_from_txn_data() -> AcceptedBundle {
     AcceptedBundle::new(
-        Bundle { txs: vec![TXN_DATA], ..Default::default() }.try_into().unwrap(),
+        Bundle { txs: vec![TXN_DATA] }.try_into().unwrap(),
         create_test_meter_bundle_response(),
     )
 }
