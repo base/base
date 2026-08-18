@@ -21,10 +21,10 @@ use tracing::info;
 use url::Url;
 
 use crate::{
-    CommandOutcome, Confirm, EXPECTED_RESOLUTION_NEVER, GameDetails, GameListFilter, GameStatus,
-    GameSummary, GamesClient, JsonOutput, KeyValueTable, MonitoringConfig, ProofProposeRequest,
-    ProofsClient, ProofsCommandError, ProposalProofSubmitter, SnarkPlonkProofBytes, SubmitterKey,
-    format_unix_timestamp,
+    CommandOutcome, Confirm, EXPECTED_RESOLUTION_NEVER, Format, GameDetails, GameListFilter,
+    GameStatus, GameSummary, GamesClient, JsonOutput, KeyValueTable, MonitoringConfig,
+    ProofProposeRequest, ProofsClient, ProofsCommandError, ProposalProofSubmitter,
+    SnarkPlonkProofBytes, SubmitterKey,
 };
 
 /// How long `--wait` and `finalize` poll the prover service before giving up.
@@ -1350,7 +1350,7 @@ fn nonzero_address(address: Address) -> Option<Address> {
 
 /// Formats an `expectedResolution` timestamp, mapping the unproven sentinel to `None`.
 fn format_expected_resolution(timestamp: u64) -> Option<String> {
-    (timestamp != EXPECTED_RESOLUTION_NEVER).then(|| format_unix_timestamp(timestamp))
+    (timestamp != EXPECTED_RESOLUTION_NEVER).then(|| Format::unix_timestamp(timestamp))
 }
 
 /// Humanized JSON shape for `basectl proofs games` (list mode).
@@ -1430,7 +1430,7 @@ impl GameSummaryJson {
             status: game_status_label(summary.status),
             starting_block: summary.starting_block,
             target_block: summary.target_block,
-            created_at: format_unix_timestamp(summary.created_at),
+            created_at: Format::unix_timestamp(summary.created_at),
             tee_prover: nonzero_address(summary.tee_prover),
             zk_prover: nonzero_address(summary.zk_prover),
             expected_resolution: format_expected_resolution(summary.expected_resolution),
@@ -1506,7 +1506,7 @@ impl GameDetailsJson {
             tee_prover: nonzero_address(details.tee_prover),
             zk_prover: nonzero_address(details.zk_prover),
             proof_count: details.proof_count,
-            created_at: format_unix_timestamp(details.created_at),
+            created_at: Format::unix_timestamp(details.created_at),
             expected_resolution: format_expected_resolution(details.expected_resolution),
             countered_index: details.countered_index,
         }

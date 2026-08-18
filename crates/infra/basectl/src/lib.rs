@@ -44,12 +44,9 @@ pub use app::{
 mod output;
 pub use output::{
     COLOR_ACTIVE_BORDER, COLOR_BASE_BLUE, COLOR_BURN, COLOR_GAS_FILL, COLOR_GROWTH,
-    COLOR_ROW_HIGHLIGHTED, COLOR_ROW_SELECTED, COLOR_TARGET, JsonOutput, KeyValueTable,
+    COLOR_ROW_HIGHLIGHTED, COLOR_ROW_SELECTED, COLOR_TARGET, Format, JsonOutput, KeyValueTable,
     L1BlocksTableParams, P2pClInfoJson, P2pElInfoJson, P2pInfoJson, P2pInfoTable, TimestampJson,
-    backlog_size_color, block_color, block_color_bright, build_gas_bar, format_bytes,
-    format_duration, format_gas, format_gwei, format_rate, format_unix_timestamp,
-    render_da_backlog_bar, render_gas_usage_bar, render_l1_blocks_table, target_usage_color,
-    time_diff_color, truncate_block_number,
+    build_gas_bar, render_da_backlog_bar, render_gas_usage_bar, render_l1_blocks_table,
 };
 
 mod config;

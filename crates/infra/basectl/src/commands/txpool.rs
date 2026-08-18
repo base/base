@@ -10,8 +10,8 @@ use tracing::{debug, info, warn};
 use url::Url;
 
 use crate::{
-    Confirm, JsonOutput, KeyValueTable, MonitoringConfig, TxpoolClient, TxpoolCounts, TxpoolReport,
-    TxpoolScope, TxpoolSenderSummary, TxpoolTransactionRow, format_gas, format_gwei,
+    Confirm, Format, JsonOutput, KeyValueTable, MonitoringConfig, TxpoolClient, TxpoolCounts,
+    TxpoolReport, TxpoolScope, TxpoolSenderSummary, TxpoolTransactionRow,
 };
 
 /// Inspect and clear execution-layer txpool contents.
@@ -423,7 +423,7 @@ fn print_read_pretty_to<W: Write>(
             hash = transaction.hash,
             to = format_destination(transaction.to),
             value_wei = transaction.value_wei,
-            gas = format_gas(transaction.gas_limit),
+            gas = Format::gas(transaction.gas_limit),
             fee = format_transaction_fee(transaction),
             input = transaction.input_bytes,
         )?;
@@ -446,8 +446,8 @@ fn format_destination(to: Option<Address>) -> String {
 
 fn format_transaction_fee(transaction: &TxpoolTransactionRow) -> String {
     let priority_fee =
-        transaction.max_priority_fee_per_gas_wei.map_or_else(|| "n/a".to_string(), format_gwei);
-    format!("max={} priority={priority_fee}", format_gwei(transaction.max_fee_per_gas_wei))
+        transaction.max_priority_fee_per_gas_wei.map_or_else(|| "n/a".to_string(), Format::gwei);
+    format!("max={} priority={priority_fee}", Format::gwei(transaction.max_fee_per_gas_wei))
 }
 
 fn print_clear_action(action: &TxpoolClearJson, json: bool) -> Result<()> {

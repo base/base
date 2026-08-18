@@ -3,9 +3,7 @@
 mod format;
 pub use format::{
     COLOR_ACTIVE_BORDER, COLOR_BASE_BLUE, COLOR_BURN, COLOR_GAS_FILL, COLOR_GROWTH,
-    COLOR_ROW_HIGHLIGHTED, COLOR_ROW_SELECTED, COLOR_TARGET, backlog_size_color, block_color,
-    block_color_bright, format_bytes, format_duration, format_gas, format_gwei, format_rate,
-    format_unix_timestamp, target_usage_color, time_diff_color, truncate_block_number,
+    COLOR_ROW_HIGHLIGHTED, COLOR_ROW_SELECTED, COLOR_TARGET, Format,
 };
 
 mod json;

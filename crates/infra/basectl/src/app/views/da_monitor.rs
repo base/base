@@ -13,9 +13,8 @@ use crate::{
         Resources, View, views::TransactionPane,
     },
     output::{
-        COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, COLOR_ROW_SELECTED, L1BlocksTableParams,
-        block_color, format_bytes as fmt_bytes, format_duration as fmt_dur, format_rate,
-        render_da_backlog_bar, render_l1_blocks_table, target_usage_color, truncate_block_number,
+        COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, COLOR_ROW_SELECTED, Format, L1BlocksTableParams,
+        render_da_backlog_bar, render_l1_blocks_table,
     },
     tui::{Keybinding, Toast},
 };
@@ -348,30 +347,31 @@ fn render_stats_panel(f: &mut Frame<'_>, area: Rect, resources: &Resources, filt
         Line::from(vec![
             Span::styled("Growth:  ", Style::default().fg(Color::DarkGray)),
             Span::styled("30s ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format_rate(growth_30s), Style::default().fg(COLOR_GROWTH)),
+            Span::styled(Format::rate(growth_30s), Style::default().fg(COLOR_GROWTH)),
             Span::raw("  "),
             Span::styled("2m ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format_rate(growth_2m), Style::default().fg(COLOR_GROWTH)),
+            Span::styled(Format::rate(growth_2m), Style::default().fg(COLOR_GROWTH)),
             Span::raw("  "),
             Span::styled("5m ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format_rate(growth_5m), Style::default().fg(COLOR_GROWTH)),
+            Span::styled(Format::rate(growth_5m), Style::default().fg(COLOR_GROWTH)),
         ]),
         Line::from(vec![
             Span::styled("Burn:    ", Style::default().fg(Color::DarkGray)),
             Span::styled("30s ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format_rate(burn_30s), Style::default().fg(COLOR_BURN)),
+            Span::styled(Format::rate(burn_30s), Style::default().fg(COLOR_BURN)),
             Span::raw("  "),
             Span::styled("2m ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format_rate(burn_2m), Style::default().fg(COLOR_BURN)),
+            Span::styled(Format::rate(burn_2m), Style::default().fg(COLOR_BURN)),
             Span::raw("  "),
             Span::styled("5m ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format_rate(burn_5m), Style::default().fg(COLOR_BURN)),
+            Span::styled(Format::rate(burn_5m), Style::default().fg(COLOR_BURN)),
         ]),
         Line::from(vec![
             Span::styled("L1 Target: ", Style::default().fg(Color::DarkGray)),
             Span::styled(
                 format_share(target_usage),
-                Style::default().fg(target_usage.map_or(Color::DarkGray, target_usage_color)),
+                Style::default()
+                    .fg(target_usage.map_or(Color::DarkGray, Format::target_usage_color)),
             ),
             Span::raw("  "),
             Span::styled("Base: ", Style::default().fg(Color::DarkGray)),
@@ -379,7 +379,7 @@ fn render_stats_panel(f: &mut Frame<'_>, area: Rect, resources: &Resources, filt
             Span::raw("  "),
             Span::styled("Last: ", Style::default().fg(Color::DarkGray)),
             Span::styled(
-                time_since.map(fmt_dur).unwrap_or_else(|| "-".to_string()),
+                time_since.map(Format::duration).unwrap_or_else(|| "-".to_string()),
                 Style::default().fg(Color::White),
             ),
             Span::raw("  "),
@@ -447,18 +447,18 @@ fn render_blocks_panel(
             let block_style = if is_safe {
                 Style::default().fg(Color::DarkGray)
             } else {
-                Style::default().fg(block_color(contrib.block_number))
+                Style::default().fg(Format::block_color(contrib.block_number))
             };
 
             let tx_str =
                 if contrib.tx_count > 0 { contrib.tx_count.to_string() } else { "-".to_string() };
 
             Row::new(vec![
-                Cell::from(truncate_block_number(contrib.block_number, block_col_width))
+                Cell::from(Format::truncate_block_number(contrib.block_number, block_col_width))
                     .style(block_style),
                 Cell::from(tx_str),
-                Cell::from(fmt_bytes(contrib.da_bytes)),
-                Cell::from(fmt_dur(Duration::from_secs(contrib.age_seconds()))),
+                Cell::from(Format::bytes(contrib.da_bytes)),
+                Cell::from(Format::duration(Duration::from_secs(contrib.age_seconds()))),
             ])
             .style(style)
         })

@@ -331,7 +331,7 @@ fn gen_array_impl(config: &ArrayConfig) -> TokenStream {
             #[inline]
             fn load<S: ::base_precompile_storage::StorageOps>(storage: &S, slot: ::alloy_primitives::U256, ctx: ::base_precompile_storage::LayoutCtx) -> ::base_precompile_storage::Result<Self> {
                 debug_assert_eq!(ctx, ::base_precompile_storage::LayoutCtx::FULL, "Arrays can only be loaded with LayoutCtx::FULL");
-                use ::base_precompile_storage::{calc_element_slot, calc_element_offset, extract_from_word};
+                use ::base_precompile_storage::{Word, calc_element_slot, calc_element_offset};
                 let base_slot = slot;
                 #load_impl
             }
@@ -339,7 +339,7 @@ fn gen_array_impl(config: &ArrayConfig) -> TokenStream {
             #[inline]
             fn store<S: ::base_precompile_storage::StorageOps>(&self, storage: &mut S, slot: ::alloy_primitives::U256, ctx: ::base_precompile_storage::LayoutCtx) -> ::base_precompile_storage::Result<()> {
                 debug_assert_eq!(ctx, ::base_precompile_storage::LayoutCtx::FULL, "Arrays can only be stored with LayoutCtx::FULL");
-                use ::base_precompile_storage::{calc_element_slot, calc_element_offset, insert_into_word};
+                use ::base_precompile_storage::{Word, calc_element_slot, calc_element_offset};
                 let base_slot = slot;
                 #store_impl
             }
@@ -357,7 +357,7 @@ fn gen_packed_array_load(array_size: &usize, elem_byte_count: &usize) -> TokenSt
                 .checked_add(::alloy_primitives::U256::from(slot_idx))
                 .ok_or(::base_precompile_storage::BasePrecompileError::SlotOverflow)?;
             let slot_value = storage.load(slot_addr)?;
-            result[i] = extract_from_word(slot_value, offset, #elem_byte_count)?;
+            result[i] = Word::extract_from_word(slot_value, offset, #elem_byte_count)?;
         }
         Ok(result)
     }
@@ -375,7 +375,7 @@ fn gen_packed_array_store(array_size: &usize, elem_byte_count: &usize) -> TokenS
                 let elem_slot = calc_element_slot(i, #elem_byte_count);
                 if elem_slot == slot_idx {
                     let offset = calc_element_offset(i, #elem_byte_count);
-                    slot_value = insert_into_word(slot_value, &self[i], offset, #elem_byte_count)?;
+                    slot_value = Word::insert_into_word(slot_value, &self[i], offset, #elem_byte_count)?;
                 }
             }
             storage.store(slot_addr, slot_value)?;

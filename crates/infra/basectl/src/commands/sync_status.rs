@@ -12,8 +12,8 @@ use serde::Serialize;
 use url::Url;
 
 use crate::{
-    JsonOutput, KeyValueTable, MonitoringConfig, SyncStatusReport, TimestampJson, fetch_block,
-    fetch_sync_status, format_duration, format_unix_timestamp,
+    Format, JsonOutput, KeyValueTable, MonitoringConfig, SyncStatusReport, TimestampJson,
+    fetch_block, fetch_sync_status,
 };
 
 /// Arguments for reporting combined consensus- and execution-layer sync status.
@@ -139,7 +139,7 @@ fn print_pretty(
         "safe_lag",
         format!(
             "{} ({} blocks behind unsafe)",
-            format_duration(Duration::from_secs(lag_seconds)),
+            Format::duration(Duration::from_secs(lag_seconds)),
             lag_blocks,
         ),
     );
@@ -186,7 +186,7 @@ fn format_tip_reference(
 
 /// Formats a block number and timestamp for pretty output.
 fn format_block_info(b: &BlockInfo) -> String {
-    format!("#{} ts={} ({})", b.number, b.timestamp, format_unix_timestamp(b.timestamp))
+    format!("#{} ts={} ({})", b.number, b.timestamp, Format::unix_timestamp(b.timestamp))
 }
 
 /// Humanized JSON shape for `basectl sync-status --json`.
