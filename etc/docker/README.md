@@ -2,7 +2,7 @@
 
 This directory contains the Dockerfiles and Compose configuration for the **local devnet** and internal Rust services.
 
-The public operator image (`ghcr.io/base/node-reth`) is built from `Dockerfile.node-reth` and `docker-compose.node.yml`. Entrypoints and supervisord live in `etc/scripts/node/`; operators edit `.env.mainnet` / `.env.sepolia` at the repo root. Root `docker-compose.yml` pulls the published image. `just devnet up` uses this directory's `docker-compose.yml` (and the HA overlay).
+The public operator image (`ghcr.io/base/node-reth`) is built from `Dockerfile.node-reth`. Entrypoints and supervisord live in `etc/scripts/node/`; operators edit `.env.mainnet` / `.env.sepolia` at the repo root. Root `docker-compose.yml` pulls the published image, or compiles this tree with `--build`. `just devnet up` uses this directory's `docker-compose.yml` (and the HA overlay).
 
 ## Dockerfiles
 
