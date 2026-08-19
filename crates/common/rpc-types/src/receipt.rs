@@ -4,12 +4,13 @@ use alloc::vec::Vec;
 
 use alloy_consensus::{Receipt, ReceiptWithBloom, TxReceipt};
 use alloy_primitives::{Address, Bytes};
-use alloy_rpc_types_eth::Log;
 use alloy_serde::OtherFields;
 use base_common_consensus::{
     BaseReceipt, BaseReceiptEnvelope, DepositReceipt, DepositReceiptWithBloom,
 };
 use serde::{Deserialize, Serialize};
+
+use crate::BaseLogResponse;
 
 /// Base transaction receipt type
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -18,7 +19,8 @@ use serde::{Deserialize, Serialize};
 pub struct BaseTransactionReceipt {
     /// Regular eth transaction receipt including deposit receipts
     #[serde(flatten)]
-    pub inner: alloy_rpc_types_eth::TransactionReceipt<ReceiptWithBloom<BaseReceipt<Log>>>,
+    pub inner:
+        alloy_rpc_types_eth::TransactionReceipt<ReceiptWithBloom<BaseReceipt<BaseLogResponse>>>,
     /// L1 block info of the transaction.
     #[serde(flatten)]
     pub l1_block_info: L1BlockInfo,
@@ -89,39 +91,39 @@ impl alloy_network_primitives::ReceiptResponse for BaseTransactionReceipt {
     }
 
     fn transaction_index(&self) -> Option<u64> {
-        self.inner.transaction_index()
+        self.inner.transaction_index
     }
 
     fn gas_used(&self) -> u64 {
-        self.inner.gas_used()
+        self.inner.gas_used
     }
 
     fn effective_gas_price(&self) -> u128 {
-        self.inner.effective_gas_price()
+        self.inner.effective_gas_price
     }
 
     fn blob_gas_used(&self) -> Option<u64> {
-        self.inner.blob_gas_used()
+        self.inner.blob_gas_used
     }
 
     fn blob_gas_price(&self) -> Option<u128> {
-        self.inner.blob_gas_price()
+        self.inner.blob_gas_price
     }
 
     fn from(&self) -> alloy_primitives::Address {
-        self.inner.from()
+        self.inner.from
     }
 
     fn to(&self) -> Option<alloy_primitives::Address> {
-        self.inner.to()
+        self.inner.to
     }
 
     fn cumulative_gas_used(&self) -> u64 {
-        self.inner.cumulative_gas_used()
+        self.inner.inner.cumulative_gas_used()
     }
 
     fn state_root(&self) -> Option<alloy_primitives::B256> {
-        self.inner.state_root()
+        self.inner.inner.status_or_post_state().as_post_state()
     }
 }
 
@@ -256,10 +258,10 @@ impl From<BaseTransactionReceipt> for BaseReceiptEnvelope {
         /// consensus types.
         #[inline(always)]
         fn convert_standard_receipt(
-            receipt: Receipt<alloy_rpc_types_eth::Log>,
+            receipt: Receipt<BaseLogResponse>,
             logs_bloom: alloy_primitives::Bloom,
         ) -> ReceiptWithBloom<Receipt<alloy_primitives::Log>> {
-            let consensus_logs = receipt.logs.into_iter().map(|log| log.inner).collect();
+            let consensus_logs = receipt.logs.into_iter().map(|log| log.inner.inner).collect();
             ReceiptWithBloom {
                 receipt: Receipt {
                     status: receipt.status,
@@ -289,7 +291,8 @@ impl From<BaseTransactionReceipt> for BaseReceiptEnvelope {
                 Self::Eip8130(convert_standard_receipt(receipt.inner, logs_bloom))
             }
             BaseReceipt::Deposit(receipt) => {
-                let consensus_logs = receipt.inner.logs.into_iter().map(|log| log.inner).collect();
+                let consensus_logs =
+                    receipt.inner.logs.into_iter().map(|log| log.inner.inner).collect();
                 let consensus_receipt = DepositReceiptWithBloom {
                     receipt: DepositReceipt {
                         inner: Receipt {
@@ -328,7 +331,19 @@ mod tests {
         "effectiveGasPrice": "0x0",
         "from": "0xdeaddeaddeaddeaddeaddeaddeaddeaddead0001",
         "gasUsed": "0xfa0d",
-        "logs": [],
+        "logs": [{
+            "address": "0x4200000000000000000000000000000000000015",
+            "topics": [],
+            "data": "0x",
+            "blockHash": "0x9e6a0fb7e22159d943d760608cc36a0fb596d1ab3c997146f5b7c55c8c718c67",
+            "blockNumber": "0x6cfef89",
+            "blockTimestamp": "0x2a",
+            "blockTimestampMs": "0xa4d8",
+            "transactionHash": "0xb7c74afdeb7c89fb9de2c312f49b38cb7a850ba36e064734c5223a477e83fdc9",
+            "transactionIndex": "0x0",
+            "logIndex": "0x0",
+            "removed": false
+        }],
         "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
         "status": "0x1",
         "to": "0x4200000000000000000000000000000000000015",
@@ -350,6 +365,9 @@ mod tests {
         let value = serde_json::to_value(&receipt).unwrap();
         let expected_value = serde_json::from_str::<serde_json::Value>(s).unwrap();
         assert_eq!(value, expected_value);
+        assert!(value.get("blockTimestampMs").is_none());
+        assert_eq!(value["logs"][0]["blockTimestamp"], "0x2a");
+        assert_eq!(value["logs"][0]["blockTimestampMs"], "0xa4d8");
     }
 
     #[test]

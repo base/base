@@ -16,7 +16,22 @@ use base_common_evm::BaseTransaction as BaseRevm;
 use reth_rpc_convert::{FromConsensusTx, SignTxRequestError, SignableTxRequest, TryIntoSimTx};
 use revm::context::TxEnv;
 
-use crate::{BaseTransactionRequest, Transaction};
+use crate::{
+    BaseHeaderResponse, BaseLogResponse, BaseTransactionReceipt, BaseTransactionRequest,
+    Transaction,
+};
+
+/// Base response types used by Reth's `eth_` RPC implementation.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct BaseRpcTypes;
+
+impl reth_rpc_convert::RpcTypes for BaseRpcTypes {
+    type Header = BaseHeaderResponse;
+    type Receipt = BaseTransactionReceipt;
+    type Log = BaseLogResponse;
+    type TransactionResponse = Transaction;
+    type TransactionRequest = BaseTransactionRequest;
+}
 
 impl FromConsensusTx<BaseTxEnvelope> for Transaction {
     type TxInfo = BaseTransactionInfo;

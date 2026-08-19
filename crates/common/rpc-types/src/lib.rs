@@ -37,3 +37,5 @@ pub use transaction::{
 
 #[cfg(feature = "reth")]
 mod reth;
+#[cfg(feature = "reth")]
+pub use reth::BaseRpcTypes;
