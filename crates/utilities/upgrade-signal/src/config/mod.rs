@@ -4,6 +4,8 @@ use core::time::Duration;
 
 use alloy_primitives::U256;
 
+use crate::PackedProtocolVersion;
+
 mod args;
 pub use args::{UpgradeSignalArgs, UpgradeSignalL1RpcArgs, UpgradeSignalStartupConfig};
 
@@ -43,11 +45,13 @@ impl UpgradeSignalDefaults {
         ))
     }
 
-    /// Encodes a `major.minor.patch` version into the packed-semver `uint256` layout used by the
-    /// L1 `ProtocolVersions` contract: `major << 96 | minor << 64 | patch << 32`, with the
-    /// prerelease field left zero.
+    /// Encodes a final-release `major.minor.patch` version into the packed-semver `uint256` layout
+    /// used by the L1 `ProtocolVersions` contract, leaving the prerelease and build fields zero.
+    ///
+    /// See [`PackedProtocolVersion`] for the field layout and the ordering rules that govern
+    /// protocol-version compatibility checks.
     pub const fn packed_protocol_version(major: u32, minor: u32, patch: u32) -> U256 {
-        U256::from_limbs([(patch as u64) << 32, ((major as u64) << 32) | minor as u64, 0, 0])
+        PackedProtocolVersion::pack(major, minor, patch, 0).into_inner()
     }
 
     /// Maps a packed Cargo version to the advertised node protocol version, promoting the

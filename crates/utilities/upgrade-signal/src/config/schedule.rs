@@ -7,6 +7,7 @@ use url::Url;
 
 use super::{UpgradeSignalBlockTag, UpgradeSignalDefaults, UpgradeSignalMode};
 use crate::{
+    PackedProtocolVersion,
     contract::AlloyUpgradeSignalReader,
     error::UpgradeSignalError,
     metrics::{UpgradeSignalMetricLayer, UpgradeSignalMetrics},
@@ -49,8 +50,13 @@ impl UpgradeSignalConfig {
     }
 
     /// Returns true if this node supports the minimum protocol version attached to `signal`.
+    ///
+    /// Compatibility compares the packed versions by their OP-Stack semver ordering (see
+    /// [`PackedProtocolVersion`]), not as raw integers: `major.minor.patch` first, with a
+    /// pre-release sorting below its matching release and `build`/reserved bits ignored.
     pub fn supports_signal_protocol_version(&self, signal: &UpgradeSignal) -> bool {
-        signal.protocol_version <= self.node_protocol_version
+        PackedProtocolVersion::new(signal.protocol_version)
+            <= PackedProtocolVersion::new(self.node_protocol_version)
     }
 
     /// Returns an error if a positive activation timestamp omits its minimum protocol version.
@@ -242,11 +248,37 @@ mod tests {
 
     #[test]
     fn rejects_signal_above_node_protocol_version() {
+        // Node supports 1.1.0; a 1.1.1 minimum is genuinely newer.
         let config = supported_config();
-        let minimum_protocol_version = config.node_protocol_version + U256::from(1);
+        let minimum_protocol_version = UpgradeSignalDefaults::packed_protocol_version(1, 1, 1);
 
         assert!(matches!(
             config.validate_signal_protocol_version(&signal(minimum_protocol_version)).unwrap_err(),
+            crate::UpgradeSignalError::UnsupportedProtocolVersion { .. }
+        ));
+    }
+
+    #[test]
+    fn accepts_prerelease_minimum_of_the_node_release() {
+        // Node runs the final 1.2.3; a 1.2.3-rc.1 minimum must be considered sufficient, even
+        // though its raw packed integer is larger than the release's.
+        let mut config = supported_config();
+        config.node_protocol_version = UpgradeSignalDefaults::packed_protocol_version(1, 2, 3);
+
+        let prerelease = PackedProtocolVersion::pack(1, 2, 3, 1).into_inner();
+        assert!(prerelease > config.node_protocol_version);
+        assert!(config.validate_signal_protocol_version(&signal(prerelease)).is_ok());
+    }
+
+    #[test]
+    fn rejects_prerelease_minimum_above_the_node_release() {
+        // A 1.2.4-rc.1 minimum still outranks the node's final 1.2.3.
+        let mut config = supported_config();
+        config.node_protocol_version = UpgradeSignalDefaults::packed_protocol_version(1, 2, 3);
+
+        let prerelease = PackedProtocolVersion::pack(1, 2, 4, 1).into_inner();
+        assert!(matches!(
+            config.validate_signal_protocol_version(&signal(prerelease)).unwrap_err(),
             crate::UpgradeSignalError::UnsupportedProtocolVersion { .. }
         ));
     }
@@ -301,7 +333,7 @@ mod tests {
                 UpgradeSignal {
                     upgrade_id: BaseUpgrade::Beryl,
                     activation_timestamp: 42,
-                    protocol_version: config.node_protocol_version + U256::from(1),
+                    protocol_version: UpgradeSignalDefaults::packed_protocol_version(1, 1, 1),
                 },
             ],
         );

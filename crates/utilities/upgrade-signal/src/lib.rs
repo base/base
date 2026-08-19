@@ -34,3 +34,6 @@ pub use runtime::{
 
 mod state;
 pub use state::{UpgradeSignal, UpgradeSignalMonitor, UpgradeSignalSchedule};
+
+mod version;
+pub use version::PackedProtocolVersion;
