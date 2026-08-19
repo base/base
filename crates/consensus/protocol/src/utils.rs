@@ -3,10 +3,13 @@
 use alloc::vec::Vec;
 
 use alloy_consensus::{Transaction, Typed2718};
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{B256, Bytes, U256};
 use alloy_rlp::{Buf, Header};
-use base_common_consensus::{BaseBlock, HoloceneExtraData, JovianExtraData, OpTxType};
+use base_common_consensus::{
+    BaseBlock, BaseTxEnvelope, HoloceneExtraData, JovianExtraData, OpTxType,
+};
 use base_common_genesis::{RollupConfig, SystemConfig};
+use base_common_rpc_types_engine::BaseExecutionPayload;
 
 use crate::{
     BaseBlockConversionError, L1BlockInfoBedrockOnlyFields as _, L1BlockInfoEcotoneBaseFields as _,
@@ -18,24 +21,80 @@ pub fn to_system_config(
     block: &BaseBlock,
     rollup_config: &RollupConfig,
 ) -> Result<SystemConfig, BaseBlockConversionError> {
-    if block.header.number == rollup_config.genesis.l2.number {
-        if block.header.hash_slow() != rollup_config.genesis.l2.hash {
-            return Err(BaseBlockConversionError::InvalidGenesisHash(
-                rollup_config.genesis.l2.hash,
-                block.header.hash_slow(),
-            ));
-        }
-        return rollup_config
-            .genesis
-            .system_config
-            .ok_or(BaseBlockConversionError::MissingSystemConfigGenesis);
+    let block_hash = block.header.hash_slow();
+    if let Some(config) = genesis_system_config(block.header.number, block_hash, rollup_config)? {
+        return Ok(config);
     }
 
-    if block.body.transactions.is_empty() {
-        return Err(BaseBlockConversionError::EmptyTransactions(block.header.hash_slow()));
+    let first_tx = block
+        .body
+        .transactions
+        .first()
+        .ok_or(BaseBlockConversionError::EmptyTransactions(block_hash))?;
+    system_config_from_transaction(
+        first_tx,
+        block.header.timestamp,
+        block.header.gas_limit,
+        &block.header.extra_data,
+        rollup_config,
+    )
+}
+
+/// Converts the [`BaseExecutionPayload`] to a partial [`SystemConfig`].
+pub fn to_system_config_from_payload(
+    payload: &BaseExecutionPayload,
+    rollup_config: &RollupConfig,
+) -> Result<SystemConfig, BaseBlockConversionError> {
+    let block_hash = payload.block_hash();
+    if let Some(config) = genesis_system_config(payload.block_number(), block_hash, rollup_config)?
+    {
+        return Ok(config);
     }
-    let Some(tx) = block.body.transactions[0].as_deposit() else {
-        return Err(BaseBlockConversionError::InvalidTxType(block.body.transactions[0].ty()));
+
+    let first_tx = payload
+        .decoded_transactions::<BaseTxEnvelope>()
+        .next()
+        .ok_or(BaseBlockConversionError::EmptyTransactions(block_hash))?
+        .map_err(|_| BaseBlockConversionError::InvalidTransactionEncoding)?;
+    system_config_from_transaction(
+        &first_tx,
+        payload.timestamp(),
+        payload.gas_limit(),
+        &payload.as_v1().extra_data,
+        rollup_config,
+    )
+}
+
+fn genesis_system_config(
+    block_number: u64,
+    block_hash: B256,
+    rollup_config: &RollupConfig,
+) -> Result<Option<SystemConfig>, BaseBlockConversionError> {
+    if block_number != rollup_config.genesis.l2.number {
+        return Ok(None);
+    }
+    if block_hash != rollup_config.genesis.l2.hash {
+        return Err(BaseBlockConversionError::InvalidGenesisHash(
+            rollup_config.genesis.l2.hash,
+            block_hash,
+        ));
+    }
+    rollup_config
+        .genesis
+        .system_config
+        .map(Some)
+        .ok_or(BaseBlockConversionError::MissingSystemConfigGenesis)
+}
+
+fn system_config_from_transaction(
+    first_tx: &BaseTxEnvelope,
+    timestamp: u64,
+    gas_limit: u64,
+    extra_data: &Bytes,
+    rollup_config: &RollupConfig,
+) -> Result<SystemConfig, BaseBlockConversionError> {
+    let Some(tx) = first_tx.as_deposit() else {
+        return Err(BaseBlockConversionError::InvalidTxType(first_tx.ty()));
     };
 
     let l1_info = L1BlockInfoTx::decode_calldata(tx.input().as_ref())?;
@@ -56,24 +115,23 @@ pub fn to_system_config(
         batcher_address: l1_info.batcher_address(),
         overhead: l1_info.l1_fee_overhead(),
         scalar: l1_fee_scalar,
-        gas_limit: block.header.gas_limit,
+        gas_limit,
         ..Default::default()
     };
 
     // After holocene's activation, the EIP-1559 parameters are stored in the block header's nonce.
-    if rollup_config.is_jovian_active(block.header.timestamp) {
-        let (elasticity, denominator, min_base_fee) =
-            JovianExtraData::decode(&block.header.extra_data)?;
+    if rollup_config.is_jovian_active(timestamp) {
+        let (elasticity, denominator, min_base_fee) = JovianExtraData::decode(extra_data)?;
         cfg.eip1559_denominator = Some(denominator);
         cfg.eip1559_elasticity = Some(elasticity);
         cfg.min_base_fee = Some(min_base_fee);
-    } else if rollup_config.is_holocene_active(block.header.timestamp) {
-        let (elasticity, denominator) = HoloceneExtraData::decode(&block.header.extra_data)?;
+    } else if rollup_config.is_holocene_active(timestamp) {
+        let (elasticity, denominator) = HoloceneExtraData::decode(extra_data)?;
         cfg.eip1559_denominator = Some(denominator);
         cfg.eip1559_elasticity = Some(elasticity);
     }
 
-    if rollup_config.is_isthmus_active(block.header.timestamp) {
+    if rollup_config.is_isthmus_active(timestamp) {
         cfg.operator_fee_scalar = Some(l1_info.operator_fee_scalar());
         cfg.operator_fee_constant = Some(l1_info.operator_fee_constant());
     }
@@ -149,7 +207,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        SpanBatchElement,
+        L1BlockInfoJovian, SpanBatchElement,
         test_utils::{RAW_BEDROCK_INFO_TX, RAW_ECOTONE_INFO_TX, RAW_ISTHMUS_INFO_TX},
     };
 
@@ -241,6 +299,10 @@ mod tests {
         };
         let err = to_system_config(&block, &rollup_config).unwrap_err();
         assert_eq!(err, BaseBlockConversionError::EmptyTransactions(block_hash));
+
+        let (payload, _) = BaseExecutionPayload::from_block_slow(&block);
+        let err = to_system_config_from_payload(&payload, &rollup_config).unwrap_err();
+        assert_eq!(err, BaseBlockConversionError::EmptyTransactions(block_hash));
     }
 
     #[test]
@@ -276,6 +338,23 @@ mod tests {
         };
         let err = to_system_config(&block, &rollup_config).unwrap_err();
         assert_eq!(err, BaseBlockConversionError::InvalidTxType(0));
+
+        let (payload, _) = BaseExecutionPayload::from_block_slow(&block);
+        let err = to_system_config_from_payload(&payload, &rollup_config).unwrap_err();
+        assert_eq!(err, BaseBlockConversionError::InvalidTxType(0));
+    }
+
+    #[test]
+    fn test_to_system_config_malformed_payload_transaction() {
+        let block = BaseBlock {
+            header: alloy_consensus::Header { number: 1, ..Default::default() },
+            ..Default::default()
+        };
+        let (mut payload, _) = BaseExecutionPayload::from_block_slow(&block);
+        payload.transactions_mut().push(bytes!("ff"));
+
+        let err = to_system_config_from_payload(&payload, &RollupConfig::default()).unwrap_err();
+        assert_eq!(err, BaseBlockConversionError::InvalidTransactionEncoding);
     }
 
     #[test]
@@ -316,6 +395,10 @@ mod tests {
             da_footprint_gas_scalar: None,
         };
         assert_eq!(config, expected);
+
+        let (mut payload, _) = BaseExecutionPayload::from_block_slow(&block);
+        payload.transactions_mut().push(bytes!("ff"));
+        assert_eq!(to_system_config_from_payload(&payload, &rollup_config).unwrap(), config);
     }
 
     #[test]
@@ -365,6 +448,9 @@ mod tests {
             da_footprint_gas_scalar: None,
         };
         assert_eq!(config, expected);
+
+        let (payload, _) = BaseExecutionPayload::from_block_slow(&block);
+        assert_eq!(to_system_config_from_payload(&payload, &rollup_config).unwrap(), config);
     }
 
     #[test]
@@ -418,5 +504,57 @@ mod tests {
             da_footprint_gas_scalar: None,
         };
         assert_eq!(config, expected);
+
+        let (payload, _) = BaseExecutionPayload::from_block_slow(&block);
+        assert_eq!(to_system_config_from_payload(&payload, &rollup_config).unwrap(), config);
+    }
+
+    #[test]
+    fn test_constructs_jovian_system_config_from_payload() {
+        let block = BaseBlock {
+            header: alloy_consensus::Header {
+                number: 1,
+                extra_data: bytes!("010000beef0000babe0000000000000123"),
+                ..Default::default()
+            },
+            body: alloy_consensus::BlockBody {
+                transactions: vec![BaseTxEnvelope::Deposit(alloy_primitives::Sealed::new(
+                    base_common_consensus::TxDeposit {
+                        input: L1BlockInfoJovian::new(
+                            1,
+                            2,
+                            3,
+                            B256::ZERO,
+                            4,
+                            address!("6887246668a3b87f54deb3b94ba47a6f63f32985"),
+                            5,
+                            6,
+                            7,
+                            8,
+                            9,
+                            10,
+                        )
+                        .encode_calldata(),
+                        ..Default::default()
+                    },
+                ))],
+                ..Default::default()
+            },
+        };
+        let rollup_config = RollupConfig {
+            upgrades: UpgradeConfig {
+                isthmus_time: Some(0),
+                jovian_time: Some(0),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let config = to_system_config(&block, &rollup_config).unwrap();
+        assert_eq!(config.min_base_fee, Some(0x123));
+        assert_eq!(config.da_footprint_gas_scalar, Some(10));
+
+        let (payload, _) = BaseExecutionPayload::from_block_slow(&block);
+        assert_eq!(to_system_config_from_payload(&payload, &rollup_config).unwrap(), config);
     }
 }
