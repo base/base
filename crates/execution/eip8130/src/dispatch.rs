@@ -158,8 +158,24 @@ impl AuthenticatorDispatch {
     /// `actorId = keccak256(x || y)`. Mirrors `OpenZeppelin` `WebAuthn.verify`
     /// with `requireUV = false` (as the deployed `WebAuthnAuthenticator`).
     fn webauthn(hash: B256, data: &[u8]) -> Result<B256, AuthError> {
-        let (auth, x, y) = <(WebAuthnAuth, B256, B256)>::abi_decode_params(data)
+        let decoded = <(WebAuthnAuth, B256, B256)>::abi_decode_params(data)
             .map_err(|_| AuthError::MalformedAuth)?;
+
+        // Canonical-encoding guard. `data` is un-signed, relay-mutable material —
+        // the WebAuthn signature commits to the challenge and `clientDataJSON`,
+        // not to this outer ABI framing — yet every byte is billed as EIP-2028
+        // payload gas. A non-canonical re-encoding (trailing padding or
+        // non-minimal dynamic offsets) decodes to the same value and still passes
+        // the P-256 check, but changes the transaction hash and inflates
+        // sender-intrinsic gas, letting a relayer shrink the execution-gas budget
+        // without the key. Requiring the input to equal its canonical ABI
+        // re-encoding makes any such mutation invalidate the transaction. Honest
+        // producers (Solidity `abi.encode` / `alloy` `abi_encode_params`) always
+        // emit this canonical form, so this rejects only malleated blobs.
+        if decoded.abi_encode_params() != data {
+            return Err(AuthError::MalformedAuth);
+        }
+        let (auth, x, y) = decoded;
 
         let auth_data = auth.authenticatorData.as_ref();
         let client_json = auth.clientDataJSON.as_bytes();
@@ -459,6 +475,26 @@ mod tests {
                 &data,
             ),
             Err(AuthError::InvalidSignature),
+        );
+    }
+
+    #[test]
+    fn webauthn_rejects_trailing_bytes() {
+        // The blob authenticates HASH; appending an unsigned trailing byte leaves
+        // the decoded value (and thus the P-256 check and resolved actorId)
+        // unchanged, but is non-canonical ABI. It must be rejected so a relayer
+        // cannot malleate the transaction hash or inflate payload gas with bytes
+        // the signer never covered.
+        let key = p256_key();
+        let (mut data, _) = webauthn_blob(&key, HASH);
+        data.push(0xFF);
+        assert_eq!(
+            AuthenticatorDispatch::authenticate(
+                HASH,
+                Eip8130Contracts::WEBAUTHN_AUTHENTICATOR,
+                &data,
+            ),
+            Err(AuthError::MalformedAuth),
         );
     }
 
