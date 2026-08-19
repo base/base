@@ -45,8 +45,8 @@ use tracing::{Level, debug, span, trace, warn};
 
 use crate::{
     BuilderConfig, BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded,
-    ParkedPredicateIndex, PayloadTxsBounds, ResourceLimits, TxResources, TxnExecutionError,
-    TxnOutcome, ValidityPredicateKey,
+    ParkedPredicateIndex, PayloadTxsBounds, ResourceLimits, StateChangeEffects, TxResources,
+    TxnExecutionError, TxnOutcome, ValidityPredicateKey,
     transaction_events::{
         BuilderAcceptedEventData, BuilderConsideredEventData, BuilderDeferredEventData,
         BuilderRejectedEventData, BuilderTransactionEventContext, emit_builder_transaction_event,
@@ -687,6 +687,10 @@ impl BasePayloadBuilderCtx {
         let mut reverted_gas_used: u64 = 0;
         let base_fee = self.base_fee();
         let mut diag = FlashblockDiagnostics::default();
+
+        // Number of validity-predicate index buckets woken (their watched balance or storage
+        // slot actually changed) across this flashblock build.
+        let mut predicate_bucket_wakeups: u64 = 0;
 
         let min_tx_index = info.executed_transactions.len() as u64;
         let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
@@ -1425,11 +1429,12 @@ impl BasePayloadBuilderCtx {
             };
             info.receipts.push(self.build_receipt(ctx, None));
 
-            let affected_parked = if predicate_index.is_empty() {
-                Vec::new()
+            let state_change_effects = if predicate_index.is_empty() {
+                StateChangeEffects::default()
             } else {
                 predicate_index.affected_by_state(&state)
             };
+            predicate_bucket_wakeups += state_change_effects.woken_buckets as u64;
 
             // commit changes
             evm.db_mut().commit(state);
@@ -1437,7 +1442,7 @@ impl BasePayloadBuilderCtx {
             // Release the committed transaction's lane before promoting predicate-unblocked heads.
             best_txs.mark_current_committed();
             let predicate_rescan_start = Instant::now();
-            for parked_hash in &affected_parked {
+            for parked_hash in &state_change_effects.affected_transactions {
                 let mut predicate_read_failed = false;
                 let Some(parked_transaction) = predicate_index.transaction(*parked_hash) else {
                     warn!(
@@ -1485,7 +1490,7 @@ impl BasePayloadBuilderCtx {
                     best_txs.promote(*parked_hash);
                 }
             }
-            if !affected_parked.is_empty() {
+            if !state_change_effects.affected_transactions.is_empty() {
                 BuilderMetrics::validity_predicate_rescan_duration()
                     .record(predicate_rescan_start.elapsed().as_secs_f64());
             }
@@ -1531,6 +1536,10 @@ impl BasePayloadBuilderCtx {
             num_txs_simulated_success as f64,
             num_txs_simulated_fail as f64,
             reverted_gas_used as f64,
+        );
+        BuilderMetrics::record_predicate_index_diagnostics(
+            predicate_bucket_wakeups,
+            &predicate_index,
         );
 
         diag.txs_considered = num_txs_considered;

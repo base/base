@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use crate::{ExecutionInfo, FlashblockDiagnostics, ResourceLimits};
+use crate::{ExecutionInfo, FlashblockDiagnostics, ParkedPredicateIndex, ResourceLimits};
 
 const PRIORITY_FEE_THRESHOLDS_WEI: [(&str, u64); 3] =
     [("100wei", 100), ("100kwei", 100_000), ("1mwei", 1_000_000)];
@@ -118,6 +118,14 @@ base_metrics::define_metrics! {
         "Total validity predicate evaluation time per flashblock build, inclusive of state loads, in seconds"
     )]
     validity_predicate_eval_duration_per_block: histogram,
+    #[describe(
+        "Number of validity-predicate index buckets woken (watched balance or storage slot changed), per flashblock build"
+    )]
+    predicate_bucket_wakeups: histogram,
+    #[describe(
+        "Depth (parked transaction count) of validity-predicate index buckets, sampled once per flashblock build"
+    )]
+    predicate_bucket_depth: histogram,
     #[describe("Validity predicate evaluation attempts")]
     #[label(outcome)]
     validity_predicate_evaluations_total: counter,
@@ -302,13 +310,23 @@ impl BuilderMetrics {
         Self::payload_num_tx_simulated_fail_gauge().set(num_txs_simulated_fail);
         Self::payload_reverted_tx_gas_used().set(reverted_gas_used);
     }
+
+    /// Records validity-predicate index bucket wakeups and depth distribution for one flashblock build.
+    pub fn record_predicate_index_diagnostics<T>(wakeups: u64, index: &ParkedPredicateIndex<T>) {
+        Self::predicate_bucket_wakeups().record(wakeups as f64);
+        for depth in index.bucket_depths() {
+            Self::predicate_bucket_depth().record(depth as f64);
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::{Address, B256};
     use metrics_exporter_prometheus::PrometheusBuilder;
 
     use super::*;
+    use crate::ValidityPredicateKey;
 
     #[test]
     fn record_flashblock_diagnostics_emits_labeled_metrics() {
@@ -390,5 +408,36 @@ mod tests {
             rendered.contains("base_builder_validity_predicate_eval_duration_per_block_sum 0.5"),
             "expected 0.5s recorded, got: {rendered}"
         );
+    }
+
+    #[test]
+    fn record_predicate_index_diagnostics_emits_wakeups_and_bucket_depths() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        let mut index = ParkedPredicateIndex::default();
+        index.park(
+            B256::with_last_byte(1),
+            (),
+            ValidityPredicateKey::Balance(Address::with_last_byte(1)),
+        );
+        index.park(
+            B256::with_last_byte(2),
+            (),
+            ValidityPredicateKey::Balance(Address::with_last_byte(1)),
+        );
+        index.park(
+            B256::with_last_byte(3),
+            (),
+            ValidityPredicateKey::Balance(Address::with_last_byte(2)),
+        );
+
+        metrics::with_local_recorder(&recorder, || {
+            BuilderMetrics::record_predicate_index_diagnostics(3, &index);
+        });
+
+        let rendered = handle.render();
+        assert!(rendered.contains("base_builder_predicate_bucket_wakeups_sum 3"));
+        assert!(rendered.contains("base_builder_predicate_bucket_depth_count 2"));
+        assert!(rendered.contains("base_builder_predicate_bucket_depth_sum 3"));
     }
 }

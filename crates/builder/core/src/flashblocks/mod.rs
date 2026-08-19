@@ -7,7 +7,7 @@ pub use best_txs::{
 };
 
 mod predicate_index;
-pub use predicate_index::{ParkedPredicateIndex, ValidityPredicateKey};
+pub use predicate_index::{ParkedPredicateIndex, StateChangeEffects, ValidityPredicateKey};
 
 mod deadline;
 pub use deadline::PayloadJobDeadline;
