@@ -90,6 +90,8 @@ impl NitroEnclave {
                 storage_proof,
             } => {
                 info!(
+                    auth_hash = %auth_hash,
+                    message_passer_storage_root = %message_passer_storage_root,
                     storage_proof_nodes = storage_proof.len(),
                     "received attested withdrawal request"
                 );

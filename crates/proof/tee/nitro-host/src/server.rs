@@ -259,6 +259,9 @@ impl EnclaveApiServer for NitroSignerRpc {
 }
 
 /// Inner RPC handler for attested-withdrawal signing on the private prover endpoint.
+///
+/// A withdrawal needs one signature, so this handler uses the primary (first)
+/// transport even when the deployment has multiple enclaves.
 struct NitroAttestedWithdrawalRpc {
     transports: Vec<Arc<NitroTransport>>,
 }
