@@ -271,6 +271,35 @@ impl ValidityPredicate {
         let pinned_to_current_block = block_upper == Some(current_block);
         pinned_to_current_block && flashblock_upper.is_some_and(|max| max < current_flashblock)
     }
+
+    /// Returns the inclusive last block at which these predicates can still be
+    /// satisfied, when the `block_number` predicates impose a finite upper bound.
+    ///
+    /// Returns `Some(0)` when the block predicates are already unsatisfiable at
+    /// any block (drop as soon as the chain advances), and `None` when no
+    /// `block_number` upper bound applies or the bound exceeds [`u64::MAX`]. This
+    /// is the pool-side, block-granular projection of [`Self::is_batch_expired`];
+    /// the finer flashblock deadline is enforced only by the builder.
+    #[must_use]
+    pub fn block_expiry_bound(predicates: &[Self]) -> Option<u64> {
+        let mut upper: Option<U256> = None;
+        for predicate in predicates {
+            let Self::BlockNumber { op, value } = predicate else { continue };
+            let candidate = match op {
+                ValidityOperator::LessThan => match value.checked_sub(U256::from(1)) {
+                    Some(max) => max,
+                    // `< 0` can never hold, so the batch is permanently expired.
+                    None => return Some(0),
+                },
+                ValidityOperator::LessThanOrEqual | ValidityOperator::Equal => *value,
+                ValidityOperator::NotEqual
+                | ValidityOperator::GreaterThan
+                | ValidityOperator::GreaterThanOrEqual => continue,
+            };
+            upper = Some(upper.map_or(candidate, |current| current.min(candidate)));
+        }
+        upper.and_then(|bound| u64::try_from(bound).ok())
+    }
 }
 
 /// Experimental validity predicates carried with a validated transaction.
@@ -934,5 +963,71 @@ mod tests {
         ];
         assert!(!ValidityPredicate::is_batch_expired(&state_only, &context_at(10_000, 9)));
         assert!(!ValidityPredicate::is_batch_expired(&[], &context_at(10_000, 9)));
+    }
+
+    #[test]
+    fn block_expiry_bound_uses_the_inclusive_upper_bound() {
+        assert_eq!(
+            ValidityPredicate::block_expiry_bound(&[block_number(
+                ValidityOperator::LessThanOrEqual,
+                100
+            )]),
+            Some(100)
+        );
+        assert_eq!(
+            ValidityPredicate::block_expiry_bound(&[block_number(ValidityOperator::Equal, 100)]),
+            Some(100)
+        );
+        // `<` is exclusive, so the last valid block is one lower.
+        assert_eq!(
+            ValidityPredicate::block_expiry_bound(&[block_number(ValidityOperator::LessThan, 100)]),
+            Some(99)
+        );
+    }
+
+    #[test]
+    fn block_expiry_bound_ignores_non_upper_bounds() {
+        for op in [
+            ValidityOperator::GreaterThan,
+            ValidityOperator::GreaterThanOrEqual,
+            ValidityOperator::NotEqual,
+        ] {
+            assert_eq!(ValidityPredicate::block_expiry_bound(&[block_number(op, 100)]), None);
+        }
+        // No block predicate at all.
+        assert_eq!(
+            ValidityPredicate::block_expiry_bound(&[flashblock_index(
+                ValidityOperator::LessThanOrEqual,
+                2
+            )]),
+            None
+        );
+        assert_eq!(ValidityPredicate::block_expiry_bound(&[]), None);
+    }
+
+    #[test]
+    fn block_expiry_bound_takes_the_tightest_bound() {
+        let predicates = [
+            block_number(ValidityOperator::LessThanOrEqual, 200),
+            block_number(ValidityOperator::LessThanOrEqual, 100),
+        ];
+        assert_eq!(ValidityPredicate::block_expiry_bound(&predicates), Some(100));
+    }
+
+    #[test]
+    fn block_expiry_bound_reports_zero_for_unsatisfiable_bounds() {
+        assert_eq!(
+            ValidityPredicate::block_expiry_bound(&[block_number(ValidityOperator::LessThan, 0)]),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn block_expiry_bound_is_none_when_bound_exceeds_u64() {
+        let predicate = ValidityPredicate::BlockNumber {
+            op: ValidityOperator::LessThanOrEqual,
+            value: U256::from(u64::MAX) + U256::from(1),
+        };
+        assert_eq!(ValidityPredicate::block_expiry_bound(&[predicate]), None);
     }
 }
