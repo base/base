@@ -20,7 +20,9 @@ pub use proof_encoder::{CryptoError, PROOF_TYPE_TEE, PROOF_TYPE_ZK, ProofEncoder
 mod prover;
 pub use prover::ProverBackend;
 
+#[cfg(feature = "verify")]
 mod verify;
+#[cfg(feature = "verify")]
 pub use verify::{
     AccountProofError, AccountProofVerifier, StorageProofError, StorageProofVerifier,
 };

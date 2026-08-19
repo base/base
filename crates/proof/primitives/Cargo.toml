@@ -17,9 +17,9 @@ async-trait.workspace = true
 alloy-eips = { workspace = true }
 alloy-chains = { workspace = true }
 alloy-primitives = { workspace = true }
-alloy-rlp.workspace = true
-alloy-rpc-types-eth = { workspace = true, features = ["serde"] }
-alloy-trie.workspace = true
+alloy-rlp = { workspace = true, optional = true }
+alloy-rpc-types-eth = { workspace = true, optional = true, features = ["serde"] }
+alloy-trie = { workspace = true, optional = true }
 base-proof-preimage = { workspace = true }
 base-common-genesis = { workspace = true }
 jsonrpsee = { workspace = true, optional = true }
@@ -51,6 +51,11 @@ serde = [
 	"base-common-genesis/serde",
 	"base-proof-preimage/serde",
 	"dep:serde",
+]
+verify = [
+	"dep:alloy-rlp",
+	"dep:alloy-rpc-types-eth",
+	"dep:alloy-trie",
 ]
 rpc-server = [
 	"dep:jsonrpsee",
