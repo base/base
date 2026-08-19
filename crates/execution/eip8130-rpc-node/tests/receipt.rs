@@ -73,14 +73,17 @@ async fn eip8130_transaction_is_mined_and_has_a_receipt() -> eyre::Result<()> {
     assert!(receipt.block_number().is_some(), "receipt must be mined into a block");
 
     // The EIP-8130 RPC receipt carries the gas payer; for a self-pay transaction
-    // that is the resolved sender. With empty `calls`, `phaseStatuses` is omitted.
+    // that is the resolved sender. With empty `calls`, EIP-8130 requires the
+    // receipt to still carry `phaseStatuses` as an empty array (distinguishing an
+    // applicable-but-empty result from an omitted / lost field).
     let client = harness.rpc_client()?;
     let json: serde_json::Value = client.request("eth_getTransactionReceipt", (tx_hash,)).await?;
     let payer: Address = serde_json::from_value(json["payer"].clone())?;
     assert_eq!(payer, alice.address(), "self-pay receipt payer must be the sender");
-    assert!(
-        json.get("phaseStatuses").is_none_or(|v| v.as_array().is_some_and(|a| a.is_empty())),
-        "empty-calls transaction must not report phase statuses"
+    assert_eq!(
+        json["phaseStatuses"],
+        serde_json::json!([]),
+        "empty-calls EIP-8130 transaction must report an empty phaseStatuses array"
     );
     assert!(
         json.get("metadata").is_none_or(serde_json::Value::is_null),
