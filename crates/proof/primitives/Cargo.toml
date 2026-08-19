@@ -54,12 +54,8 @@ serde = [
 ]
 verify = [
 	"dep:alloy-rlp",
-	"dep:alloy-trie",
-]
-account-verify = [
-	"std",
-	"verify",
 	"dep:alloy-rpc-types-eth",
+	"dep:alloy-trie",
 ]
 rpc-server = [
 	"dep:jsonrpsee",
