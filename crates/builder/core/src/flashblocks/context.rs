@@ -1,7 +1,7 @@
 use core::fmt::Debug;
 use std::{
     sync::Arc,
-    time::{Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use alloy_consensus::{Eip658Value, Transaction};
@@ -658,6 +658,17 @@ impl BasePayloadBuilderCtx {
         Ok(info)
     }
 
+    /// Runs `f`, adding its wall-clock duration to `total`. `total` stays `None`
+    /// until the first call, so a `Some` result also records that at least one
+    /// predicate was evaluated during the build; this gates the per-block
+    /// histogram so blocks without validity transactions emit no observation.
+    fn accumulate_elapsed<T>(total: &mut Option<Duration>, f: impl FnOnce() -> T) -> T {
+        let start = Instant::now();
+        let value = f();
+        *total.get_or_insert(Duration::ZERO) += start.elapsed();
+        value
+    }
+
     /// Executes the given best transactions and updates the execution info.
     ///
     /// Returns diagnostics summarizing transaction selection for the flashblock.
@@ -695,6 +706,12 @@ impl BasePayloadBuilderCtx {
         let mut predicate_index = ParkedPredicateIndex::default();
         let predicate_context =
             PredicateContext { block_number, flashblock_index: self.flashblock_index() };
+
+        // Total validity-predicate evaluation time (inclusive of the state loads each
+        // evaluation performs) across this flashblock build. `None` until the first
+        // evaluation, so it both accumulates and records whether any validity
+        // transaction was seen; emitted once when the loop finishes.
+        let mut predicate_eval_total: Option<Duration> = None;
 
         while let Some(tx) = best_txs.next(()) {
             if tx.is_bundle_expired(block_number, block_timestamp) {
@@ -791,22 +808,28 @@ impl BasePayloadBuilderCtx {
             let tx_hash = *tx.hash();
             let has_validity_predicates = !tx.validity_predicates().is_empty();
             let mut predicate_read_failed = false;
-            let blocking_predicate = match ValidityPredicateKey::first_unsatisfied(
-                tx.validity_predicates(),
-                evm.db_mut(),
-                &predicate_context,
-            ) {
-                Ok(blocking_predicate) => blocking_predicate,
-                Err(error) => {
-                    warn!(
-                        target: "payload_builder",
-                        tx_hash = ?tx_hash,
-                        error = ?error,
-                        "failed to read validity predicate state"
-                    );
-                    predicate_read_failed = true;
-                    None
+            let blocking_predicate = if has_validity_predicates {
+                match Self::accumulate_elapsed(&mut predicate_eval_total, || {
+                    ValidityPredicateKey::first_unsatisfied(
+                        tx.validity_predicates(),
+                        evm.db_mut(),
+                        &predicate_context,
+                    )
+                }) {
+                    Ok(blocking_predicate) => blocking_predicate,
+                    Err(error) => {
+                        warn!(
+                            target: "payload_builder",
+                            tx_hash = ?tx_hash,
+                            error = ?error,
+                            "failed to read validity predicate state"
+                        );
+                        predicate_read_failed = true;
+                        None
+                    }
                 }
+            } else {
+                None
             };
             if has_validity_predicates {
                 let outcome = if predicate_read_failed {
@@ -1424,23 +1447,26 @@ impl BasePayloadBuilderCtx {
                     );
                     continue;
                 };
-                let blocking_predicate = match ValidityPredicateKey::first_unsatisfied(
-                    parked_transaction.validity_predicates(),
-                    evm.db_mut(),
-                    &predicate_context,
-                ) {
-                    Ok(blocking_predicate) => blocking_predicate,
-                    Err(error) => {
-                        warn!(
-                            target: "payload_builder",
-                            tx_hash = ?parked_hash,
-                            error = ?error,
-                            "failed to re-read validity predicate state"
-                        );
-                        predicate_read_failed = true;
-                        None
-                    }
-                };
+                let blocking_predicate =
+                    match Self::accumulate_elapsed(&mut predicate_eval_total, || {
+                        ValidityPredicateKey::first_unsatisfied(
+                            parked_transaction.validity_predicates(),
+                            evm.db_mut(),
+                            &predicate_context,
+                        )
+                    }) {
+                        Ok(blocking_predicate) => blocking_predicate,
+                        Err(error) => {
+                            warn!(
+                                target: "payload_builder",
+                                tx_hash = ?parked_hash,
+                                error = ?error,
+                                "failed to re-read validity predicate state"
+                            );
+                            predicate_read_failed = true;
+                            None
+                        }
+                    };
                 let outcome = if predicate_read_failed {
                     "rescan_read_error"
                 } else if blocking_predicate.is_some() {
@@ -1488,6 +1514,13 @@ impl BasePayloadBuilderCtx {
             // append sender and transaction to the respective lists
             info.executed_senders.push(tx.signer());
             info.executed_transactions.push(tx.into_inner());
+        }
+
+        // Record accumulated validity-predicate evaluation time once per flashblock build.
+        // `None` means no validity transactions were evaluated, so nothing is emitted and
+        // the histogram is not flooded with zero observations.
+        if let Some(predicate_eval_total) = predicate_eval_total {
+            BuilderMetrics::record_predicate_eval_duration(predicate_eval_total);
         }
 
         let payload_transaction_simulation_time = execute_txs_start_time.elapsed();
