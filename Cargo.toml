@@ -216,7 +216,7 @@ base-proof-zk-host = { path = "crates/proof/zk/host" }
 base-proof-zk-utils = { path = "crates/proof/zk/utils" }
 base-proof-contracts = { path = "crates/proof/contracts" }
 base-proof-submission = { path = "crates/proof/submission" }
-base-proof-zk-backend = { path = "crates/proof/zk/backend" }
+base-proof-zk-backend = { path = "crates/proof/zk/backend", default-features = false }
 base-proof-zk-witness = { path = "crates/proof/zk/witness" }
 base-prover-service = { path = "crates/proof/prover-service" }
 base-proof-tee-registrar = { path = "crates/proof/tee/registrar" }
@@ -237,8 +237,6 @@ base-proof-primitives = { path = "crates/proof/primitives", default-features = f
 
 # Succinct (OP Succinct / SP1 proving)
 base-proof-succinct-elfs = { path = "crates/proof/succinct/utils/elfs" }
-base-proof-succinct-host-utils = { path = "crates/proof/succinct/utils/host" }
-base-proof-succinct-proof-utils = { path = "crates/proof/succinct/utils/proof" }
 
 # Batcher
 base-blobs = { path = "crates/batcher/blobs" }
@@ -402,7 +400,6 @@ arboard = "3.6.1"
 ratatui = "0.30.0"
 crossterm = "0.29"
 indicatif = "0.18"
-num-format = "0.4.4"
 human_bytes = "0.4.3"
 clap_builder = "4.6.5"
 tracing-indicatif = "0.3"

@@ -1,8 +1,25 @@
+//! SP1 stdin encoding for range and aggregation programs.
+
 use alloy_consensus::Header;
 use alloy_primitives::{Address, B256};
 use anyhow::Result;
-use base_proof_zk_utils::{boot::BootInfoStruct, types::AggregationInputs};
+use base_proof_zk_utils::{
+    boot::BootInfoStruct, types::AggregationInputs, witness::DefaultWitnessData,
+};
+use rkyv::to_bytes;
 use sp1_sdk::{HashableKey, SP1Proof, SP1Stdin};
+
+/// Build SP1 stdin from collected witness data.
+///
+/// The intermediate root sampling interval is sourced from `BootInfo` inside the zkVM
+/// (preimage key 9) — the same channel the TEE enclave reads — so it is intentionally not
+/// passed through stdin.
+pub fn get_sp1_stdin(witness: DefaultWitnessData) -> Result<SP1Stdin> {
+    let mut stdin = SP1Stdin::default();
+    let buffer = to_bytes::<rkyv::rancor::Error>(&witness)?;
+    stdin.write_slice(&buffer);
+    Ok(stdin)
+}
 
 /// Build the SP1 stdin for the aggregation proof from range proofs and headers.
 pub fn get_agg_proof_stdin(
@@ -27,8 +44,8 @@ pub fn get_agg_proof_stdin(
         multi_block_vkey: multi_block_vkey.hash_u32(),
         prover_address,
     });
-    // The headers have issues serializing with bincode, so use serde_json instead.
-    let headers_bytes = serde_cbor::to_vec(&headers).unwrap();
+    // The headers have issues serializing with bincode, so use serde_cbor instead.
+    let headers_bytes = serde_cbor::to_vec(&headers)?;
     stdin.write_vec(headers_bytes);
 
     Ok(stdin)
