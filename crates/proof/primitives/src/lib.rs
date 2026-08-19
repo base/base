@@ -22,10 +22,10 @@ pub use prover::ProverBackend;
 
 #[cfg(feature = "verify")]
 mod verify;
+#[cfg(feature = "account-verify")]
+pub use verify::{AccountProofError, AccountProofVerifier};
 #[cfg(feature = "verify")]
-pub use verify::{
-    AccountProofError, AccountProofVerifier, StorageProofError, StorageProofVerifier,
-};
+pub use verify::{StorageProofError, StorageProofVerifier};
 
 mod withdrawal;
 pub use withdrawal::{

@@ -36,9 +36,9 @@ std = [
 	"alloy-chains/std",
 	"alloy-eips/std",
 	"alloy-primitives/std",
-	"alloy-rlp/std",
-	"alloy-rpc-types-eth/std",
-	"alloy-trie/std",
+	"alloy-rlp?/std",
+	"alloy-rpc-types-eth?/std",
+	"alloy-trie?/std",
 	"base-common-genesis/std",
 	"base-proof-preimage/std",
 	"serde?/std",
@@ -54,8 +54,12 @@ serde = [
 ]
 verify = [
 	"dep:alloy-rlp",
-	"dep:alloy-rpc-types-eth",
 	"dep:alloy-trie",
+]
+account-verify = [
+	"std",
+	"verify",
+	"dep:alloy-rpc-types-eth",
 ]
 rpc-server = [
 	"dep:jsonrpsee",
