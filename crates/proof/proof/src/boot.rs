@@ -394,22 +394,26 @@ impl BootInfo {
         };
 
         // Missing or zero values default to the claimed block.
-        let schedule_l2_block_number =
-            match Self::get_optional_local(oracle, L2_SCHEDULE_BLOCK_NUMBER_KEY).await? {
-                Some(bytes) => {
-                    let value = u64::from_be_bytes(
-                        bytes.as_slice().try_into().map_err(OracleProviderError::SliceConversion)?,
-                    );
-                    if value == 0 { l2_claim_block } else { value }
-                }
-                None => {
-                    debug!(
-                        target: "boot_loader",
-                        "Schedule L2 block number preimage not found, defaulting to claimed L2 block number"
-                    );
-                    l2_claim_block
-                }
-            };
+        let schedule_l2_block_number = match Self::get_optional_local(
+            oracle,
+            L2_SCHEDULE_BLOCK_NUMBER_KEY,
+        )
+        .await?
+        {
+            Some(bytes) => {
+                let value = u64::from_be_bytes(
+                    bytes.as_slice().try_into().map_err(OracleProviderError::SliceConversion)?,
+                );
+                if value == 0 { l2_claim_block } else { value }
+            }
+            None => {
+                debug!(
+                    target: "boot_loader",
+                    "Schedule L2 block number preimage not found, defaulting to claimed L2 block number"
+                );
+                l2_claim_block
+            }
+        };
 
         if rollup_config.block_time == 0 {
             return Err(OracleProviderError::InvalidL2BlockTime);
