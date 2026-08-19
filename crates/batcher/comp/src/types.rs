@@ -1,6 +1,7 @@
 //! Compression algorithm and error types.
 
 use alloc::vec::Vec;
+use core::fmt;
 
 #[cfg(feature = "std")]
 use crate::brotli::BrotliCompressor;
@@ -20,22 +21,39 @@ pub enum CompressionError {
     #[cfg(feature = "std")]
     #[error("brotli compression failed: {0}")]
     Brotli(#[from] std::io::Error),
+    /// Brotli quality is outside the encoder's accepted range.
+    #[error("brotli quality {quality} is outside 0..=11")]
+    InvalidBrotliQuality {
+        /// The configured Brotli quality.
+        quality: u8,
+    },
 }
 
 /// The compression algorithm type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompressionAlgo {
-    /// The fastest brotli compression level.
-    Brotli9,
-    /// The default brotli compression level.
-    Brotli10,
-    /// The best brotli compression level.
-    Brotli11,
+    /// Brotli with quality `0..=11`.
+    ///
+    /// Quality is an operational choice. Derivation only inspects the `0x01`
+    /// channel-version prefix; it does not depend on this level.
+    Brotli(u8),
     /// The zlib compression.
     Zlib,
 }
 
 impl CompressionAlgo {
+    /// Inclusive minimum Brotli quality accepted by the encoder.
+    pub const BROTLI_MIN_QUALITY: u8 = 0;
+    /// Inclusive maximum Brotli quality accepted by the encoder.
+    pub const BROTLI_MAX_QUALITY: u8 = 11;
+    /// Default Brotli quality used by the batcher.
+    pub const BROTLI_DEFAULT_QUALITY: u8 = 10;
+
+    /// Brotli at `quality`, or `None` when it is outside `0..=11`.
+    pub const fn brotli(quality: u8) -> Option<Self> {
+        if quality <= Self::BROTLI_MAX_QUALITY { Some(Self::Brotli(quality)) } else { None }
+    }
+
     /// Compresses one complete derivation channel.
     ///
     /// Brotli channels carry the `0x01` channel-version byte before the
@@ -43,9 +61,12 @@ impl CompressionAlgo {
     pub fn compress_channel(self, input: &[u8]) -> Result<Vec<u8>, CompressionError> {
         let quality = match self {
             Self::Zlib => return Ok(miniz_oxide::deflate::compress_to_vec_zlib(input, 9)),
-            Self::Brotli9 => 9,
-            Self::Brotli10 => 10,
-            Self::Brotli11 => 11,
+            Self::Brotli(quality) => {
+                if quality > Self::BROTLI_MAX_QUALITY {
+                    return Err(CompressionError::InvalidBrotliQuality { quality });
+                }
+                i32::from(quality)
+            }
         };
 
         #[cfg(feature = "std")]
@@ -60,6 +81,15 @@ impl CompressionAlgo {
         {
             let _ = (input, quality);
             Err(CompressionError::BrotliUnavailable)
+        }
+    }
+}
+
+impl fmt::Display for CompressionAlgo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Zlib => f.write_str("zlib"),
+            Self::Brotli(quality) => write!(f, "brotli-{quality}"),
         }
     }
 }
@@ -81,8 +111,22 @@ mod tests {
     #[cfg(feature = "std")]
     #[test]
     fn brotli_channel_has_version_prefix() {
-        let channel = CompressionAlgo::Brotli10.compress_channel(b"batch channel data").unwrap();
+        let channel = CompressionAlgo::Brotli(10).compress_channel(b"batch channel data").unwrap();
 
         assert_eq!(channel.first(), Some(&0x01));
+    }
+
+    #[test]
+    fn brotli_rejects_quality_above_max() {
+        let err = CompressionAlgo::Brotli(12).compress_channel(b"batch channel data").unwrap_err();
+
+        assert!(matches!(err, CompressionError::InvalidBrotliQuality { quality: 12 }));
+    }
+
+    #[test]
+    fn brotli_constructor_accepts_inclusive_range() {
+        assert_eq!(CompressionAlgo::brotli(0), Some(CompressionAlgo::Brotli(0)));
+        assert_eq!(CompressionAlgo::brotli(11), Some(CompressionAlgo::Brotli(11)));
+        assert_eq!(CompressionAlgo::brotli(12), None);
     }
 }

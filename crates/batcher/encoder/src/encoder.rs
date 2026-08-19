@@ -1247,7 +1247,7 @@ mod tests {
 
     #[test]
     fn test_open_channel_emits_full_blob_without_closing() {
-        for compression_algo in [CompressionAlgo::Zlib, CompressionAlgo::Brotli10] {
+        for compression_algo in [CompressionAlgo::Zlib, CompressionAlgo::Brotli(10)] {
             let config = EncoderConfig {
                 compressed_size_target: None,
                 max_channel_duration: 100,

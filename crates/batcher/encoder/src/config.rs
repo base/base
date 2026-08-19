@@ -64,7 +64,8 @@ pub struct EncoderConfig {
     /// Brotli channels are accepted only after Fjord. Zlib remains valid on both
     /// sides of the fork and should be selected for pre-Fjord environments.
     ///
-    /// Default: [`CompressionAlgo::Brotli10`].
+    /// Default: [`CompressionAlgo::Brotli`] at
+    /// [`CompressionAlgo::BROTLI_DEFAULT_QUALITY`].
     pub compression_algo: CompressionAlgo,
 }
 
@@ -77,7 +78,7 @@ impl Default for EncoderConfig {
             sub_safety_margin: 0,
             max_blobs_per_tx: 6,
             da_type: DaType::Blob,
-            compression_algo: CompressionAlgo::Brotli10,
+            compression_algo: CompressionAlgo::Brotli(CompressionAlgo::BROTLI_DEFAULT_QUALITY),
         }
     }
 }
@@ -149,6 +150,12 @@ impl EncoderConfig {
                 max_frame_size: self.max_frame_size,
                 max_blob_frame_size: Self::MAX_BLOB_FRAME_SIZE,
             });
+        }
+
+        if let CompressionAlgo::Brotli(quality) = self.compression_algo
+            && quality > CompressionAlgo::BROTLI_MAX_QUALITY
+        {
+            return Err(EncoderConfigError::BrotliQualityOutOfRange { quality });
         }
 
         Ok(())
@@ -241,6 +248,12 @@ pub enum EncoderConfigError {
         /// The maximum frame size that leaves room for the derivation-version prefix.
         max_blob_frame_size: usize,
     },
+    /// Brotli quality is outside the encoder's accepted range.
+    #[error("brotli quality {quality} is outside 0..=11")]
+    BrotliQualityOutOfRange {
+        /// The configured Brotli quality.
+        quality: u8,
+    },
     /// Brotli compression is configured before Fjord activates.
     #[error(
         "brotli compression requires Fjord to be active for the next L2 block; \
@@ -270,6 +283,10 @@ mod tests {
         assert_eq!(cfg.max_frame_size, EncoderConfig::MAX_BLOB_FRAME_SIZE);
         assert_eq!(cfg.compressed_size_target, None);
         assert_eq!(cfg.max_blobs_per_tx, 6);
+        assert_eq!(
+            cfg.compression_algo,
+            CompressionAlgo::Brotli(CompressionAlgo::BROTLI_DEFAULT_QUALITY)
+        );
         assert_eq!(
             cfg.max_frame_size + EncoderConfig::BLOB_DERIVATION_PREFIX_SIZE,
             EncoderConfig::BLOB_MAX_DATA_SIZE
@@ -305,7 +322,7 @@ mod tests {
 
     #[rstest]
     #[case(CompressionAlgo::Zlib)]
-    #[case(CompressionAlgo::Brotli10)]
+    #[case(CompressionAlgo::Brotli(10))]
     fn validate_rejects_frame_without_payload_capacity(#[case] compression_algo: CompressionAlgo) {
         let max_frame_size = Frame::ENCODED_OVERHEAD;
         let min_frame_size = Frame::ENCODED_OVERHEAD + 1;
@@ -324,7 +341,7 @@ mod tests {
 
     #[rstest]
     #[case(CompressionAlgo::Zlib)]
-    #[case(CompressionAlgo::Brotli10)]
+    #[case(CompressionAlgo::Brotli(10))]
     fn validate_accepts_frame_with_payload_capacity(#[case] compression_algo: CompressionAlgo) {
         let max_frame_size = Frame::ENCODED_OVERHEAD + 1;
         let cfg = EncoderConfig { compression_algo, max_frame_size, ..EncoderConfig::default() };
@@ -408,6 +425,30 @@ mod tests {
             block_time,
             upgrades: UpgradeConfig { fjord_time, ..UpgradeConfig::default() },
             ..RollupConfig::default()
+        }
+    }
+
+    #[test]
+    fn validate_rejects_brotli_quality_above_max() {
+        let cfg = EncoderConfig {
+            compression_algo: CompressionAlgo::Brotli(12),
+            ..EncoderConfig::default()
+        };
+
+        assert!(matches!(
+            cfg.validate().unwrap_err(),
+            EncoderConfigError::BrotliQualityOutOfRange { quality: 12 }
+        ));
+    }
+
+    #[test]
+    fn validate_accepts_brotli_quality_bounds() {
+        for quality in [CompressionAlgo::BROTLI_MIN_QUALITY, CompressionAlgo::BROTLI_MAX_QUALITY] {
+            let cfg = EncoderConfig {
+                compression_algo: CompressionAlgo::Brotli(quality),
+                ..EncoderConfig::default()
+            };
+            assert!(cfg.validate().is_ok());
         }
     }
 

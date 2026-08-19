@@ -138,6 +138,18 @@ pub(crate) struct BatcherArgs {
     #[arg(long = "max-blobs-per-tx", default_value = "6", env = "BATCHER_MAX_BLOBS_PER_TX")]
     pub max_blobs_per_tx: usize,
 
+    /// Brotli quality used for channel compression (`0..=11`).
+    ///
+    /// Quality is an operational choice. Derivation only sees the Brotli
+    /// channel-version byte (`0x01`); it does not depend on this level.
+    #[arg(
+        long = "brotli-quality",
+        default_value_t = base_batcher_encoder::CompressionAlgo::BROTLI_DEFAULT_QUALITY,
+        env = "BATCHER_BROTLI_QUALITY",
+        value_parser = clap::value_parser!(u8).range(0..=11)
+    )]
+    pub brotli_quality: u8,
+
     /// Data availability mode for L1 submissions.
     ///
     /// Accepts `blobs` (default) or `calldata`.
@@ -299,7 +311,7 @@ impl BatcherArgs {
             max_blobs_per_tx: self.max_blobs_per_tx,
             da_type: self.da_type,
             // The batcher binary only targets post-Fjord chains, so it always uses Brotli.
-            compression_algo: base_batcher_encoder::CompressionAlgo::Brotli10,
+            compression_algo: base_batcher_encoder::CompressionAlgo::Brotli(self.brotli_quality),
         };
 
         // Fail at startup, before constructing the service or accepting blocks.
@@ -468,6 +480,10 @@ mod tests {
         );
         assert_eq!(config.encoder_config.compressed_size_target, None);
         assert_eq!(config.encoder_config.max_blobs_per_tx, 6);
+        assert_eq!(
+            config.encoder_config.compression_algo,
+            base_batcher_encoder::CompressionAlgo::Brotli(10)
+        );
     }
 
     #[test]
@@ -477,6 +493,25 @@ mod tests {
 
         assert_eq!(config.encoder_config.compressed_size_target, Some(700_000));
         assert_eq!(config.encoder_config.max_blobs_per_tx, 4);
+    }
+
+    #[test]
+    fn into_config_accepts_brotli_quality() {
+        let cli = parse_cli(&["--brotli-quality", "9"]);
+        let config = cli.args.into_config().expect("config should build");
+
+        assert_eq!(
+            config.encoder_config.compression_algo,
+            base_batcher_encoder::CompressionAlgo::Brotli(9)
+        );
+    }
+
+    #[test]
+    fn cli_rejects_brotli_quality_out_of_range() {
+        let mut args = base_args();
+        args.extend_from_slice(["--brotli-quality", "12"].as_slice());
+
+        assert!(Cli::try_parse_from(args).is_err());
     }
 
     #[test]

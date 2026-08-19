@@ -12,7 +12,7 @@ impl BrotliCompressor {
     /// Compresses the given bytes data using the Brotli compressor implemented
     /// in the [`brotli`](https://crates.io/crates/brotli) crate.
     ///
-    /// `quality` is one of the Base-supported levels 9, 10, or 11.
+    /// `quality` is the Brotli encoder quality (`0..=11`).
     pub fn compress(mut input: &[u8], quality: i32) -> std::io::Result<Vec<u8>> {
         let mut output = alloc::vec![];
         BrotliCompress(

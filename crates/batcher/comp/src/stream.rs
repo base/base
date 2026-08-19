@@ -65,9 +65,10 @@ impl CompressionStream {
                 )),
                 output: Vec::new(),
             },
-            CompressionAlgo::Brotli9 => brotli(9),
-            CompressionAlgo::Brotli10 => brotli(10),
-            CompressionAlgo::Brotli11 => brotli(11),
+            CompressionAlgo::Brotli(quality) => {
+                debug_assert!(quality <= CompressionAlgo::BROTLI_MAX_QUALITY);
+                brotli(u32::from(quality))
+            }
         };
         Self { backend, output_size: 0 }
     }
@@ -178,7 +179,7 @@ mod tests {
     #[test]
     fn brotli_roundtrip_across_appends() {
         let expected = CHUNKS.concat();
-        let mut compressor = CompressionStream::new(CompressionAlgo::Brotli10);
+        let mut compressor = CompressionStream::new(CompressionAlgo::Brotli(10));
         let mut compressed = Vec::new();
 
         for chunk in CHUNKS {
@@ -197,7 +198,7 @@ mod tests {
     fn chunking_does_not_change_the_compressed_stream() {
         let input = CHUNKS.concat();
 
-        for algorithm in [CompressionAlgo::Zlib, CompressionAlgo::Brotli10] {
+        for algorithm in [CompressionAlgo::Zlib, CompressionAlgo::Brotli(10)] {
             let mut chunked = CompressionStream::new(algorithm);
             let mut chunked_output = Vec::new();
             for chunk in CHUNKS {
@@ -225,7 +226,7 @@ mod tests {
             })
             .collect();
 
-        for algorithm in [CompressionAlgo::Zlib, CompressionAlgo::Brotli10] {
+        for algorithm in [CompressionAlgo::Zlib, CompressionAlgo::Brotli(10)] {
             let mut compressor = CompressionStream::new(algorithm);
             let bound = compressor.max_output_size(input.len());
             let mut output_size = 0usize;
