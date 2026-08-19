@@ -1535,10 +1535,7 @@ mod tests {
             AccountChangeApplier::slice_policy(0, &[]).unwrap(),
             (Address::ZERO, B256::ZERO)
         );
-        assert_eq!(
-            AccountChangeApplier::slice_policy(0, &[1]),
-            Err(ApplyError::InvalidPolicyData)
-        );
+        assert_eq!(AccountChangeApplier::slice_policy(0, &[1]), Err(ApplyError::InvalidPolicyData));
 
         let mut data = Vec::new();
         data.extend_from_slice(MANAGER.as_slice());

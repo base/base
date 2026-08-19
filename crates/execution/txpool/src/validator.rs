@@ -1526,7 +1526,9 @@ where
             TxAuthError::Authorize(AuthorizeError::DefaultEoaRevoked { .. }) => {
                 "default EOA actor is revoked"
             }
-            TxAuthError::Authorize(AuthorizeError::ActorExpired { .. }) => "actor credential expired",
+            TxAuthError::Authorize(AuthorizeError::ActorExpired { .. }) => {
+                "actor credential expired"
+            }
             TxAuthError::Authorize(AuthorizeError::NestedSignatureScope { .. }) => {
                 "delegate nested actor lacks SIGNATURE scope"
             }
