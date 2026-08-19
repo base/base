@@ -3,9 +3,9 @@
 use base_execution_chainspec::BaseChainSpec;
 use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
 use base_upgrade_signal::{
-    UpgradeSignalApplySummary, UpgradeSignalConfig, UpgradeSignalDefaults,
-    UpgradeSignalMetricLayer, UpgradeSignalMonitor, UpgradeSignalRefresher,
-    UpgradeSignalRuntimeApplier, UpgradeSignalSchedule,
+    PackedProtocolVersion, UpgradeSignalApplySummary, UpgradeSignalConfig, UpgradeSignalDefaults,
+    UpgradeSignalMetricLayer, UpgradeSignalMetrics, UpgradeSignalMonitor, UpgradeSignalPollOutcome,
+    UpgradeSignalRefresher, UpgradeSignalRuntimeApplier, UpgradeSignalSchedule,
 };
 use jsonrpsee::{RpcModule, core::RpcResult, types::ErrorObject};
 use reth_chainspec::EthChainSpec;
@@ -33,15 +33,18 @@ impl ExecutionUpgradeSignal {
         chain_spec: &mut BaseChainSpec,
     ) -> eyre::Result<()> {
         let reader = config.signal_config.reader(config.l1_rpc.clone())?;
-        let schedule = config
+        let Some(schedule) = config
             .signal_config
-            .read_required_startup_schedule(
+            .read_startup_schedule(
                 &reader,
                 "execution startup",
                 &[UpgradeSignalMetricLayer::Execution],
                 UpgradeSignalDefaults::STARTUP_SCHEDULE_RETRY_INTERVAL,
             )
-            .await?;
+            .await?
+        else {
+            return Ok(());
+        };
 
         Self::apply_schedule_to_chain_spec(chain_spec, &schedule)?;
 
@@ -66,14 +69,21 @@ impl ExecutionUpgradeSignal {
         refresher: &UpgradeSignalRefresher,
     ) -> RpcResult<UpgradeSignalApplySummary> {
         match refresher.read_schedule().await {
-            Ok(schedule) => refresher.apply(&schedule).map_err(|error| {
-                warn!(
-                    target: "upgrade_signal",
-                    error = %error,
-                    "failed to validate execution runtime upgrade signal"
-                );
-                ErrorObject::owned(-32005, "failed to validate upgrade signal", None::<()>)
-            }),
+            Ok(schedule) => match refresher.apply(&schedule) {
+                Ok(summary) => {
+                    UpgradeSignalMetrics::record_apply_success(refresher.metrics_layer, &schedule);
+                    Ok(summary)
+                }
+                Err(error) => {
+                    UpgradeSignalMetrics::record_apply_failure(refresher.metrics_layer, &schedule);
+                    warn!(
+                        target: "upgrade_signal",
+                        error = %error,
+                        "failed to validate execution runtime upgrade signal"
+                    );
+                    Err(ErrorObject::owned(-32005, "failed to validate upgrade signal", None::<()>))
+                }
+            },
             Err(error) => {
                 warn!(
                     target: "upgrade_signal",
@@ -157,36 +167,50 @@ impl BaseNodeExtension for ExecutionUpgradeSignalRuntimeExtension {
             let mut monitor = UpgradeSignalMonitor::new(UpgradeSignalMetricLayer::Execution);
             let executor = ctx.task_executor;
 
-            executor.spawn_with_graceful_shutdown_signal(|signal| {
-                Box::pin(async move {
-                    let mut interval = tokio::time::interval(poll_interval);
-                    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-                    let mut signal = Box::pin(signal);
+            // Spawned as a critical task so a fail-closed panic propagates to reth's TaskManager and
+            // exits the process non-zero, instead of being silently swallowed by a plain spawn.
+            executor.spawn_critical_with_graceful_shutdown_signal(
+                "upgrade-signal-monitor",
+                |signal| {
+                    Box::pin(async move {
+                        let mut interval = tokio::time::interval(poll_interval);
+                        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                        let mut signal = Box::pin(signal);
 
-                    loop {
-                        tokio::select! {
-                            _ = &mut signal => break,
-                            _ = interval.tick() => {
-                                tokio::select! {
-                                    _ = &mut signal => break,
-                                    polled = monitor.poll(&reader) => {
-                                        if let Some(refresher) = &auto_refresher
-                                            && let Some(schedule) = polled
-                                            && let Err(error) = refresher.apply(&schedule)
-                                        {
-                                            warn!(
-                                                target: "upgrade_signal",
-                                                error = %error,
-                                                "failed to auto-apply live upgrade signal update"
-                                            );
-                                        }
+                        loop {
+                            tokio::select! {
+                                _ = &mut signal => break,
+                                _ = interval.tick() => {
+                                    let outcome = tokio::select! {
+                                        _ = &mut signal => break,
+                                        outcome = monitor
+                                            .poll_and_apply(&reader, auto_refresher.as_ref()) =>
+                                            outcome,
+                                    };
+                                    // Fail closed: a scheduled upgrade this node cannot support is
+                                    // activating imminently. Panic so the node exits loudly rather
+                                    // than fork off the network at activation.
+                                    if let UpgradeSignalPollOutcome::HaltNode {
+                                        upgrade_id,
+                                        activation_timestamp,
+                                        minimum_protocol_version,
+                                        node_protocol_version,
+                                    } = outcome
+                                    {
+                                        panic!(
+                                            "upgrade signal fail-closed: upgrade {} activates at {} and requires node protocol version {}, but this binary supports {}; upgrade this node to a supported version",
+                                            upgrade_id.contract_id(),
+                                            activation_timestamp,
+                                            PackedProtocolVersion::new(minimum_protocol_version),
+                                            PackedProtocolVersion::new(node_protocol_version),
+                                        );
                                     }
                                 }
                             }
                         }
-                    }
-                })
-            });
+                    })
+                },
+            );
 
             info!(target: "upgrade_signal", "execution upgrade signal metrics observer spawned");
             Ok(())

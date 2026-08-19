@@ -1,6 +1,7 @@
 //! Upgrade signal configuration and CLI arguments.
 
 use core::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use alloy_primitives::U256;
 
@@ -10,7 +11,7 @@ mod args;
 pub use args::{UpgradeSignalArgs, UpgradeSignalL1RpcArgs, UpgradeSignalStartupConfig};
 
 mod schedule;
-pub use schedule::UpgradeSignalConfig;
+pub use schedule::{StartupScheduleAction, UpgradeSignalConfig};
 
 mod types;
 pub use types::{UpgradeSignalBlockTag, UpgradeSignalMode, UpgradeSignalStartupMode};
@@ -36,9 +37,27 @@ impl UpgradeSignalDefaults {
     /// not yet returned a valid schedule.
     ///
     /// Startup blocks indefinitely on an empty or unreachable contract (see
-    /// [`UpgradeSignalConfig::read_required_startup_schedule`](crate::UpgradeSignalConfig::read_required_startup_schedule)),
+    /// [`UpgradeSignalConfig::read_startup_schedule`](crate::UpgradeSignalConfig::read_startup_schedule)),
     /// so this is paced to keep the loud retry logs legible rather than to recover quickly.
     pub const STARTUP_SCHEDULE_RETRY_INTERVAL: Duration = Duration::from_secs(5);
+
+    /// Current unix time in seconds, used to compare against upgrade activation timestamps.
+    ///
+    /// A backwards clock (before the epoch) is treated as `0`, which only makes the fail-closed
+    /// check more conservative (an upgrade looks nearer), never less.
+    pub fn now_secs() -> u64 {
+        SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    }
+
+    /// Lead time before an unsupportable upgrade's activation at which the live poller fails the
+    /// node closed.
+    ///
+    /// When the runtime poller (in [`UpgradeSignalMode::RuntimeAdmin`]) observes a scheduled
+    /// upgrade this node's protocol version is too old to apply, it alarms loudly but keeps running
+    /// while the activation is more than this far away, giving the operator time to upgrade the
+    /// node. Once the activation is within this window (or already past), the node halts (fail
+    /// closed) rather than continue and fork off the network at activation.
+    pub const APPLY_HALT_LEAD_TIME: Duration = Duration::from_secs(24 * 60 * 60);
 
     /// Node protocol version supported by this binary for contract-backed upgrade signals.
     ///

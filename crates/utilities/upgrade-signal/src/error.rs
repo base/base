@@ -44,6 +44,21 @@ pub enum UpgradeSignalError {
         /// Node protocol version supported by this binary.
         node_protocol_version: String,
     },
+    /// The node halted (fail closed) because a scheduled upgrade it is too old to support is
+    /// activating imminently; continuing would fork the node off the network.
+    #[error(
+        "node halted (fail closed): upgrade {upgrade_id} activates at {activation_timestamp} and requires node protocol version {minimum_protocol_version} (this binary supports {node_protocol_version}); upgrade this node to a supported version"
+    )]
+    NodeUpgradeRequired {
+        /// Upgrade ID whose activation forced the halt.
+        upgrade_id: String,
+        /// L2 activation timestamp of the unsupportable upgrade.
+        activation_timestamp: u64,
+        /// Minimum node protocol version read from L1.
+        minimum_protocol_version: String,
+        /// Node protocol version supported by this binary.
+        node_protocol_version: String,
+    },
 }
 
 impl UpgradeSignalError {

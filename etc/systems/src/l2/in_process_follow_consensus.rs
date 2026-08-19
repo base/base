@@ -16,15 +16,15 @@ use base_consensus_node::{EngineConfig, FollowNode, FollowNodeConfig, NodeMode, 
 use base_consensus_providers::L1RpcProvider;
 use base_consensus_rpc::RpcBuilder;
 use base_upgrade_signal::{
-    UpgradeSignalConfig, UpgradeSignalMetricLayer, UpgradeSignalMonitor, UpgradeSignalRefresher,
-    UpgradeSignalRuntimeApplier,
+    UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalMetricLayer, UpgradeSignalMonitor,
+    UpgradeSignalPollOutcome, UpgradeSignalRefresher, UpgradeSignalRuntimeApplier,
 };
 use eyre::{Result, WrapErr};
 use tokio::{
     task::JoinHandle,
     time::{MissedTickBehavior, interval},
 };
-use tracing::{info, warn};
+use tracing::{error, info};
 use url::Url;
 
 use super::in_process_consensus::wait_for_rpc;
@@ -82,20 +82,23 @@ impl InProcessFollowConsensus {
         {
             let reader = signal_config.reader(l1_rpc_url.clone())?;
             let schedule = signal_config
-                .read_validated_schedule(
+                .read_startup_schedule(
                     &reader,
                     "system test follow consensus startup",
                     &[UpgradeSignalMetricLayer::Consensus],
+                    UpgradeSignalDefaults::STARTUP_SCHEDULE_RETRY_INTERVAL,
                 )
                 .await
                 .wrap_err("Failed to read upgrade signal schedule at follow consensus startup")?;
-            UpgradeSignalRuntimeApplier::apply_schedule_to_sink(
-                l2_chain_id,
-                &schedule,
-                &mut rollup_config,
-            )
-            .unwrap_or_else(|never| match never {})
-            .log("follow rollup config");
+            if let Some(schedule) = schedule {
+                UpgradeSignalRuntimeApplier::apply_schedule_to_sink(
+                    l2_chain_id,
+                    &schedule,
+                    &mut rollup_config,
+                )
+                .unwrap_or_else(|never| match never {})
+                .log("follow rollup config");
+            }
         }
 
         let rollup_config = Arc::new(rollup_config);
@@ -197,17 +200,19 @@ impl InProcessFollowConsensus {
 
             loop {
                 poll_interval.tick().await;
-                let Some(schedule) = monitor.poll(&reader).await else {
-                    continue;
-                };
-                if let Some(refresher) = &refresher
-                    && let Err(error) = refresher.apply(&schedule)
+                // Mirror production fail-closed: stop the monitor if a scheduled upgrade this node
+                // cannot support is activating imminently, rather than fork off the network.
+                if let UpgradeSignalPollOutcome::HaltNode {
+                    upgrade_id, activation_timestamp, ..
+                } = monitor.poll_and_apply(&reader, refresher.as_ref()).await
                 {
-                    warn!(
+                    error!(
                         target: "upgrade_signal",
-                        error = %error,
-                        "failed to auto-apply follow-mode upgrade signal update"
+                        upgrade = %upgrade_id.contract_id(),
+                        activation_timestamp,
+                        "in-process follow node halting upgrade signal monitor (fail closed)"
                     );
+                    break;
                 }
             }
         }))

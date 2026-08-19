@@ -31,6 +31,16 @@ pub struct UpgradeSignalConfig {
     pub request_timeout: Duration,
 }
 
+/// What a node should do with a startup schedule after the fail-closed policy has been applied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartupScheduleAction {
+    /// Apply the schedule to the node's configuration.
+    Apply,
+    /// Do not apply the schedule; the node is starting with a loud alarm because it cannot apply an
+    /// upgrade that is still far from activation (a live poller will fail it closed later).
+    Skip,
+}
+
 impl UpgradeSignalConfig {
     /// Creates a new schedule read configuration for the full contract-backed upgrade set.
     pub fn new(contract_address: Address) -> Self {
@@ -93,10 +103,12 @@ impl UpgradeSignalConfig {
             return Ok(());
         }
 
+        // Render both versions as semver (not the raw >70-digit packed decimals) so the error
+        // message states the exact node-vs-contract gap an operator must close.
         Err(UpgradeSignalError::unsupported_protocol_version(
             signal.upgrade_id.contract_id().to_string(),
-            signal.protocol_version,
-            self.node_protocol_version,
+            PackedProtocolVersion::new(signal.protocol_version),
+            PackedProtocolVersion::new(self.node_protocol_version),
         ))
     }
 
@@ -122,6 +134,28 @@ impl UpgradeSignalConfig {
         Ok(())
     }
 
+    /// Returns the first signal that requires the node to fail closed, if any.
+    ///
+    /// This is a signal whose activation is positive (an activation, not a clear), whose minimum
+    /// protocol version this node is too old to support, and whose activation is at most
+    /// `lead_secs` seconds after `now_secs` (or already past). Such an upgrade will fork the network
+    /// at activation and this node cannot follow it, so the node must halt before then.
+    ///
+    /// A malformed signal (a positive activation with a zero minimum version) is deliberately *not*
+    /// returned here: a zero version is trivially supported by the version check, so it is surfaced
+    /// as a non-fatal alarm elsewhere rather than halting the node on an L1 misconfiguration.
+    pub fn fail_closed_upgrade<'a>(
+        &self,
+        schedule: &'a UpgradeSignalSchedule,
+        now_secs: u64,
+        lead_secs: u64,
+    ) -> Option<&'a UpgradeSignal> {
+        schedule.signals.iter().find(|signal| {
+            self.validate_signal_supported_protocol_version(signal).is_err()
+                && now_secs.saturating_add(lead_secs) >= signal.activation_timestamp
+        })
+    }
+
     /// Reads the L1 startup schedule and applies it to both sinks.
     ///
     /// Execution is applied before consensus so an execution-only validation failure leaves the
@@ -141,14 +175,17 @@ impl UpgradeSignalConfig {
         CL::Error: std::error::Error + Send + Sync + 'static,
     {
         let reader = self.reader(l1_rpc)?;
-        let schedule = self
-            .read_required_startup_schedule(
+        let Some(schedule) = self
+            .read_startup_schedule(
                 &reader,
                 log_context,
                 &[UpgradeSignalMetricLayer::Execution, UpgradeSignalMetricLayer::Consensus],
                 UpgradeSignalDefaults::STARTUP_SCHEDULE_RETRY_INTERVAL,
             )
-            .await?;
+            .await?
+        else {
+            return Ok(());
+        };
 
         UpgradeSignalRuntimeApplier::apply_schedule_to_sink(chain_id, &schedule, execution_sink)
             .map_err(eyre::Report::new)?
@@ -207,37 +244,43 @@ impl UpgradeSignalConfig {
         Ok(schedule)
     }
 
-    /// Reads the startup schedule via [`Self::read_validated_schedule`], blocking until the L1
-    /// contract returns a valid, non-empty schedule.
+    /// Reads the startup schedule and applies the fail-closed policy, returning whether it should be
+    /// applied.
     ///
-    /// This is fail-closed by design. A healthy append-only `ProtocolVersions` contract is never
-    /// empty, so an empty read (like a transient provider failure) means the node cannot yet see
-    /// the authoritative activation schedule. Booting on the genesis/base configuration would risk
-    /// activating forks at different times than peers that read a populated contract, forking the
-    /// node — and any blocks it builds — off the network. Rather than take that risk, this retries
-    /// without an attempt limit, logging loudly at `error!` on every failure, until the read
-    /// succeeds. Only unrecoverable errors that waiting cannot fix — malformed contract data
-    /// ([`UpgradeSignalError::Decode`]) or a missing/unsupported protocol version — propagate and
-    /// abort startup. This future is cancellation-safe: dropping it during shutdown cancels the
-    /// in-flight request or retry sleep.
+    /// Two fail-closed behaviors combine here:
     ///
-    /// This is the startup counterpart to the manual admin refresh, which instead surfaces an empty
-    /// schedule as an error without retrying.
+    /// * **Empty or unreachable contract** — a healthy append-only `ProtocolVersions` contract is
+    ///   never empty, so an empty read (like a transient provider failure) means the node cannot yet
+    ///   see the authoritative activation schedule. Booting on the genesis/base configuration would
+    ///   risk activating forks at different times than peers that read a populated contract, forking
+    ///   the node — and any blocks it builds — off the network. Rather than take that risk, the read
+    ///   retries without an attempt limit, logging loudly at `error!` on every failure, until the
+    ///   contract returns a non-empty schedule. Only unrecoverable errors that waiting cannot fix —
+    ///   malformed contract data ([`UpgradeSignalError::Decode`]) — propagate and abort startup.
+    ///   This future is cancellation-safe: dropping it during shutdown cancels the in-flight request
+    ///   or retry sleep.
+    /// * **Unsupportable upgrade** — once a non-empty schedule is read, the lead-time fail-closed
+    ///   policy is applied so a restart is not blocked by an upgrade that is still far off: see
+    ///   [`Self::evaluate_startup_schedule`]. Returns `None` when the schedule must be skipped
+    ///   (started with an alarm), or an error that must abort startup.
     ///
-    /// `retry_interval` is the fixed delay between attempts; it is paced for legible retry logs
-    /// rather than fast recovery (see
+    /// `retry_interval` is the fixed delay between empty/provider retries; it is paced for legible
+    /// retry logs rather than fast recovery (see
     /// [`UpgradeSignalDefaults::STARTUP_SCHEDULE_RETRY_INTERVAL`]).
-    pub async fn read_required_startup_schedule(
+    pub async fn read_startup_schedule(
         &self,
         reader: &AlloyUpgradeSignalReader,
         log_context: &'static str,
         metrics_layers: &[UpgradeSignalMetricLayer],
         retry_interval: Duration,
-    ) -> Result<UpgradeSignalSchedule, UpgradeSignalError> {
+    ) -> Result<Option<UpgradeSignalSchedule>, UpgradeSignalError> {
         let mut attempt = 1_u64;
         let backoff = ConstantBuilder::default().with_delay(retry_interval).without_max_times();
 
-        (|| self.read_validated_schedule(reader, log_context, metrics_layers))
+        // Retry only the raw read until the contract is non-empty and reachable. Validation and the
+        // lead-time policy run once on the resulting schedule (below), so a distant unsupportable
+        // upgrade is deferred to the policy rather than retried forever.
+        let schedule = (|| self.read_schedule(reader, log_context, metrics_layers))
             .retry(backoff)
             .when(|error| {
                 matches!(
@@ -256,7 +299,78 @@ impl UpgradeSignalConfig {
                 );
                 attempt += 1;
             })
-            .await
+            .await?;
+
+        match self.evaluate_startup_schedule(
+            &schedule,
+            UpgradeSignalDefaults::now_secs(),
+            UpgradeSignalDefaults::APPLY_HALT_LEAD_TIME.as_secs(),
+            metrics_layers,
+        )? {
+            StartupScheduleAction::Apply => Ok(Some(schedule)),
+            StartupScheduleAction::Skip => Ok(None),
+        }
+    }
+
+    /// Applies the startup fail-closed policy to an already-read schedule.
+    ///
+    /// This is the startup analogue of the runtime poller's fail-closed handling, so a node that
+    /// applies at startup behaves consistently with one that polls live:
+    ///
+    /// * If an unsupportable upgrade activates within `lead_secs` of `now_secs` (or is overdue), the
+    ///   node must not start only to fork at activation — this returns an error that aborts startup.
+    /// * Otherwise, if the schedule fully validates, it is applied.
+    /// * If validation fails but nothing is imminent (a far-future unsupportable upgrade or a
+    ///   malformed L1 signal), the handling depends on whether a live poller will back-stop it:
+    ///   [`UpgradeSignalMode::RuntimeAdmin`] starts with a loud alarm and skips applying (the poller
+    ///   will fail closed once the upgrade nears activation), while a mode without a live poller
+    ///   stays strict and aborts startup, since nothing would catch the upgrade later.
+    pub fn evaluate_startup_schedule(
+        &self,
+        schedule: &UpgradeSignalSchedule,
+        now_secs: u64,
+        lead_secs: u64,
+        metrics_layers: &[UpgradeSignalMetricLayer],
+    ) -> Result<StartupScheduleAction, UpgradeSignalError> {
+        if let Some(signal) = self.fail_closed_upgrade(schedule, now_secs, lead_secs) {
+            for layer in metrics_layers {
+                UpgradeSignalMetrics::record_fail_closed(*layer, signal);
+            }
+            error!(
+                target: "upgrade_signal",
+                upgrade = %signal.upgrade_id.contract_id(),
+                activation_timestamp = signal.activation_timestamp,
+                node_protocol_version = %PackedProtocolVersion::new(self.node_protocol_version),
+                minimum_protocol_version = %PackedProtocolVersion::new(signal.protocol_version),
+                "refusing to start (fail closed): a scheduled L1 upgrade activates within the halt lead time but this node's protocol version is too old to apply it; upgrade this node to a supported version"
+            );
+            return Err(UpgradeSignalError::NodeUpgradeRequired {
+                upgrade_id: signal.upgrade_id.contract_id().to_string(),
+                activation_timestamp: signal.activation_timestamp,
+                minimum_protocol_version: PackedProtocolVersion::new(signal.protocol_version)
+                    .to_string(),
+                node_protocol_version: PackedProtocolVersion::new(self.node_protocol_version)
+                    .to_string(),
+            });
+        }
+
+        let Err(validation_error) = self.validate_schedule_protocol_versions(schedule) else {
+            return Ok(StartupScheduleAction::Apply);
+        };
+
+        // Validation failed but nothing is imminent. Only a mode with a live poller can safely start
+        // and defer the halt; other modes stay strict.
+        if !self.mode.allows_runtime_admin() {
+            return Err(validation_error);
+        }
+        error!(
+            target: "upgrade_signal",
+            node_protocol_version = %PackedProtocolVersion::new(self.node_protocol_version),
+            contract_protocol_versions = %schedule.required_protocol_versions(),
+            error = %validation_error,
+            "starting despite an L1 upgrade schedule that cannot be applied locally; upgrade this node before the upgrade nears activation or it will fail closed and stop"
+        );
+        Ok(StartupScheduleAction::Skip)
     }
 }
 
@@ -306,14 +420,15 @@ mod tests {
         let reader = config.reader(server.url("/").parse().unwrap()).unwrap();
 
         let schedule = config
-            .read_required_startup_schedule(
+            .read_startup_schedule(
                 &reader,
                 "startup",
                 &[UpgradeSignalMetricLayer::Consensus],
                 Duration::from_millis(10),
             )
             .await
-            .unwrap();
+            .unwrap()
+            .expect("a supported schedule is applied");
 
         assert_eq!(schedule.signals.len(), 1);
         assert_eq!(schedule.signals[0].upgrade_id, BaseUpgrade::Regolith);
@@ -338,7 +453,7 @@ mod tests {
             MockL1::mock_get_schedule(&server, single_zeroed_entry()).await;
         };
         let (schedule, ()) = tokio::join!(
-            config.read_required_startup_schedule(
+            config.read_startup_schedule(
                 &reader,
                 "startup",
                 &[UpgradeSignalMetricLayer::Consensus],
@@ -347,7 +462,7 @@ mod tests {
             swap,
         );
 
-        let schedule = schedule.unwrap();
+        let schedule = schedule.unwrap().expect("a supported schedule is applied");
         assert_eq!(schedule.signals.len(), 1);
         assert_eq!(schedule.signals[0].upgrade_id, BaseUpgrade::Regolith);
     }
@@ -362,7 +477,7 @@ mod tests {
         let reader = config.reader(server.url("/").parse().unwrap()).unwrap();
 
         let error = config
-            .read_required_startup_schedule(
+            .read_startup_schedule(
                 &reader,
                 "startup",
                 &[UpgradeSignalMetricLayer::Consensus],
@@ -527,5 +642,92 @@ mod tests {
         );
 
         assert!(config.validate_schedule_protocol_versions(&schedule).is_ok());
+    }
+
+    const STARTUP_LAYERS: &[UpgradeSignalMetricLayer] = &[UpgradeSignalMetricLayer::Consensus];
+
+    fn config_with_mode(mode: UpgradeSignalMode) -> UpgradeSignalConfig {
+        let mut config = supported_config();
+        config.mode = mode;
+        config
+    }
+
+    fn schedule_at(activation_timestamp: u64, protocol_version: U256) -> UpgradeSignalSchedule {
+        UpgradeSignalSchedule::new(
+            1,
+            vec![UpgradeSignal {
+                upgrade_id: BaseUpgrade::Azul,
+                activation_timestamp,
+                protocol_version,
+            }],
+        )
+    }
+
+    #[test]
+    fn startup_applies_a_supported_schedule() {
+        let config = config_with_mode(UpgradeSignalMode::RuntimeAdmin);
+        let lead = UpgradeSignalDefaults::APPLY_HALT_LEAD_TIME.as_secs();
+        let schedule =
+            schedule_at(1_000_000, UpgradeSignalDefaults::packed_protocol_version(1, 1, 0));
+
+        assert_eq!(
+            config.evaluate_startup_schedule(&schedule, 0, lead, STARTUP_LAYERS).unwrap(),
+            StartupScheduleAction::Apply
+        );
+    }
+
+    #[test]
+    fn startup_aborts_when_an_unsupportable_upgrade_is_imminent() {
+        let config = config_with_mode(UpgradeSignalMode::RuntimeAdmin);
+        let lead = UpgradeSignalDefaults::APPLY_HALT_LEAD_TIME.as_secs();
+        let activation = 1_000_000;
+        let schedule =
+            schedule_at(activation, UpgradeSignalDefaults::packed_protocol_version(1, 1, 1));
+
+        assert!(matches!(
+            config.evaluate_startup_schedule(
+                &schedule,
+                activation - lead + 1,
+                lead,
+                STARTUP_LAYERS
+            ),
+            Err(UpgradeSignalError::NodeUpgradeRequired { .. })
+        ));
+    }
+
+    #[test]
+    fn startup_skips_a_distant_unsupportable_upgrade_when_a_live_poller_will_backstop_it() {
+        let config = config_with_mode(UpgradeSignalMode::RuntimeAdmin);
+        let lead = UpgradeSignalDefaults::APPLY_HALT_LEAD_TIME.as_secs();
+        let schedule =
+            schedule_at(u64::MAX, UpgradeSignalDefaults::packed_protocol_version(1, 1, 1));
+
+        assert_eq!(
+            config.evaluate_startup_schedule(&schedule, 0, lead, STARTUP_LAYERS).unwrap(),
+            StartupScheduleAction::Skip
+        );
+    }
+
+    #[test]
+    fn startup_stays_strict_for_a_distant_unsupportable_upgrade_without_a_live_poller() {
+        let config = config_with_mode(UpgradeSignalMode::StartupApply);
+        let lead = UpgradeSignalDefaults::APPLY_HALT_LEAD_TIME.as_secs();
+        let schedule =
+            schedule_at(u64::MAX, UpgradeSignalDefaults::packed_protocol_version(1, 1, 1));
+
+        assert!(config.evaluate_startup_schedule(&schedule, 0, lead, STARTUP_LAYERS).is_err());
+    }
+
+    #[test]
+    fn startup_skips_a_malformed_signal_in_runtime_admin_and_never_fails_closed_on_it() {
+        let config = config_with_mode(UpgradeSignalMode::RuntimeAdmin);
+        let lead = UpgradeSignalDefaults::APPLY_HALT_LEAD_TIME.as_secs();
+        // A malformed signal (positive activation, no minimum version), even long overdue.
+        let schedule = schedule_at(1, U256::ZERO);
+
+        assert_eq!(
+            config.evaluate_startup_schedule(&schedule, u64::MAX, lead, STARTUP_LAYERS).unwrap(),
+            StartupScheduleAction::Skip
+        );
     }
 }

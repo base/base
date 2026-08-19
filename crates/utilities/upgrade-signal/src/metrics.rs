@@ -46,6 +46,18 @@ base_metrics::define_metrics! {
     #[label(layer)]
     #[label(upgrade)]
     signal_updates_total: counter,
+    #[describe("Total failed attempts to apply a live upgrade signal schedule")]
+    #[label(layer)]
+    #[label(upgrade)]
+    apply_failures_total: counter,
+    #[describe("1 while the most recent live apply for an upgrade is failing, else 0")]
+    #[label(layer)]
+    #[label(upgrade)]
+    apply_failed: gauge,
+    #[describe("Total times the node failed closed on an unsupportable upgrade nearing activation")]
+    #[label(layer)]
+    #[label(upgrade)]
+    fail_closed_total: counter,
 }
 
 impl UpgradeSignalMetrics {
@@ -109,6 +121,36 @@ impl UpgradeSignalMetrics {
             .increment(1);
     }
 
+    /// Records a failed live apply of a schedule, raising the sticky failure gauge per upgrade.
+    pub fn record_apply_failure(layer: UpgradeSignalMetricLayer, schedule: &UpgradeSignalSchedule) {
+        Self::init();
+        for signal in &schedule.signals {
+            let upgrade_id = signal.upgrade_id.contract_id().to_string();
+            Self::apply_failures_total(layer.label(), upgrade_id.clone()).increment(1);
+            Self::apply_failed(layer.label(), upgrade_id).set(1.0);
+        }
+    }
+
+    /// Records a successful live apply of a schedule, clearing the sticky failure gauge per upgrade.
+    pub fn record_apply_success(layer: UpgradeSignalMetricLayer, schedule: &UpgradeSignalSchedule) {
+        Self::init();
+        for signal in &schedule.signals {
+            Self::apply_failed(layer.label(), signal.upgrade_id.contract_id().to_string()).set(0.0);
+        }
+    }
+
+    /// Records that the node is failing closed because `signal`'s upgrade is unsupportable and its
+    /// activation is within the halt lead time.
+    ///
+    /// Emitted immediately before the node halts, so the sticky `apply_failed` gauge stays raised.
+    /// The counter is best-effort: it may not be scraped before the process exits, so the loud
+    /// fatal log and the non-zero exit remain the primary signals.
+    pub fn record_fail_closed(layer: UpgradeSignalMetricLayer, signal: &UpgradeSignal) {
+        Self::init();
+        Self::fail_closed_total(layer.label(), signal.upgrade_id.contract_id().to_string())
+            .increment(1);
+    }
+
     /// Converts a packed-semver protocol version to a compact metric gauge value.
     ///
     /// Decoded as `major * 1_000_000 + minor * 1_000 + patch` so the gauge stays readable
@@ -132,5 +174,20 @@ mod tests {
     fn converts_packed_semver_protocol_version_to_metric_value() {
         let version = crate::UpgradeSignalDefaults::packed_protocol_version(1, 1, 0);
         assert_eq!(UpgradeSignalMetrics::protocol_version_to_f64(version), 1_001_000.0);
+    }
+
+    #[test]
+    fn records_apply_outcome_without_panicking() {
+        let schedule = UpgradeSignalSchedule::new(
+            1,
+            vec![UpgradeSignal {
+                upgrade_id: BaseUpgrade::Azul,
+                activation_timestamp: 42,
+                protocol_version: U256::from(7),
+            }],
+        );
+
+        UpgradeSignalMetrics::record_apply_failure(UpgradeSignalMetricLayer::Consensus, &schedule);
+        UpgradeSignalMetrics::record_apply_success(UpgradeSignalMetricLayer::Consensus, &schedule);
     }
 }

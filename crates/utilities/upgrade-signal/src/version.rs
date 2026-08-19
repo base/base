@@ -102,6 +102,25 @@ impl PackedProtocolVersion {
     }
 }
 
+impl core::fmt::Display for PackedProtocolVersion {
+    /// Renders the version as human-readable semver for logs and error messages.
+    ///
+    /// A raw `U256` prints as a >70-digit decimal that no operator can read; this decodes the
+    /// packed fields to `major.minor.patch` (with a `-rc.N` suffix for a pre-release). An
+    /// unrecognized version-type has no defined semver layout, so it is surfaced verbatim rather
+    /// than mis-decoded as `0.0.0`.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if self.version_type() != 0 {
+            return write!(f, "unknown-version-type-{}", self.version_type());
+        }
+        write!(f, "{}.{}.{}", self.major(), self.minor(), self.patch())?;
+        if self.prerelease() != 0 {
+            write!(f, "-rc.{}", self.prerelease())?;
+        }
+        Ok(())
+    }
+}
+
 impl Ord for PackedProtocolVersion {
     fn cmp(&self, other: &Self) -> Ordering {
         self.ordering_key().cmp(&other.ordering_key())
@@ -126,6 +145,16 @@ mod tests {
         assert_eq!(version.minor(), 2);
         assert_eq!(version.patch(), 3);
         assert_eq!(version.prerelease(), 4);
+    }
+
+    #[test]
+    fn displays_semver_with_optional_prerelease_and_unknown_type() {
+        assert_eq!(PackedProtocolVersion::pack(1, 2, 3, 0).to_string(), "1.2.3");
+        assert_eq!(PackedProtocolVersion::pack(1, 2, 3, 4).to_string(), "1.2.3-rc.4");
+        assert_eq!(
+            PackedProtocolVersion::new(U256::from(2) << 248).to_string(),
+            "unknown-version-type-2"
+        );
     }
 
     #[test]

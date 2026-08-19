@@ -3,11 +3,11 @@
 use core::time::Duration;
 
 use base_upgrade_signal::{
-    AlloyUpgradeSignalReader, UpgradeSignalConfig, UpgradeSignalError, UpgradeSignalMetricLayer,
-    UpgradeSignalMonitor, UpgradeSignalRefresher,
+    AlloyUpgradeSignalReader, PackedProtocolVersion, UpgradeSignalConfig, UpgradeSignalError,
+    UpgradeSignalMetricLayer, UpgradeSignalMonitor, UpgradeSignalPollOutcome,
+    UpgradeSignalRefresher,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::warn;
 use url::Url;
 
 use crate::NodeActor;
@@ -95,20 +95,9 @@ impl UpgradeSignalMetricsActor {
     }
 
     /// Polls L1 upgrade signal state, records metrics, and auto-applies observed changes when
-    /// runtime refresh is enabled.
-    pub async fn poll_l1_signal(&mut self) {
-        let Some(schedule) = self.monitor.poll(&self.reader).await else {
-            return;
-        };
-        if let Some(refresher) = &self.refresher
-            && let Err(error) = refresher.apply(&schedule)
-        {
-            warn!(
-                target: "upgrade_signal",
-                error = %error,
-                "failed to auto-apply live upgrade signal update"
-            );
-        }
+    /// runtime refresh is enabled. Returns whether the node must fail closed.
+    pub async fn poll_l1_signal(&mut self) -> UpgradeSignalPollOutcome {
+        self.monitor.poll_and_apply(&self.reader, self.refresher.as_ref()).await
     }
 }
 
@@ -128,9 +117,30 @@ impl NodeActor for UpgradeSignalMetricsActor {
                 _ = interval.tick() => {}
             }
 
-            tokio::select! {
+            let outcome = tokio::select! {
                 _ = cancellation.cancelled() => return Ok(()),
-                _ = self.poll_l1_signal() => {}
+                outcome = self.poll_l1_signal() => outcome,
+            };
+
+            // Fail closed: a scheduled upgrade this node cannot support is activating imminently.
+            // Cancel the shared token so the whole node tears down, then return the fatal error so
+            // the supervisor logs it and the process exits non-zero rather than fork off the chain.
+            if let UpgradeSignalPollOutcome::HaltNode {
+                upgrade_id,
+                activation_timestamp,
+                minimum_protocol_version,
+                node_protocol_version,
+            } = outcome
+            {
+                cancellation.cancel();
+                return Err(UpgradeSignalError::NodeUpgradeRequired {
+                    upgrade_id: upgrade_id.contract_id().to_string(),
+                    activation_timestamp,
+                    minimum_protocol_version: PackedProtocolVersion::new(minimum_protocol_version)
+                        .to_string(),
+                    node_protocol_version: PackedProtocolVersion::new(node_protocol_version)
+                        .to_string(),
+                });
             }
         }
     }

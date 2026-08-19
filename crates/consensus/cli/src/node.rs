@@ -533,14 +533,22 @@ impl ConsensusNodeArgs {
         signal_config.request_timeout = self.config.l1_rpc_args.l1_rpc_timeout;
         let reader =
             signal_config.reader(self.resolved_upgrade_signal_l1_rpc(upgrade_signal_l1_rpc))?;
-        let schedule = signal_config
-            .read_required_startup_schedule(
+        // Apply the fail-closed startup policy (see `read_startup_schedule`): retry until the L1
+        // contract returns an authoritative schedule, abort startup only for an unsupportable
+        // upgrade nearing activation, but start with a loud alarm (`None`) for one that is still far
+        // off — so a restart is not blocked by a distant upgrade. The live poller fails the node
+        // closed once it nears activation.
+        let Some(schedule) = signal_config
+            .read_startup_schedule(
                 &reader,
                 "consensus startup",
                 &[UpgradeSignalMetricLayer::Consensus],
                 UpgradeSignalDefaults::STARTUP_SCHEDULE_RETRY_INTERVAL,
             )
-            .await?;
+            .await?
+        else {
+            return Ok(());
+        };
 
         Self::apply_schedule_to_rollup_config(cfg, &schedule);
 
