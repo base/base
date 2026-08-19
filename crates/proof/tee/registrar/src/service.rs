@@ -35,7 +35,11 @@ pub struct RegistrarConfig {
     pub l1_rpc_url: Url,
     /// `TEEProverRegistry` contract address on L1.
     pub tee_prover_registry_address: Address,
-    /// AWS ALB target group ARN for prover instance discovery.
+    /// AWS ALB target group ARN(s) for prover instance discovery.
+    ///
+    /// One ARN, or a comma-separated list when multiple fleets (and therefore
+    /// target groups) share one registrar. Discovery unions healthy instances
+    /// across every ARN so orphan cleanup does not deregister a detached fleet.
     pub target_group_arn: String,
     /// AWS region.
     pub aws_region: String,

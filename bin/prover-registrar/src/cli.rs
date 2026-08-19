@@ -31,7 +31,8 @@ pub(crate) struct Cli {
     #[arg(long, env = cli_env!("TEE_PROVER_REGISTRY_ADDRESS"))]
     tee_prover_registry_address: Address,
 
-    /// AWS ALB target group ARN for prover instance discovery.
+    /// AWS ALB target group ARN(s) for prover instance discovery.
+    /// Comma-separated when multiple fleets share one registrar.
     #[arg(long, env = cli_env!("TARGET_GROUP_ARN"))]
     target_group_arn: String,
 
@@ -127,6 +128,11 @@ pub(crate) struct Cli {
 impl Cli {
     pub(crate) fn config(self) -> Result<RegistrarConfig, Box<RegistrarError>> {
         validate_health_port(self.health.port)?;
+        if base_proof_tee_registrar::parse_target_group_arns(&self.target_group_arn).is_empty() {
+            return Err(Box::new(RegistrarError::Config(
+                "target-group-arn must contain at least one ARN".into(),
+            )));
+        }
 
         Ok(RegistrarConfig {
             l1_rpc_url: self.l1_rpc_url,
@@ -179,6 +185,31 @@ mod tests {
             "--private-key",
             "0x0101010101010101010101010101010101010101010101010101010101010101",
         ]
+    }
+
+    #[test]
+    fn comma_separated_target_group_arns_parse() {
+        let mut args = required_args();
+        args[6] = concat!(
+            "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/prover/abc123,",
+            "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/prover-v1/def456"
+        );
+
+        let cli = Cli::try_parse_from(args).unwrap();
+        assert_eq!(
+            base_proof_tee_registrar::parse_target_group_arns(&cli.target_group_arn).len(),
+            2
+        );
+        assert!(cli.config().is_ok());
+    }
+
+    #[test]
+    fn empty_target_group_arn_rejected() {
+        let mut args = required_args();
+        args[6] = " , ";
+
+        let cli = Cli::try_parse_from(args).unwrap();
+        assert!(cli.config().is_err());
     }
 
     #[test]

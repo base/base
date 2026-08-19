@@ -9,25 +9,39 @@ use url::Url;
 
 use crate::{InstanceDiscovery, InstanceHealthStatus, ProverInstance, RegistrarError, Result};
 
+/// Splits a comma-separated target-group ARN list. Empty entries are dropped.
+pub fn parse_target_group_arns(raw: &str) -> Vec<String> {
+    raw.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect()
+}
+
 /// Discovers prover instances via AWS Elastic Load Balancing target groups.
 ///
-/// Queries `describe_target_health` to enumerate registered targets, then
-/// resolves each EC2 instance's private IP address via `describe_instances`.
-/// Health state is mapped from the ALB target health state.
+/// Queries `describe_target_health` on every configured target group, unions
+/// the instance IDs, then resolves each EC2 instance's private IP via
+/// `describe_instances`. Health state is mapped from the ALB target health
+/// state. A failure against any target group fails the whole discovery cycle so
+/// the driver does not treat unseen fleets as orphans.
 #[derive(Debug)]
 pub struct AwsTargetGroupDiscovery {
     elb_client: ElbClient,
     ec2_client: Ec2Client,
-    target_group_arn: String,
+    target_group_arns: Vec<String>,
     port: u16,
 }
 
 impl AwsTargetGroupDiscovery {
     /// Creates a new `AwsTargetGroupDiscovery` with the given AWS config.
+    ///
+    /// `target_group_arn` is one ARN or a comma-separated list.
     pub fn new(aws_config: &aws_config::SdkConfig, target_group_arn: String, port: u16) -> Self {
         let elb_client = ElbClient::new(aws_config);
         let ec2_client = Ec2Client::new(aws_config);
-        Self { elb_client, ec2_client, target_group_arn, port }
+        Self {
+            elb_client,
+            ec2_client,
+            target_group_arns: parse_target_group_arns(&target_group_arn),
+            port,
+        }
     }
 
     /// Builds prover instances from EC2 reservations and removes matched IDs from `health_map`.
@@ -68,40 +82,49 @@ impl AwsTargetGroupDiscovery {
 
 impl InstanceDiscovery for AwsTargetGroupDiscovery {
     async fn discover_instances(&self) -> Result<Vec<ProverInstance>> {
-        let elb_resp = self
-            .elb_client
-            .describe_target_health()
-            .target_group_arn(&self.target_group_arn)
-            .send()
-            .await
-            .map_err(|e| RegistrarError::Discovery(Box::new(e)))?;
+        if self.target_group_arns.is_empty() {
+            return Err(RegistrarError::Discovery(Box::new(std::io::Error::other(
+                "no target group ARNs configured",
+            ))));
+        }
 
         let mut health_map: HashMap<String, InstanceHealthStatus> = HashMap::new();
-        for desc in elb_resp.target_health_descriptions() {
-            let Some(instance_id) = desc.target().and_then(|t| t.id()) else {
-                warn!("target group entry missing instance ID, skipping");
-                continue;
-            };
-            if !instance_id.starts_with("i-") {
-                warn!(
-                    id = %instance_id,
-                    "target is not an instance-type target (id does not start with \
-                     'i-'); is the target group type set to 'instance'? skipping"
-                );
-                continue;
-            }
-            let health_status = desc
-                .target_health()
-                .and_then(|h| h.state())
-                .map(|s| match s.as_str() {
-                    "initial" => InstanceHealthStatus::Initial,
-                    "healthy" => InstanceHealthStatus::Healthy,
-                    "draining" => InstanceHealthStatus::Draining,
-                    _ => InstanceHealthStatus::Unhealthy,
-                })
-                .unwrap_or(InstanceHealthStatus::Unhealthy);
+        for arn in &self.target_group_arns {
+            let elb_resp = self
+                .elb_client
+                .describe_target_health()
+                .target_group_arn(arn)
+                .send()
+                .await
+                .map_err(|e| RegistrarError::Discovery(Box::new(e)))?;
 
-            health_map.entry(instance_id.to_string()).or_insert(health_status);
+            for desc in elb_resp.target_health_descriptions() {
+                let Some(instance_id) = desc.target().and_then(|t| t.id()) else {
+                    warn!(target_group_arn = %arn, "target group entry missing instance ID, skipping");
+                    continue;
+                };
+                if !instance_id.starts_with("i-") {
+                    warn!(
+                        id = %instance_id,
+                        target_group_arn = %arn,
+                        "target is not an instance-type target (id does not start with \
+                         'i-'); is the target group type set to 'instance'? skipping"
+                    );
+                    continue;
+                }
+                let health_status = desc
+                    .target_health()
+                    .and_then(|h| h.state())
+                    .map(|s| match s.as_str() {
+                        "initial" => InstanceHealthStatus::Initial,
+                        "healthy" => InstanceHealthStatus::Healthy,
+                        "draining" => InstanceHealthStatus::Draining,
+                        _ => InstanceHealthStatus::Unhealthy,
+                    })
+                    .unwrap_or(InstanceHealthStatus::Unhealthy);
+
+                health_map.entry(instance_id.to_string()).or_insert(health_status);
+            }
         }
 
         if health_map.is_empty() {
@@ -141,6 +164,24 @@ mod tests {
     use url::Url;
 
     use super::*;
+
+    #[test]
+    fn parse_target_group_arns_splits_and_trims() {
+        assert_eq!(
+            parse_target_group_arns(
+                " arn:aws:elasticloadbalancing:us-east-1:1:targetgroup/a/abc ,arn:aws:elasticloadbalancing:us-east-1:1:targetgroup/b/def, "
+            ),
+            vec![
+                "arn:aws:elasticloadbalancing:us-east-1:1:targetgroup/a/abc",
+                "arn:aws:elasticloadbalancing:us-east-1:1:targetgroup/b/def",
+            ]
+        );
+        assert!(parse_target_group_arns(" , , ").is_empty());
+        assert_eq!(
+            parse_target_group_arns("arn:aws:elasticloadbalancing:us-east-1:1:targetgroup/a/abc"),
+            vec!["arn:aws:elasticloadbalancing:us-east-1:1:targetgroup/a/abc"]
+        );
+    }
 
     fn reservation(instances: Vec<Instance>) -> Reservation {
         Reservation::builder().set_instances(Some(instances)).build()
