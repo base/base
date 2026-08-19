@@ -72,15 +72,15 @@ Anvil mines one block every four seconds. Do not use timestamp-warp RPCs in
 this variant: Base derives Beacon slots from L1 timestamps, so arbitrary time
 jumps would break the one-slot-per-execution-block mapping used to fetch blobs.
 
-Denim is disabled by default. To activate it at block 23 and switch the sequencer to its 200ms
-cadence, set `L2_BASE_DENIM_BLOCK` explicitly:
+Denim is disabled in the default mode. To activate it at block 23 and switch the sequencer to
+its 200ms cadence, set `L2_BASE_DENIM_BLOCK` explicitly:
 
 ```bash
 L2_BASE_DENIM_BLOCK=23 just devnet up
 ```
 
 Zenith is the permanently unscheduled, genesis-only gate for future hardfork feature testing.
-To activate it at block 50, start with:
+Zenith mode activates Denim at block 23 and Zenith at block 50:
 
 ```bash
 just devnet up zenith

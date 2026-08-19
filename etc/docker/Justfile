@@ -223,11 +223,14 @@ _up-devnet compose_profile mode:
     compose_profile={{ quote(compose_profile) }}
     devnet_mode={{ quote(mode) }}
 
-    # Denim remains opt-in through L2_BASE_DENIM_BLOCK. The zenith mode schedules the
-    # genesis-only Zenith gate used for future hardfork feature testing.
+    # Default mode leaves Denim opt-in through L2_BASE_DENIM_BLOCK. The zenith mode schedules
+    # Denim and the genesis-only Zenith gate used for future hardfork feature testing.
     case "$devnet_mode" in
       default) ;;
-      zenith) export L2_BASE_ZENITH_BLOCK="${L2_BASE_ZENITH_BLOCK:-50}" ;;
+      zenith)
+        export L2_BASE_DENIM_BLOCK="${L2_BASE_DENIM_BLOCK-23}"
+        export L2_BASE_ZENITH_BLOCK="${L2_BASE_ZENITH_BLOCK:-50}"
+        ;;
       *)
         echo "ERROR: mode must be 'default' or 'zenith' (got '${devnet_mode}')" >&2
         exit 1
