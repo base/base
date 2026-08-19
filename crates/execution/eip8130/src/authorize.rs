@@ -806,7 +806,7 @@ mod tests {
     }
 
     #[test]
-    fn delegate_to_zero_address_is_rejected_as_zero_actor() {
+    fn delegate_to_zero_address_is_rejected_as_authentication_failed() {
         // A delegate to address(0) yields an outer actor id of bytes32(0).
         let nested_key = k1_key(0x44);
         let nested_id = actor_id(k1_address(&nested_key));
