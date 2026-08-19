@@ -1,21 +1,26 @@
-//! Ordered comparison of OP-Stack packed-semver protocol versions.
+//! Ordered comparison of packed-semver protocol versions.
 
 use core::cmp::Ordering;
 
 use alloy_primitives::U256;
 
-/// An OP-Stack `ProtocolVersions` packed-semver value ordered by its semver fields.
+/// A `ProtocolVersions` packed-semver value ordered by its semver fields.
 ///
-/// The L1 `ProtocolVersions` contract stores each version as a version-type `0` `uint256`:
-/// `reserved || build || major || minor || patch || pre-release`, where `major`, `minor`, `patch`,
-/// and `pre-release` are the low four 32-bit fields and `build` occupies the next 64 bits.
+/// The L1 `ProtocolVersions` contract stores each version as a `uint256` whose highest byte is the
+/// version-type. For the only defined layout, version-type `0`, the value is
+/// `version-type || reserved || build || major || minor || patch || pre-release`, where `major`,
+/// `minor`, `patch`, and `pre-release` are the low four 32-bit fields, `build` occupies the next 64
+/// bits, and `reserved`/`version-type` occupy the high 64 bits.
 ///
-/// Ordering follows the OP-Stack superchain-upgrade rules rather than the raw integer value:
+/// Ordering follows the protocol-version semver rules rather than the raw integer value:
 ///
-/// * compare `major`, then `minor`, then `patch`;
+/// * an unrecognized version-type (`version-type != 0`) sorts *above* every version-type-`0` value,
+///   so a compatibility check against a version-type-`0` node stays fail-closed for a format the
+///   node cannot interpret;
+/// * within version-type `0`, compare `major`, then `minor`, then `patch`;
 /// * a pre-release (`pre-release != 0`) sorts *below* its matching release (`pre-release == 0`),
 ///   and pre-releases of the same `major.minor.patch` sort by their pre-release counter;
-/// * `build` and the reserved/version-type high bytes are ignored.
+/// * `build` and the reserved high bits are ignored, per spec.
 ///
 /// A raw `U256` comparison instead sorts a pre-release *above* its release, because the pre-release
 /// field holds a larger integer than the release's zero. That inverts the intended order and can
@@ -25,9 +30,9 @@ use alloy_primitives::U256;
 pub struct PackedProtocolVersion(U256);
 
 impl PartialEq for PackedProtocolVersion {
-    /// Equality mirrors [`Ord`]: two values are equal when their ordered semver fields match, so
-    /// `build` and the reserved/version-type bits are ignored. Deriving `PartialEq` instead would
-    /// compare the raw `U256` bit-for-bit and break the `Ord` contract, under which
+    /// Equality mirrors [`Ord`]: two values are equal when their ordered fields (version-type plus
+    /// the semver fields) match, so `build` and the reserved bits are ignored. Deriving `PartialEq`
+    /// instead would compare the raw `U256` bit-for-bit and break the `Ord` contract, under which
     /// `a.cmp(&b) == Ordering::Equal` must imply `a == b`.
     fn eq(&self, other: &Self) -> bool {
         self.ordering_key() == other.ordering_key()
@@ -76,15 +81,24 @@ impl PackedProtocolVersion {
         self.0.as_limbs()[0] as u32
     }
 
-    /// Ordering key that applies the semver pre-release rule.
+    /// Version-type byte (the highest byte of the `uint256`); `0` is the only defined layout.
+    pub const fn version_type(self) -> u8 {
+        (self.0.as_limbs()[3] >> 56) as u8
+    }
+
+    /// Ordering key that applies the version-type and semver pre-release rules.
     ///
-    /// A final release (`prerelease == 0`) is promoted above every pre-release of the same
-    /// `major.minor.patch` by ranking it as [`u64::MAX`], which no 32-bit pre-release counter can
-    /// reach.
-    const fn ordering_key(self) -> (u32, u32, u32, u64) {
+    /// The version-type is the most significant component, so an unrecognized version-type
+    /// (`version_type != 0`) sorts above every version-type-`0` value; a compatibility check against
+    /// a version-type-`0` node therefore rejects a format the node cannot interpret (fail-closed).
+    ///
+    /// Within a version-type, a final release (`prerelease == 0`) is promoted above every
+    /// pre-release of the same `major.minor.patch` by ranking it as [`u64::MAX`], which no 32-bit
+    /// pre-release counter can reach.
+    const fn ordering_key(self) -> (u8, u32, u32, u32, u64) {
         let prerelease_rank =
             if self.prerelease() == 0 { u64::MAX } else { self.prerelease() as u64 };
-        (self.major(), self.minor(), self.patch(), prerelease_rank)
+        (self.version_type(), self.major(), self.minor(), self.patch(), prerelease_rank)
     }
 }
 
@@ -153,5 +167,18 @@ mod tests {
         assert_ne!(plain.into_inner(), with_build.into_inner());
         assert_eq!(plain.cmp(&with_build), Ordering::Equal);
         assert_eq!(plain, with_build);
+    }
+
+    #[test]
+    fn unknown_version_type_sorts_above_every_version_type_zero_value() {
+        // The version-type occupies the highest byte (bits 248..255).
+        let unknown = PackedProtocolVersion::new(U256::from(1) << 248);
+        let highest_type_zero = PackedProtocolVersion::pack(u32::MAX, u32::MAX, u32::MAX, 0);
+
+        assert_eq!(unknown.version_type(), 1);
+        assert_eq!(highest_type_zero.version_type(), 0);
+        // Even the largest possible version-type-0 value ranks below any unknown version-type, so a
+        // version-type-0 node treats an unrecognized format as unsupported (fail-closed).
+        assert!(highest_type_zero < unknown);
     }
 }
