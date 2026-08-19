@@ -8,9 +8,12 @@ pub struct ScheduleId;
 impl ScheduleId {
     /// Clears upgrades above the prefix activated at `l2_timestamp` and returns its schedule ID.
     ///
-    /// This mirrors the onchain `ProtocolVersions.scheduleId()` hash chain:
-    /// `link[i + 1] = keccak256(abi.encode(link[i], i, timestamp_i))`, committing the activated
-    /// schedule prefix in contract registration order with 0 for unscheduled entries.
+    /// This mirrors the onchain `ProtocolVersions.activatedScheduleId(l2Timestamp)` hash chain:
+    /// `link[i + 1] = keccak256(abi.encode(link[i], i, timestamp_i))`, committing only the prefix
+    /// through the highest upgrade activated at `l2_timestamp` in contract registration order, with
+    /// 0 for unscheduled entries within that prefix. Entries above the activated prefix are
+    /// excluded, unlike the no-argument `ProtocolVersions.scheduleId()`, which commits every
+    /// registered upgrade including future-scheduled ones.
     ///
     /// Genesis-active upgrades using the legacy zero timestamp convention are first normalized to
     /// the config's genesis timestamp, matching the contract schedule representation. Boot loading
@@ -41,7 +44,8 @@ impl ScheduleId {
             BaseUpgrade::CONTRACT_VARIANTS.iter().enumerate().take(pinned_count)
         {
             // unwrap_or_default() maps None (unscheduled) to 0, matching the onchain
-            // ProtocolVersions.scheduleId() which uses 0 for unscheduled entries.
+            // ProtocolVersions.activatedScheduleId() which commits 0 for unscheduled entries
+            // (holes) within the activated prefix.
             let timestamp = config.upgrades.activation_timestamp(upgrade).unwrap_or_default();
             schedule_id = Self::next_link(schedule_id, index as u64, timestamp);
         }
