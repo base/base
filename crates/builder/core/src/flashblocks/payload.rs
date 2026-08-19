@@ -260,6 +260,7 @@ where
         let BuildArguments {
             mut cached_reads,
             execution_cache,
+            leases: _leases,
             config,
             cancel: block_cancel,
             publish_guard,

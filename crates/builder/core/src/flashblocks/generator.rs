@@ -7,8 +7,8 @@ use reth_basic_payload_builder::{HeaderForPayload, PayloadConfig, PrecachedState
 use reth_execution_cache::SavedCache;
 use reth_node_api::{NodePrimitives, PayloadKind};
 use reth_payload_builder::{
-    BuildNewPayload, KeepPayloadJobAlive, PayloadBuilderError, PayloadId, PayloadJob,
-    PayloadJobGenerator,
+    BuildNewPayload, KeepPayloadJobAlive, PayloadBuilderError, PayloadBuilderLease, PayloadId,
+    PayloadJob, PayloadJobGenerator,
 };
 use reth_payload_primitives::{BuiltPayload, PayloadAttributes};
 use reth_primitives_traits::HeaderTy;
@@ -130,7 +130,7 @@ where
 
         // Extract hash before moving parent_header into Arc to avoid cloning
         let parent_hash = parent_header.hash();
-        let resources = input.resources;
+        let mut resources = input.resources;
         let config = PayloadConfig::new(Arc::new(parent_header), input.attributes, id);
 
         // Create shared mutex for synchronizing cancellation with payload publishing
@@ -146,7 +146,8 @@ where
             publish_guard,
             deadline,
             cached_reads: self.maybe_pre_cached(parent_hash),
-            execution_cache: resources.execution_cache().cloned(),
+            execution_cache: resources.take_execution_cache(),
+            leases: resources.take_leases(),
         };
 
         job.spawn_build_job();
@@ -219,6 +220,8 @@ where
     pub(crate) cached_reads: Option<CachedReads>,
     /// Optional execution cache shared with the engine.
     pub(crate) execution_cache: Option<SavedCache>,
+    /// Lifecycle leases retained until the detached worker finishes using engine resources.
+    pub(crate) leases: Vec<PayloadBuilderLease>,
 }
 
 impl<Builder> std::fmt::Debug for BlockPayloadJob<Builder>
@@ -274,6 +277,8 @@ pub struct BuildArguments<Attributes, Payload: BuiltPayload> {
     pub cached_reads: CachedReads,
     /// Optional execution cache shared with the engine.
     pub execution_cache: Option<SavedCache>,
+    /// Lifecycle leases protecting resources loaned by the engine.
+    pub leases: Vec<PayloadBuilderLease>,
     /// How to configure the payload.
     pub config: PayloadConfig<Attributes, HeaderTy<Payload::Primitives>>,
     /// A marker that can be used to cancel the job.
@@ -301,10 +306,12 @@ where
         self.payload_rx = Some(watch_rx);
         let cached_reads = self.cached_reads.take().unwrap_or_default();
         let execution_cache = self.execution_cache.take();
+        let leases = std::mem::take(&mut self.leases);
         self.executor.spawn_blocking_task(Box::pin(async move {
             let args = BuildArguments {
                 cached_reads,
                 execution_cache,
+                leases,
                 config: payload_config,
                 cancel,
                 publish_guard,
@@ -400,18 +407,30 @@ impl<T> Future for ResolvePayload<T> {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        collections::VecDeque,
+        sync::atomic::{AtomicBool, Ordering},
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
     use alloy_eips::eip7685::Requests;
     use alloy_primitives::U256;
-    use base_common_consensus::BasePrimitives;
-    use base_execution_payload_builder::{BasePayloadBuilderAttributes, PayloadPrimitives};
+    use base_common_consensus::{BasePrimitives, BaseTransactionSigned};
+    use base_execution_payload_builder::{
+        BaseBuiltPayload, BasePayloadBuilderAttributes, BasePayloadTypes, PayloadPrimitives,
+    };
+    use futures::stream;
     use rand::rng;
     use reth_execution_cache::{ExecutionCache, SavedCache};
-    use reth_node_api::{BuiltPayloadExecutedBlock, NodePrimitives};
-    use reth_payload_builder::PayloadBuilderResources;
+    use reth_node_api::{BuiltPayloadExecutedBlock, NodePrimitives, PayloadKind};
+    use reth_payload_builder::{
+        PayloadBuilderHandle, PayloadBuilderResources, PayloadBuilderService,
+    };
     use reth_primitives_traits::SealedBlock;
     use reth_provider::test_utils::MockEthProvider;
     use reth_tasks::Runtime;
     use reth_testing_utils::generators::{BlockRangeParams, random_block_range};
+    use tokio::sync::Semaphore;
     use tokio::time::{Duration, sleep, timeout};
 
     use super::*;
@@ -503,6 +522,175 @@ mod tests {
         }
     }
 
+    type TestAttributes = BasePayloadBuilderAttributes<BaseTransactionSigned>;
+
+    #[derive(Debug)]
+    struct LeaseDropProbe {
+        dropped: Arc<AtomicBool>,
+    }
+
+    impl Drop for LeaseDropProbe {
+        fn drop(&mut self) {
+            self.dropped.store(true, Ordering::Release);
+        }
+    }
+
+    #[derive(Debug)]
+    struct BuildControl {
+        started: Semaphore,
+        complete: Semaphore,
+        cancelled: Semaphore,
+        finalizing: Semaphore,
+        finish_finalizing: Semaphore,
+        published: Semaphore,
+    }
+
+    impl Default for BuildControl {
+        fn default() -> Self {
+            Self {
+                started: Semaphore::new(0),
+                complete: Semaphore::new(0),
+                cancelled: Semaphore::new(0),
+                finalizing: Semaphore::new(0),
+                finish_finalizing: Semaphore::new(0),
+                published: Semaphore::new(0),
+            }
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct ControlledBuilder {
+        controls: Arc<Mutex<VecDeque<Arc<BuildControl>>>>,
+    }
+
+    impl ControlledBuilder {
+        fn new(controls: impl IntoIterator<Item = Arc<BuildControl>>) -> Self {
+            Self { controls: Arc::new(Mutex::new(controls.into_iter().collect())) }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl PayloadBuilder for ControlledBuilder {
+        type Attributes = TestAttributes;
+        type BuiltPayload = BaseBuiltPayload;
+
+        async fn try_build(
+            &self,
+            args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
+            payload_tx: &watch::Sender<Option<Self::BuiltPayload>>,
+        ) -> Result<(), PayloadBuilderError> {
+            let control =
+                self.controls.lock().pop_front().expect("missing controlled build configuration");
+            control.started.add_permits(1);
+
+            tokio::select! {
+                permit = control.complete.acquire() => {
+                    permit.expect("complete semaphore closed").forget();
+                }
+                _ = args.cancel.cancelled() => {
+                    control.cancelled.add_permits(1);
+                }
+            }
+
+            control.finalizing.add_permits(1);
+            control
+                .finish_finalizing
+                .acquire()
+                .await
+                .expect("finalization semaphore closed")
+                .forget();
+
+            let payload_id = args.config.payload_id();
+            drop(args);
+            payload_tx.send_replace(Some(BaseBuiltPayload::new(
+                payload_id,
+                Arc::new(SealedBlock::default()),
+                U256::ZERO,
+                None,
+                None,
+            )));
+            control.published.add_permits(1);
+            Ok(())
+        }
+    }
+
+    struct LeaseTest;
+
+    impl LeaseTest {
+        const TIMEOUT: Duration = Duration::from_secs(5);
+
+        fn generator(
+            builder: ControlledBuilder,
+            ensure_only_one_payload: bool,
+            extra_deadline: Duration,
+        ) -> (BlockPayloadJobGenerator<MockEthProvider, ControlledBuilder>, TestAttributes)
+        {
+            let mut rng = rng();
+            let client = MockEthProvider::default();
+            let blocks = random_block_range(
+                &mut rng,
+                1..=1,
+                BlockRangeParams { tx_count: 0..1, ..Default::default() },
+            );
+            client.extend_blocks(blocks.into_iter().map(|block| {
+                let hash = block.hash();
+                (hash, block.unseal())
+            }));
+
+            let mut attributes = TestAttributes::default();
+            attributes.payload_attributes.parent =
+                client.latest_header().expect("latest header query failed").unwrap().hash();
+            attributes.payload_attributes.timestamp =
+                SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() + 60;
+            let generator = BlockPayloadJobGenerator::with_builder(
+                client,
+                Runtime::test(),
+                builder,
+                ensure_only_one_payload,
+                extra_deadline,
+            );
+            (generator, attributes)
+        }
+
+        fn resources(dropped: &Arc<AtomicBool>) -> PayloadBuilderResources {
+            PayloadBuilderResources::default().with_lease(PayloadBuilderLease::new(
+                LeaseDropProbe { dropped: Arc::clone(dropped) },
+            ))
+        }
+
+        fn input(
+            attributes: TestAttributes,
+            dropped: &Arc<AtomicBool>,
+        ) -> BuildNewPayload<TestAttributes> {
+            BuildNewPayload {
+                parent_hash: attributes.payload_attributes.parent,
+                attributes,
+                resources: Self::resources(dropped),
+            }
+        }
+
+        async fn wait(signal: &Semaphore) {
+            timeout(Self::TIMEOUT, signal.acquire())
+                .await
+                .expect("timed out waiting for build signal")
+                .expect("build signal semaphore closed")
+                .forget();
+        }
+
+        async fn wait_until_removed(
+            handle: &PayloadBuilderHandle<BasePayloadTypes>,
+            id: PayloadId,
+        ) {
+            timeout(Self::TIMEOUT, async {
+                while handle.payload_timestamp(id).await.is_some() {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("timed out waiting for payload job removal");
+        }
+    }
+
     #[tokio::test]
     async fn test_payload_generator() -> eyre::Result<()> {
         let mut rng = rng();
@@ -571,6 +759,233 @@ mod tests {
         }
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn normal_get_payload_holds_worker_lease_until_publication() {
+        let control = Arc::new(BuildControl::default());
+        let dropped = Arc::new(AtomicBool::new(false));
+        let (generator, attributes) = LeaseTest::generator(
+            ControlledBuilder::new([Arc::clone(&control)]),
+            false,
+            Duration::from_secs(20),
+        );
+        let parent_hash = attributes.payload_attributes.parent;
+        let mut job = generator
+            .new_payload_job(
+                LeaseTest::input(attributes.clone(), &dropped),
+                attributes.payload_id(&parent_hash),
+            )
+            .expect("payload job creation failed");
+
+        LeaseTest::wait(&control.started).await;
+        assert!(!dropped.load(Ordering::Acquire), "worker must retain the lease while building");
+
+        let (resolved, _) = job.resolve_kind(PayloadKind::Earliest);
+        LeaseTest::wait(&control.cancelled).await;
+        LeaseTest::wait(&control.finalizing).await;
+        assert!(!dropped.load(Ordering::Acquire), "lease must cover cancellation finalization");
+
+        control.finish_finalizing.add_permits(1);
+        let payload = timeout(LeaseTest::TIMEOUT, resolved)
+            .await
+            .expect("timed out resolving payload")
+            .expect("payload resolution failed");
+
+        assert_eq!(payload.id(), attributes.payload_id(&parent_hash));
+        assert!(
+            dropped.load(Ordering::Acquire),
+            "worker lease must drop before publication wakes the resolver"
+        );
+    }
+
+    #[tokio::test]
+    async fn late_get_payload_resolves_after_worker_releases_lease() {
+        let control = Arc::new(BuildControl::default());
+        let dropped = Arc::new(AtomicBool::new(false));
+        let (generator, attributes) = LeaseTest::generator(
+            ControlledBuilder::new([Arc::clone(&control)]),
+            false,
+            Duration::from_secs(20),
+        );
+        let parent_hash = attributes.payload_attributes.parent;
+        let mut job = generator
+            .new_payload_job(
+                LeaseTest::input(attributes.clone(), &dropped),
+                attributes.payload_id(&parent_hash),
+            )
+            .expect("payload job creation failed");
+
+        LeaseTest::wait(&control.started).await;
+        assert!(!dropped.load(Ordering::Acquire), "worker must retain the lease while building");
+        control.complete.add_permits(1);
+        LeaseTest::wait(&control.finalizing).await;
+        assert!(!dropped.load(Ordering::Acquire), "lease must cover finalization");
+        control.finish_finalizing.add_permits(1);
+        LeaseTest::wait(&control.published).await;
+        assert!(
+            dropped.load(Ordering::Acquire),
+            "completed worker must release its lease before a delayed request"
+        );
+
+        let (resolved, _) = job.resolve_kind(PayloadKind::Earliest);
+        let payload = timeout(LeaseTest::TIMEOUT, resolved)
+            .await
+            .expect("timed out resolving delayed payload")
+            .expect("delayed payload resolution failed");
+        assert_eq!(payload.id(), attributes.payload_id(&parent_hash));
+    }
+
+    #[tokio::test]
+    async fn cancelled_resolve_future_keeps_detached_worker_lease() {
+        let control = Arc::new(BuildControl::default());
+        let dropped = Arc::new(AtomicBool::new(false));
+        let (generator, attributes) = LeaseTest::generator(
+            ControlledBuilder::new([Arc::clone(&control)]),
+            false,
+            Duration::from_secs(20),
+        );
+        let (service, handle) = PayloadBuilderService::<_, _, BasePayloadTypes>::new(
+            generator,
+            stream::empty::<CanonStateNotification<BasePrimitives>>(),
+        );
+        let service_task = tokio::spawn(service);
+        let id = handle
+            .send_new_payload(LeaseTest::input(attributes, &dropped))
+            .await
+            .expect("payload service dropped response")
+            .expect("payload job creation failed");
+
+        LeaseTest::wait(&control.started).await;
+        let resolve_handle = handle.clone();
+        let resolve_task =
+            tokio::spawn(
+                async move { resolve_handle.resolve_kind(id, PayloadKind::Earliest).await },
+            );
+        LeaseTest::wait(&control.cancelled).await;
+        LeaseTest::wait(&control.finalizing).await;
+        LeaseTest::wait_until_removed(&handle, id).await;
+
+        resolve_task.abort();
+        let _ = resolve_task.await;
+        tokio::task::yield_now().await;
+        assert!(
+            !dropped.load(Ordering::Acquire),
+            "dropping the service resolver must not release an active worker lease"
+        );
+
+        control.finish_finalizing.add_permits(1);
+        LeaseTest::wait(&control.published).await;
+        assert!(
+            dropped.load(Ordering::Acquire),
+            "worker must release its lease after finalization"
+        );
+        service_task.abort();
+    }
+
+    #[tokio::test]
+    async fn deadline_removal_keeps_detached_worker_lease() {
+        let control = Arc::new(BuildControl::default());
+        let dropped = Arc::new(AtomicBool::new(false));
+        let (generator, mut attributes) = LeaseTest::generator(
+            ControlledBuilder::new([Arc::clone(&control)]),
+            false,
+            Duration::ZERO,
+        );
+        attributes.payload_attributes.timestamp = 0;
+        let (service, handle) = PayloadBuilderService::<_, _, BasePayloadTypes>::new(
+            generator,
+            stream::empty::<CanonStateNotification<BasePrimitives>>(),
+        );
+        let service_task = tokio::spawn(service);
+        let id = handle
+            .send_new_payload(LeaseTest::input(attributes, &dropped))
+            .await
+            .expect("payload service dropped response")
+            .expect("payload job creation failed");
+
+        LeaseTest::wait(&control.started).await;
+        LeaseTest::wait(&control.cancelled).await;
+        LeaseTest::wait(&control.finalizing).await;
+        LeaseTest::wait_until_removed(&handle, id).await;
+        assert!(
+            !dropped.load(Ordering::Acquire),
+            "deadline removal must not release a finalizing worker lease"
+        );
+
+        control.finish_finalizing.add_permits(1);
+        LeaseTest::wait(&control.published).await;
+        assert!(
+            dropped.load(Ordering::Acquire),
+            "worker must release its lease after finalization"
+        );
+        service_task.abort();
+    }
+
+    #[tokio::test]
+    async fn replacement_keeps_cancelled_worker_lease() {
+        let first_control = Arc::new(BuildControl::default());
+        let second_control = Arc::new(BuildControl::default());
+        let first_dropped = Arc::new(AtomicBool::new(false));
+        let second_dropped = Arc::new(AtomicBool::new(false));
+        let builder =
+            ControlledBuilder::new([Arc::clone(&first_control), Arc::clone(&second_control)]);
+        let (generator, first_attributes) =
+            LeaseTest::generator(builder, true, Duration::from_secs(20));
+        let mut second_attributes = first_attributes.clone();
+        second_attributes.payload_attributes.timestamp += 1;
+        let (service, handle) = PayloadBuilderService::<_, _, BasePayloadTypes>::new(
+            generator,
+            stream::empty::<CanonStateNotification<BasePrimitives>>(),
+        );
+        let service_task = tokio::spawn(service);
+
+        let first_id = handle
+            .send_new_payload(LeaseTest::input(first_attributes, &first_dropped))
+            .await
+            .expect("payload service dropped first response")
+            .expect("first payload job creation failed");
+        LeaseTest::wait(&first_control.started).await;
+
+        let second_id = handle
+            .send_new_payload(LeaseTest::input(second_attributes, &second_dropped))
+            .await
+            .expect("payload service dropped second response")
+            .expect("second payload job creation failed");
+        LeaseTest::wait(&second_control.started).await;
+        LeaseTest::wait(&first_control.cancelled).await;
+        LeaseTest::wait(&first_control.finalizing).await;
+        LeaseTest::wait_until_removed(&handle, first_id).await;
+        assert!(
+            !first_dropped.load(Ordering::Acquire),
+            "replacement must not release the cancelled worker's lease during finalization"
+        );
+
+        first_control.finish_finalizing.add_permits(1);
+        LeaseTest::wait(&first_control.published).await;
+        assert!(
+            first_dropped.load(Ordering::Acquire),
+            "replaced worker must release its lease after finalization"
+        );
+
+        second_control.complete.add_permits(1);
+        LeaseTest::wait(&second_control.finalizing).await;
+        second_control.finish_finalizing.add_permits(1);
+        LeaseTest::wait(&second_control.published).await;
+        assert!(
+            !second_dropped.load(Ordering::Acquire),
+            "service intentionally retains its lease for a delayed getPayload"
+        );
+        handle
+            .resolve_kind(second_id, PayloadKind::Earliest)
+            .await
+            .expect("second payload job missing")
+            .expect("second payload resolution failed");
+        assert!(
+            second_dropped.load(Ordering::Acquire),
+            "service lease must release after delayed payload resolution"
+        );
+        service_task.abort();
     }
 
     #[derive(Clone, Debug, Default, PartialEq, Eq)]
