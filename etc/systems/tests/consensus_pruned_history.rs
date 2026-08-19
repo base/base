@@ -348,6 +348,7 @@ fn l1_info_rpc_transaction(block_number: u64) -> BaseTransaction {
         },
         deposit_nonce: None,
         deposit_receipt_version: None,
+        block_timestamp_ms: None,
     }
 }
 
