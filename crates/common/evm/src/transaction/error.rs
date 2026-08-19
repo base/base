@@ -78,6 +78,11 @@ pub enum BaseTransactionError {
     /// the transaction's journal writes are reverted and it is not added to the
     /// block.
     Eip8130(alloc::string::String),
+    /// A classic (legacy / EIP-2930 / EIP-1559 / EIP-7702) sender failed
+    /// EIP-8130 keystore authorization after ecrecover. The default EOA is
+    /// revoked, expired, or not an unrestricted owner. Consensus-critical from
+    /// Cobalt onward; cause for non-inclusion.
+    ClassicSender(alloc::string::String),
 }
 
 impl BaseTransactionError {
@@ -87,6 +92,12 @@ impl BaseTransactionError {
     /// `.map_err(BaseTransactionError::eip8130)?`.
     pub fn eip8130(reason: impl Display) -> Self {
         Self::Eip8130(alloc::string::ToString::to_string(&reason))
+    }
+
+    /// Wraps a classic-transaction keystore rejection as
+    /// [`BaseTransactionError::ClassicSender`].
+    pub fn classic_sender(reason: impl Display) -> Self {
+        Self::ClassicSender(alloc::string::ToString::to_string(&reason))
     }
 }
 
@@ -110,6 +121,9 @@ impl Display for BaseTransactionError {
             }
             Self::Eip8130(reason) => {
                 write!(f, "EIP-8130 transaction rejected: {reason}")
+            }
+            Self::ClassicSender(reason) => {
+                write!(f, "classic transaction keystore authorization failed: {reason}")
             }
         }
     }
@@ -166,6 +180,10 @@ mod tests {
         assert_eq!(
             BaseTransactionError::eip8130("nonce too low").to_string(),
             "EIP-8130 transaction rejected: nonce too low"
+        );
+        assert_eq!(
+            BaseTransactionError::classic_sender("default EOA actor is revoked").to_string(),
+            "classic transaction keystore authorization failed: default EOA actor is revoked"
         );
     }
 
