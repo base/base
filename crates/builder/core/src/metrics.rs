@@ -158,6 +158,9 @@ base_metrics::define_metrics! {
     #[describe("Flashblock txs included")]
     #[label(flashblock_index)]
     flashblock_txs_included: histogram,
+    #[describe("Flashblock txs deferred by parking")]
+    #[label(flashblock_index)]
+    flashblock_txs_deferred: histogram,
     #[describe("Flashblock txs rejected")]
     #[label(flashblock_index)]
     flashblock_txs_rejected: histogram,
@@ -226,6 +229,7 @@ impl BuilderMetrics {
         Self::flashblock_txs_considered(flashblock_index.clone())
             .record(diag.txs_considered as f64);
         Self::flashblock_txs_included(flashblock_index.clone()).record(diag.txs_included as f64);
+        Self::flashblock_txs_deferred(flashblock_index.clone()).record(diag.txs_deferred as f64);
         Self::flashblock_txs_rejected(flashblock_index.clone())
             .record(diag.txs_rejected_total() as f64);
 
@@ -301,6 +305,7 @@ mod tests {
         let diag = FlashblockDiagnostics {
             txs_considered: 6,
             txs_included: 3,
+            txs_deferred: 2,
             txs_rejected_gas: 2,
             txs_rejected_da: 1,
             txs_rejected_metering_data_pending: 1,
@@ -341,6 +346,9 @@ mod tests {
         assert!(
             rendered
                 .contains("base_builder_flashblock_txs_considered_sum{flashblock_index=\"7\"} 6")
+        );
+        assert!(
+            rendered.contains("base_builder_flashblock_txs_deferred_sum{flashblock_index=\"7\"} 2")
         );
         assert!(
             rendered

@@ -48,8 +48,9 @@ use crate::{
     ParkedPredicateIndex, PayloadTxsBounds, ResourceLimits, TxResources, TxnExecutionError,
     TxnOutcome, ValidityPredicateKey,
     transaction_events::{
-        BuilderAcceptedEventData, BuilderConsideredEventData, BuilderRejectedEventData,
-        BuilderTransactionEventContext, emit_builder_transaction_event, rejection_reason_code,
+        BuilderAcceptedEventData, BuilderConsideredEventData, BuilderDeferredEventData,
+        BuilderRejectedEventData, BuilderTransactionEventContext, emit_builder_transaction_event,
+        rejection_reason_code,
     },
 };
 
@@ -92,6 +93,12 @@ pub struct FlashblockDiagnostics {
     pub txs_considered: u64,
     /// Number of transactions included in the flashblock.
     pub txs_included: u64,
+    /// Number of successful park decisions in this flashblock.
+    ///
+    /// Incremented once per `park_current()` and never decremented. A later
+    /// promote-and-reselect of the same transaction is a new consideration
+    /// round and does not unwind this count.
+    pub txs_deferred: u64,
     /// Number rejected by gas limit.
     pub txs_rejected_gas: u64,
     /// Number rejected by DA size limits (tx or block).
@@ -154,6 +161,14 @@ impl FlashblockDiagnostics {
             + self.txs_rejected_uncompressed_size
             + self.txs_rejected_metering_data_pending
             + self.txs_rejected_other
+    }
+
+    /// Rejected plus deferred consideration outcomes.
+    ///
+    /// Completes `txs_considered == txs_included + txs_excluded_total()`
+    /// when `txs_considered` is counted per selection attempt.
+    pub const fn txs_excluded_total(&self) -> u64 {
+        self.txs_rejected_total() + self.txs_deferred
     }
 
     /// Records a rejected transaction into the appropriate rejection bucket.
@@ -814,7 +829,7 @@ impl BasePayloadBuilderCtx {
                         tx.validity_predicates(),
                         &predicate_context,
                     );
-                let (rejection_reason, rejection_detail) = if predicate_read_failed {
+                let (decision_reason, decision_detail) = if predicate_read_failed {
                     (
                         "validity_predicate_read_failed",
                         "failed to read state required by a validity predicate",
@@ -833,7 +848,7 @@ impl BasePayloadBuilderCtx {
                 trace!(
                     target: "payload_builder",
                     tx_hash = ?tx_hash,
-                    rejection_reason,
+                    decision_reason,
                     "skipping transaction with unsatisfied validity predicate"
                 );
                 self.emit_builder_decision_event(
@@ -843,23 +858,6 @@ impl BasePayloadBuilderCtx {
                     Some(ordering_position),
                     || BuilderConsideredEventData::new(info, limits, None),
                 );
-                self.emit_builder_decision_event(
-                    &payload_id,
-                    TransactionEventType::BuilderRejected,
-                    tx_hash,
-                    Some(ordering_position),
-                    || {
-                        BuilderRejectedEventData::new(
-                            rejection_reason,
-                            rejection_detail,
-                            false,
-                            info,
-                            limits,
-                            None,
-                        )
-                    },
-                );
-                diag.txs_rejected_other += 1;
                 // A read failure cannot be retried at a later ordering position: including the
                 // transaction there could place it behind a lower-priority transaction even though
                 // its predicate may have already been satisfied at its first position. An expired
@@ -871,6 +869,23 @@ impl BasePayloadBuilderCtx {
                     // record it for the rejection cache and pool eviction so it is
                     // not re-evaluated on subsequent flashblock rebuilds. A read
                     // failure is only terminal for this scan, so it is not cached.
+                    self.emit_builder_decision_event(
+                        &payload_id,
+                        TransactionEventType::BuilderRejected,
+                        tx_hash,
+                        Some(ordering_position),
+                        || {
+                            BuilderRejectedEventData::new(
+                                decision_reason,
+                                decision_detail,
+                                false,
+                                info,
+                                limits,
+                                None,
+                            )
+                        },
+                    );
+                    diag.txs_rejected_other += 1;
                     if predicate_expired {
                         diag.permanently_rejected_txs.push(tx_hash);
                     }
@@ -878,8 +893,41 @@ impl BasePayloadBuilderCtx {
                 } else if let Some(blocking_predicate) = blocking_predicate
                     && best_txs.park_current()
                 {
+                    self.emit_builder_decision_event(
+                        &payload_id,
+                        TransactionEventType::BuilderDeferred,
+                        tx_hash,
+                        Some(ordering_position),
+                        || {
+                            BuilderDeferredEventData::new(
+                                decision_reason,
+                                decision_detail,
+                                info,
+                                limits,
+                                None,
+                            )
+                        },
+                    );
+                    diag.txs_deferred += 1;
                     predicate_index.park(tx_hash, tx, blocking_predicate);
                 } else {
+                    self.emit_builder_decision_event(
+                        &payload_id,
+                        TransactionEventType::BuilderRejected,
+                        tx_hash,
+                        Some(ordering_position),
+                        || {
+                            BuilderRejectedEventData::new(
+                                decision_reason,
+                                decision_detail,
+                                false,
+                                info,
+                                limits,
+                                None,
+                            )
+                        },
+                    );
+                    diag.txs_rejected_other += 1;
                     best_txs.mark_invalid(tx.sender(), tx.nonce());
                 }
                 continue;
@@ -1633,6 +1681,21 @@ mod tests {
 
         assert_eq!(diag.txs_considered, 5);
         assert_eq!(diag.txs_included, 2);
+    }
+
+    #[test]
+    fn diagnostics_count_deferred_outside_rejected_total() {
+        let diag = FlashblockDiagnostics {
+            txs_considered: 5,
+            txs_included: 2,
+            txs_deferred: 2,
+            txs_rejected_other: 1,
+            ..Default::default()
+        };
+
+        assert_eq!(diag.txs_rejected_total(), 1);
+        assert_eq!(diag.txs_excluded_total(), 3);
+        assert_eq!(diag.txs_considered, diag.txs_included + diag.txs_excluded_total());
     }
 
     /// [`FlashblocksExtraCtx::next`] must increment the flashblock index,

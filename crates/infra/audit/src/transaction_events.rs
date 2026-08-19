@@ -156,7 +156,8 @@ impl TransactionEventRetentionClass {
             | TransactionEventType::ProxyIngressRpcSuccess
             | TransactionEventType::BuilderConsidered
             | TransactionEventType::BuilderAccepted
-            | TransactionEventType::BuilderRejected => Self::Hot,
+            | TransactionEventType::BuilderRejected
+            | TransactionEventType::BuilderDeferred => Self::Hot,
             TransactionEventType::IngressReceived
             | TransactionEventType::SimulationStarted
             | TransactionEventType::SimulationSucceeded
@@ -1344,6 +1345,10 @@ mod tests {
         );
         assert_eq!(
             TransactionEventRetentionClass::for_event_type(TransactionEventType::BuilderRejected),
+            TransactionEventRetentionClass::Hot
+        );
+        assert_eq!(
+            TransactionEventRetentionClass::for_event_type(TransactionEventType::BuilderDeferred),
             TransactionEventRetentionClass::Hot
         );
         assert_eq!(
