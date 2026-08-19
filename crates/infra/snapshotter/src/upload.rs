@@ -271,6 +271,10 @@ impl SnapshotUploader {
     /// of each component, state, rocksdb, proofs, and manifest go to
     /// `{prefix}/{timestamp}/`. `manifest.json` is uploaded last as the "snapshot complete"
     /// signal.
+    ///
+    /// `remote_static_files` is the shared-storage listing from
+    /// [`Self::list_remote_static_files`]; callers that already listed for generation
+    /// should reuse that map instead of listing again.
     pub async fn upload(
         &self,
         output_dir: &Path,
@@ -279,6 +283,7 @@ impl SnapshotUploader {
         retain_runs: usize,
         local_manifest: &SnapshotManifest,
         remote_manifest: Option<&SnapshotManifest>,
+        remote_static_files: &HashMap<String, u64>,
     ) -> Result<String> {
         let static_prefix = self.static_files_prefix();
         let run_prefix = self.run_prefix(timestamp);
@@ -292,7 +297,6 @@ impl SnapshotUploader {
         );
 
         let manifest_path = output_dir.join("manifest.json");
-        let remote_static_files = self.list_remote_static_files().await?;
         let mut static_uploads = Vec::new();
         let mut run_uploads = Vec::new();
         let mut skipped = 0u64;
