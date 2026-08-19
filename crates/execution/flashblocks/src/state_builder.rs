@@ -1084,10 +1084,7 @@ mod tests {
         );
 
         builder
-            .execute_transaction(
-                0,
-                create_legacy_call(sender, recipient, U256::from(1), 21_000, 0),
-            )
+            .execute_transaction(0, create_legacy_call(sender, recipient, U256::from(1), 21_000, 0))
             .expect("value transfer to code-less recipient should succeed");
         builder
             .execute_transaction(1, create_legacy_call(sender, contract, U256::ZERO, 50_000, 1))
