@@ -1,17 +1,25 @@
 //! Merkle Patricia Trie proof verification utilities.
 
+#[cfg(feature = "account-verify")]
 use alloc::vec::Vec;
 
-use alloy_primitives::{Address, B256, Bytes, keccak256};
+#[cfg(feature = "account-verify")]
+use alloy_primitives::Address;
+use alloy_primitives::{B256, Bytes, keccak256};
+#[cfg(feature = "account-verify")]
 use alloy_rlp::Encodable;
+#[cfg(feature = "account-verify")]
 use alloy_rpc_types_eth::EIP1186AccountProofResponse;
+#[cfg(feature = "account-verify")]
+use alloy_trie::TrieAccount;
 use alloy_trie::{
-    Nibbles, TrieAccount,
+    Nibbles,
     proof::{ProofVerificationError, verify_proof},
 };
 use thiserror::Error;
 
 /// Errors from account proof verification.
+#[cfg(feature = "account-verify")]
 #[derive(Debug, Eq, PartialEq, Error)]
 pub enum AccountProofError {
     /// The RPC response is for a different account than the caller requested.
@@ -36,9 +44,11 @@ pub enum StorageProofError {
 }
 
 /// Verifies `eth_getProof` account responses against state roots.
+#[cfg(feature = "account-verify")]
 #[derive(Debug)]
 pub struct AccountProofVerifier;
 
+#[cfg(feature = "account-verify")]
 impl AccountProofVerifier {
     /// Verify an `eth_getProof` response against a state root.
     ///
