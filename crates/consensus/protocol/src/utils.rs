@@ -1,6 +1,6 @@
 //! Utility methods used by protocol types.
 
-use alloc::vec::Vec;
+use alloc::{string::ToString, vec::Vec};
 
 use alloy_consensus::{Transaction, Typed2718};
 use alloy_primitives::{B256, Bytes, U256};
@@ -55,7 +55,7 @@ pub fn to_system_config_from_payload(
         .decoded_transactions::<BaseTxEnvelope>()
         .next()
         .ok_or(BaseBlockConversionError::EmptyTransactions(block_hash))?
-        .map_err(|_| BaseBlockConversionError::InvalidTransactionEncoding)?;
+        .map_err(|error| BaseBlockConversionError::InvalidTransactionEncoding(error.to_string()))?;
     system_config_from_transaction(
         &first_tx,
         payload.timestamp(),
@@ -354,7 +354,10 @@ mod tests {
         payload.transactions_mut().push(bytes!("ff"));
 
         let err = to_system_config_from_payload(&payload, &RollupConfig::default()).unwrap_err();
-        assert_eq!(err, BaseBlockConversionError::InvalidTransactionEncoding);
+        let BaseBlockConversionError::InvalidTransactionEncoding(error) = err else {
+            panic!("expected invalid transaction encoding error");
+        };
+        assert!(!error.is_empty());
     }
 
     #[test]

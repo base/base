@@ -1,5 +1,7 @@
 //! Error types for protocol conversions.
 
+use alloc::string::String;
+
 use alloy_primitives::B256;
 use base_common_consensus::EIP1559ParamError;
 
@@ -15,8 +17,8 @@ pub enum BaseBlockConversionError {
     #[error("First payload transaction has unexpected type: {0}")]
     InvalidTxType(u8),
     /// Invalid transaction encoding.
-    #[error("Failed to decode first payload transaction")]
-    InvalidTransactionEncoding,
+    #[error("Failed to decode first payload transaction: {0}")]
+    InvalidTransactionEncoding(String),
     /// L1 Info error
     #[error("Failed to decode L1 info: {0}")]
     L1InfoError(#[from] DecodeError),
