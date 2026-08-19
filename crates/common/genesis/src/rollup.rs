@@ -115,54 +115,39 @@ impl Default for RollupConfig {
 
 impl EthereumHardforks for RollupConfig {
     fn ethereum_fork_activation(&self, fork: EthereumHardfork) -> ForkCondition {
-        // Helper: cascade through the Base upgrade chain, returning the first set timestamp.
-        let cascade = |starting: &[Option<u64>]| -> ForkCondition {
-            if let Some(ts) = starting.iter().flatten().next() {
-                return ForkCondition::Timestamp(*ts);
-            }
-            ForkCondition::Never
+        // The Base upgrade that first activates this Ethereum fork. The fork then activates at the
+        // earliest scheduled timestamp of that anchor or any of its cascade successors: a later
+        // Base upgrade being scheduled implies the earlier Ethereum fork is active. The successor
+        // chain comes from [`BaseUpgrade::cascade_successor`], the single source of the ladder, so
+        // this stays in sync with the CL fork methods and hole normalization automatically.
+        let anchor = if fork <= EthereumHardfork::Paris {
+            // Pre-Bedrock Ethereum forks and everything through Paris activate at block 0 on Base.
+            return ForkCondition::Block(0);
+        } else if fork <= EthereumHardfork::Shanghai {
+            BaseUpgrade::Canyon
+        } else if fork <= EthereumHardfork::Cancun {
+            BaseUpgrade::Ecotone
+        } else if fork <= EthereumHardfork::Prague {
+            BaseUpgrade::Isthmus
+        } else if fork <= EthereumHardfork::Osaka {
+            BaseUpgrade::Azul
+        } else {
+            return ForkCondition::Never;
         };
 
-        if fork <= EthereumHardfork::Berlin {
-            // Pre-Bedrock Ethereum forks all activate at block 0 on Base chains.
-            ForkCondition::Block(0)
-        } else if fork <= EthereumHardfork::Paris {
-            // Bedrock activates everything from London through Paris at block 0.
-            ForkCondition::Block(0)
-        } else if fork <= EthereumHardfork::Shanghai {
-            // Canyon activates Shanghai; cascade through later Base upgrades if unset.
-            cascade(&[
-                self.upgrade_activation_timestamp(BaseUpgrade::Canyon),
-                self.upgrade_activation_timestamp(BaseUpgrade::Ecotone),
-                self.upgrade_activation_timestamp(BaseUpgrade::Fjord),
-                self.upgrade_activation_timestamp(BaseUpgrade::Granite),
-                self.upgrade_activation_timestamp(BaseUpgrade::Holocene),
-                self.upgrade_activation_timestamp(BaseUpgrade::Isthmus),
-                self.upgrade_activation_timestamp(BaseUpgrade::Jovian),
-            ])
-        } else if fork <= EthereumHardfork::Cancun {
-            // Ecotone activates Cancun; cascade through later Base upgrades if unset.
-            cascade(&[
-                self.upgrade_activation_timestamp(BaseUpgrade::Ecotone),
-                self.upgrade_activation_timestamp(BaseUpgrade::Fjord),
-                self.upgrade_activation_timestamp(BaseUpgrade::Granite),
-                self.upgrade_activation_timestamp(BaseUpgrade::Holocene),
-                self.upgrade_activation_timestamp(BaseUpgrade::Isthmus),
-                self.upgrade_activation_timestamp(BaseUpgrade::Jovian),
-            ])
-        } else if fork <= EthereumHardfork::Prague {
-            // Isthmus activates Prague; cascade through later Base upgrades if unset.
-            cascade(&[
-                self.upgrade_activation_timestamp(BaseUpgrade::Isthmus),
-                self.upgrade_activation_timestamp(BaseUpgrade::Jovian),
-            ])
-        } else if fork <= EthereumHardfork::Osaka {
-            self.upgrade_activation_timestamp(BaseUpgrade::Azul)
-                .map(ForkCondition::Timestamp)
-                .unwrap_or(ForkCondition::Never)
-        } else {
-            ForkCondition::Never
+        let mut upgrade = Some(anchor);
+        while let Some(current) = upgrade {
+            // Only execution-ladder upgrades map to an Ethereum fork. Contract-only upgrades in the
+            // cascade (e.g. Delta, which covers Span Batches, not L1 EIPs) are skipped so they do
+            // not spuriously drive an Ethereum fork's activation.
+            if current.is_execution()
+                && let Some(timestamp) = self.upgrade_activation_timestamp(current)
+            {
+                return ForkCondition::Timestamp(timestamp);
+            }
+            upgrade = current.cascade_successor();
         }
+        ForkCondition::Never
     }
 }
 
@@ -308,22 +293,26 @@ impl RollupConfig {
         is_jovian_active,
         is_first_jovian_block,
         [upgrade_activation_timestamp(BaseUpgrade::Jovian)],
-        "Jovian";
+        "Jovian",
+        implies is_base_azul_active;
 
         is_base_azul_active,
         is_first_base_azul_block,
         [upgrade_activation_timestamp(BaseUpgrade::Azul)],
-        "Base Azul";
+        "Base Azul",
+        implies is_beryl_active;
 
         is_beryl_active,
         is_first_beryl_block,
         [upgrade_activation_timestamp(BaseUpgrade::Beryl)],
-        "Beryl";
+        "Beryl",
+        implies is_cobalt_active;
 
         is_cobalt_active,
         is_first_cobalt_block,
         [upgrade_activation_timestamp(BaseUpgrade::Cobalt)],
-        "Cobalt";
+        "Cobalt",
+        implies is_denim_active;
 
         is_denim_active,
         is_first_denim_block,
@@ -967,7 +956,7 @@ mod tests {
             ForkCondition::Timestamp(600)
         );
 
-        // Osaka↔Azul: azul drives Osaka activation; standalone (not cascaded from Jovian).
+        // Osaka↔Azul: azul drives Osaka activation.
         let mut cfg = RollupConfig::default();
         cfg.upgrades.base = BaseUpgradeConfig {
             azul: Some(700),
@@ -981,7 +970,7 @@ mod tests {
             ForkCondition::Timestamp(700)
         );
 
-        // Beryl follows Azul; Osaka still activates at Azul when both are configured.
+        // Azul set → Osaka activates at Azul even when later Base upgrades are also configured.
         let mut cfg = RollupConfig::default();
         cfg.upgrades.base = BaseUpgradeConfig {
             azul: Some(700),
@@ -997,7 +986,8 @@ mod tests {
         assert!(cfg.is_base_azul_active(800));
         assert!(cfg.is_beryl_active(800));
 
-        // Beryl requires Azul, and does not independently activate Osaka.
+        // Azul unset → Osaka cascades forward through the Base tail to the earliest scheduled
+        // successor (here Beryl). A later Base upgrade being active implies Azul is active.
         let mut cfg = RollupConfig::default();
         cfg.upgrades.base = BaseUpgradeConfig {
             azul: None,
@@ -1006,9 +996,28 @@ mod tests {
             denim: None,
             zenith: None,
         };
-        assert_eq!(cfg.ethereum_fork_activation(EthereumHardfork::Osaka), ForkCondition::Never);
+        assert_eq!(
+            cfg.ethereum_fork_activation(EthereumHardfork::Osaka),
+            ForkCondition::Timestamp(800)
+        );
+        assert!(cfg.is_base_azul_active(800));
 
-        // Jovian set but Azul unset → Osaka is Never.
+        // The cascade reaches all the way to Denim.
+        let mut cfg = RollupConfig::default();
+        cfg.upgrades.base = BaseUpgradeConfig {
+            azul: None,
+            beryl: None,
+            cobalt: None,
+            denim: Some(1000),
+            zenith: None,
+        };
+        assert_eq!(
+            cfg.ethereum_fork_activation(EthereumHardfork::Osaka),
+            ForkCondition::Timestamp(1000)
+        );
+
+        // Jovian set but Azul unset → Osaka is Never: Jovian precedes Azul, so the forward cascade
+        // from Azul never reaches it.
         let mut cfg = RollupConfig::default();
         cfg.upgrades.jovian_time = Some(900);
         assert_eq!(cfg.ethereum_fork_activation(EthereumHardfork::Osaka), ForkCondition::Never);

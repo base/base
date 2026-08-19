@@ -3,6 +3,7 @@
 use alloc::{
     collections::BTreeMap,
     string::{String, ToString},
+    vec::Vec,
 };
 use core::fmt::Display;
 
@@ -204,6 +205,40 @@ impl BaseUpgrade {
             Self::Denim => 12,
             Self::Delta | Self::PectraBlobSchedule | Self::Zenith => return None,
         })
+    }
+
+    /// Returns the upgrade whose activation is *implied* by this one being active, if any.
+    ///
+    /// This is the strictly-ordered cascade chain: a later fork being active implies its
+    /// predecessors are active. It is the single source of that relationship, consumed by the
+    /// `implies` chain in [`RollupConfig`](crate::RollupConfig)'s fork methods,
+    /// [`RollupConfig::ethereum_fork_activation`](crate::RollupConfig::ethereum_fork_activation),
+    /// and cascade-hole normalization. The chain runs the whole activation ladder, from
+    /// [`Regolith`](Self::Regolith) through the Base-specific tail
+    /// [`Azul`](Self::Azul)→[`Beryl`](Self::Beryl)→[`Cobalt`](Self::Cobalt)→[`Denim`](Self::Denim).
+    /// Upgrades outside the chain — block/genesis activated ([`Bedrock`](Self::Bedrock),
+    /// [`Zenith`](Self::Zenith)) and contract-only
+    /// [`PectraBlobSchedule`](Self::PectraBlobSchedule) — return `None`. The match is exhaustive, so
+    /// a new variant cannot be added without deciding where it sits in the cascade.
+    pub const fn cascade_successor(self) -> Option<Self> {
+        match self {
+            Self::Regolith => Some(Self::Canyon),
+            Self::Canyon => Some(Self::Delta),
+            Self::Delta => Some(Self::Ecotone),
+            Self::Ecotone => Some(Self::Fjord),
+            Self::Fjord => Some(Self::Granite),
+            Self::Granite => Some(Self::Holocene),
+            Self::Holocene => Some(Self::Isthmus),
+            Self::Isthmus => Some(Self::Jovian),
+            Self::Jovian => Some(Self::Azul),
+            Self::Azul => Some(Self::Beryl),
+            Self::Beryl => Some(Self::Cobalt),
+            Self::Cobalt => Some(Self::Denim),
+            Self::Denim
+            | Self::Bedrock
+            | Self::PectraBlobSchedule
+            | Self::Zenith => None,
+        }
     }
 
     /// Returns the canonical `snake_case` contract upgrade ID used by the L1 upgrade-signal
@@ -757,7 +792,52 @@ impl UpgradeConfig {
         }
     }
 
+    /// Fills activation "holes" so the cascade chain is monotonic non-decreasing.
+    ///
+    /// A hole is a later upgrade scheduled while one of its predecessors is unscheduled (or
+    /// scheduled later). Because the CL treats a later fork as implying its predecessors are
+    /// active, such a schedule makes cascade-reading consumers (the CL) disagree with
+    /// independent-reading consumers (the EL fork table, [`BaseUpgrade::from_chain_and_timestamp`])
+    /// about whether the predecessor is active. Pulling each predecessor forward to the earliest
+    /// activation of its transitive successors makes the stored schedule match the CL cascade
+    /// semantics, so all consumers agree.
+    ///
+    /// The chain is derived from [`BaseUpgrade::cascade_successor`] (membership) walked in
+    /// [`BaseUpgrade::CONTRACT_VARIANTS`] order (ordering), so it stays in sync with the enum
+    /// without a separate hand-maintained list. Successors always follow their predecessors in
+    /// `CONTRACT_VARIANTS`, so a reverse walk normalizes each successor before the predecessors
+    /// that point at it, letting the earliest downstream activation propagate up the whole chain.
+    ///
+    /// Returns the upgrades whose timestamps were pulled forward, oldest-first, so callers can log
+    /// and record the anomaly. An empty result means the schedule was already a well-formed ladder.
+    pub fn normalize_cascade_ladder(&mut self) -> Vec<(BaseUpgrade, u64)> {
+        let mut filled = Vec::new();
+        for upgrade in BaseUpgrade::CONTRACT_VARIANTS.into_iter().rev() {
+            let Some(successor) = upgrade.cascade_successor() else {
+                continue;
+            };
+            let own = self.activation_timestamp(upgrade);
+            let effective = match (own, self.activation_timestamp(successor)) {
+                (Some(own), Some(successor)) => Some(own.min(successor)),
+                (own, successor) => own.or(successor),
+            };
+            if let Some(effective) = effective
+                && own != Some(effective)
+            {
+                self.set_activation_timestamp(upgrade, effective);
+                filled.push((upgrade, effective));
+            }
+        }
+        filled.reverse();
+        filled
+    }
+
     /// Applies all upgrade activation overrides.
+    ///
+    /// This does not normalize the cascade ladder: the CL reads these overrides through
+    /// cascade-aware fork methods, so a hole cannot cause it to disagree with itself. Independent
+    /// per-fork consumers (the EL fork table) are fed a normalized schedule at ingestion instead
+    /// (see [`normalize_cascade_ladder`](Self::normalize_cascade_ladder)).
     pub fn apply_activation_overrides(&mut self, overrides: &UpgradeActivationOverrides) {
         for (upgrade_id, activation) in &overrides.activations {
             self.set_activation(*upgrade_id, *activation);
@@ -1133,5 +1213,118 @@ mod runtime_tests {
                 Some(BaseUpgrade::Beryl)
             );
         }
+    }
+
+    #[test]
+    fn cascade_successors_follow_predecessors_in_contract_order() {
+        // `normalize_cascade_ladder` relies on every cascade successor appearing after its
+        // predecessor in `CONTRACT_VARIANTS`, so a reverse walk normalizes successors first.
+        let index =
+            |upgrade| BaseUpgrade::CONTRACT_VARIANTS.iter().position(|&variant| variant == upgrade);
+        for upgrade in BaseUpgrade::CONTRACT_VARIANTS {
+            if let Some(successor) = upgrade.cascade_successor() {
+                let upgrade_index = index(upgrade).expect("cascade member is contract-backed");
+                let successor_index =
+                    index(successor).expect("cascade successor is contract-backed");
+                assert!(
+                    upgrade_index < successor_index,
+                    "{upgrade:?} must precede its cascade successor {successor:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn normalize_fills_holes_from_later_scheduled_upgrade() {
+        // A hole: Canyon and Delta cleared while Ecotone stays scheduled at 100.
+        let mut config = UpgradeConfig::default();
+        config.set_activation_timestamp(BaseUpgrade::Regolith, 1);
+        config.set_activation_timestamp(BaseUpgrade::Ecotone, 100);
+
+        let filled = config.normalize_cascade_ladder();
+
+        // Canyon and Delta are pulled forward to Ecotone's timestamp, oldest-first.
+        assert_eq!(filled, alloc::vec![(BaseUpgrade::Canyon, 100), (BaseUpgrade::Delta, 100)]);
+        assert_eq!(config.activation_timestamp(BaseUpgrade::Canyon), Some(100));
+        assert_eq!(config.activation_timestamp(BaseUpgrade::Delta), Some(100));
+        assert_eq!(config.activation_timestamp(BaseUpgrade::Ecotone), Some(100));
+        assert_eq!(config.activation_timestamp(BaseUpgrade::Regolith), Some(1));
+    }
+
+    #[test]
+    fn normalize_clamps_predecessor_scheduled_after_successor() {
+        // A predecessor scheduled later than its successor is pulled back to the successor.
+        let mut config = UpgradeConfig::default();
+        config.set_activation_timestamp(BaseUpgrade::Regolith, 1);
+        config.set_activation_timestamp(BaseUpgrade::Canyon, 200);
+        config.set_activation_timestamp(BaseUpgrade::Ecotone, 100);
+
+        let filled = config.normalize_cascade_ladder();
+
+        // Canyon is clamped back to Ecotone; Delta (unset) is filled to Ecotone too. Regolith
+        // (scheduled earlier at 1) is already valid and left alone.
+        assert_eq!(filled, alloc::vec![(BaseUpgrade::Canyon, 100), (BaseUpgrade::Delta, 100)]);
+        assert_eq!(config.activation_timestamp(BaseUpgrade::Canyon), Some(100));
+        assert_eq!(config.activation_timestamp(BaseUpgrade::Regolith), Some(1));
+    }
+
+    #[test]
+    fn normalize_is_noop_for_wellformed_and_standalone_schedules() {
+        // A fully-scheduled monotonic ladder (through the Base tail) plus a standalone (non-cascade)
+        // Zenith entry is left untouched: there is no hole to fill.
+        let mut config = UpgradeConfig::default();
+        for (upgrade, timestamp) in [
+            (BaseUpgrade::Regolith, 1),
+            (BaseUpgrade::Canyon, 2),
+            (BaseUpgrade::Delta, 3),
+            (BaseUpgrade::Ecotone, 4),
+            (BaseUpgrade::Fjord, 5),
+            (BaseUpgrade::Granite, 6),
+            (BaseUpgrade::Holocene, 7),
+            (BaseUpgrade::Isthmus, 8),
+            (BaseUpgrade::Jovian, 9),
+            (BaseUpgrade::Azul, 10),
+            (BaseUpgrade::Beryl, 11),
+            (BaseUpgrade::Cobalt, 12),
+            (BaseUpgrade::Denim, 13),
+        ] {
+            config.set_activation_timestamp(upgrade, timestamp);
+        }
+        // Zenith is standalone (not in the cascade) and set out of order; it must stay untouched.
+        config.set_activation_timestamp(BaseUpgrade::Zenith, 1);
+        let before = config;
+
+        assert!(config.normalize_cascade_ladder().is_empty());
+        assert_eq!(config, before);
+    }
+
+    #[test]
+    fn normalize_fills_holes_across_the_base_tail() {
+        // Only Denim (the tail) is scheduled: every cascade predecessor is pulled forward to it.
+        let mut config = UpgradeConfig::default();
+        config.set_activation_timestamp(BaseUpgrade::Denim, 500);
+
+        let filled = config.normalize_cascade_ladder();
+
+        for upgrade in [
+            BaseUpgrade::Regolith,
+            BaseUpgrade::Canyon,
+            BaseUpgrade::Delta,
+            BaseUpgrade::Ecotone,
+            BaseUpgrade::Fjord,
+            BaseUpgrade::Granite,
+            BaseUpgrade::Holocene,
+            BaseUpgrade::Isthmus,
+            BaseUpgrade::Jovian,
+            BaseUpgrade::Azul,
+            BaseUpgrade::Beryl,
+            BaseUpgrade::Cobalt,
+        ] {
+            assert_eq!(config.activation_timestamp(upgrade), Some(500), "{upgrade:?} filled");
+        }
+        // 12 predecessors filled; Denim itself was already set.
+        assert_eq!(filled.len(), 12);
+        // PectraBlobSchedule is not part of the cascade and stays unset.
+        assert_eq!(config.activation_timestamp(BaseUpgrade::PectraBlobSchedule), None);
     }
 }

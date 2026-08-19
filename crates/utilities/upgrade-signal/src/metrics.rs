@@ -46,6 +46,9 @@ base_metrics::define_metrics! {
     #[label(layer)]
     #[label(upgrade)]
     signal_updates_total: counter,
+    #[describe("Total upgrade schedule holes filled to keep CL/EL activation consistent")]
+    #[label(upgrade)]
+    schedule_holes_filled_total: counter,
 }
 
 impl UpgradeSignalMetrics {
@@ -107,6 +110,16 @@ impl UpgradeSignalMetrics {
         Self::init();
         Self::signal_updates_total(layer.label(), upgrade_id.contract_id().to_string())
             .increment(1);
+    }
+
+    /// Records a filled cascade-ladder hole for one upgrade ID.
+    ///
+    /// A hole is a malformed schedule where a later upgrade is scheduled while one of its
+    /// predecessors is not; filling it keeps the CL and EL from disagreeing on activation. This is
+    /// schedule-level (not layer-specific), so it carries no layer label.
+    pub fn record_hole_filled(upgrade_id: BaseUpgrade) {
+        Self::init();
+        Self::schedule_holes_filled_total(upgrade_id.contract_id().to_string()).increment(1);
     }
 
     /// Converts a packed-semver protocol version to a compact metric gauge value.

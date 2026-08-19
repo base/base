@@ -9,7 +9,8 @@ use alloy_primitives::{Address, B256, U256};
 use base_common_chains::{BaseUpgradeExt, ChainConfig, Upgrades};
 use base_common_consensus::Predeploys;
 use base_common_genesis::{
-    BaseUpgrade, RuntimeUpgradeRegistry, UpgradeActivation, UpgradeActivationSink,
+    BaseUpgrade, BaseUpgradeConfig, RuntimeUpgradeRegistry, UpgradeActivation, UpgradeActivationSink,
+    UpgradeConfig,
 };
 use base_protocol::OutputRoot;
 use derive_more::{Constructor, Deref, Into};
@@ -172,29 +173,53 @@ impl BaseChainSpec {
         }
 
         // Time-based upgrades
-        // L1 upgrades are mapped to the activation timestamps of the corresponding Base upgrades
-        let azul_time = genesis_info.base.azul;
-        let beryl_time = genesis_info.base.beryl;
-        let cobalt_time = genesis_info.base.cobalt;
-        let denim_time = genesis_info.base.denim;
+        // L1 upgrades are mapped to the activation timestamps of the corresponding Base upgrades.
+        // Zenith is standalone (not part of the cascade) and applied directly.
         let zenith_time = genesis_info.base.zenith;
+
+        // Fill any cascade "holes" so the EL fork table matches the CL's cascade semantics: a later
+        // fork implies its predecessors are active, across the whole ladder including the
+        // Base-specific tail (Azul→Beryl→Cobalt→Denim). A malformed genesis that schedules a later
+        // fork while leaving a predecessor unscheduled would otherwise make the EL disagree with the
+        // CL. `UpgradeConfig::normalize_cascade_ladder` is the single source of this logic; Delta is
+        // contract-only and absent from the EL fork table, so its filled value is not read back.
+        let mut ladder = UpgradeConfig {
+            regolith_time: genesis_info.regolith_time,
+            canyon_time: genesis_info.canyon_time,
+            ecotone_time: genesis_info.ecotone_time,
+            fjord_time: genesis_info.fjord_time,
+            granite_time: genesis_info.granite_time,
+            holocene_time: genesis_info.holocene_time,
+            isthmus_time: genesis_info.isthmus_time,
+            jovian_time: genesis_info.jovian_time,
+            base: BaseUpgradeConfig {
+                azul: genesis_info.base.azul,
+                beryl: genesis_info.base.beryl,
+                cobalt: genesis_info.base.cobalt,
+                denim: genesis_info.base.denim,
+                zenith: genesis_info.base.zenith,
+            },
+            ..Default::default()
+        };
+        ladder.normalize_cascade_ladder();
+
         let time_upgrade_opts = [
-            (BaseUpgrade::Regolith.boxed(), genesis_info.regolith_time),
-            (EthereumHardfork::Shanghai.boxed(), genesis_info.canyon_time),
-            (BaseUpgrade::Canyon.boxed(), genesis_info.canyon_time),
-            (EthereumHardfork::Cancun.boxed(), genesis_info.ecotone_time),
-            (BaseUpgrade::Ecotone.boxed(), genesis_info.ecotone_time),
-            (BaseUpgrade::Fjord.boxed(), genesis_info.fjord_time),
-            (BaseUpgrade::Granite.boxed(), genesis_info.granite_time),
-            (BaseUpgrade::Holocene.boxed(), genesis_info.holocene_time),
-            (EthereumHardfork::Prague.boxed(), genesis_info.isthmus_time),
-            (BaseUpgrade::Isthmus.boxed(), genesis_info.isthmus_time),
-            (BaseUpgrade::Jovian.boxed(), genesis_info.jovian_time),
-            (EthereumHardfork::Osaka.boxed(), azul_time),
-            (BaseUpgrade::Azul.boxed(), azul_time),
-            (BaseUpgrade::Beryl.boxed(), beryl_time),
-            (BaseUpgrade::Cobalt.boxed(), cobalt_time),
-            (BaseUpgrade::Denim.boxed(), denim_time),
+            (BaseUpgrade::Regolith.boxed(), ladder.regolith_time),
+            (EthereumHardfork::Shanghai.boxed(), ladder.canyon_time),
+            (BaseUpgrade::Canyon.boxed(), ladder.canyon_time),
+            (EthereumHardfork::Cancun.boxed(), ladder.ecotone_time),
+            (BaseUpgrade::Ecotone.boxed(), ladder.ecotone_time),
+            (BaseUpgrade::Fjord.boxed(), ladder.fjord_time),
+            (BaseUpgrade::Granite.boxed(), ladder.granite_time),
+            (BaseUpgrade::Holocene.boxed(), ladder.holocene_time),
+            (EthereumHardfork::Prague.boxed(), ladder.isthmus_time),
+            (BaseUpgrade::Isthmus.boxed(), ladder.isthmus_time),
+            (BaseUpgrade::Jovian.boxed(), ladder.jovian_time),
+            (EthereumHardfork::Osaka.boxed(), ladder.base.azul),
+            (BaseUpgrade::Azul.boxed(), ladder.base.azul),
+            (BaseUpgrade::Beryl.boxed(), ladder.base.beryl),
+            (BaseUpgrade::Cobalt.boxed(), ladder.base.cobalt),
+            (BaseUpgrade::Denim.boxed(), ladder.base.denim),
             (BaseUpgrade::Zenith.boxed(), zenith_time),
         ];
 
@@ -1346,6 +1371,37 @@ mod tests {
         assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Denim, 900_000));
         assert!(!chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Zenith, 999_999));
         assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Zenith, 1_000_000));
+    }
+
+    #[test]
+    fn construction_fills_cascade_hole_so_el_matches_cl() {
+        // A malformed genesis: Ecotone is scheduled at 40 while Canyon is left unscheduled — a
+        // cascade "hole". The CL treats Ecotone-active as implying Canyon-active; construction fills
+        // the hole so the EL fork table agrees instead of reporting Canyon inactive.
+        let geth_genesis = r#"
+    {
+      "config": {
+        "bedrockBlock": 0,
+        "ecotoneTime": 40,
+        "activationAdminAddress": "0xcb00000000000000000000000000000000000000",
+        "optimism": {
+          "eip1559Elasticity": 60,
+          "eip1559Denominator": 70
+        }
+      }
+    }
+    "#;
+        let genesis: Genesis = serde_json::from_str(geth_genesis).unwrap();
+        let chain_spec: BaseChainSpec = genesis.into();
+
+        // Ecotone active at 40 now implies its predecessors are active at 40 too.
+        assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Ecotone, 40));
+        assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Canyon, 40));
+        assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Regolith, 40));
+        // The Ethereum fork paired with Canyon (Shanghai) is filled to the same timestamp.
+        assert!(chain_spec.is_fork_active_at_timestamp(EthereumHardfork::Shanghai, 40));
+        // Nothing activates before Ecotone's timestamp.
+        assert!(!chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Canyon, 39));
     }
 
     #[test]

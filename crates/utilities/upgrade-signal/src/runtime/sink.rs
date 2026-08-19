@@ -1,10 +1,11 @@
 use base_common_genesis::{
     BaseUpgrade, RuntimeUpgradeRegistry, UpgradeActivation, UpgradeActivationOverrides,
-    UpgradeActivationSink,
+    UpgradeActivationSink, UpgradeConfig,
 };
+use tracing::warn;
 
 use super::{UpgradeSignalApplyAction, UpgradeSignalApplyChange, UpgradeSignalApplySummary};
-use crate::UpgradeSignalSchedule;
+use crate::{UpgradeSignalMetrics, UpgradeSignalSchedule};
 
 /// Upgrade activation sink backed by the process-local runtime registry for one chain.
 #[derive(Debug, Clone)]
@@ -66,10 +67,38 @@ impl UpgradeSignalRuntimeApplier {
         let mut summary = UpgradeSignalApplySummary::new(chain_id, schedule);
         let mut staged_sink = sink.clone();
 
+        // Normalize the cascade ladder before applying: a later fork always drags its predecessors
+        // with it. Without this, a schedule that clears a predecessor (e.g. Canyon) while a
+        // successor (e.g. Ecotone) stays scheduled would make the EL (independent per-fork) disagree
+        // with the CL (cascading), splitting activation across the two layers. All runtime paths
+        // (execution chain spec, rollup config, runtime registry) flow through this method, so
+        // filling here keeps every consumer consistent. `positive_activation_timestamp` maps an
+        // absent/zero activation to `Never`, so raw signals cleared on L1 stay cleared unless a
+        // scheduled successor pulls them forward.
+        let mut normalized = UpgradeConfig::default();
         for signal in &schedule.signals {
+            normalized.set_activation(
+                signal.upgrade_id,
+                UpgradeActivation::from_timestamp(signal.positive_activation_timestamp()),
+            );
+        }
+        for (upgrade_id, filled_timestamp) in normalized.normalize_cascade_ladder() {
+            warn!(
+                chain_id,
+                upgrade = %upgrade_id.contract_id(),
+                filled_timestamp,
+                "filled upgrade schedule hole to keep CL/EL activation consistent"
+            );
+            UpgradeSignalMetrics::record_hole_filled(upgrade_id);
+        }
+
+        for signal in &schedule.signals {
+            // Report the raw L1 signal in the summary, but apply the normalized (hole-filled)
+            // activation to the sink so the sink's schedule cannot contain a cascade hole.
             let activation =
                 UpgradeActivation::from_timestamp(signal.positive_activation_timestamp());
-            let supported = staged_sink.apply_activation(signal.upgrade_id, activation)?;
+            let applied_activation = normalized.activation(signal.upgrade_id);
+            let supported = staged_sink.apply_activation(signal.upgrade_id, applied_activation)?;
 
             let action = if !supported {
                 UpgradeSignalApplyAction::Ignored
@@ -145,12 +174,14 @@ mod tests {
         let chain_id = 9_000_001;
         RuntimeUpgradeRegistry::clear_chain(chain_id);
 
+        // A well-formed schedule: Azul<Beryl scheduled, Cobalt (the latest of the three) cleared.
+        // Clearing the tail leaves no hole, so normalization is a no-op here.
         let summary = UpgradeSignalRuntimeApplier::apply_schedule(
             chain_id,
             &schedule(&[
                 (BaseUpgrade::Azul, 42),
-                (BaseUpgrade::Beryl, 0),
-                (BaseUpgrade::Cobalt, 10),
+                (BaseUpgrade::Beryl, 84),
+                (BaseUpgrade::Cobalt, 0),
             ]),
         );
 
@@ -163,11 +194,11 @@ mod tests {
         );
         assert_eq!(
             RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Beryl),
-            Some(UpgradeActivation::Never)
+            Some(UpgradeActivation::Timestamp(84))
         );
         assert_eq!(
             RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Cobalt),
-            Some(UpgradeActivation::Timestamp(10))
+            Some(UpgradeActivation::Never)
         );
 
         RuntimeUpgradeRegistry::clear_chain(chain_id);
@@ -215,6 +246,67 @@ mod tests {
 
         assert_eq!(error, RecordingSinkError);
         assert_eq!(sink.applied, vec![(BaseUpgrade::Regolith, UpgradeActivation::Timestamp(1))]);
+    }
+
+    #[test]
+    fn applies_filled_activations_when_schedule_has_a_cascade_hole() {
+        // A hole: Canyon and Delta cleared (timestamp 0 => Never) while Ecotone stays at 100.
+        let mut sink = RecordingSink::default();
+
+        let summary = UpgradeSignalRuntimeApplier::apply_schedule_to_sink(
+            9_000_100,
+            &schedule(&[
+                (BaseUpgrade::Regolith, 1),
+                (BaseUpgrade::Canyon, 0),
+                (BaseUpgrade::Delta, 0),
+                (BaseUpgrade::Ecotone, 100),
+            ]),
+            &mut sink,
+        )
+        .unwrap();
+
+        assert!(summary.committed);
+        // The sink receives Canyon and Delta filled forward to Ecotone, not the raw cleared values,
+        // so an independent-reading sink (the EL fork table) cannot end up with a cascade hole.
+        assert_eq!(
+            sink.applied,
+            vec![
+                (BaseUpgrade::Regolith, UpgradeActivation::Timestamp(1)),
+                (BaseUpgrade::Canyon, UpgradeActivation::Timestamp(100)),
+                (BaseUpgrade::Delta, UpgradeActivation::Timestamp(100)),
+                (BaseUpgrade::Ecotone, UpgradeActivation::Timestamp(100)),
+            ]
+        );
+        // The summary still reports the raw L1 signals: Canyon and Delta were cleared on L1.
+        assert_eq!(summary.cleared_upgrades, 2);
+        assert_eq!(summary.applied_upgrades, 2);
+    }
+
+    #[test]
+    fn leaves_wellformed_schedule_unchanged() {
+        let mut sink = RecordingSink::default();
+
+        UpgradeSignalRuntimeApplier::apply_schedule_to_sink(
+            9_000_101,
+            &schedule(&[
+                (BaseUpgrade::Regolith, 1),
+                (BaseUpgrade::Canyon, 2),
+                (BaseUpgrade::Delta, 3),
+                (BaseUpgrade::Ecotone, 4),
+            ]),
+            &mut sink,
+        )
+        .unwrap();
+
+        assert_eq!(
+            sink.applied,
+            vec![
+                (BaseUpgrade::Regolith, UpgradeActivation::Timestamp(1)),
+                (BaseUpgrade::Canyon, UpgradeActivation::Timestamp(2)),
+                (BaseUpgrade::Delta, UpgradeActivation::Timestamp(3)),
+                (BaseUpgrade::Ecotone, UpgradeActivation::Timestamp(4)),
+            ]
+        );
     }
 
     #[test]
