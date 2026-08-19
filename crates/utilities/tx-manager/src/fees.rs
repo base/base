@@ -51,14 +51,23 @@ impl FeeCalculator {
         blob_base_fee.saturating_mul(2)
     }
 
-    /// Returns the minimum replacement value that clears a mempool's
+    /// Returns the minimum replacement value that clears **every** mempool's
     /// tx-replacement rule.
     ///
-    /// A mempool rejects a replacement whose fee is not **strictly** above
-    /// `x * (100 + bump_percent) / 100`. Because that division truncates, the
-    /// threshold it compares against is exactly `x + x / divisor` — so
-    /// returning that value lands *on* the boundary and is rejected. One extra
-    /// wei clears it.
+    /// Replacement policy is client policy, not consensus, and the clients we
+    /// submit to round the threshold differently:
+    ///
+    /// * **geth** compares against `floor(x * (100 + bump) / 100)` and accepts
+    ///   equality (`core/txpool/legacypool/list.go`).
+    /// * **reth** compares against `div_ceil(x * (100 + bump), 100)` and
+    ///   requires at least that (`transaction-pool/src/validate/mod.rs`).
+    ///
+    /// `x + x / divisor` is exactly geth's floor, so it satisfies geth but is
+    /// one wei short of reth whenever `x` is not divisible by the divisor. The
+    /// trailing `+ 1` clears the stricter of the two, which is what a
+    /// replacement needs in order to be valid on either client — and to
+    /// propagate across a mixed network, since a reth peer still holding the
+    /// original rejects an under-bumped replacement and keeps the original.
     ///
     /// * **Regular transactions** (`is_blob = false`): 10 % bump →
     ///   `x + x / 10 + 1`.
