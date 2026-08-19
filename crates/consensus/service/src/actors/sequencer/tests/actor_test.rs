@@ -189,6 +189,7 @@ async fn test_on_time_or_late_insert_starts_child_build_immediately(#[case] seco
             Ok(attributes_at(inserted_timestamp + block_time)),
             Ok(attributes_at(inserted_timestamp)),
         ],
+        ..Default::default()
     };
     actor.builder.engine_client = Arc::clone(&engine_client);
     actor.builder.origin_selector = origin_selector;
@@ -328,6 +329,7 @@ async fn test_early_insert_defers_child_build_until_parent_timestamp() {
             Ok(attributes_at(initial_timestamp + 2 * block_time)),
             Ok(attributes_at(initial_timestamp + block_time)),
         ],
+        ..Default::default()
     };
     actor.builder.engine_client = Arc::clone(&engine_client);
     actor.builder.origin_selector = origin_selector;
@@ -422,6 +424,7 @@ async fn test_stop_discards_queued_parent_and_restart_builds_immediately_on_fres
             Ok(attributes_at(restart_head.block_info.timestamp + block_time)),
             Ok(attributes_at(inserted_head.block_info.timestamp)),
         ],
+        ..Default::default()
     };
     actor.builder.engine_client = Arc::clone(&engine_client);
     actor.builder.origin_selector = origin_selector;
@@ -793,7 +796,8 @@ async fn test_build_unsealed_payload_prepare_payload_attributes_error(
     let mut origin_selector = MockOriginSelector::new();
     origin_selector.expect_next_l1_origin().times(1).return_once(move |_| Ok(l1_origin));
 
-    let attributes_builder = TestAttributesBuilder { attributes: vec![Err(forced_error)] };
+    let attributes_builder =
+        TestAttributesBuilder { attributes: vec![Err(forced_error)], ..Default::default() };
 
     let mut actor = test_actor();
     actor.builder.origin_selector = origin_selector;

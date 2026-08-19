@@ -3,4 +3,5 @@
 mod actor_test;
 mod admin_api_impl_test;
 
-mod test_util;
+pub(super) mod test_util;
+pub(super) use test_util::test_actor;

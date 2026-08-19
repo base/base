@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::AttributesBuilder;
 use base_consensus_rpc::SequencerAdminAPIError;
-use base_protocol::L2BlockInfo;
+use base_protocol::{L2BlockInfo, to_system_config_from_payload};
 use tokio::{
     select,
     sync::{mpsc, oneshot},
@@ -449,6 +449,29 @@ where
                     None => false,
                 };
 
+                if let Some(sealer) = self
+                    .sealer
+                    .as_ref()
+                    .filter(|sealer| sealer.matches_inserted_head(inserted_head))
+                {
+                    match to_system_config_from_payload(
+                        &sealer.envelope.execution_payload,
+                        &self.rollup_config,
+                    ) {
+                        Ok(config) => self
+                            .builder
+                            .attributes_builder
+                            .seed_parent_system_config(inserted_head, config),
+                        Err(error) => warn!(
+                            target: "sequencer",
+                            error = %error,
+                            block_number = inserted_head.block_info.number,
+                            block_hash = %inserted_head.block_info.hash,
+                            "Failed to cache acknowledged parent system config"
+                        ),
+                    }
+                }
+
                 if let Some(sealer) = self.sealer.take() {
                     Metrics::sequencer_seal_pipeline_duration().record(sealer.started_at.elapsed());
                 }
@@ -751,5 +774,98 @@ where
 {
     fn cancelled(&self) -> WaitForCancellationFuture<'_> {
         self.cancellation_token.cancelled()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::{B256, Sealed};
+    use base_common_consensus::{BaseBlock, BaseTxEnvelope, TxDeposit};
+    use base_common_genesis::{RollupConfig, SystemConfig};
+    use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
+    use base_protocol::{BlockInfo, L1BlockInfoBedrock};
+
+    use super::*;
+    use crate::actors::sequencer::tests::test_actor;
+
+    fn valid_sealer() -> (PayloadSealer, L2BlockInfo, SystemConfig) {
+        let block = BaseBlock {
+            header: alloy_consensus::Header { number: 1, ..Default::default() },
+            body: alloy_consensus::BlockBody {
+                transactions: vec![BaseTxEnvelope::Deposit(Sealed::new(TxDeposit {
+                    input: L1BlockInfoBedrock::default().encode_calldata(),
+                    ..Default::default()
+                }))],
+                ..Default::default()
+            },
+        };
+        let (payload, _) = BaseExecutionPayload::from_block_slow(&block);
+        let config = to_system_config_from_payload(&payload, &RollupConfig::default()).unwrap();
+        let head = L2BlockInfo {
+            block_info: BlockInfo {
+                hash: payload.block_hash(),
+                number: payload.block_number(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let envelope = BaseExecutionPayloadEnvelope {
+            execution_payload: payload,
+            parent_beacon_block_root: None,
+        };
+        (PayloadSealer::new(envelope), head, config)
+    }
+
+    #[tokio::test]
+    async fn acknowledged_payload_seeds_only_an_exact_decodable_parent() {
+        let (sealer, head, config) = valid_sealer();
+        let mut actor = test_actor();
+        actor.sealer = Some(sealer);
+        let mut pipeline = BuildPipelineState::default();
+        let mut shadow = None;
+        let mut reconciliation_ticker = tokio::time::interval(Duration::from_secs(1));
+        let mut build_ticker = ScheduledTicker::new(Duration::from_secs(2));
+
+        actor
+            .handle_seal_step_result(
+                &mut pipeline,
+                &mut shadow,
+                &mut reconciliation_ticker,
+                &mut build_ticker,
+                Ok(SealStepOutcome::Inserted(head)),
+            )
+            .await
+            .unwrap();
+        assert_eq!(actor.builder.attributes_builder.parent_system_configs, vec![(head, config)]);
+
+        let (sealer, mut mismatched_head, _) = valid_sealer();
+        mismatched_head.block_info.hash = B256::left_padding_from(&[1]);
+        actor.sealer = Some(sealer);
+        actor
+            .handle_seal_step_result(
+                &mut pipeline,
+                &mut shadow,
+                &mut reconciliation_ticker,
+                &mut build_ticker,
+                Ok(SealStepOutcome::Inserted(mismatched_head)),
+            )
+            .await
+            .unwrap();
+        assert_eq!(actor.builder.attributes_builder.parent_system_configs.len(), 1);
+
+        let (mut sealer, head, _) = valid_sealer();
+        sealer.envelope.execution_payload.transactions_mut().clear();
+        actor.sealer = Some(sealer);
+        actor
+            .handle_seal_step_result(
+                &mut pipeline,
+                &mut shadow,
+                &mut reconciliation_ticker,
+                &mut build_ticker,
+                Ok(SealStepOutcome::Inserted(head)),
+            )
+            .await
+            .unwrap();
+        assert_eq!(actor.builder.attributes_builder.parent_system_configs.len(), 1);
     }
 }

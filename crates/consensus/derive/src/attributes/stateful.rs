@@ -10,7 +10,7 @@ use alloy_rlp::Encodable;
 use alloy_rpc_types_engine::PayloadAttributes;
 use async_trait::async_trait;
 use base_common_consensus::Predeploys;
-use base_common_genesis::RollupConfig;
+use base_common_genesis::{RollupConfig, SystemConfig};
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_consensus_upgrades::{Upgrade, Upgrades};
 use base_protocol::{BaseTimeUpdateTx, Deposits, L1BlockInfoTx, L2BlockInfo};
@@ -36,6 +36,8 @@ where
     config_fetcher: L2P,
     /// The L1 receipts fetcher.
     receipts_fetcher: L1P,
+    /// Locally known system config for an exact L2 parent.
+    parent_system_config: Option<(L2BlockInfo, SystemConfig)>,
 }
 
 impl<L1P, L2P> StatefulAttributesBuilder<L1P, L2P>
@@ -55,6 +57,7 @@ where
             l1_cfg,
             config_fetcher: sys_cfg_fetcher,
             receipts_fetcher: receipts,
+            parent_system_config: None,
         }
     }
 }
@@ -65,6 +68,10 @@ where
     L1P: ChainProvider + Debug + Send,
     L2P: L2ChainProvider + Debug + Send,
 {
+    fn seed_parent_system_config(&mut self, parent: L2BlockInfo, config: SystemConfig) {
+        self.parent_system_config = Some((parent, config));
+    }
+
     async fn prepare_payload_attributes(
         &mut self,
         l2_parent: L2BlockInfo,
@@ -73,11 +80,17 @@ where
         let l1_header;
         let deposit_transactions: Vec<Bytes>;
 
-        let mut sys_config = self
-            .config_fetcher
-            .system_config_by_number(l2_parent.block_info.number, Arc::clone(&self.rollup_cfg))
-            .await
-            .map_err(Into::into)?;
+        let mut sys_config = match self
+            .parent_system_config
+            .take_if(|(parent, _)| *parent == l2_parent)
+        {
+            Some((_, config)) => config,
+            None => self
+                .config_fetcher
+                .system_config_by_number(l2_parent.block_info.number, Arc::clone(&self.rollup_cfg))
+                .await
+                .map_err(Into::into)?,
+        };
 
         // If the L1 origin changed in this block, then we are in the first block of the epoch.
         // In this case we need to fetch all transaction receipts from the L1 origin block so
@@ -290,7 +303,7 @@ mod tests {
 
     use alloy_consensus::Header;
     use alloy_eips::eip2718::Decodable2718;
-    use alloy_primitives::{B256, Log, LogData, U64, U256, address};
+    use alloy_primitives::{B256, Log, LogData, U64, U256, address, hex};
     use base_common_chains::Sepolia;
     use base_common_consensus::{BaseTxEnvelope, SystemAddresses};
     use base_common_genesis::{
@@ -377,6 +390,40 @@ mod tests {
         }
     }
 
+    fn system_config_test_builder(
+        fetcher: TestSystemConfigL2Fetcher,
+    ) -> (
+        StatefulAttributesBuilder<TestChainProvider, TestSystemConfigL2Fetcher>,
+        L2BlockInfo,
+        BlockNumHash,
+    ) {
+        let block_time = 10;
+        let timestamp = 100;
+        let cfg = Arc::new(RollupConfig {
+            block_time,
+            genesis: ChainGenesis { l2_time: timestamp - block_time, ..Default::default() },
+            ..Default::default()
+        });
+        let mut provider = TestChainProvider::default();
+        let header = Header { timestamp, ..Default::default() };
+        let origin_hash = header.hash_slow();
+        provider.insert_header(origin_hash, header);
+        let parent = L2BlockInfo {
+            block_info: BlockInfo {
+                hash: B256::left_padding_from(&[1]),
+                number: 1,
+                timestamp,
+                ..Default::default()
+            },
+            l1_origin: BlockNumHash { hash: origin_hash, number: 1 },
+            seq_num: 0,
+        };
+        let epoch = parent.l1_origin;
+        let builder =
+            StatefulAttributesBuilder::new(cfg, Arc::new(Sepolia::l1_config()), fetcher, provider);
+        (builder, parent, epoch)
+    }
+
     #[tokio::test]
     async fn test_derive_deposits_empty() {
         let receipts = vec![];
@@ -423,6 +470,98 @@ mod tests {
         let receipts = vec![generate_valid_receipt(), generate_valid_receipt()];
         let result = derive_deposits(B256::default(), &receipts, deposit_contract).await;
         assert_eq!(result.unwrap().len(), 4);
+    }
+
+    #[tokio::test]
+    async fn test_prepare_payload_uses_only_exact_parent_system_config_seed() {
+        let (mut builder, parent, epoch) =
+            system_config_test_builder(TestSystemConfigL2Fetcher::default());
+        builder.seed_parent_system_config(
+            parent,
+            SystemConfig { gas_limit: 123, ..Default::default() },
+        );
+
+        let payload = builder.prepare_payload_attributes(parent, epoch).await.unwrap();
+        assert_eq!(payload.gas_limit, Some(123));
+        assert!(builder.parent_system_config.is_none());
+
+        let mut fetcher = TestSystemConfigL2Fetcher::default();
+        fetcher.insert(
+            parent.block_info.number,
+            SystemConfig { gas_limit: 456, ..Default::default() },
+        );
+        let (mut builder, parent, epoch) = system_config_test_builder(fetcher);
+        let mut mismatched_parent = parent;
+        mismatched_parent.block_info.hash = B256::left_padding_from(&[2]);
+        builder.seed_parent_system_config(
+            mismatched_parent,
+            SystemConfig { gas_limit: 123, ..Default::default() },
+        );
+
+        let payload = builder.prepare_payload_attributes(parent, epoch).await.unwrap();
+        assert_eq!(payload.gas_limit, Some(456));
+        assert_eq!(builder.parent_system_config.unwrap().0, mismatched_parent);
+    }
+
+    #[tokio::test]
+    async fn test_epoch_update_applies_to_parent_system_config_seed() {
+        let system_config_address = address!("1111111111111111111111111111111111111111");
+        let cfg = Arc::new(RollupConfig {
+            block_time: 10,
+            genesis: ChainGenesis { l2_time: 90, ..Default::default() },
+            l1_system_config_address: system_config_address,
+            ..Default::default()
+        });
+        let origin_hash = B256::left_padding_from(&[1]);
+        let header = Header { parent_hash: origin_hash, timestamp: 100, ..Default::default() };
+        let epoch_hash = header.hash_slow();
+        let update = Log {
+            address: system_config_address,
+            data: LogData::new_unchecked(
+                vec![
+                    SystemConfigUpdate::TOPIC,
+                    SystemConfigUpdate::EVENT_VERSION_0,
+                    B256::left_padding_from(&[2]),
+                ],
+                hex!("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000beef").into(),
+            ),
+        };
+        let mut provider = TestChainProvider::default();
+        provider.insert_header(epoch_hash, header);
+        provider.insert_receipts(
+            epoch_hash,
+            vec![Receipt {
+                status: Eip658Value::Eip658(true),
+                logs: vec![update],
+                ..Default::default()
+            }],
+        );
+        let mut builder = StatefulAttributesBuilder::new(
+            cfg,
+            Arc::new(Sepolia::l1_config()),
+            TestSystemConfigL2Fetcher::default(),
+            provider,
+        );
+        let parent = L2BlockInfo {
+            block_info: BlockInfo {
+                hash: B256::left_padding_from(&[3]),
+                number: 1,
+                timestamp: 100,
+                ..Default::default()
+            },
+            l1_origin: BlockNumHash { hash: origin_hash, number: 1 },
+            seq_num: 0,
+        };
+        builder.seed_parent_system_config(
+            parent,
+            SystemConfig { gas_limit: 123, ..Default::default() },
+        );
+
+        let payload = builder
+            .prepare_payload_attributes(parent, BlockNumHash { hash: epoch_hash, number: 2 })
+            .await
+            .unwrap();
+        assert_eq!(payload.gas_limit, Some(0xbeef));
     }
 
     #[tokio::test]
