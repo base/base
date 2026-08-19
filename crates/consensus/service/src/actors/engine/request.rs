@@ -67,6 +67,8 @@ pub enum EngineActorRequest {
     BuildRequest(Box<BuildRequest>),
     /// Request to get the sealed payload without inserting it.
     GetPayloadRequest(Box<GetPayloadRequest>),
+    /// Request to fetch and discard an abandoned payload build.
+    DiscardPayloadRequest(Box<DiscardPayloadRequest>),
     /// Request to consolidate using a safe L2 signal from attributes or delegated safe-block
     /// derivation
     ProcessSafeL2SignalRequest(ConsolidateInput),
@@ -110,6 +112,15 @@ pub struct BuildRequest {
     pub result_tx: mpsc::Sender<Result<PayloadId, BuildTaskError>>,
     /// [`opentelemetry::Context`] from the requester, for trace propagation.
     pub otel_cx: Context,
+}
+
+/// A request to fetch and discard a payload that will not be inserted.
+#[derive(Debug)]
+pub struct DiscardPayloadRequest {
+    /// The [`PayloadId`] of the abandoned build.
+    pub payload_id: PayloadId,
+    /// The attributes associated with the payload.
+    pub attributes: AttributesWithParent,
 }
 
 /// A request to reset engine forkchoice or complete coordinated shadow activation.

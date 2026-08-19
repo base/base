@@ -156,18 +156,15 @@ where
         let current_head = self.engine_client.get_unsafe_head().await?;
         let build_parent = handle.attributes_with_parent.parent().block_info;
 
-        if current_head.block_info.number > build_parent.number {
+        let stale = if current_head.block_info.number > build_parent.number {
             warn!(
                 target: "sequencer",
                 parent_num = build_parent.number,
                 current_head_num = current_head.block_info.number,
                 "Stale build detected: unsafe head advanced past build parent, discarding"
             );
-            Metrics::sequencer_stale_build_discarded_total().increment(1);
-            return Ok(None);
-        }
-
-        if current_head.block_info.number == build_parent.number
+            true
+        } else if current_head.block_info.number == build_parent.number
             && current_head.block_info.hash != build_parent.hash
         {
             warn!(
@@ -177,7 +174,15 @@ where
                 actual_hash = %current_head.block_info.hash,
                 "Stale build detected: unsafe head reorged at same height, discarding"
             );
+            true
+        } else {
+            false
+        };
+        if stale {
             Metrics::sequencer_stale_build_discarded_total().increment(1);
+            self.engine_client
+                .discard_payload(handle.payload_id, handle.attributes_with_parent)
+                .await?;
             return Ok(None);
         }
 

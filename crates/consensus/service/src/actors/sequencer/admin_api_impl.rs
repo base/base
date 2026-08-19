@@ -187,8 +187,8 @@ where
     /// Stops the sequencer. If a seal pipeline is in-flight, the response is deferred
     /// until the pipeline completes so the returned hash reflects the fully inserted head.
     ///
-    /// Any pre-built payload is discarded so that a subsequent restart always builds on a fresh,
-    /// accurate head.
+    /// Any pre-built payload is released and discarded so that a subsequent restart always builds
+    /// on a fresh, accurate head.
     pub(super) async fn stop_sequencer(
         &mut self,
         next_payload: &mut Option<UnsealedPayloadHandle>,
@@ -196,9 +196,14 @@ where
     ) {
         info!(target: "sequencer", "Stopping sequencer");
         self.is_active = false;
-        // Discard any pre-built payload so a subsequent start_sequencer always builds on a fresh,
-        // accurate head.
-        next_payload.take();
+        if let Some(payload) = next_payload.take()
+            && let Err(error) = self
+                .engine_client
+                .discard_payload(payload.payload_id, payload.attributes_with_parent)
+                .await
+        {
+            warn!(target: "sequencer", ?error, "Failed to discard pre-built payload while stopping");
+        }
         self.update_metrics();
 
         if self.sealer.is_some() {

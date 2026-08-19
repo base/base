@@ -14,9 +14,9 @@ pub use error::EngineError;
 
 mod request;
 pub use request::{
-    BuildRequest, EngineActorRequest, EngineClientError, EngineClientResult, EngineRpcRequest,
-    GetPayloadRequest, InsertUnsafePayloadRequest, ReconcileShadowRequest, ResetOrigin,
-    ResetReason, ResetRequest, ResetRequestOutcome,
+    BuildRequest, DiscardPayloadRequest, EngineActorRequest, EngineClientError, EngineClientResult,
+    EngineRpcRequest, GetPayloadRequest, InsertUnsafePayloadRequest, ReconcileShadowRequest,
+    ResetOrigin, ResetReason, ResetRequest, ResetRequestOutcome,
 };
 
 mod engine_request_processor;

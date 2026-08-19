@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
 use alloy_primitives::B256;
+use alloy_rpc_types_engine::PayloadId;
+use base_consensus_engine::test_utils::TestAttributesBuilder;
 use base_consensus_rpc::SequencerAdminAPIError;
 use base_protocol::{BlockInfo, L2BlockInfo};
 use jsonrpsee::core::ClientError;
@@ -8,7 +10,7 @@ use rstest::rstest;
 use tokio::sync::oneshot;
 
 use crate::{
-    ConductorError, EngineClientError, ResetReason, SequencerAdminQuery,
+    ConductorError, EngineClientError, ResetReason, SequencerAdminQuery, UnsealedPayloadHandle,
     actors::{MockConductor, MockSequencerEngineClient, sequencer::tests::test_util::test_actor},
 };
 
@@ -426,6 +428,36 @@ async fn test_stop_sequencer_success(
     let result = actor.is_sequencer_active().await;
     assert!(result.is_ok());
     assert!(!result.unwrap());
+}
+
+#[tokio::test]
+async fn test_stop_sequencer_discards_prebuilt_payload() {
+    let unsafe_head = L2BlockInfo {
+        block_info: BlockInfo { hash: B256::from([1u8; 32]), ..Default::default() },
+        ..Default::default()
+    };
+    let expected_hash = unsafe_head.hash();
+    let payload_id = PayloadId::new([1; 8]);
+    let mut client = MockSequencerEngineClient::new();
+    client.expect_discard_payload().times(1).return_once(move |actual, _| {
+        assert_eq!(actual, payload_id);
+        Ok(())
+    });
+    client.expect_get_unsafe_head().times(1).return_once(move || Ok(unsafe_head));
+
+    let mut actor = test_actor();
+    actor.engine_client = Arc::new(client);
+    actor.is_active = true;
+    let mut next_payload = Some(UnsealedPayloadHandle {
+        payload_id,
+        attributes_with_parent: TestAttributesBuilder::new().build(),
+    });
+    let (tx, rx) = oneshot::channel();
+
+    actor.stop_sequencer(&mut next_payload, tx).await;
+
+    assert_eq!(rx.await.unwrap().unwrap(), expected_hash);
+    assert!(next_payload.is_none());
 }
 
 #[rstest]

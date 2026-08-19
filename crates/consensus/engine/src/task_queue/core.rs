@@ -209,6 +209,11 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
 
         let unsafe_block_info = state.sync_state.unsafe_head().block_info;
         let parent_block_info = payload_attrs.parent.block_info;
+        // Resolve the execution-layer build before validating that its parent is still current.
+        // A payload builder can hold reth's persistence handoff lease until getPayload arrives;
+        // returning early here would leave that lease active while the subsequent reset sends a
+        // forkchoice update, creating a circular wait.
+        let result = Self::fetch_payload(cfg, engine, payload_id, payload_attrs).await;
 
         if unsafe_block_info.hash != parent_block_info.hash
             || unsafe_block_info.number != parent_block_info.number
@@ -223,7 +228,7 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
             return Err(SealTaskError::UnsafeHeadChangedSinceBuild);
         }
 
-        Self::fetch_payload(cfg, engine, payload_id, payload_attrs).await
+        result
     }
 
     /// Validates a forkchoice update status returned while starting a build.
@@ -770,17 +775,19 @@ mod tests {
         let mismatched_unsafe_head = test_block_info(2);
         let state = TestEngineStateBuilder::new().with_unsafe_head(mismatched_unsafe_head).build();
         let client = test_engine_client_builder().build();
+        let payload_id = PayloadId::default();
 
         let result = Engine::get_payload_with_state(
             &state,
             &client,
             &RollupConfig::default(),
-            PayloadId::default(),
+            payload_id,
             &attributes,
         )
         .await;
 
         assert!(matches!(result, Err(SealTaskError::UnsafeHeadChangedSinceBuild)));
+        assert_eq!(client.storage().read().await.get_payload_requests, vec![payload_id]);
     }
 
     #[tokio::test]

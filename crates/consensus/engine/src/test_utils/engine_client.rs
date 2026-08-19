@@ -86,6 +86,8 @@ pub struct MockEngineStorage {
     pub fork_choice_updated_v3_error: Option<ErrorPayload>,
 
     // Version-specific get_payload responses
+    /// Storage for all versioned `get_payload` requests.
+    pub get_payload_requests: Vec<PayloadId>,
     /// Storage for execution payload envelope v2 responses.
     pub execution_payload_v2: Option<ExecutionPayloadEnvelopeV2>,
     /// Storage for Base execution payload envelope v3 responses.
@@ -661,9 +663,10 @@ impl BaseEngineApi for MockEngineClient {
 
     async fn get_payload_v2(
         &self,
-        _payload_id: PayloadId,
+        payload_id: PayloadId,
     ) -> TransportResult<ExecutionPayloadEnvelopeV2> {
-        let storage = self.storage.read().await;
+        let mut storage = self.storage.write().await;
+        storage.get_payload_requests.push(payload_id);
         storage.execution_payload_v2.clone().ok_or_else(|| {
             TransportError::from(TransportErrorKind::custom_str(
                 "No execution payload v2 set in mock",
@@ -673,9 +676,10 @@ impl BaseEngineApi for MockEngineClient {
 
     async fn get_payload_v3(
         &self,
-        _payload_id: PayloadId,
+        payload_id: PayloadId,
     ) -> TransportResult<BaseExecutionPayloadEnvelopeV3> {
-        let storage = self.storage.read().await;
+        let mut storage = self.storage.write().await;
+        storage.get_payload_requests.push(payload_id);
         storage.execution_payload_v3.clone().ok_or_else(|| {
             TransportError::from(TransportErrorKind::custom_str(
                 "No execution payload v3 set in mock",
@@ -685,9 +689,10 @@ impl BaseEngineApi for MockEngineClient {
 
     async fn get_payload_v4(
         &self,
-        _payload_id: PayloadId,
+        payload_id: PayloadId,
     ) -> TransportResult<BaseExecutionPayloadEnvelopeV4> {
-        let storage = self.storage.read().await;
+        let mut storage = self.storage.write().await;
+        storage.get_payload_requests.push(payload_id);
         storage.execution_payload_v4.clone().ok_or_else(|| {
             TransportError::from(TransportErrorKind::custom_str(
                 "No execution payload v4 set in mock",
@@ -697,9 +702,10 @@ impl BaseEngineApi for MockEngineClient {
 
     async fn get_payload_v5(
         &self,
-        _payload_id: PayloadId,
+        payload_id: PayloadId,
     ) -> TransportResult<BaseExecutionPayloadEnvelopeV5> {
-        let storage = self.storage.read().await;
+        let mut storage = self.storage.write().await;
+        storage.get_payload_requests.push(payload_id);
         storage.execution_payload_v5.clone().ok_or_else(|| {
             TransportError::from(TransportErrorKind::custom_str(
                 "No execution payload v5 set in mock",
