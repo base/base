@@ -290,6 +290,15 @@ impl AlloyUpgradeSignalReader {
     /// Records `l1_read_errors_total` for all contract-backed upgrades when the L1 block fetch or
     /// the schedule read fails; the whole schedule is read with one `getSchedule` call, so
     /// per-upgrade failures no longer exist.
+    ///
+    /// A successful read that yields no signals is rejected with
+    /// [`UpgradeSignalError::EmptySchedule`] rather than mapped to an empty schedule: applying an
+    /// empty schedule would replace every runtime override with base activations and report
+    /// success, silently diverging from the live poller, which ignores empty reads. An empty read
+    /// is not counted as an `l1_read_errors_total` failure, keeping empty success distinct from a
+    /// read failure. Callers decide how to treat it: startup retries then tolerates it (see
+    /// [`read_schedule_with_retries`](Self::read_schedule_with_retries)), while the manual admin
+    /// refresh surfaces it as an error instead of clearing overrides.
     pub async fn read_schedule(
         &self,
         metrics_layers: &[UpgradeSignalMetricLayer],
@@ -311,7 +320,12 @@ impl AlloyUpgradeSignalReader {
                 }
             };
 
-        Ok(Self::map_schedule(&timestamps, minimum_protocol_version, l1_block_number))
+        let schedule = Self::map_schedule(&timestamps, minimum_protocol_version, l1_block_number);
+        if schedule.signals.is_empty() {
+            return Err(UpgradeSignalError::EmptySchedule);
+        }
+
+        Ok(schedule)
     }
 
     /// Reads the schedule, retrying transient failures with bounded exponential jitter before
@@ -321,6 +335,11 @@ impl AlloyUpgradeSignalReader {
     /// outright; after `max_attempts` failures the last error is returned (fail-fast). This future
     /// is cancellation-safe: dropping it during shutdown cancels an in-flight HTTP request or
     /// retry sleep.
+    ///
+    /// [`UpgradeSignalError::EmptySchedule`] is retried alongside provider errors: a freshly
+    /// deployed or just-initialized contract can briefly report an empty schedule at the finalized
+    /// tag, so a few retries let a real schedule settle before callers fall back. Decode and
+    /// protocol-version errors remain fail-fast.
     pub async fn read_schedule_with_retries(
         &self,
         max_attempts: u32,
@@ -335,7 +354,12 @@ impl AlloyUpgradeSignalReader {
 
         (|| self.read_schedule(metrics_layers))
             .retry(retry_config.to_backoff_builder())
-            .when(|error| matches!(error, UpgradeSignalError::Provider { .. }))
+            .when(|error| {
+                matches!(
+                    error,
+                    UpgradeSignalError::Provider { .. } | UpgradeSignalError::EmptySchedule
+                )
+            })
             // Backon adds jitter after enforcing `max_delay`, so cap the yielded delay too.
             .adjust(|_, retry_delay| retry_delay.map(|delay| delay.min(max_backoff)))
             .notify(|error, retry_delay| {
@@ -376,8 +400,9 @@ impl AlloyUpgradeSignalReader {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::B256;
+    use alloy_primitives::{B256, hex};
     use alloy_rpc_types_eth::Block;
+    use alloy_sol_types::SolCall;
     use httpmock::prelude::*;
 
     use super::*;
@@ -532,6 +557,120 @@ mod tests {
 
         assert!(matches!(error, UpgradeSignalError::Provider { .. }));
         mock.assert_calls_async(3).await;
+    }
+
+    #[tokio::test]
+    async fn rejects_empty_schedule_read_without_recording_read_error() {
+        let server = MockServer::start_async().await;
+        let block_hash = B256::repeat_byte(1);
+        let mut block: Block = Block::default();
+        block.header.hash = block_hash;
+        block.header.inner.number = 42;
+        server
+            .mock_async(|when, then| {
+                when.method(POST).path("/").body_includes("eth_getBlockByNumber");
+                then.json_body(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 0,
+                    "result": block,
+                }));
+            })
+            .await;
+        let empty_schedule = Bytes::from(schedule_abi_header(U256::ZERO));
+        server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path("/")
+                    .body_includes(hex::encode(IProtocolVersions::getScheduleCall::SELECTOR));
+                then.json_body(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 0,
+                    "result": empty_schedule,
+                }));
+            })
+            .await;
+        let minimum_protocol_version = Bytes::from(vec![0_u8; 32]);
+        server
+            .mock_async(|when, then| {
+                when.method(POST).path("/").body_includes(hex::encode(
+                    IProtocolVersions::minimumProtocolVersionCall::SELECTOR,
+                ));
+                then.json_body(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 0,
+                    "result": minimum_protocol_version,
+                }));
+            })
+            .await;
+        let reader = AlloyUpgradeSignalReader::new(
+            server.url("/").parse().unwrap(),
+            Address::ZERO,
+            Duration::from_secs(1),
+        )
+        .unwrap();
+
+        let error = reader.read_schedule(&[]).await.unwrap_err();
+
+        assert!(matches!(error, UpgradeSignalError::EmptySchedule));
+    }
+
+    #[tokio::test]
+    async fn retries_empty_schedule_reads() {
+        let server = MockServer::start_async().await;
+        let block_hash = B256::repeat_byte(1);
+        let mut block: Block = Block::default();
+        block.header.hash = block_hash;
+        block.header.inner.number = 42;
+        server
+            .mock_async(|when, then| {
+                when.method(POST).path("/").body_includes("eth_getBlockByNumber");
+                then.json_body(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 0,
+                    "result": block,
+                }));
+            })
+            .await;
+        let empty_schedule = Bytes::from(schedule_abi_header(U256::ZERO));
+        let schedule_mock = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path("/")
+                    .body_includes(hex::encode(IProtocolVersions::getScheduleCall::SELECTOR));
+                then.json_body(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 0,
+                    "result": empty_schedule,
+                }));
+            })
+            .await;
+        let minimum_protocol_version = Bytes::from(vec![0_u8; 32]);
+        server
+            .mock_async(|when, then| {
+                when.method(POST).path("/").body_includes(hex::encode(
+                    IProtocolVersions::minimumProtocolVersionCall::SELECTOR,
+                ));
+                then.json_body(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 0,
+                    "result": minimum_protocol_version,
+                }));
+            })
+            .await;
+        let reader = AlloyUpgradeSignalReader::new(
+            server.url("/").parse().unwrap(),
+            Address::ZERO,
+            Duration::from_secs(1),
+        )
+        .unwrap();
+
+        let error = reader
+            .read_schedule_with_retries(3, Duration::ZERO, Duration::ZERO, &[])
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, UpgradeSignalError::EmptySchedule));
+        schedule_mock.assert_calls_async(3).await;
     }
 
     #[tokio::test]

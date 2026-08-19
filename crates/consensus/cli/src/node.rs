@@ -530,13 +530,16 @@ impl ConsensusNodeArgs {
         signal_config.request_timeout = self.config.l1_rpc_args.l1_rpc_timeout;
         let reader =
             signal_config.reader(self.resolved_upgrade_signal_l1_rpc(upgrade_signal_l1_rpc))?;
-        let schedule = signal_config
-            .read_validated_schedule(
+        let Some(schedule) = signal_config
+            .read_optional_startup_schedule(
                 &reader,
                 "consensus startup",
                 &[UpgradeSignalMetricLayer::Consensus],
             )
-            .await?;
+            .await?
+        else {
+            return Ok(());
+        };
 
         Self::apply_schedule_to_rollup_config(cfg, &schedule);
 

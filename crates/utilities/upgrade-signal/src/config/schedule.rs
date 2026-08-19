@@ -2,7 +2,7 @@ use core::time::Duration;
 
 use alloy_primitives::{Address, U256};
 use base_common_genesis::UpgradeActivationSink;
-use tracing::info;
+use tracing::{info, warn};
 use url::Url;
 
 use super::{UpgradeSignalBlockTag, UpgradeSignalDefaults, UpgradeSignalMode};
@@ -140,13 +140,16 @@ impl UpgradeSignalConfig {
         CL::Error: std::error::Error + Send + Sync + 'static,
     {
         let reader = self.reader(l1_rpc)?;
-        let schedule = self
-            .read_validated_schedule(
+        let Some(schedule) = self
+            .read_optional_startup_schedule(
                 &reader,
                 log_context,
                 &[UpgradeSignalMetricLayer::Execution, UpgradeSignalMetricLayer::Consensus],
             )
-            .await?;
+            .await?
+        else {
+            return Ok(());
+        };
 
         UpgradeSignalRuntimeApplier::apply_schedule_to_sink(chain_id, &schedule, execution_sink)
             .map_err(eyre::Report::new)?
@@ -204,16 +207,51 @@ impl UpgradeSignalConfig {
 
         Ok(schedule)
     }
+
+    /// Reads the startup schedule via [`Self::read_validated_schedule`], tolerating a contract that
+    /// still reports no schedule after retries.
+    ///
+    /// Empty reads are retried inside [`AlloyUpgradeSignalReader::read_schedule_with_retries`]; a
+    /// schedule that is still empty afterwards yields `Ok(None)` so startup proceeds on the
+    /// genesis/base configuration rather than failing to launch or wiping runtime overrides. All
+    /// other read and validation failures propagate. This is the startup counterpart to the manual
+    /// admin refresh, which instead surfaces an empty schedule as an error.
+    pub async fn read_optional_startup_schedule(
+        &self,
+        reader: &AlloyUpgradeSignalReader,
+        log_context: &'static str,
+        metrics_layers: &[UpgradeSignalMetricLayer],
+    ) -> Result<Option<UpgradeSignalSchedule>, UpgradeSignalError> {
+        match self.read_validated_schedule(reader, log_context, metrics_layers).await {
+            Ok(schedule) => Ok(Some(schedule)),
+            Err(UpgradeSignalError::EmptySchedule) => {
+                warn!(
+                    target: "upgrade_signal",
+                    context = log_context,
+                    "L1 upgrade signal contract reported an empty schedule after retries; \
+                     proceeding on the base configuration without applying a schedule"
+                );
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{U256, address};
+    use alloy_primitives::{B256, Bytes, U256, address, hex};
+    use alloy_rpc_types_eth::Block;
+    use alloy_sol_types::SolCall;
     use base_common_genesis::BaseUpgrade;
+    use httpmock::prelude::*;
     use rstest::rstest;
 
     use super::*;
-    use crate::state::{UpgradeSignal, UpgradeSignalSchedule};
+    use crate::{
+        contract::IProtocolVersions,
+        state::{UpgradeSignal, UpgradeSignalSchedule},
+    };
 
     fn upgrade(upgrade_id: &str) -> BaseUpgrade {
         BaseUpgrade::from_contract_fork_name(upgrade_id).unwrap()
@@ -224,6 +262,81 @@ mod tests {
             UpgradeSignalConfig::new(address!("0000000000000000000000000000000000000001"));
         config.node_protocol_version = UpgradeSignalDefaults::packed_protocol_version(1, 1, 0);
         config
+    }
+
+    /// Serves a block plus a `getSchedule` / `minimumProtocolVersion` pair over a mock L1 endpoint.
+    ///
+    /// The two contract calls are matched by ABI selector so a startup read observes the exact
+    /// `getSchedule` return supplied here.
+    async fn schedule_server(getschedule_return: Vec<u8>) -> MockServer {
+        let server = MockServer::start_async().await;
+        let block_hash = B256::repeat_byte(1);
+        let mut block: Block = Block::default();
+        block.header.hash = block_hash;
+        block.header.inner.number = 42;
+        server
+            .mock_async(|when, then| {
+                when.method(POST).path("/").body_includes("eth_getBlockByNumber");
+                then.json_body(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 0,
+                    "result": block,
+                }));
+            })
+            .await;
+        let getschedule_return = Bytes::from(getschedule_return);
+        server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path("/")
+                    .body_includes(hex::encode(IProtocolVersions::getScheduleCall::SELECTOR));
+                then.json_body(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 0,
+                    "result": getschedule_return,
+                }));
+            })
+            .await;
+        let minimum_protocol_version = Bytes::from(vec![0_u8; 32]);
+        server
+            .mock_async(|when, then| {
+                when.method(POST).path("/").body_includes(hex::encode(
+                    IProtocolVersions::minimumProtocolVersionCall::SELECTOR,
+                ));
+                then.json_body(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 0,
+                    "result": minimum_protocol_version,
+                }));
+            })
+            .await;
+        server
+    }
+
+    #[tokio::test]
+    async fn startup_read_returns_present_schedule() {
+        // ABI-encode a `uint64[]` with a single zeroed entry (offset, length, one word). A zero
+        // activation needs no protocol version, so the read passes validation without one.
+        let mut single_entry = vec![0_u8; 96];
+        single_entry[31] = 32;
+        single_entry[63] = 1;
+        let server = schedule_server(single_entry).await;
+        let config = UpgradeSignalConfig::new(Address::ZERO);
+        let reader = config.reader(server.url("/").parse().unwrap()).unwrap();
+
+        let schedule = config
+            .read_optional_startup_schedule(
+                &reader,
+                "startup",
+                &[UpgradeSignalMetricLayer::Consensus],
+            )
+            .await
+            .unwrap()
+            .expect("a non-empty schedule is present");
+
+        assert_eq!(schedule.signals.len(), 1);
+        assert_eq!(schedule.signals[0].upgrade_id, BaseUpgrade::Regolith);
+        assert_eq!(schedule.signals[0].activation_timestamp, 0);
     }
 
     #[test]
