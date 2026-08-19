@@ -14,7 +14,7 @@ use base_common_rpc_types::{
 };
 use base_execution_evm::RethL1BlockInfo;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
-use reth_node_api::NodePrimitives;
+use reth_node_api::{BlockBody, NodePrimitives};
 use reth_primitives_traits::{SealedBlock, SealedHeaderFor};
 use reth_rpc_eth_api::{
     RpcConvert,
@@ -24,6 +24,7 @@ use reth_rpc_eth_api::{
 use reth_rpc_eth_types::{EthApiError, receipt::build_receipt};
 use reth_storage_api::BlockReader;
 
+use super::BaseTimeCache;
 use crate::{BaseEthApi, BaseEthApiError, eth::RpcNodeCore};
 
 impl<N, Rpc> LoadReceipt for BaseEthApi<N, Rpc>
@@ -37,20 +38,23 @@ where
 #[derive(Debug, Clone)]
 pub struct BaseReceiptConverter<Provider> {
     provider: Provider,
+    base_time: BaseTimeCache,
 }
 
 impl<Provider> BaseReceiptConverter<Provider> {
     /// Creates a new [`BaseReceiptConverter`].
-    pub const fn new(provider: Provider) -> Self {
-        Self { provider }
+    pub const fn new(provider: Provider, base_time: BaseTimeCache) -> Self {
+        Self { provider, base_time }
     }
 }
 
 impl<Provider, N> ReceiptConverter<N> for BaseReceiptConverter<Provider>
 where
     N: NodePrimitives<SignedTx: BaseTransaction, Receipt = BaseReceipt>,
-    Provider:
-        BlockReader<Block = N::Block> + ChainSpecProvider<ChainSpec: Upgrades> + Debug + 'static,
+    Provider: BlockReader<Block = N::Block, Transaction = N::SignedTx>
+        + ChainSpecProvider<ChainSpec: Upgrades>
+        + Debug
+        + 'static,
 {
     type RpcReceipt = BaseTransactionReceipt;
     type RpcLog = BaseLogResponse;
@@ -60,9 +64,16 @@ where
         &self,
         log: Log,
         _receipt: &N::Receipt,
-        _header: &SealedHeaderFor<N>,
+        header: &SealedHeaderFor<N>,
     ) -> Result<Self::RpcLog, Self::Error> {
-        Ok(log.into())
+        let block_timestamp_ms = self.base_time.get::<N::SignedTx, _>(
+            &self.provider,
+            header.hash(),
+            header.number(),
+            header.timestamp(),
+        )?;
+
+        Ok(BaseLogResponse { inner: log, block_timestamp_ms })
     }
 
     fn convert_receipts(
@@ -86,6 +97,12 @@ where
         inputs: Vec<ConvertReceiptInput<'_, N>>,
         block: &SealedBlock<N::Block>,
     ) -> Result<Vec<Self::RpcReceipt>, Self::Error> {
+        let block_timestamp_ms = self.base_time.insert_from_transactions(
+            block.hash(),
+            block.header().number(),
+            block.header().timestamp(),
+            block.body().transactions(),
+        );
         let mut l1_block_info = match base_execution_evm::extract_l1_info(block.body()) {
             Ok(l1_block_info) => l1_block_info,
             Err(err) => {
@@ -108,10 +125,13 @@ where
             // new transaction input has changed, since otherwise the L1 cost wouldn't.
             l1_block_info.clear_tx_l1_cost();
 
-            receipts.push(
+            let mut receipt =
                 BaseReceiptBuilder::new(&self.provider.chain_spec(), input, &mut l1_block_info)?
-                    .build(),
-            );
+                    .build();
+            for log in &mut receipt.inner.inner.receipt.as_receipt_mut().logs {
+                log.block_timestamp_ms = block_timestamp_ms;
+            }
+            receipts.push(receipt);
         }
 
         Ok(receipts)
