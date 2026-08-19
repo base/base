@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   create-tag:
-    runs-on: ubuntu-latest
+    runs-on: tenki-standard-medium-4c-8g
     outputs:
       tag: ${{ steps.read-tag.outputs.tag }}
 

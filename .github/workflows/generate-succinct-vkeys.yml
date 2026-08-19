@@ -20,7 +20,7 @@ concurrency:
 jobs:
   generate:
     name: Generate Succinct VKeys
-    runs-on: ubuntu-24.04
+    runs-on: tenki-standard-medium-4c-8g
 
     steps:
       - name: Harden the runner (Audit all outbound calls)

@@ -20,7 +20,7 @@ permissions:
 
 jobs:
   start:
-    runs-on: ubuntu-latest
+    runs-on: tenki-standard-medium-4c-8g
 
     steps:
       - name: Harden the runner (Audit all outbound calls)

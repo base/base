@@ -21,8 +21,7 @@ permissions:
 jobs:
   fork-tests:
     name: Base Std Interface Tests (${{ matrix.fork }})
-    runs-on:
-      group: BasePerfRunnerGroup
+    runs-on: tenki-standard-large-plus-16c-32g
     timeout-minutes: 120
     strategy:
       fail-fast: false
@@ -199,7 +198,7 @@ jobs:
     name: Base Std Interface Tests
     if: always()
     needs: fork-tests
-    runs-on: ubuntu-latest
+    runs-on: tenki-standard-medium-4c-8g
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4

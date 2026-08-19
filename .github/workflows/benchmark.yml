@@ -21,7 +21,7 @@ jobs:
   # Build base-reth-node, base-builder, and base-load-test together, cached by source hash
   build-binaries:
     name: Build binaries
-    runs-on: ubuntu-latest
+    runs-on: tenki-standard-medium-4c-8g
     permissions:
       contents: read
       actions: write
@@ -87,7 +87,7 @@ jobs:
   # Run the benchmark
   benchmark:
     name: Run Benchmark
-    runs-on: ubuntu-latest
+    runs-on: tenki-standard-medium-4c-8g
     needs: [build-binaries]
     permissions:
       contents: read

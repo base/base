@@ -18,9 +18,9 @@ jobs:
       matrix:
         settings:
           - arch: linux/amd64
-            runs-on: ubuntu-24.04
+            runs-on: tenki-standard-medium-4c-8g
           - arch: linux/arm64
-            runs-on: ubuntu-24.04-arm
+            runs-on: tenki-standard-medium-4c-8g
         image:
           - target: base
             name: node
@@ -101,7 +101,7 @@ jobs:
       matrix:
         target: [base, execution, consensus, builder, batcher]
 
-    runs-on: ubuntu-24.04
+    runs-on: tenki-standard-medium-4c-8g
 
     permissions:
       contents: read
@@ -138,7 +138,7 @@ jobs:
             --set ${{ matrix.target }}.cache-to=type=registry,ref=${{ env.REGISTRY_IMAGE }}:cache-${{ matrix.target }}-linux-amd64,mode=max
 
   merge:
-    runs-on: ubuntu-latest
+    runs-on: tenki-standard-medium-4c-8g
     permissions:
       contents: read
       packages: write

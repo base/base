@@ -143,9 +143,9 @@ jobs:
       matrix:
         settings:
           - arch: linux/amd64
-            runs-on: ubuntu-24.04
+            runs-on: tenki-standard-medium-4c-8g
           - arch: linux/arm64
-            runs-on: ubuntu-24.04-arm
+            runs-on: tenki-standard-medium-4c-8g
         image:
           - target: base
             name: node
@@ -225,7 +225,7 @@ jobs:
   find-release-artifacts:
     needs: [build-and-push, build-binaries]
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: tenki-standard-medium-4c-8g
     outputs:
       has_digests: ${{ steps.artifacts.outputs.has_digests }}
       has_binaries: ${{ steps.artifacts.outputs.has_binaries }}
@@ -264,7 +264,7 @@ jobs:
   publish:
     needs: [find-release-artifacts]
     if: ${{ !cancelled() && (needs.find-release-artifacts.outputs.has_digests == 'true' || (inputs.is_final && needs.find-release-artifacts.outputs.has_binaries == 'true')) }}
-    runs-on: ubuntu-latest
+    runs-on: tenki-standard-medium-4c-8g
 
     steps:
       - name: Harden the runner (Audit all outbound calls)

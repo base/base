@@ -30,8 +30,7 @@ jobs:
   # (Per-benchmark interleaving would tighten the timing further and is a follow-up.)
   bench:
     name: Benchmarks (advisory)
-    runs-on:
-      group: BasePerfRunnerGroup
+    runs-on: tenki-standard-large-plus-16c-32g
     timeout-minutes: 90
     env:
       HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}

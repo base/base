@@ -19,8 +19,7 @@ permissions:
 jobs:
   action-tests:
     name: Action Tests
-    runs-on:
-      group: BasePerfRunnerGroup
+    runs-on: tenki-standard-large-plus-16c-32g
     timeout-minutes: 30
     steps:
       - name: Harden the runner (Audit all outbound calls)
