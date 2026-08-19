@@ -317,8 +317,9 @@ impl BaseReceiptBuilder {
         let payer = tx_signed
             .as_eip8130()
             .map(|signed| signed.tx().payer.unwrap_or_else(|| input.tx.signer()));
-        // Omit empty metadata rather than serializing it as `"0x"`, matching how
-        // empty `phase_statuses` is skipped — only a non-empty commitment surfaces.
+        // Omit empty metadata rather than serializing it as `"0x"`. Empty
+        // `phase_statuses` is still serialized as `[]` on EIP-8130 receipts;
+        // only metadata is skipped when empty.
         let metadata = tx_signed
             .as_eip8130()
             .map(|signed| signed.tx().metadata.clone())
