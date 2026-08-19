@@ -147,6 +147,36 @@ where
             *chain = L1BlockInfo::try_fetch(journal.db_mut(), block.number(), spec)?;
         }
 
+        // Cobalt+: classic txs (legacy / 2930 / 1559 / 7702) must still present
+        // a live unrestricted default EOA in the EIP-8130 keystore. Recovery
+        // stays stateless ecrecover; this is the stateful gate. 8130 txs use
+        // `ActorTxVerifier` instead and never reach this handler. `no_std`
+        // (proof/zkVM) builds skip the check until the eip8130 crate is
+        // available there — same gating as enshrined 8130 execution.
+        #[cfg(feature = "std")]
+        if spec.is_enabled_in(BaseUpgrade::Cobalt)
+            && tx.tx_type() != DEPOSIT_TRANSACTION_TYPE
+            && tx.tx_type() != crate::EIP8130_TRANSACTION_TYPE
+        {
+            let caller = tx.caller();
+            let now: u64 = block
+                .timestamp()
+                .try_into()
+                .map_err(|_| BaseTransactionError::classic_sender("block timestamp exceeds u64"))?;
+            let config = base_execution_eip8130::AccountConfigurationStorage::ADDRESS;
+            // `Journal::sload` assumes the account is already present.
+            journal.load_account(config)?;
+            let slot = U256::from_be_bytes(
+                base_execution_eip8130::AccountConfigurationStorage::account_state_slot(caller).0,
+            );
+            let word = journal.sload(config, slot)?.data;
+            let state = base_execution_eip8130::AccountState::from_word(word);
+            base_execution_eip8130::ActorAuthorizer::authorize_classic_sender_from_state(
+                caller, &state, now,
+            )
+            .map_err(BaseTransactionError::classic_sender)?;
+        }
+
         let mut caller_account = journal.load_account_with_code_mut(tx.caller())?.data;
 
         // validates account nonce and code
@@ -414,7 +444,8 @@ where
 mod tests {
 
     use alloy_primitives::uint;
-    use base_common_consensus::Predeploys;
+    use base_common_consensus::{Eip8130Constants, Predeploys};
+    use base_execution_eip8130::AccountConfigurationStorage;
     use revm::{
         InspectEvm,
         bytecode::Bytecode,
@@ -946,5 +977,107 @@ mod tests {
             clean_result.result.tx_gas_used(),
             "stale authorizer transaction must not make the next EXTCODESIZE(authorizer) warm"
         );
+    }
+
+    /// Packs the inline-self fields of `AccountState` (flags at bit 128, expiry
+    /// at 184, scope at 232). Sequences and lock fields stay zero.
+    fn pack_inline_self(scope: u16, expiry: u64, revoked: bool) -> U256 {
+        let flags = if revoked { Eip8130Constants::DEFAULT_EOA_REVOKED } else { 0 };
+        (U256::from(flags) << 128) | (U256::from(expiry) << 184) | (U256::from(scope) << 232)
+    }
+
+    fn seed_account_state(db: &mut InMemoryDB, account: Address, word: U256) {
+        let slot = U256::from_be_bytes(AccountConfigurationStorage::account_state_slot(account).0);
+        db.load_account(AccountConfigurationStorage::ADDRESS).unwrap().storage.insert(slot, word);
+    }
+
+    fn classic_keystore_db(caller: Address, word: Option<U256>) -> InMemoryDB {
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(
+            caller,
+            AccountInfo { balance: U256::from(1_000_000), ..Default::default() },
+        );
+        if let Some(word) = word {
+            seed_account_state(&mut db, caller, word);
+        }
+        db
+    }
+
+    fn classic_keystore_tx(caller: Address) -> BaseTransaction<TxEnv> {
+        BaseTransaction::builder()
+            .base(TxEnv::builder().caller(caller).gas_limit(100_000))
+            .enveloped_tx(Some(bytes!("FACADE")))
+            .build_fill()
+    }
+
+    fn classic_keystore_context(
+        db: InMemoryDB,
+        spec: BaseUpgrade,
+    ) -> crate::BaseContext<InMemoryDB> {
+        Context::base()
+            .with_db(db)
+            .with_chain(L1BlockInfo {
+                l2_block: Some(U256::ZERO),
+                operator_fee_scalar: Some(U256::ZERO),
+                operator_fee_constant: Some(U256::ZERO),
+                ..Default::default()
+            })
+            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(spec)))
+            .with_tx(classic_keystore_tx(Address::ZERO))
+    }
+
+    fn authorize_classic_sender(
+        db: InMemoryDB,
+        spec: BaseUpgrade,
+        caller: Address,
+    ) -> Result<(), EVMError<core::convert::Infallible, BaseTransactionError>> {
+        let ctx = classic_keystore_context(db, spec).with_tx(classic_keystore_tx(caller));
+        let mut evm = ctx.build_base();
+        let handler =
+            BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
+        let mut init_and_floor_gas = InitialAndFloorGas::new(0, 0);
+        handler.validate_against_state_and_deduct_caller(&mut evm, &mut init_and_floor_gas)
+    }
+
+    #[test]
+    fn cobalt_classic_sender_untouched_eoa_is_accepted() {
+        let caller = Address::repeat_byte(0x11);
+        authorize_classic_sender(classic_keystore_db(caller, None), BaseUpgrade::Cobalt, caller)
+            .expect("untouched EOA must still send classic txs");
+    }
+
+    #[test]
+    fn cobalt_classic_sender_revoked_default_eoa_is_rejected() {
+        let caller = Address::repeat_byte(0x11);
+        let db = classic_keystore_db(caller, Some(pack_inline_self(0, 0, true)));
+        let err = authorize_classic_sender(db, BaseUpgrade::Cobalt, caller)
+            .expect_err("revoked default EOA must not send classic txs");
+        assert!(
+            matches!(err, EVMError::Transaction(BaseTransactionError::ClassicSender(_))),
+            "expected ClassicSender, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn cobalt_classic_sender_scoped_self_is_rejected() {
+        let caller = Address::repeat_byte(0x11);
+        let db = classic_keystore_db(
+            caller,
+            Some(pack_inline_self(Eip8130Constants::SCOPE_SENDER, 0, false)),
+        );
+        let err = authorize_classic_sender(db, BaseUpgrade::Cobalt, caller)
+            .expect_err("scoped inline k1 must not send unrestricted classic txs");
+        assert!(
+            matches!(err, EVMError::Transaction(BaseTransactionError::ClassicSender(_))),
+            "expected ClassicSender, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn pre_cobalt_classic_sender_skips_keystore() {
+        let caller = Address::repeat_byte(0x11);
+        let db = classic_keystore_db(caller, Some(pack_inline_self(0, 0, true)));
+        authorize_classic_sender(db, BaseUpgrade::Isthmus, caller)
+            .expect("pre-Cobalt classic txs must not consult the keystore");
     }
 }

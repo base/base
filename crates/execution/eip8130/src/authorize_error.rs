@@ -67,4 +67,15 @@ pub enum AuthorizeError {
         /// The nested actor id that failed the admin-only delegate-vouch check.
         actor_id: B256,
     },
+
+    /// A classic (legacy / EIP-2930 / EIP-1559 / EIP-7702) sender recovered to
+    /// a live inline self that is not an unrestricted owner. Classic transactions
+    /// have no policy/`to` gate, so a scoped or policy-gated k1 self must not be
+    /// allowed to originate them. EIP-8130 transactions still accept a scoped
+    /// self through [`crate::ActorAuthorizer::authorize_k1`].
+    #[error("classic transaction requires the unrestricted default EOA on account {account}")]
+    ClassicSenderNotAdmin {
+        /// The recovered sender whose inline self is scoped or policy-gated.
+        account: Address,
+    },
 }

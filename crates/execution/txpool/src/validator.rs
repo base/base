@@ -17,13 +17,13 @@ use base_common_consensus::{
     AccountChange, ChangeType, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
     Eip8130TimestampError, InitialActor, SignedChange,
 };
-use base_common_evm::{BaseSpecId, L1BlockInfo};
+use base_common_evm::{BaseSpecId, DEPOSIT_TRANSACTION_TYPE, L1BlockInfo};
 use base_common_genesis::DaFootprintGasScalarUpdate;
 use base_common_precompiles::NonceManagerStorage;
 use base_execution_eip8130::{
-    AccountConfigurationStorage, AccountState, ApplyError, AuthorizeError, FeeCheck, IntrinsicGas,
-    IntrinsicGasInput, LockStatus, NonceError, NonceMode, NonceValidator, TransactionAuthorizer,
-    TxAuthError,
+    AccountConfigurationStorage, AccountState, ActorAuthorizer, ApplyError, AuthorizeError,
+    FeeCheck, IntrinsicGas, IntrinsicGasInput, LockStatus, NonceError, NonceMode, NonceValidator,
+    TransactionAuthorizer, TxAuthError,
 };
 use base_precompile_storage::{
     BasePrecompileError, PrecompileStorageProvider, StorageCtx, validate_loaded_code_presence,
@@ -950,7 +950,91 @@ where
             return self.apply_base_checks(outcome, state.payer_auth);
         }
         let outcome = self.inner.validate_one_with_state(origin, transaction, state);
+        let outcome = self.authorize_classic_sender(outcome);
         self.apply_base_checks(outcome, 0)
+    }
+
+    /// After ecrecover, require the recovered sender still present a live
+    /// unrestricted default EOA in the EIP-8130 keystore (Cobalt+). Deposits and
+    /// EIP-8130 transactions are not gated here. Watches `account_state[sender]`
+    /// so a later revoke/import evicts admitted classic txs.
+    fn authorize_classic_sender(
+        &self,
+        outcome: TransactionValidationOutcome<Tx>,
+    ) -> TransactionValidationOutcome<Tx> {
+        let TransactionValidationOutcome::Valid {
+            balance,
+            state_nonce,
+            transaction: valid_tx,
+            propagate,
+            bytecode_hash,
+            authorities,
+        } = outcome
+        else {
+            return outcome;
+        };
+        let tx = valid_tx.transaction();
+        if tx.ty() == DEPOSIT_TRANSACTION_TYPE || tx.as_eip8130().is_some() {
+            return TransactionValidationOutcome::Valid {
+                balance,
+                state_nonce,
+                transaction: valid_tx,
+                propagate,
+                bytecode_hash,
+                authorities,
+            };
+        }
+        let now = self.block_timestamp();
+        if !self.chain_spec().is_cobalt_active_at_timestamp(now) {
+            return TransactionValidationOutcome::Valid {
+                balance,
+                state_nonce,
+                transaction: valid_tx,
+                propagate,
+                bytecode_hash,
+                authorities,
+            };
+        }
+        let sender = tx.sender();
+        let local_chain_id = self.inner.chain_spec().chain().id();
+        let state = match self.client().latest() {
+            Ok(state) => state,
+            Err(error) => {
+                return TransactionValidationOutcome::Invalid(
+                    valid_tx.into_transaction(),
+                    Self::provider_unavailable(error),
+                );
+            }
+        };
+        let mut storage = StateProviderPrecompileStorage::new(&*state, local_chain_id, now);
+        let resolved = match StorageCtx::enter(&mut storage, |ctx| {
+            let acc = AccountConfigurationStorage::new(ctx);
+            ActorAuthorizer::authorize_classic_sender(&acc, sender, now)
+        }) {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                return TransactionValidationOutcome::Invalid(
+                    valid_tx.into_transaction(),
+                    Self::map_tx_auth_error(TxAuthError::Authorize(error)),
+                );
+            }
+        };
+        let mut watch_set = WatchSet::new().watch(InvalidationKey::Slot {
+            address: AccountConfigurationStorage::ADDRESS,
+            slot: AccountConfigurationStorage::account_state_slot(sender),
+        });
+        if resolved.expiry != 0 {
+            watch_set.push(InvalidationKey::expiry_bucket(resolved.expiry));
+        }
+        tx.set_watch_set(watch_set);
+        TransactionValidationOutcome::Valid {
+            balance,
+            state_nonce,
+            transaction: valid_tx,
+            propagate,
+            bytecode_hash,
+            authorities,
+        }
     }
 
     /// Returns a low-cardinality sender authenticator label for metrics.
@@ -1508,6 +1592,9 @@ where
             TxAuthError::Authorize(AuthorizeError::Expired { .. }) => "actor credential expired",
             TxAuthError::Authorize(AuthorizeError::NestedSignatureScope { .. }) => {
                 "delegate nested actor lacks SIGNATURE scope"
+            }
+            TxAuthError::Authorize(AuthorizeError::ClassicSenderNotAdmin { .. }) => {
+                "classic transaction requires the unrestricted default EOA"
             }
             TxAuthError::SenderRecovery => "EOA sender recovery failed",
             TxAuthError::Scope { .. } => "actor scope insufficient",
@@ -3648,5 +3735,139 @@ mod tests {
         assert_eq!(state.payer, sender);
         assert_eq!(state.sender_bytecode_hash, Some(expected_hash));
         assert!(state.watch_set.iter().any(|key| *key == InvalidationKey::CodeHash(sender)));
+    }
+
+    fn pack_inline_self(scope: u16, expiry: u64, revoked: bool) -> U256 {
+        let flags = if revoked { Eip8130Constants::DEFAULT_EOA_REVOKED } else { 0 };
+        (U256::from(flags) << 128) | (U256::from(expiry) << 184) | (U256::from(scope) << 232)
+    }
+
+    fn sign_classic_1559(signer: &PrivateKeySigner) -> BasePooledTransaction {
+        let tx = TxEip1559 {
+            chain_id: test_chain_id(),
+            nonce: 0,
+            gas_limit: 50_000,
+            max_fee_per_gas: 1_000,
+            max_priority_fee_per_gas: 0,
+            to: TxKind::Call(Address::repeat_byte(0x22)),
+            value: U256::ZERO,
+            access_list: Default::default(),
+            input: Bytes::new(),
+        };
+        let signature = signer.sign_hash_sync(&tx.signature_hash()).unwrap();
+        let envelope = BaseTxEnvelope::Eip1559(tx.into_signed(signature));
+        let recovered = envelope.clone().try_into_recovered().unwrap();
+        BasePooledTransaction::new(recovered, envelope.encode_2718_len())
+    }
+
+    fn validator_with_classic_keystore(
+        sender: Address,
+        account_state: Option<U256>,
+        cobalt: bool,
+    ) -> TestValidator {
+        let chain_spec = Arc::new(if cobalt {
+            BaseChainSpecBuilder::base_mainnet().cobalt_activated().build()
+        } else {
+            BaseChainSpecBuilder::base_mainnet().build()
+        });
+        let client = MockEthProvider::<BasePrimitives>::new()
+            .with_chain_spec(Arc::clone(&chain_spec))
+            .with_genesis_block();
+        client
+            .add_account(sender, ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64)));
+        if let Some(word) = account_state {
+            let slot = AccountConfigurationStorage::account_state_slot(sender);
+            client.add_account(
+                AccountConfigurationStorage::ADDRESS,
+                ExtendedAccount::new(0, U256::ZERO).extend_storage([(slot, word)]),
+            );
+        }
+        let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
+        let inner = EthTransactionValidatorBuilder::new(client, evm_config)
+            .no_shanghai()
+            .no_cancun()
+            .build(InMemoryBlobStore::default());
+        BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
+    }
+
+    fn assert_classic_sender_rejected(
+        outcome: TransactionValidationOutcome<BasePooledTransaction>,
+        expected: &'static str,
+    ) {
+        match outcome {
+            TransactionValidationOutcome::Invalid(_, InvalidPoolTransactionError::Other(error)) => {
+                match error.as_any().downcast_ref::<BaseTxPoolError>() {
+                    Some(BaseTxPoolError::Eip8130Validation { reason }) => {
+                        assert_eq!(*reason, expected);
+                    }
+                    other => panic!("expected Eip8130Validation, got {other:?}"),
+                }
+            }
+            other => panic!("expected classic-sender rejection, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn admits_classic_1559_from_untouched_eoa() {
+        let signer = PrivateKeySigner::random();
+        let sender = signer.address();
+        let validator = validator_with_classic_keystore(sender, None, true);
+        let pooled = sign_classic_1559(&signer);
+        let outcome = validator.validate_one(TransactionOrigin::External, pooled).await;
+        match outcome {
+            TransactionValidationOutcome::Valid { transaction, .. } => {
+                let watched = InvalidationKey::Slot {
+                    address: AccountConfigurationStorage::ADDRESS,
+                    slot: AccountConfigurationStorage::account_state_slot(sender),
+                };
+                assert!(
+                    transaction.transaction().watch_set().is_some_and(|set| set.contains(&watched)),
+                    "classic 1559 must watch account_state[sender]"
+                );
+            }
+            other => panic!("untouched EOA 1559 must be admitted, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_classic_1559_when_default_eoa_revoked() {
+        let signer = PrivateKeySigner::random();
+        let sender = signer.address();
+        let validator =
+            validator_with_classic_keystore(sender, Some(pack_inline_self(0, 0, true)), true);
+        let outcome =
+            validator.validate_one(TransactionOrigin::External, sign_classic_1559(&signer)).await;
+        assert_classic_sender_rejected(outcome, "default EOA actor is revoked");
+    }
+
+    #[tokio::test]
+    async fn rejects_classic_1559_from_scoped_inline_self() {
+        let signer = PrivateKeySigner::random();
+        let sender = signer.address();
+        let validator = validator_with_classic_keystore(
+            sender,
+            Some(pack_inline_self(Eip8130Constants::SCOPE_SENDER, 0, false)),
+            true,
+        );
+        let outcome =
+            validator.validate_one(TransactionOrigin::External, sign_classic_1559(&signer)).await;
+        assert_classic_sender_rejected(
+            outcome,
+            "classic transaction requires the unrestricted default EOA",
+        );
+    }
+
+    #[tokio::test]
+    async fn pre_cobalt_classic_1559_skips_keystore() {
+        let signer = PrivateKeySigner::random();
+        let sender = signer.address();
+        let validator =
+            validator_with_classic_keystore(sender, Some(pack_inline_self(0, 0, true)), false);
+        let outcome =
+            validator.validate_one(TransactionOrigin::External, sign_classic_1559(&signer)).await;
+        assert!(
+            matches!(outcome, TransactionValidationOutcome::Valid { .. }),
+            "pre-Cobalt classic txs must not consult the keystore, got {outcome:?}"
+        );
     }
 }
