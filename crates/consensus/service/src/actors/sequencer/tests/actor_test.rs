@@ -445,10 +445,11 @@ async fn test_try_seal_handle_current_head_equals_parent_seals() {
 
 #[tokio::test]
 async fn test_try_seal_handle_current_head_ahead_of_parent_discards() {
-    // head > parent → stale; seal_payload must NOT be called.
+    // head > parent → stale; release the build without sealing it for insertion.
     let mut client = MockSequencerEngineClient::new();
     client.expect_get_unsafe_head().times(1).return_once(|| Ok(head_at(6)));
     client.expect_get_sealed_payload().times(0);
+    client.expect_discard_payload().times(1).return_once(|_, _| Ok(()));
 
     let mut actor = test_actor();
     actor.engine_client = Arc::new(client);
@@ -470,6 +471,7 @@ async fn test_try_seal_handle_same_height_reorg_discards() {
         .times(1)
         .return_once(move || Ok(head_at_with_hash(5, reorged_hash)));
     client.expect_get_sealed_payload().times(0);
+    client.expect_discard_payload().times(1).return_once(|_, _| Ok(()));
 
     let mut actor = test_actor();
     actor.engine_client = Arc::new(client);

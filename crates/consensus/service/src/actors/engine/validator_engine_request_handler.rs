@@ -4,17 +4,17 @@ use std::{sync::Arc, time::Instant};
 
 use alloy_eips::BlockNumberOrTag;
 use base_consensus_engine::{
-    ConsolidateTask, EngineClient, EngineTask, EngineTaskError, EngineTaskErrors, FinalizeTask,
-    Metrics as EngineMetrics, SealTaskError,
+    ConsolidateTask, Engine, EngineClient, EngineTask, EngineTaskError, EngineTaskErrors,
+    FinalizeTask, Metrics as EngineMetrics, SealTaskError,
 };
 use opentelemetry::context::FutureExt as OtelFutureExt;
 use tokio::{sync::mpsc, task::JoinHandle};
 use tracing::{error, warn};
 
 use crate::{
-    BuildRequest, EngineActorRequest, EngineClientError, EngineDerivationClient, EngineError,
-    EngineProcessor, EngineRequestReceiver, GetPayloadRequest, InsertUnsafePayloadRequest, Metrics,
-    ReconcileShadowRequest, ResetRequest, ResetRequestOutcome,
+    BuildRequest, DiscardPayloadRequest, EngineActorRequest, EngineClientError,
+    EngineDerivationClient, EngineError, EngineProcessor, EngineRequestReceiver, GetPayloadRequest,
+    InsertUnsafePayloadRequest, Metrics, ReconcileShadowRequest, ResetRequest, ResetRequestOutcome,
 };
 
 /// Receives validator engine requests without carrying sequencer configuration.
@@ -118,6 +118,24 @@ where
                             self.processor
                                 .handle_engine_task_error_severity(severity, error)
                                 .await?;
+                        }
+                    }
+                    EngineActorRequest::DiscardPayloadRequest(request) => {
+                        let DiscardPayloadRequest { payload_id, attributes } = *request;
+                        if let Err(error) = Engine::<EngineClient_>::fetch_payload(
+                            self.processor.rollup().as_ref(),
+                            self.processor.client().as_ref(),
+                            payload_id,
+                            &attributes,
+                        )
+                        .await
+                        {
+                            warn!(
+                                target: "engine",
+                                ?payload_id,
+                                ?error,
+                                "Failed to fetch and discard abandoned payload"
+                            );
                         }
                     }
                     EngineActorRequest::ProcessSafeL2SignalRequest(safe_signal) => {

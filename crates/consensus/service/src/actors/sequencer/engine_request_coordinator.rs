@@ -1,12 +1,14 @@
 //! Sequencer ownership and serialized routing of engine requests.
 
-use std::{sync::Arc, time::Instant};
+use std::{collections::VecDeque, sync::Arc, time::Instant};
 
 use alloy_eips::BlockNumberOrTag;
+use alloy_rpc_types_engine::PayloadId;
 use base_consensus_engine::{
-    ConsolidateTask, EngineClient, EngineTask, EngineTaskError, EngineTaskErrorSeverity,
+    ConsolidateTask, Engine, EngineClient, EngineTask, EngineTaskError, EngineTaskErrorSeverity,
     EngineTaskErrors, FinalizeTask, Metrics as EngineMetrics, SealTaskError,
 };
+use base_protocol::AttributesWithParent;
 use opentelemetry::context::FutureExt as OtelFutureExt;
 use tokio::{
     sync::{mpsc, watch},
@@ -16,10 +18,10 @@ use tracing::{debug, error, info, warn};
 
 use super::{CanonicalUnsafeCatchup, Conductor, SequencerEngineState, ShadowReconciliationGate};
 use crate::{
-    BuildRequest, EngineActorRequest, EngineClientError, EngineDerivationClient, EngineError,
-    EngineProcessor, EngineRequestReceiver, GetPayloadRequest, InsertUnsafePayloadRequest, Metrics,
-    ReconcileShadowRequest, ResetOrigin, ResetRequest, ResetRequestOutcome,
-    actors::engine::ResetOutcome,
+    BuildRequest, DiscardPayloadRequest, EngineActorRequest, EngineClientError,
+    EngineDerivationClient, EngineError, EngineProcessor, EngineRequestReceiver, GetPayloadRequest,
+    InsertUnsafePayloadRequest, Metrics, ReconcileShadowRequest, ResetOrigin, ResetRequest,
+    ResetRequestOutcome, actors::engine::ResetOutcome,
 };
 
 const MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP: u64 = 300;
@@ -43,6 +45,8 @@ where
     conductor: Option<Arc<dyn Conductor>>,
     sequencer_stopped: bool,
     unsafe_head_tx: watch::Sender<base_protocol::L2BlockInfo>,
+    active_payload: Option<(PayloadId, AttributesWithParent)>,
+    deferred_forkchoice_requests: VecDeque<EngineActorRequest>,
 }
 
 impl<EngineClient_, DerivationClient>
@@ -67,7 +71,15 @@ where
         } else {
             SequencerEngineState::Regular
         };
-        Self { processor, sequencer_state, conductor, sequencer_stopped, unsafe_head_tx }
+        Self {
+            processor,
+            sequencer_state,
+            conductor,
+            sequencer_stopped,
+            unsafe_head_tx,
+            active_payload: None,
+            deferred_forkchoice_requests: VecDeque::new(),
+        }
     }
 
     /// Returns the coordinator's sequencer routing state.
@@ -263,11 +275,25 @@ where
                     (*val != new_head).then(|| *val = new_head).is_some()
                 });
 
-                // Wait for the next processing request.
-                let recv_result = base_metrics::time!(
-                    EngineMetrics::engine_processor_recv_wait_duration_seconds(),
-                    { request_channel.recv().await }
-                );
+                // Once the payload build is resolved, replay any forkchoice updates that arrived
+                // while it was active. Until then they must not reach reth: persistence can pause
+                // Engine API processing while the payload builder holds an overlay lease, so an
+                // intervening forkchoice update would prevent this coordinator from issuing the
+                // getPayload call that releases the lease.
+                let recv_result = if self.active_payload.is_none() {
+                    match self.deferred_forkchoice_requests.pop_front() {
+                        Some(request) => Some(request),
+                        None => base_metrics::time!(
+                            EngineMetrics::engine_processor_recv_wait_duration_seconds(),
+                            { request_channel.recv().await }
+                        ),
+                    }
+                } else {
+                    base_metrics::time!(
+                        EngineMetrics::engine_processor_recv_wait_duration_seconds(),
+                        { request_channel.recv().await }
+                    )
+                };
                 let Some(request) = recv_result else {
                     error!(target: "engine", "Engine processing request receiver closed unexpectedly");
                     return Err(EngineError::ChannelClosed);
@@ -278,6 +304,23 @@ where
                         let BuildRequest { attributes, result_tx, otel_cx } = *build_request;
                         let client = Arc::clone(self.processor.client());
                         let rollup = Arc::clone(self.processor.rollup());
+                        if let Some((payload_id, abandoned_attributes)) = self.active_payload.take()
+                            && let Err(error) = Engine::<EngineClient_>::fetch_payload(
+                                rollup.as_ref(),
+                                client.as_ref(),
+                                payload_id,
+                                &abandoned_attributes,
+                            )
+                            .await
+                        {
+                            warn!(
+                                target: "engine",
+                                ?payload_id,
+                                ?error,
+                                "Failed to fetch and discard payload before replacement build"
+                            );
+                        }
+                        let active_attributes = attributes.clone();
                         let build_result = self
                             .processor
                             .engine_mut()
@@ -286,6 +329,7 @@ where
                             .await;
                         match build_result {
                             Ok(payload_id) => {
+                                self.active_payload = Some((payload_id, active_attributes));
                                 result_tx
                                     .send(Ok(payload_id))
                                     .await
@@ -320,6 +364,21 @@ where
                             .with_context(otel_cx)
                             .await;
 
+                        if self
+                            .active_payload
+                            .as_ref()
+                            .is_some_and(|(active_payload_id, _)| *active_payload_id == payload_id)
+                        {
+                            self.active_payload = None;
+                        } else if let Some((active_payload_id, _)) = &self.active_payload {
+                            warn!(
+                                target: "engine",
+                                ?payload_id,
+                                ?active_payload_id,
+                                "GetPayload request did not match the outstanding payload build"
+                            );
+                        }
+
                         let error =
                             result.as_ref().err().map(|err| (err.severity(), format!("{err:?}")));
                         result_tx.send(result).await.map_err(|err| {
@@ -335,9 +394,50 @@ where
                             }
                         }
                     }
+                    EngineActorRequest::DiscardPayloadRequest(discard_payload_request) => {
+                        let DiscardPayloadRequest { payload_id, attributes } =
+                            *discard_payload_request;
+                        let client = Arc::clone(self.processor.client());
+                        let rollup = Arc::clone(self.processor.rollup());
+                        if let Err(error) = Engine::<EngineClient_>::fetch_payload(
+                            rollup.as_ref(),
+                            client.as_ref(),
+                            payload_id,
+                            &attributes,
+                        )
+                        .await
+                        {
+                            warn!(
+                                target: "engine",
+                                ?payload_id,
+                                ?error,
+                                "Failed to fetch and discard abandoned payload"
+                            );
+                        }
+                        if self
+                            .active_payload
+                            .as_ref()
+                            .is_some_and(|(active_payload_id, _)| *active_payload_id == payload_id)
+                        {
+                            self.active_payload = None;
+                        } else if let Some((active_payload_id, _)) = &self.active_payload {
+                            warn!(
+                                target: "engine",
+                                ?payload_id,
+                                ?active_payload_id,
+                                "Discard request did not match the outstanding payload build"
+                            );
+                        }
+                    }
                     EngineActorRequest::ProcessSafeL2SignalRequest(safe_signal) => {
                         if let Some(gate) = self.active_shadow_gate() {
                             gate.buffer_safe_signal(safe_signal);
+                            continue;
+                        }
+                        if self.active_payload.is_some() {
+                            self.deferred_forkchoice_requests.push_back(
+                                EngineActorRequest::ProcessSafeL2SignalRequest(safe_signal),
+                            );
                             continue;
                         }
                         let task = EngineTask::Consolidate(Box::new(ConsolidateTask::new(
@@ -352,6 +452,14 @@ where
                     ) => {
                         if let Some(gate) = self.active_shadow_gate() {
                             gate.buffer_finalized(*finalized_l2_block_number);
+                            continue;
+                        }
+                        if self.active_payload.is_some() {
+                            self.deferred_forkchoice_requests.push_back(
+                                EngineActorRequest::ProcessFinalizedL2BlockNumberRequest(
+                                    finalized_l2_block_number,
+                                ),
+                            );
                             continue;
                         }
                         // Finalize the L2 block at the provided block number.
@@ -457,6 +565,22 @@ where
                         }
                     }
                     EngineActorRequest::ResetRequest(reset_request) => {
+                        if let Some((payload_id, abandoned_attributes)) = self.active_payload.take()
+                            && let Err(error) = Engine::<EngineClient_>::fetch_payload(
+                                self.processor.rollup().as_ref(),
+                                self.processor.client().as_ref(),
+                                payload_id,
+                                &abandoned_attributes,
+                            )
+                            .await
+                        {
+                            warn!(
+                                target: "engine",
+                                ?payload_id,
+                                ?error,
+                                "Failed to fetch and discard payload before engine reset"
+                            );
+                        }
                         let reset_started = Instant::now();
                         let ResetRequest { result_tx, origin, reason } = *reset_request;
                         let sync_state = self.processor.engine_state().sync_state;
@@ -576,6 +700,7 @@ where
                         }
 
                         warn!(target: "engine", "Received reset request");
+                        self.deferred_forkchoice_requests.clear();
 
                         let reset_res = self.processor.reset_engine_state().await;
                         if let Ok(safe_head) = &reset_res {
@@ -657,21 +782,60 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{sync::Arc, time::Duration};
 
+    use alloy_eips::BlockNumberOrTag;
+    use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum};
     use base_common_genesis::RollupConfig;
     use base_consensus_engine::{
-        Engine, EngineState,
-        test_utils::{MockEngineClient, test_engine_client_builder},
+        ConsolidateInput, Engine, EngineState,
+        test_utils::{
+            MockEngineClient, TestAttributesBuilder, test_block_info, test_engine_client_builder,
+        },
     };
-    use base_protocol::L2BlockInfo;
+    use base_protocol::{AttributesWithParent, L2BlockInfo};
     use jsonrpsee::core::ClientError;
-    use tokio::sync::watch;
+    use tokio::{
+        sync::{mpsc, watch},
+        time::timeout,
+    };
 
     use super::{BootstrapRole, SequencerEngineRequestCoordinator, SequencerEngineState};
     use crate::{
-        Conductor, ConductorError, EngineProcessor, MockConductor, MockEngineDerivationClient,
+        BuildRequest, Conductor, ConductorError, DiscardPayloadRequest, EngineActorRequest,
+        EngineProcessor, EngineRequestReceiver, GetPayloadRequest, MockConductor,
+        MockEngineDerivationClient,
     };
+
+    fn valid_fcu(payload_id: Option<PayloadId>) -> ForkchoiceUpdated {
+        ForkchoiceUpdated {
+            payload_status: PayloadStatus {
+                status: PayloadStatusEnum::Valid,
+                latest_valid_hash: None,
+            },
+            payload_id,
+        }
+    }
+
+    async fn request_build(
+        request_tx: &mpsc::Sender<EngineActorRequest>,
+        attributes: AttributesWithParent,
+    ) -> PayloadId {
+        let (result_tx, mut result_rx) = mpsc::channel(1);
+        request_tx
+            .send(EngineActorRequest::BuildRequest(Box::new(BuildRequest {
+                attributes,
+                result_tx,
+                otel_cx: opentelemetry::Context::new(),
+            })))
+            .await
+            .expect("failed to send build request");
+        timeout(Duration::from_secs(1), result_rx.recv())
+            .await
+            .expect("build response timed out")
+            .expect("build response channel closed")
+            .expect("build failed")
+    }
 
     fn coordinator(
         shadow: bool,
@@ -745,5 +909,164 @@ mod tests {
             .returning(|| Err(ConductorError::Rpc(ClientError::Custom("timeout".into()))));
         let coordinator = coordinator(false, false, Some(Arc::new(conductor)));
         assert_eq!(coordinator.resolve_bootstrap_role().await, BootstrapRole::ConductorFollower);
+    }
+
+    #[tokio::test]
+    async fn safe_signal_waits_for_matching_get_payload_even_when_seal_fails() {
+        let payload_id = PayloadId::new([1; 8]);
+        let head = test_block_info(100);
+        let safe = test_block_info(90);
+        let finalized = test_block_info(80);
+        let client = Arc::new(
+            test_engine_client_builder()
+                .with_block_info_by_tag(BlockNumberOrTag::Latest, head)
+                .with_block_info_by_tag(BlockNumberOrTag::Safe, safe)
+                .with_block_info_by_tag(BlockNumberOrTag::Finalized, finalized)
+                .with_fork_choice_updated_v2_response(valid_fcu(Some(payload_id)))
+                .with_fork_choice_updated_v3_response(valid_fcu(None))
+                .build(),
+        );
+
+        let mut derivation = MockEngineDerivationClient::new();
+        derivation.expect_send_new_engine_safe_head().times(2).returning(|_| Ok(()));
+        derivation.expect_notify_sync_completed().once().returning(|_| Ok(()));
+
+        let (state_tx, state_rx) = watch::channel(EngineState::default());
+        let (queue_tx, _) = watch::channel(0usize);
+        let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
+        let processor = EngineProcessor::new(
+            Arc::clone(&client),
+            Arc::new(RollupConfig::default()),
+            derivation,
+            engine,
+        );
+        let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
+        let (request_tx, request_rx) = mpsc::channel(8);
+        let handle =
+            SequencerEngineRequestCoordinator::new(processor, false, None, false, unsafe_head_tx)
+                .start(request_rx);
+
+        timeout(Duration::from_secs(1), state_rx.clone().wait_for(|state| state.el_sync_finished))
+            .await
+            .expect("bootstrap timed out")
+            .expect("state channel closed during bootstrap");
+
+        let attributes = TestAttributesBuilder::new().with_parent(head).build();
+        let (build_result_tx, mut build_result_rx) = mpsc::channel(1);
+        request_tx
+            .send(EngineActorRequest::BuildRequest(Box::new(BuildRequest {
+                attributes: attributes.clone(),
+                result_tx: build_result_tx,
+                otel_cx: opentelemetry::Context::new(),
+            })))
+            .await
+            .expect("failed to send build request");
+        assert_eq!(
+            timeout(Duration::from_secs(1), build_result_rx.recv())
+                .await
+                .expect("build response timed out")
+                .expect("build response channel closed")
+                .expect("build failed"),
+            payload_id
+        );
+
+        let forkchoice_requests_before_safe =
+            client.storage().read().await.fork_choice_updated_v3_requests.len();
+        request_tx
+            .send(EngineActorRequest::ProcessSafeL2SignalRequest(ConsolidateInput::BlockInfo(head)))
+            .await
+            .expect("failed to send safe signal");
+
+        let (barrier_result_tx, mut barrier_result_rx) = mpsc::channel(1);
+        request_tx
+            .send(EngineActorRequest::GetPayloadRequest(Box::new(GetPayloadRequest {
+                payload_id: PayloadId::new([2; 8]),
+                attributes: attributes.clone(),
+                result_tx: barrier_result_tx,
+                otel_cx: opentelemetry::Context::new(),
+            })))
+            .await
+            .expect("failed to send ordering barrier");
+        assert!(
+            timeout(Duration::from_secs(1), barrier_result_rx.recv())
+                .await
+                .expect("ordering barrier timed out")
+                .expect("ordering barrier response channel closed")
+                .is_err()
+        );
+        assert_eq!(
+            client.storage().read().await.fork_choice_updated_v3_requests.len(),
+            forkchoice_requests_before_safe,
+            "safe forkchoice update ran before getPayload"
+        );
+
+        let (payload_result_tx, mut payload_result_rx) = mpsc::channel(1);
+        request_tx
+            .send(EngineActorRequest::GetPayloadRequest(Box::new(GetPayloadRequest {
+                payload_id,
+                attributes: attributes.clone(),
+                result_tx: payload_result_tx,
+                otel_cx: opentelemetry::Context::new(),
+            })))
+            .await
+            .expect("failed to send getPayload request");
+        assert!(
+            timeout(Duration::from_secs(1), payload_result_rx.recv())
+                .await
+                .expect("getPayload response timed out")
+                .expect("getPayload response channel closed")
+                .is_err(),
+            "mock getPayload should fail because no payload response is configured"
+        );
+
+        let (barrier_result_tx, mut barrier_result_rx) = mpsc::channel(1);
+        request_tx
+            .send(EngineActorRequest::GetPayloadRequest(Box::new(GetPayloadRequest {
+                payload_id: PayloadId::new([3; 8]),
+                attributes: attributes.clone(),
+                result_tx: barrier_result_tx,
+                otel_cx: opentelemetry::Context::new(),
+            })))
+            .await
+            .expect("failed to send replay barrier");
+        assert!(
+            timeout(Duration::from_secs(1), barrier_result_rx.recv())
+                .await
+                .expect("replay barrier timed out")
+                .expect("replay barrier response channel closed")
+                .is_err()
+        );
+        assert_eq!(
+            client.storage().read().await.fork_choice_updated_v3_requests.len(),
+            forkchoice_requests_before_safe + 1,
+            "deferred safe forkchoice update did not run after getPayload failed"
+        );
+
+        assert_eq!(request_build(&request_tx, attributes.clone()).await, payload_id);
+        let get_payload_requests_before_replacement =
+            client.storage().read().await.get_payload_requests.len();
+        assert_eq!(request_build(&request_tx, attributes.clone()).await, payload_id);
+        assert_eq!(
+            client.storage().read().await.get_payload_requests.len(),
+            get_payload_requests_before_replacement + 1,
+            "replacement build did not release the outstanding payload"
+        );
+
+        request_tx
+            .send(EngineActorRequest::DiscardPayloadRequest(Box::new(DiscardPayloadRequest {
+                payload_id,
+                attributes: attributes.clone(),
+            })))
+            .await
+            .expect("failed to send discard request");
+        assert_eq!(request_build(&request_tx, attributes).await, payload_id);
+        assert_eq!(
+            client.storage().read().await.get_payload_requests.len(),
+            get_payload_requests_before_replacement + 2,
+            "discard did not clear the outstanding payload before the next build"
+        );
+
+        drop(request_tx);
+        assert!(handle.await.expect("coordinator task panicked").is_err());
     }
 }

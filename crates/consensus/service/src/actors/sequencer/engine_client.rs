@@ -11,8 +11,8 @@ use tokio::sync::{mpsc, watch};
 use crate::{
     EngineClientError, EngineClientResult,
     actors::engine::{
-        BuildRequest, EngineActorRequest, GetPayloadRequest, InsertUnsafePayloadRequest,
-        ReconcileShadowRequest, ResetOrigin, ResetReason, ResetRequest,
+        BuildRequest, DiscardPayloadRequest, EngineActorRequest, GetPayloadRequest,
+        InsertUnsafePayloadRequest, ReconcileShadowRequest, ResetOrigin, ResetReason, ResetRequest,
     },
 };
 
@@ -51,6 +51,13 @@ pub trait SequencerEngineClient: Debug + Send + Sync {
         payload_id: PayloadId,
         attributes: AttributesWithParent,
     ) -> EngineClientResult<BaseExecutionPayloadEnvelope>;
+
+    /// Releases an abandoned execution-layer payload build without inserting it.
+    async fn discard_payload(
+        &self,
+        payload_id: PayloadId,
+        attributes: AttributesWithParent,
+    ) -> EngineClientResult<()>;
 
     /// Submits the sealed payload to the engine for insertion (`new_payload` + FCU), returning the
     /// inserted unsafe head after the engine acknowledges insertion.
@@ -106,6 +113,14 @@ impl<T: SequencerEngineClient> SequencerEngineClient for Arc<T> {
         attributes: AttributesWithParent,
     ) -> EngineClientResult<BaseExecutionPayloadEnvelope> {
         (**self).get_sealed_payload(payload_id, attributes).await
+    }
+
+    async fn discard_payload(
+        &self,
+        payload_id: PayloadId,
+        attributes: AttributesWithParent,
+    ) -> EngineClientResult<()> {
+        (**self).discard_payload(payload_id, attributes).await
     }
 
     async fn insert_unsafe_payload(
@@ -274,6 +289,20 @@ impl SequencerEngineClient for QueuedSequencerEngineClient {
                 Err(EngineClientError::ResponseError("response channel closed.".to_string()))
             }
         }
+    }
+
+    async fn discard_payload(
+        &self,
+        payload_id: PayloadId,
+        attributes: AttributesWithParent,
+    ) -> EngineClientResult<()> {
+        self.engine_actor_request_tx
+            .send(EngineActorRequest::DiscardPayloadRequest(Box::new(DiscardPayloadRequest {
+                payload_id,
+                attributes,
+            })))
+            .await
+            .map_err(|_| EngineClientError::RequestError("request channel closed.".to_string()))
     }
 
     async fn insert_unsafe_payload(
