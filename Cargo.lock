@@ -4453,6 +4453,7 @@ dependencies = [
  "jsonrpsee",
  "jsonrpsee-core",
  "jsonrpsee-types",
+ "lru 0.16.4",
  "metrics",
  "opentelemetry 0.32.0",
  "opentelemetry-http 0.32.0",
