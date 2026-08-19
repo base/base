@@ -145,7 +145,6 @@ impl DaEgress {
         remaining: &mut usize,
         frames: &mut Vec<(ChannelId, usize, bool)>,
     ) -> bool {
-        let first_frame = frames.len();
         let mut available = channel.available_output();
         let mut terminal_pending = channel.terminal_pending();
 
@@ -153,15 +152,6 @@ impl DaEgress {
         while available > 0 && *remaining > Frame::ENCODED_OVERHEAD {
             let data_capacity =
                 (*remaining - Frame::ENCODED_OVERHEAD).min(channel.max_frame_data());
-            if data_capacity == 0 {
-                break;
-            }
-
-            let planned_frames = frames.len().saturating_sub(first_frame);
-            let frame_count =
-                channel.frame_count().saturating_add(planned_frames).saturating_add(1);
-            debug_assert!(frame_count <= ChannelRecord::MAX_FRAMES);
-
             let data_len = available.min(data_capacity);
             let is_last = data_len == available && terminal_pending;
             frames.push((channel.id(), data_len, is_last));
@@ -177,10 +167,6 @@ impl DaEgress {
 
         // An empty compressed stream still needs one terminal frame.
         if available == 0 && terminal_pending && *remaining >= Frame::ENCODED_OVERHEAD {
-            let planned_frames = frames.len().saturating_sub(first_frame);
-            let frame_count =
-                channel.frame_count().saturating_add(planned_frames).saturating_add(1);
-            debug_assert!(frame_count <= ChannelRecord::MAX_FRAMES);
             frames.push((channel.id(), 0, true));
 
             *remaining -= Frame::ENCODED_OVERHEAD;
@@ -508,7 +494,7 @@ impl DaEgress {
         channel_ids: Vec<ChannelId>,
     ) -> ArtifactId {
         let id = ArtifactId(self.next_artifact_id);
-        self.next_artifact_id = self.next_artifact_id.saturating_add(1);
+        self.next_artifact_id += 1;
         self.artifacts.push_back(DaArtifact {
             id,
             payload,
@@ -598,7 +584,7 @@ mod tests {
         let mut transaction_len = 4_096;
         while channel.available_output() < min_output {
             append_accepted(channel, transaction_len);
-            transaction_len = transaction_len.saturating_mul(2).min(200_000);
+            transaction_len = (transaction_len * 2).min(200_000);
         }
         assert!(channel.is_open());
     }

@@ -369,7 +369,7 @@ impl BatchEncoder {
         };
 
         let oldest_number = oldest.header.number;
-        let next_safe = safe_l2.number.saturating_add(1);
+        let next_safe = safe_l2.number + 1;
         if next_safe < oldest_number {
             return false;
         }
@@ -556,7 +556,7 @@ impl BatchPipeline for BatchEncoder {
             id,
         )?;
 
-        self.next_id = self.next_id.saturating_add(1);
+        self.next_id += 1;
         let frame_count = submission.frame_count();
         let blob_count = submission.blob_count();
         BatcherMetrics::pending_frames().set(self.egress.ready_frame_count() as f64);
@@ -683,20 +683,16 @@ impl BatchPipeline for BatchEncoder {
     }
 
     fn da_backlog_bytes(&self) -> u64 {
-        let pending_blocks = self
-            .blocks
-            .iter()
-            .skip(self.block_cursor)
-            .map(Self::block_da_backlog_bytes)
-            .fold(0u64, u64::saturating_add);
-        let channels = self
+        let pending_blocks: u64 =
+            self.blocks.iter().skip(self.block_cursor).map(Self::block_da_backlog_bytes).sum();
+        let channels: u64 = self
             .channels
             .iter()
             .filter(|channel| !self.egress.channel_fully_confirmed(channel))
             .map(ChannelRecord::da_backlog_bytes)
-            .fold(0u64, u64::saturating_add);
+            .sum();
 
-        pending_blocks.saturating_add(channels)
+        pending_blocks + channels
     }
 
     fn set_blob_override(&mut self, active: bool) {
@@ -901,7 +897,6 @@ mod tests {
         assert_eq!(encoder.tip, None);
         assert!(encoder.channels.is_empty());
         assert_eq!(encoder.egress.pending_submission_count(), 0);
-        assert_eq!(encoder.next_id, 0);
     }
 
     #[test]

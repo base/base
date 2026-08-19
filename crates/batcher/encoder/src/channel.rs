@@ -191,7 +191,7 @@ impl ChannelRecord {
     ) -> Result<Self, EncoderConfigError> {
         config.validate()?;
 
-        let duration_blocks = config.max_channel_duration.saturating_sub(config.sub_safety_margin);
+        let duration_blocks = config.max_channel_duration - config.sub_safety_margin;
         Ok(Self {
             id,
             rollup_config,
@@ -207,7 +207,7 @@ impl ChannelRecord {
             blocks_added: 0,
             da_backlog_bytes: 0,
             opened_l1_block,
-            deadline_l1_block: opened_l1_block.saturating_add(duration_blocks),
+            deadline_l1_block: opened_l1_block + duration_blocks,
             next_frame_number: 0,
             terminal_pending: false,
             first_confirmed_l1_block: None,
@@ -247,7 +247,7 @@ impl ChannelRecord {
 
     /// Returns the maximum data bytes carried by one frame.
     pub const fn max_frame_data(&self) -> usize {
-        self.max_frame_size.saturating_sub(Frame::ENCODED_OVERHEAD)
+        self.max_frame_size - Frame::ENCODED_OVERHEAD
     }
 
     /// Returns the L1 block observed when the channel opened.
@@ -367,8 +367,8 @@ impl ChannelRecord {
 
         self.push_output(output);
         self.input_bytes = next_input_bytes;
-        self.blocks_added = self.blocks_added.saturating_add(1);
-        self.da_backlog_bytes = self.da_backlog_bytes.saturating_add(da_backlog_bytes);
+        self.blocks_added += 1;
+        self.da_backlog_bytes += da_backlog_bytes;
 
         if self.compressed_size_target.is_some_and(|target| total_output >= target) {
             Ok(ChannelAddOutcome::TargetReached)
@@ -407,7 +407,7 @@ impl ChannelRecord {
         }
         if self.next_frame_number >= Self::MAX_FRAMES {
             return Err(ChannelError::TooManyFrames {
-                frame_count: self.next_frame_number.saturating_add(1),
+                frame_count: self.next_frame_number + 1,
                 maximum: Self::MAX_FRAMES,
             });
         }
@@ -424,7 +424,7 @@ impl ChannelRecord {
         let number = self.next_frame_number as u16;
         let data = self.take_output(data_len);
 
-        self.next_frame_number = self.next_frame_number.saturating_add(1);
+        self.next_frame_number += 1;
         if is_last {
             self.terminal_pending = false;
         }
@@ -493,8 +493,8 @@ impl ChannelRecord {
         if output.is_empty() {
             return;
         }
-        self.available_output = self.available_output.saturating_add(output.len());
-        self.compressed_bytes = self.compressed_bytes.saturating_add(output.len());
+        self.available_output += output.len();
+        self.compressed_bytes += output.len();
         self.output.push_back(Bytes::from(output));
     }
 }

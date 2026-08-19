@@ -97,7 +97,7 @@ impl CompressionStream {
             CompressionBackend::Zlib { output, .. } => core::mem::take(output),
             CompressionBackend::Brotli(compressor) => core::mem::take(compressor.get_mut()),
         };
-        self.output_size = self.output_size.saturating_add(output.len());
+        self.output_size += output.len();
         Ok(output)
     }
 
@@ -230,9 +230,9 @@ mod tests {
             let bound = compressor.max_output_size(input.len());
             let mut output_size = 0usize;
             for chunk in input.chunks(7919) {
-                output_size = output_size.saturating_add(compressor.append(chunk).unwrap().len());
+                output_size += compressor.append(chunk).unwrap().len();
             }
-            output_size = output_size.saturating_add(compressor.finish().unwrap().len());
+            output_size += compressor.finish().unwrap().len();
             assert!(output_size <= bound);
         }
     }
