@@ -31,7 +31,7 @@ use super::{
     BlockWatcher, DisplaySnapshot, FlashblockWatcher, InclusionPulse, InclusionSource, LoadRunner,
     LoadTestDisplay, LoadTestStage, MIN_PRIORITY_FEE, PipelineStartConfig, PreparedTransaction,
     PresignBuffer, QueuedSubmitFailures, ResultsTracker, SignedBatch, SignedTransaction,
-    SubmissionPipeline, SubmitEvent, TxType,
+    SubmissionPipeline, SubmitEvent, TxType, ValidityRouter,
 };
 use crate::{
     BaselineError, Result,
@@ -96,6 +96,7 @@ struct PresignConfig {
     estimated_gas: u64,
     fresh_recipient_ratio: f64,
     signed_chunk_tx: mpsc::Sender<Vec<Vec<SignedTransaction>>>,
+    validity_router: ValidityRouter,
 }
 
 struct EnqueueProgress {
@@ -402,6 +403,10 @@ impl LoadRunner {
         self.base_fee = self.client.get_base_fee().await?;
         info!(base_fee = self.base_fee, "fetched current base fee");
 
+        if !self.validity_router.is_disabled() {
+            self.probe_validity_endpoint().await?;
+        }
+
         for account in self.accounts.accounts() {
             if !self.nonce_managers.contains_key(&account.address) {
                 let provider = RootProvider::<Ethereum>::new_http(self.config.query_rpc.clone());
@@ -626,6 +631,7 @@ impl LoadRunner {
                 estimated_gas: initial_avg_gas,
                 fresh_recipient_ratio: self.config.fresh_recipient_ratio,
                 signed_chunk_tx,
+                validity_router: self.validity_router.clone(),
             },
         ));
 
@@ -1175,6 +1181,7 @@ impl LoadRunner {
         let mut sender_jobs = Vec::with_capacity(sender_count);
         for (sender_index, from) in config.sender_addresses.iter().copied().enumerate() {
             let sender_pool_recipient = config.sender_addresses[(sender_index + 1) % sender_count];
+            let cohort = config.validity_router.cohort_for_sender(from);
             let mut prepared_txs = Vec::with_capacity(txs_per_sender);
             for _ in 0..txs_per_sender {
                 let payload = generator.select_payload()?;
@@ -1194,6 +1201,7 @@ impl LoadRunner {
                 let value = tx_request.value.unwrap_or(U256::ZERO);
                 let data = tx_request.input.input().cloned().unwrap_or_default();
                 let gas_limit = tx_request.gas.unwrap_or(21_000);
+                let validity = config.validity_router.predicates_for(cohort, from, to_addr);
 
                 prepared_txs.push(PreparedTransaction {
                     from,
@@ -1202,6 +1210,8 @@ impl LoadRunner {
                     data,
                     gas_limit,
                     estimated_gas: config.estimated_gas,
+                    validity,
+                    cohort,
                 });
             }
 
@@ -1388,6 +1398,8 @@ impl LoadRunner {
                 nonce,
                 gas_limit: prepared.gas_limit,
                 estimated_gas: prepared.estimated_gas,
+                validity: prepared.validity,
+                cohort: prepared.cohort,
             });
         }
 
@@ -1918,7 +1930,7 @@ mod tests {
         metrics::MetricsCollector,
         runner::{
             PipelineStartConfig, ResultsTracker, SUBMIT_BATCH_QUEUE_BUFFER, SignedBatch,
-            SignedTransaction, SubmissionPipeline, SubmitEvent,
+            SignedTransaction, SubmissionPipeline, SubmitCohort, SubmitEvent,
         },
     };
     #[test]
@@ -1940,6 +1952,8 @@ mod tests {
                 nonce: id,
                 gas_limit: 21_000,
                 estimated_gas: 21_000,
+                validity: Vec::new(),
+                cohort: SubmitCohort::Plain,
             }],
         }
     }

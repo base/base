@@ -18,6 +18,7 @@ use alloy_provider::RootProvider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
+use base_execution_txpool::ValidityPredicate;
 use base_tx_manager::NonceManager;
 use tokio::{
     sync::{Mutex, Semaphore, mpsc},
@@ -56,6 +57,34 @@ pub const MIN_PRIORITY_FEE: u128 = 1;
 /// Ensures the rate-limit warning is only logged once per process, since a
 /// saturated RPC can otherwise report it on every batch under sustained load.
 static RATE_LIMIT_WARNED: AtomicBool = AtomicBool::new(false);
+
+/// Submission cohort a transaction is routed to.
+///
+/// A sender's cohort is assigned deterministically so its entire nonce stream
+/// flows through a single submission origin, keeping nonces contiguous.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SubmitCohort {
+    /// Plain `eth_sendRawTransaction` submission carrying no predicates.
+    #[default]
+    Plain,
+    /// Validity submission carrying resolved predicates.
+    ValidityPass,
+}
+
+impl SubmitCohort {
+    /// Returns true when the cohort submits via the validity path.
+    pub const fn is_validity(&self) -> bool {
+        !matches!(self, Self::Plain)
+    }
+
+    /// Returns a stable label for the cohort.
+    pub const fn label(&self) -> &'static str {
+        match self {
+            Self::Plain => "plain",
+            Self::ValidityPass => "validity_pass",
+        }
+    }
+}
 
 /// EIP-1559 fee fields for a transaction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,6 +172,11 @@ pub struct PreparedTransaction {
     pub gas_limit: u64,
     /// Calibrated execution gas used for pacing.
     pub estimated_gas: u64,
+    /// Resolved validity predicates transported with the transaction. Empty for
+    /// the plain cohort.
+    pub validity: Vec<ValidityPredicate>,
+    /// Submission cohort this transaction is routed to.
+    pub cohort: SubmitCohort,
 }
 
 /// Submission events emitted by signer and sender stages.
@@ -209,6 +243,11 @@ pub struct SignedTransaction {
     pub gas_limit: u64,
     /// Calibrated execution gas used for pacing.
     pub estimated_gas: u64,
+    /// Resolved validity predicates transported with the transaction. Empty for
+    /// the plain cohort.
+    pub validity: Vec<ValidityPredicate>,
+    /// Submission cohort this transaction is routed to.
+    pub cohort: SubmitCohort,
 }
 
 /// A batch of prepared transactions.
@@ -725,6 +764,8 @@ impl SubmissionPipeline {
             nonce,
             gas_limit: prepared.gas_limit,
             estimated_gas: prepared.estimated_gas,
+            validity: prepared.validity.clone(),
+            cohort: prepared.cohort,
         })
     }
 
@@ -826,8 +867,11 @@ impl SubmissionPipeline {
             }
 
             let attempt = batch.attempt;
-            let submit_items: Vec<SubmitItem> =
-                batch.txs.iter().map(|s| SubmitItem::plain(s.raw.clone())).collect();
+            let submit_items: Vec<SubmitItem> = batch
+                .txs
+                .iter()
+                .map(|s| SubmitItem::with_validity(s.raw.clone(), s.validity.clone()))
+                .collect();
             let rpc_index = batch_id as usize % ctx.submission_batch_rpcs.len();
             let batch_results = match ctx.submission_batch_rpcs[rpc_index]
                 .send_raw_transactions(&submit_items, ctx.submit_request_limiter.as_deref())
@@ -1202,7 +1246,7 @@ mod tests {
     use super::{
         BatchTxError, Fees, GasPricer, MAX_FEE_BASE_FEE_MULTIPLIER, MIN_PRIORITY_FEE,
         PipelineQueue, PreparedBatch, PreparedTransaction, SignedBatch, SignedTransaction,
-        SubmissionPipeline, SubmitEvent,
+        SubmissionPipeline, SubmitCohort, SubmitEvent,
     };
 
     #[test]
@@ -1348,6 +1392,8 @@ mod tests {
             data: Bytes::new(),
             gas_limit: 21_000,
             estimated_gas: 12_345,
+            validity: Vec::new(),
+            cohort: SubmitCohort::Plain,
         };
         let fees = Fees { max_fee: 100, priority_fee: 10 };
 
@@ -1385,6 +1431,8 @@ mod tests {
                     data: Bytes::new(),
                     gas_limit: 21_000,
                     estimated_gas: 21_000,
+                    validity: Vec::new(),
+                    cohort: SubmitCohort::Plain,
                 }],
             })
             .await
@@ -1406,6 +1454,8 @@ mod tests {
                     nonce: 0,
                     gas_limit: 21_000,
                     estimated_gas: 21_000,
+                    validity: Vec::new(),
+                    cohort: SubmitCohort::Plain,
                 }],
             })
             .await
