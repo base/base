@@ -76,6 +76,7 @@ tracing-subscriber = { workspace = true, optional = true }
 base-protocol.workspace = true
 base-node-runner = { path = ".", features = ["test-utils"] }
 serde_json.workspace = true
+tokio-tungstenite.workspace = true
 criterion = { workspace = true, features = ["async_tokio", "html_reports"] }
 
 [[bench]]

@@ -4993,6 +4993,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tokio-tungstenite 0.28.0",
  "tower 0.5.3",
  "tracing",
  "tracing-subscriber",
