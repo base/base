@@ -9,9 +9,7 @@ use alloy_primitives::BlockHash;
 use base_common_consensus::BaseTransaction;
 use base_protocol::BaseTimeUpdateTx;
 use lru::LruCache;
-use reth_node_api::BlockBody;
-use reth_primitives_traits::Block as _;
-use reth_storage_api::{BlockReader, BlockSource, errors::ProviderError};
+use reth_storage_api::{TransactionsProvider, errors::ProviderError};
 
 /// Cache of validated `BaseTime` timestamps keyed by block hash.
 #[derive(Clone, Debug)]
@@ -30,7 +28,8 @@ impl Default for BaseTimeCache {
 }
 
 impl BaseTimeCache {
-    /// Returns the validated millisecond timestamp for a block, loading its body on a cache miss.
+    /// Returns the validated millisecond timestamp for a block, loading its transactions on a
+    /// cache miss.
     pub fn get<T, Provider>(
         &self,
         provider: &Provider,
@@ -40,7 +39,7 @@ impl BaseTimeCache {
     ) -> Result<Option<u64>, ProviderError>
     where
         T: BaseTransaction,
-        Provider: BlockReader<Transaction = T>,
+        Provider: TransactionsProvider<Transaction = T>,
     {
         if let Some(timestamp_ms) =
             self.timestamps.lock().unwrap_or_else(PoisonError::into_inner).get(&block_hash).copied()
@@ -48,18 +47,13 @@ impl BaseTimeCache {
             return Ok(timestamp_ms);
         }
 
-        let block = match provider.find_block_by_hash(block_hash, BlockSource::Any) {
-            Ok(Some(block)) => block,
+        let transactions = match provider.transactions_by_block(block_hash.into()) {
+            Ok(Some(transactions)) => transactions,
             Ok(None) | Err(ProviderError::BlockExpired { .. }) => return Ok(None),
             Err(error) => return Err(error),
         };
 
-        Ok(self.insert_from_transactions(
-            block_hash,
-            block_number,
-            block_timestamp,
-            block.body().transactions(),
-        ))
+        Ok(self.insert_from_transactions(block_hash, block_number, block_timestamp, &transactions))
     }
 
     /// Validates, caches, and returns a block's millisecond timestamp from its transactions.
