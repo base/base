@@ -318,6 +318,7 @@ mod tests {
                 transactions: alloy_rpc_types_eth::BlockTransactions::Full(vec![
                     base_common_rpc_types::Transaction {
                         inner: tx_env,
+                        block_timestamp_ms: None,
                         deposit_nonce: None,
                         deposit_receipt_version: None,
                     },

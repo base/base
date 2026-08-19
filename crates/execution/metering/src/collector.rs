@@ -331,6 +331,7 @@ mod tests {
                     transaction_index: Some(entry.index),
                     effective_gas_price: Some(entry.effective_gas_price),
                 },
+                block_timestamp_ms: None,
                 deposit_nonce: None,
                 deposit_receipt_version: None,
             };

@@ -22,6 +22,9 @@ pub struct Transaction {
     #[deref_mut]
     pub inner: alloy_rpc_types_eth::Transaction<BaseTxEnvelope>,
 
+    /// Full block timestamp in milliseconds when sub-second timing is available.
+    pub block_timestamp_ms: Option<u64>,
+
     /// Nonce for deposit transactions. Only present in RPC responses.
     pub deposit_nonce: Option<u64>,
 
@@ -55,6 +58,7 @@ impl Transaction {
                 transaction_index: tx_info.inner.index,
                 effective_gas_price: Some(effective_gas_price),
             },
+            block_timestamp_ms: tx_info.block_timestamp_ms,
             deposit_nonce: tx_info.deposit_meta.deposit_nonce,
             deposit_receipt_version: tx_info.deposit_meta.deposit_receipt_version,
         }
@@ -254,6 +258,12 @@ mod tx_serde {
             skip_serializing_if = "Option::is_none",
             with = "alloy_serde::quantity::opt"
         )]
+        block_timestamp_ms: Option<u64>,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            with = "alloy_serde::quantity::opt"
+        )]
         deposit_receipt_version: Option<u64>,
 
         #[serde(flatten)]
@@ -272,6 +282,7 @@ mod tx_serde {
                         transaction_index,
                         effective_gas_price,
                     },
+                block_timestamp_ms,
                 deposit_receipt_version,
                 deposit_nonce,
             } = value;
@@ -288,6 +299,7 @@ mod tx_serde {
                 block_number,
                 transaction_index,
                 block_timestamp,
+                block_timestamp_ms,
                 deposit_receipt_version,
                 other: OptionalFields { from, effective_gas_price, deposit_nonce },
             }
@@ -304,6 +316,7 @@ mod tx_serde {
                 block_number,
                 transaction_index,
                 block_timestamp,
+                block_timestamp_ms,
                 deposit_receipt_version,
                 other,
             } = value;
@@ -333,6 +346,7 @@ mod tx_serde {
                     transaction_index,
                     effective_gas_price,
                 },
+                block_timestamp_ms,
                 deposit_receipt_version,
                 deposit_nonce,
             })
@@ -408,6 +422,7 @@ mod tests {
                 base_fee: Some(1_000_000_000),
             },
             deposit_meta: Default::default(),
+            block_timestamp_ms: Some(1_700_000_000_200),
         };
         let rpc_tx = Transaction::from_transaction(recovered, tx_info);
 
@@ -422,6 +437,7 @@ mod tests {
         assert_eq!(value["type"], "0x79", "tx type byte exposed in RPC response");
         assert_eq!(value["from"], "0x0000000000000000000000000000000000000011");
         assert_eq!(value["blockNumber"], "0x64");
+        assert_eq!(value["blockTimestampMs"], "0x18bcfe568c8");
         assert_eq!(value["transactionIndex"], "0x0");
 
         let tx_payload = &value["tx"];
@@ -440,5 +456,10 @@ mod tests {
         assert!(value.get("sourceHash").is_none(), "no deposit-only fields leak");
         assert!(value.get("depositReceiptVersion").is_none());
         assert!(value.get("mint").is_none());
+
+        let mut transaction_without_millis = rpc_tx;
+        transaction_without_millis.block_timestamp_ms = None;
+        let value = serde_json::to_value(transaction_without_millis).unwrap();
+        assert!(value.get("blockTimestampMs").is_none());
     }
 }
