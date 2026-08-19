@@ -21,8 +21,18 @@ use alloy_primitives::U256;
 /// field holds a larger integer than the release's zero. That inverts the intended order and can
 /// reject a node running a final release under a minimum that is a release candidate of the same
 /// version.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Eq)]
 pub struct PackedProtocolVersion(U256);
+
+impl PartialEq for PackedProtocolVersion {
+    /// Equality mirrors [`Ord`]: two values are equal when their ordered semver fields match, so
+    /// `build` and the reserved/version-type bits are ignored. Deriving `PartialEq` instead would
+    /// compare the raw `U256` bit-for-bit and break the `Ord` contract, under which
+    /// `a.cmp(&b) == Ordering::Equal` must imply `a == b`.
+    fn eq(&self, other: &Self) -> bool {
+        self.ordering_key() == other.ordering_key()
+    }
+}
 
 impl PackedProtocolVersion {
     /// Wraps a packed protocol version read from the L1 `ProtocolVersions` contract.
@@ -138,6 +148,10 @@ mod tests {
         let plain = PackedProtocolVersion::pack(1, 2, 3, 0);
         let with_build = PackedProtocolVersion::new(plain.into_inner() | (U256::from(7) << 128));
 
+        // The raw integers differ, but the ordered fields (and thus both `cmp` and `==`) agree,
+        // keeping the `Ord`/`PartialEq` contract intact.
+        assert_ne!(plain.into_inner(), with_build.into_inner());
         assert_eq!(plain.cmp(&with_build), Ordering::Equal);
+        assert_eq!(plain, with_build);
     }
 }
