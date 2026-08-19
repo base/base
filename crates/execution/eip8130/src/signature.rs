@@ -143,7 +143,8 @@ impl SignatureVerifier {
         local_chain_id: u64,
         now: u64,
     ) -> Result<ResolvedActor, SignatureError> {
-        let (&sig_type_byte, inner) = auth.split_first().ok_or(SignatureError::EmptySignatureEnvelope)?;
+        let (&sig_type_byte, inner) =
+            auth.split_first().ok_or(SignatureError::EmptySignatureEnvelope)?;
         let sig_type = SignatureType::from_byte(sig_type_byte)
             .ok_or(SignatureError::UnknownSignatureType(sig_type_byte))?;
         let digest = Self::envelope_digest(sig_type, account, hash, local_chain_id);
