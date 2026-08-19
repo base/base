@@ -990,8 +990,7 @@ impl Eip8130Executor {
             // 2. Install the deferred account-*code* effects (created-account
             //    bytecode, delegation indicator) the apply step surfaced.
             if let Some(created) = &applied_tx.applied.created {
-                sctx.set_code(created.address, Bytecode::new_raw(created.code.clone()))
-                    .map_err(BaseTransactionError::eip8130)?;
+                Self::install_created_code(sctx, created.address, &created.code)?;
             }
             if let Some(delegation) = &applied_tx.applied.delegation {
                 delegation.install(sctx).map_err(BaseTransactionError::eip8130)?;
@@ -1048,7 +1047,15 @@ impl Eip8130Executor {
             //    delegation owner change was supplied. A zero target deliberately
             //    clears the sender's delegation and must not be overwritten with
             //    `DEFAULT_ACCOUNT`.
-            let sender_auto_delegated = if has_explicit_delegation {
+            // A create installs the account's own runtime, so it must never be
+            // auto-delegated to `DEFAULT_ACCOUNT`. `apply_create` rejects empty
+            // runtimes, so a created sender is never code-less here and
+            // `auto_delegate_codeless_sender` would already no-op; gating on the
+            // create explicitly keeps that invariant local rather than relying on
+            // the emptiness check, and matches the `sender_auto_delegated`
+            // intrinsic-gas classifier's own suppression on a create entry.
+            let has_create = applied_tx.applied.created.is_some();
+            let sender_auto_delegated = if has_explicit_delegation || has_create {
                 false
             } else {
                 Self::auto_delegate_codeless_sender(sctx, sender)?
@@ -1678,15 +1685,44 @@ impl Eip8130Executor {
                 }
             }
         }
-        if let Some((address, code)) = created_effect {
-            sctx.set_code(address, Bytecode::new_raw(code))
-                .map_err(BaseTransactionError::eip8130)?;
+        if let Some((address, code)) = &created_effect {
+            Self::install_created_code(sctx, *address, code)?;
         }
         let has_explicit_delegation = delegation_effect.is_some();
         if let Some(delegation) = delegation_effect {
             delegation.install(sctx).map_err(BaseTransactionError::eip8130)?;
         }
         Ok(has_explicit_delegation)
+    }
+
+    /// Installs a created account's runtime code, enforcing the CREATE2 collision
+    /// rule the reference contract gets for free from a real deploy: the
+    /// destination must be empty (no code, zero nonce). The account info is read
+    /// from the real journal (not the config overlay), so block inclusion
+    /// enforces what mempool admission checks separately — an inclusion path that
+    /// bypasses the pool cannot overwrite preexisting third-party code.
+    ///
+    /// The runtime is already validated non-empty, `<= MAX_CODE_SIZE`, and not
+    /// `0xEF`-prefixed by [`AccountChangeApplier::apply_create`], so
+    /// [`Bytecode::new_raw_checked`] never errors here; the fallible constructor
+    /// is used anyway so any future gap surfaces as a validity error rather than
+    /// a panic on transaction-controlled bytes.
+    fn install_created_code(
+        sctx: StorageCtx<'_>,
+        address: Address,
+        code: &Bytes,
+    ) -> Result<(), BaseTransactionError> {
+        let occupied = sctx
+            .with_account_info(address, |info| Ok(!info.is_empty_code_hash() || info.nonce != 0))
+            .map_err(BaseTransactionError::eip8130)?;
+        if occupied {
+            return Err(BaseTransactionError::eip8130(
+                "create destination already has code or a non-zero nonce",
+            ));
+        }
+        let bytecode =
+            Bytecode::new_raw_checked(code.clone()).map_err(BaseTransactionError::eip8130)?;
+        sctx.set_code(address, bytecode).map_err(BaseTransactionError::eip8130)
     }
 
     /// Auto-delegates a code-less sender to [`Eip8130Contracts::DEFAULT_ACCOUNT`]
@@ -3103,6 +3139,73 @@ mod tests {
         assert_eq!(created.info.nonce, 1, "create sender nonce bumped");
         assert!(!created.info.is_empty_code_hash(), "created account has code");
         assert!(created.info.balance < initial_balance, "self-paid create charged");
+    }
+
+    /// Asserts a counterfactual create with `code` is rejected at inclusion with
+    /// an `Eip8130` validity error whose reason contains `reason`, and that no
+    /// balance is charged (the transaction is not included). Never panics — the
+    /// point of the create-safety gate is that transaction-controlled runtimes
+    /// surface as clean rejections rather than executor panics.
+    fn assert_create_rejected(byte: u8, code: Bytes, reason: &str) {
+        let key = signing_key(byte);
+        let (derived, signed) = counterfactual_create_signed(&key, code, Vec::new());
+        let mut evm = evm_with(U256::from(10u64).pow(U256::from(18u64)), derived);
+        let err = evm.transact_raw(into_base_tx(&signed)).unwrap_err();
+        let EVMError::Transaction(BaseTransactionError::Eip8130(got)) = err else {
+            panic!("expected an Eip8130 validity rejection, got {err:?}");
+        };
+        assert!(got.contains(reason), "reason {got:?} does not contain {reason:?}");
+    }
+
+    #[test]
+    fn create_rejects_oversized_runtime() {
+        // EIP-170: a runtime larger than MAX_CODE_SIZE would be rejected by the
+        // reference contract's CREATE2 deploy; the enshrined path must reject it
+        // too rather than install oversized code at inclusion.
+        let code = Bytes::from(vec![0x00u8; Eip8130Constants::MAX_CODE_SIZE + 1]);
+        assert_create_rejected(0xb1, code, "MAX_CODE_SIZE");
+    }
+
+    #[test]
+    fn create_rejects_leading_ef_runtime() {
+        // EIP-3541: deployed code may not begin with 0xEF.
+        assert_create_rejected(0xb2, bytes!("ef00"), "0xEF");
+    }
+
+    #[test]
+    fn create_rejects_malformed_eip7702_runtime() {
+        // The 3-byte 0xEF0100 prefix is a malformed EIP-7702 designator that
+        // previously panicked `Bytecode::new_raw` (InvalidLength) when installed
+        // as create runtime. It must now be a clean EIP-3541 rejection.
+        assert_create_rejected(0xb3, bytes!("ef0100"), "0xEF");
+    }
+
+    #[test]
+    fn create_rejects_full_eip7702_designator_runtime() {
+        // A canonical 23-byte 0xEF0100||target designator must not be accepted as
+        // create runtime (it would silently become an EIP-7702 delegation from a
+        // Create-only transaction); EIP-3541 rejects it.
+        let mut designator = vec![0xEF, 0x01, 0x00];
+        designator.extend_from_slice(Address::repeat_byte(0x42).as_slice());
+        assert_create_rejected(0xb4, Bytes::from(designator), "0xEF");
+    }
+
+    #[test]
+    fn create_rejects_overwriting_existing_code() {
+        // CREATE2 collision: the reference contract's deploy reverts when the
+        // destination already holds code. The enshrined path installs runtime
+        // directly, so it must reject a create whose derived address already has
+        // preexisting (non-8130) bytecode instead of overwriting it.
+        let key = signing_key(0xb5);
+        let (derived, signed) = counterfactual_create_signed(&key, bytes!("6001"), Vec::new());
+        let mut evm = evm_with(U256::from(10u64).pow(U256::from(18u64)), derived);
+        seed_account_code(&mut evm, derived, Bytes::from_static(&[0xfe, 0xfe, 0xfe]));
+
+        let err = evm.transact_raw(into_base_tx(&signed)).unwrap_err();
+        let EVMError::Transaction(BaseTransactionError::Eip8130(got)) = err else {
+            panic!("expected an Eip8130 validity rejection, got {err:?}");
+        };
+        assert!(got.contains("already has code"), "unexpected reason: {got}");
     }
 
     #[test]
