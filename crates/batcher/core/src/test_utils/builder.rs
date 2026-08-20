@@ -27,9 +27,8 @@ impl SubmissionStub {
     pub fn with_id(id: u64) -> BatchSubmission {
         BatchSubmission::blobs(
             SubmissionId(id),
-            vec![BlobPayload::new(vec![Arc::new(Frame::default())]).expect("one frame")],
+            vec![BlobPayload::new(vec![Arc::new(Frame::default())])],
         )
-        .expect("one blob")
     }
 }
 

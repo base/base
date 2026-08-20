@@ -730,15 +730,13 @@ mod tests {
             (0..frame_count)
                 .map(|number| {
                     BlobPayload::new(vec![Arc::new(Frame {
-                        number: number.try_into().unwrap(),
+                        number: number.try_into().expect("frame number fits in u16"),
                         data: vec![0u8; data_len],
                         ..Frame::default()
                     })])
-                    .expect("one frame")
                 })
                 .collect(),
         )
-        .expect("one or more blob payloads")
     }
 
     const fn stub_receipt(block_number: u64) -> TransactionReceipt {
@@ -1061,19 +1059,13 @@ mod tests {
         Runner::start(Config::seeded(0), |ctx| async move {
             let recorded = Arc::new(Mutex::new(Recorded::default()));
             let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-            pipeline.submissions.push_back(
-                BatchSubmission::blobs(
-                    SubmissionId(0),
-                    vec![
-                        BlobPayload::new(vec![Arc::new(Frame {
-                            data: vec![0u8; OVERSIZED],
-                            ..Frame::default()
-                        })])
-                        .expect("one frame"),
-                    ],
-                )
-                .expect("one blob"),
-            );
+            pipeline.submissions.push_back(BatchSubmission::blobs(
+                SubmissionId(0),
+                vec![BlobPayload::new(vec![Arc::new(Frame {
+                    data: vec![0u8; OVERSIZED],
+                    ..Frame::default()
+                })])],
+            ));
 
             let handle = ctx.spawn(
                 DriverFixture::build(

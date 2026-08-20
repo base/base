@@ -5,8 +5,6 @@ use std::sync::Arc;
 use alloy_primitives::Bytes;
 use base_protocol::{DERIVATION_VERSION_0, Frame};
 
-use crate::EncoderConfig;
-
 /// Identifies a batch submission for receipt tracking.
 ///
 /// Monotonic per encoder instance, including across `reset`.
@@ -33,9 +31,9 @@ pub struct BlobPayload {
 }
 
 impl BlobPayload {
-    /// Creates a non-empty blob payload.
-    pub fn new(frames: Vec<Arc<Frame>>) -> Option<Self> {
-        (!frames.is_empty()).then_some(Self { frames })
+    /// Creates a blob payload from the given frames.
+    pub fn new(frames: Vec<Arc<Frame>>) -> Self {
+        Self { frames }
     }
 
     /// Returns the ordered frames carried by this blob.
@@ -68,10 +66,9 @@ impl BatchSubmission {
         Self { id, payload: SubmissionPayload::Calldata(frame) }
     }
 
-    /// Creates a non-empty blob submission within the protocol transaction limit.
-    pub fn blobs(id: SubmissionId, blobs: Vec<BlobPayload>) -> Option<Self> {
-        (!blobs.is_empty() && blobs.len() <= EncoderConfig::MAX_BLOBS_PER_TX)
-            .then_some(Self { id, payload: SubmissionPayload::Blobs(blobs) })
+    /// Creates a blob submission.
+    pub fn blobs(id: SubmissionId, blobs: Vec<BlobPayload>) -> Self {
+        Self { id, payload: SubmissionPayload::Blobs(blobs) }
     }
 
     /// Returns the transaction payload.
@@ -115,10 +112,15 @@ impl BatchSubmission {
 
     /// Returns the first frame in this submission.
     #[cfg(test)]
-    pub fn first_frame(&self) -> Option<&Arc<Frame>> {
+    pub fn first_frame(&self) -> &Arc<Frame> {
         match &self.payload {
-            SubmissionPayload::Blobs(blobs) => blobs.first()?.frames.first(),
-            SubmissionPayload::Calldata(frame) => Some(frame),
+            SubmissionPayload::Blobs(blobs) => blobs
+                .first()
+                .expect("blob submission has a payload")
+                .frames
+                .first()
+                .expect("blob payload has a frame"),
+            SubmissionPayload::Calldata(frame) => frame,
         }
     }
 }
@@ -135,25 +137,5 @@ impl FrameEncoder {
         data.push(DERIVATION_VERSION_0);
         data.extend_from_slice(&encoded);
         Bytes::from(data)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn rejects_empty_blob_payloads_and_submissions() {
-        assert!(BlobPayload::new(Vec::new()).is_none());
-        assert!(BatchSubmission::blobs(SubmissionId(0), Vec::new()).is_none());
-    }
-
-    #[test]
-    fn rejects_submission_above_blob_transaction_limit() {
-        let blobs = (0..=EncoderConfig::MAX_BLOBS_PER_TX)
-            .map(|_| BlobPayload::new(vec![Arc::new(Frame::default())]).unwrap())
-            .collect();
-
-        assert!(BatchSubmission::blobs(SubmissionId(0), blobs).is_none());
     }
 }

@@ -581,13 +581,9 @@ impl BatchPipeline for BatchEncoder {
                 }
                 1
             } else {
-                available
-                    .min(self.config.target_num_frames)
-                    .min(EncoderConfig::MAX_BLOBS_PER_TX)
-                    .max(1)
+                available.min(self.config.target_num_frames)
             };
-            // Clone the Arcs (pointer copies, not deep copies of frame data).
-            let frames: Vec<_> = channel.frames[frame_start..frame_start + frame_count].to_vec();
+            let frames = channel.frames[frame_start..frame_start + frame_count].to_vec();
 
             let id = SubmissionId(self.next_id);
             self.next_id += 1;
@@ -596,7 +592,6 @@ impl BatchPipeline for BatchEncoder {
 
             self.pending.insert(id, PendingRef { channel_idx: chan_idx, frame_start, frame_count });
 
-            // Frames move from pending → in-flight; decrement the pending gauge.
             BatcherMetrics::pending_frames().decrement(frame_count as f64);
             debug!(
                 id = %id.0,
@@ -606,18 +601,11 @@ impl BatchPipeline for BatchEncoder {
             );
 
             return Some(match effective_da_type {
-                DaType::Calldata => BatchSubmission::calldata(
+                DaType::Calldata => BatchSubmission::calldata(id, Arc::clone(&frames[0])),
+                DaType::Blob => BatchSubmission::blobs(
                     id,
-                    frames.into_iter().next().expect("calldata submissions carry one frame"),
+                    frames.into_iter().map(|frame| BlobPayload::new(vec![frame])).collect(),
                 ),
-                DaType::Blob => {
-                    let blobs = frames
-                        .into_iter()
-                        .map(|frame| BlobPayload::new(vec![frame]).expect("one frame"))
-                        .collect();
-                    BatchSubmission::blobs(id, blobs)
-                        .expect("non-empty blob submission within the transaction limit")
-                }
             });
         }
 
@@ -1293,7 +1281,7 @@ mod tests {
         );
 
         let retry = encoder.next_submission().unwrap();
-        assert!(Arc::ptr_eq(retry.first_frame().unwrap(), first.first_frame().unwrap()));
+        assert!(Arc::ptr_eq(retry.first_frame(), first.first_frame()));
         assert_eq!(
             &encoder.ready_channels[0].frame_states[..2],
             &[FrameState::Pending, FrameState::Confirmed]
@@ -1338,7 +1326,7 @@ mod tests {
         let replay_submissions = drain_submissions(&mut encoder);
         assert!(!replay_submissions.is_empty(), "replay must emit a fresh channel");
         assert_ne!(
-            replay_submissions[0].first_frame().unwrap().id,
+            replay_submissions[0].first_frame().id,
             original_channel_id,
             "replay must use a fresh channel id"
         );
