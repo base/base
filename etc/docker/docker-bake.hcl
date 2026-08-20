@@ -48,6 +48,7 @@ group "rust-services" {
     "audit-archiver",
     "batcher",
     "sidecrush",
+    "load-tester",
     "prover-service",
     "zk-host",
   ]
@@ -161,6 +162,12 @@ target "sidecrush" {
     "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
     "type=registry,ref=${REGISTRY_IMAGE}:cache-sidecrush-${PLATFORM_PAIR}",
   ]
+}
+
+target "load-tester" {
+  inherits = ["_rust-service-common"]
+  target = "load-tester"
+  tags = ["base-load-tester:local"]
 }
 
 target "prover-service" {

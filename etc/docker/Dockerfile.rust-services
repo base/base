@@ -134,6 +134,14 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     cargo build --profile $PROFILE --package base-sidecrush-bin --bin sidecrush && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/sidecrush /app/sidecrush
 
+FROM source AS load-tester-builder
+ARG PROFILE=release
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/target,id=load-tester-target,sharing=locked \
+    cargo build --profile $PROFILE --package base-load-tester-bin --bin base-load-tester && \
+    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-load-tester /app/base-load-tester
+
 FROM source AS prover-service-builder
 ARG PROFILE=release
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
@@ -226,6 +234,10 @@ ENTRYPOINT ["./base-batcher"]
 FROM runtime-base AS sidecrush
 COPY --from=sidecrush-builder /app/sidecrush ./sidecrush
 ENTRYPOINT ["./sidecrush"]
+
+FROM runtime-base AS load-tester
+COPY --from=load-tester-builder /app/base-load-tester ./base-load-tester
+ENTRYPOINT ["./base-load-tester"]
 
 FROM runtime-base AS prover-service
 COPY --from=prover-service-builder /app/base-prover-service ./base-prover-service
