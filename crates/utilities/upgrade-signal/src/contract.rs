@@ -582,7 +582,8 @@ mod tests {
     #[tokio::test]
     async fn does_not_retry_empty_schedule_reads() {
         let server = MockL1::block_and_min_protocol_server().await;
-        let schedule_mock = MockL1::mock_get_schedule(&server, schedule_abi_header(U256::ZERO)).await;
+        let schedule_mock =
+            MockL1::mock_get_schedule(&server, schedule_abi_header(U256::ZERO)).await;
         let reader = AlloyUpgradeSignalReader::new(
             server.url("/").parse().unwrap(),
             Address::ZERO,

@@ -3,8 +3,9 @@
 use base_execution_chainspec::BaseChainSpec;
 use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
 use base_upgrade_signal::{
-    UpgradeSignalApplySummary, UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalMetricLayer,
-    UpgradeSignalMonitor, UpgradeSignalRefresher, UpgradeSignalRuntimeApplier, UpgradeSignalSchedule,
+    UpgradeSignalApplySummary, UpgradeSignalConfig, UpgradeSignalDefaults,
+    UpgradeSignalMetricLayer, UpgradeSignalMonitor, UpgradeSignalRefresher,
+    UpgradeSignalRuntimeApplier, UpgradeSignalSchedule,
 };
 use jsonrpsee::{RpcModule, core::RpcResult, types::ErrorObject};
 use reth_chainspec::EthChainSpec;
