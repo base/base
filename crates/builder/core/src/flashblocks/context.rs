@@ -929,6 +929,9 @@ impl BasePayloadBuilderCtx {
                     );
                     diag.txs_rejected_other += 1;
                     diag.permanently_rejected_txs.push(tx_hash);
+                    // Same series as the pool-side block eviction: the builder
+                    // drops the tx before the pool sweep sees it.
+                    GuardMetrics::record_block_expiry_invalidations(1);
                     best_txs.mark_invalid(tx.sender(), tx.nonce());
                 } else if let Some(blocking_predicate) = blocking_predicate
                     && best_txs.park_current()
