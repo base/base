@@ -53,6 +53,11 @@ impl FlashblocksState {
         }
     }
 
+    /// Returns the configured maximum pending-blocks depth.
+    pub const fn max_pending_blocks_depth(&self) -> u64 {
+        self.max_pending_blocks_depth
+    }
+
     /// Starts the flashblocks state processor with the given client.
     ///
     /// This spawns a background task that processes canonical blocks and flashblocks.

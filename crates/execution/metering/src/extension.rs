@@ -184,6 +184,7 @@ impl BaseNodeExtension for MeteringExtension {
         hooks.add_rpc_module(move |ctx| {
             let fb_state: Arc<FlashblocksState> =
                 flashblocks_config.as_ref().map(|cfg| Arc::clone(&cfg.state)).unwrap_or_default();
+            let max_pending_blocks_depth = fb_state.max_pending_blocks_depth();
 
             let metering_api = if has_estimator {
                 let cache_size = cache_size.expect("estimator configuration validated");
@@ -230,12 +231,18 @@ impl BaseNodeExtension for MeteringExtension {
                 MeteringApiImpl::with_estimator(
                     ctx.provider().clone(),
                     fb_state,
+                    max_pending_blocks_depth,
                     estimator,
                     Arc::clone(&metered_opcodes),
                 )
             } else {
                 info!(message = "Starting Metering RPC (priority fee estimation disabled)");
-                MeteringApiImpl::new(ctx.provider().clone(), fb_state, Arc::clone(&metered_opcodes))
+                MeteringApiImpl::new(
+                    ctx.provider().clone(),
+                    fb_state,
+                    max_pending_blocks_depth,
+                    Arc::clone(&metered_opcodes),
+                )
             };
 
             ctx.modules.merge_configured(metering_api.into_rpc())?;

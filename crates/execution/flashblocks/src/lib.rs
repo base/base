@@ -47,8 +47,9 @@ pub use receipt_builder::{ReceiptBuildError, UnifiedReceiptBuilder};
 
 mod validation;
 pub use validation::{
-    CanonicalBlockReconciler, FlashblockSequenceValidator, ReconciliationStrategy,
-    ReorgDetectionResult, ReorgDetector, SequenceValidationResult,
+    CanonicalBlockReconciler, FlashblockSequenceValidator, PendingWindowStaleReason,
+    ReconciliationStrategy, ReorgDetectionResult, ReorgDetector, SequenceValidationResult,
+    pending_window_is_fresh, pending_window_stale_reason,
 };
 
 mod config;

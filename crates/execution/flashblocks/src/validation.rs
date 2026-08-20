@@ -2,6 +2,7 @@
 //!
 //! Provides stateless validation logic for flashblock sequencing and chain reorg detection.
 
+use alloy_eips::merge::EPOCH_SLOTS;
 use alloy_primitives::B256;
 use base_common_flashblocks::FlashblockId;
 
@@ -206,6 +207,66 @@ impl CanonicalBlockReconciler {
     }
 }
 
+/// Why a pending flashblock window is too stale to overlay for metering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingWindowStaleReason {
+    /// Pending latest is at or behind local canonical tip ([`ReconciliationStrategy::CatchUp`]).
+    CatchUp,
+    /// Local tip is more than `max_depth` past pending earliest.
+    DepthLimitExceeded {
+        /// `tip.saturating_sub(earliest)`.
+        depth: u64,
+        /// Configured maximum pending-blocks depth.
+        max_depth: u64,
+    },
+    /// Pending parent is more than [`EPOCH_SLOTS`] behind local tip.
+    HistoricalDistance {
+        /// `tip.saturating_sub(parent)` where `parent = earliest.saturating_sub(1)`.
+        distance: u64,
+    },
+}
+
+/// Returns whether a pending flashblock window is fresh enough to overlay for metering.
+///
+/// `parent < tip` alone is not stale: continue-after-canonical is expected while
+/// `latest > tip` and depth is within `max_depth`.
+pub const fn pending_window_is_fresh(earliest: u64, latest: u64, tip: u64, max_depth: u64) -> bool {
+    pending_window_stale_reason(earliest, latest, tip, max_depth).is_none()
+}
+
+/// Returns why a pending flashblock window should be ignored for metering, if at all.
+///
+/// Reuses [`CanonicalBlockReconciler::reconcile`] with `reorg_detected: false`, then
+/// applies the [`EPOCH_SLOTS`] historical-provider distance backstop against the pending
+/// parent (`earliest - 1`).
+pub const fn pending_window_stale_reason(
+    earliest: u64,
+    latest: u64,
+    tip: u64,
+    max_depth: u64,
+) -> Option<PendingWindowStaleReason> {
+    match CanonicalBlockReconciler::reconcile(Some(earliest), Some(latest), tip, max_depth, false) {
+        ReconciliationStrategy::Continue => {
+            let parent = earliest.saturating_sub(1);
+            let distance = tip.saturating_sub(parent);
+            if distance > EPOCH_SLOTS {
+                Some(PendingWindowStaleReason::HistoricalDistance { distance })
+            } else {
+                None
+            }
+        }
+        ReconciliationStrategy::CatchUp => Some(PendingWindowStaleReason::CatchUp),
+        ReconciliationStrategy::DepthLimitExceeded { depth, max_depth } => {
+            Some(PendingWindowStaleReason::DepthLimitExceeded { depth, max_depth })
+        }
+        // Unreachable with `Some`/`Some` and `reorg_detected: false`. Ignore pending if it
+        // happens so metering never overlays a window that failed reconciliation.
+        ReconciliationStrategy::HandleReorg | ReconciliationStrategy::NoPendingState => {
+            Some(PendingWindowStaleReason::CatchUp)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
@@ -352,5 +413,45 @@ mod tests {
         let result =
             CanonicalBlockReconciler::reconcile(earliest, latest, canonical, max_depth, reorg);
         assert_eq!(result, expected);
+    }
+
+    // ==================== Pending window freshness (metering) ====================
+
+    #[rstest]
+    // Keep: parent == tip - 1 (continue after one canonical)
+    #[case(101, 103, 102, 3, None)]
+    // Keep: parent == tip (fresh window on tip)
+    #[case(101, 103, 100, 3, None)]
+    // Keep: depth exactly at max (`>` not `>=`)
+    #[case(100, 110, 103, 3, None)]
+    // Keep: parent < tip is not sufficient to ignore
+    #[case(101, 104, 102, 3, None)]
+    // Keep: EPOCH_SLOTS distance exactly at the limit
+    #[case(100, 200, 131, 40, None)]
+    // Ignore: latest == tip (CatchUp)
+    #[case(100, 105, 105, 3, Some(PendingWindowStaleReason::CatchUp))]
+    // Ignore: latest < tip (CatchUp)
+    #[case(100, 105, 110, 3, Some(PendingWindowStaleReason::CatchUp))]
+    // Ignore: frozen hours-old / thousands behind
+    #[case(100, 100, 5000, 3, Some(PendingWindowStaleReason::CatchUp))]
+    // Ignore: depth exceeded while still ahead of tip
+    #[case(
+        100,
+        120,
+        104,
+        3,
+        Some(PendingWindowStaleReason::DepthLimitExceeded { depth: 4, max_depth: 3 })
+    )]
+    // Ignore: EPOCH_SLOTS even when max_depth would Keep
+    #[case(100, 200, 132, 40, Some(PendingWindowStaleReason::HistoricalDistance { distance: 33 }))]
+    fn test_pending_window_freshness(
+        #[case] earliest: u64,
+        #[case] latest: u64,
+        #[case] tip: u64,
+        #[case] max_depth: u64,
+        #[case] expected: Option<PendingWindowStaleReason>,
+    ) {
+        assert_eq!(pending_window_stale_reason(earliest, latest, tip, max_depth), expected);
+        assert_eq!(pending_window_is_fresh(earliest, latest, tip, max_depth), expected.is_none());
     }
 }
