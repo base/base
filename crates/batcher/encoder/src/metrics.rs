@@ -50,11 +50,20 @@ impl BatcherMetrics {
     /// Channel closed because the compressed frame data reached the target size.
     pub const REASON_SIZE_FULL: &'static str = "size_full";
 
+    /// Channel closed because the optional compressed-size target was reached.
+    pub const REASON_SOFT_TARGET: &'static str = "soft_target";
+
+    /// Channel closed because the next batch would exceed a hard derivation limit.
+    pub const REASON_PROTOCOL_LIMIT: &'static str = "protocol_limit";
+
     /// Channel closed because it reached `max_channel_duration` L1 blocks.
     pub const REASON_TIMEOUT: &'static str = "timeout";
 
     /// Channel closed by an explicit force-flush signal.
     pub const REASON_FORCE: &'static str = "force";
+
+    /// Channel closed by an administrative flush.
+    pub const REASON_FLUSH: &'static str = "flush";
 
     /// Channel discarded because its first block exceeded channel limits.
     pub const REASON_DISCARD: &'static str = "discard";

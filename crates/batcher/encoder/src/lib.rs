@@ -24,6 +24,11 @@ pub use channel::{
     ReadyChannel,
 };
 
+#[allow(dead_code, unreachable_pub, unnameable_types)]
+mod egress;
+#[allow(dead_code, unreachable_pub, unnameable_types)]
+mod record;
+
 mod encoder;
 pub use encoder::BatchEncoder;
 
