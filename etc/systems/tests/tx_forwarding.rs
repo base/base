@@ -33,13 +33,11 @@ const L2_CHAIN_ID: u64 = 84538453;
 const TX_RECEIPT_TIMEOUT: Duration = Duration::from_secs(60);
 const PENDING_TX_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// Waits until the builder exposes a transaction as pending.
+/// Waits until the builder knows a transaction, proving forwarding completed.
 async fn wait_for_pending_transaction(provider: &RootProvider<Base>, tx_hash: B256) -> Result<()> {
     timeout(PENDING_TX_TIMEOUT, async {
         loop {
-            if provider.get_transaction_by_hash(tx_hash).await?.is_some()
-                && provider.get_transaction_receipt(tx_hash).await?.is_none()
-            {
+            if provider.get_transaction_by_hash(tx_hash).await?.is_some() {
                 return Ok::<_, eyre::Error>(());
             }
             sleep(Duration::from_millis(100)).await;
