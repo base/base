@@ -80,12 +80,23 @@ where
         let l1_header;
         let deposit_transactions: Vec<Bytes>;
 
-        let mut sys_config = match self
-            .parent_system_config
-            .take_if(|(parent, _)| *parent == l2_parent)
-        {
-            Some((_, config)) => config,
-            None => self
+        let parent_timestamp =
+            self.rollup_cfg.l2_block_timestamp(l2_parent.block_info.number.saturating_sub(1));
+        let mut sys_config = match self.parent_system_config {
+            Some((parent, config))
+                if parent == l2_parent
+                    && !self.rollup_cfg.is_first_isthmus_block(
+                        l2_parent.block_info.timestamp,
+                        parent_timestamp,
+                    )
+                    && !self.rollup_cfg.is_first_jovian_block(
+                        l2_parent.block_info.timestamp,
+                        parent_timestamp,
+                    ) =>
+            {
+                config
+            }
+            _ => self
                 .config_fetcher
                 .system_config_by_number(l2_parent.block_info.number, Arc::clone(&self.rollup_cfg))
                 .await
@@ -483,7 +494,12 @@ mod tests {
 
         let payload = builder.prepare_payload_attributes(parent, epoch).await.unwrap();
         assert_eq!(payload.gas_limit, Some(123));
-        assert!(builder.parent_system_config.is_none());
+
+        // The seed survives use, so a retried build on the same parent reuses it instead of
+        // falling back to the RPC (the default fetcher errors on any lookup, so a second
+        // success proves no fallback happened).
+        let payload = builder.prepare_payload_attributes(parent, epoch).await.unwrap();
+        assert_eq!(payload.gas_limit, Some(123));
 
         let mut fetcher = TestSystemConfigL2Fetcher::default();
         fetcher.insert(
