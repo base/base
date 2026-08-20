@@ -761,6 +761,13 @@ where
         let block_timestamp = self.attributes().timestamp();
         let can_finalize_early = self.is_denim_active();
         while let Some(tx) = best_txs.next(()) {
+            if self.cancel.is_cancelled() {
+                return Ok(Some(()));
+            }
+            if can_finalize_early && self.cancel.is_finalization_requested() {
+                break;
+            }
+
             if self.builder_config.manifest_precheck_enabled
                 && let Some(manifest) = tx.watch_manifest()
                 && let Err(stale) = manifest.revalidate(builder.evm_mut().db_mut(), block_timestamp)
@@ -841,13 +848,6 @@ where
                 continue;
             }
 
-            if self.cancel.is_cancelled() {
-                return Ok(Some(()));
-            }
-            if can_finalize_early && self.cancel.is_finalization_requested() {
-                break;
-            }
-
             let gas_output = match builder.execute_transaction(tx.clone()) {
                 Ok(gas_output) => gas_output,
                 Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
@@ -876,7 +876,10 @@ where
             info.total_fees += U256::from(miner_fee) * U256::from(gas_output.tx_gas_used());
         }
 
-        if self.cancel.is_cancelled() {
+        // A cancellation that raced the finalization break (or an empty iterator) must still
+        // win, so re-check it before the finalized payload is assembled. Gated on Denim so
+        // pre-Denim control flow is unchanged.
+        if can_finalize_early && self.cancel.is_cancelled() {
             return Ok(Some(()));
         }
 
