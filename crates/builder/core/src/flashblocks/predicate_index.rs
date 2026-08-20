@@ -127,14 +127,15 @@ impl<T> ParkedPredicateIndex<T> {
         Some(transaction)
     }
 
-    /// Returns parked transactions whose indexed state may have changed.
-    pub fn affected_by_state(&self, state: &EvmState) -> Vec<TxHash> {
-        let mut affected = Vec::new();
+    /// Returns parked transactions and index-bucket wakeups triggered by `state`.
+    pub fn affected_by_state(&self, state: &EvmState) -> StateChangeEffects {
+        let mut effects = StateChangeEffects::default();
         for (address, account) in state {
             if account.info.balance != account.original_info().balance
                 && let Some(hashes) = self.blockers.get(&ValidityPredicateKey::Balance(*address))
             {
-                affected.extend(hashes.iter().copied());
+                effects.affected_transactions.extend(hashes.iter().copied());
+                effects.woken_buckets += 1;
             }
 
             // Selfdestruct can clear slots that were not loaded during this execution. Wake every
@@ -143,7 +144,8 @@ impl<T> ParkedPredicateIndex<T> {
                 for (key, hashes) in &self.blockers {
                     if matches!(key, ValidityPredicateKey::Storage(key_address, _) if key_address == address)
                     {
-                        affected.extend(hashes.iter().copied());
+                        effects.affected_transactions.extend(hashes.iter().copied());
+                        effects.woken_buckets += 1;
                     }
                 }
             } else {
@@ -152,25 +154,45 @@ impl<T> ParkedPredicateIndex<T> {
                         && let Some(hashes) =
                             self.blockers.get(&ValidityPredicateKey::Storage(*address, *slot))
                     {
-                        affected.extend(hashes.iter().copied());
+                        effects.affected_transactions.extend(hashes.iter().copied());
+                        effects.woken_buckets += 1;
                     }
                 }
             }
         }
-        affected
+        effects
     }
+
+    /// Returns the number of parked transactions blocked on each distinct index bucket.
+    pub fn bucket_depths(&self) -> impl Iterator<Item = usize> + '_ {
+        self.blockers.values().map(HashSet::len)
+    }
+}
+
+/// Parked transactions and index-bucket wakeups triggered by one state change.
+///
+/// A bucket is "woken" when the watched [`ValidityPredicateKey`] it indexes actually changed,
+/// counted once per bucket regardless of how many parked transactions block on it. A wakeup
+/// means the bucket's parked transactions are due for re-evaluation — it does not mean their
+/// predicates became satisfied; that outcome is determined separately by the rescan.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct StateChangeEffects {
+    /// Parked transactions whose blocking predicate may have changed and need re-evaluation.
+    pub affected_transactions: Vec<TxHash>,
+    /// Number of distinct index buckets that were woken.
+    pub woken_buckets: usize,
 }
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, B256, U256};
+    use alloy_primitives::{Address, B256, U256, map::HashSet};
     use base_execution_txpool::{PredicateContext, ValidityOperator, ValidityPredicate};
     use revm::{
         database::InMemoryDB,
         state::{Account, EvmState, EvmStorageSlot},
     };
 
-    use super::{ParkedPredicateIndex, ValidityPredicateKey};
+    use super::{ParkedPredicateIndex, StateChangeEffects, ValidityPredicateKey};
 
     fn balance_predicate(address: Address, value: U256) -> ValidityPredicate {
         ValidityPredicate::Balance { address, op: ValidityOperator::Equal, value }
@@ -195,7 +217,10 @@ mod tests {
         account.info.balance = U256::ONE;
         state.insert(balance_address, account);
 
-        assert_eq!(index.affected_by_state(&state), vec![balance_hash]);
+        assert_eq!(
+            index.affected_by_state(&state),
+            StateChangeEffects { affected_transactions: vec![balance_hash], woken_buckets: 1 }
+        );
 
         assert!(
             index.reindex(
@@ -211,7 +236,10 @@ mod tests {
         state.clear();
         state.insert(storage_address, account);
 
-        assert_eq!(index.affected_by_state(&state), vec![balance_hash]);
+        assert_eq!(
+            index.affected_by_state(&state),
+            StateChangeEffects { affected_transactions: vec![balance_hash], woken_buckets: 1 }
+        );
         assert_eq!(index.remove(balance_hash), Some(1));
         assert_eq!(index.transaction(storage_hash), Some(&2));
     }
@@ -228,7 +256,97 @@ mod tests {
         let mut state = EvmState::default();
         state.insert(address, account);
 
-        assert_eq!(index.affected_by_state(&state), vec![hash]);
+        assert_eq!(
+            index.affected_by_state(&state),
+            StateChangeEffects { affected_transactions: vec![hash], woken_buckets: 1 }
+        );
+    }
+
+    #[test]
+    fn selfdestruct_wakes_every_matching_storage_bucket() {
+        let address = Address::with_last_byte(1);
+        let first_hash = B256::with_last_byte(1);
+        let second_hash = B256::with_last_byte(2);
+        let mut index = ParkedPredicateIndex::default();
+        index.park(first_hash, (), ValidityPredicateKey::Storage(address, U256::from(7)));
+        index.park(second_hash, (), ValidityPredicateKey::Storage(address, U256::from(8)));
+
+        let mut account = Account::default();
+        account.mark_selfdestruct();
+        let mut state = EvmState::default();
+        state.insert(address, account);
+
+        let effects = index.affected_by_state(&state);
+        assert_eq!(effects.woken_buckets, 2);
+        assert_eq!(
+            effects.affected_transactions.into_iter().collect::<HashSet<_>>(),
+            HashSet::from_iter([first_hash, second_hash])
+        );
+    }
+
+    #[test]
+    fn distinct_accounts_each_wake_their_own_bucket() {
+        let balance_address = Address::with_last_byte(1);
+        let storage_address = Address::with_last_byte(2);
+        let balance_hash = B256::with_last_byte(1);
+        let storage_hash = B256::with_last_byte(2);
+        let mut index = ParkedPredicateIndex::default();
+        index.park(balance_hash, (), ValidityPredicateKey::Balance(balance_address));
+        index.park(storage_hash, (), ValidityPredicateKey::Storage(storage_address, U256::from(7)));
+
+        let mut state = EvmState::default();
+        let mut changed_balance = Account::default();
+        changed_balance.info.balance = U256::ONE;
+        state.insert(balance_address, changed_balance);
+        let mut changed_storage = Account::default();
+        changed_storage.storage.insert(
+            U256::from(7),
+            EvmStorageSlot::new_changed(U256::ZERO, U256::ONE, Default::default()),
+        );
+        state.insert(storage_address, changed_storage);
+
+        let effects = index.affected_by_state(&state);
+        assert_eq!(effects.woken_buckets, 2);
+        assert_eq!(
+            effects.affected_transactions.into_iter().collect::<HashSet<_>>(),
+            HashSet::from_iter([balance_hash, storage_hash])
+        );
+    }
+
+    #[test]
+    fn shared_bucket_wakes_once_but_affects_every_rider() {
+        let shared_address = Address::with_last_byte(1);
+        let first_hash = B256::with_last_byte(1);
+        let second_hash = B256::with_last_byte(2);
+        let mut index = ParkedPredicateIndex::default();
+        index.park(first_hash, (), ValidityPredicateKey::Balance(shared_address));
+        index.park(second_hash, (), ValidityPredicateKey::Balance(shared_address));
+
+        let mut state = EvmState::default();
+        let mut account = Account::default();
+        account.info.balance = U256::ONE;
+        state.insert(shared_address, account);
+
+        let effects = index.affected_by_state(&state);
+        assert_eq!(effects.woken_buckets, 1);
+        assert_eq!(
+            effects.affected_transactions.into_iter().collect::<HashSet<_>>(),
+            HashSet::from_iter([first_hash, second_hash])
+        );
+    }
+
+    #[test]
+    fn bucket_depths_reflects_parked_transactions_per_bucket() {
+        let shared_address = Address::with_last_byte(1);
+        let unique_address = Address::with_last_byte(2);
+        let mut index = ParkedPredicateIndex::default();
+        index.park(B256::with_last_byte(1), (), ValidityPredicateKey::Balance(shared_address));
+        index.park(B256::with_last_byte(2), (), ValidityPredicateKey::Balance(shared_address));
+        index.park(B256::with_last_byte(3), (), ValidityPredicateKey::Balance(unique_address));
+
+        let mut depths: Vec<usize> = index.bucket_depths().collect();
+        depths.sort_unstable();
+        assert_eq!(depths, vec![1, 2]);
     }
 
     #[test]
@@ -290,6 +408,6 @@ mod tests {
         account.info.balance = U256::ONE;
         state.insert(Address::with_last_byte(1), account);
 
-        assert!(index.affected_by_state(&state).is_empty());
+        assert_eq!(index.affected_by_state(&state), StateChangeEffects::default());
     }
 }

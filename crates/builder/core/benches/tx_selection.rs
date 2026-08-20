@@ -254,7 +254,12 @@ fn run_predicate_selection(pool: &Pool, db: &mut InMemoryDB) -> usize {
         black_box(&transaction);
         best.mark_current_committed();
         selected += 1;
-        assert!(predicate_index.affected_by_state(&EvmState::default()).is_empty());
+        assert!(
+            predicate_index
+                .affected_by_state(&EvmState::default())
+                .affected_transactions
+                .is_empty()
+        );
     }
 
     selected
