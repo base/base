@@ -49,7 +49,7 @@ pub struct EncoderConfig {
     /// Target number of frames per channel and per L1 transaction.
     ///
     /// Each frame maps to one EIP-4844 blob, so setting this to N submits N blobs
-    /// per transaction. Cancun supports up to 6; Isthmus (EIP-7892) up to 21.
+    /// per transaction. Blob DA rejects values above [`Self::MAX_BLOBS_PER_TX`].
     ///
     /// Default: 1 (one blob per transaction).
     pub target_num_frames: usize,
@@ -163,6 +163,13 @@ impl EncoderConfig {
             });
         }
 
+        if matches!(self.da_type, DaType::Blob) && self.target_num_frames > Self::MAX_BLOBS_PER_TX {
+            return Err(EncoderConfigError::TooManyBlobFramesPerTx {
+                target_num_frames: self.target_num_frames,
+                maximum: Self::MAX_BLOBS_PER_TX,
+            });
+        }
+
         if matches!(self.da_type, DaType::Blob) && self.max_frame_size > Self::MAX_BLOB_FRAME_SIZE {
             return Err(EncoderConfigError::BlobFrameSizeTooLarge {
                 max_frame_size: self.max_frame_size,
@@ -255,6 +262,14 @@ pub enum EncoderConfigError {
     CalldataRequiresSingleFrame {
         /// The configured target number of frames.
         target_num_frames: usize,
+    },
+    /// Blob DA `target_num_frames` exceeds the protocol transaction blob limit.
+    #[error("blob DA target_num_frames ({target_num_frames}) must be at most {maximum}")]
+    TooManyBlobFramesPerTx {
+        /// The configured target number of frames.
+        target_num_frames: usize,
+        /// Protocol maximum blobs per transaction.
+        maximum: usize,
     },
     /// `da_type == DaType::Blob` but `max_frame_size` leaves no room for the
     /// derivation-version prefix.
@@ -398,6 +413,23 @@ mod tests {
         let cfg = EncoderConfig { target_num_frames: 0, ..EncoderConfig::default() };
 
         assert!(matches!(cfg.validate().unwrap_err(), EncoderConfigError::TargetNumFramesZero));
+    }
+
+    #[test]
+    fn validate_rejects_blob_target_num_frames_above_tx_limit() {
+        let cfg = EncoderConfig {
+            target_num_frames: EncoderConfig::MAX_BLOBS_PER_TX + 1,
+            ..EncoderConfig::default()
+        };
+
+        assert!(matches!(
+            cfg.validate().unwrap_err(),
+            EncoderConfigError::TooManyBlobFramesPerTx {
+                target_num_frames,
+                maximum,
+            } if target_num_frames == EncoderConfig::MAX_BLOBS_PER_TX + 1
+                && maximum == EncoderConfig::MAX_BLOBS_PER_TX
+        ));
     }
 
     #[test]
