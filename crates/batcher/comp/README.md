@@ -6,8 +6,9 @@ Compression types for Base.
 
 Provides channel encoding and compression utilities for the Base derivation pipeline. `ChannelOut`
 encodes batches into compressed frames using a pluggable `VariantCompressor` (Brotli or zlib).
-Supports multiple compression algorithms selectable via `CompressionAlgo`. The `MockCompressor`
-is available under the `test-utils` feature for deterministic testing.
+`CompressionStream` compresses a channel incrementally; `CompressionAlgo::compress_channel`
+compresses one complete channel in a single call. The `MockCompressor` is available under the
+`test-utils` feature for deterministic testing.
 
 ## Usage
 
