@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use alloy_primitives::{B256, Bytes};
 use base_proof_preimage::PreimageKey;
 use base_proof_primitives::ProofResult;
 use base_proof_tee_nitro_enclave::Server;
@@ -42,6 +43,26 @@ impl NitroTransport {
             Self::Vsock(t) => t.prove(preimages).await?,
             Self::Local(s) => Box::pin(s.prove(preimages)).await?,
         })
+    }
+
+    /// Verify a withdrawal record and return the enclave's raw signature.
+    pub async fn sign_attested_withdrawal(
+        &self,
+        auth_hash: B256,
+        message_passer_storage_root: B256,
+        storage_proof: Vec<Bytes>,
+    ) -> Result<Vec<u8>, NitroHostError> {
+        match self {
+            #[cfg(target_os = "linux")]
+            Self::Vsock(transport) => {
+                transport
+                    .sign_attested_withdrawal(auth_hash, message_passer_storage_root, storage_proof)
+                    .await
+            }
+            Self::Local(server) => Ok(server
+                .sign_attested_withdrawal(auth_hash, message_passer_storage_root, &storage_proof)?
+                .to_vec()),
+        }
     }
 
     /// Return the 65-byte uncompressed ECDSA public key of the enclave signer.

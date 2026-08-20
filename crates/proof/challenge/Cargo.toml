@@ -34,7 +34,7 @@ base-proof-contracts.workspace = true
 base-proof-submission.workspace = true
 base-prover-service-client.workspace = true
 base-prover-service-protocol.workspace = true
-base-proof-primitives = { workspace = true, features = ["rpc-client"] }
+base-proof-primitives = { workspace = true, features = ["account-verify", "rpc-client"] }
 
 # Protocol
 base-protocol.workspace = true

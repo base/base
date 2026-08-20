@@ -3,7 +3,9 @@ use std::{fmt, net::SocketAddr, sync::Arc};
 use alloy_signer::utils::public_key_to_address;
 use base_health::{HealthzApiServer, HealthzRpc};
 use base_proof_host::ProverConfig;
-use base_proof_primitives::{EnclaveApiServer, ProofRequest, ProofResult, ProverApiServer};
+use base_proof_primitives::{
+    AttestedWithdrawalApiServer, EnclaveApiServer, ProofRequest, ProofResult, ProverApiServer,
+};
 use jsonrpsee::{
     RpcModule,
     core::{RpcResult, async_trait},
@@ -24,6 +26,12 @@ const MAX_USER_DATA_BYTES: usize = 512;
 
 /// Maximum allowed size for the `nonce` attestation field (NSM limit).
 const MAX_NONCE_BYTES: usize = 512;
+
+/// Maximum number of trie nodes accepted for one attested-withdrawal proof.
+const MAX_STORAGE_PROOF_NODES: usize = 64;
+
+/// Maximum encoded trie-node bytes accepted for one attested-withdrawal proof.
+const MAX_STORAGE_PROOF_BYTES: usize = 1024 * 1024;
 
 /// Host-side TEE prover server exposing a JSON-RPC interface.
 ///
@@ -121,7 +129,8 @@ impl NitroProverServer {
         }
         module.merge(NitroProverRpc { pool: Arc::new(pool) }.into_rpc())?;
 
-        module.merge(NitroSignerRpc { transports }.into_rpc())?;
+        module.merge(NitroSignerRpc { transports: transports.clone() }.into_rpc())?;
+        module.merge(NitroAttestedWithdrawalRpc { transports }.into_rpc())?;
 
         Ok(server.start(module))
     }
@@ -249,11 +258,56 @@ impl EnclaveApiServer for NitroSignerRpc {
     }
 }
 
+/// Inner RPC handler for attested-withdrawal signing on the private prover endpoint.
+///
+/// A withdrawal needs one signature, so this handler uses the primary (first)
+/// transport even when the deployment has multiple enclaves.
+struct NitroAttestedWithdrawalRpc {
+    transports: Vec<Arc<NitroTransport>>,
+}
+
+#[async_trait]
+impl AttestedWithdrawalApiServer for NitroAttestedWithdrawalRpc {
+    async fn sign_attested_withdrawal(
+        &self,
+        auth_hash: alloy_primitives::B256,
+        message_passer_storage_root: alloy_primitives::B256,
+        storage_proof: Vec<alloy_primitives::Bytes>,
+    ) -> RpcResult<Vec<u8>> {
+        if storage_proof.len() > MAX_STORAGE_PROOF_NODES {
+            return Err(NitroProverServer::rpc_err(
+                -32602,
+                format!("storage proof exceeds {MAX_STORAGE_PROOF_NODES}-node limit"),
+            ));
+        }
+        let storage_proof_bytes = storage_proof
+            .iter()
+            .try_fold(0_usize, |total, node| total.checked_add(node.len()).ok_or(()));
+        match storage_proof_bytes {
+            Ok(bytes) if bytes <= MAX_STORAGE_PROOF_BYTES => {}
+            Ok(_) | Err(()) => {
+                return Err(NitroProverServer::rpc_err(
+                    -32602,
+                    format!("storage proof exceeds {MAX_STORAGE_PROOF_BYTES}-byte limit"),
+                ));
+            }
+        }
+
+        let transport = self.transports.first().ok_or_else(|| {
+            NitroProverServer::rpc_err(-32001, "no enclave transports configured")
+        })?;
+        transport
+            .sign_attested_withdrawal(auth_hash, message_passer_storage_root, storage_proof)
+            .await
+            .map_err(|error| NitroProverServer::rpc_err(-32001, error))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::Ordering;
 
-    use base_proof_primitives::EnclaveApiServer;
+    use base_proof_primitives::{AttestedWithdrawalApiServer, EnclaveApiServer};
     use base_proof_tee_nitro_enclave::Server as EnclaveServer;
     use jsonrpsee::core::client::ClientT as _;
 
@@ -300,6 +354,55 @@ mod tests {
             client.request("enclave_signerPublicKey", jsonrpsee::rpc_params![]).await.unwrap();
         assert_eq!(result, vec![expected]);
         handle.stop().unwrap();
+    }
+
+    #[tokio::test]
+    async fn registrar_rpc_server_does_not_expose_attested_withdrawal_signing() {
+        let server = Arc::new(EnclaveServer::new_local().unwrap());
+        let transport = Arc::new(NitroTransport::local(server));
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+
+        let handle =
+            NitroProverServer::run_registrar_rpc_server(addr, vec![transport], None).await.unwrap();
+        let client = jsonrpsee::http_client::HttpClientBuilder::default()
+            .build(format!("http://{addr}"))
+            .unwrap();
+
+        let error = client
+            .request::<Vec<u8>, _>(
+                "enclave_signAttestedWithdrawal",
+                jsonrpsee::rpc_params![
+                    alloy_primitives::B256::ZERO,
+                    alloy_primitives::B256::ZERO,
+                    Vec::<alloy_primitives::Bytes>::new()
+                ],
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("Method not found"));
+        handle.stop().unwrap();
+    }
+
+    #[tokio::test]
+    async fn attested_withdrawal_rpc_rejects_oversized_storage_proof() {
+        let server = Arc::new(EnclaveServer::new_local().unwrap());
+        let rpc = NitroAttestedWithdrawalRpc {
+            transports: vec![Arc::new(NitroTransport::local(server))],
+        };
+        let storage_proof = vec![alloy_primitives::Bytes::new(); MAX_STORAGE_PROOF_NODES + 1];
+
+        let error = AttestedWithdrawalApiServer::sign_attested_withdrawal(
+            &rpc,
+            alloy_primitives::B256::ZERO,
+            alloy_primitives::B256::ZERO,
+            storage_proof,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code(), -32602);
+        assert!(error.message().contains("storage proof"));
     }
 
     #[tokio::test]

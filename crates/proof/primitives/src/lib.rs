@@ -20,9 +20,21 @@ pub use proof_encoder::{CryptoError, PROOF_TYPE_TEE, PROOF_TYPE_ZK, ProofEncoder
 mod prover;
 pub use prover::ProverBackend;
 
+#[cfg(feature = "verify")]
+mod verify;
+#[cfg(feature = "account-verify")]
+pub use verify::{AccountProofError, AccountProofVerifier};
+#[cfg(feature = "verify")]
+pub use verify::{StorageProofError, StorageProofVerifier};
+
+mod withdrawal;
+pub use withdrawal::{
+    ATTESTED_WITHDRAWAL_DOMAIN, ATTESTED_WITHDRAWAL_SLOT, WithdrawalAuthorization,
+};
+
 #[cfg(any(feature = "rpc-server", feature = "rpc-client"))]
 mod rpc;
 #[cfg(feature = "rpc-client")]
-pub use rpc::{EnclaveApiClient, ProverApiClient};
+pub use rpc::{AttestedWithdrawalApiClient, EnclaveApiClient, ProverApiClient};
 #[cfg(feature = "rpc-server")]
-pub use rpc::{EnclaveApiServer, ProverApiServer};
+pub use rpc::{AttestedWithdrawalApiServer, EnclaveApiServer, ProverApiServer};

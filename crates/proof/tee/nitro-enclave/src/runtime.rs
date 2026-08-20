@@ -84,6 +84,27 @@ impl NitroEnclave {
                 };
                 Frame::write(&mut stream, &response).await?;
             }
+            EnclaveRequest::SignAttestedWithdrawal {
+                auth_hash,
+                message_passer_storage_root,
+                storage_proof,
+            } => {
+                info!(
+                    auth_hash = %auth_hash,
+                    message_passer_storage_root = %message_passer_storage_root,
+                    storage_proof_nodes = storage_proof.len(),
+                    "received attested withdrawal request"
+                );
+                let response = match self.server.sign_attested_withdrawal(
+                    auth_hash,
+                    message_passer_storage_root,
+                    &storage_proof,
+                ) {
+                    Ok(signature) => EnclaveResponse::AttestedWithdrawal(signature.to_vec()),
+                    Err(error) => EnclaveResponse::Error(error.to_string()),
+                };
+                Frame::write(&mut stream, &response).await?;
+            }
             EnclaveRequest::SignerPublicKey => {
                 info!("received signer public key request");
                 let key = self.server.signer_public_key();
