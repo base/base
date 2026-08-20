@@ -1,9 +1,8 @@
 use core::time::Duration;
 
 use alloy_primitives::{Address, U256};
-use backon::Retryable;
+use backon::{ConstantBuilder, Retryable};
 use base_common_genesis::UpgradeActivationSink;
-use base_retry::{DEFAULT_UNBOUNDED_INITIAL_DELAY, DEFAULT_UNBOUNDED_MAX_DELAY, RetryConfig};
 use tracing::{error, info};
 use url::Url;
 
@@ -147,6 +146,7 @@ impl UpgradeSignalConfig {
                 &reader,
                 log_context,
                 &[UpgradeSignalMetricLayer::Execution, UpgradeSignalMetricLayer::Consensus],
+                UpgradeSignalDefaults::STARTUP_SCHEDULE_RETRY_INTERVAL,
             )
             .await?;
 
@@ -223,18 +223,22 @@ impl UpgradeSignalConfig {
     ///
     /// This is the startup counterpart to the manual admin refresh, which instead surfaces an empty
     /// schedule as an error without retrying.
+    ///
+    /// `retry_interval` is the fixed delay between attempts; it is paced for legible retry logs
+    /// rather than fast recovery (see
+    /// [`UpgradeSignalDefaults::STARTUP_SCHEDULE_RETRY_INTERVAL`]).
     pub async fn read_required_startup_schedule(
         &self,
         reader: &AlloyUpgradeSignalReader,
         log_context: &'static str,
         metrics_layers: &[UpgradeSignalMetricLayer],
+        retry_interval: Duration,
     ) -> Result<UpgradeSignalSchedule, UpgradeSignalError> {
         let mut attempt = 1_u64;
-        let retry_config =
-            RetryConfig::unbounded(DEFAULT_UNBOUNDED_INITIAL_DELAY, DEFAULT_UNBOUNDED_MAX_DELAY);
+        let backoff = ConstantBuilder::default().with_delay(retry_interval).without_max_times();
 
         (|| self.read_validated_schedule(reader, log_context, metrics_layers))
-            .retry(retry_config.to_backoff_builder())
+            .retry(backoff)
             .when(|error| {
                 matches!(
                     error,
@@ -306,6 +310,7 @@ mod tests {
                 &reader,
                 "startup",
                 &[UpgradeSignalMetricLayer::Consensus],
+                Duration::from_millis(10),
             )
             .await
             .unwrap();
@@ -337,6 +342,7 @@ mod tests {
                 &reader,
                 "startup",
                 &[UpgradeSignalMetricLayer::Consensus],
+                Duration::from_millis(10),
             ),
             swap,
         );
@@ -360,6 +366,7 @@ mod tests {
                 &reader,
                 "startup",
                 &[UpgradeSignalMetricLayer::Consensus],
+                Duration::from_millis(10),
             )
             .await
             .unwrap_err();

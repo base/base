@@ -12,8 +12,8 @@ use base_consensus_node::{
     UpgradeSignalBuilderConfig,
 };
 use base_upgrade_signal::{
-    UpgradeSignalArgs, UpgradeSignalConfig, UpgradeSignalMetricLayer, UpgradeSignalRuntimeApplier,
-    UpgradeSignalSchedule, UpgradeSignalStartupMode,
+    UpgradeSignalArgs, UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalMetricLayer,
+    UpgradeSignalRuntimeApplier, UpgradeSignalSchedule, UpgradeSignalStartupMode,
 };
 use clap::Args;
 use eyre::Context;
@@ -535,6 +535,7 @@ impl ConsensusNodeArgs {
                 &reader,
                 "consensus startup",
                 &[UpgradeSignalMetricLayer::Consensus],
+                UpgradeSignalDefaults::STARTUP_SCHEDULE_RETRY_INTERVAL,
             )
             .await?;
 

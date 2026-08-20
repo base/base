@@ -32,6 +32,14 @@ impl UpgradeSignalDefaults {
     /// Maximum jittered backoff between L1 upgrade signal schedule read attempts.
     pub const READ_MAX_BACKOFF: Duration = Duration::from_secs(10);
 
+    /// Fixed interval between fail-closed startup schedule read attempts while the L1 contract has
+    /// not yet returned a valid schedule.
+    ///
+    /// Startup blocks indefinitely on an empty or unreachable contract (see
+    /// [`UpgradeSignalConfig::read_required_startup_schedule`](crate::UpgradeSignalConfig::read_required_startup_schedule)),
+    /// so this is paced to keep the loud retry logs legible rather than to recover quickly.
+    pub const STARTUP_SCHEDULE_RETRY_INTERVAL: Duration = Duration::from_secs(5);
+
     /// Node protocol version supported by this binary for contract-backed upgrade signals.
     ///
     /// Release branches sync the Cargo package version to the `GitHub` release tag, so release
