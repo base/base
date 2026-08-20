@@ -354,11 +354,40 @@ impl BaseChainSpec {
     }
 
     /// Get an iterator of all hardforks with runtime-aware activation conditions.
-    pub fn forks_iter(&self) -> impl Iterator<Item = (&dyn Hardfork, ForkCondition)> {
-        self.inner.forks_iter().map(|(fork, condition)| {
-            let condition = self.runtime_fork_condition(fork).unwrap_or(condition);
-            (fork, condition)
-        })
+    ///
+    /// Includes upgrades scheduled purely at runtime (via the registry) that were absent from the
+    /// startup schedule, so enumeration matches [`Self::runtime_hardforks`] and [`Self::fork_id`].
+    pub fn forks_iter<'a>(
+        &'a self,
+    ) -> impl Iterator<Item = (&'a dyn Hardfork, ForkCondition)> + 'a {
+        // Mirror of the execution fork ladder with `'static` storage, so runtime-scheduled
+        // upgrades absent from the startup schedule can be handed out as `&'static dyn Hardfork`.
+        // Derived from the single source of truth, so new variants require no changes here.
+        static EXECUTION_LADDER: [BaseUpgrade; BaseUpgrade::EXECUTION_VARIANTS.len()] =
+            BaseUpgrade::EXECUTION_VARIANTS;
+
+        // Forks in the startup schedule, with any runtime override applied to the condition.
+        let mut forks = self
+            .inner
+            .forks_iter()
+            .map(|(fork, condition)| {
+                (fork, self.runtime_fork_condition(fork).unwrap_or(condition))
+            })
+            .collect::<Vec<(&'a dyn Hardfork, ForkCondition)>>();
+
+        // Upgrades scheduled purely at runtime that were absent from the startup schedule are
+        // missing above. Append them so enumeration matches `runtime_hardforks()`/`fork_id()`.
+        // They are always the latest forks, so appending keeps the enumeration chronological.
+        for upgrade in &EXECUTION_LADDER {
+            if self.inner.hardforks.get(*upgrade).is_some() {
+                continue; // already present in the startup schedule
+            }
+            if let Some(condition) = self.runtime_fork_condition(upgrade) {
+                forks.push((upgrade, condition));
+            }
+        }
+
+        forks.into_iter()
     }
 
     /// Returns the runtime-aware fork ID for the given head.
@@ -908,6 +937,35 @@ mod tests {
         assert_eq!(spec.fork(EthereumHardfork::Osaka), ForkCondition::Never);
         assert_eq!(spec.fork(BaseUpgrade::Azul), ForkCondition::Never);
         assert_eq!(spec.fork(BaseUpgrade::Cobalt), ForkCondition::Never);
+
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+    }
+
+    #[test]
+    fn forks_iter_surfaces_runtime_scheduled_absent_fork() {
+        let chain_id = 9_100_007;
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+        let spec = BaseChainSpecBuilder::default()
+            .chain(Chain::from_id(chain_id))
+            .genesis(Genesis::default())
+            .build();
+        let chain_id = spec.chain().id();
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+
+        let cobalt_condition = |spec: &BaseChainSpec| {
+            spec.forks_iter().find_map(|(fork, condition)| {
+                (fork.name() == BaseUpgrade::Cobalt.name()).then_some(condition)
+            })
+        };
+
+        // Cobalt is unscheduled at startup, so it is absent from the enumeration.
+        assert_eq!(cobalt_condition(&spec), None);
+
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Cobalt, 84);
+
+        // Once scheduled at runtime it must appear, matching `fork()`/`runtime_hardforks()`.
+        assert_eq!(cobalt_condition(&spec), Some(ForkCondition::Timestamp(84)));
+        assert_eq!(spec.fork(BaseUpgrade::Cobalt), ForkCondition::Timestamp(84));
 
         RuntimeUpgradeRegistry::clear_chain(chain_id);
     }
