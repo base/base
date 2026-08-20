@@ -24,9 +24,4 @@ base-common-genesis = { workspace = true, features = ["std"] }
 
 [features]
 default = []
-std = [
-	"brotli?/std",
-	"dep:brotli",
-	"miniz_oxide/std",
-	"thiserror/std",
-]
+std = [ "brotli?/std", "dep:brotli", "miniz_oxide/std", "thiserror/std" ]
