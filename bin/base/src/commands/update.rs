@@ -19,6 +19,10 @@ pub(crate) struct UpdateCommand {
     /// Skip release signature and attestation verification.
     #[arg(long)]
     pub(crate) unsafe_skip_verify: bool,
+
+    /// Reinstall even if the target version is already installed.
+    #[arg(short = 'f', long)]
+    pub(crate) force: bool,
 }
 
 impl UpdateCommand {
@@ -44,6 +48,10 @@ impl UpdateCommand {
 
         if self.unsafe_skip_verify {
             command.arg("--unsafe-skip-verify");
+        }
+
+        if self.force {
+            command.arg("--force");
         }
 
         let status = command
@@ -94,6 +102,16 @@ mod tests {
         };
 
         assert!(update.update_installer);
+    }
+
+    #[test]
+    fn parses_force_flag() {
+        let cli = BaseCli::parse_from(["base", "update", "--force"]);
+        let BaseCommand::Update(update) = cli.command else {
+            panic!("expected update command");
+        };
+
+        assert!(update.force);
     }
 
     #[test]
