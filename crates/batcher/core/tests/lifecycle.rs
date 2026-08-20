@@ -14,7 +14,7 @@ use base_batcher_core::{
         Recorded, SubmissionStub, TrackingPipeline,
     },
 };
-use base_batcher_encoder::{ChannelFullReason, StepError, SubmissionId};
+use base_batcher_encoder::{ChannelLimit, StepError, SubmissionId};
 use base_batcher_source::{ChannelBlockSource, L2BlockEvent, test_utils::InMemoryBlockSource};
 use base_runtime::{
     Cancellation, Clock, Spawner,
@@ -131,9 +131,9 @@ fn test_shutdown_drains_in_flight_before_returning_flush_error() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let recorded = Arc::new(Mutex::new(Recorded::default()));
         let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded)).with_flush_error(
-            StepError::BlockRejectedByEmptyChannel {
+            StepError::BlockExceedsChannelLimit {
                 cursor: 0,
-                reason: ChannelFullReason::CompressedOutput,
+                limit: ChannelLimit::RlpBytes { required: 1, maximum: 0 },
             },
         );
         pipeline.submissions.push_back(SubmissionStub::stub());
