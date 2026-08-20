@@ -46,33 +46,7 @@ use crate::{
 
 /// Records the priority fee of a rejected transaction with the given reason as a label.
 fn record_rejected_tx_priority_fee(reason: &TxnExecutionError, priority_fee: f64) {
-    let r = match reason {
-        TxnExecutionError::TransactionDASizeExceeded(_, _) => "tx_da_size_exceeded",
-        TxnExecutionError::BlockDASizeExceeded { .. } => "block_da_size_exceeded",
-        TxnExecutionError::DAFootprintLimitExceeded { .. } => "da_footprint_limit_exceeded",
-        TxnExecutionError::TransactionGasLimitExceeded { .. } => "transaction_gas_limit_exceeded",
-        TxnExecutionError::BlockUncompressedSizeExceeded { .. } => {
-            "block_uncompressed_size_exceeded"
-        }
-        TxnExecutionError::MeteringDataPending => "metering_data_pending",
-        TxnExecutionError::ExecutionMeteringLimitExceeded(inner) => match inner {
-            ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _) => {
-                "tx_execution_time_exceeded"
-            }
-            ExecutionMeteringLimitExceeded::FlashblockExecutionTime(_, _, _) => {
-                "flashblock_execution_time_exceeded"
-            }
-            ExecutionMeteringLimitExceeded::BlockStateRootGas(_, _, _) => {
-                "block_state_root_gas_exceeded"
-            }
-        },
-        TxnExecutionError::SequencerTransaction => "sequencer_transaction",
-        TxnExecutionError::NonceTooLow => "nonce_too_low",
-        TxnExecutionError::InternalError(_) => "internal_error",
-        TxnExecutionError::EvmError => "evm_error",
-        TxnExecutionError::MaxGasUsageExceeded => "max_gas_usage_exceeded",
-    };
-    BuilderMetrics::rejected_tx_priority_fee(r).record(priority_fee);
+    BuilderMetrics::rejected_tx_priority_fee(reason.rejection_code()).record(priority_fee);
 }
 
 /// Diagnostics captured during a single flashblock's transaction execution.
@@ -121,6 +95,8 @@ pub struct FlashblockDiagnostics {
     pub txs_rejected_state_root_time: u64,
     /// Number rejected by uncompressed size limit.
     pub txs_rejected_uncompressed_size: u64,
+    /// Number rejected by the block fresh storage slot limit.
+    pub txs_rejected_new_storage_slots: u64,
     /// Number skipped because metering data has not yet arrived.
     pub txs_rejected_metering_data_pending: u64,
     /// Number rejected or skipped for other reasons.
@@ -144,7 +120,7 @@ impl FlashblockDiagnostics {
     }
 
     /// Returns the rejection counts keyed by their metric/log reason labels.
-    pub const fn rejection_counts(&self) -> [(&'static str, u64); 8] {
+    pub const fn rejection_counts(&self) -> [(&'static str, u64); 9] {
         [
             ("gas_limit", self.txs_rejected_gas),
             ("da_size", self.txs_rejected_da),
@@ -152,6 +128,7 @@ impl FlashblockDiagnostics {
             ("execution_time", self.txs_rejected_execution_time),
             ("state_root_time", self.txs_rejected_state_root_time),
             ("uncompressed_size", self.txs_rejected_uncompressed_size),
+            ("new_storage_slots", self.txs_rejected_new_storage_slots),
             ("metering_data_pending", self.txs_rejected_metering_data_pending),
             ("other", self.txs_rejected_other),
         ]
@@ -173,6 +150,7 @@ impl FlashblockDiagnostics {
             + self.txs_rejected_execution_time
             + self.txs_rejected_state_root_time
             + self.txs_rejected_uncompressed_size
+            + self.txs_rejected_new_storage_slots
             + self.txs_rejected_metering_data_pending
             + self.txs_rejected_other
     }
@@ -192,6 +170,9 @@ impl FlashblockDiagnostics {
             }
             TxnExecutionError::BlockUncompressedSizeExceeded { .. } => {
                 self.txs_rejected_uncompressed_size += 1;
+            }
+            TxnExecutionError::BlockNewStorageSlotsExceeded { .. } => {
+                self.txs_rejected_new_storage_slots += 1;
             }
             TxnExecutionError::ExecutionMeteringLimitExceeded(inner) => match inner {
                 ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _)
@@ -674,6 +655,8 @@ impl BasePayloadBuilderCtx {
             flashblock_execution_time_limit_us = ?limits.flashblock_execution_time_limit_us,
             block_state_root_gas_limit = ?limits.block_state_root_gas_limit,
             execution_metering_mode = ?self.builder_config.execution_metering_mode,
+            block_new_storage_slots_limit = ?limits.block_new_storage_slots_limit,
+            new_storage_slot_throttle_mode = ?self.builder_config.new_storage_slot_throttle_mode,
         );
 
         let block_number = as_u64_saturated!(self.evm_env.block_env.number);
@@ -941,8 +924,49 @@ impl BasePayloadBuilderCtx {
             // Record state modification counts (trie work proxy)
             let accounts_modified = state.len();
             let storage_slots_modified: usize = state.values().map(|a| a.storage.len()).sum();
+            let new_storage_slots = ExecutionInfo::count_new_storage_slots(&state);
             BuilderMetrics::tx_accounts_modified().record(accounts_modified as f64);
             BuilderMetrics::tx_storage_slots_modified().record(storage_slots_modified as f64);
+            BuilderMetrics::tx_new_storage_slots().record(new_storage_slots as f64);
+
+            if self.builder_config.new_storage_slot_throttle_mode.is_enabled()
+                && let Some(block_limit) = limits.block_new_storage_slots_limit
+                && let Err(err) = info.check_new_storage_slots(new_storage_slots, block_limit)
+            {
+                BuilderMetrics::new_storage_slot_throttle_would_reject_total().increment(1);
+                let dry_run = self.builder_config.new_storage_slot_throttle_mode.is_dry_run();
+                let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
+
+                debug!(
+                    target: "payload_builder",
+                    rejection_code = err.rejection_code(),
+                    cumulative_new_storage_slots = info.cumulative_new_storage_slots,
+                    tx_new_storage_slots = new_storage_slots,
+                    block_limit,
+                    priority_fee,
+                    dry_run,
+                    "Fresh storage slot throttle exceeded"
+                );
+
+                if !dry_run {
+                    BuilderMetrics::new_storage_slot_throttle_rejected_total().increment(1);
+                    diag.record_rejection(&err);
+                    record_rejected_tx_priority_fee(&err, priority_fee);
+                    self.record_rejected_tx(
+                        info,
+                        tx_hash,
+                        RejectionReason::NewStorageSlotsExceeded {
+                            cumulative: info.cumulative_new_storage_slots,
+                            tx_new_slots: new_storage_slots,
+                            block_limit,
+                        },
+                        resource_usage.unwrap_or_default(),
+                    );
+                    log_txn(Err(err));
+                    best_txs.mark_invalid(tx.signer(), tx.nonce());
+                    continue;
+                }
+            }
 
             // Record execution time for unmetered transactions (race condition indicator)
             if resource_usage.is_none() {
@@ -991,6 +1015,8 @@ impl BasePayloadBuilderCtx {
             info.cumulative_da_bytes_used += tx_da_size;
             // record uncompressed tx size
             info.cumulative_uncompressed_bytes += tx_uncompressed_size;
+            // record fresh storage slots created by committed txpool transactions
+            info.record_new_storage_slots(new_storage_slots);
             // record execution time (only from predictions; unmetered txs count as zero)
             if let Some(execution_time) = predicted_execution_time_us {
                 info.flashblock_execution_time_us += execution_time;
@@ -1228,6 +1254,7 @@ mod tests {
                 ("execution_time", 0),
                 ("state_root_time", 1),
                 ("uncompressed_size", 0),
+                ("new_storage_slots", 0),
                 ("metering_data_pending", 0),
                 ("other", 0),
             ]
@@ -1245,6 +1272,19 @@ mod tests {
         assert_eq!(diag.txs_rejected_metering_data_pending, 1);
         assert_eq!(diag.txs_rejected_other, 3);
         assert_eq!(diag.txs_rejected_total(), 4);
+    }
+
+    #[test]
+    fn diagnostics_bucket_new_storage_slot_rejections() {
+        let mut diag = FlashblockDiagnostics::default();
+        diag.record_rejection(&TxnExecutionError::BlockNewStorageSlotsExceeded {
+            cumulative: 8,
+            tx_new_slots: 3,
+            block_limit: 10,
+        });
+
+        assert_eq!(diag.txs_rejected_new_storage_slots, 1);
+        assert_eq!(diag.rejection_reasons(), vec!["new_storage_slots"]);
     }
 
     #[test]

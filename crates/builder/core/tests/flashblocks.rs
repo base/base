@@ -4,12 +4,14 @@ use std::time::Duration;
 
 use alloy_primitives::{Address, B256, U256};
 use base_builder_core::{
-    BuilderConfig,
+    BuilderConfig, ExecutionMeteringMode,
     test_utils::{
-        TransactionBuilderExt, default_node_config_with_azul, funded_signer,
-        setup_test_instance_with_builder_config, setup_test_instance_with_node_config,
+        BlockTransactionsExt, ChainDriverExt, ONE_ETH, TransactionBuilderExt,
+        default_node_config_with_azul, funded_signer, setup_test_instance_with_builder_config,
+        setup_test_instance_with_node_config,
     },
 };
+use base_test_utils::DoubleCounter;
 
 /// Verify that pre-Base-Azul flashblock metadata contains `new_account_balances`
 /// and `receipts` (but no `access_list`).
@@ -149,6 +151,98 @@ async fn test_flashblock_metadata_post_base_azul() -> eyre::Result<()> {
     }
 
     flashblocks_listener.stop().await
+}
+
+/// Dry-run mode observes a block-level fresh-slot excess without excluding any transaction.
+#[tokio::test]
+async fn new_storage_slot_throttle_dry_run_includes_excess_transaction() -> eyre::Result<()> {
+    let mut config = BuilderConfig::for_tests();
+    config.max_new_storage_slots_per_block = Some(2);
+    config.new_storage_slot_throttle_mode = ExecutionMeteringMode::DryRun;
+    let rbuilder = setup_test_instance_with_builder_config(config).await?;
+    let driver = rbuilder.driver().await?;
+    let signers = driver.fund_accounts(3, ONE_ETH).await?;
+
+    let deployment_a = driver
+        .create_transaction()
+        .with_signer(&signers[0])
+        .with_create()
+        .with_input(DoubleCounter::BYTECODE.clone())
+        .with_gas_limit(500_000)
+        .with_max_priority_fee_per_gas(100)
+        .send()
+        .await?;
+    let deployment_b = driver
+        .create_transaction()
+        .with_signer(&signers[1])
+        .with_create()
+        .with_input(DoubleCounter::BYTECODE.clone())
+        .with_gas_limit(500_000)
+        .with_max_priority_fee_per_gas(90)
+        .send()
+        .await?;
+    let ordinary_transfer = driver
+        .create_transaction()
+        .with_signer(&signers[2])
+        .with_to(Address::repeat_byte(0x11))
+        .with_value(1)
+        .with_max_priority_fee_per_gas(80)
+        .send()
+        .await?;
+
+    let block = driver.build_new_block_with_current_timestamp(None).await?;
+
+    assert!(block.includes(deployment_a.tx_hash()));
+    assert!(block.includes(deployment_b.tx_hash()));
+    assert!(block.includes(ordinary_transfer.tx_hash()));
+    Ok(())
+}
+
+/// Enforce mode skips before commit, leaves ordinary transactions unaffected, and retries next block.
+#[tokio::test]
+async fn new_storage_slot_throttle_enforces_per_block_and_retries() -> eyre::Result<()> {
+    let mut config = BuilderConfig::for_tests();
+    config.max_new_storage_slots_per_block = Some(2);
+    config.new_storage_slot_throttle_mode = ExecutionMeteringMode::Enforce;
+    let rbuilder = setup_test_instance_with_builder_config(config).await?;
+    let driver = rbuilder.driver().await?;
+    let signers = driver.fund_accounts(3, ONE_ETH).await?;
+
+    let deployment_a = driver
+        .create_transaction()
+        .with_signer(&signers[0])
+        .with_create()
+        .with_input(DoubleCounter::BYTECODE.clone())
+        .with_gas_limit(500_000)
+        .with_max_priority_fee_per_gas(100)
+        .send()
+        .await?;
+    let deployment_b = driver
+        .create_transaction()
+        .with_signer(&signers[1])
+        .with_create()
+        .with_input(DoubleCounter::BYTECODE.clone())
+        .with_gas_limit(500_000)
+        .with_max_priority_fee_per_gas(90)
+        .send()
+        .await?;
+    let ordinary_transfer = driver
+        .create_transaction()
+        .with_signer(&signers[2])
+        .with_to(Address::repeat_byte(0x22))
+        .with_value(1)
+        .with_max_priority_fee_per_gas(80)
+        .send()
+        .await?;
+
+    let block_one = driver.build_new_block_with_current_timestamp(None).await?;
+    assert!(block_one.includes(deployment_a.tx_hash()));
+    assert!(!block_one.includes(deployment_b.tx_hash()));
+    assert!(block_one.includes(ordinary_transfer.tx_hash()));
+
+    let block_two = driver.build_new_block_with_current_timestamp(None).await?;
+    assert!(block_two.includes(deployment_b.tx_hash()));
+    Ok(())
 }
 
 /// Test that state root is computed on finalization:

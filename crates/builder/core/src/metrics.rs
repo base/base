@@ -209,6 +209,14 @@ base_metrics::define_metrics! {
     tx_accounts_modified: histogram,
     #[describe("Number of storage slots modified by a transaction (from EVM post-state)")]
     tx_storage_slots_modified: histogram,
+    #[describe("Number of fresh storage slots created by a transaction (from EVM post-state)")]
+    tx_new_storage_slots: histogram,
+    #[describe("Cumulative fresh storage slots created by txpool transactions per block")]
+    block_new_storage_slots: histogram,
+    #[describe("Transactions that would exceed the block fresh storage slot limit")]
+    new_storage_slot_throttle_would_reject_total: counter,
+    #[describe("Transactions rejected by the block fresh storage slot throttle")]
+    new_storage_slot_throttle_rejected_total: counter,
     #[describe("Rejected transaction batch drops due to full forwarding channel")]
     rejected_tx_channel_drops: counter,
     #[describe("Rejected transaction drops due to per-block accumulation limit")]
@@ -353,6 +361,10 @@ mod tests {
 
         metrics::with_local_recorder(&recorder, || {
             BuilderMetrics::record_flashblock_diagnostics(7, &diag, &info, &limits);
+            BuilderMetrics::tx_new_storage_slots().record(2.0);
+            BuilderMetrics::block_new_storage_slots().record(9.0);
+            BuilderMetrics::new_storage_slot_throttle_would_reject_total().increment(1);
+            BuilderMetrics::new_storage_slot_throttle_rejected_total().increment(1);
         });
 
         let rendered = handle.render();
@@ -382,5 +394,9 @@ mod tests {
         assert!(rendered.contains(
             "base_builder_flashblock_min_priority_fee_above_threshold_total{flashblock_index=\"7\",threshold=\"100wei\"} 1"
         ));
+        assert!(rendered.contains("base_builder_tx_new_storage_slots"));
+        assert!(rendered.contains("base_builder_block_new_storage_slots"));
+        assert!(rendered.contains("base_builder_new_storage_slot_throttle_would_reject_total 1"));
+        assert!(rendered.contains("base_builder_new_storage_slot_throttle_rejected_total 1"));
     }
 }

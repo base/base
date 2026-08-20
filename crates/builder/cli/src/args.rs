@@ -87,6 +87,22 @@ pub struct Args {
     #[arg(long = "builder.execution-metering-mode", value_enum, default_value = "off")]
     pub execution_metering_mode: ExecutionMeteringMode,
 
+    /// Maximum cumulative fresh storage slots created by txpool transactions per block
+    #[arg(
+        long = "builder.max-new-storage-slots-per-block",
+        env = "BUILDER_MAX_NEW_STORAGE_SLOTS_PER_BLOCK"
+    )]
+    pub max_new_storage_slots_per_block: Option<u64>,
+
+    /// Fresh storage slot throttle mode: off, dry-run, or enforce
+    #[arg(
+        long = "builder.new-storage-slot-throttle-mode",
+        env = "BUILDER_NEW_STORAGE_SLOT_THROTTLE_MODE",
+        value_enum,
+        default_value = "off"
+    )]
+    pub new_storage_slot_throttle_mode: ExecutionMeteringMode,
+
     /// How much extra time to wait for the block building job to complete and not get garbage collected
     #[arg(long = "builder.extra-block-deadline-secs", default_value = "20")]
     pub extra_block_deadline_secs: u64,
@@ -165,6 +181,8 @@ impl Default for Args {
             state_root_gas_coefficient: 0.02,
             state_root_gas_anchor_us: 5000,
             execution_metering_mode: ExecutionMeteringMode::Off,
+            max_new_storage_slots_per_block: None,
+            new_storage_slot_throttle_mode: ExecutionMeteringMode::Off,
             extra_block_deadline_secs: 20,
             enable_resource_metering: false,
             max_uncompressed_block_size: None,
@@ -213,6 +231,8 @@ impl Args {
             state_root_gas_coefficient: self.state_root_gas_coefficient,
             state_root_gas_anchor_us: self.state_root_gas_anchor_us,
             execution_metering_mode: self.execution_metering_mode,
+            max_new_storage_slots_per_block: self.max_new_storage_slots_per_block,
+            new_storage_slot_throttle_mode: self.new_storage_slot_throttle_mode,
             max_uncompressed_block_size: self.max_uncompressed_block_size,
             metering_wait_duration: self.metering_wait_duration_ms.map(Duration::from_millis),
             metering_provider,
@@ -229,14 +249,21 @@ impl Args {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{ffi::OsStr, sync::Arc};
 
     use alloy_primitives::{B256, TxHash, U256};
     use base_builder_core::{MeteringProvider, NoopMeteringProvider};
     use base_bundles::MeterBundleResponse;
+    use clap::{CommandFactory, Parser};
     use rstest::rstest;
 
     use super::*;
+
+    #[derive(clap::Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        args: Args,
+    }
 
     fn convert(args: Args) -> BuilderConfig {
         let metering_provider: SharedMeteringProvider = Arc::new(NoopMeteringProvider);
@@ -268,6 +295,48 @@ mod tests {
         let args = Args { max_gas_per_txn: input, ..Default::default() };
         let config = convert(args);
         assert_eq!(config.max_gas_per_txn, expected);
+    }
+
+    #[test]
+    fn new_storage_slot_throttle_maps_correctly() {
+        let args = Args {
+            max_new_storage_slots_per_block: Some(10_000),
+            new_storage_slot_throttle_mode: ExecutionMeteringMode::DryRun,
+            ..Default::default()
+        };
+        let config = convert(args);
+
+        assert_eq!(config.max_new_storage_slots_per_block, Some(10_000));
+        assert_eq!(config.new_storage_slot_throttle_mode, ExecutionMeteringMode::DryRun);
+    }
+
+    #[test]
+    fn new_storage_slot_throttle_has_direct_environment_bindings() {
+        let parsed = TestCli::parse_from([
+            "test",
+            "--builder.max-new-storage-slots-per-block",
+            "123",
+            "--builder.new-storage-slot-throttle-mode",
+            "enforce",
+        ]);
+        assert_eq!(parsed.args.max_new_storage_slots_per_block, Some(123));
+        assert_eq!(parsed.args.new_storage_slot_throttle_mode, ExecutionMeteringMode::Enforce);
+
+        let command = TestCli::command();
+        let max_slots = command
+            .get_arguments()
+            .find(|arg| arg.get_long() == Some("builder.max-new-storage-slots-per-block"))
+            .expect("max slots argument should exist");
+        assert_eq!(
+            max_slots.get_env(),
+            Some(OsStr::new("BUILDER_MAX_NEW_STORAGE_SLOTS_PER_BLOCK"))
+        );
+
+        let mode = command
+            .get_arguments()
+            .find(|arg| arg.get_long() == Some("builder.new-storage-slot-throttle-mode"))
+            .expect("throttle mode argument should exist");
+        assert_eq!(mode.get_env(), Some(OsStr::new("BUILDER_NEW_STORAGE_SLOT_THROTTLE_MODE")));
     }
 
     #[rstest]

@@ -70,6 +70,12 @@ pub struct BuilderConfig {
     /// Execution metering mode: off, dry-run, or enforce.
     pub execution_metering_mode: ExecutionMeteringMode,
 
+    /// Maximum cumulative fresh storage slots created by txpool transactions per block.
+    pub max_new_storage_slots_per_block: Option<u64>,
+
+    /// Fresh storage slot throttle mode: off, dry-run, or enforce.
+    pub new_storage_slot_throttle_mode: ExecutionMeteringMode,
+
     /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes.
     pub max_uncompressed_block_size: Option<u64>,
 
@@ -125,6 +131,8 @@ impl core::fmt::Debug for BuilderConfig {
             .field("state_root_gas_coefficient", &self.state_root_gas_coefficient)
             .field("state_root_gas_anchor_us", &self.state_root_gas_anchor_us)
             .field("execution_metering_mode", &self.execution_metering_mode)
+            .field("max_new_storage_slots_per_block", &self.max_new_storage_slots_per_block)
+            .field("new_storage_slot_throttle_mode", &self.new_storage_slot_throttle_mode)
             .field("max_uncompressed_block_size", &self.max_uncompressed_block_size)
             .field("metering_wait_duration", &self.metering_wait_duration)
             .field("metering_provider", &self.metering_provider)
@@ -154,6 +162,8 @@ impl Default for BuilderConfig {
             state_root_gas_coefficient: 0.02,
             state_root_gas_anchor_us: 5_000,
             execution_metering_mode: ExecutionMeteringMode::Off,
+            max_new_storage_slots_per_block: None,
+            new_storage_slot_throttle_mode: ExecutionMeteringMode::Off,
             max_uncompressed_block_size: None,
             metering_wait_duration: None,
             metering_provider: Arc::new(NoopMeteringProvider),

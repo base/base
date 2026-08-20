@@ -12,6 +12,7 @@ use base_bundles::RejectedTransaction;
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned};
 use base_common_evm::BaseTransactionError;
 use derive_more::Display;
+use revm::state::EvmState;
 use thiserror::Error;
 
 /// Resource limits configuration for transaction and block constraints.
@@ -46,6 +47,8 @@ pub struct ResourceLimits {
     pub block_state_root_gas_limit: Option<u64>,
     /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes (optional).
     pub block_uncompressed_size_limit: Option<u64>,
+    /// Maximum cumulative fresh storage slots created by txpool transactions per block (optional).
+    pub block_new_storage_slots_limit: Option<u64>,
 }
 
 /// Resource usage for a single transaction.
@@ -144,6 +147,19 @@ pub enum TxnExecutionError {
         block_limit: u64,
     },
 
+    /// Block fresh storage slot limit exceeded.
+    #[error(
+        "block new storage slots exceeded: cumulative={cumulative} tx_new_slots={tx_new_slots} block_limit={block_limit}"
+    )]
+    BlockNewStorageSlotsExceeded {
+        /// Fresh storage slots created by previously included txpool transactions.
+        cumulative: u64,
+        /// Fresh storage slots created by this transaction.
+        tx_new_slots: u64,
+        /// Block fresh storage slot limit.
+        block_limit: u64,
+    },
+
     // Execution metering limits (optionally enforced, depend on metering service predictions)
     /// Execution metering limit exceeded (execution time or state root time).
     #[error("{0}")]
@@ -176,6 +192,35 @@ pub enum TxnExecutionError {
 }
 
 impl TxnExecutionError {
+    /// Returns the stable machine-readable rejection code used by logs and metrics.
+    pub const fn rejection_code(&self) -> &'static str {
+        match self {
+            Self::TransactionDASizeExceeded(_, _) => "tx_da_size_exceeded",
+            Self::BlockDASizeExceeded { .. } => "block_da_size_exceeded",
+            Self::DAFootprintLimitExceeded { .. } => "da_footprint_limit_exceeded",
+            Self::TransactionGasLimitExceeded { .. } => "transaction_gas_limit_exceeded",
+            Self::BlockUncompressedSizeExceeded { .. } => "block_uncompressed_size_exceeded",
+            Self::BlockNewStorageSlotsExceeded { .. } => "block_new_storage_slots_exceeded",
+            Self::ExecutionMeteringLimitExceeded(inner) => match inner {
+                ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _) => {
+                    "tx_execution_time_exceeded"
+                }
+                ExecutionMeteringLimitExceeded::FlashblockExecutionTime(_, _, _) => {
+                    "flashblock_execution_time_exceeded"
+                }
+                ExecutionMeteringLimitExceeded::BlockStateRootGas(_, _, _) => {
+                    "block_state_root_gas_exceeded"
+                }
+            },
+            Self::SequencerTransaction => "sequencer_transaction",
+            Self::NonceTooLow => "nonce_too_low",
+            Self::InternalError(_) => "internal_error",
+            Self::EvmError => "evm_error",
+            Self::MaxGasUsageExceeded => "max_gas_usage_exceeded",
+            Self::MeteringDataPending => "metering_data_pending",
+        }
+    }
+
     /// Returns `true` if this rejection is permanent — the transaction will never be includable
     /// regardless of block/flashblock cumulative state. Permanent rejections are intrinsic to
     /// the transaction itself (e.g. its size or predicted execution time exceeds the per-tx limit).
@@ -241,6 +286,8 @@ pub struct ExecutionInfo {
     pub cumulative_state_root_gas: u64,
     /// Cumulative uncompressed (EIP-2718 encoded) bytes used in the block
     pub cumulative_uncompressed_bytes: u64,
+    /// Cumulative fresh storage slots created by txpool transactions in the block.
+    pub cumulative_new_storage_slots: u64,
     /// Tracks fees from executed mempool transactions
     pub total_fees: U256,
     /// Extra execution information for the Flashblocks builder
@@ -263,6 +310,7 @@ impl ExecutionInfo {
             flashblock_execution_time_us: 0,
             cumulative_state_root_gas: 0,
             cumulative_uncompressed_bytes: 0,
+            cumulative_new_storage_slots: 0,
             total_fees: U256::ZERO,
             extra: Default::default(),
             da_footprint_scalar: None,
@@ -273,6 +321,39 @@ impl ExecutionInfo {
     /// Reset the flashblock-scoped execution time budget for a new flashblock.
     pub const fn reset_flashblock_execution_time(&mut self) {
         self.flashblock_execution_time_us = 0;
+    }
+
+    /// Counts changed storage slots whose value transitions from zero to non-zero.
+    pub fn count_new_storage_slots(state: &EvmState) -> u64 {
+        state
+            .values()
+            .flat_map(|account| account.storage.values())
+            .filter(|slot| slot.original_value().is_zero() && !slot.present_value().is_zero())
+            .fold(0, |count, _| count.saturating_add(1))
+    }
+
+    /// Checks whether adding a transaction's fresh storage slots would exceed the block limit.
+    pub fn check_new_storage_slots(
+        &self,
+        tx_new_slots: u64,
+        block_limit: u64,
+    ) -> Result<(), TxnExecutionError> {
+        if tx_new_slots > 0
+            && self.cumulative_new_storage_slots.saturating_add(tx_new_slots) > block_limit
+        {
+            return Err(TxnExecutionError::BlockNewStorageSlotsExceeded {
+                cumulative: self.cumulative_new_storage_slots,
+                tx_new_slots,
+                block_limit,
+            });
+        }
+        Ok(())
+    }
+
+    /// Adds a committed transaction's fresh storage slots to the block total.
+    pub const fn record_new_storage_slots(&mut self, tx_new_slots: u64) {
+        self.cumulative_new_storage_slots =
+            self.cumulative_new_storage_slots.saturating_add(tx_new_slots);
     }
 
     /// Returns true if the transaction would exceed the block limits:
@@ -387,11 +468,26 @@ impl ExecutionInfo {
 
 #[cfg(test)]
 mod tests {
+    use revm::state::{Account, EvmStorageSlot, TransactionId};
+
     use super::*;
 
     /// Helper to create default limits with block gas limit set
     fn default_limits() -> ResourceLimits {
         ResourceLimits { block_gas_limit: 30_000_000, ..Default::default() }
+    }
+
+    fn state_with_slots(slots: &[(U256, U256, U256)]) -> EvmState {
+        let mut account = Account::default();
+        for (key, original, present) in slots {
+            account.storage.insert(
+                *key,
+                EvmStorageSlot::new_changed(*original, *present, TransactionId::ZERO),
+            );
+        }
+        let mut state = EvmState::default();
+        state.insert(Address::ZERO, account);
+        state
     }
 
     // ==================== Basic Limit Tests ====================
@@ -828,5 +924,91 @@ mod tests {
             TxResources { gas_limit: 21_000, uncompressed_size: 1_000_000, ..Default::default() };
 
         assert!(info.is_tx_over_limits(&tx, &limits).is_ok());
+    }
+
+    #[test]
+    fn counts_only_zero_to_nonzero_storage_transitions() {
+        let state = state_with_slots(&[
+            (U256::from(1), U256::ZERO, U256::from(10)),
+            (U256::from(2), U256::from(5), U256::from(10)),
+            (U256::from(3), U256::from(5), U256::ZERO),
+            (U256::from(4), U256::ZERO, U256::ZERO),
+        ]);
+
+        assert_eq!(ExecutionInfo::count_new_storage_slots(&state), 1);
+    }
+
+    #[test]
+    fn duplicate_writes_to_one_fresh_slot_count_once() {
+        let mut state = state_with_slots(&[(U256::from(1), U256::ZERO, U256::from(10))]);
+        let account = state.get_mut(&Address::ZERO).expect("account exists");
+        account.storage.insert(
+            U256::from(1),
+            EvmStorageSlot::new_changed(U256::ZERO, U256::from(20), TransactionId::ZERO),
+        );
+
+        assert_eq!(ExecutionInfo::count_new_storage_slots(&state), 1);
+    }
+
+    #[test]
+    fn reverted_state_consumes_no_fresh_storage_slots() {
+        assert_eq!(ExecutionInfo::count_new_storage_slots(&EvmState::default()), 0);
+    }
+
+    #[test]
+    fn fresh_storage_slot_limit_allows_exact_limit() {
+        let mut info = ExecutionInfo::with_capacity(1);
+        info.cumulative_new_storage_slots = 8;
+
+        assert!(info.check_new_storage_slots(2, 10).is_ok());
+    }
+
+    #[test]
+    fn fresh_storage_slot_limit_does_not_reject_zero_slot_transactions_after_dry_run_excess() {
+        let mut info = ExecutionInfo::with_capacity(1);
+        info.cumulative_new_storage_slots = 11;
+
+        assert!(info.check_new_storage_slots(0, 10).is_ok());
+    }
+
+    #[test]
+    fn fresh_storage_slot_limit_is_transient_and_reports_usage() {
+        let mut info = ExecutionInfo::with_capacity(1);
+        info.cumulative_new_storage_slots = 8;
+
+        let err = info.check_new_storage_slots(3, 10).expect_err("limit should be exceeded");
+        assert!(matches!(
+            err,
+            TxnExecutionError::BlockNewStorageSlotsExceeded {
+                cumulative: 8,
+                tx_new_slots: 3,
+                block_limit: 10,
+            }
+        ));
+        assert_eq!(err.rejection_code(), "block_new_storage_slots_exceeded");
+        assert!(!err.is_permanent());
+    }
+
+    #[test]
+    fn fresh_storage_slot_accumulation_saturates() {
+        let mut info = ExecutionInfo::with_capacity(1);
+        info.cumulative_new_storage_slots = u64::MAX - 1;
+
+        info.record_new_storage_slots(10);
+
+        assert_eq!(info.cumulative_new_storage_slots, u64::MAX);
+        assert!(info.check_new_storage_slots(1, u64::MAX).is_ok());
+    }
+
+    #[test]
+    fn fresh_storage_slots_accumulate_across_flashblocks() {
+        let mut info = ExecutionInfo::with_capacity(2);
+        info.record_new_storage_slots(4);
+        info.reset_flashblock_execution_time();
+        info.record_new_storage_slots(5);
+
+        assert_eq!(info.cumulative_new_storage_slots, 9);
+        assert!(info.check_new_storage_slots(1, 10).is_ok());
+        assert!(info.check_new_storage_slots(2, 10).is_err());
     }
 }

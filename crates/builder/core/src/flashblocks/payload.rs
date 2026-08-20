@@ -627,6 +627,7 @@ where
             flashblock_execution_time_limit_us,
             block_state_root_gas_limit: target_state_root_gas_for_batch,
             block_uncompressed_size_limit: ctx.builder_config.max_uncompressed_block_size,
+            block_new_storage_slots_limit: ctx.builder_config.max_new_storage_slots_per_block,
         };
         let diag = ctx
             .execute_best_transactions(info, state, best_txs, &limits)
@@ -847,6 +848,7 @@ where
 
         // Record cumulative uncompressed block size
         BuilderMetrics::block_uncompressed_size().record(info.cumulative_uncompressed_bytes as f64);
+        BuilderMetrics::block_new_storage_slots().record(info.cumulative_new_storage_slots as f64);
 
         debug!(
             target: "payload_builder",
