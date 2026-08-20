@@ -222,6 +222,12 @@ pub struct Args {
     #[arg(long = "builder.metering-wait-duration-ms")]
     pub metering_wait_duration_ms: Option<u64>,
 
+    /// Hard cutoff, in milliseconds, on cumulative validity-predicate evaluation time per
+    /// flashblock build. Once exceeded, further validity-gated transactions are deferred to a
+    /// later flashblock rather than evaluated.
+    #[arg(long = "builder.predicate-eval-hard-cutoff-ms", default_value = "10")]
+    pub predicate_eval_hard_cutoff_ms: u64,
+
     /// URL of the audit-archiver RPC endpoint for forwarding rejected transactions
     #[arg(long = "builder.audit-archiver-url", env = "BUILDER_AUDIT_ARCHIVER_URL")]
     pub audit_archiver_url: Option<String>,
@@ -315,6 +321,7 @@ impl Default for Args {
             shadow_validity_injection_sample_rate_bps: 100,
             max_uncompressed_block_size: None,
             metering_wait_duration_ms: None,
+            predicate_eval_hard_cutoff_ms: 10,
             audit_archiver_url: None,
             rejected_tx_channel_size: 500,
             max_rejected_txs_per_block: 500,
@@ -386,6 +393,7 @@ impl Args {
             execution_metering_mode: self.execution_metering_mode,
             max_uncompressed_block_size: self.max_uncompressed_block_size,
             metering_wait_duration: self.metering_wait_duration_ms.map(Duration::from_millis),
+            predicate_eval_hard_cutoff: Duration::from_millis(self.predicate_eval_hard_cutoff_ms),
             metering_provider,
             rejection_cache: RejectionCache::new(
                 self.rejection_cache_max_capacity,
@@ -580,6 +588,16 @@ mod tests {
         let args = Args { metering_wait_duration_ms: input, ..Default::default() };
         let config = convert(args);
         assert_eq!(config.metering_wait_duration, expected);
+    }
+
+    #[rstest]
+    #[case::default(10, Duration::from_millis(10))]
+    #[case::zero(0, Duration::from_millis(0))]
+    #[case::custom(25, Duration::from_millis(25))]
+    fn predicate_eval_hard_cutoff_maps_correctly(#[case] input: u64, #[case] expected: Duration) {
+        let args = Args { predicate_eval_hard_cutoff_ms: input, ..Default::default() };
+        let config = convert(args);
+        assert_eq!(config.predicate_eval_hard_cutoff, expected);
     }
 
     #[test]
