@@ -44,7 +44,7 @@ impl RunningNode {
 
     async fn launch_multiplex() -> eyre::Result<Self> {
         let service_builder =
-            MultiplexingServiceBuilder::new(test_builder_config()).with_dual_builders_enabled(true);
+            MultiplexingServiceBuilder::new(test_builder_config()).with_cutover_enabled(true);
         Self::launch(service_builder).await
     }
 
@@ -242,6 +242,8 @@ async fn multiplex_flashblocks_equivalence_and_shadow_dispatch() -> eyre::Result
         let basic_dispatches = MultiplexRouter::debug_basic_dispatch_count();
         assert!(flashblocks_dispatches >= 1, "expected at least one multiplex dispatch");
         assert_eq!(flashblocks_dispatches, basic_dispatches);
+        assert!(MultiplexRouter::debug_flashblocks_selected_count() >= 1);
+        assert_eq!(MultiplexRouter::debug_basic_selected_count(), 0);
     }
 
     std::mem::forget(baseline);

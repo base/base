@@ -28,24 +28,12 @@ pub struct MultiplexingServiceBuilder {
     pub builder_config: BuilderConfig,
     /// Multiplexer settings.
     pub routing_config: RoutingConfig,
-    /// Whether to compute pending block in basic builder.
-    pub compute_pending_block: bool,
 }
 
 impl MultiplexingServiceBuilder {
     /// Creates a new multiplexing service builder.
     pub fn new(builder_config: BuilderConfig) -> Self {
-        Self {
-            builder_config,
-            routing_config: RoutingConfig::default(),
-            compute_pending_block: false,
-        }
-    }
-
-    /// Configures pending-block computation for the basic payload builder.
-    pub const fn with_compute_pending_block(mut self, compute_pending_block: bool) -> Self {
-        self.compute_pending_block = compute_pending_block;
-        self
+        Self { builder_config, routing_config: RoutingConfig::default() }
     }
 
     /// Configures multiplexer runtime config.
@@ -54,9 +42,9 @@ impl MultiplexingServiceBuilder {
         self
     }
 
-    /// Enables or disables dual payload builders mode.
-    pub const fn with_dual_builders_enabled(mut self, dual_builders_enabled: bool) -> Self {
-        self.routing_config.dual_builders_enabled = dual_builders_enabled;
+    /// Enables or disables the Zenith payload-builder cutover.
+    pub const fn with_cutover_enabled(mut self, cutover_enabled: bool) -> Self {
+        self.routing_config.cutover_enabled = cutover_enabled;
         self
     }
 }
@@ -72,7 +60,7 @@ where
         pool: Pool,
         evm_config: BaseEvmConfig,
     ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>> {
-        if !self.routing_config.dual_builders_enabled {
+        if !self.routing_config.cutover_enabled {
             return FlashblocksServiceBuilder::new(self.builder_config)
                 .spawn_payload_builder_service(ctx, pool, evm_config)
                 .await;
@@ -92,8 +80,7 @@ where
                     gas_limit_config: self.builder_config.gas_limit_config.clone(),
                     manifest_precheck_enabled: self.builder_config.manifest_precheck_enabled,
                 },
-            )
-            .set_compute_pending_block(self.compute_pending_block);
+            );
 
         let payload_config = ctx.config().builder.clone();
         let payload_job_config = BasicPayloadJobGeneratorConfig::default()
@@ -142,6 +129,7 @@ where
             basic_handle,
             flashblocks_health,
             basic_health,
+            ctx.chain_spec(),
             self.routing_config,
         );
 
