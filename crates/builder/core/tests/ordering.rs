@@ -309,10 +309,6 @@ async fn shadow_validity_injection_preserves_forwarded_transaction() -> eyre::Re
     let forwarded = ValidatedTransaction {
         sender: accounts[0].address(),
         raw: raw.clone().into(),
-        min_block_number: None,
-        max_block_number: None,
-        min_timestamp: None,
-        max_timestamp: None,
         extensions: TransactionValidity::default(),
     };
     driver

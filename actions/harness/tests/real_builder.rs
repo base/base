@@ -104,25 +104,7 @@ async fn builder_backed_sequencer_produces_block_with_azul_active() -> eyre::Res
 /// injected transaction from the pool.
 #[tokio::test(flavor = "multi_thread")]
 async fn builder_backed_sequencer_selects_pool_transaction() -> eyre::Result<()> {
-    let batcher_cfg = BatcherConfig {
-        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
-        ..BatcherConfig::default()
-    };
-    // Anchor genesis a little ahead of wall-clock so produced-block timestamps are in the future
-    // (which the Flashblocks builder needs to schedule flashblocks), but close enough that the
-    // block's slot lands well inside the harness's inserted-block timeout.
-    let base_ts =
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() + 4;
-    let l1_cfg = L1MinerConfig { genesis_timestamp: base_ts, ..L1MinerConfig::default() };
-    let mut rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
-        .through_isthmus()
-        .with_jovian_at(0)
-        .build();
-    rollup_cfg.genesis.l2_time = base_ts;
-    let h = ActionTestHarness::new(l1_cfg, rollup_cfg);
-
-    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
-    let mut sequencer = h.create_l2_sequencer_with_builder(l1_chain).await?;
+    let (_h, mut sequencer, _batcher_cfg) = wall_clock_builder_sequencer().await?;
 
     // In production-builder mode this transaction is injected into the real pool and selected by
     // the builder, rather than force-included via the payload attributes.
