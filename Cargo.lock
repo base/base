@@ -4569,6 +4569,7 @@ dependencies = [
  "jsonrpsee",
  "lru 0.16.4",
  "metrics",
+ "metrics-util",
  "parking_lot",
  "reth-chainspec",
  "reth-eth-wire-types",

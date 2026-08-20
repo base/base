@@ -80,6 +80,6 @@ pub use wire::{
 mod two_d_nonce_pool;
 
 mod metrics;
-pub use metrics::{GuardMetrics, ValidatorMetrics};
+pub use metrics::{GuardMetrics, ValidatorMetrics, ValidityPoolMetrics};
 
 pub mod estimated_da_size;
