@@ -12,58 +12,31 @@ use crate::{CompressionAlgo, DaType};
 /// Configuration for the [`BatchEncoder`](crate::BatchEncoder).
 #[derive(Debug, Clone)]
 pub struct EncoderConfig {
-    /// Optional soft limit for a channel's compressed bytes.
-    ///
-    /// The batch that makes the compressor emit at least this many total bytes
-    /// remains in the channel, then the channel closes. Bytes already assigned
-    /// to full artifacts still count toward the target. Compressor buffering and
-    /// the final complete batch may make the finished stream exceed it.
-    /// This bounds channel latency and memory without a shadow compressor or
-    /// rollback path. `None` closes channels only for protocol channel limits,
-    /// duration, or an explicit flush.
-    ///
+    /// Optional soft compressed-byte target. The reaching batch stays, then the
+    /// channel closes. `None` closes on duration, flush, or protocol limits.
     /// Default: `None`.
     pub compressed_size_target: Option<usize>,
 
-    /// Maximum serialized size of each derivation frame.
-    ///
-    /// Streaming DA egress creates frames against the remaining artifact
-    /// capacity without exceeding this bound. Set it smaller in tests to force
-    /// additional frames.
+    /// Maximum serialized derivation frame size.
     pub max_frame_size: usize,
 
     /// Maximum L1 blocks a channel may stay open.
     /// Default: 2.
     pub max_channel_duration: u64,
 
-    /// Safety margin reserved within `max_channel_duration`.
-    ///
-    /// The encoder computes one operational deadline at channel open using
-    /// `max_channel_duration - sub_safety_margin`. That deadline closes an open
-    /// channel and later releases any partial blob retained after a size close.
-    /// The default of 0 uses the full configured duration.
+    /// Subtracted from `max_channel_duration` for the close deadline.
     /// Default: 0.
     pub sub_safety_margin: u64,
 
-    /// Maximum number of blobs included in one L1 transaction.
-    ///
-    /// This controls transaction construction only; it does not close channels.
-    /// Fusaka limits each transaction to six blobs; the separate block-level
-    /// limit may be higher.
-    ///
+    /// Max blobs per L1 transaction. Does not close channels.
     /// Default: 6.
     pub max_blobs_per_tx: usize,
 
-    /// How frames should be encoded for L1 submission.
-    ///
+    /// How frames are encoded for L1 submission.
     /// Default: [`DaType::Blob`].
     pub da_type: DaType,
 
-    /// Compression algorithm used for newly opened channels.
-    ///
-    /// Brotli channels are accepted only after Fjord. Zlib remains valid on both
-    /// sides of the fork and should be selected for pre-Fjord environments.
-    ///
+    /// Compression for newly opened channels. Brotli requires Fjord.
     /// Default: [`CompressionAlgo::Brotli`] at
     /// [`CompressionAlgo::BROTLI_DEFAULT_QUALITY`].
     pub compression_algo: CompressionAlgo,

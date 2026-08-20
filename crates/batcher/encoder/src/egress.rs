@@ -97,11 +97,6 @@ impl DaEgress {
     }
 
     /// Plans one full or deadline-released blob without mutating channels.
-    ///
-    /// Walks the channel FIFO in order. A later channel is reachable only after
-    /// this plan includes the previous channel's terminal frame. The plan is
-    /// returned only when the blob is full, or when a closed channel's deadline
-    /// allows posting a partial tail.
     fn plan_blob(
         channels: &VecDeque<ChannelRecord>,
         l1_head: u64,
@@ -136,10 +131,9 @@ impl DaEgress {
         if saturated || release_due { Some(frames) } else { None }
     }
 
-    /// Appends every frame from one channel that fits in the current blob.
+    /// Append frames from one channel that fit in the current blob.
     ///
-    /// Returns `true` only after selecting the closed channel's terminal frame,
-    /// which allows the planner to continue into the next FIFO record.
+    /// `true` after the terminal frame, so the planner may continue to the next channel.
     fn plan_channel_frames(
         channel: &ChannelRecord,
         remaining: &mut usize,

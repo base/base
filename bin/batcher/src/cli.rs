@@ -127,10 +127,7 @@ pub(crate) struct BatcherArgs {
     #[arg(long = "sub-safety-margin", default_value = "0", env = "BATCHER_SUB_SAFETY_MARGIN")]
     pub sub_safety_margin: u64,
 
-    /// Optional soft compressed-byte target for each channel.
-    ///
-    /// The batch that reaches the target remains in the channel. Omit to close
-    /// channels only on duration, explicit flush, or protocol channel limits.
+    /// Optional soft compressed-byte target.
     #[arg(long = "compressed-size-target", env = "BATCHER_COMPRESSED_SIZE_TARGET")]
     pub compressed_size_target: Option<usize>,
 
@@ -138,10 +135,7 @@ pub(crate) struct BatcherArgs {
     #[arg(long = "max-blobs-per-tx", default_value = "6", env = "BATCHER_MAX_BLOBS_PER_TX")]
     pub max_blobs_per_tx: usize,
 
-    /// Brotli quality used for channel compression (`0..=11`).
-    ///
-    /// Quality is an operational choice. Derivation only sees the Brotli
-    /// channel-version byte (`0x01`); it does not depend on this level.
+    /// Brotli quality (`0..=11`).
     #[arg(
         long = "brotli-quality",
         default_value_t = base_batcher_encoder::CompressionAlgo::BROTLI_DEFAULT_QUALITY,
@@ -259,13 +253,7 @@ pub(crate) struct BatcherArgs {
     )]
     pub wait_node_sync_timeout_secs: u64,
 
-    /// Disable the throttle-driven blob-DA override.
-    ///
-    /// By default, when DA-backlog throttling activates, the encoder is forced
-    /// to emit blob-typed submissions even if `--data-availability-type=calldata`
-    /// is configured because blobs amortise DA cost more efficiently under congestion.
-    /// Pass this flag to keep the configured DA type regardless of throttle state.
-    /// No-op for blob-configured batchers.
+    /// Keep the configured DA type when throttling. Default forces blobs.
     #[arg(long = "no-force-blobs-when-throttling", env = "BATCHER_NO_FORCE_BLOBS_WHEN_THROTTLING")]
     pub no_force_blobs_when_throttling: bool,
 

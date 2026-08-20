@@ -33,9 +33,6 @@ pub enum CompressionError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompressionAlgo {
     /// Brotli with quality `0..=11`.
-    ///
-    /// Quality is an operational choice. Derivation only inspects the `0x01`
-    /// channel-version prefix; it does not depend on this level.
     Brotli(u8),
     /// The zlib compression.
     Zlib,
@@ -56,8 +53,7 @@ impl CompressionAlgo {
 
     /// Compresses one complete derivation channel.
     ///
-    /// Brotli channels carry the `0x01` channel-version byte before the
-    /// compressed stream. Zlib streams are self-identifying and need no prefix.
+    /// Brotli prepends `0x01`; zlib does not.
     pub fn compress_channel(self, input: &[u8]) -> Result<Vec<u8>, CompressionError> {
         let quality = match self {
             Self::Zlib => return Ok(miniz_oxide::deflate::compress_to_vec_zlib(input, 9)),

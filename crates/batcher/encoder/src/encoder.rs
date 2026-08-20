@@ -41,10 +41,7 @@ pub struct BatchEncoder {
     next_id: u64,
     /// Per-instance RNG for generating unique channel IDs.
     rng: SmallRng,
-    /// Driver-controlled override that forces [`DaType::Blob`] on every emitted
-    /// submission, regardless of the configured `da_type`. Toggled by the driver
-    /// when DA-backlog throttling activates and `force_blobs_when_throttling` is
-    /// set. No-op when the configured `da_type` is already [`DaType::Blob`].
+    /// When set, emit blobs even if `da_type` is calldata.
     blob_override: bool,
     /// Fatal error observed from trait methods that cannot return [`StepError`].
     deferred_step_error: Option<StepError>,
@@ -103,16 +100,7 @@ impl BatchEncoder {
             .sum()
     }
 
-    /// Step the encoder until idle, flush the current channel, and return
-    /// every available submission.
-    ///
-    /// Convenience wrapper for tests and one-shot batch pipelines that have
-    /// already added all blocks via [`BatchPipeline::add_block`].
-    ///
-    /// # Errors
-    ///
-    /// Returns the first [`StepError`] encountered during encoding. Returned
-    /// submissions retain the identifiers required to confirm or requeue them.
+    /// Step until idle, flush, and drain submissions. Test/one-shot helper.
     pub fn encode_and_drain(&mut self) -> Result<Vec<BatchSubmission>, StepError> {
         loop {
             match self.step()? {
@@ -131,7 +119,7 @@ impl BatchEncoder {
         Ok(submissions)
     }
 
-    /// Finalizes the writable FIFO tail without changing its submission policy.
+    /// Close the writable channel.
     fn close_current_channel(&mut self, close_reason: ChannelCloseReason) -> Result<(), StepError> {
         let Some(channel) = self.channels.back_mut().filter(|channel| channel.is_open()) else {
             return Ok(());
@@ -163,7 +151,7 @@ impl BatchEncoder {
             "closed channel"
         );
 
-        // Emit close counter and channel lifetime / compression ratio histograms.
+        // Close metrics.
         BatcherMetrics::channel_closed_total(close_reason.metric_label()).increment(1);
         BatcherMetrics::channel_duration_blocks().record(duration_blocks as f64);
         BatcherMetrics::l2_blocks_per_channel().record(blocks_added as f64);
@@ -197,10 +185,7 @@ impl BatchEncoder {
         }
     }
 
-    /// Opens a channel when `step` has a queued block but no current channel.
-    ///
-    /// `block_start` anchors the exact input range later attached to the closed
-    /// channel; the current L1 head starts its timeout window.
+    /// Opens a channel for the next queued block.
     fn open_new_channel(&mut self, block_start: usize) {
         let mut id = ChannelId::default();
         self.rng.fill_bytes(&mut id);
@@ -222,12 +207,9 @@ impl BatchEncoder {
         self.channels.push_back(channel);
     }
 
-    /// Closes the current channel when its effective L1 duration has elapsed.
-    ///
-    /// Both `step` and [`BatchPipeline::advance_l1_head`] call this so timeout
-    /// processing does not depend on another L2 block arriving.
+    /// Close the writable channel if its duration has elapsed.
     fn check_channel_timeout(&mut self) -> Result<bool, StepError> {
-        // The writable and closed states share one absolute operational timeout.
+        // Same deadline for closing an open channel and releasing a closed partial tail.
         let should_close = self
             .channels
             .back()
@@ -469,18 +451,15 @@ impl BatchPipeline for BatchEncoder {
     }
 
     fn step(&mut self) -> Result<StepResult, StepError> {
-        // A step performs one state transition: report a deferred error, close
-        // a timed-out channel, or attempt exactly one queued L2 block.
+        // One transition: deferred error, timeout close, or one queued block.
         if let Some(error) = self.deferred_step_error.take() {
             return Err(error);
         }
 
-        // Check for channel timeout first.
         if self.check_channel_timeout()? {
             return Ok(StepResult::ChannelClosed);
         }
 
-        // If there are no blocks to encode, we're idle.
         if self.block_cursor >= self.blocks.len() {
             return Ok(StepResult::Idle);
         }
@@ -488,8 +467,7 @@ impl BatchPipeline for BatchEncoder {
         let block = &self.blocks[self.block_cursor];
         let block_da_backlog_bytes = Self::block_da_backlog_bytes(block);
 
-        // Convert block to a SingleBatch. Failure here is fatal: skipping the block
-        // would produce a gap in the L2 block sequence submitted to L1.
+        // Composition failure is fatal: skipping the block would gap the L2 sequence.
         let single_batch = BatchComposer::block_to_single_batch(block)
             .map_err(|source| StepError::CompositionFailed { cursor: self.block_cursor, source })?;
 
@@ -502,8 +480,7 @@ impl BatchPipeline for BatchEncoder {
 
         match outcome {
             accepted @ (ChannelAddOutcome::Accepted | ChannelAddOutcome::TargetReached) => {
-                // The queue cursor is the acceptance boundary. Advancing it
-                // earlier would lose a block when the channel rejects a candidate.
+                // Cursor advances only after accept, so a later reject retries this block.
                 BatcherMetrics::input_bytes(BatcherMetrics::STAGE_ADDED)
                     .set(channel.input_bytes() as f64);
                 self.block_cursor += 1;
@@ -515,8 +492,7 @@ impl BatchPipeline for BatchEncoder {
                 }
             }
             ChannelAddOutcome::Rejected(limit) => {
-                // A hard channel-limit rejection in an empty channel cannot be resolved
-                // by retrying the same block in another identical channel.
+                // Empty channel: this block cannot fit anywhere. Discard and fail.
                 if channel.is_empty() {
                     self.channels.pop_back();
                     BatcherMetrics::channel_closed_total(BatcherMetrics::REASON_DISCARD)
@@ -527,8 +503,7 @@ impl BatchPipeline for BatchEncoder {
                     });
                 }
 
-                // Finalize only the previously accepted payload. The unchanged
-                // cursor makes the next step retry this block in a fresh channel.
+                // Close what we have; next step retries this block in a new channel.
                 debug!(%limit, "channel reached a protocol size limit, closing");
                 self.close_current_channel(ChannelCloseReason::ProtocolLimit)?;
                 Ok(StepResult::ChannelClosed)
@@ -652,10 +627,7 @@ impl BatchPipeline for BatchEncoder {
         self.channels.clear();
         self.egress.reset();
         self.deferred_step_error = None;
-        // Intentionally not resetting `next_id`: keeping it monotonically
-        // increasing across resets means post-reset submissions can never
-        // share an ID with any pre-reset in-flight submission, eliminating
-        // stale-confirm silent corruption.
+        // Keep `next_id` monotonic across reset so stale confirms cannot collide.
         self.rng = SmallRng::from_os_rng();
 
         // Zero out state gauges — all buffered data has been discarded.

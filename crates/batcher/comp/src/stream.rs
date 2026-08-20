@@ -73,10 +73,7 @@ impl CompressionStream {
         Self { backend, output_size: 0 }
     }
 
-    /// Appends input and returns newly observable compressed bytes.
-    ///
-    /// The returned bytes are an immutable continuation of earlier output. The
-    /// stream retains its dictionary and does not flush.
+    /// Append input and return newly emitted compressed bytes.
     pub fn append(&mut self, input: &[u8]) -> Result<Vec<u8>, CompressionError> {
         // miniz exposes explicit stream progress, so validate that every byte
         // was consumed before treating the append as committed.

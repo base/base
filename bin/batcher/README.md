@@ -11,8 +11,7 @@ Streaming channels no longer use `--target-frame-size` or
 `BATCHER_TARGET_FRAME_SIZE`; blob frames use the protocol capacity directly.
 Replace `--target-num-frames` with `--max-blobs-per-tx`, and replace
 `--max-l1-tx-size-bytes` with `--max-calldata-size-bytes` for calldata DA.
-`--brotli-quality` selects Brotli quality `0..=11` (default 10). Quality is
-operational; derivation only sees the Brotli channel-version byte.
+`--brotli-quality` selects Brotli quality `0..=11` (default 10).
 The corresponding environment variables use the new option names.
 
 ## Shadow mode

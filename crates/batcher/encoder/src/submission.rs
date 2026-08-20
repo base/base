@@ -9,29 +9,19 @@ use crate::EncoderConfig;
 
 /// Identifies a batch submission for receipt tracking.
 ///
-/// Monotonically increasing per [`BatchEncoder`](crate::BatchEncoder) instance,
-/// including across [`BatchPipeline::reset`](crate::BatchPipeline::reset) calls.
-/// The counter is intentionally **not** reset to 0 on reset so that post-reset
-/// submissions can never share an ID with any pre-reset in-flight submission,
-/// eliminating stale-confirm collisions.
+/// Monotonic per encoder instance, including across `reset`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SubmissionId(pub u64);
 
 /// Selects how batch frames are encoded for L1 submission.
-///
-/// The driver uses this field on each [`BatchSubmission`] to determine whether
-/// frames should be sent as EIP-4844 blobs or transaction calldata.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 pub enum DaType {
-    /// Frames are sent as EIP-4844 blobs (default).
-    ///
-    /// Each blob may carry multiple frames from one or more channels.
+    /// EIP-4844 blobs.
     #[default]
     #[cfg_attr(feature = "clap", value(name = "blobs", alias = "blob"))]
     Blob,
-    /// Each frame is sent as a single calldata transaction
-    /// (`[DERIVATION_VERSION_0] ++ frame.encode()`).
+    /// One frame as calldata (`[DERIVATION_VERSION_0] ++ frame.encode()`).
     Calldata,
 }
 
@@ -134,19 +124,11 @@ impl BatchSubmission {
 }
 
 /// Encodes batch frames for L1 submission.
-///
-/// This unit type groups the frame-encoding utilities used by both the production
-/// `BatchDriver` (in `base-batcher-core`) and the action-test harness, so the framing
-/// logic is defined exactly once.
 #[derive(Debug)]
 pub struct FrameEncoder;
 
 impl FrameEncoder {
-    /// Encode a single frame as L1 calldata.
-    ///
-    /// Prepends the [`DERIVATION_VERSION_0`] byte to the encoded frame, producing
-    /// the exact byte sequence the derivation pipeline expects to find in a batcher
-    /// transaction's calldata field.
+    /// `[DERIVATION_VERSION_0] ++ frame.encode()`.
     pub fn to_calldata(frame: &Frame) -> Bytes {
         let encoded = frame.encode();
         let mut data = Vec::with_capacity(1 + encoded.len());

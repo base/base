@@ -107,12 +107,7 @@ pub enum ChannelError {
     InvalidTerminalTransition,
 }
 
-/// One channel retained from its first batch until derivation makes it safe.
-///
-/// Compression output is transferred into an internal byte FIFO as the stream
-/// produces it. Blob framing may consume that stable prefix while the compressor
-/// remains open; closing only emits the stream suffix and enables the terminal
-/// frame.
+/// One encoding channel, from first batch until the safe head covers it.
 pub struct ChannelRecord {
     /// Unique derivation channel identifier.
     id: ChannelId,
@@ -171,10 +166,7 @@ impl fmt::Debug for ChannelRecord {
 }
 
 impl ChannelRecord {
-    /// Largest frame count currently accepted by derivation channel reassembly.
-    ///
-    /// Although a `u16` can number 65,536 frames from zero, derivation currently
-    /// cannot reassemble a channel whose last frame number is `u16::MAX`.
+    /// Max frames per channel. Derivation cannot reassemble frame number `u16::MAX`.
     pub const MAX_FRAMES: usize = u16::MAX as usize;
 
     /// Creates an empty writable channel at the tail of the FIFO.
@@ -255,17 +247,12 @@ impl ChannelRecord {
         self.opened_l1_block
     }
 
-    /// Returns whether the channel deadline is due.
-    ///
-    /// An open channel closes at this block. Once closed, its partial tail may
-    /// be released at the same block unless an administrative flush advances it.
+    /// Whether `l1_head` has reached the channel deadline.
     pub const fn deadline_due(&self, l1_head: u64) -> bool {
         l1_head >= self.deadline_l1_block
     }
 
-    /// Makes a closed partial tail eligible for submission at `l1_head`.
-    ///
-    /// Used by an administrative flush. Never postpones the original deadline.
+    /// Make a closed partial tail eligible at `l1_head` without postponing the deadline.
     pub fn release_at(&mut self, l1_head: u64) {
         self.deadline_l1_block = self.deadline_l1_block.min(l1_head);
     }
@@ -300,11 +287,7 @@ impl ChannelRecord {
         self.next_frame_number
     }
 
-    /// Encodes `batch` and, if every hard limit still holds, appends it once.
-    ///
-    /// Limits are projected from a worst-case finished stream so a rejection
-    /// never mutates the compressor. Soft target is checked only after a
-    /// successful append, against bytes actually returned so far.
+    /// Append `batch` if hard limits hold; otherwise reject without mutating the stream.
     pub fn add_batch(
         &mut self,
         batch: SingleBatch,
@@ -342,6 +325,7 @@ impl ChannelRecord {
         let max_assembled_bytes =
             max_compressed_bytes.saturating_add(max_total_frames.saturating_mul(Frame::OVERHEAD));
 
+        // Reject against projected limits before mutating the stream.
         if next_input_bytes > max_channel_bytes {
             return Ok(ChannelAddOutcome::Rejected(ChannelLimit::RlpBytes {
                 required: next_input_bytes,
@@ -361,7 +345,7 @@ impl ChannelRecord {
             }));
         }
 
-        // Commit once. Newly stable bytes go into the FIFO; the dictionary stays.
+        // Commit once. Newly stable bytes go into the FIFO.
         let output = compressor.append(&self.candidate_scratch)?;
         let total_output = compressor.output_size();
 
@@ -377,11 +361,7 @@ impl ChannelRecord {
         }
     }
 
-    /// Stops accepting batches and enables the terminal frame.
-    ///
-    /// Taking the compressor is the closed-channel signal. `finish` emits the
-    /// stream suffix into the same FIFO; framing itself happens later in
-    /// [`Self::take_frame`].
+    /// Stop accepting batches and finish the compressor.
     pub fn close(&mut self) -> Result<(), ChannelError> {
         let Some(compressor) = self.compressor.take() else {
             return Ok(());
@@ -393,11 +373,7 @@ impl ChannelRecord {
         Ok(())
     }
 
-    /// Cuts `data_len` compressed bytes into the next numbered derivation frame.
-    ///
-    /// DA egress chooses `data_len` and `is_last`. This method only checks that
-    /// the cut is legal, then consumes the FIFO prefix. A terminal frame must
-    /// drain every remaining byte of a closed channel.
+    /// Cut the next numbered frame from the compressed FIFO.
     pub fn take_frame(&mut self, data_len: usize, is_last: bool) -> Result<Frame, ChannelError> {
         if data_len > self.available_output {
             return Err(ChannelError::OutputUnderflow {
@@ -432,10 +408,7 @@ impl ChannelRecord {
         Ok(Frame { id: self.id, number, data, is_last })
     }
 
-    /// Drains `len` bytes from the front of the compressed FIFO.
-    ///
-    /// Compressor `append`s land as whole chunks; a frame may start or end in
-    /// the middle of one, so leftover bytes are pushed back.
+    /// Drain `len` bytes from the compressed FIFO.
     fn take_output(&mut self, len: usize) -> Vec<u8> {
         debug_assert!(len <= self.available_output);
         debug_assert_eq!(
@@ -460,10 +433,7 @@ impl ChannelRecord {
         output
     }
 
-    /// Records L1 inclusion of one artifact that carries this channel.
-    ///
-    /// Derivation timeout/replay uses the earliest and latest inclusion blocks,
-    /// not each artifact individually.
+    /// Record L1 inclusion for timeout/replay (min/max over artifacts).
     pub fn record_confirmation(&mut self, l1_block: u64) {
         self.first_confirmed_l1_block =
             Some(self.first_confirmed_l1_block.map_or(l1_block, |first| first.min(l1_block)));
