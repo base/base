@@ -1,7 +1,9 @@
+//! OP Succinct L2OO and dispute-game factory bindings.
+
 use alloy_primitives::B256;
 use alloy_sol_types::sol;
 
-use crate::OPSuccinctL2OutputOracle::opSuccinctConfigsReturn;
+use self::OPSuccinctL2OutputOracle::opSuccinctConfigsReturn;
 
 // Sourced from base-succinct/contracts/src/validity/OPSuccinctL2OutputOracle.sol
 sol! {
@@ -123,15 +125,6 @@ sol! {
             Claim _rootClaim,
             bytes calldata _extraData
         ) external payable returns (IDisputeGame proxy_);
-    }
-}
-
-sol! {
-    struct L2Output {
-        uint64 zero;
-        bytes32 l2_state_root;
-        bytes32 l2_storage_hash;
-        bytes32 l2_claim_hash;
     }
 }
 

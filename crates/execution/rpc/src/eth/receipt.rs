@@ -290,8 +290,9 @@ pub struct BaseReceiptBuilder {
     /// EIP-8130 gas payer (sender for self-pay, specified payer for sponsored). `None` for
     /// non-EIP-8130 transactions.
     pub payer: Option<Address>,
-    /// EIP-8130 per-phase execution statuses. Empty for non-EIP-8130 transactions.
-    pub phase_statuses: Vec<u8>,
+    /// EIP-8130 per-phase execution statuses. `None` for non-EIP-8130 transactions;
+    /// `Some` (possibly empty) for EIP-8130 transactions.
+    pub phase_statuses: Option<Vec<u8>>,
     /// EIP-8130 opaque transaction metadata. `None` for non-EIP-8130 transactions.
     pub metadata: Option<alloy_primitives::Bytes>,
 }
@@ -316,15 +317,19 @@ impl BaseReceiptBuilder {
         let payer = tx_signed
             .as_eip8130()
             .map(|signed| signed.tx().payer.unwrap_or_else(|| input.tx.signer()));
-        // Omit empty metadata rather than serializing it as `"0x"`, matching how
-        // empty `phase_statuses` is skipped — only a non-empty commitment surfaces.
+        // Omit empty metadata rather than serializing it as `"0x"`. Empty
+        // `phase_statuses` is still serialized as `[]` on EIP-8130 receipts;
+        // only metadata is skipped when empty.
         let metadata = tx_signed
             .as_eip8130()
             .map(|signed| signed.tx().metadata.clone())
             .filter(|metadata| !metadata.is_empty());
+        // `Some` (possibly empty) marks an EIP-8130 receipt so an empty-`calls`
+        // transaction still surfaces `"phaseStatuses": []`; `None` omits the field
+        // entirely for non-EIP-8130 receipts.
         let phase_statuses = match &input.receipt {
-            BaseReceipt::Eip8130(receipt) => receipt.phase_statuses.clone(),
-            _ => Vec::new(),
+            BaseReceipt::Eip8130(receipt) => Some(receipt.phase_statuses.clone()),
+            _ => None,
         };
 
         let mut core_receipt = build_receipt(input, None, |receipt, next_log_index, meta| {

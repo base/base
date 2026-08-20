@@ -15,9 +15,8 @@ use crate::{
 
 /// An activated version of the stablecoin B-20 precompile logic.
 ///
-/// Each variant maps to an immutable implementation via [`Self::implementation`]. Variants are
-/// declared in activation order, so the derived ordering is chronological.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+/// Each variant maps to an immutable implementation via [`Self::implementation`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StablecoinVersion {
     /// Introduced at Beryl, the stablecoin's activation fork.
     V1,

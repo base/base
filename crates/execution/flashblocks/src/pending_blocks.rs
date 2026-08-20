@@ -896,6 +896,7 @@ mod tests {
                 transaction_index: Some(0),
                 effective_gas_price: Some(1_000_000_000),
             },
+            block_timestamp_ms: None,
             deposit_nonce: None,
             deposit_receipt_version: None,
         }
@@ -931,6 +932,7 @@ mod tests {
                 transaction_index: Some(0),
                 effective_gas_price: Some(1_000_000_000),
             },
+            block_timestamp_ms: None,
             deposit_nonce: None,
             deposit_receipt_version: None,
         }
@@ -959,6 +961,7 @@ mod tests {
                 transaction_index: Some(0),
                 effective_gas_price: Some(0),
             },
+            block_timestamp_ms: None,
             deposit_nonce: Some(42),
             deposit_receipt_version: Some(1),
         }
@@ -989,7 +992,7 @@ mod tests {
             },
             l1_block_info: L1BlockInfo::default(),
             payer: None,
-            phase_statuses: Vec::new(),
+            phase_statuses: None,
             metadata: None,
         }
     }
@@ -1046,7 +1049,7 @@ mod tests {
             },
             l1_block_info: Default::default(),
             payer: None,
-            phase_statuses: Vec::new(),
+            phase_statuses: None,
             metadata: None,
         }
     }
@@ -1329,7 +1332,7 @@ mod tests {
             },
             l1_block_info: Default::default(),
             payer: None,
-            phase_statuses: Vec::new(),
+            phase_statuses: None,
             metadata: None,
         }
     }
@@ -1470,7 +1473,7 @@ mod tests {
             },
             l1_block_info: Default::default(),
             payer: None,
-            phase_statuses: Vec::new(),
+            phase_statuses: None,
             metadata: None,
         };
 

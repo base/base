@@ -21,12 +21,13 @@ base-proof-zk-utils.workspace = true
 base-proof-zk-witness.workspace = true
 base-proof-succinct-elfs.workspace = true
 base-prover-service-protocol.workspace = true
-base-proof-succinct-host-utils.workspace = true
-base-proof-succinct-proof-utils.workspace = true
 
 # network
 url.workspace = true
 tonic.workspace = true
+alloy-contract.workspace = true
+alloy-consensus.workspace = true
+alloy-sol-types.workspace = true
 alloy-primitives.workspace = true
 
 # sp1
@@ -34,7 +35,7 @@ sp1-prover-types.workspace = true
 sp1-cluster-utils.workspace = true
 sp1-cluster-common.workspace = true
 sp1-cluster-artifact.workspace = true
-sp1-sdk = { workspace = true, features = ["network"] }
+sp1-sdk = { workspace = true, features = ["network", "blocking", "profiling"] }
 
 # async
 backoff.workspace = true
@@ -43,10 +44,13 @@ tokio-util.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 
 # error handling
+anyhow.workspace = true
 thiserror.workspace = true
 
 # serialization
+rkyv.workspace = true
 serde_json.workspace = true
+serde_cbor.workspace = true
 bincode = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["derive", "std"] }
 
