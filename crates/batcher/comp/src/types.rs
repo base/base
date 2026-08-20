@@ -96,14 +96,13 @@ impl<A: alloc::borrow::Borrow<CompressionAlgo>> From<A> for crate::BrotliLevel {
 
 #[cfg(test)]
 mod tests {
-    use miniz_oxide::inflate::decompress_to_vec_zlib;
-
-    use super::*;
-
     #[cfg(feature = "std")]
     use base_common_genesis::RollupConfig;
     #[cfg(feature = "std")]
     use base_protocol::Brotli;
+    use miniz_oxide::inflate::decompress_to_vec_zlib;
+
+    use super::*;
 
     #[test]
     fn zlib_channel_roundtrips() {
