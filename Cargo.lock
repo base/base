@@ -4396,6 +4396,7 @@ dependencies = [
  "derive_more 2.1.1",
  "reth-basic-payload-builder",
  "reth-chainspec",
+ "reth-ethereum-forks",
  "reth-evm",
  "reth-execution-cache",
  "reth-execution-types",
