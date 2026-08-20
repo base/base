@@ -19,8 +19,8 @@ workspace = true
 # Workspace – Prover
 base-proof-worker.workspace = true
 base-proof-zk-host.workspace = true
-base-proof-zk-backend.workspace = true
 base-prover-service-client.workspace = true
+base-proof-zk-backend = { workspace = true, features = ["metrics"] }
 
 # CLI / errors
 eyre.workspace = true

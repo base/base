@@ -100,8 +100,9 @@ pub struct BatcherConfig {
     /// initial sync — without this gate the initial backfill would race the
     /// node's derivation pipeline and could submit redundant data.
     pub wait_node_sync: bool,
-    /// Maximum time to wait for the rollup node to report sync when
-    /// [`wait_node_sync`](Self::wait_node_sync) is set.
+    /// Budget for retrying one-shot startup RPCs, and the maximum time to wait
+    /// for the rollup node to report sync when [`wait_node_sync`](Self::wait_node_sync)
+    /// is set.
     ///
     /// On expiry the service exits with an error rather than hanging
     /// indefinitely, giving operators a clear signal that the upstream node is

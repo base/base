@@ -39,6 +39,6 @@ pub use admin::{
 };
 
 mod driver;
-pub use driver::BatchDriver;
+pub use driver::{BatchDriver, BatchDriverHeads};
 
 pub mod test_utils;

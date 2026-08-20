@@ -1564,9 +1564,8 @@ where
             }
             ApplyError::EmptyBytecode => "create bytecode is empty",
             ApplyError::BytecodeTooLarge => "create bytecode exceeds the size limit",
-            ApplyError::AccountDeploymentFailed { .. } => {
-                "create bytecode is not deployable (size or reserved 0xEF prefix)"
-            }
+            ApplyError::CreateCodeExceedsMaxSize => "create bytecode exceeds MAX_CODE_SIZE",
+            ApplyError::CreateCodeStartsWithEf => "create bytecode begins with 0xEF",
             ApplyError::AlreadyCreated { .. } => "create account already exists",
             ApplyError::CreateAddressMismatch { .. } => "create address does not match the sender",
             ApplyError::InvalidCreatePosition => "create entry must be the only one, at index 0",

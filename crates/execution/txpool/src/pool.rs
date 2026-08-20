@@ -27,7 +27,7 @@ use tracing::debug;
 use crate::{
     Admission, BasePooledTx, BaseTransactionValidator, GuardLimits, GuardMetrics,
     InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard, ParkableBestTransactions,
-    ParkableTransactionPool, ParkedBestTransactions, StateDiffInvalidation,
+    ParkableTransactionPool, ParkedBestTransactions, StateDiffInvalidation, ValidityPoolMetrics,
     best::MergeBestTransactions,
     two_d_nonce_pool::{InsertOutcome, TwoDNoncePool},
 };
@@ -399,6 +399,15 @@ where
         }
     }
 
+    /// Returns whether a validated transaction carries validity predicates, for
+    /// lane-churn accounting. Invalid outcomes carry no pooled transaction and
+    /// are never counted.
+    fn has_validity_predicates(validated: &TransactionValidationOutcome<T>) -> bool {
+        validated
+            .as_valid_transaction()
+            .is_some_and(|transaction| !transaction.transaction().validity_predicates().is_empty())
+    }
+
     fn reconcile_guard(&self) {
         let tracked = self.guard.read().tracked_hashes();
         if tracked.is_empty() {
@@ -502,8 +511,10 @@ where
         // tracked replacement bypasses this check and is reaccounted after the
         // protocol pool atomically accepts the fee bump.
         let pre_admitted = self.pre_admit_protocol_transaction(hash, replaced, &validated)?;
-        // Capture the block-expiry bound before `validated` is consumed below.
+        // Capture the block-expiry bound and validity-lane flag before
+        // `validated` is consumed below.
         let block_expiry_bound = Self::validity_block_expiry_bound(&validated);
+        let is_validity = Self::has_validity_predicates(&validated);
         let mut outcomes =
             self.protocol_pool.inner().add_transactions(origin, std::iter::once(validated));
         let outcome = match outcomes.pop() {
@@ -526,6 +537,9 @@ where
         };
         self.gate_protocol_admission(hash, replaced, pre_admitted)?;
         self.register_block_expiry(hash, block_expiry_bound, replaced);
+        if is_validity {
+            ValidityPoolMetrics::record_admission(replaced.is_some());
+        }
         Ok(outcome)
     }
 
@@ -643,6 +657,7 @@ where
                     .limit_class()
                     .map(|class| class.classification_generation);
                 let admission = Self::admission_for(&validated.transaction);
+                let is_validity = !validated.transaction.validity_predicates().is_empty();
                 let outcome = nonce_pool.insert_validated(validated, state_nonce)?;
                 // nonce_pool serializes sidecar replacement. Never acquire it while holding guard.
                 let mut guard = self.guard.write();
@@ -689,6 +704,9 @@ where
                 }
                 drop(guard);
                 listeners.on_inserted(&nonce_pool, &outcome);
+                if is_validity {
+                    ValidityPoolMetrics::record_admission(outcome.replaced.is_some());
+                }
                 Ok(outcome.outcome)
             }
             TransactionValidationOutcome::Invalid(transaction, error) => {
@@ -843,8 +861,10 @@ where
             self.ensure_protocol_classification_current(hash, &validated)?;
             let replaced = self.protocol_replacement_hash(sender, nonce);
             let pre_admitted = self.pre_admit_protocol_transaction(hash, replaced, &validated)?;
-            // Capture the block-expiry bound before `validated` is consumed below.
+            // Capture the block-expiry bound and validity-lane flag before
+            // `validated` is consumed below.
             let block_expiry_bound = Self::validity_block_expiry_bound(&validated);
+            let is_validity = Self::has_validity_predicates(&validated);
             let events =
                 match self.protocol_pool.inner().add_transaction_and_subscribe(origin, validated) {
                     Ok(events) => events,
@@ -857,6 +877,9 @@ where
                 };
             self.gate_protocol_admission(hash, replaced, pre_admitted)?;
             self.register_block_expiry(hash, block_expiry_bound, replaced);
+            if is_validity {
+                ValidityPoolMetrics::record_admission(replaced.is_some());
+            }
             return Ok(events);
         }
 

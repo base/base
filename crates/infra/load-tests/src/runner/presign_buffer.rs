@@ -140,7 +140,7 @@ impl PresignBuffer {
 mod tests {
     use alloy_primitives::{Address, Bytes, TxHash};
 
-    use super::*;
+    use super::{super::SubmitCohort, *};
 
     fn tx(sender: u8, nonce: u64, gas_limit: u64) -> SignedTransaction {
         tx_with_estimated_gas(sender, nonce, gas_limit, gas_limit)
@@ -159,6 +159,8 @@ mod tests {
             nonce,
             gas_limit,
             estimated_gas,
+            validity: Vec::new(),
+            cohort: SubmitCohort::Plain,
         }
     }
 
