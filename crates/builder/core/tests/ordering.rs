@@ -216,10 +216,6 @@ async fn predicate_eval_hard_cutoff_defers_without_evaluating() -> eyre::Result<
             (ValidatedTransaction {
                 sender: accounts[0].address(),
                 raw: first.encoded_2718().into(),
-                min_block_number: None,
-                max_block_number: None,
-                min_timestamp: None,
-                max_timestamp: None,
                 extensions: TransactionValidity { validity: always_satisfied.clone() },
             },),
         )
@@ -241,10 +237,6 @@ async fn predicate_eval_hard_cutoff_defers_without_evaluating() -> eyre::Result<
             (ValidatedTransaction {
                 sender: accounts[1].address(),
                 raw: deferred.encoded_2718().into(),
-                min_block_number: None,
-                max_block_number: None,
-                min_timestamp: None,
-                max_timestamp: None,
                 extensions: TransactionValidity { validity: always_satisfied },
             },),
         )
