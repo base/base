@@ -392,8 +392,9 @@ where
         let Self { sequencer_url, sequencer_headers, min_suggested_priority_fee, .. } = self;
         let provider = ctx.components.provider().clone();
         let base_time = BaseTimeCache::default();
-        let rpc_converter = RpcConverter::new(BaseReceiptConverter::new(provider.clone()))
-            .with_mapper(BaseTxInfoMapper::new(provider, base_time.clone()));
+        let rpc_converter =
+            RpcConverter::new(BaseReceiptConverter::new(provider.clone(), base_time.clone()))
+                .with_mapper(BaseTxInfoMapper::new(provider, base_time.clone()));
 
         let sequencer_client = if let Some(url) = sequencer_url {
             Some(

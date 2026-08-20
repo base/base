@@ -2,7 +2,6 @@
 
 use base_common_consensus::BasePrimitives;
 use base_common_rpc_types::{BaseHeaderResponse, BaseRpcTypes};
-use base_protocol::BaseTimeUpdateTx;
 use futures::StreamExt;
 use reth_chain_state::CanonStateSubscriptions;
 use reth_rpc_eth_api::{RpcConvert, RpcNodeCore, helpers::EthSubscriptions};
@@ -18,6 +17,7 @@ where
 {
     fn header_stream(&self) -> impl futures::Stream<Item = BaseHeaderResponse> + Send + Unpin {
         let converter = self.eth_api().converter();
+        let base_time = self.base_time_cache().clone();
         self.provider().canonical_state_stream().flat_map(move |new_chain| {
             let headers = new_chain
                 .committed()
@@ -29,12 +29,13 @@ where
                             error!(error = %err, "failed to convert canonical header");
                         })
                         .ok()?;
-                    header.timestamp_ms = BaseTimeUpdateTx::extract_timestamp_ms(
-                        &block.body().transactions,
+                    let timestamp_ms = base_time.insert_from_transactions(
+                        block.hash(),
                         block.number,
                         block.timestamp,
-                    )
-                    .ok();
+                        &block.body().transactions,
+                    );
+                    header.timestamp_ms = timestamp_ms;
                     Some(header)
                 })
                 .collect::<Vec<_>>();
