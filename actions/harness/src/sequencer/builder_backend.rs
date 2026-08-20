@@ -248,6 +248,16 @@ impl SequencerEngineClient for BuilderBackedEngineClient {
         })
     }
 
+    async fn discard_payload(
+        &self,
+        _payload_id: PayloadId,
+        _attributes: AttributesWithParent,
+    ) -> EngineClientResult<()> {
+        // The builder engine drops payload builds that are never resolved via `get_payload`, so a
+        // discarded build needs no active release here.
+        Ok(())
+    }
+
     async fn insert_unsafe_payload(
         &self,
         payload: BaseExecutionPayloadEnvelope,

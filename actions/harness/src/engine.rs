@@ -1001,6 +1001,17 @@ impl SequencerEngineClient for ActionEngineClient {
         Ok(BaseExecutionPayloadEnvelope { parent_beacon_block_root, execution_payload: payload })
     }
 
+    async fn discard_payload(
+        &self,
+        payload_id: PayloadId,
+        _attributes: AttributesWithParent,
+    ) -> Result<(), NodeEngineClientError> {
+        // Abandon the in-memory build without sealing or inserting it.
+        let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
+        let _ = Self::take_pending(&mut guard, payload_id);
+        Ok(())
+    }
+
     async fn insert_unsafe_payload(
         &self,
         payload: BaseExecutionPayloadEnvelope,

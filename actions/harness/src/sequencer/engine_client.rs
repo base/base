@@ -62,6 +62,14 @@ impl SequencerEngineClient for ActionSequencerEngineClient {
         self.inner.get_sealed_payload(payload_id, attributes).await
     }
 
+    async fn discard_payload(
+        &self,
+        payload_id: PayloadId,
+        attributes: AttributesWithParent,
+    ) -> Result<(), base_consensus_node::EngineClientError> {
+        self.inner.discard_payload(payload_id, attributes).await
+    }
+
     async fn insert_unsafe_payload(
         &self,
         payload: BaseExecutionPayloadEnvelope,
