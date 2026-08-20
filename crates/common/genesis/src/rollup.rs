@@ -486,6 +486,9 @@ impl RollupConfig {
     /// The fixed cadence once subsecond blocks activates.
     pub const NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS: u64 = 200;
 
+    /// The number of Denim blocks produced in one legacy two-second block interval.
+    pub const DENIM_GAS_PARAMETER_SCALING_FACTOR: u32 = 10;
+
     /// Helper method for deserializing a default granite channel timeout.
     #[cfg(feature = "serde")]
     pub const fn default_granite_channel_timeout() -> u64 {

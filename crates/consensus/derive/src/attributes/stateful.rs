@@ -144,6 +144,15 @@ where
             ));
         }
 
+        if self.rollup_cfg.is_first_denim_block(next_l2_time, l2_parent.block_info.timestamp) {
+            // Preserve gas throughput and base-fee responsiveness per unit of wall-clock time
+            // when Denim increases the number of blocks in each legacy block interval tenfold.
+            sys_config.gas_limit /= u64::from(RollupConfig::DENIM_GAS_PARAMETER_SCALING_FACTOR);
+            sys_config.eip1559_denominator = sys_config.eip1559_denominator.map(|denominator| {
+                denominator.saturating_mul(RollupConfig::DENIM_GAS_PARAMETER_SCALING_FACTOR)
+            });
+        }
+
         let mut upgrade_transactions: Vec<Bytes> = vec![];
         if self.rollup_cfg.is_ecotone_active(next_l2_time)
             && !self.rollup_cfg.is_ecotone_active(l2_parent.block_info.timestamp)
@@ -285,7 +294,8 @@ mod tests {
     use base_common_chains::Sepolia;
     use base_common_consensus::{BaseTxEnvelope, SystemAddresses};
     use base_common_genesis::{
-        BaseUpgradeConfig, ChainGenesis, SystemConfig, SystemConfigUpdate, UpgradeConfig,
+        BaseUpgradeConfig, ChainGenesis, SystemConfig, SystemConfigUpdate, SystemConfigUpdateKind,
+        UpgradeConfig,
     };
     use base_protocol::{BlockInfo, DepositDecodeError};
 
@@ -342,6 +352,28 @@ mod tests {
             status: Eip658Value::Eip658(true),
             logs: vec![generate_valid_log(), bad_dest_log, invalid_topic_log],
             ..Default::default()
+        }
+    }
+
+    fn generate_system_config_update_log(
+        address: Address,
+        kind: SystemConfigUpdateKind,
+        value: U256,
+    ) -> Log {
+        let mut data = vec![0_u8; 96];
+        data[24..32].copy_from_slice(&32_u64.to_be_bytes());
+        data[56..64].copy_from_slice(&32_u64.to_be_bytes());
+        data[64..96].copy_from_slice(&value.to_be_bytes::<32>());
+        Log {
+            address,
+            data: LogData::new_unchecked(
+                vec![
+                    SystemConfigUpdate::TOPIC,
+                    SystemConfigUpdate::EVENT_VERSION_0,
+                    B256::left_padding_from(&(kind as u64).to_be_bytes()),
+                ],
+                data.into(),
+            ),
         }
     }
 
@@ -611,6 +643,7 @@ mod tests {
             l2_chain_id: chain_id.into(),
             upgrades: UpgradeConfig {
                 ecotone_time: Some(102),
+                jovian_time: Some(0),
                 base: BaseUpgradeConfig { denim: Some(102), ..Default::default() },
                 ..Default::default()
             },
@@ -619,7 +652,16 @@ mod tests {
         let l1_cfg = Arc::new(Sepolia::l1_config());
         let l2_number = 2;
         let mut fetcher = TestSystemConfigL2Fetcher::default();
-        fetcher.insert(l2_number, SystemConfig::default());
+        fetcher.insert(
+            l2_number,
+            SystemConfig {
+                gas_limit: 30_000_000,
+                eip1559_denominator: Some(500),
+                eip1559_elasticity: Some(6),
+                min_base_fee: Some(100_000_000),
+                ..Default::default()
+            },
+        );
         let mut provider = TestChainProvider::default();
         let header = Header { timestamp, ..Default::default() };
         let hash = header.hash_slow();
@@ -645,6 +687,9 @@ mod tests {
 
         let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
         assert_eq!(payload.payload_attributes.timestamp, expected_timestamp);
+        assert_eq!(payload.gas_limit, Some(30_000_000));
+        assert_eq!(payload.eip_1559_params, Some([0, 0, 1, 244, 0, 0, 0, 6].into()));
+        assert_eq!(payload.min_base_fee, Some(100_000_000));
         let transactions = payload.transactions.unwrap();
         assert_eq!(transactions.len(), 2);
         let envelope = BaseTxEnvelope::decode_2718_exact(&transactions[1]).unwrap();
@@ -653,6 +698,89 @@ mod tests {
             BaseTimeUpdateTx::decode_calldata(&deposit.input).unwrap().timestamp_millis_part(),
             expected_millis_part
         );
+    }
+
+    #[tokio::test]
+    async fn test_denim_gas_transition_applies_after_l1_system_config_updates() {
+        let timestamp = 100;
+        let l2_number = 1;
+        let system_config_address = address!("1111111111111111111111111111111111111111");
+        let cfg = Arc::new(RollupConfig {
+            block_time: 2,
+            genesis: ChainGenesis { l2_time: 98, ..Default::default() },
+            l1_system_config_address: system_config_address,
+            upgrades: UpgradeConfig {
+                ecotone_time: Some(0),
+                jovian_time: Some(0),
+                base: BaseUpgradeConfig { denim: Some(102), ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        let mut fetcher = TestSystemConfigL2Fetcher::default();
+        fetcher.insert(
+            l2_number,
+            SystemConfig {
+                gas_limit: 300_000_000,
+                eip1559_denominator: Some(50),
+                eip1559_elasticity: Some(6),
+                min_base_fee: Some(100_000_000),
+                ..Default::default()
+            },
+        );
+
+        let origin_hash = B256::left_padding_from(&[0xBB]);
+        let header = Header { parent_hash: origin_hash, timestamp, ..Default::default() };
+        let epoch_hash = header.hash_slow();
+        let eip1559_params = (40_u64 << 32) | 8;
+        let receipt = Receipt {
+            status: Eip658Value::Eip658(true),
+            logs: vec![
+                generate_system_config_update_log(
+                    system_config_address,
+                    SystemConfigUpdateKind::GasLimit,
+                    U256::from(400_000_000),
+                ),
+                generate_system_config_update_log(
+                    system_config_address,
+                    SystemConfigUpdateKind::Eip1559,
+                    U256::from(eip1559_params),
+                ),
+                generate_system_config_update_log(
+                    system_config_address,
+                    SystemConfigUpdateKind::MinBaseFee,
+                    U256::from(200_000_000),
+                ),
+            ],
+            ..Default::default()
+        };
+        let mut provider = TestChainProvider::default();
+        provider.insert_header(epoch_hash, header);
+        provider.insert_receipts(epoch_hash, vec![receipt]);
+
+        let mut builder = StatefulAttributesBuilder::new(
+            Arc::clone(&cfg),
+            Arc::new(Sepolia::l1_config()),
+            fetcher,
+            provider,
+        );
+        let epoch = BlockNumHash { hash: epoch_hash, number: l2_number + 1 };
+        let l2_parent = L2BlockInfo {
+            block_info: BlockInfo {
+                hash: B256::ZERO,
+                number: l2_number,
+                timestamp,
+                parent_hash: epoch_hash,
+            },
+            l1_origin: BlockNumHash { hash: origin_hash, number: l2_number },
+            seq_num: 0,
+        };
+
+        let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
+        assert_eq!(payload.gas_limit, Some(40_000_000));
+        assert_eq!(payload.eip_1559_params, Some([0, 0, 1, 144, 0, 0, 0, 8].into()));
+        assert_eq!(payload.min_base_fee, Some(200_000_000));
     }
 
     #[tokio::test]
