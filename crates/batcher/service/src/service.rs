@@ -293,7 +293,7 @@ impl BatcherService {
             warn!(
                 error = %error,
                 op,
-                backoff_secs = delay.as_secs(),
+                backoff_ms = delay.as_millis(),
                 "startup RPC failed, backing off"
             );
         });
@@ -343,7 +343,7 @@ impl BatcherService {
                     Err(error) => {
                         warn!(
                             error = %error,
-                            backoff_secs = error_backoff.as_secs(),
+                            backoff_ms = error_backoff.as_millis(),
                             "optimism_syncStatus RPC failed during wait, backing off"
                         );
                         tokio::time::sleep(error_backoff).await;
