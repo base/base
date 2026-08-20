@@ -8,15 +8,19 @@ use crate::ShadowBlockStats;
 
 /// Gas-divergence tolerance: a shadow block whose gas is within this percentage
 /// of canonical is considered healthy.
-pub const HEALTH_GAS_DIFF_THRESHOLD_PCT: f64 = 50.0;
+pub(crate) const HEALTH_GAS_DIFF_THRESHOLD_PCT: f64 = 50.0;
 
 /// One pass/fail health check with a human-readable detail string.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HealthCheck {
+    /// Stable machine identifier for the check.
     pub id: &'static str,
+    /// Human-readable check name.
     pub label: &'static str,
+    /// Whether the check passed.
     pub passed: bool,
+    /// Human-readable detail (the compared shadow/canonical values).
     pub detail: String,
 }
 
@@ -26,9 +30,13 @@ pub struct HealthCheck {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ShadowBlockHealth {
+    /// Whether the canonical replacement was found; when false the checks could not run.
     pub reconciled: bool,
+    /// Number of checks that passed.
     pub passed: usize,
+    /// Total number of checks.
     pub total: usize,
+    /// Individual check results (empty when not reconciled).
     pub checks: Vec<HealthCheck>,
 }
 
@@ -36,6 +44,8 @@ pub struct ShadowBlockHealth {
 const CHECK_COUNT: usize = 4;
 
 impl ShadowBlockHealth {
+    /// Evaluates the health checks for a shadow block against its canonical
+    /// replacement. Returns a pending verdict (no checks) when `canonical` is absent.
     #[must_use]
     pub fn evaluate(shadow: &ShadowBlockStats, canonical: Option<&ShadowBlockStats>) -> Self {
         let Some(canonical) = canonical else {
