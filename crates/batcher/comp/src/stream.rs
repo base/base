@@ -109,8 +109,10 @@ impl CompressionStream {
                 // miniz `mz_compressBound`.
                 input_size.saturating_add(input_size / 16).saturating_add(67)
             }
-            CompressionBackend::Brotli(_) => BrotliEncoderMaxCompressedSize(input_size)
-                .saturating_add(CompressionAlgo::BROTLI_CHANNEL_VERSION as usize),
+            CompressionBackend::Brotli(_) => {
+                // Channel-version prefix byte.
+                BrotliEncoderMaxCompressedSize(input_size).saturating_add(1)
+            }
         }
     }
 
