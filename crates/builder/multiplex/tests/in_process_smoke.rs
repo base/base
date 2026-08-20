@@ -48,6 +48,12 @@ impl RunningNode {
         Self::launch(service_builder).await
     }
 
+    async fn launch_basic() -> eyre::Result<Self> {
+        let service_builder =
+            MultiplexingServiceBuilder::new(test_builder_config()).with_basic_only(true);
+        Self::launch(service_builder).await
+    }
+
     async fn launch<SB>(service_builder: SB) -> eyre::Result<Self>
     where
         SB: base_node_runner::PayloadServiceBuilder,
@@ -246,8 +252,15 @@ async fn multiplex_flashblocks_equivalence_and_shadow_dispatch() -> eyre::Result
         assert_eq!(MultiplexRouter::debug_basic_selected_count(), 0);
     }
 
+    let basic = RunningNode::launch_basic().await?;
+    let basic_provider = basic.provider().await?;
+    let basic_block =
+        build_new_block(&basic_provider, &basic.auth_ipc_path, build_timestamp).await?;
+    assert_eq!(baseline_block, basic_block);
+
     std::mem::forget(baseline);
     std::mem::forget(multiplex);
+    std::mem::forget(basic);
 
     Ok(())
 }

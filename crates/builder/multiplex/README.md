@@ -9,5 +9,7 @@ Runs Base flashblocks and Base basic payload builders in parallel behind a singl
 - selects flashblocks before Zenith and basic at and after Zenith,
 - routes reads (`BestPayload`, `PayloadTimestamp`, `Resolve`, `Subscribe`) to the builder
   selected for each payload,
+- with basic-only mode enabled, starts only the basic payload builder for operation after the
+  cutover is complete,
 - defaults cutover mode to disabled so startup behavior is identical to plain
   `FlashblocksServiceBuilder`.
