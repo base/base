@@ -116,6 +116,9 @@ impl EncoderConfig {
     /// derivation-version prefix.
     pub const MAX_BLOB_FRAME_SIZE: usize = PROTOCOL_MAX_BLOB_FRAME_SIZE;
 
+    /// Fusaka hard limit for blobs carried by one transaction.
+    pub const MAX_BLOBS_PER_TX: usize = 6;
+
     /// Validate the configuration, returning an error if any constraint is violated.
     ///
     /// This should be called at service startup before constructing a

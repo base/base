@@ -13,7 +13,7 @@ pub enum DriverEvent {
     Shutdown,
     /// New L2 unsafe block from the source.
     Block(Box<BaseBlock>),
-    /// Source (or admin) requested a force-flush of the current channel.
+    /// Source (or admin) requested a flush of the current channel.
     ///
     /// If the ack is set, it fires once every frame resulting from this flush has been
     /// encoded and handed to the tx manager.

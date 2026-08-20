@@ -16,8 +16,8 @@ use rand::{RngCore, SeedableRng, rngs::SmallRng};
 use tracing::{debug, warn};
 
 use crate::{
-    BatchPipeline, BatchSubmission, BatcherMetrics, DaType, DerivationReconciliation,
-    EncoderConfig, ReorgError, StepError, StepResult, SubmissionId,
+    BatchPipeline, BatchSubmission, BatcherMetrics, BlobPayload, DaType, DerivationReconciliation,
+    EncoderConfig, ReorgError, StepError, StepResult, SubmissionId, SubmissionPayload,
     channel::{ChannelAddOutcome, FrameState, OpenChannel, PendingRef, ReadyChannel},
 };
 
@@ -103,7 +103,7 @@ impl BatchEncoder {
             .sum()
     }
 
-    /// Step the encoder until idle, force-close the current channel, and return
+    /// Step the encoder until idle, flush the current channel, and return
     /// all frames from every available submission.
     ///
     /// Convenience wrapper for tests and one-shot batch pipelines that have
@@ -124,15 +124,20 @@ impl BatchEncoder {
         self.close_current_channel("force")?;
         let mut frames = Vec::new();
         while let Some(sub) = self.next_submission() {
-            frames.extend(sub.frames);
+            match sub.payload() {
+                SubmissionPayload::Blobs(blobs) => {
+                    frames.extend(blobs.iter().flat_map(|blob| blob.frames().iter().cloned()));
+                }
+                SubmissionPayload::Calldata(frame) => frames.push(Arc::clone(frame)),
+            }
         }
         Ok(frames)
     }
 
     /// Finalizes the current channel and publishes it to the submission queue.
     ///
-    /// Size and timeout transitions in `step`, plus explicit force-close calls,
-    /// share this path. Frames are built completely before `ready_channels` is
+    /// Size and timeout transitions in `step`, plus explicit [`BatchPipeline::flush`]
+    /// calls, share this path. Frames are built completely before `ready_channels` is
     /// mutated, so a framing error cannot publish a partial channel.
     /// `close_reason` is also recorded on the channel-close metric.
     fn close_current_channel(&mut self, close_reason: &'static str) -> Result<(), StepError> {
@@ -561,39 +566,25 @@ impl BatchPipeline for BatchEncoder {
             let frame_start = ready_range.start;
             let available = ready_range.len();
 
-            // Pack up to `target_num_frames` frames into a single L1 transaction.
+            // Calldata is one frame per L1 transaction. Blobs pack up to
+            // `target_num_frames` frames, each as its own blob in the same tx.
             let frame_count = if effective_da_type == DaType::Calldata {
                 if let Some(max_size) = self.config.max_l1_tx_size_bytes {
-                    // For calldata, accumulate frames until the next frame would push
-                    // the total calldata size over `max_l1_tx_size_bytes`.
-                    // Each frame serialises as: 1 (DERIVATION_VERSION_0) + 16 (channel
-                    // id) + 2 (frame number) + 4 (data length) + data + 1 (is_last).
-                    let mut total = 0usize;
-                    let mut n = 0usize;
-                    for frame in channel.frames[frame_start..].iter().take(available) {
-                        if n >= self.config.target_num_frames {
-                            break;
-                        }
-                        let frame_size = 24 + frame.data.len();
-                        if n > 0 && total + frame_size > max_size {
-                            break;
-                        }
-                        if n == 0 && frame_size > max_size {
-                            warn!(
-                                frame_size,
-                                max_l1_tx_size_bytes = max_size,
-                                "frame exceeds max_l1_tx_size_bytes; submitting anyway"
-                            );
-                        }
-                        total += frame_size;
-                        n += 1;
+                    let frame_size = 24 + channel.frames[frame_start].data.len();
+                    if frame_size > max_size {
+                        warn!(
+                            frame_size,
+                            max_l1_tx_size_bytes = max_size,
+                            "frame exceeds max_l1_tx_size_bytes; submitting anyway"
+                        );
                     }
-                    n.max(1)
-                } else {
-                    available.min(self.config.target_num_frames).max(1)
                 }
+                1
             } else {
-                available.min(self.config.target_num_frames).max(1)
+                available
+                    .min(self.config.target_num_frames)
+                    .min(EncoderConfig::MAX_BLOBS_PER_TX)
+                    .max(1)
             };
             // Clone the Arcs (pointer copies, not deep copies of frame data).
             let frames: Vec<_> = channel.frames[frame_start..frame_start + frame_count].to_vec();
@@ -614,11 +605,19 @@ impl BatchPipeline for BatchEncoder {
                 "dequeued frames for submission"
             );
 
-            return Some(BatchSubmission {
-                id,
-                channel_id: channel.id,
-                da_type: effective_da_type,
-                frames,
+            return Some(match effective_da_type {
+                DaType::Calldata => BatchSubmission::calldata(
+                    id,
+                    frames.into_iter().next().expect("calldata submissions carry one frame"),
+                ),
+                DaType::Blob => {
+                    let blobs = frames
+                        .into_iter()
+                        .map(|frame| BlobPayload::new(vec![frame]).expect("one frame"))
+                        .collect();
+                    BatchSubmission::blobs(id, blobs)
+                        .expect("non-empty blob submission within the transaction limit")
+                }
             });
         }
 
@@ -686,14 +685,12 @@ impl BatchPipeline for BatchEncoder {
         );
     }
 
-    fn force_close_channel(&mut self) {
-        debug!("force-closing current channel");
-        if self.deferred_step_error.is_some() {
-            return;
+    fn flush(&mut self) -> Result<(), StepError> {
+        debug!("flushing current channel");
+        if let Some(error) = self.deferred_step_error.take() {
+            return Err(error);
         }
-        if let Err(error) = self.close_current_channel("force") {
-            self.defer_step_error(error, "force_close_channel");
-        }
+        self.close_current_channel("force")
     }
 
     fn advance_l1_head(&mut self, l1_block: u64) {
@@ -904,7 +901,7 @@ mod tests {
             encoder.add_block(block).unwrap();
             assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
         }
-        encoder.force_close_channel();
+        encoder.flush().unwrap();
         for submission in drain_submissions(&mut encoder) {
             encoder.confirm(submission.id, 100);
         }
@@ -970,7 +967,7 @@ mod tests {
         assert!(encoder.current_channel.is_some());
         assert_eq!(encoder.da_backlog_bytes(), queued_backlog);
 
-        encoder.force_close_channel();
+        encoder.flush().unwrap();
         assert!(encoder.current_channel.is_none());
         assert!(!encoder.ready_channels.is_empty());
         assert!(encoder.da_backlog_bytes() > 0);
@@ -1242,7 +1239,7 @@ mod tests {
         };
 
         // Each submission must contain between 1 and target_num_frames frames.
-        assert!(!sub.frames.is_empty() && sub.frames.len() <= 2);
+        assert!(sub.frame_count() > 0 && sub.frame_count() <= 2);
     }
 
     /// A requeue makes every frame in the submission ready again.
@@ -1265,14 +1262,14 @@ mod tests {
 
         let Some(sub) = encoder.next_submission() else { return };
         let id = sub.id;
-        let submitted_frame_count = sub.frames.len();
+        let submitted_frame_count = sub.frame_count();
 
         encoder.requeue(id);
 
         let resub = encoder.next_submission();
         assert!(resub.is_some(), "requeued frames must be available again");
         assert_eq!(
-            resub.unwrap().frames.len(),
+            resub.unwrap().frame_count(),
             submitted_frame_count,
             "requeued submission must contain the same number of frames"
         );
@@ -1283,7 +1280,7 @@ mod tests {
         let mut encoder = encoder_with_confirmation_timeout(100);
         encoder.add_block(make_block_with_user_tx(B256::ZERO)).unwrap();
         assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
-        encoder.force_close_channel();
+        encoder.flush().unwrap();
 
         let first = encoder.next_submission().unwrap();
         let second = encoder.next_submission().unwrap();
@@ -1296,7 +1293,7 @@ mod tests {
         );
 
         let retry = encoder.next_submission().unwrap();
-        assert!(Arc::ptr_eq(&retry.frames[0], &first.frames[0]));
+        assert!(Arc::ptr_eq(retry.first_frame().unwrap(), first.first_frame().unwrap()));
         assert_eq!(
             &encoder.ready_channels[0].frame_states[..2],
             &[FrameState::Pending, FrameState::Confirmed]
@@ -1309,7 +1306,7 @@ mod tests {
 
         encoder.add_block(make_block_with_user_tx(B256::ZERO)).unwrap();
         assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
-        encoder.force_close_channel();
+        encoder.flush().unwrap();
 
         let original_channel_id = encoder.ready_channels[0].id;
         let submissions = drain_submissions(&mut encoder);
@@ -1336,12 +1333,13 @@ mod tests {
         assert_eq!(encoder.blocks.len(), 1, "stale late confirmations must be no-ops");
 
         assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
-        encoder.force_close_channel();
+        encoder.flush().unwrap();
 
         let replay_submissions = drain_submissions(&mut encoder);
         assert!(!replay_submissions.is_empty(), "replay must emit a fresh channel");
         assert_ne!(
-            replay_submissions[0].channel_id, original_channel_id,
+            replay_submissions[0].first_frame().unwrap().id,
+            original_channel_id,
             "replay must use a fresh channel id"
         );
 
@@ -1363,7 +1361,7 @@ mod tests {
         let mut encoder = encoder_with_confirmation_timeout(2);
         encoder.add_block(make_block_with_user_tx(B256::ZERO)).unwrap();
         assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
-        encoder.force_close_channel();
+        encoder.flush().unwrap();
 
         for submission in drain_submissions(&mut encoder) {
             encoder.confirm(submission.id, 1);
@@ -1384,7 +1382,7 @@ mod tests {
         let block_hash = block.header.hash_slow();
         encoder.add_block(block).unwrap();
         assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
-        encoder.force_close_channel();
+        encoder.flush().unwrap();
 
         for submission in drain_submissions(&mut encoder) {
             encoder.confirm(submission.id, 1_000);
@@ -1421,7 +1419,7 @@ mod tests {
         let mut encoder = encoder_with_confirmation_timeout(2);
         encoder.add_block(make_block_with_user_tx(B256::ZERO)).unwrap();
         assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
-        encoder.force_close_channel();
+        encoder.flush().unwrap();
 
         let submissions = drain_submissions(&mut encoder);
         assert!(submissions.len() >= 2);
@@ -1442,7 +1440,7 @@ mod tests {
 
         encoder.add_block(make_block_with_user_tx(B256::ZERO)).unwrap();
         assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
-        encoder.force_close_channel();
+        encoder.flush().unwrap();
 
         let submissions = drain_submissions(&mut encoder);
         assert!(
@@ -1617,7 +1615,7 @@ mod tests {
         assert_eq!(open.blocks_added, 1);
         assert_eq!(encoder.blocks.len(), 1);
 
-        encoder.force_close_channel();
+        encoder.flush().unwrap();
         for submission in drain_submissions(&mut encoder) {
             encoder.confirm(submission.id, 1);
         }
@@ -1772,12 +1770,12 @@ mod tests {
                 break;
             }
         }
-        encoder.force_close_channel();
+        encoder.flush().unwrap();
 
         // Each submission contains exactly 1 frame (target_num_frames=1).
         let mut count = 0;
         while let Some(sub) = encoder.next_submission() {
-            assert_eq!(sub.frames.len(), 1, "calldata submission must have exactly 1 frame");
+            assert_eq!(sub.frame_count(), 1, "calldata submission must have exactly 1 frame");
             count += 1;
         }
         assert!(count >= 1, "expected at least one submission");
@@ -1821,16 +1819,16 @@ mod tests {
                 break;
             }
         }
-        encoder.force_close_channel();
+        encoder.flush().unwrap();
 
         encoder.set_blob_override(true);
         let sub = encoder.next_submission().expect("submission while override active");
-        assert_eq!(sub.da_type, DaType::Blob, "override must flip da_type to Blob");
+        assert_eq!(sub.da_type(), DaType::Blob, "override must flip da_type to Blob");
         encoder.requeue(sub.id);
 
         encoder.set_blob_override(false);
         let sub = encoder.next_submission().expect("submission after override cleared");
-        assert_eq!(sub.da_type, DaType::Calldata, "configured calldata da_type must return");
+        assert_eq!(sub.da_type(), DaType::Calldata, "configured calldata da_type must return");
     }
 
     /// `set_blob_override(true)` is a no-op for blob-configured encoders —

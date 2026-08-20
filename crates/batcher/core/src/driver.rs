@@ -273,18 +273,18 @@ where
                         in_flight = %self.submissions.in_flight_count(),
                         "batcher shutting down, draining in-flight submissions"
                     );
-                    self.pipeline.force_close_channel();
+                    self.pipeline.flush()?;
                     shutting_down = true;
                 }
                 DriverEvent::Block(b) => {
                     self.on_block(b);
                 }
                 DriverEvent::Flush(ack) => {
-                    self.pipeline.force_close_channel();
+                    self.pipeline.flush()?;
                     if let Some(ack) = ack {
                         self.pending_flush_acks.push(ack);
                     }
-                    debug!("flush signal received, force-closed channel");
+                    debug!("flush signal received, closed channel");
                 }
                 DriverEvent::Reorg => {
                     warn!("L2 reorg detected, resetting pipeline and catching up from safe head");
@@ -611,12 +611,14 @@ mod tests {
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
     use alloy_primitives::{Address, B256, Bloom, Bytes};
     use alloy_rpc_types_eth::TransactionReceipt;
-    use base_batcher_encoder::{BatchSubmission, DaType, FrameEncoder, SubmissionId};
+    use base_batcher_encoder::{
+        BatchSubmission, BlobPayload, FrameEncoder, SubmissionId, SubmissionPayload,
+    };
     use base_batcher_source::{
         L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource,
     };
     use base_blobs::{BlobDecoder, BlobEncoder};
-    use base_protocol::{BlockInfo, ChannelId, Frame};
+    use base_protocol::{BlockInfo, Frame};
     use base_runtime::{
         Cancellation, Clock, Spawner,
         deterministic::{Config, Runner},
@@ -723,20 +725,20 @@ mod tests {
 
     fn blob_filling_submission_with_frames(id: u64, frame_count: usize) -> BatchSubmission {
         let data_len = BlobEncoder::BLOB_MAX_DATA_SIZE - 1 - BlobEncoder::FRAME_OVERHEAD;
-        BatchSubmission {
-            id: SubmissionId(id),
-            channel_id: ChannelId::default(),
-            da_type: DaType::Blob,
-            frames: (0..frame_count)
+        BatchSubmission::blobs(
+            SubmissionId(id),
+            (0..frame_count)
                 .map(|number| {
-                    Arc::new(Frame {
+                    BlobPayload::new(vec![Arc::new(Frame {
                         number: number.try_into().unwrap(),
                         data: vec![0u8; data_len],
                         ..Frame::default()
-                    })
+                    })])
+                    .expect("one frame")
                 })
                 .collect(),
-        }
+        )
+        .expect("one or more blob payloads")
     }
 
     const fn stub_receipt(block_number: u64) -> TransactionReceipt {
@@ -1059,12 +1061,19 @@ mod tests {
         Runner::start(Config::seeded(0), |ctx| async move {
             let recorded = Arc::new(Mutex::new(Recorded::default()));
             let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-            pipeline.submissions.push_back(BatchSubmission {
-                id: SubmissionId(0),
-                channel_id: ChannelId::default(),
-                da_type: DaType::Blob,
-                frames: vec![Arc::new(Frame { data: vec![0u8; OVERSIZED], ..Frame::default() })],
-            });
+            pipeline.submissions.push_back(
+                BatchSubmission::blobs(
+                    SubmissionId(0),
+                    vec![
+                        BlobPayload::new(vec![Arc::new(Frame {
+                            data: vec![0u8; OVERSIZED],
+                            ..Frame::default()
+                        })])
+                        .expect("one frame"),
+                    ],
+                )
+                .expect("one blob"),
+            );
 
             let handle = ctx.spawn(
                 DriverFixture::build(
@@ -1143,8 +1152,13 @@ mod tests {
             let candidates = Arc::new(Mutex::new(Vec::new()));
             let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
             let submission = blob_filling_submission_with_frames(0, 3);
-            let expected_blob_payloads: Vec<_> =
-                submission.frames.iter().map(|frame| FrameEncoder::to_calldata(frame)).collect();
+            let SubmissionPayload::Blobs(payloads) = submission.payload() else {
+                panic!("helper must create blob payloads");
+            };
+            let expected_blob_payloads: Vec<_> = payloads
+                .iter()
+                .map(|payload| FrameEncoder::to_calldata(&payload.frames()[0]))
+                .collect();
             pipeline.submissions.push_back(submission);
 
             let handle = ctx.spawn(

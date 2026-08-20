@@ -137,8 +137,8 @@ fn test_paused_drops_block_and_flush_events() {
             fn requeue(&mut self, id: SubmissionId) {
                 self.inner.requeue(id);
             }
-            fn force_close_channel(&mut self) {
-                self.inner.force_close_channel();
+            fn flush(&mut self) -> Result<(), StepError> {
+                self.inner.flush()
             }
             fn advance_l1_head(&mut self, n: u64) {
                 self.inner.advance_l1_head(n);

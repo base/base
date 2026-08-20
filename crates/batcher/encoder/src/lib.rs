@@ -8,19 +8,15 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod submission;
-pub use submission::{BatchSubmission, DaType, FrameEncoder, SubmissionId};
-
-mod step;
-pub use step::{StepError, StepResult};
-
-mod reorg;
-pub use reorg::ReorgError;
+pub use submission::{
+    BatchSubmission, BlobPayload, DaType, FrameEncoder, SubmissionId, SubmissionPayload,
+};
 
 mod config;
 pub use config::{CompressionAlgo, EncoderConfig, EncoderConfigError};
 
 mod pipeline;
-pub use pipeline::{BatchPipeline, DerivationReconciliation};
+pub use pipeline::{BatchPipeline, DerivationReconciliation, ReorgError, StepError, StepResult};
 
 mod channel;
 pub use channel::{
