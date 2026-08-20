@@ -44,8 +44,10 @@ const DERIVATION_PROVIDER_CACHE_SIZE: usize = 1024;
 
 #[derive(Debug)]
 enum ConfiguredEngineReceiver<E: EngineClient + 'static> {
-    Validator(ValidatorEngineRequestHandler<E, QueuedEngineDerivationClient>),
-    Sequencer(SequencerEngineRequestCoordinator<E, QueuedEngineDerivationClient>),
+    // Both handlers are large; box them so the enum doesn't carry the size of the largest variant
+    // inline (clippy::large_enum_variant).
+    Validator(Box<ValidatorEngineRequestHandler<E, QueuedEngineDerivationClient>>),
+    Sequencer(Box<SequencerEngineRequestCoordinator<E, QueuedEngineDerivationClient>>),
 }
 
 impl<E: EngineClient + 'static> EngineRequestReceiver for ConfiguredEngineReceiver<E> {
@@ -303,17 +305,17 @@ impl RollupNode {
         );
 
         let engine_handler = if mode.is_validator() {
-            ConfiguredEngineReceiver::Validator(ValidatorEngineRequestHandler::new(
+            ConfiguredEngineReceiver::Validator(Box::new(ValidatorEngineRequestHandler::new(
                 engine_processor,
-            ))
+            )))
         } else {
-            ConfiguredEngineReceiver::Sequencer(SequencerEngineRequestCoordinator::new(
+            ConfiguredEngineReceiver::Sequencer(Box::new(SequencerEngineRequestCoordinator::new(
                 engine_processor,
                 shadow_sequencer,
                 conductor,
                 self.sequencer_config.sequencer_stopped,
                 unsafe_head_tx,
-            ))
+            )))
         };
         let engine_actor = EngineActor::new(cancellation_token, engine_request_rx, engine_handler);
 
