@@ -202,7 +202,7 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::*;
-    use crate::runner::{InclusionSource, SentTransaction};
+    use crate::runner::{InclusionSource, SentTransaction, SubmitCohort};
 
     #[tokio::test]
     async fn matching_flashblock_publishes_early_refill_pulse() {
@@ -215,6 +215,7 @@ mod tests {
             from: sender,
             estimated_gas: 21_000,
             measured: true,
+            cohort: SubmitCohort::Plain,
         }]);
         let (pulse_tx, mut pulse_rx) = mpsc::channel(1);
         let watcher = FlashblockWatcher::new(
