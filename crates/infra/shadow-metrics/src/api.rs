@@ -14,7 +14,7 @@ use base_shadow_indexer_db::{ShadowBlockRepo, ShadowBlockRow};
 use serde::{Deserialize, Serialize};
 use tower_http::cors::CorsLayer;
 
-use crate::{ShadowBlockStats, ShadowMetricsStore};
+use crate::{ShadowBlockHealth, ShadowBlockStats, ShadowMetricsStore};
 
 /// Default page size for the block list.
 const DEFAULT_LIMIT: i64 = 50;
@@ -44,6 +44,7 @@ pub fn api_router(store: Option<ShadowMetricsStore>) -> Router {
         .route("/blocks/{id}/tx/{index}", get(get_tx_by_index))
         .route("/tx/{hash}", get(get_tx_by_hash))
         .route("/shadow-blocks", get(list_shadow_blocks))
+        .route("/shadow-blocks/{id}", get(get_shadow_block))
         .layer(CorsLayer::permissive())
         .with_state(ApiState { store })
 }
@@ -104,6 +105,7 @@ struct ShadowBlockSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     canonical_non_deposit_tx_count: Option<usize>,
     shadow_priority_fee_inversions: usize,
+    health: ShadowBlockHealth,
 }
 
 /// Paginated shadow block list.
@@ -248,6 +250,30 @@ async fn get_block(
     Ok(Json(block_detail(&row)))
 }
 
+/// A single reorged-out shadow block paired with its canonical replacement,
+/// including the health verdict. Addressed by shadow block hash.
+async fn get_shadow_block(
+    State(state): State<ApiState>,
+    Path(id): Path<String>,
+) -> Result<Json<ShadowBlockSummary>, ApiError> {
+    let BlockId::Hash(hash) = parse_block_id(&id)? else {
+        return Err(ApiError::BadRequest);
+    };
+
+    let repo = state.repo()?;
+    let row = repo.get_by_block_hash(hash.as_slice()).await?.ok_or(ApiError::NotFound)?;
+    if !row.reorged_out || row.canonical_hash.is_none() {
+        return Err(ApiError::NotFound);
+    }
+
+    let canonical = match row.canonical_hash.as_ref() {
+        Some(hash) => repo.get_by_block_hash(hash).await?,
+        None => None,
+    };
+
+    Ok(Json(shadow_block_summary(&row, canonical.as_ref())))
+}
+
 async fn get_tx_by_index(
     State(state): State<ApiState>,
     Path((id, index)): Path<(String, usize)>,
@@ -319,6 +345,8 @@ fn shadow_block_summary(row: &ShadowBlockRow, canonical: Option<&ShadowBlockRow>
     let tx_count_diff =
         canonical.as_ref().map(|c| shadow.transaction_count as i64 - c.transaction_count as i64);
 
+    let health = ShadowBlockHealth::evaluate(&shadow, canonical.as_ref());
+
     ShadowBlockSummary {
         number: row.number,
         hash: hex::encode_prefixed(&row.hash),
@@ -336,6 +364,7 @@ fn shadow_block_summary(row: &ShadowBlockRow, canonical: Option<&ShadowBlockRow>
         shadow_priority_fee_inversions: shadow.priority_fee_inversions,
         canonical_builder_version: canonical.as_ref().map(|c| c.builder_version.clone()),
         shadow_builder_version: shadow.builder_version,
+        health,
     }
 }
 
@@ -646,5 +675,16 @@ mod tests {
 
         assert_eq!(summary.gas_diff_abs, Some(21_000));
         assert!(summary.gas_diff_pct.is_none());
+    }
+
+    #[test]
+    fn shadow_block_summary_carries_health_verdict() {
+        let shadow = sample_row_full(5, 30_000, "shadow", true, Some(vec![0xcd; 32]));
+        let canonical = sample_row_full(5, 20_000, "canonical", false, None);
+        let summary = shadow_block_summary(&shadow, Some(&canonical));
+
+        assert!(summary.health.reconciled);
+        assert_eq!(summary.health.total, 4);
+        assert_eq!(summary.health.passed, 4);
     }
 }

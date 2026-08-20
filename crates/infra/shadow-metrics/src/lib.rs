@@ -10,6 +10,9 @@
 mod api;
 pub use api::api_router;
 
+mod health;
+pub use health::{HealthCheck, ShadowBlockHealth};
+
 mod metrics;
 pub use metrics::ShadowMetrics;
 
