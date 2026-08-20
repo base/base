@@ -35,8 +35,11 @@ pub struct RegistrarConfig {
     pub l1_rpc_url: Url,
     /// `TEEProverRegistry` contract address on L1.
     pub tee_prover_registry_address: Address,
-    /// AWS ALB target group ARN for prover instance discovery.
-    pub target_group_arn: String,
+    /// AWS ALB target group ARNs for prover instance discovery.
+    ///
+    /// Discovery unions instances across every ARN so orphan cleanup does not
+    /// deregister a detached fleet.
+    pub target_group_arns: Vec<String>,
     /// AWS region.
     pub aws_region: String,
     /// JSON-RPC port to poll on each prover instance.
@@ -74,7 +77,7 @@ impl fmt::Debug for RegistrarConfig {
         f.debug_struct("RegistrarConfig")
             .field("l1_rpc_url", &self.l1_rpc_url.origin().unicode_serialization())
             .field("tee_prover_registry_address", &self.tee_prover_registry_address)
-            .field("target_group_arn", &self.target_group_arn)
+            .field("target_group_arns", &self.target_group_arns)
             .field("aws_region", &self.aws_region)
             .field("prover_port", &self.prover_port)
             .field("signing", &self.signing)
@@ -174,7 +177,7 @@ impl RegistrarConfig {
             .load()
             .await;
         let discovery =
-            AwsTargetGroupDiscovery::new(&aws_config, self.target_group_arn, self.prover_port);
+            AwsTargetGroupDiscovery::new(&aws_config, self.target_group_arns, self.prover_port);
 
         let registry = TEEProverRegistryContractClient::new(
             self.tee_prover_registry_address,
@@ -270,8 +273,9 @@ mod tests {
         let config = RegistrarConfig {
             l1_rpc_url: Url::parse(&format!("https://mainnet.infura.io/v3/{api_key}")).unwrap(),
             tee_prover_registry_address: TEST_REGISTRY_ADDRESS,
-            target_group_arn: "arn:aws:elasticloadbalancing:us-east-1:123:targetgroup/test/abc"
-                .to_string(),
+            target_group_arns: vec![
+                "arn:aws:elasticloadbalancing:us-east-1:123:targetgroup/test/abc".to_string(),
+            ],
             aws_region: "us-east-1".to_string(),
             prover_port: 8000,
             signing: SignerConfig::local(

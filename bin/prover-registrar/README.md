@@ -2,7 +2,7 @@
 
 Automated TEE prover signer registration service.
 
-Discovers TEE prover instances via an AWS ALB target group, validates their Nitro
+Discovers TEE prover instances via AWS ALB target groups, validates their Nitro
 attestations, generates P-384 inverse hints, and submits certificate-cache and
 signer-registration transactions onchain.
 

@@ -10,7 +10,7 @@ use crate::{ProverInstance, Result};
 ///
 /// The primary implementation is
 /// [`AwsTargetGroupDiscovery`](crate::AwsTargetGroupDiscovery), which queries
-/// an ALB target group via the AWS SDK. Other implementations (e.g., a static
+/// one or more ALB target groups via the AWS SDK. Other implementations (e.g., a static
 /// list for local testing) can be substituted.
 pub trait InstanceDiscovery: Send + Sync {
     /// Return the current set of prover instances with their health status.
