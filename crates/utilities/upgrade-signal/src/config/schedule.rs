@@ -240,17 +240,14 @@ impl UpgradeSignalConfig {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{B256, Bytes, U256, address, hex};
-    use alloy_rpc_types_eth::Block;
-    use alloy_sol_types::SolCall;
+    use alloy_primitives::{U256, address};
     use base_common_genesis::BaseUpgrade;
-    use httpmock::prelude::*;
     use rstest::rstest;
 
     use super::*;
     use crate::{
-        contract::IProtocolVersions,
         state::{UpgradeSignal, UpgradeSignalSchedule},
+        test_utils::MockL1,
     };
 
     fn upgrade(upgrade_id: &str) -> BaseUpgrade {
@@ -264,55 +261,6 @@ mod tests {
         config
     }
 
-    /// Serves a block plus a `getSchedule` / `minimumProtocolVersion` pair over a mock L1 endpoint.
-    ///
-    /// The two contract calls are matched by ABI selector so a startup read observes the exact
-    /// `getSchedule` return supplied here.
-    async fn schedule_server(getschedule_return: Vec<u8>) -> MockServer {
-        let server = MockServer::start_async().await;
-        let block_hash = B256::repeat_byte(1);
-        let mut block: Block = Block::default();
-        block.header.hash = block_hash;
-        block.header.inner.number = 42;
-        server
-            .mock_async(|when, then| {
-                when.method(POST).path("/").body_includes("eth_getBlockByNumber");
-                then.json_body(serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": 0,
-                    "result": block,
-                }));
-            })
-            .await;
-        let getschedule_return = Bytes::from(getschedule_return);
-        server
-            .mock_async(|when, then| {
-                when.method(POST)
-                    .path("/")
-                    .body_includes(hex::encode(IProtocolVersions::getScheduleCall::SELECTOR));
-                then.json_body(serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": 0,
-                    "result": getschedule_return,
-                }));
-            })
-            .await;
-        let minimum_protocol_version = Bytes::from(vec![0_u8; 32]);
-        server
-            .mock_async(|when, then| {
-                when.method(POST).path("/").body_includes(hex::encode(
-                    IProtocolVersions::minimumProtocolVersionCall::SELECTOR,
-                ));
-                then.json_body(serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": 0,
-                    "result": minimum_protocol_version,
-                }));
-            })
-            .await;
-        server
-    }
-
     #[tokio::test]
     async fn startup_read_returns_present_schedule() {
         // ABI-encode a `uint64[]` with a single zeroed entry (offset, length, one word). A zero
@@ -320,7 +268,7 @@ mod tests {
         let mut single_entry = vec![0_u8; 96];
         single_entry[31] = 32;
         single_entry[63] = 1;
-        let server = schedule_server(single_entry).await;
+        let server = MockL1::schedule_server(single_entry).await;
         let config = UpgradeSignalConfig::new(Address::ZERO);
         let reader = config.reader(server.url("/").parse().unwrap()).unwrap();
 
@@ -337,6 +285,29 @@ mod tests {
         assert_eq!(schedule.signals.len(), 1);
         assert_eq!(schedule.signals[0].upgrade_id, BaseUpgrade::Regolith);
         assert_eq!(schedule.signals[0].activation_timestamp, 0);
+    }
+
+    #[tokio::test]
+    async fn startup_read_tolerates_empty_schedule() {
+        // ABI-encode an empty `uint64[]` (offset word, zero length). The startup path surfaces the
+        // empty read as `EmptySchedule` and tolerates it, yielding `Ok(None)` so the node boots on
+        // the base configuration instead of failing to launch or wiping runtime overrides.
+        let mut empty = vec![0_u8; 64];
+        empty[31] = 32;
+        let server = MockL1::schedule_server(empty).await;
+        let config = UpgradeSignalConfig::new(Address::ZERO);
+        let reader = config.reader(server.url("/").parse().unwrap()).unwrap();
+
+        let schedule = config
+            .read_optional_startup_schedule(
+                &reader,
+                "startup",
+                &[UpgradeSignalMetricLayer::Consensus],
+            )
+            .await
+            .unwrap();
+
+        assert!(schedule.is_none());
     }
 
     #[test]

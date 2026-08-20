@@ -15,7 +15,7 @@ use base_retry::RetryConfig;
 use futures::future::try_join;
 use reqwest::Client;
 use tower::{ServiceExt, service_fn};
-use tracing::warn;
+use tracing::{debug, warn};
 use url::Url;
 
 use crate::{
@@ -328,18 +328,20 @@ impl AlloyUpgradeSignalReader {
         Ok(schedule)
     }
 
-    /// Reads the schedule, retrying transient failures with bounded exponential jitter before
-    /// giving up.
+    /// Reads the schedule, retrying transient provider failures with bounded exponential jitter
+    /// before giving up.
     ///
     /// Used on the startup path, where a single transient L1 error should not abort node launch
     /// outright; after `max_attempts` failures the last error is returned (fail-fast). This future
     /// is cancellation-safe: dropping it during shutdown cancels an in-flight HTTP request or
     /// retry sleep.
     ///
-    /// [`UpgradeSignalError::EmptySchedule`] is retried alongside provider errors: a freshly
-    /// deployed or just-initialized contract can briefly report an empty schedule at the finalized
-    /// tag, so a few retries let a real schedule settle before callers fall back. Decode and
-    /// protocol-version errors remain fail-fast.
+    /// Only [`UpgradeSignalError::Provider`] errors are retried. An empty schedule is not a
+    /// transient flake at the finalized or safe tags: the tag lags the initializing transaction by
+    /// epochs, far longer than the retry budget, so retrying would only delay startup and multiply
+    /// RPC calls without changing the outcome. Empty reads are surfaced immediately and left for the
+    /// caller to tolerate (startup) or reject (admin refresh). Decode and protocol-version errors
+    /// remain fail-fast.
     pub async fn read_schedule_with_retries(
         &self,
         max_attempts: u32,
@@ -354,12 +356,7 @@ impl AlloyUpgradeSignalReader {
 
         (|| self.read_schedule(metrics_layers))
             .retry(retry_config.to_backoff_builder())
-            .when(|error| {
-                matches!(
-                    error,
-                    UpgradeSignalError::Provider { .. } | UpgradeSignalError::EmptySchedule
-                )
-            })
+            .when(|error| matches!(error, UpgradeSignalError::Provider { .. }))
             // Backon adds jitter after enforcing `max_delay`, so cap the yielded delay too.
             .adjust(|_, retry_delay| retry_delay.map(|delay| delay.min(max_backoff)))
             .notify(|error, retry_delay| {
@@ -378,14 +375,22 @@ impl AlloyUpgradeSignalReader {
 
     /// Reads the schedule, tolerating read failures.
     ///
-    /// Records `l1_read_errors_total` and returns `None` when the read fails. Intended for the live
-    /// metrics poller, which must not abort the node because a schedule read failed.
+    /// Returns `None` when the read fails, recording `l1_read_errors_total`, or when the contract
+    /// reports an empty schedule, which is not a read failure and so records no metric. Intended for
+    /// the live metrics poller, which must not abort the node because a schedule read failed.
     pub async fn read_schedule_tolerant(
         &self,
         metrics_layers: &[UpgradeSignalMetricLayer],
     ) -> Option<UpgradeSignalSchedule> {
         match self.read_schedule(metrics_layers).await {
             Ok(schedule) => Some(schedule),
+            Err(UpgradeSignalError::EmptySchedule) => {
+                debug!(
+                    target: "upgrade_signal",
+                    "L1 upgrade signal contract reported an empty schedule; skipping live apply"
+                );
+                None
+            }
             Err(error) => {
                 warn!(
                     target: "upgrade_signal",
@@ -406,6 +411,7 @@ mod tests {
     use httpmock::prelude::*;
 
     use super::*;
+    use crate::test_utils::MockL1;
 
     fn signals(schedule: &UpgradeSignalSchedule) -> Vec<(BaseUpgrade, u64)> {
         schedule
@@ -560,48 +566,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_empty_schedule_read_without_recording_read_error() {
-        let server = MockServer::start_async().await;
-        let block_hash = B256::repeat_byte(1);
-        let mut block: Block = Block::default();
-        block.header.hash = block_hash;
-        block.header.inner.number = 42;
-        server
-            .mock_async(|when, then| {
-                when.method(POST).path("/").body_includes("eth_getBlockByNumber");
-                then.json_body(serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": 0,
-                    "result": block,
-                }));
-            })
-            .await;
-        let empty_schedule = Bytes::from(schedule_abi_header(U256::ZERO));
-        server
-            .mock_async(|when, then| {
-                when.method(POST)
-                    .path("/")
-                    .body_includes(hex::encode(IProtocolVersions::getScheduleCall::SELECTOR));
-                then.json_body(serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": 0,
-                    "result": empty_schedule,
-                }));
-            })
-            .await;
-        let minimum_protocol_version = Bytes::from(vec![0_u8; 32]);
-        server
-            .mock_async(|when, then| {
-                when.method(POST).path("/").body_includes(hex::encode(
-                    IProtocolVersions::minimumProtocolVersionCall::SELECTOR,
-                ));
-                then.json_body(serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": 0,
-                    "result": minimum_protocol_version,
-                }));
-            })
-            .await;
+    async fn rejects_empty_schedule_read() {
+        let server = MockL1::schedule_server(schedule_abi_header(U256::ZERO)).await;
         let reader = AlloyUpgradeSignalReader::new(
             server.url("/").parse().unwrap(),
             Address::ZERO,
@@ -615,7 +581,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn retries_empty_schedule_reads() {
+    async fn does_not_retry_empty_schedule_reads() {
         let server = MockServer::start_async().await;
         let block_hash = B256::repeat_byte(1);
         let mut block: Block = Block::default();
@@ -669,8 +635,9 @@ mod tests {
             .await
             .unwrap_err();
 
+        // An empty read is surfaced immediately: it is not a transient flake, so it is not retried.
         assert!(matches!(error, UpgradeSignalError::EmptySchedule));
-        schedule_mock.assert_calls_async(3).await;
+        schedule_mock.assert_calls_async(1).await;
     }
 
     #[tokio::test]
