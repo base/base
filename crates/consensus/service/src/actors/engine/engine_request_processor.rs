@@ -10,7 +10,11 @@ use base_consensus_engine::{
     ForkchoiceCheckpointReader, InsertTask, InsertTaskResult, NoopForkchoiceCheckpointReader,
 };
 use base_protocol::L2BlockInfo;
-use tokio::{sync::mpsc, task::JoinHandle};
+use derive_more::Debug;
+use tokio::{
+    sync::{mpsc, oneshot},
+    task::JoinHandle,
+};
 
 use crate::{
     CheckpointWriter, EngineActorRequest, EngineClientError, EngineDerivationClient, EngineError,
@@ -71,6 +75,9 @@ where
     checkpoint_reader: Arc<dyn ForkchoiceCheckpointReader>,
     /// Writes checkpointed forkchoice state after engine state changes.
     checkpoint_writer: Arc<dyn CheckpointWriter>,
+    /// Oneshot senders that complete after the next drain that runs a derived consolidate task.
+    #[debug(skip)]
+    pending_derived_confirmations: Vec<oneshot::Sender<L2BlockInfo>>,
 }
 
 impl<EngineClient_, DerivationClient> EngineProcessor<EngineClient_, DerivationClient>
@@ -101,6 +108,69 @@ where
     /// Enqueues an engine task.
     pub fn enqueue(&mut self, task: EngineTask<EngineClient_>) {
         self.engine.enqueue(task);
+    }
+
+    /// Records a derived-attribute confirmation oneshot to complete after the next drain.
+    pub fn queue_derived_confirmation(&mut self, confirmed: oneshot::Sender<L2BlockInfo>) {
+        self.pending_derived_confirmations.push(confirmed);
+    }
+
+    /// Completes queued derived-attribute confirmation oneshots after a drain that moved the
+    /// safe head. Unchanged heads leave the senders queued so a buffered consolidate can
+    /// complete them later.
+    ///
+    /// Returns `true` when at least one oneshot was completed so the matching mailbox
+    /// `EngineSafeHeadAdvanced` must not be sent; the waiter is in [`crate::AwaitingSafeHead`].
+    fn complete_pending_derived_confirmations(&mut self) -> bool {
+        if self.pending_derived_confirmations.is_empty() {
+            return false;
+        }
+
+        let head = self.engine.state().sync_state.safe_head();
+        if head == self.last_safe_head_sent {
+            return false;
+        }
+
+        for tx in self.pending_derived_confirmations.drain(..) {
+            if tx.send(head).is_err() {
+                warn!(
+                    target: "engine",
+                    "Derived-attribute confirmation receiver dropped"
+                );
+            }
+        }
+        true
+    }
+
+    /// Drops queued derived-attribute oneshots without completing them.
+    ///
+    /// Used after a reset or flush so derivation leaves [`crate::AwaitingSafeHead`] via the
+    /// pipeline signal rather than a oneshot that would race the mailbox.
+    fn drop_pending_derived_confirmations(&mut self) {
+        let dropped = self.pending_derived_confirmations.len();
+        if dropped == 0 {
+            return;
+        }
+        self.pending_derived_confirmations.clear();
+        warn!(
+            target: "engine",
+            dropped,
+            "Dropped derived-attribute confirmation oneshots after reset or flush"
+        );
+    }
+
+    /// Publishes an out-of-band safe-head mailbox event unless a derived-attribute oneshot
+    /// already delivered the same head.
+    async fn publish_safe_head_mailbox_unless_confirmed(
+        &mut self,
+        oneshot_confirmed: bool,
+    ) -> Result<(), EngineError> {
+        if oneshot_confirmed {
+            // Keep last_safe_head_sent in sync so a later drain does not re-send this head.
+            self.last_safe_head_sent = self.engine.state().sync_state.safe_head();
+            return Ok(());
+        }
+        self.send_derivation_actor_safe_head_if_updated().await
     }
 
     /// Constructs a new [`EngineProcessor`] from the params.
@@ -139,6 +209,7 @@ where
             last_finalized_head_checkpointed: L2BlockInfo::default(),
             last_safe_head_checkpointed: L2BlockInfo::default(),
             last_safe_head_sent: L2BlockInfo::default(),
+            pending_derived_confirmations: Vec::new(),
             rollup: config,
         }
     }
@@ -286,7 +357,12 @@ where
 
     /// Drains the inner [`Engine`] task queue and attempts to update the safe head.
     pub async fn drain(&mut self) -> Result<ResetOutcome, EngineError> {
-        let reset_outcome = match self.engine.drain().await {
+        let drain_result = self.engine.drain().await;
+        let flushed = drain_result
+            .as_ref()
+            .err()
+            .is_some_and(|err| err.severity() == EngineTaskErrorSeverity::Flush);
+        let reset_outcome = match drain_result {
             Ok(_) => {
                 trace!(target: "engine", "[ENGINE] tasks drained");
                 ResetOutcome::NotReset
@@ -295,7 +371,14 @@ where
         };
 
         self.checkpoint_forkchoice_state_if_updated().await;
-        self.send_derivation_actor_safe_head_if_updated().await?;
+
+        let oneshot_confirmed = if reset_outcome == ResetOutcome::Reset || flushed {
+            self.drop_pending_derived_confirmations();
+            false
+        } else {
+            self.complete_pending_derived_confirmations()
+        };
+        self.publish_safe_head_mailbox_unless_confirmed(oneshot_confirmed).await?;
 
         if !self.el_sync_complete && self.engine.state().el_sync_finished {
             let sync_outcome = self.mark_el_sync_complete_and_notify_derivation_actor().await?;
@@ -421,7 +504,8 @@ where
             ));
         }
         self.checkpoint_forkchoice_state_if_updated().await;
-        self.send_derivation_actor_safe_head_if_updated()
+        let oneshot_confirmed = self.complete_pending_derived_confirmations();
+        self.publish_safe_head_mailbox_unless_confirmed(oneshot_confirmed)
             .await
             .map_err(|error| EngineClientError::ShadowForkchoiceUpdate(error.to_string()))?;
         Ok(Some(reconciled_head))

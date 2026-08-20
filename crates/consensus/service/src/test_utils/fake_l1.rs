@@ -10,7 +10,6 @@ use std::{collections::VecDeque, sync::Arc};
 use alloy_primitives::{Address, B256};
 use async_trait::async_trait;
 use base_consensus_derive::{L1RetrievalProvider, PipelineError, PipelineResult};
-use base_consensus_engine::ConsolidateInput;
 use base_consensus_providers::{APIConfigResponse, APIGenesisResponse, BeaconClient, BoxedBlob};
 use base_protocol::{BlockInfo, L2BlockInfo};
 use tokio::sync::{Mutex, mpsc};
@@ -144,8 +143,8 @@ impl FakeL1 {
         };
 
         self.engine_request_tx
-            .send(EngineActorRequest::ProcessSafeL2SignalRequest(ConsolidateInput::BlockInfo(
-                safe_l2,
+            .send(EngineActorRequest::ProcessSafeL2SignalRequest(Box::new(
+                crate::SafeL2SignalRequest::delegated(safe_l2),
             )))
             .await
             .expect("engine actor request channel closed while dispatching safe l2 signal");

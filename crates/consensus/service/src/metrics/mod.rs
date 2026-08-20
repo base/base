@@ -21,6 +21,19 @@ base_metrics::define_metrics! {
     derivation_pipeline_step_duration_seconds: histogram,
     #[describe("Wall-clock duration the derivation actor waits for an inbound request")]
     derivation_actor_inbound_recv_wait_duration_seconds: histogram,
+    #[describe("Out-of-band engine safe-head updates that did not advance the derivation cursor")]
+    #[label(
+        name = "state",
+        default = [
+            "awaiting_el_sync_completion",
+            "awaiting_l1_data",
+            "awaiting_safe_head_confirmation",
+            "awaiting_signal",
+            "awaiting_update_after_signal",
+            "deriving"
+        ]
+    )]
+    derivation_non_advancing_safe_head_updates: counter,
     #[describe("Tracks sequencer state flags")]
     #[label(active)]
     #[label(recovery)]

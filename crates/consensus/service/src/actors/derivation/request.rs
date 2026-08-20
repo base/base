@@ -33,7 +33,10 @@ pub enum DerivationActorRequest {
     ProcessFinalizedL1Block(Box<BlockInfo>),
     /// Request to process the provided L1 head block update.
     ProcessL1HeadUpdateRequest(Box<BlockInfo>),
-    /// Request for the current derivation-state-machine state.
+    /// Request for the current derivation-state observability snapshot.
     #[cfg(test)]
     CurrentStateRequest(tokio::sync::oneshot::Sender<crate::DerivationState>),
+    /// Request for the derivation cursor used as the next pipeline step base.
+    #[cfg(test)]
+    CurrentConfirmedSafeHeadRequest(tokio::sync::oneshot::Sender<L2BlockInfo>),
 }

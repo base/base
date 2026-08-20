@@ -1,12 +1,10 @@
 use alloy_rpc_types_engine::PayloadId;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
-use base_consensus_engine::{
-    BuildTaskError, ConsolidateInput, EngineQueries, InsertTaskError, SealTaskError,
-};
+use base_consensus_engine::{BuildTaskError, EngineQueries, InsertTaskError, SealTaskError};
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 use opentelemetry::Context;
 use thiserror::Error;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 /// The result of an Engine client call.
 pub type EngineClientResult<T> = Result<T, EngineClientError>;
@@ -67,9 +65,9 @@ pub enum EngineActorRequest {
     BuildRequest(Box<BuildRequest>),
     /// Request to get the sealed payload without inserting it.
     GetPayloadRequest(Box<GetPayloadRequest>),
-    /// Request to consolidate using a safe L2 signal from attributes or delegated safe-block
-    /// derivation
-    ProcessSafeL2SignalRequest(ConsolidateInput),
+    /// Request to consolidate using a safe L2 signal from derived attributes or delegated
+    /// safe-block derivation.
+    ProcessSafeL2SignalRequest(Box<SafeL2SignalRequest>),
     /// Request to finalize the L2 block at the provided block number.
     ProcessFinalizedL2BlockNumberRequest(Box<u64>),
     /// Request to process an unsafe block authenticated by the P2P gossip layer.
@@ -82,6 +80,55 @@ pub enum EngineActorRequest {
     ReconcileShadowRequest(Box<ReconcileShadowRequest>),
     /// Request to reset engine forkchoice.
     ResetRequest(Box<ResetRequest>),
+}
+
+/// Consolidation request from derivation (or tests) to the engine.
+///
+/// Direct derivation always pairs attributes with a confirmation oneshot. Delegated
+/// derivation and tests promote a safe L2 head without a waiter.
+pub enum SafeL2SignalRequest {
+    /// Derived attributes whose confirmation is owned by [`crate::AwaitingSafeHead`].
+    Derived {
+        /// Attributes to consolidate.
+        attributes: Box<AttributesWithParent>,
+        /// Completes after the drain that runs this consolidate task.
+        confirmed: oneshot::Sender<L2BlockInfo>,
+    },
+    /// Delegated or test-driven safe-head promotion. Confirmation is mailbox-only.
+    Delegated {
+        /// Safe L2 head to consolidate.
+        safe_l2: L2BlockInfo,
+    },
+}
+
+impl std::fmt::Debug for SafeL2SignalRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Derived { attributes, .. } => f
+                .debug_struct("Derived")
+                .field("attributes", attributes)
+                .field("confirmed", &"oneshot::Sender")
+                .finish(),
+            Self::Delegated { safe_l2 } => {
+                f.debug_struct("Delegated").field("safe_l2", safe_l2).finish()
+            }
+        }
+    }
+}
+
+impl SafeL2SignalRequest {
+    /// Derived-attribute consolidation with a lock-step confirmation oneshot.
+    pub fn derived(
+        attributes: AttributesWithParent,
+        confirmed: oneshot::Sender<L2BlockInfo>,
+    ) -> Self {
+        Self::Derived { attributes: Box::new(attributes), confirmed }
+    }
+
+    /// Delegated or test consolidation of an already-known safe L2 head.
+    pub const fn delegated(safe_l2: L2BlockInfo) -> Self {
+        Self::Delegated { safe_l2 }
+    }
 }
 
 /// Request to replace a private shadow range with the active sequencer's P2P branch.

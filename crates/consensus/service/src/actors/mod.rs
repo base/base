@@ -19,7 +19,7 @@ pub use engine::{
     EngineConfig, EngineDerivationClient, EngineError, EngineProcessor, EngineRequestReceiver,
     EngineRpcProcessor, EngineRpcRequest, GetPayloadRequest, InsertUnsafePayloadRequest,
     QueuedEngineDerivationClient, ReconcileShadowRequest, ResetOrigin, ResetOutcome, ResetReason,
-    ResetRequest, ResetRequestOutcome, ValidatorEngineRequestHandler,
+    ResetRequest, ResetRequestOutcome, SafeL2SignalRequest, ValidatorEngineRequestHandler,
 };
 
 mod rpc;
@@ -30,11 +30,12 @@ pub use rpc::{
 
 mod derivation;
 pub use derivation::{
-    DelegateDerivationActor, DerivationActor, DerivationActorRequest, DerivationClientError,
-    DerivationClientResult, DerivationDelegateClient, DerivationDelegateClientError,
-    DerivationEngineClient, DerivationError, DerivationState, DerivationStateMachine,
-    DerivationStateTransitionError, DerivationStateUpdate, L2Finalizer,
-    QueuedDerivationEngineClient,
+    AfterMailbox, AwaitingELSync, AwaitingL1Data, AwaitingSafeHead, AwaitingSignal,
+    AwaitingUpdateAfterSignal, DelegateDerivationActor, DerivationActor, DerivationActorRequest,
+    DerivationClientError, DerivationClientResult, DerivationDelegateClient,
+    DerivationDelegateClientError, DerivationEngineClient, DerivationError, DerivationState,
+    Deriving, Idle, L2Finalizer, MailboxIdle, ProduceAttributes, QueuedDerivationEngineClient,
+    SafeHeadCursor, WaitOutcome,
 };
 
 mod l1_watcher;

@@ -1,7 +1,7 @@
 //! Derivation actors including direct, delegated, and L2-delegate variants.
 
 mod actor;
-pub use actor::{DerivationActor, DerivationError};
+pub use actor::{DerivationActor, DerivationError, ProduceAttributes, WaitOutcome};
 
 mod delegated;
 pub use delegated::{
@@ -19,5 +19,6 @@ pub use request::{DerivationActorRequest, DerivationClientError, DerivationClien
 
 mod state_machine;
 pub use state_machine::{
-    DerivationState, DerivationStateMachine, DerivationStateTransitionError, DerivationStateUpdate,
+    AfterMailbox, AwaitingELSync, AwaitingL1Data, AwaitingSafeHead, AwaitingSignal,
+    AwaitingUpdateAfterSignal, DerivationState, Deriving, Idle, MailboxIdle, SafeHeadCursor,
 };

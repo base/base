@@ -3,12 +3,11 @@
 use alloy_consensus::Header as ConsensusHeader;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
-use base_consensus_engine::ConsolidateInput;
 use base_consensus_safedb::SafeHeadResponse;
 use base_protocol::{BlockInfo, L2BlockInfo};
 
 use super::{Driver, EngineClientCall, HarnessBuilder, NodeConfig, ScriptedForkchoiceResponse};
-use crate::{EngineActorRequest, NodeMode};
+use crate::{EngineActorRequest, NodeMode, SafeL2SignalRequest};
 
 fn valid_fcu() -> ScriptedForkchoiceResponse {
     ScriptedForkchoiceResponse::Ok(ForkchoiceUpdated {
@@ -256,8 +255,11 @@ async fn e2e_invalid_fcu_reset_and_recovery() {
     // fake_l1.extend() calls inject_fcu_v3_call() which pops the first scripted response before
     // the engine actor ever calls fork_choice_updated_v3(), defeating the test.
     engine_tx
-        .send(EngineActorRequest::ProcessSafeL2SignalRequest(ConsolidateInput::BlockInfo(
-            L2BlockInfo { block_info: block(1, B256::ZERO, hash_for(1), 1), ..Default::default() },
+        .send(EngineActorRequest::ProcessSafeL2SignalRequest(Box::new(
+            SafeL2SignalRequest::delegated(L2BlockInfo {
+                block_info: block(1, B256::ZERO, hash_for(1), 1),
+                ..Default::default()
+            }),
         )))
         .await
         .expect("engine actor must accept the signal");
