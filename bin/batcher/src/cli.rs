@@ -244,9 +244,10 @@ pub(crate) struct BatcherArgs {
     #[arg(long = "wait-node-sync", env = "BATCHER_WAIT_NODE_SYNC")]
     pub wait_node_sync: bool,
 
-    /// Maximum seconds to wait for the rollup node to report sync when
-    /// `--wait-node-sync` is set. On expiry the service exits with an error
-    /// rather than hanging indefinitely. Default: 600 seconds (10 minutes).
+    /// Budget for retrying one-shot startup RPCs, and the maximum seconds to
+    /// wait for the rollup node to report sync when `--wait-node-sync` is set.
+    /// On expiry the service exits with an error rather than hanging
+    /// indefinitely. Default: 600 seconds (10 minutes).
     #[arg(
         long = "wait-node-sync-timeout",
         default_value = "600",
