@@ -14,6 +14,8 @@ base_metrics::define_metrics! {
     derivation_l1_origin: counter,
     #[describe("Critical errors in the derivation pipeline")]
     derivation_critical_errors: counter,
+    #[describe("Out-of-lockstep engine safe-head updates ignored for not advancing the safe head")]
+    derivation_non_advancing_safe_head_updates: counter,
     #[describe("Advisory follow-mode L1 origin check failures by reason")]
     #[label(name = "reason", default = ["unavailable", "fetch_failed", "not_canonical"])]
     follow_l1_origin_check_failures_total: counter,

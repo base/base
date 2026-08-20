@@ -1,7 +1,8 @@
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 use derive_more::PartialEq;
 use thiserror::Error;
-use tracing::info;
+
+use crate::Metrics;
 
 /// The possible states of the [`DerivationStateMachine`] implemented by the
 /// [`crate::DerivationActor`].
@@ -86,6 +87,11 @@ fn transition(
             DerivationStateUpdate::SignalProcessed => {
                 Ok(DerivationState::AwaitingUpdateAfterSignal)
             }
+            // The engine pushes a safe-head confirmation on every safe-head advance (e.g. an
+            // out-of-lockstep L1 consolidation catch-up), not only in response to attributes we
+            // submitted. Absorb it without leaving the wait for L1 data; `update` advances
+            // `confirmed_safe_head` when the head moves forward.
+            DerivationStateUpdate::NewAttributesConfirmed(_) => Ok(DerivationState::AwaitingL1Data),
             _ => Err(DerivationStateTransitionError::InvalidTransition {
                 state: *state,
                 update: update.clone(),
@@ -111,6 +117,9 @@ fn transition(
             DerivationStateUpdate::L1DataReceived | DerivationStateUpdate::MoreDataNeeded => {
                 Ok(DerivationState::AwaitingSignal)
             }
+            // Same rationale as `AwaitingL1Data`: absorb out-of-lockstep engine safe-head
+            // confirmations while waiting for the pending reset signal instead of crashing.
+            DerivationStateUpdate::NewAttributesConfirmed(_) => Ok(DerivationState::AwaitingSignal),
             _ => Err(DerivationStateTransitionError::InvalidTransition {
                 state: *state,
                 update: update.clone(),
@@ -198,19 +207,43 @@ impl DerivationStateMachine {
         &mut self,
         state_update: &DerivationStateUpdate,
     ) -> Result<(), DerivationStateTransitionError> {
-        if let DerivationStateUpdate::NewAttributesConfirmed(safe_head) = state_update
-            && safe_head.block_info.hash == self.confirmed_safe_head.block_info.hash
-        {
-            info!(target: "derivation", ?safe_head, "Re-received safe head. Skipping state transition.");
-        }
+        let prev_state = self.state;
 
         debug!(target: "derivation", state=?self.state, ?state_update, "Executing derivation state update.");
         self.state = transition(&self.state, state_update)?;
 
-        if let DerivationStateUpdate::NewAttributesConfirmed(safe_head) = state_update {
-            self.confirmed_safe_head = **safe_head;
-        } else if let DerivationStateUpdate::ELSyncCompleted(safe_head) = state_update {
-            self.confirmed_safe_head = **safe_head;
+        match state_update {
+            DerivationStateUpdate::NewAttributesConfirmed(safe_head) => {
+                // In `AwaitingL1Data`/`AwaitingSignal` the confirmation is an out-of-lockstep
+                // advance pushed by the engine, not a response to attributes we submitted. Only
+                // ever move the safe head forward here: a non-advancing head in these states means
+                // a reset signal was missing or reordered (legitimate backwards heads arrive via
+                // `AwaitingUpdateAfterSignal` after a reset). Surface it, but never regress or
+                // crash. In all other states the confirmation is applied unconditionally, which
+                // preserves the reset path where the safe head correctly moves backwards.
+                let absorbing = matches!(
+                    prev_state,
+                    DerivationState::AwaitingL1Data | DerivationState::AwaitingSignal
+                );
+                if absorbing
+                    && safe_head.block_info.number <= self.confirmed_safe_head.block_info.number
+                {
+                    warn!(
+                        target: "derivation",
+                        state = ?prev_state,
+                        safe_head = ?safe_head,
+                        confirmed = ?self.confirmed_safe_head,
+                        "Ignoring non-advancing out-of-lockstep safe-head update",
+                    );
+                    Metrics::derivation_non_advancing_safe_head_updates().increment(1);
+                } else {
+                    self.confirmed_safe_head = **safe_head;
+                }
+            }
+            DerivationStateUpdate::ELSyncCompleted(safe_head) => {
+                self.confirmed_safe_head = **safe_head;
+            }
+            _ => {}
         }
 
         Ok(())
@@ -264,6 +297,20 @@ mod tests {
         Box::new(dummy_l2_block_info())
     }
 
+    /// Creates an `L2BlockInfo` at a specific block number with a distinct hash.
+    fn block_at(number: u64) -> Box<L2BlockInfo> {
+        Box::new(L2BlockInfo {
+            block_info: BlockInfo {
+                hash: BlockHash::with_last_byte(number as u8),
+                number,
+                parent_hash: BlockHash::default(),
+                timestamp: number,
+            },
+            l1_origin: BlockNumHash { hash: BlockHash::default(), number: 0 },
+            seq_num: 0,
+        })
+    }
+
     #[rstest]
     // AwaitingELSyncCompletion valid transitions
     #[case(AwaitingELSyncCompletion, ELSyncCompleted(block()), Deriving)]
@@ -273,6 +320,7 @@ mod tests {
     // AwaitingL1Data valid transitions
     #[case(AwaitingL1Data, L1DataReceived, Deriving)]
     #[case(AwaitingL1Data, SignalProcessed, AwaitingUpdateAfterSignal)]
+    #[case(AwaitingL1Data, NewAttributesConfirmed(block()), AwaitingL1Data)]
     // AwaitingSafeHeadConfirmation valid transitions
     #[case(AwaitingSafeHeadConfirmation, NewAttributesConfirmed(block()), Deriving)]
     #[case(AwaitingSafeHeadConfirmation, SignalProcessed, AwaitingUpdateAfterSignal)]
@@ -281,6 +329,7 @@ mod tests {
     #[case(AwaitingSignal, SignalProcessed, AwaitingUpdateAfterSignal)]
     #[case(AwaitingSignal, L1DataReceived, AwaitingSignal)]
     #[case(AwaitingSignal, MoreDataNeeded, AwaitingSignal)]
+    #[case(AwaitingSignal, NewAttributesConfirmed(block()), AwaitingSignal)]
     // AwaitingUpdateAfterSignal valid transitions
     #[case(AwaitingUpdateAfterSignal, L1DataReceived, Deriving)]
     #[case(AwaitingUpdateAfterSignal, NewAttributesConfirmed(block()), Deriving)]
@@ -312,7 +361,6 @@ mod tests {
     #[case(AwaitingL1Data, ELSyncCompleted(block()))]
     #[case(AwaitingL1Data, MoreDataNeeded)]
     #[case(AwaitingL1Data, NewAttributesDerived(attrs()))]
-    #[case(AwaitingL1Data, NewAttributesConfirmed(block()))]
     #[case(AwaitingL1Data, SignalNeeded)]
     // AwaitingSafeHeadConfirmation invalid transitions
     #[case(AwaitingSafeHeadConfirmation, ELSyncCompleted(block()))]
@@ -322,7 +370,6 @@ mod tests {
     // AwaitingSignal invalid transitions
     #[case(AwaitingSignal, ELSyncCompleted(block()))]
     #[case(AwaitingSignal, NewAttributesDerived(attrs()))]
-    #[case(AwaitingSignal, NewAttributesConfirmed(block()))]
     #[case(AwaitingSignal, SignalNeeded)]
     // AwaitingUpdateAfterSignal invalid transitions
     #[case(AwaitingUpdateAfterSignal, ELSyncCompleted(block()))]
@@ -427,5 +474,71 @@ mod tests {
                 assert!(matches!(update, MoreDataNeeded));
             }
         }
+    }
+
+    /// An out-of-lockstep engine safe-head confirmation that advances the safe head while
+    /// `AwaitingL1Data` must be absorbed: stay in `AwaitingL1Data` and move the safe head forward.
+    #[test]
+    fn test_awaiting_l1_data_absorbs_forward_confirmation() {
+        let mut machine = DerivationStateMachine::new();
+        machine.update(&ELSyncCompleted(block_at(5))).unwrap();
+        machine.update(&MoreDataNeeded).unwrap();
+        assert_eq!(machine.current_state(), AwaitingL1Data);
+
+        machine.update(&NewAttributesConfirmed(block_at(7))).unwrap();
+
+        assert_eq!(machine.current_state(), AwaitingL1Data);
+        assert_eq!(machine.last_confirmed_safe_head().block_info.number, 7);
+    }
+
+    /// A non-advancing confirmation received in `AwaitingL1Data` (missing/reordered reset signal)
+    /// must never regress the confirmed safe head, and must not crash.
+    #[rstest]
+    #[case(block_at(5))] // equal
+    #[case(block_at(3))] // backwards
+    fn test_awaiting_l1_data_ignores_non_advancing_confirmation(
+        #[case] confirmation: Box<L2BlockInfo>,
+    ) {
+        let mut machine = DerivationStateMachine::new();
+        machine.update(&ELSyncCompleted(block_at(5))).unwrap();
+        machine.update(&MoreDataNeeded).unwrap();
+        assert_eq!(machine.current_state(), AwaitingL1Data);
+
+        machine.update(&NewAttributesConfirmed(confirmation)).unwrap();
+
+        assert_eq!(machine.current_state(), AwaitingL1Data);
+        assert_eq!(machine.last_confirmed_safe_head().block_info.number, 5);
+    }
+
+    /// The same absorption behaviour applies while `AwaitingSignal` (waiting on a pending reset).
+    #[test]
+    fn test_awaiting_signal_absorbs_forward_confirmation() {
+        let mut machine = DerivationStateMachine::new();
+        machine.update(&ELSyncCompleted(block_at(5))).unwrap();
+        machine.update(&SignalNeeded).unwrap();
+        assert_eq!(machine.current_state(), AwaitingSignal);
+
+        machine.update(&NewAttributesConfirmed(block_at(7))).unwrap();
+
+        assert_eq!(machine.current_state(), AwaitingSignal);
+        assert_eq!(machine.last_confirmed_safe_head().block_info.number, 7);
+    }
+
+    /// Regression guard: a reset legitimately moves the safe head backwards. The confirmation
+    /// arrives in `AwaitingUpdateAfterSignal` (after the reset signal), where it must be applied
+    /// unconditionally so the safe head regresses to the reset target.
+    #[test]
+    fn test_reset_path_applies_backwards_confirmation() {
+        let mut machine = DerivationStateMachine::new();
+        machine.update(&ELSyncCompleted(block_at(5))).unwrap();
+        machine.update(&SignalNeeded).unwrap();
+        machine.update(&SignalProcessed).unwrap();
+        assert_eq!(machine.current_state(), AwaitingUpdateAfterSignal);
+
+        // Reset target is behind the previously confirmed head.
+        machine.update(&NewAttributesConfirmed(block_at(3))).unwrap();
+
+        assert_eq!(machine.current_state(), Deriving);
+        assert_eq!(machine.last_confirmed_safe_head().block_info.number, 3);
     }
 }
