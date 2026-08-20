@@ -490,18 +490,17 @@ impl BatcherService {
 
         let validator_provider = if let Some(url) = &self.config.parity_validator_l2_rpc_url {
             let url = url.clone();
-            let provider =
-                Self::rpc_retry("parity-validator-l2-rpc", retry, rpc_timeout, || {
-                    let url = url.clone();
-                    async move {
-                        ProviderBuilder::new()
-                            .disable_recommended_fillers()
-                            .network::<Base>()
-                            .connect(url.as_str())
-                            .await
-                    }
-                })
-                .await?;
+            let provider = Self::rpc_retry("parity-validator-l2-rpc", retry, rpc_timeout, || {
+                let url = url.clone();
+                async move {
+                    ProviderBuilder::new()
+                        .disable_recommended_fillers()
+                        .network::<Base>()
+                        .connect(url.as_str())
+                        .await
+                }
+            })
+            .await?;
             let provider: Arc<dyn Provider<Base> + Send + Sync> = Arc::new(provider);
             Some(RpcL2BlockProvider::new(provider))
         } else {
@@ -509,19 +508,15 @@ impl BatcherService {
         };
 
         // Connect to L1 before the optional node-sync gate.
-        let l1_provider: RootProvider =
-            Self::rpc_retry("l1-rpc", retry, rpc_timeout, || {
-                Self::connect_first(&self.config.l1_rpc_url, "l1-rpc", |url| {
-                    let url = url.clone();
-                    async move {
-                        ProviderBuilder::new()
-                            .disable_recommended_fillers()
-                            .connect(url.as_str())
-                            .await
-                    }
-                })
+        let l1_provider: RootProvider = Self::rpc_retry("l1-rpc", retry, rpc_timeout, || {
+            Self::connect_first(&self.config.l1_rpc_url, "l1-rpc", |url| {
+                let url = url.clone();
+                async move {
+                    ProviderBuilder::new().disable_recommended_fillers().connect(url.as_str()).await
+                }
             })
-            .await?;
+        })
+        .await?;
 
         // Recent transactions only select an L1 synchronization target.
         // They never advance the L2 backfill cursor.
@@ -551,10 +546,9 @@ impl BatcherService {
         }
 
         // Channel duration is measured from this tip, not from L1 block 0.
-        let initial_l1_head = Self::rpc_retry("l1-head", retry, rpc_timeout, || {
-            l1_provider.get_block_number()
-        })
-        .await?;
+        let initial_l1_head =
+            Self::rpc_retry("l1-head", retry, rpc_timeout, || l1_provider.get_block_number())
+                .await?;
 
         let initial_derivation_status = if let Some(provider) = validator_provider.as_ref() {
             Self::rpc_retry("parity-validator-safe-l2", retry, rpc_timeout, || {
@@ -674,10 +668,9 @@ impl BatcherService {
         );
 
         // Fetch L1 chain ID and construct the tx manager.
-        let l1_chain_id = Self::rpc_retry("l1-chain-id", retry, rpc_timeout, || {
-            l1_provider.get_chain_id()
-        })
-        .await?;
+        let l1_chain_id =
+            Self::rpc_retry("l1-chain-id", retry, rpc_timeout, || l1_provider.get_chain_id())
+                .await?;
         let tx_manager_config = TxManagerConfig {
             resubmission_timeout: self.config.resubmission_timeout,
             num_confirmations: self.config.num_confirmations as u64,
@@ -759,8 +752,9 @@ impl BatcherService {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::sync::atomic::{AtomicU8, Ordering};
+
+    use super::*;
 
     fn test_retry() -> RetryConfig {
         RetryConfig::unbounded(Duration::from_millis(1), Duration::from_millis(1))
@@ -771,13 +765,7 @@ mod tests {
         let attempts = AtomicU8::new(0);
         let value = BatcherService::rpc_retry("test", test_retry(), Duration::from_secs(1), || {
             let n = attempts.fetch_add(1, Ordering::SeqCst);
-            async move {
-                if n < 2 {
-                    Err("transient")
-                } else {
-                    Ok(7u64)
-                }
-            }
+            async move { if n < 2 { Err("transient") } else { Ok(7u64) } }
         })
         .await
         .expect("retry should succeed after transient failures");
