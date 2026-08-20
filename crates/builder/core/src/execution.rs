@@ -333,7 +333,7 @@ impl ExecutionInfo {
     }
 
     /// Checks whether adding a transaction's fresh storage slots would exceed the block limit.
-    pub fn check_new_storage_slots(
+    pub const fn check_new_storage_slots(
         &self,
         tx_new_slots: u64,
         block_limit: u64,
