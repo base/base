@@ -122,7 +122,6 @@ impl NitroProverServer {
             }
         };
 
-        let attested_withdrawal_checker = checker.as_ref().map(Arc::clone);
         if let Some(checker) = checker {
             pool = pool
                 .with_registration_checker(checker)
@@ -130,14 +129,7 @@ impl NitroProverServer {
         }
         module.merge(NitroProverRpc { pool: Arc::new(pool) }.into_rpc())?;
 
-        module.merge(NitroSignerRpc { transports: transports.clone() }.into_rpc())?;
-        module.merge(
-            NitroAttestedWithdrawalRpc {
-                transports,
-                registration_checker: attested_withdrawal_checker,
-            }
-            .into_rpc(),
-        )?;
+        module.merge(NitroSignerRpc { transports }.into_rpc())?;
 
         Ok(server.start(module))
     }
@@ -315,7 +307,9 @@ impl NitroAttestedWithdrawalRpc {
                 .await
                 .map_err(|error| NitroProverServer::rpc_err(-32001, error))?
                 .first()
-                .expect("select_all_valid_enclaves returns at least one signer")
+                .ok_or_else(|| {
+                    NitroProverServer::rpc_err(-32001, "no valid enclave signers available")
+                })?
                 .index
         } else {
             0
@@ -488,6 +482,26 @@ mod tests {
         };
 
         assert!(Arc::ptr_eq(rpc.select_transport().await.unwrap(), &second));
+    }
+
+    #[tokio::test]
+    async fn attested_withdrawal_rpc_rejects_when_no_signer_is_registered() {
+        let server = Arc::new(EnclaveServer::new_local().unwrap());
+        let transport = Arc::new(NitroTransport::local(server));
+        let checker = Arc::new(
+            RegistrationChecker::new(
+                vec![Arc::clone(&transport)],
+                AddressBasedMockRegistry::new(HashMap::new()),
+            )
+            .unwrap(),
+        );
+        let rpc = NitroAttestedWithdrawalRpc {
+            transports: vec![transport],
+            registration_checker: Some(checker),
+        };
+
+        let error = rpc.select_transport().await.err().unwrap();
+        assert_eq!(error.code(), -32001);
     }
 
     #[tokio::test]

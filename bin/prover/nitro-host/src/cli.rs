@@ -427,7 +427,7 @@ async fn run_worker(
     worker: WorkerArgs,
     transports: Vec<Arc<NitroTransport>>,
     transport_mode: WorkerTransportMode,
-    registrar_listen_addr: Option<SocketAddr>,
+    rpc_listen_addr: Option<SocketAddr>,
     rpc_server_mode: RpcServerMode,
     cancel: CancellationToken,
 ) -> eyre::Result<()> {
@@ -490,7 +490,7 @@ async fn run_worker(
         .with_lock_duration_seconds(worker.job_discovery_lock_duration_seconds)
         .with_max_concurrent_jobs(worker.job_discovery_max_concurrent_jobs);
     let discovery = JobDiscovery::new(client, proof_generator, discovery_config);
-    let registrar_handle = if let Some(addr) = registrar_listen_addr {
+    let rpc_handle = if let Some(addr) = rpc_listen_addr {
         Some(match rpc_server_mode {
             RpcServerMode::Registrar => {
                 NitroProverServer::run_registrar_rpc_server(
@@ -534,7 +534,7 @@ async fn run_worker(
         }
     }
     discovery.run_until_cancelled(cancel).await;
-    if let Some(handle) = registrar_handle {
+    if let Some(handle) = rpc_handle {
         let _ = handle.stop();
         handle.stopped().await;
     }

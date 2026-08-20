@@ -192,7 +192,10 @@ where
             .await
             .map_err(|error| AttestedWithdrawalRelayError::L2Rpc(error.to_string()))?;
         let storage_proof = account_proof.storage_proof;
-        if storage_proof.len() != 1 || storage_proof[0].key.as_b256() != slot {
+        if storage_proof.len() != 1
+            || storage_proof[0].key.as_b256() != slot
+            || storage_proof[0].value.is_zero()
+        {
             return Err(AttestedWithdrawalRelayError::InvalidStorageProof);
         }
         let signature = normalize_attested_withdrawal_signature(
