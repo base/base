@@ -12,25 +12,26 @@ use std::{
 };
 
 use alloy_network::{Ethereum, EthereumWallet, TransactionBuilder};
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, TxHash, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer_local::PrivateKeySigner;
 use base_tx_manager::NonceManager;
 use rand::Rng;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, instrument};
+use tracing::{debug, info, instrument};
 
 use super::{
     DisplaySnapshot, LoadConfig, LoadTestDisplay, LoadTestStage, SubmissionPipeline, TxType,
+    ValidityRouter,
 };
 use crate::{
     BaselineError, Result,
     config::WorkloadConfig,
     metrics::{ConfigSummary, MetricsCollector, MetricsSummary},
     rpc::{
-        BaseFeeExt, BatchRpcClient, QueryProvider, RpcProviders, RpcResultExt,
-        create_wallet_provider,
+        BaseFeeExt, BatchRpcClient, JSON_RPC_METHOD_NOT_FOUND, QueryProvider, RpcProviders,
+        RpcResultExt, create_wallet_provider,
     },
     workload::{
         AccountPool, ChainPrepContext, KeyStream, PREP_CONCURRENCY, RealTokenRecoverySummary,
@@ -55,6 +56,7 @@ pub struct LoadRunner {
     pub(super) nonce_managers: Arc<HashMap<Address, NonceManager<RootProvider<Ethereum>>>>,
     pub(super) signers: Arc<HashMap<Address, PrivateKeySigner>>,
     pub(super) submission_batch_rpcs: Arc<Vec<BatchRpcClient>>,
+    pub(super) validity_router: ValidityRouter,
     pub(super) base_fee: u128,
     pub(super) display: Option<LoadTestDisplay>,
     pub(super) snapshot_tx: Option<watch::Sender<DisplaySnapshot>>,
@@ -156,6 +158,7 @@ impl LoadRunner {
             None
         };
         let recipient_rng = SeededRng::new(config.seed.wrapping_add(FRESH_RECIPIENT_RNG_SALT));
+        let validity_router = ValidityRouter::new(&config);
 
         Ok(Self {
             config,
@@ -169,6 +172,7 @@ impl LoadRunner {
             nonce_managers: Arc::new(HashMap::new()),
             signers,
             submission_batch_rpcs,
+            validity_router,
             base_fee: 0,
             display: None,
             snapshot_tx: None,
@@ -206,6 +210,37 @@ impl LoadRunner {
 
     pub(super) fn build_signers(accounts: &AccountPool) -> HashMap<Address, PrivateKeySigner> {
         accounts.accounts().iter().map(|a| (a.address, a.signer.clone())).collect()
+    }
+
+    /// Probes each submission endpoint for validity-transaction support.
+    ///
+    /// Sends a throwaway `base_sendRawTransactionValidity` request; a
+    /// method-not-found response means the node was not started with validity
+    /// transactions enabled, so the run aborts loudly rather than silently
+    /// degrading to plain submission. Any other response (including a rejection
+    /// of the throwaway payload) confirms the method is served.
+    pub(super) async fn probe_validity_endpoint(&self) -> Result<()> {
+        for url in &self.config.transaction_submission_rpcs {
+            let provider = RpcProviders::query(url.clone())?;
+            let result: std::result::Result<TxHash, _> = provider
+                .client()
+                .request(
+                    "base_sendRawTransactionValidity",
+                    (serde_json::json!({ "tx": "0x", "validity": [] }),),
+                )
+                .await;
+            if let Err(err) = &result
+                && let Some(payload) = err.as_error_resp()
+                && payload.code == JSON_RPC_METHOD_NOT_FOUND
+            {
+                return Err(BaselineError::Config(format!(
+                    "submission endpoint {url} does not serve base_sendRawTransactionValidity; \
+                     start the node with --enable-experimental-validity-transactions"
+                )));
+            }
+            debug!(url = %url, "validity endpoint capability probe passed");
+        }
+        Ok(())
     }
 
     pub(super) async fn calibrate_avg_gas(&self) -> Result<u64> {

@@ -1,19 +1,25 @@
 //! Batcher service startup and wiring.
 
-use std::{future::pending, sync::Arc};
+use std::{
+    future::{Future, pending},
+    sync::Arc,
+    time::Duration,
+};
 
 use alloy_provider::{Provider, ProviderBuilder, ProviderLayer, RootProvider};
+use backon::Retryable;
 use base_balance_monitor::BalanceMonitorLayer;
 use base_batcher_admin::AdminServer;
 use base_batcher_core::{
-    AdminHandle, BatchDriver, DaThrottle, NoopThrottleClient, ThrottleClient, ThrottleConfig,
-    ThrottleController, ThrottleStrategy,
+    AdminHandle, BatchDriver, BatchDriverHeads, DaThrottle, NoopThrottleClient, ThrottleClient,
+    ThrottleConfig, ThrottleController, ThrottleStrategy,
 };
 use base_batcher_encoder::{BatchEncoder, BatcherMetrics};
 use base_batcher_source::{HybridL1HeadSource, PollingBlockSource, SourceError};
 use base_common_network::Base;
 use base_consensus_rpc::RollupNodeApiClient;
 use base_protocol::BlockInfo;
+use base_retry::{DEFAULT_UNBOUNDED_MAX_DELAY, RetryConfig};
 use base_runtime::TokioRuntime;
 use base_tx_manager::{BaseTxMetrics, SimpleTxManager, TxManagerConfig};
 use futures::{
@@ -267,17 +273,46 @@ impl BatcherService {
         ))
     }
 
+    /// Retry a one-shot startup RPC until it succeeds or `timeout` elapses.
+    ///
+    /// Uses [`RetryConfig`] for exponential backoff with jitter. URL failover
+    /// stays in [`connect_first`]: this retries the whole attempt, including
+    /// walking the endpoint list again.
+    async fn rpc_retry<T, E, F, Fut>(
+        op: &'static str,
+        retry: RetryConfig,
+        timeout: Duration,
+        f: F,
+    ) -> eyre::Result<T>
+    where
+        F: FnMut() -> Fut,
+        Fut: Future<Output = Result<T, E>>,
+        E: std::fmt::Display,
+    {
+        let attempt = f.retry(retry.to_backoff_builder()).notify(|error, delay| {
+            warn!(
+                error = %error,
+                op,
+                backoff_ms = delay.as_millis(),
+                "startup RPC failed, backing off"
+            );
+        });
+        match tokio::time::timeout(timeout, attempt).await {
+            Ok(Ok(value)) => Ok(value),
+            Ok(Err(error)) => Err(eyre::eyre!("{op} failed: {error}")),
+            Err(_) => Err(eyre::eyre!("{op} timed out after {timeout:?}")),
+        }
+    }
+
     /// Block until the rollup node has processed `target_l1`, or until `timeout` elapses.
     ///
-    /// RPC errors use exponential backoff capped at 30 seconds.
+    /// RPC errors use exponential backoff capped at [`DEFAULT_UNBOUNDED_MAX_DELAY`].
     async fn wait_for_node_sync(
         rollup_client: &HttpClient,
         target_l1: u64,
-        poll_interval: std::time::Duration,
-        timeout: std::time::Duration,
+        poll_interval: Duration,
+        timeout: Duration,
     ) -> eyre::Result<()> {
-        const MAX_ERROR_BACKOFF: std::time::Duration = std::time::Duration::from_secs(30);
-
         info!(
             target_l1 = %target_l1,
             timeout_secs = %timeout.as_secs(),
@@ -308,11 +343,11 @@ impl BatcherService {
                     Err(error) => {
                         warn!(
                             error = %error,
-                            backoff_secs = %error_backoff.as_secs(),
+                            backoff_ms = error_backoff.as_millis(),
                             "optimism_syncStatus RPC failed during wait, backing off"
                         );
                         tokio::time::sleep(error_backoff).await;
-                        error_backoff = (error_backoff * 2).min(MAX_ERROR_BACKOFF);
+                        error_backoff = (error_backoff * 2).min(DEFAULT_UNBOUNDED_MAX_DELAY);
                     }
                 }
             }
@@ -325,9 +360,11 @@ impl BatcherService {
     /// Initialise all batcher components and return a [`ReadyBatcher`].
     ///
     /// Connects to the L2 and L1 RPC endpoints, fetches the rollup config,
-    /// validates the private key, and constructs the driver. Returns an error
-    /// if any of those steps fail — the caller sees the failure immediately,
-    /// before any background work is spawned.
+    /// validates the private key, and constructs the driver. One-shot startup
+    /// RPCs retry with exponential backoff until
+    /// [`BatcherConfig::wait_node_sync_timeout`]. Returns an error if any of
+    /// those steps fail — the caller sees the failure immediately, before any
+    /// background work is spawned.
     ///
     /// The runtime's cancellation token is forwarded to the derivation-status poller
     /// spawned here so it stops cleanly when the batcher shuts down.
@@ -391,18 +428,23 @@ impl BatcherService {
             "starting batcher service"
         );
 
+        let retry = RetryConfig::unbounded(self.config.poll_interval, DEFAULT_UNBOUNDED_MAX_DELAY);
+        let rpc_timeout = self.config.wait_node_sync_timeout;
+
         // Connect to the L2 RPC endpoint, with connection-time failover across
         // the configured endpoint list.
         let l2_provider: Arc<dyn Provider<Base> + Send + Sync> = Arc::new(
-            Self::connect_first(&self.config.l2_rpc_url, "l2-rpc", |url| {
-                let url = url.clone();
-                async move {
-                    ProviderBuilder::new()
-                        .disable_recommended_fillers()
-                        .network::<Base>()
-                        .connect(url.as_str())
-                        .await
-                }
+            Self::rpc_retry("l2-rpc", retry, rpc_timeout, || {
+                Self::connect_first(&self.config.l2_rpc_url, "l2-rpc", |url| {
+                    let url = url.clone();
+                    async move {
+                        ProviderBuilder::new()
+                            .disable_recommended_fillers()
+                            .network::<Base>()
+                            .connect(url.as_str())
+                            .await
+                    }
+                })
             })
             .await?,
         );
@@ -411,32 +453,26 @@ impl BatcherService {
         // `optimism_rollupConfig` and `optimism_syncStatus` are called through the
         // generated `RollupNodeApiClient` trait rather than raw JSON requests.
         // `HttpClientBuilder::build` is sync but only validates the URL; the first
-        // real RPC call below (`rollup_config`) is what actually exercises the
-        // endpoint, so we probe via `rollup_config` to drive failover.
-        let rollup_client: HttpClient =
-            Self::connect_first(&self.config.rollup_rpc_url, "rollup-rpc", |url| {
-                let url = url.clone();
-                async move {
-                    let client = HttpClientBuilder::default()
-                        .build(url.as_str())
-                        .map_err(|e| eyre::eyre!("failed to build rollup RPC client: {e}"))?;
-                    // Issue a cheap probe call so a non-responsive endpoint
-                    // triggers failover instead of falling through to the next
-                    // step and erroring with no fallback.
-                    client
-                        .rollup_config()
-                        .await
-                        .map_err(|e| eyre::eyre!("optimism_rollupConfig probe failed: {e}"))?;
-                    eyre::Ok(client)
-                }
+        // real RPC (`rollup_config`) is what actually exercises the endpoint, so
+        // that call both drives failover and supplies the config used below.
+        let (rollup_client, rollup_config) =
+            Self::rpc_retry("rollup-rpc", retry, rpc_timeout, || {
+                Self::connect_first(&self.config.rollup_rpc_url, "rollup-rpc", |url| {
+                    let url = url.clone();
+                    async move {
+                        let client = HttpClientBuilder::default()
+                            .build(url.as_str())
+                            .map_err(|e| eyre::eyre!("failed to build rollup RPC client: {e}"))?;
+                        let config = client
+                            .rollup_config()
+                            .await
+                            .map_err(|e| eyre::eyre!("optimism_rollupConfig RPC failed: {e}"))?;
+                        eyre::Ok((client, config))
+                    }
+                })
             })
             .await?;
-        let rollup_config = Arc::new(
-            rollup_client
-                .rollup_config()
-                .await
-                .map_err(|e| eyre::eyre!("optimism_rollupConfig RPC failed: {e}"))?,
-        );
+        let rollup_config = Arc::new(rollup_config);
         let effective_batch_inbox =
             self.config.batch_inbox_override.unwrap_or(rollup_config.batch_inbox_address);
         if self.config.batch_inbox_override.is_some() {
@@ -453,12 +489,18 @@ impl BatcherService {
         }
 
         let validator_provider = if let Some(url) = &self.config.parity_validator_l2_rpc_url {
-            let provider = ProviderBuilder::new()
-                .disable_recommended_fillers()
-                .network::<Base>()
-                .connect(url.as_str())
-                .await
-                .map_err(|e| eyre::eyre!("failed to connect parity validator L2 RPC: {e}"))?;
+            let url = url.clone();
+            let provider = Self::rpc_retry("parity-validator-l2-rpc", retry, rpc_timeout, || {
+                let url = url.clone();
+                async move {
+                    ProviderBuilder::new()
+                        .disable_recommended_fillers()
+                        .network::<Base>()
+                        .connect(url.as_str())
+                        .await
+                }
+            })
+            .await?;
             let provider: Arc<dyn Provider<Base> + Send + Sync> = Arc::new(provider);
             Some(RpcL2BlockProvider::new(provider))
         } else {
@@ -466,30 +508,33 @@ impl BatcherService {
         };
 
         // Connect to L1 before the optional node-sync gate.
-        let l1_provider: RootProvider =
+        let l1_provider: RootProvider = Self::rpc_retry("l1-rpc", retry, rpc_timeout, || {
             Self::connect_first(&self.config.l1_rpc_url, "l1-rpc", |url| {
                 let url = url.clone();
                 async move {
                     ProviderBuilder::new().disable_recommended_fillers().connect(url.as_str()).await
                 }
             })
-            .await?;
+        })
+        .await?;
 
         // Recent transactions only select an L1 synchronization target.
         // They never advance the L2 backfill cursor.
         if self.config.wait_node_sync {
             let target_l1 = if self.config.check_recent_txs_depth > 0 {
-                RecentTxSyncTarget::find(
-                    &l1_provider,
-                    signer_address,
-                    self.config.check_recent_txs_depth,
-                )
+                Self::rpc_retry("recent-tx-sync-target", retry, rpc_timeout, || {
+                    RecentTxSyncTarget::find(
+                        &l1_provider,
+                        signer_address,
+                        self.config.check_recent_txs_depth,
+                    )
+                })
                 .await?
             } else {
-                l1_provider
-                    .get_block_number()
-                    .await
-                    .map_err(|e| eyre::eyre!("failed to fetch L1 sync target: {e}"))?
+                Self::rpc_retry("l1-sync-target", retry, rpc_timeout, || {
+                    l1_provider.get_block_number()
+                })
+                .await?
             };
             Self::wait_for_node_sync(
                 &rollup_client,
@@ -500,16 +545,21 @@ impl BatcherService {
             .await?;
         }
 
+        // Channel duration is measured from this tip, not from L1 block 0.
+        let initial_l1_head =
+            Self::rpc_retry("l1-head", retry, rpc_timeout, || l1_provider.get_block_number())
+                .await?;
+
         let initial_derivation_status = if let Some(provider) = validator_provider.as_ref() {
-            provider
-                .derivation_status()
-                .await
-                .map_err(|e| eyre::eyre!("failed to fetch parity validator safe L2 status: {e}"))?
+            Self::rpc_retry("parity-validator-safe-l2", retry, rpc_timeout, || {
+                provider.derivation_status()
+            })
+            .await?
         } else {
-            rollup_client
-                .derivation_status()
-                .await
-                .map_err(|e| eyre::eyre!("optimism_syncStatus RPC failed: {e}"))?
+            Self::rpc_retry("optimism_syncStatus", retry, rpc_timeout, || {
+                rollup_client.derivation_status()
+            })
+            .await?
         };
         let safe_l2 = initial_derivation_status.safe_l2;
         if safe_l2 == BlockInfo::default() {
@@ -597,11 +647,16 @@ impl BatcherService {
         let l1_head_subscription =
             Self::build_l1_subscription(self.config.l1_ws_url.as_ref()).await;
         let l1_head_poller = RpcL1HeadPollingSource::new(Arc::new(
-            Self::connect_first(&self.config.l1_rpc_url, "l1-rpc-poller", |url| {
-                let url = url.clone();
-                async move {
-                    ProviderBuilder::new().disable_recommended_fillers().connect(url.as_str()).await
-                }
+            Self::rpc_retry("l1-rpc-poller", retry, rpc_timeout, || {
+                Self::connect_first(&self.config.l1_rpc_url, "l1-rpc-poller", |url| {
+                    let url = url.clone();
+                    async move {
+                        ProviderBuilder::new()
+                            .disable_recommended_fillers()
+                            .connect(url.as_str())
+                            .await
+                    }
+                })
             })
             .await?,
         ));
@@ -613,10 +668,9 @@ impl BatcherService {
         );
 
         // Fetch L1 chain ID and construct the tx manager.
-        let l1_chain_id = l1_provider
-            .get_chain_id()
-            .await
-            .map_err(|e| eyre::eyre!("failed to fetch L1 chain ID: {e}"))?;
+        let l1_chain_id =
+            Self::rpc_retry("l1-chain-id", retry, rpc_timeout, || l1_provider.get_chain_id())
+                .await?;
         let tx_manager_config = TxManagerConfig {
             resubmission_timeout: self.config.resubmission_timeout,
             num_confirmations: self.config.num_confirmations as u64,
@@ -673,7 +727,12 @@ impl BatcherService {
                 force_blobs_when_throttling: self.config.force_blobs_when_throttling,
             },
             DaThrottle::new(throttle, throttle_client),
-            (l1_head_source, initial_derivation_status, derivation_status_rx),
+            BatchDriverHeads::new(
+                l1_head_source,
+                initial_l1_head,
+                initial_derivation_status,
+                derivation_status_rx,
+            ),
         )
         .with_stopped(self.config.stopped);
 
@@ -688,5 +747,45 @@ impl BatcherService {
 
         info!("batcher service components initialized");
         Ok(ReadyBatcher { driver, admin_server, background_tasks, cancellation })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicU8, Ordering};
+
+    use super::*;
+
+    fn test_retry() -> RetryConfig {
+        RetryConfig::unbounded(Duration::from_millis(1), Duration::from_millis(1))
+    }
+
+    #[tokio::test]
+    async fn rpc_retry_succeeds_after_transient_failure() {
+        let attempts = AtomicU8::new(0);
+        let value = BatcherService::rpc_retry("test", test_retry(), Duration::from_secs(1), || {
+            let n = attempts.fetch_add(1, Ordering::SeqCst);
+            async move { if n < 2 { Err("transient") } else { Ok(7u64) } }
+        })
+        .await
+        .expect("retry should succeed after transient failures");
+        assert_eq!(value, 7);
+        assert_eq!(attempts.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn rpc_retry_times_out_while_failing() {
+        let error = BatcherService::rpc_retry(
+            "test-op",
+            test_retry(),
+            Duration::from_millis(20),
+            || async { Err::<(), _>("always") },
+        )
+        .await
+        .expect_err("retry should time out while the RPC keeps failing");
+        assert!(
+            error.to_string().contains("test-op"),
+            "timeout error should name the operation, got {error}"
+        );
     }
 }

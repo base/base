@@ -360,7 +360,7 @@ mod tests {
                 },
                 l1_block_info: L1BlockInfo::default(),
                 payer: None,
-                phase_statuses: Vec::new(),
+                phase_statuses: None,
                 metadata: None,
             };
 

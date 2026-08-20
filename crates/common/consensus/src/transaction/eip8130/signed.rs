@@ -366,7 +366,21 @@ impl Eip8130Signed {
         if self.tx.sender.is_some() {
             return Ok(None);
         }
-        let signature = alloy_primitives::Signature::try_from(self.sender_auth.as_ref())
+        // Canonical-encoding guard: the EOA `sender_auth` must be exactly a
+        // 65-byte `r || s || v` blob with `v` in 'Electrum' notation
+        // (`v in {27, 28}`). `sender_auth` cannot be covered by
+        // `sender_signature_hash` (a signature cannot sign over itself), so if we
+        // accepted the alternative `v in {0, 1}` encoding any relayer could flip
+        // that byte to mint a second, equally valid transaction hash for the same
+        // signer without the key (txid malleability). `alloy`'s parser normalizes
+        // `{0, 1, 27, 28}` all to the same parity, so we reject the non-canonical
+        // forms here before parsing, matching the k1 authenticator's strict
+        // `v in {27, 28}` check in `RecoveredActorId::recover_k1`.
+        let raw = self.sender_auth.as_ref();
+        if raw.len() != 65 || !matches!(raw[64], 27 | 28) {
+            return Err(alloy_consensus::crypto::RecoveryError::new());
+        }
+        let signature = alloy_primitives::Signature::try_from(raw)
             .map_err(|_| alloy_consensus::crypto::RecoveryError::new())?;
         let hash = self.tx.sender_signature_hash();
         recover(&signature, hash).map(Some)
@@ -837,6 +851,28 @@ mod tests {
         let signed = Eip8130Signed::new(tx, sender_auth, Bytes::new());
 
         assert_eq!(signed.recover_eoa_sender().unwrap(), Some(expected));
+    }
+
+    #[cfg(feature = "k256")]
+    #[test]
+    fn recover_eoa_sender_rejects_noncanonical_v() {
+        use alloy_signer::SignerSync;
+        use alloy_signer_local::PrivateKeySigner;
+
+        let signer = PrivateKeySigner::random();
+        let mut tx = sample_signed(false).into_tx();
+        tx.sender = None;
+        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+        let mut bytes = signature.as_bytes().to_vec();
+        // Honest tooling emits `v` in 'Electrum' notation (`{27, 28}`). Rewrite it
+        // to the `{0, 1}` encoding of the same parity: it recovers the same signer
+        // but is a distinct byte string (txid malleability), so both the checked
+        // and unchecked recovery paths must reject it.
+        assert!(matches!(bytes[64], 27 | 28));
+        bytes[64] -= 27;
+        let signed = Eip8130Signed::new(tx, Bytes::from(bytes), Bytes::new());
+        assert!(signed.recover_eoa_sender().is_err());
+        assert!(signed.recover_eoa_sender_unchecked().is_err());
     }
 
     #[cfg(feature = "k256")]
