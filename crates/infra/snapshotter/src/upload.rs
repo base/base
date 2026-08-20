@@ -60,6 +60,25 @@ pub struct SnapshotRun {
     pub manifest_key: String,
 }
 
+/// Inputs for [`SnapshotUploader::upload`].
+#[derive(Debug, Clone, Copy)]
+pub struct SnapshotUploadParams<'a> {
+    /// Directory containing the generated archives and `manifest.json`.
+    pub output_dir: &'a Path,
+    /// Generated artifact paths to upload.
+    pub files: &'a [PathBuf],
+    /// Unix timestamp used as the run directory name.
+    pub timestamp: u64,
+    /// Number of completed run directories to retain after upload.
+    pub retain_runs: usize,
+    /// Freshly generated local manifest.
+    pub local_manifest: &'a SnapshotManifest,
+    /// Previous run's published manifest, if any.
+    pub remote_manifest: Option<&'a SnapshotManifest>,
+    /// Shared `static_files/` listing from [`SnapshotUploader::list_remote_static_files`].
+    pub remote_static_files: &'a HashMap<String, u64>,
+}
+
 /// Determines whether a snapshot component is re-uploaded every run
 /// or can be skipped when the remote copy already matches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -275,33 +294,24 @@ impl SnapshotUploader {
     /// `remote_static_files` is the shared-storage listing from
     /// [`Self::list_remote_static_files`]; callers that already listed for generation
     /// should reuse that map instead of listing again.
-    pub async fn upload(
-        &self,
-        output_dir: &Path,
-        files: &[PathBuf],
-        timestamp: u64,
-        retain_runs: usize,
-        local_manifest: &SnapshotManifest,
-        remote_manifest: Option<&SnapshotManifest>,
-        remote_static_files: &HashMap<String, u64>,
-    ) -> Result<String> {
+    pub async fn upload(&self, params: SnapshotUploadParams<'_>) -> Result<String> {
         let static_prefix = self.static_files_prefix();
-        let run_prefix = self.run_prefix(timestamp);
+        let run_prefix = self.run_prefix(params.timestamp);
 
         info!(
             run_prefix = %run_prefix,
             static_prefix = %static_prefix,
-            file_count = files.len(),
+            file_count = params.files.len(),
             bucket = %self.bucket,
             "uploading snapshot artifacts"
         );
 
-        let manifest_path = output_dir.join("manifest.json");
+        let manifest_path = params.output_dir.join("manifest.json");
         let mut static_uploads = Vec::new();
         let mut run_uploads = Vec::new();
         let mut skipped = 0u64;
 
-        for file in files {
+        for file in params.files {
             if file == &manifest_path {
                 continue;
             }
@@ -312,16 +322,18 @@ impl SnapshotUploader {
                 .to_string_lossy()
                 .to_string();
 
-            let strategy = UploadStrategy::classify_with_manifest(&file_name, local_manifest);
+            let strategy =
+                UploadStrategy::classify_with_manifest(&file_name, params.local_manifest);
 
             match strategy {
                 UploadStrategy::DiffByHash => {
-                    let local_hashes = local_manifest.chunk_hashes_for_file(&file_name);
+                    let local_hashes = params.local_manifest.chunk_hashes_for_file(&file_name);
                     let remote_hashes =
-                        remote_manifest.and_then(|m| m.chunk_hashes_for_file(&file_name));
+                        params.remote_manifest.and_then(|m| m.chunk_hashes_for_file(&file_name));
                     match (&local_hashes, &remote_hashes) {
                         (Some(local), Some(remote))
-                            if local == remote && remote_static_files.contains_key(&file_name) =>
+                            if local == remote
+                                && params.remote_static_files.contains_key(&file_name) =>
                         {
                             debug!(file = %file_name, "skipping finalized static file (blake3 matches shared object)");
                             skipped += 1;
@@ -380,9 +392,9 @@ impl SnapshotUploader {
                 .await?;
 
             let published_manifest = build_published_manifest(
-                local_manifest,
+                params.local_manifest,
                 self.public_snapshot_base_url().as_deref(),
-                timestamp,
+                params.timestamp,
             )?;
             self.upload_manifest(&manifest_key, published_manifest, progress_ref).await?;
             Ok::<(), anyhow::Error>(())
@@ -403,8 +415,8 @@ impl SnapshotUploader {
             return Err(error);
         }
 
-        if let Err(e) = self.prune_old_runs(retain_runs).await {
-            warn!(error = %e, retain_runs, "failed to prune old snapshot runs");
+        if let Err(e) = self.prune_old_runs(params.retain_runs).await {
+            warn!(error = %e, retain_runs = params.retain_runs, "failed to prune old snapshot runs");
         }
 
         info!(

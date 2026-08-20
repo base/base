@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use base_snapshotter::{
     ChunkedArchive, ComponentManifest, ContainerManager, DockerContainerManager,
     ManifestGenerationParams, OutputFileChecksum, SnapshotGenerator, SnapshotManifest,
-    SnapshotUploader, TipChecker, TipStatus,
+    SnapshotUploadParams, SnapshotUploader, TipChecker, TipStatus,
 };
 use bollard::{
     Docker,
@@ -30,6 +30,26 @@ use serial_test::serial;
 
 mod common;
 use common::TestHarness;
+
+/// Builds [`SnapshotUploadParams`] for e2e uploads that retain 100 runs.
+const fn upload_params<'a>(
+    output_dir: &'a Path,
+    files: &'a [PathBuf],
+    timestamp: u64,
+    local_manifest: &'a SnapshotManifest,
+    remote_manifest: Option<&'a SnapshotManifest>,
+    remote_static_files: &'a HashMap<String, u64>,
+) -> SnapshotUploadParams<'a> {
+    SnapshotUploadParams {
+        output_dir,
+        files,
+        timestamp,
+        retain_runs: 100,
+        local_manifest,
+        remote_manifest,
+        remote_static_files,
+    }
+}
 
 struct MockContainerManager {
     running: AtomicBool,
@@ -353,7 +373,14 @@ async fn upload_artifacts_to_minio() -> Result<()> {
     let local_manifest = parse_local_manifest(&output_dir)?;
 
     let upload_prefix = uploader
-        .upload(&output_dir, &files, 1_700_000_000, 100, &local_manifest, None, &HashMap::new())
+        .upload(upload_params(
+            &output_dir,
+            &files,
+            1_700_000_000,
+            &local_manifest,
+            None,
+            &HashMap::new(),
+        ))
         .await?;
     assert_eq!(upload_prefix, "mainnet/1700000000", "run prefix should be date-based");
 
@@ -446,7 +473,14 @@ async fn upload_with_empty_prefix() -> Result<()> {
     let local_manifest = parse_local_manifest(&output_dir)?;
 
     let upload_prefix = uploader
-        .upload(&output_dir, &files, 1_700_000_000, 100, &local_manifest, None, &HashMap::new())
+        .upload(upload_params(
+            &output_dir,
+            &files,
+            1_700_000_000,
+            &local_manifest,
+            None,
+            &HashMap::new(),
+        ))
         .await?;
     assert_eq!(upload_prefix, "1700000000", "empty prefix should produce bare date");
 
@@ -588,15 +622,14 @@ async fn diff_upload_skips_chunks_when_blake3_matches() -> Result<()> {
 
     let remote_static_files = uploader.list_remote_static_files().await?;
     uploader
-        .upload(
+        .upload(upload_params(
             &output_dir,
             &files,
             1_700_000_000,
-            100,
             &local_manifest,
             remote_manifest.as_ref(),
             &remote_static_files,
-        )
+        ))
         .await?;
 
     // Verify: matching finalized chunks were not overwritten, while the latest chunks
@@ -660,15 +693,14 @@ async fn finalizing_previous_latest_chunk_uploads_it_to_shared_storage() -> Resu
     )?;
     let first_manifest = parse_local_manifest(&first_output_dir)?;
     uploader
-        .upload(
+        .upload(upload_params(
             &first_output_dir,
             &first_files,
             1_700_000_000,
-            100,
             &first_manifest,
             None,
             &HashMap::new(),
-        )
+        ))
         .await?;
 
     let first_tip =
@@ -692,15 +724,14 @@ async fn finalizing_previous_latest_chunk_uploads_it_to_shared_storage() -> Resu
     let second_manifest = parse_local_manifest(&second_output_dir)?;
     let remote_manifest = uploader.fetch_previous_manifest().await?;
     uploader
-        .upload(
+        .upload(upload_params(
             &second_output_dir,
             &second_files,
             1_700_000_001,
-            100,
             &second_manifest,
             remote_manifest.as_ref(),
             &HashMap::new(),
-        )
+        ))
         .await?;
 
     let finalized =
@@ -781,15 +812,14 @@ async fn diff_upload_reuploads_on_blake3_mismatch_even_when_size_matches() -> Re
     let remote_manifest = uploader.fetch_previous_manifest().await?;
 
     uploader
-        .upload(
+        .upload(upload_params(
             &output_dir,
             &files,
             1_700_000_000,
-            100,
             &local_manifest,
             remote_manifest.as_ref(),
             &HashMap::new(),
-        )
+        ))
         .await?;
 
     // Verify finalized chunks are re-uploaded on a BLAKE3 mismatch, while latest chunks
@@ -837,15 +867,14 @@ async fn diff_upload_uploads_everything_on_first_run() -> Result<()> {
     assert!(remote_manifest.is_none(), "fresh bucket should have no previous manifest");
 
     uploader
-        .upload(
+        .upload(upload_params(
             &output_dir,
             &files,
             1_700_000_000,
-            100,
             &local_manifest,
             remote_manifest.as_ref(),
             &HashMap::new(),
-        )
+        ))
         .await?;
 
     let body =
@@ -1008,7 +1037,14 @@ async fn generate_and_upload_proofs_to_minio() -> Result<()> {
 
     let local_manifest = parse_local_manifest(output.path())?;
     let upload_prefix = uploader
-        .upload(output.path(), &files, 1_700_000_000, 100, &local_manifest, None, &HashMap::new())
+        .upload(upload_params(
+            output.path(),
+            &files,
+            1_700_000_000,
+            &local_manifest,
+            None,
+            &HashMap::new(),
+        ))
         .await?;
     assert_eq!(upload_prefix, "proofs-gen/1700000000");
 
@@ -1091,17 +1127,17 @@ async fn always_upload_overwrites_existing_state_rocksdb_and_proofs() -> Result<
         output_dir.join("rocksdb_indices.tar.zst"),
         output_dir.join("state.tar.zst"),
     ];
+    let empty_manifest = empty_manifest(2_000_000);
 
     let upload_prefix = uploader
-        .upload(
+        .upload(upload_params(
             &output_dir,
             &files,
             1_700_000_000,
-            100,
-            &empty_manifest(2_000_000),
+            &empty_manifest,
             None,
             &HashMap::new(),
-        )
+        ))
         .await?;
     assert_eq!(upload_prefix, "overwrite-test/1700000000");
 
@@ -1342,7 +1378,14 @@ async fn e2e_stop_upload_restart_real_container() -> Result<()> {
         None,
     );
     let upload_prefix = uploader
-        .upload(&output_dir, &files, 1_700_000_000, 100, &local_manifest, None, &HashMap::new())
+        .upload(upload_params(
+            &output_dir,
+            &files,
+            1_700_000_000,
+            &local_manifest,
+            None,
+            &HashMap::new(),
+        ))
         .await?;
 
     let manifest_body = get_object_bytes(

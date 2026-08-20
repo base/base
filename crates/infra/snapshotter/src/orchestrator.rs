@@ -17,7 +17,7 @@ use crate::{
         SnapshotManifestExt,
     },
     tip::TipChecker,
-    upload::SnapshotUploader,
+    upload::{SnapshotUploadParams, SnapshotUploader},
 };
 
 /// Orchestrates the full snapshot flow: stop CL and EL → generate → upload → restart EL and CL.
@@ -285,15 +285,15 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
             serde_json::from_slice(&manifest_bytes).context("failed to parse run manifest.json")?;
 
         self.uploader
-            .upload(
-                run_output_dir,
-                &files,
-                run_timestamp,
-                self.config.retain_runs.get(),
-                &local_manifest,
+            .upload(SnapshotUploadParams {
+                output_dir: run_output_dir,
+                files: &files,
+                timestamp: run_timestamp,
+                retain_runs: self.config.retain_runs.get(),
+                local_manifest: &local_manifest,
                 remote_manifest,
                 remote_static_files,
-            )
+            })
             .await
             .with_context(|| {
                 format!(
