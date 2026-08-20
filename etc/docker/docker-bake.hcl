@@ -15,7 +15,7 @@ variable "ZK_HOST_PROFILE" {
 }
 
 variable "REGISTRY_IMAGE" {
-  default = "ghcr.io/base/node-reth-dev"
+  default = "ghcr.io/base/node"
 }
 
 variable "PLATFORM_PAIR" {
