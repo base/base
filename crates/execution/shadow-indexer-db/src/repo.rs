@@ -167,12 +167,11 @@ impl ShadowBlockRepo {
     /// # Errors
     /// Returns an error when the query fails.
     pub async fn count_canonical(&self) -> Result<i64> {
-        let count = query_scalar::<_, i64>(
-            "SELECT count(*) FROM shadow_blocks WHERE reorged_out = false",
-        )
-        .fetch_one(&self.pool)
-        .await
-        .context("failed to count shadow blocks")?;
+        let count =
+            query_scalar::<_, i64>("SELECT count(*) FROM shadow_blocks WHERE reorged_out = false")
+                .fetch_one(&self.pool)
+                .await
+                .context("failed to count shadow blocks")?;
 
         Ok(count)
     }
@@ -252,16 +251,39 @@ impl ShadowBlockRepo {
         Ok(row)
     }
 
+    /// Loads canonical rows for a set of block hashes in one query.
+    ///
+    /// Used to resolve the canonical replacements for a page of reorged-out shadow
+    /// blocks without a per-row round trip.
+    ///
+    /// # Errors
+    /// Returns an error when the query fails.
+    pub async fn list_canonical_by_hashes(
+        &self,
+        hashes: &[Vec<u8>],
+    ) -> Result<Vec<ShadowBlockRow>> {
+        if hashes.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let rows = query_as::<_, ShadowBlockRow>(
+            "SELECT * FROM shadow_blocks WHERE reorged_out = false AND hash = ANY($1)",
+        )
+        .bind(hashes)
+        .fetch_all(&self.pool)
+        .await
+        .context("failed to list canonical shadow blocks by hashes")?;
+
+        Ok(rows)
+    }
+
     /// Finds the newest canonical block containing a transaction hash.
     ///
     /// `tx_hash` must be the lowercase `0x`-prefixed hex string as serialized in the payload.
     ///
     /// # Errors
     /// Returns an error when the query fails.
-    pub async fn find_canonical_by_tx_hash(
-        &self,
-        tx_hash: &str,
-    ) -> Result<Option<ShadowBlockRow>> {
+    pub async fn find_canonical_by_tx_hash(&self, tx_hash: &str) -> Result<Option<ShadowBlockRow>> {
         let row = query_as::<_, ShadowBlockRow>(
             "SELECT * FROM shadow_blocks WHERE reorged_out = false \
                AND jsonb_path_query_array(payload, '$.block.block.body.transactions[*].hash') \

@@ -57,13 +57,10 @@ impl ShadowBlockHealth {
 
 fn gas_check(shadow: &ShadowBlockStats, canonical: &ShadowBlockStats) -> HealthCheck {
     let (passed, detail) = if canonical.gas_used == 0 {
-        (
-            shadow.gas_used == 0,
-            format!("shadow {} vs canonical 0", shadow.gas_used),
-        )
+        (shadow.gas_used == 0, format!("shadow {} vs canonical 0", shadow.gas_used))
     } else {
-        let pct =
-            (shadow.gas_used as f64 - canonical.gas_used as f64) / canonical.gas_used as f64 * 100.0;
+        let pct = (shadow.gas_used as f64 - canonical.gas_used as f64) / canonical.gas_used as f64
+            * 100.0;
         (
             pct.abs() <= HEALTH_GAS_DIFF_THRESHOLD_PCT,
             format!("{pct:+.1}% (shadow {} vs canonical {})", shadow.gas_used, canonical.gas_used),
@@ -125,7 +122,8 @@ mod tests {
 
     #[test]
     fn all_checks_pass_when_shadow_matches_canonical() {
-        let health = ShadowBlockHealth::evaluate(&stats(20_000, 2, 1, 0), Some(&stats(20_000, 2, 1, 0)));
+        let health =
+            ShadowBlockHealth::evaluate(&stats(20_000, 2, 1, 0), Some(&stats(20_000, 2, 1, 0)));
         assert!(health.reconciled);
         assert_eq!(health.total, 4);
         assert_eq!(health.passed, 4);
@@ -139,7 +137,8 @@ mod tests {
         assert_eq!(health.passed, 2);
         let gas = health.checks.iter().find(|c| c.id == "gas_in_band").unwrap();
         assert!(!gas.passed);
-        let inversions = health.checks.iter().find(|c| c.id == "no_priority_fee_inversions").unwrap();
+        let inversions =
+            health.checks.iter().find(|c| c.id == "no_priority_fee_inversions").unwrap();
         assert!(!inversions.passed);
     }
 

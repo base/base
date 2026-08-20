@@ -1,5 +1,7 @@
 //! Read-only HTTP JSON API serving persisted shadow blocks to the explorer UI.
 
+use std::collections::HashMap;
+
 use alloy_consensus::{Transaction, TxReceipt, Typed2718};
 use alloy_primitives::{B256, hex};
 use axum::{
@@ -12,7 +14,6 @@ use axum::{
 use base_common_consensus::BaseTxEnvelope;
 use base_shadow_indexer_db::{ShadowBlockRepo, ShadowBlockRow};
 use serde::{Deserialize, Serialize};
-use tower_http::cors::CorsLayer;
 
 use crate::{ShadowBlockHealth, ShadowBlockStats, ShadowMetricsStore};
 
@@ -36,7 +37,8 @@ impl ApiState {
     }
 }
 
-/// Builds the block explorer API router, permissive to any origin for internal VPN use.
+/// Builds the block explorer API router. Consumed server-to-server over the mesh
+/// (no browser origin), so it carries no CORS layer.
 pub fn api_router(store: Option<ShadowMetricsStore>) -> Router {
     Router::new()
         .route("/blocks", get(list_blocks))
@@ -45,7 +47,6 @@ pub fn api_router(store: Option<ShadowMetricsStore>) -> Router {
         .route("/tx/{hash}", get(get_tx_by_hash))
         .route("/shadow-blocks", get(list_shadow_blocks))
         .route("/shadow-blocks/{id}", get(get_shadow_block))
-        .layer(CorsLayer::permissive())
         .with_state(ApiState { store })
 }
 
@@ -167,9 +168,11 @@ struct TxDetail {
     gas_limit: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     gas_used: Option<u64>,
-    max_fee_per_gas: u128,
+    // Decimal strings: u128 fees exceed JS's safe-integer range, so they are not
+    // serialized as JSON numbers.
+    max_fee_per_gas: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    max_priority_fee_per_gas: Option<u128>,
+    max_priority_fee_per_gas: Option<String>,
     tx_type: String,
 }
 
@@ -230,14 +233,22 @@ async fn list_shadow_blocks(
     let rows = repo.list_reorged(limit, offset).await?;
     let total_count = repo.count_reorged().await?;
 
-    let mut blocks = Vec::with_capacity(rows.len());
-    for row in &rows {
-        let canonical = match row.canonical_hash.as_ref() {
-            Some(hash) => repo.get_by_block_hash(hash).await?,
-            None => None,
-        };
-        blocks.push(shadow_block_summary(row, canonical.as_ref()));
-    }
+    // Resolve all canonical replacements for the page in one query instead of a
+    // per-row lookup.
+    let canonical_hashes: Vec<Vec<u8>> =
+        rows.iter().filter_map(|row| row.canonical_hash.clone()).collect();
+    let canonical_rows = repo.list_canonical_by_hashes(&canonical_hashes).await?;
+    let canonical_by_hash: HashMap<&[u8], &ShadowBlockRow> =
+        canonical_rows.iter().map(|row| (row.hash.as_slice(), row)).collect();
+
+    let blocks = rows
+        .iter()
+        .map(|row| {
+            let canonical =
+                row.canonical_hash.as_deref().and_then(|hash| canonical_by_hash.get(hash).copied());
+            shadow_block_summary(row, canonical)
+        })
+        .collect();
 
     Ok(Json(ShadowBlockListResponse { blocks, total_count }))
 }
@@ -333,7 +344,10 @@ fn block_summary(row: &ShadowBlockRow) -> BlockSummary {
     }
 }
 
-fn shadow_block_summary(row: &ShadowBlockRow, canonical: Option<&ShadowBlockRow>) -> ShadowBlockSummary {
+fn shadow_block_summary(
+    row: &ShadowBlockRow,
+    canonical: Option<&ShadowBlockRow>,
+) -> ShadowBlockSummary {
     let shadow = ShadowBlockStats::from_row(row);
     let canonical = canonical.map(ShadowBlockStats::from_row);
 
@@ -424,8 +438,8 @@ fn tx_detail(row: &ShadowBlockRow, index: usize) -> Option<TxDetail> {
         value: tx.value().to_string(),
         gas_limit: tx.gas_limit(),
         gas_used: per_tx_gas_used(row).get(index).copied().flatten(),
-        max_fee_per_gas: tx.max_fee_per_gas(),
-        max_priority_fee_per_gas: tx.max_priority_fee_per_gas(),
+        max_fee_per_gas: tx.max_fee_per_gas().to_string(),
+        max_priority_fee_per_gas: tx.max_priority_fee_per_gas().map(|fee| fee.to_string()),
         tx_type: tx_type_str(tx).to_owned(),
     })
 }
@@ -612,7 +626,10 @@ mod tests {
     fn block_detail_exposes_shadow_status_and_replacement_hash() {
         let detail = block_detail(&sample_row_with(true, Some(vec![0xcd; 32])));
         assert!(detail.reorged_out);
-        assert_eq!(detail.canonical_hash.as_deref(), Some(format!("0x{}", "cd".repeat(32)).as_str()));
+        assert_eq!(
+            detail.canonical_hash.as_deref(),
+            Some(format!("0x{}", "cd".repeat(32)).as_str())
+        );
     }
 
     #[test]
