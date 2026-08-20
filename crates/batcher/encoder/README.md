@@ -41,6 +41,9 @@ compression stream and its FIFO output, and `DaEgress` owns framing and immutabl
 artifacts. `BatchEncoder` coordinates those components with block, timeout,
 confirmation, retry, and derivation-reconciliation state.
 
+Channel-close metric `reason` labels: `soft_target`, `protocol_limit`,
+`timeout`, `flush`, `discard`.
+
 ## Usage
 
 ```rust,ignore

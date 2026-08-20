@@ -161,6 +161,16 @@ impl EncoderConfig {
         Ok(())
     }
 
+    /// Minimum of pre- and post-Granite `channel_timeout`; `0` is treated as unset.
+    pub fn confirmation_channel_timeout(rollup_config: &RollupConfig) -> u64 {
+        let pre_granite = rollup_config.channel_timeout(0);
+        let post_granite = rollup_config.channel_timeout(u64::MAX);
+        match (pre_granite, post_granite) {
+            (0, timeout) | (timeout, 0) => timeout,
+            (pre, post) => pre.min(post),
+        }
+    }
+
     /// Validate the configuration against the active rollup state.
     ///
     /// `next_l2_timestamp` should be the timestamp of the next L2 block the
@@ -177,6 +187,14 @@ impl EncoderConfig {
             && !rollup_config.is_fjord_active(next_l2_timestamp)
         {
             return Err(EncoderConfigError::BrotliRequiresFjord { next_l2_timestamp });
+        }
+
+        let channel_timeout = Self::confirmation_channel_timeout(rollup_config);
+        if channel_timeout > 0 && self.max_channel_duration >= channel_timeout {
+            return Err(EncoderConfigError::ChannelDurationExceedsTimeout {
+                max_channel_duration: self.max_channel_duration,
+                channel_timeout,
+            });
         }
 
         Ok(())
@@ -262,6 +280,17 @@ pub enum EncoderConfigError {
     BrotliRequiresFjord {
         /// The timestamp of the next L2 block the batcher may encode.
         next_l2_timestamp: u64,
+    },
+    /// `max_channel_duration >= channel_timeout`.
+    #[error(
+        "max_channel_duration ({max_channel_duration}) must be less than \
+         the derivation channel_timeout ({channel_timeout})"
+    )]
+    ChannelDurationExceedsTimeout {
+        /// Configured duration in L1 blocks.
+        max_channel_duration: u64,
+        /// Derivation channel timeout in L1 blocks.
+        channel_timeout: u64,
     },
 }
 
@@ -468,5 +497,72 @@ mod tests {
 
         let err = cfg.validate_for_rollup_config(&rollup_config, 98).unwrap_err();
         assert!(matches!(err, EncoderConfigError::BrotliRequiresFjord { next_l2_timestamp: 98 }));
+    }
+
+    fn rollup_config_with_channel_timeouts(
+        pre_granite: u64,
+        post_granite: u64,
+        granite_time: Option<u64>,
+    ) -> RollupConfig {
+        RollupConfig {
+            channel_timeout: pre_granite,
+            granite_channel_timeout: post_granite,
+            upgrades: UpgradeConfig { granite_time, ..UpgradeConfig::default() },
+            ..RollupConfig::default()
+        }
+    }
+
+    #[test]
+    fn confirmation_channel_timeout_takes_the_conservative_minimum() {
+        let rollup_config = rollup_config_with_channel_timeouts(300, 50, Some(10));
+        assert_eq!(EncoderConfig::confirmation_channel_timeout(&rollup_config), 50);
+    }
+
+    #[test]
+    fn confirmation_channel_timeout_treats_zero_as_unset() {
+        let rollup_config = rollup_config_with_channel_timeouts(0, 50, Some(10));
+        assert_eq!(EncoderConfig::confirmation_channel_timeout(&rollup_config), 50);
+    }
+
+    #[test]
+    fn validate_for_rollup_config_rejects_duration_at_channel_timeout() {
+        let cfg = EncoderConfig {
+            compression_algo: CompressionAlgo::Zlib,
+            max_channel_duration: 50,
+            ..EncoderConfig::default()
+        };
+        let rollup_config = rollup_config_with_channel_timeouts(300, 50, Some(10));
+
+        let err = cfg.validate_for_rollup_config(&rollup_config, 0).unwrap_err();
+        assert!(matches!(
+            err,
+            EncoderConfigError::ChannelDurationExceedsTimeout {
+                max_channel_duration: 50,
+                channel_timeout: 50,
+            }
+        ));
+    }
+
+    #[test]
+    fn validate_for_rollup_config_allows_duration_below_channel_timeout() {
+        let cfg = EncoderConfig {
+            compression_algo: CompressionAlgo::Zlib,
+            max_channel_duration: 49,
+            ..EncoderConfig::default()
+        };
+        let rollup_config = rollup_config_with_channel_timeouts(300, 50, Some(10));
+
+        assert!(cfg.validate_for_rollup_config(&rollup_config, 0).is_ok());
+    }
+
+    #[test]
+    fn validate_for_rollup_config_skips_when_channel_timeout_is_unset() {
+        let cfg = EncoderConfig {
+            compression_algo: CompressionAlgo::Zlib,
+            max_channel_duration: 1000,
+            ..EncoderConfig::default()
+        };
+
+        assert!(cfg.validate_for_rollup_config(&RollupConfig::default(), 0).is_ok());
     }
 }

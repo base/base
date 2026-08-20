@@ -166,11 +166,10 @@ pub trait BatchPipeline: Send {
         current_l1: Option<u64>,
     ) -> DerivationReconciliation;
 
-    /// Returns the estimated DA backlog in bytes.
+    /// Estimated DA bytes still awaiting confirmation.
     ///
-    /// Sum of unsafe DA bytes that have not yet been submitted to L1, including
-    /// pending block estimates, open channel estimates, and closed channel frame bytes.
-    /// Deposit transactions are excluded from block estimates.
+    /// Unencoded queued blocks plus channels that are not fully confirmed.
+    /// Deposits are excluded.
     fn da_backlog_bytes(&self) -> u64;
 
     /// Force the next [`next_submission`](Self::next_submission) calls to emit

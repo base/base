@@ -243,12 +243,7 @@ impl BatchEncoder {
 
     /// Returns the conservative protocol channel timeout used for confirmation windows.
     fn confirmation_channel_timeout(&self) -> u64 {
-        let pre_granite = self.rollup_config.channel_timeout(0);
-        let post_granite = self.rollup_config.channel_timeout(u64::MAX);
-        match (pre_granite, post_granite) {
-            (0, timeout) | (timeout, 0) => timeout,
-            (pre, post) => pre.min(post),
-        }
+        EncoderConfig::confirmation_channel_timeout(&self.rollup_config)
     }
 
     /// Invalidates one channel and every atomic artifact or submission dependency.
@@ -715,7 +710,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::{BatchComposeError, CompressionAlgo, SubmissionPayload};
+    use crate::{BatchComposeError, ChannelLimit, CompressionAlgo, SubmissionPayload};
 
     fn make_deposit_tx() -> BaseTxEnvelope {
         let calldata = L1BlockInfoTx::Bedrock(L1BlockInfoBedrock::default()).encode_calldata();
@@ -744,9 +739,13 @@ mod tests {
         }
     }
 
-    fn make_block_with_large_user_tx(parent_hash: B256, seed: u64) -> BaseBlock {
+    fn make_block_with_user_tx_bytes(
+        parent_hash: B256,
+        payload_len: usize,
+        seed: u64,
+    ) -> BaseBlock {
         let mut state = seed;
-        let input: Vec<u8> = (0..200_000)
+        let input: Vec<u8> = (0..payload_len)
             .map(|_| {
                 state ^= state << 13;
                 state ^= state >> 7;
@@ -763,6 +762,10 @@ mod tests {
                 ..Default::default()
             },
         }
+    }
+
+    fn make_block_with_large_user_tx(parent_hash: B256, seed: u64) -> BaseBlock {
+        make_block_with_user_tx_bytes(parent_hash, 200_000, seed)
     }
 
     fn make_user_tx_chain(len: usize) -> Vec<BaseBlock> {
@@ -854,6 +857,59 @@ mod tests {
         // No more blocks => idle.
         let result = encoder.step().unwrap();
         assert_eq!(result, StepResult::Idle);
+    }
+
+    fn tiny_frame_zlib_encoder() -> BatchEncoder {
+        let config = EncoderConfig {
+            max_frame_size: Frame::ENCODED_OVERHEAD + 1,
+            compression_algo: CompressionAlgo::Zlib,
+            ..EncoderConfig::default()
+        };
+        BatchEncoder::new(Arc::new(RollupConfig::default()), config)
+            .expect("valid tiny-frame config")
+    }
+
+    #[test]
+    fn test_step_retries_rejected_block_after_protocol_limit_close() {
+        let mut encoder = tiny_frame_zlib_encoder();
+        let first = make_block_with_user_tx_bytes(B256::ZERO, 30_000, 1);
+        let second = make_block_with_user_tx_bytes(first.header.hash_slow(), 30_000, 2);
+        encoder.add_block(first).unwrap();
+        encoder.add_block(second).unwrap();
+
+        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
+        assert_eq!(encoder.block_cursor, 1);
+        assert_eq!(encoder.channels.len(), 1);
+        assert!(has_open_channel(&encoder));
+
+        assert_eq!(encoder.step().unwrap(), StepResult::ChannelClosed);
+        assert_eq!(encoder.block_cursor, 1, "rejected block stays at the cursor");
+        assert_eq!(encoder.channels.len(), 1);
+        assert!(!has_open_channel(&encoder));
+        assert!(encoder.channels[0].terminal_pending());
+
+        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
+        assert_eq!(encoder.block_cursor, 2);
+        assert_eq!(encoder.channels.len(), 2);
+        assert!(has_open_channel(&encoder));
+        assert_eq!(encoder.channels[1].blocks_added(), 1);
+    }
+
+    #[test]
+    fn test_step_discards_block_that_exceeds_empty_channel() {
+        let mut encoder = tiny_frame_zlib_encoder();
+        encoder.add_block(make_block_with_user_tx_bytes(B256::ZERO, 100_000, 1)).unwrap();
+
+        let err = encoder.step().unwrap_err();
+        assert!(matches!(
+            err,
+            StepError::BlockExceedsChannelLimit {
+                cursor: 0,
+                limit: ChannelLimit::FrameCount { .. }
+            }
+        ));
+        assert!(encoder.channels.is_empty());
+        assert_eq!(encoder.block_cursor, 0);
     }
 
     #[test]
