@@ -31,7 +31,10 @@ jobs:
       group: BasePerfRunnerGroup
     timeout-minutes: 90
     env:
-      HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      # `github.sha` is the synthetic merge commit for pull_request runs. Comparing
+      # against it measures the PR as it would land and maximizes shared Cargo inputs
+      # with its base parent. On workflow_dispatch it remains the selected commit.
+      HEAD_SHA: ${{ github.sha }}
       BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -39,13 +42,13 @@ jobs:
         with:
           egress-policy: audit
 
-      # Single checkout at HEAD_SHA. The tree is switched to the base commit for the
-      # first pass and back to head for the second; ./.github/actions/setup and the
-      # compare script resolve at the workspace root either way.
-      - name: Checkout head
+      # Single checkout at the PR merge commit. The tree is switched to the base commit
+      # for the first pass and back to the merge result for the second;
+      # ./.github/actions/setup and the compare script resolve at the workspace root.
+      - name: Checkout PR merge commit
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 1
 
       - uses: ./.github/actions/setup

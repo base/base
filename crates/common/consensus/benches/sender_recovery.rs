@@ -3,12 +3,13 @@
 //! Compares sequential vs parallel ECDSA sender recovery
 //! as requested in <https://github.com/base/base/issues/282>
 
-use alloy_consensus::transaction::SignerRecoverable;
-use alloy_primitives::{Address, B256};
+use alloy_consensus::{SignableTransaction, TxEip1559, transaction::SignerRecoverable};
+use alloy_primitives::{Address, B256, TxKind, U256};
+use alloy_signer::SignerSync;
+use alloy_signer_local::PrivateKeySigner;
 use base_common_consensus::BaseTransactionSigned;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rayon::prelude::*;
-use reth_transaction_pool::test_utils::TransactionBuilder;
 use serde_json::Value;
 
 /// Generate signed transactions from multiple unique signers.
@@ -20,23 +21,25 @@ fn generate_transactions(count: usize) -> Vec<BaseTransactionSigned> {
             signer_bytes[0] = ((i + 1) % 256) as u8;
             signer_bytes[1] = ((i + 1) / 256) as u8;
             signer_bytes[31] = 1; // Ensure non-zero
-            let signer = B256::from(signer_bytes);
+            let signer = PrivateKeySigner::from_bytes(&B256::from(signer_bytes))
+                .expect("deterministic private key should be valid");
 
-            let txn = TransactionBuilder::default()
-                .signer(signer)
-                .chain_id(8453) // Base mainnet
-                .to(Address::random())
-                .nonce(0)
-                .value(1_000_000_000u128)
-                .gas_limit(21_000)
-                .max_fee_per_gas(1_000_000_000)
-                .max_priority_fee_per_gas(1_000_000_000)
-                .into_eip1559()
-                .as_eip1559()
-                .expect("should convert to eip1559")
-                .clone();
+            let transaction = TxEip1559 {
+                chain_id: 8453, // Base mainnet
+                nonce: 0,
+                gas_limit: 21_000,
+                max_fee_per_gas: 1_000_000_000,
+                max_priority_fee_per_gas: 1_000_000_000,
+                to: TxKind::Call(Address::random()),
+                value: U256::from(1_000_000_000u128),
+                access_list: Default::default(),
+                input: Default::default(),
+            };
+            let signature = signer
+                .sign_hash_sync(&transaction.signature_hash())
+                .expect("transaction signing should succeed");
 
-            BaseTransactionSigned::Eip1559(txn)
+            BaseTransactionSigned::Eip1559(transaction.into_signed(signature))
         })
         .collect()
 }

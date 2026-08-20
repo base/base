@@ -138,12 +138,22 @@ case "$mode" in
     output_dir="${2:?build requires OUTPUT_DIR}"
     mkdir -p "$output_dir"
 
-    echo "::group::Build Solidity test contracts"
-    (
-      cd crates/utilities/test-utils/contracts || exit
-      forge soldeer install && forge build
-    )
-    end_group "$?"
+    if [ -f crates/common/consensus/benches/sender_recovery.rs ]; then
+      sender_package=base-common-consensus
+      sender_features=(--features k256,serde)
+    else
+      # The base revision of the rollout PR still owns this benchmark in the node
+      # crate, whose dev dependency on base-test-utils requires generated contracts.
+      sender_package=base-flashblocks-node
+      sender_features=()
+
+      echo "::group::Build Solidity test contracts"
+      (
+        cd crates/utilities/test-utils/contracts || exit
+        forge soldeer install && forge build
+      )
+      end_group "$?"
+    fi
 
     build_benchmark trie_node base-proof-mpt trie_node
     build_benchmark batch_transaction base-protocol batch_transaction
@@ -151,7 +161,7 @@ case "$mode" in
     build_benchmark base_precompiles base-common-precompiles base_precompiles \
       --features test-utils
     build_benchmark tx_selection base-builder-core tx_selection
-    build_benchmark sender_recovery base-flashblocks-node sender_recovery
+    build_benchmark sender_recovery "$sender_package" sender_recovery "${sender_features[@]}"
     build_benchmark flz base-common-flz flz
     build_benchmark flashblock_decode base-common-flashblocks flashblock_decode
     build_benchmark frame_parse base-protocol frame_parse

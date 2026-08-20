@@ -94,7 +94,6 @@ tracing-subscriber.workspace = true
 
 # misc
 rand.workspace = true
-rayon.workspace = true
 serde_json = { workspace = true, features = ["std"] }
 criterion = { workspace = true, features = ["async_tokio"] }
 
@@ -127,8 +126,4 @@ test-utils = [
 
 [[bench]]
 name = "pending_state"
-harness = false
-
-[[bench]]
-name = "sender_recovery"
 harness = false

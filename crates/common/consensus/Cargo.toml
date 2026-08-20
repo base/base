@@ -49,13 +49,20 @@ reth-primitives-traits = { workspace = true, optional = true }
 
 [dev-dependencies]
 rand.workspace = true
+rayon.workspace = true
 rstest.workspace = true
+criterion.workspace = true
 serde_json.workspace = true
 alloy-signer.workspace = true
 alloy-signer-local.workspace = true
 bincode = { workspace = true, features = ["serde"] }
 arbitrary = { workspace = true, features = ["derive"] }
 alloy-primitives = { workspace = true, features = ["rand", "arbitrary"] }
+
+[[bench]]
+name = "sender_recovery"
+harness = false
+required-features = ["k256", "serde"]
 
 [features]
 default = [ "std" ]
