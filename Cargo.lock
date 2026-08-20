@@ -5992,13 +5992,20 @@ name = "base-shadow-metrics"
 version = "0.0.0"
 dependencies = [
  "alloy-consensus 2.4.1",
+ "alloy-primitives",
  "anyhow",
+ "axum 0.8.9",
+ "base-common-consensus",
  "base-metrics",
  "base-shadow-indexer-db",
+ "chrono",
  "metrics",
+ "reth-primitives-traits",
+ "serde",
  "sqlx",
  "thiserror 2.0.19",
  "tokio",
+ "tower-http",
  "tracing",
 ]
 

@@ -20,7 +20,7 @@ use axum::{
 use base_cli_utils::LogConfig;
 use base_shadow_metrics::{
     DEFAULT_MAX_ROWS_PER_POLL, DEFAULT_POLL_INTERVAL_SECS, ShadowMetricsReader,
-    ShadowMetricsReaderConfig, ShadowMetricsStore,
+    ShadowMetricsReaderConfig, ShadowMetricsStore, api_router,
 };
 use clap::Parser;
 use tokio::net::TcpListener;
@@ -127,10 +127,10 @@ async fn run_server(args: Args) -> Result<()> {
         }
     };
 
-    let app = health_router(store, reader_alive);
+    let app = health_router(store.clone(), reader_alive).merge(api_router(store));
     let http_listener = TcpListener::bind(http_addr).await?;
     let http_server = axum::serve(http_listener, app);
-    info!(http_addr = %http_addr, "Shadow-metrics health server started");
+    info!(http_addr = %http_addr, "Shadow-metrics HTTP server started (health + block API)");
 
     tokio::select! {
         result = http_server => {

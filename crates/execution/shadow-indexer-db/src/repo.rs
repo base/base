@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use sqlx::{PgPool, Postgres, QueryBuilder, query_as, types::Json};
+use sqlx::{PgPool, Postgres, QueryBuilder, query_as, query_scalar, types::Json};
 
 use crate::{ShadowBlockCursor, ShadowBlockRow};
 
@@ -142,6 +142,138 @@ impl ShadowBlockRepo {
         .context("failed to load newest shadow block cursor")?;
 
         Ok(row.map(|(updated_at, number, hash)| ShadowBlockCursor { updated_at, number, hash }))
+    }
+
+    /// Lists canonical rows newest-first for the explorer block list.
+    ///
+    /// # Errors
+    /// Returns an error when the query fails.
+    pub async fn list_recent(&self, limit: i64, offset: i64) -> Result<Vec<ShadowBlockRow>> {
+        let rows = query_as::<_, ShadowBlockRow>(
+            "SELECT * FROM shadow_blocks WHERE reorged_out = false \
+             ORDER BY number DESC LIMIT $1 OFFSET $2",
+        )
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await
+        .context("failed to list recent shadow blocks")?;
+
+        Ok(rows)
+    }
+
+    /// Counts canonical rows for pagination totals.
+    ///
+    /// # Errors
+    /// Returns an error when the query fails.
+    pub async fn count_canonical(&self) -> Result<i64> {
+        let count = query_scalar::<_, i64>(
+            "SELECT count(*) FROM shadow_blocks WHERE reorged_out = false",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .context("failed to count shadow blocks")?;
+
+        Ok(count)
+    }
+
+    /// Lists reorged-out shadow blocks that were replaced by a canonical block,
+    /// newest-first, for the shadow block explorer.
+    ///
+    /// Only rows carrying a `canonical_hash` are returned: a reorged-out row with no
+    /// replacement is a pipeline unwind, not a shadow-versus-canonical comparison.
+    ///
+    /// # Errors
+    /// Returns an error when the query fails.
+    pub async fn list_reorged(&self, limit: i64, offset: i64) -> Result<Vec<ShadowBlockRow>> {
+        let rows = query_as::<_, ShadowBlockRow>(
+            "SELECT * FROM shadow_blocks \
+             WHERE reorged_out = true AND canonical_hash IS NOT NULL \
+             ORDER BY number DESC LIMIT $1 OFFSET $2",
+        )
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await
+        .context("failed to list reorged shadow blocks")?;
+
+        Ok(rows)
+    }
+
+    /// Counts reorged-out shadow blocks with a canonical replacement, for pagination totals.
+    ///
+    /// # Errors
+    /// Returns an error when the query fails.
+    pub async fn count_reorged(&self) -> Result<i64> {
+        let count = query_scalar::<_, i64>(
+            "SELECT count(*) FROM shadow_blocks \
+             WHERE reorged_out = true AND canonical_hash IS NOT NULL",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .context("failed to count reorged shadow blocks")?;
+
+        Ok(count)
+    }
+
+    /// Returns the canonical row at a block number.
+    ///
+    /// # Errors
+    /// Returns an error when the query fails.
+    pub async fn get_canonical_by_number(&self, number: i64) -> Result<Option<ShadowBlockRow>> {
+        let row = query_as::<_, ShadowBlockRow>(
+            "SELECT * FROM shadow_blocks WHERE number = $1 AND reorged_out = false \
+             ORDER BY updated_at DESC LIMIT 1",
+        )
+        .bind(number)
+        .fetch_optional(&self.pool)
+        .await
+        .context("failed to load shadow block by number")?;
+
+        Ok(row)
+    }
+
+    /// Returns the block with a given hash, whether canonical or reorged out (shadow).
+    ///
+    /// Prefers a canonical row if the same hash somehow exists in both states.
+    ///
+    /// # Errors
+    /// Returns an error when the query fails.
+    pub async fn get_by_block_hash(&self, hash: &[u8]) -> Result<Option<ShadowBlockRow>> {
+        let row = query_as::<_, ShadowBlockRow>(
+            "SELECT * FROM shadow_blocks WHERE hash = $1 \
+             ORDER BY reorged_out, number DESC LIMIT 1",
+        )
+        .bind(hash)
+        .fetch_optional(&self.pool)
+        .await
+        .context("failed to load shadow block by hash")?;
+
+        Ok(row)
+    }
+
+    /// Finds the newest canonical block containing a transaction hash.
+    ///
+    /// `tx_hash` must be the lowercase `0x`-prefixed hex string as serialized in the payload.
+    ///
+    /// # Errors
+    /// Returns an error when the query fails.
+    pub async fn find_canonical_by_tx_hash(
+        &self,
+        tx_hash: &str,
+    ) -> Result<Option<ShadowBlockRow>> {
+        let row = query_as::<_, ShadowBlockRow>(
+            "SELECT * FROM shadow_blocks WHERE reorged_out = false \
+               AND jsonb_path_query_array(payload, '$.block.block.body.transactions[*].hash') \
+                   @> to_jsonb($1::text) \
+             ORDER BY number DESC LIMIT 1",
+        )
+        .bind(tx_hash)
+        .fetch_optional(&self.pool)
+        .await
+        .context("failed to find shadow block by tx hash")?;
+
+        Ok(row)
     }
 }
 
