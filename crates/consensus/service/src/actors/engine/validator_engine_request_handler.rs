@@ -4,8 +4,8 @@ use std::{sync::Arc, time::Instant};
 
 use alloy_eips::BlockNumberOrTag;
 use base_consensus_engine::{
-    ConsolidateTask, EngineClient, EngineTask, EngineTaskError, EngineTaskErrors, FinalizeTask,
-    Metrics as EngineMetrics, SealTaskError,
+    ConsolidateInput, ConsolidateTask, EngineClient, EngineTask, EngineTaskError, EngineTaskErrors,
+    FinalizeTask, Metrics as EngineMetrics, SealTaskError,
 };
 use opentelemetry::context::FutureExt as OtelFutureExt;
 use tokio::{sync::mpsc, task::JoinHandle};
@@ -14,7 +14,7 @@ use tracing::{error, warn};
 use crate::{
     BuildRequest, EngineActorRequest, EngineClientError, EngineDerivationClient, EngineError,
     EngineProcessor, EngineRequestReceiver, GetPayloadRequest, InsertUnsafePayloadRequest, Metrics,
-    ReconcileShadowRequest, ResetRequest, ResetRequestOutcome,
+    ReconcileShadowRequest, ResetRequest, ResetRequestOutcome, SafeL2SignalRequest,
 };
 
 /// Receives validator engine requests without carrying sequencer configuration.
@@ -120,12 +120,19 @@ where
                                 .await?;
                         }
                     }
-                    EngineActorRequest::ProcessSafeL2SignalRequest(safe_signal) => {
+                    EngineActorRequest::ProcessSafeL2SignalRequest(request) => {
+                        let input = match *request {
+                            SafeL2SignalRequest::Derived { attributes, confirmed } => {
+                                self.processor.queue_derived_confirmation(confirmed);
+                                ConsolidateInput::Attributes(attributes)
+                            }
+                            SafeL2SignalRequest::Delegated { safe_l2 } => safe_l2.into(),
+                        };
                         self.processor.enqueue(EngineTask::Consolidate(Box::new(
                             ConsolidateTask::new(
                                 Arc::clone(self.processor.client()),
                                 Arc::clone(self.processor.rollup()),
-                                safe_signal,
+                                input,
                             ),
                         )));
                     }

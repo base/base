@@ -4,8 +4,9 @@ use std::{sync::Arc, time::Instant};
 
 use alloy_eips::BlockNumberOrTag;
 use base_consensus_engine::{
-    ConsolidateTask, EngineClient, EngineTask, EngineTaskError, EngineTaskErrorSeverity,
-    EngineTaskErrors, FinalizeTask, Metrics as EngineMetrics, SealTaskError,
+    ConsolidateInput, ConsolidateTask, EngineClient, EngineTask, EngineTaskError,
+    EngineTaskErrorSeverity, EngineTaskErrors, FinalizeTask, Metrics as EngineMetrics,
+    SealTaskError,
 };
 use opentelemetry::context::FutureExt as OtelFutureExt;
 use tokio::{
@@ -18,7 +19,7 @@ use super::{CanonicalUnsafeCatchup, Conductor, SequencerEngineState, ShadowRecon
 use crate::{
     BuildRequest, EngineActorRequest, EngineClientError, EngineDerivationClient, EngineError,
     EngineProcessor, EngineRequestReceiver, GetPayloadRequest, InsertUnsafePayloadRequest, Metrics,
-    ReconcileShadowRequest, ResetOrigin, ResetRequest, ResetRequestOutcome,
+    ReconcileShadowRequest, ResetOrigin, ResetRequest, ResetRequestOutcome, SafeL2SignalRequest,
     actors::engine::ResetOutcome,
 };
 
@@ -335,15 +336,22 @@ where
                             }
                         }
                     }
-                    EngineActorRequest::ProcessSafeL2SignalRequest(safe_signal) => {
+                    EngineActorRequest::ProcessSafeL2SignalRequest(request) => {
+                        let input = match *request {
+                            SafeL2SignalRequest::Derived { attributes, confirmed } => {
+                                self.processor.queue_derived_confirmation(confirmed);
+                                ConsolidateInput::Attributes(attributes)
+                            }
+                            SafeL2SignalRequest::Delegated { safe_l2 } => safe_l2.into(),
+                        };
                         if let Some(gate) = self.active_shadow_gate() {
-                            gate.buffer_safe_signal(safe_signal);
+                            gate.buffer_safe_signal(input);
                             continue;
                         }
                         let task = EngineTask::Consolidate(Box::new(ConsolidateTask::new(
                             Arc::clone(self.processor.client()),
                             Arc::clone(self.processor.rollup()),
-                            safe_signal,
+                            input,
                         )));
                         self.processor.enqueue(task);
                     }
