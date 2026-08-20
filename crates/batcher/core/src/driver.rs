@@ -118,42 +118,11 @@ where
     /// starving receipt processing and cancellation checks.
     pub const STEP_BUDGET: usize = 128;
 
-    /// Create a new [`BatchDriver`] with its live L1 and derivation inputs.
+    /// Create a [`BatchDriver`] from live L1 and derivation inputs.
+    ///
+    /// Advances the pipeline to the initial L1 tip before the event loop starts
+    /// so channel duration is measured from that tip, not from block 0.
     pub fn new(
-        runtime: R,
-        pipeline: P,
-        source: S,
-        tx_manager: TM,
-        config: BatchDriverConfig,
-        throttle: DaThrottle<TC>,
-        heads: BatchDriverHeads<L>,
-    ) -> Self {
-        Self::new_inner(runtime, pipeline, source, tx_manager, config, throttle, heads)
-    }
-
-    /// Create a driver without derivation-status tracking for tests that do not exercise it.
-    #[cfg(any(test, feature = "test-utils"))]
-    pub fn new_without_derivation_status(
-        runtime: R,
-        pipeline: P,
-        source: S,
-        tx_manager: TM,
-        config: BatchDriverConfig,
-        throttle: DaThrottle<TC>,
-        l1_head_source: L,
-    ) -> Self {
-        Self::new_inner(
-            runtime,
-            pipeline,
-            source,
-            tx_manager,
-            config,
-            throttle,
-            BatchDriverHeads::without_derivation(l1_head_source),
-        )
-    }
-
-    fn new_inner(
         runtime: R,
         mut pipeline: P,
         source: S,
@@ -185,6 +154,28 @@ where
             force_blobs_when_throttling: config.force_blobs_when_throttling,
             pending_flush_acks: Vec::new(),
         }
+    }
+
+    /// Create a driver without derivation-status tracking for tests that do not exercise it.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn new_without_derivation_status(
+        runtime: R,
+        pipeline: P,
+        source: S,
+        tx_manager: TM,
+        config: BatchDriverConfig,
+        throttle: DaThrottle<TC>,
+        l1_head_source: L,
+    ) -> Self {
+        Self::new(
+            runtime,
+            pipeline,
+            source,
+            tx_manager,
+            config,
+            throttle,
+            BatchDriverHeads::without_derivation(l1_head_source),
+        )
     }
 
     /// Attach a derivation-status feed to a test driver created without one.
@@ -711,7 +702,7 @@ mod tests {
             let (_status_tx, status_rx) = mpsc::channel(1);
             let status = DerivationStatus::new(safe_head(10), safe_head(42));
 
-            let _driver = BatchDriver::new_inner(
+            let _driver = BatchDriver::new(
                 ctx,
                 pipeline,
                 QueuedSource::new(std::iter::empty()),
