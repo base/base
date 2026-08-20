@@ -106,7 +106,6 @@ jobs:
           "$RUNNER_TEMP/bench-bins/head"
 
       - name: Render comparison
-        id: render
         shell: bash
         env:
           WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -121,16 +120,14 @@ jobs:
             --output "$RUNNER_TEMP/bench-comment.md" \
             --run-url "$WORKFLOW_RUN_URL" \
             --threshold-pct 10 \
-            --improvement-pct 10 \
-            --github-output "$GITHUB_OUTPUT"
+            --improvement-pct 10
           cat "$RUNNER_TEMP/bench-comment.md" >> "$GITHUB_STEP_SUMMARY"
 
-      # Only comment on a stable regression/improvement or incomplete/lost coverage,
-      # keeping noisy repetitions in the job summary without adding PR noise. If a
-      # later push becomes unremarkable, delete the stale comment. Skip forked PRs.
-      - name: Comment or clear benchmark results on PR
+      # Keep one concise status comment current on every run. Skip forked PRs because
+      # their pull_request workflows cannot write comments with GITHUB_TOKEN.
+      - name: Post or update benchmark results on PR
         if: >
-          always() &&
+          success() &&
           github.event_name == 'pull_request' &&
           github.event.pull_request.head.repo.full_name == github.repository
         shell: bash
@@ -138,7 +135,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
-          SHOULD_COMMENT: ${{ steps.render.outputs.should_comment }}
         run: |
           set -euo pipefail
           marker='<!-- bench-pr-results -->'
@@ -146,18 +142,11 @@ jobs:
             --jq ".[] | select(.body | startswith(\"${marker}\")) | .id" \
             | head -1)
 
-          if [ "$SHOULD_COMMENT" = "true" ]; then
-            body=$(cat "$RUNNER_TEMP/bench-comment.md")
-            if [ -n "$existing_id" ]; then
-              gh api "repos/${REPO}/issues/comments/${existing_id}" \
-                -X PATCH --field body="$body" > /dev/null
-            else
-              gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
-                --field body="$body" > /dev/null
-            fi
-          elif [ "$SHOULD_COMMENT" = "false" ] && [ -n "$existing_id" ]; then
-            # Only clear a stale comment when the render step explicitly decided this
-            # PR is unremarkable. If render never ran (e.g. it crashed) SHOULD_COMMENT
-            # is empty, and we must not delete a legitimate warning from a prior run.
-            gh api "repos/${REPO}/issues/comments/${existing_id}" -X DELETE > /dev/null
+          body=$(cat "$RUNNER_TEMP/bench-comment.md")
+          if [ -n "$existing_id" ]; then
+            gh api "repos/${REPO}/issues/comments/${existing_id}" \
+              -X PATCH --field body="$body" > /dev/null
+          else
+            gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+              --field body="$body" > /dev/null
           fi

@@ -20,7 +20,7 @@ import json
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from statistics import fmean
+from statistics import fmean, pstdev
 
 MARKER = "<!-- bench-pr-results -->"
 
@@ -256,14 +256,31 @@ class BenchCompare:
         """Render a `bench (+d%)` list for an alert summary."""
         return ", ".join(f"`{b}` ({self.delta_pct(base[b], head[b]):+.1f}%)" for b in ids)
 
+    def delta_statistics(
+        self, base: dict[str, Measurement], head: dict[str, Measurement], ids: list[str]
+    ) -> tuple[float, float, int] | None:
+        """Return mean delta and population deviation for complete matched benchmarks."""
+        deltas = []
+        for bench_id in ids:
+            base_measurement = base.get(bench_id)
+            head_measurement = head.get(bench_id)
+            if not self.has_all_repetitions(base_measurement, head_measurement):
+                continue
+            delta = self.delta_pct(base_measurement, head_measurement)
+            if delta is not None:
+                deltas.append(delta)
+        if not deltas:
+            return None
+        return fmean(deltas), pstdev(deltas), len(deltas)
+
     def render(
         self,
         criterion_dir: Path,
         base_baselines: str | list[str],
         head_baselines: str | list[str],
         run_url: str,
-    ) -> tuple[str, bool]:
-        """Render the comment body, returning it and whether it warrants a comment."""
+    ) -> str:
+        """Render the benchmark comment body."""
         if isinstance(base_baselines, str):
             base_baselines = [base_baselines]
         if isinstance(head_baselines, str):
@@ -283,6 +300,19 @@ class BenchCompare:
             for b in bench_ids
             if b in base and b in head and not self.has_all_repetitions(base[b], head[b])
         ]
+
+        if not (regressed or improved or dropped or incomplete):
+            statistics = self.delta_statistics(base, head, bench_ids)
+            if statistics is None:
+                summary = "⚠️ No comparable base/head benchmark results."
+            else:
+                mean, deviation, count = statistics
+                noun = "benchmark" if count == 1 else "benchmarks"
+                summary = (
+                    "✅ No significant benchmark changes — "
+                    f"mean Δ {mean:+.1f}%, σ {deviation:.1f}% across {count} {noun}."
+                )
+            return f"{MARKER}\n\n{summary} [View run]({run_url})\n"
 
         lines = [MARKER, ""]
         # A dropped bench (lost coverage) and a regression are both actionable, so
@@ -355,9 +385,7 @@ class BenchCompare:
                 f"_{omitted} benchmark(s) within ±{self.threshold_pct:.0f}% omitted._",
             ]
         lines += ["", f"[View run]({run_url}) · [Re-run benchmarks]({run_url})"]
-        return "\n".join(lines) + "\n", bool(
-            regressed or improved or dropped or incomplete
-        )
+        return "\n".join(lines) + "\n"
 
 
 def parse_args() -> argparse.Namespace:
@@ -370,23 +398,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-url", required=True)
     parser.add_argument("--threshold-pct", type=float, default=10.0)
     parser.add_argument("--improvement-pct", type=float, default=10.0)
-    parser.add_argument("--github-output", type=Path)
     return parser.parse_args()
 
 
 def main() -> int:
     """Entry point for the benchmark comparison renderer."""
     args = parse_args()
-    body, should_comment = BenchCompare(args.threshold_pct, args.improvement_pct).render(
+    body = BenchCompare(args.threshold_pct, args.improvement_pct).render(
         args.criterion_dir,
         args.base_baselines or ["pr-base-1", "pr-base-2"],
         args.head_baselines or ["pr-head-1", "pr-head-2"],
         args.run_url,
     )
     args.output.write_text(body, encoding="utf-8")
-    if args.github_output is not None:
-        with args.github_output.open("a", encoding="utf-8") as handle:
-            handle.write(f"should_comment={'true' if should_comment else 'false'}\n")
     return 0
 
 
