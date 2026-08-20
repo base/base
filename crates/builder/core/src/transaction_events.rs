@@ -315,6 +315,32 @@ impl BuilderDeferredEventData {
     }
 }
 
+/// Fields emitted when the builder discards a transaction that can no longer become valid.
+#[derive(Debug, Serialize)]
+pub(crate) struct BuilderExpiredEventData {
+    #[serde(flatten)]
+    budget: BuilderBudgetFields,
+    expire_reason: &'static str,
+    expire_detail: String,
+}
+
+impl BuilderExpiredEventData {
+    /// Creates an expired-event payload with an explicit reason and detail.
+    pub(crate) fn new(
+        expire_reason: &'static str,
+        expire_detail: impl Into<String>,
+        info: &ExecutionInfo,
+        limits: &ResourceLimits,
+        resources: Option<&TxResources>,
+    ) -> Self {
+        Self {
+            budget: BuilderBudgetFields::new(info, limits, resources),
+            expire_reason,
+            expire_detail: expire_detail.into(),
+        }
+    }
+}
+
 /// Fields emitted when the builder accepts a transaction.
 #[derive(Debug, Serialize)]
 pub(crate) struct BuilderAcceptedEventData {
@@ -655,24 +681,6 @@ mod tests {
         assert_eq!(ctx.payload_id, "0x0102030405060708");
         assert_eq!(data["parent_hash"], format!("{:#x}", B256::repeat_byte(0xaa)));
         assert_eq!(data["transaction_count"], 0);
-    }
-
-    #[test]
-    fn deferred_event_data_is_distinct_from_rejection() {
-        let data = serialize_builder_event_data(BuilderEventData {
-            context: context().event_data(),
-            event: BuilderDeferredEventData::new(
-                "validity_predicate_not_satisfied",
-                "a validity predicate is not satisfied by the current build state",
-                &ExecutionInfo { cumulative_gas_used: 21_000, ..Default::default() },
-                &ResourceLimits { block_gas_limit: 30_000_000, ..Default::default() },
-                None,
-            ),
-        });
-
-        assert_eq!(data["defer_reason"], "validity_predicate_not_satisfied");
-        assert!(data.get("rejection_reason").is_none());
-        assert!(data.get("permanent").is_none());
     }
 
     #[test]

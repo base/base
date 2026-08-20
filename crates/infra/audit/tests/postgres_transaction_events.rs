@@ -159,6 +159,27 @@ async fn postgres_retention_index_is_applied() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn postgres_rejected_index_includes_builder_expired() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+
+    let indexdef: String = sqlx::query_scalar(
+        "SELECT indexdef FROM pg_indexes \
+         WHERE schemaname = 'public' \
+           AND indexname = 'transaction_events_rejected_event_time_idx'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert!(
+        indexdef.contains("BUILDER_EXPIRED"),
+        "rejected index should include BUILDER_EXPIRED: {indexdef}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn postgres_sink_chunks_large_direct_inserts() -> anyhow::Result<()> {
     let harness = PostgresHarness::new().await?;
 

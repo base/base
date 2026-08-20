@@ -49,8 +49,8 @@ use crate::{
     TxnExecutionError, TxnOutcome, ValidityPredicateKey,
     transaction_events::{
         BuilderAcceptedEventData, BuilderConsideredEventData, BuilderDeferredEventData,
-        BuilderRejectedEventData, BuilderTransactionEventContext, emit_builder_transaction_event,
-        rejection_reason_code,
+        BuilderExpiredEventData, BuilderRejectedEventData, BuilderTransactionEventContext,
+        emit_builder_transaction_event, rejection_reason_code,
     },
 };
 
@@ -743,20 +743,17 @@ impl BasePayloadBuilderCtx {
                 );
                 self.emit_builder_decision_event(
                     &payload_id,
-                    TransactionEventType::BuilderRejected,
+                    TransactionEventType::BuilderExpired,
                     tx_hash,
                     Some(ordering_position),
                     || {
-                        BuilderRejectedEventData::new(
+                        BuilderExpiredEventData::new(
                             "bundle_expired",
                             "bundle validity window expired",
-                            false,
                             info,
                             limits,
                             None,
                         )
-                        .with_bundle_block_window(min_block_number, max_block_number)
-                        .with_block_timestamp(block_timestamp)
                     },
                 );
                 best_txs.mark_invalid(tx.sender(), tx.nonce());
@@ -890,12 +887,8 @@ impl BasePayloadBuilderCtx {
                 // its predicate may have already been satisfied at its first position. An expired
                 // position predicate is terminal too — no later position can satisfy it — so both
                 // are dropped rather than parked; only recoverable state mismatches are parked.
-                if predicate_read_failed || predicate_expired {
-                    // A passed position bound can never be satisfied in any later
-                    // block, so an expired predicate is permanently terminal:
-                    // record it for the rejection cache and pool eviction so it is
-                    // not re-evaluated on subsequent flashblock rebuilds. A read
-                    // failure is only terminal for this scan, so it is not cached.
+                if predicate_read_failed {
+                    // A read failure is only terminal for this scan, so it is not cached.
                     self.emit_builder_decision_event(
                         &payload_id,
                         TransactionEventType::BuilderRejected,
@@ -913,9 +906,29 @@ impl BasePayloadBuilderCtx {
                         },
                     );
                     diag.txs_rejected_other += 1;
-                    if predicate_expired {
-                        diag.permanently_rejected_txs.push(tx_hash);
-                    }
+                    best_txs.mark_invalid(tx.sender(), tx.nonce());
+                } else if predicate_expired {
+                    // A passed position bound can never be satisfied in any later
+                    // block, so an expired predicate is permanently terminal:
+                    // record it for the rejection cache and pool eviction so it is
+                    // not re-evaluated on subsequent flashblock rebuilds.
+                    self.emit_builder_decision_event(
+                        &payload_id,
+                        TransactionEventType::BuilderExpired,
+                        tx_hash,
+                        Some(ordering_position),
+                        || {
+                            BuilderExpiredEventData::new(
+                                decision_reason,
+                                decision_detail,
+                                info,
+                                limits,
+                                None,
+                            )
+                        },
+                    );
+                    diag.txs_rejected_other += 1;
+                    diag.permanently_rejected_txs.push(tx_hash);
                     best_txs.mark_invalid(tx.sender(), tx.nonce());
                 } else if let Some(blocking_predicate) = blocking_predicate
                     && best_txs.park_current()

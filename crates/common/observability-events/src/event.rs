@@ -175,6 +175,9 @@ pub enum TransactionEventType {
     /// The builder deferred a transaction for later re-evaluation during payload construction.
     #[serde(rename = "BUILDER_DEFERRED")]
     BuilderDeferred,
+    /// The builder discarded a transaction that can no longer become valid.
+    #[serde(rename = "BUILDER_EXPIRED")]
+    BuilderExpired,
     /// The builder included a transaction in a finalized payload.
     #[serde(rename = "BUILDER_INCLUDED")]
     BuilderIncluded,
@@ -240,6 +243,7 @@ impl fmt::Display for TransactionEventType {
             Self::BuilderAccepted => "BUILDER_ACCEPTED",
             Self::BuilderRejected => "BUILDER_REJECTED",
             Self::BuilderDeferred => "BUILDER_DEFERRED",
+            Self::BuilderExpired => "BUILDER_EXPIRED",
             Self::BuilderIncluded => "BUILDER_INCLUDED",
             Self::BuilderPayloadFinalized => "BUILDER_PAYLOAD_FINALIZED",
             Self::BuilderFlashblockStarted => "BUILDER_FLASHBLOCK_STARTED",

@@ -157,7 +157,8 @@ impl TransactionEventRetentionClass {
             | TransactionEventType::BuilderConsidered
             | TransactionEventType::BuilderAccepted
             | TransactionEventType::BuilderRejected
-            | TransactionEventType::BuilderDeferred => Self::Hot,
+            | TransactionEventType::BuilderDeferred
+            | TransactionEventType::BuilderExpired => Self::Hot,
             TransactionEventType::IngressReceived
             | TransactionEventType::SimulationStarted
             | TransactionEventType::SimulationSucceeded
@@ -834,7 +835,7 @@ impl PgTransactionEventSink {
             "SELECT event_id, schema_version, event_time, ingested_at, producer, event_type, \
              network, tx_hash, block_hash, block_number, payload_id, request_id, data \
              FROM transaction_events \
-             WHERE event_type IN ('SIMULATION_FAILED', 'BUILDER_REJECTED') \
+             WHERE event_type IN ('SIMULATION_FAILED', 'BUILDER_REJECTED', 'BUILDER_EXPIRED') \
                AND ($1::BIGINT IS NULL OR block_number >= $1) \
                AND ($2::BIGINT IS NULL OR block_number <= $2) \
                AND ($3::TIMESTAMPTZ IS NULL OR event_time >= $3) \
@@ -1349,6 +1350,10 @@ mod tests {
         );
         assert_eq!(
             TransactionEventRetentionClass::for_event_type(TransactionEventType::BuilderDeferred),
+            TransactionEventRetentionClass::Hot
+        );
+        assert_eq!(
+            TransactionEventRetentionClass::for_event_type(TransactionEventType::BuilderExpired),
             TransactionEventRetentionClass::Hot
         );
         assert_eq!(
