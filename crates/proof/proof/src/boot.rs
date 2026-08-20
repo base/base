@@ -197,11 +197,19 @@ pub struct BootInfo {
 impl BootInfo {
     /// Read an optional local preimage by key.
     ///
-    /// Returns `Ok(None)` only when the oracle reports the key as absent
-    /// ([`PreimageOracleError::KeyNotFound`]), which callers may safely default. Every other oracle
-    /// failure — timeout, I/O error, closed channel, etc. — is propagated as
-    /// [`OracleProviderError::Preimage`] so a genuine operational failure is not silently treated as
-    /// a missing optional value.
+    /// Returns `Ok(None)` only when the oracle reports the key as absent, which callers may safely
+    /// default. Every other oracle failure — timeout, I/O error, closed channel, etc. — is
+    /// propagated as [`OracleProviderError::Preimage`] so a genuine operational failure is not
+    /// silently treated as a missing optional value.
+    ///
+    /// Two error variants are treated as "absent" because backends disagree on how they signal a
+    /// miss:
+    /// - [`PreimageOracleError::KeyNotFound`], returned by the hosted/enclave oracles.
+    /// - [`PreimageOracleError::InvalidPreimageKey`], returned by the in-memory zkVM
+    ///   `PreimageStore` on a map miss. This is unambiguous for local keys: they are never
+    ///   hash-validated (`check_preimage` skips `PreimageKeyType::Local`), so `InvalidPreimageKey`
+    ///   on a local key can only mean the key is absent, never corrupt. Tolerating it preserves the
+    ///   backwards-compatibility defaults on the ZK path, which would otherwise abort the load.
     pub async fn get_optional_local<O>(
         oracle: &O,
         key: U256,
@@ -211,7 +219,9 @@ impl BootInfo {
     {
         match oracle.get(PreimageKey::new_local(key.to())).await {
             Ok(bytes) => Ok(Some(bytes)),
-            Err(PreimageOracleError::KeyNotFound) => Ok(None),
+            Err(PreimageOracleError::KeyNotFound | PreimageOracleError::InvalidPreimageKey) => {
+                Ok(None)
+            }
             Err(e) => Err(OracleProviderError::Preimage(e)),
         }
     }
@@ -495,11 +505,14 @@ mod tests {
         data: Vec<(PreimageKey, Vec<u8>)>,
         /// Keys that should surface an operational failure (`Timeout`) instead of `KeyNotFound`.
         timeout_keys: Vec<PreimageKey>,
+        /// When set, a missing key surfaces as `InvalidPreimageKey` rather than `KeyNotFound`,
+        /// emulating the in-memory zkVM `PreimageStore` instead of the hosted/enclave oracles.
+        miss_returns_invalid_key: bool,
     }
 
     impl MockOracle {
         fn new() -> Self {
-            Self { data: Vec::new(), timeout_keys: Vec::new() }
+            Self { data: Vec::new(), timeout_keys: Vec::new(), miss_returns_invalid_key: false }
         }
 
         fn insert(&mut self, key: U256, value: Vec<u8>) {
@@ -508,6 +521,12 @@ mod tests {
 
         fn fail_with_timeout(&mut self, key: U256) {
             self.timeout_keys.push(PreimageKey::new_local(key.to()));
+        }
+
+        /// Emulate the zkVM `PreimageStore`, which returns `InvalidPreimageKey` on a map miss.
+        const fn with_zk_store_miss_semantics(mut self) -> Self {
+            self.miss_returns_invalid_key = true;
+            self
         }
 
         fn insert_rollup_config(&mut self, chain_id: u64, rollup_config: &RollupConfig) {
@@ -528,10 +547,15 @@ mod tests {
             if self.timeout_keys.contains(&key) {
                 return Err(PreimageOracleError::Timeout);
             }
+            let miss_error = if self.miss_returns_invalid_key {
+                PreimageOracleError::InvalidPreimageKey
+            } else {
+                PreimageOracleError::KeyNotFound
+            };
             self.data
                 .iter()
                 .find_map(|(entry_key, value)| (*entry_key == key).then(|| value.clone()))
-                .ok_or(PreimageOracleError::KeyNotFound)
+                .ok_or(miss_error)
         }
 
         async fn get_exact(&self, key: PreimageKey, buf: &mut [u8]) -> PreimageOracleResult<()> {
@@ -1072,12 +1096,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn defaults_optional_keys_when_zk_store_reports_invalid_key() {
+        // The in-memory zkVM `PreimageStore` returns `InvalidPreimageKey` (not `KeyNotFound`) on a
+        // map miss. The optional boot keys must still default there so replaying a witness that
+        // predates one of them does not abort the load.
+        let oracle = oracle_with_required_keys().with_zk_store_miss_semantics();
+
+        let boot_info = BootInfo::load(&oracle).await.expect("boot info should load");
+
+        assert_eq!(boot_info.proposer, Address::ZERO);
+        assert_eq!(boot_info.intermediate_block_interval, 0);
+        assert_eq!(boot_info.l1_head_number, 0);
+        assert_eq!(boot_info.claimed_l2_block_number, 100);
+    }
+
+    #[tokio::test]
     async fn get_optional_local_maps_keynotfound_to_none() {
         let oracle = MockOracle::new();
 
         let result = BootInfo::get_optional_local(&oracle, PROPOSER_KEY)
             .await
             .expect("absent key should not be an error");
+        assert_eq!(result, None);
+    }
+
+    #[tokio::test]
+    async fn get_optional_local_maps_invalid_key_to_none() {
+        let oracle = MockOracle::new().with_zk_store_miss_semantics();
+
+        let result = BootInfo::get_optional_local(&oracle, PROPOSER_KEY)
+            .await
+            .expect("zk store map miss should be treated as absent");
         assert_eq!(result, None);
     }
 }
