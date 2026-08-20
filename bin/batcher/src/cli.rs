@@ -127,13 +127,22 @@ pub(crate) struct BatcherArgs {
     #[arg(long = "sub-safety-margin", default_value = "0", env = "BATCHER_SUB_SAFETY_MARGIN")]
     pub sub_safety_margin: u64,
 
-    /// Target compressed frame size in bytes.
-    #[arg(long = "target-frame-size", default_value = "130044", env = "BATCHER_TARGET_FRAME_SIZE")]
-    pub target_frame_size: usize,
+    /// Optional soft compressed-byte target.
+    #[arg(long = "compressed-size-target", env = "BATCHER_COMPRESSED_SIZE_TARGET")]
+    pub compressed_size_target: Option<usize>,
 
-    /// Number of frames (blobs) per L1 transaction.
-    #[arg(long = "target-num-frames", default_value = "1", env = "BATCHER_TARGET_NUM_FRAMES")]
-    pub target_num_frames: usize,
+    /// Maximum number of blobs per L1 transaction (hard maximum: 6).
+    #[arg(long = "max-blobs-per-tx", default_value = "6", env = "BATCHER_MAX_BLOBS_PER_TX")]
+    pub max_blobs_per_tx: usize,
+
+    /// Brotli quality (`0..=11`).
+    #[arg(
+        long = "brotli-quality",
+        default_value_t = base_batcher_encoder::CompressionAlgo::BROTLI_DEFAULT_QUALITY,
+        env = "BATCHER_BROTLI_QUALITY",
+        value_parser = clap::value_parser!(u8).range(0..=11)
+    )]
+    pub brotli_quality: u8,
 
     /// Data availability mode for L1 submissions.
     ///
@@ -211,12 +220,12 @@ pub(crate) struct BatcherArgs {
     )]
     pub check_recent_txs_depth: u64,
 
-    /// Maximum serialized size of a single L1 calldata transaction in bytes.
+    /// Maximum derivation payload carried in one calldata transaction.
     ///
-    /// Safety cap that prevents oversized calldata transactions from being rejected
-    /// by the mempool. No-op for blob DA. Omit to disable the cap.
-    #[arg(long = "max-l1-tx-size-bytes", env = "BATCHER_MAX_L1_TX_SIZE_BYTES")]
-    pub max_l1_tx_size_bytes: Option<usize>,
+    /// Includes the derivation-version prefix but excludes the signed transaction
+    /// envelope. No-op for blob DA. Omit to use the blob-compatible frame limit.
+    #[arg(long = "max-calldata-size-bytes", env = "BATCHER_MAX_CALLDATA_SIZE_BYTES")]
+    pub max_calldata_size_bytes: Option<usize>,
 
     /// Bind address for the admin JSON-RPC API (default: 127.0.0.1).
     ///
@@ -258,13 +267,7 @@ pub(crate) struct BatcherArgs {
     )]
     pub wait_node_sync_timeout_secs: u64,
 
-    /// Disable the throttle-driven blob-DA override.
-    ///
-    /// By default, when DA-backlog throttling activates, the encoder is forced
-    /// to emit blob-typed submissions even if `--data-availability-type=calldata`
-    /// is configured because blobs amortise DA cost more efficiently under congestion.
-    /// Pass this flag to keep the configured DA type regardless of throttle state.
-    /// No-op for blob-configured batchers.
+    /// Keep the configured DA type when throttling. Default forces blobs.
     #[arg(long = "no-force-blobs-when-throttling", env = "BATCHER_NO_FORCE_BLOBS_WHEN_THROTTLING")]
     pub no_force_blobs_when_throttling: bool,
 
@@ -280,31 +283,40 @@ pub(crate) struct BatcherArgs {
 impl BatcherArgs {
     /// Convert CLI arguments into a [`BatcherConfig`].
     fn into_config(self) -> eyre::Result<BatcherConfig> {
+        // Shadow mode must never run against the configured production inbox.
         if self.shadow_mode != self.dangerously_override_batch_inbox_address.is_some() {
             eyre::bail!(
                 "--shadow-mode and --dangerously-override-batch-inbox-address must be set together"
             );
         }
+
         let signer = SignerConfig::try_from(self.signer)?;
-        let frame_size = match self.da_type {
-            base_batcher_encoder::DaType::Blob => self
-                .target_frame_size
-                .saturating_sub(base_batcher_encoder::EncoderConfig::BLOB_DERIVATION_PREFIX_SIZE),
-            base_batcher_encoder::DaType::Calldata => self.target_frame_size,
+
+        // Blob frames use the full protocol packing limit. Calldata reserves
+        // one byte for the derivation version outside the encoded frame.
+        let max_frame_size = match self.da_type {
+            base_batcher_encoder::DaType::Blob => {
+                base_batcher_encoder::EncoderConfig::MAX_BLOB_FRAME_SIZE
+            }
+            base_batcher_encoder::DaType::Calldata => self
+                .max_calldata_size_bytes
+                .map_or(base_batcher_encoder::EncoderConfig::MAX_BLOB_FRAME_SIZE, |size| {
+                    size.saturating_sub(1)
+                }),
         };
+
         let encoder_config = base_batcher_encoder::EncoderConfig {
-            target_frame_size: frame_size,
-            max_frame_size: frame_size,
+            compressed_size_target: self.compressed_size_target,
+            max_frame_size,
             max_channel_duration: self.max_channel_duration,
             sub_safety_margin: self.sub_safety_margin,
-            target_num_frames: self.target_num_frames,
+            max_blobs_per_tx: self.max_blobs_per_tx,
             da_type: self.da_type,
             // The batcher binary only targets post-Fjord chains, so it always uses Brotli.
-            compression_algo: base_batcher_encoder::CompressionAlgo::Brotli10,
-            max_l1_tx_size_bytes: self.max_l1_tx_size_bytes,
-            compressed_size_target: None,
-            max_blobs_per_tx: base_batcher_encoder::EncoderConfig::MAX_BLOBS_PER_TX,
+            compression_algo: base_batcher_encoder::CompressionAlgo::Brotli(self.brotli_quality),
         };
+
+        // Fail at startup, before constructing the service or accepting blocks.
         encoder_config.validate()?;
         let tx_manager = TxManagerConfig {
             num_confirmations: self.num_confirmations,
@@ -463,32 +475,51 @@ mod tests {
         let config = cli.args.into_config().expect("config should build");
 
         assert_eq!(config.encoder_config.da_type, base_batcher_encoder::DaType::Blob);
-        assert_eq!(config.encoder_config.compressed_size_target, None);
-        assert_eq!(
-            config.encoder_config.max_blobs_per_tx,
-            base_batcher_encoder::EncoderConfig::MAX_BLOBS_PER_TX
-        );
     }
 
     #[test]
-    fn into_config_reserves_blob_derivation_prefix_from_target_frame_size() {
+    fn into_config_uses_full_blob_frame_capacity() {
         let cli = parse_cli(&[]);
         let config = cli.args.into_config().expect("config should build");
 
         assert_eq!(
-            config.encoder_config.target_frame_size,
+            config.encoder_config.max_frame_size,
             base_batcher_encoder::EncoderConfig::MAX_BLOB_FRAME_SIZE
         );
-        assert_eq!(config.encoder_config.max_frame_size, config.encoder_config.target_frame_size);
+        assert_eq!(config.encoder_config.compressed_size_target, None);
+        assert_eq!(config.encoder_config.max_blobs_per_tx, 6);
+        assert_eq!(
+            config.encoder_config.compression_algo,
+            base_batcher_encoder::CompressionAlgo::Brotli(10)
+        );
     }
 
     #[test]
-    fn into_config_reserves_blob_prefix_for_explicit_target_frame_size() {
-        let cli = parse_cli(&["--target-frame-size", "130000"]);
+    fn into_config_accepts_compressed_target_and_blob_limit() {
+        let cli = parse_cli(&["--compressed-size-target", "700000", "--max-blobs-per-tx", "4"]);
         let config = cli.args.into_config().expect("config should build");
 
-        assert_eq!(config.encoder_config.target_frame_size, 129_999);
-        assert_eq!(config.encoder_config.max_frame_size, 129_999);
+        assert_eq!(config.encoder_config.compressed_size_target, Some(700_000));
+        assert_eq!(config.encoder_config.max_blobs_per_tx, 4);
+    }
+
+    #[test]
+    fn into_config_accepts_brotli_quality() {
+        let cli = parse_cli(&["--brotli-quality", "9"]);
+        let config = cli.args.into_config().expect("config should build");
+
+        assert_eq!(
+            config.encoder_config.compression_algo,
+            base_batcher_encoder::CompressionAlgo::Brotli(9)
+        );
+    }
+
+    #[test]
+    fn cli_rejects_brotli_quality_out_of_range() {
+        let mut args = base_args();
+        args.extend_from_slice(["--brotli-quality", "12"].as_slice());
+
+        assert!(Cli::try_parse_from(args).is_err());
     }
 
     #[test]
@@ -500,13 +531,16 @@ mod tests {
     }
 
     #[test]
-    fn into_config_does_not_reserve_blob_prefix_for_calldata_da_mode() {
-        let cli =
-            parse_cli(&["--data-availability-type", "calldata", "--target-frame-size", "130000"]);
+    fn into_config_reserves_derivation_prefix_from_calldata_size_cap() {
+        let cli = parse_cli(&[
+            "--data-availability-type",
+            "calldata",
+            "--max-calldata-size-bytes",
+            "130000",
+        ]);
         let config = cli.args.into_config().expect("config should build");
 
-        assert_eq!(config.encoder_config.target_frame_size, 130_000);
-        assert_eq!(config.encoder_config.max_frame_size, 130_000);
+        assert_eq!(config.encoder_config.max_frame_size, 129_999);
     }
 
     #[test]

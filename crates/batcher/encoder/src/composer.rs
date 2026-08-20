@@ -1,4 +1,4 @@
-//! Contains the [`BatchComposer`] type.
+//! Block-to-batch composition.
 
 use alloy_eips::eip2718::Encodable2718;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
@@ -40,7 +40,6 @@ impl BatchComposer {
 
         let l1_info = L1BlockInfoTx::decode_calldata(&deposit.input)
             .map_err(|_| BatchComposeError::L1InfoDecode)?;
-
         let epoch = l1_info.id();
 
         let transactions = block
@@ -63,7 +62,7 @@ impl BatchComposer {
 
 #[cfg(test)]
 mod tests {
-    use alloc::{vec, vec::Vec};
+    use std::vec;
 
     use alloy_consensus::{BlockBody, Header, SignableTransaction, TxLegacy};
     use alloy_eips::eip2718::Encodable2718;
@@ -105,7 +104,6 @@ mod tests {
 
     #[test]
     fn test_deposits_filtered() {
-        // The L1 info deposit plus an extra deposit — both must be stripped.
         let block = make_block(vec![valid_deposit_tx(), deposit_tx(Bytes::new())]);
         let batch = BatchComposer::block_to_single_batch(&block).unwrap();
         assert!(batch.transactions.is_empty());

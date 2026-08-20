@@ -2,19 +2,18 @@
 
 use alloy_primitives::B256;
 use base_common_consensus::BaseBlock;
-use base_comp::BatchComposeError;
 use base_protocol::BlockInfo;
 
-use crate::{BatchSubmission, ChannelFullReason, OpenChannelError, SubmissionId};
+use crate::{BatchComposeError, BatchSubmission, ChannelError, ChannelLimit, SubmissionId};
 
 /// Result of a [`BatchPipeline::step`] call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StepResult {
     /// One block was encoded into the current channel.
     BlockEncoded,
-    /// The current channel reached a closure trigger and was moved to the submission queue.
+    /// The writable channel reached a close trigger.
     ChannelClosed,
-    /// No transition is available: no block is pending and no channel must close.
+    /// No pending block and nothing to close.
     Idle,
 }
 
@@ -30,17 +29,17 @@ pub enum StepError {
         #[source]
         source: BatchComposeError,
     },
-    /// A block cannot fit in an empty channel and therefore cannot be published.
-    #[error("block at cursor {cursor} was rejected by an empty channel: {reason}")]
-    BlockRejectedByEmptyChannel {
+    /// A block cannot fit in an empty derivation channel.
+    #[error("block at cursor {cursor} exceeds a derivation channel limit: {limit}")]
+    BlockExceedsChannelLimit {
         /// Index of the block in the encoder's input queue.
         cursor: usize,
-        /// Size constraint that rejected the block.
-        reason: ChannelFullReason,
+        /// Limit that the block exceeded in an otherwise empty channel.
+        limit: ChannelLimit,
     },
-    /// Channel construction, compression, or framing failed.
+    /// Channel state transition failed.
     #[error(transparent)]
-    ChannelFailed(#[from] OpenChannelError),
+    Channel(#[from] ChannelError),
 }
 
 /// Returned by [`BatchPipeline::add_block`] when a reorg is detected.
@@ -72,7 +71,7 @@ pub trait BatchPipeline: Send {
     /// Queue an L2 block. Parent mismatch returns the block so the caller can reset.
     fn add_block(&mut self, block: BaseBlock) -> Result<(), (ReorgError, Box<BaseBlock>)>;
 
-    /// Encode one pending block or close the current channel.
+    /// Encode one pending block or close the writable channel.
     ///
     /// Call until [`StepResult::Idle`]. [`StepError`] is fatal.
     fn step(&mut self) -> Result<StepResult, StepError>;
@@ -86,16 +85,13 @@ pub trait BatchPipeline: Send {
     /// Record L1 inclusion. Does not prune; [`reconcile_derivation`](Self::reconcile_derivation) does.
     fn confirm(&mut self, id: SubmissionId, l1_block: u64);
 
-    /// Return the submission's frames to ready.
+    /// Return the submission's artifacts to ready.
     fn requeue(&mut self, id: SubmissionId);
 
     /// Close duration-expired channels and replay confirmation timeouts.
     fn advance_l1_head(&mut self, l1_block: u64);
 
-    /// Close the current channel and move it to the submission queue.
-    ///
-    /// Unlike [`advance_l1_head`](Self::advance_l1_head) with `u64::MAX`, this does not
-    /// mutate the L1 head tracker.
+    /// Close the writable channel and release retained partial artifacts.
     fn flush(&mut self) -> Result<(), StepError>;
 
     /// Drop buffered encoding state. Discard in-flight tracking first.

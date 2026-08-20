@@ -6,67 +6,26 @@ rust-version.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
-description = "Compression types for Base"
+description = "Derivation channel compression for Base"
 
 [lints]
 workspace = true
 
 [dependencies]
 thiserror.workspace = true
-alloy-rlp.workspace = true
-alloy-eips.workspace = true
 miniz_oxide.workspace = true
-base-protocol.workspace = true
-base-common-consensus.workspace = true
-base-common-genesis.workspace = true
-derive_more = { workspace = true, features = ["debug"] }
 
 brotli = { workspace = true, optional = true }
-alloy-primitives = { workspace = true, optional = true }
 
 [dev-dependencies]
-spin.workspace = true
-rstest.workspace = true
-proptest.workspace = true
-serde_json.workspace = true
-alloy-consensus.workspace = true
-alloy-sol-types.workspace = true
-arbitrary = { workspace = true, features = ["derive"] }
-tracing-subscriber = { workspace = true, features = ["fmt"] }
-alloy-primitives = { workspace = true, features = ["arbitrary"] }
+base-protocol = { workspace = true, features = ["std"] }
+alloy-primitives = { workspace = true, features = ["std"] }
+base-common-genesis = { workspace = true, features = ["std"] }
 
 [features]
 default = []
 std = [
-	"alloy-eips/std",
-	"alloy-primitives?/std",
-	"alloy-rlp/std",
-	"base-common-consensus/std",
-	"base-common-genesis/std",
-	"base-protocol/std",
-	"brotli?/std",
-	"dep:brotli",
-	"derive_more/std",
+	"brotli/std",
 	"miniz_oxide/std",
 	"thiserror/std",
-]
-test-utils = [
-	"base-common-genesis/test-utils",
-	"base-protocol/test-utils",
-	"dep:alloy-primitives",
-]
-serde = [
-	"alloy-eips/serde",
-	"alloy-primitives?/serde",
-	"base-common-consensus/serde",
-	"base-common-genesis/serde",
-	"base-protocol/serde",
-	"miniz_oxide/serde",
-]
-arbitrary = [
-	"alloy-eips/arbitrary",
-	"alloy-primitives?/arbitrary",
-	"base-common-consensus/arbitrary",
-	"base-common-genesis/arbitrary",
-	"base-protocol/arbitrary",
 ]

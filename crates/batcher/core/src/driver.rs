@@ -18,16 +18,19 @@ use crate::{
     SubmissionQueue, ThrottleClient, ThrottleController, event::DriverEvent,
 };
 
-/// Live L1 and derivation inputs consumed when constructing a [`BatchDriver`].
+/// Initial L1 and derivation inputs consumed by a [`BatchDriver`].
 #[derive(Debug)]
 pub struct BatchDriverHeads<L> {
+    /// Source of live L1 head updates.
     l1_head_source: L,
+    /// Live L1 head used to seed channel deadlines.
     initial_l1_head: Option<u64>,
+    /// Initial derivation status and its ordered update stream.
     derivation_feed: Option<(DerivationStatus, mpsc::Receiver<DerivationStatus>)>,
 }
 
 impl<L> BatchDriverHeads<L> {
-    /// Production inputs: L1 head source, current L1 tip, and derivation status.
+    /// Creates production head inputs from independent live and derivation clocks.
     pub const fn new(
         l1_head_source: L,
         initial_l1_head: u64,
@@ -41,7 +44,7 @@ impl<L> BatchDriverHeads<L> {
         }
     }
 
-    /// Head inputs without derivation tracking or an initial L1 tip, for tests.
+    /// Creates head inputs without derivation tracking for tests.
     #[cfg(any(test, feature = "test-utils"))]
     pub const fn without_derivation(l1_head_source: L) -> Self {
         Self { l1_head_source, initial_l1_head: None, derivation_feed: None }
@@ -115,11 +118,42 @@ where
     /// starving receipt processing and cancellation checks.
     pub const STEP_BUDGET: usize = 128;
 
-    /// Create a [`BatchDriver`] from live L1 and derivation inputs.
-    ///
-    /// Advances the pipeline to the initial L1 tip before the event loop starts
-    /// so channel duration is measured from that tip, not from block 0.
+    /// Create a new [`BatchDriver`] with its live L1 and derivation inputs.
     pub fn new(
+        runtime: R,
+        pipeline: P,
+        source: S,
+        tx_manager: TM,
+        config: BatchDriverConfig,
+        throttle: DaThrottle<TC>,
+        heads: BatchDriverHeads<L>,
+    ) -> Self {
+        Self::new_inner(runtime, pipeline, source, tx_manager, config, throttle, heads)
+    }
+
+    /// Create a driver without derivation-status tracking for tests that do not exercise it.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn new_without_derivation_status(
+        runtime: R,
+        pipeline: P,
+        source: S,
+        tx_manager: TM,
+        config: BatchDriverConfig,
+        throttle: DaThrottle<TC>,
+        l1_head_source: L,
+    ) -> Self {
+        Self::new_inner(
+            runtime,
+            pipeline,
+            source,
+            tx_manager,
+            config,
+            throttle,
+            BatchDriverHeads::without_derivation(l1_head_source),
+        )
+    }
+
+    fn new_inner(
         runtime: R,
         mut pipeline: P,
         source: S,
@@ -151,28 +185,6 @@ where
             force_blobs_when_throttling: config.force_blobs_when_throttling,
             pending_flush_acks: Vec::new(),
         }
-    }
-
-    /// Create a driver without derivation-status tracking for tests that do not exercise it.
-    #[cfg(any(test, feature = "test-utils"))]
-    pub fn new_without_derivation_status(
-        runtime: R,
-        pipeline: P,
-        source: S,
-        tx_manager: TM,
-        config: BatchDriverConfig,
-        throttle: DaThrottle<TC>,
-        l1_head_source: L,
-    ) -> Self {
-        Self::new(
-            runtime,
-            pipeline,
-            source,
-            tx_manager,
-            config,
-            throttle,
-            BatchDriverHeads::without_derivation(l1_head_source),
-        )
     }
 
     /// Attach a derivation-status feed to a test driver created without one.
@@ -291,7 +303,7 @@ where
                     if let Some(ack) = ack {
                         self.pending_flush_acks.push(ack);
                     }
-                    debug!("flush signal received, closed channel");
+                    debug!("flush signal received, released channel artifacts");
                 }
                 DriverEvent::Reorg => {
                     warn!("L2 reorg detected, resetting pipeline and catching up from safe head");
@@ -697,8 +709,9 @@ mod tests {
             let recorded = Arc::new(Mutex::new(Recorded::default()));
             let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
             let (_status_tx, status_rx) = mpsc::channel(1);
+            let status = DerivationStatus::new(safe_head(10), safe_head(42));
 
-            let _driver = BatchDriver::new(
+            let _driver = BatchDriver::new_inner(
                 ctx,
                 pipeline,
                 QueuedSource::new(std::iter::empty()),
@@ -713,7 +726,7 @@ mod tests {
                 BatchDriverHeads::new(
                     QueuedL1HeadSource::new(std::iter::empty()),
                     50,
-                    DerivationStatus::from_safe_l2(safe_head(10)),
+                    status,
                     status_rx,
                 ),
             );
@@ -737,7 +750,7 @@ mod tests {
             (0..frame_count)
                 .map(|number| {
                     BlobPayload::new(vec![Arc::new(Frame {
-                        number: number.try_into().expect("frame number fits in u16"),
+                        number: number.try_into().unwrap(),
                         data: vec![0u8; data_len],
                         ..Frame::default()
                     })])
@@ -1142,7 +1155,7 @@ mod tests {
     }
 
     /// A single submission may contain multiple blob-filling frames when
-    /// `target_num_frames > 1`. Each frame becomes its own blob in the same L1
+    /// `max_blobs_per_tx > 1`. Each frame becomes its own blob in the same L1
     /// transaction.
     #[test]
     fn test_multi_frame_blob_submission_maps_frames_to_blobs() {

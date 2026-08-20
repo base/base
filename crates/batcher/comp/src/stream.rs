@@ -115,9 +115,10 @@ impl From<CompressionAlgo> for CompressionBackend {
                 )),
                 output: Vec::new(),
             },
-            CompressionAlgo::Brotli9 => brotli(9),
-            CompressionAlgo::Brotli10 => brotli(10),
-            CompressionAlgo::Brotli11 => brotli(11),
+            CompressionAlgo::Brotli(quality) => {
+                debug_assert!(quality <= CompressionAlgo::BROTLI_MAX_QUALITY);
+                brotli(u32::from(quality))
+            }
         }
     }
 }
@@ -125,8 +126,9 @@ impl From<CompressionAlgo> for CompressionBackend {
 /// A single incremental compressor for one derivation channel.
 #[derive(derive_more::Debug)]
 pub struct CompressionStream {
+    /// Selected streaming backend.
     backend: CompressionBackend,
-    /// Total bytes returned by prior [`append`](Self::append) calls.
+    /// Total bytes returned by prior appends.
     output_size: usize,
 }
 
@@ -154,7 +156,7 @@ impl CompressionStream {
         self.output_size
     }
 
-    /// Conservative upper bound for a finished stream of `input_size` uncompressed bytes.
+    /// Returns a conservative upper bound for a finished stream of `input_size`.
     pub fn max_output_size(&self, input_size: usize) -> usize {
         self.backend.max_output_size(input_size)
     }
@@ -175,27 +177,30 @@ mod tests {
 
     const CHUNKS: [&[u8]; 3] = [b"first batch", b"second batch", b"third batch"];
 
-    fn collect(algorithm: CompressionAlgo, chunks: &[&[u8]]) -> Vec<u8> {
-        let mut compressor = CompressionStream::new(algorithm);
-        let mut compressed = Vec::new();
-        for chunk in chunks {
-            compressed.extend(compressor.append(chunk).unwrap());
-        }
-        compressed.extend(compressor.finish().unwrap());
-        compressed
-    }
-
     #[test]
     fn zlib_roundtrip_across_appends() {
         let expected = CHUNKS.concat();
-        let compressed = collect(CompressionAlgo::Zlib, &CHUNKS);
+        let mut compressor = CompressionStream::new(CompressionAlgo::Zlib);
+        let mut compressed = Vec::new();
+
+        for chunk in CHUNKS {
+            compressed.extend(compressor.append(chunk).unwrap());
+        }
+        compressed.extend(compressor.finish().unwrap());
+
         assert_eq!(decompress_to_vec_zlib(&compressed).unwrap(), expected);
     }
 
     #[test]
     fn brotli_roundtrip_across_appends() {
         let expected = CHUNKS.concat();
-        let compressed = collect(CompressionAlgo::Brotli10, &CHUNKS);
+        let mut compressor = CompressionStream::new(CompressionAlgo::Brotli(10));
+        let mut compressed = Vec::new();
+
+        for chunk in CHUNKS {
+            compressed.extend(compressor.append(chunk).unwrap());
+        }
+        compressed.extend(compressor.finish().unwrap());
 
         assert_eq!(compressed.first(), Some(&CompressionAlgo::BROTLI_CHANNEL_VERSION));
         let decompressed = Brotli
@@ -208,10 +213,19 @@ mod tests {
     fn chunking_does_not_change_the_compressed_stream() {
         let input = CHUNKS.concat();
 
-        for algorithm in [CompressionAlgo::Zlib, CompressionAlgo::Brotli10] {
-            let chunked = collect(algorithm, &CHUNKS);
-            let single = collect(algorithm, &[input.as_slice()]);
-            assert_eq!(chunked, single);
+        for algorithm in [CompressionAlgo::Zlib, CompressionAlgo::Brotli(10)] {
+            let mut chunked = CompressionStream::new(algorithm);
+            let mut chunked_output = Vec::new();
+            for chunk in CHUNKS {
+                chunked_output.extend(chunked.append(chunk).unwrap());
+            }
+            chunked_output.extend(chunked.finish().unwrap());
+
+            let mut single = CompressionStream::new(algorithm);
+            let mut single_output = single.append(&input).unwrap();
+            single_output.extend(single.finish().unwrap());
+
+            assert_eq!(chunked_output, single_output);
         }
     }
 
@@ -227,7 +241,7 @@ mod tests {
             })
             .collect();
 
-        for algorithm in [CompressionAlgo::Zlib, CompressionAlgo::Brotli10] {
+        for algorithm in [CompressionAlgo::Zlib, CompressionAlgo::Brotli(10)] {
             let mut compressor = CompressionStream::new(algorithm);
             let bound = compressor.max_output_size(input.len());
             let mut output_size = 0usize;

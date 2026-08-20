@@ -112,15 +112,10 @@ impl BatchSubmission {
 
     /// Returns the first frame in this submission.
     #[cfg(test)]
-    pub fn first_frame(&self) -> &Arc<Frame> {
+    pub fn first_frame(&self) -> Option<&Arc<Frame>> {
         match &self.payload {
-            SubmissionPayload::Blobs(blobs) => blobs
-                .first()
-                .expect("blob submission has a payload")
-                .frames
-                .first()
-                .expect("blob payload has a frame"),
-            SubmissionPayload::Calldata(frame) => frame,
+            SubmissionPayload::Blobs(blobs) => blobs.first()?.frames.first(),
+            SubmissionPayload::Calldata(frame) => Some(frame),
         }
     }
 }

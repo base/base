@@ -84,7 +84,7 @@ pub enum BatcherError {
 ///
 /// Each call to [`advance`] drives one complete batch cycle:
 /// 1. Drain the L2 source and forward each block to the driver via the channel.
-/// 2. Send a [`L2BlockEvent::Flush`] (with an ack) to close the current channel.
+/// 2. Send a [`L2BlockEvent::Flush`] (with an ack) to close and release the current channel.
 /// 3. Wait for the ack, confirming the driver has encoded every resulting frame and
 ///    handed it to the tx manager (not just the first).
 /// 4. Mine one L1 block via the shared [`L1MinerTxManager`], firing all
@@ -136,7 +136,8 @@ impl<S: L2BlockProvider> Batcher<S> {
     fn build(l2_source: S, rollup_config: &RollupConfig, config: BatcherConfig) -> Self {
         let l1_chain_id = rollup_config.l1_chain_id;
         let rollup_config = Arc::new(rollup_config.clone());
-        let pipeline = BatchEncoder::new(rollup_config, config.encoder.clone());
+        let pipeline =
+            BatchEncoder::new(rollup_config, config.encoder.clone()).expect("valid encoder config");
 
         let (source, block_tx) = ChannelBlockSource::new();
 

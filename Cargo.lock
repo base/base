@@ -2961,7 +2961,6 @@ dependencies = [
  "base-common-network",
  "base-common-precompiles",
  "base-common-rpc-types-engine",
- "base-comp",
  "base-consensus-derive",
  "base-consensus-engine",
  "base-consensus-gossip",
@@ -3765,24 +3764,12 @@ dependencies = [
 name = "base-comp"
 version = "0.0.0"
 dependencies = [
- "alloy-consensus 2.4.1",
- "alloy-eips 2.4.1",
  "alloy-primitives",
- "alloy-rlp",
- "alloy-sol-types",
- "arbitrary",
- "base-common-consensus",
  "base-common-genesis",
  "base-protocol",
  "brotli",
- "derive_more 2.1.1",
  "miniz_oxide 0.9.1",
- "proptest",
- "rstest",
- "serde_json",
- "spin 0.10.1",
  "thiserror 2.0.19",
- "tracing-subscriber",
 ]
 
 [[package]]

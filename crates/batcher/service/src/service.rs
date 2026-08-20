@@ -544,6 +544,10 @@ impl BatcherService {
             )
             .await?;
         }
+        let initial_l1_head = l1_provider
+            .get_block_number()
+            .await
+            .map_err(|e| eyre::eyre!("failed to fetch initial L1 head: {e}"))?;
 
         // Channel duration is measured from this tip, not from L1 block 0.
         let initial_l1_head =
@@ -624,7 +628,7 @@ impl BatcherService {
             self.config.poll_interval,
         );
         let encoder =
-            BatchEncoder::new(Arc::clone(&rollup_config), self.config.encoder_config.clone());
+            BatchEncoder::new(Arc::clone(&rollup_config), self.config.encoder_config.clone())?;
 
         // Build the throttle controller and the appropriate client. The throttle
         // RPC uses the L2 endpoint(s); `RpcThrottleClient` rotates per-call

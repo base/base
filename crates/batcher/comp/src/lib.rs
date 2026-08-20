@@ -10,40 +10,15 @@
 
 extern crate alloc;
 
-mod channel_out;
-pub use channel_out::{ChannelOut, ChannelOutError};
-
-mod composer;
-pub use composer::{BatchComposeError, BatchComposer};
-
-mod traits;
-pub use traits::CompressorWriter;
-
 mod types;
-pub use types::{CompressionAlgo, CompressionError, CompressorError, CompressorResult};
-
-mod zlib;
-pub use zlib::ZlibCompressor;
+pub use types::{CompressionAlgo, CompressionError};
 
 #[cfg(feature = "std")]
 mod brotli;
 #[cfg(feature = "std")]
-pub use brotli::{BrotliCompressionError, BrotliCompressor, BrotliLevel};
+pub use brotli::BrotliCompressor;
 
 #[cfg(feature = "std")]
 mod stream;
 #[cfg(feature = "std")]
 pub use stream::{CompressionBackend, CompressionStream};
-
-#[cfg(feature = "std")]
-mod variant;
-#[cfg(feature = "std")]
-pub use variant::VariantCompressor;
-
-#[cfg(feature = "std")]
-mod shadow;
-#[cfg(feature = "std")]
-pub use shadow::ShadowCompressor;
-
-#[cfg(any(test, feature = "test-utils"))]
-pub mod test_utils;
