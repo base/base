@@ -7,13 +7,14 @@ use std::{
 
 use alloy_primitives::Address;
 use base_batcher_core::{
-    BatchDriver, BatchDriverConfig, DaThrottle, NoopThrottleClient, ThrottleController,
+    BatchDriver, BatchDriverConfig, BatchDriverError, DaThrottle, NoopThrottleClient,
+    ThrottleController,
     test_utils::{
         DriverFixture, ImmediateConfirmTxManager, NeverConfirmTxManager, PendingL1HeadSource,
         Recorded, SubmissionStub, TrackingPipeline,
     },
 };
-use base_batcher_encoder::SubmissionId;
+use base_batcher_encoder::{ChannelFullReason, StepError, SubmissionId};
 use base_batcher_source::{ChannelBlockSource, L2BlockEvent, test_utils::InMemoryBlockSource};
 use base_runtime::{
     Cancellation, Clock, Spawner,
@@ -121,5 +122,40 @@ fn test_drain_timeout_exits_with_in_flight_submissions() {
         let r = recorded.lock().unwrap();
         assert_eq!(r.dequeued, vec![SubmissionId(0)], "submission must have been dequeued");
         assert_eq!(r.flush_count, 1, "flush must be called on shutdown");
+    });
+}
+
+/// A flush error on shutdown must not skip the in-flight receipt drain.
+#[test]
+fn test_shutdown_drains_in_flight_before_returning_flush_error() {
+    Runner::start(Config::seeded(0), |ctx| async move {
+        let recorded = Arc::new(Mutex::new(Recorded::default()));
+        let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded)).with_flush_error(
+            StepError::BlockRejectedByEmptyChannel {
+                cursor: 0,
+                reason: ChannelFullReason::CompressedOutput,
+            },
+        );
+        pipeline.submissions.push_back(SubmissionStub::stub());
+
+        let driver = DriverFixture::build(ctx.clone(), pipeline, NeverConfirmTxManager);
+        let handle = ctx.spawn(driver.run());
+
+        ctx.sleep(Duration::from_millis(20)).await;
+        let cancelled_at = ctx.now();
+        ctx.cancel();
+
+        let result = handle.await.unwrap();
+        assert!(
+            matches!(result, Err(BatchDriverError::Step(_))),
+            "flush error must be returned after drain"
+        );
+        assert!(
+            ctx.now().saturating_sub(cancelled_at) >= Duration::from_millis(10),
+            "in-flight receipts must be drained before the flush error is returned"
+        );
+        let r = recorded.lock().unwrap();
+        assert_eq!(r.dequeued, vec![SubmissionId(0)]);
+        assert_eq!(r.flush_count, 1);
     });
 }

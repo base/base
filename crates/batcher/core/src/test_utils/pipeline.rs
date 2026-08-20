@@ -43,6 +43,8 @@ pub struct TrackingPipeline {
     safe_head_matches: bool,
     /// Whether derivation reconciliation reports a stalled channel.
     derivation_stalled: bool,
+    /// When set, `flush` records the call then returns this error.
+    flush_error: Option<StepError>,
 }
 
 impl TrackingPipeline {
@@ -54,6 +56,7 @@ impl TrackingPipeline {
             da_backlog_bytes_value: 0,
             safe_head_matches: true,
             derivation_stalled: false,
+            flush_error: None,
         }
     }
 
@@ -72,6 +75,12 @@ impl TrackingPipeline {
     /// Set whether derivation-stall detection requests a replay.
     pub const fn with_derivation_stalled(mut self, stalled: bool) -> Self {
         self.derivation_stalled = stalled;
+        self
+    }
+
+    /// Make `flush` fail after recording the call.
+    pub fn with_flush_error(mut self, error: StepError) -> Self {
+        self.flush_error = Some(error);
         self
     }
 }
@@ -103,6 +112,9 @@ impl BatchPipeline for TrackingPipeline {
 
     fn flush(&mut self) -> Result<(), StepError> {
         self.recorded.lock().unwrap().flush_count += 1;
+        if let Some(error) = self.flush_error.take() {
+            return Err(error);
+        }
         Ok(())
     }
 

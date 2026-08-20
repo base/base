@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use base_batcher_encoder::{BatchPipeline, DerivationReconciliation, StepResult};
+use base_batcher_encoder::{BatchPipeline, DerivationReconciliation, StepError, StepResult};
 use base_batcher_source::{
     L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource,
 };
@@ -237,6 +237,7 @@ where
         }
 
         let mut shutting_down = false;
+        let mut shutdown_flush_error: Option<StepError> = None;
         loop {
             if !shutting_down {
                 self.apply_pending_derivation_status_updates()?;
@@ -264,6 +265,9 @@ where
                 self.submissions
                     .drain(&mut self.pipeline, self.runtime.sleep(self.drain_timeout))
                     .await;
+                if let Some(error) = shutdown_flush_error {
+                    return Err(error.into());
+                }
                 return Ok(());
             }
 
@@ -273,7 +277,10 @@ where
                         in_flight = %self.submissions.in_flight_count(),
                         "batcher shutting down, draining in-flight submissions"
                     );
-                    self.pipeline.flush()?;
+                    if let Err(error) = self.pipeline.flush() {
+                        warn!(error = %error, "flush failed during shutdown");
+                        shutdown_flush_error = Some(error);
+                    }
                     shutting_down = true;
                 }
                 DriverEvent::Block(b) => {
