@@ -258,6 +258,7 @@ async fn shadow_funding_only_applies_to_first_private_block() {
             Ok(attributes_at(inserted_head.block_info.timestamp + block_time)),
             Ok(attributes_at(inserted_head.block_info.timestamp)),
         ],
+        ..Default::default()
     };
     actor.builder.engine_client = Arc::clone(&engine_client);
     actor.builder.origin_selector = origin_selector;
@@ -693,8 +694,10 @@ async fn shadow_funding_is_included_in_payload_attributes() {
     let mut actor = test_actor();
     actor.builder.origin_selector = origin_selector;
     actor.builder.engine_client = Arc::new(client);
-    actor.builder.attributes_builder =
-        TestAttributesBuilder { attributes: vec![Ok(BasePayloadAttributes::default())] };
+    actor.builder.attributes_builder = TestAttributesBuilder {
+        attributes: vec![Ok(BasePayloadAttributes::default())],
+        ..Default::default()
+    };
 
     let crate::BuildOutcome::Ready(handle) =
         actor.builder.build(Some(ShadowFunding::new(address, amount))).await.unwrap()
