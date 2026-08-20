@@ -32,7 +32,7 @@ pub struct BlobPayload {
 
 impl BlobPayload {
     /// Creates a blob payload from the given frames.
-    pub fn new(frames: Vec<Arc<Frame>>) -> Self {
+    pub const fn new(frames: Vec<Arc<Frame>>) -> Self {
         Self { frames }
     }
 
@@ -67,7 +67,7 @@ impl BatchSubmission {
     }
 
     /// Creates a blob submission.
-    pub fn blobs(id: SubmissionId, blobs: Vec<BlobPayload>) -> Self {
+    pub const fn blobs(id: SubmissionId, blobs: Vec<BlobPayload>) -> Self {
         Self { id, payload: SubmissionPayload::Blobs(blobs) }
     }
 
