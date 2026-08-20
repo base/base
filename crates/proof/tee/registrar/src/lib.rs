@@ -8,7 +8,7 @@ mod crl;
 pub use crl::{CertCrlInfo, CrlError, check_chain_against_crls};
 
 mod discovery;
-pub use discovery::{AwsTargetGroupDiscovery, parse_target_group_arns};
+pub use discovery::AwsTargetGroupDiscovery;
 
 mod driver;
 pub use driver::{

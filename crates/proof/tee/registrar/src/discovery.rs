@@ -1,6 +1,6 @@
 //! AWS ALB target group instance discovery.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, hash_map::Entry};
 
 use aws_sdk_ec2::{Client as Ec2Client, types::Reservation};
 use aws_sdk_elasticloadbalancingv2::Client as ElbClient;
@@ -8,11 +8,6 @@ use tracing::{debug, warn};
 use url::Url;
 
 use crate::{InstanceDiscovery, InstanceHealthStatus, ProverInstance, RegistrarError, Result};
-
-/// Splits a comma-separated target-group ARN list. Empty entries are dropped.
-pub fn parse_target_group_arns(raw: &str) -> Vec<String> {
-    raw.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect()
-}
 
 /// Discovers prover instances via AWS Elastic Load Balancing target groups.
 ///
@@ -30,17 +25,43 @@ pub struct AwsTargetGroupDiscovery {
 }
 
 impl AwsTargetGroupDiscovery {
+    /// Splits a comma-separated target-group ARN list. Empty entries are dropped.
+    pub fn parse_arns(raw: &str) -> Vec<String> {
+        raw.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect()
+    }
+
     /// Creates a new `AwsTargetGroupDiscovery` with the given AWS config.
-    ///
-    /// `target_group_arn` is one ARN or a comma-separated list.
-    pub fn new(aws_config: &aws_config::SdkConfig, target_group_arn: String, port: u16) -> Self {
+    pub fn new(
+        aws_config: &aws_config::SdkConfig,
+        target_group_arns: Vec<String>,
+        port: u16,
+    ) -> Self {
         let elb_client = ElbClient::new(aws_config);
         let ec2_client = Ec2Client::new(aws_config);
-        Self {
-            elb_client,
-            ec2_client,
-            target_group_arns: parse_target_group_arns(&target_group_arn),
-            port,
+        Self { elb_client, ec2_client, target_group_arns, port }
+    }
+
+    /// Records target health, keeping the first-seen status when an instance is
+    /// registered in more than one target group.
+    pub fn record_instance_health(
+        health_map: &mut HashMap<String, InstanceHealthStatus>,
+        instance_id: String,
+        health_status: InstanceHealthStatus,
+        target_group_arn: &str,
+    ) {
+        match health_map.entry(instance_id) {
+            Entry::Vacant(entry) => {
+                entry.insert(health_status);
+            }
+            Entry::Occupied(entry) => {
+                warn!(
+                    instance_id = %entry.key(),
+                    target_group_arn = %target_group_arn,
+                    first_health = ?entry.get(),
+                    ignored_health = ?health_status,
+                    "instance appears in multiple target groups; keeping first-seen health"
+                );
+            }
         }
     }
 
@@ -123,7 +144,12 @@ impl InstanceDiscovery for AwsTargetGroupDiscovery {
                     })
                     .unwrap_or(InstanceHealthStatus::Unhealthy);
 
-                health_map.entry(instance_id.to_string()).or_insert(health_status);
+                Self::record_instance_health(
+                    &mut health_map,
+                    instance_id.to_string(),
+                    health_status,
+                    arn,
+                );
             }
         }
 
@@ -166,9 +192,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_target_group_arns_splits_and_trims() {
+    fn parse_arns_splits_and_trims() {
         assert_eq!(
-            parse_target_group_arns(
+            AwsTargetGroupDiscovery::parse_arns(
                 " arn:aws:elasticloadbalancing:us-east-1:1:targetgroup/a/abc ,arn:aws:elasticloadbalancing:us-east-1:1:targetgroup/b/def, "
             ),
             vec![
@@ -176,11 +202,32 @@ mod tests {
                 "arn:aws:elasticloadbalancing:us-east-1:1:targetgroup/b/def",
             ]
         );
-        assert!(parse_target_group_arns(" , , ").is_empty());
+        assert!(AwsTargetGroupDiscovery::parse_arns(" , , ").is_empty());
         assert_eq!(
-            parse_target_group_arns("arn:aws:elasticloadbalancing:us-east-1:1:targetgroup/a/abc"),
+            AwsTargetGroupDiscovery::parse_arns(
+                "arn:aws:elasticloadbalancing:us-east-1:1:targetgroup/a/abc"
+            ),
             vec!["arn:aws:elasticloadbalancing:us-east-1:1:targetgroup/a/abc"]
         );
+    }
+
+    #[test]
+    fn record_instance_health_keeps_first_seen_status() {
+        let mut health_map = HashMap::new();
+        AwsTargetGroupDiscovery::record_instance_health(
+            &mut health_map,
+            "i-001".to_string(),
+            InstanceHealthStatus::Unhealthy,
+            "arn:a",
+        );
+        AwsTargetGroupDiscovery::record_instance_health(
+            &mut health_map,
+            "i-001".to_string(),
+            InstanceHealthStatus::Healthy,
+            "arn:b",
+        );
+
+        assert_eq!(health_map.get("i-001"), Some(&InstanceHealthStatus::Unhealthy));
     }
 
     fn reservation(instances: Vec<Instance>) -> Reservation {

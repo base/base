@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use alloy_primitives::Address;
 use base_proof_tee_registrar::{
-    DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
-    INSTANCE_CACHE_TTL_CYCLES, RegistrarConfig, RegistrarError,
+    AwsTargetGroupDiscovery, DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_TX_RETRIES,
+    DEFAULT_TX_RETRY_DELAY_SECS, INSTANCE_CACHE_TTL_CYCLES, RegistrarConfig, RegistrarError,
 };
 use base_tx_manager::{SignerConfig, TxManagerConfig};
 use clap::Parser;
@@ -128,7 +128,8 @@ pub(crate) struct Cli {
 impl Cli {
     pub(crate) fn config(self) -> Result<RegistrarConfig, Box<RegistrarError>> {
         validate_health_port(self.health.port)?;
-        if base_proof_tee_registrar::parse_target_group_arns(&self.target_group_arn).is_empty() {
+        let target_group_arns = AwsTargetGroupDiscovery::parse_arns(&self.target_group_arn);
+        if target_group_arns.is_empty() {
             return Err(Box::new(RegistrarError::Config(
                 "target-group-arn must contain at least one ARN".into(),
             )));
@@ -137,7 +138,7 @@ impl Cli {
         Ok(RegistrarConfig {
             l1_rpc_url: self.l1_rpc_url,
             tee_prover_registry_address: self.tee_prover_registry_address,
-            target_group_arn: self.target_group_arn,
+            target_group_arns,
             aws_region: self.aws_region,
             prover_port: self.prover_port,
             signing: SignerConfig::try_from(self.signer)
@@ -195,12 +196,8 @@ mod tests {
             "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/prover-v1/def456"
         );
 
-        let cli = Cli::try_parse_from(args).unwrap();
-        assert_eq!(
-            base_proof_tee_registrar::parse_target_group_arns(&cli.target_group_arn).len(),
-            2
-        );
-        assert!(cli.config().is_ok());
+        let config = Cli::try_parse_from(args).unwrap().config().unwrap();
+        assert_eq!(config.target_group_arns.len(), 2);
     }
 
     #[test]
