@@ -57,6 +57,8 @@ alloy-signer.workspace = true
 alloy-signer-local.workspace = true
 bincode = { workspace = true, features = ["serde"] }
 arbitrary = { workspace = true, features = ["derive"] }
+# Match the native recovery backend used by node builds in sender recovery benchmarks.
+alloy-consensus = { workspace = true, features = ["secp256k1"] }
 alloy-primitives = { workspace = true, features = ["rand", "arbitrary"] }
 
 [[bench]]
