@@ -4,9 +4,8 @@ use alloy_eips::BlockId;
 use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::state::StateOverride;
 use base_common_consensus::Eip8130Constants;
-use base_common_network::Base;
 use base_common_precompiles::NonceManagerStorage;
-use base_common_rpc_types::Eip8130Nonce;
+use base_common_rpc_types::{BaseRpcTypes, Eip8130Nonce};
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
 use reth_provider::StateProvider;
 use reth_rpc_eth_api::helpers::{EthState, FullEthApi};
@@ -51,7 +50,7 @@ impl ChannelNonceReader {
         state_overrides: Option<&StateOverride>,
     ) -> Result<U256, ErrorObjectOwned>
     where
-        Eth: FullEthApi<NetworkTypes = Base> + Send + Sync + 'static,
+        Eth: FullEthApi<NetworkTypes = BaseRpcTypes> + Send + Sync + 'static,
         ErrorObjectOwned: From<Eth::Error>,
     {
         // Protocol nonce. Lives in account state, not the precompile.

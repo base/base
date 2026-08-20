@@ -7,8 +7,7 @@ use alloy_primitives::{Address, U256};
 use alloy_rpc_types::state::{EvmOverrides, StateOverride};
 use base_common_chains::Upgrades;
 use base_common_evm::BaseTransaction as BaseRevm;
-use base_common_network::Base;
-use base_common_rpc_types::BaseTransactionRequest;
+use base_common_rpc_types::{BaseRpcTypes, BaseTransactionRequest};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -87,7 +86,7 @@ impl<Eth: EthApiTypes> Eip8130EthApiExt<Eth> {
 #[async_trait]
 impl<Eth> Eip8130EthApiOverrideServer for Eip8130EthApiExt<Eth>
 where
-    Eth: FullEthApi<NetworkTypes = Base> + LoadPendingBlock + Clone + Send + Sync + 'static,
+    Eth: FullEthApi<NetworkTypes = BaseRpcTypes> + LoadPendingBlock + Clone + Send + Sync + 'static,
     Eth::Error: FromEthApiError,
     <Eth as RpcNodeCore>::Provider: ChainSpecProvider + BlockReaderIdExt,
     <<Eth as RpcNodeCore>::Provider as ChainSpecProvider>::ChainSpec: Upgrades,
