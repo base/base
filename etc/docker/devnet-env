@@ -196,11 +196,10 @@ L2_BASE_BERYL_BLOCK=21
 # Leave unset to avoid setting base.cobalt during genesis generation.
 L2_BASE_COBALT_BLOCK=22
 # Optional: set to a non-negative block number to schedule Base Denim in devnet.
-# `just devnet up` defaults this to 23; set it to an empty value to leave base.denim unset.
+# Default mode leaves this unset; `just devnet up zenith` defaults it to 23.
 # L2_BASE_DENIM_BLOCK=23
 # Optional: set to a non-negative block number to schedule the genesis-only Base Zenith gate
-# used for future hardfork feature testing. `just devnet up zenith` defaults this to 50,
-# after the Denim default so it does not conflict with earlier activations.
+# used for future hardfork feature testing. `just devnet up zenith` defaults this to 50.
 # Leave unset to avoid setting base.zenith during genesis generation.
 # L2_BASE_ZENITH_BLOCK=50
 
