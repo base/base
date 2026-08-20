@@ -34,6 +34,7 @@ use reth_transaction_pool::{
 };
 use tracing::{debug, instrument, warn};
 
+use super::BaseTimeCache;
 use crate::{BaseEthApi, BaseEthApiError, BaseInvalidTransactionError, SequencerClient};
 
 impl<N, Rpc> EthTransactions for BaseEthApi<N, Rpc>
@@ -254,11 +255,12 @@ where
 /// Otherwise, it works like regular Ethereum implementation, i.e. uses [`TransactionInfo`].
 pub struct BaseTxInfoMapper<Provider> {
     provider: Provider,
+    base_time: BaseTimeCache,
 }
 
 impl<Provider: Clone> Clone for BaseTxInfoMapper<Provider> {
     fn clone(&self) -> Self {
-        Self { provider: self.provider.clone() }
+        Self { provider: self.provider.clone(), base_time: self.base_time.clone() }
     }
 }
 
@@ -269,16 +271,16 @@ impl<Provider> Debug for BaseTxInfoMapper<Provider> {
 }
 
 impl<Provider> BaseTxInfoMapper<Provider> {
-    /// Creates [`BaseTxInfoMapper`] that uses [`ReceiptProvider`] borrowed from given `eth_api`.
-    pub const fn new(provider: Provider) -> Self {
-        Self { provider }
+    /// Creates a mapper backed by the given provider and `BaseTime` cache.
+    pub const fn new(provider: Provider, base_time: BaseTimeCache) -> Self {
+        Self { provider, base_time }
     }
 }
 
 impl<T, Provider> TxInfoMapper<T> for BaseTxInfoMapper<Provider>
 where
     T: BaseTransaction + SignedTransaction,
-    Provider: ReceiptProvider<Receipt: DepositReceiptExt>,
+    Provider: TransactionsProvider<Transaction = T> + ReceiptProvider<Receipt: DepositReceiptExt>,
 {
     type Out = BaseTransactionInfo;
     type Err = ProviderError;
@@ -296,6 +298,14 @@ where
         }
         .unwrap_or_default();
 
-        Ok(BaseTransactionInfo::new(tx_info, deposit_meta))
+        let block_timestamp_ms =
+            match (tx_info.block_hash, tx_info.block_number, tx_info.block_timestamp) {
+                (Some(block_hash), Some(block_number), Some(block_timestamp)) => self
+                    .base_time
+                    .get::<T, _>(&self.provider, block_hash, block_number, block_timestamp)?,
+                _ => None,
+            };
+
+        Ok(BaseTransactionInfo { inner: tx_info, deposit_meta, block_timestamp_ms })
     }
 }

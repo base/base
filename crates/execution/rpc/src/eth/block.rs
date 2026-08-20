@@ -3,7 +3,6 @@
 use alloy_eips::BlockId;
 use base_common_consensus::BaseTransaction;
 use base_common_rpc_types::BaseHeaderResponse;
-use base_protocol::BaseTimeUpdateTx;
 use reth_node_api::BlockBody;
 use reth_primitives_traits::{AlloyBlockHeader, NodePrimitives};
 use reth_rpc_eth_api::{
@@ -29,12 +28,12 @@ where
         Self: FullEthApiTypes,
     {
         let Some(block) = self.recovered_block(block_id).await? else { return Ok(None) };
-        let timestamp_ms = BaseTimeUpdateTx::extract_timestamp_ms(
-            block.body().transactions(),
+        let timestamp_ms = self.base_time_cache().insert_from_transactions(
+            block.hash(),
             block.number(),
             block.timestamp(),
-        )
-        .ok();
+            block.body().transactions(),
+        );
         let mut header =
             self.converter().convert_header(block.clone_sealed_header(), block.rlp_length())?;
         header.timestamp_ms = timestamp_ms;
@@ -50,12 +49,12 @@ where
         Self: FullEthApiTypes,
     {
         let Some(block) = self.recovered_block(block_id).await? else { return Ok(None) };
-        let timestamp_ms = BaseTimeUpdateTx::extract_timestamp_ms(
-            block.body().transactions(),
+        let timestamp_ms = self.base_time_cache().insert_from_transactions(
+            block.hash(),
             block.number(),
             block.timestamp(),
-        )
-        .ok();
+            block.body().transactions(),
+        );
         let mut block = block.clone_into_rpc_block(
             full.into(),
             |tx, tx_info| self.converter().fill(tx, tx_info),
