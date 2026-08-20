@@ -9,7 +9,8 @@ use std::{any::Any, path::PathBuf, sync::Arc, time::Duration};
 
 use alloy_primitives::hex::ToHexExt;
 use alloy_rpc_types_engine::JwtSecret;
-use base_builder_core::{BuilderConfig, FlashblocksServiceBuilder, test_utils::get_available_port};
+use base_builder_core::{BuilderConfig, test_utils::get_available_port};
+use base_builder_multiplex::MultiplexingServiceBuilder;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{
     BasePooledTransaction, BuilderApiImpl, BuilderApiServer, DEFAULT_MAX_VALIDITY_PREDICATES,
@@ -53,6 +54,8 @@ pub struct InProcessBuilderConfig {
     pub flashblocks_port: Option<u16>,
     /// Whether to accept experimental validity-bearing transactions.
     pub enable_experimental_validity_transactions: bool,
+    /// Whether to run both payload builders and cut over to basic at Zenith.
+    pub payload_builder_cutover: bool,
     /// Additional node extensions installed after the builder's built-in RPC wiring.
     ///
     /// Lets downstream consumers layer their own [`BaseNodeExtension`] onto the standard
@@ -156,7 +159,10 @@ impl InProcessBuilder {
                 base_node
                     .components()
                     .pool(pool_component(&rollup_args))
-                    .payload(FlashblocksServiceBuilder::new(builder_config)),
+                    .payload(
+                        MultiplexingServiceBuilder::new(builder_config)
+                            .with_cutover_enabled(config.payload_builder_cutover),
+                    ),
             )
             .with_add_ons(addons)
             .on_component_initialized(move |_ctx| Ok(()))

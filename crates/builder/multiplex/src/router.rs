@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -6,12 +7,15 @@ use std::{
     time::Instant,
 };
 
+use alloy_consensus::BlockHeader;
 use alloy_rpc_types_engine::PayloadId;
+use base_common_chains::Upgrades;
+use base_execution_chainspec::BaseChainSpec;
 use base_node_core::BaseEngineTypes;
 use reth_payload_builder::{BuildNewPayload, PayloadBuilderHandle, PayloadServiceCommand};
-use reth_payload_builder_primitives::PayloadBuilderError;
-use reth_payload_primitives::{PayloadKind, PayloadTypes};
-use tokio::sync::mpsc;
+use reth_payload_builder_primitives::{Events, PayloadBuilderError};
+use reth_payload_primitives::{PayloadAttributes, PayloadKind, PayloadTypes};
+use tokio::sync::{Mutex, broadcast, mpsc};
 use tracing::info;
 
 use crate::RoutingConfig;
@@ -23,6 +27,10 @@ const BASIC_BUILDER: &str = "basic";
 static DEBUG_DISPATCH_FLASHBLOCKS: AtomicU64 = AtomicU64::new(0);
 #[cfg(debug_assertions)]
 static DEBUG_DISPATCH_BASIC: AtomicU64 = AtomicU64::new(0);
+#[cfg(debug_assertions)]
+static DEBUG_SELECTED_FLASHBLOCKS: AtomicU64 = AtomicU64::new(0);
+#[cfg(debug_assertions)]
+static DEBUG_SELECTED_BASIC: AtomicU64 = AtomicU64::new(0);
 
 /// Shared health state for one inner service.
 #[derive(Debug, Clone)]
@@ -74,28 +82,33 @@ pub type ResolveFuture = std::pin::Pin<
     >,
 >;
 
-/// Router that multiplexes one outer payload-builder handle over flashblocks + basic shadow.
+/// Router that cuts payload selection from flashblocks to basic when Zenith activates.
 #[derive(Debug, Clone)]
 pub struct MultiplexRouter {
-    /// Flashblocks handle used for all reads and selected build results.
+    /// Flashblocks payload-builder handle.
     pub flashblocks_handle: PayloadBuilderHandle<BaseEngineTypes>,
-    /// Basic handle used only for shadow build fan-out.
+    /// Basic payload-builder handle.
     pub basic_handle: PayloadBuilderHandle<BaseEngineTypes>,
     /// Flashblocks health state.
     pub flashblocks_health: HealthState,
     /// Basic health state.
     pub basic_health: HealthState,
+    /// Chain spec that owns the Zenith activation condition.
+    pub chain_spec: Arc<BaseChainSpec>,
+    /// Whether each active payload ID is routed to the basic builder.
+    pub payload_routes: Arc<Mutex<HashMap<PayloadId, bool>>>,
     /// Deadline used to flag slow selected `getPayload` resolutions.
     pub getpayload_deadline: std::time::Duration,
 }
 
 impl MultiplexRouter {
     /// Creates a new router.
-    pub const fn new(
+    pub fn new(
         flashblocks_handle: PayloadBuilderHandle<BaseEngineTypes>,
         basic_handle: PayloadBuilderHandle<BaseEngineTypes>,
         flashblocks_health: HealthState,
         basic_health: HealthState,
+        chain_spec: Arc<BaseChainSpec>,
         config: RoutingConfig,
     ) -> Self {
         Self {
@@ -103,7 +116,27 @@ impl MultiplexRouter {
             basic_handle,
             flashblocks_health,
             basic_health,
+            chain_spec,
+            payload_routes: Arc::new(Mutex::new(HashMap::new())),
             getpayload_deadline: config.getpayload_deadline,
+        }
+    }
+
+    /// Returns whether Zenith selects the basic builder at `timestamp`.
+    pub fn basic_selected_at(&self, timestamp: u64) -> bool {
+        self.chain_spec.is_zenith_active_at_timestamp(timestamp)
+    }
+
+    /// Returns the recorded route for a payload, defaulting unknown payloads to flashblocks.
+    pub async fn basic_selected_for_payload(&self, payload_id: PayloadId) -> bool {
+        self.payload_routes.lock().await.get(&payload_id).copied().unwrap_or(false)
+    }
+
+    /// Returns the timestamp represented by a payload-builder event.
+    pub fn event_timestamp(event: &Events<BaseEngineTypes>) -> u64 {
+        match event {
+            Events::Attributes(attributes) => attributes.timestamp(),
+            Events::BuiltPayload(payload) => payload.block().timestamp(),
         }
     }
 
@@ -148,38 +181,80 @@ impl MultiplexRouter {
         tx: tokio::sync::oneshot::Sender<Result<PayloadId, PayloadBuilderError>>,
     ) {
         let payload_id = input.payload_id();
+        let selected_basic = self.basic_selected_at(input.attributes.timestamp());
+        self.payload_routes.lock().await.insert(payload_id, selected_basic);
 
-        let basic_input = input;
-        let flashblocks_input = BuildNewPayload {
-            attributes: basic_input.attributes.clone(),
-            parent_hash: basic_input.parent_hash,
-            cache: None,
-            state_root_handle: None,
+        let mut shadow_attributes = input.attributes.clone();
+        shadow_attributes.no_tx_pool = true;
+        let shadow_input = BuildNewPayload {
+            attributes: shadow_attributes,
+            parent_hash: input.parent_hash,
+            resources: Default::default(),
         };
+        let (flashblocks_input, basic_input) =
+            if selected_basic { (shadow_input, input) } else { (input, shadow_input) };
 
         Self::inc_dispatch_metric(FLASHBLOCKS_BUILDER);
         Self::inc_dispatch_metric(BASIC_BUILDER);
-        Self::inc_selected_build_metric(FLASHBLOCKS_BUILDER);
 
         let flashblocks_rx = self.flashblocks_handle.send_new_payload(flashblocks_input);
         let basic_rx = self.basic_handle.send_new_payload(basic_input);
 
-        let (flashblocks_result, basic_result) = tokio::join!(flashblocks_rx, basic_rx);
-        let selected_result = flashblocks_result.unwrap_or_else(|_| {
-            self.flashblocks_health.mark_unavailable();
-            Self::set_service_health_metric(FLASHBLOCKS_BUILDER, false);
-            Err(Self::unavailable_error(FLASHBLOCKS_BUILDER))
-        });
-        let shadow_result = basic_result.unwrap_or_else(|_| {
-            self.basic_health.mark_unavailable();
-            Self::set_service_health_metric(BASIC_BUILDER, false);
-            Err(Self::unavailable_error(BASIC_BUILDER))
+        let (
+            selected_rx,
+            selected_health,
+            selected_builder,
+            shadow_rx,
+            shadow_health,
+            shadow_builder,
+        ) = if selected_basic {
+            (
+                basic_rx,
+                self.basic_health.clone(),
+                BASIC_BUILDER,
+                flashblocks_rx,
+                self.flashblocks_health.clone(),
+                FLASHBLOCKS_BUILDER,
+            )
+        } else {
+            (
+                flashblocks_rx,
+                self.flashblocks_health.clone(),
+                FLASHBLOCKS_BUILDER,
+                basic_rx,
+                self.basic_health.clone(),
+                BASIC_BUILDER,
+            )
+        };
+
+        Self::inc_selected_build_metric(selected_builder);
+        tokio::spawn(async move {
+            let shadow_result = shadow_rx.await.unwrap_or_else(|_| {
+                shadow_health.mark_unavailable();
+                Self::set_service_health_metric(shadow_builder, false);
+                Err(Self::unavailable_error(shadow_builder))
+            });
+            Self::inc_shadow_metric(shadow_builder, shadow_result.is_ok());
+            info!(
+                builder = shadow_builder,
+                payload_id = ?payload_id,
+                selected = false,
+                result = if shadow_result.is_ok() { "ok" } else { "err" },
+                "multiplex shadow build request completed"
+            );
         });
 
-        Self::inc_shadow_metric(BASIC_BUILDER, shadow_result.is_ok());
+        let selected_result = selected_rx.await.unwrap_or_else(|_| {
+            selected_health.mark_unavailable();
+            Self::set_service_health_metric(selected_builder, false);
+            Err(Self::unavailable_error(selected_builder))
+        });
+        if selected_result.is_err() {
+            self.payload_routes.lock().await.remove(&payload_id);
+        }
 
         info!(
-            builder = FLASHBLOCKS_BUILDER,
+            builder = selected_builder,
             payload_id = ?payload_id,
             selected = true,
             result = if selected_result.is_ok() { "ok" } else { "err" },
@@ -197,8 +272,17 @@ impl MultiplexRouter {
             Option<Result<<BaseEngineTypes as PayloadTypes>::BuiltPayload, PayloadBuilderError>>,
         >,
     ) {
-        let result = self.flashblocks_handle.best_payload(payload_id).await;
-        let mapped = self.map_flashblocks_read_result(result);
+        let selected_basic = self.basic_selected_for_payload(payload_id).await;
+        let (result, builder, health) = if selected_basic {
+            (self.basic_handle.best_payload(payload_id).await, BASIC_BUILDER, &self.basic_health)
+        } else {
+            (
+                self.flashblocks_handle.best_payload(payload_id).await,
+                FLASHBLOCKS_BUILDER,
+                &self.flashblocks_health,
+            )
+        };
+        let mapped = self.map_read_result(result, builder, health);
         let _ = tx.send(mapped);
     }
 
@@ -208,8 +292,21 @@ impl MultiplexRouter {
         payload_id: PayloadId,
         tx: tokio::sync::oneshot::Sender<Option<Result<u64, PayloadBuilderError>>>,
     ) {
-        let result = self.flashblocks_handle.payload_timestamp(payload_id).await;
-        let mapped = self.map_flashblocks_read_result(result);
+        let selected_basic = self.basic_selected_for_payload(payload_id).await;
+        let (result, builder, health) = if selected_basic {
+            (
+                self.basic_handle.payload_timestamp(payload_id).await,
+                BASIC_BUILDER,
+                &self.basic_health,
+            )
+        } else {
+            (
+                self.flashblocks_handle.payload_timestamp(payload_id).await,
+                FLASHBLOCKS_BUILDER,
+                &self.flashblocks_health,
+            )
+        };
+        let mapped = self.map_read_result(result, builder, health);
         let _ = tx.send(mapped);
     }
 
@@ -220,13 +317,19 @@ impl MultiplexRouter {
         kind: PayloadKind,
         tx: tokio::sync::oneshot::Sender<Option<ResolveFuture>>,
     ) {
-        let handle = self.flashblocks_handle.clone();
-        let health = self.flashblocks_health.clone();
+        let selected_basic = self.basic_selected_for_payload(payload_id).await;
+        let (handle, health, builder) = if selected_basic {
+            (self.basic_handle.clone(), self.basic_health.clone(), BASIC_BUILDER)
+        } else {
+            (self.flashblocks_handle.clone(), self.flashblocks_health.clone(), FLASHBLOCKS_BUILDER)
+        };
         let deadline = self.getpayload_deadline;
+        let payload_routes = Arc::clone(&self.payload_routes);
         let future = async move {
             let started = Instant::now();
             let result = handle.resolve_kind(payload_id, kind).await;
             let elapsed = started.elapsed();
+            payload_routes.lock().await.remove(&payload_id);
 
             Self::record_selected_getpayload_latency(elapsed.as_secs_f64());
             if elapsed > deadline {
@@ -237,13 +340,13 @@ impl MultiplexRouter {
                 Some(Ok(payload)) => Ok(payload),
                 Some(Err(PayloadBuilderError::ChannelClosed)) => {
                     health.mark_unavailable();
-                    Self::set_service_health_metric(FLASHBLOCKS_BUILDER, false);
-                    Err(Self::unavailable_error(FLASHBLOCKS_BUILDER))
+                    Self::set_service_health_metric(builder, false);
+                    Err(Self::unavailable_error(builder))
                 }
                 Some(Err(err)) => Err(err),
                 None => {
                     if !health.is_healthy() {
-                        Err(Self::unavailable_error(FLASHBLOCKS_BUILDER))
+                        Err(Self::unavailable_error(builder))
                     } else {
                         Err(PayloadBuilderError::MissingPayload)
                     }
@@ -263,37 +366,78 @@ impl MultiplexRouter {
             >,
         >,
     ) {
-        if !self.flashblocks_health.is_healthy() {
+        let mut flashblocks_events = match self.flashblocks_handle.subscribe().await {
+            Ok(events) => events.receiver,
+            Err(_) => {
+                self.flashblocks_health.mark_unavailable();
+                Self::set_service_health_metric(FLASHBLOCKS_BUILDER, false);
+                return;
+            }
+        };
+        let mut basic_events = match self.basic_handle.subscribe().await {
+            Ok(events) => events.receiver,
+            Err(_) => {
+                self.basic_health.mark_unavailable();
+                Self::set_service_health_metric(BASIC_BUILDER, false);
+                return;
+            }
+        };
+        let (events_tx, events_rx) = broadcast::channel(64);
+        if tx.send(events_rx).is_err() {
             return;
         }
 
-        match self.flashblocks_handle.subscribe().await {
-            Ok(events) => {
-                let _ = tx.send(events.receiver);
-            }
-            Err(err) => {
-                if matches!(err, PayloadBuilderError::ChannelClosed) {
-                    self.flashblocks_health.mark_unavailable();
-                    Self::set_service_health_metric(FLASHBLOCKS_BUILDER, false);
+        let router = self.clone();
+        tokio::spawn(async move {
+            let mut flashblocks_closed = false;
+            let mut basic_closed = false;
+            while !flashblocks_closed || !basic_closed {
+                tokio::select! {
+                    result = flashblocks_events.recv(), if !flashblocks_closed => match result {
+                        Ok(event) => {
+                            if !router.basic_selected_at(Self::event_timestamp(&event)) {
+                                let _ = events_tx.send(event);
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Closed) => {
+                            flashblocks_closed = true;
+                            router.flashblocks_health.mark_unavailable();
+                            Self::set_service_health_metric(FLASHBLOCKS_BUILDER, false);
+                        }
+                        Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    },
+                    result = basic_events.recv(), if !basic_closed => match result {
+                        Ok(event) => {
+                            if router.basic_selected_at(Self::event_timestamp(&event)) {
+                                let _ = events_tx.send(event);
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Closed) => {
+                            basic_closed = true;
+                            router.basic_health.mark_unavailable();
+                            Self::set_service_health_metric(BASIC_BUILDER, false);
+                        }
+                        Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    },
                 }
             }
-        }
+        });
     }
 
-    /// Maps flashblocks read results with unavailable conversion.
-    pub fn map_flashblocks_read_result<T>(
+    /// Maps selected-builder read results with unavailable conversion.
+    pub fn map_read_result<T>(
         &self,
         result: Option<Result<T, PayloadBuilderError>>,
+        builder: &'static str,
+        health: &HealthState,
     ) -> Option<Result<T, PayloadBuilderError>> {
         match result {
             Some(Err(PayloadBuilderError::ChannelClosed)) => {
-                self.flashblocks_health.mark_unavailable();
-                Self::set_service_health_metric(FLASHBLOCKS_BUILDER, false);
-                Some(Err(Self::unavailable_error(FLASHBLOCKS_BUILDER)))
+                health.mark_unavailable();
+                Self::set_service_health_metric(builder, false);
+                Some(Err(Self::unavailable_error(builder)))
             }
-            None if !self.flashblocks_health.is_healthy() => {
-                Some(Err(Self::unavailable_error(FLASHBLOCKS_BUILDER)))
-            }
+            None if !health.is_healthy() => Some(Err(Self::unavailable_error(builder))),
             other => other,
         }
     }
@@ -327,15 +471,36 @@ impl MultiplexRouter {
         DEBUG_DISPATCH_BASIC.load(Ordering::Relaxed)
     }
 
+    /// Returns the in-process debug selected counter for flashblocks.
+    #[cfg(debug_assertions)]
+    pub fn debug_flashblocks_selected_count() -> u64 {
+        DEBUG_SELECTED_FLASHBLOCKS.load(Ordering::Relaxed)
+    }
+
+    /// Returns the in-process debug selected counter for basic.
+    #[cfg(debug_assertions)]
+    pub fn debug_basic_selected_count() -> u64 {
+        DEBUG_SELECTED_BASIC.load(Ordering::Relaxed)
+    }
+
     /// Resets in-process debug dispatch counters.
     #[cfg(debug_assertions)]
     pub fn debug_reset_dispatch_counts() {
         DEBUG_DISPATCH_FLASHBLOCKS.store(0, Ordering::Relaxed);
         DEBUG_DISPATCH_BASIC.store(0, Ordering::Relaxed);
+        DEBUG_SELECTED_FLASHBLOCKS.store(0, Ordering::Relaxed);
+        DEBUG_SELECTED_BASIC.store(0, Ordering::Relaxed);
     }
 
     /// Increments selected metric.
     pub fn inc_selected_build_metric(builder: &'static str) {
+        #[cfg(debug_assertions)]
+        if builder == FLASHBLOCKS_BUILDER {
+            DEBUG_SELECTED_FLASHBLOCKS.fetch_add(1, Ordering::Relaxed);
+        } else if builder == BASIC_BUILDER {
+            DEBUG_SELECTED_BASIC.fetch_add(1, Ordering::Relaxed);
+        }
+
         metrics::counter!("mux_selected_builds_total", "builder" => builder).increment(1);
     }
 
@@ -373,11 +538,16 @@ impl MultiplexRouter {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
+    use base_common_genesis::BaseUpgrade;
+    use base_execution_chainspec::BaseChainSpecBuilder;
+    use reth_ethereum_forks::ForkCondition;
     use reth_payload_builder::PayloadBuilderHandle;
     use reth_payload_builder_primitives::Events;
     use tokio::sync::{broadcast, mpsc};
 
     use super::*;
+
+    const ZENITH_TIMESTAMP: u64 = 10;
 
     fn test_router() -> (
         MultiplexRouter,
@@ -391,76 +561,100 @@ mod tests {
             PayloadBuilderHandle::new(basic_tx),
             HealthState::new(),
             HealthState::new(),
+            Arc::new(
+                BaseChainSpecBuilder::base_mainnet()
+                    .with_fork(BaseUpgrade::Zenith, ForkCondition::Timestamp(ZENITH_TIMESTAMP))
+                    .build(),
+            ),
             RoutingConfig::default(),
         );
         (router, flash_rx, basic_rx)
     }
 
-    fn sample_input() -> BuildNewPayload<<BaseEngineTypes as PayloadTypes>::PayloadAttributes> {
-        BuildNewPayload {
+    fn sample_input(
+        timestamp: u64,
+    ) -> BuildNewPayload<<BaseEngineTypes as PayloadTypes>::PayloadAttributes> {
+        let mut input = BuildNewPayload {
             attributes: base_execution_payload_builder::BasePayloadBuilderAttributes::default(),
             parent_hash: B256::ZERO,
-            cache: None,
-            state_root_handle: None,
-        }
+            resources: Default::default(),
+        };
+        input.attributes.payload_attributes.timestamp = timestamp;
+        input
     }
 
     fn payload_id_from_byte(value: u8) -> PayloadId {
-        let mut input = sample_input();
+        let mut input = sample_input(0);
         input.parent_hash = B256::repeat_byte(value);
         input.payload_id()
     }
 
     #[tokio::test]
-    async fn build_fans_to_both_and_selects_flashblocks() {
-        let (router, mut flash_rx, mut basic_rx) = test_router();
-        let (tx, rx) = tokio::sync::oneshot::channel();
+    async fn build_fans_to_both_and_selects_by_zenith_activation() {
+        for (timestamp, selected_basic) in [(ZENITH_TIMESTAMP - 1, false), (ZENITH_TIMESTAMP, true)]
+        {
+            let (router, mut flash_rx, mut basic_rx) = test_router();
+            let (tx, rx) = tokio::sync::oneshot::channel();
 
-        let input = sample_input();
-        let payload_id = input.payload_id();
-        tokio::spawn(async move {
-            router.handle_build_new_payload(input, tx).await;
-        });
+            let input = sample_input(timestamp);
+            let payload_id = input.payload_id();
+            tokio::spawn(async move {
+                router.handle_build_new_payload(input, tx).await;
+            });
 
-        let flash_cmd = flash_rx.recv().await.expect("flash cmd");
-        let basic_cmd = basic_rx.recv().await.expect("basic cmd");
-        let mut flash_seen = false;
-        let mut basic_seen = false;
+            let flash_cmd = flash_rx.recv().await.expect("flash cmd");
+            let basic_cmd = basic_rx.recv().await.expect("basic cmd");
+            let mut flash_seen = false;
+            let mut basic_seen = false;
 
-        if let PayloadServiceCommand::BuildNewPayload(input, _, tx) = flash_cmd {
-            flash_seen = true;
-            assert_eq!(input.payload_id(), payload_id);
-            assert!(input.cache.is_none());
-            assert!(input.state_root_handle.is_none());
-            tx.send(Ok(payload_id)).expect("flash response");
+            if let PayloadServiceCommand::BuildNewPayload(input, _, tx) = flash_cmd {
+                flash_seen = true;
+                assert_eq!(input.payload_id() == payload_id, !selected_basic);
+                assert_eq!(input.attributes.no_tx_pool, selected_basic);
+                assert!(input.resources.execution_cache().is_none());
+                assert!(input.resources.state_root_handle().is_none());
+                tx.send(if selected_basic {
+                    Err(PayloadBuilderError::MissingPayload)
+                } else {
+                    Ok(payload_id)
+                })
+                .expect("flash response");
+            }
+
+            if let PayloadServiceCommand::BuildNewPayload(input, _, tx) = basic_cmd {
+                basic_seen = true;
+                assert_eq!(input.payload_id() == payload_id, selected_basic);
+                assert_eq!(input.attributes.no_tx_pool, !selected_basic);
+                tx.send(if selected_basic {
+                    Ok(payload_id)
+                } else {
+                    Err(PayloadBuilderError::MissingPayload)
+                })
+                .expect("basic response");
+            }
+
+            assert!(flash_seen);
+            assert!(basic_seen);
+            assert!(rx.await.expect("selected response").is_ok());
         }
-
-        if let PayloadServiceCommand::BuildNewPayload(input, _, tx) = basic_cmd {
-            basic_seen = true;
-            assert_eq!(input.payload_id(), payload_id);
-            tx.send(Err(PayloadBuilderError::MissingPayload)).expect("basic response");
-        }
-
-        assert!(flash_seen);
-        assert!(basic_seen);
-        assert!(rx.await.expect("selected response").is_ok());
     }
 
     #[tokio::test]
-    async fn best_payload_reads_flashblocks_only() {
+    async fn best_payload_reads_recorded_builder() {
         let (router, mut flash_rx, mut basic_rx) = test_router();
         let payload_id = payload_id_from_byte(7);
+        router.payload_routes.lock().await.insert(payload_id, true);
         let (tx, rx) = tokio::sync::oneshot::channel();
 
         tokio::spawn(async move {
             router.handle_best_payload(payload_id, tx).await;
         });
 
-        let flash_cmd = flash_rx.recv().await.expect("flash command");
-        assert!(basic_rx.try_recv().is_err());
-        if let PayloadServiceCommand::BestPayload(inner_payload_id, tx) = flash_cmd {
+        let basic_cmd = basic_rx.recv().await.expect("basic command");
+        assert!(flash_rx.try_recv().is_err());
+        if let PayloadServiceCommand::BestPayload(inner_payload_id, tx) = basic_cmd {
             assert_eq!(inner_payload_id, payload_id);
-            tx.send(None).expect("send flash response");
+            tx.send(None).expect("send basic response");
         } else {
             panic!("expected BestPayload command");
         }
@@ -469,7 +663,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn payload_timestamp_reads_flashblocks_only() {
+    async fn payload_timestamp_defaults_unknown_payload_to_flashblocks() {
         let (router, mut flash_rx, mut basic_rx) = test_router();
         let payload_id = payload_id_from_byte(9);
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -491,7 +685,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn subscribe_uses_flashblocks_only() {
+    async fn subscribe_forwards_events_from_builder_selected_at_event_timestamp() {
         let (router, mut flash_rx, mut basic_rx) = test_router();
         let (sub_tx, sub_rx) = tokio::sync::oneshot::channel();
 
@@ -499,25 +693,43 @@ mod tests {
             router.handle_subscribe(sub_tx).await;
         });
 
+        let (flash_events_tx, flash_events_rx) = broadcast::channel(2);
+        let (basic_events_tx, basic_events_rx) = broadcast::channel(2);
         let flash_cmd = flash_rx.recv().await.expect("flash subscribe command");
-        assert!(basic_rx.try_recv().is_err());
-        if let PayloadServiceCommand::Subscribe(tx) = flash_cmd {
-            let (events_tx, events_rx) = broadcast::channel(2);
-            tx.send(events_rx).expect("send flash receiver");
-            let mut sub = sub_rx.await.expect("outer subscribe receiver");
-            events_tx
-                .send(Events::Attributes(sample_input().attributes))
-                .expect("send flash event");
-            assert!(sub.recv().await.is_ok());
-        } else {
-            panic!("expected Subscribe command");
-        }
+        let PayloadServiceCommand::Subscribe(flash_tx) = flash_cmd else {
+            panic!("expected flash Subscribe command");
+        };
+        flash_tx.send(flash_events_rx).expect("send flash receiver");
+
+        let basic_cmd = basic_rx.recv().await.expect("basic subscribe command");
+        let PayloadServiceCommand::Subscribe(basic_tx) = basic_cmd else {
+            panic!("expected basic Subscribe command");
+        };
+        basic_tx.send(basic_events_rx).expect("send basic receiver");
+        let mut sub = sub_rx.await.expect("outer subscribe receiver");
+
+        flash_events_tx
+            .send(Events::Attributes(sample_input(ZENITH_TIMESTAMP - 1).attributes))
+            .expect("send pre-Zenith flash event");
+        assert_eq!(
+            MultiplexRouter::event_timestamp(&sub.recv().await.expect("receive flash event")),
+            ZENITH_TIMESTAMP - 1
+        );
+
+        basic_events_tx
+            .send(Events::Attributes(sample_input(ZENITH_TIMESTAMP).attributes))
+            .expect("send post-Zenith basic event");
+        assert_eq!(
+            MultiplexRouter::event_timestamp(&sub.recv().await.expect("receive basic event")),
+            ZENITH_TIMESTAMP
+        );
     }
 
     #[tokio::test]
-    async fn resolve_uses_flashblocks_only() {
+    async fn resolve_uses_recorded_builder() {
         let (router, mut flash_rx, mut basic_rx) = test_router();
         let payload_id = payload_id_from_byte(11);
+        router.payload_routes.lock().await.insert(payload_id, true);
         let (resolve_tx, resolve_rx) = tokio::sync::oneshot::channel();
 
         tokio::spawn(async move {
@@ -529,11 +741,11 @@ mod tests {
 
         let resolve_task = tokio::spawn(future);
 
-        let flash_cmd = flash_rx.recv().await.expect("flash resolve command");
-        assert!(basic_rx.try_recv().is_err());
-        if let PayloadServiceCommand::Resolve(inner_payload_id, _, tx) = flash_cmd {
+        let basic_cmd = basic_rx.recv().await.expect("basic resolve command");
+        assert!(flash_rx.try_recv().is_err());
+        if let PayloadServiceCommand::Resolve(inner_payload_id, _, tx) = basic_cmd {
             assert_eq!(inner_payload_id, payload_id);
-            assert!(tx.send(None).is_ok(), "send flash resolve response");
+            assert!(tx.send(None).is_ok(), "send basic resolve response");
         } else {
             panic!("expected Resolve command");
         }

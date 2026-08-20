@@ -1,14 +1,13 @@
 # `base-builder-multiplex`
 
 Runs Base flashblocks and Base basic payload builders in parallel behind a single routing
-`PayloadBuilderHandle`.
+`PayloadBuilderHandle`, cutting the selected builder over when Zenith activates.
 
 ## Overview
 
-- with dual mode enabled, fans out every `BuildNewPayload` request to flashblocks (selected)
-  and basic (shadow),
-- always routes reads (`BestPayload`, `PayloadTimestamp`, `Resolve`, `Subscribe`) to
-  flashblocks,
-- keeps basic as validation-only shadow output during 200ms cutover migration,
-- defaults dual mode to disabled so startup behavior is identical to plain
+- with cutover mode enabled, fans out every `BuildNewPayload` request to both builders,
+- selects flashblocks before Zenith and basic at and after Zenith,
+- routes reads (`BestPayload`, `PayloadTimestamp`, `Resolve`, `Subscribe`) to the builder
+  selected for each payload,
+- defaults cutover mode to disabled so startup behavior is identical to plain
   `FlashblocksServiceBuilder`.

@@ -269,10 +269,9 @@ pub struct Args {
     #[command(flatten)]
     pub flashblocks: FlashblocksArgs,
 
-    /// Enables flashblocks + basic dual payload builders for 200ms cutover validation.
-    /// Reads always continue to come from flashblocks.
-    #[arg(long = "builder.dual-payload-builders", default_value = "false")]
-    pub dual_payload_builders: bool,
+    /// Runs both payload builders and selects the basic builder when Zenith activates.
+    #[arg(long = "builder.payload-builder-cutover", default_value = "false")]
+    pub payload_builder_cutover: bool,
 
     /// Transaction event journal configuration
     #[command(flatten)]
@@ -330,7 +329,7 @@ impl Default for Args {
             sampling_ratio: 100,
             manifest_precheck_enabled: true,
             flashblocks: FlashblocksArgs::default(),
-            dual_payload_builders: false,
+            payload_builder_cutover: false,
             transaction_events: TransactionEventsArgs::default(),
             shadow_indexer: ShadowIndexerArgs::default(),
         }
@@ -503,9 +502,15 @@ mod tests {
     }
 
     #[test]
-    fn dual_payload_builders_defaults_to_disabled() {
+    fn payload_builder_cutover_defaults_to_disabled() {
         let parsed = CommandParser::parse_from(["test"]);
-        assert!(!parsed.args.dual_payload_builders);
+        assert!(!parsed.args.payload_builder_cutover);
+    }
+
+    #[test]
+    fn payload_builder_cutover_requires_explicit_opt_in() {
+        let parsed = CommandParser::parse_from(["test", "--builder.payload-builder-cutover"]);
+        assert!(parsed.args.payload_builder_cutover);
     }
 
     #[rstest]

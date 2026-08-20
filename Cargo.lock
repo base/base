@@ -3333,12 +3333,15 @@ dependencies = [
 name = "base-builder-multiplex"
 version = "0.0.0"
 dependencies = [
- "alloy-eips 2.2.0",
+ "alloy-consensus 2.4.1",
+ "alloy-eips 2.4.1",
  "alloy-primitives",
- "alloy-provider 2.2.0",
+ "alloy-provider",
  "alloy-rpc-types-engine",
  "base-builder-core",
+ "base-common-chains",
  "base-common-consensus",
+ "base-common-genesis",
  "base-common-network",
  "base-common-rpc-types-engine",
  "base-execution-chainspec",
@@ -3353,6 +3356,7 @@ dependencies = [
  "metrics-exporter-prometheus",
  "reth-basic-payload-builder",
  "reth-db",
+ "reth-ethereum-forks",
  "reth-ipc",
  "reth-node-api",
  "reth-node-builder",
@@ -6174,6 +6178,7 @@ dependencies = [
  "base-batcher-encoder",
  "base-batcher-service",
  "base-builder-core",
+ "base-builder-multiplex",
  "base-bundle-extension",
  "base-common-consensus",
  "base-common-genesis",

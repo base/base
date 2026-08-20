@@ -89,6 +89,7 @@ impl ShadowSequencer {
             p2p_port: None,
             flashblocks_port: None,
             enable_experimental_validity_transactions: false,
+            payload_builder_cutover: false,
             extra_extensions: Vec::new(),
         })
         .await

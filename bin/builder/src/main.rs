@@ -55,8 +55,7 @@ fn main() {
             .with_manifest_precheck_enabled(manifest_precheck_enabled)
             .with_service_builder(
                 MultiplexingServiceBuilder::new(builder_config)
-                    .with_compute_pending_block(rollup_args.compute_pending_block)
-                    .with_dual_builders_enabled(builder_args.dual_payload_builders),
+                    .with_cutover_enabled(builder_args.payload_builder_cutover),
             );
         runner.install_ext::<MeteringStoreExtension>(metering_provider);
         runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig::default());

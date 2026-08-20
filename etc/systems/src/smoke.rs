@@ -290,6 +290,7 @@ pub struct SystemTestStackBuilder {
     stable_config: Option<StableSystemTestConfig>,
     tx_forwarding_config: Option<TxForwardingConfig>,
     enable_experimental_validity_transactions: bool,
+    payload_builder_cutover: bool,
     verifier_l1_confs: u64,
     client_consensus_mode: L2ClientConsensusMode,
     shadow_sequencer_count: usize,
@@ -386,6 +387,12 @@ impl SystemTestStackBuilder {
     /// Enables experimental validity transaction ingress and builder acceptance.
     pub const fn with_experimental_validity_transactions(mut self) -> Self {
         self.enable_experimental_validity_transactions = true;
+        self
+    }
+
+    /// Runs both payload builders and cuts selection from flashblocks to basic at Zenith.
+    pub const fn with_payload_builder_cutover(mut self) -> Self {
+        self.payload_builder_cutover = true;
         self
     }
 
@@ -686,6 +693,7 @@ impl SystemTestStackBuilder {
             tx_forwarding_config: self.tx_forwarding_config,
             enable_experimental_validity_transactions: self
                 .enable_experimental_validity_transactions,
+            payload_builder_cutover: self.payload_builder_cutover,
             verifier_l1_confs: self.verifier_l1_confs,
             client_consensus_mode: self.client_consensus_mode,
             upgrade_signal: l2_upgrade_signal,
