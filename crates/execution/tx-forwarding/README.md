@@ -13,6 +13,8 @@ This crate provides:
 
 A slow builder backpressures only its own reader. Transactions are marked as recently sent only
 after that builder's queue accepts them, so another destination cannot suppress their delivery.
+Each forwarder sends an isolated request immediately, but drains any other requests already waiting
+for that destination into the same RPC batch up to the configured batch size.
 
 ## Forwarding without the pool
 

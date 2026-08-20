@@ -21,9 +21,15 @@ base_metrics::define_metrics! {
     #[describe("RPC round-trip latency in seconds (including retries)")]
     #[label(builder_url)]
     rpc_latency: histogram,
+    #[describe("Number of requests in each RPC batch")]
+    #[label(builder_url)]
+    batch_size: histogram,
     #[describe("Current number of transactions buffered and awaiting send")]
     #[label(builder_url)]
     buffer_size: gauge,
+    #[describe("Current number of transactions waiting in the destination channel")]
+    #[label(builder_url)]
+    queue_size: gauge,
 }
 
 impl ForwarderMetrics {

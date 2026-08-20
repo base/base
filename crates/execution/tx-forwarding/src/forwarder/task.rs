@@ -73,9 +73,10 @@ impl RateLimiter {
 /// Async forwarder task that receives requests from a destination queue and
 /// sends them to a single builder via RPC.
 ///
-/// Under normal load, each request is sent immediately as a batch of 1. When
-/// the sliding window rate limit (`max_rps`) is hit, incoming requests buffer
-/// and flush as a single batch (capped at `max_batch_size`) once the window
+/// Once one request is available, the forwarder drains all other immediately
+/// available requests into the same batch, capped at `max_batch_size`. This
+/// batches bursts without delaying an isolated request. If the sliding window
+/// rate limit (`max_rps`) is hit, requests continue buffering until the window
 /// opens.
 ///
 /// Requests are relayed in the order the queue yields them, and a batch
@@ -122,8 +123,19 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
         );
 
         loop {
+            if self.buffer.is_empty() {
+                let request = self.receiver.recv().await;
+                if self.handle_recv(request) {
+                    break;
+                }
+            }
+
+            if self.fill_buffer_from_queue() {
+                break;
+            }
+
             match self.limiter.check_rate_limit() {
-                None if !self.buffer.is_empty() => {
+                None => {
                     self.flush_buffer().await;
                     continue;
                 }
@@ -143,20 +155,29 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
                     }
                     continue;
                 }
-                _ => {}
-            }
-
-            let transaction = self.receiver.recv().await;
-            let closed = self.handle_recv(transaction);
-            if closed {
-                break;
-            }
-            if !self.buffer.is_empty() && self.limiter.check_rate_limit().is_none() {
-                self.flush_buffer().await;
             }
         }
 
         self.flush_remaining().await;
+    }
+
+    /// Fills the current batch from requests already waiting in the destination queue.
+    ///
+    /// Returns `true` when the queue is closed and all of its remaining requests are buffered.
+    fn fill_buffer_from_queue(&mut self) -> bool {
+        let mut closed = false;
+        while self.buffer.len() < self.buffer_limit {
+            match self.receiver.try_recv() {
+                Ok(request) => self.buffer.push(request),
+                Err(mpsc::error::TryRecvError::Empty) => break,
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    closed = true;
+                    break;
+                }
+            }
+        }
+        self.update_pending_metrics();
+        closed
     }
 
     /// Returns `true` if the channel is closed and the forwarder should shut down.
@@ -164,11 +185,11 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
         match request {
             Some(request) => {
                 self.buffer.push(request);
-                ForwarderMetrics::buffer_size(Arc::clone(&self.url_label))
-                    .set(self.buffer.len() as f64);
+                self.update_pending_metrics();
                 false
             }
             None => {
+                self.update_pending_metrics();
                 info!(
                     builder_url = %self.builder_url,
                     buffered = self.buffer.len(),
@@ -177,6 +198,11 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
                 true
             }
         }
+    }
+
+    fn update_pending_metrics(&self) {
+        ForwarderMetrics::buffer_size(Arc::clone(&self.url_label)).set(self.buffer.len() as f64);
+        ForwarderMetrics::queue_size(Arc::clone(&self.url_label)).set(self.receiver.len() as f64);
     }
 
     async fn flush_remaining(&mut self) {
@@ -197,6 +223,8 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
         if batch.is_empty() {
             return;
         }
+
+        ForwarderMetrics::batch_size(Arc::clone(&self.url_label)).record(batch.len() as f64);
 
         trace!(
             builder_url = %self.builder_url,
@@ -585,6 +613,39 @@ mod tests {
         forwarder.flush_buffer().await;
         assert!(forwarder.buffer.is_empty());
         assert_eq!(received.lock().unwrap().len(), 5);
+    }
+
+    #[tokio::test]
+    async fn ready_queue_is_drained_into_full_batches() {
+        let (sender, receiver) = mpsc::channel(250);
+        for nonce in 0..250 {
+            sender.send(transaction::<NoExtensions>(nonce)).await.unwrap();
+        }
+        drop(sender);
+
+        let url = url::Url::parse("http://builder.test").unwrap();
+        let mut forwarder = forwarder(url, receiver, config(0, 100));
+        let mut batch_sizes = Vec::new();
+        let mut hashes = Vec::new();
+
+        loop {
+            let request = forwarder.receiver.recv().await;
+            if forwarder.handle_recv(request) {
+                break;
+            }
+            let closed = forwarder.fill_buffer_from_queue();
+            batch_sizes.push(forwarder.buffer.len());
+            hashes.extend(forwarder.buffer.drain(..).map(|request| request.tx_hash));
+            if closed {
+                break;
+            }
+        }
+
+        assert_eq!(batch_sizes, [100, 100, 50]);
+        assert_eq!(
+            hashes,
+            (0..250).map(|nonce| B256::with_last_byte(nonce as u8)).collect::<Vec<_>>()
+        );
     }
 
     #[tokio::test]
