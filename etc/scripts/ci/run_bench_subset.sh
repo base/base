@@ -1,45 +1,197 @@
 #!/usr/bin/env bash
-# Runs the curated advisory benchmark subset in the current working directory,
-# saving each result under the criterion baseline named by the first argument
-# (default: `current`) for base-vs-head comparison.
+# Builds or runs the curated advisory benchmark subset.
 #
-# Usage: run_bench_subset.sh [BASELINE]
+# Usage:
+#   run_bench_subset.sh build OUTPUT_DIR
+#   run_bench_subset.sh run BASE_BIN_DIR HEAD_BIN_DIR
+# Passing the same directory for both run arguments performs a full A/A diagnostic.
 #
-# bench-pr.yml invokes this twice from a single checkout — once per commit — after
-# git-switching the working tree between the PR base and head. Both passes share one
-# target dir, so the second build is incremental over the first; passing distinct
-# baseline names ("pr-base" and "pr-head") keeps both results side by side under
-# target/criterion for bench_compare.py to read. The caller runs the *hoisted* copy
-# of this script (outside the tree) for both passes so a single authoritative list
-# runs against both commits: keeping the list here removes the drift risk of
-# duplicating it across two workflow steps, where adding or removing a bench in only
-# one block would surface as a spurious "new"/"missing" coverage change.
+# bench-pr.yml hoists the head commit's copy of this script, then uses `build`
+# once per commit. Each compiled benchmark executable is copied outside Cargo's
+# shared target directory before the other commit is built. This cleanly separates
+# compilation from measurement without giving up incremental builds between base
+# and head.
 #
-# Advisory only: a bench that fails to compile or run must not fail the job, so the
-# caller runs this with continue-on-error. The curated subset is the deterministic,
-# CPU-bound benches; I/O-heavy, async, and multi-threaded benches are left out
-# because their wall-clock time is too noisy to read per-PR.
+# `run` measures each prebuilt executable in base-head-head-base (ABBA) order.
+# Both revisions therefore occupy the same average position in time, reducing
+# systematic bias from CPU frequency, temperature, and host-load drift. The two
+# repetitions per revision also provide an A/A repeat-spread measurement for
+# bench_compare.py. The long tx-selection executable is split by benchmark group
+# so matching base and head samples remain close together in time. Each repetition
+# uses half the old sample count and shorter warmup/measurement windows; across two
+# repetitions each revision retains 100 samples while fitting comfortably in CI.
+#
+# Advisory only: a bench that fails to compile or run must not prevent the other
+# benches from producing results. The curated subset contains deterministic,
+# CPU-bound, single-threaded benches; I/O-heavy, async, and multi-threaded benches
+# are excluded because their wall-clock time is too noisy to read per PR.
 set -uo pipefail
 
-baseline="${1:-current}"
+mode="${1:-}"
+failures=0
 
-run() { echo "::group::$*"; "$@"; echo "::endgroup::"; }
+end_group() {
+  local status="$1"
+  echo "::endgroup::"
+  if [ "$status" -ne 0 ]; then
+    failures=1
+  fi
+}
 
-run cargo bench -p base-proof-mpt --bench trie_node \
-  -- --save-baseline "$baseline" --noplot
-run cargo bench -p base-protocol --bench batch_transaction \
-  -- --save-baseline "$baseline" --noplot
-run cargo bench -p base-consensus-derive --bench batch_queue --features test-utils \
-  -- --save-baseline "$baseline" --noplot
-run cargo bench -p base-common-precompiles --bench base_precompiles --features test-utils \
-  -- --save-baseline "$baseline" --noplot
-run cargo bench -p base-builder-core --bench tx_selection \
-  -- --save-baseline "$baseline" --noplot
-run cargo bench -p base-flashblocks-node --bench sender_recovery \
-  -- --save-baseline "$baseline" sequential --noplot
-run cargo bench -p base-common-flz --bench flz \
-  -- --save-baseline "$baseline" --noplot
-run cargo bench -p base-common-flashblocks --bench flashblock_decode \
-  -- --save-baseline "$baseline" --noplot
-run cargo bench -p base-protocol --bench frame_parse \
-  -- --save-baseline "$baseline" --noplot
+find_bench_executable() {
+  local bench="$1"
+  python3 -c '
+import json
+import sys
+
+bench = sys.argv[1]
+executable = None
+for line in sys.stdin:
+    try:
+        message = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    if message.get("reason") == "compiler-message":
+        rendered = message.get("message", {}).get("rendered")
+        if rendered:
+            print(rendered, file=sys.stderr, end="")
+    target = message.get("target", {})
+    if (
+        message.get("reason") == "compiler-artifact"
+        and target.get("name") == bench
+        and "bench" in target.get("kind", [])
+        and message.get("executable")
+    ):
+        executable = message["executable"]
+if executable is None:
+    raise SystemExit(f"cargo did not report an executable for benchmark {bench}")
+print(executable)
+' "$bench"
+}
+
+build_benchmark() {
+  local key="$1"
+  local package="$2"
+  local bench="$3"
+  shift 3
+
+  echo "::group::Build $package --bench $bench"
+  local executable
+  if ! executable=$(cargo bench -p "$package" --bench "$bench" "$@" \
+    --no-run --message-format=json-render-diagnostics | find_bench_executable "$bench"); then
+    end_group 1
+    return
+  fi
+  if ! cp "$executable" "$output_dir/$key"; then
+    end_group 1
+    return
+  fi
+  chmod +x "$output_dir/$key"
+  end_group 0
+}
+
+run_once() {
+  local side="$1"
+  local key="$2"
+  local baseline="$3"
+  local filter="$4"
+  local bin_dir="$base_bin_dir"
+  if [ "$side" = "head" ]; then
+    bin_dir="$head_bin_dir"
+  fi
+
+  echo "::group::Run $key ($side, $baseline)"
+  if [ ! -x "$bin_dir/$key" ]; then
+    echo "::warning::Missing $side benchmark executable: $key"
+    end_group 1
+    return
+  fi
+
+  local -a args=(
+    # `cargo bench` normally supplies this hidden libtest-compatible flag. Direct
+    # execution without it only smoke-tests each routine and saves no measurements.
+    --bench
+    --sample-size 50
+    --warm-up-time 2
+    --measurement-time 2
+    --save-baseline "$baseline"
+    --noplot
+  )
+  if [ -n "$filter" ]; then
+    args=("$filter" "${args[@]}")
+  fi
+  "${bench_prefix[@]}" "$bin_dir/$key" "${args[@]}"
+  end_group "$?"
+}
+
+run_pair() {
+  local key="$1"
+  local filter="${2:-}"
+  run_once base "$key" pr-base-1 "$filter"
+  run_once head "$key" pr-head-1 "$filter"
+  run_once head "$key" pr-head-2 "$filter"
+  run_once base "$key" pr-base-2 "$filter"
+}
+
+case "$mode" in
+  build)
+    output_dir="${2:?build requires OUTPUT_DIR}"
+    mkdir -p "$output_dir"
+
+    echo "::group::Build Solidity test contracts"
+    (
+      cd crates/utilities/test-utils/contracts || exit
+      forge soldeer install && forge build
+    )
+    end_group "$?"
+
+    build_benchmark trie_node base-proof-mpt trie_node
+    build_benchmark batch_transaction base-protocol batch_transaction
+    build_benchmark batch_queue base-consensus-derive batch_queue --features test-utils
+    build_benchmark base_precompiles base-common-precompiles base_precompiles \
+      --features test-utils
+    build_benchmark tx_selection base-builder-core tx_selection
+    build_benchmark sender_recovery base-flashblocks-node sender_recovery
+    build_benchmark flz base-common-flz flz
+    build_benchmark flashblock_decode base-common-flashblocks flashblock_decode
+    build_benchmark frame_parse base-protocol frame_parse
+    ;;
+  run)
+    base_bin_dir="${2:?run requires BASE_BIN_DIR}"
+    head_bin_dir="${3:?run requires HEAD_BIN_DIR}"
+    export CRITERION_HOME="${CRITERION_HOME:-$PWD/target/criterion}"
+    # Cached target directories can contain identically named baselines from an
+    # earlier workflow run. Never let those mask a failed or missing repetition.
+    rm -rf "$CRITERION_HOME"
+
+    allowed_cpus=$(awk '/Cpus_allowed_list/ { print $2 }' /proc/self/status)
+    bench_cpu="${BENCH_CPU:-${allowed_cpus%%[-,]*}}"
+    bench_prefix=()
+    if command -v taskset > /dev/null; then
+      bench_prefix=(taskset -c "$bench_cpu")
+      echo "Benchmark CPU: $bench_cpu (allowed: $allowed_cpus)"
+    else
+      echo "::warning::taskset unavailable; running benchmarks without CPU affinity"
+    fi
+
+    run_pair trie_node
+    run_pair batch_transaction
+    run_pair batch_queue
+    run_pair base_precompiles
+    run_pair tx_selection 'tx_selection/best_transactions/'
+    run_pair tx_selection 'tx_selection/best_transactions_chained/'
+    run_pair tx_selection 'tx_selection/parkable_payload/'
+    run_pair tx_selection 'tx_selection/predicate_rescan/'
+    run_pair tx_selection 'tx_selection/predicate_index/'
+    run_pair sender_recovery sequential
+    run_pair flz
+    run_pair flashblock_decode
+    run_pair frame_parse
+    ;;
+  *)
+    echo "usage: $0 build OUTPUT_DIR | run BASE_BIN_DIR HEAD_BIN_DIR" >&2
+    exit 2
+    ;;
+esac
+
+exit "$failures"
