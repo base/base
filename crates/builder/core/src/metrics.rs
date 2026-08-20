@@ -1,5 +1,7 @@
 //! Builder metrics collected during block and flashblock construction.
 
+use std::time::Duration;
+
 use crate::{ExecutionInfo, FlashblockDiagnostics, ResourceLimits};
 
 const PRIORITY_FEE_THRESHOLDS_WEI: [(&str, u64); 3] =
@@ -112,6 +114,10 @@ base_metrics::define_metrics! {
     rejection_cache_size: gauge,
     #[describe("Duration of rescanning parked transaction validity predicates in seconds")]
     validity_predicate_rescan_duration: histogram,
+    #[describe(
+        "Total validity predicate evaluation time per flashblock build, inclusive of state loads, in seconds"
+    )]
+    validity_predicate_eval_duration_per_block: histogram,
     #[describe("Validity predicate evaluation attempts")]
     #[label(outcome)]
     validity_predicate_evaluations_total: counter,
@@ -212,6 +218,12 @@ base_metrics::define_metrics! {
 }
 
 impl BuilderMetrics {
+    /// Records the total validity predicate evaluation time accumulated across a
+    /// single build iteration, inclusive of the state loads each evaluation performs.
+    pub fn record_predicate_eval_duration(duration: Duration) {
+        Self::validity_predicate_eval_duration_per_block().record(duration.as_secs_f64());
+    }
+
     /// Records per-flashblock selection diagnostics as labeled metrics.
     pub fn record_flashblock_diagnostics(
         flashblock_index: u64,
@@ -357,5 +369,26 @@ mod tests {
         assert!(rendered.contains(
             "base_builder_flashblock_min_priority_fee_above_threshold_total{flashblock_index=\"7\",threshold=\"100wei\"} 1"
         ));
+    }
+
+    #[test]
+    fn record_predicate_eval_duration_emits_histogram_in_seconds() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+
+        metrics::with_local_recorder(&recorder, || {
+            // 500ms accumulated across a build iteration -> 0.5 seconds.
+            BuilderMetrics::record_predicate_eval_duration(Duration::from_millis(500));
+        });
+
+        let rendered = handle.render();
+        assert!(
+            rendered.contains("base_builder_validity_predicate_eval_duration_per_block_count 1"),
+            "expected a single observation, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("base_builder_validity_predicate_eval_duration_per_block_sum 0.5"),
+            "expected 0.5s recorded, got: {rendered}"
+        );
     }
 }
