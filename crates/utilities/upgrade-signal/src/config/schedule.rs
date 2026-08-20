@@ -7,6 +7,7 @@ use url::Url;
 
 use super::{UpgradeSignalBlockTag, UpgradeSignalDefaults, UpgradeSignalMode};
 use crate::{
+    PackedProtocolVersion,
     contract::AlloyUpgradeSignalReader,
     error::UpgradeSignalError,
     metrics::{UpgradeSignalMetricLayer, UpgradeSignalMetrics},
@@ -49,8 +50,14 @@ impl UpgradeSignalConfig {
     }
 
     /// Returns true if this node supports the minimum protocol version attached to `signal`.
+    ///
+    /// Compatibility compares the packed versions by their semver ordering (see
+    /// [`PackedProtocolVersion`]), not as raw integers: an unrecognized version-type ranks above
+    /// everything (fail-closed), then `major.minor.patch`, with a pre-release sorting below its
+    /// matching release and `build`/reserved bits ignored.
     pub fn supports_signal_protocol_version(&self, signal: &UpgradeSignal) -> bool {
-        signal.protocol_version <= self.node_protocol_version
+        PackedProtocolVersion::new(signal.protocol_version)
+            <= PackedProtocolVersion::new(self.node_protocol_version)
     }
 
     /// Returns an error if a positive activation timestamp omits its minimum protocol version.
@@ -242,11 +249,52 @@ mod tests {
 
     #[test]
     fn rejects_signal_above_node_protocol_version() {
+        // Node supports 1.1.0; a 1.1.1 minimum is genuinely newer.
         let config = supported_config();
-        let minimum_protocol_version = config.node_protocol_version + U256::from(1);
+        let minimum_protocol_version = UpgradeSignalDefaults::packed_protocol_version(1, 1, 1);
 
         assert!(matches!(
             config.validate_signal_protocol_version(&signal(minimum_protocol_version)).unwrap_err(),
+            crate::UpgradeSignalError::UnsupportedProtocolVersion { .. }
+        ));
+    }
+
+    #[test]
+    fn accepts_prerelease_minimum_of_the_node_release() {
+        // Node runs the final 1.2.3; a 1.2.3-rc.1 minimum must be considered sufficient, even
+        // though its raw packed integer is larger than the release's.
+        let mut config = supported_config();
+        config.node_protocol_version = UpgradeSignalDefaults::packed_protocol_version(1, 2, 3);
+
+        let prerelease = PackedProtocolVersion::pack(1, 2, 3, 1).into_inner();
+        assert!(prerelease > config.node_protocol_version);
+        assert!(config.validate_signal_protocol_version(&signal(prerelease)).is_ok());
+    }
+
+    #[test]
+    fn rejects_prerelease_minimum_above_the_node_release() {
+        // A 1.2.4-rc.1 minimum still outranks the node's final 1.2.3.
+        let mut config = supported_config();
+        config.node_protocol_version = UpgradeSignalDefaults::packed_protocol_version(1, 2, 3);
+
+        let prerelease = PackedProtocolVersion::pack(1, 2, 4, 1).into_inner();
+        assert!(matches!(
+            config.validate_signal_protocol_version(&signal(prerelease)).unwrap_err(),
+            crate::UpgradeSignalError::UnsupportedProtocolVersion { .. }
+        ));
+    }
+
+    #[test]
+    fn rejects_signal_with_unrecognized_version_type() {
+        // A non-zero version-type is a format the node cannot interpret. Its semver fields here are
+        // all zero, so ignoring the version-type would decode it as `0.0.0` and wrongly accept it
+        // (fail-open) under the node's 1.1.0; the version-type must instead rank it above the node
+        // so it is rejected (fail-closed).
+        let config = supported_config();
+        let unknown_version_type = U256::from(1) << 248;
+
+        assert!(matches!(
+            config.validate_signal_protocol_version(&signal(unknown_version_type)).unwrap_err(),
             crate::UpgradeSignalError::UnsupportedProtocolVersion { .. }
         ));
     }
@@ -301,7 +349,7 @@ mod tests {
                 UpgradeSignal {
                     upgrade_id: BaseUpgrade::Beryl,
                     activation_timestamp: 42,
-                    protocol_version: config.node_protocol_version + U256::from(1),
+                    protocol_version: UpgradeSignalDefaults::packed_protocol_version(1, 1, 1),
                 },
             ],
         );
@@ -318,13 +366,15 @@ mod tests {
     fn schedule_validation_allows_clear_with_unsupported_protocol_version(
         #[case] upgrade_id: &str,
     ) {
-        let config = UpgradeSignalConfig::new(address!("0000000000000000000000000000000000000001"));
+        // Node supports 1.1.0; a 1.1.1 minimum is genuinely unsupported, yet a clear (activation
+        // timestamp `0`) must still be allowed regardless of the ordering.
+        let config = supported_config();
         let schedule = UpgradeSignalSchedule::new(
             1,
             vec![UpgradeSignal {
                 upgrade_id: upgrade(upgrade_id),
                 activation_timestamp: 0,
-                protocol_version: config.node_protocol_version + U256::from(1),
+                protocol_version: UpgradeSignalDefaults::packed_protocol_version(1, 1, 1),
             }],
         );
 
