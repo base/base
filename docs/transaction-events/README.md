@@ -188,6 +188,22 @@ Mempool/node:
 - `TXPOOL_DROPPED`
 - `TXPOOL_REPLACED`
 - `TXPOOL_TRACKING_OVERFLOWED`
+- `TXPOOL_SEND_RAW_TRANSACTION`
+- `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY`
+
+`TXPOOL_SEND_RAW_TRANSACTION` and `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY` are
+one-time RPC-admission events, one per unique submit path. They fire after the
+transaction is decoded and before sequencer forwarding or pool insertion.
+`tx_hash` is the join key. They are distinct from `TXPOOL_PENDING` /
+`TXPOOL_QUEUED`, which record later subpool membership.
+`TXPOOL_SEND_RAW_TRANSACTION_VALIDITY` is the only event that records
+`data.validity_predicates` (the serialized `balance`, `storage`,
+`block_number`, and `flashblock_index` list). Downstream lifecycle events do
+not repeat that list; join them back by `tx_hash`. A replacement is a fresh
+admission with its own `tx_hash` and/or predicate list;
+`TXPOOL_REPLACED.replacement_hash` links the outgoing transaction to the
+incoming one. `base_insertValidatedTransaction` uses
+`TXPOOL_VALIDATED_INSERT_ACCEPTED` / `TXPOOL_VALIDATED_INSERT_REJECTED`.
 
 Forwarding:
 
@@ -208,16 +224,25 @@ Builder:
 - `BUILDER_CONSIDERED`
 - `BUILDER_ACCEPTED`
 - `BUILDER_REJECTED`
+- `BUILDER_DEFERRED`
 - `BUILDER_INCLUDED`
 - `BUILDER_PAYLOAD_FINALIZED`
 - `BUILDER_FLASHBLOCK_STARTED`
 - `BUILDER_FLASHBLOCK_PUBLISHED`
 - `BUILDER_FLASHBLOCK_BUILD_STOPPED`
 
-Builder caveat: `BUILDER_CONSIDERED`, `BUILDER_ACCEPTED`, and
-`BUILDER_REJECTED` are emitted per payload-building attempt and include
-`payload_id`, `block_number`, and `flashblock_index` when applicable. The same
-transaction can therefore produce multiple decision events across flashblocks.
+Builder caveat: `BUILDER_CONSIDERED`, `BUILDER_ACCEPTED`,
+`BUILDER_REJECTED`, and `BUILDER_DEFERRED` are emitted per payload-building
+attempt and include `payload_id`, `block_number`, and `flashblock_index` when
+applicable. The same transaction can therefore produce multiple decision events
+across flashblocks. `BUILDER_DEFERRED` is emitted each time the builder moves a
+transaction from the selection queue into the parking lot, including after a
+promote-and-repark in the same flashblock. Reindexing an already-parked
+transaction when its blocker changes does not emit another `BUILDER_DEFERRED`.
+`BUILDER_ACCEPTED` and `BUILDER_INCLUDED` are unchanged; correlate a deferral
+with a later accept/include by `tx_hash` within the same `payload_id`/flashblock
+window. A parking-capacity miss stays `BUILDER_REJECTED` with
+`validity_predicate_not_satisfied`.
 `BUILDER_INCLUDED` is emitted when the builder finalizes the payload it can
 serve via `engine_getPayload` and includes
 `data.inclusion_signal = "builder_finalized_payload"`. The payload loop emits

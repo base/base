@@ -205,11 +205,6 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
         O: PrecompileCallObserver,
     {
         let mut precompiles = PrecompilesMap::from_static(self.precompiles());
-        // The `observer` only applies to the dynamic, address-derived B-20 token
-        // precompiles resolved at call time via `BerylLookup`. Every directly
-        // installed precompile below — Beryl's factory/registries and Cobalt's
-        // EIP-8130 precompiles alike — uses plain `install`; none is observed, by
-        // design, since metrics are scoped to the B-20 token call path.
         if self.spec.upgrade() >= BaseUpgrade::Beryl {
             B20Factory::install_with_observer(
                 &mut precompiles,

@@ -16,7 +16,7 @@ use std::{
 };
 
 use alloy_primitives::U256;
-use base_common_network::Base;
+use base_common_rpc_types::BaseRpcTypes;
 use eyre::WrapErr;
 pub use receipt::{BaseReceiptBuilder, ReceiptFieldsBuilder};
 use reth_chainspec::{EthereumHardforks, Hardforks};
@@ -307,7 +307,7 @@ pub type BaseRpcConvert<N, NetworkT> = RpcConverter<
 
 /// Builds [`BaseEthApi`] for Base.
 #[derive(Debug)]
-pub struct BaseEthApiBuilder<NetworkT = Base> {
+pub struct BaseEthApiBuilder<NetworkT = BaseRpcTypes> {
     /// Sequencer client, configured to forward submitted transactions to sequencer of the given
     /// Base network.
     sequencer_url: Option<String>,

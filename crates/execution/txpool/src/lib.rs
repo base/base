@@ -33,6 +33,9 @@ pub use validity::{
     ValidityPredicate, ValidityPredicateError,
 };
 
+mod block_expiry;
+pub use block_expiry::BlockExpiryIndex;
+
 mod transaction;
 pub use transaction::{
     BLOCK_TIME_SECS, BasePooledTransaction, BasePooledTx, BundleTransaction,
@@ -77,6 +80,6 @@ pub use wire::{
 mod two_d_nonce_pool;
 
 mod metrics;
-pub use metrics::{GuardMetrics, ValidatorMetrics};
+pub use metrics::{GuardMetrics, ValidatorMetrics, ValidityPoolMetrics};
 
 pub mod estimated_da_size;

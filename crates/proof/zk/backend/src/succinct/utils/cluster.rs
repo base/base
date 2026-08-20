@@ -1,14 +1,12 @@
 //! SP1 cluster proof utilities.
 
-#![recursion_limit = "256"]
-
 use std::{
     fmt,
     sync::Arc,
     time::{Instant, SystemTime},
 };
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use base_proof_succinct_elfs::AGGREGATION_ELF;
 use base_proof_zk_witness::{fetcher::OPSuccinctDataFetcher, host::SuccinctHost};
 use serde::{Deserialize, Serialize};
@@ -22,19 +20,9 @@ use sp1_cluster_utils::{
     check_proof_status, create_request, request_config_from_env, request_proof_from_env,
 };
 use sp1_prover_types::Artifact;
-use sp1_sdk::{
-    Elf, ProvingKey, SP1ProofMode, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
-    SP1VerifyingKey,
-    blocking::{CpuProver, LightProver, Prover as BlockingProver},
-    network::proto::types::ProofMode,
-};
+use sp1_sdk::{SP1ProofMode, SP1ProofWithPublicValues, SP1Stdin, network::proto::types::ProofMode};
 
-/// Get the range ELF.
-pub const fn get_range_elf_embedded() -> &'static [u8] {
-    use base_proof_succinct_elfs::RANGE_ELF_EMBEDDED;
-
-    RANGE_ELF_EMBEDDED
-}
+use super::elf::get_range_elf_embedded;
 
 /// Initialize the host.
 pub fn initialize_host(fetcher: Arc<OPSuccinctDataFetcher>) -> Arc<SuccinctHost> {
@@ -45,58 +33,6 @@ pub fn initialize_host(fetcher: Arc<OPSuccinctDataFetcher>) -> Arc<SuccinctHost>
 /// Returns true if `SP1_PROVER` is set to `"cluster"` (self-hosted cluster mode).
 pub fn is_cluster_mode() -> bool {
     std::env::var("SP1_PROVER").unwrap_or_default() == "cluster"
-}
-
-/// Set up range and aggregation proving/verifying keys via blocking `CpuProver`.
-///
-/// Runs in `spawn_blocking` because `CpuProver` creates its own tokio runtime
-/// internally, which would panic if called directly from an async context.
-pub async fn cluster_setup_keys()
--> Result<(SP1ProvingKey, SP1VerifyingKey, SP1ProvingKey, SP1VerifyingKey)> {
-    tokio::task::spawn_blocking(|| {
-        let cpu_prover = CpuProver::new();
-        let range_pk = cpu_prover
-            .setup(Elf::Static(get_range_elf_embedded()))
-            .context("range ELF setup failed")?;
-        let range_vk = range_pk.verifying_key().clone();
-        let agg_pk =
-            cpu_prover.setup(Elf::Static(AGGREGATION_ELF)).context("agg ELF setup failed")?;
-        let agg_vk = agg_pk.verifying_key().clone();
-        anyhow::Ok((range_pk, range_vk, agg_pk, agg_vk))
-    })
-    .await?
-}
-
-/// Set up only the range proving key via blocking `CpuProver`.
-///
-/// Runs in `spawn_blocking` because `CpuProver` creates its own tokio runtime
-/// internally, which would panic if called directly from an async context.
-pub async fn cluster_setup_range_key() -> Result<SP1ProvingKey> {
-    tokio::task::spawn_blocking(|| {
-        let cpu_prover = CpuProver::new();
-        cpu_prover.setup(Elf::Static(get_range_elf_embedded())).context("range ELF setup failed")
-    })
-    .await?
-}
-
-/// Compute only the verifying keys for the range and aggregation ELFs.
-///
-/// Uses [`LightProver`] which skips the expensive proving-key generation,
-/// making this orders of magnitude faster than [`cluster_setup_keys`].
-/// Use this when you only need VKs (e.g. the ZK prover service startup,
-/// vkey hash generation).
-pub async fn cluster_setup_vkeys() -> Result<(SP1VerifyingKey, SP1VerifyingKey)> {
-    tokio::task::spawn_blocking(|| {
-        let prover = LightProver::new();
-        let range_pk = prover
-            .setup(Elf::Static(get_range_elf_embedded()))
-            .context("range ELF setup failed")?;
-        let range_vk = range_pk.verifying_key().clone();
-        let agg_pk = prover.setup(Elf::Static(AGGREGATION_ELF)).context("agg ELF setup failed")?;
-        let agg_vk = agg_pk.verifying_key().clone();
-        anyhow::Ok((range_vk, agg_vk))
-    })
-    .await?
 }
 
 const fn to_proto_proof_mode(mode: SP1ProofMode) -> ProofMode {
@@ -116,7 +52,7 @@ async fn cluster_proof_blocking(
     stdin: SP1Stdin,
     label: &str,
 ) -> Result<SP1ProofWithPublicValues> {
-    tracing::info!("Generating {label} proof via cluster");
+    tracing::info!(label = %label, "Generating proof via cluster");
     let timeout_hours = timeout_secs.div_ceil(3600).max(1);
     let cluster_elf = ClusterElf::NewElf(elf.to_vec());
     let ProofRequestResults { proof, .. } = tokio::time::timeout(

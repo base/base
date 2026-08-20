@@ -1,10 +1,12 @@
 # `docker`
 
-This directory contains the Dockerfiles and Compose configuration for the Base node.
+This directory contains the Dockerfiles and Compose configuration for the **local devnet** and internal Rust services.
+
+The public operator image (`ghcr.io/base/node`) is the `base` target in `Dockerfile.rust-services`. Published images and operator `--build` use `PROFILE=maxperf` (same as `base/node`). The bake/Dockerfile default stays `release`; `just devnet` builds `dev`. Operator entrypoints live in `etc/scripts/node/`; operators edit `.env.mainnet` / `.env.sepolia` at the repo root. Root `docker-compose.yml` pulls the published image, or compiles this tree with `--build`. `just devnet up` overrides the entrypoint to `./base`.
 
 ## Dockerfiles
 
-`Dockerfile.rust-services` is the shared multi-target Dockerfile for the Debian-based Rust services. The local devnet builds the unified `base` image for L2 bootnode, sequencer, and validator/RPC nodes.
+`Dockerfile.rust-services` is the shared multi-target Dockerfile for the Debian-based Rust services. The `base` target is published as `ghcr.io/base/node` and is also the local devnet image. Devnet compose overrides the default supervisord CMD.
 
 `Dockerfile.devnet` builds a utility image containing genesis generation tools (`eth-genesis-state-generator`, `eth2-val-tools`, `op-deployer`) and setup scripts. This image bootstraps L1 and L2 chain configurations for local development.
 
@@ -70,16 +72,15 @@ Anvil mines one block every four seconds. Do not use timestamp-warp RPCs in
 this variant: Base derives Beacon slots from L1 timestamps, so arbitrary time
 jumps would break the one-slot-per-execution-block mapping used to fetch blobs.
 
-Denim is activated at block 23 by default, switching the sequencer to its 200ms cadence. To
-start a pre-Denim devnet, set `L2_BASE_DENIM_BLOCK` to an empty value:
+Denim is disabled in the default mode. To activate it at block 23 and switch the sequencer to
+its 200ms cadence, set `L2_BASE_DENIM_BLOCK` explicitly:
 
 ```bash
-L2_BASE_DENIM_BLOCK= just devnet up
+L2_BASE_DENIM_BLOCK=23 just devnet up
 ```
 
 Zenith is the permanently unscheduled, genesis-only gate for future hardfork feature testing.
-To additionally activate it at block 50 (after Denim, so it does not conflict with earlier
-activations), start with:
+Zenith mode activates Denim at block 23 and Zenith at block 50:
 
 ```bash
 just devnet up zenith

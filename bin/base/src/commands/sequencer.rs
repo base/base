@@ -3,9 +3,7 @@
 use std::sync::Arc;
 
 use base_builder_cli::Args as BuilderArgs;
-use base_builder_core::{
-    BuilderApiExtension, BuilderApiExtensionConfig, FlashblocksServiceBuilder,
-};
+use base_builder_core::{BuilderApiExtension, FlashblocksServiceBuilder};
 use base_builder_metering::MeteringStoreExtension;
 use base_consensus_cli::{
     CliMetrics, ConsensusNodeArgs, ConsensusNodeConfigArgs, ConsensusNodeOverrides,
@@ -70,8 +68,7 @@ impl SequencerCommand {
         let sequencer_rpc = rollup_args.sequencer.clone();
         let metering_provider: base_builder_core::SharedMeteringProvider =
             Arc::new(builder.build_metering_store());
-        let accept_validity_transactions = builder.enable_experimental_validity_transactions;
-        let max_validity_predicates = builder.experimental_validity_max_predicates;
+        let builder_api_config = builder.builder_api_config()?;
         let builder_config = builder.into_builder_config(Arc::clone(&metering_provider))?;
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
@@ -110,10 +107,7 @@ impl SequencerCommand {
                 .with_service_builder(FlashblocksServiceBuilder::new(builder_config));
             runner.install_ext::<MeteringStoreExtension>(metering_provider);
             runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig { sequencer_rpc });
-            runner.install_ext::<BuilderApiExtension>(BuilderApiExtensionConfig::new(
-                accept_validity_transactions,
-                max_validity_predicates,
-            ));
+            runner.install_ext::<BuilderApiExtension>(builder_api_config);
             StandardBaseRethNode::install_upgrade_signal_runtime_extension(
                 &mut runner,
                 &rollup_args,

@@ -9,9 +9,8 @@ use ratatui::{
 use crate::{
     app::{Action, Resources, View, views::TransactionPane},
     output::{
-        COLOR_ACTIVE_BORDER, COLOR_ROW_HIGHLIGHTED, COLOR_ROW_SELECTED, block_color,
-        block_color_bright, build_gas_bar, format_gas, format_gwei, render_gas_usage_bar,
-        time_diff_color, truncate_block_number,
+        COLOR_ACTIVE_BORDER, COLOR_ROW_HIGHLIGHTED, COLOR_ROW_SELECTED, Format, build_gas_bar,
+        render_gas_usage_bar,
     },
     tui::{Keybinding, Toast},
 };
@@ -303,7 +302,7 @@ impl View for FlashblocksView {
 
                 let (base_fee_str, base_fee_style) = if entry.index == 0 {
                     let fee_str =
-                        entry.base_fee.map(format_gwei).unwrap_or_else(|| "-".to_string());
+                        entry.base_fee.map(Format::gwei).unwrap_or_else(|| "-".to_string());
                     let style = match (entry.base_fee, entry.prev_base_fee) {
                         (Some(curr), Some(prev)) if curr > prev => Style::default().fg(Color::Red),
                         (Some(curr), Some(prev)) if curr < prev => {
@@ -341,25 +340,25 @@ impl View for FlashblocksView {
 
                 let (time_diff_str, time_style) = entry.time_diff_ms.map_or_else(
                     || ("-".to_string(), Style::default().fg(Color::DarkGray)),
-                    |ms| (format!("+{ms}ms"), Style::default().fg(time_diff_color(ms))),
+                    |ms| (format!("+{ms}ms"), Style::default().fg(Format::time_diff_color(ms))),
                 );
 
                 let block_style = if entry.index == 0 {
                     Style::default()
-                        .fg(block_color_bright(entry.block_number))
+                        .fg(Format::block_color_bright(entry.block_number))
                         .add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default().fg(block_color(entry.block_number))
+                    Style::default().fg(Format::block_color(entry.block_number))
                 };
 
                 let time_str = entry.timestamp.format("%H:%M:%S").to_string();
 
                 Row::new(vec![
-                    Cell::from(truncate_block_number(entry.block_number, block_col_width))
+                    Cell::from(Format::truncate_block_number(entry.block_number, block_col_width))
                         .style(block_style),
                     Cell::from(entry.index.to_string()).style(block_style),
                     Cell::from(entry.tx_count.to_string()).style(block_style),
-                    Cell::from(format_gas(entry.gas_used)),
+                    Cell::from(Format::gas(entry.gas_used)),
                     Cell::from(base_fee_str).style(base_fee_style),
                     Cell::from(delta_str).style(delta_style),
                     Cell::from(time_diff_str).style(time_style),

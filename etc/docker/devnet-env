@@ -70,6 +70,10 @@ L1_CL_P2P_PORT=4900
 L2_EL_BOOTNODE_P2P_PORT=9303
 L2_CL_BOOTNODE_P2P_PORT=9003
 L2_BUILDER_HTTP_PORT=7545
+# Builder RPC endpoint(s) that ingress nodes forward validity (advanced) txs to.
+# Single-sequencer default targets base-builder; the HA `up` recipe overrides
+# this to fan out to all three conductor-managed sequencers.
+VALIDITY_BUILDER_RPC_URLS=http://base-builder:7545
 L2_BUILDER_WS_PORT=7546
 L2_BUILDER_AUTH_PORT=7551
 L2_BUILDER_P2P_PORT=7303
@@ -196,11 +200,10 @@ L2_BASE_BERYL_BLOCK=21
 # Leave unset to avoid setting base.cobalt during genesis generation.
 L2_BASE_COBALT_BLOCK=22
 # Optional: set to a non-negative block number to schedule Base Denim in devnet.
-# `just devnet up` defaults this to 23; set it to an empty value to leave base.denim unset.
+# Default mode leaves this unset; `just devnet up zenith` defaults it to 23.
 # L2_BASE_DENIM_BLOCK=23
 # Optional: set to a non-negative block number to schedule the genesis-only Base Zenith gate
-# used for future hardfork feature testing. `just devnet up zenith` defaults this to 50,
-# after the Denim default so it does not conflict with earlier activations.
+# used for future hardfork feature testing. `just devnet up zenith` defaults this to 50.
 # Leave unset to avoid setting base.zenith during genesis generation.
 # L2_BASE_ZENITH_BLOCK=50
 

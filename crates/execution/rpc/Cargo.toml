@@ -40,6 +40,7 @@ base-common-evm.workspace = true
 base-execution-evm.workspace = true
 base-execution-trie.workspace = true
 base-execution-txpool.workspace = true
+base-observability-events.workspace = true
 base-execution-payload-builder.workspace = true
 
 # ethereum
@@ -57,7 +58,6 @@ alloy-rpc-types-eth.workspace = true
 alloy-transport-http.workspace = true
 alloy-rpc-types-debug.workspace = true
 alloy-rpc-types-engine.workspace = true
-base-common-network = { workspace = true, features = ["reth"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 base-common-rpc-types = { workspace = true, features = ["reth"] }
 base-common-rpc-types-engine = { workspace = true, features = ["reth"] }

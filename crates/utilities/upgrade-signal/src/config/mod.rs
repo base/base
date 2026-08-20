@@ -4,6 +4,8 @@ use core::time::Duration;
 
 use alloy_primitives::U256;
 
+use crate::PackedProtocolVersion;
+
 mod args;
 pub use args::{UpgradeSignalArgs, UpgradeSignalL1RpcArgs, UpgradeSignalStartupConfig};
 
@@ -34,7 +36,8 @@ impl UpgradeSignalDefaults {
     ///
     /// Release branches sync the Cargo package version to the `GitHub` release tag, so release
     /// binaries advertise the release semver as their supported protocol version. Dev builds
-    /// (workspace `0.0.0`) advertise `U256::MAX` so no contract minimum rejects them.
+    /// (workspace `0.0.0`) advertise the maximum version-type-`0` version so no contract minimum
+    /// rejects them.
     pub fn node_protocol_version() -> U256 {
         Self::advertised_protocol_version(Self::packed_protocol_version(
             env!("CARGO_PKG_VERSION_MAJOR").parse::<u32>().expect("Cargo package major is numeric"),
@@ -43,17 +46,28 @@ impl UpgradeSignalDefaults {
         ))
     }
 
-    /// Encodes a `major.minor.patch` version into the packed-semver `uint256` layout used by the
-    /// L1 `ProtocolVersions` contract: `major << 96 | minor << 64 | patch << 32`, with the
-    /// prerelease field left zero.
+    /// Encodes a final-release `major.minor.patch` version into the packed-semver `uint256` layout
+    /// used by the L1 `ProtocolVersions` contract, leaving the prerelease and build fields zero.
+    ///
+    /// See [`PackedProtocolVersion`] for the field layout and the ordering rules that govern
+    /// protocol-version compatibility checks.
     pub const fn packed_protocol_version(major: u32, minor: u32, patch: u32) -> U256 {
-        U256::from_limbs([(patch as u64) << 32, ((major as u64) << 32) | minor as u64, 0, 0])
+        PackedProtocolVersion::pack(major, minor, patch, 0).into_inner()
     }
 
     /// Maps a packed Cargo version to the advertised node protocol version, promoting the
-    /// dev-build `0.0.0` (zero) to `U256::MAX` so no contract minimum can reject a dev build.
+    /// dev-build `0.0.0` (zero) to the maximum version-type-`0` version so no contract minimum can
+    /// reject a dev build.
+    ///
+    /// The sentinel is the top element of [`PackedProtocolVersion`]'s ordering by construction:
+    /// `U256::MAX` is *not* usable here, since it decodes to a pre-release (its pre-release field is
+    /// non-zero) and so ranks below the corresponding final release under the semver ordering.
     pub fn advertised_protocol_version(cargo_version: U256) -> U256 {
-        if cargo_version == U256::ZERO { U256::MAX } else { cargo_version }
+        if cargo_version == U256::ZERO {
+            PackedProtocolVersion::pack(u32::MAX, u32::MAX, u32::MAX, 0).into_inner()
+        } else {
+            cargo_version
+        }
     }
 }
 
@@ -63,9 +77,22 @@ mod tests {
 
     #[test]
     fn dev_build_advertises_max_protocol_version() {
-        // Dev builds (0.0.0 -> zero) must bypass any contract minimum-version check.
+        // Dev builds (0.0.0 -> zero) must bypass any contract minimum-version check, so the
+        // sentinel is the top element of the semver ordering (not the raw `U256::MAX`, which decodes
+        // to a pre-release and ranks below its final release).
         let zero = UpgradeSignalDefaults::packed_protocol_version(0, 0, 0);
-        assert_eq!(UpgradeSignalDefaults::advertised_protocol_version(zero), U256::MAX);
+        let sentinel = UpgradeSignalDefaults::advertised_protocol_version(zero);
+        assert_eq!(
+            sentinel,
+            PackedProtocolVersion::pack(u32::MAX, u32::MAX, u32::MAX, 0).into_inner()
+        );
+
+        // No version-type-`0` minimum can outrank the sentinel.
+        let highest_minimum =
+            UpgradeSignalDefaults::packed_protocol_version(u32::MAX, u32::MAX, u32::MAX);
+        assert!(
+            PackedProtocolVersion::new(highest_minimum) <= PackedProtocolVersion::new(sentinel)
+        );
     }
 
     #[test]

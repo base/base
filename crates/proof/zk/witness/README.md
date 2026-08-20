@@ -7,4 +7,4 @@ Fetches L1/L2 data over RPC, runs the preimage server, and collects
 programs-workspace dependency: guests consume witness bytes through zkVM
 stdin, not this host code.
 
-SP1 stdin encoding stays in `base-proof-succinct-host-utils`.
+SP1 stdin encoding lives in `base-proof-zk-backend`.

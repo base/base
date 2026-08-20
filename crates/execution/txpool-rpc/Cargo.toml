@@ -15,6 +15,7 @@ workspace = true
 # workspace
 base-node-runner.workspace = true
 base-execution-txpool.workspace = true
+base-observability-events.workspace = true
 
 # reth
 reth-rpc-eth-types.workspace = true

@@ -156,7 +156,8 @@ impl TransactionEventRetentionClass {
             | TransactionEventType::ProxyIngressRpcSuccess
             | TransactionEventType::BuilderConsidered
             | TransactionEventType::BuilderAccepted
-            | TransactionEventType::BuilderRejected => Self::Hot,
+            | TransactionEventType::BuilderRejected
+            | TransactionEventType::BuilderDeferred => Self::Hot,
             TransactionEventType::IngressReceived
             | TransactionEventType::SimulationStarted
             | TransactionEventType::SimulationSucceeded
@@ -169,7 +170,9 @@ impl TransactionEventRetentionClass {
             | TransactionEventType::TxpoolBuilderForwardAttempt
             | TransactionEventType::TxpoolBuilderForwardSuccess
             | TransactionEventType::TxpoolBuilderConsumed
-            | TransactionEventType::TxpoolValidatedInsertAccepted => Self::Warm,
+            | TransactionEventType::TxpoolValidatedInsertAccepted
+            | TransactionEventType::TxpoolSendRawTransaction
+            | TransactionEventType::TxpoolSendRawTransactionValidity => Self::Warm,
             TransactionEventType::ProxyRejected
             | TransactionEventType::ProxyValidationRejected
             | TransactionEventType::ProxyBackendFailure
@@ -1331,11 +1334,21 @@ mod tests {
             TransactionEventRetentionClass::Warm
         );
         assert_eq!(
+            TransactionEventRetentionClass::for_event_type(
+                TransactionEventType::TxpoolSendRawTransactionValidity
+            ),
+            TransactionEventRetentionClass::Warm
+        );
+        assert_eq!(
             TransactionEventRetentionClass::for_event_type(TransactionEventType::SimulationFailed),
             TransactionEventRetentionClass::Cold
         );
         assert_eq!(
             TransactionEventRetentionClass::for_event_type(TransactionEventType::BuilderRejected),
+            TransactionEventRetentionClass::Hot
+        );
+        assert_eq!(
+            TransactionEventRetentionClass::for_event_type(TransactionEventType::BuilderDeferred),
             TransactionEventRetentionClass::Hot
         );
         assert_eq!(

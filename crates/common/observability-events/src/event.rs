@@ -148,6 +148,21 @@ pub enum TransactionEventType {
     /// A validated txpool insert rejected a transaction.
     #[serde(rename = "TXPOOL_VALIDATED_INSERT_REJECTED")]
     TxpoolValidatedInsertRejected,
+    /// A transaction was submitted through `eth_sendRawTransaction`.
+    ///
+    /// Emitted once per RPC admission after the transaction is decoded, before
+    /// sequencer forwarding or pool insertion. Distinct from [`Self::Pending`],
+    /// which records later pending-subpool membership.
+    #[serde(rename = "TXPOOL_SEND_RAW_TRANSACTION")]
+    TxpoolSendRawTransaction,
+    /// A transaction was submitted through `base_sendRawTransactionValidity`.
+    ///
+    /// Emitted once per RPC admission after the transaction is decoded and its
+    /// predicate list is attached, before pool insertion. Downstream lifecycle
+    /// events join back by `tx_hash` and must not repeat
+    /// `data.validity_predicates`.
+    #[serde(rename = "TXPOOL_SEND_RAW_TRANSACTION_VALIDITY")]
+    TxpoolSendRawTransactionValidity,
     /// The builder considered a transaction for payload inclusion.
     #[serde(rename = "BUILDER_CONSIDERED")]
     BuilderConsidered,
@@ -157,6 +172,9 @@ pub enum TransactionEventType {
     /// The builder rejected a transaction during payload construction.
     #[serde(rename = "BUILDER_REJECTED")]
     BuilderRejected,
+    /// The builder deferred a transaction for later re-evaluation during payload construction.
+    #[serde(rename = "BUILDER_DEFERRED")]
+    BuilderDeferred,
     /// The builder included a transaction in a finalized payload.
     #[serde(rename = "BUILDER_INCLUDED")]
     BuilderIncluded,
@@ -216,9 +234,12 @@ impl fmt::Display for TransactionEventType {
             Self::TxpoolBuilderConsumed => "TXPOOL_BUILDER_CONSUMED",
             Self::TxpoolValidatedInsertAccepted => "TXPOOL_VALIDATED_INSERT_ACCEPTED",
             Self::TxpoolValidatedInsertRejected => "TXPOOL_VALIDATED_INSERT_REJECTED",
+            Self::TxpoolSendRawTransaction => "TXPOOL_SEND_RAW_TRANSACTION",
+            Self::TxpoolSendRawTransactionValidity => "TXPOOL_SEND_RAW_TRANSACTION_VALIDITY",
             Self::BuilderConsidered => "BUILDER_CONSIDERED",
             Self::BuilderAccepted => "BUILDER_ACCEPTED",
             Self::BuilderRejected => "BUILDER_REJECTED",
+            Self::BuilderDeferred => "BUILDER_DEFERRED",
             Self::BuilderIncluded => "BUILDER_INCLUDED",
             Self::BuilderPayloadFinalized => "BUILDER_PAYLOAD_FINALIZED",
             Self::BuilderFlashblockStarted => "BUILDER_FLASHBLOCK_STARTED",
@@ -435,4 +456,17 @@ fn is_forbidden_data_key(key: &str) -> bool {
         "headers",
     ];
     FORBIDDEN.iter().any(|forbidden| key.eq_ignore_ascii_case(forbidden))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_matches_serde_rename() {
+        for event_type in TransactionEventType::all() {
+            let serialized = serde_json::to_value(event_type).unwrap();
+            assert_eq!(serialized, serde_json::Value::String(event_type.to_string()));
+        }
+    }
 }

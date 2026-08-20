@@ -105,8 +105,21 @@ mod tests {
         let chain_id = 9_100_002;
         RuntimeUpgradeRegistry::clear_chain(chain_id);
 
-        let unsupported = UpgradeSignalDefaults::node_protocol_version() + U256::from(1);
-        refresher(chain_id).apply(&schedule(BaseUpgrade::Azul, 42, unsupported)).unwrap_err();
+        // Node supports 1.1.0; a 1.1.1 minimum is genuinely newer and must be rejected. Adding
+        // `+ 1` to the dev-build sentinel no longer works: it decodes to a pre-release of the max
+        // release, which now sorts below the release under the semver ordering.
+        let mut config = UpgradeSignalConfig::new(Address::ZERO);
+        config.node_protocol_version = UpgradeSignalDefaults::packed_protocol_version(1, 1, 0);
+        let reader = config.reader("http://127.0.0.1:1".parse().unwrap()).unwrap();
+        let refresher = UpgradeSignalRefresher::new(
+            config,
+            reader,
+            chain_id,
+            UpgradeSignalMetricLayer::Consensus,
+        );
+
+        let unsupported = UpgradeSignalDefaults::packed_protocol_version(1, 1, 1);
+        refresher.apply(&schedule(BaseUpgrade::Azul, 42, unsupported)).unwrap_err();
 
         assert_eq!(RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Azul), None);
     }

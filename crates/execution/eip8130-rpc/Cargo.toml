@@ -15,7 +15,6 @@ workspace = true
 
 [dependencies]
 # base
-base-common-network.workspace = true
 base-common-consensus.workspace = true
 base-common-precompiles.workspace = true
 base-common-chains.workspace = true
