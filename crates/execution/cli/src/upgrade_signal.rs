@@ -32,17 +32,14 @@ impl ExecutionUpgradeSignal {
         chain_spec: &mut BaseChainSpec,
     ) -> eyre::Result<()> {
         let reader = config.signal_config.reader(config.l1_rpc.clone())?;
-        let Some(schedule) = config
+        let schedule = config
             .signal_config
-            .read_optional_startup_schedule(
+            .read_required_startup_schedule(
                 &reader,
                 "execution startup",
                 &[UpgradeSignalMetricLayer::Execution],
             )
-            .await?
-        else {
-            return Ok(());
-        };
+            .await?;
 
         Self::apply_schedule_to_chain_spec(chain_spec, &schedule)?;
 

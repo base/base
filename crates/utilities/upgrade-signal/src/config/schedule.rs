@@ -1,8 +1,10 @@
 use core::time::Duration;
 
 use alloy_primitives::{Address, U256};
+use backon::Retryable;
 use base_common_genesis::UpgradeActivationSink;
-use tracing::{info, warn};
+use base_retry::{DEFAULT_UNBOUNDED_INITIAL_DELAY, DEFAULT_UNBOUNDED_MAX_DELAY, RetryConfig};
+use tracing::{error, info};
 use url::Url;
 
 use super::{UpgradeSignalBlockTag, UpgradeSignalDefaults, UpgradeSignalMode};
@@ -140,16 +142,13 @@ impl UpgradeSignalConfig {
         CL::Error: std::error::Error + Send + Sync + 'static,
     {
         let reader = self.reader(l1_rpc)?;
-        let Some(schedule) = self
-            .read_optional_startup_schedule(
+        let schedule = self
+            .read_required_startup_schedule(
                 &reader,
                 log_context,
                 &[UpgradeSignalMetricLayer::Execution, UpgradeSignalMetricLayer::Consensus],
             )
-            .await?
-        else {
-            return Ok(());
-        };
+            .await?;
 
         UpgradeSignalRuntimeApplier::apply_schedule_to_sink(chain_id, &schedule, execution_sink)
             .map_err(eyre::Report::new)?
@@ -208,33 +207,52 @@ impl UpgradeSignalConfig {
         Ok(schedule)
     }
 
-    /// Reads the startup schedule via [`Self::read_validated_schedule`], tolerating a contract that
-    /// still reports no schedule after retries.
+    /// Reads the startup schedule via [`Self::read_validated_schedule`], blocking until the L1
+    /// contract returns a valid, non-empty schedule.
     ///
-    /// Empty reads are retried inside [`AlloyUpgradeSignalReader::read_schedule_with_retries`]; a
-    /// schedule that is still empty afterwards yields `Ok(None)` so startup proceeds on the
-    /// genesis/base configuration rather than failing to launch or wiping runtime overrides. All
-    /// other read and validation failures propagate. This is the startup counterpart to the manual
-    /// admin refresh, which instead surfaces an empty schedule as an error.
-    pub async fn read_optional_startup_schedule(
+    /// This is fail-closed by design. A healthy append-only `ProtocolVersions` contract is never
+    /// empty, so an empty read (like a transient provider failure) means the node cannot yet see
+    /// the authoritative activation schedule. Booting on the genesis/base configuration would risk
+    /// activating forks at different times than peers that read a populated contract, forking the
+    /// node — and any blocks it builds — off the network. Rather than take that risk, this retries
+    /// without an attempt limit, logging loudly at `error!` on every failure, until the read
+    /// succeeds. Only unrecoverable errors that waiting cannot fix — malformed contract data
+    /// ([`UpgradeSignalError::Decode`]) or a missing/unsupported protocol version — propagate and
+    /// abort startup. This future is cancellation-safe: dropping it during shutdown cancels the
+    /// in-flight request or retry sleep.
+    ///
+    /// This is the startup counterpart to the manual admin refresh, which instead surfaces an empty
+    /// schedule as an error without retrying.
+    pub async fn read_required_startup_schedule(
         &self,
         reader: &AlloyUpgradeSignalReader,
         log_context: &'static str,
         metrics_layers: &[UpgradeSignalMetricLayer],
-    ) -> Result<Option<UpgradeSignalSchedule>, UpgradeSignalError> {
-        match self.read_validated_schedule(reader, log_context, metrics_layers).await {
-            Ok(schedule) => Ok(Some(schedule)),
-            Err(UpgradeSignalError::EmptySchedule) => {
-                warn!(
+    ) -> Result<UpgradeSignalSchedule, UpgradeSignalError> {
+        let mut attempt = 1_u64;
+        let retry_config =
+            RetryConfig::unbounded(DEFAULT_UNBOUNDED_INITIAL_DELAY, DEFAULT_UNBOUNDED_MAX_DELAY);
+
+        (|| self.read_validated_schedule(reader, log_context, metrics_layers))
+            .retry(retry_config.to_backoff_builder())
+            .when(|error| {
+                matches!(
+                    error,
+                    UpgradeSignalError::EmptySchedule | UpgradeSignalError::Provider { .. }
+                )
+            })
+            .notify(|error, retry_delay| {
+                error!(
                     target: "upgrade_signal",
                     context = log_context,
-                    "L1 upgrade signal contract reported an empty schedule after retries; \
-                     proceeding on the base configuration without applying a schedule"
+                    attempt,
+                    retry_delay_ms = u64::try_from(retry_delay.as_millis()).unwrap_or(u64::MAX),
+                    error = %error,
+                    "refusing to start without an authoritative L1 upgrade schedule; retrying"
                 );
-                Ok(None)
-            }
-            Err(error) => Err(error),
-        }
+                attempt += 1;
+            })
+            .await
     }
 }
 
@@ -261,45 +279,30 @@ mod tests {
         config
     }
 
-    #[tokio::test]
-    async fn startup_read_returns_present_schedule() {
-        // ABI-encode a `uint64[]` with a single zeroed entry (offset, length, one word). A zero
-        // activation needs no protocol version, so the read passes validation without one.
+    /// ABI-encodes a `uint64[]` with a single zeroed entry (offset, length, one word). A zero
+    /// activation needs no protocol version, so the read passes validation without one.
+    fn single_zeroed_entry() -> Vec<u8> {
         let mut single_entry = vec![0_u8; 96];
         single_entry[31] = 32;
         single_entry[63] = 1;
-        let server = MockL1::schedule_server(single_entry).await;
-        let config = UpgradeSignalConfig::new(Address::ZERO);
-        let reader = config.reader(server.url("/").parse().unwrap()).unwrap();
+        single_entry
+    }
 
-        let schedule = config
-            .read_optional_startup_schedule(
-                &reader,
-                "startup",
-                &[UpgradeSignalMetricLayer::Consensus],
-            )
-            .await
-            .unwrap()
-            .expect("a non-empty schedule is present");
-
-        assert_eq!(schedule.signals.len(), 1);
-        assert_eq!(schedule.signals[0].upgrade_id, BaseUpgrade::Regolith);
-        assert_eq!(schedule.signals[0].activation_timestamp, 0);
+    /// ABI-encodes an empty `uint64[]` (offset word, zero length).
+    fn empty_schedule() -> Vec<u8> {
+        let mut empty = vec![0_u8; 64];
+        empty[31] = 32;
+        empty
     }
 
     #[tokio::test]
-    async fn startup_read_tolerates_empty_schedule() {
-        // ABI-encode an empty `uint64[]` (offset word, zero length). The startup path surfaces the
-        // empty read as `EmptySchedule` and tolerates it, yielding `Ok(None)` so the node boots on
-        // the base configuration instead of failing to launch or wiping runtime overrides.
-        let mut empty = vec![0_u8; 64];
-        empty[31] = 32;
-        let server = MockL1::schedule_server(empty).await;
+    async fn startup_read_returns_present_schedule() {
+        let server = MockL1::schedule_server(single_zeroed_entry()).await;
         let config = UpgradeSignalConfig::new(Address::ZERO);
         let reader = config.reader(server.url("/").parse().unwrap()).unwrap();
 
         let schedule = config
-            .read_optional_startup_schedule(
+            .read_required_startup_schedule(
                 &reader,
                 "startup",
                 &[UpgradeSignalMetricLayer::Consensus],
@@ -307,7 +310,61 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(schedule.is_none());
+        assert_eq!(schedule.signals.len(), 1);
+        assert_eq!(schedule.signals[0].upgrade_id, BaseUpgrade::Regolith);
+        assert_eq!(schedule.signals[0].activation_timestamp, 0);
+    }
+
+    #[tokio::test]
+    async fn startup_read_retries_until_schedule_is_present() {
+        // The contract reports an empty schedule at first. Fail-closed startup must not boot on the
+        // base configuration; it retries until the contract returns a real schedule, then applies
+        // it. The mock is swapped from empty to populated once the empty read is observed.
+        let server = MockL1::block_and_min_protocol_server().await;
+        let empty_mock = MockL1::mock_get_schedule(&server, empty_schedule()).await;
+        let config = UpgradeSignalConfig::new(Address::ZERO);
+        let reader = config.reader(server.url("/").parse().unwrap()).unwrap();
+
+        let swap = async {
+            while empty_mock.calls_async().await == 0 {
+                tokio::task::yield_now().await;
+            }
+            empty_mock.delete_async().await;
+            MockL1::mock_get_schedule(&server, single_zeroed_entry()).await;
+        };
+        let (schedule, ()) = tokio::join!(
+            config.read_required_startup_schedule(
+                &reader,
+                "startup",
+                &[UpgradeSignalMetricLayer::Consensus],
+            ),
+            swap,
+        );
+
+        let schedule = schedule.unwrap();
+        assert_eq!(schedule.signals.len(), 1);
+        assert_eq!(schedule.signals[0].upgrade_id, BaseUpgrade::Regolith);
+    }
+
+    #[tokio::test]
+    async fn startup_read_aborts_on_fatal_error() {
+        // A `getSchedule` that returns malformed data (`0x`) is a decode error: waiting cannot fix
+        // it, so fail-closed startup surfaces it immediately instead of looping forever.
+        let server = MockL1::block_and_min_protocol_server().await;
+        MockL1::mock_get_schedule(&server, Vec::new()).await;
+        let config = UpgradeSignalConfig::new(Address::ZERO);
+        let reader = config.reader(server.url("/").parse().unwrap()).unwrap();
+
+        let error = config
+            .read_required_startup_schedule(
+                &reader,
+                "startup",
+                &[UpgradeSignalMetricLayer::Consensus],
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, UpgradeSignalError::Decode { .. }));
     }
 
     #[test]

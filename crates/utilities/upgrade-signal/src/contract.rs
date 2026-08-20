@@ -405,9 +405,8 @@ impl AlloyUpgradeSignalReader {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{B256, hex};
+    use alloy_primitives::B256;
     use alloy_rpc_types_eth::Block;
-    use alloy_sol_types::SolCall;
     use httpmock::prelude::*;
 
     use super::*;
@@ -582,47 +581,8 @@ mod tests {
 
     #[tokio::test]
     async fn does_not_retry_empty_schedule_reads() {
-        let server = MockServer::start_async().await;
-        let block_hash = B256::repeat_byte(1);
-        let mut block: Block = Block::default();
-        block.header.hash = block_hash;
-        block.header.inner.number = 42;
-        server
-            .mock_async(|when, then| {
-                when.method(POST).path("/").body_includes("eth_getBlockByNumber");
-                then.json_body(serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": 0,
-                    "result": block,
-                }));
-            })
-            .await;
-        let empty_schedule = Bytes::from(schedule_abi_header(U256::ZERO));
-        let schedule_mock = server
-            .mock_async(|when, then| {
-                when.method(POST)
-                    .path("/")
-                    .body_includes(hex::encode(IProtocolVersions::getScheduleCall::SELECTOR));
-                then.json_body(serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": 0,
-                    "result": empty_schedule,
-                }));
-            })
-            .await;
-        let minimum_protocol_version = Bytes::from(vec![0_u8; 32]);
-        server
-            .mock_async(|when, then| {
-                when.method(POST).path("/").body_includes(hex::encode(
-                    IProtocolVersions::minimumProtocolVersionCall::SELECTOR,
-                ));
-                then.json_body(serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": 0,
-                    "result": minimum_protocol_version,
-                }));
-            })
-            .await;
+        let server = MockL1::block_and_min_protocol_server().await;
+        let schedule_mock = MockL1::mock_get_schedule(&server, schedule_abi_header(U256::ZERO)).await;
         let reader = AlloyUpgradeSignalReader::new(
             server.url("/").parse().unwrap(),
             Address::ZERO,
