@@ -16,6 +16,9 @@ pub use block::{BaseBlockResponse, BaseHeaderResponse};
 mod genesis;
 pub use genesis::{ChainInfo, FeeInfo, GenesisInfo, UpgradeInfo};
 
+mod log;
+pub use log::BaseLogResponse;
+
 mod receipt;
 pub use receipt::{
     BaseTransactionReceipt, Eip8130ReceiptFields, L1BlockInfo, TransactionReceiptFields,
