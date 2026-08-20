@@ -514,6 +514,20 @@ impl BasePayloadBuilderCtx {
     }
 }
 
+/// The context needed to emit a defer/reject builder-decision event for one candidate.
+pub(crate) struct DecisionContext<'a> {
+    /// Payload identifier used to correlate emitted events.
+    payload_id: &'a str,
+    /// Execution info snapshot read into event budget fields.
+    info: &'a ExecutionInfo,
+    /// Resource limits read into event budget fields.
+    limits: &'a ResourceLimits,
+    /// Machine-readable reason code recorded on the emitted event.
+    reason: &'static str,
+    /// Human-readable detail recorded on the emitted event.
+    detail: &'static str,
+}
+
 impl BasePayloadBuilderCtx {
     /// Constructs a receipt for the given transaction.
     pub fn build_receipt<E: Evm>(
@@ -669,6 +683,45 @@ impl BasePayloadBuilderCtx {
         value
     }
 
+    /// Defers the current validity-gated candidate by parking it for a later flashblock, or, when
+    /// the iterator cannot park it, rejects it and marks it invalid. Emits the matching
+    /// builder-decision event and updates `diag`. Returns `true` when the transaction was parked.
+    fn defer_or_reject_current<B: PayloadTxsBounds>(
+        &self,
+        best_txs: &mut B,
+        diag: &mut FlashblockDiagnostics,
+        cx: &DecisionContext<'_>,
+        tx: &B::Transaction,
+        ordering_position: u64,
+    ) -> bool {
+        if best_txs.park_current() {
+            self.emit_builder_decision_event(
+                cx.payload_id,
+                TransactionEventType::BuilderDeferred,
+                *tx.hash(),
+                Some(ordering_position),
+                || BuilderDeferredEventData::new(cx.reason, cx.detail, cx.info, cx.limits, None),
+            );
+            diag.txs_deferred += 1;
+            true
+        } else {
+            self.emit_builder_decision_event(
+                cx.payload_id,
+                TransactionEventType::BuilderRejected,
+                *tx.hash(),
+                Some(ordering_position),
+                || {
+                    BuilderRejectedEventData::new(
+                        cx.reason, cx.detail, false, cx.info, cx.limits, None,
+                    )
+                },
+            );
+            diag.txs_rejected_other += 1;
+            best_txs.mark_invalid(tx.sender(), tx.nonce());
+            false
+        }
+    }
+
     /// Executes the given best transactions and updates the execution info.
     ///
     /// Returns diagnostics summarizing transaction selection for the flashblock.
@@ -811,6 +864,47 @@ impl BasePayloadBuilderCtx {
 
             let tx_hash = *tx.hash();
             let has_validity_predicates = !tx.validity_predicates().is_empty();
+
+            // Defer without evaluating once this flashblock's predicate-eval time budget is
+            // exhausted, rather than spending more IO on the naive per-transaction loop. The
+            // deferred transaction is never rejected from the pool, so it is picked up as a
+            // fresh candidate next flashblock, when the budget resets.
+            if has_validity_predicates
+                && predicate_eval_total
+                    .is_some_and(|total| total >= self.builder_config.predicate_eval_hard_cutoff)
+            {
+                num_txs_considered += 1;
+                let ordering_position = num_txs_considered;
+                trace!(
+                    target: "payload_builder",
+                    tx_hash = ?tx_hash,
+                    "deferring validity-gated transaction: predicate evaluation budget exhausted for this flashblock"
+                );
+                self.emit_builder_decision_event(
+                    &payload_id,
+                    TransactionEventType::BuilderConsidered,
+                    tx_hash,
+                    Some(ordering_position),
+                    || BuilderConsideredEventData::new(info, limits, None),
+                );
+                BuilderMetrics::validity_predicate_evaluations_total("budget_exhausted")
+                    .increment(1);
+                self.defer_or_reject_current(
+                    best_txs,
+                    &mut diag,
+                    &DecisionContext {
+                        payload_id: &payload_id,
+                        info,
+                        limits,
+                        reason: "predicate_eval_budget_exhausted",
+                        detail: "validity-predicate evaluation time budget exhausted for this flashblock",
+                    },
+                    &tx,
+                    ordering_position,
+                );
+                continue;
+            }
+
             let mut predicate_read_failed = false;
             let blocking_predicate = if has_validity_predicates {
                 match Self::accumulate_elapsed(&mut predicate_eval_total, || {
@@ -917,45 +1011,26 @@ impl BasePayloadBuilderCtx {
                         diag.permanently_rejected_txs.push(tx_hash);
                     }
                     best_txs.mark_invalid(tx.sender(), tx.nonce());
-                } else if let Some(blocking_predicate) = blocking_predicate
-                    && best_txs.park_current()
-                {
-                    self.emit_builder_decision_event(
-                        &payload_id,
-                        TransactionEventType::BuilderDeferred,
-                        tx_hash,
-                        Some(ordering_position),
-                        || {
-                            BuilderDeferredEventData::new(
-                                decision_reason,
-                                decision_detail,
-                                info,
-                                limits,
-                                None,
-                            )
-                        },
-                    );
-                    diag.txs_deferred += 1;
-                    predicate_index.park(tx_hash, tx, blocking_predicate);
                 } else {
-                    self.emit_builder_decision_event(
-                        &payload_id,
-                        TransactionEventType::BuilderRejected,
-                        tx_hash,
-                        Some(ordering_position),
-                        || {
-                            BuilderRejectedEventData::new(
-                                decision_reason,
-                                decision_detail,
-                                false,
-                                info,
-                                limits,
-                                None,
-                            )
+                    // Recoverable state mismatch: park under the current blocker to retry at a
+                    // later position or flashblock, or reject if the iterator cannot park it.
+                    let blocking_predicate = blocking_predicate
+                        .expect("unsatisfied, non-terminal predicate implies a blocking key");
+                    if self.defer_or_reject_current(
+                        best_txs,
+                        &mut diag,
+                        &DecisionContext {
+                            payload_id: &payload_id,
+                            info,
+                            limits,
+                            reason: decision_reason,
+                            detail: decision_detail,
                         },
-                    );
-                    diag.txs_rejected_other += 1;
-                    best_txs.mark_invalid(tx.sender(), tx.nonce());
+                        &tx,
+                        ordering_position,
+                    ) {
+                        predicate_index.park(tx_hash, tx, blocking_predicate);
+                    }
                 }
                 continue;
             }
@@ -1442,7 +1517,22 @@ impl BasePayloadBuilderCtx {
             // Release the committed transaction's lane before promoting predicate-unblocked heads.
             best_txs.mark_current_committed();
             let predicate_rescan_start = Instant::now();
-            for parked_hash in &state_change_effects.affected_transactions {
+            for (rescanned, parked_hash) in
+                state_change_effects.affected_transactions.iter().enumerate()
+            {
+                // Stop rescanning once this flashblock's predicate-eval time budget is
+                // exhausted. Remaining affected transactions stay parked under their current
+                // blocker exactly as they are; they are picked up as fresh candidates next
+                // flashblock, when the budget resets.
+                if predicate_eval_total
+                    .is_some_and(|total| total >= self.builder_config.predicate_eval_hard_cutoff)
+                {
+                    let remaining =
+                        (state_change_effects.affected_transactions.len() - rescanned) as u64;
+                    BuilderMetrics::validity_predicate_evaluations_total("rescan_budget_exhausted")
+                        .increment(remaining);
+                    break;
+                }
                 let mut predicate_read_failed = false;
                 let Some(parked_transaction) = predicate_index.transaction(*parked_hash) else {
                     warn!(
