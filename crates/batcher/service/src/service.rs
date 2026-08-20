@@ -544,10 +544,6 @@ impl BatcherService {
             )
             .await?;
         }
-        let initial_l1_head = l1_provider
-            .get_block_number()
-            .await
-            .map_err(|e| eyre::eyre!("failed to fetch initial L1 head: {e}"))?;
 
         // Channel duration is measured from this tip, not from L1 block 0.
         let initial_l1_head =
