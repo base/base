@@ -6,8 +6,8 @@ use alloy_provider::{Provider, ProviderBuilder, ProviderLayer, RootProvider};
 use base_balance_monitor::BalanceMonitorLayer;
 use base_batcher_admin::AdminServer;
 use base_batcher_core::{
-    AdminHandle, BatchDriver, DaThrottle, NoopThrottleClient, ThrottleClient, ThrottleConfig,
-    ThrottleController, ThrottleStrategy,
+    AdminHandle, BatchDriver, BatchDriverHeads, DaThrottle, NoopThrottleClient, ThrottleClient,
+    ThrottleConfig, ThrottleController, ThrottleStrategy,
 };
 use base_batcher_encoder::{BatchEncoder, BatcherMetrics};
 use base_batcher_source::{HybridL1HeadSource, PollingBlockSource, SourceError};
@@ -500,6 +500,12 @@ impl BatcherService {
             .await?;
         }
 
+        // Channel duration is measured from this tip, not from L1 block 0.
+        let initial_l1_head = l1_provider
+            .get_block_number()
+            .await
+            .map_err(|e| eyre::eyre!("failed to fetch initial L1 head: {e}"))?;
+
         let initial_derivation_status = if let Some(provider) = validator_provider.as_ref() {
             provider
                 .derivation_status()
@@ -673,7 +679,12 @@ impl BatcherService {
                 force_blobs_when_throttling: self.config.force_blobs_when_throttling,
             },
             DaThrottle::new(throttle, throttle_client),
-            (l1_head_source, initial_derivation_status, derivation_status_rx),
+            BatchDriverHeads::new(
+                l1_head_source,
+                initial_l1_head,
+                initial_derivation_status,
+                derivation_status_rx,
+            ),
         )
         .with_stopped(self.config.stopped);
 
