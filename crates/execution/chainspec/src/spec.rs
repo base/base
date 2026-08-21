@@ -370,9 +370,7 @@ impl BaseChainSpec {
         let mut forks = self
             .inner
             .forks_iter()
-            .map(|(fork, condition)| {
-                (fork, self.runtime_fork_condition(fork).unwrap_or(condition))
-            })
+            .map(|(fork, condition)| (fork, self.runtime_fork_condition(fork).unwrap_or(condition)))
             .collect::<Vec<(&'a dyn Hardfork, ForkCondition)>>();
 
         // Upgrades scheduled purely at runtime that were absent from the startup schedule are
