@@ -15,13 +15,7 @@ use base_common_consensus::BaseTxEnvelope;
 use base_shadow_indexer_db::{ShadowBlockRepo, ShadowBlockRow};
 use serde::{Deserialize, Serialize};
 
-use crate::{ShadowBlockHealth, ShadowBlockStats, ShadowMetricsStore};
-
-/// Default page size for the block list.
-const DEFAULT_LIMIT: i64 = 50;
-
-/// Maximum page size for the block list.
-const MAX_LIMIT: i64 = 1_000;
+use crate::{ShadowBlockStats, ShadowMetricsStore};
 
 /// Shared state for the block API handlers.
 #[derive(Clone)]
@@ -41,38 +35,11 @@ impl ApiState {
 /// (no browser origin), so it carries no CORS layer.
 pub fn api_router(store: Option<ShadowMetricsStore>) -> Router {
     Router::new()
-        .route("/blocks", get(list_blocks))
+        .route("/shadow-candidates", get(get_shadow_candidates_batch))
         .route("/blocks/{id}", get(get_block))
-        .route("/blocks/{id}/tx/{index}", get(get_tx_by_index))
-        .route("/tx/{hash}", get(get_tx_by_hash))
-        .route("/shadow-blocks", get(list_shadow_blocks))
+        .route("/blocks/{id}/shadow-candidates", get(get_shadow_candidates))
         .route("/shadow-blocks/{id}", get(get_shadow_block))
         .with_state(ApiState { store })
-}
-
-/// Pagination query parameters.
-#[derive(Debug, Deserialize)]
-struct Pagination {
-    limit: Option<i64>,
-    offset: Option<i64>,
-}
-
-/// One row in the latest-blocks list.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct BlockSummary {
-    number: i64,
-    hash: String,
-    tx_count: usize,
-    timestamp: u64,
-}
-
-/// Paginated block list.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct BlockListResponse {
-    blocks: Vec<BlockSummary>,
-    total_count: i64,
 }
 
 /// One reorged-out shadow block paired with the canonical block that replaced it.
@@ -106,15 +73,6 @@ struct ShadowBlockSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     canonical_non_deposit_tx_count: Option<usize>,
     shadow_priority_fee_inversions: usize,
-    health: ShadowBlockHealth,
-}
-
-/// Paginated shadow block list.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ShadowBlockListResponse {
-    blocks: Vec<ShadowBlockSummary>,
-    total_count: i64,
 }
 
 /// Block overview plus its transaction summaries.
@@ -152,30 +110,6 @@ struct TxSummary {
     tx_type: String,
 }
 
-/// Full transaction detail.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct TxDetail {
-    block_number: i64,
-    index: usize,
-    hash: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    from: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    to: Option<String>,
-    nonce: u64,
-    value: String,
-    gas_limit: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    gas_used: Option<u64>,
-    // Decimal strings: u128 fees exceed JS's safe-integer range, so they are not
-    // serialized as JSON numbers.
-    max_fee_per_gas: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    max_priority_fee_per_gas: Option<String>,
-    tx_type: String,
-}
-
 /// Errors surfaced by the block API.
 #[derive(Debug)]
 enum ApiError {
@@ -207,58 +141,88 @@ impl IntoResponse for ApiError {
     }
 }
 
-async fn list_blocks(
-    State(state): State<ApiState>,
-    Query(pagination): Query<Pagination>,
-) -> Result<Json<BlockListResponse>, ApiError> {
-    let limit = pagination.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
-    let offset = pagination.offset.unwrap_or(0).max(0);
-
-    let repo = state.repo()?;
-    let rows = repo.list_recent(limit, offset).await?;
-    let total_count = repo.count_canonical().await?;
-
-    let blocks = rows.iter().map(block_summary).collect();
-    Ok(Json(BlockListResponse { blocks, total_count }))
-}
-
-async fn list_shadow_blocks(
-    State(state): State<ApiState>,
-    Query(pagination): Query<Pagination>,
-) -> Result<Json<ShadowBlockListResponse>, ApiError> {
-    let limit = pagination.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
-    let offset = pagination.offset.unwrap_or(0).max(0);
-
-    let repo = state.repo()?;
-    let rows = repo.list_reorged(limit, offset).await?;
-    let total_count = repo.count_reorged().await?;
-
-    // Resolve all canonical replacements for the page in one query instead of a
-    // per-row lookup.
-    let canonical_hashes: Vec<Vec<u8>> =
-        rows.iter().filter_map(|row| row.canonical_hash.clone()).collect();
-    let canonical_rows = repo.list_canonical_by_hashes(&canonical_hashes).await?;
-    let canonical_by_hash: HashMap<&[u8], &ShadowBlockRow> =
-        canonical_rows.iter().map(|row| (row.hash.as_slice(), row)).collect();
-
-    let blocks = rows
-        .iter()
-        .map(|row| {
-            let canonical =
-                row.canonical_hash.as_deref().and_then(|hash| canonical_by_hash.get(hash).copied());
-            shadow_block_summary(row, canonical)
-        })
-        .collect();
-
-    Ok(Json(ShadowBlockListResponse { blocks, total_count }))
-}
-
 async fn get_block(
     State(state): State<ApiState>,
     Path(id): Path<String>,
 ) -> Result<Json<BlockDetail>, ApiError> {
     let row = resolve_block(&state.repo()?, &id).await?;
     Ok(Json(block_detail(&row)))
+}
+
+/// Reorged-out shadow blocks replaced by the canonical block addressed by the path.
+async fn get_shadow_candidates(
+    State(state): State<ApiState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<ShadowBlockSummary>>, ApiError> {
+    let repo = state.repo()?;
+    let canonical_hash = match parse_block_id(&id)? {
+        BlockId::Number(number) => match repo.get_canonical_by_number(number).await? {
+            Some(row) => row.hash,
+            None => return Ok(Json(Vec::new())),
+        },
+        BlockId::Hash(hash) => hash.to_vec(),
+    };
+
+    let shadows = repo.list_reorged_by_canonical(canonical_hash.as_slice()).await?;
+    let canonical = repo.get_by_block_hash(canonical_hash.as_slice()).await?;
+
+    let blocks =
+        shadows.iter().map(|shadow| shadow_block_summary(shadow, canonical.as_ref())).collect();
+
+    Ok(Json(blocks))
+}
+
+#[derive(Debug, Deserialize)]
+struct ShadowCandidatesQuery {
+    canonical: Option<String>,
+}
+
+/// Batch lookup for reorged-out shadow blocks replaced by canonical hashes.
+async fn get_shadow_candidates_batch(
+    State(state): State<ApiState>,
+    Query(query): Query<ShadowCandidatesQuery>,
+) -> Result<Json<HashMap<String, Vec<ShadowBlockSummary>>>, ApiError> {
+    let Some(canonical) = query.canonical else {
+        return Ok(Json(HashMap::new()));
+    };
+
+    let mut parsed = Vec::new();
+    for entry in canonical.split(',') {
+        if parsed.len() >= 200 {
+            break;
+        }
+        let trimmed = entry.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        match parse_block_id(trimmed) {
+            Ok(BlockId::Hash(hash)) => parsed.push(hash),
+            Ok(BlockId::Number(_)) | Err(_) => continue,
+        }
+    }
+
+    if parsed.is_empty() {
+        return Ok(Json(HashMap::new()));
+    }
+
+    let hashes: Vec<Vec<u8>> = parsed.into_iter().map(|hash| hash.to_vec()).collect();
+    let repo = state.repo()?;
+    let shadows = repo.list_reorged_by_canonicals(&hashes).await?;
+    let canonicals = repo.list_canonical_by_hashes(&hashes).await?;
+    let canonical_by_hash: HashMap<&[u8], &ShadowBlockRow> =
+        canonicals.iter().map(|row| (row.hash.as_slice(), row)).collect();
+
+    let mut result: HashMap<String, Vec<ShadowBlockSummary>> = HashMap::new();
+    for shadow in &shadows {
+        let Some(canonical_hash) = shadow.canonical_hash.as_ref() else {
+            continue;
+        };
+        let key = hex::encode_prefixed(canonical_hash.as_slice());
+        let canonical = canonical_by_hash.get(canonical_hash.as_slice()).copied();
+        result.entry(key).or_default().push(shadow_block_summary(shadow, canonical));
+    }
+
+    Ok(Json(result))
 }
 
 /// A single reorged-out shadow block paired with its canonical replacement,
@@ -285,14 +249,6 @@ async fn get_shadow_block(
     Ok(Json(shadow_block_summary(&row, canonical.as_ref())))
 }
 
-async fn get_tx_by_index(
-    State(state): State<ApiState>,
-    Path((id, index)): Path<(String, usize)>,
-) -> Result<Json<TxDetail>, ApiError> {
-    let row = resolve_block(&state.repo()?, &id).await?;
-    tx_detail(&row, index).map(Json).ok_or(ApiError::NotFound)
-}
-
 /// A block identifier accepted in the path: a decimal block number or a block hash.
 enum BlockId {
     Number(i64),
@@ -317,33 +273,6 @@ async fn resolve_block(repo: &ShadowBlockRepo, id: &str) -> Result<ShadowBlockRo
     row.ok_or(ApiError::NotFound)
 }
 
-async fn get_tx_by_hash(
-    State(state): State<ApiState>,
-    Path(hash): Path<String>,
-) -> Result<Json<TxDetail>, ApiError> {
-    let normalized = normalize_tx_hash(&hash);
-    let row =
-        state.repo()?.find_canonical_by_tx_hash(&normalized).await?.ok_or(ApiError::NotFound)?;
-    let index = tx_index_of(&row, &normalized).ok_or(ApiError::NotFound)?;
-    tx_detail(&row, index).map(Json).ok_or(ApiError::NotFound)
-}
-
-/// Normalizes a user-supplied hash to the lowercase `0x`-prefixed form stored in the payload.
-fn normalize_tx_hash(hash: &str) -> String {
-    let trimmed = hash.trim().to_lowercase();
-    let rest = trimmed.strip_prefix("0x").unwrap_or(&trimmed);
-    format!("0x{rest}")
-}
-
-fn block_summary(row: &ShadowBlockRow) -> BlockSummary {
-    BlockSummary {
-        number: row.number,
-        hash: hex::encode_prefixed(&row.hash),
-        tx_count: row.payload.block.body().transactions.len(),
-        timestamp: row.payload.block.header().timestamp,
-    }
-}
-
 fn shadow_block_summary(
     row: &ShadowBlockRow,
     canonical: Option<&ShadowBlockRow>,
@@ -358,8 +287,6 @@ fn shadow_block_summary(
     });
     let tx_count_diff =
         canonical.as_ref().map(|c| shadow.transaction_count as i64 - c.transaction_count as i64);
-
-    let health = ShadowBlockHealth::evaluate(&shadow, canonical.as_ref());
 
     ShadowBlockSummary {
         number: row.number,
@@ -378,7 +305,6 @@ fn shadow_block_summary(
         shadow_priority_fee_inversions: shadow.priority_fee_inversions,
         canonical_builder_version: canonical.as_ref().map(|c| c.builder_version.clone()),
         shadow_builder_version: shadow.builder_version,
-        health,
     }
 }
 
@@ -426,24 +352,6 @@ fn tx_summary(
     }
 }
 
-fn tx_detail(row: &ShadowBlockRow, index: usize) -> Option<TxDetail> {
-    let tx = row.payload.block.body().transactions.get(index)?;
-    Some(TxDetail {
-        block_number: row.number,
-        index,
-        hash: hex::encode_prefixed(tx.tx_hash()),
-        from: sender_at(row, index),
-        to: tx.to().map(hex::encode_prefixed),
-        nonce: tx.nonce(),
-        value: tx.value().to_string(),
-        gas_limit: tx.gas_limit(),
-        gas_used: per_tx_gas_used(row).get(index).copied().flatten(),
-        max_fee_per_gas: tx.max_fee_per_gas().to_string(),
-        max_priority_fee_per_gas: tx.max_priority_fee_per_gas().map(|fee| fee.to_string()),
-        tx_type: tx_type_str(tx).to_owned(),
-    })
-}
-
 /// Recovered sender address at a transaction index, if senders are present.
 fn sender_at(row: &ShadowBlockRow, index: usize) -> Option<String> {
     row.payload.block.senders().get(index).map(hex::encode_prefixed)
@@ -469,16 +377,6 @@ fn per_tx_gas_used(row: &ShadowBlockRow) -> Vec<Option<u64>> {
             Some(used)
         })
         .collect()
-}
-
-/// Finds the index of a transaction hash within a block's transactions.
-fn tx_index_of(row: &ShadowBlockRow, normalized_hash: &str) -> Option<usize> {
-    row.payload
-        .block
-        .body()
-        .transactions
-        .iter()
-        .position(|tx| hex::encode_prefixed(tx.tx_hash()) == normalized_hash)
 }
 
 fn tx_type_str(tx: &BaseTxEnvelope) -> &'static str {
@@ -561,21 +459,6 @@ mod tests {
     }
 
     #[test]
-    fn normalize_tx_hash_lowercases_and_prefixes() {
-        assert_eq!(normalize_tx_hash("0xABC"), "0xabc");
-        assert_eq!(normalize_tx_hash("ABC"), "0xabc");
-        assert_eq!(normalize_tx_hash("  0xAbC  "), "0xabc");
-    }
-
-    #[test]
-    fn block_summary_reports_row_number_hash_and_tx_count() {
-        let summary = block_summary(&sample_row());
-        assert_eq!(summary.number, 42);
-        assert_eq!(summary.hash, format!("0x{}", "ab".repeat(32)));
-        assert_eq!(summary.tx_count, 1);
-    }
-
-    #[test]
     fn block_detail_derives_per_tx_gas_and_sender() {
         let detail = block_detail(&sample_row());
         assert_eq!(detail.number, 42);
@@ -589,21 +472,6 @@ mod tests {
         assert_eq!(tx.tx_type, "deposit");
         assert_eq!(tx.from.as_deref(), Some(hex::encode_prefixed(SENDER).as_str()));
         assert_eq!(tx.to.as_deref(), Some(hex::encode_prefixed(RECIPIENT).as_str()));
-    }
-
-    #[test]
-    fn tx_detail_returns_none_past_the_end() {
-        let row = sample_row();
-        assert!(tx_detail(&row, 0).is_some());
-        assert!(tx_detail(&row, 1).is_none());
-    }
-
-    #[test]
-    fn tx_index_of_matches_the_stored_hash() {
-        let row = sample_row();
-        let hash = hex::encode_prefixed(row.payload.block.body().transactions[0].tx_hash());
-        assert_eq!(tx_index_of(&row, &hash), Some(0));
-        assert_eq!(tx_index_of(&row, "0xdeadbeef"), None);
     }
 
     #[test]
@@ -692,16 +560,5 @@ mod tests {
 
         assert_eq!(summary.gas_diff_abs, Some(21_000));
         assert!(summary.gas_diff_pct.is_none());
-    }
-
-    #[test]
-    fn shadow_block_summary_carries_health_verdict() {
-        let shadow = sample_row_full(5, 30_000, "shadow", true, Some(vec![0xcd; 32]));
-        let canonical = sample_row_full(5, 20_000, "canonical", false, None);
-        let summary = shadow_block_summary(&shadow, Some(&canonical));
-
-        assert!(summary.health.reconciled);
-        assert_eq!(summary.health.total, 4);
-        assert_eq!(summary.health.passed, 4);
     }
 }
