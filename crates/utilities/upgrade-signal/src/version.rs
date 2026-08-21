@@ -139,7 +139,15 @@ impl core::str::FromStr for PackedProtocolVersion {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let (core, prerelease) = match s.split_once("-rc.") {
             Some((core, rc)) => {
-                (core, rc.parse::<u32>().map_err(|_| ParseProtocolVersionError::new(s))?)
+                let prerelease =
+                    rc.parse::<u32>().map_err(|_| ParseProtocolVersionError::new(s))?;
+                // `prerelease == 0` is the sentinel for a final release, so `-rc.0` would silently
+                // round-trip to `major.minor.patch` and drop the suffix. Reject it rather than
+                // accept a pre-release string that means the opposite of what it says.
+                if prerelease == 0 {
+                    return Err(ParseProtocolVersionError::new(s));
+                }
+                (core, prerelease)
             }
             None => (s, 0),
         };
@@ -227,7 +235,9 @@ mod tests {
         // Round-trips through Display.
         assert_eq!(PackedProtocolVersion::from_str("10.0.7").unwrap().to_string(), "10.0.7");
 
-        for bad in ["", "1", "1.2", "1.2.3.4", "1.2.x", "1.2.3-rc.", "1.2.3-rc.x", "v1.2.3"] {
+        for bad in
+            ["", "1", "1.2", "1.2.3.4", "1.2.x", "1.2.3-rc.", "1.2.3-rc.x", "1.2.3-rc.0", "v1.2.3"]
+        {
             assert!(PackedProtocolVersion::from_str(bad).is_err(), "expected {bad:?} to fail");
         }
     }
