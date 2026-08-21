@@ -65,6 +65,10 @@ use crate::{
 /// - **Bit field consistency**: Ensures origin bits match block count
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct SpanBatch {
+    /// Absolute L2 block number of the first element when resolved by the derivation pipeline.
+    ///
+    /// This is in-memory context and is not encoded in the span-batch wire format.
+    pub start_block_number: Option<u64>,
     /// First 20 bytes of the parent hash of the first block in the span.
     ///
     /// This field provides a collision-resistant check to ensure the span batch
@@ -149,6 +153,24 @@ impl SpanBatch {
     /// temporal ranges and fits within L1 derivation windows.
     pub fn final_timestamp(&self) -> u64 {
         self.batches[self.batches.len() - 1].timestamp
+    }
+
+    /// Applies the deterministic timestamp schedule from the given first L2 block number.
+    pub fn set_start_block_number(&mut self, cfg: &RollupConfig, block_number: u64) {
+        self.start_block_number = Some(block_number);
+        for (index, batch) in self.batches.iter_mut().enumerate() {
+            batch.timestamp = cfg.l2_block_timestamp(block_number + index as u64);
+        }
+    }
+
+    /// Returns the absolute L2 block number for the element at `index`, when resolved.
+    pub fn block_number(&self, index: usize) -> Option<u64> {
+        self.start_block_number.map(|number| number + index as u64)
+    }
+
+    /// Returns the absolute L2 block number of the last element, when resolved.
+    pub fn final_block_number(&self) -> Option<u64> {
+        self.batches.len().checked_sub(1).and_then(|index| self.block_number(index))
     }
 
     /// Returns the L1 epoch number for the first batch in the span.
@@ -771,6 +793,30 @@ mod tests {
                 ..Default::default()
             })
             .collect()
+    }
+
+    #[test]
+    fn set_start_block_number_applies_denim_timestamps() {
+        let cfg = RollupConfig {
+            block_time: 2,
+            upgrades: UpgradeConfig {
+                base: BaseUpgradeConfig { denim: Some(6), ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut batch =
+            SpanBatch { batches: vec![SpanBatchElement::default(); 8], ..Default::default() };
+
+        batch.set_start_block_number(&cfg, 1);
+
+        assert_eq!(batch.start_block_number, Some(1));
+        assert_eq!(batch.block_number(3), Some(4));
+        assert_eq!(batch.final_block_number(), Some(8));
+        assert_eq!(
+            batch.batches.iter().map(|batch| batch.timestamp).collect::<Vec<_>>(),
+            [2, 4, 6, 6, 6, 6, 6, 7]
+        );
     }
 
     #[test]
