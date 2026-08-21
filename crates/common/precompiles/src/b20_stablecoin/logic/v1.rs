@@ -672,10 +672,12 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
 mod tests {
     use alloc::{
         collections::BTreeMap,
+        rc::Rc,
         string::{String, ToString},
         vec,
         vec::Vec,
     };
+    use core::cell::RefCell;
 
     use alloy_primitives::{Address, B256, LogData, U256, keccak256};
     use alloy_sol_types::SolEvent;
@@ -721,6 +723,9 @@ mod tests {
         role_admins: BTreeMap<B256, B256>,
         policy_ids: BTreeMap<B256, u64>,
         events: Vec<LogData>,
+        /// Records storage-access order; shared with [`FakePolicyAccounting`] via
+        /// [`token_with_access_log`] so tests can assert cross-trait read ordering.
+        access_log: Rc<RefCell<Vec<&'static str>>>,
     }
 
     impl FakeAccounting {
@@ -742,6 +747,7 @@ mod tests {
                 role_admins: BTreeMap::new(),
                 policy_ids: BTreeMap::new(),
                 events: Vec::new(),
+                access_log: Rc::new(RefCell::new(Vec::new())),
             }
         }
     }
@@ -842,6 +848,7 @@ mod tests {
             Ok(())
         }
         fn policy_id(&self, policy_scope: B256) -> Result<u64> {
+            self.access_log.borrow_mut().push("old_policy_id");
             Ok(self.policy_ids.get(&policy_scope).copied().unwrap_or(0))
         }
         fn set_policy_id(&mut self, policy_scope: B256, policy_id: u64) -> Result<()> {
@@ -878,6 +885,9 @@ mod tests {
         pending_admins: BTreeMap<u64, Address>,
         next_counter: u64,
         events: Vec<LogData>,
+        /// Records storage-access order; shared with [`FakeAccounting`] via
+        /// [`token_with_access_log`] so tests can assert cross-trait read ordering.
+        access_log: Rc<RefCell<Vec<&'static str>>>,
     }
 
     impl FakePolicyAccounting {
@@ -890,6 +900,7 @@ mod tests {
                 pending_admins: BTreeMap::new(),
                 next_counter: 0,
                 events: Vec::new(),
+                access_log: Rc::new(RefCell::new(Vec::new())),
             }
         }
 
@@ -911,6 +922,7 @@ mod tests {
             self.caller
         }
         fn read_policy_word(&self, policy_id: u64) -> Result<U256> {
+            self.access_log.borrow_mut().push("new_policy_exists");
             Ok(self.policies.get(&policy_id).copied().unwrap_or(U256::ZERO))
         }
         fn write_policy_word(&mut self, policy_id: u64, word: U256) -> Result<()> {
@@ -973,6 +985,16 @@ mod tests {
             FakePolicyAccounting::new(),
             PolicyVersion::V1,
         )
+    }
+
+    /// Builds a token whose accounting and policy fakes share `log`, recording the order in
+    /// which each side's storage is accessed.
+    fn token_with_access_log(log: Rc<RefCell<Vec<&'static str>>>) -> Tok {
+        let mut accounting = FakeAccounting::new();
+        accounting.access_log = Rc::clone(&log);
+        let mut policy = FakePolicyAccounting::new();
+        policy.access_log = log;
+        B20StablecoinToken::with_storage_and_policy(accounting, policy, PolicyVersion::V1)
     }
 
     /// Grants `role` to `account` and keeps the admin member-count consistent.
@@ -1379,6 +1401,19 @@ mod tests {
             .update_policy(&mut tok, ADMIN, B20PolicyType::TransferSender.id(), 99, true)
             .unwrap_err();
         assert_eq!(err, BasePrecompileError::revert(IB20::PolicyNotFound { policyId: 99 }));
+    }
+
+    /// Matches the frozen Beryl reference: the old `policyId` SLOAD must happen before the
+    /// `policyExists(newPolicyId)` check, even on the revert path (BOP-549).
+    #[test]
+    fn update_policy_reads_old_policy_before_checking_new_policy_exists() {
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let mut tok = token_with_access_log(Rc::clone(&log));
+        let err = LOGIC
+            .update_policy(&mut tok, ADMIN, B20PolicyType::TransferSender.id(), 99, true)
+            .unwrap_err();
+        assert_eq!(err, BasePrecompileError::revert(IB20::PolicyNotFound { policyId: 99 }));
+        assert_eq!(*log.borrow(), vec!["old_policy_id", "new_policy_exists"]);
     }
 
     #[test]
