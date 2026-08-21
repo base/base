@@ -292,3 +292,89 @@ transactions:
 ```
 
 Recipient keys are always positioned with a runtime-random seed/offset (never the configured `seed`), so repeated runs never regenerate the same "fresh" addresses. The runner logs `randomized_recipient_seed`/`randomized_recipient_offset` at startup and writes `fresh_recipient_count` to the final summary. Recover recipients from that logged value with `AccountPool::from_mnemonic(mnemonic, fresh_recipient_count, randomized_recipient_offset)` or `AccountPool::with_offset(randomized_recipient_seed, fresh_recipient_count, recipient_offset)`.
+
+#### Validity (Conditional) Transactions
+
+A configurable fraction of *senders* can route their entire traffic through the
+`base_sendRawTransactionValidity` endpoint, attaching state-based validity
+predicates (balance and storage conditions) to every transaction they submit.
+This exercises the sequencer and builder under congestion when validity
+predicates are in play. Set `validity.ratio` to `0.0` (the default) to disable
+the workload entirely, in which case behavior is identical to a plain run.
+
+Routing is deterministic and *per sender* (a hash of `seed + sender`), not per
+transaction, so a given sender's entire nonce stream stays on one submission
+origin. This keeps nonces contiguous and single-origin, avoiding transient
+nonce gaps that a split origin could cause under congestion. Because senders are
+exercised roughly uniformly, the fraction of senders on the validity path
+approximates the fraction of transactions.
+
+```yaml
+validity:
+  ratio: 0.25                 # fraction of senders routed to the validity endpoint
+  predicates:
+    - type: balance
+      address: sender          # sender | recipient | 0x-literal
+      op: ">="
+      value: "0"
+    - type: storage
+      address: "0x1234567890123456789012345678901234567890"
+      slot:
+        kind: fixed
+        value: "0x1"
+      mask: "0xff"             # optional; defaults to all ones server-side
+      op: "="
+      value: "0x0"
+    # balanceOf(sender) against a seeded token's mapping slot:
+    - type: storage
+      address: "0xTOKEN000000000000000000000000000000000000"
+      slot:
+        kind: mapping
+        mapping_slot: "0x0"
+        key: sender
+      op: ">="
+      value: "0x0"
+```
+
+Predicate addresses resolve per transaction: `sender` → the tx `from`,
+`recipient` → the tx `to` (falling back to `from` for contract creation), or a
+fixed `0x` address. Storage slots are either a `fixed` slot or a `mapping`
+slot, which computes the Solidity mapping slot `keccak256(key ++ mapping_slot)`
+so `balanceOf(key)` slots are expressible. Values, slots, and masks accept hex
+(`0x...`) or decimal strings. At most 64 predicates may be attached per
+transaction.
+
+The final summary's `by_cohort` breakdown reports confirmed transactions split
+across the `plain` and `validity_pass` cohorts, so plain traffic can be compared
+against validity traffic when the workload is enabled.
+
+**Required flags for end-to-end evaluation.** For predicates to actually be
+evaluated (not merely transported), the target environment must be configured so
+that:
+
+1. The ingress/sequencer node is started with
+   `--enable-experimental-validity-transactions`. This flag hard-requires
+   transaction forwarding, so it must be accompanied by `--enable-tx-forwarding`
+   and at least one `--builder-rpc-urls=<url>`; the node refuses to start
+   otherwise. Only with this flag set is the `base_sendRawTransactionValidity`
+   endpoint registered.
+2. The builder is started with
+   `--builder.enable-experimental-validity-transactions`. If it is not, forwarded
+   transactions that carry predicates are **rejected** ("transaction extensions
+   are disabled"), so a misconfiguration fails loudly rather than silently
+   dropping predicates.
+3. The builder runs the flashblocks build path (the only builder path wired in
+   the shipped binaries), which is where predicates are evaluated against state.
+
+If `validity.ratio > 0` but the ingress endpoint does not serve
+`base_sendRawTransactionValidity`, the run fails loudly at startup rather than
+silently degrading to plain submission.
+
+**Interpreting the results.** There is no validity-specific builder rejection
+metric, so a transaction whose predicate is false is skipped by the builder and
+simply never confirms (it is not distinguishable from an ordinary drop by a
+counter alone). Compare the `by_cohort` inclusion rates *relative to each other*
+rather than against an absolute target; to confirm the skip path directly,
+observe the builder's `BuilderRejected` event with reason
+`validity_predicate_not_satisfied`, or run the builder with
+`RUST_LOG=payload_builder=trace`.
