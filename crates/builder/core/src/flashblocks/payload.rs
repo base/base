@@ -931,6 +931,9 @@ where
         // Record cumulative uncompressed block size
         BuilderMetrics::block_uncompressed_size().record(info.cumulative_uncompressed_bytes as f64);
 
+        // Record validity-predicate state loads accumulated across the block's flashblocks.
+        BuilderMetrics::record_predicate_loads(&info.predicate_loads);
+
         debug!(
             target: "payload_builder",
             message = message,

@@ -9,6 +9,9 @@ pub use best_txs::{
 mod predicate_index;
 pub use predicate_index::{ParkedPredicateIndex, StateChangeEffects, ValidityPredicateKey};
 
+mod predicate_loads;
+pub use predicate_loads::{PredicateLoadTracker, PredicateReadRecorder};
+
 mod deadline;
 pub use deadline::PayloadJobDeadline;
 
