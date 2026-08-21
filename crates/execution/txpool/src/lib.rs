@@ -43,6 +43,9 @@ pub use transaction::{
     TimestampedTransaction, unix_time_millis,
 };
 
+mod inline_sim;
+pub use inline_sim::{InlineSimEnqueueError, InlineSimJob, InlineSimQueue};
+
 mod ordering;
 pub use ordering::{BaseOrdering, BestTransactionPriority, TimestampOrdering};
 

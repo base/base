@@ -13,6 +13,9 @@ use base_common_chains::Upgrades;
 use base_common_consensus::{
     BaseTransaction, BaseTransactionInfo, DepositInfo, DepositReceiptExt, EIP8130_TX_TYPE_ID,
 };
+use base_execution_txpool::{
+    BasePooledTransaction, InlineSimEnqueueError, InlineSimJob, InlineSimQueue,
+};
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
@@ -31,6 +34,7 @@ use reth_storage_api::{
 };
 use reth_transaction_pool::{
     AddedTransactionOutcome, PoolTransaction, TransactionOrigin, TransactionPool,
+    TransactionValidationOutcome, ValidatingPool, error::PoolError,
 };
 use tracing::{debug, instrument, warn};
 
@@ -41,6 +45,7 @@ impl<N, Rpc> EthTransactions for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
     N::Provider: BlockReaderIdExt + ChainSpecProvider<ChainSpec: Upgrades>,
+    N::Pool: ValidatingPool<Transaction = BasePooledTransaction>,
     BaseEthApiError: FromEvmError<N::Evm>,
     Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
 {
@@ -97,6 +102,10 @@ where
             });
 
             return Ok(hash);
+        }
+
+        if InlineSimQueue::is_enabled() {
+            return self.send_inline_sim(origin, pool_transaction).await;
         }
 
         // submit the transaction to the pool with the given origin
@@ -246,6 +255,50 @@ where
             return Ok(false);
         };
         Ok(self.provider().chain_spec().is_cobalt_active_at_timestamp(header.timestamp()))
+    }
+}
+
+impl<N, Rpc> BaseEthApi<N, Rpc>
+where
+    N: RpcNodeCore,
+    N::Pool: ValidatingPool<Transaction = BasePooledTransaction>,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
+{
+    /// Cheap-validate, enqueue for meter_bundle workers, and return the hash without waiting.
+    async fn send_inline_sim(
+        &self,
+        origin: TransactionOrigin,
+        pool_transaction: BasePooledTransaction,
+    ) -> Result<B256, BaseEthApiError> {
+        let hash = *pool_transaction.hash();
+        // Cheap admission before the sim queue so spam does not occupy workers.
+        // `add_transaction` validates again after sim; nonce/balance can change
+        // in between, and validate_one is cheap enough to run twice.
+        let validated = match self.pool().validate(origin, pool_transaction).await {
+            TransactionValidationOutcome::Valid { transaction, .. } => {
+                transaction.into_transaction()
+            }
+            TransactionValidationOutcome::Invalid(tx, err) => {
+                return Err(EthApiError::PoolError(PoolError::new(*tx.hash(), err).into()).into());
+            }
+            TransactionValidationOutcome::Error(hash, err) => {
+                return Err(EthApiError::PoolError(PoolError::other(hash, err).into()).into());
+            }
+        };
+
+        match InlineSimQueue::try_enqueue(InlineSimJob { origin, transaction: validated }) {
+            Ok(()) => Ok(hash),
+            Err(InlineSimEnqueueError::Full) => {
+                Err(EthApiError::PoolError(
+                    reth_rpc_eth_types::error::RpcPoolError::TxPoolOverflow,
+                )
+                .into())
+            }
+            Err(InlineSimEnqueueError::Disabled) => Err(EthApiError::PoolError(
+                PoolError::other(hash, "inline sim queue is not installed").into(),
+            )
+            .into()),
+        }
     }
 }
 
