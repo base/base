@@ -233,6 +233,10 @@ pub struct RpcStandardNodeArgs {
     pub flashblocks_url: Option<Url>,
 
     /// The max pending blocks depth.
+    ///
+    /// Deprecated and ignored. Pending flashblocks are rebased onto the current canonical tip
+    /// instead of retaining a depth-limited historical overlay. Kept so existing deployment
+    /// flags remain accepted.
     #[arg(
         long = "max-pending-blocks-depth",
         value_name = "MAX_PENDING_BLOCKS_DEPTH",

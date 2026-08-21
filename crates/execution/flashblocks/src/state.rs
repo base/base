@@ -31,7 +31,6 @@ pub struct FlashblocksState {
     queue: mpsc::UnboundedSender<StateUpdate>,
     rx: Arc<Mutex<mpsc::UnboundedReceiver<StateUpdate>>>,
     flashblock_sender: Sender<Arc<PendingBlocks>>,
-    max_pending_blocks_depth: u64,
 }
 
 impl FlashblocksState {
@@ -39,18 +38,16 @@ impl FlashblocksState {
     ///
     /// The state is created without a client. Call [`start`](Self::start) with a client
     /// to spawn the state processor after the node is launched.
-    pub fn new(max_pending_blocks_depth: u64) -> Self {
+    ///
+    /// `max_pending_blocks_depth` is accepted for call-site compatibility and ignored: pending
+    /// state is rebased onto the current canonical tip instead of retaining a depth-limited
+    /// historical overlay.
+    pub fn new(_max_pending_blocks_depth: u64) -> Self {
         let (tx, rx) = mpsc::unbounded_channel::<StateUpdate>();
         let pending_blocks: Arc<ArcSwapOption<PendingBlocks>> = Arc::new(ArcSwapOption::new(None));
         let (flashblock_sender, _) = broadcast::channel(BUFFER_SIZE);
 
-        Self {
-            pending_blocks,
-            queue: tx,
-            rx: Arc::new(Mutex::new(rx)),
-            flashblock_sender,
-            max_pending_blocks_depth,
-        }
+        Self { pending_blocks, queue: tx, rx: Arc::new(Mutex::new(rx)), flashblock_sender }
     }
 
     /// Starts the flashblocks state processor with the given client.
@@ -68,7 +65,6 @@ impl FlashblocksState {
         let state_processor = StateProcessor::new(
             client,
             Arc::clone(&self.pending_blocks),
-            self.max_pending_blocks_depth,
             Arc::clone(&self.rx),
             self.flashblock_sender.clone(),
         );
