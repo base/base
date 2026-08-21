@@ -89,15 +89,14 @@ impl StateUpdate {
         }
     }
 
-    fn has_wrong_parent_at_tip(&self, best_number: u64, best_hash: B256) -> bool {
-        match self {
-            Self::Flashblock(flashblock) => {
-                self.pending_anchor_number() == best_number
-                    && flashblock.index == 0
-                    && flashblock.base.as_ref().is_none_or(|base| base.parent_hash != best_hash)
-            }
-            Self::Canonical(_) => false,
-        }
+    fn flashblock_has_wrong_parent_at_tip(
+        flashblock: &Flashblock,
+        best_number: u64,
+        best_hash: B256,
+    ) -> bool {
+        flashblock.metadata.block_number.saturating_sub(1) == best_number
+            && flashblock.index == 0
+            && flashblock.base.as_ref().is_none_or(|base| base.parent_hash != best_hash)
     }
 
     fn is_stale_against(&self, best_number: u64, best_hash: B256) -> bool {
@@ -107,7 +106,9 @@ impl StateUpdate {
 
         match self {
             Self::Canonical(block) => block.number == best_number && block.hash() != best_hash,
-            Self::Flashblock(_) => self.has_wrong_parent_at_tip(best_number, best_hash),
+            Self::Flashblock(flashblock) => {
+                Self::flashblock_has_wrong_parent_at_tip(flashblock, best_number, best_hash)
+            }
         }
     }
 
@@ -123,10 +124,24 @@ impl StateUpdate {
         };
 
         if recovering {
-            return if self.is_recovery_resume(best_number, best_hash) {
-                UpdatePreflight::ResumeRecovery
-            } else {
-                UpdatePreflight::Skip
+            if self.is_recovery_resume(best_number, best_hash) {
+                return UpdatePreflight::ResumeRecovery;
+            }
+
+            return match self {
+                // Canonical notifications are emitted after their tip is visible to the provider.
+                // Process this one to advance and replay the bounded cache.
+                Self::Canonical(block)
+                    if block.number == best_number && block.hash() == best_hash =>
+                {
+                    UpdatePreflight::Process
+                }
+                // A future flashblock cannot execute without its canonical parent, but
+                // `apply_flashblock` stores cacheable payloads until that parent arrives.
+                Self::Flashblock(_) if self.pending_anchor_number() > best_number => {
+                    UpdatePreflight::Process
+                }
+                _ => UpdatePreflight::Skip,
             };
         }
 
@@ -284,8 +299,12 @@ where
             UpdatePreflight::Process => Some((best, false)),
             UpdatePreflight::ResumeRecovery => Some((best, true)),
             UpdatePreflight::Skip => {
-                if update.has_wrong_parent_at_tip(best.number(), best.hash())
-                    && let StateUpdate::Flashblock(flashblock) = update
+                if let StateUpdate::Flashblock(flashblock) = update
+                    && StateUpdate::flashblock_has_wrong_parent_at_tip(
+                        flashblock,
+                        best.number(),
+                        best.hash(),
+                    )
                 {
                     *self
                         .quarantined_flashblock_block
@@ -346,8 +365,7 @@ where
                                         cached_count = cached.len(),
                                     );
                                     for flashblock in cached {
-                                        let cached_update =
-                                            StateUpdate::Flashblock(flashblock.clone());
+                                        let cached_update = StateUpdate::Flashblock(flashblock);
                                         let Some((_, cached_resuming_recovery)) = self
                                             .preflight_update(&cached_update, &mut recovering)
                                             .await
@@ -356,6 +374,10 @@ where
                                                 break;
                                             }
                                             continue;
+                                        };
+                                        let StateUpdate::Flashblock(flashblock) = cached_update
+                                        else {
+                                            unreachable!("cached update is always a flashblock");
                                         };
 
                                         let fb_prev = self.pending_blocks.load_full();
@@ -1115,6 +1137,7 @@ mod tests {
     use base_common_flashblocks::{
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Metadata,
     };
+    use reth_primitives_traits::SealedBlock;
 
     use super::*;
 
@@ -1204,6 +1227,37 @@ mod tests {
         assert_eq!(
             resume.preflight(Some((best, best_hash)), false, false, true),
             UpdatePreflight::ResumeRecovery
+        );
+    }
+
+    #[test]
+    fn recovery_preflight_admits_future_flashblocks_for_caching() {
+        let best = 100;
+        let best_hash = B256::repeat_byte(0xAB);
+        let future = StateUpdate::Flashblock(flashblock(102, 0, B256::repeat_byte(0xCD)));
+
+        assert_eq!(
+            future.preflight(Some((best, best_hash)), false, false, true),
+            UpdatePreflight::Process,
+            "the caller must cache a future flashblock until its parent becomes canonical"
+        );
+    }
+
+    #[test]
+    fn recovery_preflight_processes_current_canonical_for_cache_replay() {
+        let best = 100;
+        let block = BaseBlock {
+            header: Header { number: best, ..Default::default() },
+            body: Default::default(),
+        };
+        let block = RecoveredBlock::new_sealed(SealedBlock::seal_slow(block), Vec::new());
+        let best_hash = block.hash();
+        let update = StateUpdate::Canonical(block);
+
+        assert_eq!(
+            update.preflight(Some((best, best_hash)), false, false, true),
+            UpdatePreflight::Process,
+            "the current canonical event must advance and replay the cache during recovery"
         );
     }
 
