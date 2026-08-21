@@ -42,6 +42,9 @@ base_metrics::define_metrics! {
     #[label(layer)]
     #[label(upgrade)]
     l1_read_errors_total: counter,
+    #[describe("Total L1 upgrade signal reads that succeeded but returned an empty schedule")]
+    #[label(layer)]
+    empty_schedule_reads_total: counter,
     #[describe("Total observed L1 upgrade signal value changes while the node is live")]
     #[label(layer)]
     #[label(upgrade)]
@@ -99,6 +102,20 @@ impl UpgradeSignalMetrics {
         Self::init();
         for layer in layers {
             Self::record_l1_read_errors(*layer);
+        }
+    }
+
+    /// Records an empty (but successful) L1 schedule read for one layer.
+    pub fn record_empty_schedule_read(layer: UpgradeSignalMetricLayer) {
+        Self::init();
+        Self::empty_schedule_reads_total(layer.label()).increment(1);
+    }
+
+    /// Records an empty (but successful) L1 schedule read across all enabled layers.
+    pub fn record_empty_schedule_reads_for_layers(layers: &[UpgradeSignalMetricLayer]) {
+        Self::init();
+        for layer in layers {
+            Self::record_empty_schedule_read(*layer);
         }
     }
 

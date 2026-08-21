@@ -295,10 +295,12 @@ impl AlloyUpgradeSignalReader {
     /// [`UpgradeSignalError::EmptySchedule`] rather than mapped to an empty schedule: applying an
     /// empty schedule would replace every runtime override with base activations and report
     /// success, silently diverging from the live poller, which ignores empty reads. An empty read
-    /// is not counted as an `l1_read_errors_total` failure, keeping empty success distinct from a
-    /// read failure. Callers decide how to treat it: startup retries then tolerates it (see
-    /// [`read_schedule_with_retries`](Self::read_schedule_with_retries)), while the manual admin
-    /// refresh surfaces it as an error instead of clearing overrides.
+    /// increments `empty_schedule_reads_total` instead of `l1_read_errors_total`, keeping an empty
+    /// success distinct from a read failure. Callers decide how to treat it: startup fails closed,
+    /// retrying indefinitely until the contract is populated rather than booting on base
+    /// activations; the live poller skips the apply (see
+    /// [`read_schedule_tolerant`](Self::read_schedule_tolerant)); and the manual admin refresh
+    /// surfaces it as an error instead of clearing overrides.
     pub async fn read_schedule(
         &self,
         metrics_layers: &[UpgradeSignalMetricLayer],
@@ -322,6 +324,7 @@ impl AlloyUpgradeSignalReader {
 
         let schedule = Self::map_schedule(&timestamps, minimum_protocol_version, l1_block_number);
         if schedule.signals.is_empty() {
+            UpgradeSignalMetrics::record_empty_schedule_reads_for_layers(metrics_layers);
             return Err(UpgradeSignalError::EmptySchedule);
         }
 
@@ -336,12 +339,12 @@ impl AlloyUpgradeSignalReader {
     /// is cancellation-safe: dropping it during shutdown cancels an in-flight HTTP request or
     /// retry sleep.
     ///
-    /// Only [`UpgradeSignalError::Provider`] errors are retried. An empty schedule is not a
+    /// Only [`UpgradeSignalError::Provider`] errors are retried here. An empty schedule is not a
     /// transient flake at the finalized or safe tags: the tag lags the initializing transaction by
     /// epochs, far longer than the retry budget, so retrying would only delay startup and multiply
-    /// RPC calls without changing the outcome. Empty reads are surfaced immediately and left for the
-    /// caller to tolerate (startup) or reject (admin refresh). Decode and protocol-version errors
-    /// remain fail-fast.
+    /// RPC calls without changing the outcome. Empty reads are surfaced immediately; the startup
+    /// path then retries them indefinitely to fail closed, while the manual admin refresh rejects
+    /// them. Decode and protocol-version errors remain fail-fast.
     pub async fn read_schedule_with_retries(
         &self,
         max_attempts: u32,
@@ -376,8 +379,9 @@ impl AlloyUpgradeSignalReader {
     /// Reads the schedule, tolerating read failures.
     ///
     /// Returns `None` when the read fails, recording `l1_read_errors_total`, or when the contract
-    /// reports an empty schedule, which is not a read failure and so records no metric. Intended for
-    /// the live metrics poller, which must not abort the node because a schedule read failed.
+    /// reports an empty schedule, which is not a read failure and so records `empty_schedule_reads_total`
+    /// rather than `l1_read_errors_total`. Intended for the live metrics poller, which must not abort
+    /// the node because a schedule read failed.
     pub async fn read_schedule_tolerant(
         &self,
         metrics_layers: &[UpgradeSignalMetricLayer],
