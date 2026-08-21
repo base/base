@@ -156,7 +156,7 @@ impl SpanBatch {
     }
 
     /// Applies the deterministic timestamp schedule from the given first L2 block number.
-    pub fn set_start_block_number(&mut self, cfg: &RollupConfig, block_number: u64) {
+    pub fn apply_block_number_timestamps(&mut self, cfg: &RollupConfig, block_number: u64) {
         self.start_block_number = Some(block_number);
         for (index, batch) in self.batches.iter_mut().enumerate() {
             batch.timestamp = cfg.l2_block_timestamp(block_number + index as u64);
@@ -796,7 +796,7 @@ mod tests {
     }
 
     #[test]
-    fn set_start_block_number_applies_denim_timestamps() {
+    fn apply_block_number_timestamps_uses_denim_schedule() {
         let cfg = RollupConfig {
             block_time: 2,
             upgrades: UpgradeConfig {
@@ -808,7 +808,7 @@ mod tests {
         let mut batch =
             SpanBatch { batches: vec![SpanBatchElement::default(); 8], ..Default::default() };
 
-        batch.set_start_block_number(&cfg, 1);
+        batch.apply_block_number_timestamps(&cfg, 1);
 
         assert_eq!(batch.start_block_number, Some(1));
         assert_eq!(batch.block_number(3), Some(4));
