@@ -420,6 +420,7 @@ impl MultiplexRouter {
             let mut basic_closed = false;
             while !flashblocks_closed || !basic_closed {
                 tokio::select! {
+                    _ = events_tx.closed() => break,
                     result = flashblocks_events.recv(), if !flashblocks_closed => match result {
                         Ok(event) => {
                             if !router.basic_selected_at(Self::event_timestamp(&event)) {
@@ -539,6 +540,8 @@ impl MultiplexRouter {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use alloy_primitives::B256;
     use base_common_genesis::BaseUpgrade;
     use base_execution_chainspec::BaseChainSpecBuilder;
@@ -725,6 +728,12 @@ mod tests {
             MultiplexRouter::event_timestamp(&sub.recv().await.expect("receive basic event")),
             ZENITH_TIMESTAMP
         );
+
+        drop(sub);
+        tokio::time::timeout(Duration::from_secs(1), flash_events_tx.closed())
+            .await
+            .expect("forwarding task should unsubscribe when downstream receiver closes");
+        assert_eq!(basic_events_tx.receiver_count(), 0);
     }
 
     #[tokio::test]
