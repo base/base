@@ -63,8 +63,24 @@ where
     pub async fn advance_to_target(
         &mut self,
         cfg: &RollupConfig,
-        mut target: Option<u64>,
+        target: Option<u64>,
         mut on_block: impl FnMut(L2BlockInfo, B256),
+    ) -> DriverResult<(L2BlockInfo, B256), E::Error> {
+        self.advance_to_target_with_artifacts(cfg, target, |l2_info, output_root, _, _| {
+            on_block(l2_info, output_root)
+        })
+        .await
+    }
+
+    /// Advances the derivation pipeline to the target block number and exposes each block's
+    /// execution artifacts to the callback.
+    ///
+    /// Calls `on_block` for each derived block before advancing the cursor.
+    pub async fn advance_to_target_with_artifacts(
+        &mut self,
+        cfg: &RollupConfig,
+        mut target: Option<u64>,
+        mut on_block: impl FnMut(L2BlockInfo, B256, &BlockBuildingOutcome, &[Bytes]),
     ) -> DriverResult<(L2BlockInfo, B256), E::Error> {
         let mut result = None;
 
@@ -172,7 +188,12 @@ where
                 &self.pipeline.rollup_config().genesis,
             )?;
             let output_root = self.executor.compute_output_root().map_err(DriverError::Executor)?;
-            on_block(l2_info, output_root);
+            on_block(
+                l2_info,
+                output_root,
+                &outcome,
+                attributes.transactions.as_deref().unwrap_or_default(),
+            );
             result = Some((l2_info, output_root));
             let tip_cursor = TipCursor::new(l2_info, outcome.header.clone(), output_root);
             // Advance the derivation pipeline cursor

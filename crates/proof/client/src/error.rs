@@ -26,6 +26,14 @@ pub enum FaultProofProgramError {
         /// The claimed output root.
         claimed: alloy_primitives::B256,
     },
+    /// Derivation ended at a different L2 block than the claim.
+    #[error("invalid claim block: derived {derived}, claimed {claimed}")]
+    InvalidClaimBlock {
+        /// The final derived L2 block number.
+        derived: u64,
+        /// The claimed L2 block number.
+        claimed: u64,
+    },
     /// Trace extension detected — agreed and claimed output roots match.
     #[error("trace extension detected")]
     TraceExtension,
@@ -46,6 +54,12 @@ mod tests {
         assert!(msg.contains("invalid claim"));
         assert!(msg.contains(&alloc::format!("{computed}")));
         assert!(msg.contains(&alloc::format!("{claimed}")));
+    }
+
+    #[test]
+    fn test_invalid_claim_block_display() {
+        let err = FaultProofProgramError::InvalidClaimBlock { derived: 6, claimed: 7 };
+        assert_eq!(alloc::format!("{err}"), "invalid claim block: derived 6, claimed 7");
     }
 
     #[test]

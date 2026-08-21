@@ -16,4 +16,4 @@ mod prologue;
 pub use prologue::Prologue;
 
 mod driver;
-pub use driver::FaultProofDriver;
+pub use driver::{FaultProofBlock, FaultProofDriver};

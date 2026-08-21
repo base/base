@@ -29,6 +29,18 @@ base-common-genesis.workspace = true
 
 [dev-dependencies]
 rstest.workspace = true
+alloy-rlp.workspace = true
+base-comp.workspace = true
+alloy-eips.workspace = true
+alloy-trie.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+alloy-signer.workspace = true
+alloy-genesis.workspace = true
+base-proof-mpt.workspace = true
+alloy-signer-local.workspace = true
+base-proof-zk-utils.workspace = true
+base-common-rpc-types-engine.workspace = true
 tokio = { workspace = true, features = ["full"] }
 
 [features]
