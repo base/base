@@ -1,14 +1,17 @@
 //! Shadow-builder validity predicate injection for forwarded transactions.
 
-use alloy_primitives::U256;
+use std::sync::Arc;
+
+use alloy_primitives::{TxHash, U256};
+use base_bundles::MeterBundleResponse;
 use base_execution_txpool::{
-    BasePooledTransaction, BuilderApiImpl, BuilderApiServer, TransactionValidity,
+    BasePooledTransaction, BuilderApiImpl, BuilderApiServer, InsertMetering, TransactionValidity,
     ValidatedTransaction, ValidityOperator, ValidityPredicate,
 };
 use jsonrpsee::core::RpcResult;
 use reth_transaction_pool::TransactionPool;
 
-use crate::{BuilderApiExtensionConfig, BuilderMetrics};
+use crate::{BuilderApiExtensionConfig, BuilderMetrics, SharedMeteringProvider};
 
 /// Number of basis points representing a 100% sampling rate.
 pub const MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS: u16 = 10_000;
@@ -114,6 +117,16 @@ impl Default for ShadowValidityConfig {
     }
 }
 
+/// Adapts [`SharedMeteringProvider`] to the insert-path metering sink.
+#[derive(Debug, Clone)]
+struct InsertMeteringAdapter(SharedMeteringProvider);
+
+impl InsertMetering for InsertMeteringAdapter {
+    fn insert_metering(&self, tx_hash: TxHash, metering: MeterBundleResponse) {
+        self.0.insert(tx_hash, metering);
+    }
+}
+
 /// Builder API that decorates sampled transactions before normal validated insertion.
 #[derive(Debug)]
 pub struct ShadowValidityBuilderApi<P> {
@@ -123,13 +136,18 @@ pub struct ShadowValidityBuilderApi<P> {
 
 impl<P> ShadowValidityBuilderApi<P> {
     /// Creates a builder API using validated configuration.
-    pub const fn new(pool: P, config: BuilderApiExtensionConfig) -> Self {
+    pub fn new(
+        pool: P,
+        config: BuilderApiExtensionConfig,
+        metering_provider: SharedMeteringProvider,
+    ) -> Self {
         Self {
             inner: BuilderApiImpl::with_extensions(
                 pool,
                 config.accept_experimental_validity_transactions,
                 config.max_validity_predicates,
-            ),
+            )
+            .with_metering_cache(Arc::new(InsertMeteringAdapter(metering_provider))),
             config: config.shadow_validity,
         }
     }
@@ -189,6 +207,7 @@ mod tests {
             max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            metering: None,
             extensions: TransactionValidity::default(),
         }
     }

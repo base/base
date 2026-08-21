@@ -50,7 +50,8 @@ pub use flashblocks::{
 
 mod extension;
 pub use extension::{
-    BuilderApiExtension, BuilderApiExtensionConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
+    BuilderApiExtension, BuilderApiExtensionArgs, BuilderApiExtensionConfig,
+    DEFAULT_MAX_VALIDITY_PREDICATES,
 };
 
 mod shadow_validity;

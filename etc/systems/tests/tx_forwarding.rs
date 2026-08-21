@@ -113,6 +113,7 @@ async fn test_insert_validated_transaction_single() -> Result<()> {
         max_block_number: None,
         min_timestamp: None,
         max_timestamp: None,
+        metering: None,
         extensions: NoExtensions {},
     };
 

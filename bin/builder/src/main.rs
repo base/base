@@ -52,9 +52,11 @@ fn main() {
             .with_gas_limit_config(gas_limit_config)
             .with_manifest_precheck_enabled(manifest_precheck_enabled)
             .with_service_builder(FlashblocksServiceBuilder::new(builder_config));
-        runner.install_ext::<MeteringStoreExtension>(metering_provider);
+        runner.install_ext::<MeteringStoreExtension>(Arc::clone(&metering_provider));
         runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig::default());
-        runner.install_ext::<BuilderApiExtension>(builder_api_config);
+        runner.install_ext::<BuilderApiExtension>(
+            builder_api_config.with_metering_provider(metering_provider),
+        );
         runner.install_ext::<ShadowIndexerExtension>(shadow_indexer_config);
         StandardBaseRethNode::install_upgrade_signal_runtime_extension(&mut runner, &rollup_args)?;
         runner.add_started_callback(|| {
