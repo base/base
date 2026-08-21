@@ -359,6 +359,7 @@ impl ServerArgs {
             transports,
             WorkerTransportMode::Vsock,
             Some(self.listen_addr),
+            RpcServerMode::Registrar,
             cancel,
         )
         .await
@@ -375,6 +376,10 @@ struct LocalArgs {
     #[command(flatten)]
     worker: WorkerArgs,
 
+    /// Socket address for the private signer JSON-RPC API.
+    #[arg(long, env = "LISTEN_ADDR", default_value = "0.0.0.0:8000")]
+    listen_addr: SocketAddr,
+
     /// Number of local enclave instances to run (minimum 1).
     #[arg(long, env = "LOCAL_ENCLAVE_COUNT", default_value = "1")]
     local_enclave_count: usize,
@@ -388,8 +393,16 @@ impl LocalArgs {
         }
 
         let transports = local_transports(self.local_enclave_count)?;
-        run_worker(self.runtime, self.worker, transports, WorkerTransportMode::Local, None, cancel)
-            .await
+        run_worker(
+            self.runtime,
+            self.worker,
+            transports,
+            WorkerTransportMode::Local,
+            Some(self.listen_addr),
+            RpcServerMode::AttestedWithdrawal,
+            cancel,
+        )
+        .await
     }
 }
 
@@ -414,7 +427,8 @@ async fn run_worker(
     worker: WorkerArgs,
     transports: Vec<Arc<NitroTransport>>,
     transport_mode: WorkerTransportMode,
-    registrar_listen_addr: Option<SocketAddr>,
+    rpc_listen_addr: Option<SocketAddr>,
+    rpc_server_mode: RpcServerMode,
     cancel: CancellationToken,
 ) -> eyre::Result<()> {
     let registration_health = runtime.registration_health_config();
@@ -476,15 +490,25 @@ async fn run_worker(
         .with_lock_duration_seconds(worker.job_discovery_lock_duration_seconds)
         .with_max_concurrent_jobs(worker.job_discovery_max_concurrent_jobs);
     let discovery = JobDiscovery::new(client, proof_generator, discovery_config);
-    let registrar_handle = if let Some(addr) = registrar_listen_addr {
-        Some(
-            NitroProverServer::run_registrar_rpc_server(
-                addr,
-                registrar_transports,
-                registration_checker,
-            )
-            .await?,
-        )
+    let rpc_handle = if let Some(addr) = rpc_listen_addr {
+        Some(match rpc_server_mode {
+            RpcServerMode::Registrar => {
+                NitroProverServer::run_registrar_rpc_server(
+                    addr,
+                    registrar_transports,
+                    registration_checker,
+                )
+                .await?
+            }
+            RpcServerMode::AttestedWithdrawal => {
+                NitroProverServer::run_attested_withdrawal_rpc_server(
+                    addr,
+                    registrar_transports,
+                    registration_checker,
+                )
+                .await?
+            }
+        })
     } else {
         None
     };
@@ -510,11 +534,21 @@ async fn run_worker(
         }
     }
     discovery.run_until_cancelled(cancel).await;
-    if let Some(handle) = registrar_handle {
+    if let Some(handle) = rpc_handle {
         let _ = handle.stop();
         handle.stopped().await;
     }
     Ok(())
+}
+
+/// Selects the JSON-RPC surface exposed by a Nitro-host worker.
+#[cfg(any(target_os = "linux", feature = "local"))]
+#[derive(Clone, Copy)]
+enum RpcServerMode {
+    /// Expose only signer registration methods.
+    Registrar,
+    /// Expose private attested-withdrawal signing methods.
+    AttestedWithdrawal,
 }
 
 #[cfg(any(target_os = "linux", feature = "local"))]

@@ -6,7 +6,7 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
-use alloy_rpc_types_eth::{BlockId, EIP1186AccountProofResponse};
+use alloy_rpc_types_eth::{BlockId, EIP1186AccountProofResponse, Filter, Log};
 use alloy_transport_http::{Http, reqwest::Client};
 use async_trait::async_trait;
 use backon::Retryable;
@@ -202,6 +202,50 @@ impl L2Provider for L2Client {
                 tracing::debug!(error = %err, delay = ?dur, "Retrying L2Client::chain_config");
             })
             .await
+    }
+
+    async fn chain_id(&self) -> RpcResult<u64> {
+        let backoff = self.retry_config.to_backoff_builder();
+        (|| async { self.provider.get_chain_id().await.map_err(RpcError::from) })
+            .retry(backoff)
+            .when(|error| error.is_retryable())
+            .notify(|err, dur| {
+                tracing::debug!(error = %err, delay = ?dur, "Retrying L2Client::chain_id");
+            })
+            .await
+    }
+
+    async fn get_logs(&self, filter: Filter) -> RpcResult<Vec<Log>> {
+        let backoff = self.retry_config.to_backoff_builder();
+        (|| async { self.provider.get_logs(&filter).await.map_err(RpcError::from) })
+            .retry(backoff)
+            .when(|error| error.is_retryable())
+            .notify(|err, dur| {
+                tracing::debug!(error = %err, delay = ?dur, "Retrying L2Client::get_logs");
+            })
+            .await
+    }
+
+    async fn get_storage_proof(
+        &self,
+        address: Address,
+        storage_keys: Vec<B256>,
+        block_hash: B256,
+    ) -> RpcResult<EIP1186AccountProofResponse> {
+        let backoff = self.retry_config.to_backoff_builder();
+        (|| async {
+            self.provider
+                .get_proof(address, storage_keys.clone())
+                .hash(block_hash)
+                .await
+                .map_err(RpcError::from)
+        })
+        .retry(backoff)
+        .when(|error| error.is_retryable())
+        .notify(|err, dur| {
+            tracing::debug!(error = %err, delay = ?dur, "Retrying L2Client::get_storage_proof");
+        })
+        .await
     }
 
     async fn get_proof(

@@ -2,7 +2,7 @@
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256, Bytes, U256};
-use alloy_rpc_types_eth::{EIP1186AccountProofResponse, Header, TransactionReceipt};
+use alloy_rpc_types_eth::{EIP1186AccountProofResponse, Filter, Header, Log, TransactionReceipt};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_optimism_rpc::{OutputAtBlock, SyncStatus};
@@ -47,6 +47,20 @@ pub trait L1Provider: Send + Sync {
 pub trait L2Provider: Send + Sync {
     /// Gets the chain configuration via `debug_chainConfig`.
     async fn chain_config(&self) -> RpcResult<serde_json::Value>;
+
+    /// Gets the L2 chain ID.
+    async fn chain_id(&self) -> RpcResult<u64>;
+
+    /// Gets logs matching an Ethereum filter.
+    async fn get_logs(&self, filter: Filter) -> RpcResult<Vec<Log>>;
+
+    /// Gets an account proof with the requested storage keys at a block hash.
+    async fn get_storage_proof(
+        &self,
+        address: Address,
+        storage_keys: Vec<B256>,
+        block_hash: B256,
+    ) -> RpcResult<EIP1186AccountProofResponse>;
 
     /// Gets an account proof via `eth_getProof`.
     async fn get_proof(

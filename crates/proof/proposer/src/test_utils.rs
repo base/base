@@ -7,7 +7,7 @@ use std::{
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256, Bytes, U256};
-use alloy_rpc_types_eth::{EIP1186AccountProofResponse, Header};
+use alloy_rpc_types_eth::{EIP1186AccountProofResponse, Filter, Header, Log};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_optimism_rpc::{L1BlockId, L1BlockRef, L2BlockRef, OutputAtBlock, SyncStatus};
@@ -99,8 +99,22 @@ impl L2Provider for MockL2 {
     async fn chain_config(&self) -> RpcResult<serde_json::Value> {
         unimplemented!()
     }
+    async fn chain_id(&self) -> RpcResult<u64> {
+        Ok(0)
+    }
+    async fn get_logs(&self, _: Filter) -> RpcResult<Vec<Log>> {
+        Ok(Vec::new())
+    }
+    async fn get_storage_proof(
+        &self,
+        _: Address,
+        _: Vec<B256>,
+        _: B256,
+    ) -> RpcResult<EIP1186AccountProofResponse> {
+        Err(RpcError::ProofNotFound("mock has no storage proof".into()))
+    }
     async fn get_proof(&self, _: Address, _: B256) -> RpcResult<EIP1186AccountProofResponse> {
-        unimplemented!()
+        Err(RpcError::ProofNotFound("mock has no account proof".into()))
     }
     async fn header_by_number(&self, _: BlockNumberOrTag) -> RpcResult<BaseHeader> {
         Ok(Header::<alloy_consensus::Header> {

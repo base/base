@@ -8,7 +8,7 @@ use base_tx_manager::{SignerConfig, TxManagerConfig};
 use eyre::{Result, WrapErr, ensure};
 use url::Url;
 
-use crate::cli::Cli;
+use crate::{AttestedWithdrawalRelayConfig, cli::Cli};
 
 /// Challenger configuration.
 #[derive(Debug)]
@@ -25,6 +25,8 @@ pub struct ChallengerConfig {
     pub game_type: u32,
     /// Polling interval for new dispute games.
     pub poll_interval: Duration,
+    /// Optional attested-withdrawal relay configuration.
+    pub attested_withdrawal_relay: Option<AttestedWithdrawalRelayConfig>,
     /// Run in no-dispute mode: skip all ZK/proof-dispute paths and run only the
     /// bond/anchor lifecycle.
     pub no_dispute: bool,
@@ -79,7 +81,7 @@ impl ChallengerConfig {
                 "--zk-rpc-url must not be set in --no-dispute mode"
             );
             ensure!(
-                !challenger.bond_claim_addresses.is_empty(),
+                challenger.attested_withdrawal_relay || !challenger.bond_claim_addresses.is_empty(),
                 "--bond-claim-addresses is required in --no-dispute mode"
             );
         } else {
@@ -88,6 +90,46 @@ impl ChallengerConfig {
                 "--zk-rpc-url is required unless --no-dispute is set"
             );
         }
+        let attested_withdrawal_relay = if challenger.attested_withdrawal_relay {
+            let portal_address = challenger.attested_withdrawal_portal_addr.ok_or_else(|| eyre::eyre!("--attested-withdrawal-portal-addr is required when --attested-withdrawal-relay is set"))?;
+            ensure!(
+                portal_address != Address::ZERO,
+                "attested-withdrawal-portal-addr must be non-zero"
+            );
+            let enclave_rpc_url = challenger.attested_withdrawal_enclave_rpc_url.ok_or_else(|| eyre::eyre!("--attested-withdrawal-enclave-rpc-url is required when --attested-withdrawal-relay is set"))?;
+            ensure!(
+                enclave_rpc_url.has_host(),
+                "invalid attested-withdrawal-enclave-rpc-url URL: missing host"
+            );
+            let start_block = challenger.attested_withdrawal_start_block.ok_or_else(|| eyre::eyre!("--attested-withdrawal-start-block is required when --attested-withdrawal-relay is set"))?;
+            let poll_interval =
+                challenger.attested_withdrawal_poll_interval.unwrap_or(challenger.poll_interval);
+            ensure!(
+                !poll_interval.is_zero(),
+                "attested-withdrawal-poll-interval must be greater than 0"
+            );
+            ensure!(
+                challenger.attested_withdrawal_scan_batch_size != 0,
+                "attested-withdrawal-scan-batch-size must be greater than 0"
+            );
+            Some(AttestedWithdrawalRelayConfig {
+                portal_address,
+                enclave_rpc_url,
+                start_block,
+                poll_interval,
+                confirmations: challenger.attested_withdrawal_confirmations,
+                scan_batch_size: challenger.attested_withdrawal_scan_batch_size,
+            })
+        } else {
+            ensure!(
+                challenger.attested_withdrawal_portal_addr.is_none()
+                    && challenger.attested_withdrawal_enclave_rpc_url.is_none()
+                    && challenger.attested_withdrawal_start_block.is_none(),
+                "attested-withdrawal relay options require --attested-withdrawal-relay"
+            );
+            None
+        };
+
         if let Some(zk_rpc_url) = &challenger.zk_rpc_url {
             ensure!(zk_rpc_url.has_host(), "invalid zk-rpc-url URL: missing host");
         }
@@ -125,6 +167,7 @@ impl ChallengerConfig {
             anchor_state_registry_addr: challenger.anchor_state_registry_addr,
             game_type: challenger.game_type,
             poll_interval: challenger.poll_interval,
+            attested_withdrawal_relay,
             no_dispute,
             zk_rpc_url: challenger.zk_rpc_url,
             zk_request_timeout: challenger.zk_request_timeout,

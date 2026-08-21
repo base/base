@@ -38,6 +38,12 @@ pub use tee_prover_registry::{
     ITEEProverRegistry, TEEProverRegistryClient, TEEProverRegistryContractClient,
 };
 
+mod optimism_portal;
+pub use optimism_portal::{
+    IL2ToL1MessagePasser, IOptimismPortal2, OptimismPortalClient, OptimismPortalContractClient,
+    encode_redeem_attested_withdrawal_calldata,
+};
+
 mod nitro_enclave_verifier;
 pub use nitro_enclave_verifier::{
     INitroEnclaveVerifier, NitroEnclaveVerifierClient, NitroEnclaveVerifierContractClient,

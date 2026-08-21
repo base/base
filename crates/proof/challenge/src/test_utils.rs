@@ -13,7 +13,9 @@ use alloy_consensus::{
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256, Bloom, Bytes, U256, keccak256};
 use alloy_rlp::Encodable;
-use alloy_rpc_types_eth::{EIP1186AccountProofResponse, Header as RpcHeader, TransactionReceipt};
+use alloy_rpc_types_eth::{
+    EIP1186AccountProofResponse, Filter, Header as RpcHeader, Log, TransactionReceipt,
+};
 use alloy_trie::{HashBuilder, Nibbles, TrieAccount, proof::ProofRetainer};
 use async_trait::async_trait;
 use base_common_consensus::Predeploys;
@@ -683,6 +685,12 @@ pub struct MockL2Provider {
     pub headers: HashMap<u64, RpcHeader>,
     /// Account proofs keyed by block hash.
     pub proofs: HashMap<B256, EIP1186AccountProofResponse>,
+    /// L2 chain ID returned to relay tests.
+    pub chain_id: u64,
+    /// Logs returned to relay tests.
+    pub logs: Vec<Log>,
+    /// Keyed storage-proof requests received by the mock.
+    pub storage_proof_requests: Mutex<Vec<(Address, Vec<B256>, B256)>>,
     /// Block numbers that should return an error (simulating missing blocks).
     pub error_blocks: Vec<u64>,
     /// Delay applied before returning a header.
@@ -717,6 +725,24 @@ impl MockL2Provider {
 impl L2Provider for MockL2Provider {
     async fn chain_config(&self) -> RpcResult<serde_json::Value> {
         Ok(serde_json::Value::Null)
+    }
+
+    async fn chain_id(&self) -> RpcResult<u64> {
+        Ok(self.chain_id)
+    }
+
+    async fn get_logs(&self, _filter: Filter) -> RpcResult<Vec<Log>> {
+        Ok(self.logs.clone())
+    }
+
+    async fn get_storage_proof(
+        &self,
+        address: Address,
+        storage_keys: Vec<B256>,
+        block_hash: B256,
+    ) -> RpcResult<EIP1186AccountProofResponse> {
+        self.storage_proof_requests.lock().unwrap().push((address, storage_keys, block_hash));
+        self.get_proof(Address::ZERO, block_hash).await
     }
 
     async fn get_proof(
