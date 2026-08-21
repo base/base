@@ -39,12 +39,14 @@ use base_common_precompiles::{
     ERC8056_INTERFACE_IDS, FakePolicyAccounting, IB20, IB20Asset, NoopPrecompileCallObserver,
     PolicyVersion, TokenAccounting,
 };
-use base_precompile_storage::{BasePrecompileError, HashMapStorageProvider, StorageCtx};
+use base_precompile_storage::{
+    BasePrecompileError, HashMapStorageProvider, StorageCtx, StorageFeatures,
+};
 
 mod common;
 use common::{
     ADMIN, ALICE, BOB, CAROL, CHAIN_ID, MEMO, POLICY_ID, TOKEN, anvil_owner, bless_or_assert_gas,
-    bless_or_assert_root, hash_token_state, ok_true, provider_for, signed_permit, u,
+    bless_or_assert_root, hash_token_state, ok_true, signed_permit, u,
 };
 
 // --- fixtures ---------------------------------------------------------------
@@ -155,7 +157,7 @@ const ROOT_ANNOUNCE_V2: B256 =
 
 /// Fresh provider with an initialized `Base Asset` at [`TOKEN`] (multiplier = 1 WAD).
 fn fresh() -> HashMapStorageProvider {
-    let mut storage = provider_for(BaseUpgrade::Cobalt);
+    let mut storage = HashMapStorageProvider::new_with_storage_features(CHAIN_ID, StorageFeatures::Cobalt);
     StorageCtx::enter(&mut storage, |ctx| {
         let mut token = B20AssetStorage::from_address(TOKEN, ctx);
         token
@@ -340,7 +342,7 @@ fn dispatch_rejects_nonzero_value() {
 
 #[test]
 fn dispatch_reverts_when_uninitialized() {
-    let mut s = provider_for(BaseUpgrade::Cobalt);
+    let mut s = HashMapStorageProvider::new_with_storage_features(CHAIN_ID, StorageFeatures::Cobalt);
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
     let out = StorageCtx::enter(&mut s, |ctx| {
         B20AssetToken::with_storage_and_policy(
@@ -363,7 +365,7 @@ fn dispatch_reverts_when_uninitialized() {
 #[test]
 fn golden_dispatch_no_observer_wrapper_reverts_uninitialized() {
     // Exercises the no-observer `dispatch()` wrapper + the is_initialized=false gate.
-    let mut s = provider_for(BaseUpgrade::Cobalt);
+    let mut s = HashMapStorageProvider::new_with_storage_features(CHAIN_ID, StorageFeatures::Cobalt);
     s.set_caller(ALICE);
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
     let out = StorageCtx::enter(&mut s, |ctx| {

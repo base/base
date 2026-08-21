@@ -36,11 +36,11 @@ use base_common_precompiles::{
     ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, IPolicyRegistry,
     PolicyRegistryStorage, PolicyVersion, PolicyVersions,
 };
-use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
+use base_precompile_storage::{HashMapStorageProvider, StorageCtx, StorageFeatures};
 
 mod common;
 use common::{
-    ACTIVATION_ADMIN, ADMIN, ALICE, BOB, bless_or_assert_gas, bless_or_assert_root, provider_for,
+    ACTIVATION_ADMIN, ADMIN, ALICE, BOB, CHAIN_ID, bless_or_assert_gas, bless_or_assert_root,
 };
 
 // --- fixtures ---------------------------------------------------------------
@@ -106,7 +106,7 @@ fn activate(storage: &mut HashMapStorageProvider) {
 
 /// A fresh provider with the policy registry activated.
 fn fresh() -> HashMapStorageProvider {
-    let mut storage = provider_for(BaseUpgrade::Cobalt);
+    let mut storage = HashMapStorageProvider::new_with_storage_features(CHAIN_ID, StorageFeatures::Cobalt);
     activate(&mut storage);
     storage
 }
@@ -530,7 +530,7 @@ fn golden_composite_policy_child_ids_empty_for_non_composites() {
 #[test]
 fn golden_composite_policy_child_ids_reads_before_activation() {
     // No activation, matching `golden_write_reverts_when_not_activated`.
-    let mut s = provider_for(BaseUpgrade::Cobalt);
+    let mut s = HashMapStorageProvider::new_with_storage_features(CHAIN_ID, StorageFeatures::Cobalt);
     let (rev, bytes) = call_policy(
         &mut s,
         OUTSIDER,
@@ -966,7 +966,7 @@ fn golden_reverts_nonzero_value() {
 #[test]
 fn golden_write_reverts_when_not_activated() {
     // No activation: a write op must revert; a read op still works.
-    let mut s = provider_for(BaseUpgrade::Cobalt);
+    let mut s = HashMapStorageProvider::new_with_storage_features(CHAIN_ID, StorageFeatures::Cobalt);
     let (rev, _) = call_policy(
         &mut s,
         ADMIN,

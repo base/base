@@ -2,8 +2,7 @@
 
 use alloy_primitives::{Address, B256, Bytes, LogData, U256, address, hex, keccak256};
 use alloy_sol_types::SolValue;
-use base_common_genesis::BaseUpgrade;
-use base_common_precompiles::{IB20, PermitArgs, UpgradeGatedStorageFeatures};
+use base_common_precompiles::{IB20, PermitArgs};
 use base_precompile_storage::HashMapStorageProvider;
 use k256::ecdsa::SigningKey;
 
@@ -31,18 +30,6 @@ pub const POLICY_ID: u64 = (1u64 << 56) | 7;
 // Anvil/Hardhat account 0 — well-known test key, never used in production.
 pub const PRIVATE_KEY: [u8; 32] =
     hex!("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
-
-// --- provider construction --------------------------------------------------
-
-/// A fresh, empty provider whose persistent-storage features match `upgrade` in production, so a
-/// golden dispatching at `upgrade` exercises the same `SLOAD`/dynamic-tail-cleanup behavior as
-/// on-chain rather than the `HashMapStorageProvider::new` `Legacy` default. Reuses the production
-/// mapping [`UpgradeGatedStorageFeatures::from_upgrade`] as the single source of truth.
-pub fn provider_for(upgrade: BaseUpgrade) -> HashMapStorageProvider {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_storage_features(UpgradeGatedStorageFeatures::from_upgrade(upgrade));
-    storage
-}
 
 // --- small value helpers ----------------------------------------------------
 
