@@ -109,7 +109,7 @@ pub enum ChannelError {
 
 /// One encoding channel, from first batch until the safe head covers it.
 #[derive(derive_more::Debug)]
-pub struct ChannelRecord {
+pub struct Channel {
     /// Unique derivation channel identifier.
     id: ChannelId,
     /// Rollup rules used for timestamp-dependent protocol limits.
@@ -154,7 +154,7 @@ pub struct ChannelRecord {
     last_confirmed_l1_block: Option<u64>,
 }
 
-impl ChannelRecord {
+impl Channel {
     /// Max frames per channel. Derivation cannot reassemble frame number `u16::MAX`.
     pub const MAX_FRAMES: usize = u16::MAX as usize;
 
@@ -486,8 +486,8 @@ mod tests {
         }
     }
 
-    fn channel(config: EncoderConfig) -> ChannelRecord {
-        ChannelRecord::new(ChannelId::default(), Arc::new(RollupConfig::default()), &config, 0, 0)
+    fn channel(config: EncoderConfig) -> Channel {
+        Channel::new(ChannelId::default(), Arc::new(RollupConfig::default()), &config, 0, 0)
             .unwrap()
     }
 
@@ -543,7 +543,7 @@ mod tests {
         let mut channel = channel(config);
 
         assert!(matches!(
-            channel.add_batch(&batch(ChannelRecord::MAX_FRAMES + 1), 1).unwrap(),
+            channel.add_batch(&batch(Channel::MAX_FRAMES + 1), 1).unwrap(),
             ChannelAddOutcome::Rejected(ChannelLimit::FrameCount { .. })
         ));
         assert!(channel.is_empty());

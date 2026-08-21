@@ -6,7 +6,7 @@ use base_common_consensus::BaseBlock;
 use base_protocol::{BlockInfo, ChannelId, Frame};
 
 use crate::{
-    BatchPipeline, BatchSubmission, ChannelRecord, DerivationReconciliation, ReorgError, StepError,
+    BatchPipeline, BatchSubmission, Channel, DerivationReconciliation, ReorgError, StepError,
     StepResult, SubmissionId,
 };
 
@@ -89,7 +89,7 @@ impl BatchPipeline for MockBatchPipeline {
 
 /// One-shot framing for Span fixtures and tests.
 ///
-/// Production encoding cuts frames incrementally via [`ChannelRecord::take_frame`].
+/// Production encoding cuts frames incrementally via [`Channel::take_frame`].
 /// This helper still splits a fully compressed channel, which the action harness
 /// uses to inject historical Span payloads.
 #[derive(Debug)]
@@ -147,10 +147,10 @@ impl ChannelFramer {
 
         let payload_size = max_frame_size - Frame::ENCODED_OVERHEAD;
         let frame_count = channel_data.len().div_ceil(payload_size);
-        if frame_count > ChannelRecord::MAX_FRAMES {
+        if frame_count > Channel::MAX_FRAMES {
             return Err(ChannelFramerError::TooManyFrames {
                 frame_count,
-                maximum: ChannelRecord::MAX_FRAMES,
+                maximum: Channel::MAX_FRAMES,
             });
         }
 
@@ -216,7 +216,7 @@ mod tests {
 
     #[test]
     fn rejects_non_derivable_frame_count() {
-        let channel_data = vec![0; ChannelRecord::MAX_FRAMES + 1];
+        let channel_data = vec![0; Channel::MAX_FRAMES + 1];
         let err =
             ChannelFramer::split(ChannelId::default(), channel_data, Frame::ENCODED_OVERHEAD + 1)
                 .unwrap_err();
@@ -224,8 +224,8 @@ mod tests {
         assert_eq!(
             err,
             ChannelFramerError::TooManyFrames {
-                frame_count: ChannelRecord::MAX_FRAMES + 1,
-                maximum: ChannelRecord::MAX_FRAMES,
+                frame_count: Channel::MAX_FRAMES + 1,
+                maximum: Channel::MAX_FRAMES,
             }
         );
     }

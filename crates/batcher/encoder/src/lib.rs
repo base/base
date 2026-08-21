@@ -22,7 +22,7 @@ pub use composer::{BatchComposeError, BatchComposer};
 
 mod channel;
 pub use channel::{
-    ChannelAddOutcome, ChannelCloseReason, ChannelError, ChannelLimit, ChannelRecord,
+    Channel, ChannelAddOutcome, ChannelCloseReason, ChannelError, ChannelLimit,
 };
 
 mod artifact;

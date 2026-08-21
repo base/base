@@ -8,7 +8,7 @@ use std::{
 use base_protocol::{BLOB_DERIVATION_PREFIX_SIZE, BLOB_MAX_DATA_SIZE, ChannelId, Frame};
 
 use crate::{
-    BatchSubmission, BlobPayload, ChannelRecord, DaType, SubmissionId,
+    BatchSubmission, BlobPayload, Channel, DaType, SubmissionId,
     artifact::{ArtifactId, DaArtifactPayload, DaArtifacts},
 };
 
@@ -37,7 +37,7 @@ impl DaEgress {
 
     /// Plans one full or deadline-released blob without mutating channels.
     fn plan_blob(
-        channels: &VecDeque<ChannelRecord>,
+        channels: &VecDeque<Channel>,
         l1_head: u64,
     ) -> Option<Vec<(ChannelId, usize, bool)>> {
         let mut frames = Vec::new();
@@ -74,7 +74,7 @@ impl DaEgress {
     ///
     /// `true` after the terminal frame, so the planner may continue to the next channel.
     fn plan_channel_frames(
-        channel: &ChannelRecord,
+        channel: &Channel,
         remaining: &mut usize,
         frames: &mut Vec<(ChannelId, usize, bool)>,
     ) -> bool {
@@ -112,7 +112,7 @@ impl DaEgress {
     /// Returns whether an immutable ready artifact or buildable payload exists.
     pub fn has_ready_submission(
         &self,
-        channels: &VecDeque<ChannelRecord>,
+        channels: &VecDeque<Channel>,
         da_type: DaType,
         l1_head: u64,
     ) -> bool {
@@ -129,7 +129,7 @@ impl DaEgress {
     /// Builds and leases one transaction-sized submission.
     pub fn next_submission(
         &mut self,
-        channels: &mut VecDeque<ChannelRecord>,
+        channels: &mut VecDeque<Channel>,
         da_type: DaType,
         l1_head: u64,
         max_blobs_per_tx: usize,
@@ -148,7 +148,7 @@ impl DaEgress {
     /// Materializes ready artifacts only when no retry is already waiting.
     fn build_ready_artifacts(
         &mut self,
-        channels: &mut VecDeque<ChannelRecord>,
+        channels: &mut VecDeque<Channel>,
         da_type: DaType,
         l1_head: u64,
         max_blobs: usize,
@@ -191,7 +191,7 @@ impl DaEgress {
     }
 
     /// Returns whether all artifacts from a fully framed channel are confirmed.
-    pub fn channel_fully_confirmed(&self, channel: &ChannelRecord) -> bool {
+    pub fn channel_fully_confirmed(&self, channel: &Channel) -> bool {
         channel.framing_complete() && self.artifacts.all_confirmed_for(channel.id())
     }
 
@@ -227,7 +227,7 @@ impl DaEgress {
     }
 
     /// Plans one calldata frame without mutating channel output.
-    fn plan_calldata(channels: &VecDeque<ChannelRecord>) -> Option<(ChannelId, usize, bool)> {
+    fn plan_calldata(channels: &VecDeque<Channel>) -> Option<(ChannelId, usize, bool)> {
         // Preserve FIFO ordering: only the first unfinished channel may emit.
         for channel in channels {
             if channel.framing_complete() {
@@ -258,7 +258,7 @@ impl DaEgress {
     /// Commits a validated blob plan into one immutable ready artifact.
     fn commit_blob(
         &mut self,
-        channels: &mut VecDeque<ChannelRecord>,
+        channels: &mut VecDeque<Channel>,
         plan: Vec<(ChannelId, usize, bool)>,
     ) -> ArtifactId {
         let mut frames = Vec::with_capacity(plan.len());
@@ -286,7 +286,7 @@ impl DaEgress {
     /// Commits one calldata frame into an immutable ready artifact.
     fn commit_calldata(
         &mut self,
-        channels: &mut VecDeque<ChannelRecord>,
+        channels: &mut VecDeque<Channel>,
         plan: (ChannelId, usize, bool),
     ) -> ArtifactId {
         let (channel_id, data_len, is_last) = plan;
@@ -330,14 +330,13 @@ mod tests {
     use super::*;
     use crate::{ChannelAddOutcome, CompressionAlgo, EncoderConfig};
 
-    fn channel(id: ChannelId, opened_l1_block: u64, duration: u64) -> ChannelRecord {
+    fn channel(id: ChannelId, opened_l1_block: u64, duration: u64) -> Channel {
         let config = EncoderConfig {
             compression_algo: CompressionAlgo::Zlib,
             max_channel_duration: duration,
             ..EncoderConfig::default()
         };
-        ChannelRecord::new(id, Arc::new(RollupConfig::default()), &config, 0, opened_l1_block)
-            .unwrap()
+        Channel::new(id, Arc::new(RollupConfig::default()), &config, 0, opened_l1_block).unwrap()
     }
 
     fn incompressible_batch(transaction_len: usize) -> SingleBatch {
@@ -359,7 +358,7 @@ mod tests {
         }
     }
 
-    fn append_accepted(channel: &mut ChannelRecord, transaction_len: usize) {
+    fn append_accepted(channel: &mut Channel, transaction_len: usize) {
         assert_eq!(
             channel
                 .add_batch(&incompressible_batch(transaction_len), transaction_len as u64)
@@ -368,7 +367,7 @@ mod tests {
         );
     }
 
-    fn fill_open_channel(channel: &mut ChannelRecord, min_output: usize) {
+    fn fill_open_channel(channel: &mut Channel, min_output: usize) {
         let mut transaction_len = 4_096;
         while channel.available_output() < min_output {
             append_accepted(channel, transaction_len);
@@ -476,7 +475,7 @@ mod tests {
     }
 
     /// Returns an egress and one channel holding `blobs` worth of output.
-    fn egress_with_output(blobs: usize) -> (DaEgress, VecDeque<ChannelRecord>) {
+    fn egress_with_output(blobs: usize) -> (DaEgress, VecDeque<Channel>) {
         let mut channel = channel([1; 16], 0, 10);
         fill_open_channel(&mut channel, DaEgress::BLOB_CAPACITY * blobs);
 

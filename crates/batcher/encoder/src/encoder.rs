@@ -11,9 +11,9 @@ use rand::{RngCore, SeedableRng, rngs::SmallRng};
 use tracing::{debug, warn};
 
 use crate::{
-    ArtifactId, BatchComposer, BatchPipeline, BatchSubmission, BatcherMetrics, ChannelAddOutcome,
-    ChannelCloseReason, ChannelRecord, DaEgress, DaType, DerivationReconciliation, EncoderConfig,
-    EncoderConfigError, ReorgError, StepError, StepResult, SubmissionId,
+    ArtifactId, BatchComposer, BatchPipeline, BatchSubmission, BatcherMetrics, Channel,
+    ChannelAddOutcome, ChannelCloseReason, DaEgress, DaType, DerivationReconciliation,
+    EncoderConfig, EncoderConfigError, ReorgError, StepError, StepResult, SubmissionId,
 };
 
 /// The batcher encoding pipeline state machine.
@@ -34,7 +34,7 @@ pub struct BatchEncoder {
     /// Hash of the last accepted block or safe-head anchor.
     tip: Option<B256>,
     /// Append-only channel FIFO. At most its tail may remain open.
-    channels: VecDeque<ChannelRecord>,
+    channels: VecDeque<Channel>,
     /// Streaming DA artifact builder and immutable submission ledger.
     egress: DaEgress,
     /// Next submission id counter.
@@ -189,7 +189,7 @@ impl BatchEncoder {
     fn open_new_channel(&mut self, block_start: usize) {
         let mut id = ChannelId::default();
         self.rng.fill_bytes(&mut id);
-        let channel = ChannelRecord::new(
+        let channel = Channel::new(
             id,
             Arc::clone(&self.rollup_config),
             &self.config,
@@ -378,7 +378,7 @@ impl BatchEncoder {
             .count();
         if channels_to_prune > 0 {
             let channel_ids: Vec<_> =
-                self.channels.iter().take(channels_to_prune).map(ChannelRecord::id).collect();
+                self.channels.iter().take(channels_to_prune).map(Channel::id).collect();
             self.channels.drain(..channels_to_prune);
             self.egress.prune_channels(&channel_ids);
             BatcherMetrics::pending_frames().set(self.egress.ready_frame_count() as f64);
@@ -471,7 +471,7 @@ impl BatchPipeline for BatchEncoder {
         let single_batch = BatchComposer::block_to_single_batch(block)
             .map_err(|source| StepError::CompositionFailed { cursor: self.block_cursor, source })?;
 
-        if !self.channels.back().is_some_and(ChannelRecord::is_open) {
+        if !self.channels.back().is_some_and(Channel::is_open) {
             self.open_new_channel(self.block_cursor);
         }
 
@@ -656,7 +656,7 @@ impl BatchPipeline for BatchEncoder {
             .channels
             .iter()
             .filter(|channel| !self.egress.channel_fully_confirmed(channel))
-            .map(ChannelRecord::da_backlog_bytes)
+            .map(Channel::da_backlog_bytes)
             .sum();
 
         pending_blocks + channels
@@ -792,7 +792,7 @@ mod tests {
     }
 
     fn has_open_channel(encoder: &BatchEncoder) -> bool {
-        encoder.channels.back().is_some_and(ChannelRecord::is_open)
+        encoder.channels.back().is_some_and(Channel::is_open)
     }
 
     #[test]
