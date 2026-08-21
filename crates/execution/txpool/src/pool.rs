@@ -634,6 +634,13 @@ where
         validated: TransactionValidationOutcome<T>,
         origin: TransactionOrigin,
     ) -> PoolResult<AddedTransactionOutcome> {
+        // Capture the block-expiry bound before `validated` is consumed by the
+        // match below, mirroring the protocol admission paths. A sidecar (EIP-8130)
+        // transaction carrying block-number validity predicates must be recorded
+        // in the block-expiry index so it is evicted once its last valid block
+        // passes; a finite 2D-nonce-channel sidecar has no time-based expiry, so
+        // without this it would linger indefinitely.
+        let block_expiry_bound = Self::validity_block_expiry_bound(&validated);
         match validated {
             TransactionValidationOutcome::Valid {
                 transaction,
@@ -707,6 +714,15 @@ where
                 if is_validity {
                     ValidityPoolMetrics::record_admission(outcome.replaced.is_some());
                 }
+                // Record the block-expiry bound after a successful insertion,
+                // dropping the replaced hash's stale entry in the same pass.
+                // Release the sidecar locks first so the block-expiry index is
+                // not acquired while holding the nonce pool.
+                let inserted_hash = outcome.outcome.hash;
+                let replaced_hash = outcome.replaced.as_ref().map(|replaced| *replaced.hash());
+                drop(listeners);
+                drop(nonce_pool);
+                self.register_block_expiry(inserted_hash, block_expiry_bound, replaced_hash);
                 Ok(outcome.outcome)
             }
             TransactionValidationOutcome::Invalid(transaction, error) => {
@@ -2457,5 +2473,34 @@ mod tests {
         // An unbounded replacement still clears the replaced hash's stale entry.
         pool.register_block_expiry(new_hash, None, Some(replaced));
         assert!(pool.block_expiry.read().is_empty());
+    }
+
+    #[tokio::test]
+    async fn sidecar_validity_transaction_registers_block_expiry() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+
+        // A finite 2D-nonce-channel EIP-8130 sidecar carrying a block-number
+        // upper-bound predicate. Such a transaction has no time-based expiry, so
+        // block-expiry registration is the only thing that prevents it from
+        // lingering in the pool forever once it can no longer be included.
+        let transaction = self_paid_eoa_8130(&signer, U256::from(1), 0, 0, 1_000)
+            .with_validity_predicates(vec![crate::ValidityPredicate::BlockNumber {
+                op: crate::ValidityOperator::LessThanOrEqual,
+                value: U256::from(100),
+            }]);
+        let hash = *transaction.hash();
+        pool.add_transaction(TransactionOrigin::Local, transaction).await.unwrap();
+
+        // The sidecar admission path must record the tx's last valid block.
+        assert_eq!(pool.block_expiry.read().len(), 1);
+        assert!(pool.get(&hash).is_some());
+
+        // Once the last valid block is behind the tip, block-expiry eviction
+        // removes it and releases any guard capacity it held.
+        pool.expire_by_block(101);
+        assert!(pool.get(&hash).is_none());
+        assert!(!pool.guard.read().contains(&hash));
     }
 }

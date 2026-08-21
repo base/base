@@ -228,9 +228,10 @@ pub struct RpcStandardNodeArgs {
 
     /// Enable the experimental validity transaction RPC.
     ///
-    /// When transaction forwarding is enabled, validity predicates are forwarded to builders, but
-    /// they are not yet enforced. This can also be enabled on a standalone sequencer (e.g. a local
-    /// devnet) that builds blocks itself, in which case forwarding is not required.
+    /// When transaction forwarding is enabled, validity predicates are forwarded to builders, which
+    /// evaluate and enforce them during block construction. This can also be enabled on a standalone
+    /// sequencer (e.g. a local devnet) that builds blocks itself, in which case forwarding is not
+    /// required.
     #[arg(long = "enable-experimental-validity-transactions")]
     pub enable_experimental_validity_transactions: bool,
 
