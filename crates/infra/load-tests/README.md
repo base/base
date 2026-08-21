@@ -360,6 +360,30 @@ The final summary's `by_cohort` breakdown reports confirmed transactions split
 across the `plain` and `validity_pass` cohorts, so plain traffic can be compared
 against validity traffic when the workload is enabled.
 
+##### Delayed (fixed future) validity spike
+
+To make the whole validity cohort become valid at the same future block —
+parking it in the pool until then and releasing it as one predictable spike —
+attach a lower-bound `block_number` predicate targeting a future block:
+
+```yaml
+validity:
+  ratio: 1.0
+  predicates:
+    - type: block_number
+      op: ">="
+      value: "12345"   # a block that is still in the future when submission starts
+```
+
+Every validity transaction carries `block_number >= 12345`, so the builder skips
+them until block 12345 and then includes the accumulated backlog together. Choose
+the target relative to the block height **at which measured submission begins**,
+not run-invocation time: account funding and token setup run first and advance the
+chain by a variable number of blocks, so a target that is too low will already be
+satisfied by the time submission starts (no spike). Pick a value comfortably
+beyond the expected setup duration, and confirm the spike landed via the
+`by_cohort` / `fullest_block` breakdown in the summary.
+
 **Required flags for end-to-end evaluation.** For predicates to actually be
 evaluated (not merely transported), the target environment must be configured so
 that:
