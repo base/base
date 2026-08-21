@@ -6631,6 +6631,7 @@ dependencies = [
  "base-prover-service-client",
  "base-prover-service-protocol",
  "base-tx-manager",
+ "base-upgrade-signal",
  "chrono",
  "clap",
  "crossterm",

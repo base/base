@@ -60,15 +60,23 @@ impl UpgradeSignalConfig {
             .with_block_tag(self.l1_block_tag.block_number_or_tag()))
     }
 
-    /// Returns true if this node supports the minimum protocol version attached to `signal`.
+    /// Returns true if this node's advertised protocol version satisfies `minimum`.
     ///
     /// Compatibility compares the packed versions by their semver ordering (see
     /// [`PackedProtocolVersion`]), not as raw integers: an unrecognized version-type ranks above
     /// everything (fail-closed), then `major.minor.patch`, with a pre-release sorting below its
     /// matching release and `build`/reserved bits ignored.
-    pub fn supports_signal_protocol_version(&self, signal: &UpgradeSignal) -> bool {
-        PackedProtocolVersion::new(signal.protocol_version)
+    pub fn supports_protocol_version(&self, minimum: U256) -> bool {
+        PackedProtocolVersion::new(minimum)
             <= PackedProtocolVersion::new(self.node_protocol_version)
+    }
+
+    /// Returns true if this node supports the minimum protocol version attached to `signal`.
+    ///
+    /// This is the pure version comparison ([`Self::supports_protocol_version`]) independent of the
+    /// signal's activation timing, so it is meaningful even for an upgrade that is not yet scheduled.
+    pub fn supports_signal_protocol_version(&self, signal: &UpgradeSignal) -> bool {
+        self.supports_protocol_version(signal.protocol_version)
     }
 
     /// Returns an error if a positive activation timestamp omits its minimum protocol version.
@@ -164,10 +172,25 @@ impl UpgradeSignalConfig {
         now_secs: u64,
         lead_secs: u64,
     ) -> Option<&'a UpgradeSignal> {
-        schedule.signals.iter().find(|signal| {
-            self.validate_signal_supported_protocol_version(signal).is_err()
-                && now_secs.saturating_add(lead_secs) >= signal.activation_timestamp
-        })
+        schedule.signals.iter().find(|signal| self.signal_fails_closed(signal, now_secs, lead_secs))
+    }
+
+    /// Returns true if `signal` would fail the node closed at `now_secs` given `lead_secs`.
+    ///
+    /// This is the per-signal predicate behind [`Self::fail_closed_upgrade`]: an activation this
+    /// node's protocol version is too old to support whose activation is within `lead_secs` of
+    /// `now_secs` (or already past). A clear (activation `0`) and a malformed zero-version signal are
+    /// both treated as supported by [`Self::validate_signal_supported_protocol_version`], so neither
+    /// fails closed. Sharing this predicate keeps the readiness report (see
+    /// [`Self::evaluate_readiness`]) exactly consistent with the node's actual halt decision.
+    pub fn signal_fails_closed(
+        &self,
+        signal: &UpgradeSignal,
+        now_secs: u64,
+        lead_secs: u64,
+    ) -> bool {
+        self.validate_signal_supported_protocol_version(signal).is_err()
+            && now_secs.saturating_add(lead_secs) >= signal.activation_timestamp
     }
 
     /// Reads the L1 startup schedule and applies it to both sinks.

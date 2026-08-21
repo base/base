@@ -18,7 +18,7 @@ pub use commands::{
     SequencerNodeActionArgs, SequencerNodeJson, SequencerRole, SequencerStartArgs,
     SequencerStatusArgs, SequencerStatusJson, SyncStatusCommand, SyncStatusJson, TipReferenceJson,
     TipStatus, TxpoolClearArgs, TxpoolClearJson, TxpoolCommand, TxpoolCommands, TxpoolReadArgs,
-    TxpoolReadJson, UnsafeHeadSource, ZkBackendOption,
+    TxpoolReadJson, UnsafeHeadSource, UpgradeReadinessCommand, ZkBackendOption,
 };
 
 mod denim;
@@ -90,12 +90,12 @@ pub use rpc::{
     fetch_full_system_config, fetch_info, fetch_initial_backlog_with_progress,
     fetch_l1_block_number, fetch_l2_block_number, fetch_l2_chain_id, fetch_raw_info,
     fetch_raw_peers, fetch_safe_and_latest, fetch_sequencer_active, fetch_sync_status,
-    list_banned_peers, pause_sequencer_node, remove_peer, restart_conductor_node,
-    run_block_fetcher, run_conductor_poller, run_flashblock_ws, run_flashblock_ws_timestamped,
-    run_l1_blob_watcher, run_pods_poller, run_proofs_poller, run_rollup_config_poller,
-    run_safe_head_poller, run_validator_poller, start_sequencer, start_sequencer_node,
-    stop_sequencer, stop_sequencer_node, transfer_conductor_leader, unban_el_peer, unban_peer,
-    unpause_sequencer_node,
+    fetch_upgrade_readiness, list_banned_peers, pause_sequencer_node, remove_peer,
+    restart_conductor_node, run_block_fetcher, run_conductor_poller, run_flashblock_ws,
+    run_flashblock_ws_timestamped, run_l1_blob_watcher, run_pods_poller, run_proofs_poller,
+    run_rollup_config_poller, run_safe_head_poller, run_validator_poller, start_sequencer,
+    start_sequencer_node, stop_sequencer, stop_sequencer_node, transfer_conductor_leader,
+    unban_el_peer, unban_peer, unpause_sequencer_node,
 };
 
 mod tui;

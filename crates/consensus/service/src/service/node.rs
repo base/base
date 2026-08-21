@@ -19,7 +19,7 @@ use base_consensus_providers::{
     AlloyChainProvider, AlloyL2ChainProvider, OnlineBeaconClient, OnlineBlobProvider,
     OnlinePipeline,
 };
-use base_consensus_rpc::RpcBuilder;
+use base_consensus_rpc::{BaseRpc, RpcBuilder};
 use base_consensus_safedb::{DisabledSafeDB, SafeDB, SafeDBReader, SafeHeadListener};
 use base_protocol::L2BlockInfo;
 use tokio::sync::{mpsc, watch};
@@ -633,6 +633,12 @@ impl RollupNode {
         let engine_rpc_actor = rpc_builder
             .as_ref()
             .map(|_| (engine_rpc_processor, (cancellation.clone(), engine_rpc_request_rx)));
+        // Public `base` namespace, available whenever the upgrade signal is configured (any mode),
+        // built from the same config and reader the node uses so readiness reflects reality.
+        let base_rpc = self
+            .upgrade_signal_config
+            .as_ref()
+            .map(|c| BaseRpc::new(c.config.clone(), c.reader.clone()));
         let rpc = rpc_builder.map(|b| {
             RpcActor::new(
                 b,
@@ -640,6 +646,7 @@ impl RollupNode {
                 sequencer_admin_client,
                 safe_db_reader,
                 upgrade_signal_refresher,
+                base_rpc,
             )
         });
 

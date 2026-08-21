@@ -37,8 +37,11 @@ pub use state::{
     UpgradeSignal, UpgradeSignalMonitor, UpgradeSignalPollOutcome, UpgradeSignalSchedule,
 };
 
+mod readiness;
+pub use readiness::{UpgradeReadiness, UpgradeReadinessEntry, UpgradeReadinessTarget};
+
 mod version;
-pub use version::PackedProtocolVersion;
+pub use version::{PackedProtocolVersion, ParseProtocolVersionError};
 
 #[cfg(test)]
 pub mod test_utils;
