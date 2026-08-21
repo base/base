@@ -400,6 +400,40 @@ impl From<&StandardNodeArgs> for TxForwardingConfig {
     }
 }
 
+/// Metering RPC config for a standard node.
+///
+/// Enabled when `--enable-metering` or `--enable-inline-simulation` is set so
+/// mempool nodes can run `meter_bundle` in-process before sim workers exist.
+fn metering_config(
+    args: &StandardNodeArgs,
+    flashblocks_config: Option<FlashblocksConfig>,
+) -> eyre::Result<MeteringConfig> {
+    if !args.metering.enable_metering && !args.rpc.enable_inline_simulation {
+        return Ok(MeteringConfig::disabled());
+    }
+
+    let resource_limits = MeteringResourceLimits {
+        gas_limit: args.metering.metering_gas_limit,
+        da_bytes: args.metering.metering_da_bytes,
+    };
+    let metered_opcodes = if args.metering.metering_metered_opcodes.is_empty() {
+        MeteredOpcodes::default()
+    } else {
+        MeteredOpcodes::parse(&args.metering.metering_metered_opcodes)?
+    }
+    .with_all_precompiles();
+
+    let mut config = flashblocks_config
+        .map_or_else(MeteringConfig::enabled, MeteringConfig::with_flashblocks)
+        .with_resource_limits(resource_limits)
+        .with_metered_opcodes(metered_opcodes);
+    if let Some(target_flashblocks_per_block) = args.metering.metering_target_flashblocks_per_block
+    {
+        config = config.with_target_flashblocks_per_block(target_flashblocks_per_block);
+    }
+    Ok(config)
+}
+
 /// Standard Base execution-node runner wiring.
 #[derive(Debug, Clone, Copy)]
 pub struct StandardBaseRethNode;
@@ -543,33 +577,7 @@ impl StandardBaseRethNode {
             warn!("deprecated metering resource limit flags are ignored");
         }
 
-        let resource_limits = MeteringResourceLimits {
-            gas_limit: args.metering.metering_gas_limit,
-            da_bytes: args.metering.metering_da_bytes,
-        };
-        let metering_config = if args.metering.enable_metering {
-            let metered_opcodes = if args.metering.metering_metered_opcodes.is_empty() {
-                MeteredOpcodes::default()
-            } else {
-                MeteredOpcodes::parse(&args.metering.metering_metered_opcodes)?
-            }
-            .with_all_precompiles();
-
-            let mut config = flashblocks_config
-                .clone()
-                .map_or_else(MeteringConfig::enabled, MeteringConfig::with_flashblocks)
-                .with_resource_limits(resource_limits)
-                .with_metered_opcodes(metered_opcodes);
-            if let Some(target_flashblocks_per_block) =
-                args.metering.metering_target_flashblocks_per_block
-            {
-                config = config.with_target_flashblocks_per_block(target_flashblocks_per_block);
-            }
-            config
-        } else {
-            MeteringConfig::disabled()
-        };
-        runner.install_ext::<MeteringExtension>(metering_config);
+        runner.install_ext::<MeteringExtension>(metering_config(&args, flashblocks_config.clone())?);
         runner.install_ext::<ShadowIndexerExtension>((&args.shadow_indexer).try_into()?);
         runner.install_ext::<BundleExtension>(());
         let tx_forwarding_config: TxForwardingConfig = (&args).into();
@@ -988,6 +996,36 @@ mod tests {
         assert_eq!(config.inline_simulation_workers, 8);
         assert_eq!(config.inline_simulation_queue_capacity, 32);
         assert_eq!(config.inline_simulation_timeout_ms, 500);
+    }
+
+    #[test]
+    fn inline_simulation_enables_metering_without_enable_metering_flag() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
+            "base-reth",
+            "--enable-tx-forwarding",
+            "--builder-rpc-urls",
+            "http://localhost:8545",
+            "--enable-inline-simulation",
+        ])
+        .args;
+
+        assert!(!args.metering.enable_metering);
+        let config = metering_config(&args, None).expect("inline sim should enable metering");
+        assert!(config.enabled);
+    }
+
+    #[test]
+    fn forwarding_without_inline_simulation_leaves_metering_disabled() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
+            "base-reth",
+            "--enable-tx-forwarding",
+            "--builder-rpc-urls",
+            "http://localhost:8545",
+        ])
+        .args;
+
+        let config = metering_config(&args, None).expect("forwarding-only config");
+        assert!(!config.enabled);
     }
 
     #[test]

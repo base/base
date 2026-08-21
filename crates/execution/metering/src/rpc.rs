@@ -2,16 +2,17 @@
 
 use std::sync::Arc;
 
-use alloy_consensus::{BlockHeader, Header, Sealed};
+use alloy_consensus::{BlockHeader, Header, Sealed, transaction::Recovered};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{B256, U256};
 use base_bundles::{Bundle, MeterBundleResponse, ParsedBundle};
-use base_common_consensus::BaseBlock;
+use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use base_common_evm::L1BlockInfo;
 use base_common_flz::flz_compress_len;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::extract_l1_info_from_tx;
 use base_flashblocks::{FlashblocksAPI, PendingBlocksAPI};
+use eyre::{Result as EyreResult, eyre};
 use jsonrpsee::core::{RpcResult, async_trait};
 use reth_primitives_traits::SealedHeader;
 use reth_provider::{
@@ -96,57 +97,6 @@ where
             "Starting bundle metering"
         );
 
-        // Get pending blocks from flashblocks API
-        let pending_blocks = self.flashblocks_api.get_pending_blocks();
-
-        // Get header and flashblock index from pending blocks
-        // If no pending blocks exist, fall back to latest canonical block
-        let (header, flashblock_index, canonical_block_number) =
-            if let Some(pb) = pending_blocks.as_ref() {
-                let latest_header: Sealed<Header> = pb.latest_header();
-                let flashblock_index = pb.latest_flashblock_index();
-                let canonical_block_number = pb.canonical_block_number();
-
-                debug!(
-                    latest_block = latest_header.number,
-                    canonical_block = %canonical_block_number,
-                    flashblock_index = flashblock_index,
-                    "Using latest flashblock state for metering"
-                );
-
-                // Convert Sealed<Header> to SealedHeader
-                let sealed_header =
-                    SealedHeader::new(latest_header.inner().clone(), latest_header.hash());
-                (sealed_header, flashblock_index, canonical_block_number)
-            } else {
-                // No pending blocks, use latest canonical block
-                let canonical_block_number = pending_blocks.get_canonical_block_number();
-                let header = self
-                    .provider
-                    .sealed_header_by_number_or_tag(canonical_block_number)
-                    .map_err(|e| {
-                        jsonrpsee::types::ErrorObjectOwned::owned(
-                            jsonrpsee::types::ErrorCode::InternalError.code(),
-                            format!("Failed to get canonical block header: {e}"),
-                            None::<()>,
-                        )
-                    })?
-                    .ok_or_else(|| {
-                        jsonrpsee::types::ErrorObjectOwned::owned(
-                            jsonrpsee::types::ErrorCode::InternalError.code(),
-                            "Canonical block not found".to_string(),
-                            None::<()>,
-                        )
-                    })?;
-
-                debug!(
-                    canonical_block = header.number,
-                    "No flashblocks available, using canonical block state for metering"
-                );
-
-                (header, 0, canonical_block_number)
-            };
-
         let parsed_bundle = ParsedBundle::try_from(bundle).map_err(|e| {
             jsonrpsee::types::ErrorObjectOwned::owned(
                 jsonrpsee::types::ErrorCode::InvalidParams.code(),
@@ -155,48 +105,7 @@ where
             )
         })?;
 
-        // Get state provider for the canonical block
-        let state_provider =
-            self.provider.state_by_block_number_or_tag(canonical_block_number).map_err(|e| {
-                error!(error = %e, "Failed to get state provider");
-                jsonrpsee::types::ErrorObjectOwned::owned(
-                    jsonrpsee::types::ErrorCode::InternalError.code(),
-                    format!("Failed to get state provider: {e}"),
-                    None::<()>,
-                )
-            })?;
-
-        // If we have pending blocks, extract the pending state for metering
-        let pending_state =
-            pending_blocks.as_ref().map(|pb| PendingState { bundle_state: pb.get_bundle_state() });
-
-        // Pending flashblock headers can omit parent_beacon_block_root; prefer the CL-provided
-        // value from the flashblock base payload when available, otherwise fall back to the header.
-        let parent_beacon_block_root = header.parent_beacon_block_root().or_else(|| {
-            pending_blocks.as_ref().and_then(|pb| {
-                pb.get_flashblocks()
-                    .first()
-                    .and_then(|fb| fb.base.as_ref().map(|base| base.parent_beacon_block_root))
-            })
-        });
-
-        // Get L1 block info from the canonical block (not flashblock header, which has zero hash)
-        let l1_block_info = self.get_l1_block_info(canonical_block_number)?;
-
-        // Meter bundle using utility function
-        let output = meter_bundle(MeterBundleInput {
-            state_provider,
-            chain_spec: self.provider.chain_spec(),
-            bundle: parsed_bundle,
-            header: header.clone(),
-            parent_beacon_block_root,
-            pending_state,
-            l1_block_info,
-            metered_opcodes: Arc::clone(&self.metered_opcodes),
-        })
-        .map_err(|e| {
-            // Sample error msg:
-            // Transaction $TX_HASH execution failed: EVM reported invalid transaction ($TX_HASH): nonce $EXPECTED_NONCE too high, expected $EXPECTED_NONCE"
+        self.meter_parsed_bundle(parsed_bundle).map_err(|e| {
             let error_msg = e.to_string();
             if error_msg.contains("nonce") {
                 debug!(error = %e, "Bundle metering failed");
@@ -208,40 +117,6 @@ where
                 format!("Bundle metering failed: {e}"),
                 None::<()>,
             )
-        })?;
-
-        // Calculate average gas price
-        let bundle_gas_price = if output.total_gas_used > 0 {
-            output.total_gas_fees / U256::from(output.total_gas_used)
-        } else {
-            U256::from(0)
-        };
-        let total_execution_time_us = output
-            .results
-            .iter()
-            .fold(0u128, |acc, result| acc.saturating_add(result.execution_time_us));
-
-        debug!(
-            bundle_hash = %output.bundle_hash,
-            num_transactions = output.results.len(),
-            total_gas_used = output.total_gas_used,
-            total_time_us = output.total_time_us,
-            state_block_number = header.number,
-            flashblock_index = flashblock_index,
-            "Bundle metering completed successfully"
-        );
-
-        Ok(MeterBundleResponse {
-            bundle_gas_price,
-            bundle_hash: output.bundle_hash,
-            coinbase_diff: output.total_gas_fees,
-            eth_sent_to_coinbase: U256::from(0),
-            gas_fees: output.total_gas_fees,
-            results: output.results,
-            state_block_number: header.number,
-            state_flashblock_index: pending_blocks.as_ref().map(|pb| pb.latest_flashblock_index()),
-            total_gas_used: output.total_gas_used,
-            total_execution_time_us,
         })
     }
 
@@ -418,49 +293,144 @@ where
         + 'static,
     FB: FlashblocksAPI + Send + Sync + 'static,
 {
+    /// Meters a parsed bundle against latest canonical or pending flashblock state.
+    ///
+    /// This is the in-process entry point used by `base_meterBundle` and later
+    /// inline-sim workers. It does not go through JSON-RPC.
+    pub fn meter_parsed_bundle(
+        &self,
+        parsed_bundle: ParsedBundle,
+    ) -> EyreResult<MeterBundleResponse> {
+        let pending_blocks = self.flashblocks_api.get_pending_blocks();
+        let (header, flashblock_index, canonical_block_number) =
+            if let Some(pb) = pending_blocks.as_ref() {
+                let latest_header: Sealed<Header> = pb.latest_header();
+                let flashblock_index = pb.latest_flashblock_index();
+                let canonical_block_number = pb.canonical_block_number();
+
+                debug!(
+                    latest_block = latest_header.number,
+                    canonical_block = %canonical_block_number,
+                    flashblock_index = flashblock_index,
+                    "Using latest flashblock state for metering"
+                );
+
+                let sealed_header =
+                    SealedHeader::new(latest_header.inner().clone(), latest_header.hash());
+                (sealed_header, flashblock_index, canonical_block_number)
+            } else {
+                let canonical_block_number = pending_blocks.get_canonical_block_number();
+                let header = self
+                    .provider
+                    .sealed_header_by_number_or_tag(canonical_block_number)
+                    .map_err(|e| eyre!("Failed to get canonical block header: {e}"))?
+                    .ok_or_else(|| eyre!("Canonical block not found"))?;
+
+                debug!(
+                    canonical_block = header.number,
+                    "No flashblocks available, using canonical block state for metering"
+                );
+
+                (header, 0, canonical_block_number)
+            };
+
+        let state_provider = self
+            .provider
+            .state_by_block_number_or_tag(canonical_block_number)
+            .map_err(|e| {
+                error!(error = %e, "Failed to get state provider");
+                eyre!("Failed to get state provider: {e}")
+            })?;
+
+        let pending_state =
+            pending_blocks.as_ref().map(|pb| PendingState { bundle_state: pb.get_bundle_state() });
+
+        // Pending flashblock headers can omit parent_beacon_block_root; prefer the CL-provided
+        // value from the flashblock base payload when available, otherwise fall back to the header.
+        let parent_beacon_block_root = header.parent_beacon_block_root().or_else(|| {
+            pending_blocks.as_ref().and_then(|pb| {
+                pb.get_flashblocks()
+                    .first()
+                    .and_then(|fb| fb.base.as_ref().map(|base| base.parent_beacon_block_root))
+            })
+        });
+
+        let l1_block_info = self.get_l1_block_info(canonical_block_number)?;
+        let output = meter_bundle(MeterBundleInput {
+            state_provider,
+            chain_spec: self.provider.chain_spec(),
+            bundle: parsed_bundle,
+            header: header.clone(),
+            parent_beacon_block_root,
+            pending_state,
+            l1_block_info,
+            metered_opcodes: Arc::clone(&self.metered_opcodes),
+        })?;
+
+        let bundle_gas_price = if output.total_gas_used > 0 {
+            output.total_gas_fees / U256::from(output.total_gas_used)
+        } else {
+            U256::from(0)
+        };
+        let total_execution_time_us = output
+            .results
+            .iter()
+            .fold(0u128, |acc, result| acc.saturating_add(result.execution_time_us));
+
+        debug!(
+            bundle_hash = %output.bundle_hash,
+            num_transactions = output.results.len(),
+            total_gas_used = output.total_gas_used,
+            total_time_us = output.total_time_us,
+            state_block_number = header.number,
+            flashblock_index = flashblock_index,
+            "Bundle metering completed successfully"
+        );
+
+        Ok(MeterBundleResponse {
+            bundle_gas_price,
+            bundle_hash: output.bundle_hash,
+            coinbase_diff: output.total_gas_fees,
+            eth_sent_to_coinbase: U256::from(0),
+            gas_fees: output.total_gas_fees,
+            results: output.results,
+            state_block_number: header.number,
+            state_flashblock_index: pending_blocks.as_ref().map(|pb| pb.latest_flashblock_index()),
+            total_gas_used: output.total_gas_used,
+            total_execution_time_us,
+        })
+    }
+
+    /// Meters a single recovered transaction against latest state.
+    pub fn meter_transaction(
+        &self,
+        tx: Recovered<BaseTxEnvelope>,
+    ) -> EyreResult<MeterBundleResponse> {
+        self.meter_parsed_bundle(ParsedBundle::from_recovered(tx))
+    }
+
     /// Get L1 block info from the first transaction of a block.
     ///
     /// Uses the block number/tag to look up the block, which works for both canonical blocks
     /// and when metering against pending flashblocks (where we use the canonical parent block
     /// to get L1 info, since flashblock headers have zero hashes and can't be looked up by hash).
-    fn get_l1_block_info(&self, block_id: BlockNumberOrTag) -> RpcResult<L1BlockInfo> {
+    fn get_l1_block_info(&self, block_id: BlockNumberOrTag) -> EyreResult<L1BlockInfo> {
         let first_tx = self
             .provider
             .block_by_number_or_tag(block_id)
             .map_err(|e| {
                 error!(error = %e, block = ?block_id, "Failed to get block");
-                jsonrpsee::types::ErrorObjectOwned::owned(
-                    jsonrpsee::types::ErrorCode::InternalError.code(),
-                    format!("Failed to get block: {e}"),
-                    None::<()>,
-                )
+                eyre!("Failed to get block: {e}")
             })?
-            .ok_or_else(|| {
-                jsonrpsee::types::ErrorObjectOwned::owned(
-                    jsonrpsee::types::ErrorCode::InvalidParams.code(),
-                    format!("Block not found: {block_id:?}"),
-                    None::<()>,
-                )
-            })?
+            .ok_or_else(|| eyre!("Block not found: {block_id:?}"))?
             .body
             .transactions
             .first()
-            .ok_or_else(|| {
-                jsonrpsee::types::ErrorObjectOwned::owned(
-                    jsonrpsee::types::ErrorCode::InvalidParams.code(),
-                    format!("Block has no transactions: {block_id:?}"),
-                    None::<()>,
-                )
-            })?
+            .ok_or_else(|| eyre!("Block has no transactions: {block_id:?}"))?
             .clone();
 
-        extract_l1_info_from_tx(&first_tx).map_err(|e| {
-            jsonrpsee::types::ErrorObjectOwned::owned(
-                jsonrpsee::types::ErrorCode::InvalidParams.code(),
-                format!("Failed to extract L1 block info from transaction: {e}"),
-                None::<()>,
-            )
-        })
+        extract_l1_info_from_tx(&first_tx)
+            .map_err(|e| eyre!("Failed to extract L1 block info from transaction: {e}"))
     }
 
     /// Internal helper to meter a block's execution
@@ -480,7 +450,7 @@ where
 mod tests {
     use std::sync::Arc;
 
-    use alloy_consensus::Header;
+    use alloy_consensus::{Header, transaction::SignerRecoverable};
     use alloy_eips::Encodable2718;
     use alloy_primitives::{B256, Bloom, Bytes, address};
     use alloy_rpc_client::RpcClient;
@@ -489,14 +459,14 @@ mod tests {
     use base_common_flashblocks::{
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
     };
-    use base_flashblocks::{FlashblocksConfig, PendingBlocksBuilder};
+    use base_flashblocks::{FlashblocksConfig, FlashblocksState, PendingBlocksBuilder};
     use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness};
     use base_test_utils::Account;
     use reth_transaction_pool::test_utils::TransactionBuilder;
     use url::Url;
 
     use super::*;
-    use crate::{MeteringConfig, MeteringExtension, MeteringResourceLimits};
+    use crate::{MeteredOpcodes, MeteringConfig, MeteringExtension, MeteringResourceLimits};
 
     fn create_bundle(txs: Vec<Bytes>, block_number: u64, min_timestamp: Option<u64>) -> Bundle {
         Bundle {
@@ -608,6 +578,43 @@ mod tests {
         assert_eq!(result.gas_used, 21_000);
         assert_eq!(result.gas_price, 1_000_000_000);
         assert!(result.execution_time_us > 0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn in_process_meter_transaction_uses_mempool_state() -> eyre::Result<()> {
+        let harness = TestHarness::builder().build().await?;
+        harness
+            .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
+            .await?;
+
+        let api = MeteringApiImpl::new(
+            harness.blockchain_provider(),
+            Arc::new(FlashblocksState::default()),
+            Arc::new(MeteredOpcodes::default()),
+        );
+
+        let tx = TransactionBuilder::default()
+            .signer(Account::Alice.signer_b256())
+            .chain_id(harness.chain_id())
+            .nonce(0)
+            .to(address!("0x1111111111111111111111111111111111111111"))
+            .value(1000)
+            .gas_limit(21_000)
+            .max_fee_per_gas(1_000_000_000)
+            .max_priority_fee_per_gas(1_000_000_000)
+            .into_eip1559();
+        let signed_tx =
+            BaseTransactionSigned::Eip1559(tx.as_eip1559().expect("eip1559 transaction").clone());
+        let envelope: BaseTxEnvelope = signed_tx;
+        let recovered = envelope.try_into_recovered()?;
+
+        let response = api.meter_transaction(recovered)?;
+        assert_eq!(response.results.len(), 1, "in-process meter must return one result");
+        assert_eq!(response.total_gas_used, 21_000, "simple transfer uses 21000 gas");
+        assert!(response.total_execution_time_us > 0, "sim must record execution time");
+        assert_eq!(response.results[0].from_address, Account::Alice.address());
 
         Ok(())
     }
