@@ -95,12 +95,8 @@ impl ShadowBlockFixture {
         self
     }
 
-    fn into_row(
-        self,
-        hash_seed: u8,
-        reorged_out: bool,
-        canonical_hash_seed: Option<u8>,
-    ) -> ShadowBlockRow {
+    /// `canonical_hash_seed` selects the reader branch: `None` reverts, `Some` reconciles.
+    fn into_row(self, hash_seed: u8, canonical_hash_seed: Option<u8>) -> ShadowBlockRow {
         let number = self.number;
         let payload = self.into_payload();
         let now = Utc::now();
@@ -108,7 +104,6 @@ impl ShadowBlockFixture {
         ShadowBlockRow {
             number,
             hash: vec![hash_seed; 32],
-            reorged_out,
             canonical_hash: canonical_hash_seed.map(|seed| vec![seed; 32]),
             created_at: now,
             updated_at: now,
@@ -159,14 +154,15 @@ async fn emits_only_reconciled_shadow_row_once() -> Result<()> {
     let database = TestDatabase::start().await?;
     let mut reader = database.reader(DEFAULT_TEST_MAX_ROWS).await?;
     let repo = ShadowBlockRepo::new(database.pool.clone());
+    // Distinct numbers: `PRIMARY KEY(number)` would collapse a same-height pair into one row.
     let rows = [
-        ShadowBlockFixture::new(7).builder_version("shadow").into_row(0x11, true, Some(0x91)),
-        ShadowBlockFixture::new(7).builder_version("canonical").into_row(0x12, false, None),
+        ShadowBlockFixture::new(7).builder_version("shadow").into_row(0x11, Some(0x91)),
+        ShadowBlockFixture::new(8).builder_version("reverted").into_row(0x12, None),
     ];
     repo.insert_batch(&rows).await?;
 
     let emitted = reader.poll_once().await?;
-    assert_eq!(emitted.len(), 1);
+    assert_eq!(emitted.len(), 1, "the reverted row must advance the cursor without emitting");
     assert_eq!(emitted[0].number, 7);
     assert_eq!(emitted[0].builder_version, "shadow");
     assert!(reader.poll_once().await?.is_empty(), "row must not be emitted twice");
@@ -179,12 +175,12 @@ async fn emits_unreconciled_row_after_reconciliation() -> Result<()> {
     let database = TestDatabase::start().await?;
     let mut reader = database.reader(DEFAULT_TEST_MAX_ROWS).await?;
     let repo = ShadowBlockRepo::new(database.pool.clone());
-    repo.insert_batch(&[ShadowBlockFixture::new(11).into_row(0x21, false, None)]).await?;
+    repo.insert_batch(&[ShadowBlockFixture::new(11).into_row(0x21, None)]).await?;
 
     assert!(reader.poll_once().await?.is_empty());
 
     sleep(Duration::from_millis(2)).await;
-    repo.insert_batch(&[ShadowBlockFixture::new(11).into_row(0x21, true, Some(0xa1))]).await?;
+    repo.insert_batch(&[ShadowBlockFixture::new(11).into_row(0x21, Some(0xa1))]).await?;
 
     let emitted = reader.poll_once().await?;
     assert_eq!(emitted.len(), 1);
@@ -199,7 +195,7 @@ async fn skips_unwind_and_advances_cursor() -> Result<()> {
     let database = TestDatabase::start().await?;
     let mut reader = database.reader(DEFAULT_TEST_MAX_ROWS).await?;
     ShadowBlockRepo::new(database.pool.clone())
-        .insert_batch(&[ShadowBlockFixture::new(21).into_row(0x31, true, None)])
+        .insert_batch(&[ShadowBlockFixture::new(21).into_row(0x31, None)])
         .await?;
 
     assert!(reader.poll_once().await?.is_empty());
@@ -208,7 +204,6 @@ async fn skips_unwind_and_advances_cursor() -> Result<()> {
         .await?
         .expect("reader initialization persists a cursor");
     assert_eq!(cursor.number, 21);
-    assert_eq!(cursor.hash, vec![0x31; 32]);
 
     Ok(())
 }
@@ -222,12 +217,12 @@ async fn poison_payload_fails_the_whole_poll() -> Result<()> {
     let cursor_repo = ShadowMetricsCursorRepo::new(database.pool.clone());
     let initial_cursor =
         cursor_repo.load().await?.expect("reader initialization persists a cursor");
-    repo.insert_batch(&[ShadowBlockFixture::new(31).into_row(0x41, true, Some(0xb1))]).await?;
+    repo.insert_batch(&[ShadowBlockFixture::new(31).into_row(0x41, Some(0xb1))]).await?;
     sleep(Duration::from_millis(2)).await;
     sqlx::query(
         "INSERT INTO shadow_blocks \
-         (number, hash, reorged_out, canonical_hash, payload) \
-         VALUES ($1, $2, true, $3, $4)",
+         (number, hash, canonical_hash, payload) \
+         VALUES ($1, $2, $3, $4)",
     )
     .bind(32_i64)
     .bind(vec![0x42_u8; 32])
@@ -236,7 +231,7 @@ async fn poison_payload_fails_the_whole_poll() -> Result<()> {
     .execute(&database.pool)
     .await?;
     sleep(Duration::from_millis(2)).await;
-    repo.insert_batch(&[ShadowBlockFixture::new(33).into_row(0x43, true, Some(0xb3))]).await?;
+    repo.insert_batch(&[ShadowBlockFixture::new(33).into_row(0x43, Some(0xb3))]).await?;
 
     let error = reader.poll_once().await.expect_err("poison payload must fail the whole poll");
     let error_chain = format!("{error:#}");
@@ -263,7 +258,7 @@ async fn counts_deposits_but_excludes_them_from_fee_ordering() -> Result<()> {
             .base_fee_per_gas(0)
             .deposits(2)
             .tips(&[30, 20, 40])
-            .into_row(0x51, true, Some(0xc1))])
+            .into_row(0x51, Some(0xc1))])
         .await?;
 
     let emitted = reader.poll_once().await?;
@@ -282,13 +277,11 @@ async fn counts_sawtooth_boundaries_and_accepts_non_increasing_fees() -> Result<
     let mut reader = database.reader(DEFAULT_TEST_MAX_ROWS).await?;
     ShadowBlockRepo::new(database.pool.clone())
         .insert_batch(&[
-            ShadowBlockFixture::new(51).tips(&[100, 90, 80, 120, 110, 100, 130, 120]).into_row(
-                0x61,
-                true,
-                Some(0xd1),
-            ),
-            ShadowBlockFixture::new(52).tips(&[120, 110, 100, 90]).into_row(0x62, true, Some(0xd2)),
-            ShadowBlockFixture::new(53).tips(&[50, 50, 40]).into_row(0x63, true, Some(0xd3)),
+            ShadowBlockFixture::new(51)
+                .tips(&[100, 90, 80, 120, 110, 100, 130, 120])
+                .into_row(0x61, Some(0xd1)),
+            ShadowBlockFixture::new(52).tips(&[120, 110, 100, 90]).into_row(0x62, Some(0xd2)),
+            ShadowBlockFixture::new(53).tips(&[50, 50, 40]).into_row(0x63, Some(0xd3)),
         ])
         .await?;
 
@@ -310,8 +303,8 @@ async fn persisted_cursor_never_moves_backwards() -> Result<()> {
     let database = TestDatabase::start().await?;
     let repo = ShadowMetricsCursorRepo::new(database.pool.clone());
     let updated_at = Utc::now();
-    let older = ShadowBlockCursor { updated_at, number: 1, hash: vec![0x71; 32] };
-    let newer = ShadowBlockCursor { updated_at, number: 2, hash: vec![0x72; 32] };
+    let older = ShadowBlockCursor { updated_at, number: 1 };
+    let newer = ShadowBlockCursor { updated_at, number: 2 };
 
     repo.store(&older).await?;
     repo.store(&newer).await?;
@@ -330,11 +323,7 @@ async fn respects_poll_cap_and_advances_by_cap() -> Result<()> {
     let mut reader = database.reader(MAX_ROWS).await?;
     let rows = (1_u8..=7)
         .map(|offset| {
-            ShadowBlockFixture::new(60 + i64::from(offset)).into_row(
-                offset,
-                true,
-                Some(0xe0 + offset),
-            )
+            ShadowBlockFixture::new(60 + i64::from(offset)).into_row(offset, Some(0xe0 + offset))
         })
         .collect::<Vec<_>>();
     ShadowBlockRepo::new(database.pool.clone()).insert_batch(&rows).await?;
@@ -370,17 +359,23 @@ async fn drains_timestamp_tie_group_without_loss_or_duplicates() -> Result<()> {
         .map(|(index, number)| {
             ShadowBlockFixture::new(number).into_row(
                 u8::try_from(index + 1).expect("fixture hash seed fits in u8"),
-                true,
                 Some(0xf1),
             )
         })
         .collect::<Vec<_>>();
     ShadowBlockRepo::new(database.pool.clone()).insert_batch(&rows).await?;
 
-    let distinct_timestamps: i64 =
-        sqlx::query_scalar("SELECT COUNT(DISTINCT updated_at) FROM shadow_blocks")
+    let (seeded_rows, distinct_timestamps): (i64, i64) =
+        sqlx::query_as("SELECT COUNT(*), COUNT(DISTINCT updated_at) FROM shadow_blocks")
             .fetch_one(&database.pool)
             .await?;
+    // Under `PRIMARY KEY(number)` a repeated number would silently upsert away, leaving the
+    // emission assertions below to check a smaller tie group than this test intends to cover.
+    assert_eq!(
+        seeded_rows,
+        i64::try_from(ROW_COUNT).expect("row count fits in i64"),
+        "every seeded number must be distinct"
+    );
     assert_eq!(distinct_timestamps, 1, "fixture must form one timestamp tie group");
 
     let mut emitted_numbers = Vec::new();
@@ -411,8 +406,8 @@ async fn resumes_from_persisted_cursor_after_restart() -> Result<()> {
     let mut reader = database.reader(MAX_ROWS).await?;
     ShadowBlockRepo::new(database.pool.clone())
         .insert_batch(&[
-            ShadowBlockFixture::new(201).into_row(0x71, true, Some(0x81)),
-            ShadowBlockFixture::new(202).into_row(0x72, true, Some(0x82)),
+            ShadowBlockFixture::new(201).into_row(0x71, Some(0x81)),
+            ShadowBlockFixture::new(202).into_row(0x72, Some(0x82)),
         ])
         .await?;
 

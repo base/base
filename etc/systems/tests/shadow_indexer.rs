@@ -1,4 +1,9 @@
-//! End-to-end test ensuring shadow-indexer persists committed blocks to Postgres.
+//! End-to-end test ensuring shadow-indexer boots, migrates, and persists nothing for committed
+//! blocks.
+//!
+//! `shadow_blocks` holds reorged-out and reverted blocks only, so a devnet run that never reorgs
+//! must leave the table empty. The table's existence is the liveness control proving the `ExEx`
+//! writer actually started rather than the assertion passing vacuously.
 
 use std::time::Duration;
 
@@ -7,6 +12,7 @@ use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension};
 use base_shadow_indexer_db::{ShadowBlockRepo, ShadowDbConfig};
 use base_system_tests::{SystemTestProviderExt, SystemTestStackBuilder};
 use eyre::{Result, WrapErr, ensure};
+use sqlx::postgres::PgPoolOptions;
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres;
 use tokio::time::{Instant, sleep};
@@ -18,7 +24,7 @@ const DB_POLL_TIMEOUT: Duration = Duration::from_secs(20);
 const DB_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 #[tokio::test]
-async fn shadow_indexer_persists_committed_blocks() -> Result<()> {
+async fn shadow_indexer_persists_no_canonical_blocks() -> Result<()> {
     let container = Postgres::default().start().await?;
     let port = container.get_host_port_ipv4(5432).await?;
     let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
@@ -47,50 +53,58 @@ async fn shadow_indexer_persists_committed_blocks() -> Result<()> {
         .await
         .wrap_err("builder did not reach target block height")?;
 
-    let pool = db_config.init_pool().await.map_err(|err| eyre::eyre!(err.to_string()))?;
+    // Connect without `ShadowDbConfig::init_pool`: it would apply the migrations itself and make
+    // the liveness assertions below pass even if the extension never started.
+    let pool = PgPoolOptions::new()
+        .max_connections(5)
+        .acquire_timeout(Duration::from_secs(5))
+        .connect(&url)
+        .await?;
+
+    let shadow_blocks: Option<String> =
+        sqlx::query_scalar("SELECT to_regclass('public.shadow_blocks')::text")
+            .fetch_one(&pool)
+            .await?;
+    ensure!(
+        shadow_blocks.as_deref() == Some("shadow_blocks"),
+        "shadow_blocks is missing, so the shadow indexer writer never ran its migrations: \
+         to_regclass={shadow_blocks:?}, target_height={target}"
+    );
+
+    let legacy_table: Option<String> =
+        sqlx::query_scalar("SELECT to_regclass('public.shadow_blocks_legacy')::text")
+            .fetch_one(&pool)
+            .await?;
+    ensure!(
+        legacy_table.as_deref() == Some("shadow_blocks_legacy"),
+        "shadow_blocks_legacy is missing, so migration 0004 was not applied: \
+         to_regclass={legacy_table:?}, target_height={target}"
+    );
+
     let repo = ShadowBlockRepo::new(pool);
 
+    // Assert emptiness on every poll rather than once at the end: the writer flushes on a 1s tick,
+    // so only sustained absence across the whole window rules out a late canonical flush.
     let deadline = Instant::now() + DB_POLL_TIMEOUT;
-    let mut rows = repo
-        .list_by_number_range(0, target as i64)
-        .await
-        .map_err(|err| eyre::eyre!(err.to_string()))?;
-    while rows.len() < 3 && Instant::now() < deadline {
-        sleep(DB_POLL_INTERVAL).await;
-        rows = repo
+    let mut polls = 0usize;
+    loop {
+        let rows = repo
             .list_by_number_range(0, target as i64)
             .await
             .map_err(|err| eyre::eyre!(err.to_string()))?;
-    }
+        polls += 1;
+        ensure!(
+            rows.is_empty(),
+            "shadow_blocks must stay empty for committed blocks: rows={}, numbers={:?}, \
+             poll={polls}, target_height={target}",
+            rows.len(),
+            rows.iter().map(|row| row.number).collect::<Vec<_>>()
+        );
 
-    let row_count = rows.len();
-    let max_number = rows.iter().map(|row| row.number).max().unwrap_or(0);
-    ensure!(
-        row_count >= 3,
-        "expected at least 3 shadow rows before timeout: rows={row_count}, target_height={target}"
-    );
-    ensure!(
-        max_number >= 3,
-        "expected shadow rows to reach height >= 3: max_number={max_number}, rows={row_count}, target_height={target}"
-    );
-
-    for row in &rows {
-        ensure!(
-            row.payload.builder_version == "e2e-test",
-            "unexpected builder version: number={}, builder_version={}, target_height={target}",
-            row.number,
-            row.payload.builder_version
-        );
-        ensure!(
-            !row.hash.is_empty(),
-            "missing hash for shadow row: number={}, target_height={target}",
-            row.number
-        );
-        ensure!(
-            row.payload.block.hash().as_slice() == row.hash.as_slice(),
-            "payload block hash does not match row hash: number={}, target_height={target}",
-            row.number
-        );
+        if Instant::now() >= deadline {
+            break;
+        }
+        sleep(DB_POLL_INTERVAL).await;
     }
 
     Ok(())
