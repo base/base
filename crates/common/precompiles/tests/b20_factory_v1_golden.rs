@@ -679,9 +679,6 @@ fn golden_create_reverts_when_not_activated() {
 // ============================================================================
 
 /// Drives one factory call through `dispatch` at `upgrade`, returning `(is_revert, bytes)`.
-///
-/// `call_factory` is pinned to Beryl; this variant exercises the Cobalt path so bootstrap init
-/// calls resolve the *active* token version rather than the frozen V1.
 fn call_factory_at(
     storage: &mut HashMapStorageProvider,
     caller: Address,
@@ -710,10 +707,7 @@ fn create_policy(s: &mut HashMapStorageProvider, policy_type: IPolicyRegistry::P
     IPolicyRegistry::createPolicyCall::abi_decode_returns(&out.bytes).unwrap()
 }
 
-/// Seeds a UNION composite over two simple ALLOWLIST children on the live registry, returning its
-/// id. Composites are a Cobalt-only (V2) policy feature; the bootstrap init call points
-/// `SEIZE_HOLDER_POLICY` at this id, and `updatePolicy` checks `policy_exists` against the registry,
-/// so the composite must genuinely exist.
+/// Seeds a UNION composite over two simple ALLOWLIST children on the live registry, returning its id.
 fn seed_union_composite(s: &mut HashMapStorageProvider) -> u64 {
     s.set_caller(ACTIVATION_ADMIN);
     StorageCtx::enter(s, |ctx| {
@@ -746,10 +740,6 @@ fn seed_union_composite(s: &mut HashMapStorageProvider) -> u64 {
 
 #[test]
 fn golden_cobalt_bootstrap_routes_asset_seize_holder_policy_init_call() {
-    // BOP-550: an adminless Asset created at Cobalt whose init call points SEIZE_HOLDER_POLICY (a
-    // V2-only scope) at a UNION composite must succeed. The factory must route the init call through
-    // the Cobalt-active AssetVersion::V2; the frozen V1 rejects the seize scope with
-    // UnsupportedPolicyType, which would roll the whole creation back.
     let mut s = fresh();
     let composite = seed_union_composite(&mut s);
     let token = asset_addr(CREATOR, SALT);
@@ -765,7 +755,7 @@ fn golden_cobalt_bootstrap_routes_asset_seize_holder_policy_init_call() {
         create_call(
             IB20Factory::B20Variant::ASSET,
             SALT,
-            asset_params(Address::ZERO, ASSET_DECIMALS), // adminless: relies on bootstrap privilege
+            asset_params(Address::ZERO, ASSET_DECIMALS),
             vec![Bytes::from(update)],
         ),
         BaseUpgrade::Cobalt,
@@ -780,9 +770,6 @@ fn golden_cobalt_bootstrap_routes_asset_seize_holder_policy_init_call() {
 
 #[test]
 fn golden_cobalt_bootstrap_routes_stablecoin_seize_holder_policy_init_call() {
-    // BOP-550 (stablecoin path): the same Cobalt bootstrap must succeed for a Stablecoin, routed
-    // through StablecoinVersion::V2. Exercises `init_stablecoin`'s version resolution independently
-    // of the asset path, since the fix touches both.
     let mut s = fresh();
     let composite = seed_union_composite(&mut s);
     let token = stablecoin_addr(CREATOR, SALT);
@@ -798,7 +785,7 @@ fn golden_cobalt_bootstrap_routes_stablecoin_seize_holder_policy_init_call() {
         create_call(
             IB20Factory::B20Variant::STABLECOIN,
             SALT,
-            stablecoin_params(Address::ZERO, CURRENCY), // adminless: relies on bootstrap privilege
+            stablecoin_params(Address::ZERO, CURRENCY),
             vec![Bytes::from(update)],
         ),
         BaseUpgrade::Cobalt,
@@ -813,9 +800,6 @@ fn golden_cobalt_bootstrap_routes_stablecoin_seize_holder_policy_init_call() {
 
 #[test]
 fn golden_beryl_bootstrap_rejects_asset_seize_holder_policy_init_call() {
-    // The fix is upgrade-gated, not a blanket widening of V1: the same init call at Beryl must still
-    // revert UnsupportedPolicyType, because the seize scope is not part of the frozen V1 surface.
-    // The seize-scope check precedes the policy-existence check, so no policy need exist here.
     let mut s = fresh();
     let update =
         IB20::updatePolicyCall { policyScope: B20PolicyType::SeizeHolder.id(), newPolicyId: 2 }
@@ -844,8 +828,6 @@ fn golden_beryl_bootstrap_rejects_asset_seize_holder_policy_init_call() {
 
 #[test]
 fn golden_beryl_bootstrap_rejects_stablecoin_seize_holder_policy_init_call() {
-    // Stablecoin counterpart: Beryl bootstrap must still reject the V2-only seize scope, pinning
-    // that the stablecoin fix is upgrade-gated too.
     let mut s = fresh();
     let update =
         IB20::updatePolicyCall { policyScope: B20PolicyType::SeizeHolder.id(), newPolicyId: 2 }
