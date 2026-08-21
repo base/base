@@ -564,6 +564,7 @@ mod tests {
         let gate = ShadowReconciliationGate::new(head(10, B256::ZERO));
 
         assert!(!gate.should_defer_finalized(9, 9));
+        assert!(!gate.should_defer_finalized(10, 10));
         assert!(gate.should_defer_finalized(10, 9));
         assert!(gate.should_defer_finalized(11, 11));
     }
