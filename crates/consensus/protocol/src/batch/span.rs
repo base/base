@@ -165,6 +165,7 @@ impl SpanBatch {
 
     /// Returns the absolute L2 block number for the element at `index`, when resolved.
     pub fn block_number(&self, index: usize) -> Option<u64> {
+        self.batches.get(index)?;
         self.start_block_number.map(|number| number + index as u64)
     }
 
@@ -812,6 +813,7 @@ mod tests {
 
         assert_eq!(batch.start_block_number, Some(1));
         assert_eq!(batch.block_number(3), Some(4));
+        assert_eq!(batch.block_number(8), None);
         assert_eq!(batch.final_block_number(), Some(8));
         assert_eq!(
             batch.batches.iter().map(|batch| batch.timestamp).collect::<Vec<_>>(),
