@@ -31,7 +31,7 @@ use base_common_precompiles::{
     B20AssetStorage, B20AssetToken, B20PolicyType, B20TokenRole, FakePolicyAccounting, IB20,
     IB20Asset, NoopPrecompileCallObserver, PolicyVersion, TokenAccounting,
 };
-use base_precompile_storage::{BasePrecompileError, HashMapStorageProvider, StorageCtx};
+use base_precompile_storage::{BasePrecompileError, Handler, HashMapStorageProvider, StorageCtx};
 
 mod common;
 use common::{
@@ -48,84 +48,85 @@ const LOGIC: AssetV1 = AssetV1;
 
 // --- pinned storage hashes (bless with BLESS_GOLDEN=1; see module docs) --------
 
-const ROOT_FRESH: B256 = b256!("de2b3de71e2d90dd57658394598aad6d034e71866e561ba6019ea023f427260a");
+const ROOT_FRESH: B256 = b256!("e29cabf2f5d0e0eedebf4697b61ad93a4a24fa2d911d4004d641bb0b123fa091");
 const ROOT_TRANSFER_PRIV: B256 =
-    b256!("867ada5b7d66b25e23f7195e7457e55a4f523f6463759b9b05c71f702a98d22b");
+    b256!("8a8c95a5a46fd1968f924479897846bdd2a1cc88c8365741c782c47b0d3ffa81");
 const ROOT_TRANSFER_UNPRIV: B256 =
-    b256!("c15c5cdd9aefed169bc0d6953d45e075134c43f7e35bbd9ad2c4d941b5ef7a1e");
+    b256!("63c542ccf49f3be8d67a0e5fc4d1d0f6126e81157d1b1b53b969154ddf9a4f8b");
 const ROOT_TRANSFER_WITH_MEMO: B256 =
-    b256!("5e2eab9a12124b87bb6978238e375e0374aba305821c7b97c2926664944effa8");
+    b256!("1373d29ddaf8cf795c185c179ccd72a3be6a518eaf6e909bc660f0d9c430faa2");
 const ROOT_TRANSFER_FROM_FINITE: B256 =
-    b256!("82cc44f94691083c0970a0bc614e394c20417629e840899a6ab718b0cce8a4ac");
+    b256!("826132aed4b216cb6157dfbe2eee15c5529b40c640532dc1edd39023d7bfe43e");
 const ROOT_TRANSFER_FROM_INFINITE: B256 =
-    b256!("7dc5250931184f3730965dc873b7cce9cb855aaec380791db3df801bbeb3afaf");
+    b256!("c7c98558f1eefd845c4c8ae6994cfe27921f7e1f75b32a06b1042aea23eedbed");
 const ROOT_TRANSFER_FROM_WITH_MEMO: B256 =
-    b256!("b688a53c7d4b31cc758628a404d4b133f19d2f8726aba04cecb22b788b53ab35");
+    b256!("d8a423aeeb838ccf840c3304426a44affa08f7e4c73dab6b6d0355ea9a93cb55");
 const ROOT_APPROVE: B256 =
-    b256!("55e45e640ea3936ef2e0be30c99aea533c873386a2f5ab2b74b43dcac3d1c7bc");
+    b256!("eb54df6e31bdfe6ff3b9c898e776c7a9aa6249604c421c247014bfe38c5320d5");
 const ROOT_MINT_PRIV: B256 =
-    b256!("fbcefa77e7d1eb4ba9369ec91e403e42c415c3a42a8cca14b042098661383afa");
+    b256!("9028416ca6edfb4e75add6f4f9a93b5bf19fe6a04d5b57c5a49ded3009cf3f39");
 const ROOT_MINT_UNPRIV: B256 =
-    b256!("5df5e927483a97d14c0e0bd65653acc70505d341dcc1b2b108b086161e53c183");
+    b256!("3374c9af2e12ba5ec092f1c4f1f52142110af23ac420f0eb5153bc18b2788666");
 const ROOT_MINT_WITH_MEMO: B256 =
-    b256!("79ab20102cd5d0904ad6d9cb47162e3fe7aa6d5256908dc0b08906699d068468");
-const ROOT_BURN: B256 = b256!("284b6654388a63ba2883c24d8c4255ac8f4916d2aa2c278d3dfe9944c6b033a4");
+    b256!("7d1fce256019cc70fd7f68fb4f6070aca3fb313f4a31ed99aa42acacc65affe8");
+const ROOT_BURN: B256 = b256!("ade155c4138f7b71f96ace7ac3a5804c10e94c421d79331c790867ba79bf66c1");
 const ROOT_BURN_WITH_MEMO: B256 =
-    b256!("79283f419fbf8a643accd34969d09b6739c955be2be70074026e792d845d3a5a");
+    b256!("f2dc0e262f62cde4e299e8d2bba339f9cd2d28cc25607a327553d324db6e7596");
 const ROOT_BURN_BLOCKED: B256 =
-    b256!("b92c29f185e5834ccaac6e69810890d6b699f11fc85befe336b77fdf9705868f");
-const ROOT_PAUSE: B256 = b256!("049d63d7409725d09f1bca25a06c6adaca95872064daed65ffd470387ec08eed");
+    b256!("5249765fc1a60e0cca911b0dfca10bcc7c4afd23e15b1b7dbc3d4e91bb9e4603");
+const ROOT_PAUSE: B256 = b256!("1c2af409faaa966d7e866226209ad6e34784c8f6b34771a5857f3592cdd269fa");
 const ROOT_UNPAUSE: B256 =
-    b256!("1d21ba46e60dbc0842c9c88a0c979ec5782d5f47202dbe26cfae8fb9fd928604");
+    b256!("6487edf62f45d0209b1d93e668a6d7b7879133062927908c2fd2addd0d7c649f");
 const ROOT_UPDATE_SUPPLY_CAP: B256 =
-    b256!("a809d3acae7715263499970a826f2b8213be31e5a3517ef56529ff1fa414136e");
+    b256!("b7da26ed4139cc7f730792550ee8ce46e0c1d9d7fe480e580d6772ea5000d09b");
 const ROOT_UPDATE_NAME: B256 =
-    b256!("43d9c635d8026bfb0eee62958bb2f05d5abc6a25418f2c88da1f1a9eb7b0063b");
+    b256!("1d4993119f19447ea2738eafadf0dd6fd4d9843ebff11af78f6140c60522f3cd");
 const ROOT_UPDATE_SYMBOL: B256 =
-    b256!("a616996185a42251dcc639b8c90409546f7842f26002925a00972d0cb5a5347e");
+    b256!("5948dd0afd2cfe783d54fa684a0e79f74afb28ebf3a699868f0e43a607039b9d");
 const ROOT_UPDATE_CONTRACT_URI: B256 =
-    b256!("22bf8ca8c0bb8f4959d8e997dd6ad431ae6b4ead260de245c3b192c31e664e0e");
+    b256!("b9110c98a36b52516f37b6e7b2f1ca7bf45a7a69d882bd73fbd12307d0c24aa7");
 const ROOT_GRANT_ROLE: B256 =
-    b256!("88a7880af526c558fcf20ae35c08a190c8f85546fae8bd5551a0a35490c96a2c");
+    b256!("db7327c728187786e000a33766fc33d14f6e990b40b467388e46bf92fe1270f4");
 const ROOT_REVOKE_ROLE: B256 =
-    b256!("46eee799676e49c4960a4bc08cad640d0b4902711a542fa51b05637902e3e5c0");
+    b256!("bae23d9d6012567505cb15687219c903a7f6264221ae1ce651b157f796116791");
 const ROOT_RENOUNCE_ROLE: B256 =
-    b256!("a84c7df0a815abd5a4f7e917eae0c4336d448b528537f7b38d2c34dfc2abf6e0");
+    b256!("d51de5372be373c54b010cf92edd87a100b94142641b251e1cc0d3a38d35a50a");
 const ROOT_RENOUNCE_LAST_ADMIN: B256 =
-    b256!("378f31165a3d136ad05016b9b3399e12e2107308d24ad00e9fb30581e1302583");
+    b256!("4e3aaeac81242cb1de6434972071d768a40283dc2b428b915125db89b5a35d5d");
 const ROOT_SET_ROLE_ADMIN: B256 =
-    b256!("089db7709749c947b4f92e63421953eafa97e1243a87316b4c21c4a420666841");
+    b256!("8b9c7bb4b91bea8469409833f010f0e7d599bec804863b28f8d7c643d2e8f9ee");
 const ROOT_UPDATE_POLICY: B256 =
-    b256!("52f42a4bca134e5bfdcd41ef222ff39867f02fcfee9e8dde84a3eb6a865a0b64");
-const ROOT_PERMIT: B256 = b256!("df45f185b938015154fc9529002ee4f3325e2983c2acbb9b0ac5fc3c606cb3ac");
+    b256!("17c384f3c7009cde9c64520ca48e735f0e74ff44a1c20f5f835252ed5316d633");
+const ROOT_PERMIT: B256 = b256!("073a87de0e60125aeb9df668b6d9462d33559bd8696360dc0fc87ad062545803");
 const ROOT_GRANT_DEFAULT_ADMIN: B256 =
-    b256!("7d6eb7b233dd2f680394081d74cae0c91517f98d870d0cf0ed47f6b9aa80387f");
+    b256!("e47421a3157f752161dd7daaa3a042639cb27e92a7d6045a0a541f014feb03ec");
 const ROOT_GRANT_IDEMPOTENT: B256 =
-    b256!("93b045c96b7252ebea310afd00cf812aaa07deb9283d278d6620196a1e63c618");
+    b256!("05e26defbbd563cd07319fe3155331476630d5ea43ff8da11ac2283c01253cb8");
 const ROOT_GRANT_UNCHECKED: B256 =
-    b256!("345d3510df56d0313f0d5db98fd065a2caa8923435c976be644837474dda91e9");
+    b256!("3a3145f737b772e3f4cee5cf2c36531117a1e7b9891775d09371c777ed3922a9");
 
 // asset-specific (blessed against v1.1.1)
 const ROOT_MULTIPLIER_SCALED: B256 =
     b256!("686201a1ea687d57677c2b0bbf82da29be8e43b7028935651294f77cbd4e32e2");
 const ROOT_ANNOUNCE_ID_USED: B256 =
-    b256!("78449cce19ec897e715b0c77abab3fb767d0fee4e5f10bf2e789a6a78ff0e9ca");
+    b256!("37d104dac2c6bafec2e0eb2ad0c48e463dfae4d239102367249be33c55446cdb");
 const ROOT_EXTRA_METADATA_READ: B256 =
-    b256!("128ad2b0a1217597b897324c1ea84b7afb1031176bc98726511d29cac5505a96");
+    b256!("a7235b360a5c2cf33b1706c9c37c25aff8cf029b6072335922e9bda7616c632f");
 const ROOT_UPDATE_MULTIPLIER: B256 =
     b256!("797f188e28956f02934ecb539834a0a7577f20d46ba2e62cc3287cac6959b468");
 const ROOT_BATCH_MINT: B256 =
-    b256!("76770109f6850da0abbb4c4f68c3d9e8518084054dc3ac0d8fdc9f34e7e7f3ad");
+    b256!("f3c6787115aee5f808fae895bc4a6f1eb895a476e273de0e4e2e35de70bc84e8");
 const ROOT_METADATA_SET: B256 =
-    b256!("4cab20f91770775eb2adbf1a09c956c65a04931727308c73bf38be693aec691e");
+    b256!("eb23e81c02299fc34cf9471b38d9f606e59fcf6dd6d0aff446b9f831e90eba8a");
 const ROOT_METADATA_REMOVE: B256 =
-    b256!("f6a5309a3a75bf0dd2f824c503d866da37f0b00da5e9a17b21cb7fb4f5cf8eb8");
+    b256!("28c8bef2b1b23198ab03bef1cae027031f9e993be2630f16218f0cf8a73422eb");
 const ROOT_ANNOUNCE: B256 =
     b256!("bc541cb4aecf8c93e8bc0b495eb7d1011c614fcb65704b848a961bb7207dcb83");
 
 // --- harness ----------------------------------------------------------------
 
-/// Fresh provider with an initialized `Base Asset` at [`TOKEN`] (multiplier = 1 WAD).
+/// Fresh provider with an initialized `Base Asset` at [`TOKEN`], matching the factory
+/// bootstrap: the multiplier slot is left physically zero and the getter normalizes it to WAD.
 fn fresh() -> HashMapStorageProvider {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageCtx::enter(&mut storage, |ctx| {
@@ -135,7 +136,7 @@ fn fresh() -> HashMapStorageProvider {
                 name: NAME.into(),
                 symbol: SYMBOL.into(),
                 supply_cap: B20_MAX_SUPPLY_CAP,
-                multiplier: B20AssetStorage::WAD,
+                multiplier: U256::ZERO, // factory INITIAL_MULTIPLIER: physical zero, getter returns WAD
                 decimals: DECIMALS,
             })
             .expect("initialize asset");
@@ -2019,6 +2020,17 @@ fn golden_read_extra_metadata() {
 // ============================================================================
 // updateMultiplier
 // ============================================================================
+
+// Guards `fresh()` against drifting back to a physical-WAD prestate: a factory-bootstrapped
+// token leaves the multiplier slot physically zero, and the getter normalizes it to WAD.
+#[test]
+fn golden_fresh_multiplier_slot_is_physical_zero() {
+    let mut s = fresh();
+    read(&mut s, |t| {
+        assert_eq!(t.asset.multiplier.read().unwrap(), U256::ZERO); // raw slot
+        assert_eq!(t.multiplier().unwrap(), B20AssetStorage::WAD); // normalized getter
+    });
+}
 
 #[test]
 fn golden_update_multiplier() {
