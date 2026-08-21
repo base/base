@@ -13,7 +13,7 @@ use axum::{
     routing::post,
 };
 use base_observability_events::{TransactionEvent, TransactionEventProducer, TransactionEventType};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use serde::{
     Deserialize, Serialize,
     de::{
@@ -48,6 +48,240 @@ pub const DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES: usize = 8 * 1024 * 1024;
 /// Each row uses 12 bind parameters, so this stays below Postgres' 65,535 bind
 /// parameter limit with room for future columns.
 pub const MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE: usize = 5_000;
+
+/// Default days to keep high-volume proxy and builder-decision events.
+pub const DEFAULT_TRANSACTION_EVENT_HOT_RETENTION_DAYS: u32 = 3;
+/// Default days to keep ingress, simulation-success, and txpool-forward events.
+pub const DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS: u32 = 7;
+/// Default days to keep failures, drops, inclusion, and flashblock events.
+pub const DEFAULT_TRANSACTION_EVENT_COLD_RETENTION_DAYS: u32 = 30;
+/// Default number of expired rows deleted in one statement.
+pub const DEFAULT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE: u32 = 10_000;
+/// Default maximum delete statements per retention pass.
+///
+/// Shared across hot, then warm, then cold. A large hot backlog can consume
+/// the whole budget and defer warmer expiry until a later pass.
+pub const DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES: u32 = 1_000;
+const TRANSACTION_EVENT_RETENTION_LOCK_ID: i64 = 744_697_762_131_337_711;
+
+/// Session advisory lock held on one pooled connection for a retention pass.
+///
+/// Unlock is always attempted. If unlock fails, or this guard is dropped
+/// without unlocking, the connection is detached from the pool so Postgres
+/// releases the session lock when the backend disconnects instead of leaking
+/// it onto a reused pool connection.
+struct RetentionAdvisoryLock {
+    conn: Option<sqlx::pool::PoolConnection<sqlx::Postgres>>,
+}
+
+impl RetentionAdvisoryLock {
+    async fn try_acquire(pool: &PgPool) -> Result<Option<Self>> {
+        let mut conn = pool.acquire().await?;
+        let locked = match sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
+            .bind(TRANSACTION_EVENT_RETENTION_LOCK_ID)
+            .fetch_one(&mut *conn)
+            .await
+        {
+            Ok(locked) => locked,
+            Err(err) => {
+                // The lock statement may have succeeded on the server even if
+                // the client failed to read the result. Detach so a held
+                // session lock cannot leak onto a reused pool connection.
+                let _detached = conn.detach();
+                return Err(err.into());
+            }
+        };
+        if locked { Ok(Some(Self { conn: Some(conn) })) } else { Ok(None) }
+    }
+
+    fn conn(&mut self) -> &mut sqlx::PgConnection {
+        self.conn.as_deref_mut().expect("retention lock connection taken")
+    }
+
+    async fn unlock(mut self) {
+        let Some(mut conn) = self.conn.take() else {
+            return;
+        };
+        if let Err(err) = sqlx::query("SELECT pg_advisory_unlock($1)")
+            .bind(TRANSACTION_EVENT_RETENTION_LOCK_ID)
+            .execute(&mut *conn)
+            .await
+        {
+            error!(error = %err, "failed to release transaction event retention lock");
+            let _detached = conn.detach();
+        }
+    }
+}
+
+impl Drop for RetentionAdvisoryLock {
+    fn drop(&mut self) {
+        if let Some(conn) = self.conn.take() {
+            let _detached = conn.detach();
+        }
+    }
+}
+
+/// Retention class used to pick a delete cutoff for an event type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransactionEventRetentionClass {
+    /// High-volume success-path and repeated builder-decision events.
+    Hot,
+    /// Ordinary arrival, simulation-success, and forwarding events.
+    Warm,
+    /// High-value inclusion, finalization, rejection, and drop events.
+    Cold,
+}
+
+impl TransactionEventRetentionClass {
+    /// Stable lowercase value used as a bounded metric label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Hot => "hot",
+            Self::Warm => "warm",
+            Self::Cold => "cold",
+        }
+    }
+
+    /// Classifies a transaction event at expiry.
+    ///
+    /// The match is exhaustive so new `TransactionEventType` variants fail to
+    /// compile until they are assigned a retention class deliberately.
+    pub const fn for_event_type(event_type: TransactionEventType) -> Self {
+        match event_type {
+            TransactionEventType::ProxyReceived
+            | TransactionEventType::ProxyValidationAccepted
+            | TransactionEventType::ProxyRoutedToBackend
+            | TransactionEventType::ProxyBackendSuccess
+            | TransactionEventType::ProxyIngressRpcAttempt
+            | TransactionEventType::ProxyIngressRpcSuccess
+            | TransactionEventType::BuilderConsidered
+            | TransactionEventType::BuilderAccepted
+            | TransactionEventType::BuilderRejected
+            | TransactionEventType::BuilderDeferred
+            | TransactionEventType::BuilderExpired => Self::Hot,
+            TransactionEventType::IngressReceived
+            | TransactionEventType::SimulationStarted
+            | TransactionEventType::SimulationSucceeded
+            | TransactionEventType::IngressMeteringSendAttempt
+            | TransactionEventType::IngressMeteringSendSuccess
+            | TransactionEventType::Pending
+            | TransactionEventType::Queued
+            | TransactionEventType::PendingToQueued
+            | TransactionEventType::QueuedToPending
+            | TransactionEventType::TxpoolBuilderForwardAttempt
+            | TransactionEventType::TxpoolBuilderForwardSuccess
+            | TransactionEventType::TxpoolBuilderConsumed
+            | TransactionEventType::TxpoolValidatedInsertAccepted
+            | TransactionEventType::TxpoolSendRawTransaction
+            | TransactionEventType::TxpoolSendRawTransactionValidity => Self::Warm,
+            TransactionEventType::ProxyRejected
+            | TransactionEventType::ProxyValidationRejected
+            | TransactionEventType::ProxyBackendFailure
+            | TransactionEventType::ProxyIngressRpcFailure
+            | TransactionEventType::SimulationFailed
+            | TransactionEventType::IngressMeteringSendFailure
+            | TransactionEventType::IngressMeteringSendDropped
+            | TransactionEventType::Dropped
+            | TransactionEventType::Replaced
+            | TransactionEventType::Overflowed
+            | TransactionEventType::TxpoolBuilderForwardFailure
+            | TransactionEventType::TxpoolBuilderForwardDropped
+            | TransactionEventType::TxpoolValidatedInsertRejected
+            | TransactionEventType::BuilderIncluded
+            | TransactionEventType::BuilderPayloadFinalized
+            | TransactionEventType::BuilderFlashblockStarted
+            | TransactionEventType::BuilderFlashblockPublished
+            | TransactionEventType::BuilderFlashblockBuildStopped => Self::Cold,
+        }
+    }
+
+    /// Event-type labels stored in Postgres for this class.
+    fn event_type_labels(self) -> Vec<String> {
+        self.event_types().map(|event_type| event_type.to_string()).collect()
+    }
+
+    fn event_types(self) -> impl Iterator<Item = TransactionEventType> {
+        TransactionEventType::all()
+            .filter(move |event_type| Self::for_event_type(*event_type) == self)
+    }
+}
+
+/// Configuration for one transaction event retention pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TransactionEventRetentionConfig {
+    /// Days to keep hot event types after `ingested_at`.
+    pub hot_days: u32,
+    /// Days to keep warm event types after `ingested_at`.
+    pub warm_days: u32,
+    /// Days to keep cold event types after `ingested_at`.
+    pub cold_days: u32,
+    /// Maximum rows deleted in one statement.
+    pub delete_batch_size: u32,
+    /// Maximum delete statements in one locked pass.
+    ///
+    /// Shared across hot, then warm, then cold. A large hot backlog can
+    /// consume the whole budget and defer warmer expiry until a later pass.
+    /// Raise this if warm or cold expiry stalls behind hot deletes.
+    pub max_batches: u32,
+}
+
+impl Default for TransactionEventRetentionConfig {
+    fn default() -> Self {
+        Self {
+            hot_days: DEFAULT_TRANSACTION_EVENT_HOT_RETENTION_DAYS,
+            warm_days: DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS,
+            cold_days: DEFAULT_TRANSACTION_EVENT_COLD_RETENTION_DAYS,
+            delete_batch_size: DEFAULT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE,
+            max_batches: DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES,
+        }
+    }
+}
+
+impl TransactionEventRetentionConfig {
+    /// Validates retention bounds before deleting expired rows.
+    pub fn validate(self) -> Result<Self> {
+        anyhow::ensure!(
+            self.hot_days > 0 && self.hot_days <= self.warm_days,
+            "transaction event hot retention days must be greater than zero and at most warm days"
+        );
+        anyhow::ensure!(
+            self.warm_days <= self.cold_days,
+            "transaction event warm retention days must be at most cold days"
+        );
+        anyhow::ensure!(
+            (1..=100_000).contains(&self.delete_batch_size),
+            "transaction event retention delete batch size must be between 1 and 100000"
+        );
+        anyhow::ensure!(
+            (1..=1_000).contains(&self.max_batches),
+            "transaction event retention max batches must be between 1 and 1000"
+        );
+        Ok(self)
+    }
+
+    const fn class_days(self, class: TransactionEventRetentionClass) -> u32 {
+        match class {
+            TransactionEventRetentionClass::Hot => self.hot_days,
+            TransactionEventRetentionClass::Warm => self.warm_days,
+            TransactionEventRetentionClass::Cold => self.cold_days,
+        }
+    }
+}
+
+/// Result of one locked retention pass.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransactionEventRetentionOutcome {
+    /// Expired rows deleted in this pass.
+    pub rows_deleted: u64,
+    /// Delete statements executed in this pass.
+    pub batches: u64,
+    /// Expired hot rows deleted in this pass.
+    pub hot_rows_deleted: u64,
+    /// Expired warm rows deleted in this pass.
+    pub warm_rows_deleted: u64,
+    /// Expired cold rows deleted in this pass.
+    pub cold_rows_deleted: u64,
+}
 
 /// Configuration for transaction event HTTP ingest.
 #[derive(Debug, Clone)]
@@ -334,6 +568,92 @@ impl PgTransactionEventSink {
         Ok(())
     }
 
+    /// Deletes expired `transaction_events` rows in bounded batches.
+    ///
+    /// Uses a session advisory lock so only one replica expires rows at a time.
+    /// Returns a zeroed outcome when another replica already holds the lock.
+    /// The lock is released after the pass, including when a batch fails. If
+    /// unlock itself fails, the connection is detached so the session lock
+    /// cannot leak onto a reused pool connection.
+    /// Hot rows are expired first so high-churn types free space before colder
+    /// types consume the shared batch budget. That can starve warm and cold
+    /// deletes in one pass; raise `max_batches` if they stall.
+    pub async fn expire_old_events(
+        &self,
+        config: TransactionEventRetentionConfig,
+    ) -> Result<TransactionEventRetentionOutcome> {
+        // Public API: validate here so tests and other callers cannot skip it.
+        let config = config.validate()?;
+        let batch_size = i64::from(config.delete_batch_size);
+        let classes = [
+            TransactionEventRetentionClass::Hot,
+            TransactionEventRetentionClass::Warm,
+            TransactionEventRetentionClass::Cold,
+        ];
+
+        let Some(mut lock) = RetentionAdvisoryLock::try_acquire(&self.pool).await? else {
+            return Ok(TransactionEventRetentionOutcome {
+                rows_deleted: 0,
+                batches: 0,
+                hot_rows_deleted: 0,
+                warm_rows_deleted: 0,
+                cold_rows_deleted: 0,
+            });
+        };
+
+        let outcome = async {
+            let mut rows_deleted = 0u64;
+            let mut batches = 0u64;
+            let mut hot_rows_deleted = 0u64;
+            let mut warm_rows_deleted = 0u64;
+            let mut cold_rows_deleted = 0u64;
+            for class in classes {
+                let cutoff = Utc::now() - Duration::days(i64::from(config.class_days(class)));
+                let event_types = class.event_type_labels();
+                while batches < u64::from(config.max_batches) {
+                    let deleted = sqlx::query(
+                        "WITH doomed AS ( \
+                            SELECT event_id \
+                            FROM transaction_events \
+                            WHERE event_type = ANY($1) AND ingested_at < $2 \
+                            LIMIT $3 \
+                         ) \
+                         DELETE FROM transaction_events \
+                         WHERE event_id IN (SELECT event_id FROM doomed)",
+                    )
+                    .bind(&event_types)
+                    .bind(cutoff)
+                    .bind(batch_size)
+                    .execute(lock.conn())
+                    .await?
+                    .rows_affected();
+                    batches += 1;
+                    if deleted == 0 {
+                        break;
+                    }
+                    rows_deleted += deleted;
+                    match class {
+                        TransactionEventRetentionClass::Hot => hot_rows_deleted += deleted,
+                        TransactionEventRetentionClass::Warm => warm_rows_deleted += deleted,
+                        TransactionEventRetentionClass::Cold => cold_rows_deleted += deleted,
+                    }
+                    Metrics::transaction_events_expired(class.as_str()).increment(deleted);
+                }
+            }
+            Ok(TransactionEventRetentionOutcome {
+                rows_deleted,
+                batches,
+                hot_rows_deleted,
+                warm_rows_deleted,
+                cold_rows_deleted,
+            })
+        }
+        .await;
+
+        lock.unlock().await;
+        outcome
+    }
+
     /// Checks optional transaction event storage readiness.
     pub async fn check_optional_schema_ready(
         sink: Option<&Self>,
@@ -515,7 +835,7 @@ impl PgTransactionEventSink {
             "SELECT event_id, schema_version, event_time, ingested_at, producer, event_type, \
              network, tx_hash, block_hash, block_number, payload_id, request_id, data \
              FROM transaction_events \
-             WHERE event_type IN ('SIMULATION_FAILED', 'BUILDER_REJECTED') \
+             WHERE event_type IN ('SIMULATION_FAILED', 'BUILDER_REJECTED', 'BUILDER_EXPIRED') \
                AND ($1::BIGINT IS NULL OR block_number >= $1) \
                AND ($2::BIGINT IS NULL OR block_number <= $2) \
                AND ($3::TIMESTAMPTZ IS NULL OR event_time >= $3) \
@@ -1000,6 +1320,88 @@ mod tests {
     fn raw_event(value: Value) -> RawTransactionEvent {
         let byte_len = serde_json::to_string(&value).unwrap().len();
         RawTransactionEvent { value, byte_len }
+    }
+
+    #[test]
+    fn classifies_transaction_event_retention() {
+        assert_eq!(
+            TransactionEventRetentionClass::for_event_type(
+                TransactionEventType::ProxyBackendSuccess
+            ),
+            TransactionEventRetentionClass::Hot
+        );
+        assert_eq!(
+            TransactionEventRetentionClass::for_event_type(TransactionEventType::IngressReceived),
+            TransactionEventRetentionClass::Warm
+        );
+        assert_eq!(
+            TransactionEventRetentionClass::for_event_type(
+                TransactionEventType::TxpoolSendRawTransactionValidity
+            ),
+            TransactionEventRetentionClass::Warm
+        );
+        assert_eq!(
+            TransactionEventRetentionClass::for_event_type(TransactionEventType::SimulationFailed),
+            TransactionEventRetentionClass::Cold
+        );
+        assert_eq!(
+            TransactionEventRetentionClass::for_event_type(TransactionEventType::BuilderRejected),
+            TransactionEventRetentionClass::Hot
+        );
+        assert_eq!(
+            TransactionEventRetentionClass::for_event_type(TransactionEventType::BuilderDeferred),
+            TransactionEventRetentionClass::Hot
+        );
+        assert_eq!(
+            TransactionEventRetentionClass::for_event_type(TransactionEventType::BuilderExpired),
+            TransactionEventRetentionClass::Hot
+        );
+        assert_eq!(
+            TransactionEventRetentionClass::for_event_type(
+                TransactionEventType::BuilderPayloadFinalized
+            ),
+            TransactionEventRetentionClass::Cold
+        );
+    }
+
+    #[test]
+    fn retention_classes_partition_all_event_types() {
+        let mut seen = std::collections::HashSet::new();
+        for event_type in TransactionEventType::all() {
+            assert!(seen.insert(event_type), "event type {event_type} appeared more than once");
+            let class = TransactionEventRetentionClass::for_event_type(event_type);
+            assert!(class.event_types().any(|candidate| candidate == event_type));
+        }
+    }
+
+    #[test]
+    fn validates_transaction_event_retention_bounds() {
+        assert!(TransactionEventRetentionConfig::default().validate().is_ok());
+        assert!(
+            TransactionEventRetentionConfig { hot_days: 0, ..Default::default() }
+                .validate()
+                .is_err()
+        );
+        assert!(
+            TransactionEventRetentionConfig {
+                hot_days: 14,
+                warm_days: 7,
+                cold_days: 30,
+                ..Default::default()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            TransactionEventRetentionConfig { delete_batch_size: 0, ..Default::default() }
+                .validate()
+                .is_err()
+        );
+        assert!(
+            TransactionEventRetentionConfig { max_batches: 0, ..Default::default() }
+                .validate()
+                .is_err()
+        );
     }
 
     #[tokio::test]

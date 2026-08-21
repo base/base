@@ -106,7 +106,8 @@ fn activate(storage: &mut HashMapStorageProvider) {
 
 /// A fresh provider with the policy registry activated.
 fn fresh() -> HashMapStorageProvider {
-    let mut storage = HashMapStorageProvider::new_with_storage_features(CHAIN_ID, StorageFeatures::Cobalt);
+    let mut storage =
+        HashMapStorageProvider::new_with_storage_features(CHAIN_ID, StorageFeatures::Cobalt);
     activate(&mut storage);
     storage
 }
@@ -530,7 +531,8 @@ fn golden_composite_policy_child_ids_empty_for_non_composites() {
 #[test]
 fn golden_composite_policy_child_ids_reads_before_activation() {
     // No activation, matching `golden_write_reverts_when_not_activated`.
-    let mut s = HashMapStorageProvider::new_with_storage_features(CHAIN_ID, StorageFeatures::Cobalt);
+    let mut s =
+        HashMapStorageProvider::new_with_storage_features(CHAIN_ID, StorageFeatures::Cobalt);
     let (rev, bytes) = call_policy(
         &mut s,
         OUTSIDER,
@@ -577,6 +579,84 @@ fn golden_update_composite_reverts_unauthorized() {
     );
     assert!(rev);
     assert_eq!(bytes, Bytes::from(IPolicyRegistry::Unauthorized {}.abi_encode()));
+}
+
+#[test]
+fn golden_create_composite_reverts_child_count_outside_of_range() {
+    let mut s = fresh();
+    let a = create(&mut s, ADMIN, ADMIN, PolicyType::ALLOWLIST);
+    let (rev, bytes) = call_policy(
+        &mut s,
+        ADMIN,
+        IPolicyRegistry::createCompositePolicyCall {
+            admin: ADMIN,
+            policyType: PolicyType::UNION,
+            childPolicyIds: vec![a],
+        }
+        .abi_encode(),
+    );
+    assert!(rev);
+    assert_eq!(bytes, Bytes::from(IPolicyRegistry::ChildPoliciesOutsideOfRange {}.abi_encode()));
+}
+
+/// Reads `MIN_COMPOSITE_CHILD_POLICIES()` over the wire.
+fn min_composite_child_policies(storage: &mut HashMapStorageProvider) -> U256 {
+    let (rev, bytes) = call_policy(
+        storage,
+        OUTSIDER,
+        IPolicyRegistry::MIN_COMPOSITE_CHILD_POLICIESCall {}.abi_encode(),
+    );
+    assert!(!rev, "MIN_COMPOSITE_CHILD_POLICIES unexpectedly reverted");
+    IPolicyRegistry::MIN_COMPOSITE_CHILD_POLICIESCall::abi_decode_returns(&bytes).unwrap()
+}
+
+/// Reads `MAX_COMPOSITE_CHILD_POLICIES()` over the wire.
+fn max_composite_child_policies(storage: &mut HashMapStorageProvider) -> U256 {
+    let (rev, bytes) = call_policy(
+        storage,
+        OUTSIDER,
+        IPolicyRegistry::MAX_COMPOSITE_CHILD_POLICIESCall {}.abi_encode(),
+    );
+    assert!(!rev, "MAX_COMPOSITE_CHILD_POLICIES unexpectedly reverted");
+    IPolicyRegistry::MAX_COMPOSITE_CHILD_POLICIESCall::abi_decode_returns(&bytes).unwrap()
+}
+
+#[test]
+fn golden_min_max_composite_child_policies() {
+    let mut s = fresh();
+    assert_eq!(min_composite_child_policies(&mut s), U256::from(2));
+    assert_eq!(max_composite_child_policies(&mut s), U256::from(4));
+}
+
+#[test]
+fn golden_min_max_composite_child_policies_read_before_activation() {
+    // No activation, matching `golden_composite_policy_child_ids_reads_before_activation`.
+    let mut s = HashMapStorageProvider::new(CHAIN_ID);
+    let (min_rev, min_bytes) = call_policy(
+        &mut s,
+        OUTSIDER,
+        IPolicyRegistry::MIN_COMPOSITE_CHILD_POLICIESCall {}.abi_encode(),
+    );
+    assert!(!min_rev, "view must not be gated on activation");
+    assert_eq!(
+        min_bytes,
+        Bytes::from(IPolicyRegistry::MIN_COMPOSITE_CHILD_POLICIESCall::abi_encode_returns(
+            &U256::from(2)
+        ))
+    );
+
+    let (max_rev, max_bytes) = call_policy(
+        &mut s,
+        OUTSIDER,
+        IPolicyRegistry::MAX_COMPOSITE_CHILD_POLICIESCall {}.abi_encode(),
+    );
+    assert!(!max_rev, "view must not be gated on activation");
+    assert_eq!(
+        max_bytes,
+        Bytes::from(IPolicyRegistry::MAX_COMPOSITE_CHILD_POLICIESCall::abi_encode_returns(
+            &U256::from(4)
+        ))
+    );
 }
 
 #[test]
@@ -966,7 +1046,8 @@ fn golden_reverts_nonzero_value() {
 #[test]
 fn golden_write_reverts_when_not_activated() {
     // No activation: a write op must revert; a read op still works.
-    let mut s = HashMapStorageProvider::new_with_storage_features(CHAIN_ID, StorageFeatures::Cobalt);
+    let mut s =
+        HashMapStorageProvider::new_with_storage_features(CHAIN_ID, StorageFeatures::Cobalt);
     let (rev, _) = call_policy(
         &mut s,
         ADMIN,
@@ -1123,6 +1204,7 @@ fn v2_op_coverage_checklist(call: IPolicyRegistry::IPolicyRegistryCalls) {
         C::createCompositePolicy(_) => covered(&[
             golden_create_composite_union,
             golden_create_composite_reverts_incompatible_type,
+            golden_create_composite_reverts_child_count_outside_of_range,
         ]),
         C::updateComposite(_) => {
             covered(&[golden_update_composite, golden_update_composite_reverts_unauthorized])
@@ -1131,6 +1213,10 @@ fn v2_op_coverage_checklist(call: IPolicyRegistry::IPolicyRegistryCalls) {
             golden_composite_policy_child_ids,
             golden_composite_policy_child_ids_empty_for_non_composites,
             golden_composite_policy_child_ids_reads_before_activation,
+        ]),
+        C::MIN_COMPOSITE_CHILD_POLICIES(_) | C::MAX_COMPOSITE_CHILD_POLICIES(_) => covered(&[
+            golden_min_max_composite_child_policies,
+            golden_min_max_composite_child_policies_read_before_activation,
         ]),
     }
 }

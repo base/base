@@ -1,7 +1,13 @@
 //! Flashblocks builder types.
 
 mod best_txs;
-pub use best_txs::BestFlashblocksTxs;
+pub use best_txs::{
+    BestFlashblocksTxs, ParkableBestPayloadTransactions, ParkablePayloadTransactions,
+    PayloadTransactionInvalidated,
+};
+
+mod predicate_index;
+pub use predicate_index::{ParkedPredicateIndex, StateChangeEffects, ValidityPredicateKey};
 
 mod deadline;
 pub use deadline::PayloadJobDeadline;

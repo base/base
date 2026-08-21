@@ -19,6 +19,14 @@ pub enum UpgradeSignalError {
         /// Decode error string.
         error: String,
     },
+    /// A successful `getSchedule` call returned no schedule entries.
+    ///
+    /// A healthy append-only `ProtocolVersions` contract always reports at least the oldest
+    /// registered upgrade, so an empty read signals a misconfigured, uninitialized, or mock
+    /// contract rather than an authoritative instruction to clear every runtime override. It is
+    /// kept distinct from a read failure so the empty-success case never advances local state.
+    #[error("getSchedule returned an empty schedule from a contract that should be append-only")]
+    EmptySchedule,
     /// A positive activation timestamp was not paired with a minimum node protocol version.
     #[error(
         "upgrade signal for {0} has an activation timestamp but no minimum node protocol version"
@@ -31,6 +39,21 @@ pub enum UpgradeSignalError {
     UnsupportedProtocolVersion {
         /// Upgrade ID whose signal required a newer protocol version.
         upgrade_id: String,
+        /// Minimum node protocol version read from L1.
+        minimum_protocol_version: String,
+        /// Node protocol version supported by this binary.
+        node_protocol_version: String,
+    },
+    /// The node halted (fail closed) because a scheduled upgrade it is too old to support is
+    /// activating imminently; continuing would fork the node off the network.
+    #[error(
+        "node halted (fail closed): upgrade {upgrade_id} activates at {activation_timestamp} and requires node protocol version {minimum_protocol_version} (this binary supports {node_protocol_version}); upgrade this node to a supported version"
+    )]
+    NodeUpgradeRequired {
+        /// Upgrade ID whose activation forced the halt.
+        upgrade_id: String,
+        /// L2 activation timestamp of the unsupportable upgrade.
+        activation_timestamp: u64,
         /// Minimum node protocol version read from L1.
         minimum_protocol_version: String,
         /// Node protocol version supported by this binary.

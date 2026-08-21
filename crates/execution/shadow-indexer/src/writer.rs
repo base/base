@@ -1,0 +1,218 @@
+use std::time::Duration;
+
+use async_trait::async_trait;
+use base_shadow_indexer_db::{ShadowBlockRepo, ShadowBlockRow, ShadowDbConfig};
+use reth_tasks::TaskExecutor;
+use tokio::{
+    sync::mpsc,
+    time::{MissedTickBehavior, interval, sleep},
+};
+use tracing::{error, info};
+
+const BATCH_SIZE: usize = 100;
+const FLUSH_INTERVAL: Duration = Duration::from_secs(1);
+const MAX_FLUSH_ATTEMPTS: usize = 3;
+const RETRY_BACKOFF: Duration = Duration::from_millis(200);
+
+#[cfg_attr(test, mockall::automock)]
+#[async_trait]
+trait BlockInserter: Send + Sync {
+    async fn insert_batch(&self, rows: &[ShadowBlockRow]) -> anyhow::Result<usize>;
+}
+
+#[async_trait]
+impl BlockInserter for ShadowBlockRepo {
+    async fn insert_batch(&self, rows: &[ShadowBlockRow]) -> anyhow::Result<usize> {
+        Self::insert_batch(self, rows).await
+    }
+}
+
+/// Shadow indexer writer task.
+#[derive(Debug)]
+pub struct ShadowWriter {
+    rx: mpsc::Receiver<ShadowBlockRow>,
+    db_config: ShadowDbConfig,
+    builder_version: String,
+}
+
+impl ShadowWriter {
+    /// Spawns the writer task on the provided executor.
+    pub fn spawn(
+        executor: TaskExecutor,
+        rx: mpsc::Receiver<ShadowBlockRow>,
+        db_config: ShadowDbConfig,
+        builder_version: String,
+    ) {
+        let writer = Self { rx, db_config, builder_version };
+        // Spawned as a critical task on purpose: this runs only on shadow canary nodes, where an
+        // unrecoverable writer failure (pool init panic, or the task ending) should fail-fast and
+        // take the node down rather than let it run without shadow indexing. On normal nodes the
+        // extension is disabled and this is never spawned.
+        executor.spawn_critical_task("shadow-indexer-writer", async move {
+            writer.run().await;
+        });
+    }
+
+    async fn run(mut self) {
+        info!(target: "base::shadow-indexer", "Starting shadow indexer writer");
+
+        let pool = self.db_config.init_pool().await.unwrap_or_else(|error| {
+            panic!("failed to initialize shadow indexer database pool: {error:?}")
+        });
+        let repo = ShadowBlockRepo::new(pool);
+        let mut interval = interval(FLUSH_INTERVAL);
+        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        let mut block_buffer = Vec::with_capacity(BATCH_SIZE);
+
+        loop {
+            tokio::select! {
+                maybe_row = self.rx.recv() => {
+                    match maybe_row {
+                        Some(mut row) => {
+                            self.stamp_row(&mut row);
+                            block_buffer.push(row);
+                            if block_buffer.len() >= BATCH_SIZE {
+                                self.flush(&repo, &mut block_buffer).await;
+                            }
+                        }
+                        None => {
+                            self.flush(&repo, &mut block_buffer).await;
+                            break;
+                        }
+                    }
+                }
+                _ = interval.tick() => {
+                    self.flush(&repo, &mut block_buffer).await;
+                }
+            }
+        }
+    }
+
+    async fn flush(&self, repo: &dyn BlockInserter, buffer: &mut Vec<ShadowBlockRow>) {
+        if buffer.is_empty() {
+            return;
+        }
+
+        let batch_size = buffer.len();
+
+        for attempt in 1..=MAX_FLUSH_ATTEMPTS {
+            match repo.insert_batch(buffer).await {
+                Ok(inserted) => {
+                    info!(
+                        target: "base::shadow-indexer",
+                        inserted,
+                        batch_size,
+                        "Inserted shadow indexer rows"
+                    );
+                    buffer.clear();
+                    return;
+                }
+                Err(error) => {
+                    error!(
+                        target: "base::shadow-indexer",
+                        error = ?error,
+                        batch_size,
+                        "Failed to insert shadow indexer rows"
+                    );
+                    if attempt < MAX_FLUSH_ATTEMPTS {
+                        sleep(RETRY_BACKOFF).await;
+                    }
+                }
+            }
+        }
+
+        let (min_number, max_number) = buffer
+            .iter()
+            .fold((i64::MAX, i64::MIN), |acc, row| (acc.0.min(row.number), acc.1.max(row.number)));
+        error!(
+            target: "base::shadow-indexer",
+            dropped = buffer.len(),
+            min_block_number = min_number,
+            max_block_number = max_number,
+            "Dropping shadow indexer rows after failed retries"
+        );
+        buffer.clear();
+    }
+
+    fn stamp_row(&self, row: &mut ShadowBlockRow) {
+        row.payload.builder_version = self.builder_version.clone();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use anyhow::anyhow;
+    use base_shadow_indexer_db::{ShadowBlockPayload, ShadowBlockRow, ShadowDbConfig};
+    use chrono::{DateTime, Utc};
+    use reth_primitives_traits::RecoveredBlock;
+    use tokio::sync::mpsc;
+
+    use super::{MAX_FLUSH_ATTEMPTS, MockBlockInserter, ShadowWriter};
+
+    fn test_writer() -> ShadowWriter {
+        let (_tx, rx) = mpsc::channel(1);
+        ShadowWriter {
+            rx,
+            db_config: ShadowDbConfig {
+                url: String::new(),
+                max_connections: 1,
+                connection_timeout: Duration::from_secs(1),
+            },
+            builder_version: "test-builder".to_string(),
+        }
+    }
+
+    fn sample_row(number: i64, created_at: DateTime<Utc>) -> ShadowBlockRow {
+        ShadowBlockRow {
+            number,
+            hash: b"hash".to_vec(),
+            reorged_out: false,
+            canonical_hash: None,
+            created_at,
+            updated_at: created_at,
+            payload: ShadowBlockPayload {
+                builder_version: String::new(),
+                block: RecoveredBlock::default(),
+                receipts: Vec::new(),
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn flush_retries_then_drops_buffer() {
+        let writer = test_writer();
+        let created_at = Utc::now();
+        let mut buffer = vec![sample_row(1, created_at)];
+        writer.stamp_row(&mut buffer[0]);
+
+        let mut repo = MockBlockInserter::new();
+        repo.expect_insert_batch()
+            .times(MAX_FLUSH_ATTEMPTS)
+            .returning(|_| Err(anyhow!("insert failed")));
+
+        writer.flush(&repo, &mut buffer).await;
+        assert!(buffer.is_empty());
+    }
+
+    #[tokio::test]
+    async fn flush_stamps_builder_version_without_mutating_created_at() {
+        let writer = test_writer();
+        let created_at = Utc::now();
+        let mut buffer = vec![sample_row(7, created_at)];
+        writer.stamp_row(&mut buffer[0]);
+
+        let expected_created_at = created_at;
+        let mut repo = MockBlockInserter::new();
+        repo.expect_insert_batch().times(MAX_FLUSH_ATTEMPTS).returning(move |rows| {
+            for row in rows {
+                assert_eq!(row.created_at, expected_created_at);
+                assert_eq!(row.payload.builder_version, "test-builder");
+            }
+            Err(anyhow!("insert failed"))
+        });
+
+        writer.flush(&repo, &mut buffer).await;
+    }
+}

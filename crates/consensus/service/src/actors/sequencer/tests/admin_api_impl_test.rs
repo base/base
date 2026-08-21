@@ -8,7 +8,7 @@ use rstest::rstest;
 use tokio::sync::oneshot;
 
 use crate::{
-    ConductorError, EngineClientError, SequencerAdminQuery,
+    ConductorError, EngineClientError, ResetReason, SequencerAdminQuery,
     actors::{MockConductor, MockSequencerEngineClient, sequencer::tests::test_util::test_actor},
 };
 
@@ -558,7 +558,11 @@ async fn test_override_leader(
 #[tokio::test]
 async fn test_reset_derivation_pipeline_success(#[values(true, false)] via_channel: bool) {
     let mut client = MockSequencerEngineClient::new();
-    client.expect_reset_engine_forkchoice().times(1).return_once(|| Ok(()));
+    client
+        .expect_reset_engine_forkchoice()
+        .with(mockall::predicate::eq(ResetReason::Admin))
+        .times(1)
+        .return_once(|_| Ok(()));
 
     let mut actor = test_actor();
     actor.engine_client = Arc::new(client);
@@ -588,7 +592,7 @@ async fn test_reset_derivation_pipeline_error(#[values(true, false)] via_channel
     client
         .expect_reset_engine_forkchoice()
         .times(1)
-        .return_once(|| Err(EngineClientError::RequestError("reset failed".to_string())));
+        .return_once(|_| Err(EngineClientError::RequestError("reset failed".to_string())));
 
     let mut actor = test_actor();
     actor.engine_client = Arc::new(client);
@@ -624,7 +628,7 @@ async fn test_handle_admin_query_resilient_to_dropped_receiver() {
     };
     let mut client = MockSequencerEngineClient::new();
     client.expect_get_unsafe_head().times(1).returning(move || Ok(unsafe_head));
-    client.expect_reset_engine_forkchoice().times(1).returning(|| Ok(()));
+    client.expect_reset_engine_forkchoice().times(1).returning(|_| Ok(()));
 
     let mut actor = test_actor();
     actor.conductor = Some(conductor);

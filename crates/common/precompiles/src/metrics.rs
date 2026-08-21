@@ -105,7 +105,7 @@ pub struct PrecompileCallOutcome {
     /// Regular gas used by the precompile.
     pub gas_used: u64,
     /// State gas used by the precompile.
-    pub state_gas_used: u64,
+    pub state_gas_used: i64,
     /// Gas refunded by the precompile.
     pub gas_refunded: i64,
     /// Total time spent in the Beryl dispatch wrapper, in seconds.

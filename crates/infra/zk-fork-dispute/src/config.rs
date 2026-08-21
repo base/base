@@ -153,7 +153,7 @@ impl Config {
             );
         }
 
-        let factory = DisputeGameFactoryContractClient::new(factory_address, l1_rpc_url.clone())?;
+        let factory = DisputeGameFactoryContractClient::new(factory_address, provider);
 
         if let Some(game_address) = game_address {
             let game_type = Self::game_type_for_proxy(&factory, game_address).await?;

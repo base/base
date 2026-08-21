@@ -12,7 +12,7 @@ use alloy_primitives::{Address, U256, keccak256};
 
 use crate::{
     error::{BasePrecompileError, Result},
-    packing::{PackedSlot, calc_element_loc, calc_packed_slot_count, create_element_mask},
+    packing::{PackedSlot, Word, calc_element_loc, calc_packed_slot_count},
     provider::{Handler, Layout, LayoutCtx, Storable, StorableType, StorageOps},
     types::{HandlerCache, Slot},
 };
@@ -313,7 +313,7 @@ where
                 let mut combined_clear_mask = U256::ZERO;
                 for index in new_len..boundary_slot_end {
                     let byte_offset = (index % elems_per_slot) * T::BYTES;
-                    combined_clear_mask |= create_element_mask(T::BYTES) << (byte_offset * 8);
+                    combined_clear_mask |= Word::create_element_mask(T::BYTES) << (byte_offset * 8);
                 }
                 self.storage.sstore(
                     self.address,
@@ -560,9 +560,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        StorageFeatures, hashmap::setup_storage, packing::gen_word_from, storage_ctx::StorageCtx,
-    };
+    use crate::{StorageFeatures, hashmap::setup_storage, packing::Word, storage_ctx::StorageCtx};
 
     #[derive(Debug, Default, Clone, PartialEq, Eq, base_precompile_macros::Storable)]
     struct DynamicRecord {
@@ -609,7 +607,7 @@ mod tests {
 
             let data_start = calc_data_slot(len_slot);
             let slot_data = U256::handle(data_start, LayoutCtx::FULL, address, ctx).read().unwrap();
-            let expected = gen_word_from(&["0x32", "0x28", "0x1e", "0x14", "0x0a"]);
+            let expected = Word::gen_word_from(&["0x32", "0x28", "0x1e", "0x14", "0x0a"]);
             assert_eq!(slot_data, expected, "u8 packing should match Solidity layout");
         });
     }
@@ -745,7 +743,7 @@ mod tests {
                 .read()
                 .unwrap();
             // Only byte 0 (element 32 = 0x20) should survive.
-            let expected = gen_word_from(&["0x20"]);
+            let expected = Word::gen_word_from(&["0x20"]);
             assert_eq!(slot1, expected, "boundary slot must retain element 32 only");
         });
     }
@@ -781,7 +779,7 @@ mod tests {
 
             // slot 0 must be fully intact.
             let slot0 = U256::handle(data_start, LayoutCtx::FULL, address, ctx).read().unwrap();
-            let expected = gen_word_from(&[
+            let expected = Word::gen_word_from(&[
                 "0x1f", "0x1e", "0x1d", "0x1c", "0x1b", "0x1a", "0x19", "0x18", "0x17", "0x16",
                 "0x15", "0x14", "0x13", "0x12", "0x11", "0x10", "0x0f", "0x0e", "0x0d", "0x0c",
                 "0x0b", "0x0a", "0x09", "0x08", "0x07", "0x06", "0x05", "0x04", "0x03", "0x02",

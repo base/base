@@ -325,6 +325,11 @@ impl RollupConfig {
         [upgrade_activation_timestamp(BaseUpgrade::Cobalt)],
         "Cobalt";
 
+        is_denim_active,
+        is_first_denim_block,
+        [upgrade_activation_timestamp(BaseUpgrade::Denim)],
+        "Denim";
+
         is_zenith_active,
         is_first_zenith_block,
         [upgrade_activation_timestamp(BaseUpgrade::Zenith)],
@@ -358,7 +363,20 @@ impl RollupConfig {
         }
     }
 
-    /// Returns the L2 block number at which Zenith activates.
+    /// Returns the L2 block number at which Denim activates.
+    ///
+    /// If Denim is not configured, returns [`None`].
+    pub fn denim_activation_block_number(&self) -> Option<u64> {
+        let denim_timestamp = self.upgrade_activation_timestamp(BaseUpgrade::Denim)?;
+
+        if self.block_time == 0 {
+            panic!("rollup config: block time cannot be 0");
+        }
+
+        Some(denim_timestamp.saturating_sub(self.genesis.l2_time).div_ceil(self.block_time))
+    }
+
+    /// Returns the L2 block number at which the genesis-only Zenith testing gate activates.
     ///
     /// If Zenith is not configured, returns [`None`].
     pub fn zenith_activation_block_number(&self) -> Option<u64> {
@@ -373,8 +391,8 @@ impl RollupConfig {
 
     /// Returns the deterministic timestamp of an L2 block in milliseconds.
     ///
-    /// Before Zenith activation, this matches the legacy whole-second schedule exactly.
-    /// After Zenith activation, this advances by a fixed 200ms cadence from the activation block.
+    /// Before Denim activation, this matches the legacy whole-second schedule exactly.
+    /// After Denim activation, this advances by a fixed 200ms cadence from the activation block.
     ///
     /// `block_number` is an absolute L2 block number; it is measured relative to the L2 genesis
     /// block number (`self.genesis.l2.number`), which is non-zero for chains whose L2 genesis
@@ -388,22 +406,22 @@ impl RollupConfig {
             .saturating_add(blocks_since_genesis.saturating_mul(self.block_time));
         let legacy_millis = legacy_seconds.saturating_mul(1_000);
 
-        let Some(zenith_activation_block) = self.zenith_activation_block_number() else {
+        let Some(denim_activation_block) = self.denim_activation_block_number() else {
             return legacy_millis;
         };
 
-        if blocks_since_genesis < zenith_activation_block {
+        if blocks_since_genesis < denim_activation_block {
             return legacy_millis;
         }
 
-        let zenith_activation_seconds = self
+        let denim_activation_seconds = self
             .genesis
             .l2_time
-            .saturating_add(zenith_activation_block.saturating_mul(self.block_time));
-        let zenith_activation_full_millis = zenith_activation_seconds.saturating_mul(1_000);
-        zenith_activation_full_millis.saturating_add(
+            .saturating_add(denim_activation_block.saturating_mul(self.block_time));
+        let denim_activation_full_millis = denim_activation_seconds.saturating_mul(1_000);
+        denim_activation_full_millis.saturating_add(
             blocks_since_genesis
-                .saturating_sub(zenith_activation_block)
+                .saturating_sub(denim_activation_block)
                 .saturating_mul(Self::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS),
         )
     }
@@ -467,6 +485,9 @@ impl RollupConfig {
 
     /// The fixed cadence once subsecond blocks activates.
     pub const NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS: u64 = 200;
+
+    /// The number of Denim blocks produced in one legacy two-second block interval.
+    pub const DENIM_GAS_PARAMETER_SCALING_FACTOR: u32 = 10;
 
     /// Helper method for deserializing a default granite channel timeout.
     #[cfg(feature = "serde")]
@@ -591,6 +612,7 @@ mod tests {
                     azul: Some(110),
                     beryl: Some(120),
                     cobalt: Some(130),
+                    denim: None,
                     zenith: None,
                 },
             },
@@ -672,6 +694,7 @@ mod tests {
                     azul: Some(110),
                     beryl: Some(120),
                     cobalt: None,
+                    denim: None,
                     zenith: None,
                 },
                 ..Default::default()
@@ -949,8 +972,13 @@ mod tests {
 
         // Osaka↔Azul: azul drives Osaka activation; standalone (not cascaded from Jovian).
         let mut cfg = RollupConfig::default();
-        cfg.upgrades.base =
-            BaseUpgradeConfig { azul: Some(700), beryl: None, cobalt: None, zenith: None };
+        cfg.upgrades.base = BaseUpgradeConfig {
+            azul: Some(700),
+            beryl: None,
+            cobalt: None,
+            denim: None,
+            zenith: None,
+        };
         assert_eq!(
             cfg.ethereum_fork_activation(EthereumHardfork::Osaka),
             ForkCondition::Timestamp(700)
@@ -958,8 +986,13 @@ mod tests {
 
         // Beryl follows Azul; Osaka still activates at Azul when both are configured.
         let mut cfg = RollupConfig::default();
-        cfg.upgrades.base =
-            BaseUpgradeConfig { azul: Some(700), beryl: Some(800), cobalt: None, zenith: None };
+        cfg.upgrades.base = BaseUpgradeConfig {
+            azul: Some(700),
+            beryl: Some(800),
+            cobalt: None,
+            denim: None,
+            zenith: None,
+        };
         assert_eq!(
             cfg.ethereum_fork_activation(EthereumHardfork::Osaka),
             ForkCondition::Timestamp(700)
@@ -969,8 +1002,13 @@ mod tests {
 
         // Beryl requires Azul, and does not independently activate Osaka.
         let mut cfg = RollupConfig::default();
-        cfg.upgrades.base =
-            BaseUpgradeConfig { azul: None, beryl: Some(800), cobalt: None, zenith: None };
+        cfg.upgrades.base = BaseUpgradeConfig {
+            azul: None,
+            beryl: Some(800),
+            cobalt: None,
+            denim: None,
+            zenith: None,
+        };
         assert_eq!(cfg.ethereum_fork_activation(EthereumHardfork::Osaka), ForkCondition::Never);
 
         // Jovian set but Azul unset → Osaka is Never.
@@ -1082,6 +1120,94 @@ mod tests {
         assert!(cfg.is_zenith_active(u64::MAX));
     }
 
+    fn rollup_config_with_denim(
+        genesis_l2_time: u64,
+        block_time: u64,
+        denim_time: Option<u64>,
+    ) -> RollupConfig {
+        RollupConfig {
+            genesis: ChainGenesis { l2_time: genesis_l2_time, ..Default::default() },
+            block_time,
+            upgrades: UpgradeConfig {
+                base: BaseUpgradeConfig { denim: denim_time, ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn l2_block_full_millis_matches_legacy_before_denim_activation() {
+        let cfg = rollup_config_with_denim(10, 2, Some(15));
+        assert_eq!(cfg.denim_activation_block_number(), Some(3));
+
+        for block_number in 0..3 {
+            let expected = (10 + block_number * 2) * 1_000;
+            assert_eq!(cfg.l2_block_timestamp_millis(block_number), expected);
+            assert_eq!(cfg.l2_block_timestamp(block_number), expected / 1_000);
+            assert_eq!(cfg.l2_block_timestamp_parts(block_number), (expected / 1_000, 0));
+        }
+    }
+
+    #[test]
+    fn l2_block_full_millis_respects_denim_activation_boundary() {
+        let cfg = rollup_config_with_denim(10, 2, Some(15));
+
+        assert_eq!(cfg.denim_activation_block_number(), Some(3));
+        assert_eq!(cfg.l2_block_timestamp_millis(3), 16_000);
+        assert_eq!(cfg.l2_block_timestamp_parts(3), (16, 0));
+    }
+
+    #[test]
+    fn l2_block_full_millis_advances_by_200ms_after_activation() {
+        let cfg = rollup_config_with_denim(10, 2, Some(15));
+
+        let activation = cfg.l2_block_timestamp_millis(3);
+        let next = cfg.l2_block_timestamp_millis(4);
+        assert_eq!(
+            next.saturating_sub(activation),
+            RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS
+        );
+        assert_eq!(next, 16_200);
+        assert_eq!(cfg.l2_block_timestamp_parts(4), (16, 200));
+    }
+
+    #[test]
+    fn l2_block_full_millis_keeps_fixed_200ms_cadence_in_denim_era() {
+        let cfg = rollup_config_with_denim(10, 2, Some(15));
+
+        let start_block = 3;
+        let mut previous = cfg.l2_block_timestamp_millis(start_block);
+        for block_number in (start_block + 1)..=14 {
+            let current = cfg.l2_block_timestamp_millis(block_number);
+            assert_eq!(
+                current.saturating_sub(previous),
+                RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS
+            );
+            previous = current;
+        }
+    }
+
+    #[test]
+    fn l2_block_full_millis_without_denim_uses_legacy_formula() {
+        let cfg = rollup_config_with_denim(11, 3, None);
+
+        assert_eq!(cfg.denim_activation_block_number(), None);
+        for block_number in [0_u64, 1, 2, 10, 100] {
+            let expected =
+                11u64.saturating_add(block_number.saturating_mul(3)).saturating_mul(1_000);
+            assert_eq!(cfg.l2_block_timestamp_millis(block_number), expected);
+            assert_eq!(cfg.l2_block_timestamp(block_number), expected / 1_000);
+            assert_eq!(cfg.l2_block_timestamp_parts(block_number), (expected / 1_000, 0));
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "rollup config: block time cannot be 0")]
+    fn denim_activation_block_number_rejects_zero_block_time() {
+        rollup_config_with_denim(100, 0, Some(101)).denim_activation_block_number();
+    }
+
     fn rollup_config_with_zenith(
         genesis_l2_time: u64,
         block_time: u64,
@@ -1099,69 +1225,12 @@ mod tests {
     }
 
     #[test]
-    fn l2_block_full_millis_matches_legacy_before_zenith_activation() {
-        let cfg = rollup_config_with_zenith(10, 2, Some(15));
-        assert_eq!(cfg.zenith_activation_block_number(), Some(3));
-
-        for block_number in 0..3 {
-            let expected = (10 + block_number * 2) * 1_000;
-            assert_eq!(cfg.l2_block_timestamp_millis(block_number), expected);
-            assert_eq!(cfg.l2_block_timestamp(block_number), expected / 1_000);
-            assert_eq!(cfg.l2_block_timestamp_parts(block_number), (expected / 1_000, 0));
-        }
-    }
-
-    #[test]
-    fn l2_block_full_millis_respects_zenith_activation_boundary() {
-        let cfg = rollup_config_with_zenith(10, 2, Some(15));
-
-        assert_eq!(cfg.zenith_activation_block_number(), Some(3));
-        assert_eq!(cfg.l2_block_timestamp_millis(3), 16_000);
-        assert_eq!(cfg.l2_block_timestamp_parts(3), (16, 0));
-    }
-
-    #[test]
-    fn l2_block_full_millis_advances_by_200ms_after_activation() {
-        let cfg = rollup_config_with_zenith(10, 2, Some(15));
-
-        let activation = cfg.l2_block_timestamp_millis(3);
-        let next = cfg.l2_block_timestamp_millis(4);
+    fn zenith_activation_block_number_derives_from_genesis_config() {
         assert_eq!(
-            next.saturating_sub(activation),
-            RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS
+            rollup_config_with_zenith(10, 2, Some(15)).zenith_activation_block_number(),
+            Some(3)
         );
-        assert_eq!(next, 16_200);
-        assert_eq!(cfg.l2_block_timestamp_parts(4), (16, 200));
-    }
-
-    #[test]
-    fn l2_block_full_millis_keeps_fixed_200ms_cadence_in_zenith_era() {
-        let cfg = rollup_config_with_zenith(10, 2, Some(15));
-
-        let start_block = 3;
-        let mut previous = cfg.l2_block_timestamp_millis(start_block);
-        for block_number in (start_block + 1)..=14 {
-            let current = cfg.l2_block_timestamp_millis(block_number);
-            assert_eq!(
-                current.saturating_sub(previous),
-                RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS
-            );
-            previous = current;
-        }
-    }
-
-    #[test]
-    fn l2_block_full_millis_without_zenith_uses_legacy_formula() {
-        let cfg = rollup_config_with_zenith(11, 3, None);
-
-        assert_eq!(cfg.zenith_activation_block_number(), None);
-        for block_number in [0_u64, 1, 2, 10, 100] {
-            let expected =
-                11u64.saturating_add(block_number.saturating_mul(3)).saturating_mul(1_000);
-            assert_eq!(cfg.l2_block_timestamp_millis(block_number), expected);
-            assert_eq!(cfg.l2_block_timestamp(block_number), expected / 1_000);
-            assert_eq!(cfg.l2_block_timestamp_parts(block_number), (expected / 1_000, 0));
-        }
+        assert_eq!(rollup_config_with_zenith(10, 2, None).zenith_activation_block_number(), None);
     }
 
     #[test]
@@ -1172,7 +1241,7 @@ mod tests {
 
     #[test]
     fn l2_block_full_millis_saturates() {
-        let saturating = rollup_config_with_zenith(u64::MAX, u64::MAX, None);
+        let saturating = rollup_config_with_denim(u64::MAX, u64::MAX, None);
         assert_eq!(saturating.l2_block_timestamp_millis(1), u64::MAX);
     }
 

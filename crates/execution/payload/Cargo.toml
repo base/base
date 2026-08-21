@@ -17,7 +17,9 @@ reth-evm.workspace = true
 reth-chainspec.workspace = true
 reth-storage-api.workspace = true
 reth-payload-util.workspace = true
+reth-trie-parallel.workspace = true
 reth-execution-types.workspace = true
+reth-execution-cache.workspace = true
 reth-payload-builder.workspace = true
 reth-transaction-pool.workspace = true
 reth-primitives-traits.workspace = true
@@ -52,3 +54,9 @@ serde.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 derive_more.workspace = true
+
+[dev-dependencies]
+reth-provider.workspace = true
+reth-ethereum-forks.workspace = true
+base-execution-chainspec.workspace = true
+reth-revm = { workspace = true, features = ["test-utils"] }

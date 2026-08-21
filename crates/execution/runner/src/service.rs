@@ -2,12 +2,9 @@
 
 use base_node_core::{
     BaseConsensusBuilder, BaseExecutorBuilder, BaseNetworkBuilder,
-    node::{BasePayloadBuilder, BasePoolBuilder},
+    node::{BasePayloadServiceBuilder, BasePoolBuilder},
 };
-use reth_node_builder::{
-    NodeComponentsBuilder,
-    components::{BasicPayloadServiceBuilder, ComponentsBuilder},
-};
+use reth_node_builder::{NodeComponentsBuilder, components::ComponentsBuilder};
 
 use crate::{
     node::BaseNode,
@@ -40,7 +37,7 @@ impl PayloadServiceBuilder for DefaultPayloadServiceBuilder {
     type ComponentsBuilder = ComponentsBuilder<
         BaseNodeTypes,
         BasePoolBuilder,
-        BasicPayloadServiceBuilder<BasePayloadBuilder>,
+        BasePayloadServiceBuilder,
         BaseNetworkBuilder,
         BaseExecutorBuilder,
         BaseConsensusBuilder,

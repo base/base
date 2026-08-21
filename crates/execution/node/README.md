@@ -1,4 +1,4 @@
-# `base-execution-node`
+# `base-node-core`
 
 Base execution node implementation.
 
@@ -15,11 +15,11 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-execution-node = { workspace = true }
+base-node-core = { workspace = true }
 ```
 
 ```rust,ignore
-use base_execution_node::{BaseEngineApiBuilder, BaseEngineTypes};
+use base_node_core::{BaseEngineApiBuilder, BaseEngineTypes};
 
 let node = NodeBuilder::new(config)
     .with_types::<BaseEngineTypes>()

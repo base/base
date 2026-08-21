@@ -383,8 +383,8 @@ mod tests {
             launch_config.standard.rpc.rollup_args.sequencer.as_deref(),
             Some("http://localhost:8545")
         );
-        assert!(!launch_config.standard.enable_tx_forwarding);
-        assert!(launch_config.standard.builder_rpc_urls.is_empty());
+        assert!(!launch_config.standard.rpc.enable_tx_forwarding);
+        assert!(launch_config.standard.rpc.builder_rpc_urls.is_empty());
     }
 
     #[test]
@@ -554,12 +554,37 @@ mod tests {
     }
 
     #[test]
-    fn rejects_rpc_tx_forwarding_args() {
+    fn parses_rpc_validity_forwarding_args() {
+        let cli = BaseCli::parse_from(rpc_args(&[
+            "base",
+            "rpc",
+            "--enable-tx-forwarding",
+            "--builder-rpc-urls",
+            "http://localhost:8545",
+            "--enable-experimental-validity-transactions",
+            "--experimental-validity-max-predicates",
+            "8",
+        ]));
+
+        let BaseCommand::Rpc(rpc) = cli.command else {
+            panic!("expected rpc command");
+        };
+
+        let launch_config = rpc.execution.into_launch_config(BaseChainSpec::devnet().into());
+
+        assert!(launch_config.standard.rpc.enable_tx_forwarding);
+        assert!(launch_config.standard.rpc.enable_experimental_validity_transactions);
+        assert_eq!(launch_config.standard.rpc.experimental_validity_max_predicates, 8);
+        assert_eq!(launch_config.standard.rpc.builder_rpc_urls.len(), 1);
+    }
+
+    #[test]
+    fn rpc_tx_forwarding_requires_builder_urls() {
         let err = BaseCli::try_parse_from(rpc_args(&["base", "rpc", "--enable-tx-forwarding"]))
             .unwrap_err();
 
         let rendered = err.to_string();
-        assert!(rendered.contains("--enable-tx-forwarding"));
+        assert!(rendered.contains("--builder-rpc-urls"));
     }
 
     #[test]

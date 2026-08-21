@@ -15,9 +15,8 @@ use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    AssetAccounting, AssetCall, AssetV1, AssetVersion, AssetVersions, B20AssetStorage,
-    B20AssetToken, B20PolicyType, B20TokenRole, BerylAuxiliaryMetrics, BerylCallRecorder,
-    BerylMetricLabels,
+    AssetAccounting, AssetCall, AssetVersion, AssetVersions, B20AssetStorage, B20AssetToken,
+    B20PolicyType, B20TokenRole, BerylAuxiliaryMetrics, BerylCallRecorder, BerylMetricLabels,
     IB20::{self, IB20Calls as C},
     IB20Asset::{self, IB20AssetCalls as SC},
     NoopPrecompileCallObserver, PermitArgs, PolicyAccounting, PrecompileCallObserver,
@@ -72,19 +71,24 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
         recorder.record_base_result(ctx, self.route(ctx, calldata, version, false, observer), |b| b)
     }
 
-    /// Grants `role` to `account` without checking caller authorization.
+    /// Grants `role` to `account` without checking caller authorization, using the token logic
+    /// implementation active at `upgrade`.
     ///
     /// The one token-level mutation the factory needs at bootstrap, when no admin exists yet and the
-    /// authorized [`Asset::grant_role`](crate::Asset) path is not yet reachable. Pinned to
-    /// [`AssetV1`], the token's introduction version.
-    // TODO: When the factory gains fork threading, remove this and pull versions into the factory.
+    /// authorized [`Asset::grant_role`](crate::Asset) path is not yet reachable.
     pub fn grant_role_unchecked(
         &mut self,
         role: alloy_primitives::B256,
         account: alloy_primitives::Address,
         sender: alloy_primitives::Address,
+        upgrade: BaseUpgrade,
     ) -> base_precompile_storage::Result<()> {
-        AssetV1.grant_role_unchecked(self, role, account, sender)
+        // `None` is unreachable in practice — the precompile is only installed from Beryl — but
+        // we revert defensively, mirroring `dispatch_with_observer`.
+        let Some(version) = AssetVersions::from_base_upgrade(upgrade) else {
+            return Err(BasePrecompileError::Revert(Bytes::new()));
+        };
+        version.implementation().grant_role_unchecked(self, role, account, sender)
     }
 
     /// Decodes calldata, observes the decoded operation, and routes it to `version` with optional
@@ -243,7 +247,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
             // --- Seize ---
             C::seizeWithMemo(c) => {
                 logic.seize_with_memo(self, caller, c.from, c.to, c.amount, c.memo)?;
-                true.abi_encode().into()
+                Bytes::new()
             }
 
             // --- Pause ---
@@ -342,6 +346,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
         let encoded: Bytes = match call {
             SC::OPERATOR_ROLE(_) => logic.operator_role().abi_encode().into(),
             SC::WAD_PRECISION(_) => B20AssetStorage::WAD.abi_encode().into(),
+            SC::MAX_UI_MULTIPLIER(_) => logic.max_ui_multiplier()?.abi_encode().into(),
 
             // --- Multiplier reads ---
             SC::multiplier(_) => logic.multiplier(self)?.abi_encode().into(),
@@ -352,6 +357,9 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                 logic.to_scaled_balance(self, c.rawBalance)?.abi_encode().into()
             }
             SC::toRawBalance(c) => logic.to_raw_balance(self, c.scaledBalance)?.abi_encode().into(),
+            // ERC-8056 Conversion extension: aliases of `toScaledBalance` / `toRawBalance`.
+            SC::toUIAmount(c) => logic.to_scaled_balance(self, c.rawAmount)?.abi_encode().into(),
+            SC::fromUIAmount(c) => logic.to_raw_balance(self, c.uiAmount)?.abi_encode().into(),
             SC::scaledBalanceOf(c) => logic.scaled_balance_of(self, c.account)?.abi_encode().into(),
             SC::balanceOfUI(c) => logic.balance_of_ui(self, c.account)?.abi_encode().into(),
             SC::totalSupplyUI(_) => logic.total_supply_ui(self)?.abi_encode().into(),
@@ -374,8 +382,8 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                 logic.update_multiplier(self, caller, c.newMultiplier, privileged)?;
                 Bytes::new()
             }
-            SC::setUIMultiplier(c) => {
-                logic.set_ui_multiplier(
+            SC::updateUIMultiplier(c) => {
+                logic.update_ui_multiplier(
                     self,
                     caller,
                     c.newMultiplier,
@@ -384,8 +392,8 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                 )?;
                 Bytes::new()
             }
-            SC::cancelScheduledMultiplier(_) => {
-                logic.cancel_scheduled_multiplier(self, caller, privileged)?;
+            SC::cancelUIMultiplierUpdate(_) => {
+                logic.cancel_ui_multiplier_update(self, caller, privileged)?;
                 Bytes::new()
             }
 
@@ -730,7 +738,7 @@ mod tests {
             &mut token,
             ALICE,
             U256::from(1u64),
-            IB20Asset::setUIMultiplierCall { newMultiplier: target, effectiveAt: effective_at }
+            IB20Asset::updateUIMultiplierCall { newMultiplier: target, effectiveAt: effective_at }
                 .abi_encode(),
         )
         .unwrap();
@@ -782,7 +790,7 @@ mod tests {
     #[test]
     fn route_v1_rejects_scheduled_selector_as_unknown() {
         let mut token = make_token();
-        let calldata = IB20Asset::setUIMultiplierCall {
+        let calldata = IB20Asset::updateUIMultiplierCall {
             newMultiplier: B20AssetStorage::WAD,
             effectiveAt: U256::from(2u64),
         }
@@ -806,8 +814,8 @@ mod tests {
     #[test]
     fn route_v1_rejects_scheduled_selector_with_malformed_args_as_unknown() {
         let mut token = make_token();
-        // A valid `setUIMultiplier` selector followed by truncated (non-decodable) arguments.
-        let mut calldata = IB20Asset::setUIMultiplierCall::SELECTOR.to_vec();
+        // A valid `updateUIMultiplier` selector followed by truncated (non-decodable) arguments.
+        let mut calldata = IB20Asset::updateUIMultiplierCall::SELECTOR.to_vec();
         calldata.extend_from_slice(&[0u8; 3]);
         let selector: [u8; 4] = calldata[..4].try_into().unwrap();
         let err = call_asset(&mut token, ALICE, calldata).unwrap_err();

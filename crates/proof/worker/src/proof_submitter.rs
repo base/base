@@ -447,6 +447,7 @@ mod tests {
                     sequence_window: None,
                     l1_head: None,
                     intermediate_root_interval: None,
+                    schedule_l2_block_number: None,
                     zk_vm: ZkVm::Sp1,
                     zk_backend: ZkBackend::Cluster,
                 }),
@@ -577,25 +578,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn task_controller_cancels_spawned_submission() {
+    async fn task_controller_cancels_and_drains_spawned_submission() {
         let client = MockWorkerClient::new(vec![retryable_error()]);
         let submitter = ProofSubmitter::new(client.clone()).with_backoff_config(
             RetryConfig::unbounded(Duration::from_secs(60), Duration::from_secs(60)),
         );
         let controller = ProofTaskController::new();
+        controller.spawn_submission(&submitter, submit_request()).await;
 
-        let handle = controller.spawn_submission(&submitter, submit_request());
         timeout(Duration::from_secs(1), client.wait_for_submission_count(1))
             .await
             .expect("first submission attempt should happen");
-        controller.cancel_submissions();
-
-        let result = timeout(Duration::from_secs(1), handle)
+        timeout(Duration::from_secs(1), controller.cancel_and_drain_submissions())
             .await
-            .expect("cancelled submission task should finish")
-            .expect("submission task should not panic");
+            .expect("cancelled submission task should finish");
 
-        assert!(matches!(result, Err(ProofSubmitterError::Cancelled)));
-        assert_eq!(client.submission_count(), 1);
+        assert_eq!(controller.pending_submissions(), 0);
     }
 }

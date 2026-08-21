@@ -117,14 +117,12 @@ impl PolicyAbi {
 pub struct PolicyVersions;
 
 impl PolicyVersions {
-    /// Returns the version active at `upgrade`, or `None` before Beryl, where the policy
+    /// Returns the version active at `upgrade`, or `None` before the introduction
     pub fn from_base_upgrade(upgrade: BaseUpgrade) -> Option<PolicyVersion> {
-        if upgrade >= BaseUpgrade::Cobalt {
-            Some(PolicyVersion::V2)
-        } else if upgrade >= BaseUpgrade::Beryl {
-            Some(PolicyVersion::V1)
-        } else {
-            None
+        match upgrade {
+            u if u >= BaseUpgrade::Cobalt => Some(PolicyVersion::V2),
+            u if u >= BaseUpgrade::Beryl => Some(PolicyVersion::V1),
+            _ => None,
         }
     }
 }
@@ -185,21 +183,23 @@ mod tests {
         let added: Vec<[u8; 4]> = IPolicyRegistryV2::IPolicyRegistryCalls::selectors()
             .filter(|selector| !PolicyAbi::V1.valid_selector(*selector))
             .collect();
-        assert_eq!(added.len(), 3);
+        assert_eq!(added.len(), 5);
         assert!(added.contains(&IPolicyRegistry::createCompositePolicyCall::SELECTOR));
         assert!(added.contains(&IPolicyRegistry::updateCompositeCall::SELECTOR));
         assert!(added.contains(&IPolicyRegistry::compositePolicyChildIdsCall::SELECTOR));
+        assert!(added.contains(&IPolicyRegistry::MIN_COMPOSITE_CHILD_POLICIESCall::SELECTOR));
+        assert!(added.contains(&IPolicyRegistry::MAX_COMPOSITE_CHILD_POLICIESCall::SELECTOR));
     }
 
     /// `abi_decode_validate` short-circuits on `len < MIN_DATA_LENGTH + 4` before looking at the
-    /// selector. Equal minimums across surfaces is what makes truncated calldata produce identical
-    /// bytes at every fork, and it is not obvious from the interface definitions.
+    /// selector. Before Cobalt's `MIN_COMPOSITE_CHILD_POLICIES`/`MAX_COMPOSITE_CHILD_POLICIES`
+    /// getters (the first zero-argument calls on either surface), equal minimums across surfaces
+    /// meant truncated calldata produced identical bytes at every fork. V2's minimum is now `0`
+    /// since those two calls take no arguments; V1, which never gained a zero-arg call, keeps `32`.
     #[test]
     fn surfaces_share_a_minimum_calldata_length() {
-        assert_eq!(
-            IPolicyRegistryV1::IPolicyRegistryCalls::MIN_DATA_LENGTH,
-            IPolicyRegistryV2::IPolicyRegistryCalls::MIN_DATA_LENGTH
-        );
+        assert_eq!(IPolicyRegistryV1::IPolicyRegistryCalls::MIN_DATA_LENGTH, 32);
+        assert_eq!(IPolicyRegistryV2::IPolicyRegistryCalls::MIN_DATA_LENGTH, 0);
     }
 
     /// `SolInterface::NAME` lands in consensus data: the short-calldata branch of

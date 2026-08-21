@@ -1,0 +1,26 @@
+[package]
+name = "base-shadow-metrics-bin"
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "shadow-metrics"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+anyhow.workspace = true
+dotenvy.workspace = true
+base-cli-utils.workspace = true
+base-shadow-metrics.workspace = true
+tracing = { workspace = true, features = ["std"] }
+clap = { workspace = true, features = ["derive", "env"] }
+axum = { workspace = true, features = ["tokio", "http1"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "time", "signal"] }

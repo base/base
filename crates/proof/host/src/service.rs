@@ -72,11 +72,14 @@ impl<B: ProverBackend> ProverService<B> {
         let l1_header_cache = self.l1_header_cache.get_or_init(L1HeaderCache::new).clone();
         let oracle = self.backend.create_oracle();
 
-        let oracle = base_metrics::time!(Metrics::witness_build_duration_seconds(), {
-            host.build_witness_with_l1_header_cache(oracle, l1_header_cache)
-                .await
-                .map_err(ProverError::Host)?
-        });
+        let witness_timer = base_metrics::timed!(Metrics::witness_build_duration_seconds(
+            self.backend.prover_label()
+        ));
+        let oracle = host
+            .build_witness_with_l1_header_cache(oracle, l1_header_cache)
+            .await
+            .map_err(ProverError::Host)?;
+        drop(witness_timer);
 
         let result = base_metrics::time!(Metrics::prover_duration_seconds(), {
             self.backend.prove(oracle).await.map_err(ProverError::Backend)?
@@ -146,6 +149,10 @@ mod tests {
 
         fn create_oracle(&self) -> Self::Oracle {
             NoopOracle::default()
+        }
+
+        fn prover_label(&self) -> &'static str {
+            "test"
         }
 
         async fn prove(&self, _witness: Self::Oracle) -> Result<ProofResult, Self::Error> {

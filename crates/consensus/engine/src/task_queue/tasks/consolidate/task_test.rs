@@ -44,6 +44,7 @@ fn rpc_transaction(tx: BaseTxEnvelope, block_number: u64) -> BaseTransaction {
             effective_gas_price: Some(0),
             transaction_index: Some(0),
         },
+        block_timestamp_ms: None,
         deposit_nonce: None,
         deposit_receipt_version: None,
     }

@@ -1,6 +1,7 @@
 //! Contains the [`TxForwardingExtension`] which wires up the transaction
 //! forwarding pipeline on the Base node builder.
 
+use base_execution_txpool::TransactionValidity;
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use tracing::info;
 
@@ -40,7 +41,8 @@ impl BaseNodeExtension for TxForwardingExtension {
 
             let pool = ctx.pool().clone();
             let executor = ctx.task_executor;
-            let handle = TxForwardingService::new(config).spawn(pool, &executor);
+            let handle = TxForwardingService::new(config)
+                .spawn_with_extensions::<_, TransactionValidity>(pool, &executor);
 
             executor.spawn_with_graceful_shutdown_signal(|signal| {
                 Box::pin(async move {

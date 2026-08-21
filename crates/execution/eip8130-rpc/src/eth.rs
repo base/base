@@ -7,8 +7,7 @@ use alloy_primitives::{Address, U256};
 use alloy_rpc_types::state::{EvmOverrides, StateOverride};
 use base_common_chains::Upgrades;
 use base_common_evm::BaseTransaction as BaseRevm;
-use base_common_network::Base;
-use base_common_rpc_types::BaseTransactionRequest;
+use base_common_rpc_types::{BaseRpcTypes, BaseTransactionRequest};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -55,7 +54,8 @@ pub trait Eip8130EthApiOverride {
     /// Estimates gas for a transaction.
     ///
     /// A request carrying EIP-8130 fields (account changes, calls, `nonce_key`,
-    /// expiry, or metadata) is estimated via a single read-only EIP-8130
+    /// `valid_after`/`valid_before`, or metadata) is estimated via a single
+    /// read-only EIP-8130
     /// simulation against the block state (gated on the Cobalt fork). The
     /// EIP-8130 pipeline charges deterministic, signature-independent gas, so no
     /// gas-limit binary search is needed. A plain request falls through to the
@@ -86,7 +86,7 @@ impl<Eth: EthApiTypes> Eip8130EthApiExt<Eth> {
 #[async_trait]
 impl<Eth> Eip8130EthApiOverrideServer for Eip8130EthApiExt<Eth>
 where
-    Eth: FullEthApi<NetworkTypes = Base> + LoadPendingBlock + Clone + Send + Sync + 'static,
+    Eth: FullEthApi<NetworkTypes = BaseRpcTypes> + LoadPendingBlock + Clone + Send + Sync + 'static,
     Eth::Error: FromEthApiError,
     <Eth as RpcNodeCore>::Provider: ChainSpecProvider + BlockReaderIdExt,
     <<Eth as RpcNodeCore>::Provider as ChainSpecProvider>::ChainSpec: Upgrades,

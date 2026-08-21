@@ -36,29 +36,17 @@ pub struct BatcherConfig {
     /// [`l1_rpc_url`](Self::l1_rpc_url) only on failure. When absent, polling
     /// is used exclusively.
     pub l1_ws_url: Option<Url>,
-    /// Optional L2 WebSocket endpoint for new-block subscriptions.
+    /// Parity validator L2 RPC endpoint for shadow mode.
     ///
-    /// When set, the batcher subscribes to new block headers over this
-    /// connection and falls back to polling [`l2_rpc_url`](Self::l2_rpc_url)
-    /// only on failure. When absent, the batcher uses polling exclusively.
-    pub l2_ws_url: Option<Url>,
-    /// Optional derived-parity validator L2 RPC endpoint.
-    ///
-    /// When set, shadow-mode deployments compare derived L2 block hashes
-    /// from this validator against the configured sequencer L2 RPC endpoint.
-    /// The validator is expected to derive from the shadow batch inbox and must
-    /// not be a follow-mode mirror of the sequencer.
+    /// Required with [`batch_inbox_override`](Self::batch_inbox_override) and
+    /// rejected without it. Its safe L2 head anchors shadow batcher recovery,
+    /// and its derived block hashes are compared with the sequencer.
     pub parity_validator_l2_rpc_url: Option<Url>,
     /// Rollup node RPC endpoint(s).
     ///
     /// Same connection-time failover semantics as [`l1_rpc_url`](Self::l1_rpc_url).
     /// Must be non-empty.
     pub rollup_rpc_url: Vec<Url>,
-    /// Optional L1 beacon API endpoint.
-    ///
-    /// Used only by shadow-mode parity monitoring to fetch EIP-4844 blob sidecars
-    /// for canonical and shadow inbox submissions. Calldata parity does not require it.
-    pub l1_beacon_url: Option<Url>,
     /// Signer configuration for signing L1 transactions.
     ///
     /// Must be `Some` before the batcher is started; a `None` value will cause
@@ -87,13 +75,13 @@ pub struct BatcherConfig {
     pub resubmission_timeout: Duration,
     /// Throttle configuration (optional).
     pub throttle: Option<ThrottleConfig>,
-    /// Number of recent L1 blocks to scan on startup for already-submitted batcher frames.
+    /// Number of recent L1 blocks to inspect for a confirmed batcher transaction.
     ///
-    /// When nonzero, the service walks back this many blocks from the current L1 head
-    /// on startup, decodes any calldata batcher frames it finds, and advances the L2
-    /// block cursor past data already pending on L1. This avoids re-submitting frames
-    /// that were posted but not yet reflected in the safe head after an unclean shutdown.
+    /// When [`wait_node_sync`](Self::wait_node_sync) is enabled, recent batcher
+    /// account nonce activity selects the L1 synchronization target in this window.
+    /// This never changes the L2 backfill cursor.
     ///
+    /// Must be zero unless [`wait_node_sync`](Self::wait_node_sync) is enabled.
     /// Must be at most [`MAX_CHECK_RECENT_TXS_DEPTH`](crate::MAX_CHECK_RECENT_TXS_DEPTH)
     /// (128). A value of 0 disables the scan (default).
     pub check_recent_txs_depth: u64,
@@ -104,19 +92,17 @@ pub struct BatcherConfig {
     pub admin_addr: Option<SocketAddr>,
     /// If `true`, start in a stopped state and defer batch submission until
     /// `admin_startBatcher` is called via the admin API.
-    ///
-    /// Matches the reference batcher's `--stopped` behavior (env: `BATCHER_STOPPED`).
     pub stopped: bool,
-    /// If `true`, block startup until the rollup node reports a non-zero
-    /// `unsafe_l2` and `current_l1` head via `optimism_syncStatus`.
+    /// If `true`, block startup until the rollup node has processed the selected
+    /// L1 synchronization target.
     ///
     /// Useful when the batcher is started before the node has finished its
     /// initial sync — without this gate the initial backfill would race the
     /// node's derivation pipeline and could submit redundant data.
-    /// Matches the reference batcher's `--wait-node-sync` flag.
     pub wait_node_sync: bool,
-    /// Maximum time to wait for the rollup node to report sync when
-    /// [`wait_node_sync`](Self::wait_node_sync) is set.
+    /// Budget for retrying one-shot startup RPCs, and the maximum time to wait
+    /// for the rollup node to report sync when [`wait_node_sync`](Self::wait_node_sync)
+    /// is set.
     ///
     /// On expiry the service exits with an error rather than hanging
     /// indefinitely, giving operators a clear signal that the upstream node is
@@ -134,10 +120,8 @@ impl Default for BatcherConfig {
             l1_rpc_url: vec!["http://localhost:8545".parse().expect("valid default URL")],
             l1_ws_url: None,
             l2_rpc_url: vec!["http://localhost:9545".parse().expect("valid default URL")],
-            l2_ws_url: None,
             parity_validator_l2_rpc_url: None,
             rollup_rpc_url: vec!["http://localhost:7545".parse().expect("valid default URL")],
-            l1_beacon_url: None,
             signer: None,
             metrics_enabled: false,
             batch_inbox_override: None,

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use alloy_provider::RootProvider;
 use alloy_rpc_types_engine::JwtSecret;
@@ -23,6 +23,8 @@ pub struct EngineConfig {
 
     /// The L1 rpc url.
     pub l1_url: Url,
+    /// Request timeout for L1 execution JSON-RPC calls.
+    pub l1_rpc_timeout: Duration,
 
     /// The mode of operation for the node.
     /// When the node is in sequencer mode, the engine actor will receive requests to build blocks
@@ -39,6 +41,7 @@ impl EngineConfig {
             l2: self.l2_url.clone(),
             l2_jwt: self.l2_jwt_secret,
             l1_rpc: self.l1_url.clone(),
+            l1_rpc_timeout: self.l1_rpc_timeout,
             cfg: Arc::clone(&self.config),
         }
         .build()

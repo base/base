@@ -14,17 +14,6 @@ pub enum CompressorError {
     Brotli,
 }
 
-/// The type of compressor to use.
-///
-/// Matches the reference batcher's compressor variants.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CompressorType {
-    /// The ratio compression.
-    Ratio,
-    /// The shadow compression.
-    Shadow,
-}
-
 /// The compression algorithm type.
 ///
 /// See:

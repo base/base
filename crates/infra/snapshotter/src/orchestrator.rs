@@ -12,9 +12,12 @@ use tracing::{error, info, warn};
 use crate::{
     SnapshotterConfig,
     container::ContainerManager,
-    snapshot::{OutputFileChecksum, SnapshotGenerator, SnapshotManifest, SnapshotManifestExt},
+    snapshot::{
+        ManifestGenerationParams, OutputFileChecksum, SnapshotGenerator, SnapshotManifest,
+        SnapshotManifestExt,
+    },
     tip::TipChecker,
-    upload::SnapshotUploader,
+    upload::{SnapshotUploadParams, SnapshotUploader},
 };
 
 /// Orchestrates the full snapshot flow: stop CL and EL → generate → upload → restart EL and CL.
@@ -193,19 +196,22 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
         let chain_id = self.config.chain_id;
         let block = Some(self.config.block.unwrap_or(latest_block));
         let blocks_per_file = self.config.blocks_per_file;
-        let remote_for_gen = remote_static_files;
+        let remote_for_gen = remote_static_files.clone();
         let previous_chunk_output_files_for_gen = previous_chunk_output_files;
+        let upload_proofs = self.config.upload_proofs;
 
         let files = tokio::task::spawn_blocking(move || {
-            SnapshotGenerator::generate_manifest_with_previous_chunk_output_files(
-                &source_datadir,
-                &output_dir_for_gen,
+            let params = ManifestGenerationParams {
+                source_datadir: &source_datadir,
+                output_dir: &output_dir_for_gen,
                 chain_id,
                 block,
                 blocks_per_file,
-                &remote_for_gen,
-                &previous_chunk_output_files_for_gen,
-            )
+                remote_static_files: &remote_for_gen,
+                previous_chunk_output_files: &previous_chunk_output_files_for_gen,
+                upload_proofs,
+            };
+            SnapshotGenerator::generate_manifest(&params)
         })
         .await
         .context("snapshot generation task panicked")?
@@ -215,8 +221,14 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
             bail!("snapshot generation produced no files");
         }
 
-        self.upload_run_directory(&run_output_dir, run_timestamp, files, remote_manifest.as_ref())
-            .await?;
+        self.upload_run_directory(
+            &run_output_dir,
+            run_timestamp,
+            files,
+            remote_manifest.as_ref(),
+            &remote_static_files,
+        )
+        .await?;
 
         info!(output_dir = %run_output_dir.display(), "cleaning up local artifacts");
         if let Err(e) = tokio::fs::remove_dir_all(&run_output_dir).await {
@@ -237,13 +249,20 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
         );
 
         let files = SnapshotGenerator::collect_output_files(&run_output_dir)?;
+        let remote_static_files = self.uploader.list_remote_static_files().await?;
         let remote_manifest = self.uploader.fetch_previous_manifest().await?;
         info!(
             has_remote_manifest = remote_manifest.is_some(),
             "fetched previous manifest for blake3 diff"
         );
-        self.upload_run_directory(&run_output_dir, run_timestamp, files, remote_manifest.as_ref())
-            .await
+        self.upload_run_directory(
+            &run_output_dir,
+            run_timestamp,
+            files,
+            remote_manifest.as_ref(),
+            &remote_static_files,
+        )
+        .await
     }
 
     /// Uploads one prepared run directory after generation or from upload-only mode.
@@ -253,6 +272,7 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
         run_timestamp: u64,
         files: Vec<PathBuf>,
         remote_manifest: Option<&SnapshotManifest>,
+        remote_static_files: &HashMap<String, u64>,
     ) -> Result<()> {
         if files.is_empty() {
             bail!("snapshot run directory produced no files")
@@ -265,14 +285,15 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
             serde_json::from_slice(&manifest_bytes).context("failed to parse run manifest.json")?;
 
         self.uploader
-            .upload(
-                run_output_dir,
-                &files,
-                run_timestamp,
-                self.config.retain_runs.get(),
-                &local_manifest,
+            .upload(SnapshotUploadParams {
+                output_dir: run_output_dir,
+                files: &files,
+                timestamp: run_timestamp,
+                retain_runs: self.config.retain_runs.get(),
+                local_manifest: &local_manifest,
                 remote_manifest,
-            )
+                remote_static_files,
+            })
             .await
             .with_context(|| {
                 format!(

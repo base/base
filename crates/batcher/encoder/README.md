@@ -5,10 +5,23 @@ Batcher encoding pipeline: `BatchPipeline` trait and `BatchEncoder` state machin
 The encoder is a synchronous, pure state machine that transforms L2 blocks into
 L1 submission frames. No async, no I/O, no tokio dependency.
 
+## Span channel sizing
+
+The Span producer keeps accepted and candidate RLP state transactionally. The
+protocol RLP limit is always exact. A conservative size check avoids full
+recompression while the candidate is clearly below the compressed-output
+target; near the boundary, the complete candidate is compressed to make the
+exact decision. Candidates above the target are rejected unless the channel is
+empty, which guarantees forward progress. Rejected blocks remain at the encoder
+cursor and are retried in a fresh channel.
+
 ## Usage
 
 ```rust,ignore
-use base_batcher_encoder::{BatchEncoder, EncoderConfig, FrameEncoder, StepResult};
+use base_batcher_encoder::{
+    BatchEncoder, BatchPipeline, DerivationReconciliation, EncoderConfig, FrameEncoder,
+    StepResult,
+};
 
 let mut encoder = BatchEncoder::new(rollup_config, EncoderConfig::default());
 
@@ -17,7 +30,7 @@ encoder.add_block(block)?;
 
 // Step until idle.
 loop {
-    match encoder.step() {
+    match encoder.step()? {
         StepResult::Idle => break,
         _ => {}
     }
@@ -31,23 +44,33 @@ while let Some(sub) = encoder.next_submission() {
         // Or pack into EIP-4844 blobs via base-blobs::BlobEncoder.
     }
     encoder.confirm(sub.id, l1_block_number);
+    encoder.advance_l1_head(l1_block_number);
     // Call encoder.requeue(sub.id) if submission fails and frames must be retried.
+}
+
+// Reconcile derivation progress. `current_l1_number` is `None` when no cursor is available.
+match encoder.reconcile_derivation(safe_head, current_l1_number) {
+    DerivationReconciliation::Consistent => {}
+    DerivationReconciliation::SafeHeadMismatch
+    | DerivationReconciliation::StalledChannel => {
+        encoder.reset();
+    }
 }
 ```
 
 ## Confirm / requeue lifecycle
 
-Every submission drained from `next_submission()` **must** be resolved with either
-`confirm(id, l1_block)` or `requeue(id)`:
+During normal operation, every submission drained from `next_submission()` **must**
+be resolved with either `confirm(id, l1_block)` or `requeue(id)`:
 
-- `confirm` prunes the submission's frames from the channel's pending set. Once all
-  frames of a channel are confirmed, the channel is finalized and its L2 blocks are
-  removed from the encoder's input queue, keeping memory bounded.
-- `requeue` rewinds the channel's frame cursor so the same frames are re-emitted on the
-  next `next_submission()` call. Use this when an L1 transaction fails or is dropped.
+- `confirm` records frame inclusion. Completed channels and their L2 blocks remain
+  buffered until `reconcile_derivation` observes the corresponding safe-head advance.
+- `requeue` makes the submission's frames available again. Use this when an L1
+  transaction fails or is dropped.
 
-Failing to call either will cause the encoder's internal `pending` map and block deque
-to grow without bound.
+Failing to call either leaves the submission in the encoder's internal `pending` map.
+The block deque tracks the `(safe, unsafe]` range; normal removal happens during
+derivation reconciliation.
 
 ## Frame encoding
 

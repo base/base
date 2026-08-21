@@ -237,6 +237,11 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
         self.safe_head.block_info.number
     }
 
+    /// Return the executed hash for a derived L2 block.
+    pub fn derived_block_hash(&self, block_number: u64) -> Option<B256> {
+        self.engine.block_hash_at(block_number)
+    }
+
     /// Return the current L2 unsafe head.
     ///
     /// Advances ahead of the safe head as P2P gossip blocks are received.

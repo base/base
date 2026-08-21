@@ -1,6 +1,9 @@
 //! L1 Client CLI arguments.
 
+use std::{num::ParseIntError, time::Duration};
+
 use alloy_primitives::Address;
+use base_consensus_providers::L1_RPC_TIMEOUT;
 use url::Url;
 
 const DEFAULT_L1_TRUST_RPC: bool = true;
@@ -11,6 +14,16 @@ pub struct L1ClientArgs {
     /// URL of the L1 execution client RPC API.
     #[arg(long, visible_alias = "l1", env = "BASE_NODE_L1_ETH_RPC")]
     pub l1_eth_rpc: Url,
+    /// Request timeout for general L1 execution JSON-RPC calls.
+    #[arg(
+        long = "l1.rpc-timeout-ms",
+        default_value = L1_RPC_TIMEOUT.as_millis().to_string(),
+        env = "BASE_NODE_L1_RPC_TIMEOUT_MS",
+        value_parser = |arg: &str| -> Result<Duration, ParseIntError> {
+            Ok(Duration::from_millis(arg.parse()?))
+        }
+    )]
+    pub l1_rpc_timeout: Duration,
     /// Whether to trust the L1 RPC.
     /// If false, block hash verification is performed for all retrieved blocks.
     #[arg(
@@ -46,17 +59,97 @@ pub struct L1ClientArgs {
     /// the verifier derives from the latest L1 head with no confirmation delay.
     #[arg(long = "l1.verifier-confs", default_value = "0", env = "BASE_NODE_VERIFIER_L1_CONFS")]
     pub l1_verifier_confs: u64,
+    /// Interval, in milliseconds, between polls of the L1 `finalized` block tag. This governs how
+    /// quickly the node observes new L1 finality checkpoints and, in turn, advances its finalized
+    /// L2 head. Controlled via `BASE_NODE_FINALIZED_POLL_INTERVAL_MS`. When unset, a
+    /// chain-specific default is used (one L1 epoch, ~384s, on Ethereum mainnet/Sepolia).
+    #[arg(
+        long = "l1.finalized-poll-interval-ms",
+        env = "BASE_NODE_FINALIZED_POLL_INTERVAL_MS",
+        value_parser = |arg: &str| -> Result<Duration, ParseIntError> {
+            Ok(Duration::from_millis(arg.parse()?))
+        }
+    )]
+    pub l1_finalized_poll_interval: Option<Duration>,
 }
 
 impl Default for L1ClientArgs {
     fn default() -> Self {
         Self {
             l1_eth_rpc: Url::parse("http://localhost:8545").unwrap(),
+            l1_rpc_timeout: L1_RPC_TIMEOUT,
             l1_trust_rpc: DEFAULT_L1_TRUST_RPC,
             l1_beacon: Url::parse("http://localhost:5052").unwrap(),
             l1_slot_duration_override: None,
             l1_da_batcher_sender_override: None,
             l1_verifier_confs: 0,
+            l1_finalized_poll_interval: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use clap::Parser;
+
+    use super::{L1_RPC_TIMEOUT, L1ClientArgs};
+
+    #[derive(Parser)]
+    struct Command {
+        #[command(flatten)]
+        args: L1ClientArgs,
+    }
+
+    #[test]
+    fn defaults_l1_rpc_timeout_to_fifteen_seconds() {
+        assert_eq!(L1ClientArgs::default().l1_rpc_timeout, L1_RPC_TIMEOUT);
+    }
+
+    #[test]
+    fn parses_l1_rpc_timeout_in_milliseconds() {
+        let args = Command::parse_from([
+            "base-consensus",
+            "--l1-eth-rpc",
+            "http://localhost:8545",
+            "--l1-beacon",
+            "http://localhost:5052",
+            "--l1.rpc-timeout-ms",
+            "2500",
+        ])
+        .args;
+
+        assert_eq!(args.l1_rpc_timeout, Duration::from_millis(2500));
+    }
+
+    #[test]
+    fn finalized_poll_interval_defaults_to_none() {
+        let args = Command::parse_from([
+            "base-consensus",
+            "--l1-eth-rpc",
+            "http://localhost:8545",
+            "--l1-beacon",
+            "http://localhost:5052",
+        ])
+        .args;
+
+        assert_eq!(args.l1_finalized_poll_interval, None);
+    }
+
+    #[test]
+    fn parses_finalized_poll_interval_in_milliseconds() {
+        let args = Command::parse_from([
+            "base-consensus",
+            "--l1-eth-rpc",
+            "http://localhost:8545",
+            "--l1-beacon",
+            "http://localhost:5052",
+            "--l1.finalized-poll-interval-ms",
+            "60000",
+        ])
+        .args;
+
+        assert_eq!(args.l1_finalized_poll_interval, Some(Duration::from_millis(60000)));
     }
 }

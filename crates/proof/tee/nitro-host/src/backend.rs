@@ -35,6 +35,10 @@ impl ProverBackend for NitroBackend {
         Oracle::empty()
     }
 
+    fn prover_label(&self) -> &'static str {
+        base_proof_host::Metrics::PROVER_NITRO
+    }
+
     async fn prove(&self, witness: Oracle) -> Result<ProofResult, NitroHostError> {
         let preimages = witness.into_preimages().map_err(NitroHostError::Enclave)?;
         self.transport.prove(preimages).await

@@ -32,12 +32,12 @@ jobs:
           # recorded in the result artifact and PR comment.
           - fork: Beryl
             key: beryl
-            base_anvil_ref: 6d744e03224977edd42a36699ba9ff42be25e8cb
+            base_anvil_ref: 8d0f5b8ae60edd30caa52609bc8677e0b631e2d7
             base_std_ref: v1.0.0
           - fork: Cobalt
             key: cobalt
-            base_anvil_ref: ae7557c4f8602caa1da0be33143bb2504c85b0c8
-            base_std_ref: 8f88bf3e59dcf7a7396e3e80f6eb02166a46573a
+            base_anvil_ref: 9df661bc39c6fb96ef28bfd5ff5d345931f133d3
+            base_std_ref: e30b34212689186b27acd3d340ba0d75d31495e9
     env:
       FORK_NAME: ${{ matrix.fork }}
       FORK_KEY: ${{ matrix.key }}
@@ -262,8 +262,12 @@ jobs:
           cat "$body" >> "$GITHUB_STEP_SUMMARY"
           echo "overall=$overall" >> "$GITHUB_OUTPUT"
 
+      # Skip commenting on forked PRs — we don't have permission to comment on them.
       - name: Comment fork-test results on PR
-        if: github.event_name == 'pull_request' && steps.aggregate.outcome == 'success'
+        if: >
+          github.event_name == 'pull_request' &&
+          steps.aggregate.outcome == 'success' &&
+          github.event.pull_request.head.repo.full_name == github.repository
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

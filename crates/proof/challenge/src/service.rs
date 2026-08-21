@@ -6,7 +6,7 @@ use std::sync::{
 };
 
 use alloy_primitives::Address;
-use alloy_provider::{Provider, ProviderBuilder};
+use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use base_balance_monitor::BalanceMonitorLayer;
 use base_cli_utils::RuntimeManager;
 use base_health::HealthServer;
@@ -82,16 +82,17 @@ impl ChallengerService {
         .map_err(|e| eyre::eyre!("failed to construct tx manager: {e}"))?;
         let submitter = ChallengeSubmitter::new(tx_manager);
 
+        let read_provider = RootProvider::new_http(l1_rpc_url.clone());
         let factory_client = DisputeGameFactoryContractClient::new(
             config.dispute_game_factory_addr,
-            l1_rpc_url.clone(),
-        )?;
+            read_provider.clone(),
+        );
         info!(
             address = %config.dispute_game_factory_addr,
             "DisputeGameFactory client initialized"
         );
 
-        let verifier_client = AggregateVerifierContractClient::new(l1_rpc_url.clone())?;
+        let verifier_client = AggregateVerifierContractClient::new(read_provider.clone());
         let impl_address = factory_client.game_impls(config.game_type).await?;
         if impl_address == Address::ZERO {
             return Err(eyre::eyre!(
@@ -124,8 +125,8 @@ impl ChallengerService {
 
         let anchor_registry_client = AnchorStateRegistryContractClient::new(
             config.anchor_state_registry_addr,
-            l1_rpc_url.clone(),
-        )?;
+            read_provider,
+        );
         info!(
             address = %config.anchor_state_registry_addr,
             "AnchorStateRegistry client initialized"

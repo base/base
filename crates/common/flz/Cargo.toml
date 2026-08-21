@@ -16,7 +16,12 @@ workspace = true
 
 [dev-dependencies]
 rstest.workspace = true
+criterion.workspace = true
 hex-literal.workspace = true
+
+[[bench]]
+name = "flz"
+harness = false
 
 [features]
 default = [ "std" ]

@@ -25,7 +25,7 @@ pub enum DispatchOutcome {
     /// `ACCOUNT_CONFIGURATION.authenticateActor(delegate, ...)`.
     Delegated {
         /// Outer actor id registered on the originating account:
-        /// `bytes32(bytes20(delegate_account))`.
+        /// `bytes32(uint256(uint160(delegate_account)))` (right-aligned).
         actor_id: B256,
         /// The delegated account (B) whose config the nested actor must be
         /// authorized against via `authenticateActor`.

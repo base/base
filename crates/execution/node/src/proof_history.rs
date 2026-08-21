@@ -47,7 +47,6 @@ pub async fn launch_node_with_proof_history(
     let RollupArgs {
         sequencer,
         disable_txpool_gossip,
-        compute_pending_block,
         discovery_v4,
         sequencer_headers,
         min_suggested_priority_fee,
@@ -72,7 +71,6 @@ pub async fn launch_node_with_proof_history(
     let mut node_builder = builder.node(BaseNode::new(RollupArgs {
         sequencer,
         disable_txpool_gossip,
-        compute_pending_block,
         discovery_v4,
         sequencer_headers,
         min_suggested_priority_fee,

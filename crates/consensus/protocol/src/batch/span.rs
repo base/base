@@ -8,15 +8,14 @@
 use alloc::vec::Vec;
 
 use alloy_eips::eip2718::Encodable2718;
-use alloy_primitives::FixedBytes;
+use alloy_primitives::{FixedBytes, bytes};
 use base_common_consensus::OpTxType;
 use base_common_genesis::RollupConfig;
 use tracing::{info, warn};
 
 use crate::{
-    BatchDropReason, BatchValidationProvider, BatchValidity, BlockInfo, L2BlockInfo, RawSpanBatch,
-    SingleBatch, SpanBatchBits, SpanBatchElement, SpanBatchError, SpanBatchPayload,
-    SpanBatchPrefix, SpanBatchTransactions,
+    BatchDropReason, BatchValidationProvider, BatchValidity, BlockInfo, L2BlockInfo, SingleBatch,
+    SpanBatchBits, SpanBatchElement, SpanBatchError, SpanBatchPrefix, SpanBatchTransactions,
 };
 
 /// Container for the inputs required to build a span of L2 blocks in derived form.
@@ -243,56 +242,40 @@ impl SpanBatch {
         &self.batches[self.batches.len() - 1 - n]
     }
 
-    /// Converts this span batch to its raw serializable format.
+    /// Encodes this span directly into its raw wire format.
     ///
-    /// Transforms the derived span batch into a [`RawSpanBatch`] that can be
-    /// serialized and transmitted over the network. This involves organizing
-    /// the cached data into the proper prefix and payload structure.
+    /// [`crate::Batch::encode`] and the batcher's Span candidate builder call
+    /// this after writing the batch type byte. Encoding from the derived caches
+    /// avoids cloning them into an owned [`crate::RawSpanBatch`].
     ///
-    /// # Returns
-    /// * `Ok(RawSpanBatch)` - Successfully converted raw span batch
-    /// * `Err(SpanBatchError)` - Conversion failed, typically due to empty batch
-    ///
-    /// # Errors
-    /// Returns [`SpanBatchError::EmptySpanBatch`] if the span contains no blocks,
-    /// which is invalid as span batches must contain at least one block.
-    ///
-    /// # Algorithm
-    /// The conversion process:
-    /// 1. **Validation**: Ensure the span is not empty
-    /// 2. **Prefix Construction**: Build prefix with temporal and origin data
-    /// 3. **Payload Assembly**: Package cached data into payload structure
-    /// 4. **Relative Timestamp Calculation**: Convert absolute to relative timestamp
-    ///
-    /// The relative timestamp is calculated as:
-    /// ```text
-    /// rel_timestamp = first_block_timestamp - genesis_timestamp
-    /// ```
-    ///
-    /// This enables efficient timestamp encoding in the serialized format.
-    pub fn to_raw_span_batch(&self) -> Result<RawSpanBatch, SpanBatchError> {
+    /// Returns [`SpanBatchError::EmptySpanBatch`] when no block has been appended.
+    pub fn encode(&self, w: &mut dyn bytes::BufMut) -> Result<(), SpanBatchError> {
         if self.batches.is_empty() {
             return Err(SpanBatchError::EmptySpanBatch);
         }
+        let span_start = &self.batches[0];
+        let span_end = &self.batches[self.batches.len() - 1];
 
-        // These should never error since we check for an empty batch above.
-        let span_start = self.batches.first().ok_or(SpanBatchError::EmptySpanBatch)?;
-        let span_end = self.batches.last().ok_or(SpanBatchError::EmptySpanBatch)?;
+        // The wire prefix anchors the span to its first L2 timestamp, parent,
+        // and final L1 origin.
+        SpanBatchPrefix {
+            rel_timestamp: span_start.timestamp - self.genesis_timestamp,
+            l1_origin_num: span_end.epoch_num,
+            parent_check: self.parent_check,
+            l1_origin_check: self.l1_origin_check,
+        }
+        .encode_prefix(w);
 
-        Ok(RawSpanBatch {
-            prefix: SpanBatchPrefix {
-                rel_timestamp: span_start.timestamp - self.genesis_timestamp,
-                l1_origin_num: span_end.epoch_num,
-                parent_check: self.parent_check,
-                l1_origin_check: self.l1_origin_check,
-            },
-            payload: SpanBatchPayload {
-                block_count: self.batches.len() as u64,
-                origin_bits: self.origin_bits.clone(),
-                block_tx_counts: self.block_tx_counts.clone(),
-                txs: self.txs.clone(),
-            },
-        })
+        // Encode directly from the derived caches instead of cloning them into
+        // an intermediate RawSpanBatch payload.
+        let block_count = self.batches.len();
+        let mut varint_buf = [0u8; 10];
+        w.put_slice(unsigned_varint::encode::u64(block_count as u64, &mut varint_buf));
+        SpanBatchBits::encode(w, block_count, &self.origin_bits)?;
+        for block_tx_count in &self.block_tx_counts {
+            w.put_slice(unsigned_varint::encode::u64(*block_tx_count, &mut varint_buf));
+        }
+        self.txs.encode(w)
     }
 
     /// Converts all [`SpanBatchElement`]s after the L2 safe head to [`SingleBatch`]es. The
@@ -764,15 +747,15 @@ impl SpanBatch {
 mod tests {
     use alloc::{string::ToString, vec};
 
-    use alloy_consensus::{Header, constants::EIP1559_TX_TYPE_ID};
+    use alloy_consensus::{Header, SignableTransaction, TxLegacy, constants::EIP1559_TX_TYPE_ID};
     use alloy_eips::BlockNumHash;
-    use alloy_primitives::{B256, Bytes, b256};
-    use base_common_consensus::BaseBlock;
+    use alloy_primitives::{B256, Bytes, Signature, b256};
+    use base_common_consensus::{BaseBlock, BaseTxEnvelope};
     use base_common_genesis::{BaseUpgradeConfig, ChainGenesis, UpgradeConfig};
     use tracing::Level;
 
     use super::*;
-    use crate::test_utils::TestBatchValidator;
+    use crate::{RawSpanBatch, SpanBatchPayload, test_utils::TestBatchValidator};
 
     fn gen_l1_blocks(
         start_num: u64,
@@ -852,6 +835,68 @@ mod tests {
             transactions: vec![],
         };
         assert!(batch.append_singular_batch(singular_batch, 1).is_ok());
+    }
+
+    #[test]
+    fn encode_matches_owned_raw_span_batch() {
+        let tx =
+            BaseTxEnvelope::Legacy(TxLegacy::default().into_signed(Signature::test_signature()))
+                .encoded_2718()
+                .into();
+        let mut batch = SpanBatch { genesis_timestamp: 100, ..Default::default() };
+        batch
+            .append_singular_batch(
+                SingleBatch {
+                    epoch_num: 10,
+                    epoch_hash: FixedBytes::repeat_byte(0x22),
+                    parent_hash: FixedBytes::repeat_byte(0x11),
+                    timestamp: 110,
+                    transactions: vec![tx],
+                },
+                0,
+            )
+            .unwrap();
+        batch
+            .append_singular_batch(
+                SingleBatch {
+                    epoch_num: 11,
+                    epoch_hash: FixedBytes::repeat_byte(0x33),
+                    timestamp: 112,
+                    ..Default::default()
+                },
+                0,
+            )
+            .unwrap();
+        let mut expected = Vec::new();
+        RawSpanBatch {
+            prefix: SpanBatchPrefix {
+                rel_timestamp: 10,
+                l1_origin_num: 11,
+                parent_check: batch.parent_check,
+                l1_origin_check: batch.l1_origin_check,
+            },
+            payload: SpanBatchPayload {
+                block_count: 2,
+                origin_bits: batch.origin_bits.clone(),
+                block_tx_counts: batch.block_tx_counts.clone(),
+                txs: batch.txs.clone(),
+            },
+        }
+        .encode(&mut expected)
+        .unwrap();
+        let mut actual = Vec::new();
+
+        batch.encode(&mut actual).unwrap();
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn encode_rejects_empty_span_batch() {
+        assert_eq!(
+            SpanBatch::default().encode(&mut Vec::new()),
+            Err(SpanBatchError::EmptySpanBatch)
+        );
     }
 
     #[test]

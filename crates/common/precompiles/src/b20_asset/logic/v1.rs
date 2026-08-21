@@ -28,6 +28,12 @@ const VERSION: &[u8] = b"1";
 pub struct AssetV1;
 
 impl AssetV1 {
+    const PAUSABLE_FEATURES: &[IB20::PausableFeature] = &[
+        IB20::PausableFeature::TRANSFER,
+        IB20::PausableFeature::MINT,
+        IB20::PausableFeature::BURN,
+    ];
+
     /// Role identifier for asset operators: `keccak256("OPERATOR_ROLE")`.
     ///
     /// Asset-specific (not part of [`B20TokenRole`]); kept inherent to V1 so it stays frozen with
@@ -97,34 +103,6 @@ impl AssetV1 {
             .emit_event(IB20::Transfer { from, to: Address::ZERO, amount }.encode_log_data())
     }
 
-    /// Grants `role` to `account` without checking caller authorization.
-    ///
-    /// The one token-level mutation the factory needs at bootstrap, when no admin exists yet and the
-    /// authorized [`grant_role`](Asset::grant_role) path is not reachable. Bumps the `DefaultAdmin`
-    /// member count and emits `RoleGranted`. Kept inherent to V1 (off the `Asset` trait) so it stays
-    /// frozen with this version and off `&dyn Asset`.
-    pub(crate) fn grant_role_unchecked<S: AssetAccounting, A: PolicyAccounting>(
-        &self,
-        token: &mut B20AssetToken<S, A>,
-        role: B256,
-        account: Address,
-        sender: Address,
-    ) -> Result<()> {
-        if token.accounting().has_role(role, account)? {
-            return Ok(());
-        }
-        token.accounting_mut().set_role(role, account, true)?;
-        if role == B20TokenRole::DefaultAdmin.id() {
-            let current = token.accounting().role_member_count(role)?;
-            let next =
-                current.checked_add(U256::ONE).ok_or_else(BasePrecompileError::under_overflow)?;
-            token.accounting_mut().set_role_member_count(role, next)?;
-        }
-        token
-            .accounting_mut()
-            .emit_event(IB20::RoleGranted { role, account, sender }.encode_log_data())
-    }
-
     /// Revokes `role` from `account` without checking caller authorization.
     fn revoke_role_unchecked<S: AssetAccounting, A: PolicyAccounting>(
         &self,
@@ -164,14 +142,32 @@ impl AssetV1 {
         Ok(())
     }
 
-    /// Ensures `policy_scope` names a built-in B-20 policy slot.
+    /// Ensures `policy_scope` names a built-in B-20 policy slot available on the frozen V1 (Beryl)
+    /// common surface.
+    ///
+    /// The seize scopes (`SEIZE_HOLDER_POLICY` / `SEIZE_RECEIVER_POLICY`) were introduced at Cobalt
+    /// (V2), so they are rejected here — matching the base-std `v1.0.0` reference. This is what keeps
+    /// the common `updatePolicy` / `policyId` selectors (dialable on V1) from reaching a V2-only
+    /// scope.
+    ///
+    /// The match is exhaustive by design (no `_` arm): every `B20PolicyType` variant is named, so a
+    /// scope added for a future fork fails to compile here until an engineer explicitly places it in
+    /// the supported or rejected arm, reconciling V1 against the base-std `v1.0.0` reference. A
+    /// wildcard would silently reject a newly added scope that should be valid at V1.
     fn ensure_supported_policy_type(policy_scope: B256) -> Result<()> {
-        if B20PolicyType::from_id(policy_scope).is_some() {
-            Ok(())
-        } else {
-            Err(BasePrecompileError::revert(IB20::UnsupportedPolicyType {
-                policyScope: policy_scope,
-            }))
+        match B20PolicyType::from_id(policy_scope) {
+            Some(
+                B20PolicyType::TransferSender
+                | B20PolicyType::TransferReceiver
+                | B20PolicyType::TransferExecutor
+                | B20PolicyType::MintReceiver,
+            ) => Ok(()),
+            // Cobalt (V2)-only scopes, and any unrecognized id, are not part of the frozen V1 surface.
+            Some(B20PolicyType::SeizeHolder | B20PolicyType::SeizeReceiver) | None => {
+                Err(BasePrecompileError::revert(IB20::UnsupportedPolicyType {
+                    policyScope: policy_scope,
+                }))
+            }
         }
     }
 
@@ -346,7 +342,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV1 {
         privileged: bool,
     ) -> Result<()> {
         for feature in &features {
-            B20PausableFeature::ensure_valid(*feature)?;
+            B20PausableFeature::ensure_one_of(*feature, Self::PAUSABLE_FEATURES)?;
         }
         if !privileged {
             B20Guards::ensure_token_role(token, caller, B20TokenRole::Pause)?;
@@ -372,7 +368,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV1 {
         privileged: bool,
     ) -> Result<()> {
         for feature in &features {
-            B20PausableFeature::ensure_valid(*feature)?;
+            B20PausableFeature::ensure_one_of(*feature, Self::PAUSABLE_FEATURES)?;
         }
         if !privileged {
             B20Guards::ensure_token_role(token, caller, B20TokenRole::Unpause)?;
@@ -480,6 +476,28 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV1 {
         self.grant_role_unchecked(token, role, account, caller)
     }
 
+    fn grant_role_unchecked(
+        &self,
+        token: &mut B20AssetToken<S, A>,
+        role: B256,
+        account: Address,
+        sender: Address,
+    ) -> Result<()> {
+        if token.accounting().has_role(role, account)? {
+            return Ok(());
+        }
+        token.accounting_mut().set_role(role, account, true)?;
+        if role == B20TokenRole::DefaultAdmin.id() {
+            let current = token.accounting().role_member_count(role)?;
+            let next =
+                current.checked_add(U256::ONE).ok_or_else(BasePrecompileError::under_overflow)?;
+            token.accounting_mut().set_role_member_count(role, next)?;
+        }
+        token
+            .accounting_mut()
+            .emit_event(IB20::RoleGranted { role, account, sender }.encode_log_data())
+    }
+
     fn revoke_role(
         &self,
         token: &mut B20AssetToken<S, A>,
@@ -568,12 +586,13 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV1 {
         if !privileged {
             B20Guards::ensure_token_role(token, caller, B20TokenRole::DefaultAdmin)?;
         }
-        let old_policy_id = self.policy_id(token, policy_scope)?;
+        Self::ensure_supported_policy_type(policy_scope)?;
         if !token.policy().policy_exists(token.policy_storage(), new_policy_id)? {
             return Err(BasePrecompileError::revert(IB20::PolicyNotFound {
                 policyId: new_policy_id,
             }));
         }
+        let old_policy_id = token.accounting().policy_id(policy_scope)?;
         token.accounting_mut().set_policy_id(policy_scope, new_policy_id)?;
         token.accounting_mut().emit_event(
             IB20::PolicyUpdated {
@@ -703,7 +722,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV1 {
         token: &B20AssetToken<S, A>,
         feature: IB20::PausableFeature,
     ) -> Result<bool> {
-        B20PausableFeature::ensure_valid(feature)?;
+        B20PausableFeature::ensure_one_of(feature, Self::PAUSABLE_FEATURES)?;
         Ok((token.accounting().paused()? & B20PausableFeature::mask(feature)) != U256::ZERO)
     }
 
@@ -1309,6 +1328,23 @@ mod tests {
         assert!(LOGIC.is_paused(&tok, IB20::PausableFeature::MINT).unwrap());
         LOGIC.unpause(&mut tok, ADMIN, vec![IB20::PausableFeature::MINT], true).unwrap();
         assert!(!LOGIC.is_paused(&tok, IB20::PausableFeature::MINT).unwrap());
+    }
+
+    /// `SEIZE` is Cobalt-only. The Beryl wire rejects it at decode; this pins the matching
+    /// logic-layer allowlist so V1 does not accept it via direct logic calls either.
+    #[test]
+    fn pause_unpause_and_is_paused_reject_seize() {
+        let mut tok = token();
+        let expected = BasePrecompileError::enum_conversion_error();
+        assert_eq!(
+            LOGIC.pause(&mut tok, ADMIN, vec![IB20::PausableFeature::SEIZE], true).unwrap_err(),
+            expected
+        );
+        assert_eq!(
+            LOGIC.unpause(&mut tok, ADMIN, vec![IB20::PausableFeature::SEIZE], true).unwrap_err(),
+            expected
+        );
+        assert_eq!(LOGIC.is_paused(&tok, IB20::PausableFeature::SEIZE).unwrap_err(), expected);
     }
 
     // --- roles ---

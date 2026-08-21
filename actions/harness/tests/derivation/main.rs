@@ -1548,6 +1548,52 @@ async fn gas_limit_change_does_not_disrupt_derivation() {
     assert_eq!(node.l2_safe_number(), 2, "both L2 blocks derived after gas-limit update");
 }
 
+/// A `GasLimit` system-config update takes effect on the first L2 block that
+/// adopts the L1 origin carrying the change, not a block later.
+///
+/// With `block_time=2` and L1 `block_time=12`:
+/// - L2 blocks 1-5 stay on genesis (epoch 0) and keep the genesis gas limit
+/// - L2 block 6 adopts L1 block 1 and must already use the updated gas limit
+#[tokio::test]
+async fn gas_limit_change_applies_on_adopting_origin_block() {
+    const NEW_GAS_LIMIT: u64 = 60_000_000;
+
+    let l1_sys_cfg_addr = Address::repeat_byte(0xCC);
+    let batcher_cfg = BatcherConfig::default();
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
+        .with_l1_system_config_address(l1_sys_cfg_addr)
+        .build();
+    let genesis_gas_limit = rollup_cfg
+        .genesis
+        .system_config
+        .expect("base mainnet config defines a system config")
+        .gas_limit;
+    assert_ne!(genesis_gas_limit, NEW_GAS_LIMIT, "test setup must change the gas limit");
+
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+    h.l1.enqueue_gas_limit_update(l1_sys_cfg_addr, NEW_GAS_LIMIT);
+    h.l1.mine_block();
+
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut sequencer = h.create_l2_sequencer(l1_chain);
+
+    for _ in 1..=5u64 {
+        let block = sequencer.build_next_block_with_single_transaction().await;
+        assert_eq!(sequencer.head().l1_origin.number, 0, "L2 blocks 1-5 stay on genesis origin");
+        assert_eq!(
+            block.header.gas_limit, genesis_gas_limit,
+            "epoch 0 blocks must keep the genesis gas limit"
+        );
+    }
+
+    let adopting = sequencer.build_next_block_with_single_transaction().await;
+    assert_eq!(sequencer.head().l1_origin.number, 1, "L2 block 6 should adopt L1 origin 1");
+    assert_eq!(
+        adopting.header.gas_limit, NEW_GAS_LIMIT,
+        "the first L2 block that adopts the updated L1 origin must use the new gas limit immediately"
+    );
+}
+
 // ── Typed garbage-frame variant tests ─────────────────────────────────────────
 
 /// Submit a raw garbage payload, mine it into an L1 block, step the derivation

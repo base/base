@@ -19,6 +19,7 @@ base-jwt = { workspace = true, features = ["engine-validation"] }
 base-upgrade-signal = { workspace = true, features = ["metrics"] }
 
 # consensus
+base-protocol.workspace = true
 base-consensus-rpc.workspace = true
 base-consensus-peers.workspace = true
 base-consensus-derive.workspace = true
@@ -30,6 +31,10 @@ base-consensus-disc = { workspace = true, features = ["metrics"] }
 base-consensus-node = { workspace = true, features = ["metrics"] }
 base-consensus-providers = { workspace = true, features = ["metrics"] }
 reth-node-core.workspace = true
+
+# retry
+backon.workspace = true
+base-retry.workspace = true
 
 # alloy
 alloy-signer.workspace = true
@@ -68,7 +73,9 @@ serde_json = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 rstest.workspace = true
+httpmock.workspace = true
 tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
 
 [features]
 default = [ "otlp" ]

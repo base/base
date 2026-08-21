@@ -6,7 +6,7 @@ use alloy_primitives::Address;
 use alloy_provider::Provider;
 use base_runtime::{Runtime, RuntimeTimeout, TokioRuntime};
 use tokio::sync::{Mutex, OwnedMutexGuard};
-use tracing::{debug, info, warn};
+use tracing::{debug, trace, warn};
 
 use crate::TxManagerError;
 
@@ -168,12 +168,11 @@ where
                     );
                     TxManagerError::Rpc("nonce fetch timed out".into())
                 })?
-                .map_err(|e| {
-                    warn!(
-                        error = %e, address = %self.address,
-                        "failed to fetch nonce from chain",
-                    );
-                    TxManagerError::Rpc(e.to_string())
+                .map_err(|_| {
+                    // The raw transport error may embed credential-bearing
+                    // RPC URLs, so neither log nor propagate it.
+                    warn!(address = %self.address, "failed to fetch nonce from chain");
+                    TxManagerError::Rpc("nonce fetch failed".into())
                 })?;
 
             // Phase 3: re-acquire the lock and populate only if still
@@ -298,7 +297,7 @@ where
         guard.generation = guard.generation.wrapping_add(1);
         // `returned_nonces` is intentionally NOT cleared — these nonces
         // were never published and must persist for reuse.
-        info!(address = %self.address, "nonce cache reset");
+        trace!(address = %self.address, "nonce cache reset");
     }
 
     /// Returns a previously reserved nonce for reuse.

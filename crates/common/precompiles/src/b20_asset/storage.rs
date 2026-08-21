@@ -4,7 +4,7 @@ use alloc::string::String;
 
 use alloy_primitives::{Address, U256};
 use base_precompile_macros::{AssetAccounting, Storable, TokenAccounting, contract};
-use base_precompile_storage::{Handler, Mapping, Result, StorageCtx, StorageOps, insert_into_word};
+use base_precompile_storage::{Handler, Mapping, Result, StorageCtx, StorageOps, Word};
 
 use crate::B20CoreStorage;
 
@@ -94,15 +94,16 @@ impl B20AssetStorage<'_> {
     /// single read-modify-write of the slot they share.
     ///
     /// The two `#[mutator]`-generated setters would each pay a full SLOAD/SSTORE on the same packed
-    /// word; coalescing them halves that to one SLOAD + one SSTORE. `insert_into_word` rewrites only
+    /// word; coalescing them halves that to one SLOAD + one SSTORE. `Word::insert_into_word` rewrites only
     /// each field's own bytes, so the slot's unused upper 8 bytes are preserved untouched.
     fn write_pending(&mut self, multiplier: u128, effective_at: u64) -> Result<()> {
         // `pending_multiplier` (u128) occupies the low 16 bytes; `pending_effective_at` (u64) the
         // next 8. Both share one slot, so writing either field's handle addresses the same word.
         let slot = self.asset.pending_multiplier.slot();
         let current = StorageOps::load(&self.asset.pending_multiplier, slot)?;
-        let word = insert_into_word(current, &multiplier, 0, size_of::<u128>())?;
-        let word = insert_into_word(word, &effective_at, size_of::<u128>(), size_of::<u64>())?;
+        let word = Word::insert_into_word(current, &multiplier, 0, size_of::<u128>())?;
+        let word =
+            Word::insert_into_word(word, &effective_at, size_of::<u128>(), size_of::<u64>())?;
         StorageOps::store(&mut self.asset.pending_multiplier, slot, word)
     }
 }

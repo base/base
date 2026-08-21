@@ -49,30 +49,90 @@ cargo run -p base-load-tester-bin --bin base-load-tester -- path/to/config.yaml
 
 ## Configuration
 
-All configuration is done via YAML files. See `src/config/test_config.rs` for comprehensive field documentation, or `examples/devnet.yaml` for a working example.
+All configuration is done via YAML files. The runner uses a single adaptive open-loop submission
+mode (confirmation-backlog-aware pacing); there is no separate closed-loop mode.
+See `src/config/test_config.rs` for comprehensive field documentation, or
+`examples/devnet.yaml` for a working example.
 Example minimal config:
 
 ```yaml
 transaction_submission_rpcs:
   - "http://localhost:8545"
 # Add more URLs to shard submit batches across multiple HTTP endpoints.
+batch_size: 100
 query_rpc: "http://localhost:8545"
 # Optional: clear pending transactions from these admin RPC nodes for all sender addresses.
 txpool_nodes: []
-flashblocks_ws: "ws://localhost:7111"
 sender_count: 10
 target_gps: 2100000
+# Align canonical block polling and convert target_gps into a per-block gas floor.
+block_time: "2s"
 duration: "30s"
 ```
 
-`flashblocks_ws` is required for builder flashblocks broadcast latency data.
+Ordinary invocations calibrate and run in one go. Benchmark harnesses that need an explicit
+ready/start handshake before measured submission can pass `--separate-setup <control-dir>` and
+`--block-gas-limit <gas>` on the command line; these orchestration controls are intentionally not
+part of the portable YAML configuration.
+
+`in_flight_per_sender` bounds unconfirmed transactions per sender and defaults to `16`, matching
+Reth's default per-account transaction-pool slots. It remains configurable for nodes with a
+different pool policy. The aggregate cap defaults to
+`in_flight_per_sender * sender_count`. Set `max_total_in_flight` to cap the aggregate independently
+of sender count, e.g. to protect a shared target node's mempool regardless of how many senders are
+configured.
+
+`in_flight_per_sender` and `max_total_in_flight` bound unconfirmed *transactions*, not outbound
+*requests*. If the submission RPC is rate-limiting you (e.g. `over rate limit` failures) rather than
+its mempool overflowing, set `max_concurrent_submit_requests` instead: it caps how many
+`eth_sendRawTransaction` batch requests may be outstanding to the submission RPC(s) at once, without
+shrinking the in-flight inventory target. When set, it also expands the signer and sender worker
+pools so the configured request concurrency can be reached. The shared semaphore remains the
+authoritative outbound request limit. `batch_size` controls the maximum transactions per JSON-RPC
+batch request and defaults to 100.
+
+During measurement, the runner refills immediately after an inclusion source releases transaction
+inventory. When `flashblocks_ws` is configured, builder broadcasts provide the earliest signal;
+phase-locked canonical polling remains active as an automatic fallback and the authoritative source
+for final metrics. Both sources feed the same idempotent depth controller, so canonical observation
+does not double-release transactions already seen in a flashblock.
+
+The controller calibrates expected execution gas before measurement, targets
+`target_gps * block_time` of that estimated gas outstanding, and permits up to twice that depth
+while confirmed gas is behind the run-average target. Transaction gas limits remain unchanged for
+execution safety, but do not reduce TPS when they conservatively exceed observed gas usage. Refills
+measure depth from transactions accepted by a submission RPC; local submission backlog still counts
+toward sender and aggregate transaction capacity but is not treated as node mempool inventory.
+Refills are capped by the cumulative measured submission budget (`target_gps * elapsed`), so faster
+flashblock inclusion cannot drive offered load above the configured rate. When `target_gps` is
+omitted, the floor is one full block and the ceiling is two full blocks. Capacity and submission
+bottlenecks are reported without failing the run. Omit `flashblocks_ws` to run with canonical
+polling only; removing the flashblock watcher does not change the controller or submission pipeline.
+The final pacing summary reports canonical, flashblock, and safety refill-cycle counts so source
+fallback is visible.
+
+### Logging
+
+The CLI defaults to INFO logs for the load-test crates and WARN logs for dependencies. In an
+interactive terminal, a compact live footer stays below the logs through setup, submission, and
+confirmation draining. Redirected and non-interactive runs emit the same five-second structured
+progress events without terminal control sequences.
+
+Use `RUST_LOG=base_load_tests=debug` for pacing diagnostics. Normal per-transaction and per-account
+events are available only at trace level. Avoid trace logging for sustained load runs because its
+volume scales with transaction count.
+
+RPC and WebSocket credentials, full endpoint URLs, deterministic account seeds, and randomized
+recipient recovery values are excluded from structured logs. Fresh-recipient recovery instructions
+are still printed explicitly at startup, so protect captured stdout/stderr as recovery material.
+
 `transaction_submission_rpcs` accepts either a single URL string or a list; submit batches are
 distributed across the configured HTTP endpoints.
 `txpool_nodes` is optional and defaults to an empty list; when present, the load tester calls
 `admin_dropSenderTransactions` for every sender address on every configured node before funding.
-Transaction landing is detected by polling `query_rpc` with `eth_getBlockByNumber` every 500ms and
-matching submitted transaction hashes against each block's transaction list; the recorded block
-latency therefore includes the block poll and scan cost. Gas usage and revert status are backfilled
+Canonical transaction landing is detected by phase-locking `query_rpc` polling to `block_time`, then
+probing briefly until the next `eth_getBlockByNumber` response becomes available. Submitted hashes
+are matched against each block's transaction list. Gas usage and revert status are backfilled
 in a single `eth_getBlockReceipts` batch pass at the very end of the run, scoped only to the blocks
 that contained our transactions, so `query_rpc` must support `eth_getBlockReceipts`. Receipt-fetch
 delay is measured for logging but is no longer included in the JSON output.
@@ -217,11 +277,12 @@ real_token_setup:
 
 #### Running multiple load tests
 
-- You may need to tune `target_gps` and sender count appropriately.
+- Tune `target_gps`, `block_time`, and sender count appropriately. Omit `target_gps` to keep one
+  to two block-gas-limits of inventory.
 
 #### Account Create
 
-By default, transfer recipients are picked from the bounded sender pool, so long runs keep targeting the same `sender_count` addresses. Set `fresh_recipient_ratio` to a value from `0.0` to `1.0` to derive that fraction of recipient signing keys from the configured mnemonic, or from `seed` when no mnemonic is set. This drives account-trie fan-out for workloads like the account-create performance baseline.
+By default, transfer recipients are picked from the bounded sender pool, so long runs keep targeting the same `sender_count` addresses. Set `fresh_recipient_ratio` to a value from `0.0` to `1.0` to derive that fraction of recipient signing keys from the same derivation kind as the sender pool (mnemonic when set, otherwise seed-based). This drives account-trie fan-out for workloads like the account-create performance baseline.
 
 ```yaml
 fresh_recipient_ratio: 1.0
@@ -230,4 +291,90 @@ transactions:
     type: transfer
 ```
 
-Recipient keys are advanced past the sender keys. The runner prints `recipient_offset` at startup and writes `fresh_recipient_count` to the final summary. Recover recipients with `AccountPool::from_mnemonic(mnemonic, fresh_recipient_count, recipient_offset)` or `AccountPool::with_offset(seed, fresh_recipient_count, recipient_offset)`.
+Recipient keys are always positioned with a runtime-random seed/offset (never the configured `seed`), so repeated runs never regenerate the same "fresh" addresses. The runner logs `randomized_recipient_seed`/`randomized_recipient_offset` at startup and writes `fresh_recipient_count` to the final summary. Recover recipients from that logged value with `AccountPool::from_mnemonic(mnemonic, fresh_recipient_count, randomized_recipient_offset)` or `AccountPool::with_offset(randomized_recipient_seed, fresh_recipient_count, recipient_offset)`.
+
+#### Validity (Conditional) Transactions
+
+A configurable fraction of *senders* can route their entire traffic through the
+`base_sendRawTransactionValidity` endpoint, attaching state-based validity
+predicates (balance and storage conditions) to every transaction they submit.
+This exercises the sequencer and builder under congestion when validity
+predicates are in play. Set `validity.ratio` to `0.0` (the default) to disable
+the workload entirely, in which case behavior is identical to a plain run.
+
+Routing is deterministic and *per sender* (a hash of `seed + sender`), not per
+transaction, so a given sender's entire nonce stream stays on one submission
+origin. This keeps nonces contiguous and single-origin, avoiding transient
+nonce gaps that a split origin could cause under congestion. Because senders are
+exercised roughly uniformly, the fraction of senders on the validity path
+approximates the fraction of transactions.
+
+```yaml
+validity:
+  ratio: 0.25                 # fraction of senders routed to the validity endpoint
+  predicates:
+    - type: balance
+      address: sender          # sender | recipient | 0x-literal
+      op: ">="
+      value: "0"
+    - type: storage
+      address: "0x1234567890123456789012345678901234567890"
+      slot:
+        kind: fixed
+        value: "0x1"
+      mask: "0xff"             # optional; defaults to all ones server-side
+      op: "="
+      value: "0x0"
+    # balanceOf(sender) against a seeded token's mapping slot:
+    - type: storage
+      address: "0xTOKEN000000000000000000000000000000000000"
+      slot:
+        kind: mapping
+        mapping_slot: "0x0"
+        key: sender
+      op: ">="
+      value: "0x0"
+```
+
+Predicate addresses resolve per transaction: `sender` → the tx `from`,
+`recipient` → the tx `to` (falling back to `from` for contract creation), or a
+fixed `0x` address. Storage slots are either a `fixed` slot or a `mapping`
+slot, which computes the Solidity mapping slot `keccak256(key ++ mapping_slot)`
+so `balanceOf(key)` slots are expressible. Values, slots, and masks accept hex
+(`0x...`) or decimal strings. At most 64 predicates may be attached per
+transaction.
+
+The final summary's `by_cohort` breakdown reports confirmed transactions split
+across the `plain` and `validity_pass` cohorts, so plain traffic can be compared
+against validity traffic when the workload is enabled.
+
+**Required flags for end-to-end evaluation.** For predicates to actually be
+evaluated (not merely transported), the target environment must be configured so
+that:
+
+1. The ingress/sequencer node is started with
+   `--enable-experimental-validity-transactions`. This flag hard-requires
+   transaction forwarding, so it must be accompanied by `--enable-tx-forwarding`
+   and at least one `--builder-rpc-urls=<url>`; the node refuses to start
+   otherwise. Only with this flag set is the `base_sendRawTransactionValidity`
+   endpoint registered.
+2. The builder is started with
+   `--builder.enable-experimental-validity-transactions`. If it is not, forwarded
+   transactions that carry predicates are **rejected** ("transaction extensions
+   are disabled"), so a misconfiguration fails loudly rather than silently
+   dropping predicates.
+3. The builder runs the flashblocks build path (the only builder path wired in
+   the shipped binaries), which is where predicates are evaluated against state.
+
+If `validity.ratio > 0` but the ingress endpoint does not serve
+`base_sendRawTransactionValidity`, the run fails loudly at startup rather than
+silently degrading to plain submission.
+
+**Interpreting the results.** There is no validity-specific builder rejection
+metric, so a transaction whose predicate is false is skipped by the builder and
+simply never confirms (it is not distinguishable from an ordinary drop by a
+counter alone). Compare the `by_cohort` inclusion rates *relative to each other*
+rather than against an absolute target; to confirm the skip path directly,
+observe the builder's `BuilderRejected` event with reason
+`validity_predicate_not_satisfied`, or run the builder with
+`RUST_LOG=payload_builder=trace`.

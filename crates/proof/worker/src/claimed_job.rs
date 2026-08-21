@@ -75,4 +75,7 @@ pub trait ClaimedProofJobHandler: Send + Sync + 'static {
 
     /// Signals backend-specific spawned work to stop during shutdown.
     fn shutdown(&self) {}
+
+    /// Waits for work cancelled by [`Self::shutdown`] to finish.
+    async fn join_shutdown(&self) {}
 }

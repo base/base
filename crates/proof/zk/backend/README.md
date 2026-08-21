@@ -11,3 +11,6 @@ interface.
 - `DryRunZkProver`: local SP1 execution statistics with an empty proof payload.
 - `ClusterZkProver`: SP1 cluster range-proof backend for compressed proofs.
 - `NetworkZkProver`: SP1 prover-network range-proof backend for compressed proofs.
+
+SP1 stdin, ELF/key setup, cluster clients, L2OO bindings, and stdin caches
+live under `succinct/utils`.

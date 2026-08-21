@@ -9,7 +9,7 @@ use alloy_consensus::{BlockHeader, Header, Sealed};
 use alloy_eips::{BlockId, eip1898::BlockNumberOrTag};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_network::{Ethereum, Network};
-use alloy_primitives::{Address, B256, BlockHash, StorageKey, U256};
+use alloy_primitives::{Address, B256, BlockHash, Bytes, StorageKey, U256, hex};
 use alloy_provider::{EthGetBlock, ProviderCall, RpcWithBlock};
 use alloy_rpc_types_engine::{
     ClientVersionV1, ExecutionPayloadBodiesV1, ExecutionPayloadEnvelopeV2, ExecutionPayloadInputV2,
@@ -21,7 +21,7 @@ use alloy_rpc_types_eth::{
 };
 use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
 use async_trait::async_trait;
-use base_common_consensus::{BaseBlock, BasePrimitives, BaseReceipt};
+use base_common_consensus::{BaseBlock, BasePrimitives, BaseReceipt, Predeploys};
 use base_common_genesis::RollupConfig;
 use base_common_network::{Base, BaseEngineApi};
 use base_common_rpc_types_engine::{
@@ -30,7 +30,9 @@ use base_common_rpc_types_engine::{
     BasePayloadAttributes,
 };
 use base_consensus_engine::{EngineClient, EngineClientError};
-use base_consensus_node::{EngineClientError as NodeEngineClientError, SequencerEngineClient};
+use base_consensus_node::{
+    EngineClientError as NodeEngineClientError, ResetReason, SequencerEngineClient,
+};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{
@@ -51,11 +53,12 @@ use reth_payload_primitives::{BuiltPayload, PayloadAttributes};
 use reth_primitives_traits::SealedHeader;
 use reth_provider::{
     BlockWriter, HashedPostStateProvider, LatestStateProviderRef, ProviderFactory, StateProvider,
-    StateProviderFactory, providers::BlockchainProvider,
+    StateProviderFactory, StorageRootProvider, providers::BlockchainProvider,
     test_utils::create_test_provider_factory_with_node_types,
 };
 use reth_revm::{cached::CachedReads, cancelled::CancelOnDrop};
 use reth_transaction_pool::noop::NoopTransactionPool;
+use reth_trie_common::HashedStorage;
 
 use crate::{SharedBlockHashRegistry, SharedL1Chain};
 
@@ -73,6 +76,12 @@ pub type TestPool = NoopTransactionPool<BasePooledTransaction>;
 
 /// Type alias for Base L2 RPC blocks returned by the action engine.
 type ActionL2RpcBlock = <Base as Network>::BlockResponse;
+
+/// Minimal `L2ToL1MessagePasser` stand-in for Isthmus withdrawals-root tests.
+///
+/// Any call increments storage slot 0 so the account storage root — and therefore
+/// the post-Isthmus header `withdrawals_root` — changes when a withdrawal runs.
+const L2_TO_L1_MESSAGE_PASSER_STUB_CODE: [u8; 10] = hex!("60005460010160005500");
 
 /// A payload built in-process during sequencer mode, waiting to be sealed or inserted.
 #[derive(Debug, Clone)]
@@ -152,6 +161,14 @@ impl ActionEngineClient {
         genesis.alloc.insert(
             crate::TEST_ACCOUNT_ADDRESS,
             GenesisAccount::default().with_balance(test_balance),
+        );
+
+        // Harness genesis has no OP predeploys. Without code at this address,
+        // withdrawal calls are no-ops and Isthmus withdrawals_root never moves.
+        genesis.alloc.insert(
+            Predeploys::L2_TO_L1_MESSAGE_PASSER,
+            GenesisAccount::default()
+                .with_code(Some(Bytes::from_static(&L2_TO_L1_MESSAGE_PASSER_STUB_CODE))),
         );
 
         let hf = &rollup_config.upgrades;
@@ -298,10 +315,29 @@ impl ActionEngineClient {
             .unwrap_or(alloy_primitives::U256::ZERO)
     }
 
+    /// Storage root of `address` at the latest committed state.
+    ///
+    /// Prefer this over `eth_getProof` in action tests: the engine client's proof
+    /// RPC path is stubbed and always returns a zero storage hash.
+    pub fn account_storage_root(&self, address: Address) -> B256 {
+        let inner = self.inner.lock().expect("engine client lock");
+        let provider =
+            inner.blockchain_provider.latest().expect("failed to get latest state provider");
+        provider
+            .storage_root(address, HashedStorage::default())
+            .expect("failed to compute account storage root")
+    }
+
     /// Return receipts for an executed block number.
     pub fn receipts_at(&self, block_number: u64) -> Option<Vec<BaseReceipt>> {
         let inner = self.inner.lock().expect("engine client lock");
         inner.executed_receipts.get(&block_number).cloned()
+    }
+
+    /// Return the executed hash for an L2 block number.
+    pub fn block_hash_at(&self, block_number: u64) -> Option<B256> {
+        let inner = self.inner.lock().expect("engine client lock");
+        inner.executed_infos.get(&block_number).map(|info| info.block_info.hash)
     }
 
     /// Check whether an account has non-empty code deployed.
@@ -422,7 +458,12 @@ impl ActionEngineClient {
             let hashed_state = HashedPostStateProvider::hashed_post_state(
                 &LatestStateProviderRef::new(&state_provider),
                 &execution_output.state,
-            );
+            )
+            .map_err(|e| {
+                TransportError::from(TransportErrorKind::custom_str(&format!(
+                    "failed to calculate hashed_post_state: {e}"
+                )))
+            })?;
             drop(state_provider);
 
             let provider_rw = inner.provider_factory.provider_rw().map_err(|e| {
@@ -525,7 +566,6 @@ impl ActionEngineClient {
             // The spec notes: "as long as MinBaseFee is not explicitly set, the
             // default value (0) will be systematically applied."
             min_base_fee: Some(0),
-            timestamp_millis_part: None,
         };
 
         let built = Self::build_payload(inner, payload.parent_hash, attrs)?;
@@ -763,6 +803,10 @@ impl EngineClient for ActionEngineClient {
         };
         Ok(info)
     }
+
+    async fn el_syncing(&self) -> Result<bool, EngineClientError> {
+        Ok(false)
+    }
 }
 
 #[async_trait]
@@ -922,7 +966,10 @@ impl BaseEngineApi for ActionEngineClient {
 
 #[async_trait]
 impl SequencerEngineClient for ActionEngineClient {
-    async fn reset_engine_forkchoice(&self) -> Result<(), NodeEngineClientError> {
+    async fn reset_engine_forkchoice(
+        &self,
+        _reason: ResetReason,
+    ) -> Result<(), NodeEngineClientError> {
         // No-op in action tests — FCU to current head is the default.
         Ok(())
     }

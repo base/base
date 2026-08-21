@@ -13,7 +13,6 @@ use std::{
 
 use alloy_genesis::ChainConfig;
 use alloy_primitives::B256;
-use alloy_provider::RootProvider;
 use alloy_rpc_types_engine::JwtSecret;
 use alloy_signer_local::PrivateKeySigner;
 use base_builder_core::test_utils::get_available_port;
@@ -27,7 +26,8 @@ use base_consensus_peers::{PeerScoreLevel, SecretKeyLoader};
 use base_consensus_rpc::{AdminApiClient, BaseP2PApiClient, RollupNodeApiClient, RpcBuilder};
 use base_consensus_sources::BlockSigner;
 use base_upgrade_signal::{
-    UpgradeSignalConfig, UpgradeSignalMetricLayer, UpgradeSignalRuntimeApplier,
+    UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalMetricLayer,
+    UpgradeSignalRuntimeApplier,
 };
 use eyre::{Result, WrapErr};
 use jsonrpsee::http_client::HttpClientBuilder;
@@ -117,27 +117,32 @@ impl InProcessConsensus {
         let mut rollup_config = config.rollup_config;
         let l1_chain_config = config.l1_chain_config;
 
-        // Mirror the standalone consensus CLI: read the validated L1 schedule and apply it to
-        // the rollup config before the node starts.
+        // Mirror the standalone consensus CLI: apply the fail-closed startup policy (see
+        // `read_startup_schedule`) and apply the schedule to the rollup config before the node
+        // starts. A distant unsupportable upgrade yields `None` (start with an alarm); an imminent
+        // one aborts startup.
         if let Some(signal_config) = &config.upgrade_signal
             && signal_config.mode.applies_at_startup()
         {
-            let reader = signal_config.reader(RootProvider::new_http(config.l1_rpc_url.clone()));
+            let reader = signal_config.reader(config.l1_rpc_url.clone())?;
             let schedule = signal_config
-                .read_validated_schedule(
+                .read_startup_schedule(
                     &reader,
                     "system test consensus startup",
                     &[UpgradeSignalMetricLayer::Consensus],
+                    UpgradeSignalDefaults::STARTUP_SCHEDULE_RETRY_INTERVAL,
                 )
                 .await
                 .wrap_err("Failed to read upgrade signal schedule at startup")?;
-            UpgradeSignalRuntimeApplier::apply_schedule_to_sink(
-                rollup_config.l2_chain_id.id(),
-                &schedule,
-                &mut rollup_config,
-            )
-            .unwrap_or_else(|never| match never {})
-            .log("rollup config");
+            if let Some(schedule) = schedule {
+                UpgradeSignalRuntimeApplier::apply_schedule_to_sink(
+                    rollup_config.l2_chain_id.id(),
+                    &schedule,
+                    &mut rollup_config,
+                )
+                .unwrap_or_else(|never| match never {})
+                .log("rollup config");
+            }
         }
 
         let rpc_port = config.rpc_port.unwrap_or_else(get_available_port);
@@ -192,6 +197,7 @@ impl InProcessConsensus {
             trust_rpc: true,
             beacon: config.l1_beacon_url,
             rpc_url: config.l1_rpc_url.clone(),
+            rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,
             slot_duration_override: config.l1_slot_duration_override,
             verifier_l1_confs: config.verifier_l1_confs,
             da_batcher_sender_override: None,
@@ -202,6 +208,7 @@ impl InProcessConsensus {
             l2_url: config.l2_engine_url,
             l2_jwt_secret: config.jwt_secret,
             l1_url: config.l1_rpc_url,
+            l1_rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,
             mode: config.mode,
         };
 
@@ -241,6 +248,7 @@ impl InProcessConsensus {
             builder = builder.with_sequencer_config(SequencerConfig {
                 sequencer_stopped: config.sequencer_stopped,
                 shadow_blocks_per_cycle: config.shadow_blocks_per_cycle,
+                l1_rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,
                 ..Default::default()
             });
         }

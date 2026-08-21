@@ -28,3 +28,8 @@ serde_json = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 rstest.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "flashblock_decode"
+harness = false

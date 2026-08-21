@@ -9,11 +9,13 @@ use alloy_rpc_types_eth::{Log, TransactionReceipt};
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTransaction};
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
-use base_common_rpc_types::{BaseTransactionReceipt, L1BlockInfo, TransactionReceiptFields};
+use base_common_rpc_types::{
+    BaseLogResponse, BaseTransactionReceipt, L1BlockInfo, TransactionReceiptFields,
+};
 use base_execution_evm::RethL1BlockInfo;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
-use reth_node_api::NodePrimitives;
-use reth_primitives_traits::SealedBlock;
+use reth_node_api::{BlockBody, NodePrimitives};
+use reth_primitives_traits::{SealedBlock, SealedHeaderFor};
 use reth_rpc_eth_api::{
     RpcConvert,
     helpers::LoadReceipt,
@@ -22,6 +24,7 @@ use reth_rpc_eth_api::{
 use reth_rpc_eth_types::{EthApiError, receipt::build_receipt};
 use reth_storage_api::BlockReader;
 
+use super::BaseTimeCache;
 use crate::{BaseEthApi, BaseEthApiError, eth::RpcNodeCore};
 
 impl<N, Rpc> LoadReceipt for BaseEthApi<N, Rpc>
@@ -35,23 +38,43 @@ where
 #[derive(Debug, Clone)]
 pub struct BaseReceiptConverter<Provider> {
     provider: Provider,
+    base_time: BaseTimeCache,
 }
 
 impl<Provider> BaseReceiptConverter<Provider> {
     /// Creates a new [`BaseReceiptConverter`].
-    pub const fn new(provider: Provider) -> Self {
-        Self { provider }
+    pub const fn new(provider: Provider, base_time: BaseTimeCache) -> Self {
+        Self { provider, base_time }
     }
 }
 
 impl<Provider, N> ReceiptConverter<N> for BaseReceiptConverter<Provider>
 where
     N: NodePrimitives<SignedTx: BaseTransaction, Receipt = BaseReceipt>,
-    Provider:
-        BlockReader<Block = N::Block> + ChainSpecProvider<ChainSpec: Upgrades> + Debug + 'static,
+    Provider: BlockReader<Block = N::Block, Transaction = N::SignedTx>
+        + ChainSpecProvider<ChainSpec: Upgrades>
+        + Debug
+        + 'static,
 {
     type RpcReceipt = BaseTransactionReceipt;
+    type RpcLog = BaseLogResponse;
     type Error = BaseEthApiError;
+
+    fn convert_log(
+        &self,
+        log: Log,
+        _receipt: &N::Receipt,
+        header: &SealedHeaderFor<N>,
+    ) -> Result<Self::RpcLog, Self::Error> {
+        let block_timestamp_ms = self.base_time.get::<N::SignedTx, _>(
+            &self.provider,
+            header.hash(),
+            header.number(),
+            header.timestamp(),
+        )?;
+
+        Ok(BaseLogResponse { inner: log, block_timestamp_ms })
+    }
 
     fn convert_receipts(
         &self,
@@ -74,6 +97,12 @@ where
         inputs: Vec<ConvertReceiptInput<'_, N>>,
         block: &SealedBlock<N::Block>,
     ) -> Result<Vec<Self::RpcReceipt>, Self::Error> {
+        let block_timestamp_ms = self.base_time.insert_from_transactions(
+            block.hash(),
+            block.header().number(),
+            block.header().timestamp(),
+            block.body().transactions(),
+        );
         let mut l1_block_info = match base_execution_evm::extract_l1_info(block.body()) {
             Ok(l1_block_info) => l1_block_info,
             Err(err) => {
@@ -96,10 +125,13 @@ where
             // new transaction input has changed, since otherwise the L1 cost wouldn't.
             l1_block_info.clear_tx_l1_cost();
 
-            receipts.push(
+            let mut receipt =
                 BaseReceiptBuilder::new(&self.provider.chain_spec(), input, &mut l1_block_info)?
-                    .build(),
-            );
+                    .build();
+            for log in &mut receipt.inner.inner.receipt.as_receipt_mut().logs {
+                log.block_timestamp_ms = block_timestamp_ms;
+            }
+            receipts.push(receipt);
         }
 
         Ok(receipts)
@@ -274,14 +306,15 @@ impl ReceiptFieldsBuilder {
 #[derive(Debug)]
 pub struct BaseReceiptBuilder {
     /// Core receipt with all fields from an L1 receipt and used as the basis for the Base receipt.
-    pub core_receipt: TransactionReceipt<ReceiptWithBloom<BaseReceipt<Log>>>,
+    pub core_receipt: TransactionReceipt<ReceiptWithBloom<BaseReceipt<BaseLogResponse>>>,
     /// Additional Base receipt fields.
     pub receipt_fields: TransactionReceiptFields,
     /// EIP-8130 gas payer (sender for self-pay, specified payer for sponsored). `None` for
     /// non-EIP-8130 transactions.
     pub payer: Option<Address>,
-    /// EIP-8130 per-phase execution statuses. Empty for non-EIP-8130 transactions.
-    pub phase_statuses: Vec<u8>,
+    /// EIP-8130 per-phase execution statuses. `None` for non-EIP-8130 transactions;
+    /// `Some` (possibly empty) for EIP-8130 transactions.
+    pub phase_statuses: Option<Vec<u8>>,
     /// EIP-8130 opaque transaction metadata. `None` for non-EIP-8130 transactions.
     pub metadata: Option<alloy_primitives::Bytes>,
 }
@@ -306,24 +339,31 @@ impl BaseReceiptBuilder {
         let payer = tx_signed
             .as_eip8130()
             .map(|signed| signed.tx().payer.unwrap_or_else(|| input.tx.signer()));
-        // Omit empty metadata rather than serializing it as `"0x"`, matching how
-        // empty `phase_statuses` is skipped — only a non-empty commitment surfaces.
+        // Omit empty metadata rather than serializing it as `"0x"`. Empty
+        // `phase_statuses` is still serialized as `[]` on EIP-8130 receipts;
+        // only metadata is skipped when empty.
         let metadata = tx_signed
             .as_eip8130()
             .map(|signed| signed.tx().metadata.clone())
             .filter(|metadata| !metadata.is_empty());
+        // `Some` (possibly empty) marks an EIP-8130 receipt so an empty-`calls`
+        // transaction still surfaces `"phaseStatuses": []`; `None` omits the field
+        // entirely for non-EIP-8130 receipts.
         let phase_statuses = match &input.receipt {
-            BaseReceipt::Eip8130(receipt) => receipt.phase_statuses.clone(),
-            _ => Vec::new(),
+            BaseReceipt::Eip8130(receipt) => Some(receipt.phase_statuses.clone()),
+            _ => None,
         };
 
         let mut core_receipt = build_receipt(input, None, |receipt, next_log_index, meta| {
             let map_logs = move |receipt: alloy_consensus::Receipt| {
                 let Receipt { status, cumulative_gas_used, logs } = receipt;
-                let logs = Log::collect_for_receipt(next_log_index, meta, logs);
+                let logs = Log::collect_for_receipt(next_log_index, meta, logs)
+                    .into_iter()
+                    .map(BaseLogResponse::from)
+                    .collect();
                 Receipt { status, cumulative_gas_used, logs }
             };
-            let mapped_receipt: BaseReceipt<Log> = match receipt {
+            let mapped_receipt: BaseReceipt<BaseLogResponse> = match receipt {
                 BaseReceipt::Legacy(receipt) => BaseReceipt::Legacy(map_logs(receipt)),
                 BaseReceipt::Eip2930(receipt) => BaseReceipt::Eip2930(map_logs(receipt)),
                 BaseReceipt::Eip1559(receipt) => BaseReceipt::Eip1559(map_logs(receipt)),

@@ -55,6 +55,8 @@ pub struct ShadowSequencerConfig {
     pub l1_beacon_url: Url,
     /// P2P multiaddr of the active sequencer's consensus node to peer with.
     pub active_consensus_p2p_addr: String,
+    /// L1 slot duration in seconds, used as the consensus derivation poll override.
+    pub l1_slot_duration: u64,
 }
 
 /// A running shadow sequencer: an isolated builder execution layer plus a
@@ -86,6 +88,7 @@ impl ShadowSequencer {
             auth_port: None,
             p2p_port: None,
             flashblocks_port: None,
+            enable_experimental_validity_transactions: false,
             extra_extensions: Vec::new(),
         })
         .await
@@ -105,7 +108,7 @@ impl ShadowSequencer {
             p2p_tcp_port: None,
             p2p_udp_port: None,
             unsafe_block_signer: config.active_sequencer_address,
-            l1_slot_duration_override: Some(4),
+            l1_slot_duration_override: Some(config.l1_slot_duration),
             sequencer_stopped: true,
             verifier_l1_confs: 0,
             shadow_blocks_per_cycle: Some(config.shadow_blocks_per_cycle),

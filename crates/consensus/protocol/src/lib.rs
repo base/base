@@ -56,6 +56,9 @@ pub use base_time::{
     BaseTimeMetadataError, BaseTimeUpdateDecodeError, BaseTimeUpdateError, BaseTimeUpdateTx,
 };
 
+mod timing;
+pub use timing::DEFAULT_SEAL_OFFSET;
+
 mod info;
 pub use info::{
     BlockInfoError, DecodeError, L1BlockInfoBedrock, L1BlockInfoBedrockBase,

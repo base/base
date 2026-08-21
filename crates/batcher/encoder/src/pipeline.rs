@@ -1,8 +1,20 @@
 //! The batcher pipeline trait.
 
 use base_common_consensus::BaseBlock;
+use base_protocol::BlockInfo;
 
 use crate::{BatchSubmission, ReorgError, StepError, StepResult, SubmissionId};
+
+/// Result of reconciling buffered batcher state with derivation progress.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DerivationReconciliation {
+    /// Buffered state is consistent with derivation and safe blocks were pruned.
+    Consistent,
+    /// The reported safe L2 head does not match the buffered L2 chain.
+    SafeHeadMismatch,
+    /// Derivation passed a fully confirmed channel without making its last L2 block safe.
+    StalledChannel,
+}
 
 /// The batcher pipeline -- inverse of the derivation pipeline.
 ///
@@ -14,13 +26,14 @@ use crate::{BatchSubmission, ReorgError, StepError, StepResult, SubmissionId};
 /// 2. Advancing state via [`step`](Self::step) until [`StepResult::Idle`].
 /// 3. Draining ready submissions via [`next_submission`](Self::next_submission).
 /// 4. Reporting outcomes via [`confirm`](Self::confirm) / [`requeue`](Self::requeue).
+/// 5. Reconciling derivation progress via
+///    [`reconcile_derivation`](Self::reconcile_derivation).
 pub trait BatchPipeline: Send {
     /// Add an L2 block to the pipeline's input queue.
     ///
     /// Returns `Err((ReorgError, block))` if the block's parent hash does not match the
-    /// current tip, giving the caller back the block so it can be re-fed after
-    /// [`reset`](Self::reset). On reorg error the caller must reset the pipeline and
-    /// re-add the returned block as the first block of the new chain.
+    /// current tip. The caller must reset the pipeline and restart its block source
+    /// from a trusted head.
     fn add_block(&mut self, block: BaseBlock) -> Result<(), (ReorgError, Box<BaseBlock>)>;
 
     /// Advance the pipeline by one step.
@@ -28,8 +41,8 @@ pub trait BatchPipeline: Send {
     /// A step encodes one pending block into the current channel, or closes a full channel
     /// and moves it to the submission queue. Call repeatedly until [`StepResult::Idle`].
     ///
-    /// Returns [`StepError`] if a block cannot be composed into a batch. This is fatal:
-    /// skipping the block would silently break the contiguous L2 block sequence required
+    /// Returns [`StepError`] if batch composition or channel finalization fails. This is
+    /// fatal: continuing could silently break the contiguous L2 block sequence required
     /// by the derivation spec. The caller must not continue and should surface the error.
     fn step(&mut self) -> Result<StepResult, StepError>;
 
@@ -50,17 +63,18 @@ pub trait BatchPipeline: Send {
 
     /// Mark a submission as confirmed at the given L1 block number.
     ///
-    /// Prunes the confirmed frames from the channel's pending set. Once all frames of a channel
-    /// are confirmed, the channel is finalized and its blocks are pruned from the input queue.
+    /// Records frame inclusion without removing the channel or its L2 blocks.
+    /// [`reconcile_derivation`](Self::reconcile_derivation) owns safe-prefix removal.
+    /// Call [`advance_l1_head`](Self::advance_l1_head) after processing the receipt.
     fn confirm(&mut self, id: SubmissionId, l1_block: u64);
 
-    /// Mark a submission as failed -- rewinds the frame cursor so frames are resubmitted.
+    /// Mark a submission as failed so its frames can be submitted again.
     fn requeue(&mut self, id: SubmissionId);
 
     /// Notify the pipeline of the current L1 head block number.
     ///
-    /// Used to detect channel timeouts: if `l1_head - channel.opened_at > max_channel_duration`,
-    /// the channel is force-closed and its blocks are requeued.
+    /// Closes open channels that reach their maximum duration and replays closed channels
+    /// whose confirmation window expires.
     fn advance_l1_head(&mut self, l1_block: u64);
 
     /// Force-close the current channel, moving it to the submission queue.
@@ -71,21 +85,34 @@ pub trait BatchPipeline: Send {
     ///
     /// Intended for test harnesses that need to flush the current channel without
     /// simulating L1 time progression.
+    ///
+    /// Implementations that encounter a fatal close error surface it from the next
+    /// [`step`](Self::step) call because this method cannot return a result.
     fn force_close_channel(&mut self);
 
-    /// Reset all pipeline state.
+    /// Reset buffered encoding and submission state.
     ///
-    /// Called after a reorg is detected. The caller is responsible for waiting for all
-    /// in-flight submissions to settle (confirm or requeue) before calling reset.
+    /// Called when buffered state must be discarded, such as after a reorg, derivation
+    /// mismatch, or pause. The caller must discard in-flight submission tracking first
+    /// so stale outcomes cannot mutate the rebuilt state.
     fn reset(&mut self);
 
-    /// Prune blocks confirmed safe on L2 to prevent unbounded queue growth.
+    /// Reconcile buffered state with the reported derivation progress.
     ///
-    /// Drains blocks from the front of the input queue whose block number is
-    /// `<= safe_l2_number` **and** that have already been fed into a channel
-    /// (i.e. are before the encoding cursor). Blocks that have not yet been
-    /// encoded are never pruned, even if their number is below the safe head.
-    fn prune_safe(&mut self, safe_l2_number: u64);
+    /// Prunes buffered blocks at or below `safe_l2`, returning
+    /// [`DerivationReconciliation::SafeHeadMismatch`] without mutation when the safe head leaves a
+    /// gap below the buffered window, lies above it, or has a different hash than the boundary
+    /// block. An empty buffer is valid.
+    ///
+    /// After pruning, returns [`DerivationReconciliation::StalledChannel`] if `current_l1` has
+    /// moved strictly beyond the last inclusion block of a fully confirmed channel whose last L2
+    /// block is not safe. `current_l1` must be the derivation cursor, not the live L1 chain head;
+    /// `None` disables this check for providers that do not expose the cursor.
+    fn reconcile_derivation(
+        &mut self,
+        safe_l2: BlockInfo,
+        current_l1: Option<u64>,
+    ) -> DerivationReconciliation;
 
     /// Returns the estimated DA backlog in bytes.
     ///

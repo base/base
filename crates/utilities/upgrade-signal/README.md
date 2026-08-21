@@ -36,6 +36,13 @@ typically advances. It records the latest schedule metrics and update counters w
 contract-backed signal changes. Read failures are metrics-only failures: they are logged and
 counted, but they do not clear the last observed schedule or stop the node.
 
+Every schedule path uses a size-bounded Alloy HTTP provider with a fifteen-second request deadline
+by default and a 256 `KiB` maximum response. Consensus readers continue to honor the configured
+`--l1.rpc-timeout-ms` as their request deadline. The reader rejects a `getSchedule()` ABI array
+declaring more than 256 entries before allocating the decoded vector. Startup and manual reads make
+at most three attempts with the shared capped, jittered exponential backoff, while live reads are
+dropped immediately when the node's shutdown signal wins its cancellation selection.
+
 `startup-apply` reads and validates the L1 schedule before the node starts serving.
 Execution-side callers apply the schedule to the chain spec, consensus-side callers apply it to the
 rollup config, and integrated `base` commands apply one startup read to both. Live polling remains
@@ -56,19 +63,31 @@ ignored while mapping the contract schedule.
 
 ## Protocol Versions
 
-The contract exposes one global `minimumProtocolVersion()` as a packed-semver `uint256`
-(`major << 96 | minor << 64 | patch << 32`), so this crate reads it as `U256` and attaches it to
-every signal in a schedule.
+The contract exposes one global `minimumProtocolVersion()` as a packed-semver `uint256`, so this
+crate reads it as `U256` and attaches it to every signal in a schedule. The highest byte is the
+version-type; for the only defined layout, version-type `0`, the value is
+`version-type || reserved || build || major || minor || patch || pre-release`, where `major`,
+`minor`, `patch`, and `pre-release` are the low four 32-bit fields, `build` occupies the next 64
+bits, and `reserved`/`version-type` occupy the high 64 bits.
+
+Versions are compared by their semver fields rather than as raw integers, via
+[`PackedProtocolVersion`](src/version.rs): an unrecognized version-type (`version-type != 0`) sorts
+above every version-type-`0` value so an unreadable format is rejected (fail-closed); within
+version-type `0` the order is `major`, then `minor`, then `patch`, with a pre-release
+(`pre-release != 0`) sorting below its matching final release (`pre-release == 0`); `build` and the
+reserved bits are ignored.
 
 The node advertises its supported level with
 [`UpgradeSignalDefaults::node_protocol_version()`](src/config/mod.rs), which packs the Cargo
 package semver synced from the `GitHub` release tag on release branches. Development `0.0.0` builds
-advertise `U256::MAX` so contract minimums do not reject untagged local builds. A positive
-activation signal is supported when:
+advertise the maximum version-type-`0` version (`pack(u32::MAX, u32::MAX, u32::MAX, 0)`) so contract
+minimums do not reject untagged local builds; raw `U256::MAX` is unusable as the sentinel because it
+decodes to a pre-release and would rank below its final release. A positive activation signal is
+supported when:
 
 - the contract provides a non-zero minimum protocol version
 - the signaled minimum protocol version is less than or equal to the node's supported protocol
-  version
+  version under the semver ordering above
 
 ## Upgrade Timestamps
 

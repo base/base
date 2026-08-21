@@ -15,6 +15,7 @@ workspace = true
 # base
 base-health.workspace = true
 base-proof-host.workspace = true
+base-proof-worker.workspace = true
 base-proof-preimage.workspace = true
 base-proof-contracts.workspace = true
 base-prover-service-client.workspace = true
@@ -36,6 +37,7 @@ tokio = { workspace = true, features = ["rt", "time", "io-util", "net"] }
 url.workspace = true
 eyre.workspace = true
 tower.workspace = true
+chrono.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 jsonrpsee = { workspace = true, features = ["server", "macros"] }
@@ -44,10 +46,8 @@ jsonrpsee = { workspace = true, features = ["server", "macros"] }
 tokio-vsock.workspace = true
 
 [dev-dependencies]
-chrono.workspace = true
 reqwest.workspace = true
 alloy-genesis.workspace = true
-alloy-signer-local.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 base-common-genesis = { workspace = true, features = ["serde", "std"] }
 

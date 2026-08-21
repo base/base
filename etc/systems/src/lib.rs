@@ -41,8 +41,8 @@ pub use images::{OP_DEPLOYER_IMAGE, RETH_IMAGE};
 
 mod l1;
 pub use l1::{
-    L1ContainerConfig, L1Stack, L1StackConfig, LighthouseBeaconContainer,
-    LighthouseValidatorContainer, RethContainer,
+    L1ContainerConfig, L1Execution, L1ReorgDriver, L1ReplacementBranch, L1RpcProxy, L1Stack,
+    L1StackConfig, LighthouseBeaconContainer, LighthouseValidatorContainer, RethContainer,
 };
 
 mod l2;

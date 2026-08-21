@@ -1,4 +1,4 @@
-# `base-txpool`
+# `base-execution-txpool`
 
 Transaction pool for Base.
 
@@ -51,11 +51,11 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-txpool = { workspace = true }
+base-execution-txpool = { workspace = true }
 ```
 
 ```rust,ignore
-use base_txpool::{BaseOrdering, BaseTransactionPool, BaseTransactionValidator};
+use base_execution_txpool::{BaseOrdering, BaseTransactionPool, BaseTransactionValidator};
 
 let pool = Pool::new(
     BaseTransactionValidator::new(client, evm),

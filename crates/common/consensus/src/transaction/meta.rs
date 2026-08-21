@@ -21,12 +21,14 @@ pub struct BaseTransactionInfo {
     pub inner: TransactionInfo,
     /// Additional metadata for deposit transactions.
     pub deposit_meta: DepositInfo,
+    /// Full block timestamp in milliseconds when `BaseTime` metadata is available.
+    pub block_timestamp_ms: Option<u64>,
 }
 
 impl BaseTransactionInfo {
     /// Creates a new [`BaseTransactionInfo`] with the given [`TransactionInfo`] and
     /// [`DepositInfo`].
     pub const fn new(inner: TransactionInfo, deposit_meta: DepositInfo) -> Self {
-        Self { inner, deposit_meta }
+        Self { inner, deposit_meta, block_timestamp_ms: None }
     }
 }

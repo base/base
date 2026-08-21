@@ -35,7 +35,9 @@ use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
 use base_consensus_engine::EngineGetPayloadVersion;
-use base_consensus_node::{EngineClientError, EngineClientResult, SequencerEngineClient};
+use base_consensus_node::{
+    EngineClientError, EngineClientResult, ResetReason, SequencerEngineClient,
+};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_builder::BasePayloadBuilderAttributes;
 use base_execution_txpool::BasePooledTransaction;
@@ -158,7 +160,7 @@ impl BuilderBackedEngineClient {
 /// `newPayload` + canonical `forkchoiceUpdated` to import it.
 #[async_trait]
 impl SequencerEngineClient for BuilderBackedEngineClient {
-    async fn reset_engine_forkchoice(&self) -> EngineClientResult<()> {
+    async fn reset_engine_forkchoice(&self, _reason: ResetReason) -> EngineClientResult<()> {
         let head = self.head.lock().expect("head lock").block_info.hash;
         self.engine()
             .update_forkchoice(head, head, None)

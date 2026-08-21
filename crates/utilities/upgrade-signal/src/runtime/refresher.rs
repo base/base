@@ -1,6 +1,3 @@
-use alloy_provider::RootProvider;
-use tracing::info;
-
 use super::{UpgradeSignalApplySummary, UpgradeSignalRuntimeApplier};
 use crate::{
     AlloyUpgradeSignalReader, UpgradeSignalConfig, UpgradeSignalError, UpgradeSignalMetricLayer,
@@ -24,34 +21,27 @@ impl UpgradeSignalRefresher {
     /// Creates a runtime upgrade signal refresher.
     pub const fn new(
         config: UpgradeSignalConfig,
-        l1_provider: RootProvider,
+        reader: AlloyUpgradeSignalReader,
         chain_id: u64,
         metrics_layer: UpgradeSignalMetricLayer,
     ) -> Self {
-        let reader = config.reader(l1_provider);
         Self { config, reader, chain_id, metrics_layer }
     }
 
     /// Validates and applies an already-read schedule without touching L1.
     ///
-    /// Callers do not retry failures: validation failures are deterministic, and failed reads
-    /// never advance the monitor baseline, so changed signals are re-detected next poll.
+    /// This is atomic: the whole schedule is validated before any registry mutation, so a
+    /// validation failure leaves the runtime registry unchanged. The live poller
+    /// ([`crate::UpgradeSignalMonitor::poll_and_apply`]) advances its applied baseline only when
+    /// this call succeeds, so a failed apply leaves the schedule offered for retry on the next
+    /// poll rather than being silently adopted as the baseline.
     pub fn apply(
         &self,
         schedule: &UpgradeSignalSchedule,
     ) -> Result<UpgradeSignalApplySummary, UpgradeSignalError> {
         self.config.validate_schedule_protocol_versions(schedule)?;
         let summary = UpgradeSignalRuntimeApplier::apply_schedule(self.chain_id, schedule);
-        info!(
-            target: "upgrade_signal",
-            chain_id = summary.chain_id,
-            l1_block_number = ?summary.l1_block_number,
-            applied_upgrades = summary.applied_upgrades,
-            cleared_upgrades = summary.cleared_upgrades,
-            ignored_upgrades = summary.ignored_upgrades,
-            configured_upgrades = summary.configured_upgrades,
-            "applied runtime upgrade signal schedule"
-        );
+        summary.log("runtime registry");
 
         Ok(summary)
     }
@@ -79,12 +69,9 @@ mod tests {
     use crate::{UpgradeSignal, UpgradeSignalDefaults};
 
     fn refresher(chain_id: u64) -> UpgradeSignalRefresher {
-        UpgradeSignalRefresher::new(
-            UpgradeSignalConfig::new(Address::ZERO),
-            RootProvider::new_http("http://127.0.0.1:1".parse().unwrap()),
-            chain_id,
-            UpgradeSignalMetricLayer::Consensus,
-        )
+        let config = UpgradeSignalConfig::new(Address::ZERO);
+        let reader = config.reader("http://127.0.0.1:1".parse().unwrap()).unwrap();
+        UpgradeSignalRefresher::new(config, reader, chain_id, UpgradeSignalMetricLayer::Consensus)
     }
 
     fn schedule(
@@ -92,12 +79,10 @@ mod tests {
         activation_timestamp: u64,
         protocol_version: U256,
     ) -> UpgradeSignalSchedule {
-        UpgradeSignalSchedule::new(vec![UpgradeSignal {
-            upgrade_id,
-            activation_timestamp,
-            protocol_version,
-            l1_block_number: 1,
-        }])
+        UpgradeSignalSchedule::new(
+            1,
+            vec![UpgradeSignal { upgrade_id, activation_timestamp, protocol_version }],
+        )
     }
 
     #[test]
@@ -123,8 +108,21 @@ mod tests {
         let chain_id = 9_100_002;
         RuntimeUpgradeRegistry::clear_chain(chain_id);
 
-        let unsupported = UpgradeSignalDefaults::node_protocol_version() + U256::from(1);
-        refresher(chain_id).apply(&schedule(BaseUpgrade::Azul, 42, unsupported)).unwrap_err();
+        // Node supports 1.1.0; a 1.1.1 minimum is genuinely newer and must be rejected. Adding
+        // `+ 1` to the dev-build sentinel no longer works: it decodes to a pre-release of the max
+        // release, which now sorts below the release under the semver ordering.
+        let mut config = UpgradeSignalConfig::new(Address::ZERO);
+        config.node_protocol_version = UpgradeSignalDefaults::packed_protocol_version(1, 1, 0);
+        let reader = config.reader("http://127.0.0.1:1".parse().unwrap()).unwrap();
+        let refresher = UpgradeSignalRefresher::new(
+            config,
+            reader,
+            chain_id,
+            UpgradeSignalMetricLayer::Consensus,
+        );
+
+        let unsupported = UpgradeSignalDefaults::packed_protocol_version(1, 1, 1);
+        refresher.apply(&schedule(BaseUpgrade::Azul, 42, unsupported)).unwrap_err();
 
         assert_eq!(RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Azul), None);
     }

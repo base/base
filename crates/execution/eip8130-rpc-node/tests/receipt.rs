@@ -40,7 +40,8 @@ async fn eip8130_transaction_is_mined_and_has_a_receipt() -> eyre::Result<()> {
         sender: None,
         nonce_key: U256::ZERO,
         nonce_sequence: 0,
-        expiry: 0,
+        valid_after: 0,
+        valid_before: 0,
         max_priority_fee_per_gas: 0,
         max_fee_per_gas: 1_000_000_000,
         gas_limit: 200_000,
@@ -72,14 +73,17 @@ async fn eip8130_transaction_is_mined_and_has_a_receipt() -> eyre::Result<()> {
     assert!(receipt.block_number().is_some(), "receipt must be mined into a block");
 
     // The EIP-8130 RPC receipt carries the gas payer; for a self-pay transaction
-    // that is the resolved sender. With empty `calls`, `phaseStatuses` is omitted.
+    // that is the resolved sender. With empty `calls`, EIP-8130 requires the
+    // receipt to still carry `phaseStatuses` as an empty array (distinguishing an
+    // applicable-but-empty result from an omitted / lost field).
     let client = harness.rpc_client()?;
     let json: serde_json::Value = client.request("eth_getTransactionReceipt", (tx_hash,)).await?;
     let payer: Address = serde_json::from_value(json["payer"].clone())?;
     assert_eq!(payer, alice.address(), "self-pay receipt payer must be the sender");
-    assert!(
-        json.get("phaseStatuses").is_none_or(|v| v.as_array().is_some_and(|a| a.is_empty())),
-        "empty-calls transaction must not report phase statuses"
+    assert_eq!(
+        json["phaseStatuses"],
+        serde_json::json!([]),
+        "empty-calls EIP-8130 transaction must report an empty phaseStatuses array"
     );
     assert!(
         json.get("metadata").is_none_or(serde_json::Value::is_null),
@@ -109,7 +113,8 @@ async fn eip8130_receipt_reports_phase_statuses() -> eyre::Result<()> {
         sender: None,
         nonce_key: U256::ZERO,
         nonce_sequence: 0,
-        expiry: 0,
+        valid_after: 0,
+        valid_before: 0,
         max_priority_fee_per_gas: 0,
         max_fee_per_gas: 1_000_000_000,
         gas_limit: 200_000,
@@ -172,7 +177,8 @@ async fn eip8130_sponsored_receipt_reports_declared_payer() -> eyre::Result<()> 
         sender: None,
         nonce_key: U256::ZERO,
         nonce_sequence: 0,
-        expiry: 0,
+        valid_after: 0,
+        valid_before: 0,
         max_priority_fee_per_gas: 0,
         max_fee_per_gas: 1_000_000_000,
         gas_limit: 200_000,
@@ -247,7 +253,8 @@ async fn two_eip8130_transactions_in_one_block_attribute_phase_statuses() -> eyr
         sender: None,
         nonce_key: U256::ZERO,
         nonce_sequence: 0,
-        expiry: 0,
+        valid_after: 0,
+        valid_before: 0,
         max_priority_fee_per_gas: 0,
         max_fee_per_gas: 1_000_000_000,
         gas_limit: 200_000,
@@ -271,7 +278,8 @@ async fn two_eip8130_transactions_in_one_block_attribute_phase_statuses() -> eyr
         sender: None,
         nonce_key: U256::ZERO,
         nonce_sequence: 0,
-        expiry: 0,
+        valid_after: 0,
+        valid_before: 0,
         max_priority_fee_per_gas: 0,
         max_fee_per_gas: 1_000_000_000,
         gas_limit: 200_000,

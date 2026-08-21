@@ -28,6 +28,7 @@ base-cli-utils.workspace = true
 base-tx-manager.workspace = true
 base-common-network.workspace = true
 base-common-flashblocks.workspace = true
+base-execution-txpool.workspace = true
 base-common-precompiles = { workspace = true, default-features = false }
 
 # display
@@ -39,6 +40,7 @@ tracing-subscriber = { workspace = true, features = ["fmt", "env-filter"] }
 url.workspace = true
 eyre.workspace = true
 rand.workspace = true
+async-trait.workspace = true
 revm.workspace = true
 serde.workspace = true
 futures.workspace = true

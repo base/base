@@ -2,8 +2,9 @@
 
 mod types;
 pub use types::{
-    BlockLoadMetrics, BlockRange, ConfigSummary, FlashblocksLatencyMetrics, GasMetrics,
-    LatencyMetrics, SubmissionStats, ThroughputMetrics, ThroughputPercentiles, ThroughputSample,
+    BlockLoadMetrics, BlockRange, CohortMetrics, ConfigSummary, FlashblocksLatencyMetrics,
+    GasMetrics, LatencyMetrics, PacingCycleObservation, PacingCycleSource, PacingMetrics,
+    SubmissionStats, SubmitCohortLabel, ThroughputMetrics, ThroughputPercentiles, ThroughputSample,
     TransactionMetrics,
 };
 

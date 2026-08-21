@@ -7,8 +7,8 @@ use crate::ProofResult;
 
 /// A proof backend that owns its witness oracle type and proving logic.
 ///
-/// Each backend (TEE, SP1, RISC Zero) implements this with its own
-/// oracle storage layout and proving strategy.
+/// Each backend implements this with its own oracle storage layout and proving
+/// strategy.
 ///
 /// The oracle type must implement [`WitnessOracle`] for the capture path
 /// (receiving preimages during witness generation) and must be `Send + Sync`
@@ -23,6 +23,9 @@ pub trait ProverBackend: Send + Sync {
 
     /// Create a fresh oracle instance for a single proof's witness generation.
     fn create_oracle(&self) -> Self::Oracle;
+
+    /// Metric label for the prover backend (`nitro`, `sp1`, …).
+    fn prover_label(&self) -> &'static str;
 
     /// Execute the proof using the populated witness oracle.
     ///

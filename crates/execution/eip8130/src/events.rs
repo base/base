@@ -42,21 +42,22 @@ pub use IAccountConfigurationEvents::{
 pub struct AccountConfigurationEvents;
 
 impl AccountConfigurationEvents {
-    /// Packs `ActorAuthorized.actorData` as the contract's `_emitActorAuthorized`
-    /// does: `authenticator ‖ scope ‖ expiry ‖ reserved(5 zero bytes)` (32 bytes),
-    /// plus `manager ‖ commitment` when `SCOPE_POLICY` is set (84 bytes total).
-    ///
-    /// This is `abi.encodePacked` order (declaration order, left-to-right) — not
-    /// the right-aligned storage-slot packing of [`ActorConfig::to_word`].
+    /// Packs `ActorAuthorized.actorData` as the finalized Keystore's
+    /// `_emitActorAuthorized` does: `authenticator(20) ‖ expiry(6) ‖ scope(2) ‖
+    /// reserved(4 zero bytes)` (32 bytes), plus `manager(20) ‖ commitment(32)`
+    /// when `SCOPE_POLICY` is set (84 bytes total). This mirrors the right-aligned
+    /// `ActorConfig` storage-slot field order (`authenticator ‖ expiry ‖ scope ‖
+    /// reserved`) packed left-to-right via `abi.encodePacked`.
     #[must_use]
     pub fn pack_actor_data(config: &ActorConfig, manager: Address, commitment: B256) -> Bytes {
         let policy = config.scope & Eip8130Constants::SCOPE_POLICY != 0;
         let mut data = Vec::with_capacity(if policy { 84 } else { 32 });
         data.extend_from_slice(config.authenticator.as_slice());
-        data.push(config.scope);
         // uint48 expiry: low 6 bytes of the big-endian u64.
         data.extend_from_slice(&config.expiry.to_be_bytes()[2..]);
-        data.extend_from_slice(&[0u8; 5]);
+        // uint16 scope: 2 bytes big-endian.
+        data.extend_from_slice(&config.scope.to_be_bytes());
+        data.extend_from_slice(&[0u8; 4]);
         if policy {
             data.extend_from_slice(manager.as_slice());
             data.extend_from_slice(commitment.as_slice());
@@ -150,9 +151,9 @@ mod tests {
         let data = AccountConfigurationEvents::pack_actor_data(&config, Address::ZERO, B256::ZERO);
         assert_eq!(data.len(), 32);
         assert_eq!(&data[..20], config.authenticator.as_slice());
-        assert_eq!(data[20], Eip8130Constants::SCOPE_SENDER);
-        assert_eq!(&data[21..27], &config.expiry.to_be_bytes()[2..]);
-        assert_eq!(&data[27..], &[0u8; 5]);
+        assert_eq!(&data[20..26], &config.expiry.to_be_bytes()[2..]);
+        assert_eq!(&data[26..28], &Eip8130Constants::SCOPE_SENDER.to_be_bytes());
+        assert_eq!(&data[28..], &[0u8; 4]);
     }
 
     #[test]

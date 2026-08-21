@@ -7,9 +7,6 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), allow(unused_crate_dependencies))]
 
-mod candidate_source;
-pub use candidate_source::{BoxedBestTransactions, CandidateSource, DefaultCandidateSource};
-
 mod config;
 pub use config::BuilderConfig;
 
@@ -46,11 +43,21 @@ mod flashblocks;
 pub use flashblocks::{
     BasePayloadBuilderCtx, BestFlashblocksTxs, BlockPayloadJob, BlockPayloadJobGenerator,
     BuildArguments, FlashblockDiagnostics, FlashblockSelectionOutcome, FlashblocksExtraCtx,
-    FlashblocksServiceBuilder, PayloadBuilder, PayloadHandler, PayloadJobDeadline, ResolvePayload,
+    FlashblocksServiceBuilder, ParkableBestPayloadTransactions, ParkablePayloadTransactions,
+    ParkedPredicateIndex, PayloadBuilder, PayloadHandler, PayloadJobDeadline,
+    PayloadTransactionInvalidated, ResolvePayload, StateChangeEffects, ValidityPredicateKey,
 };
 
 mod extension;
-pub use extension::BuilderApiExtension;
+pub use extension::{
+    BuilderApiExtension, BuilderApiExtensionConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
+};
+
+mod shadow_validity;
+pub use shadow_validity::{
+    MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS, ShadowValidityBuilderApi, ShadowValidityConfig,
+    ShadowValidityConfigError,
+};
 
 /// Shared test infrastructure: local node instances, chain drivers, transaction builders, and pool observers.
 #[cfg(any(test, feature = "test-utils"))]

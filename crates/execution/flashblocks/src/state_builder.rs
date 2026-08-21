@@ -236,6 +236,7 @@ where
             },
             deposit_nonce,
             deposit_receipt_version,
+            block_timestamp_ms: None,
         };
 
         self.cumulative_gas_used = self
@@ -396,6 +397,7 @@ where
                     },
                     deposit_nonce,
                     deposit_receipt_version,
+                    block_timestamp_ms: None,
                 };
                 self.evm.db_mut().commit(state.clone());
 

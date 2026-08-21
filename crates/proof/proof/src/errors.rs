@@ -123,6 +123,50 @@ pub enum OracleProviderError {
         /// The L2 chain ID claimed by the loaded rollup config.
         rollup_config_chain_id: u64,
     },
+    /// The claimed L2 block precedes the rollup genesis block.
+    #[error("L2 claim block {claim_block} precedes rollup genesis block {genesis_block}")]
+    L2ClaimBeforeGenesis {
+        /// The claimed L2 block number.
+        claim_block: u64,
+        /// The configured rollup genesis L2 block number.
+        genesis_block: u64,
+    },
+    /// Computing the schedule L2 block timestamp overflowed `u64`.
+    #[error("L2 schedule block timestamp overflow for block {schedule_block}")]
+    L2ScheduleTimestampOverflow {
+        /// The L2 block number used to pin the upgrade schedule.
+        schedule_block: u64,
+    },
+    /// Computing the claimed L2 block timestamp overflowed `u64`.
+    #[error("L2 claim block timestamp overflow for block {claim_block}")]
+    L2ClaimTimestampOverflow {
+        /// The claimed L2 block number.
+        claim_block: u64,
+    },
+    /// The rollup config has a zero L2 block time.
+    #[error("L2 block time must be non-zero")]
+    InvalidL2BlockTime,
+    /// The rollup config has a zero L2 genesis timestamp.
+    ///
+    /// Genesis-active upgrades in legacy configs may be stored as `Some(0)` and are normalized to
+    /// the genesis timestamp before hashing, while unscheduled entries inside the pinned prefix
+    /// hash as 0. Those two cases are only distinguishable while the genesis timestamp is non-zero
+    /// — with a zero genesis, `{regolith: None, canyon: Some(0)}` and
+    /// `{regolith: Some(0), canyon: Some(0)}` collide onto one schedule ID. Rejecting here keeps the
+    /// schedule ID injective.
+    #[error("L2 genesis timestamp must be non-zero")]
+    InvalidL2GenesisTimestamp,
+    /// The schedule block precedes the claimed L2 block.
+    #[error("Schedule L2 block {schedule_block} precedes claimed L2 block {claim_block}")]
+    ScheduleBlockBeforeClaim {
+        /// The L2 block number used to pin the upgrade schedule.
+        schedule_block: u64,
+        /// The claimed L2 block number.
+        claim_block: u64,
+    },
+    /// An active Zenith upgrade is not committed by the proof schedule ID.
+    #[error("Active Zenith upgrade is not committed by the proof schedule ID")]
+    UncommittedZenithUpgrade,
     /// A Beryl-enabled chain is missing a trusted activation registry admin address.
     ///
     /// This error occurs when proof boot data resolves a rollup config with Beryl scheduled but no

@@ -6,13 +6,6 @@ pub use error::NitroHostError;
 mod config;
 pub use config::{ConfigError, NitroWorkerConfig};
 
-mod job_discovery;
-pub use job_discovery::{
-    DEFAULT_JOB_DISCOVERY_LOCK_DURATION_SECONDS, DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS,
-    DEFAULT_JOB_DISCOVERY_POLL_INTERVAL, DEFAULT_JOB_DISCOVERY_WORKER_ID, JobDiscovery,
-    JobDiscoveryConfig, JobDiscoveryPollOutcome, JobDiscoveryTask, MIN_JOB_DISCOVERY_POLL_INTERVAL,
-};
-
 mod backend;
 pub use backend::NitroBackend;
 
@@ -20,18 +13,19 @@ mod registration;
 pub use registration::{RegistrationChecker, RegistrationError, ValidSigner};
 
 mod proof_submitter;
-pub use proof_submitter::{ProofSubmitter, ProofSubmitterError, ProofSubmitterRequest};
-
-mod signer_recovery;
-pub use signer_recovery::TeeSignerRecovery;
+pub use proof_submitter::{ProofSubmitterRequest, ProofSubmitterRequestError};
 
 mod proof_generator;
 pub use proof_generator::{
     DEFAULT_PROOF_GENERATOR_HEARTBEAT_INTERVAL,
     DEFAULT_PROOF_GENERATOR_HEARTBEAT_LOCK_DURATION_SECONDS,
+    DEFAULT_PROOF_GENERATOR_MAX_CONSECUTIVE_HEARTBEAT_FAILURES,
     MIN_PROOF_GENERATOR_HEARTBEAT_INTERVAL, ProofGenerator, ProofGeneratorError,
-    ProofGeneratorHeartbeatConfig, ProofGeneratorRequest, ProofGeneratorTask,
+    ProofGeneratorHeartbeatConfig, ProofGeneratorRequest,
 };
+
+mod host;
+pub use host::NitroHost;
 
 mod pool;
 pub use pool::{

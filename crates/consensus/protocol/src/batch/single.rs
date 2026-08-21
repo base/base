@@ -345,12 +345,12 @@ mod tests {
     }
 
     #[test]
-    fn test_check_batch_timestamp_accepts_same_second_in_zenith_era() {
+    fn test_check_batch_timestamp_accepts_same_second_in_denim_era() {
         let cfg = RollupConfig {
             block_time: 2,
             genesis: ChainGenesis { l2_time: 98, ..Default::default() },
             upgrades: UpgradeConfig {
-                base: BaseUpgradeConfig { zenith: Some(102), ..Default::default() },
+                base: BaseUpgradeConfig { denim: Some(102), ..Default::default() },
                 ..Default::default()
             },
             ..Default::default()
@@ -368,7 +368,7 @@ mod tests {
     }
 
     #[test]
-    fn test_check_batch_timestamp_non_zenith_unchanged() {
+    fn test_check_batch_timestamp_non_denim_unchanged() {
         let cfg = RollupConfig {
             block_time: 2,
             genesis: ChainGenesis { l2_time: 98, ..Default::default() },

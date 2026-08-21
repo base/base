@@ -31,11 +31,12 @@ use crate::{
     DerivationActor, DerivationDelegateClient, DerivationError, EngineActor, EngineActorRequest,
     EngineConfig, EngineProcessor, EngineRequestReceiver, EngineRpcProcessor, L1OriginSelector,
     L1WatcherActor, L1WatcherQueryProcessor, NetworkActor, NetworkBuilder, NetworkConfig,
-    NodeActor, NodeMode, PayloadBuilder, QueuedDerivationEngineClient,
-    QueuedEngineDerivationClient, QueuedEngineRpcClient, QueuedL1WatcherDerivationClient,
-    QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient,
-    RecoveryModeGuard, RpcActor, RpcContext, SequencerActor, SequencerConfig,
-    SequencerEngineRequestCoordinator, UpgradeSignalNodeConfig, ValidatorEngineRequestHandler,
+    NodeActor, NodeMode, PayloadBuilder, PrefetchedChainProvider, PreparedL1Origin,
+    QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
+    QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient,
+    QueuedSequencerEngineClient, RecoveryModeGuard, RpcActor, RpcContext, SequencerActor,
+    SequencerConfig, SequencerEngineRequestCoordinator, UpgradeSignalNodeConfig,
+    ValidatorEngineRequestHandler,
     actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
 };
 
@@ -70,7 +71,7 @@ pub struct L1Config {
     pub trust_rpc: bool,
     /// The L1 beacon API client.
     pub beacon_client: OnlineBeaconClient,
-    /// The L1 execution JSON-RPC provider.
+    /// The general L1 execution JSON-RPC provider.
     pub engine_provider: RootProvider,
     /// How frequently to poll L1 for a new finalized block.
     ///
@@ -112,6 +113,8 @@ pub struct RollupNode {
     pub config: Arc<RollupConfig>,
     /// The L1 configuration.
     pub l1_config: L1Config,
+    /// L1 execution JSON-RPC provider dedicated to the sequencer block-production hot path.
+    pub sequencer_l1_provider: RootProvider,
     /// The L2 EL provider.
     pub l2_provider: RootProvider<Base>,
     /// Whether to trust the L2 RPC.
@@ -202,15 +205,17 @@ impl RollupNode {
         self.rpc_builder.clone()
     }
 
-    /// Returns the sequencer builder for the node.
+    /// Returns the sequencer attributes builder for the node.
     fn create_attributes_builder(
         &self,
-    ) -> StatefulAttributesBuilder<AlloyChainProvider, AlloyL2ChainProvider> {
-        let l1_derivation_provider = AlloyChainProvider::new_with_trust(
-            self.l1_config.engine_provider.clone(),
+        origin_rx: watch::Receiver<Option<PreparedL1Origin>>,
+    ) -> StatefulAttributesBuilder<PrefetchedChainProvider, AlloyL2ChainProvider> {
+        let l1_fallback_provider = AlloyChainProvider::new_with_trust(
+            self.sequencer_l1_provider.clone(),
             DERIVATION_PROVIDER_CACHE_SIZE,
             self.l1_config.trust_rpc,
         );
+        let l1_derivation_provider = PrefetchedChainProvider::new(origin_rx, l1_fallback_provider);
         let l2_derivation_provider = AlloyL2ChainProvider::new_with_trust(
             self.l2_provider.clone(),
             Arc::clone(&self.config),
@@ -524,14 +529,6 @@ impl RollupNode {
         .map_err(|e| format!("Failed to start network actor: {e}"))?;
 
         let (l1_head_updates_tx, l1_head_updates_rx) = watch::channel(None);
-        let delayed_l1_provider = DelayedL1OriginSelectorProvider::new(
-            self.l1_config.engine_provider.clone(),
-            l1_head_updates_rx,
-            self.sequencer_config.l1_conf_delay,
-        );
-
-        let delayed_origin_selector =
-            L1OriginSelector::new(Arc::clone(&self.config), delayed_l1_provider);
 
         // Create the L1 Watcher actor
 
@@ -580,6 +577,15 @@ impl RollupNode {
         let node_mode = self.mode();
         // Create the sequencer if needed
         let (sequencer_actor, sequencer_admin_client) = if node_mode.is_sequencer() {
+            let delayed_l1_provider = DelayedL1OriginSelectorProvider::new(
+                self.sequencer_l1_provider.clone(),
+                l1_head_updates_rx,
+                self.sequencer_config.l1_conf_delay,
+            );
+            let delayed_origin_selector =
+                L1OriginSelector::new(Arc::clone(&self.config), delayed_l1_provider);
+            let attributes_builder =
+                self.create_attributes_builder(delayed_origin_selector.subscribe());
             let sequencer_engine_client = QueuedSequencerEngineClient {
                 engine_actor_request_tx: engine_actor_request_tx.clone(),
                 unsafe_head_rx,
@@ -598,7 +604,7 @@ impl RollupNode {
                 Some(SequencerActor {
                     admin_api_rx: sequencer_admin_api_rx,
                     builder: PayloadBuilder {
-                        attributes_builder: self.create_attributes_builder(),
+                        attributes_builder,
                         engine_client: Arc::clone(&engine_client),
                         origin_selector: delayed_origin_selector,
                         recovery_mode: recovery_mode.clone(),
@@ -611,6 +617,7 @@ impl RollupNode {
                     shadow_blocks_per_cycle: self.sequencer_config.shadow_blocks_per_cycle,
                     recovery_mode,
                     rollup_config: Arc::clone(&self.config),
+                    seal_offset: self.sequencer_config.seal_offset,
                     unsafe_payload_gossip_client: queued_gossip_client,
                     sealer: None,
                     pending_stop: None,

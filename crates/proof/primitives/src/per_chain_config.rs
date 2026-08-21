@@ -212,6 +212,7 @@ impl PerChainConfig {
     /// default fork settings (all forks active at genesis).
     #[must_use]
     pub fn to_rollup_config(&self) -> RollupConfig {
+        let genesis_timestamp = self.genesis.l2_time;
         RollupConfig {
             l1_chain_id: 1,
             l2_chain_id: Chain::from_id(self.chain_id.to::<u64>()),
@@ -227,17 +228,23 @@ impl PerChainConfig {
             protocol_versions_address: Address::ZERO,
             blobs_enabled_l1_timestamp: Some(0),
             upgrades: UpgradeConfig {
-                regolith_time: Some(0),
-                canyon_time: Some(0),
-                delta_time: Some(0),
-                ecotone_time: Some(0),
-                fjord_time: Some(0),
-                granite_time: Some(0),
-                holocene_time: Some(0),
+                regolith_time: Some(genesis_timestamp),
+                canyon_time: Some(genesis_timestamp),
+                delta_time: Some(genesis_timestamp),
+                ecotone_time: Some(genesis_timestamp),
+                fjord_time: Some(genesis_timestamp),
+                granite_time: Some(genesis_timestamp),
+                holocene_time: Some(genesis_timestamp),
                 pectra_blob_schedule_time: None,
-                isthmus_time: Some(0),
-                jovian_time: Some(0),
-                base: BaseUpgradeConfig { azul: Some(0), beryl: None, cobalt: None, zenith: None },
+                isthmus_time: Some(genesis_timestamp),
+                jovian_time: Some(genesis_timestamp),
+                base: BaseUpgradeConfig {
+                    azul: Some(genesis_timestamp),
+                    beryl: None,
+                    cobalt: None,
+                    denim: None,
+                    zenith: None,
+                },
             },
             chain_op_config: FeeConfig::base_mainnet(),
         }
@@ -403,14 +410,16 @@ mod tests {
     #[test]
     fn test_to_rollup_config_forks_active_at_genesis() {
         let rollup_config = sample_config().to_rollup_config();
-        assert_eq!(rollup_config.upgrades.canyon_time, Some(0));
-        assert_eq!(rollup_config.upgrades.delta_time, Some(0));
-        assert_eq!(rollup_config.upgrades.ecotone_time, Some(0));
-        assert_eq!(rollup_config.upgrades.fjord_time, Some(0));
-        assert_eq!(rollup_config.upgrades.granite_time, Some(0));
-        assert_eq!(rollup_config.upgrades.holocene_time, Some(0));
-        assert_eq!(rollup_config.upgrades.isthmus_time, Some(0));
-        assert_eq!(rollup_config.upgrades.regolith_time, Some(0));
+        let genesis_timestamp = rollup_config.genesis.l2_time;
+        assert_eq!(rollup_config.upgrades.canyon_time, Some(genesis_timestamp));
+        assert_eq!(rollup_config.upgrades.delta_time, Some(genesis_timestamp));
+        assert_eq!(rollup_config.upgrades.ecotone_time, Some(genesis_timestamp));
+        assert_eq!(rollup_config.upgrades.fjord_time, Some(genesis_timestamp));
+        assert_eq!(rollup_config.upgrades.granite_time, Some(genesis_timestamp));
+        assert_eq!(rollup_config.upgrades.holocene_time, Some(genesis_timestamp));
+        assert_eq!(rollup_config.upgrades.isthmus_time, Some(genesis_timestamp));
+        assert_eq!(rollup_config.upgrades.regolith_time, Some(genesis_timestamp));
+        assert_eq!(rollup_config.upgrades.base.azul, Some(genesis_timestamp));
     }
 
     #[cfg(feature = "serde")]

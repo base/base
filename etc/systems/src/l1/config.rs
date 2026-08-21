@@ -16,4 +16,12 @@ pub struct L1ContainerConfig {
     pub beacon_http_port: Option<u16>,
     /// If set, bind to this specific host port for beacon P2P
     pub beacon_p2p_port: Option<u16>,
+    /// If true, back the container datadir (`/data`) with tmpfs. reth's mdbx and lighthouse's
+    /// database need a writable `MAP_SHARED` mmap, which some container storage backends (e.g.
+    /// overlayfs on docker-in-docker CI runners) reject; tmpfs supports it. No effect where the
+    /// storage already supports mmap.
+    pub tmpfs_datadir: bool,
+    /// If true, supervise Reth so system tests can stop the node process, mutate its database, and
+    /// restart it without replacing the container.
+    pub enable_reorg_control: bool,
 }

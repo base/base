@@ -15,7 +15,7 @@ workspace = true
 # ethereum
 alloy-eips.workspace = true
 alloy-consensus.workspace = true
-alloy-primitives.workspace = true
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 
 # reth
 reth-evm.workspace = true
@@ -65,6 +65,7 @@ alloy-signer-local.workspace = true
 reth-tasks.workspace = true
 base-test-utils.workspace = true
 base-execution-chainspec.workspace = true
+metrics-util = { workspace = true, features = ["debugging"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["time", "rt-multi-thread", "macros"] }
@@ -74,6 +75,7 @@ default = [ "metrics" ]
 metrics = [
 	"base-common-evm/metrics",
 	"base-metrics/metrics",
+	"base-observability-events/metrics",
 	"dep:metrics",
 	"reth-evm/metrics",
 ]

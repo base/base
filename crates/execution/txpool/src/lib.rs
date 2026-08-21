@@ -27,6 +27,15 @@ pub use validator::{BaseL1BlockInfo, BaseTransactionValidator, BaseTxPoolError, 
 
 mod best;
 
+mod validity;
+pub use validity::{
+    DEFAULT_MAX_VALIDITY_PREDICATES, PredicateContext, TransactionValidity, ValidityOperator,
+    ValidityPredicate, ValidityPredicateError,
+};
+
+mod block_expiry;
+pub use block_expiry::BlockExpiryIndex;
+
 mod transaction;
 pub use transaction::{
     BLOCK_TIME_SECS, BasePooledTransaction, BasePooledTx, BundleTransaction,
@@ -35,7 +44,13 @@ pub use transaction::{
 };
 
 mod ordering;
-pub use ordering::{BaseOrdering, TimestampOrdering};
+pub use ordering::{BaseOrdering, BestTransactionPriority, TimestampOrdering};
+
+mod parking;
+pub use parking::{
+    BestTransactionLane, BestTransactionLaneState, ParkableBestTransactions,
+    ParkableTransactionPool, ParkedBestTransactions,
+};
 
 mod pool;
 pub use pool::{AccountStateDiff, BaseTransactionPool};
@@ -65,6 +80,6 @@ pub use wire::{
 mod two_d_nonce_pool;
 
 mod metrics;
-pub use metrics::{GuardMetrics, ValidatorMetrics};
+pub use metrics::{GuardMetrics, ValidatorMetrics, ValidityPoolMetrics};
 
 pub mod estimated_da_size;

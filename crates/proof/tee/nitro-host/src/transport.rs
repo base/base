@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use alloy_primitives::Address;
 use alloy_signer::utils::public_key_to_address;
+#[cfg(feature = "metrics")]
 use base_proof_host::Metrics;
 use base_proof_preimage::PreimageKey;
 use base_proof_primitives::ProofResult;
@@ -41,7 +42,8 @@ impl NitroTransport {
         &self,
         preimages: Vec<(PreimageKey, Vec<u8>)>,
     ) -> Result<ProofResult, NitroHostError> {
-        Metrics::witness_size_bytes()
+        #[cfg(feature = "metrics")]
+        Metrics::witness_size_bytes(Metrics::PROVER_NITRO)
             .record(preimages.iter().map(|(_, value)| value.len()).sum::<usize>() as f64);
 
         Ok(match self {

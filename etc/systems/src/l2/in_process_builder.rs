@@ -11,7 +11,9 @@ use alloy_primitives::hex::ToHexExt;
 use alloy_rpc_types_engine::JwtSecret;
 use base_builder_core::{BuilderConfig, FlashblocksServiceBuilder, test_utils::get_available_port};
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_txpool::{BasePooledTransaction, BuilderApiImpl, BuilderApiServer};
+use base_execution_txpool::{
+    BasePooledTransaction, BuilderApiImpl, BuilderApiServer, DEFAULT_MAX_VALIDITY_PREDICATES,
+};
 use base_node_core::{args::RollupArgs, node::BasePoolBuilder};
 use base_node_runner::{BaseNode, BaseNodeExtension, NodeHooks};
 use eyre::{Result, WrapErr, eyre};
@@ -49,6 +51,8 @@ pub struct InProcessBuilderConfig {
     pub p2p_port: Option<u16>,
     /// Optional fixed Flashblocks port (uses random if None).
     pub flashblocks_port: Option<u16>,
+    /// Whether to accept experimental validity-bearing transactions.
+    pub enable_experimental_validity_transactions: bool,
     /// Additional node extensions installed after the builder's built-in RPC wiring.
     ///
     /// Lets downstream consumers layer their own [`BaseNodeExtension`] onto the standard
@@ -143,6 +147,7 @@ impl InProcessBuilder {
         let node_config = create_node_config(chain_spec, &data_path, &jwt_path, &config)?;
         let p2p_port = node_config.network.port;
 
+        let accept_validity_transactions = config.enable_experimental_validity_transactions;
         let node_builder = NodeBuilder::new(node_config.clone())
             .with_database(db)
             .with_launch_context(runtime.clone())
@@ -156,8 +161,12 @@ impl InProcessBuilder {
             .with_add_ons(addons)
             .on_component_initialized(move |_ctx| Ok(()))
             // Register the builder API RPC module (base_insertValidatedTransaction)
-            .extend_rpc_modules(|ctx| {
-                let api = BuilderApiImpl::new(ctx.pool().clone());
+            .extend_rpc_modules(move |ctx| {
+                let api = BuilderApiImpl::<_, base_execution_txpool::TransactionValidity>::with_extensions(
+                    ctx.pool().clone(),
+                    accept_validity_transactions,
+                    DEFAULT_MAX_VALIDITY_PREDICATES,
+                );
                 ctx.modules.merge_configured(api.into_rpc())?;
                 Ok(())
             });

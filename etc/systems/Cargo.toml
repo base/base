@@ -75,7 +75,10 @@ tokio-util.workspace = true
 tokio = { workspace = true, features = ["full", "rt-multi-thread", "macros"] }
 
 # rpc
+axum = { workspace = true, features = ["http1", "tokio"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }
+reth-rpc-layer.workspace = true
+tower.workspace = true
 
 # p2p
 k256.workspace = true
@@ -127,8 +130,22 @@ base-optimism-rpc.workspace = true
 base-prover-service-client.workspace = true
 base-prover-service-protocol.workspace = true
 
+# execution
+base-shadow-indexer.workspace = true
+base-shadow-metrics.workspace = true
+base-shadow-indexer-db.workspace = true
+
+# reth
+reth-primitives-traits.workspace = true
+
+# database
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "json", "migrate", "macros", "tls-native-tls"] }
+
 # misc
+chrono.workspace = true
+anyhow.workspace = true
 indicatif.workspace = true
+testcontainers-modules = { workspace = true, features = ["postgres"] }
 
 [[bench]]
 name = "b20_zk_proving"

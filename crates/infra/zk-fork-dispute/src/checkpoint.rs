@@ -119,6 +119,9 @@ impl Checkpoint {
 
     /// Requests a SNARK PLONK proof for this checkpoint and returns dispute-ready bytes.
     ///
+    /// Pins the schedule to the game's final L2 block, which may be after [`Self::target_block`],
+    /// so the proof commits to the same schedule as the game it disputes.
+    ///
     /// Polling stops when this future is dropped or times out, but the prover-service
     /// session continues server-side (acceptable for this one-shot Anvil tool).
     pub async fn request_proof(
@@ -126,6 +129,7 @@ impl Checkpoint {
         config: &Config,
         prover_address: Address,
         l1_head: B256,
+        game_l2_block_number: u64,
     ) -> Result<Bytes> {
         let client = ProofRequesterClient::connect(&ProverServiceClientConfig::new(
             config.prover_service_url.as_str(),
@@ -137,6 +141,7 @@ impl Checkpoint {
             start_block = self.start_block,
             target_block = self.target_block(),
             l1_head = %l1_head,
+            schedule_l2_block_number = game_l2_block_number,
             "requesting SNARK PLONK proof"
         );
 
@@ -147,6 +152,7 @@ impl Checkpoint {
                 sequence_window: None,
                 l1_head: Some(l1_head),
                 intermediate_root_interval: Some(self.block_count),
+                schedule_l2_block_number: Some(game_l2_block_number),
                 zk_vm: ZkVm::Sp1,
                 zk_backend: config.zk_backend,
             },
@@ -164,6 +170,7 @@ impl Checkpoint {
                     session_id: session_id.clone(),
                     request: ProofRequestKind::SnarkPlonk(snark_request),
                 },
+                retry_failed: true,
             })
             .await
             .context("failed to submit proveBlockRange")?;
@@ -261,7 +268,7 @@ impl Checkpoint {
     ) -> String {
         let invalid_index = invalid_index.to_be_bytes();
         ProofSessionId::derive_from_components(
-            b"base/zk-fork-dispute/proof-session/v1",
+            b"base/zk-fork-dispute/proof-session/v2",
             "zk/sp1/snark_plonk",
             &[
                 game_address.as_slice(),
@@ -358,10 +365,9 @@ impl AnvilPatch {
             encode_extra_data(info.l2_block_number, info.parent_address, &patched_roots);
         let patched_uuid = Self::game_uuid(config.game_type, info.root_claim, &patched_extra);
 
-        let factory = DisputeGameFactoryContractClient::new(
-            config.dispute_game_factory,
-            config.l1_rpc_url.clone(),
-        )?;
+        let provider: RootProvider = RootProvider::new_http(config.l1_rpc_url.clone());
+        let factory =
+            DisputeGameFactoryContractClient::new(config.dispute_game_factory, provider.clone());
         let original_lookup = factory
             .games(config.game_type, info.root_claim, original_extra)
             .await
@@ -373,7 +379,6 @@ impl AnvilPatch {
             );
         }
 
-        let provider: RootProvider = RootProvider::new_http(config.l1_rpc_url.clone());
         let (mapping_slot, packed_game_id) = Self::find_mapping_slot(
             &provider,
             config.dispute_game_factory,

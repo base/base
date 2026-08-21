@@ -11,12 +11,13 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{
     ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalRuntimeExtension,
 };
+use base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES;
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
 use base_node_core::args::RollupArgs;
 use base_node_runner::{BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use base_tx_forwarding::{TxForwardingConfig, TxForwardingExtension};
-use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
+use base_txpool_rpc::{SendRawTransactionValidityExtension, TxPoolRpcConfig, TxPoolRpcExtension};
 use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
 use eyre::{Context, Result, eyre};
 use reth_db::{
@@ -56,6 +57,8 @@ pub struct InProcessClientConfig {
     /// Optional transaction forwarding configuration.
     /// When set, the client will forward transactions to builder RPC endpoints.
     pub tx_forwarding_config: Option<TxForwardingConfig>,
+    /// Whether to register the experimental validity transaction RPC.
+    pub enable_experimental_validity_transactions: bool,
     /// Optional L1 upgrade signal configuration.
     ///
     /// When the mode applies at startup, the schedule is read from L1 and applied to the chain
@@ -314,6 +317,14 @@ impl InProcessClient {
 
         // TxForwarding extension (optional - forwards txs to builder RPC)
         if let Some(ref tx_fwd_config) = config.tx_forwarding_config {
+            if config.enable_experimental_validity_transactions
+                && tx_fwd_config.enabled
+                && !tx_fwd_config.builder_urls.is_empty()
+            {
+                extensions.push(Box::new(SendRawTransactionValidityExtension::from_config(
+                    DEFAULT_MAX_VALIDITY_PREDICATES,
+                )));
+            }
             extensions.push(Box::new(TxForwardingExtension::from_config(tx_fwd_config.clone())));
         }
 

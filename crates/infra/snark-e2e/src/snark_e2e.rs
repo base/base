@@ -215,12 +215,14 @@ impl SnarkE2e {
                             sequence_window: Some(SEQUENCE_WINDOW),
                             l1_head: None,
                             intermediate_root_interval: None,
+                            schedule_l2_block_number: None,
                             zk_vm: ZkVm::Sp1,
                             zk_backend: ZkBackend::Cluster,
                         },
                         prover_address: Address::ZERO,
                     }),
                 },
+                retry_failed: true,
             })
             .await
             .with_context(|| {
@@ -342,7 +344,7 @@ impl SnarkE2e {
         // -- 5. Compute aggregation verifying key ---------------------------------
         info!("computing aggregation verifying key (LightProver — VK only)");
         let t = std::time::Instant::now();
-        let (_range_vk, agg_vk) = base_proof_succinct_proof_utils::cluster_setup_vkeys()
+        let (_range_vk, agg_vk) = base_proof_zk_backend::cluster_setup_vkeys()
             .await
             .context("failed to compute aggregation verifying key")?;
         info!(elapsed_secs = t.elapsed().as_secs_f64(), "aggregation verifying key computed");

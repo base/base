@@ -68,11 +68,15 @@ pub struct L2StackConfig {
     pub l1_rpc_url: String,
     /// L1 beacon API endpoint URL (host-accessible).
     pub l1_beacon_url: String,
+    /// L1 slot duration in seconds, used as the consensus derivation poll override.
+    pub l1_slot_duration: u64,
     /// Optional container configuration for stable naming and port binding.
     pub container_config: Option<L2ContainerConfig>,
     /// Optional transaction forwarding configuration for the client node.
     /// When set, the client will forward transactions to builder RPC endpoints.
     pub tx_forwarding_config: Option<TxForwardingConfig>,
+    /// Whether both L2 nodes enable experimental validity transaction transport.
+    pub enable_experimental_validity_transactions: bool,
     /// Number of L1 blocks to keep distance from the L1 head for the client (validator)
     /// consensus node's derivation pipeline.
     pub verifier_l1_confs: u64,
@@ -195,6 +199,8 @@ impl L2Stack {
             auth_port: container_config.and_then(|c| c.builder_auth_port),
             p2p_port: container_config.and_then(|c| c.builder_p2p_port),
             flashblocks_port: container_config.and_then(|c| c.builder_flashblocks_port),
+            enable_experimental_validity_transactions: config
+                .enable_experimental_validity_transactions,
             extra_extensions: config.extra_builder_extensions,
         };
         let builder = InProcessBuilder::start(builder_config)
@@ -219,7 +225,7 @@ impl L2Stack {
             p2p_tcp_port: container_config.and_then(|c| c.builder_consensus_p2p_tcp_port),
             p2p_udp_port: container_config.and_then(|c| c.builder_consensus_p2p_udp_port),
             unsafe_block_signer: SEQUENCER.address,
-            l1_slot_duration_override: Some(4),
+            l1_slot_duration_override: Some(config.l1_slot_duration),
             sequencer_stopped: true,
             verifier_l1_confs: 0,
             shadow_blocks_per_cycle: None,
@@ -273,6 +279,8 @@ impl L2Stack {
             auth_port: container_config.and_then(|c| c.client_auth_port),
             p2p_port: container_config.and_then(|c| c.client_p2p_port),
             tx_forwarding_config,
+            enable_experimental_validity_transactions: config
+                .enable_experimental_validity_transactions,
             upgrade_signal: config.execution_upgrade_signal.clone(),
             extra_extensions: config.extra_client_extensions,
         };
@@ -297,7 +305,7 @@ impl L2Stack {
                     p2p_tcp_port: container_config.and_then(|c| c.client_consensus_p2p_tcp_port),
                     p2p_udp_port: container_config.and_then(|c| c.client_consensus_p2p_udp_port),
                     unsafe_block_signer: SEQUENCER.address,
-                    l1_slot_duration_override: Some(4),
+                    l1_slot_duration_override: Some(config.l1_slot_duration),
                     sequencer_stopped: false,
                     verifier_l1_confs: config.verifier_l1_confs,
                     shadow_blocks_per_cycle: None,
@@ -442,6 +450,7 @@ impl L2Stack {
                     active_consensus_p2p_addr: active_consensus_p2p_addr.clone(),
                     active_sequencer_address: SEQUENCER.address,
                     shadow_blocks_per_cycle: shadow_config.blocks_per_cycle,
+                    l1_slot_duration: config.l1_slot_duration,
                 })
                 .await
                 .wrap_err_with(|| format!("Failed to start shadow sequencer {index}"))?;

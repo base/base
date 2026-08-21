@@ -17,16 +17,10 @@ mod traits;
 pub use traits::UnsafeBlockSource;
 
 mod polling;
-pub use polling::PollingSource;
-
-mod subscription;
-pub use subscription::BlockSubscription;
+pub use polling::{PollingBlockSource, PollingSource};
 
 mod stream_subscription;
 pub use stream_subscription::{KeepAliveSubscription, PendingSubscription, StreamSubscription};
-
-mod hybrid;
-pub use hybrid::HybridBlockSource;
 
 mod channel;
 pub use channel::ChannelBlockSource;

@@ -4,92 +4,72 @@ use alloc::{sync::Arc, vec, vec::Vec};
 
 use alloy_rlp::Encodable;
 use base_common_genesis::RollupConfig;
-use base_protocol::{Batch, ChannelId, Frame};
-use rand::{RngCore, SeedableRng, rngs::SmallRng};
+use base_protocol::{BatchType, ChannelId, Frame, SingleBatch};
 
-use crate::{ChannelCompressor, CompressorError};
+use crate::{CompressorError, CompressorWriter};
 
-/// The frame overhead.
-const FRAME_V0_OVERHEAD: usize = 23;
-
-/// An error returned by the [`ChannelOut`] when adding single batches.
+/// An error returned while building or framing a [`ChannelOut`].
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ChannelOutError {
-    /// The channel is closed.
-    #[error("The channel is already closed")]
-    ChannelClosed,
     /// The max frame size is too small.
-    #[error("The max frame size is too small")]
+    #[error("max frame size is too small")]
     MaxFrameSizeTooSmall,
-    /// Missing compressed batch data.
-    #[error("Missing compressed batch data")]
-    MissingData,
     /// An error from compression.
-    #[error("Error from compression")]
+    #[error("compression failed: {0}")]
     Compression(#[from] CompressorError),
-    /// An error encoding the `Batch`.
-    #[error("Error encoding the batch")]
-    BatchEncoding,
     /// The encoded batch exceeds the max RLP bytes per channel.
-    #[error("The encoded batch exceeds the max RLP bytes per channel")]
+    #[error("encoded batch exceeds the max RLP bytes per channel")]
     ExceedsMaxRlpBytesPerChannel,
 }
 
-/// [`ChannelOut`] constructs a channel from compressed, encoded batch data.
+/// Owns compression and final framing for one derivation channel.
+///
+/// The Single producer writes batches through [`Self::add_single_batch`]. The
+/// Span producer supplies an already-populated compressor and uses only
+/// [`Self::into_frames`] for the terminal framing step.
 #[derive(derive_more::Debug)]
 pub struct ChannelOut<C>
 where
-    C: ChannelCompressor,
+    C: CompressorWriter,
 {
     /// The unique identifier for the channel.
-    pub id: ChannelId,
+    id: ChannelId,
     /// The [`RollupConfig`] used to check the max RLP bytes per channel when
     /// encoding and accepting batches.
     #[debug(skip)]
-    pub config: Arc<RollupConfig>,
-    /// The rlp length of the channel.
-    pub rlp_length: u64,
-    /// Whether the channel is closed.
-    pub closed: bool,
-    /// The frame number.
-    pub frame_number: u16,
+    config: Arc<RollupConfig>,
+    /// Total RLP input bytes accepted by the Single producer.
+    rlp_length: u64,
     /// The compressor.
     #[debug(skip)]
-    pub compressor: C,
+    compressor: C,
 }
 
 impl<C> ChannelOut<C>
 where
-    C: ChannelCompressor,
+    C: CompressorWriter,
 {
-    /// Creates a new [`ChannelOut`] with the given [`ChannelId`].
+    /// Wraps the compressor used to build or finalize the identified channel.
     pub const fn new(id: ChannelId, config: Arc<RollupConfig>, compressor: C) -> Self {
-        Self { id, config, rlp_length: 0, frame_number: 0, closed: false, compressor }
+        Self { id, config, rlp_length: 0, compressor }
     }
 
-    /// Resets the [`ChannelOut`] to its initial state.
-    pub fn reset(&mut self) {
-        self.rlp_length = 0;
-        self.frame_number = 0;
-        self.closed = false;
-        self.compressor.reset();
-        // `getrandom` isn't available for wasm and risc targets
-        // Thread-based RNGs are not available for no_std
-        // So we must use a seeded RNG.
-        let mut small_rng = SmallRng::seed_from_u64(43);
-        SmallRng::fill_bytes(&mut small_rng, &mut self.id);
+    /// Returns the channel identifier.
+    pub const fn id(&self) -> ChannelId {
+        self.id
     }
 
-    /// Accepts the given [Batch] data into the [`ChannelOut`], compressing it
-    /// into frames.
-    pub fn add_batch(&mut self, batch: Batch) -> Result<(), ChannelOutError> {
-        if self.closed {
-            return Err(ChannelOutError::ChannelClosed);
-        }
+    /// Encodes and compresses one batch for the Single producer path.
+    ///
+    /// The Single variant of the encoder's open channel calls this once per
+    /// accepted L2 block. The write is rejected before compression if it would
+    /// exceed the protocol's cumulative RLP limit.
+    pub fn add_single_batch(&mut self, batch: SingleBatch) -> Result<(), ChannelOutError> {
+        let timestamp = batch.timestamp;
 
-        // Encode the batch.
-        let mut buf = vec![];
-        batch.encode(&mut buf).map_err(|_| ChannelOutError::BatchEncoding)?;
+        // Build the derivation wire payload: batch type followed by SingleBatch RLP.
+        let mut buf = vec![BatchType::Single as u8];
+        batch.encode(&mut buf);
 
         // Wrap in an RLP byte string so the BatchReader can decode it via Bytes::decode().
         // Use `&buf[..]` (a `[u8]` slice) to get the byte-string encoding rather than
@@ -98,7 +78,7 @@ where
         buf.as_slice().encode(&mut rlp_buf);
 
         // Validate that the RLP length is within the channel's limits.
-        let max_rlp_bytes_per_channel = self.config.max_rlp_bytes_per_channel(batch.timestamp());
+        let max_rlp_bytes_per_channel = self.config.max_rlp_bytes_per_channel(timestamp);
         if self.rlp_length + rlp_buf.len() as u64 > max_rlp_bytes_per_channel {
             return Err(ChannelOutError::ExceedsMaxRlpBytesPerChannel);
         }
@@ -109,66 +89,55 @@ where
         Ok(())
     }
 
-    /// Returns the total amount of rlp-encoded input bytes.
+    /// Returns the cumulative RLP input used for limits and encoder metrics.
     pub const fn input_bytes(&self) -> u64 {
         self.rlp_length
     }
 
-    /// Returns the number of bytes ready to be output to a frame.
-    pub fn ready_bytes(&self) -> usize {
-        self.compressor.len()
-    }
-
-    /// Flush the internal compressor.
-    pub fn flush(&mut self) -> Result<(), ChannelOutError> {
-        self.compressor.flush()?;
-        Ok(())
-    }
-
-    /// Closes the channel if not already closed.
-    pub const fn close(&mut self) {
-        self.closed = true;
-    }
-
-    /// Outputs a [Frame] from the [`ChannelOut`].
+    /// Consumes the channel and returns its complete ordered frame list.
     ///
-    /// Call this repeatedly until [`ready_bytes`] returns 0 to drain all
-    /// compressed data into frames. Only the final frame (when no data
-    /// remains and the channel is closed) will have `is_last = true`.
-    ///
-    /// [`ready_bytes`]: ChannelOut::ready_bytes
-    pub fn output_frame(&mut self, max_size: usize) -> Result<Frame, ChannelOutError> {
-        if max_size < FRAME_V0_OVERHEAD {
-            return Err(ChannelOutError::MaxFrameSizeTooSmall);
+    /// The encoder calls this when an open channel closes. It finalizes the
+    /// compressor, emits the compression-version byte in the first frame, and
+    /// marks only the final frame as `is_last`.
+    pub fn into_frames(mut self, max_size: usize) -> Result<Vec<Frame>, ChannelOutError> {
+        let mut frames = Vec::new();
+        let mut frame_number = 0;
+        loop {
+            let remaining = self.compressor.compressed_len()?;
+            if remaining == 0 {
+                break;
+            }
+
+            // Brotli's channel-version byte is emitted once in the first frame;
+            // zlib data is self-identifying.
+            let version_byte =
+                if frame_number == 0 { self.compressor.channel_version_byte() } else { None };
+            let prefix_len = usize::from(version_byte.is_some());
+            let overhead = Frame::ENCODED_OVERHEAD + prefix_len;
+            if max_size <= overhead {
+                return Err(ChannelOutError::MaxFrameSizeTooSmall);
+            }
+
+            let payload_size = (max_size - overhead).min(remaining);
+            let mut data = Vec::with_capacity(prefix_len + payload_size);
+            if let Some(version) = version_byte {
+                data.push(version);
+            }
+
+            let payload_start = data.len();
+            data.resize(payload_start + payload_size, 0);
+            self.compressor.read(&mut data[payload_start..])?;
+
+            let frame = Frame {
+                id: self.id,
+                number: frame_number,
+                is_last: self.compressor.compressed_len()? == 0,
+                data,
+            };
+            frame_number += 1;
+            frames.push(frame);
         }
-
-        // The first frame carries the channel version prefix (if any) so that
-        // the reader can identify the compression format.  For brotli this is
-        // `0x01`; zlib data is self-identifying and needs no prefix.
-        let version_byte =
-            if self.frame_number == 0 { self.compressor.channel_version_byte() } else { None };
-        let prefix_len = usize::from(version_byte.is_some());
-
-        let max_size = (max_size - FRAME_V0_OVERHEAD - prefix_len).min(self.ready_bytes());
-
-        let mut data = Vec::with_capacity(prefix_len + max_size);
-        if let Some(v) = version_byte {
-            data.push(v);
-        }
-
-        // Read `max_size` bytes from the compressed data.
-        let mut buf = vec![0u8; max_size];
-        self.compressor.read(&mut buf).map_err(ChannelOutError::Compression)?;
-        data.extend_from_slice(&buf);
-
-        // `is_last` is only true when the channel is closed AND all
-        // compressed data has been consumed (ready_bytes == 0 after read).
-        let is_last = self.closed && self.ready_bytes() == 0;
-
-        let frame = Frame { id: self.id, number: self.frame_number, is_last, data };
-
-        self.frame_number += 1;
-        Ok(frame)
+        Ok(frames)
     }
 }
 
@@ -177,111 +146,74 @@ mod tests {
     use alloc::{sync::Arc, vec::Vec};
 
     use alloy_primitives::Bytes;
-    use base_protocol::{SingleBatch, SpanBatch};
+    use base_protocol::SingleBatch;
 
     use super::*;
-    use crate::{CompressorWriter, test_utils::MockCompressor};
+    use crate::test_utils::MockCompressor;
 
     #[test]
-    fn test_output_frame_max_size_too_small() {
-        let config = RollupConfig::default();
-        let mut channel =
-            ChannelOut::new(ChannelId::default(), Arc::new(config), MockCompressor::default());
-        assert_eq!(channel.output_frame(0), Err(ChannelOutError::MaxFrameSizeTooSmall));
+    fn into_frames_rejects_too_small_max_size() {
+        let compressor =
+            MockCompressor { compressed: Some(Bytes::from_static(b"x")), ..Default::default() };
+        let channel =
+            ChannelOut::new(ChannelId::default(), Arc::new(RollupConfig::default()), compressor);
+
+        assert_eq!(
+            channel.into_frames(Frame::ENCODED_OVERHEAD),
+            Err(ChannelOutError::MaxFrameSizeTooSmall)
+        );
     }
 
     #[test]
-    fn test_channel_out_output_frame_no_data() {
-        let mut channel = ChannelOut::new(
+    fn into_frames_reserves_channel_version_byte() {
+        let compressor = MockCompressor {
+            compressed: Some(Bytes::from_static(b"abc")),
+            version_byte: Some(1),
+            ..Default::default()
+        };
+        let channel =
+            ChannelOut::new(ChannelId::default(), Arc::new(RollupConfig::default()), compressor);
+
+        let frames = channel
+            .into_frames(Frame::ENCODED_OVERHEAD + 2)
+            .expect("version and payload bytes should fit");
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0].number, 0);
+        assert!(!frames[0].is_last);
+        assert_eq!(frames[0].data, Bytes::from_static(b"\x01a"));
+        assert_eq!(frames[1].number, 1);
+        assert!(frames[1].is_last);
+        assert_eq!(frames[1].data, Bytes::from_static(b"bc"));
+    }
+
+    #[test]
+    fn into_frames_propagates_compressor_error() {
+        let channel = ChannelOut::new(
             ChannelId::default(),
             Arc::new(RollupConfig::default()),
-            MockCompressor { read_error: true, compressed: Some(Default::default()) },
+            MockCompressor {
+                compressed: Some(Bytes::from_static(b"x")),
+                read_error: true,
+                ..Default::default()
+            },
         );
-        let err = channel.output_frame(FRAME_V0_OVERHEAD).unwrap_err();
+
+        let err = channel.into_frames(Frame::ENCODED_OVERHEAD + 1).unwrap_err();
         assert_eq!(err, ChannelOutError::Compression(CompressorError::Full));
     }
 
     #[test]
-    fn test_channel_out_output() {
-        let mut channel = ChannelOut::new(
+    fn into_frames_marks_only_frame_last() {
+        let channel = ChannelOut::new(
             ChannelId::default(),
             Arc::new(RollupConfig::default()),
-            MockCompressor { compressed: Some(Default::default()), ..Default::default() },
+            MockCompressor { compressed: Some(Bytes::from_static(b"x")), ..Default::default() },
         );
-        let frame = channel.output_frame(FRAME_V0_OVERHEAD).unwrap();
+        let frames = channel.into_frames(Frame::ENCODED_OVERHEAD + 1).unwrap();
+        let frame = &frames[0];
         assert_eq!(frame.id, ChannelId::default());
         assert_eq!(frame.number, 0);
-        assert!(!frame.is_last);
-    }
-
-    #[test]
-    fn test_channel_out_reset() {
-        let config = RollupConfig::default();
-        let mut channel = ChannelOut {
-            id: ChannelId::default(),
-            config: Arc::new(config),
-            rlp_length: 10,
-            closed: true,
-            frame_number: 11,
-            compressor: MockCompressor::default(),
-        };
-        channel.reset();
-        assert_eq!(channel.rlp_length, 0);
-        assert_eq!(channel.frame_number, 0);
-        // The odds of a randomized channel id being equal to the
-        // default are so astronomically low, this test will always pass.
-        // The randomized [u8; 16] is about 1/255^16.
-        assert!(channel.id != ChannelId::default());
-        assert!(!channel.closed);
-    }
-
-    #[test]
-    fn test_channel_out_ready_bytes_empty() {
-        let config = RollupConfig::default();
-        let channel =
-            ChannelOut::new(ChannelId::default(), Arc::new(config), MockCompressor::default());
-        assert_eq!(channel.ready_bytes(), 0);
-    }
-
-    #[test]
-    fn test_channel_out_ready_bytes_some() {
-        let config = RollupConfig::default();
-        let mut channel =
-            ChannelOut::new(ChannelId::default(), Arc::new(config), MockCompressor::default());
-        channel.compressor.write(&[1, 2, 3]).unwrap();
-        assert_eq!(channel.ready_bytes(), 3);
-    }
-
-    #[test]
-    fn test_channel_out_close() {
-        let config = RollupConfig::default();
-        let mut channel =
-            ChannelOut::new(ChannelId::default(), Arc::new(config), MockCompressor::default());
-        assert!(!channel.closed);
-
-        channel.close();
-        assert!(channel.closed);
-    }
-
-    #[test]
-    fn test_channel_out_add_batch_closed() {
-        let config = RollupConfig::default();
-        let mut channel =
-            ChannelOut::new(ChannelId::default(), Arc::new(config), MockCompressor::default());
-        channel.close();
-
-        let batch = Batch::Single(SingleBatch::default());
-        assert_eq!(channel.add_batch(batch), Err(ChannelOutError::ChannelClosed));
-    }
-
-    #[test]
-    fn test_channel_out_empty_span_batch_decode_error() {
-        let config = RollupConfig::default();
-        let mut channel =
-            ChannelOut::new(ChannelId::default(), Arc::new(config), MockCompressor::default());
-
-        let batch = Batch::Span(SpanBatch::default());
-        assert_eq!(channel.add_batch(batch), Err(ChannelOutError::BatchEncoding));
+        assert!(frame.is_last);
     }
 
     #[test]
@@ -292,24 +224,26 @@ mod tests {
             MockCompressor::default(),
         );
 
-        let batch = Batch::Single(SingleBatch::default());
-        channel.rlp_length = channel.config.max_rlp_bytes_per_channel(batch.timestamp());
+        let batch = SingleBatch::default();
+        channel.rlp_length = channel.config.max_rlp_bytes_per_channel(batch.timestamp);
 
-        assert_eq!(channel.add_batch(batch), Err(ChannelOutError::ExceedsMaxRlpBytesPerChannel));
+        assert_eq!(
+            channel.add_single_batch(batch),
+            Err(ChannelOutError::ExceedsMaxRlpBytesPerChannel)
+        );
     }
 
     #[test]
-    fn test_channel_out_add_batch() {
+    fn test_channel_out_add_single_batch() {
         let config = RollupConfig::default();
         let mut channel =
             ChannelOut::new(ChannelId::default(), Arc::new(config), MockCompressor::default());
 
-        let batch = Batch::Single(SingleBatch::default());
-        assert_eq!(channel.add_batch(batch), Ok(()));
+        assert_eq!(channel.add_single_batch(SingleBatch::default()), Ok(()));
     }
 
     #[test]
-    fn test_channel_out_add_batch_enforces_cumulative_rlp_limit() {
+    fn test_channel_out_add_single_batch_enforces_cumulative_rlp_limit() {
         let mut channel = ChannelOut::new(
             ChannelId::default(),
             Arc::new(RollupConfig::default()),
@@ -320,23 +254,23 @@ mod tests {
         let max_rlp = channel.config.max_rlp_bytes_per_channel(timestamp);
         let payload_size = (max_rlp / 2 + 1) as usize;
 
-        let large_batch = Batch::Single(SingleBatch {
+        let large_batch = SingleBatch {
             timestamp,
             transactions: vec![Bytes::from(vec![0u8; payload_size])],
             ..Default::default()
-        });
+        };
 
-        let mut encoded = Vec::new();
-        large_batch.encode(&mut encoded).expect("test batch should encode");
+        let mut encoded = vec![BatchType::Single as u8];
+        large_batch.encode(&mut encoded);
         assert!(encoded.len() as u64 <= max_rlp, "test batch should fit within per-channel limit");
 
-        channel.add_batch(large_batch.clone()).expect("first batch should fit");
+        channel.add_single_batch(large_batch.clone()).expect("first batch should fit");
         // rlp_length tracks the RLP byte-string-wrapped size (includes header bytes).
         let mut rlp_wrapped = Vec::new();
         encoded.as_slice().encode(&mut rlp_wrapped);
         assert_eq!(channel.rlp_length, rlp_wrapped.len() as u64);
 
-        let err = channel.add_batch(large_batch).unwrap_err();
+        let err = channel.add_single_batch(large_batch).unwrap_err();
         assert_eq!(err, ChannelOutError::ExceedsMaxRlpBytesPerChannel);
     }
 }

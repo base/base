@@ -9,6 +9,9 @@ pub enum SourceError {
     /// Provider or RPC error.
     #[error("provider error: {0}")]
     Provider(String),
+    /// A requested block has not become available from the provider yet.
+    #[error("block {0} is not available yet")]
+    BlockUnavailable(u64),
     /// The underlying channel or stream was closed.
     #[error("source closed")]
     Closed,

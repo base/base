@@ -16,15 +16,15 @@ use base_consensus_node::{EngineConfig, FollowNode, FollowNodeConfig, NodeMode, 
 use base_consensus_providers::L1RpcProvider;
 use base_consensus_rpc::RpcBuilder;
 use base_upgrade_signal::{
-    UpgradeSignalConfig, UpgradeSignalMetricLayer, UpgradeSignalMonitor, UpgradeSignalRefresher,
-    UpgradeSignalRuntimeApplier,
+    UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalMetricLayer, UpgradeSignalMonitor,
+    UpgradeSignalPollOutcome, UpgradeSignalRefresher, UpgradeSignalRuntimeApplier,
 };
 use eyre::{Result, WrapErr};
 use tokio::{
-    task::JoinHandle,
+    task::{AbortHandle, JoinHandle},
     time::{MissedTickBehavior, interval},
 };
-use tracing::{info, warn};
+use tracing::{error, info};
 use url::Url;
 
 use super::in_process_consensus::wait_for_rpc;
@@ -80,22 +80,25 @@ impl InProcessFollowConsensus {
         if let Some(signal_config) = &upgrade_signal
             && signal_config.mode.applies_at_startup()
         {
-            let reader = signal_config.reader(RootProvider::new_http(l1_rpc_url.clone()));
+            let reader = signal_config.reader(l1_rpc_url.clone())?;
             let schedule = signal_config
-                .read_validated_schedule(
+                .read_startup_schedule(
                     &reader,
                     "system test follow consensus startup",
                     &[UpgradeSignalMetricLayer::Consensus],
+                    UpgradeSignalDefaults::STARTUP_SCHEDULE_RETRY_INTERVAL,
                 )
                 .await
                 .wrap_err("Failed to read upgrade signal schedule at follow consensus startup")?;
-            UpgradeSignalRuntimeApplier::apply_schedule_to_sink(
-                l2_chain_id,
-                &schedule,
-                &mut rollup_config,
-            )
-            .unwrap_or_else(|never| match never {})
-            .log("follow rollup config");
+            if let Some(schedule) = schedule {
+                UpgradeSignalRuntimeApplier::apply_schedule_to_sink(
+                    l2_chain_id,
+                    &schedule,
+                    &mut rollup_config,
+                )
+                .unwrap_or_else(|never| match never {})
+                .log("follow rollup config");
+            }
         }
 
         let rollup_config = Arc::new(rollup_config);
@@ -107,6 +110,7 @@ impl InProcessFollowConsensus {
             l2_url: config.l2_engine_url,
             l2_jwt_secret: config.jwt_secret,
             l1_url: l1_rpc_url.clone(),
+            l1_rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,
             mode: NodeMode::Validator,
         };
         let engine_client = Arc::new(
@@ -166,9 +170,16 @@ impl InProcessFollowConsensus {
 
         // Spawn the live monitor only after the node is up, so no error path above has to
         // clean it up.
-        let upgrade_signal_handle = upgrade_signal.map(|signal_config| {
-            Self::spawn_upgrade_signal_monitor(signal_config, l1_rpc_url, l2_chain_id)
-        });
+        let upgrade_signal_handle = upgrade_signal
+            .map(|signal_config| {
+                Self::spawn_upgrade_signal_monitor(
+                    signal_config,
+                    l1_rpc_url,
+                    l2_chain_id,
+                    handle.abort_handle(),
+                )
+            })
+            .transpose()?;
 
         Ok(Self { rpc_addr, rollup_config, handle: Some(handle), upgrade_signal_handle })
     }
@@ -177,14 +188,14 @@ impl InProcessFollowConsensus {
         signal_config: UpgradeSignalConfig,
         l1_rpc_url: Url,
         l2_chain_id: u64,
-    ) -> JoinHandle<()> {
-        tokio::spawn(async move {
-            let l1_provider = RootProvider::new_http(l1_rpc_url);
-            let reader = signal_config.reader(l1_provider.clone());
+        node_abort: AbortHandle,
+    ) -> Result<JoinHandle<()>> {
+        let reader = signal_config.reader(l1_rpc_url)?;
+        Ok(tokio::spawn(async move {
             let refresher = signal_config.mode.allows_runtime_admin().then(|| {
                 UpgradeSignalRefresher::new(
                     signal_config.clone(),
-                    l1_provider,
+                    reader.clone(),
                     l2_chain_id,
                     UpgradeSignalMetricLayer::Consensus,
                 )
@@ -195,20 +206,26 @@ impl InProcessFollowConsensus {
 
             loop {
                 poll_interval.tick().await;
-                let Some(schedule) = monitor.poll(&reader).await else {
-                    continue;
-                };
-                if let Some(refresher) = &refresher
-                    && let Err(error) = refresher.apply(&schedule)
+                // Mirror production fail-closed: when a scheduled upgrade this node cannot support is
+                // activating imminently, stop the follow node itself rather than fork off the
+                // network. Production cancels the shared token and exits the process; here the
+                // equivalent is aborting the follow node task (not just this monitor loop), so the
+                // node stops following past activation.
+                if let UpgradeSignalPollOutcome::HaltNode {
+                    upgrade_id, activation_timestamp, ..
+                } = monitor.poll_and_apply(&reader, refresher.as_ref()).await
                 {
-                    warn!(
+                    error!(
                         target: "upgrade_signal",
-                        error = %error,
-                        "failed to auto-apply follow-mode upgrade signal update"
+                        upgrade = %upgrade_id.contract_id(),
+                        activation_timestamp,
+                        "in-process follow node failing closed: aborting follow node task"
                     );
+                    node_abort.abort();
+                    break;
                 }
             }
-        })
+        }))
     }
 
     /// Returns the RPC URL for this consensus node.

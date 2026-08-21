@@ -1,10 +1,10 @@
 //! Execution-node upgrade signal schedule application.
 
-use alloy_provider::RootProvider;
 use base_execution_chainspec::BaseChainSpec;
 use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
 use base_upgrade_signal::{
-    UpgradeSignalApplySummary, UpgradeSignalConfig, UpgradeSignalMetricLayer, UpgradeSignalMonitor,
+    PackedProtocolVersion, UpgradeSignalApplySummary, UpgradeSignalConfig, UpgradeSignalDefaults,
+    UpgradeSignalMetricLayer, UpgradeSignalMetrics, UpgradeSignalMonitor, UpgradeSignalPollOutcome,
     UpgradeSignalRefresher, UpgradeSignalRuntimeApplier, UpgradeSignalSchedule,
 };
 use jsonrpsee::{RpcModule, core::RpcResult, types::ErrorObject};
@@ -32,15 +32,19 @@ impl ExecutionUpgradeSignal {
         config: &ExecutionUpgradeSignalConfig,
         chain_spec: &mut BaseChainSpec,
     ) -> eyre::Result<()> {
-        let reader = config.signal_config.reader(RootProvider::new_http(config.l1_rpc.clone()));
-        let schedule = config
+        let reader = config.signal_config.reader(config.l1_rpc.clone())?;
+        let Some(schedule) = config
             .signal_config
-            .read_validated_schedule(
+            .read_startup_schedule(
                 &reader,
                 "execution startup",
                 &[UpgradeSignalMetricLayer::Execution],
+                UpgradeSignalDefaults::STARTUP_SCHEDULE_RETRY_INTERVAL,
             )
-            .await?;
+            .await?
+        else {
+            return Ok(());
+        };
 
         Self::apply_schedule_to_chain_spec(chain_spec, &schedule)?;
 
@@ -65,14 +69,21 @@ impl ExecutionUpgradeSignal {
         refresher: &UpgradeSignalRefresher,
     ) -> RpcResult<UpgradeSignalApplySummary> {
         match refresher.read_schedule().await {
-            Ok(schedule) => refresher.apply(&schedule).map_err(|error| {
-                warn!(
-                    target: "upgrade_signal",
-                    error = %error,
-                    "failed to validate execution runtime upgrade signal"
-                );
-                ErrorObject::owned(-32005, "failed to validate upgrade signal", None::<()>)
-            }),
+            Ok(schedule) => match refresher.apply(&schedule) {
+                Ok(summary) => {
+                    UpgradeSignalMetrics::record_apply_success(refresher.metrics_layer, &schedule);
+                    Ok(summary)
+                }
+                Err(error) => {
+                    UpgradeSignalMetrics::record_apply_failure(refresher.metrics_layer, &schedule);
+                    warn!(
+                        target: "upgrade_signal",
+                        error = %error,
+                        "failed to validate execution runtime upgrade signal"
+                    );
+                    Err(ErrorObject::owned(-32005, "failed to validate upgrade signal", None::<()>))
+                }
+            },
             Err(error) => {
                 warn!(
                     target: "upgrade_signal",
@@ -94,9 +105,10 @@ impl ExecutionUpgradeSignal {
         }
 
         let chain_id = ctx.config().chain.chain().id();
+        let reader = config.signal_config.reader(config.l1_rpc)?;
         let refresher = UpgradeSignalRefresher::new(
             config.signal_config,
-            RootProvider::new_http(config.l1_rpc),
+            reader,
             chain_id,
             UpgradeSignalMetricLayer::Execution,
         );
@@ -140,15 +152,14 @@ impl BaseNodeExtension for ExecutionUpgradeSignalRuntimeExtension {
         };
 
         hooks.add_node_started_hook(move |ctx| {
-            let l1_provider = RootProvider::new_http(config.l1_rpc.clone());
             let poll_interval = config.signal_config.l1_block_tag.poll_interval();
-            let reader = config.signal_config.reader(l1_provider.clone());
+            let reader = config.signal_config.reader(config.l1_rpc.clone())?;
             // Live updates are re-applied automatically, matching the manual
             // `admin_refreshUpgradeSignal` path.
             let auto_refresher = config.signal_config.mode.allows_runtime_admin().then(|| {
                 UpgradeSignalRefresher::new(
                     config.signal_config.clone(),
-                    l1_provider,
+                    reader.clone(),
                     ctx.chain_spec().chain().id(),
                     UpgradeSignalMetricLayer::Execution,
                 )
@@ -156,36 +167,50 @@ impl BaseNodeExtension for ExecutionUpgradeSignalRuntimeExtension {
             let mut monitor = UpgradeSignalMonitor::new(UpgradeSignalMetricLayer::Execution);
             let executor = ctx.task_executor;
 
-            executor.spawn_with_graceful_shutdown_signal(|signal| {
-                Box::pin(async move {
-                    let mut interval = tokio::time::interval(poll_interval);
-                    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-                    let mut signal = Box::pin(signal);
+            // Spawned as a critical task so a fail-closed panic propagates to reth's TaskManager and
+            // exits the process non-zero, instead of being silently swallowed by a plain spawn.
+            executor.spawn_critical_with_graceful_shutdown_signal(
+                "upgrade-signal-monitor",
+                |signal| {
+                    Box::pin(async move {
+                        let mut interval = tokio::time::interval(poll_interval);
+                        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                        let mut signal = Box::pin(signal);
 
-                    loop {
-                        tokio::select! {
-                            _ = &mut signal => break,
-                            _ = interval.tick() => {
-                                tokio::select! {
-                                    _ = &mut signal => break,
-                                    polled = monitor.poll(&reader) => {
-                                        if let Some(refresher) = &auto_refresher
-                                            && let Some(schedule) = polled
-                                            && let Err(error) = refresher.apply(&schedule)
-                                        {
-                                            warn!(
-                                                target: "upgrade_signal",
-                                                error = %error,
-                                                "failed to auto-apply live upgrade signal update"
-                                            );
-                                        }
+                        loop {
+                            tokio::select! {
+                                _ = &mut signal => break,
+                                _ = interval.tick() => {
+                                    let outcome = tokio::select! {
+                                        _ = &mut signal => break,
+                                        outcome = monitor
+                                            .poll_and_apply(&reader, auto_refresher.as_ref()) =>
+                                            outcome,
+                                    };
+                                    // Fail closed: a scheduled upgrade this node cannot support is
+                                    // activating imminently. Panic so the node exits loudly rather
+                                    // than fork off the network at activation.
+                                    if let UpgradeSignalPollOutcome::HaltNode {
+                                        upgrade_id,
+                                        activation_timestamp,
+                                        minimum_protocol_version,
+                                        node_protocol_version,
+                                    } = outcome
+                                    {
+                                        panic!(
+                                            "upgrade signal fail-closed: upgrade {} activates at {} and requires node protocol version {}, but this binary supports {}; upgrade this node to a supported version",
+                                            upgrade_id.contract_id(),
+                                            activation_timestamp,
+                                            PackedProtocolVersion::new(minimum_protocol_version),
+                                            PackedProtocolVersion::new(node_protocol_version),
+                                        );
                                     }
                                 }
                             }
                         }
-                    }
-                })
-            });
+                    })
+                },
+            );
 
             info!(target: "upgrade_signal", "execution upgrade signal metrics observer spawned");
             Ok(())
@@ -211,35 +236,34 @@ mod tests {
     use super::*;
 
     fn runtime_refresher(chain_id: u64) -> UpgradeSignalRefresher {
-        UpgradeSignalRefresher::new(
-            UpgradeSignalConfig::new(Address::ZERO),
-            RootProvider::new_http("http://127.0.0.1:1".parse().unwrap()),
-            chain_id,
-            UpgradeSignalMetricLayer::Execution,
-        )
+        let config = UpgradeSignalConfig::new(Address::ZERO);
+        let reader = config.reader("http://127.0.0.1:1".parse().unwrap()).unwrap();
+        UpgradeSignalRefresher::new(config, reader, chain_id, UpgradeSignalMetricLayer::Execution)
     }
 
     fn versioned_schedule(
         upgrade_id: BaseUpgrade,
         activation_timestamp: u64,
     ) -> UpgradeSignalSchedule {
-        UpgradeSignalSchedule::new(vec![base_upgrade_signal::UpgradeSignal {
-            upgrade_id,
-            activation_timestamp,
-            protocol_version: UpgradeSignalDefaults::node_protocol_version(),
-            l1_block_number: 1,
-        }])
+        UpgradeSignalSchedule::new(
+            1,
+            vec![base_upgrade_signal::UpgradeSignal {
+                upgrade_id,
+                activation_timestamp,
+                protocol_version: UpgradeSignalDefaults::node_protocol_version(),
+            }],
+        )
     }
 
     fn schedule(signals: &[(BaseUpgrade, u64)]) -> UpgradeSignalSchedule {
         UpgradeSignalSchedule::new(
+            1,
             signals
                 .iter()
                 .map(|(upgrade_id, activation_timestamp)| base_upgrade_signal::UpgradeSignal {
                     upgrade_id: *upgrade_id,
                     activation_timestamp: *activation_timestamp,
                     protocol_version: Default::default(),
-                    l1_block_number: 1,
                 })
                 .collect(),
         )

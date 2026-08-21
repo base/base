@@ -1,6 +1,6 @@
 //! CLI argument parsing and execution for the load tester binary.
 
-use std::{path::PathBuf, time::Duration};
+use std::{num::NonZeroU64, path::PathBuf, time::Duration};
 
 use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, U256, utils::format_ether};
@@ -9,9 +9,10 @@ use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
 use alloy_signer_local::PrivateKeySigner;
 use base_cli_utils::RuntimeManager;
 use base_load_tests::{
-    AccountPool, BaselineError, FundedAccount, LoadRunner, LoadTestDisplay, LoadTestDisplayConfig,
-    LoadTestRunHooks, LoadTestRunOptions, MetricsSummary, QueryProvider, ReceiptCoverage,
-    Result as LoadResult, RpcProviders, RpcResultExt, TestConfig, create_wallet_provider,
+    AccountPool, BaselineError, DEFAULT_MAX_GAS_PRICE, FundedAccount, LoadRunner, LoadTestDisplay,
+    LoadTestDisplayConfig, LoadTestRunHooks, LoadTestRunOptions, MetricsSummary, QueryProvider,
+    ReceiptCoverage, Result as LoadResult, RpcProviders, RpcResultExt, TestConfig,
+    create_wallet_provider,
 };
 use clap::{ArgGroup, Args, Parser, Subcommand};
 use eyre::{Result, bail};
@@ -27,9 +28,6 @@ const RESCUE_CONCURRENCY: usize = 32;
 
 /// Default number of accounts to scan during rescue.
 const DEFAULT_RESCUE_SCAN_COUNT: usize = 1000;
-
-/// Default maximum gas price (1000 gwei).
-const DEFAULT_MAX_GAS_PRICE: u128 = 1_000_000_000_000;
 
 /// The Base load tester CLI.
 #[derive(Parser, Clone, Debug)]
@@ -82,6 +80,18 @@ struct LoadArgs {
     #[arg(long)]
     recover_real_tokens: bool,
 
+    /// Skip draining native ETH balances back to the funder account.
+    #[arg(long)]
+    skip_drain: bool,
+
+    /// Benchmark-only directory for the ready/start handshake before measured submission.
+    #[arg(long, value_name = "DIR", requires = "block_gas_limit")]
+    separate_setup: Option<PathBuf>,
+
+    /// Block gas limit used for in-flight inventory sizing instead of the latest RPC block.
+    #[arg(long, requires = "separate_setup")]
+    block_gas_limit: Option<NonZeroU64>,
+
     /// Load test YAML configuration.
     #[arg(value_name = "CONFIG")]
     config: PathBuf,
@@ -114,7 +124,7 @@ enum Command {
 }
 
 async fn run_load_test(args: LoadArgs) -> Result<()> {
-    let mp = LoadTestDisplay::init_tracing();
+    let multi_progress = LoadTestDisplay::init_tracing()?;
     let mode = LoadMode::from_args(&args);
     let config_path = args.config;
 
@@ -123,6 +133,7 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
     }
 
     let test_config = TestConfig::load(&config_path)?;
+    let skip_drain = args.skip_drain || test_config.skip_drain;
 
     let query_rpc = match test_config.query_rpc.clone() {
         Some(query_rpc) => query_rpc,
@@ -136,7 +147,9 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
     };
 
     // Continuous mode is applied by LoadTestExecutor from LoadTestRunOptions.
-    let load_config = test_config.to_load_config(rpc_chain_id)?;
+    let mut load_config = test_config.to_load_config(rpc_chain_id)?;
+    load_config.separate_setup = args.separate_setup;
+    load_config.block_gas_limit = args.block_gas_limit.map(NonZeroU64::get);
 
     let funding_key = TestConfig::funder_key()?;
 
@@ -147,6 +160,10 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
                 "Re-deriving {} accounts from config and draining to funder...",
                 load_config.account_count
             );
+            if skip_drain {
+                println!("Skipping drain due to --skip-drain.");
+                return Ok(());
+            }
             let runner = LoadRunner::new(load_config)?;
             match runner.drain_accounts(funding_key).await {
                 Ok(drained) => println!("Drained {} ETH back to funder.", format_ether(drained)),
@@ -179,9 +196,15 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
                 }
                 Err(e) => bail!("real-token recovery failed: {e}"),
             }
-            match runner.drain_accounts(funding_key).await {
-                Ok(drained) => println!("Drained {} ETH back to funder.", format_ether(drained)),
-                Err(e) => bail!("drain failed: {e}"),
+            if skip_drain {
+                println!("Skipping drain due to --skip-drain.");
+            } else {
+                match runner.drain_accounts(funding_key).await {
+                    Ok(drained) => {
+                        println!("Drained {} ETH back to funder.", format_ether(drained))
+                    }
+                    Err(e) => bail!("drain failed: {e}"),
+                }
             }
             return Ok(());
         }
@@ -208,9 +231,12 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
     } else {
         load_config.duration.map_or_else(|| "continuous".to_string(), |d| format!("{d:?}"))
     };
+    let target_gps_display = load_config
+        .target_gps
+        .map_or_else(|| "unbounded".to_string(), |gps| format!("{gps} gas/s"));
     println!(
-        "Target: {} GPS | Duration: {} | Accounts: {}",
-        load_config.target_gps, duration_display, load_config.account_count
+        "Target cap: {} | Duration: {} | Accounts: {}",
+        target_gps_display, duration_display, load_config.account_count
     );
     println!();
 
@@ -219,9 +245,16 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
         test_config,
         load_config,
         funding_key,
-        LoadTestRunOptions { continuous: args.continuous, install_signal_handler: true },
+        LoadTestRunOptions {
+            continuous: args.continuous,
+            install_signal_handler: true,
+            skip_drain,
+        },
         LoadTestRunHooks {
-            display: Some(LoadTestDisplayConfig { multi_progress: mp, duration: display_duration }),
+            display: multi_progress.map(|multi_progress| LoadTestDisplayConfig {
+                multi_progress,
+                duration: display_duration,
+            }),
             before_cleanup: present_load_test_summary,
         },
     )
@@ -242,17 +275,60 @@ fn present_load_test_summary(summary: &MetricsSummary) {
         }
         let tp = &summary.throughput;
         println!("TPS: {:.2} | GPS: {:.0}", tp.tps, tp.gps);
+        let pacing = &summary.pacing;
+        let target_gps = summary
+            .config
+            .as_ref()
+            .and_then(|config| config.target_gps)
+            .map_or_else(|| "unbounded".to_string(), |target| target.to_string());
+        println!(
+            "Pacing: target_gps={}  offered_gps={:.0}  achieved_gps={:.0}",
+            target_gps, pacing.offered_gps, tp.gps
+        );
+        println!(
+            "Depth: mean/floor={:.2}x  blocks={}  under_floor={}  max_gas={}  max_queued_gas={}",
+            pacing.mean_depth_to_floor_ratio,
+            pacing.blocks_observed,
+            pacing.blocks_under_floor,
+            pacing.max_depth_gas,
+            pacing.max_queued_gas,
+        );
+        println!(
+            "Shortfalls: capacity={}  presign={}  rpc={}  chain={}",
+            pacing.capacity_limited_cycles,
+            pacing.presign_starved_cycles,
+            pacing.rpc_bound_cycles,
+            pacing.chain_bound_cycles
+        );
+        println!(
+            "Refill Sources: canonical={}  flashblock={}  safety={}",
+            pacing.canonical_cycles, pacing.flashblock_cycles, pacing.safety_cycles
+        );
+        println!(
+            "Block Fill: mean={:.1}%  load_test_estimated={:.1}%",
+            pacing.mean_block_fill_ratio * 100.0,
+            pacing.mean_our_block_ratio * 100.0
+        );
+        println!(
+            "Refill Lag: p50={:.1?}  p95={:.1?}  p99={:.1?}  max={:.1?}",
+            pacing.refill_lag.p50,
+            pacing.refill_lag.p95,
+            pacing.refill_lag.p99,
+            pacing.refill_lag.max
+        );
+        println!(
+            "Cycle Work: plan_p95={:.1?}  submit_p95={:.1?}",
+            pacing.plan_time.p95, pacing.submit_time.p95
+        );
+        println!(
+            "Availability Lag: p50={:.1?}  p95={:.1?}  max={:.1?}",
+            pacing.availability_lag.p50, pacing.availability_lag.p95, pacing.availability_lag.max
+        );
         let bl = &summary.block_latency;
         println!(
             "Block Latency:       min={:.1?}  p50={:.1?}  mean={:.1?}  p95={:.1?}  p99={:.1?}  max={:.1?}",
             bl.min, bl.p50, bl.mean, bl.p95, bl.p99, bl.max
         );
-        let fb = &summary.flashblocks_latency;
-        println!(
-            "FB Latency:          min={:.1?}  p50={:.1?}  mean={:.1?}  p95={:.1?}  p99={:.1?}  max={:.1?}  (n={})",
-            fb.min, fb.p50, fb.mean, fb.p95, fb.p99, fb.max, fb.count
-        );
-
         println!();
         println!(
             "Totals: Submitted={} | Confirmed={} | Failed={} | Reverted={} | Success={:.1}%",
@@ -263,6 +339,12 @@ fn present_load_test_summary(summary: &MetricsSummary) {
             summary.throughput.success_rate()
         );
         println!("Gas: total={}  avg/tx={}", summary.gas.total_gas, summary.gas.avg_gas);
+        if pacing.undrained_transactions > 0 {
+            println!(
+                "Undrained inventory: transactions={}  gas={}",
+                pacing.undrained_transactions, pacing.undrained_gas
+            );
+        }
         let rc: &ReceiptCoverage = &summary.receipt_coverage;
         if !rc.is_complete() {
             println!(
@@ -571,7 +653,12 @@ async fn rescue_await_drained_balances(
     }
 
     if !pending_accounts.is_empty() {
-        warn!(accounts = ?pending_accounts, "some rescue balances did not settle within timeout");
+        let sample: Vec<_> = pending_accounts.iter().take(3).copied().collect();
+        warn!(
+            pending_account_count = pending_accounts.len(),
+            pending_account_sample = ?sample,
+            "some rescue balances did not settle within timeout"
+        );
     }
 
     Ok(())

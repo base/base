@@ -141,7 +141,7 @@ pub struct OnlineBeaconClient {
 impl OnlineBeaconClient {
     /// Creates a new [`OnlineBeaconClient`] from the provided base URL string.
     ///
-    /// Requests use the shared [`crate::L1_RPC_TIMEOUT`] deadline.
+    /// Requests use the default [`crate::L1_RPC_TIMEOUT`] deadline.
     pub fn new_http(base: String) -> Self {
         Self::with_timeout(base, crate::L1_RPC_TIMEOUT)
     }

@@ -40,11 +40,11 @@ base-common-evm.workspace = true
 base-execution-evm.workspace = true
 base-execution-trie.workspace = true
 base-execution-txpool.workspace = true
+base-observability-events.workspace = true
 base-execution-payload-builder.workspace = true
 
 # ethereum
 revm.workspace = true
-alloy-rlp.workspace = true
 alloy-eips.workspace = true
 alloy-serde.workspace = true
 alloy-json-rpc.workspace = true
@@ -58,7 +58,6 @@ alloy-rpc-types-eth.workspace = true
 alloy-transport-http.workspace = true
 alloy-rpc-types-debug.workspace = true
 alloy-rpc-types-engine.workspace = true
-base-common-network = { workspace = true, features = ["reth"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 base-common-rpc-types = { workspace = true, features = ["reth"] }
 base-common-rpc-types-engine = { workspace = true, features = ["reth"] }
@@ -79,6 +78,7 @@ jsonrpsee-types.workspace = true
 opentelemetry-http.workspace = true
 
 # misc
+lru.workspace = true
 eyre.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
@@ -90,6 +90,7 @@ metrics = { workspace = true, optional = true }
 
 [dev-dependencies]
 base-execution-chainspec.workspace = true
+reth-provider = { workspace = true, features = ["test-utils"] }
 
 [features]
 default = [ "metrics" ]

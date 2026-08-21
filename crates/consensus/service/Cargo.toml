@@ -60,7 +60,7 @@ backon.workspace = true
 libp2p.workspace = true
 futures.workspace = true
 http-body.workspace = true
-tokio-util.workspace = true
+tokio-util = { workspace = true, features = ["rt"] }
 opentelemetry.workspace = true
 async-trait.workspace = true
 async-stream.workspace = true
@@ -87,12 +87,15 @@ rand.workspace = true
 rstest.workspace = true
 anyhow.workspace = true
 mockall.workspace = true
+httpmock.workspace = true
 tempfile.workspace = true
 arbitrary.workspace = true
 alloy-network.workspace = true
 base-common-rpc-types.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 alloy-primitives = { workspace = true, features = ["k256"] }
+metrics-util = { workspace = true, features = ["debugging"] }
+base-common-genesis = { workspace = true, features = ["test-utils"] }
 base-consensus-derive = { workspace = true, features = ["test-utils"] }
 base-consensus-engine = { workspace = true, features = ["test-utils"] }
 alloy-consensus = { workspace = true, features = ["arbitrary", "std"] }

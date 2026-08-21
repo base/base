@@ -236,6 +236,7 @@ pub struct SetupContainer {
     base_azul_activation_block: Option<u64>,
     base_beryl_activation_block: Option<u64>,
     base_cobalt_activation_block: Option<u64>,
+    base_denim_activation_block: Option<u64>,
     base_zenith_activation_block: Option<u64>,
     network_name: Option<String>,
 }
@@ -247,11 +248,12 @@ impl SetupContainer {
             output_dir: output_dir.into(),
             chain_id: 1337,
             l2_chain_id: 84538453,
-            slot_duration: 2,
+            slot_duration: 1,
             isthmus_activation_block: None,
             base_azul_activation_block: None,
             base_beryl_activation_block: None,
             base_cobalt_activation_block: None,
+            base_denim_activation_block: None,
             base_zenith_activation_block: None,
             network_name: None,
         }
@@ -299,7 +301,13 @@ impl SetupContainer {
         self
     }
 
-    /// Sets the L2 block number at which Base Zenith activates.
+    /// Sets the L2 block number at which Base Denim activates.
+    pub const fn with_base_denim_activation_block(mut self, block: u64) -> Self {
+        self.base_denim_activation_block = Some(block);
+        self
+    }
+
+    /// Sets the L2 block number at which the genesis-only Base Zenith testing gate activates.
     pub const fn with_base_zenith_activation_block(mut self, block: u64) -> Self {
         self.base_zenith_activation_block = Some(block);
         self
@@ -404,6 +412,10 @@ impl SetupContainer {
 
         if let Some(block) = self.base_cobalt_activation_block {
             container = container.with_env_var("L2_BASE_COBALT_BLOCK", block.to_string());
+        }
+
+        if let Some(block) = self.base_denim_activation_block {
+            container = container.with_env_var("L2_BASE_DENIM_BLOCK", block.to_string());
         }
 
         if let Some(block) = self.base_zenith_activation_block {

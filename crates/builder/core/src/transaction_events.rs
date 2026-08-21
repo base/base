@@ -289,6 +289,58 @@ impl BuilderRejectedEventData {
     }
 }
 
+/// Fields emitted when the builder defers a transaction for later re-evaluation.
+#[derive(Debug, Serialize)]
+pub(crate) struct BuilderDeferredEventData {
+    #[serde(flatten)]
+    budget: BuilderBudgetFields,
+    defer_reason: &'static str,
+    defer_detail: String,
+}
+
+impl BuilderDeferredEventData {
+    /// Creates a deferred-event payload with an explicit reason and detail.
+    pub(crate) fn new(
+        defer_reason: &'static str,
+        defer_detail: impl Into<String>,
+        info: &ExecutionInfo,
+        limits: &ResourceLimits,
+        resources: Option<&TxResources>,
+    ) -> Self {
+        Self {
+            budget: BuilderBudgetFields::new(info, limits, resources),
+            defer_reason,
+            defer_detail: defer_detail.into(),
+        }
+    }
+}
+
+/// Fields emitted when the builder discards a transaction that can no longer become valid.
+#[derive(Debug, Serialize)]
+pub(crate) struct BuilderExpiredEventData {
+    #[serde(flatten)]
+    budget: BuilderBudgetFields,
+    expire_reason: &'static str,
+    expire_detail: String,
+}
+
+impl BuilderExpiredEventData {
+    /// Creates an expired-event payload with an explicit reason and detail.
+    pub(crate) fn new(
+        expire_reason: &'static str,
+        expire_detail: impl Into<String>,
+        info: &ExecutionInfo,
+        limits: &ResourceLimits,
+        resources: Option<&TxResources>,
+    ) -> Self {
+        Self {
+            budget: BuilderBudgetFields::new(info, limits, resources),
+            expire_reason,
+            expire_detail: expire_detail.into(),
+        }
+    }
+}
+
 /// Fields emitted when the builder accepts a transaction.
 #[derive(Debug, Serialize)]
 pub(crate) struct BuilderAcceptedEventData {

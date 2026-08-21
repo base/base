@@ -119,7 +119,7 @@ sol! {
         function burnBlocked(address from, uint256 amount) external;
 
         // Seize
-        function seizeWithMemo(address from, address to, uint256 amount, bytes32 memo) external returns (bool);
+        function seizeWithMemo(address from, address to, uint256 amount, bytes32 memo) external;
 
         // Roles
         function hasRole(bytes32 role, address account) external view returns (bool);
@@ -235,7 +235,7 @@ mod tests {
     /// `sol!` reorder of `TRANSFER`/`MINT`/`BURN` would silently remap which bit each feature
     /// toggles while leaving every selector, topic0, error selector and `COUNT` identical.
     const V1_ABI_FINGERPRINT: B256 =
-        b256!("106ef4b7c288c9344d6906ba7ef99a740bd9621cdaed89d06b35abd313c13449");
+        b256!("bcece6954307d847db07d6f723438cd1fa93ae40fe0c4c7ee5578779cb502661");
 
     /// Absolute wire fingerprint for Cobalt's (canonical) surface. Diverges from V1: Cobalt adds
     /// the seize surface (`seizeWithMemo`, the `SEIZE_ROLE`/`SEIZE_HOLDER_POLICY`/`SEIZE_RECEIVER_POLICY`

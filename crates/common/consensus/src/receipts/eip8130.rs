@@ -10,8 +10,11 @@
 
 use alloc::vec::Vec;
 
-use alloy_consensus::{InMemorySize, Receipt};
+use alloy_consensus::{
+    InMemorySize, Receipt, ReceiptWithBloom, RlpDecodableReceipt, RlpEncodableReceipt,
+};
 use alloy_primitives::Log;
+use alloy_rlp::{BufMut, Decodable, Encodable};
 
 /// EIP-8130 account-abstraction receipt: a standard [`Receipt`] plus the
 /// per-phase execution statuses.
@@ -36,7 +39,6 @@ pub struct Eip8130Receipt<T = Log> {
     #[cfg_attr(feature = "serde", serde(skip))]
     pub phase_statuses: Vec<u8>,
 }
-
 impl<T> Eip8130Receipt<T> {
     /// Creates a new [`Eip8130Receipt`] from an inner receipt and its per-phase
     /// statuses.
@@ -63,7 +65,6 @@ impl<T> Eip8130Receipt<T> {
         self.map_inner(|r| r.map_logs(f))
     }
 }
-
 impl<T> AsRef<Receipt<T>> for Eip8130Receipt<T> {
     fn as_ref(&self) -> &Receipt<T> {
         &self.inner
@@ -73,6 +74,45 @@ impl<T> AsRef<Receipt<T>> for Eip8130Receipt<T> {
 impl<T> From<Eip8130Receipt<T>> for Receipt<T> {
     fn from(value: Eip8130Receipt<T>) -> Self {
         value.into_inner()
+    }
+}
+
+impl<T: Encodable> RlpEncodableReceipt for Eip8130Receipt<T> {
+    fn rlp_encoded_length_with_bloom(&self, bloom: &alloy_primitives::Bloom) -> usize {
+        self.inner.rlp_encoded_length_with_bloom(bloom)
+    }
+
+    fn rlp_encode_with_bloom(&self, bloom: &alloy_primitives::Bloom, out: &mut dyn BufMut) {
+        self.inner.rlp_encode_with_bloom(bloom, out);
+    }
+}
+
+impl<T: Decodable> RlpDecodableReceipt for Eip8130Receipt<T> {
+    fn rlp_decode_with_bloom(buf: &mut &[u8]) -> alloy_rlp::Result<ReceiptWithBloom<Self>> {
+        let ReceiptWithBloom { receipt, logs_bloom } = Receipt::rlp_decode_with_bloom(buf)?;
+        Ok(ReceiptWithBloom { receipt: Self::new(receipt, Vec::new()), logs_bloom })
+    }
+}
+
+impl<T> Encodable for Eip8130Receipt<T>
+where
+    Receipt<T>: Encodable,
+{
+    fn encode(&self, out: &mut dyn BufMut) {
+        self.inner.encode(out);
+    }
+
+    fn length(&self) -> usize {
+        self.inner.length()
+    }
+}
+
+impl<T> Decodable for Eip8130Receipt<T>
+where
+    Receipt<T>: Decodable,
+{
+    fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
+        Ok(Self::new(Receipt::decode(buf)?, Vec::new()))
     }
 }
 
