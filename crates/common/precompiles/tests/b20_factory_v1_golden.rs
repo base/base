@@ -801,9 +801,12 @@ fn golden_cobalt_bootstrap_routes_stablecoin_seize_holder_policy_init_call() {
 #[test]
 fn golden_beryl_bootstrap_rejects_asset_seize_holder_policy_init_call() {
     let mut s = fresh();
-    let update =
-        IB20::updatePolicyCall { policyScope: B20PolicyType::SeizeHolder.id(), newPolicyId: 2 }
-            .abi_encode();
+    let composite = seed_union_composite(&mut s);
+    let update = IB20::updatePolicyCall {
+        policyScope: B20PolicyType::SeizeHolder.id(),
+        newPolicyId: composite,
+    }
+    .abi_encode();
     let (rev, bytes) = call_factory_at(
         &mut s,
         CREATOR,
@@ -829,9 +832,12 @@ fn golden_beryl_bootstrap_rejects_asset_seize_holder_policy_init_call() {
 #[test]
 fn golden_beryl_bootstrap_rejects_stablecoin_seize_holder_policy_init_call() {
     let mut s = fresh();
-    let update =
-        IB20::updatePolicyCall { policyScope: B20PolicyType::SeizeHolder.id(), newPolicyId: 2 }
-            .abi_encode();
+    let composite = seed_union_composite(&mut s);
+    let update = IB20::updatePolicyCall {
+        policyScope: B20PolicyType::SeizeHolder.id(),
+        newPolicyId: composite,
+    }
+    .abi_encode();
     let (rev, bytes) = call_factory_at(
         &mut s,
         CREATOR,
