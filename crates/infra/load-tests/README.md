@@ -296,11 +296,14 @@ Recipient keys are always positioned with a runtime-random seed/offset (never th
 #### Validity (Conditional) Transactions
 
 A configurable fraction of *senders* can route their entire traffic through the
-`base_sendRawTransactionValidity` endpoint, attaching state-based validity
-predicates (balance and storage conditions) to every transaction they submit.
-This exercises the sequencer and builder under congestion when validity
-predicates are in play. Set `validity.ratio` to `0.0` (the default) to disable
-the workload entirely, in which case behavior is identical to a plain run.
+`base_sendRawTransactionValidity` endpoint, attaching validity predicates to
+every transaction they submit. All four server predicate types are supported:
+the state-based `balance` and `storage` conditions, and the build-position
+`block_number` and `flashblock_index` conditions (compared against the block and
+flashblock currently being built). This exercises the sequencer and builder
+under congestion when validity predicates are in play. Set `validity.ratio` to
+`0.0` (the default) to disable the workload entirely, in which case behavior is
+identical to a plain run.
 
 Routing is deterministic and *per sender* (a hash of `seed + sender`), not per
 transaction, so a given sender's entire nonce stream stays on one submission
@@ -334,14 +337,23 @@ validity:
         key: sender
       op: ">="
       value: "0x0"
+    # build-position predicates carry only an operator and value:
+    - type: block_number
+      op: ">="
+      value: "0x0"
+    - type: flashblock_index
+      op: ">="
+      value: "1"
 ```
 
 Predicate addresses resolve per transaction: `sender` → the tx `from`,
 `recipient` → the tx `to` (falling back to `from` for contract creation), or a
 fixed `0x` address. Storage slots are either a `fixed` slot or a `mapping`
 slot, which computes the Solidity mapping slot `keccak256(key ++ mapping_slot)`
-so `balanceOf(key)` slots are expressible. Values, slots, and masks accept hex
-(`0x...`) or decimal strings. At most 64 predicates may be attached per
+so `balanceOf(key)` slots are expressible. The `block_number` and
+`flashblock_index` predicates carry only an `op` and `value` and read the
+build position rather than any address or slot. Values, slots, and masks accept
+hex (`0x...`) or decimal strings. At most 64 predicates may be attached per
 transaction.
 
 The final summary's `by_cohort` breakdown reports confirmed transactions split

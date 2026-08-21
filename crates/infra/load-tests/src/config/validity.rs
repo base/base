@@ -58,6 +58,20 @@ pub enum ValidityPredicateConfig {
         /// Right-hand comparison value (hex or decimal).
         value: String,
     },
+    /// Compares the number of the block being built with a value.
+    BlockNumber {
+        /// Comparison operator (`<`, `<=`, `=`, `!=`, `>`, `>=`).
+        op: String,
+        /// Right-hand comparison value (hex or decimal).
+        value: String,
+    },
+    /// Compares the index of the flashblock being built with a value.
+    FlashblockIndex {
+        /// Comparison operator (`<`, `<=`, `=`, `!=`, `>`, `>=`).
+        op: String,
+        /// Right-hand comparison value (hex or decimal).
+        value: String,
+    },
 }
 
 /// Source for a predicate's address, resolved per transaction at prepare time.
@@ -175,6 +189,14 @@ impl ValidityPredicateConfig {
                     value: parse_u256_hex_or_dec(value, "validity storage value")?,
                 })
             }
+            Self::BlockNumber { op, value } => Ok(ValidityPredicateTemplate::BlockNumber {
+                op: parse_operator(op)?,
+                value: parse_u256_hex_or_dec(value, "validity block_number value")?,
+            }),
+            Self::FlashblockIndex { op, value } => Ok(ValidityPredicateTemplate::FlashblockIndex {
+                op: parse_operator(op)?,
+                value: parse_u256_hex_or_dec(value, "validity flashblock_index value")?,
+            }),
         }
     }
 }
@@ -296,6 +318,38 @@ mod tests {
             }
             other => panic!("expected mapping template, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn block_number_predicate_to_template() {
+        let config = ValidityPredicateConfig::BlockNumber { op: ">=".into(), value: "0x100".into() };
+        match config.to_template().unwrap() {
+            ValidityPredicateTemplate::BlockNumber { op, value } => {
+                assert_eq!(op, ValidityOperator::GreaterThanOrEqual);
+                assert_eq!(value, U256::from(0x100));
+            }
+            other => panic!("expected block_number template, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn flashblock_index_predicate_to_template() {
+        let config =
+            ValidityPredicateConfig::FlashblockIndex { op: "=".into(), value: "2".into() };
+        match config.to_template().unwrap() {
+            ValidityPredicateTemplate::FlashblockIndex { op, value } => {
+                assert_eq!(op, ValidityOperator::Equal);
+                assert_eq!(value, U256::from(2));
+            }
+            other => panic!("expected flashblock_index template, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn position_predicate_surfaces_bad_operator() {
+        let config =
+            ValidityPredicateConfig::BlockNumber { op: "==".into(), value: "1".into() };
+        assert!(config.to_template().is_err());
     }
 
     #[test]

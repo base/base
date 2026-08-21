@@ -90,6 +90,14 @@ impl ValidityRouter {
                     value: *value,
                 }
             }
+            // Position predicates read the build context, not `from`/`to`, so
+            // they resolve identically for every transaction.
+            ValidityPredicateTemplate::BlockNumber { op, value } => {
+                ValidityPredicate::BlockNumber { op: *op, value: *value }
+            }
+            ValidityPredicateTemplate::FlashblockIndex { op, value } => {
+                ValidityPredicate::FlashblockIndex { op: *op, value: *value }
+            }
         }
     }
 }
@@ -225,6 +233,39 @@ mod tests {
             ValidityPredicate::Balance { address, .. } => assert_eq!(*address, to),
             other => panic!("expected balance, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn position_predicates_resolve_independent_of_addresses() {
+        let templates = vec![
+            ValidityPredicateTemplate::BlockNumber {
+                op: ValidityOperator::GreaterThanOrEqual,
+                value: U256::from(100),
+            },
+            ValidityPredicateTemplate::FlashblockIndex {
+                op: ValidityOperator::Equal,
+                value: U256::from(2),
+            },
+        ];
+        let r = router(1.0, templates);
+        let predicates = r.predicates_for(
+            SubmitCohort::ValidityPass,
+            Address::repeat_byte(0xaa),
+            Some(Address::repeat_byte(0xbb)),
+        );
+        assert_eq!(
+            predicates,
+            vec![
+                ValidityPredicate::BlockNumber {
+                    op: ValidityOperator::GreaterThanOrEqual,
+                    value: U256::from(100),
+                },
+                ValidityPredicate::FlashblockIndex {
+                    op: ValidityOperator::Equal,
+                    value: U256::from(2),
+                },
+            ],
+        );
     }
 
     #[test]
