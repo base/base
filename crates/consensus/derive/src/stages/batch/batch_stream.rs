@@ -1,13 +1,13 @@
 //! This module contains the `BatchStream` stage.
 
-use alloc::{boxed::Box, collections::VecDeque, string::ToString, sync::Arc};
+use alloc::{boxed::Box, collections::VecDeque, string::ToString, sync::Arc, vec::Vec};
 use core::fmt::Debug;
 
 use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
 use base_common_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{
-    Batch, BatchValidity, BatchWithInclusionBlock, BlockInfo, L2BlockInfo, SingleBatch, SpanBatch,
+    Batch, BatchDropReason, BatchValidity, BlockInfo, L2BlockInfo, SingleBatch, SpanBatch,
     SpanBatchError,
 };
 
@@ -45,6 +45,8 @@ where
     pub prev: P,
     /// There can only be a single staged span batch.
     pub span: Option<SpanBatch>,
+    /// Span awaiting contextual resolution and its L1 inclusion block.
+    pub pending_span: Option<(SpanBatch, BlockInfo)>,
     /// A buffer of single batches derived from the [`SpanBatch`].
     pub buffer: VecDeque<SingleBatch>,
     /// A reference to the rollup config, used to check
@@ -61,7 +63,7 @@ where
 {
     /// Create a new [`BatchStream`] stage.
     pub const fn new(prev: P, config: Arc<RollupConfig>, fetcher: BF) -> Self {
-        Self { prev, span: None, buffer: VecDeque::new(), config, fetcher }
+        Self { prev, span: None, pending_span: None, buffer: VecDeque::new(), config, fetcher }
     }
 
     /// Returns if the [`BatchStream`] stage is active based on the
@@ -99,6 +101,71 @@ where
         Metrics::pipeline_batch_mem().set(batch_size);
         Ok(())
     }
+
+    /// Resolves a span's exact first L2 block from the range sharing its header timestamp, using
+    /// span coverage and the parent check.
+    pub async fn resolve_span_start_block(
+        &mut self,
+        span: &SpanBatch,
+        l2_safe_head: L2BlockInfo,
+    ) -> Result<u64, BatchValidity> {
+        let Some(first_batch) = span.batches.first() else {
+            return Err(BatchValidity::Drop(BatchDropReason::SpanBatchMisalignedTimestamp));
+        };
+
+        let next_block_number = l2_safe_head.block_info.number + 1;
+        let Some(timestamp_range) =
+            self.config.l2_block_range_for_header_timestamp(first_batch.timestamp)
+        else {
+            return Err(BatchValidity::Drop(BatchDropReason::SpanBatchMisalignedTimestamp));
+        };
+        let block_count = span.batches.len() as u64;
+        let eligible_starts = timestamp_range
+            .clone()
+            .filter(|start| {
+                *start > self.config.genesis.l2.number
+                    && *start <= next_block_number
+                    && *start + block_count > next_block_number
+            })
+            .collect::<Vec<_>>();
+        if eligible_starts.is_empty() {
+            if *timestamp_range.start() > next_block_number {
+                return Err(BatchValidity::Drop(BatchDropReason::FutureTimestampHolocene));
+            }
+            if *timestamp_range.end() + block_count <= next_block_number {
+                return Err(BatchValidity::Past);
+            }
+            return Err(BatchValidity::Drop(BatchDropReason::SpanBatchMisalignedTimestamp));
+        }
+
+        let mut resolved_start = None;
+        let mut provider_failed = false;
+        for start in eligible_starts {
+            let parent = if start == next_block_number {
+                l2_safe_head
+            } else {
+                let parent_number = start - 1;
+                match self.fetcher.l2_block_info_by_number(parent_number).await {
+                    Ok(parent) => parent,
+                    Err(error) => {
+                        warn!(target: "batch_span", block_number = parent_number, error = %error, "Failed to fetch candidate span parent");
+                        provider_failed = true;
+                        continue;
+                    }
+                }
+            };
+            if span.parent_check.as_slice() == &parent.block_info.hash[..20]
+                && resolved_start.replace(start).is_some()
+            {
+                return Err(BatchValidity::Drop(BatchDropReason::ParentHashMismatch));
+            }
+        }
+
+        if provider_failed {
+            return Err(BatchValidity::Undecided);
+        }
+        resolved_start.ok_or(BatchValidity::Drop(BatchDropReason::ParentHashMismatch))
+    }
 }
 
 #[async_trait]
@@ -111,6 +178,7 @@ where
         if self.is_active().unwrap_or(false) {
             self.prev.flush();
             self.span = None;
+            self.pending_span = None;
             self.buffer.clear();
         }
     }
@@ -133,51 +201,59 @@ where
 
         // If the buffer is empty, attempt to pull a batch from the previous stage.
         if self.buffer.is_empty() {
-            // Safety: bubble up any errors from the batch reader.
-            let batch_with_inclusion = BatchWithInclusionBlock::new(
-                self.origin().ok_or(PipelineError::MissingOrigin.crit())?,
-                self.prev.next_batch().await?,
-            );
+            if self.pending_span.is_none() {
+                let inclusion_block = self.origin().ok_or(PipelineError::MissingOrigin.crit())?;
+                match self.prev.next_batch().await? {
+                    Batch::Single(batch) => return Ok(Batch::Single(batch)),
+                    Batch::Span(span) => self.pending_span = Some((span, inclusion_block)),
+                }
+            }
 
-            // If the next batch is a singular batch, it is immediately
-            // forwarded to the `BatchQueue` stage. Otherwise, we buffer
-            // the span batch in this stage if it passes the validity checks.
-            match batch_with_inclusion.batch {
-                Batch::Single(b) => return Ok(Batch::Single(b)),
-                Batch::Span(b) => {
-                    let (validity, _) =
-                        base_metrics::time!(Metrics::pipeline_check_batch_prefix(), {
-                            b.check_batch_prefix(
-                                self.config.as_ref(),
-                                l1_origins,
-                                parent,
-                                &batch_with_inclusion.inclusion_block,
-                                &mut self.fetcher,
-                            )
-                            .await
-                        });
-                    Metrics::pipeline_batch_validity(validity.to_string()).increment(1.0);
-
-                    match validity {
-                        BatchValidity::Accept => self.span = Some(b),
-                        BatchValidity::Drop(_) => {
-                            // Flush the stage.
-                            self.flush();
-
-                            return Err(PipelineError::NotEnoughData.temp());
-                        }
-                        BatchValidity::Past => {
-                            if !self.is_active()? {
-                                error!(target: "batch_stream", "BatchValidity::Past is not allowed pre-holocene");
-                                return Err(PipelineError::InvalidBatchValidity.crit());
+            let (mut span, inclusion_block) =
+                self.pending_span.take().expect("span must be staged");
+            if self.config.denim_activation_block_number().is_some() {
+                let first_block_number = match self.resolve_span_start_block(&span, parent).await {
+                    Ok(number) => number,
+                    Err(validity) => {
+                        Metrics::pipeline_batch_validity(validity.to_string()).increment(1.0);
+                        match validity {
+                            BatchValidity::Drop(_) => self.flush(),
+                            BatchValidity::Past => {}
+                            BatchValidity::Undecided | BatchValidity::Future => {
+                                self.pending_span = Some((span, inclusion_block));
                             }
-
-                            return Err(PipelineError::NotEnoughData.temp());
+                            BatchValidity::Accept => {
+                                unreachable!("resolution cannot accept directly")
+                            }
                         }
-                        BatchValidity::Undecided | BatchValidity::Future => {
-                            return Err(PipelineError::NotEnoughData.temp());
-                        }
+                        return Err(PipelineError::NotEnoughData.temp());
                     }
+                };
+                span.apply_block_number_timestamps(self.config.as_ref(), first_block_number);
+            }
+
+            let (validity, _) = base_metrics::time!(Metrics::pipeline_check_batch_prefix(), {
+                span.check_batch_prefix(
+                    self.config.as_ref(),
+                    l1_origins,
+                    parent,
+                    &inclusion_block,
+                    &mut self.fetcher,
+                )
+                .await
+            });
+            Metrics::pipeline_batch_validity(validity.to_string()).increment(1.0);
+
+            match validity {
+                BatchValidity::Accept => self.span = Some(span),
+                BatchValidity::Drop(_) => {
+                    self.flush();
+                    return Err(PipelineError::NotEnoughData.temp());
+                }
+                BatchValidity::Past => return Err(PipelineError::NotEnoughData.temp()),
+                BatchValidity::Undecided | BatchValidity::Future => {
+                    self.pending_span = Some((span, inclusion_block));
+                    return Err(PipelineError::NotEnoughData.temp());
                 }
             }
         }
@@ -232,6 +308,7 @@ where
         self.prev.reset(l1_origin, system_config).await?;
         self.buffer.clear();
         self.span = None;
+        self.pending_span = None;
         Ok(())
     }
 
@@ -239,6 +316,7 @@ where
         self.prev.activate().await?;
         self.buffer.clear();
         self.span = None;
+        self.pending_span = None;
         Ok(())
     }
 
@@ -246,6 +324,7 @@ where
         self.prev.flush_channel().await?;
         self.buffer.clear();
         self.span = None;
+        self.pending_span = None;
         Ok(())
     }
 }
@@ -258,7 +337,7 @@ mod tests {
     use alloy_eips::{BlockNumHash, NumHash};
     use alloy_primitives::{FixedBytes, b256};
     use base_common_consensus::BaseBlock;
-    use base_common_genesis::{ChainGenesis, SystemConfig, UpgradeConfig};
+    use base_common_genesis::{BaseUpgradeConfig, ChainGenesis, SystemConfig, UpgradeConfig};
     use base_protocol::{SingleBatch, SpanBatchElement};
 
     use super::*;
@@ -266,6 +345,115 @@ mod tests {
         StageReset,
         test_utils::{TestBatchStreamProvider, TestL2ChainProvider},
     };
+
+    fn denim_config() -> Arc<RollupConfig> {
+        Arc::new(RollupConfig {
+            block_time: 2,
+            seq_window_size: 100,
+            upgrades: UpgradeConfig {
+                delta_time: Some(0),
+                holocene_time: Some(0),
+                base: BaseUpgradeConfig { denim: Some(6), ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+    }
+
+    fn span(timestamp: u64, block_count: usize, parent_hash: FixedBytes<32>) -> SpanBatch {
+        SpanBatch {
+            parent_check: FixedBytes::from_slice(&parent_hash[..20]),
+            batches: vec![SpanBatchElement { timestamp, ..Default::default() }; block_count],
+            ..Default::default()
+        }
+    }
+
+    fn l2_block(number: u64, hash: FixedBytes<32>) -> L2BlockInfo {
+        L2BlockInfo {
+            block_info: BlockInfo { number, hash, ..Default::default() },
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn resolves_each_denim_same_second_start_slot() {
+        for start_block in 3..=7 {
+            let parent_hash = FixedBytes::repeat_byte(start_block as u8);
+            let mut stream = BatchStream::new(
+                TestBatchStreamProvider::new(vec![]),
+                denim_config(),
+                TestL2ChainProvider::default(),
+            );
+
+            assert_eq!(
+                stream
+                    .resolve_span_start_block(
+                        &span(6, 1, parent_hash),
+                        l2_block(start_block - 1, parent_hash),
+                    )
+                    .await,
+                Ok(start_block)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn resolves_overlapping_denim_span_by_parent_hash() {
+        let blocks =
+            (2..=4).map(|number| l2_block(number, FixedBytes::repeat_byte(number as u8))).collect();
+        let safe_head = l2_block(5, FixedBytes::repeat_byte(5));
+        let provider = TestL2ChainProvider { blocks, ..Default::default() };
+        let mut stream =
+            BatchStream::new(TestBatchStreamProvider::new(vec![]), denim_config(), provider);
+
+        assert_eq!(
+            stream
+                .resolve_span_start_block(&span(6, 5, FixedBytes::repeat_byte(2)), safe_head)
+                .await,
+            Ok(3)
+        );
+    }
+
+    #[tokio::test]
+    async fn drops_unmatched_or_ambiguous_denim_span_parent() {
+        for parent_hashes in [
+            [FixedBytes::repeat_byte(2), FixedBytes::repeat_byte(3)],
+            [FixedBytes::repeat_byte(2), FixedBytes::repeat_byte(2)],
+        ] {
+            let blocks = vec![l2_block(2, parent_hashes[0]), l2_block(3, parent_hashes[1])];
+            let safe_head = l2_block(4, FixedBytes::repeat_byte(4));
+            let provider = TestL2ChainProvider { blocks, ..Default::default() };
+            let mut stream =
+                BatchStream::new(TestBatchStreamProvider::new(vec![]), denim_config(), provider);
+            let expected_parent = if parent_hashes[0] == parent_hashes[1] {
+                parent_hashes[0]
+            } else {
+                FixedBytes::repeat_byte(9)
+            };
+
+            assert_eq!(
+                stream.resolve_span_start_block(&span(6, 3, expected_parent), safe_head).await,
+                Err(BatchValidity::Drop(BatchDropReason::ParentHashMismatch))
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn keeps_denim_span_undecided_when_candidate_parent_is_unavailable() {
+        let safe_head = l2_block(4, FixedBytes::repeat_byte(4));
+        let mut stream = BatchStream::new(
+            TestBatchStreamProvider::new(vec![]),
+            denim_config(),
+            TestL2ChainProvider::default(),
+        );
+
+        assert_eq!(
+            stream
+                .resolve_span_start_block(&span(6, 3, FixedBytes::repeat_byte(2)), safe_head)
+                .await,
+            Err(BatchValidity::Undecided)
+        );
+    }
 
     #[tokio::test]
     async fn test_batch_stream_flush() {

@@ -311,8 +311,12 @@ impl SpanBatch {
     ) -> Result<Vec<SingleBatch>, SpanBatchError> {
         let mut single_batches = Vec::with_capacity(self.batches.len());
         let mut origin_index = 0;
-        for batch in &self.batches {
-            if batch.timestamp <= l2_safe_head.block_info.timestamp {
+        for (index, batch) in self.batches.iter().enumerate() {
+            let overlaps_safe_head = self.block_number(index).map_or_else(
+                || batch.timestamp <= l2_safe_head.block_info.timestamp,
+                |number| number <= l2_safe_head.block_info.number,
+            );
+            if overlaps_safe_head {
                 continue;
             }
             // Overlapping span batches can pass the prefix checks but then the
@@ -405,7 +409,11 @@ impl SpanBatch {
             let batch_timestamp = batch.timestamp;
             let batch_epoch = batch.epoch_num;
 
-            if batch_timestamp <= l2_safe_head.block_info.timestamp {
+            let overlaps_safe_head = self.block_number(i).map_or_else(
+                || batch_timestamp <= l2_safe_head.block_info.timestamp,
+                |number| number <= l2_safe_head.block_info.number,
+            );
+            if overlaps_safe_head {
                 continue;
             }
             if batch_epoch < l2_safe_head.l1_origin.number {
@@ -535,7 +543,11 @@ impl SpanBatch {
         let parent_num = parent_block.block_info.number;
         let next_timestamp =
             cfg.l2_block_timestamp(l2_safe_head.block_info.number.saturating_add(1));
-        if self.starting_timestamp() < next_timestamp {
+        let overlaps_safe_head = self.start_block_number.map_or_else(
+            || self.starting_timestamp() < next_timestamp,
+            |number| number <= l2_safe_head.block_info.number,
+        );
+        if overlaps_safe_head {
             for i in 0..(l2_safe_head.block_info.number - parent_num) {
                 let safe_block_num = parent_num + i + 1;
                 let safe_block_payload = match fetcher.block_by_number(safe_block_num).await {
@@ -621,8 +633,8 @@ impl SpanBatch {
         }
 
         let epoch = l1_origins[0];
-        let next_timestamp =
-            cfg.l2_block_timestamp(l2_safe_head.block_info.number.saturating_add(1));
+        let next_block_number = l2_safe_head.block_info.number + 1;
+        let next_timestamp = cfg.l2_block_timestamp(next_block_number);
 
         let starting_epoch_num = self.starting_epoch_num();
         let mut batch_origin = epoch;
@@ -647,7 +659,11 @@ impl SpanBatch {
             return (BatchValidity::Drop(BatchDropReason::SpanBatchPreDelta), None);
         }
 
-        if self.starting_timestamp() > next_timestamp {
+        let starts_in_future = self.start_block_number.map_or_else(
+            || self.starting_timestamp() > next_timestamp,
+            |number| number > next_block_number,
+        );
+        if starts_in_future {
             warn!(
                 target: "batch_span",
                 "received out-of-order batch for future processing after next batch ({} > {})",
@@ -663,7 +679,11 @@ impl SpanBatch {
         }
 
         // Drop the batch if it has no new blocks after the safe head.
-        if self.final_timestamp() < next_timestamp {
+        let has_no_new_blocks = self.final_block_number().map_or_else(
+            || self.final_timestamp() < next_timestamp,
+            |number| number < next_block_number,
+        );
+        if has_no_new_blocks {
             warn!(target: "batch_span", "span batch has no new blocks after safe head");
             return if cfg.is_holocene_active(inclusion_block.timestamp) {
                 (BatchValidity::Past, None)
@@ -677,21 +697,36 @@ impl SpanBatch {
         // safe head.
         let mut parent_num = l2_safe_head.block_info.number;
         let mut parent_block = l2_safe_head;
-        if self.starting_timestamp() < next_timestamp {
-            if self.starting_timestamp() > l2_safe_head.block_info.timestamp {
-                // Batch timestamp cannot be between safe head and next timestamp.
-                warn!(target: "batch_span", "batch has misaligned timestamp, block time is too short");
-                return (BatchValidity::Drop(BatchDropReason::SpanBatchMisalignedTimestamp), None);
-            }
-            if !(l2_safe_head.block_info.timestamp - self.starting_timestamp())
-                .is_multiple_of(cfg.block_time)
-            {
-                warn!(target: "batch_span", "batch has misaligned timestamp, not overlapped exactly");
-                return (BatchValidity::Drop(BatchDropReason::SpanBatchNotOverlappedExactly), None);
-            }
-            parent_num = l2_safe_head.block_info.number
-                - (l2_safe_head.block_info.timestamp - self.starting_timestamp()) / cfg.block_time
-                - 1;
+        let overlaps_safe_head = self.start_block_number.map_or_else(
+            || self.starting_timestamp() < next_timestamp,
+            |number| number <= l2_safe_head.block_info.number,
+        );
+        if overlaps_safe_head {
+            parent_num = if let Some(start_block_number) = self.start_block_number {
+                start_block_number - 1
+            } else {
+                if self.starting_timestamp() > l2_safe_head.block_info.timestamp {
+                    // Batch timestamp cannot be between safe head and next timestamp.
+                    warn!(target: "batch_span", "batch has misaligned timestamp, block time is too short");
+                    return (
+                        BatchValidity::Drop(BatchDropReason::SpanBatchMisalignedTimestamp),
+                        None,
+                    );
+                }
+                if !(l2_safe_head.block_info.timestamp - self.starting_timestamp())
+                    .is_multiple_of(cfg.block_time)
+                {
+                    warn!(target: "batch_span", "batch has misaligned timestamp, not overlapped exactly");
+                    return (
+                        BatchValidity::Drop(BatchDropReason::SpanBatchNotOverlappedExactly),
+                        None,
+                    );
+                }
+                l2_safe_head.block_info.number
+                    - (l2_safe_head.block_info.timestamp - self.starting_timestamp())
+                        / cfg.block_time
+                    - 1
+            };
             parent_block = match fetcher.l2_block_info_by_number(parent_num).await {
                 Ok(block) => block,
                 Err(e) => {
@@ -1058,6 +1093,28 @@ mod tests {
         let logs = trace_store.get_by_level(Level::WARN);
         assert_eq!(logs.len(), 1);
         assert!(logs[0].contains("empty span batch, cannot proceed with batch checking"));
+    }
+
+    #[test]
+    fn resolved_span_keeps_new_same_second_blocks_after_safe_head() {
+        let l1_block = BlockInfo { number: 1, timestamp: 0, ..Default::default() };
+        let l2_safe_head = L2BlockInfo {
+            block_info: BlockInfo { number: 5, timestamp: 6, ..Default::default() },
+            l1_origin: l1_block.id(),
+            ..Default::default()
+        };
+        let batch = SpanBatch {
+            start_block_number: Some(3),
+            batches: (0..5)
+                .map(|_| SpanBatchElement { epoch_num: 1, timestamp: 6, ..Default::default() })
+                .collect(),
+            ..Default::default()
+        };
+
+        let singular = batch.get_singular_batches(&[l1_block], l2_safe_head).unwrap();
+
+        assert_eq!(singular.len(), 2);
+        assert_eq!(singular.iter().map(|batch| batch.timestamp).collect::<Vec<_>>(), [6, 6]);
     }
 
     #[tokio::test]
