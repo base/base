@@ -1894,6 +1894,30 @@ fn gas(
     (s.counter_sload(), s.counter_sstore(), s.counter_keccak256())
 }
 
+/// Like [`gas`], but for calls expected to revert — still counts the storage footprint
+/// incurred before the revert.
+fn gas_reverting(
+    setup: impl FnOnce(&mut B20StablecoinStorage<'_>),
+    caller: Address,
+    policy: FakePolicyAccounting,
+    calldata: Vec<u8>,
+) -> (u64, u64, u64) {
+    let mut s = fresh();
+    seed(&mut s, setup);
+    s.set_caller(caller);
+    s.reset_counters();
+    StorageCtx::enter(&mut s, |ctx| {
+        B20StablecoinToken::with_storage_and_policy(
+            B20StablecoinStorage::from_address(TOKEN, ctx),
+            policy,
+            PolicyVersion::V1,
+        )
+        .route(ctx, &calldata, StablecoinVersion::V1, true, NoopPrecompileCallObserver)
+    })
+    .expect_err("gas-footprint op must revert");
+    (s.counter_sload(), s.counter_sstore(), s.counter_keccak256())
+}
+
 /// An `FakePolicyAccounting` authorizing `who` under the default (0) scope.
 fn allow0(who: Address) -> FakePolicyAccounting {
     let mut p = FakePolicyAccounting::new();
@@ -2069,6 +2093,19 @@ fn golden_gas_footprints() {
                 .abi_encode(),
             ),
         ),
+        (
+            "update_policy_reverts_missing_policy",
+            gas_reverting(
+                |_t| {},
+                ADMIN,
+                FakePolicyAccounting::new(),
+                IB20::updatePolicyCall {
+                    policyScope: B20PolicyType::TransferSender.id(),
+                    newPolicyId: 99,
+                }
+                .abi_encode(),
+            ),
+        ),
     ];
 
     let expected: &[(&str, (u64, u64, u64))] = &[
@@ -2088,6 +2125,11 @@ fn golden_gas_footprints() {
         ("revoke_role", (1, 1, 0)),
         ("set_role_admin", (1, 1, 0)),
         ("update_policy", (2, 1, 0)),
+        // BOP-549: the old policyId SLOAD must still happen even though newPolicyId=99
+        // doesn't exist and the call reverts. A check-new-first regression returns via
+        // `?` before ever reading the old policyId, so its footprint here would be
+        // (0, 0, 0) instead.
+        ("update_policy_reverts_missing_policy", (1, 0, 0)),
     ];
 
     bless_or_assert_gas(&actual, expected);
