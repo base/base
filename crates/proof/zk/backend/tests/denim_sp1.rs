@@ -1,12 +1,15 @@
 //! Local SP1 execution coverage for the shared Denim proof fixture.
 
 use alloy_primitives::B256;
-use base_proof_zk_backend::{DryRunZkProver, get_sp1_stdin};
+use base_proof_zk_backend::{DryRunZkProver, get_range_elf_embedded, get_sp1_stdin};
 use base_proof_zk_utils::{
     boot::BootInfoStruct,
     test_utils::{CLAIM_BLOCK, DENIM_FIXTURE_CONTENT_HASH, DenimFixture},
 };
-use sp1_sdk::SP1PublicValues;
+use sp1_sdk::{
+    Elf, ProvingKey, SP1PublicValues,
+    blocking::{CpuProver, ProveRequest, Prover},
+};
 
 const RANGE_CYCLE_LIMIT: u64 = 1_000_000_000_000;
 
@@ -55,4 +58,25 @@ async fn rejects_or_fails_to_commit_wrong_claim_and_schedule() {
 
     let wrong_schedule = DenimFixture::new().with_schedule_block(CLAIM_BLOCK - 1);
     assert!(execute(&wrong_schedule).await.is_err());
+}
+
+#[test]
+#[ignore = "expensive release gate; run `just succinct prove-denim-range`"]
+fn proves_and_verifies_compressed_denim_fixture() -> anyhow::Result<()> {
+    let fixture = DenimFixture::new();
+    assert_eq!(fixture.content_hash(), DENIM_FIXTURE_CONTENT_HASH);
+    let expected = tokio::runtime::Builder::new_current_thread()
+        .build()?
+        .block_on(fixture.expected_public_values());
+    let stdin = get_sp1_stdin(fixture.witness())?;
+
+    let prover = CpuProver::new();
+    let proving_key = prover.setup(Elf::Static(get_range_elf_embedded()))?;
+    let proof = prover.prove(&proving_key, stdin).compressed().run()?;
+    prover.verify(&proof, proving_key.verifying_key(), None)?;
+
+    let mut expected_public_values = SP1PublicValues::new();
+    expected_public_values.write(&expected);
+    assert_eq!(proof.public_values.as_slice(), expected_public_values.as_slice());
+    Ok(())
 }
