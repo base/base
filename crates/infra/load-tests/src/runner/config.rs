@@ -65,6 +65,28 @@ pub enum ValidityPredicateTemplate {
         /// Right-hand comparison value.
         value: U256,
     },
+    /// Block-number comparison template.
+    ///
+    /// Carries no address or slot: the block being built is read from the
+    /// builder's context, so this template resolves to the same predicate for
+    /// every transaction.
+    BlockNumber {
+        /// Comparison operator.
+        op: ValidityOperator,
+        /// Right-hand comparison value.
+        value: U256,
+    },
+    /// Flashblock-index comparison template.
+    ///
+    /// Carries no address or slot: the flashblock being built is read from the
+    /// builder's context, so this template resolves to the same predicate for
+    /// every transaction.
+    FlashblockIndex {
+        /// Comparison operator.
+        op: ValidityOperator,
+        /// Right-hand comparison value.
+        value: U256,
+    },
 }
 
 /// Configuration for a single transaction type with its weight.
