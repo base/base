@@ -1251,6 +1251,16 @@ mod tests {
     }
 
     #[test]
+    fn l2_block_full_millis_uses_absolute_nonzero_genesis_block_numbers() {
+        let mut cfg = rollup_config_with_denim(10, 2, Some(15));
+        cfg.genesis.l2.number = 100;
+
+        assert_eq!(cfg.l2_block_timestamp_millis(101), 12_000);
+        assert_eq!(cfg.l2_block_timestamp_millis(103), 16_000);
+        assert_eq!(cfg.l2_block_timestamp_millis(104), 16_200);
+    }
+
+    #[test]
     fn l2_block_range_for_header_timestamp_covers_legacy_and_denim_boundaries() {
         let cfg = rollup_config_with_denim(10, 2, Some(15));
 
@@ -1271,7 +1281,6 @@ mod tests {
         assert_eq!(cfg.denim_activation_block_number(), Some(103));
         assert_eq!(cfg.l2_block_range_for_header_timestamp(12), Some(101..=101));
         assert_eq!(cfg.l2_block_range_for_header_timestamp(16), Some(103..=107));
-        assert_eq!(cfg.l2_block_timestamp_millis(103), 16_000);
     }
 
     #[test]
