@@ -17,6 +17,7 @@ metrics = { workspace = true, optional = true }
 tracing = { workspace = true, features = ["std"] }
 base-comp = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
+alloy-rlp = { workspace = true, features = ["std"] }
 alloy-eips = { workspace = true, features = ["std"] }
 base-protocol = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["std"] }

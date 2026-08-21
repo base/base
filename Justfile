@@ -1,10 +1,10 @@
-# On macOS, skip risc0-sys kernel compilation for check/clippy commands.
-# The kernels require Xcode (Metal) on macOS but are only needed for linking
-# (cargo build), not for type-checking (cargo check/clippy). CI builds run
-# on Linux where CPU kernels compile without issue.
-
-[private]
-_skip_kernels := if os() == "macos" { "RISC0_SKIP_BUILD_KERNELS=1" } else { "" }
+_sccache := `command -v sccache 2>/dev/null || true`
+# Cache compiled artifacts with sccache when it is installed, otherwise fall
+# back to the plain compiler.
+export RUSTC_WRAPPER := if _sccache != "" { "sccache" } else { "" }
+# sccache cannot cache incrementally-compiled crates, so disable incremental
+# compilation only when sccache is active.
+export CARGO_INCREMENTAL := if _sccache != "" { "0" } else { "1" }
 
 set positional-arguments := true
 
@@ -20,6 +20,10 @@ mod check 'etc/just/check.just'
 mod build 'etc/just/build.just'
 # SP1 / succinct ELF builds and proving helpers
 mod succinct 'etc/just/succinct.just'
+# Standalone user-funded prover stack (user RPCs + Succinct Network key)
+mod prover 'etc/just/prover.just'
+# Local no-Nitro proof stack for the single-Anvil L1 devnet
+mod anvil-no-nitro 'etc/just/anvil-no-nitro.just'
 # Prover-service JSON-RPC request helpers
 mod zk-prover 'etc/just/zk-prover.just'
 # Challenge / dispute helpers
@@ -46,6 +50,17 @@ load-test-continuous network='devnet':
 setup:
     #!/usr/bin/env bash
     set -euo pipefail
+
+    if ! command -v sccache >/dev/null 2>&1; then
+        echo "Installing sccache..."
+        if command -v brew >/dev/null 2>&1; then
+            brew install sccache
+        elif command -v cargo-binstall >/dev/null 2>&1; then
+            cargo binstall --no-confirm sccache
+        else
+            cargo install sccache --locked
+        fi
+    fi
 
     just build contracts
     echo "Setup complete!"
@@ -133,12 +148,12 @@ hack:
 
 # Fixes any formatting issues
 format-fix:
-    {{ _skip_kernels }} BASE_SUCCINCT_ELF_STUB=1 cargo fix --allow-dirty --allow-staged --workspace
+    BASE_SUCCINCT_ELF_STUB=1 cargo fix --allow-dirty --allow-staged --workspace
     cargo +nightly fmt --all
 
 # Fixes any clippy issues
 clippy-fix:
-    {{ _skip_kernels }} BASE_SUCCINCT_ELF_STUB=1 cargo clippy --workspace --all-features --all-targets --fix --allow-dirty --allow-staged
+    BASE_SUCCINCT_ELF_STUB=1 cargo clippy --workspace --all-features --all-targets --fix --allow-dirty --allow-staged
 
 # Cleans the workspace
 clean:
@@ -152,18 +167,67 @@ watch-test: build::contracts
 watch-check:
     cargo watch -x "fmt --all -- --check" -x "clippy --all-features --all-targets -- -D warnings" -x test
 
-# Runs all benchmarks
+# Runs all benchmarks (excludes b20_zk_proving, which requires a live local L2/rollup/prover-service stack)
 benches:
-    @just bench-flashblocks
+    @just bench-flashblocks-pending-state
+    @just bench-flashblocks-sender-recovery
     @just bench-proof-mpt
+    @just bench-protocol
+    @just bench-consensus-derive
+    @just bench-precompiles
+    @just bench-node-runner
+    @just bench-execution-trie-witness-reads
+    @just bench-execution-trie-deep-history-reads
+    @just bench-builder-core
+    @just bench-builder-publish
 
 # Runs flashblocks pending state benchmarks
-bench-flashblocks:
-    cargo bench -p base-flashblocks --bench pending_state
+bench-flashblocks-pending-state:
+    cargo bench -p base-flashblocks-node --bench pending_state
+
+# Runs flashblocks sender recovery benchmarks
+bench-flashblocks-sender-recovery:
+    cargo bench -p base-flashblocks-node --bench sender_recovery
 
 # Runs MPT trie node benchmarks
 bench-proof-mpt:
     cargo bench -p base-proof-mpt --bench trie_node
+
+# Runs consensus protocol batch transaction benchmarks
+bench-protocol:
+    cargo bench -p base-protocol --bench batch_transaction
+
+# Runs consensus derive batch queue benchmarks
+bench-consensus-derive:
+    cargo bench -p base-consensus-derive --bench batch_queue --features test-utils
+
+# Runs precompile benchmarks
+bench-precompiles:
+    cargo bench -p base-common-precompiles --bench base_precompiles --features test-utils
+
+# Runs node runner forkchoice update benchmarks
+bench-node-runner:
+    cargo bench -p base-node-runner --bench fcu_unsafe
+
+# Runs execution trie witness read benchmarks
+bench-execution-trie-witness-reads:
+    cargo bench -p base-execution-trie --bench witness_reads
+
+# Runs execution trie deep history read benchmarks
+bench-execution-trie-deep-history-reads:
+    cargo bench -p base-execution-trie --bench deep_history_reads
+
+# Runs builder core state root benchmarks
+bench-builder-core:
+    cargo bench -p base-builder-core --bench state_root
+
+# Runs builder publish benchmarks
+bench-builder-publish:
+    cargo bench -p base-builder-publish --bench publisher
+
+# Runs the B-20 ZK proving system benchmark (requires a live local L2/rollup/prover-service stack)
+bench-b20-zk-proving:
+    cargo bench -p base-system-tests --bench b20_zk_proving
 
 # Run basectl TUI dashboard
 basectl:

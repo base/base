@@ -4,13 +4,14 @@ use std::{error::Error as StdError, fmt, sync::Arc};
 
 use alloy_primitives::{Address, B256};
 use base_l1_head::{L1HeadCalculator, L1HeadError};
-use base_proof_succinct_client_utils::boot::BootInfoStruct;
-use base_proof_succinct_host_utils::{
-    fetcher::OPSuccinctDataFetcher, get_agg_proof_stdin, host::SuccinctHost,
-};
+use base_proof_host::Metrics;
+use base_proof_zk_utils::boot::BootInfoStruct;
+use base_proof_zk_witness::{fetcher::OPSuccinctDataFetcher, host::SuccinctHost};
 use sp1_sdk::{SP1ProofWithPublicValues, SP1Stdin, SP1VerifyingKey};
 use thiserror::Error;
 use tracing::{debug, info};
+
+use super::utils::{get_agg_proof_stdin, get_sp1_stdin};
 
 /// Inputs to [`OpSuccinctWitnessProvider::generate_witness`].
 #[derive(Debug, Clone, Copy)]
@@ -23,6 +24,8 @@ pub struct WitnessParams<'a> {
     pub l1_head: L1HeadSource<'a>,
     /// Number of L2 blocks between sampled intermediate output roots.
     pub intermediate_root_interval: u64,
+    /// L2 block number whose timestamp determines the activated upgrade schedule.
+    pub schedule_l2_block_number: Option<u64>,
 }
 
 /// Source used to select the L1 head hash for witness generation.
@@ -154,68 +157,19 @@ impl OpSuccinctWitnessProvider {
         &self,
         params: WitnessParams<'_>,
     ) -> Result<SP1Stdin, WitnessError> {
-        let WitnessParams { start_block, end_block, l1_head, intermediate_root_interval } = params;
+        let timer =
+            base_metrics::timed!(Metrics::witness_build_duration_seconds(Metrics::PROVER_SP1));
+        let stdin = self.generate_witness_inner(params).await?;
+        drop(timer);
+        #[cfg(feature = "metrics")]
+        Metrics::witness_size_bytes(Metrics::PROVER_SP1)
+            .record(stdin.buffer.iter().map(Vec::len).sum::<usize>() as f64);
 
         info!(
-            start_block = start_block,
-            end_block = end_block,
-            l1_head_source = l1_head.variant_name(),
-            "starting witness generation"
+            start_block = params.start_block,
+            end_block = params.end_block,
+            "witness generation completed"
         );
-
-        let host_args = match l1_head {
-            L1HeadSource::Pinned(hash) => {
-                info!(hash = %hash, "using caller-provided l1_head");
-                self.host
-                    .fetch(start_block, end_block, Some(hash), intermediate_root_interval, false)
-                    .await
-                    .map_err(|source| WitnessError::PinnedHostFetch {
-                        source: source.into_boxed_dyn_error(),
-                    })?
-            }
-            L1HeadSource::SequenceWindow { sequence_window, l1_node_url, base_consensus_url } => {
-                let (l1_head_block_num, l1_head_hash) =
-                    L1HeadCalculator::calculate_l1_head_from_urls(
-                        l1_node_url,
-                        base_consensus_url,
-                        end_block,
-                        sequence_window,
-                    )
-                    .await
-                    .map_err(|source| WitnessError::SequenceWindowL1Head { source })?;
-                info!(
-                    l1_head_block = l1_head_block_num,
-                    l1_head_hash = %l1_head_hash,
-                    "l1 head calculated via sequence_window"
-                );
-                self.host
-                    .fetch(
-                        start_block,
-                        end_block,
-                        Some(l1_head_hash),
-                        intermediate_root_interval,
-                        false,
-                    )
-                    .await
-                    .map_err(|source| WitnessError::SequenceWindowHostFetch {
-                        source: source.into_boxed_dyn_error(),
-                    })?
-            }
-        };
-
-        debug!(start_block = start_block, end_block = end_block, "host args fetched");
-
-        let witness =
-            self.host.run(&host_args).await.map_err(|source| WitnessError::HostRun {
-                source: source.into_boxed_dyn_error(),
-            })?;
-        let stdin = self
-            .host
-            .witness_generator()
-            .get_sp1_stdin(witness)
-            .map_err(|source| WitnessError::Stdin { source: source.into_boxed_dyn_error() })?;
-
-        info!(start_block = start_block, end_block = end_block, "witness generation completed");
 
         Ok(stdin)
     }
@@ -252,5 +206,82 @@ impl OpSuccinctWitnessProvider {
             .map_err(|source| WitnessError::AggregationStdin {
                 source: source.into_boxed_dyn_error(),
             })
+    }
+
+    async fn generate_witness_inner(
+        &self,
+        params: WitnessParams<'_>,
+    ) -> Result<SP1Stdin, WitnessError> {
+        let WitnessParams {
+            start_block,
+            end_block,
+            l1_head,
+            intermediate_root_interval,
+            schedule_l2_block_number,
+        } = params;
+
+        info!(
+            start_block = start_block,
+            end_block = end_block,
+            l1_head_source = l1_head.variant_name(),
+            "starting witness generation"
+        );
+
+        let host_args = match l1_head {
+            L1HeadSource::Pinned(hash) => {
+                info!(hash = %hash, "using caller-provided l1_head");
+                self.host
+                    .fetch(
+                        start_block,
+                        end_block,
+                        Some(hash),
+                        intermediate_root_interval,
+                        false,
+                        schedule_l2_block_number,
+                    )
+                    .await
+                    .map_err(|source| WitnessError::PinnedHostFetch {
+                        source: source.into_boxed_dyn_error(),
+                    })?
+            }
+            L1HeadSource::SequenceWindow { sequence_window, l1_node_url, base_consensus_url } => {
+                let (l1_head_block_num, l1_head_hash) =
+                    L1HeadCalculator::calculate_l1_head_from_urls(
+                        l1_node_url,
+                        base_consensus_url,
+                        end_block,
+                        sequence_window,
+                    )
+                    .await
+                    .map_err(|source| WitnessError::SequenceWindowL1Head { source })?;
+                info!(
+                    l1_head_block = l1_head_block_num,
+                    l1_head_hash = %l1_head_hash,
+                    "l1 head calculated via sequence_window"
+                );
+                self.host
+                    .fetch(
+                        start_block,
+                        end_block,
+                        Some(l1_head_hash),
+                        intermediate_root_interval,
+                        false,
+                        schedule_l2_block_number,
+                    )
+                    .await
+                    .map_err(|source| WitnessError::SequenceWindowHostFetch {
+                        source: source.into_boxed_dyn_error(),
+                    })?
+            }
+        };
+
+        debug!(start_block = start_block, end_block = end_block, "host args fetched");
+
+        let witness =
+            self.host.run(&host_args).await.map_err(|source| WitnessError::HostRun {
+                source: source.into_boxed_dyn_error(),
+            })?;
+        get_sp1_stdin(witness)
+            .map_err(|source| WitnessError::Stdin { source: source.into_boxed_dyn_error() })
     }
 }

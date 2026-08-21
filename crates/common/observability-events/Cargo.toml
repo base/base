@@ -20,6 +20,7 @@ hex.workspace = true
 metrics = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive", "std"] }
 serde_json = { workspace = true, features = ["std"] }
+strum = { workspace = true, features = ["derive"] }
 sha2.workspace = true
 thiserror.workspace = true
 tracing = { workspace = true, features = ["std"] }

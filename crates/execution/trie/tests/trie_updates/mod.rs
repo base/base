@@ -148,8 +148,8 @@ fn test_store_trie_updates_with_wiped_storage_and_new_slots<
     let new_slot_overwriting_old = (B256::repeat_byte(0x10), U256::from(0xBEEF));
 
     let mut post_state = HashedPostState::default();
-    let wiped_with_new =
-        HashedStorage::from_iter(true, vec![new_slot_kept, new_slot_overwriting_old]);
+    let mut wiped_with_new = HashedStorage::new(true);
+    wiped_with_new.extend(&HashedStorage::from_iter(vec![new_slot_kept, new_slot_overwriting_old]));
     post_state.storages.insert(hashed_address, wiped_with_new);
 
     let block_state_diff = BlockStateDiff {

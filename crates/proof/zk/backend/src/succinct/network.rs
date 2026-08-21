@@ -9,8 +9,8 @@ use std::{fmt, sync::Arc, time::Duration};
 
 use alloy_primitives::B256;
 use async_trait::async_trait;
-use base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL;
 use base_proof_zk_host::{ZkProver, ZkProverError, ZkSessionState};
+use base_proof_zk_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL;
 use base_prover_service_protocol::{
     ProofResult, SessionType, SnarkPlonkProofRequest, SnarkPlonkProofResult, ZkProofRequest,
     ZkProofResult, ZkVm,
@@ -169,7 +169,7 @@ impl NetworkZkProver {
             SuccinctZkProverBuilder::complete_unless_cancelled(
                 cancel,
                 async {
-                    base_proof_succinct_proof_utils::cluster_setup_keys().await.map_err(|error| {
+                    super::utils::cluster_setup_keys().await.map_err(|error| {
                         SuccinctZkProverBuildError::boxed_operation(
                             "failed to compute proving keys",
                             error.into_boxed_dyn_error(),
@@ -339,7 +339,7 @@ impl NetworkZkProver {
         );
 
         let witness_start = std::time::Instant::now();
-        let stdin = self
+        let stdin = match self
             .provider
             .generate_witness(WitnessParams {
                 start_block,
@@ -353,24 +353,27 @@ impl NetworkZkProver {
                     L1HeadSource::Pinned,
                 ),
                 intermediate_root_interval,
+                schedule_l2_block_number: request.schedule_l2_block_number,
             })
             .await
-            .map_err(|e| {
+        {
+            Ok(stdin) => stdin,
+            Err(e) => {
                 error!(
                     start_block = start_block,
                     end_block = end_block,
                     error = %e,
                     "witness generation failed"
                 );
-                backend_error!("witness generation failed: {e}")
-            })?;
-        let witness_gen_duration_ms = witness_start.elapsed().as_secs_f64() * 1000.0;
+                return Err(backend_error!("witness generation failed: {e}"));
+            }
+        };
 
         info!(
             request_session_id = %request_session_id,
-            witness_gen_duration_ms = witness_gen_duration_ms,
             range_cycle_limit = self.config.range_cycle_limit,
             range_gas_limit = self.config.range_gas_limit,
+            witness_gen_duration_ms = witness_start.elapsed().as_millis(),
             "witness generated, submitting range proof to SP1 Network"
         );
 
@@ -441,13 +444,12 @@ impl NetworkZkProver {
             )
             .await
             .map_err(|e| backend_error!("aggregation witness generation failed: {e}"))?;
-        let witness_gen_duration_ms = witness_start.elapsed().as_secs_f64() * 1000.0;
 
         info!(
             request_session_id = %request_session_id,
-            witness_gen_duration_ms = witness_gen_duration_ms,
             aggregation_cycle_limit = self.config.aggregation_cycle_limit,
             aggregation_gas_limit = self.config.aggregation_gas_limit,
+            witness_gen_duration_ms = witness_start.elapsed().as_millis(),
             "aggregation witness generated, submitting PLONK proof to SP1 Network"
         );
 

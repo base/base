@@ -125,6 +125,20 @@ pub enum ProofJobStatus {
 pub struct ProveBlockRangeRequest {
     /// Proof request payload.
     pub proof: ProofRequest,
+    /// Whether an existing failed session may be atomically requeued.
+    ///
+    /// Defaults to `true` when omitted for compatibility with clients that
+    /// predate explicit failed-session retry control.
+    #[serde(default = "ProveBlockRangeRequest::default_retry_failed")]
+    pub retry_failed: bool,
+}
+
+impl ProveBlockRangeRequest {
+    /// Returns the legacy failed-session retry behavior used when the wire
+    /// request omits `retry_failed`.
+    pub const fn default_retry_failed() -> bool {
+        true
+    }
 }
 
 /// Response returned after a prove-block-range request is accepted.
@@ -185,6 +199,9 @@ pub struct ZkProofRequest {
     /// Optional intermediate output root interval.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub intermediate_root_interval: Option<u64>,
+    /// L2 block used to pin the upgrade schedule; defaults to the claimed block.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schedule_l2_block_number: Option<u64>,
     /// ZK virtual machine implementation to use.
     pub zk_vm: ZkVm,
     /// Proving backend that should execute this request.
@@ -538,10 +555,12 @@ mod tests {
                     sequence_window: None,
                     l1_head: Some(B256::repeat_byte(0xab)),
                     intermediate_root_interval: Some(128),
+                    schedule_l2_block_number: None,
                     zk_vm: ZkVm::Sp1,
                     zk_backend: ZkBackend::Cluster,
                 }),
             },
+            retry_failed: true,
         };
 
         let value = serde_json::to_value(request).expect("proof request should serialize");
@@ -562,9 +581,30 @@ mod tests {
                             "zk_backend": "cluster"
                         }
                     }
-                }
+                },
+                "retry_failed": true
             })
         );
+    }
+
+    #[test]
+    fn proof_request_defaults_retry_failed_for_legacy_clients() {
+        let request = serde_json::from_value::<ProveBlockRangeRequest>(json!({
+            "proof": {
+                "session_id": "proof-session",
+                "request": {
+                    "proof_type": "compressed",
+                    "payload": {
+                        "start_block_number": 10,
+                        "number_of_blocks_to_prove": 20,
+                        "zk_vm": "sp1"
+                    }
+                }
+            }
+        }))
+        .expect("legacy request should deserialize");
+
+        assert!(request.retry_failed);
     }
 
     #[test]
@@ -638,7 +678,7 @@ mod tests {
                 proposer: address!("0000000000000000000000000000000000000006"),
                 intermediate_block_interval: 7,
                 l1_head_number: 8,
-                image_hash: B256::repeat_byte(9),
+                schedule_l2_block_number: None,
             },
             tee_kind: TeeKind::AwsNitro,
         };
@@ -657,7 +697,6 @@ mod tests {
                     "proposer": "0x0000000000000000000000000000000000000006",
                     "intermediate_block_interval": 7,
                     "l1_head_number": 8,
-                    "image_hash": format!("{:#x}", B256::repeat_byte(9)),
                 },
                 "tee_kind": "aws_nitro",
             })
@@ -676,7 +715,6 @@ mod tests {
                 "proposer": "0x0000000000000000000000000000000000000006",
                 "intermediate_block_interval": 7,
                 "l1_head_number": 8,
-                "image_hash": format!("{:#x}", B256::repeat_byte(9)),
             }
         }));
 
@@ -694,7 +732,6 @@ mod tests {
             "proposer": "0x0000000000000000000000000000000000000006",
             "intermediate_block_interval": 7,
             "l1_head_number": 8,
-            "image_hash": format!("{:#x}", B256::repeat_byte(9)),
             "tee_kind": "aws_nitro"
         }));
 
@@ -802,7 +839,7 @@ mod tests {
             proposer: address!("0000000000000000000000000000000000000006"),
             intermediate_block_interval: 7,
             l1_head_number: 8,
-            image_hash: B256::repeat_byte(9),
+            schedule_l2_block_number: None,
         };
 
         let value = serde_json::to_value(request).expect("tee request payload should serialize");
@@ -818,7 +855,6 @@ mod tests {
                 "proposer": "0x0000000000000000000000000000000000000006",
                 "intermediate_block_interval": 7,
                 "l1_head_number": 8,
-                "image_hash": format!("{:#x}", B256::repeat_byte(9)),
             })
         );
     }
@@ -881,10 +917,32 @@ mod tests {
                 sequence_window: None,
                 l1_head: None,
                 intermediate_root_interval: None,
+                schedule_l2_block_number: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             }
         );
+    }
+
+    #[test]
+    fn schedule_l2_block_number_round_trips_through_json() {
+        let request = ZkProofRequest {
+            start_block_number: 10,
+            number_of_blocks_to_prove: 20,
+            sequence_window: None,
+            l1_head: None,
+            intermediate_root_interval: None,
+            schedule_l2_block_number: Some(42),
+            zk_vm: ZkVm::Sp1,
+            zk_backend: ZkBackend::Cluster,
+        };
+
+        let value = serde_json::to_value(&request).expect("zk request should serialize");
+        assert_eq!(value["schedule_l2_block_number"], json!(42));
+
+        let round_tripped: ZkProofRequest =
+            serde_json::from_value(value).expect("zk request should deserialize");
+        assert_eq!(round_tripped, request);
     }
 
     #[test]

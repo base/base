@@ -2,14 +2,13 @@
 //!
 //! Artifacts are split into two areas within the bucket:
 //!
-//! - `{prefix}/static_files/` — static file chunks that are immutable for finalized
-//!   block ranges. Only the tip chunk changes between snapshots. The uploader
-//!   compares the per-file BLAKE3 hashes recorded in the previous run's
-//!   `manifest.json` against the freshly generated manifest, and skips chunks
-//!   whose hashes match.
+//! - `{prefix}/static_files/` — static file chunks for finalized block ranges. The uploader
+//!   compares the per-file BLAKE3 hashes recorded in the previous run's `manifest.json`
+//!   against the freshly generated manifest, and skips chunks whose hashes match.
 //!
-//! - `{prefix}/{date}/` — per-run directory for mdbx state, rocksdb, and the manifest.
-//!   These are always re-uploaded since they change every snapshot.
+//! - `{prefix}/{date}/` — per-run directory for mdbx state, rocksdb indices, proofs, the
+//!   manifest, and the latest static-file chunk for every component. Keeping the mutable chunk
+//!   beside the manifest prevents it from being overwritten while a downloader uses that manifest.
 
 use std::{
     collections::HashMap,
@@ -30,7 +29,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     progress::{UploadProgress, UploadStage},
-    snapshot::{ChunkFilename, SnapshotManifest, SnapshotManifestExt},
+    snapshot::{ChunkFilename, ComponentManifest, SnapshotManifest, SnapshotManifestExt},
 };
 
 /// Maximum number of concurrent file uploads.
@@ -61,27 +60,57 @@ pub struct SnapshotRun {
     pub manifest_key: String,
 }
 
+/// Inputs for [`SnapshotUploader::upload`].
+#[derive(Debug, Clone, Copy)]
+pub struct SnapshotUploadParams<'a> {
+    /// Directory containing the generated archives and `manifest.json`.
+    pub output_dir: &'a Path,
+    /// Generated artifact paths to upload.
+    pub files: &'a [PathBuf],
+    /// Unix timestamp used as the run directory name.
+    pub timestamp: u64,
+    /// Number of completed run directories to retain after upload.
+    pub retain_runs: usize,
+    /// Freshly generated local manifest.
+    pub local_manifest: &'a SnapshotManifest,
+    /// Previous run's published manifest, if any.
+    pub remote_manifest: Option<&'a SnapshotManifest>,
+    /// Shared `static_files/` listing from [`SnapshotUploader::list_remote_static_files`].
+    pub remote_static_files: &'a HashMap<String, u64>,
+}
+
 /// Determines whether a snapshot component is re-uploaded every run
 /// or can be skipped when the remote copy already matches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UploadStrategy {
-    /// Always upload to the per-run date directory (mdbx, rocksdb, manifest).
+    /// Always upload to the per-run date directory (mdbx, rocksdb, proofs, manifest).
     AlwaysUpload,
     /// Upload to `static_files/`, skipping if the per-file BLAKE3 hashes
     /// recorded in the previous run's manifest match the freshly generated ones.
     DiffByHash,
+    /// Upload the latest static-file chunk to the timestamped run directory.
+    LatestChunk,
 }
 
 impl UploadStrategy {
     /// Classifies a snapshot filename into its upload strategy.
     ///
     /// Static file chunks follow the pattern `{component}-{start}-{end}.tar.zst`
-    /// (e.g. `headers-0-499999.tar.zst`). These are immutable for finalized block
-    /// ranges and only the tip chunk changes between snapshots.
+    /// (e.g. `headers-0-499999.tar.zst`). Finalized chunks are deduplicated in
+    /// `static_files/`; the latest chunk is kept beside the timestamped manifest.
     ///
-    /// Everything else (state, rocksdb, manifest) is always uploaded.
+    /// Everything else (state, rocksdb, proofs, manifest) is always uploaded.
     pub fn classify(filename: &str) -> Self {
         if ChunkFilename::parse(filename).is_some() { Self::DiffByHash } else { Self::AlwaysUpload }
+    }
+
+    /// Classifies a snapshot filename using its manifest to identify the latest chunk.
+    pub fn classify_with_manifest(filename: &str, manifest: &SnapshotManifest) -> Self {
+        if manifest.is_latest_chunk_file(filename) {
+            Self::LatestChunk
+        } else {
+            Self::classify(filename)
+        }
     }
 }
 
@@ -255,37 +284,34 @@ impl SnapshotUploader {
 
     /// Uploads snapshot artifacts with diff-based optimization.
     ///
-    /// Static file chunks go to `{prefix}/static_files/` and are skipped when
-    /// their per-file BLAKE3 hashes (recorded in `local_manifest`) match those
-    /// from `remote_manifest`. State, rocksdb, and manifest go to
-    /// `{prefix}/{timestamp}/` and are always re-uploaded. `manifest.json` is
-    /// uploaded last as the "snapshot complete" signal.
-    pub async fn upload(
-        &self,
-        output_dir: &Path,
-        files: &[PathBuf],
-        timestamp: u64,
-        retain_runs: usize,
-        local_manifest: &SnapshotManifest,
-        remote_manifest: Option<&SnapshotManifest>,
-    ) -> Result<String> {
+    /// Finalized static file chunks go to `{prefix}/static_files/` and are skipped
+    /// only when their per-file BLAKE3 hashes (recorded in `local_manifest`) match
+    /// `remote_manifest` and the archive exists in shared storage. The latest chunk
+    /// of each component, state, rocksdb, proofs, and manifest go to
+    /// `{prefix}/{timestamp}/`. `manifest.json` is uploaded last as the "snapshot complete"
+    /// signal.
+    ///
+    /// `remote_static_files` is the shared-storage listing from
+    /// [`Self::list_remote_static_files`]; callers that already listed for generation
+    /// should reuse that map instead of listing again.
+    pub async fn upload(&self, params: SnapshotUploadParams<'_>) -> Result<String> {
         let static_prefix = self.static_files_prefix();
-        let run_prefix = self.run_prefix(timestamp);
+        let run_prefix = self.run_prefix(params.timestamp);
 
         info!(
             run_prefix = %run_prefix,
             static_prefix = %static_prefix,
-            file_count = files.len(),
+            file_count = params.files.len(),
             bucket = %self.bucket,
             "uploading snapshot artifacts"
         );
 
-        let manifest_path = output_dir.join("manifest.json");
+        let manifest_path = params.output_dir.join("manifest.json");
         let mut static_uploads = Vec::new();
         let mut run_uploads = Vec::new();
         let mut skipped = 0u64;
 
-        for file in files {
+        for file in params.files {
             if file == &manifest_path {
                 continue;
             }
@@ -296,18 +322,25 @@ impl SnapshotUploader {
                 .to_string_lossy()
                 .to_string();
 
-            let strategy = UploadStrategy::classify(&file_name);
+            let strategy =
+                UploadStrategy::classify_with_manifest(&file_name, params.local_manifest);
 
             match strategy {
                 UploadStrategy::DiffByHash => {
-                    let local_hashes = local_manifest.chunk_hashes_for_file(&file_name);
+                    let local_hashes = params.local_manifest.chunk_hashes_for_file(&file_name);
                     let remote_hashes =
-                        remote_manifest.and_then(|m| m.chunk_hashes_for_file(&file_name));
+                        params.remote_manifest.and_then(|m| m.chunk_hashes_for_file(&file_name));
                     match (&local_hashes, &remote_hashes) {
-                        (Some(local), Some(remote)) if local == remote => {
-                            debug!(file = %file_name, "skipping static file (blake3 matches)");
+                        (Some(local), Some(remote))
+                            if local == remote
+                                && params.remote_static_files.contains_key(&file_name) =>
+                        {
+                            debug!(file = %file_name, "skipping finalized static file (blake3 matches shared object)");
                             skipped += 1;
                             continue;
+                        }
+                        (Some(local), Some(remote)) if local == remote => {
+                            debug!(file = %file_name, "uploading finalized static file missing from shared storage");
                         }
                         (Some(_), Some(_)) => {
                             debug!(file = %file_name, "re-uploading static file (blake3 mismatch)");
@@ -318,7 +351,7 @@ impl SnapshotUploader {
                     }
                     static_uploads.push(file.clone());
                 }
-                UploadStrategy::AlwaysUpload => {
+                UploadStrategy::LatestChunk | UploadStrategy::AlwaysUpload => {
                     run_uploads.push(file.clone());
                 }
             }
@@ -359,9 +392,9 @@ impl SnapshotUploader {
                 .await?;
 
             let published_manifest = build_published_manifest(
-                local_manifest,
-                self.public_static_files_base_url().as_deref(),
-                timestamp,
+                params.local_manifest,
+                self.public_snapshot_base_url().as_deref(),
+                params.timestamp,
             )?;
             self.upload_manifest(&manifest_key, published_manifest, progress_ref).await?;
             Ok::<(), anyhow::Error>(())
@@ -382,8 +415,8 @@ impl SnapshotUploader {
             return Err(error);
         }
 
-        if let Err(e) = self.prune_old_runs(retain_runs).await {
-            warn!(error = %e, retain_runs, "failed to prune old snapshot runs");
+        if let Err(e) = self.prune_old_runs(params.retain_runs).await {
+            warn!(error = %e, retain_runs = params.retain_runs, "failed to prune old snapshot runs");
         }
 
         info!(
@@ -413,13 +446,13 @@ impl SnapshotUploader {
         }
     }
 
-    /// Returns the public base URL for top-level static files, if configured.
-    fn public_static_files_base_url(&self) -> Option<String> {
+    /// Returns the public HTTP base URL for snapshot downloads (snapshot root, not `static_files/`).
+    fn public_snapshot_base_url(&self) -> Option<String> {
         let base = self.public_base_url.as_deref()?.trim_end_matches('/');
         Some(if self.prefix.is_empty() {
-            format!("{base}/static_files")
+            base.to_string()
         } else {
-            format!("{base}/{}/static_files", self.prefix)
+            format!("{base}/{}", self.prefix)
         })
     }
 
@@ -1005,24 +1038,49 @@ fn retry_delay_secs(attempt: usize) -> u64 {
     retry_delay(attempt).as_secs()
 }
 
-/// Builds the single published manifest for a run.
+/// Builds the published manifest for a run.
 ///
-/// Chunked archives are served from top-level `static_files/` via `base_url`, while
-/// the always-changing `state` and `rocksdb_indices` archives stay in the timestamped
-/// run directory and are referenced through `../{timestamp}/...` file paths.
+/// `base_url` points at the snapshot root (`{public_base}/{prefix}`). Finalized static-file
+/// chunks use `static_files/{archive}` in [`ChunkedArchive::chunk_files`]; tip chunks and
+/// state/rocksdb use `{timestamp}/{archive}`. Proofs stays a bare sibling filename for
+/// `ProofsDownloader`.
 fn build_published_manifest(
     local_manifest: &SnapshotManifest,
-    public_static_files_base_url: Option<&str>,
+    public_snapshot_base_url: Option<&str>,
     timestamp: u64,
 ) -> Result<Vec<u8>> {
     let mut manifest = local_manifest.clone();
-    manifest.base_url = public_static_files_base_url.map(str::to_owned);
+    manifest.base_url = public_snapshot_base_url.map(str::to_owned);
 
     for (component_name, component) in &mut manifest.components {
-        if let reth_cli_commands::download::manifest::ComponentManifest::Single(single) = component
-            && matches!(component_name.as_str(), "state" | "rocksdb_indices")
-        {
-            single.file = format!("../{timestamp}/{}", single.file);
+        match component {
+            ComponentManifest::Single(single)
+                if matches!(component_name.as_str(), "state" | "rocksdb_indices") =>
+            {
+                single.file = format!("{timestamp}/{}", single.file);
+            }
+            ComponentManifest::Chunked(chunked) => {
+                let num_chunks = chunked.num_chunks();
+                let mut chunk_files = Vec::with_capacity(num_chunks as usize);
+                for i in 0..num_chunks {
+                    let start = i
+                        .checked_mul(chunked.blocks_per_file)
+                        .context("block range overflow in published chunk_files")?;
+                    let end = chunked
+                        .blocks_per_file
+                        .checked_sub(1)
+                        .and_then(|offset| start.checked_add(offset))
+                        .context("block range overflow in published chunk_files")?;
+                    let archive_name = ChunkFilename::format(component_name, start, end);
+                    if i.checked_add(1) == Some(num_chunks) {
+                        chunk_files.push(format!("{timestamp}/{archive_name}"));
+                    } else {
+                        chunk_files.push(format!("static_files/{archive_name}"));
+                    }
+                }
+                chunked.chunk_files = chunk_files;
+            }
+            _ => {}
         }
     }
 
@@ -1068,8 +1126,85 @@ mod tests {
             UploadStrategy::classify("rocksdb_indices.tar.zst"),
             UploadStrategy::AlwaysUpload
         );
+        assert_eq!(UploadStrategy::classify("proofs.tar.zst"), UploadStrategy::AlwaysUpload);
         assert_eq!(UploadStrategy::classify("manifest.json"), UploadStrategy::AlwaysUpload);
         assert_eq!(UploadStrategy::classify("random-file.txt"), UploadStrategy::AlwaysUpload);
+    }
+
+    #[test]
+    fn build_published_manifest_sets_chunk_files_and_leaves_proofs_as_sibling() {
+        use std::collections::BTreeMap;
+
+        use crate::snapshot::{ChunkedArchive, SingleArchive};
+
+        let mut components = BTreeMap::new();
+        components.insert(
+            "state".to_string(),
+            ComponentManifest::Single(SingleArchive {
+                file: "state.tar.zst".to_string(),
+                size: 100,
+                decompressed_size: 200,
+                blake3: None,
+                output_files: vec![],
+            }),
+        );
+        components.insert(
+            "proofs".to_string(),
+            ComponentManifest::Single(SingleArchive {
+                file: "proofs.tar.zst".to_string(),
+                size: 50,
+                decompressed_size: 80,
+                blake3: None,
+                output_files: vec![],
+            }),
+        );
+        components.insert(
+            "headers".to_string(),
+            ComponentManifest::Chunked(ChunkedArchive {
+                blocks_per_file: 500_000,
+                total_blocks: 1_000_000,
+                chunk_sizes: vec![100, 200],
+                chunk_decompressed_sizes: vec![1_000, 2_000],
+                chunk_output_files: vec![vec![], vec![]],
+                chunk_files: vec![],
+            }),
+        );
+
+        let local = SnapshotManifest {
+            block: 1_000_000,
+            chain_id: 8453,
+            storage_version: 2,
+            timestamp: 1_700_000_000,
+            base_url: None,
+            reth_version: None,
+            components,
+        };
+
+        let published =
+            build_published_manifest(&local, Some("https://example.com/mainnet"), 1_700_000_000)
+                .unwrap();
+        let manifest: serde_json::Value = serde_json::from_slice(&published).unwrap();
+
+        assert_eq!(
+            manifest["base_url"], "https://example.com/mainnet",
+            "base_url should point at snapshot root"
+        );
+        assert_eq!(
+            manifest["components"]["state"]["file"], "1700000000/state.tar.zst",
+            "state should be rewritten under the timestamp directory"
+        );
+        assert_eq!(
+            manifest["components"]["proofs"]["file"], "proofs.tar.zst",
+            "proofs must remain a sibling of manifest.json for ProofsDownloader"
+        );
+        assert_eq!(
+            manifest["components"]["headers"]["chunk_files"],
+            serde_json::json!([
+                "static_files/headers-0-499999.tar.zst",
+                "1700000000/headers-500000-999999.tar.zst",
+            ]),
+            "headers chunk_files should split finalized and tip paths under root base_url"
+        );
     }
 
     #[test]

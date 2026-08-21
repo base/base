@@ -19,7 +19,7 @@ base-proof.workspace = true
 sp1-zkvm.workspace = true
 
 # base-succinct
-base-proof-succinct-client-utils.workspace = true
+base-proof-zk-utils.workspace = true
 
 # `tracing-subscriber` feature dependencies
 tracing-subscriber = { workspace = true, optional = true }

@@ -1,7 +1,7 @@
 use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
 
 use alloy_chains::Chain;
-use alloy_consensus::{BlockHeader, Header, proofs::storage_root_unhashed};
+use alloy_consensus::{BlockHeader, EMPTY_ROOT_HASH, Header, proofs::storage_root_unhashed};
 use alloy_eips::eip7840::BlobParams;
 use alloy_genesis::Genesis;
 use alloy_hardforks::Hardfork;
@@ -11,6 +11,7 @@ use base_common_consensus::Predeploys;
 use base_common_genesis::{
     BaseUpgrade, RuntimeUpgradeRegistry, UpgradeActivation, UpgradeActivationSink,
 };
+use base_protocol::OutputRoot;
 use derive_more::{Constructor, Deref, Into};
 use reth_chainspec::{
     BaseFeeParams, BaseFeeParamsKind, ChainSpec, DepositContract, DisplayHardforks, EthChainSpec,
@@ -175,6 +176,7 @@ impl BaseChainSpec {
         let azul_time = genesis_info.base.azul;
         let beryl_time = genesis_info.base.beryl;
         let cobalt_time = genesis_info.base.cobalt;
+        let denim_time = genesis_info.base.denim;
         let zenith_time = genesis_info.base.zenith;
         let time_upgrade_opts = [
             (BaseUpgrade::Regolith.boxed(), genesis_info.regolith_time),
@@ -192,6 +194,7 @@ impl BaseChainSpec {
             (BaseUpgrade::Azul.boxed(), azul_time),
             (BaseUpgrade::Beryl.boxed(), beryl_time),
             (BaseUpgrade::Cobalt.boxed(), cobalt_time),
+            (BaseUpgrade::Denim.boxed(), denim_time),
             (BaseUpgrade::Zenith.boxed(), zenith_time),
         ];
 
@@ -264,16 +267,38 @@ impl BaseChainSpec {
         let mut header = reth_chainspec::make_genesis_header(genesis, upgrades);
 
         if upgrades.fork(BaseUpgrade::Isthmus).active_at_timestamp(header.timestamp)
-            && let Some(predeploy) = genesis.alloc.get(&Predeploys::L2_TO_L1_MESSAGE_PASSER)
-            && let Some(storage) = &predeploy.storage
+            && let Some(storage_root) = Self::l2_to_l1_message_passer_storage_root(genesis)
         {
-            header.withdrawals_root =
-                Some(storage_root_unhashed(storage.iter().filter_map(|(k, v)| {
-                    if v.is_zero() { None } else { Some((*k, (*v).into())) }
-                })));
+            header.withdrawals_root = Some(storage_root);
         }
 
         header
+    }
+
+    /// Computes the storage root of the genesis `L2ToL1MessagePasser`, if configured.
+    pub fn l2_to_l1_message_passer_storage_root(genesis: &Genesis) -> Option<B256> {
+        genesis
+            .alloc
+            .get(&Predeploys::L2_TO_L1_MESSAGE_PASSER)
+            .and_then(|account| account.storage.as_ref())
+            .map(|storage| {
+                storage_root_unhashed(storage.iter().filter_map(|(key, value)| {
+                    if value.is_zero() { None } else { Some((*key, (*value).into())) }
+                }))
+            })
+    }
+
+    /// Computes the V0 output root for this chain's genesis block.
+    pub fn genesis_output_root(&self) -> B256 {
+        let bridge_storage_root =
+            Self::l2_to_l1_message_passer_storage_root(&self.genesis).unwrap_or(EMPTY_ROOT_HASH);
+
+        OutputRoot::from_parts(
+            self.genesis_header().state_root,
+            bridge_storage_root,
+            self.genesis_hash(),
+        )
+        .hash()
     }
 
     /// Parses a chain name into an [`BaseChainSpec`], if recognized.
@@ -329,11 +354,38 @@ impl BaseChainSpec {
     }
 
     /// Get an iterator of all hardforks with runtime-aware activation conditions.
-    pub fn forks_iter(&self) -> impl Iterator<Item = (&dyn Hardfork, ForkCondition)> {
-        self.inner.forks_iter().map(|(fork, condition)| {
-            let condition = self.runtime_fork_condition(fork).unwrap_or(condition);
-            (fork, condition)
-        })
+    ///
+    /// Includes upgrades scheduled purely at runtime (via the registry) that were absent from the
+    /// startup schedule, so enumeration matches [`Self::runtime_hardforks`] and [`Self::fork_id`].
+    pub fn forks_iter<'a>(
+        &'a self,
+    ) -> impl Iterator<Item = (&'a dyn Hardfork, ForkCondition)> + 'a {
+        // Mirror of the execution fork ladder with `'static` storage, so runtime-scheduled
+        // upgrades absent from the startup schedule can be handed out as `&'static dyn Hardfork`.
+        // Derived from the single source of truth, so new variants require no changes here.
+        static EXECUTION_LADDER: [BaseUpgrade; BaseUpgrade::EXECUTION_VARIANTS.len()] =
+            BaseUpgrade::EXECUTION_VARIANTS;
+
+        // Forks in the startup schedule, with any runtime override applied to the condition.
+        let mut forks = self
+            .inner
+            .forks_iter()
+            .map(|(fork, condition)| (fork, self.runtime_fork_condition(fork).unwrap_or(condition)))
+            .collect::<Vec<(&'a dyn Hardfork, ForkCondition)>>();
+
+        // Upgrades scheduled purely at runtime that were absent from the startup schedule are
+        // missing above. Append them so enumeration matches `runtime_hardforks()`/`fork_id()`.
+        // They are always the latest forks, so appending keeps the enumeration chronological.
+        for upgrade in &EXECUTION_LADDER {
+            if self.inner.hardforks.get(*upgrade).is_some() {
+                continue; // already present in the startup schedule
+            }
+            if let Some(condition) = self.runtime_fork_condition(upgrade) {
+                forks.push((upgrade, condition));
+            }
+        }
+
+        forks.into_iter()
     }
 
     /// Returns the runtime-aware fork ID for the given head.
@@ -475,9 +527,9 @@ impl UpgradeActivationSink for BaseChainSpec {
         }
     }
 
-    fn finalize(&mut self) -> Result<(), Self::Error> {
+    fn finalize(&mut self) -> Result<bool, Self::Error> {
         self.refresh_genesis_header();
-        Ok(())
+        Ok(true)
     }
 }
 
@@ -671,7 +723,7 @@ mod tests {
     };
     use reth_ethereum_forks::{EthereumHardfork, ForkCondition, ForkHash, ForkId, Head};
 
-    use crate::{BaseChainSpec, BaseChainSpecBuilder, BaseChainSpecError};
+    use crate::{BaseChainSpec, BaseChainSpecBuilder, BaseChainSpecError, GenesisInfo};
 
     #[test]
     fn test_storage_root_consistency() {
@@ -707,6 +759,14 @@ mod tests {
         assert_ne!(root_origin, root_fix);
         assert_eq!(root_origin, origin_root);
         assert_eq!(root_fix, expected_root);
+    }
+
+    #[test]
+    fn devnet_genesis_output_root() {
+        assert_eq!(
+            BaseChainSpec::devnet().genesis_output_root(),
+            b256!("14dabde8a7b90e1c258c03b239c69567baf19bad7eccf4e59c6c720e6787e7fe")
+        );
     }
 
     #[test]
@@ -880,6 +940,35 @@ mod tests {
     }
 
     #[test]
+    fn forks_iter_surfaces_runtime_scheduled_absent_fork() {
+        let chain_id = 9_100_007;
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+        let spec = BaseChainSpecBuilder::default()
+            .chain(Chain::from_id(chain_id))
+            .genesis(Genesis::default())
+            .build();
+        let chain_id = spec.chain().id();
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+
+        let cobalt_condition = |spec: &BaseChainSpec| {
+            spec.forks_iter().find_map(|(fork, condition)| {
+                (fork.name() == BaseUpgrade::Cobalt.name()).then_some(condition)
+            })
+        };
+
+        // Cobalt is unscheduled at startup, so it is absent from the enumeration.
+        assert_eq!(cobalt_condition(&spec), None);
+
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Cobalt, 84);
+
+        // Once scheduled at runtime it must appear, matching `fork()`/`runtime_hardforks()`.
+        assert_eq!(cobalt_condition(&spec), Some(ForkCondition::Timestamp(84)));
+        assert_eq!(spec.fork(BaseUpgrade::Cobalt), ForkCondition::Timestamp(84));
+
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+    }
+
+    #[test]
     fn runtime_registry_overrides_execution_fork_ids() {
         let chain_id = 9_100_004;
         RuntimeUpgradeRegistry::clear_chain(chain_id);
@@ -962,9 +1051,12 @@ mod tests {
     }
 
     #[test]
-    fn builtin_chain_specs_never_activate_zenith() {
-        // Built-in production schedules do not configure the genesis-only Zenith upgrade.
+    fn builtin_chain_specs_never_activate_denim_or_zenith() {
+        // Built-in production schedules do not configure Denim or genesis-only Zenith.
         for spec in [BaseChainSpec::mainnet(), BaseChainSpec::sepolia(), BaseChainSpec::devnet()] {
+            assert_eq!(spec.fork(BaseUpgrade::Denim), ForkCondition::Never);
+            assert!(!spec.is_fork_active_at_timestamp(BaseUpgrade::Denim, 0));
+            assert!(!spec.is_fork_active_at_timestamp(BaseUpgrade::Denim, u64::MAX));
             assert_eq!(spec.fork(BaseUpgrade::Zenith), ForkCondition::Never);
             assert!(!spec.is_fork_active_at_timestamp(BaseUpgrade::Zenith, 0));
             assert!(!spec.is_fork_active_at_timestamp(BaseUpgrade::Zenith, u64::MAX));
@@ -1131,6 +1223,52 @@ mod tests {
     }
 
     #[test]
+    fn embedded_genesis_matches_genesis_active_upgrade_conditions() {
+        for config in [ChainConfig::mainnet(), ChainConfig::sepolia(), ChainConfig::zeronet()] {
+            let genesis: Genesis = serde_json::from_str(config.genesis_json).unwrap();
+            for (actual, expected) in [
+                (genesis.config.shanghai_time, config.canyon_timestamp),
+                (genesis.config.cancun_time, config.ecotone_timestamp),
+                (genesis.config.prague_time, config.isthmus_timestamp),
+            ] {
+                if let Some(actual) = actual {
+                    assert_eq!(
+                        actual, expected,
+                        "Ethereum fork timestamp drift for chain {}",
+                        config.chain_id
+                    );
+                }
+            }
+
+            let genesis_info = GenesisInfo::extract_from(&genesis)
+                .base_chain_info
+                .genesis_info
+                .unwrap_or_default();
+            let configured = BaseChainSpec::try_from(config).unwrap();
+            for (upgrade, actual) in [
+                (BaseUpgrade::Regolith, genesis_info.regolith_time),
+                (BaseUpgrade::Canyon, genesis_info.canyon_time),
+                (BaseUpgrade::Ecotone, genesis_info.ecotone_time),
+                (BaseUpgrade::Fjord, genesis_info.fjord_time),
+                (BaseUpgrade::Granite, genesis_info.granite_time),
+                (BaseUpgrade::Holocene, genesis_info.holocene_time),
+                (BaseUpgrade::Isthmus, genesis_info.isthmus_time),
+                (BaseUpgrade::Jovian, genesis_info.jovian_time),
+            ] {
+                let expected = configured.fork(upgrade);
+                if expected == ForkCondition::Timestamp(config.genesis_l2_time) {
+                    assert_eq!(
+                        actual.map(ForkCondition::Timestamp).unwrap_or(ForkCondition::Never),
+                        expected,
+                        "genesis-active {upgrade} timestamp drift for chain {}",
+                        config.chain_id
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn el_bootnodes_count_matches_config() {
         // `bootnodes()` must surface every EL entry from `ChainConfig.bootnodes.execution`.
         // A mismatch means `parse_nodes` silently dropped a malformed entry.
@@ -1216,6 +1354,7 @@ mod tests {
           "v1": 55,
           "v2": 60,
           "v3": 65,
+          "denim": 900000,
           "zenith": 1000000
         },
         "activationAdminAddress": "0xcb00000000000000000000000000000000000000",
@@ -1259,6 +1398,8 @@ mod tests {
         assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Beryl, 60));
         assert!(!chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Cobalt, 64));
         assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Cobalt, 65));
+        assert!(!chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Denim, 899_999));
+        assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Denim, 900_000));
         assert!(!chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Zenith, 999_999));
         assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Zenith, 1_000_000));
     }

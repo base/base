@@ -10,7 +10,7 @@
 //!   structs and dynamic types (e.g. `Mapping`, `Vec`), but also fixed-size arrays whose
 //!   element type is small (<=16 bytes). For those arrays `N = calc_packed_slot_count(len,
 //!   elem_bytes)`, and individual elements within each slot are still packed using
-//!   `extract_from_word` / `insert_into_word`.
+//!   `Word::extract_from_word` / `Word::insert_into_word`.
 //!
 //! ## Solidity Compatibility
 //!
@@ -71,88 +71,126 @@ impl FieldLocation {
     }
 }
 
-/// Create a bit mask for a value of the given byte size.
+/// Bit-level operations on a single 32-byte EVM storage word.
 ///
-/// For values less than 32 bytes, returns a mask with the appropriate number of bits set.
-/// For 32-byte values, returns `U256::MAX`.
-#[inline]
-pub fn create_element_mask(byte_count: usize) -> U256 {
-    if byte_count >= 32 { U256::MAX } else { (U256::ONE << (byte_count * 8)) - U256::ONE }
-}
+/// Groups the helpers used to pack and unpack multiple small values within one slot.
+#[derive(Debug)]
+pub struct Word;
 
-/// Extract a packed value from a storage slot at a given byte offset.
-#[inline]
-pub fn extract_from_word<T: FromWord + StorableType>(
-    slot_value: U256,
-    offset: usize,
-    bytes: usize,
-) -> Result<T> {
-    debug_assert!(
-        matches!(T::LAYOUT, Layout::Bytes(..)),
-        "Packing is only supported by primitive types"
-    );
-
-    if offset + bytes > 32 {
-        return Err(crate::error::BasePrecompileError::Fatal(format!(
-            "Value of {} bytes at offset {} would span slot boundary (max offset: {})",
-            bytes,
-            offset,
-            32 - bytes
-        )));
+impl Word {
+    /// Create a bit mask for a value of the given byte size.
+    ///
+    /// For values less than 32 bytes, returns a mask with the appropriate number of bits set.
+    /// For 32-byte values, returns `U256::MAX`.
+    #[inline]
+    pub fn create_element_mask(byte_count: usize) -> U256 {
+        if byte_count >= 32 { U256::MAX } else { (U256::ONE << (byte_count * 8)) - U256::ONE }
     }
 
-    let shift_bits = offset * 8;
-    let mask = create_element_mask(bytes);
+    /// Extract a packed value from a storage slot at a given byte offset.
+    #[inline]
+    pub fn extract_from_word<T: FromWord + StorableType>(
+        slot_value: U256,
+        offset: usize,
+        bytes: usize,
+    ) -> Result<T> {
+        debug_assert!(
+            matches!(T::LAYOUT, Layout::Bytes(..)),
+            "Packing is only supported by primitive types"
+        );
 
-    T::from_word((slot_value >> shift_bits) & mask)
-}
+        if offset + bytes > 32 {
+            return Err(crate::error::BasePrecompileError::Fatal(format!(
+                "Value of {} bytes at offset {} would span slot boundary (max offset: {})",
+                bytes,
+                offset,
+                32 - bytes
+            )));
+        }
 
-/// Insert a packed value into a storage slot at a given byte offset.
-#[inline]
-pub fn insert_into_word<T: FromWord + StorableType>(
-    current: U256,
-    value: &T,
-    offset: usize,
-    bytes: usize,
-) -> Result<U256> {
-    debug_assert!(
-        matches!(T::LAYOUT, Layout::Bytes(..)),
-        "Packing is only supported by primitive types"
-    );
+        let shift_bits = offset * 8;
+        let mask = Self::create_element_mask(bytes);
 
-    if offset + bytes > 32 {
-        return Err(crate::error::BasePrecompileError::Fatal(format!(
-            "Value of {} bytes at offset {} would span slot boundary (max offset: {})",
-            bytes,
-            offset,
-            32 - bytes
-        )));
+        T::from_word((slot_value >> shift_bits) & mask)
     }
 
-    let field_value = value.to_word();
-    let shift_bits = offset * 8;
-    let mask = create_element_mask(bytes);
-    let clear_mask = !(mask << shift_bits);
-    let cleared = current & clear_mask;
-    let positioned = (field_value & mask) << shift_bits;
-    Ok(cleared | positioned)
-}
+    /// Insert a packed value into a storage slot at a given byte offset.
+    #[inline]
+    pub fn insert_into_word<T: FromWord + StorableType>(
+        current: U256,
+        value: &T,
+        offset: usize,
+        bytes: usize,
+    ) -> Result<U256> {
+        debug_assert!(
+            matches!(T::LAYOUT, Layout::Bytes(..)),
+            "Packing is only supported by primitive types"
+        );
 
-/// Zero out a packed value in a storage slot at a given byte offset.
-#[inline]
-pub fn delete_from_word(current: U256, offset: usize, bytes: usize) -> Result<U256> {
-    if offset + bytes > 32 {
-        return Err(crate::error::BasePrecompileError::Fatal(format!(
-            "Value of {} bytes at offset {} would span slot boundary (max offset: {})",
-            bytes,
-            offset,
-            32 - bytes
-        )));
+        if offset + bytes > 32 {
+            return Err(crate::error::BasePrecompileError::Fatal(format!(
+                "Value of {} bytes at offset {} would span slot boundary (max offset: {})",
+                bytes,
+                offset,
+                32 - bytes
+            )));
+        }
+
+        let field_value = value.to_word();
+        let shift_bits = offset * 8;
+        let mask = Self::create_element_mask(bytes);
+        let clear_mask = !(mask << shift_bits);
+        let cleared = current & clear_mask;
+        let positioned = (field_value & mask) << shift_bits;
+        Ok(cleared | positioned)
     }
 
-    let mask = create_element_mask(bytes);
-    let shifted_mask = mask << (offset * 8);
-    Ok(current & !shifted_mask)
+    /// Zero out a packed value in a storage slot at a given byte offset.
+    #[inline]
+    pub fn delete_from_word(current: U256, offset: usize, bytes: usize) -> Result<U256> {
+        if offset + bytes > 32 {
+            return Err(crate::error::BasePrecompileError::Fatal(format!(
+                "Value of {} bytes at offset {} would span slot boundary (max offset: {})",
+                bytes,
+                offset,
+                32 - bytes
+            )));
+        }
+
+        let mask = Self::create_element_mask(bytes);
+        let shifted_mask = mask << (offset * 8);
+        Ok(current & !shifted_mask)
+    }
+
+    /// Test helper: constructs a U256 slot from hex string literals, left-padded to 32 bytes.
+    ///
+    /// Takes an array of hex strings (with or without "0x" prefix), concatenates them
+    /// left-to-right, left-pads with zeros to 32 bytes, and returns a U256.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn gen_word_from(values: &[&str]) -> U256 {
+        let mut bytes = Vec::new();
+
+        for value in values {
+            let hex_str = value.strip_prefix("0x").unwrap_or(value);
+
+            assert!(hex_str.len() % 2 == 0, "Hex string '{value}' has odd length");
+
+            for i in (0..hex_str.len()).step_by(2) {
+                let byte_str = &hex_str[i..i + 2];
+                let byte = u8::from_str_radix(byte_str, 16)
+                    .unwrap_or_else(|e| panic!("Invalid hex in '{value}': {e}"));
+                bytes.push(byte);
+            }
+        }
+
+        assert!(bytes.len() <= 32, "Total bytes ({}) exceed 32-byte slot limit", bytes.len());
+
+        let mut slot_bytes = [0u8; 32];
+        let start_idx = 32 - bytes.len();
+        slot_bytes[start_idx..].copy_from_slice(&bytes);
+
+        U256::from_be_bytes(slot_bytes)
+    }
 }
 
 /// Calculate which slot an array element at index `idx` starts in.
@@ -184,36 +222,6 @@ pub const fn calc_element_loc(idx: usize, elem_bytes: usize) -> FieldLocation {
 pub const fn calc_packed_slot_count(n: usize, elem_bytes: usize) -> usize {
     let elems_per_slot = 32 / elem_bytes;
     n.div_ceil(elems_per_slot)
-}
-
-/// Test helper: constructs a U256 slot from hex string literals, left-padded to 32 bytes.
-///
-/// Takes an array of hex strings (with or without "0x" prefix), concatenates them
-/// left-to-right, left-pads with zeros to 32 bytes, and returns a U256.
-#[cfg(any(test, feature = "test-utils"))]
-pub fn gen_word_from(values: &[&str]) -> U256 {
-    let mut bytes = Vec::new();
-
-    for value in values {
-        let hex_str = value.strip_prefix("0x").unwrap_or(value);
-
-        assert!(hex_str.len() % 2 == 0, "Hex string '{value}' has odd length");
-
-        for i in (0..hex_str.len()).step_by(2) {
-            let byte_str = &hex_str[i..i + 2];
-            let byte = u8::from_str_radix(byte_str, 16)
-                .unwrap_or_else(|e| panic!("Invalid hex in '{value}': {e}"));
-            bytes.push(byte);
-        }
-    }
-
-    assert!(bytes.len() <= 32, "Total bytes ({}) exceed 32-byte slot limit", bytes.len());
-
-    let mut slot_bytes = [0u8; 32];
-    let start_idx = 32 - bytes.len();
-    slot_bytes[start_idx..].copy_from_slice(&bytes);
-
-    U256::from_be_bytes(slot_bytes)
 }
 
 #[cfg(test)]
@@ -314,80 +322,80 @@ mod tests {
 
     #[test]
     fn test_create_element_mask() {
-        assert_eq!(create_element_mask(1), U256::from(0xff));
-        assert_eq!(create_element_mask(2), U256::from(0xffff));
-        assert_eq!(create_element_mask(4), U256::from(0xffffffffu32));
-        assert_eq!(create_element_mask(8), U256::from(u64::MAX));
-        assert_eq!(create_element_mask(16), U256::from(u128::MAX));
-        assert_eq!(create_element_mask(32), U256::MAX);
-        assert_eq!(create_element_mask(64), U256::MAX);
+        assert_eq!(Word::create_element_mask(1), U256::from(0xff));
+        assert_eq!(Word::create_element_mask(2), U256::from(0xffff));
+        assert_eq!(Word::create_element_mask(4), U256::from(0xffffffffu32));
+        assert_eq!(Word::create_element_mask(8), U256::from(u64::MAX));
+        assert_eq!(Word::create_element_mask(16), U256::from(u128::MAX));
+        assert_eq!(Word::create_element_mask(32), U256::MAX);
+        assert_eq!(Word::create_element_mask(64), U256::MAX);
     }
 
     #[test]
     fn test_delete_from_word() {
-        let slot = gen_word_from(&["0xff", "0x56", "0x34", "0x12"]);
+        let slot = Word::gen_word_from(&["0xff", "0x56", "0x34", "0x12"]);
 
-        let cleared = delete_from_word(slot, 1, 1).unwrap();
-        let expected = gen_word_from(&["0xff", "0x56", "0x00", "0x12"]);
+        let cleared = Word::delete_from_word(slot, 1, 1).unwrap();
+        let expected = Word::gen_word_from(&["0xff", "0x56", "0x00", "0x12"]);
         assert_eq!(cleared, expected, "Should zero offset 1");
 
-        let slot = gen_word_from(&["0x5678", "0x1234"]);
-        let cleared = delete_from_word(slot, 0, 2).unwrap();
-        let expected = gen_word_from(&["0x5678", "0x0000"]);
+        let slot = Word::gen_word_from(&["0x5678", "0x1234"]);
+        let cleared = Word::delete_from_word(slot, 0, 2).unwrap();
+        let expected = Word::gen_word_from(&["0x5678", "0x0000"]);
         assert_eq!(cleared, expected, "Should zero u16 at offset 0");
 
-        let slot = gen_word_from(&["0xff"]);
-        let cleared = delete_from_word(slot, 0, 1).unwrap();
+        let slot = Word::gen_word_from(&["0xff"]);
+        let cleared = Word::delete_from_word(slot, 0, 1).unwrap();
         assert_eq!(cleared, U256::ZERO, "Should zero entire slot");
     }
 
     #[test]
     fn test_boundary_validation_rejects_spanning() {
         let addr = Address::random();
-        let result = insert_into_word(U256::ZERO, &addr, 13, 20);
+        let result = Word::insert_into_word(U256::ZERO, &addr, 13, 20);
         assert!(result.is_err(), "Should reject address at offset 13");
 
         let val: u16 = 42;
-        let result = insert_into_word(U256::ZERO, &val, 31, 2);
+        let result = Word::insert_into_word(U256::ZERO, &val, 31, 2);
         assert!(result.is_err(), "Should reject u16 at offset 31");
 
         let val: u32 = 42;
-        let result = insert_into_word(U256::ZERO, &val, 29, 4);
+        let result = Word::insert_into_word(U256::ZERO, &val, 29, 4);
         assert!(result.is_err(), "Should reject u32 at offset 29");
 
-        let result = extract_from_word::<Address>(U256::ZERO, 13, 20);
+        let result = Word::extract_from_word::<Address>(U256::ZERO, 13, 20);
         assert!(result.is_err(), "Should reject extracting address from offset 13");
     }
 
     #[test]
     fn test_boundary_validation_accepts_valid() {
         let addr = Address::random();
-        assert!(insert_into_word(U256::ZERO, &addr, 12, 20).is_ok());
+        assert!(Word::insert_into_word(U256::ZERO, &addr, 12, 20).is_ok());
 
         let val: u16 = 42;
-        assert!(insert_into_word(U256::ZERO, &val, 30, 2).is_ok());
+        assert!(Word::insert_into_word(U256::ZERO, &val, 30, 2).is_ok());
 
         let val: u8 = 42;
-        assert!(insert_into_word(U256::ZERO, &val, 31, 1).is_ok());
+        assert!(Word::insert_into_word(U256::ZERO, &val, 31, 1).is_ok());
 
         let val = U256::from(42);
-        assert!(insert_into_word(U256::ZERO, &val, 0, 32).is_ok());
+        assert!(Word::insert_into_word(U256::ZERO, &val, 0, 32).is_ok());
     }
 
     #[test]
     fn test_bool() {
-        let expected = gen_word_from(&["0x01"]);
-        let slot = insert_into_word(U256::ZERO, &true, 0, 1).unwrap();
+        let expected = Word::gen_word_from(&["0x01"]);
+        let slot = Word::insert_into_word(U256::ZERO, &true, 0, 1).unwrap();
         assert_eq!(slot, expected);
-        assert!(extract_from_word::<bool>(slot, 0, 1).unwrap());
+        assert!(Word::extract_from_word::<bool>(slot, 0, 1).unwrap());
 
-        let expected = gen_word_from(&["0x01", "0x01"]);
+        let expected = Word::gen_word_from(&["0x01", "0x01"]);
         let mut slot = U256::ZERO;
-        slot = insert_into_word(slot, &true, 0, 1).unwrap();
-        slot = insert_into_word(slot, &true, 1, 1).unwrap();
+        slot = Word::insert_into_word(slot, &true, 0, 1).unwrap();
+        slot = Word::insert_into_word(slot, &true, 1, 1).unwrap();
         assert_eq!(slot, expected);
-        assert!(extract_from_word::<bool>(slot, 0, 1).unwrap());
-        assert!(extract_from_word::<bool>(slot, 1, 1).unwrap());
+        assert!(Word::extract_from_word::<bool>(slot, 0, 1).unwrap());
+        assert!(Word::extract_from_word::<bool>(slot, 1, 1).unwrap());
     }
 
     #[test]
@@ -397,19 +405,19 @@ mod tests {
         let v3: u8 = 0x56;
         let v4: u8 = u8::MAX;
 
-        let expected = gen_word_from(&["0xff", "0x56", "0x34", "0x12"]);
+        let expected = Word::gen_word_from(&["0xff", "0x56", "0x34", "0x12"]);
 
         let mut slot = U256::ZERO;
-        slot = insert_into_word(slot, &v1, 0, 1).unwrap();
-        slot = insert_into_word(slot, &v2, 1, 1).unwrap();
-        slot = insert_into_word(slot, &v3, 2, 1).unwrap();
-        slot = insert_into_word(slot, &v4, 3, 1).unwrap();
+        slot = Word::insert_into_word(slot, &v1, 0, 1).unwrap();
+        slot = Word::insert_into_word(slot, &v2, 1, 1).unwrap();
+        slot = Word::insert_into_word(slot, &v3, 2, 1).unwrap();
+        slot = Word::insert_into_word(slot, &v4, 3, 1).unwrap();
 
         assert_eq!(slot, expected);
-        assert_eq!(extract_from_word::<u8>(slot, 0, 1).unwrap(), v1);
-        assert_eq!(extract_from_word::<u8>(slot, 1, 1).unwrap(), v2);
-        assert_eq!(extract_from_word::<u8>(slot, 2, 1).unwrap(), v3);
-        assert_eq!(extract_from_word::<u8>(slot, 3, 1).unwrap(), v4);
+        assert_eq!(Word::extract_from_word::<u8>(slot, 0, 1).unwrap(), v1);
+        assert_eq!(Word::extract_from_word::<u8>(slot, 1, 1).unwrap(), v2);
+        assert_eq!(Word::extract_from_word::<u8>(slot, 2, 1).unwrap(), v3);
+        assert_eq!(Word::extract_from_word::<u8>(slot, 3, 1).unwrap(), v4);
     }
 
     #[test]
@@ -418,17 +426,17 @@ mod tests {
         let v2: u16 = 0x5678;
         let v3: u16 = u16::MAX;
 
-        let expected = gen_word_from(&["0xffff", "0x5678", "0x1234"]);
+        let expected = Word::gen_word_from(&["0xffff", "0x5678", "0x1234"]);
 
         let mut slot = U256::ZERO;
-        slot = insert_into_word(slot, &v1, 0, 2).unwrap();
-        slot = insert_into_word(slot, &v2, 2, 2).unwrap();
-        slot = insert_into_word(slot, &v3, 4, 2).unwrap();
+        slot = Word::insert_into_word(slot, &v1, 0, 2).unwrap();
+        slot = Word::insert_into_word(slot, &v2, 2, 2).unwrap();
+        slot = Word::insert_into_word(slot, &v3, 4, 2).unwrap();
 
         assert_eq!(slot, expected);
-        assert_eq!(extract_from_word::<u16>(slot, 0, 2).unwrap(), v1);
-        assert_eq!(extract_from_word::<u16>(slot, 2, 2).unwrap(), v2);
-        assert_eq!(extract_from_word::<u16>(slot, 4, 2).unwrap(), v3);
+        assert_eq!(Word::extract_from_word::<u16>(slot, 0, 2).unwrap(), v1);
+        assert_eq!(Word::extract_from_word::<u16>(slot, 2, 2).unwrap(), v2);
+        assert_eq!(Word::extract_from_word::<u16>(slot, 4, 2).unwrap(), v3);
     }
 
     #[test]
@@ -436,15 +444,15 @@ mod tests {
         let v1: u32 = 0x12345678;
         let v2: u32 = u32::MAX;
 
-        let expected = gen_word_from(&["0xffffffff", "0x12345678"]);
+        let expected = Word::gen_word_from(&["0xffffffff", "0x12345678"]);
 
         let mut slot = U256::ZERO;
-        slot = insert_into_word(slot, &v1, 0, 4).unwrap();
-        slot = insert_into_word(slot, &v2, 4, 4).unwrap();
+        slot = Word::insert_into_word(slot, &v1, 0, 4).unwrap();
+        slot = Word::insert_into_word(slot, &v2, 4, 4).unwrap();
 
         assert_eq!(slot, expected);
-        assert_eq!(extract_from_word::<u32>(slot, 0, 4).unwrap(), v1);
-        assert_eq!(extract_from_word::<u32>(slot, 4, 4).unwrap(), v2);
+        assert_eq!(Word::extract_from_word::<u32>(slot, 0, 4).unwrap(), v1);
+        assert_eq!(Word::extract_from_word::<u32>(slot, 4, 4).unwrap(), v2);
     }
 
     #[test]
@@ -452,15 +460,15 @@ mod tests {
         let v1: u64 = 0x123456789abcdef0;
         let v2: u64 = u64::MAX;
 
-        let expected = gen_word_from(&["0xffffffffffffffff", "0x123456789abcdef0"]);
+        let expected = Word::gen_word_from(&["0xffffffffffffffff", "0x123456789abcdef0"]);
 
         let mut slot = U256::ZERO;
-        slot = insert_into_word(slot, &v1, 0, 8).unwrap();
-        slot = insert_into_word(slot, &v2, 8, 8).unwrap();
+        slot = Word::insert_into_word(slot, &v1, 0, 8).unwrap();
+        slot = Word::insert_into_word(slot, &v2, 8, 8).unwrap();
 
         assert_eq!(slot, expected);
-        assert_eq!(extract_from_word::<u64>(slot, 0, 8).unwrap(), v1);
-        assert_eq!(extract_from_word::<u64>(slot, 8, 8).unwrap(), v2);
+        assert_eq!(Word::extract_from_word::<u64>(slot, 0, 8).unwrap(), v1);
+        assert_eq!(Word::extract_from_word::<u64>(slot, 8, 8).unwrap(), v2);
     }
 
     #[test]
@@ -468,18 +476,18 @@ mod tests {
         let v1: u128 = 0x123456789abcdef0fedcba9876543210;
         let v2: u128 = u128::MAX;
 
-        let expected = gen_word_from(&[
+        let expected = Word::gen_word_from(&[
             "0xffffffffffffffffffffffffffffffff",
             "0x123456789abcdef0fedcba9876543210",
         ]);
 
         let mut slot = U256::ZERO;
-        slot = insert_into_word(slot, &v1, 0, 16).unwrap();
-        slot = insert_into_word(slot, &v2, 16, 16).unwrap();
+        slot = Word::insert_into_word(slot, &v1, 0, 16).unwrap();
+        slot = Word::insert_into_word(slot, &v2, 16, 16).unwrap();
 
         assert_eq!(slot, expected);
-        assert_eq!(extract_from_word::<u128>(slot, 0, 16).unwrap(), v1);
-        assert_eq!(extract_from_word::<u128>(slot, 16, 16).unwrap(), v2);
+        assert_eq!(Word::extract_from_word::<u128>(slot, 0, 16).unwrap(), v1);
+        assert_eq!(Word::extract_from_word::<u128>(slot, 16, 16).unwrap(), v2);
     }
 
     #[test]
@@ -488,16 +496,16 @@ mod tests {
         let number: u8 = 0x2a;
 
         let expected =
-            gen_word_from(&["0x2a", "0x1111111111111111111111111111111111111111", "0x01"]);
+            Word::gen_word_from(&["0x2a", "0x1111111111111111111111111111111111111111", "0x01"]);
 
         let mut slot = U256::ZERO;
-        slot = insert_into_word(slot, &true, 0, 1).unwrap();
-        slot = insert_into_word(slot, &addr, 1, 20).unwrap();
-        slot = insert_into_word(slot, &number, 21, 1).unwrap();
+        slot = Word::insert_into_word(slot, &true, 0, 1).unwrap();
+        slot = Word::insert_into_word(slot, &addr, 1, 20).unwrap();
+        slot = Word::insert_into_word(slot, &number, 21, 1).unwrap();
         assert_eq!(slot, expected);
-        assert!(extract_from_word::<bool>(slot, 0, 1).unwrap());
-        assert_eq!(extract_from_word::<Address>(slot, 1, 20).unwrap(), addr);
-        assert_eq!(extract_from_word::<u8>(slot, 21, 1).unwrap(), number);
+        assert!(Word::extract_from_word::<bool>(slot, 0, 1).unwrap());
+        assert_eq!(Word::extract_from_word::<Address>(slot, 1, 20).unwrap(), addr);
+        assert_eq!(Word::extract_from_word::<u8>(slot, 21, 1).unwrap(), number);
     }
 
     #[test]
@@ -553,105 +561,105 @@ mod tests {
 
         #[test]
         fn proptest_roundtrip_u8(value: u8, offset in arb_offset(1)) {
-            let slot = insert_into_word(U256::ZERO, &value, offset, 1)?;
-            let extracted: u8 = extract_from_word(slot, offset, 1)?;
+            let slot = Word::insert_into_word(U256::ZERO, &value, offset, 1)?;
+            let extracted: u8 = Word::extract_from_word(slot, offset, 1)?;
             prop_assert_eq!(extracted, value);
         }
 
         #[test]
         fn proptest_roundtrip_u16(value: u16, offset in arb_offset(2)) {
-            let slot = insert_into_word(U256::ZERO, &value, offset, 2)?;
-            let extracted: u16 = extract_from_word(slot, offset, 2)?;
+            let slot = Word::insert_into_word(U256::ZERO, &value, offset, 2)?;
+            let extracted: u16 = Word::extract_from_word(slot, offset, 2)?;
             prop_assert_eq!(extracted, value);
         }
 
         #[test]
         fn proptest_roundtrip_u32(value: u32, offset in arb_offset(4)) {
-            let slot = insert_into_word(U256::ZERO, &value, offset, 4)?;
-            let extracted: u32 = extract_from_word(slot, offset, 4)?;
+            let slot = Word::insert_into_word(U256::ZERO, &value, offset, 4)?;
+            let extracted: u32 = Word::extract_from_word(slot, offset, 4)?;
             prop_assert_eq!(extracted, value);
         }
 
         #[test]
         fn proptest_roundtrip_u64(value: u64, offset in arb_offset(8)) {
-            let slot = insert_into_word(U256::ZERO, &value, offset, 8)?;
-            let extracted: u64 = extract_from_word(slot, offset, 8)?;
+            let slot = Word::insert_into_word(U256::ZERO, &value, offset, 8)?;
+            let extracted: u64 = Word::extract_from_word(slot, offset, 8)?;
             prop_assert_eq!(extracted, value);
         }
 
         #[test]
         fn proptest_roundtrip_u128(value: u128, offset in arb_offset(16)) {
-            let slot = insert_into_word(U256::ZERO, &value, offset, 16)?;
-            let extracted: u128 = extract_from_word(slot, offset, 16)?;
+            let slot = Word::insert_into_word(U256::ZERO, &value, offset, 16)?;
+            let extracted: u128 = Word::extract_from_word(slot, offset, 16)?;
             prop_assert_eq!(extracted, value);
         }
 
         #[test]
         fn proptest_roundtrip_address(addr in arb_address(), offset in arb_offset(20)) {
-            let slot = insert_into_word(U256::ZERO, &addr, offset, 20)?;
-            let extracted: Address = extract_from_word(slot, offset, 20)?;
+            let slot = Word::insert_into_word(U256::ZERO, &addr, offset, 20)?;
+            let extracted: Address = Word::extract_from_word(slot, offset, 20)?;
             prop_assert_eq!(extracted, addr);
         }
 
         #[test]
         fn proptest_roundtrip_u256(value in arb_u256()) {
-            let slot = insert_into_word(U256::ZERO, &value, 0, 32)?;
-            let extracted: U256 = extract_from_word(slot, 0, 32)?;
+            let slot = Word::insert_into_word(U256::ZERO, &value, 0, 32)?;
+            let extracted: U256 = Word::extract_from_word(slot, 0, 32)?;
             prop_assert_eq!(extracted, value);
         }
 
         #[test]
         fn proptest_roundtrip_bool(value: bool, offset in arb_offset(1)) {
-            let slot = insert_into_word(U256::ZERO, &value, offset, 1)?;
-            let extracted: bool = extract_from_word(slot, offset, 1)?;
+            let slot = Word::insert_into_word(U256::ZERO, &value, offset, 1)?;
+            let extracted: bool = Word::extract_from_word(slot, offset, 1)?;
             prop_assert_eq!(extracted, value);
         }
 
         #[test]
         fn proptest_roundtrip_i8(value: i8, offset in arb_offset(1)) {
-            let slot = insert_into_word(U256::ZERO, &value, offset, 1)?;
-            let extracted: i8 = extract_from_word(slot, offset, 1)?;
+            let slot = Word::insert_into_word(U256::ZERO, &value, offset, 1)?;
+            let extracted: i8 = Word::extract_from_word(slot, offset, 1)?;
             prop_assert_eq!(extracted, value);
         }
 
         #[test]
         fn proptest_roundtrip_i16(value: i16, offset in arb_offset(2)) {
-            let slot = insert_into_word(U256::ZERO, &value, offset, 2)?;
-            let extracted: i16 = extract_from_word(slot, offset, 2)?;
+            let slot = Word::insert_into_word(U256::ZERO, &value, offset, 2)?;
+            let extracted: i16 = Word::extract_from_word(slot, offset, 2)?;
             prop_assert_eq!(extracted, value);
         }
 
         #[test]
         fn proptest_roundtrip_i32(value: i32, offset in arb_offset(4)) {
-            let slot = insert_into_word(U256::ZERO, &value, offset, 4)?;
-            let extracted: i32 = extract_from_word(slot, offset, 4)?;
+            let slot = Word::insert_into_word(U256::ZERO, &value, offset, 4)?;
+            let extracted: i32 = Word::extract_from_word(slot, offset, 4)?;
             prop_assert_eq!(extracted, value);
         }
 
         #[test]
         fn proptest_roundtrip_i64(value: i64, offset in arb_offset(8)) {
-            let slot = insert_into_word(U256::ZERO, &value, offset, 8)?;
-            let extracted: i64 = extract_from_word(slot, offset, 8)?;
+            let slot = Word::insert_into_word(U256::ZERO, &value, offset, 8)?;
+            let extracted: i64 = Word::extract_from_word(slot, offset, 8)?;
             prop_assert_eq!(extracted, value);
         }
 
         #[test]
         fn proptest_roundtrip_i128(value: i128, offset in arb_offset(16)) {
-            let slot = insert_into_word(U256::ZERO, &value, offset, 16)?;
-            let extracted: i128 = extract_from_word(slot, offset, 16)?;
+            let slot = Word::insert_into_word(U256::ZERO, &value, offset, 16)?;
+            let extracted: i128 = Word::extract_from_word(slot, offset, 16)?;
             prop_assert_eq!(extracted, value);
         }
 
         #[test]
         fn proptest_multiple_values_no_interference(v1: u8, v2: u16, v3: u32) {
             let mut slot = U256::ZERO;
-            slot = insert_into_word(slot, &v1, 0, 1)?;
-            slot = insert_into_word(slot, &v2, 1, 2)?;
-            slot = insert_into_word(slot, &v3, 3, 4)?;
+            slot = Word::insert_into_word(slot, &v1, 0, 1)?;
+            slot = Word::insert_into_word(slot, &v2, 1, 2)?;
+            slot = Word::insert_into_word(slot, &v3, 3, 4)?;
 
-            let e1: u8 = extract_from_word(slot, 0, 1)?;
-            let e2: u16 = extract_from_word(slot, 1, 2)?;
-            let e3: u32 = extract_from_word(slot, 3, 4)?;
+            let e1: u8 = Word::extract_from_word(slot, 0, 1)?;
+            let e2: u16 = Word::extract_from_word(slot, 1, 2)?;
+            let e3: u32 = Word::extract_from_word(slot, 3, 4)?;
 
             prop_assert_eq!(e1, v1);
             prop_assert_eq!(e2, v2);
@@ -661,12 +669,12 @@ mod tests {
         #[test]
         fn proptest_overwrite_preserves_others(v1: u8, v2: u16, v1_new: u8) {
             let mut slot = U256::ZERO;
-            slot = insert_into_word(slot, &v1, 0, 1)?;
-            slot = insert_into_word(slot, &v2, 1, 2)?;
-            slot = insert_into_word(slot, &v1_new, 0, 1)?;
+            slot = Word::insert_into_word(slot, &v1, 0, 1)?;
+            slot = Word::insert_into_word(slot, &v2, 1, 2)?;
+            slot = Word::insert_into_word(slot, &v1_new, 0, 1)?;
 
-            let e1: u8 = extract_from_word(slot, 0, 1)?;
-            let e2: u16 = extract_from_word(slot, 1, 2)?;
+            let e1: u8 = Word::extract_from_word(slot, 0, 1)?;
+            let e2: u16 = Word::extract_from_word(slot, 1, 2)?;
 
             prop_assert_eq!(e1, v1_new);
             prop_assert_eq!(e2, v2);

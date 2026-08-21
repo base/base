@@ -120,7 +120,7 @@ impl ProofRequesterClient {
             warn!(
                 session_id = %request.proof.session_id,
                 backoff_ms = delay.as_millis(),
-                error = %error,
+                error_kind = error.kind(),
                 "prove block range failed; retrying"
             );
         })
@@ -144,7 +144,7 @@ impl ProofRequesterClient {
             warn!(
                 session_id = %request.session_id,
                 backoff_ms = delay.as_millis(),
-                error = %error,
+                error_kind = error.kind(),
                 "get proof failed; retrying"
             );
         })
@@ -168,7 +168,7 @@ impl ProofRequesterClient {
             warn!(
                 session_id = %request.session_id,
                 backoff_ms = delay.as_millis(),
-                error = %error,
+                error_kind = error.kind(),
                 "delete proof failed; retrying"
             );
         })
@@ -190,7 +190,7 @@ impl ProofRequesterClient {
                 warn!(
                     tee_signer = %request.tee_signer,
                     backoff_ms = delay.as_millis(),
-                    error = %error,
+                    error_kind = error.kind(),
                     "delete proofs by TEE signer failed; retrying"
                 );
             })
@@ -217,7 +217,7 @@ impl ProofRequesterClient {
                     limit = request.limit,
                     status_filter = ?request.status_filter,
                     backoff_ms = delay.as_millis(),
-                    error = %error,
+                    error_kind = error.kind(),
                     "list proofs failed; retrying"
                 );
             })
@@ -523,10 +523,12 @@ mod tests {
                     sequence_window: None,
                     l1_head: None,
                     intermediate_root_interval: None,
+                    schedule_l2_block_number: None,
                     zk_vm: ZkVm::Sp1,
                     zk_backend: ZkBackend::Cluster,
                 }),
             },
+            retry_failed: true,
         }
     }
 

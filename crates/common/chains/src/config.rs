@@ -57,6 +57,8 @@ pub struct ChainConfig {
     pub beryl_timestamp: Option<u64>,
     /// Cobalt activation timestamp (optional).
     pub cobalt_timestamp: Option<u64>,
+    /// Denim activation timestamp (optional).
+    pub denim_timestamp: Option<u64>,
 
     // Genesis
     /// L1 genesis block hash.
@@ -150,6 +152,13 @@ pub const SEPOLIA_BERYL_ACTIVATION_ADMIN_ADDRESS: Address =
 /// Base Zeronet activation registry admin used by Beryl before Cobalt state-backed admin storage.
 pub const ZERONET_BERYL_ACTIVATION_ADMIN_ADDRESS: Address =
     address!("F5969A85a555671EeD766C4ff0C61426AA626b11");
+
+/// Local Docker devnet activation registry admin used by Beryl before Cobalt state-backed storage.
+///
+/// Matches `L2_ACTIVATION_ADMIN_ADDR` in `etc/scripts/devnet/setup-l2.sh`, which defaults to the
+/// deterministic devnet sequencer address.
+pub const DEVNET_BERYL_ACTIVATION_ADMIN_ADDRESS: Address =
+    address!("9965507D1a55bcC2695C58ba16FB37d819B0A4dc");
 
 impl ChainConfig {
     /// CLI chain name for Base Mainnet.
@@ -247,7 +256,7 @@ impl ChainConfig {
         match id {
             8453 => Some(&MAINNET),
             84532 => Some(&SEPOLIA),
-            1337 => Some(&DEVNET),
+            84538453 => Some(&DEVNET),
             763360 => Some(&ZERONET),
             _ => None,
         }
@@ -280,6 +289,7 @@ impl ChainConfig {
             8453 => Some(MAINNET_BERYL_ACTIVATION_ADMIN_ADDRESS),
             84532 => Some(SEPOLIA_BERYL_ACTIVATION_ADMIN_ADDRESS),
             763360 => Some(ZERONET_BERYL_ACTIVATION_ADMIN_ADDRESS),
+            84538453 => Some(DEVNET_BERYL_ACTIVATION_ADMIN_ADDRESS),
             _ => None,
         }
     }
@@ -325,6 +335,7 @@ impl ChainConfig {
                 azul: self.azul_timestamp,
                 beryl: self.beryl_timestamp,
                 cobalt: self.cobalt_timestamp,
+                denim: self.denim_timestamp,
                 zenith: None,
             },
         }
@@ -409,7 +420,7 @@ const MAINNET: ChainConfig = ChainConfig {
     channel_timeout: 300,
 
     bedrock_block: 0,
-    regolith_timestamp: 0,
+    regolith_timestamp: 1_686_789_347,
     canyon_timestamp: 1_704_992_401,
     delta_timestamp: 1_708_560_000,
     ecotone_timestamp: 1_710_374_401,
@@ -422,6 +433,7 @@ const MAINNET: ChainConfig = ChainConfig {
     azul_timestamp: Some(1_779_991_200),
     beryl_timestamp: Some(1_782_410_400),
     cobalt_timestamp: None,
+    denim_timestamp: None,
 
     genesis_l1_hash: b256!("5c13d307623a926cd31415036c8b7fa14572f9dac64528e857a470511fc30771"),
     genesis_l1_number: 17_481_768,
@@ -482,7 +494,7 @@ const SEPOLIA: ChainConfig = ChainConfig {
     channel_timeout: 300,
 
     bedrock_block: 0,
-    regolith_timestamp: 0,
+    regolith_timestamp: 1_695_768_288,
     canyon_timestamp: 1_699_981_200,
     delta_timestamp: 1_703_203_200,
     ecotone_timestamp: 1_708_534_800,
@@ -495,6 +507,7 @@ const SEPOLIA: ChainConfig = ChainConfig {
     azul_timestamp: Some(1_776_708_000),
     beryl_timestamp: Some(1_781_805_600),
     cobalt_timestamp: None,
+    denim_timestamp: None,
 
     genesis_l1_hash: b256!("cac9a83291d4dec146d6f7f69ab2304f23f5be87b1789119a0c5b1e4482444ed"),
     genesis_l1_number: 4_370_868,
@@ -537,8 +550,8 @@ const SEPOLIA: ChainConfig = ChainConfig {
 };
 
 const DEVNET: ChainConfig = ChainConfig {
-    chain_id: 1337,
-    l1_chain_id: 900,
+    chain_id: 84538453,
+    l1_chain_id: 1337,
 
     block_time: 2,
     seq_window_size: 3600,
@@ -559,6 +572,7 @@ const DEVNET: ChainConfig = ChainConfig {
     azul_timestamp: Some(0),
     beryl_timestamp: None,
     cobalt_timestamp: None,
+    denim_timestamp: None,
 
     genesis_l1_hash: B256::ZERO,
     genesis_l1_number: 0,
@@ -599,19 +613,20 @@ const ZERONET: ChainConfig = ChainConfig {
     channel_timeout: 300,
 
     bedrock_block: 0,
-    regolith_timestamp: 0,
-    canyon_timestamp: 0,
-    delta_timestamp: 0,
-    ecotone_timestamp: 0,
-    fjord_timestamp: 0,
-    granite_timestamp: 0,
-    holocene_timestamp: 0,
+    regolith_timestamp: 1_782_348_588,
+    canyon_timestamp: 1_782_348_588,
+    delta_timestamp: 1_782_348_588,
+    ecotone_timestamp: 1_782_348_588,
+    fjord_timestamp: 1_782_348_588,
+    granite_timestamp: 1_782_348_588,
+    holocene_timestamp: 1_782_348_588,
     pectra_blob_schedule_timestamp: None,
-    isthmus_timestamp: 0,
-    jovian_timestamp: 0,
+    isthmus_timestamp: 1_782_348_588,
+    jovian_timestamp: 1_782_348_588,
     azul_timestamp: Some(1_782_348_888),
     beryl_timestamp: Some(1_782_349_188),
     cobalt_timestamp: None,
+    denim_timestamp: None,
 
     genesis_l1_hash: b256!("acb2c60e3887888b5111b05c8d8f32e2761c7d4a0f10562d199253ab072c3a71"),
     genesis_l1_number: 3_083_762,
@@ -689,6 +704,29 @@ mod tests {
     }
 
     #[test]
+    fn genesis_active_upgrades_use_genesis_timestamps() {
+        for chain in [ChainConfig::mainnet(), ChainConfig::sepolia()] {
+            assert_eq!(chain.regolith_timestamp, chain.genesis_l2_time);
+        }
+
+        let chain = ChainConfig::zeronet();
+        let upgrades = chain.upgrade_config();
+        for upgrade in [
+            BaseUpgrade::Regolith,
+            BaseUpgrade::Canyon,
+            BaseUpgrade::Delta,
+            BaseUpgrade::Ecotone,
+            BaseUpgrade::Fjord,
+            BaseUpgrade::Granite,
+            BaseUpgrade::Holocene,
+            BaseUpgrade::Isthmus,
+            BaseUpgrade::Jovian,
+        ] {
+            assert_eq!(upgrades.activation_timestamp(upgrade), Some(chain.genesis_l2_time));
+        }
+    }
+
+    #[test]
     fn supported_chain_names_resolve() {
         for name in ChainConfig::SUPPORTED_NAMES {
             assert!(ChainConfig::by_name(name).is_some(), "{name} should resolve");
@@ -747,6 +785,10 @@ mod tests {
         assert_eq!(
             ChainConfig::activation_admin_address_for_upgrade_by_chain_id(84532, BaseUpgrade::Azul),
             None
+        );
+        assert_eq!(
+            ChainConfig::beryl_activation_admin_address_by_chain_id(84538453),
+            Some(DEVNET_BERYL_ACTIVATION_ADMIN_ADDRESS)
         );
     }
 }

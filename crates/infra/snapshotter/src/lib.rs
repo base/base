@@ -24,12 +24,12 @@ pub use tip::{RpcTipChecker, TipChecker, TipStatus};
 
 mod snapshot;
 pub use snapshot::{
-    ChunkFilename, ChunkedArchive, ComponentManifest, OutputFileChecksum, SingleArchive,
-    SnapshotGenerator, SnapshotManifest, SnapshotManifestExt,
+    ChunkFilename, ChunkedArchive, ComponentManifest, ManifestGenerationParams, OutputFileChecksum,
+    SingleArchive, SnapshotGenerator, SnapshotManifest, SnapshotManifestExt,
 };
 
 mod upload;
-pub use upload::{SnapshotRun, SnapshotUploader, UploadStrategy};
+pub use upload::{SnapshotRun, SnapshotUploadParams, SnapshotUploader, UploadStrategy};
 
 mod orchestrator;
 pub use orchestrator::Snapshotter;

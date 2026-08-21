@@ -218,6 +218,9 @@ pub enum CreateProofRequestOutcome {
     Requeued(Uuid),
     /// An existing non-failed row was returned unchanged for idempotent replay.
     Replayed(Uuid),
+    /// An existing failed row was left unchanged because the caller did not
+    /// explicitly allow a retry.
+    RetryNotAllowed(Uuid),
     /// An existing failed row is at the retry cap; no requeue.
     RetryExhausted(Uuid),
 }
@@ -229,6 +232,7 @@ impl CreateProofRequestOutcome {
             Self::Created(id)
             | Self::Requeued(id)
             | Self::Replayed(id)
+            | Self::RetryNotAllowed(id)
             | Self::RetryExhausted(id) => *id,
         }
     }
@@ -1253,6 +1257,7 @@ mod tests {
                 sequence_window: Some(50),
                 l1_head: None,
                 intermediate_root_interval: None,
+                schedule_l2_block_number: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             }),

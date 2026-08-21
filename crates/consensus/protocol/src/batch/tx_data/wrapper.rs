@@ -111,7 +111,8 @@ impl TryFrom<&BaseTxEnvelope> for SpanBatchTransactionData {
                 Ok(Self::Eip8130(SpanBatchEip8130TransactionData {
                     sender: tx.sender,
                     nonce_key: tx.nonce_key,
-                    expiry: tx.expiry,
+                    valid_after: tx.valid_after,
+                    valid_before: tx.valid_before,
                     max_priority_fee_per_gas: tx.max_priority_fee_per_gas,
                     max_fee_per_gas: tx.max_fee_per_gas,
                     payer: tx.payer,

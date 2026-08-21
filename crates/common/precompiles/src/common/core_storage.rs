@@ -4,7 +4,9 @@ use alloc::string::String;
 
 use alloy_primitives::{Address, B256, FixedBytes, U256};
 use base_precompile_macros::Storable;
-use base_precompile_storage::Mapping;
+use base_precompile_storage::{Mapping, Result, StorageOps, Word};
+
+use crate::TransferPolicyIds;
 
 /// Core B-20 storage rooted at the `base.b20` ERC-7201 namespace.
 #[derive(Debug, Clone, Storable)]
@@ -90,6 +92,36 @@ pub struct B20CoreStorage {
     pub seize_receiver_policy_id: u64, // slot 14, offset 8
     /// Reserved padding to close slot 14.
     pub seize_reserved: FixedBytes<16>, // slot 14, offset 16
+}
+
+impl B20CoreStorageHandler<'_> {
+    /// Reads the sender/receiver/executor transfer policy ids in a single SLOAD.
+    ///
+    /// The three ids are packed into one storage word (slot 9); loading it once and extracting each
+    /// lane avoids the three separate SLOADs the per-field accessors would incur. Offsets come from
+    /// the generated packing constants, so they track the field layout (also pinned by the
+    /// offset test below).
+    pub fn transfer_policy_ids(&self) -> Result<TransferPolicyIds> {
+        let slot = self.transfer_sender_policy_id.slot();
+        let word = StorageOps::load(&self.transfer_sender_policy_id, slot)?;
+        Ok(TransferPolicyIds {
+            sender: Word::extract_from_word::<u64>(
+                word,
+                __packing_b20_core_storage::TRANSFER_SENDER_POLICY_ID_LOC.offset_bytes,
+                size_of::<u64>(),
+            )?,
+            receiver: Word::extract_from_word::<u64>(
+                word,
+                __packing_b20_core_storage::TRANSFER_RECEIVER_POLICY_ID_LOC.offset_bytes,
+                size_of::<u64>(),
+            )?,
+            executor: Word::extract_from_word::<u64>(
+                word,
+                __packing_b20_core_storage::TRANSFER_EXECUTOR_POLICY_ID_LOC.offset_bytes,
+                size_of::<u64>(),
+            )?,
+        })
+    }
 }
 
 #[cfg(test)]

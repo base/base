@@ -10,9 +10,8 @@ use std::{
 };
 
 use async_trait::async_trait;
-use base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL;
-use base_proof_succinct_proof_utils::{ClusterArtifactStore, ClusterProofConfig};
 use base_proof_zk_host::{ZkProver, ZkProverError, ZkSessionState};
+use base_proof_zk_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL;
 use base_prover_service_protocol::{
     ProofResult, SessionType, SnarkPlonkProofRequest, SnarkPlonkProofResult, ZkProofRequest,
     ZkProofResult, ZkVm,
@@ -33,6 +32,7 @@ use sp1_sdk::{
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
+use super::utils::{ClusterArtifactStore, ClusterProofConfig};
 use crate::succinct::{
     L1HeadSource, OpSuccinctWitnessProvider, SuccinctRpcConfig, SuccinctZkProverBuildError,
     SuccinctZkProverBuilder, WitnessParams,
@@ -176,7 +176,7 @@ impl ClusterZkProver {
         let Some((range_vk, _aggregation_vk)) = SuccinctZkProverBuilder::complete_unless_cancelled(
             cancel,
             async {
-                base_proof_succinct_proof_utils::cluster_setup_vkeys().await.map_err(|error| {
+                super::utils::cluster_setup_vkeys().await.map_err(|error| {
                     SuccinctZkProverBuildError::boxed_operation(
                         "failed to compute proof verification keys",
                         error.into_boxed_dyn_error(),
@@ -599,7 +599,7 @@ impl ClusterZkProver {
         );
 
         let witness_start = std::time::Instant::now();
-        let stdin = self
+        let stdin = match self
             .provider
             .generate_witness(WitnessParams {
                 start_block,
@@ -613,25 +613,28 @@ impl ClusterZkProver {
                     L1HeadSource::Pinned,
                 ),
                 intermediate_root_interval,
+                schedule_l2_block_number: request.schedule_l2_block_number,
             })
             .await
-            .map_err(|e| {
+        {
+            Ok(stdin) => stdin,
+            Err(e) => {
                 error!(
                     start_block = start_block,
                     end_block = end_block,
                     error = %e,
                     "witness generation failed"
                 );
-                backend_error!("witness generation failed: {e}")
-            })?;
-        let witness_gen_duration_ms = witness_start.elapsed().as_secs_f64() * 1000.0;
+                return Err(backend_error!("witness generation failed: {e}"));
+            }
+        };
 
         info!(
             proof_id = %proof_id,
-            witness_gen_duration_ms = witness_gen_duration_ms,
             timeout_secs = self.config.timeout.as_secs(),
             range_cycle_limit = self.config.range_cycle_limit,
             range_gas_limit = self.config.range_gas_limit,
+            witness_gen_duration_ms = witness_start.elapsed().as_millis(),
             "witness generated, submitting range proof to SP1 cluster"
         );
 
@@ -793,8 +796,8 @@ impl ClusterZkProver {
         }
 
         let range_session = ClusterSessionId::parse(range_backend_session_id)?;
-        let witness_start = std::time::Instant::now();
         let range_proof = self.download_cluster_proof(&range_session).await?;
+        let witness_start = std::time::Instant::now();
         let stdin = self
             .provider
             .generate_aggregation_witness(
@@ -804,16 +807,16 @@ impl ClusterZkProver {
             )
             .await
             .map_err(|e| backend_error!("aggregation witness generation failed: {e}"))?;
-        let witness_gen_duration_ms = witness_start.elapsed().as_secs_f64() * 1000.0;
+        let witness_gen_duration_ms = witness_start.elapsed().as_millis();
 
         let session = self.create_cluster_request(proof_id, stdin, ProofMode::Plonk).await?;
         let backend_session_id = session.to_backend_session_id()?;
         info!(
             proof_id = %session.proof_id,
             proof_output_id = %session.proof_output_id,
-            witness_gen_duration_ms = witness_gen_duration_ms,
             cycle_limit = self.config.aggregation_cycle_limit,
             gas_limit = self.config.aggregation_gas_limit,
+            witness_gen_duration_ms = witness_gen_duration_ms,
             "aggregation proof request submitted to SP1 cluster"
         );
 

@@ -25,6 +25,11 @@ pub use el::{
 mod flashblocks;
 pub use flashblocks::{TimestampedFlashblock, run_flashblock_ws, run_flashblock_ws_timestamped};
 
+mod games;
+pub use games::{
+    EXPECTED_RESOLUTION_NEVER, GameDetails, GameListFilter, GameStatus, GameSummary, GamesClient,
+};
+
 mod l1;
 pub use l1::{
     L1BlockInfo, L1ConnectionMode, fetch_full_system_config, fetch_l1_block_number,
@@ -44,7 +49,7 @@ mod pods;
 pub use pods::{PodGroupStatus, PodStatus, PodsPoller, PodsSnapshot, run_pods_poller};
 
 mod prover;
-pub use prover::{ProofFinalizeRequest, ProofsClient};
+pub use prover::{ProofProposeRequest, ProofsClient};
 
 mod rollup;
 pub use rollup::{
@@ -53,10 +58,13 @@ pub use rollup::{
     run_validator_poller,
 };
 
+mod submit;
+pub use submit::{ProposalProofSubmitter, SnarkPlonkProofBytes, SubmittedProof, SubmitterKey};
+
 mod telemetry;
 pub use telemetry::{
-    ElReachabilityOutcome, ElReachabilityResponse, ElReachabilityStage, TelemetryApiError,
-    TelemetryClient, TelemetryClientError, TelemetryErrorResponse,
+    ReachabilityOutcome, ReachabilityResponse, TelemetryApiError, TelemetryClient,
+    TelemetryClientError, TelemetryErrorResponse,
 };
 
 mod txpool;

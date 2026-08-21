@@ -7,7 +7,7 @@
 //!
 //! ```rust
 //! use alloy_rpc_types_eth::BlockId;
-//! use base_common_network::Base;
+//! use base_common_rpc_types::BaseRpcTypes;
 //! use reth_db::test_utils::create_test_rw_db_with_path;
 //! use reth_node_builder::{
 //!     ConsensusEngineHandle, LaunchContext, NodeConfig, RethFullAdapter,
@@ -76,7 +76,10 @@
 //!         cache,
 //!         engine_handle: ConsensusEngineHandle::new(tx),
 //!     };
-//!     let eth_api = BaseEthApiBuilder::<Base>::default().build_eth_api(ctx).await.unwrap();
+//!     let eth_api = BaseEthApiBuilder::<BaseRpcTypes>::default()
+//!         .build_eth_api(ctx)
+//!         .await
+//!         .unwrap();
 //!
 //!     // build `trace` namespace API
 //!     let trace_api = TraceApi::new(eth_api, BlockingTaskGuard::new(10), EthConfig::default());

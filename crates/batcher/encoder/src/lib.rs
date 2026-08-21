@@ -17,13 +17,16 @@ mod reorg;
 pub use reorg::ReorgError;
 
 mod config;
-pub use config::{EncoderConfig, EncoderConfigError};
+pub use config::{CompressionAlgo, EncoderConfig, EncoderConfigError};
 
 mod pipeline;
-pub use pipeline::BatchPipeline;
+pub use pipeline::{BatchPipeline, DerivationReconciliation};
 
 mod channel;
-pub use channel::{OpenChannel, PendingRef, ReadyChannel};
+pub use channel::{
+    ChannelAddOutcome, ChannelFullReason, FrameState, OpenChannel, OpenChannelError,
+    OpenChannelKind, PendingRef, ReadyChannel, SpanChannel,
+};
 
 mod encoder;
 pub use encoder::BatchEncoder;

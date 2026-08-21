@@ -34,7 +34,8 @@ base_metrics::define_metrics! {
     #[describe("Number of preimages captured in the last witness build")]
     preimage_count: gauge,
 
-    #[describe("Size of a witness submitted to a Nitro enclave in bytes")]
+    #[describe("Canonical estimate of range witness data bytes (Nitro: preimage values; SP1: stdin buffer lengths)")]
+    #[label(name = "prover", default = ["sp1", "nitro"])]
     witness_size_bytes: histogram,
 
     #[describe("Latency in seconds for debug_executePayload RPC calls to the L2 proof node")]
@@ -43,7 +44,8 @@ base_metrics::define_metrics! {
     #[describe("End-to-end proof generation duration")]
     proof_duration_seconds: histogram,
 
-    #[describe("Witness build duration")]
+    #[describe("Range witness build duration")]
+    #[label(name = "prover", default = ["sp1", "nitro"])]
     witness_build_duration_seconds: histogram,
 
     #[describe("Backend prover duration")]
@@ -72,6 +74,12 @@ impl Metrics {
 
     /// Future was cancelled (dropped) before completion.
     pub const OUTCOME_DROPPED: &str = "dropped";
+
+    /// SP1 prover label for witness metrics.
+    pub const PROVER_SP1: &str = "sp1";
+
+    /// Nitro TEE prover label for witness metrics.
+    pub const PROVER_NITRO: &str = "nitro";
 }
 
 /// RAII guard for in-flight proof tracking.

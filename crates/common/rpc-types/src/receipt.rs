@@ -4,12 +4,13 @@ use alloc::vec::Vec;
 
 use alloy_consensus::{Receipt, ReceiptWithBloom, TxReceipt};
 use alloy_primitives::{Address, Bytes};
-use alloy_rpc_types_eth::Log;
 use alloy_serde::OtherFields;
 use base_common_consensus::{
     BaseReceipt, BaseReceiptEnvelope, DepositReceipt, DepositReceiptWithBloom,
 };
 use serde::{Deserialize, Serialize};
+
+use crate::BaseLogResponse;
 
 /// Base transaction receipt type
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -18,7 +19,8 @@ use serde::{Deserialize, Serialize};
 pub struct BaseTransactionReceipt {
     /// Regular eth transaction receipt including deposit receipts
     #[serde(flatten)]
-    pub inner: alloy_rpc_types_eth::TransactionReceipt<ReceiptWithBloom<BaseReceipt<Log>>>,
+    pub inner:
+        alloy_rpc_types_eth::TransactionReceipt<ReceiptWithBloom<BaseReceipt<BaseLogResponse>>>,
     /// L1 block info of the transaction.
     #[serde(flatten)]
     pub l1_block_info: L1BlockInfo,
@@ -32,16 +34,40 @@ pub struct BaseTransactionReceipt {
     /// Per-phase execution statuses for EIP-8130 transactions.
     ///
     /// Each entry is `0x01` (success) or `0x00` (reverted); phases after a revert are
-    /// not executed and reported as `0x00`. Empty for non-EIP-8130 transactions or when
-    /// the transaction's `calls` was empty.
-    #[serde(default, skip_serializing_if = "Vec::is_empty", with = "alloy_serde::quantity::vec")]
-    pub phase_statuses: Vec<u8>,
+    /// not executed and reported as `0x00`. `None` for non-EIP-8130 transactions (the
+    /// field is omitted from the JSON); `Some([])` for an EIP-8130 transaction whose
+    /// `calls` was empty, which per EIP-8130 must still surface as `"phaseStatuses": []`.
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "phase_statuses_serde")]
+    pub phase_statuses: Option<Vec<u8>>,
     /// Opaque transaction metadata for EIP-8130 transactions, committed to by the sender
     /// and payer signatures but otherwise uninterpreted by the protocol.
     ///
     /// Always null for non-EIP-8130 transactions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Bytes>,
+}
+
+/// EIP-8130-specific fields attached to a transaction receipt response.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Eip8130ReceiptFields {
+    /// Resolved gas payer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payer: Option<Address>,
+    /// Per-phase execution statuses.
+    #[serde(default, skip_serializing_if = "Vec::is_empty", with = "alloy_serde::quantity::vec")]
+    pub phase_statuses: Vec<u8>,
+    /// Opaque transaction metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Bytes>,
+}
+
+impl TryFrom<Eip8130ReceiptFields> for OtherFields {
+    type Error = serde_json::Error;
+
+    fn try_from(value: Eip8130ReceiptFields) -> Result<Self, Self::Error> {
+        serde_json::to_value(value)?.try_into()
+    }
 }
 
 impl alloy_network_primitives::ReceiptResponse for BaseTransactionReceipt {
@@ -66,39 +92,39 @@ impl alloy_network_primitives::ReceiptResponse for BaseTransactionReceipt {
     }
 
     fn transaction_index(&self) -> Option<u64> {
-        self.inner.transaction_index()
+        self.inner.transaction_index
     }
 
     fn gas_used(&self) -> u64 {
-        self.inner.gas_used()
+        self.inner.gas_used
     }
 
     fn effective_gas_price(&self) -> u128 {
-        self.inner.effective_gas_price()
+        self.inner.effective_gas_price
     }
 
     fn blob_gas_used(&self) -> Option<u64> {
-        self.inner.blob_gas_used()
+        self.inner.blob_gas_used
     }
 
     fn blob_gas_price(&self) -> Option<u128> {
-        self.inner.blob_gas_price()
+        self.inner.blob_gas_price
     }
 
     fn from(&self) -> alloy_primitives::Address {
-        self.inner.from()
+        self.inner.from
     }
 
     fn to(&self) -> Option<alloy_primitives::Address> {
-        self.inner.to()
+        self.inner.to
     }
 
     fn cumulative_gas_used(&self) -> u64 {
-        self.inner.cumulative_gas_used()
+        self.inner.inner.cumulative_gas_used()
     }
 
     fn state_root(&self) -> Option<alloy_primitives::B256> {
-        self.inner.state_root()
+        self.inner.inner.status_or_post_state().as_post_state()
     }
 }
 
@@ -149,6 +175,40 @@ mod l1_fee_scalar_serde {
         }
 
         Ok(None)
+    }
+}
+
+/// Serde for the EIP-8130 `phaseStatuses` field.
+///
+/// Separates applicability from contents: `None` (a non-EIP-8130 receipt) is
+/// omitted from the JSON via `skip_serializing_if`, while `Some(vec)` — including
+/// the empty vector for an EIP-8130 transaction whose `calls` was empty — always
+/// serializes as a (possibly empty) array of `0x00`/`0x01` quantities.
+mod phase_statuses_serde {
+    use alloc::vec::Vec;
+
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub(super) fn serialize<S>(value: &Option<Vec<u8>>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match value {
+            Some(statuses) => {
+                alloy_serde::quantity::vec::serialize(statuses.as_slice(), serializer)
+            }
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Wrapper(#[serde(with = "alloy_serde::quantity::vec")] Vec<u8>);
+
+        Ok(Option::<Wrapper>::deserialize(deserializer)?.map(|Wrapper(statuses)| statuses))
     }
 }
 
@@ -233,10 +293,10 @@ impl From<BaseTransactionReceipt> for BaseReceiptEnvelope {
         /// consensus types.
         #[inline(always)]
         fn convert_standard_receipt(
-            receipt: Receipt<alloy_rpc_types_eth::Log>,
+            receipt: Receipt<BaseLogResponse>,
             logs_bloom: alloy_primitives::Bloom,
         ) -> ReceiptWithBloom<Receipt<alloy_primitives::Log>> {
-            let consensus_logs = receipt.logs.into_iter().map(|log| log.inner).collect();
+            let consensus_logs = receipt.logs.into_iter().map(|log| log.inner.inner).collect();
             ReceiptWithBloom {
                 receipt: Receipt {
                     status: receipt.status,
@@ -266,7 +326,8 @@ impl From<BaseTransactionReceipt> for BaseReceiptEnvelope {
                 Self::Eip8130(convert_standard_receipt(receipt.inner, logs_bloom))
             }
             BaseReceipt::Deposit(receipt) => {
-                let consensus_logs = receipt.inner.logs.into_iter().map(|log| log.inner).collect();
+                let consensus_logs =
+                    receipt.inner.logs.into_iter().map(|log| log.inner.inner).collect();
                 let consensus_receipt = DepositReceiptWithBloom {
                     receipt: DepositReceipt {
                         inner: Receipt {
@@ -305,7 +366,19 @@ mod tests {
         "effectiveGasPrice": "0x0",
         "from": "0xdeaddeaddeaddeaddeaddeaddeaddeaddead0001",
         "gasUsed": "0xfa0d",
-        "logs": [],
+        "logs": [{
+            "address": "0x4200000000000000000000000000000000000015",
+            "topics": [],
+            "data": "0x",
+            "blockHash": "0x9e6a0fb7e22159d943d760608cc36a0fb596d1ab3c997146f5b7c55c8c718c67",
+            "blockNumber": "0x6cfef89",
+            "blockTimestamp": "0x2a",
+            "blockTimestampMs": "0xa4d8",
+            "transactionHash": "0xb7c74afdeb7c89fb9de2c312f49b38cb7a850ba36e064734c5223a477e83fdc9",
+            "transactionIndex": "0x0",
+            "logIndex": "0x0",
+            "removed": false
+        }],
         "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
         "status": "0x1",
         "to": "0x4200000000000000000000000000000000000015",
@@ -327,6 +400,53 @@ mod tests {
         let value = serde_json::to_value(&receipt).unwrap();
         let expected_value = serde_json::from_str::<serde_json::Value>(s).unwrap();
         assert_eq!(value, expected_value);
+        assert!(value.get("blockTimestampMs").is_none());
+        assert_eq!(value["logs"][0]["blockTimestamp"], "0x2a");
+        assert_eq!(value["logs"][0]["blockTimestampMs"], "0xa4d8");
+    }
+
+    #[test]
+    fn phase_statuses_distinguishes_absent_from_empty() {
+        use alloc::{vec, vec::Vec};
+
+        // The base JSON carries no `phaseStatuses`, so a non-EIP-8130 receipt
+        // deserializes to `None` and re-serializes with the field omitted.
+        let s = r#"{
+            "blockHash": "0x9e6a0fb7e22159d943d760608cc36a0fb596d1ab3c997146f5b7c55c8c718c67",
+            "blockNumber": "0x6cfef89",
+            "contractAddress": null,
+            "cumulativeGasUsed": "0xfa0d",
+            "effectiveGasPrice": "0x0",
+            "from": "0xdeaddeaddeaddeaddeaddeaddeaddeaddead0001",
+            "gasUsed": "0xfa0d",
+            "logs": [],
+            "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            "status": "0x1",
+            "to": "0x4200000000000000000000000000000000000015",
+            "transactionHash": "0xb7c74afdeb7c89fb9de2c312f49b38cb7a850ba36e064734c5223a477e83fdc9",
+            "transactionIndex": "0x0",
+            "type": "0x79"
+        }"#;
+
+        let mut receipt: BaseTransactionReceipt = serde_json::from_str(s).unwrap();
+        assert_eq!(receipt.phase_statuses, None);
+        let json = serde_json::to_value(&receipt).unwrap();
+        assert!(json.get("phaseStatuses").is_none(), "absent statuses must omit the field");
+
+        // Applicable but empty (EIP-8130 with empty `calls`) must serialize as `[]`,
+        // distinguishable from the omitted field above, and round-trip back to `Some([])`.
+        receipt.phase_statuses = Some(Vec::new());
+        let json = serde_json::to_value(&receipt).unwrap();
+        assert_eq!(json["phaseStatuses"], json!([]));
+        let back: BaseTransactionReceipt = serde_json::from_value(json).unwrap();
+        assert_eq!(back.phase_statuses, Some(Vec::new()));
+
+        // Populated statuses serialize as an array of quantity bytes.
+        receipt.phase_statuses = Some(vec![0x01, 0x00]);
+        let json = serde_json::to_value(&receipt).unwrap();
+        assert_eq!(json["phaseStatuses"], json!(["0x1", "0x0"]));
+        let back: BaseTransactionReceipt = serde_json::from_value(json).unwrap();
+        assert_eq!(back.phase_statuses, Some(vec![0x01, 0x00]));
     }
 
     #[test]
@@ -369,5 +489,23 @@ mod tests {
 
         let base_fields: TransactionReceiptFields = serde_json::from_value(json).unwrap();
         assert_eq!(base_fields.l1_block_info.l1_fee_scalar, None);
+    }
+
+    #[test]
+    fn eip8130_receipt_fields_use_canonical_rpc_shape() {
+        let payer = Address::repeat_byte(0xaa);
+        let fields = Eip8130ReceiptFields {
+            payer: Some(payer),
+            phase_statuses: vec![0x01, 0x00],
+            metadata: Some(Bytes::from_static(&[0xca, 0xfe])),
+        };
+        let json = serde_json::to_value(&fields).unwrap();
+
+        assert_eq!(json["payer"], serde_json::to_value(payer).unwrap());
+        assert_eq!(json["phaseStatuses"], json!(["0x1", "0x0"]));
+        assert_eq!(json["metadata"], "0xcafe");
+
+        let other = OtherFields::try_from(fields).unwrap();
+        assert_eq!(other.get("phaseStatuses"), Some(&json!(["0x1", "0x0"])));
     }
 }

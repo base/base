@@ -2,9 +2,13 @@ use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, Bytes, Signed, U160, U256};
 use alloy_rpc_types::TransactionRequest;
 use alloy_sol_types::{SolCall, sol};
+use async_trait::async_trait;
 
 use super::Payload;
-use crate::workload::SeededRng;
+use crate::{
+    Result,
+    workload::{SeededRng, chain_prep::ChainPrepContext},
+};
 
 type I24 = Signed<24, 1>;
 
@@ -81,6 +85,7 @@ impl AerodromeClPayload {
     }
 }
 
+#[async_trait]
 impl Payload for AerodromeClPayload {
     fn name(&self) -> &'static str {
         "aerodrome_cl"
@@ -88,6 +93,13 @@ impl Payload for AerodromeClPayload {
 
     fn uses_runner_recipient(&self) -> bool {
         false
+    }
+
+    async fn prepare(&self, ctx: &mut ChainPrepContext<'_>) -> Result<()> {
+        if let Some(setup) = ctx.real_token_setup {
+            super::real_token_lifecycle::prepare(ctx, setup).await?;
+        }
+        Ok(())
     }
 
     fn generate(&self, rng: &mut SeededRng, from: Address, _to: Address) -> TransactionRequest {

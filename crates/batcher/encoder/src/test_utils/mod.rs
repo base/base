@@ -3,8 +3,12 @@
 use std::collections::VecDeque;
 
 use base_common_consensus::BaseBlock;
+use base_protocol::BlockInfo;
 
-use crate::{BatchPipeline, BatchSubmission, ReorgError, StepError, StepResult, SubmissionId};
+use crate::{
+    BatchPipeline, BatchSubmission, DerivationReconciliation, ReorgError, StepError, StepResult,
+    SubmissionId,
+};
 
 /// A mock implementation of [`BatchPipeline`] for testing downstream consumers
 /// such as the [`BatchDriver`](crate::BatchPipeline).
@@ -26,8 +30,8 @@ pub struct MockBatchPipeline {
     pub resets: usize,
     /// L1 heads that were advanced to.
     pub l1_heads: Vec<u64>,
-    /// Safe L2 block numbers that were pruned to.
-    pub safe_l2_numbers_pruned: Vec<u64>,
+    /// Safe L2 block numbers passed to derivation reconciliation.
+    pub safe_l2_numbers_reconciled: Vec<u64>,
 }
 
 impl BatchPipeline for MockBatchPipeline {
@@ -45,6 +49,10 @@ impl BatchPipeline for MockBatchPipeline {
         self.submissions.pop_front()
     }
 
+    fn has_ready_submission(&self) -> bool {
+        !self.submissions.is_empty()
+    }
+
     fn confirm(&mut self, id: SubmissionId, l1_block: u64) {
         self.confirmed.push((id, l1_block));
     }
@@ -59,8 +67,13 @@ impl BatchPipeline for MockBatchPipeline {
         self.l1_heads.push(l1_block);
     }
 
-    fn prune_safe(&mut self, safe_l2_number: u64) {
-        self.safe_l2_numbers_pruned.push(safe_l2_number);
+    fn reconcile_derivation(
+        &mut self,
+        safe_l2: BlockInfo,
+        _: Option<u64>,
+    ) -> DerivationReconciliation {
+        self.safe_l2_numbers_reconciled.push(safe_l2.number);
+        DerivationReconciliation::Consistent
     }
 
     fn reset(&mut self) {

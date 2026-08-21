@@ -8,7 +8,7 @@
 /// ```ignore
 /// let _timer = base_metrics::timed!(Metrics::proof_duration_seconds());
 ///
-/// let mut timer = base_metrics::timed!(Metrics::witness_build_duration_seconds());
+/// let mut timer = base_metrics::timed!(Metrics::witness_build_duration_seconds("nitro"));
 /// timer.stop();
 /// ```
 #[macro_export]

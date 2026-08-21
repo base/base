@@ -144,6 +144,7 @@ mod tests {
                 transaction_index: Some(3),
                 effective_gas_price: Some(1_000_000_000),
             },
+            block_timestamp_ms: None,
             deposit_nonce: None,
             deposit_receipt_version: None,
         };

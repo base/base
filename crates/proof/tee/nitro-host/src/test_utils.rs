@@ -38,6 +38,14 @@ impl MockRegistry {
 
 #[async_trait]
 impl TEEProverRegistryClient for MockRegistry {
+    fn address(&self) -> Address {
+        Address::ZERO
+    }
+
+    async fn nitro_validator(&self) -> Result<Address, base_proof_contracts::ContractError> {
+        unimplemented!()
+    }
+
     async fn is_valid_signer(
         &self,
         _signer: Address,
@@ -90,6 +98,14 @@ impl AddressBasedMockRegistry {
 
 #[async_trait]
 impl TEEProverRegistryClient for AddressBasedMockRegistry {
+    fn address(&self) -> Address {
+        Address::ZERO
+    }
+
+    async fn nitro_validator(&self) -> Result<Address, base_proof_contracts::ContractError> {
+        unimplemented!()
+    }
+
     async fn is_valid_signer(
         &self,
         signer: Address,

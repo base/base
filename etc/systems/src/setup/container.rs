@@ -1,7 +1,7 @@
 use std::{
     fs,
     io::ErrorKind,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Command,
     thread,
     time::{Duration, Instant},
@@ -124,17 +124,23 @@ impl SetupImage {
     }
 
     /// Finds the repository root that contains the setup Dockerfile.
+    ///
+    /// Resolved from this crate's `CARGO_MANIFEST_DIR` (fixed at compile time) rather than the
+    /// process's current directory, so this still finds the Dockerfile when `base-system-tests`
+    /// is compiled as a vendored git dependency from another workspace — where the process's
+    /// current directory is the consuming repo, not this one.
     pub fn find_repo_root() -> Result<PathBuf> {
-        let mut path = std::env::current_dir()?;
-        loop {
-            if path.join("Cargo.toml").exists() && path.join(SETUP_DOCKERFILE_PATH).exists() {
-                return Ok(path);
-            }
-            if !path.pop() {
-                break;
-            }
-        }
-        Err(eyre::eyre!("Could not find repository root with {SETUP_DOCKERFILE_PATH}"))
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .ok_or_else(|| eyre::eyre!("CARGO_MANIFEST_DIR has no grandparent directory"))?
+            .to_path_buf();
+        ensure!(
+            repo_root.join(SETUP_DOCKERFILE_PATH).exists(),
+            "{SETUP_DOCKERFILE_PATH} not found under {}",
+            repo_root.display()
+        );
+        Ok(repo_root)
     }
 }
 
@@ -230,6 +236,7 @@ pub struct SetupContainer {
     base_azul_activation_block: Option<u64>,
     base_beryl_activation_block: Option<u64>,
     base_cobalt_activation_block: Option<u64>,
+    base_denim_activation_block: Option<u64>,
     base_zenith_activation_block: Option<u64>,
     network_name: Option<String>,
 }
@@ -241,11 +248,12 @@ impl SetupContainer {
             output_dir: output_dir.into(),
             chain_id: 1337,
             l2_chain_id: 84538453,
-            slot_duration: 2,
+            slot_duration: 1,
             isthmus_activation_block: None,
             base_azul_activation_block: None,
             base_beryl_activation_block: None,
             base_cobalt_activation_block: None,
+            base_denim_activation_block: None,
             base_zenith_activation_block: None,
             network_name: None,
         }
@@ -293,7 +301,13 @@ impl SetupContainer {
         self
     }
 
-    /// Sets the L2 block number at which Base Zenith activates.
+    /// Sets the L2 block number at which Base Denim activates.
+    pub const fn with_base_denim_activation_block(mut self, block: u64) -> Self {
+        self.base_denim_activation_block = Some(block);
+        self
+    }
+
+    /// Sets the L2 block number at which the genesis-only Base Zenith testing gate activates.
     pub const fn with_base_zenith_activation_block(mut self, block: u64) -> Self {
         self.base_zenith_activation_block = Some(block);
         self
@@ -398,6 +412,10 @@ impl SetupContainer {
 
         if let Some(block) = self.base_cobalt_activation_block {
             container = container.with_env_var("L2_BASE_COBALT_BLOCK", block.to_string());
+        }
+
+        if let Some(block) = self.base_denim_activation_block {
+            container = container.with_env_var("L2_BASE_DENIM_BLOCK", block.to_string());
         }
 
         if let Some(block) = self.base_zenith_activation_block {

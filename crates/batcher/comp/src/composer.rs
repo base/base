@@ -19,9 +19,6 @@ pub enum BatchComposeError {
 }
 
 /// Converts L2 blocks into [`SingleBatch`]es.
-///
-/// This is the Rust equivalent of `BlockToSingularBatch` from the reference batcher's
-/// `channel_out.go`.
 #[derive(Debug)]
 pub struct BatchComposer;
 
@@ -29,7 +26,6 @@ impl BatchComposer {
     /// Convert an L2 [`BaseBlock`] into a [`SingleBatch`] and the decoded
     /// [`L1BlockInfoTx`].
     ///
-    /// Mirrors the reference batcher's `BlockToSingularBatch`:
     /// 1. The first transaction must be a deposit carrying L1 block info calldata.
     /// 2. All deposit transactions are filtered out; remaining user transactions
     ///    are EIP-2718-encoded.

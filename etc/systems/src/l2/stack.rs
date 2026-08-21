@@ -8,15 +8,25 @@
 
 use std::{num::NonZeroU64, time::Duration};
 
+use alloy_consensus::SignableTransaction;
+use alloy_eips::{BlockNumberOrTag, eip2718::Encodable2718};
 use alloy_genesis::ChainConfig;
-use alloy_primitives::B256;
+use alloy_network::{Ethereum, TransactionBuilder};
+use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_engine::JwtSecret;
+use alloy_signer::SignerSync;
+use alloy_signer_local::PrivateKeySigner;
 use base_common_genesis::RollupConfig;
+use base_common_network::Base;
+use base_common_rpc_types::BaseTransactionRequest;
 use base_consensus_node::NodeMode;
 use base_execution_cli::ExecutionUpgradeSignalConfig;
+use base_node_runner::BaseNodeExtension;
 use base_tx_forwarding::TxForwardingConfig;
 use base_upgrade_signal::UpgradeSignalConfig;
 use eyre::{Result, WrapErr};
+use tokio::time::{sleep, timeout};
 use url::Url;
 
 use super::{
@@ -25,7 +35,7 @@ use super::{
     InProcessFollowConsensus, InProcessFollowConsensusConfig, L2ContainerConfig, ShadowSequencer,
     ShadowSequencerConfig,
 };
-use crate::config::SEQUENCER;
+use crate::config::{ANVIL_ACCOUNT_1, BATCHER, SEQUENCER};
 
 /// Consensus mode used by the L2 client node.
 #[derive(Debug, Clone, Copy, Default)]
@@ -38,7 +48,7 @@ pub enum L2ClientConsensusMode {
 }
 
 /// Configuration for the L2 stack.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct L2StackConfig {
     /// L2 genesis JSON content.
     pub l2_genesis: Vec<u8>,
@@ -58,11 +68,15 @@ pub struct L2StackConfig {
     pub l1_rpc_url: String,
     /// L1 beacon API endpoint URL (host-accessible).
     pub l1_beacon_url: String,
+    /// L1 slot duration in seconds, used as the consensus derivation poll override.
+    pub l1_slot_duration: u64,
     /// Optional container configuration for stable naming and port binding.
     pub container_config: Option<L2ContainerConfig>,
     /// Optional transaction forwarding configuration for the client node.
     /// When set, the client will forward transactions to builder RPC endpoints.
     pub tx_forwarding_config: Option<TxForwardingConfig>,
+    /// Whether both L2 nodes enable experimental validity transaction transport.
+    pub enable_experimental_validity_transactions: bool,
     /// Number of L1 blocks to keep distance from the L1 head for the client (validator)
     /// consensus node's derivation pipeline.
     pub verifier_l1_confs: u64,
@@ -74,6 +88,10 @@ pub struct L2StackConfig {
     pub execution_upgrade_signal: Option<ExecutionUpgradeSignalConfig>,
     /// Shadow sequencer configuration. When [`None`], no shadow sequencers are started.
     pub shadow_sequencers: Option<ShadowSequencersConfig>,
+    /// Additional node extensions installed on the builder, after its built-in RPC wiring.
+    pub extra_builder_extensions: Vec<Box<dyn BaseNodeExtension>>,
+    /// Additional node extensions installed on the client, after its built-in extensions.
+    pub extra_client_extensions: Vec<Box<dyn BaseNodeExtension>>,
 }
 
 /// Configuration for the shadow sequencers running alongside the active sequencer.
@@ -85,6 +103,8 @@ pub struct ShadowSequencersConfig {
     pub keys: Vec<B256>,
     /// Number of private blocks each shadow sequencer builds per reconciliation cycle.
     pub blocks_per_cycle: NonZeroU64,
+    /// If set, start the active sequencer first and delay shadows until this L2 height.
+    pub start_block: Option<u64>,
 }
 
 /// Running L2 client consensus node.
@@ -162,8 +182,11 @@ impl L2Stack {
         let l1_rpc_url: Url = config.l1_rpc_url.parse().wrap_err("Invalid L1 RPC URL")?;
         let l1_beacon_url: Url = config.l1_beacon_url.parse().wrap_err("Invalid L1 beacon URL")?;
 
-        let rollup_config: RollupConfig = serde_json::from_slice(&config.rollup_config)
+        let mut rollup_config: RollupConfig = serde_json::from_slice(&config.rollup_config)
             .wrap_err("Failed to parse rollup config")?;
+        if config.shadow_sequencers.as_ref().is_some_and(|shadow| shadow.start_block.is_some()) {
+            rollup_config.block_time = 2;
+        }
         let l1_chain_config: ChainConfig = serde_json::from_slice(&config.l1_genesis)
             .wrap_err("Failed to parse L1 chain config")?;
 
@@ -176,6 +199,9 @@ impl L2Stack {
             auth_port: container_config.and_then(|c| c.builder_auth_port),
             p2p_port: container_config.and_then(|c| c.builder_p2p_port),
             flashblocks_port: container_config.and_then(|c| c.builder_flashblocks_port),
+            enable_experimental_validity_transactions: config
+                .enable_experimental_validity_transactions,
+            extra_extensions: config.extra_builder_extensions,
         };
         let builder = InProcessBuilder::start(builder_config)
             .await
@@ -199,7 +225,7 @@ impl L2Stack {
             p2p_tcp_port: container_config.and_then(|c| c.builder_consensus_p2p_tcp_port),
             p2p_udp_port: container_config.and_then(|c| c.builder_consensus_p2p_udp_port),
             unsafe_block_signer: SEQUENCER.address,
-            l1_slot_duration_override: Some(4),
+            l1_slot_duration_override: Some(config.l1_slot_duration),
             sequencer_stopped: true,
             verifier_l1_confs: 0,
             shadow_blocks_per_cycle: None,
@@ -209,16 +235,25 @@ impl L2Stack {
             .await
             .wrap_err("Failed to start builder consensus")?;
 
-        // 3. Start the in-process batcher, pointing at builder consensus RPC.
-        // No host gateway translation needed — the batcher runs in the same process as the test.
-        let batcher = InProcessBatcher::start(InProcessBatcherConfig {
-            l1_rpc_url: l1_rpc_url.clone(),
-            l2_rpc_url: builder.rpc_url()?,
-            rollup_rpc_url: builder_consensus.rpc_url(),
-            batcher_key: config.batcher_key,
-        })
-        .await
-        .wrap_err("Failed to start in-process batcher")?;
+        // 3. Start the normal batcher immediately. Delayed-shadow tests instead start a
+        // short-lived, deterministic batcher after producing their historical prefix.
+        let delayed_shadow =
+            config.shadow_sequencers.as_ref().is_some_and(|c| c.start_block.is_some());
+        let mut batcher = if delayed_shadow {
+            None
+        } else {
+            Some(
+                InProcessBatcher::start(InProcessBatcherConfig {
+                    l1_rpc_url: l1_rpc_url.clone(),
+                    l2_rpc_url: builder.rpc_url()?,
+                    rollup_rpc_url: builder_consensus.rpc_url(),
+                    batcher_key: config.batcher_key,
+                    force_batch_submission: false,
+                })
+                .await
+                .wrap_err("Failed to start in-process batcher")?,
+            )
+        };
 
         // 4. Start the client (in-process EL).
         // If tx forwarding is enabled, configure it with the builder's RPC URL
@@ -244,7 +279,10 @@ impl L2Stack {
             auth_port: container_config.and_then(|c| c.client_auth_port),
             p2p_port: container_config.and_then(|c| c.client_p2p_port),
             tx_forwarding_config,
+            enable_experimental_validity_transactions: config
+                .enable_experimental_validity_transactions,
             upgrade_signal: config.execution_upgrade_signal.clone(),
+            extra_extensions: config.extra_client_extensions,
         };
         let client = InProcessClient::start(client_config)
             .await
@@ -267,7 +305,7 @@ impl L2Stack {
                     p2p_tcp_port: container_config.and_then(|c| c.client_consensus_p2p_tcp_port),
                     p2p_udp_port: container_config.and_then(|c| c.client_consensus_p2p_udp_port),
                     unsafe_block_signer: SEQUENCER.address,
-                    l1_slot_duration_override: Some(4),
+                    l1_slot_duration_override: Some(config.l1_slot_duration),
                     sequencer_stopped: false,
                     verifier_l1_confs: config.verifier_l1_confs,
                     shadow_blocks_per_cycle: None,
@@ -306,10 +344,96 @@ impl L2Stack {
             }
         };
 
-        // 6. Start shadow sequencers, each peered to the active sequencer. Shadows must join the
-        // gossip mesh before the active begins producing blocks: gossip does not backfill history,
-        // so any canonical block sealed before a shadow connects would never reach its
-        // reconciliation gate, leaving the shadow unable to reconcile its private branch.
+        // 6. Unless late startup was requested, shadows join the gossip mesh before active
+        // sequencing begins. Preserve that ordering because it is the normal production path.
+        if let Some(start_block) = config.shadow_sequencers.as_ref().and_then(|c| c.start_block) {
+            let provider = RootProvider::<Base>::new_http(builder.rpc_url()?);
+            let signer = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_1.private_key)
+                .wrap_err("Failed to parse delayed-shadow batch trigger signer")?;
+            let first_nonce = provider.get_transaction_count(signer.address()).await?;
+            for offset in 0..start_block {
+                let transaction = BaseTransactionRequest::default()
+                    .from(signer.address())
+                    .to(Address::repeat_byte(0xfe))
+                    .value(U256::from(1))
+                    .transaction_type(2)
+                    .with_gas_limit(21_000)
+                    .with_max_fee_per_gas(1_000_000_000)
+                    .with_max_priority_fee_per_gas(0)
+                    .with_chain_id(rollup_config.l2_chain_id.id())
+                    .with_nonce(first_nonce + offset)
+                    .build_typed_tx()
+                    .map_err(|error| eyre::eyre!("Invalid batch trigger transaction: {error:?}"))?;
+                let signature = signer.sign_hash_sync(&transaction.signature_hash())?;
+                let raw_transaction: Bytes =
+                    transaction.into_signed(signature).encoded_2718().into();
+                let pending = provider
+                    .send_raw_transaction(&raw_transaction)
+                    .await
+                    .wrap_err("Failed to submit delayed-shadow batch trigger transaction")?;
+                let transaction_hash = *pending.tx_hash();
+                drop(pending);
+                if offset == 0 {
+                    sleep(Duration::from_millis(500)).await;
+                    builder_consensus
+                        .start_sequencer()
+                        .await
+                        .wrap_err("Failed to produce delayed-shadow catch-up blocks")?;
+                }
+                timeout(Duration::from_secs(10), async {
+                    while provider.get_transaction_receipt(transaction_hash).await?.is_none() {
+                        sleep(Duration::from_millis(10)).await;
+                    }
+                    Ok::<_, eyre::Error>(())
+                })
+                .await
+                .wrap_err("Timed out waiting for delayed-shadow catch-up receipt")??;
+            }
+            batcher = Some(
+                InProcessBatcher::start(InProcessBatcherConfig {
+                    l1_rpc_url: l1_rpc_url.clone(),
+                    l2_rpc_url: builder.rpc_url()?,
+                    rollup_rpc_url: builder_consensus.rpc_url(),
+                    batcher_key: config.batcher_key,
+                    force_batch_submission: true,
+                })
+                .await
+                .wrap_err("Failed to start delayed-shadow batcher")?,
+            );
+            let safe_target = start_block.saturating_sub(1);
+            let safe_wait = timeout(Duration::from_secs(30), async {
+                loop {
+                    if let Some(error) = batcher.as_ref().and_then(InProcessBatcher::failure) {
+                        return Err(eyre::eyre!(
+                            "Batcher exited before safe-head catch-up: {error}"
+                        ));
+                    }
+                    let safe_height = provider
+                        .get_block_by_number(BlockNumberOrTag::Safe)
+                        .await?
+                        .map_or(0, |block| block.header.number);
+                    if safe_height >= safe_target {
+                        return Ok::<_, eyre::Error>(());
+                    }
+                    sleep(Duration::from_millis(500)).await;
+                }
+            })
+            .await;
+            if safe_wait.is_err() {
+                let safe_height = provider
+                    .get_block_by_number(BlockNumberOrTag::Safe)
+                    .await?
+                    .map_or(0, |block| block.header.number);
+                let l1_provider = RootProvider::<Ethereum>::new_http(l1_rpc_url.clone());
+                let batcher_nonce = l1_provider.get_transaction_count(BATCHER.address).await?;
+                eyre::bail!(
+                    "Timed out waiting for active sequencer safe head before delayed shadows: \
+                     safe={safe_height}, target={safe_target}, batcher_nonce={batcher_nonce}"
+                );
+            }
+            safe_wait.expect("timeout handled")?;
+        }
+
         let active_consensus_p2p_addr = builder_consensus.p2p_addr();
         let mut shadow_sequencers = Vec::new();
         if let Some(shadow_config) = &config.shadow_sequencers {
@@ -326,23 +450,47 @@ impl L2Stack {
                     active_consensus_p2p_addr: active_consensus_p2p_addr.clone(),
                     active_sequencer_address: SEQUENCER.address,
                     shadow_blocks_per_cycle: shadow_config.blocks_per_cycle,
+                    l1_slot_duration: config.l1_slot_duration,
                 })
                 .await
                 .wrap_err_with(|| format!("Failed to start shadow sequencer {index}"))?;
+                let shadow_start_height = if shadow_config.start_block.is_some() {
+                    Some(
+                        RootProvider::<Base>::new_http(builder.rpc_url()?)
+                            .get_block_number()
+                            .await?,
+                    )
+                } else {
+                    None
+                };
+                if let Some(shadow_start_height) = shadow_start_height {
+                    let shadow_provider = RootProvider::<Base>::new_http(shadow.rpc_url()?);
+                    timeout(Duration::from_secs(30), async {
+                        while shadow_provider.get_block_number().await? < shadow_start_height {
+                            sleep(Duration::from_millis(100)).await;
+                        }
+                        Ok::<_, eyre::Error>(())
+                    })
+                    .await
+                    .wrap_err("Timed out waiting for delayed shadow safe catch-up")??;
+                    batcher.as_ref().expect("delayed batcher started").stop();
+                }
                 shadow_sequencers.push(shadow);
             }
         }
 
-        // 7. Start the active sequencer only after every shadow has joined the gossip mesh.
-        builder_consensus
-            .start_sequencer()
-            .await
-            .wrap_err("Failed to start sequencer after peer connection")?;
+        // 7. In the default path, start active sequencing only after every shadow connected.
+        if !delayed_shadow {
+            builder_consensus
+                .start_sequencer()
+                .await
+                .wrap_err("Failed to start sequencer after peer connection")?;
+        }
 
         Ok(Self {
             builder,
             builder_consensus,
-            batcher,
+            batcher: batcher.expect("batcher starts in both shadow startup paths"),
             client,
             client_consensus,
             shadow_sequencers,

@@ -4,6 +4,9 @@ pub mod proofs;
 pub mod receipt;
 pub mod transaction;
 
+mod base_time;
+pub use base_time::BaseTimeCache;
+
 mod block;
 mod call;
 mod pending_block;
@@ -16,7 +19,7 @@ use std::{
 };
 
 use alloy_primitives::U256;
-use base_common_network::Base;
+use base_common_rpc_types::BaseRpcTypes;
 use eyre::WrapErr;
 pub use receipt::{BaseReceiptBuilder, ReceiptFieldsBuilder};
 use reth_chainspec::{EthereumHardforks, Hardforks};
@@ -74,9 +77,14 @@ impl<N: RpcNodeCore, Rpc: RpcConvert> BaseEthApi<N, Rpc> {
         eth_api: EthApiNodeBackend<N, Rpc>,
         sequencer_client: Option<SequencerClient>,
         min_suggested_priority_fee: U256,
+        base_time: BaseTimeCache,
     ) -> Self {
-        let inner =
-            Arc::new(BaseEthApiInner { eth_api, sequencer_client, min_suggested_priority_fee });
+        let inner = Arc::new(BaseEthApiInner {
+            eth_api,
+            sequencer_client,
+            min_suggested_priority_fee,
+            base_time,
+        });
         Self { inner }
     }
 
@@ -92,6 +100,11 @@ impl<N: RpcNodeCore, Rpc: RpcConvert> BaseEthApi<N, Rpc> {
     /// Returns the configured sequencer client, if any.
     pub fn sequencer_client(&self) -> Option<&SequencerClient> {
         self.inner.sequencer_client()
+    }
+
+    /// Returns the shared cache of validated `BaseTime` timestamps.
+    pub fn base_time_cache(&self) -> &BaseTimeCache {
+        &self.inner.base_time
     }
 }
 
@@ -276,6 +289,8 @@ pub struct BaseEthApiInner<N: RpcNodeCore, Rpc: RpcConvert> {
     ///
     /// See also <https://github.com/ethereum-optimism/op-geth/blob/d4e0fe9bb0c2075a9bff269fb975464dd8498f75/eth/gasprice/optimism-gasprice.go#L38-L38>
     min_suggested_priority_fee: U256,
+    /// Shared cache of validated `BaseTime` timestamps.
+    base_time: BaseTimeCache,
 }
 
 impl<N: RpcNodeCore, Rpc: RpcConvert> fmt::Debug for BaseEthApiInner<N, Rpc> {
@@ -307,7 +322,7 @@ pub type BaseRpcConvert<N, NetworkT> = RpcConverter<
 
 /// Builds [`BaseEthApi`] for Base.
 #[derive(Debug)]
-pub struct BaseEthApiBuilder<NetworkT = Base> {
+pub struct BaseEthApiBuilder<NetworkT = BaseRpcTypes> {
     /// Sequencer client, configured to forward submitted transactions to sequencer of the given
     /// Base network.
     sequencer_url: Option<String>,
@@ -375,9 +390,11 @@ where
 
     async fn build_eth_api(self, ctx: EthApiCtx<'_, N>) -> eyre::Result<Self::EthApi> {
         let Self { sequencer_url, sequencer_headers, min_suggested_priority_fee, .. } = self;
+        let provider = ctx.components.provider().clone();
+        let base_time = BaseTimeCache::default();
         let rpc_converter =
-            RpcConverter::new(BaseReceiptConverter::new(ctx.components.provider().clone()))
-                .with_mapper(BaseTxInfoMapper::new(ctx.components.provider().clone()));
+            RpcConverter::new(BaseReceiptConverter::new(provider.clone(), base_time.clone()))
+                .with_mapper(BaseTxInfoMapper::new(provider, base_time.clone()));
 
         let sequencer_client = if let Some(url) = sequencer_url {
             Some(
@@ -391,6 +408,11 @@ where
 
         let eth_api = ctx.eth_api_builder().with_rpc_converter(rpc_converter).build_inner();
 
-        Ok(BaseEthApi::new(eth_api, sequencer_client, U256::from(min_suggested_priority_fee)))
+        Ok(BaseEthApi::new(
+            eth_api,
+            sequencer_client,
+            U256::from(min_suggested_priority_fee),
+            base_time,
+        ))
     }
 }

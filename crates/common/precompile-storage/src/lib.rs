@@ -10,9 +10,8 @@ pub use error::{BasePrecompileError, DelegateCallNotAllowed, IntoPrecompileResul
 
 mod packing;
 pub use packing::{
-    FieldLocation, PackedSlot, calc_element_loc, calc_element_offset, calc_element_slot,
-    calc_packed_slot_count, create_element_mask, delete_from_word, extract_from_word,
-    insert_into_word,
+    FieldLocation, PackedSlot, Word, calc_element_loc, calc_element_offset, calc_element_slot,
+    calc_packed_slot_count,
 };
 
 mod provider;
@@ -46,5 +45,3 @@ mod hashmap;
 pub use hashmap::HashMapStorageProvider;
 #[cfg(any(test, feature = "test-utils"))]
 pub use hashmap::setup_storage;
-#[cfg(any(test, feature = "test-utils"))]
-pub use packing::gen_word_from;

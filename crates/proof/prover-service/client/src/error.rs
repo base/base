@@ -27,6 +27,10 @@ pub enum ProverServiceClientError {
         message: String,
     },
 
+    /// The local worker lease budget was exhausted before a successful heartbeat.
+    #[error("worker lease budget exceeded: {0}")]
+    LeaseBudgetExceeded(String),
+
     /// The client stopped waiting before the proof reached a terminal state.
     #[error("timed out waiting for prover-service result: {0}")]
     Timeout(String),
@@ -53,6 +57,20 @@ impl ProverServiceClientError {
     /// JSON-RPC code used by the prover service for failed preconditions.
     pub const ERROR_FAILED_PRECONDITION: i32 = -32017;
 
+    /// Returns a bounded label suitable for logs that must not expose
+    /// transport URLs or server-provided error details.
+    pub const fn kind(&self) -> &'static str {
+        match self {
+            Self::RpcTransport(_) => "rpc_transport",
+            Self::ProofFailure { .. } => "proof_failure",
+            Self::WorkerLeaseRejected { .. } => "worker_lease_rejected",
+            Self::LeaseBudgetExceeded(_) => "lease_budget_exceeded",
+            Self::Timeout(_) => "timeout",
+            Self::MissingResult(_) => "missing_result",
+            Self::UnexpectedResultPayload(_) => "unexpected_result_payload",
+        }
+    }
+
     /// Returns `true` when retrying the same client operation may succeed.
     #[must_use]
     pub fn is_retryable(&self) -> bool {
@@ -61,6 +79,7 @@ impl ProverServiceClientError {
             Self::Timeout(_) => true,
             Self::ProofFailure { .. }
             | Self::WorkerLeaseRejected { .. }
+            | Self::LeaseBudgetExceeded(_)
             | Self::MissingResult(_)
             | Self::UnexpectedResultPayload(_) => false,
         }
@@ -143,6 +162,10 @@ mod tests {
     )]
     #[case::worker_lease_rejected(
         ProverServiceClientError::WorkerLeaseRejected { message: "lease mismatch".to_owned() },
+        false
+    )]
+    #[case::lease_budget_exceeded(
+        ProverServiceClientError::LeaseBudgetExceeded("lock expired".to_owned()),
         false
     )]
     #[case::missing_result(

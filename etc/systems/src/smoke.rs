@@ -17,6 +17,7 @@ use alloy_signer_local::PrivateKeySigner;
 #[cfg(feature = "upgrade-signal")]
 use base_common_genesis::{BaseUpgrade, RollupConfig, RuntimeUpgradeRegistry, UpgradeActivation};
 use base_common_network::Base;
+use base_node_runner::BaseNodeExtension;
 use base_tx_forwarding::TxForwardingConfig;
 #[cfg(feature = "upgrade-signal")]
 use eyre::ensure;
@@ -28,7 +29,7 @@ use url::Url;
 use crate::upgrade_signal::{MockProtocolVersionsClient, UpgradeSignalStackOptions};
 use crate::{
     BATCHER, BUILDER, SEQUENCER,
-    l1::{L1ContainerConfig, L1Stack, L1StackConfig},
+    l1::{L1ContainerConfig, L1Execution, L1RpcProxy, L1Stack, L1StackConfig},
     l2::{
         L2ClientConsensusMode, L2ContainerConfig, L2Stack, L2StackConfig, ShadowSequencersConfig,
     },
@@ -38,7 +39,9 @@ use crate::{
 
 const DEFAULT_L1_CHAIN_ID: u64 = 1337;
 const DEFAULT_L2_CHAIN_ID: u64 = 84538453;
-const DEFAULT_SLOT_DURATION: u64 = 2;
+/// L1 beacon slot duration. Live `op-deployer` confirms one transaction per L1
+/// slot, so this dominates stack startup time.
+const DEFAULT_SLOT_DURATION: u64 = 1;
 const DEFAULT_SHADOW_BLOCKS_PER_CYCLE: NonZeroU64 = NonZeroU64::new(3).unwrap();
 
 /// Longest wait for a live L1 schedule change to be re-applied by a runtime-admin node (the
@@ -106,6 +109,7 @@ pub struct SystemTestStack {
     l2_deployment: L2DeploymentOutput,
     l1_stack: L1Stack,
     l2_stack: L2Stack,
+    l1_rpc_proxy: Option<L1RpcProxy>,
     #[cfg(feature = "upgrade-signal")]
     upgrade_signal: Option<MockProtocolVersionsClient>,
     /// Must be the last field: it clears the runtime registry on drop, so the stacks above
@@ -132,6 +136,11 @@ impl SystemTestStack {
     /// Returns a reference to the L2 stack.
     pub const fn l2_stack(&self) -> &L2Stack {
         &self.l2_stack
+    }
+
+    /// Returns the controllable L1 RPC proxy when fault injection was enabled.
+    pub const fn l1_rpc_proxy(&self) -> Option<&L1RpcProxy> {
+        self.l1_rpc_proxy.as_ref()
     }
 
     /// Returns the public RPC URL of the L1 Reth node.
@@ -275,14 +284,21 @@ pub struct SystemTestStackBuilder {
     base_azul_activation_block: Option<u64>,
     base_beryl_activation_block: Option<u64>,
     base_cobalt_activation_block: Option<u64>,
+    base_denim_activation_block: Option<u64>,
     base_zenith_activation_block: Option<u64>,
     output_dir: Option<PathBuf>,
     stable_config: Option<StableSystemTestConfig>,
     tx_forwarding_config: Option<TxForwardingConfig>,
+    enable_experimental_validity_transactions: bool,
     verifier_l1_confs: u64,
     client_consensus_mode: L2ClientConsensusMode,
     shadow_sequencer_count: usize,
     shadow_blocks_per_cycle: Option<NonZeroU64>,
+    shadow_start_block: Option<u64>,
+    tmpfs_datadirs: bool,
+    l1_fault_injection: bool,
+    extra_builder_extensions: Vec<Box<dyn BaseNodeExtension>>,
+    extra_client_extensions: Vec<Box<dyn BaseNodeExtension>>,
     #[cfg(feature = "upgrade-signal")]
     upgrade_signal: Option<UpgradeSignalStackOptions>,
 }
@@ -305,7 +321,7 @@ impl SystemTestStackBuilder {
         self
     }
 
-    /// Sets the slot duration.
+    /// Sets the L1 beacon slot duration in seconds.
     pub const fn with_slot_duration(mut self, slot_duration: u64) -> Self {
         self.slot_duration = Some(slot_duration);
         self
@@ -335,7 +351,13 @@ impl SystemTestStackBuilder {
         self
     }
 
-    /// Sets the L2 block number at which Base Zenith activates.
+    /// Sets the L2 block number at which Base Denim activates.
+    pub const fn with_base_denim_activation_block(mut self, block: u64) -> Self {
+        self.base_denim_activation_block = Some(block);
+        self
+    }
+
+    /// Sets the L2 block number at which the genesis-only Base Zenith testing gate activates.
     pub const fn with_base_zenith_activation_block(mut self, block: u64) -> Self {
         self.base_zenith_activation_block = Some(block);
         self
@@ -358,6 +380,30 @@ impl SystemTestStackBuilder {
     /// the `base_insertValidatedTransaction` RPC endpoint.
     pub fn with_tx_forwarding(mut self, config: TxForwardingConfig) -> Self {
         self.tx_forwarding_config = Some(config);
+        self
+    }
+
+    /// Enables experimental validity transaction ingress and builder acceptance.
+    pub const fn with_experimental_validity_transactions(mut self) -> Self {
+        self.enable_experimental_validity_transactions = true;
+        self
+    }
+
+    /// Backs the L1 container datadirs (reth, lighthouse) with tmpfs.
+    ///
+    /// reth's mdbx and lighthouse's database need a writable `MAP_SHARED` mmap, which some
+    /// container storage backends reject — notably overlayfs on docker-in-docker CI runners, where
+    /// reth exits at startup with "failed to open the database: Remote I/O error (121)". tmpfs
+    /// supports mmap. Enable this to run the stack on such runners; it is a no-op where the storage
+    /// already supports mmap.
+    pub const fn with_tmpfs_datadirs(mut self) -> Self {
+        self.tmpfs_datadirs = true;
+        self
+    }
+
+    /// Routes L2 services through a controllable L1 RPC proxy and enables L1 reorg control.
+    pub const fn with_l1_fault_injection(mut self) -> Self {
+        self.l1_fault_injection = true;
         self
     }
 
@@ -388,6 +434,32 @@ impl SystemTestStackBuilder {
     /// reconciliation cycle. Defaults to [`DEFAULT_SHADOW_BLOCKS_PER_CYCLE`].
     pub const fn with_shadow_blocks_per_cycle(mut self, blocks: NonZeroU64) -> Self {
         self.shadow_blocks_per_cycle = Some(blocks);
+        self
+    }
+
+    /// Delays starting configured shadow sequencers until the active builder reaches `block`.
+    pub const fn with_shadow_start_block(mut self, block: u64) -> Self {
+        self.shadow_start_block = Some(block);
+        self
+    }
+
+    /// Registers an additional node extension on the L2 builder, installed after its built-in
+    /// RPC wiring.
+    ///
+    /// Lets downstream consumers layer their own [`BaseNodeExtension`] onto the standard builder
+    /// wiring without forking this crate.
+    pub fn with_builder_extension(mut self, extension: Box<dyn BaseNodeExtension>) -> Self {
+        self.extra_builder_extensions.push(extension);
+        self
+    }
+
+    /// Registers an additional node extension on the L2 client, installed after its built-in
+    /// extensions.
+    ///
+    /// Lets downstream consumers layer their own [`BaseNodeExtension`] — such as a custom RPC
+    /// method — onto the standard client wiring without forking this crate.
+    pub fn with_client_extension(mut self, extension: Box<dyn BaseNodeExtension>) -> Self {
+        self.extra_client_extensions.push(extension);
         self
     }
 
@@ -444,6 +516,10 @@ impl SystemTestStackBuilder {
             setup = setup.with_base_cobalt_activation_block(block);
         }
 
+        if let Some(block) = self.base_denim_activation_block {
+            setup = setup.with_base_denim_activation_block(block);
+        }
+
         if let Some(block) = self.base_zenith_activation_block {
             setup = setup.with_base_zenith_activation_block(block);
         }
@@ -472,6 +548,8 @@ impl SystemTestStackBuilder {
                     engine_port: Some(config.ports.l1_auth),
                     beacon_http_port: Some(config.ports.l1_cl_http),
                     beacon_p2p_port: Some(config.ports.l1_cl_p2p),
+                    tmpfs_datadir: self.tmpfs_datadirs,
+                    enable_reorg_control: self.l1_fault_injection,
                 };
                 let l2_config = L2ContainerConfig {
                     use_stable_names: true,
@@ -495,6 +573,15 @@ impl SystemTestStackBuilder {
                 (Some(l1_config), Some(l2_config))
             });
 
+        // Ensure the tmpfs-datadir request reaches the L1 containers even without a stable config.
+        let l1_container_config = l1_container_config.or_else(|| {
+            (self.tmpfs_datadirs || self.l1_fault_injection).then(|| L1ContainerConfig {
+                tmpfs_datadir: self.tmpfs_datadirs,
+                enable_reorg_control: self.l1_fault_injection,
+                ..Default::default()
+            })
+        });
+
         let l1_config = L1StackConfig {
             el_genesis_json,
             jwt_secret_hex,
@@ -502,14 +589,20 @@ impl SystemTestStackBuilder {
             container_config: l1_container_config,
         };
 
-        let l1_stack = L1Stack::start(l1_config).await.wrap_err("Failed to start L1 stack")?;
-
-        let l1_internal_rpc_url = l1_stack.reth().internal_rpc_url();
-        let l2_deployment =
-            tokio::task::spawn_blocking(move || setup.deploy_l2_contracts(&l1_internal_rpc_url))
-                .await
-                .wrap_err("L2 deployment task panicked")?
-                .wrap_err("Failed to deploy L2 contracts")?;
+        // Start Reth first, then overlap live L2 deployment with Lighthouse
+        // startup. `op-deployer apply` only needs the EL RPC; its transactions
+        // sit in the mempool until the validator begins producing blocks.
+        let l1_execution =
+            L1Execution::start(l1_config).await.wrap_err("Failed to start L1 execution layer")?;
+        let l1_internal_rpc_url = l1_execution.reth().internal_rpc_url();
+        let deploy_handle =
+            tokio::task::spawn_blocking(move || setup.deploy_l2_contracts(&l1_internal_rpc_url));
+        let l1_stack =
+            l1_execution.start_consensus().await.wrap_err("Failed to start L1 consensus")?;
+        let l2_deployment = deploy_handle
+            .await
+            .wrap_err("L2 deployment task panicked")?
+            .wrap_err("Failed to deploy L2 contracts")?;
 
         let jwt_secret = JwtSecret::random();
 
@@ -531,6 +624,7 @@ impl SystemTestStackBuilder {
                 blocks_per_cycle: self
                     .shadow_blocks_per_cycle
                     .unwrap_or(DEFAULT_SHADOW_BLOCKS_PER_CYCLE),
+                start_block: self.shadow_start_block,
             }
         });
 
@@ -567,6 +661,16 @@ impl SystemTestStackBuilder {
         #[cfg(not(feature = "upgrade-signal"))]
         let (l2_upgrade_signal, l2_execution_upgrade_signal) = (None, None);
 
+        let direct_l1_rpc_url = l1_stack.reth().rpc_url().await?;
+        let l1_rpc_proxy = if self.l1_fault_injection {
+            Some(L1RpcProxy::start(direct_l1_rpc_url.clone()).await?)
+        } else {
+            None
+        };
+        let l2_l1_rpc_url = l1_rpc_proxy
+            .as_ref()
+            .map_or_else(|| direct_l1_rpc_url.to_string(), |proxy| proxy.url().to_string());
+
         let l2_config = L2StackConfig {
             l2_genesis: l2_genesis_bytes,
             rollup_config: rollup_config_bytes,
@@ -575,15 +679,20 @@ impl SystemTestStackBuilder {
             p2p_key: BUILDER.private_key,
             sequencer_key: SEQUENCER.private_key,
             batcher_key: BATCHER.private_key,
-            l1_rpc_url: l1_stack.reth().rpc_url().await?.to_string(),
+            l1_rpc_url: l2_l1_rpc_url,
             l1_beacon_url: l1_stack.beacon().beacon_url().await?,
+            l1_slot_duration: slot_duration,
             container_config: l2_container_config,
             tx_forwarding_config: self.tx_forwarding_config,
+            enable_experimental_validity_transactions: self
+                .enable_experimental_validity_transactions,
             verifier_l1_confs: self.verifier_l1_confs,
             client_consensus_mode: self.client_consensus_mode,
             upgrade_signal: l2_upgrade_signal,
             execution_upgrade_signal: l2_execution_upgrade_signal,
             shadow_sequencers,
+            extra_builder_extensions: self.extra_builder_extensions,
+            extra_client_extensions: self.extra_client_extensions,
         };
 
         let l2_stack = L2Stack::start(l2_config).await.wrap_err("Failed to start L2 stack")?;
@@ -596,6 +705,7 @@ impl SystemTestStackBuilder {
             l2_deployment,
             l1_stack,
             l2_stack,
+            l1_rpc_proxy,
             #[cfg(feature = "upgrade-signal")]
             upgrade_signal,
             #[cfg(feature = "upgrade-signal")]

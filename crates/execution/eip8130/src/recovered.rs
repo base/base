@@ -8,7 +8,7 @@ use k256::ecdsa::{RecoveryId, Signature as K256Signature, VerifyingKey as K256Ve
 use crate::AuthError;
 
 /// A recovered secp256k1 signer, carried as its address and resolved `actorId`
-/// (`bytes32(bytes20(address))`).
+/// (`bytes32(uint256(uint160(address)))`, address right-aligned).
 ///
 /// The wrapped address is private and every constructor performs a real
 /// signature recovery, so a value is *evidence* that the signer authenticated
@@ -78,12 +78,13 @@ impl RecoveredActorId {
         self.address
     }
 
-    /// The recovered signer's actor id, `bytes32(bytes20(address))` — the 20
-    /// address bytes left-aligned, right-padded with zeros.
+    /// The recovered signer's actor id, `bytes32(uint256(uint160(address)))` —
+    /// the 20 address bytes right-aligned in the low bytes, high 12 bytes zero
+    /// (matches the finalized `Keystore.ActorId.fromAddress`).
     #[must_use]
     pub fn actor_id(self) -> B256 {
         let mut id = [0u8; 32];
-        id[..20].copy_from_slice(self.address.as_slice());
+        id[12..].copy_from_slice(self.address.as_slice());
         B256::from(id)
     }
 }

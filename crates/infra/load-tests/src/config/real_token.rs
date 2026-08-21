@@ -6,8 +6,8 @@ use super::{
     test_config::{TxTypeConfig, WeightedTxType},
 };
 use crate::{
-    runner::{RealTokenAcquisition, RealTokenPairTokenSetup, RealTokenSetup},
     utils::{BaselineError, Result},
+    workload::{RealTokenAcquisition, RealTokenPairTokenSetup, RealTokenSetup},
 };
 
 /// Optional setup for real-token bidirectional swap workloads.
@@ -257,7 +257,7 @@ mod tests {
     use alloy_primitives::{Address, U256};
 
     use super::super::test_config::TestConfig;
-    use crate::runner::RealTokenAcquisition;
+    use crate::workload::RealTokenAcquisition;
 
     #[test]
     fn parse_real_token_setup_for_random_direction_swap_parity() {

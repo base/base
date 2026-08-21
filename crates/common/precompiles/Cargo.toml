@@ -51,6 +51,10 @@ name = "b20_asset_v1_golden"
 required-features = ["test-utils"]
 
 [[test]]
+name = "b20_asset_v2_golden"
+required-features = ["test-utils"]
+
+[[test]]
 name = "b20_policy_v1_golden"
 required-features = ["test-utils"]
 
@@ -83,5 +87,6 @@ optional_balance_check = [ "revm/optional_balance_check" ]
 optional_block_gas_limit = [ "revm/optional_block_gas_limit" ]
 test-utils = [
 	"base-common-chains/test-utils",
+	"base-common-genesis/test-utils",
 	"base-precompile-storage/test-utils",
 ]

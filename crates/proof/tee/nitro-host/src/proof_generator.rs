@@ -1,72 +1,39 @@
 //! Proof generation orchestration for claimed Nitro worker jobs.
 
-use std::{future::Future, sync::Arc, time::Duration};
+use std::{future::Future, sync::Arc};
 
+use async_trait::async_trait;
 use base_proof_primitives::ProofRequest as NitroProofRequest;
-use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider};
-use base_prover_service_protocol::{
-    HeartbeatRequest, ProofJob, ProofRequestKind, TeeKind, WorkerSubmitProofResponse,
+use base_proof_worker::{
+    ClaimedProofJobHandler, ClaimedProofJobMetadata, ClaimedProofJobMetadataError, ProofSubmitter,
+    ProofTaskController, WorkerHeartbeat,
 };
+pub use base_proof_worker::{
+    DEFAULT_WORKER_HEARTBEAT_INTERVAL as DEFAULT_PROOF_GENERATOR_HEARTBEAT_INTERVAL,
+    DEFAULT_WORKER_HEARTBEAT_LOCK_DURATION_SECONDS as DEFAULT_PROOF_GENERATOR_HEARTBEAT_LOCK_DURATION_SECONDS,
+    DEFAULT_WORKER_MAX_CONSECUTIVE_HEARTBEAT_FAILURES as DEFAULT_PROOF_GENERATOR_MAX_CONSECUTIVE_HEARTBEAT_FAILURES,
+    MIN_WORKER_HEARTBEAT_INTERVAL as MIN_PROOF_GENERATOR_HEARTBEAT_INTERVAL,
+    WorkerHeartbeatConfig as ProofGeneratorHeartbeatConfig,
+};
+use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider};
+use base_prover_service_protocol::{ProofJob, ProofRequestKind, TeeKind};
+use chrono::{DateTime, Utc};
 use thiserror::Error;
-use tokio::{task::JoinHandle, time::sleep};
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::{
-    NitroEnclavePool, NitroEnclavePoolError, ProofSubmitter, ProofSubmitterError,
-    ProofSubmitterRequest,
+    NitroEnclavePool, NitroEnclavePoolError, ProofSubmitterRequest, ProofSubmitterRequestError,
 };
-
-/// Minimum proof-generation heartbeat interval.
-pub const MIN_PROOF_GENERATOR_HEARTBEAT_INTERVAL: Duration = Duration::from_millis(1);
-
-/// Default interval between worker API heartbeats while an enclave proof is being generated.
-pub const DEFAULT_PROOF_GENERATOR_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
-
-/// Default lock duration requested by proof-generation heartbeats.
-///
-/// A value of zero asks the prover service to use its server-side default.
-pub const DEFAULT_PROOF_GENERATOR_HEARTBEAT_LOCK_DURATION_SECONDS: u32 = 0;
-
-/// Heartbeat settings used while the enclave pool is generating a proof.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ProofGeneratorHeartbeatConfig {
-    /// Delay between heartbeat attempts.
-    pub interval: Duration,
-    /// Requested lock duration in seconds. Zero uses the server default.
-    pub lock_duration_seconds: u32,
-}
-
-impl ProofGeneratorHeartbeatConfig {
-    /// Creates a proof-generation heartbeat config.
-    pub const fn new(interval: Duration, lock_duration_seconds: u32) -> Self {
-        Self { interval, lock_duration_seconds }
-    }
-
-    /// Returns the configured interval clamped to the minimum allowed delay.
-    pub fn normalized_interval(&self) -> Duration {
-        self.interval.max(MIN_PROOF_GENERATOR_HEARTBEAT_INTERVAL)
-    }
-}
-
-impl Default for ProofGeneratorHeartbeatConfig {
-    fn default() -> Self {
-        Self::new(
-            DEFAULT_PROOF_GENERATOR_HEARTBEAT_INTERVAL,
-            DEFAULT_PROOF_GENERATOR_HEARTBEAT_LOCK_DURATION_SECONDS,
-        )
-    }
-}
 
 /// Claimed prover-service job data needed to generate and submit a Nitro proof.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProofGeneratorRequest {
-    /// Proof session identifier.
-    pub session_id: String,
-    /// Server-issued lock identifier for this worker claim.
-    pub lock_id: String,
-    /// Worker identifier that owns the claim.
-    pub worker_id: String,
+    /// Common worker claim metadata.
+    pub claim: ClaimedProofJobMetadata,
+    /// Server-issued claim lease expiry from the claim / latest heartbeat.
+    pub lock_expires_at: Option<DateTime<Utc>>,
     /// Primitive Nitro proof request.
     pub proof: NitroProofRequest,
 }
@@ -75,34 +42,17 @@ impl TryFrom<ProofJob> for ProofGeneratorRequest {
     type Error = ProofGeneratorError;
 
     fn try_from(job: ProofJob) -> Result<Self, Self::Error> {
-        let session_id = job.session_id;
-        let lock_id = job
-            .lock_id
-            .ok_or_else(|| ProofGeneratorError::MissingLockId { session_id: session_id.clone() })?;
-        let worker_id = job.worker_id.ok_or_else(|| ProofGeneratorError::MissingWorkerId {
-            session_id: session_id.clone(),
-        })?;
+        let claim = ClaimedProofJobMetadata::from_job(&job)?;
+        let session_id = claim.session_id.clone();
+        let lock_expires_at = job.lock_expires_at;
 
         let ProofRequestKind::Tee(tee) = job.request.request else {
             return Err(ProofGeneratorError::UnsupportedProofRequest { session_id });
         };
         let TeeKind::AwsNitro = tee.tee_kind;
 
-        Ok(Self { session_id, lock_id, worker_id, proof: tee.proof })
+        Ok(Self { claim, lock_expires_at, proof: tee.proof })
     }
-}
-
-/// Handle for a proof submission task spawned after successful proof generation.
-#[derive(Debug)]
-pub struct ProofGeneratorTask {
-    /// Proof session identifier.
-    pub session_id: String,
-    /// Server-issued lock identifier for this worker claim.
-    pub lock_id: String,
-    /// Worker identifier that owns the claim.
-    pub worker_id: String,
-    /// Spawned proof submission task.
-    pub submit_handle: JoinHandle<Result<WorkerSubmitProofResponse, ProofSubmitterError>>,
 }
 
 /// Orchestrates Nitro witness generation, enclave proving, and async proof submission.
@@ -110,7 +60,7 @@ pub struct ProofGeneratorTask {
 pub struct ProofGenerator<Client> {
     pool: Arc<NitroEnclavePool>,
     submitter: ProofSubmitter<Client>,
-    submission_cancel: CancellationToken,
+    tasks: ProofTaskController,
     heartbeat: ProofGeneratorHeartbeatConfig,
 }
 
@@ -121,33 +71,15 @@ impl<Client> ProofGenerator<Client> {
         submitter: ProofSubmitter<Client>,
         heartbeat: ProofGeneratorHeartbeatConfig,
     ) -> Self {
-        Self { pool, submitter, submission_cancel: CancellationToken::new(), heartbeat }
+        Self { pool, submitter, tasks: ProofTaskController::new(), heartbeat }
     }
 
-    /// Use a caller-provided cancellation token for spawned submission tasks.
-    pub fn with_submission_cancel(mut self, submission_cancel: CancellationToken) -> Self {
-        self.submission_cancel = submission_cancel;
+    /// Limits how many proof submission tasks may run at once.
+    #[must_use]
+    pub fn with_max_pending_submissions(mut self, max_pending: usize) -> Self {
+        let tasks = self.tasks;
+        self.tasks = tasks.with_max_pending_submissions(max_pending);
         self
-    }
-
-    /// Returns the Nitro enclave pool.
-    pub fn pool(&self) -> Arc<NitroEnclavePool> {
-        Arc::clone(&self.pool)
-    }
-
-    /// Returns the proof submitter.
-    pub const fn submitter(&self) -> &ProofSubmitter<Client> {
-        &self.submitter
-    }
-
-    /// Returns the cancellation token used for spawned submission tasks.
-    pub fn submission_cancel(&self) -> CancellationToken {
-        self.submission_cancel.clone()
-    }
-
-    /// Returns the heartbeat settings used while proofs are generated.
-    pub const fn heartbeat_config(&self) -> ProofGeneratorHeartbeatConfig {
-        self.heartbeat
     }
 }
 
@@ -156,91 +88,70 @@ where
     Client: Clone + ProverWorkerProvider + 'static,
 {
     /// Generate a proof for a claimed worker job and spawn proof submission.
-    pub async fn generate_and_submit(
-        &self,
-        job: ProofJob,
-    ) -> Result<ProofGeneratorTask, ProofGeneratorError> {
+    pub async fn generate_and_submit(&self, job: ProofJob) -> Result<(), ProofGeneratorError> {
         let request = ProofGeneratorRequest::try_from(job)?;
+        let l2_block = request.proof.claimed_l2_block_number;
 
         info!(
-            session_id = %request.session_id,
-            lock_id = %request.lock_id,
-            worker_id = %request.worker_id,
-            l2_block = request.proof.claimed_l2_block_number,
+            session_id = %request.claim.session_id,
+            lock_id = %request.claim.lock_id,
+            worker_id = %request.claim.worker_id,
+            l2_block,
             "starting nitro proof generation"
         );
 
-        let l2_block = request.proof.claimed_l2_block_number;
-        let proof = match self
-            .with_heartbeat_while_generating(&request, self.pool.prove(request.proof.clone()))
+        let (proof, permit) = self
+            .with_heartbeat_while_generating(&request, async {
+                let proof = self.pool.prove(request.proof.clone()).await?;
+                let permit = self.tasks.acquire_submission_permit().await;
+                Ok((proof, permit))
+            })
             .await
-        {
-            Ok(proof) => proof,
-            Err(ProofGeneratorError::Generate { session_id, source }) => {
-                warn!(
-                    session_id = %request.session_id,
-                    lock_id = %request.lock_id,
-                    worker_id = %request.worker_id,
-                    l2_block,
-                    error = %source,
-                    "nitro proof generation failed"
-                );
-
-                return Err(ProofGeneratorError::Generate { session_id, source });
-            }
-            Err(ProofGeneratorError::Heartbeat { session_id, source }) => {
-                warn!(
-                    session_id = %request.session_id,
-                    lock_id = %request.lock_id,
-                    worker_id = %request.worker_id,
-                    l2_block,
-                    error = %source,
-                    "aborting nitro proof generation due to heartbeat failure"
-                );
-
-                return Err(ProofGeneratorError::Heartbeat { session_id, source });
-            }
-            Err(
-                source @ (ProofGeneratorError::MissingLockId { .. }
-                | ProofGeneratorError::MissingWorkerId { .. }
-                | ProofGeneratorError::UnsupportedProofRequest { .. }
-                | ProofGeneratorError::BuildSubmission { .. }),
-            ) => {
-                unreachable!(
-                    "with_heartbeat_while_generating returned an impossible error: {source}"
-                );
-            }
-        };
+            .inspect_err(|error| match error {
+                ProofGeneratorError::Generate { source, .. } => {
+                    warn!(
+                        session_id = %request.claim.session_id,
+                        lock_id = %request.claim.lock_id,
+                        worker_id = %request.claim.worker_id,
+                        l2_block,
+                        error = %source,
+                        "nitro proof generation failed"
+                    );
+                }
+                ProofGeneratorError::Heartbeat { source, .. } => {
+                    warn!(
+                        session_id = %request.claim.session_id,
+                        lock_id = %request.claim.lock_id,
+                        worker_id = %request.claim.worker_id,
+                        l2_block,
+                        error = %source,
+                        "aborting nitro proof generation due to heartbeat failure"
+                    );
+                }
+                _ => {}
+            })?;
 
         let submit_request = ProofSubmitterRequest::from_tee_proof(
-            request.session_id.clone(),
-            request.lock_id.clone(),
-            request.worker_id.clone(),
+            request.claim.session_id.clone(),
+            request.claim.lock_id.clone(),
+            request.claim.worker_id.clone(),
             proof,
-            request.proof.proposer,
-            request.proof.image_hash,
         )
         .map_err(|source| ProofGeneratorError::BuildSubmission {
-            session_id: request.session_id.clone(),
+            session_id: request.claim.session_id.clone(),
             source,
         })?;
 
-        let submit_handle =
-            self.submitter.spawn_submit(submit_request, self.submission_cancel.clone());
+        self.tasks.spawn_submission_with_permit(&self.submitter, submit_request, permit).await;
 
         info!(
-            session_id = %request.session_id,
-            lock_id = %request.lock_id,
-            worker_id = %request.worker_id,
+            session_id = %request.claim.session_id,
+            lock_id = %request.claim.lock_id,
+            worker_id = %request.claim.worker_id,
             "nitro proof generated; proof submitter task spawned"
         );
 
-        Ok(ProofGeneratorTask {
-            session_id: request.session_id,
-            lock_id: request.lock_id,
-            worker_id: request.worker_id,
-            submit_handle,
-        })
+        Ok(())
     }
 
     async fn with_heartbeat_while_generating<Output, Generate>(
@@ -253,6 +164,8 @@ where
     {
         let heartbeat_cancel = CancellationToken::new();
         let _heartbeat_cancel_guard = heartbeat_cancel.clone().drop_guard();
+        // Heartbeats run on a dedicated blocking thread so a blocking `pool.prove`
+        // future cannot starve lease renewals on the shared async runtime.
         let mut heartbeat_failure =
             self.spawn_heartbeat_until_failure(request.clone(), heartbeat_cancel.clone());
         tokio::pin!(generate);
@@ -269,18 +182,18 @@ where
                 match generate.await {
                     Ok(_) => {
                         info!(
-                            session_id = %request.session_id,
-                            lock_id = %request.lock_id,
-                            worker_id = %request.worker_id,
+                            session_id = %request.claim.session_id,
+                            lock_id = %request.claim.lock_id,
+                            worker_id = %request.claim.worker_id,
                             l2_block = request.proof.claimed_l2_block_number,
                             "discarding nitro proof generated after heartbeat failure"
                         );
                     }
                     Err(error) => {
                         warn!(
-                            session_id = %request.session_id,
-                            lock_id = %request.lock_id,
-                            worker_id = %request.worker_id,
+                            session_id = %request.claim.session_id,
+                            lock_id = %request.claim.lock_id,
+                            worker_id = %request.claim.worker_id,
                             error = %error,
                             "nitro proof generation finished with error after heartbeat failure"
                         );
@@ -288,7 +201,7 @@ where
                 }
 
                 Err(ProofGeneratorError::Heartbeat {
-                    session_id: request.session_id.clone(),
+                    session_id: request.claim.session_id.clone(),
                     source,
                 })
             },
@@ -302,13 +215,13 @@ where
                     })
                 {
                     return Err(ProofGeneratorError::Heartbeat {
-                        session_id: request.session_id.clone(),
+                        session_id: request.claim.session_id.clone(),
                         source,
                     });
                 }
 
                 result.map_err(|source| ProofGeneratorError::Generate {
-                    session_id: request.session_id.clone(),
+                    session_id: request.claim.session_id.clone(),
                     source,
                 })
             }
@@ -329,12 +242,18 @@ where
                 .build()
                 .expect("failed to build proof heartbeat runtime");
 
-            runtime.block_on(Self::heartbeat_until_failure(
-                submitter,
-                heartbeat_config,
-                request,
-                cancel,
-            ))
+            runtime.block_on(async {
+                tokio::select! {
+                    biased;
+                    source = WorkerHeartbeat::until_failure(
+                        &submitter,
+                        &request.claim,
+                        heartbeat_config,
+                        request.lock_expires_at,
+                    ) => Some(source),
+                    () = cancel.cancelled() => None,
+                }
+            })
         })
     }
 
@@ -343,73 +262,57 @@ where
             "proof generator heartbeat thread stopped unexpectedly".to_owned(),
         )
     }
+}
 
-    async fn heartbeat_until_failure(
-        submitter: ProofSubmitter<Client>,
-        heartbeat_config: ProofGeneratorHeartbeatConfig,
-        request: ProofGeneratorRequest,
-        cancel: CancellationToken,
-    ) -> Option<ProverServiceClientError> {
-        loop {
-            tokio::select! {
-                biased;
-                () = cancel.cancelled() => return None,
-                () = sleep(heartbeat_config.normalized_interval()) => {}
+#[async_trait]
+impl<Client> ClaimedProofJobHandler for ProofGenerator<Client>
+where
+    Client: Clone + ProverWorkerProvider + 'static,
+{
+    type Error = ProofGeneratorError;
+
+    async fn ready_to_claim(&self, _worker_id: &str) -> bool {
+        let Some(checker) = self.pool.registration_checker() else {
+            return true;
+        };
+
+        match checker.select_all_valid_enclaves().await {
+            Ok(valid) => {
+                debug!(
+                    valid_signer_count = valid.len(),
+                    "registration gate passed for nitro job claim"
+                );
+                true
             }
-
-            let heartbeat = HeartbeatRequest {
-                session_id: request.session_id.clone(),
-                lock_id: request.lock_id.clone(),
-                worker_id: request.worker_id.clone(),
-                lock_duration_seconds: heartbeat_config.lock_duration_seconds,
-            };
-
-            let result = tokio::select! {
-                biased;
-                result = submitter.heartbeat(heartbeat) => result,
-                () = cancel.cancelled() => return None,
-            };
-
-            match result {
-                Ok(response) => {
-                    info!(
-                        session_id = %request.session_id,
-                        lock_id = %request.lock_id,
-                        worker_id = %request.worker_id,
-                        lock_expires_at = ?response.job.lock_expires_at,
-                        "proof job heartbeat accepted"
-                    );
-                }
-                Err(error) => {
-                    warn!(
-                        session_id = %request.session_id,
-                        lock_id = %request.lock_id,
-                        worker_id = %request.worker_id,
-                        error = %error,
-                        "proof job heartbeat failed"
-                    );
-                    return Some(error);
-                }
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    "registration gate not ready; skipping nitro job claim"
+                );
+                false
             }
         }
+    }
+
+    async fn handle_claimed_job(&self, job: ProofJob) -> Result<(), Self::Error> {
+        Self::generate_and_submit(self, job).await
+    }
+
+    fn shutdown(&self) {
+        self.tasks.cancel_submissions();
+    }
+
+    async fn join_shutdown(&self) {
+        self.tasks.drain_submissions().await;
     }
 }
 
 /// Errors raised while generating and dispatching Nitro proof submissions.
 #[derive(Debug, Error)]
 pub enum ProofGeneratorError {
-    /// Claimed proof job did not include a lock identifier.
-    #[error("proof job {session_id} is missing lock_id")]
-    MissingLockId {
-        /// Proof session identifier.
-        session_id: String,
-    },
-    /// Claimed proof job did not include a worker identifier.
-    #[error("proof job {session_id} is missing worker_id")]
-    MissingWorkerId {
-        /// Proof session identifier.
-        session_id: String,
-    },
+    /// Claim metadata was missing from the proof job.
+    #[error(transparent)]
+    Metadata(#[from] ClaimedProofJobMetadataError),
     /// Claimed proof job is not a TEE proof request.
     #[error("proof job {session_id} is not an AWS Nitro TEE proof request")]
     UnsupportedProofRequest {
@@ -441,7 +344,7 @@ pub enum ProofGeneratorError {
         session_id: String,
         /// Underlying proof submission request error.
         #[source]
-        source: ProofSubmitterError,
+        source: ProofSubmitterRequestError,
     },
 }
 
@@ -454,12 +357,13 @@ mod tests {
     use base_common_genesis::RollupConfig;
     use base_proof_host::ProverConfig;
     use base_proof_tee_nitro_enclave::Server as EnclaveServer;
+    use base_proof_worker::ProofSubmitter;
     use base_prover_service_client::ProverServiceClientError;
     use base_prover_service_protocol::{
         GetNextProofRequest, GetNextProofResponse, GetProofSessionRequest, GetProofSessionResponse,
         HeartbeatRequest, HeartbeatResponse, ProofJobStatus, ProofRequest,
         RecordProofSessionRequest, RecordProofSessionResponse, TeeKind, TeeProofRequest,
-        WorkerSubmitProofRequest,
+        WorkerSubmitProofRequest, WorkerSubmitProofResponse,
     };
     use chrono::Utc;
     use tokio::time::sleep;
@@ -486,7 +390,6 @@ mod tests {
 
     #[derive(Debug, Clone, Copy)]
     enum MockHeartbeatFailure {
-        Retryable,
         NonRetryable,
     }
 
@@ -529,9 +432,6 @@ mod tests {
             };
 
             match failure {
-                Some(MockHeartbeatFailure::Retryable) => Err(ProverServiceClientError::Timeout(
-                    "mock retryable heartbeat failure".to_owned(),
-                )),
                 Some(MockHeartbeatFailure::NonRetryable) => {
                     Err(ProverServiceClientError::WorkerLeaseRejected {
                         message: "mock lease rejected".to_owned(),
@@ -621,6 +521,17 @@ mod tests {
             .unwrap()
     }
 
+    fn test_pool_with_registry(registry: MockRegistry) -> NitroEnclavePool {
+        let server = Arc::new(EnclaveServer::new_local().unwrap());
+        let transport = Arc::new(NitroTransport::local(server));
+        let checker =
+            Arc::new(RegistrationChecker::new(vec![Arc::clone(&transport)], registry).unwrap());
+
+        NitroEnclavePool::new(test_prover_config(), Arc::clone(&transport))
+            .with_registration_checker(checker)
+            .unwrap()
+    }
+
     fn proof_job(
         session_id: impl Into<String>,
         status: ProofJobStatus,
@@ -642,6 +553,7 @@ mod tests {
                     sequence_window: None,
                     l1_head: None,
                     intermediate_root_interval: None,
+                    schedule_l2_block_number: None,
                     zk_vm: base_prover_service_protocol::ZkVm::Sp1,
                     zk_backend: base_prover_service_protocol::ZkBackend::Cluster,
                 })
@@ -691,7 +603,11 @@ mod tests {
     ) -> ProofGenerator<MockWorkerClient> {
         generator_with_heartbeat(
             client,
-            ProofGeneratorHeartbeatConfig::new(interval, TEST_HEARTBEAT_LOCK_DURATION_SECONDS),
+            ProofGeneratorHeartbeatConfig::with_max_consecutive_failures(
+                interval,
+                TEST_HEARTBEAT_LOCK_DURATION_SECONDS,
+                1,
+            ),
         )
     }
 
@@ -719,7 +635,10 @@ mod tests {
 
         let err = ProofGeneratorRequest::try_from(job).unwrap_err();
 
-        assert!(matches!(err, ProofGeneratorError::MissingLockId { .. }));
+        assert!(matches!(
+            err,
+            ProofGeneratorError::Metadata(ClaimedProofJobMetadataError::MissingLockId { .. })
+        ));
     }
 
     #[test]
@@ -738,29 +657,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn heartbeat_runs_while_generation_is_in_progress() {
+    async fn ready_to_claim_is_false_when_registration_has_no_valid_signer() {
         let client = MockWorkerClient::default();
-        let generator = generator_with_heartbeat_interval(client.clone(), Duration::from_millis(5));
-        let request = claimed_tee_request();
+        let generator = ProofGenerator::new(
+            Arc::new(test_pool_with_registry(MockRegistry::new(false))),
+            ProofSubmitter::new(client),
+            ProofGeneratorHeartbeatConfig::default(),
+        );
 
-        let err = generator
-            .with_heartbeat_while_generating(&request, async {
-                sleep(Duration::from_millis(20)).await;
-                Err::<(), NitroEnclavePoolError>(NitroEnclavePoolError::Busy)
-            })
-            .await
-            .unwrap_err();
-
-        assert!(matches!(err, ProofGeneratorError::Generate { .. }));
-
-        let heartbeats = client.heartbeats();
-        assert!(heartbeats.len() >= 2);
-        assert!(heartbeats.iter().all(|heartbeat| {
-            heartbeat.session_id == TEST_SESSION_ID
-                && heartbeat.lock_id == TEST_LOCK_ID
-                && heartbeat.worker_id == TEST_WORKER_ID
-                && heartbeat.lock_duration_seconds == TEST_HEARTBEAT_LOCK_DURATION_SECONDS
-        }));
+        assert!(!generator.ready_to_claim(TEST_WORKER_ID).await);
     }
 
     #[tokio::test]
@@ -826,42 +731,6 @@ mod tests {
         assert!(matches!(err, ProofGeneratorError::Generate { .. }));
         sleep(Duration::from_millis(75)).await;
         assert!(client.heartbeats().is_empty());
-    }
-
-    #[tokio::test]
-    async fn retryable_heartbeat_failure_aborts_generation() {
-        let client = MockWorkerClient::with_heartbeat_failure(MockHeartbeatFailure::Retryable);
-        let generator = generator_with_heartbeat_interval(client.clone(), Duration::from_millis(5));
-        let request = claimed_tee_request();
-
-        let err = generator
-            .with_heartbeat_while_generating(&request, async {
-                sleep(Duration::from_millis(20)).await;
-                Err::<(), NitroEnclavePoolError>(NitroEnclavePoolError::Busy)
-            })
-            .await
-            .unwrap_err();
-
-        assert!(matches!(err, ProofGeneratorError::Heartbeat { .. }));
-        assert_eq!(client.heartbeats().len(), 1);
-    }
-
-    #[tokio::test]
-    async fn non_retryable_heartbeat_failure_aborts_generation() {
-        let client = MockWorkerClient::with_heartbeat_failure(MockHeartbeatFailure::NonRetryable);
-        let generator = generator_with_heartbeat_interval(client.clone(), Duration::from_millis(5));
-        let request = claimed_tee_request();
-
-        let err = generator
-            .with_heartbeat_while_generating(&request, async {
-                sleep(Duration::from_millis(25)).await;
-                Err::<(), NitroEnclavePoolError>(NitroEnclavePoolError::Busy)
-            })
-            .await
-            .unwrap_err();
-
-        assert!(matches!(err, ProofGeneratorError::Heartbeat { .. }));
-        assert_eq!(client.heartbeats().len(), 1);
     }
 
     #[tokio::test]

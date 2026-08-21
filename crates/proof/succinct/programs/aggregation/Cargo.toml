@@ -11,7 +11,7 @@ repository.workspace = true
 sha2.workspace = true
 sp1-zkvm = { workspace = true, features = ["verify"] }
 sp1-lib = { workspace = true, features = ["verify"] }
-base-proof-succinct-client-utils.workspace = true
+base-proof-zk-utils.workspace = true
 alloy-consensus = { workspace = true, features = ["serde"] }
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true

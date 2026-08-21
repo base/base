@@ -3,9 +3,9 @@ use std::{cmp::Reverse, collections::BTreeMap, time::Duration};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    BlockLoadMetrics, BlockRange, ConfigSummary, FlashblocksLatencyMetrics, GasMetrics,
-    LatencyMetrics, SubmissionStats, ThroughputMetrics, ThroughputPercentiles, ThroughputSample,
-    TransactionMetrics,
+    BlockLoadMetrics, BlockRange, CohortMetrics, ConfigSummary, FlashblocksLatencyMetrics,
+    GasMetrics, LatencyMetrics, PacingMetrics, SubmissionStats, SubmitCohortLabel,
+    ThroughputMetrics, ThroughputPercentiles, ThroughputSample, TransactionMetrics,
 };
 
 /// Aggregates raw transaction metrics into summary statistics.
@@ -36,14 +36,19 @@ impl<'a> MetricsAggregator<'a> {
     ) -> MetricsSummary {
         let mut top_failure_reasons: Vec<(String, u64)> =
             submission.failure_reasons.iter().map(|(k, v)| (k.clone(), *v)).collect();
-        top_failure_reasons.sort_by_key(|reason| std::cmp::Reverse(reason.1));
+        top_failure_reasons.sort_by_key(|entry| std::cmp::Reverse(entry.1));
         top_failure_reasons.truncate(3);
 
         let tps_values: Vec<f64> = throughput_samples.iter().map(|s| s.tps).collect();
         let gps_values: Vec<f64> = throughput_samples.iter().map(|s| s.gps).collect();
 
         let block_range = Self::compute_block_range(self.transactions);
-        let throughput_duration = block_range.block_time_duration().unwrap_or(wall_clock_duration);
+        let block_time = config
+            .as_ref()
+            .and_then(|config| humantime::parse_duration(&config.block_time).ok())
+            .unwrap_or(Duration::from_secs(2));
+        let throughput_duration =
+            block_range.block_time_duration(block_time).unwrap_or(wall_clock_duration);
 
         MetricsSummary {
             config,
@@ -58,13 +63,50 @@ impl<'a> MetricsAggregator<'a> {
             ),
             throughput_percentiles: Self::compute_throughput_percentiles(&tps_values, &gps_values),
             throughput_timeseries: throughput_samples.to_vec(),
+            pacing: PacingMetrics::default(),
             gas: Self::compute_gas(self.transactions),
             block_range,
             fullest_block: Self::compute_fullest_block(self.transactions),
             top_failure_reasons,
             receipt_coverage,
             fresh_recipient_count,
+            by_cohort: Self::compute_by_cohort(self.transactions),
         }
+    }
+
+    /// Breaks confirmed transactions down by submission cohort.
+    ///
+    /// Returns an empty vector when every confirmed transaction is
+    /// [`SubmitCohortLabel::Plain`], so the breakdown only appears in the summary
+    /// when validity transactions were actually exercised.
+    fn compute_by_cohort(transactions: &[TransactionMetrics]) -> Vec<CohortMetrics> {
+        if transactions.iter().all(|t| t.cohort == SubmitCohortLabel::Plain) {
+            return Vec::new();
+        }
+
+        let labels = [SubmitCohortLabel::Plain, SubmitCohortLabel::ValidityPass];
+        labels
+            .into_iter()
+            .filter_map(|cohort| {
+                let members: Vec<&TransactionMetrics> =
+                    transactions.iter().filter(|t| t.cohort == cohort).collect();
+                if members.is_empty() {
+                    return None;
+                }
+                let confirmed = members.len() as u64;
+                let reverted = members.iter().filter(|t| t.reverted).count() as u64;
+                let total_gas: u64 = members.iter().map(|t| t.gas_used).sum();
+                let mut latencies: Vec<Duration> =
+                    members.iter().filter_map(|t| t.block_latency).collect();
+                Some(CohortMetrics {
+                    cohort,
+                    confirmed,
+                    reverted,
+                    total_gas,
+                    block_latency: Self::compute_duration_metrics(&mut latencies),
+                })
+            })
+            .collect()
     }
 
     fn compute_block_range<'t>(
@@ -259,6 +301,8 @@ pub struct MetricsSummary {
     pub throughput_percentiles: ThroughputPercentiles,
     /// Throughput samples over time for graphing.
     pub throughput_timeseries: Vec<ThroughputSample>,
+    /// Block-aligned mempool pacing health.
+    pub pacing: PacingMetrics,
     /// Gas usage statistics.
     pub gas: GasMetrics,
     /// Range of blocks containing confirmed test transactions.
@@ -274,6 +318,10 @@ pub struct MetricsSummary {
     /// Number of fresh recipient keys generated during the run.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fresh_recipient_count: Option<u64>,
+    /// Confirmed-transaction metrics broken down by submission cohort. Empty
+    /// unless validity transactions were exercised during the run.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub by_cohort: Vec<CohortMetrics>,
 }
 
 impl MetricsSummary {
@@ -355,5 +403,48 @@ mod tests {
 
     fn unconfirmed_transaction(gas_used: u64) -> TransactionMetrics {
         TransactionMetrics::new(TxHash::ZERO, None, None, gas_used, 0, None)
+    }
+
+    fn cohort_transaction(
+        block_number: u64,
+        gas_used: u64,
+        cohort: SubmitCohortLabel,
+    ) -> TransactionMetrics {
+        let mut transaction = TransactionMetrics::new(
+            TxHash::ZERO,
+            Some(Duration::from_millis(10)),
+            None,
+            gas_used,
+            0,
+            Some(block_number),
+        );
+        transaction.cohort = cohort;
+        transaction
+    }
+
+    #[test]
+    fn by_cohort_is_empty_when_all_plain() {
+        let transactions = [transaction(10, 100), transaction(11, 200)];
+
+        assert!(MetricsAggregator::compute_by_cohort(&transactions).is_empty());
+    }
+
+    #[test]
+    fn by_cohort_splits_confirmed_across_cohorts() {
+        let transactions = [
+            cohort_transaction(10, 100, SubmitCohortLabel::Plain),
+            cohort_transaction(11, 200, SubmitCohortLabel::ValidityPass),
+            cohort_transaction(12, 300, SubmitCohortLabel::ValidityPass),
+        ];
+
+        let by_cohort = MetricsAggregator::compute_by_cohort(&transactions);
+
+        assert_eq!(by_cohort.len(), 2);
+        assert_eq!(by_cohort[0].cohort, SubmitCohortLabel::Plain);
+        assert_eq!(by_cohort[0].confirmed, 1);
+        assert_eq!(by_cohort[0].total_gas, 100);
+        assert_eq!(by_cohort[1].cohort, SubmitCohortLabel::ValidityPass);
+        assert_eq!(by_cohort[1].confirmed, 2);
+        assert_eq!(by_cohort[1].total_gas, 500);
     }
 }

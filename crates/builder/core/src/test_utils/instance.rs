@@ -39,7 +39,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    BuilderConfig, CandidateSource, DefaultCandidateSource, SharedMeteringProvider,
+    BuilderConfig, SharedMeteringProvider,
     flashblocks::FlashblocksServiceBuilder,
     test_utils::{
         EngineApi, Ipc, TransactionPoolObserver, create_test_db_env, driver::ChainDriver,
@@ -111,58 +111,39 @@ where
     }
 }
 
-/// Builder for a [`LocalInstance`] that supports injecting a custom
-/// [`CandidateSource`] and installing node [extensions](BaseNodeExtension).
+/// Builder for a [`LocalInstance`] that supports installing node extensions.
 ///
 /// The resulting node is wired through the same payload-service and extension-hook pipeline used by
 /// the production runner, so extensions installed here run exactly as they would in a real node.
 ///
 /// ```ignore
 /// let instance = LocalInstanceBuilder::new(BuilderConfig::for_tests())
-///     .with_candidate_source(my_source)
 ///     .install_ext::<MyExtension>(my_config)
 ///     .build()
 ///     .await?;
 /// ```
 #[derive(derive_more::Debug)]
-pub struct LocalInstanceBuilder<S = DefaultCandidateSource> {
+pub struct LocalInstanceBuilder {
     builder_config: BuilderConfig,
     node_config: NodeConfig<BaseChainSpec>,
-    candidate_source: S,
     #[debug("{}", extensions.len())]
     extensions: Vec<Box<dyn BaseNodeExtension>>,
 }
 
 impl LocalInstanceBuilder {
     /// Creates a new builder with the given builder configuration, the default node configuration,
-    /// the default candidate source, and no extensions.
+    /// and no extensions.
     pub fn new(builder_config: BuilderConfig) -> Self {
-        Self {
-            builder_config,
-            node_config: default_node_config(),
-            candidate_source: DefaultCandidateSource,
-            extensions: Vec::new(),
-        }
+        Self { builder_config, node_config: default_node_config(), extensions: Vec::new() }
     }
 }
 
-impl<S> LocalInstanceBuilder<S> {
+impl LocalInstanceBuilder {
     /// Overrides the Reth node configuration.
     #[must_use]
     pub fn with_node_config(mut self, node_config: NodeConfig<BaseChainSpec>) -> Self {
         self.node_config = node_config;
         self
-    }
-
-    /// Replaces the candidate transaction source used by the flashblocks build loop.
-    #[must_use]
-    pub fn with_candidate_source<S2>(self, candidate_source: S2) -> LocalInstanceBuilder<S2> {
-        LocalInstanceBuilder {
-            builder_config: self.builder_config,
-            node_config: self.node_config,
-            candidate_source,
-            extensions: self.extensions,
-        }
     }
 
     /// Installs a node extension built from the given config, mirroring
@@ -184,17 +165,9 @@ impl<S> LocalInstanceBuilder<S> {
     ///
     /// This method does not prefund any accounts, so before sending any transactions make sure that
     /// sender accounts are funded.
-    pub async fn build(self) -> eyre::Result<LocalInstance>
-    where
-        S: CandidateSource<BasePooledTransaction> + Clone + Unpin + 'static,
-    {
-        Box::pin(LocalInstance::launch(
-            self.builder_config,
-            self.node_config,
-            self.candidate_source,
-            self.extensions,
-        ))
-        .await
+    pub async fn build(self) -> eyre::Result<LocalInstance> {
+        Box::pin(LocalInstance::launch(self.builder_config, self.node_config, self.extensions))
+            .await
     }
 }
 
@@ -223,19 +196,14 @@ impl LocalInstance {
 
     /// Core launch routine shared by all constructors.
     ///
-    /// Builds the node through the runner's payload-service seam (so a custom [`CandidateSource`]
-    /// can be injected) and applies caller-supplied [extensions](BaseNodeExtension) via the same
-    /// [`NodeHooks`] pipeline used in production, plus an internal hook that captures the running
-    /// node's transaction pool for tests.
-    async fn launch<S>(
+    /// Builds the node through the runner's payload-service seam and applies caller-supplied
+    /// [extensions](BaseNodeExtension) via the same [`NodeHooks`] pipeline used in production,
+    /// plus an internal hook that captures the running node's transaction pool for tests.
+    async fn launch(
         builder_config: BuilderConfig,
         node_config: NodeConfig<BaseChainSpec>,
-        candidate_source: S,
         extensions: Vec<Box<dyn BaseNodeExtension>>,
-    ) -> eyre::Result<Self>
-    where
-        S: CandidateSource<BasePooledTransaction> + Clone + Unpin + 'static,
-    {
+    ) -> eyre::Result<Self> {
         clear_otel_env_vars();
         init_silenced_tracing();
         let runtime = RuntimeBuilder::new(RuntimeConfig::default()).build()?;
@@ -248,9 +216,7 @@ impl LocalInstance {
             .with_da_config(da_config)
             .with_gas_limit_config(gas_limit_config);
 
-        // Build the flashblocks payload service with the (possibly custom) candidate source.
-        let service_builder = FlashblocksServiceBuilder::new(builder_config.clone())
-            .with_candidate_source(candidate_source);
+        let service_builder = FlashblocksServiceBuilder::new(builder_config.clone());
         let components = service_builder.build_components(&base_node);
 
         let (txpool_ready_tx, txpool_ready_rx) =
@@ -453,7 +419,12 @@ pub fn default_node_config_with_azul() -> NodeConfig<BaseChainSpec> {
     node_config_with_chain_spec(chain_spec_with_azul())
 }
 
-fn node_config_with_chain_spec(spec: Arc<BaseChainSpec>) -> NodeConfig<BaseChainSpec> {
+/// Builds a [`LocalInstance`]-style Reth node configuration for the given chain spec.
+///
+/// Uses the same IPC-only RPC setup, disabled discovery, unused ports, and temporary data
+/// directories as [`default_node_config`], but with a caller-supplied chain spec — so an in-process
+/// builder node can be launched against a custom genesis (e.g. one derived from a rollup config).
+pub fn node_config_with_chain_spec(spec: Arc<BaseChainSpec>) -> NodeConfig<BaseChainSpec> {
     let tempdir = std::env::temp_dir();
     let random_id = nanoid!();
 

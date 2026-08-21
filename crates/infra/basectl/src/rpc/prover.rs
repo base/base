@@ -1,94 +1,279 @@
 //! Prover-service requester client helpers for the `basectl proofs` command group.
 
-use std::time::Duration;
+use std::{fmt, time::Duration};
 
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256};
 use base_prover_service_client::{
-    ProofRequesterClient, ProverServiceClientConfig, ProverServiceClientError,
+    ProofRequesterClient, ProverServiceClientBuildError, ProverServiceClientConfig,
+    ProverServiceClientError,
 };
 use base_prover_service_protocol::{
     GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse, ProofRequest,
-    ProofRequestKind, ProofSessionId, ProofStatus, ProveBlockRangeRequest, ZkBackend,
-    ZkProofRequest, ZkVm,
+    ProofRequestKind, ProofSessionId, ProofStatus, ProveBlockRangeRequest, SnarkPlonkProofRequest,
+    ZkBackend, ZkProofRequest, ZkVm,
 };
+use jsonrpsee::core::client::Error as JsonRpcClientError;
 use tokio::time::{Instant, sleep};
 use tracing::{debug, info};
 use url::Url;
 
-use crate::errors::ProofsCommandError;
+use crate::{
+    errors::ProofsCommandError,
+    rpc::games::{GameDetails, GameStatus},
+};
 
-/// Parameters for a `basectl proofs finalize` compressed ZK proof request.
+/// Parameters for a `basectl proofs propose` game-matched PLONK proof request.
+///
+/// The `AggregateVerifier` contract reconstructs the proof journal from its
+/// own stored game state with the submitting wallet as proposer, so every
+/// range parameter must be taken from the target game itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProofFinalizeRequest {
-    /// First L2 block number to prove.
-    pub start_block: u64,
+pub struct ProofProposeRequest {
+    /// Dispute game proxy address the proof targets.
+    pub game: Address,
+    /// Pre-state L2 block number (start of the proved range).
+    pub pre_state_block: u64,
     /// Number of consecutive L2 blocks to prove.
     pub num_blocks: u64,
+    /// L1 head hash stored at game creation time.
+    pub l1_head: B256,
+    /// Intermediate output root interval matching the game's checkpoints.
+    pub intermediate_root_interval: u64,
+    /// L1 wallet address that will later submit the proof on chain.
+    ///
+    /// The proof journal commits to this address as the proposer, so the
+    /// `verifyProposalProof` transaction must be sent from exactly this
+    /// wallet.
+    pub prover_address: Address,
+    /// ZK proving backend that executes the proof.
+    pub zk_backend: ZkBackend,
     /// Explicit session ID override. When `None`, an idempotent session ID is
-    /// derived from the network name and block range.
+    /// derived from the network name, game, block range, checkpoint stride,
+    /// and prover address.
     pub session_id: Option<String>,
-    /// Optional L1 head hash used for witness generation.
-    pub l1_head: Option<B256>,
-    /// Optional sequencing window.
-    pub sequence_window: Option<u64>,
-    /// Optional intermediate output root interval.
-    pub intermediate_root_interval: Option<u64>,
 }
 
-impl ProofFinalizeRequest {
+impl ProofProposeRequest {
     /// Session ID namespace for proofs requested via basectl.
-    const SESSION_NAMESPACE: &'static [u8] = b"basectl";
+    ///
+    /// v2 prevents reuse of prover-service or SP1 journals created before schedule pinning.
+    const SESSION_NAMESPACE: &'static [u8] = b"basectl/v2";
 
-    /// Session ID proof subtype for compressed SP1 proofs.
-    const SESSION_SUBTYPE: &'static str = "zk/sp1/compressed";
+    /// Builds a game-matched request from the game's on-chain state.
+    ///
+    /// Validates that the game can still accept a ZK proposal proof and takes
+    /// the block range, L1 head, and checkpoint stride from the game so the
+    /// proof journal matches what the contract reconstructs.
+    /// `intermediate_root_interval` supplies the stride when the game does
+    /// not expose `INTERMEDIATE_BLOCK_INTERVAL`; otherwise it must match the
+    /// game's committed value.
+    pub fn for_game(
+        details: &GameDetails,
+        prover_address: Address,
+        zk_backend: ZkBackend,
+        session_id: Option<String>,
+        intermediate_root_interval: Option<u64>,
+    ) -> Result<Self, ProofsCommandError> {
+        let not_provable = |reason: &str| ProofsCommandError::GameNotProvable {
+            game: details.address.to_string(),
+            reason: reason.to_string(),
+        };
+        if prover_address == Address::ZERO {
+            return Err(not_provable("prover address cannot be the zero address"));
+        }
+        if details.status != GameStatus::InProgress {
+            return Err(not_provable("game is not in progress"));
+        }
+        if details.zk_prover != Address::ZERO {
+            return Err(not_provable("game already has a ZK proof"));
+        }
+        let intermediate_root_interval =
+            Self::intermediate_root_interval(details, intermediate_root_interval)?;
+        Ok(Self {
+            game: details.address,
+            pre_state_block: details.starting_block,
+            num_blocks: details.block_interval,
+            l1_head: details.l1_head,
+            intermediate_root_interval,
+            prover_address,
+            zk_backend,
+            session_id,
+        })
+    }
+
+    /// Returns the explicit or derived session ID for an existing game's proof.
+    ///
+    /// Unlike [`Self::for_game`], this intentionally ignores mutable game
+    /// status and proof slots so `basectl proofs submit` can retrieve a paid
+    /// proof before its final on-chain submission preflight.
+    pub fn session_id_for_game(
+        network: &str,
+        details: &GameDetails,
+        prover_address: Address,
+        zk_backend: ZkBackend,
+        session_id: Option<String>,
+        intermediate_root_interval: Option<u64>,
+    ) -> Result<String, ProofsCommandError> {
+        if let Some(session_id) = session_id {
+            return Ok(session_id);
+        }
+        let intermediate_root_interval =
+            Self::intermediate_root_interval(details, intermediate_root_interval)?;
+        Ok(Self::derive_session_id(
+            network,
+            details.address,
+            details.starting_block,
+            details.block_interval,
+            intermediate_root_interval,
+            prover_address,
+            zk_backend,
+        ))
+    }
+
+    fn intermediate_root_interval(
+        details: &GameDetails,
+        intermediate_root_interval: Option<u64>,
+    ) -> Result<u64, ProofsCommandError> {
+        let not_provable = |reason: &str| ProofsCommandError::GameNotProvable {
+            game: details.address.to_string(),
+            reason: reason.to_string(),
+        };
+        if details.block_interval == 0 {
+            return Err(not_provable("game covers an empty block range"));
+        }
+        if let (Some(explicit), Some(canonical)) =
+            (intermediate_root_interval, details.intermediate_root_interval)
+            && explicit != canonical
+        {
+            return Err(not_provable(&format!(
+                "intermediate root interval {explicit} does not match the game \
+                 implementation's INTERMEDIATE_BLOCK_INTERVAL {canonical}; a proof with a \
+                 different stride would not verify on chain"
+            )));
+        }
+        let intermediate_root_interval =
+            intermediate_root_interval.or(details.intermediate_root_interval).ok_or_else(|| {
+                not_provable(
+                    "the game does not expose INTERMEDIATE_BLOCK_INTERVAL; \
+                     pass --intermediate-root-interval",
+                )
+            })?;
+        if intermediate_root_interval == 0
+            || !details.block_interval.is_multiple_of(intermediate_root_interval)
+        {
+            return Err(not_provable(&format!(
+                "intermediate root interval {intermediate_root_interval} must be a nonzero \
+                 divisor of the game's {}-block range",
+                details.block_interval
+            )));
+        }
+
+        let expected_root_count = details.block_interval / intermediate_root_interval;
+        if expected_root_count != details.intermediate_root_count as u64 {
+            return Err(not_provable(&format!(
+                "game committed {} intermediate root(s) but its {}-block range at a \
+                 {intermediate_root_interval}-block checkpoint interval covers \
+                 {expected_root_count}; the game was not created with the canonical \
+                 checkpoints and a proof would not verify on chain",
+                details.intermediate_root_count, details.block_interval
+            )));
+        }
+        Ok(intermediate_root_interval)
+    }
 
     /// Returns the effective session ID for `network`.
     ///
     /// Uses the explicit override when set; otherwise derives an idempotent
-    /// `UUIDv5` from the network name and block range so re-running the same
-    /// command resolves to the same prover-service session instead of
-    /// enqueueing a duplicate proof.
+    /// `UUIDv5` from the network name, game address, block range, checkpoint
+    /// stride, and prover address so re-running the same command resolves to
+    /// the same prover-service session instead of enqueueing a duplicate
+    /// proof. `basectl proofs propose` and `basectl proofs submit` share this
+    /// derivation so `submit` can find the session that `propose` created
+    /// without the operator copying session IDs around.
     pub fn effective_session_id(&self, network: &str) -> String {
         self.session_id.clone().unwrap_or_else(|| {
-            ProofSessionId::derive_from_components(
-                Self::SESSION_NAMESPACE,
-                Self::SESSION_SUBTYPE,
-                &[
-                    network.as_bytes(),
-                    &self.start_block.to_be_bytes(),
-                    &self.num_blocks.to_be_bytes(),
-                ],
+            Self::derive_session_id(
+                network,
+                self.game,
+                self.pre_state_block,
+                self.num_blocks,
+                self.intermediate_root_interval,
+                self.prover_address,
+                self.zk_backend,
             )
         })
     }
 
+    fn derive_session_id(
+        network: &str,
+        game: Address,
+        pre_state_block: u64,
+        num_blocks: u64,
+        intermediate_root_interval: u64,
+        prover_address: Address,
+        zk_backend: ZkBackend,
+    ) -> String {
+        let subtype = match zk_backend {
+            ZkBackend::DryRun => "zk/sp1/snark_plonk/dry_run",
+            ZkBackend::Cluster => "zk/sp1/snark_plonk",
+            ZkBackend::Network => "zk/sp1/snark_plonk/network",
+        };
+        ProofSessionId::derive_from_components(
+            Self::SESSION_NAMESPACE,
+            subtype,
+            &[
+                network.as_bytes(),
+                game.as_slice(),
+                &pre_state_block.to_be_bytes(),
+                &num_blocks.to_be_bytes(),
+                &intermediate_root_interval.to_be_bytes(),
+                prover_address.as_slice(),
+            ],
+        )
+    }
+
     /// Builds the prover-service prove-block-range request for `network`, deriving
     /// its effective session ID with [`Self::effective_session_id`].
-    pub fn to_prove_request(&self, network: &str) -> ProveBlockRangeRequest {
+    pub fn to_prove_request(&self, network: &str, retry_failed: bool) -> ProveBlockRangeRequest {
         ProveBlockRangeRequest {
             proof: ProofRequest {
                 session_id: self.effective_session_id(network),
-                request: ProofRequestKind::Compressed(ZkProofRequest {
-                    start_block_number: self.start_block,
-                    number_of_blocks_to_prove: self.num_blocks,
-                    sequence_window: self.sequence_window,
-                    l1_head: self.l1_head,
-                    intermediate_root_interval: self.intermediate_root_interval,
-                    zk_vm: ZkVm::Sp1,
-                    zk_backend: ZkBackend::Cluster,
+                request: ProofRequestKind::SnarkPlonk(SnarkPlonkProofRequest {
+                    proof: ZkProofRequest {
+                        start_block_number: self.pre_state_block,
+                        number_of_blocks_to_prove: self.num_blocks,
+                        sequence_window: None,
+                        l1_head: Some(self.l1_head),
+                        intermediate_root_interval: Some(self.intermediate_root_interval),
+                        schedule_l2_block_number: None,
+                        zk_vm: ZkVm::Sp1,
+                        zk_backend: self.zk_backend,
+                    },
+                    prover_address: self.prover_address,
                 }),
             },
+            retry_failed,
         }
     }
 }
 
 /// Prover-service requester client used by the `basectl proofs` commands.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ProofsClient {
-    endpoint: Url,
+    endpoint: String,
     requester: ProofRequesterClient,
     poll_interval: Duration,
     max_wait: Duration,
+}
+
+impl fmt::Debug for ProofsClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ProofsClient")
+            .field("endpoint", &self.endpoint)
+            .field("poll_interval", &self.poll_interval)
+            .field("max_wait", &self.max_wait)
+            .finish_non_exhaustive()
+    }
 }
 
 impl ProofsClient {
@@ -96,14 +281,30 @@ impl ProofsClient {
     pub fn connect(endpoint: &Url) -> Result<Self, ProofsCommandError> {
         let config = ProverServiceClientConfig::new(endpoint.as_str());
         let requester = ProofRequesterClient::connect(&config).map_err(|source| {
-            ProofsCommandError::BuildClient { endpoint: endpoint.to_string(), source }
+            let source = match source {
+                ProverServiceClientBuildError::RpcTransport(error) => {
+                    ProverServiceClientBuildError::RpcTransport(Self::sanitize_rpc_error(error))
+                }
+                other => other,
+            };
+            ProofsCommandError::BuildClient {
+                endpoint: endpoint.origin().ascii_serialization(),
+                source,
+            }
         })?;
         Ok(Self {
-            endpoint: endpoint.clone(),
+            endpoint: endpoint.origin().ascii_serialization(),
             requester,
             poll_interval: config.poll_interval(),
             max_wait: config.max_wait(),
         })
+    }
+
+    /// Overrides the maximum time spent waiting for proof completion.
+    #[must_use]
+    pub const fn with_max_wait(mut self, max_wait: Duration) -> Self {
+        self.max_wait = max_wait;
+        self
     }
 
     /// Overrides the poll cadence used by [`Self::wait_for_completion`].
@@ -207,7 +408,22 @@ impl ProofsClient {
         method: &'static str,
         source: ProverServiceClientError,
     ) -> ProofsCommandError {
-        ProofsCommandError::Rpc { endpoint: self.endpoint.to_string(), method, source }
+        let source = match source {
+            ProverServiceClientError::RpcTransport(error) => {
+                ProverServiceClientError::RpcTransport(Self::sanitize_rpc_error(error))
+            }
+            other => other,
+        };
+        ProofsCommandError::Rpc { endpoint: self.endpoint.clone(), method, source }
+    }
+
+    fn sanitize_rpc_error(error: JsonRpcClientError) -> JsonRpcClientError {
+        match error {
+            JsonRpcClientError::Transport(_) | JsonRpcClientError::RestartNeeded(_) => {
+                JsonRpcClientError::Custom("transport request failed".to_string())
+            }
+            other => other,
+        }
     }
 }
 
@@ -215,91 +431,288 @@ impl ProofsClient {
 mod tests {
     use std::{
         collections::VecDeque,
+        error::Error as _,
+        io,
         net::SocketAddr,
         sync::{Arc, Mutex},
         time::Duration,
     };
 
+    use alloy_primitives::{Address, B256};
     use base_prover_service_protocol::{
         DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, GetProofResponse,
         ListProofsRequest, ListProofsResponse, ProofRequestKind, ProofStatus,
-        ProveBlockRangeRequest, ProveBlockRangeResponse, ProverRequesterApiServer, ZkVm,
+        ProveBlockRangeRequest, ProveBlockRangeResponse, ProverRequesterApiServer, ZkBackend, ZkVm,
     };
     use jsonrpsee::{
-        core::{RpcResult, async_trait},
+        core::{RpcResult, async_trait, client::Error as JsonRpcClientError},
         server::{Server, ServerHandle},
         types::{ErrorObjectOwned, error::ErrorCode},
     };
     use url::Url;
 
-    use super::{ProofFinalizeRequest, ProofsClient};
-    use crate::errors::ProofsCommandError;
+    use super::{ProofProposeRequest, ProofsClient};
+    use crate::{
+        errors::ProofsCommandError,
+        rpc::games::{GameDetails, GameStatus},
+    };
 
-    fn finalize_request() -> ProofFinalizeRequest {
-        ProofFinalizeRequest {
-            start_block: 100,
-            num_blocks: 5,
-            session_id: None,
-            l1_head: None,
-            sequence_window: None,
-            intermediate_root_interval: None,
+    fn provable_game() -> GameDetails {
+        GameDetails {
+            address: Address::repeat_byte(0xAA),
+            status: GameStatus::InProgress,
+            root_claim: B256::repeat_byte(0x11),
+            starting_block: 4000,
+            target_block: 5000,
+            block_interval: 1000,
+            intermediate_root_interval: Some(100),
+            intermediate_root_count: 10,
+            l1_head: B256::repeat_byte(0x22),
+            parent_address: Address::repeat_byte(0xBB),
+            tee_prover: Address::repeat_byte(0xCC),
+            zk_prover: Address::ZERO,
+            proof_count: 1,
+            created_at: 1_700_000_000,
+            expected_resolution: 1_700_432_000,
+            countered_index: None,
+        }
+    }
+
+    fn propose_request() -> ProofProposeRequest {
+        ProofProposeRequest::for_game(
+            &provable_game(),
+            Address::repeat_byte(0xDD),
+            ZkBackend::Network,
+            None,
+            None,
+        )
+        .expect("provable game should build a request")
+    }
+
+    #[test]
+    fn propose_for_game_maps_game_state() {
+        let request = propose_request();
+
+        assert_eq!(request.game, Address::repeat_byte(0xAA));
+        assert_eq!(request.pre_state_block, 4000);
+        assert_eq!(request.num_blocks, 1000);
+        assert_eq!(request.l1_head, B256::repeat_byte(0x22));
+        assert_eq!(request.intermediate_root_interval, 100);
+        assert_eq!(request.prover_address, Address::repeat_byte(0xDD));
+    }
+
+    #[test]
+    fn propose_for_game_rejects_unprovable_games() {
+        let resolved = GameDetails { status: GameStatus::DefenderWins, ..provable_game() };
+        let already_proven =
+            GameDetails { zk_prover: Address::repeat_byte(0xEE), ..provable_game() };
+        let empty_range = GameDetails { block_interval: 0, target_block: 4000, ..provable_game() };
+        let no_stride = GameDetails { intermediate_root_interval: None, ..provable_game() };
+
+        for details in [resolved, already_proven, empty_range, no_stride] {
+            let error = ProofProposeRequest::for_game(
+                &details,
+                Address::repeat_byte(0xDD),
+                ZkBackend::Network,
+                None,
+                None,
+            )
+            .expect_err("unprovable game should be rejected");
+            assert!(matches!(error, ProofsCommandError::GameNotProvable { .. }));
         }
     }
 
     #[test]
-    fn session_id_is_deterministic_per_network_and_range() {
-        let request = finalize_request();
+    fn propose_for_game_rejects_zero_prover_address() {
+        let error = ProofProposeRequest::for_game(
+            &provable_game(),
+            Address::ZERO,
+            ZkBackend::Network,
+            None,
+            None,
+        )
+        .expect_err("zero address cannot submit the resulting proof");
+
+        assert!(matches!(error, ProofsCommandError::GameNotProvable { .. }));
+    }
+
+    #[test]
+    fn propose_for_game_rejects_stride_overrides_conflicting_with_canonical_stride() {
+        let error = ProofProposeRequest::for_game(
+            &provable_game(),
+            Address::repeat_byte(0xDD),
+            ZkBackend::Network,
+            None,
+            Some(250),
+        )
+        .expect_err("stride that conflicts with the canonical interval must be rejected");
+        assert!(matches!(error, ProofsCommandError::GameNotProvable { .. }));
+    }
+
+    #[test]
+    fn propose_for_game_rejects_invalid_stride_overrides() {
+        let no_stride = GameDetails { intermediate_root_interval: None, ..provable_game() };
+        for interval in [0, 300] {
+            let error = ProofProposeRequest::for_game(
+                &no_stride,
+                Address::repeat_byte(0xDD),
+                ZkBackend::Network,
+                None,
+                Some(interval),
+            )
+            .expect_err("stride that is zero or does not divide the range must be rejected");
+            assert!(matches!(error, ProofsCommandError::GameNotProvable { .. }));
+        }
+    }
+
+    #[test]
+    fn propose_for_game_accepts_stride_override() {
+        let no_stride = GameDetails {
+            intermediate_root_interval: None,
+            intermediate_root_count: 4,
+            ..provable_game()
+        };
+        let request = ProofProposeRequest::for_game(
+            &no_stride,
+            Address::repeat_byte(0xDD),
+            ZkBackend::Network,
+            None,
+            Some(250),
+        )
+        .expect("stride override should build a request");
+
+        assert_eq!(request.intermediate_root_interval, 250);
+    }
+
+    #[test]
+    fn propose_for_game_rejects_noncanonical_root_count() {
+        // 1000-block game at the canonical 100-block stride commits 10 roots;
+        // a game holding 20 was not created with the canonical checkpoints.
+        let extra_roots = GameDetails { intermediate_root_count: 20, ..provable_game() };
+        let error = ProofProposeRequest::for_game(
+            &extra_roots,
+            Address::repeat_byte(0xDD),
+            ZkBackend::Network,
+            None,
+            None,
+        )
+        .expect_err("root count contradicting the canonical stride must be rejected");
+        assert!(matches!(error, ProofsCommandError::GameNotProvable { .. }));
+    }
+
+    #[test]
+    fn propose_for_game_rejects_override_inconsistent_with_root_count() {
+        // Without a canonical stride the override is trusted, but it must still
+        // cover every committed root: 500-block strides over 1000 blocks cover 2,
+        // not the 10 the game committed.
+        let no_stride = GameDetails { intermediate_root_interval: None, ..provable_game() };
+        let error = ProofProposeRequest::for_game(
+            &no_stride,
+            Address::repeat_byte(0xDD),
+            ZkBackend::Network,
+            None,
+            Some(500),
+        )
+        .expect_err("override that does not cover the committed roots must be rejected");
+        assert!(matches!(error, ProofsCommandError::GameNotProvable { .. }));
+    }
+
+    #[test]
+    fn propose_session_id_is_distinct_per_game_prover_and_backend() {
+        let request = propose_request();
 
         assert_eq!(
             request.effective_session_id("mainnet"),
             request.effective_session_id("mainnet")
         );
-        assert_ne!(
-            request.effective_session_id("mainnet"),
-            request.effective_session_id("sepolia")
-        );
 
-        let other_range = ProofFinalizeRequest { start_block: 101, ..finalize_request() };
-        assert_ne!(
-            request.effective_session_id("mainnet"),
-            other_range.effective_session_id("mainnet")
-        );
+        let other_game =
+            ProofProposeRequest { game: Address::repeat_byte(0x99), ..request.clone() };
+        let other_prover =
+            ProofProposeRequest { prover_address: Address::repeat_byte(0x88), ..request.clone() };
+        let other_backend =
+            ProofProposeRequest { zk_backend: ZkBackend::Cluster, ..request.clone() };
+        let other_stride =
+            ProofProposeRequest { intermediate_root_interval: 200, ..request.clone() };
+
+        let base_id = request.effective_session_id("mainnet");
+        assert_ne!(base_id, other_game.effective_session_id("mainnet"));
+        assert_ne!(base_id, other_prover.effective_session_id("mainnet"));
+        assert_ne!(base_id, other_backend.effective_session_id("mainnet"));
+        assert_ne!(base_id, other_stride.effective_session_id("mainnet"));
+        assert_ne!(base_id, request.effective_session_id("sepolia"));
     }
 
     #[test]
-    fn explicit_session_id_overrides_derivation() {
-        let request = ProofFinalizeRequest {
-            session_id: Some("custom-session".to_string()),
-            ..finalize_request()
+    fn propose_explicit_session_id_overrides_derivation() {
+        let request = ProofProposeRequest {
+            session_id: Some("custom-propose".to_string()),
+            ..propose_request()
         };
 
-        assert_eq!(request.effective_session_id("mainnet"), "custom-session");
+        assert_eq!(request.effective_session_id("mainnet"), "custom-propose");
     }
 
     #[test]
-    fn to_prove_request_maps_all_fields() {
-        let request = ProofFinalizeRequest {
-            start_block: 100,
-            num_blocks: 5,
-            session_id: Some("session-map".to_string()),
-            l1_head: Some(alloy_primitives::B256::repeat_byte(0xaa)),
-            sequence_window: Some(3600),
-            intermediate_root_interval: Some(10),
+    fn submit_session_id_ignores_mutable_game_state() {
+        let expected = propose_request().effective_session_id("mainnet");
+        let unavailable = GameDetails {
+            status: GameStatus::DefenderWins,
+            zk_prover: Address::repeat_byte(0xEE),
+            ..provable_game()
         };
 
-        let prove = request.to_prove_request("devnet");
-        assert_eq!(prove.proof.session_id, "session-map");
+        let session_id = ProofProposeRequest::session_id_for_game(
+            "mainnet",
+            &unavailable,
+            Address::repeat_byte(0xDD),
+            ZkBackend::Network,
+            None,
+            None,
+        )
+        .expect("mutable game state must not prevent retrieving an existing paid proof");
+
+        assert_eq!(session_id, expected);
+    }
+
+    #[test]
+    fn propose_to_prove_request_builds_snark_plonk_kind() {
+        let prove = propose_request().to_prove_request("devnet", false);
+
+        assert!(!prove.retry_failed);
         match prove.proof.request {
-            ProofRequestKind::Compressed(zk) => {
-                assert_eq!(zk.start_block_number, 100);
-                assert_eq!(zk.number_of_blocks_to_prove, 5);
-                assert_eq!(zk.sequence_window, Some(3600));
-                assert_eq!(zk.l1_head, Some(alloy_primitives::B256::repeat_byte(0xaa)));
-                assert_eq!(zk.intermediate_root_interval, Some(10));
-                assert_eq!(zk.zk_vm, ZkVm::Sp1);
-                assert_eq!(zk.zk_backend, super::ZkBackend::Cluster);
+            ProofRequestKind::SnarkPlonk(snark) => {
+                assert_eq!(snark.prover_address, Address::repeat_byte(0xDD));
+                assert_eq!(snark.proof.start_block_number, 4000);
+                assert_eq!(snark.proof.number_of_blocks_to_prove, 1000);
+                assert_eq!(snark.proof.sequence_window, None);
+                assert_eq!(snark.proof.l1_head, Some(B256::repeat_byte(0x22)));
+                assert_eq!(snark.proof.intermediate_root_interval, Some(100));
+                assert_eq!(snark.proof.zk_vm, ZkVm::Sp1);
+                assert_eq!(snark.proof.zk_backend, ZkBackend::Network);
             }
             other => panic!("unexpected proof request kind: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn client_redacts_endpoint_secrets_from_logs_and_errors() {
+        let endpoint =
+            Url::parse("https://user:password@prover.example/rpc/api-key?token=secret").unwrap();
+        let client = ProofsClient::connect(&endpoint).expect("client should build");
+        let source = base_prover_service_client::ProverServiceClientError::RpcTransport(
+            JsonRpcClientError::Transport(
+                io::Error::other(format!("request to {endpoint} failed")).into(),
+            ),
+        );
+        let error = client.rpc_error("prover_getProof", source);
+        let source = error.source().expect("RPC error should preserve a source").to_string();
+        let debug = format!("{client:?}");
+
+        assert_eq!(client.endpoint, "https://prover.example");
+        for secret in ["user", "password", "api-key", "token=secret"] {
+            assert!(!source.contains(secret));
+            assert!(!debug.contains(secret));
         }
     }
 
@@ -379,19 +792,6 @@ mod tests {
     async fn shutdown(handle: ServerHandle) {
         handle.stop().expect("server should stop");
         handle.stopped().await;
-    }
-
-    #[tokio::test]
-    async fn submit_returns_accepted_session_id() {
-        let api = MockRequesterApi::scripted([], ProofStatus::Queued);
-        let (client, handle) = spawn_mock(api).await;
-
-        let request = finalize_request();
-        let session_id =
-            client.submit(request.to_prove_request("devnet")).await.expect("submit should succeed");
-
-        assert_eq!(session_id, finalize_request().effective_session_id("devnet"));
-        shutdown(handle).await;
     }
 
     #[tokio::test]

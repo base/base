@@ -14,11 +14,11 @@ use base_common_consensus::Eip8130Constants;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ResolvedActor {
-    /// The resolved actor id (`bytes20(address)` for ecrecover/delegate,
-    /// `keccak256(x‖y)` for P-256/`WebAuthn`).
+    /// The resolved actor id (`bytes32(uint256(uint160(address)))`, right-aligned,
+    /// for ecrecover/delegate; `keccak256(x‖y)` for P-256/`WebAuthn`).
     pub actor_id: B256,
-    /// The actor's scope bitfield (`0 = unrestricted`).
-    pub scope: u8,
+    /// The actor's scope bitfield (`uint16`; `0 = unrestricted`).
+    pub scope: u16,
     /// The actor's policy gate target (the policy *manager*), or
     /// [`Address::ZERO`] when ungated. Never the signed policy commitment.
     pub policy_target: Address,
@@ -68,7 +68,7 @@ impl ResolvedActor {
 mod tests {
     use super::*;
 
-    fn actor(scope: u8) -> ResolvedActor {
+    fn actor(scope: u16) -> ResolvedActor {
         ResolvedActor { actor_id: B256::ZERO, scope, policy_target: Address::ZERO, expiry: 0 }
     }
 

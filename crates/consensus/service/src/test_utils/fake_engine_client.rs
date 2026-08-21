@@ -207,6 +207,10 @@ impl EngineClient for FakeEngineClient {
         self.cfg.as_ref()
     }
 
+    async fn el_syncing(&self) -> Result<bool, EngineClientError> {
+        Ok(false)
+    }
+
     fn get_l1_block(&self, block: BlockId) -> EthGetBlock<<Ethereum as Network>::BlockResponse> {
         EthGetBlock::new_provider(
             block,

@@ -9,8 +9,8 @@
 
 mod config;
 pub use config::{
-    UpgradeSignalArgs, UpgradeSignalBlockTag, UpgradeSignalConfig, UpgradeSignalDefaults,
-    UpgradeSignalL1RpcArgs, UpgradeSignalMode, UpgradeSignalStartupConfig,
+    StartupScheduleAction, UpgradeSignalArgs, UpgradeSignalBlockTag, UpgradeSignalConfig,
+    UpgradeSignalDefaults, UpgradeSignalL1RpcArgs, UpgradeSignalMode, UpgradeSignalStartupConfig,
     UpgradeSignalStartupMode,
 };
 
@@ -33,4 +33,12 @@ pub use runtime::{
 };
 
 mod state;
-pub use state::{UpgradeSignal, UpgradeSignalMonitor, UpgradeSignalSchedule};
+pub use state::{
+    UpgradeSignal, UpgradeSignalMonitor, UpgradeSignalPollOutcome, UpgradeSignalSchedule,
+};
+
+mod version;
+pub use version::PackedProtocolVersion;
+
+#[cfg(test)]
+pub mod test_utils;

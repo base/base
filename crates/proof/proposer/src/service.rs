@@ -9,7 +9,7 @@ use std::{
 };
 
 use alloy_primitives::Address;
-use alloy_provider::{Provider, ProviderBuilder};
+use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use base_balance_monitor::BalanceMonitorLayer;
 use base_cli_utils::RuntimeManager;
 use base_health::HealthServer;
@@ -63,7 +63,6 @@ impl ProposerService {
             anchor_state_registry = %config.anchor_state_registry_addr,
             dispute_game_factory = %config.dispute_game_factory_addr,
             game_type = config.game_type,
-            tee_image_hash = %config.tee_image_hash,
             prover_timeout = ?config.prover_timeout,
             poll_interval = ?config.poll_interval,
             rpc_timeout = ?config.rpc_timeout,
@@ -105,20 +104,21 @@ impl ProposerService {
         let proof_requester: Arc<dyn ProofRequesterProvider> = Arc::new(proof_requester);
         info!(endpoint = %config.prover_rpc, "Prover-service requester client initialized");
 
+        let read_provider = RootProvider::new_http(config.l1_eth_rpc.clone());
         let anchor_registry: Arc<dyn AnchorStateRegistryClient> =
             Arc::new(AnchorStateRegistryContractClient::new(
                 config.anchor_state_registry_addr,
-                config.l1_eth_rpc.clone(),
-            )?);
+                read_provider.clone(),
+            ));
         info!(address = %config.anchor_state_registry_addr, "AnchorStateRegistry client initialized");
 
         let factory_client = DisputeGameFactoryContractClient::new(
             config.dispute_game_factory_addr,
-            config.l1_eth_rpc.clone(),
-        )?;
+            read_provider.clone(),
+        );
         info!(address = %config.dispute_game_factory_addr, "DisputeGameFactory client initialized");
 
-        let verifier_client = AggregateVerifierContractClient::new(config.l1_eth_rpc.clone())?;
+        let verifier_client = AggregateVerifierContractClient::new(read_provider);
         let impl_address = factory_client.game_impls(config.game_type).await?;
         if impl_address == Address::ZERO {
             return Err(eyre::eyre!(
@@ -224,7 +224,6 @@ impl ProposerService {
             intermediate_block_interval,
             game_type: config.game_type,
             proposer_address: proposer_address.unwrap_or_default(),
-            tee_image_hash: config.tee_image_hash,
             anchor_state_registry_address: config.anchor_state_registry_addr,
         };
         let proof_dispatcher = ProofDispatcher::new(

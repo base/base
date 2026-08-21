@@ -2,8 +2,12 @@
 
 use alloy_primitives::Address;
 use alloy_rpc_types::TransactionRequest;
+use async_trait::async_trait;
 
-use crate::workload::SeededRng;
+use crate::{
+    Result,
+    workload::{SeededRng, chain_prep::ChainPrepContext},
+};
 
 mod transfer;
 pub use transfer::TransferPayload;
@@ -33,10 +37,16 @@ mod b20;
 pub use b20::B20TransferPayload;
 pub(crate) use b20::{b20_salt_for, b20_token_for};
 
+mod b20_lifecycle;
+
+mod real_token_lifecycle;
+pub use real_token_lifecycle::recover_real_tokens;
+
 mod osaka;
 pub use osaka::OsakaPayload;
 
-/// A transaction payload generator.
+/// A transaction payload generator with optional chain preparation.
+#[async_trait]
 pub trait Payload: Send + Sync + std::fmt::Debug {
     /// Returns the name of this payload type.
     fn name(&self) -> &'static str;
@@ -46,4 +56,16 @@ pub trait Payload: Send + Sync + std::fmt::Debug {
 
     /// Generates a transaction request.
     fn generate(&self, rng: &mut SeededRng, from: Address, to: Address) -> TransactionRequest;
+
+    /// Optional chain preparation before the measured load phase. Default: no-op.
+    async fn prepare(&self, ctx: &mut ChainPrepContext<'_>) -> Result<()> {
+        let _ = ctx;
+        Ok(())
+    }
+
+    /// Optional cleanup after the load phase. Default: no-op.
+    async fn teardown(&self, ctx: &ChainPrepContext<'_>) -> Result<()> {
+        let _ = ctx;
+        Ok(())
+    }
 }

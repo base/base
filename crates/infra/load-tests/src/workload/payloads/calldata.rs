@@ -1,6 +1,7 @@
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, Bytes};
 use alloy_rpc_types::TransactionRequest;
+use async_trait::async_trait;
 
 use super::Payload;
 use crate::workload::SeededRng;
@@ -49,6 +50,7 @@ impl Default for CalldataPayload {
     }
 }
 
+#[async_trait]
 impl Payload for CalldataPayload {
     fn name(&self) -> &'static str {
         "calldata"

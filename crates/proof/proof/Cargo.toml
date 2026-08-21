@@ -48,7 +48,7 @@ async-trait.workspace = true
 
 # KZG
 ark-ff.workspace = true
-ark-bls12-381.workspace = true
+ark-bls12-381 = { workspace = true, features = ["scalar_field"] }
 
 # `std` feature dependencies
 c-kzg = { workspace = true, optional = true }

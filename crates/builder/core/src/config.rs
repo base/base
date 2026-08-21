@@ -58,6 +58,12 @@ pub struct BuilderConfig {
     /// Transactions younger than this without metering data will be skipped.
     pub metering_wait_duration: Option<Duration>,
 
+    /// Hard cutoff on cumulative validity-predicate evaluation time per flashblock build.
+    /// Once the cutoff is exceeded, further validity-gated transactions are deferred to a
+    /// later flashblock rather than evaluated. This is the guardrail backing the
+    /// `base_builder_predicate_eval_duration_per_block` metric's P99 SLO.
+    pub predicate_eval_hard_cutoff: Duration,
+
     /// Resource metering provider
     pub metering_provider: SharedMeteringProvider,
 
@@ -108,6 +114,7 @@ impl core::fmt::Debug for BuilderConfig {
             .field("execution_metering_mode", &self.execution_metering_mode)
             .field("max_uncompressed_block_size", &self.max_uncompressed_block_size)
             .field("metering_wait_duration", &self.metering_wait_duration)
+            .field("predicate_eval_hard_cutoff", &self.predicate_eval_hard_cutoff)
             .field("metering_provider", &self.metering_provider)
             .field("rejection_cache_size", &self.rejection_cache.entry_count())
             .field("audit_archiver_url", &self.audit_archiver_url)
@@ -134,6 +141,7 @@ impl Default for BuilderConfig {
             execution_metering_mode: ExecutionMeteringMode::Off,
             max_uncompressed_block_size: None,
             metering_wait_duration: None,
+            predicate_eval_hard_cutoff: Duration::from_millis(10),
             metering_provider: Arc::new(NoopMeteringProvider),
             rejection_cache: RejectionCache::new(100_000, Duration::from_secs(1800)),
             audit_archiver_url: None,
@@ -209,6 +217,13 @@ impl BuilderConfig {
     #[must_use]
     pub const fn with_manifest_precheck_enabled(mut self, enabled: bool) -> Self {
         self.manifest_precheck_enabled = enabled;
+        self
+    }
+
+    /// Sets the validity-predicate evaluation hard cutoff in milliseconds.
+    #[must_use]
+    pub const fn with_predicate_eval_hard_cutoff_ms(mut self, ms: u64) -> Self {
+        self.predicate_eval_hard_cutoff = Duration::from_millis(ms);
         self
     }
 }

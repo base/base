@@ -66,4 +66,8 @@ eyre.workspace = true
 
 [features]
 default = [ "metrics" ]
-metrics = [ "base-metrics/metrics", "dep:metrics" ]
+metrics = [
+	"base-metrics/metrics",
+	"base-observability-events/metrics",
+	"dep:metrics",
+]

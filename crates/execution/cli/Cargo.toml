@@ -49,6 +49,8 @@ base-execution-trie.workspace = true
 base-execution-eip8130-rpc-node.workspace = true
 base-bundle-extension.workspace = true
 base-proofs-extension.workspace = true
+base-shadow-indexer.workspace = true
+base-shadow-indexer-db.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-consensus.workspace = true
 base-upgrade-signal = { workspace = true, features = ["metrics"] }
@@ -66,7 +68,6 @@ serde_json.workspace = true
 jsonrpsee = { workspace = true, features = ["server"] }
 reqwest = { workspace = true, features = ["json", "stream"] }
 alloy-eips.workspace = true
-alloy-provider.workspace = true
 secp256k1.workspace = true
 tokio-stream.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }

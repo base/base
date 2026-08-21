@@ -64,11 +64,17 @@ pub enum ReorgError {
 pub struct L1MinerConfig {
     /// Simulated L1 block time in seconds. Post-merge Ethereum uses 12 s.
     pub block_time: u64,
+    /// Timestamp of the synthetic L1 genesis block.
+    ///
+    /// Defaults to `0` (the deterministic model used by most action tests). Set this to a
+    /// near-wall-clock value when driving the production Flashblocks builder, whose flashblock
+    /// scheduling is wall-clock based and produces no flashblocks for timestamps far in the past.
+    pub genesis_timestamp: u64,
 }
 
 impl Default for L1MinerConfig {
     fn default() -> Self {
-        Self { block_time: 12 }
+        Self { block_time: 12, genesis_timestamp: 0 }
     }
 }
 
@@ -235,7 +241,7 @@ impl L1Miner {
     /// Create a new [`L1Miner`] initialised with a genesis block.
     pub fn new(config: L1MinerConfig) -> Self {
         let genesis = L1Block {
-            header: Header { number: 0, timestamp: 0, ..Default::default() },
+            header: Header { number: 0, timestamp: config.genesis_timestamp, ..Default::default() },
             transactions: vec![],
             receipts: vec![],
             transaction_receipts: vec![],

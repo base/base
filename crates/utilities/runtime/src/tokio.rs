@@ -14,7 +14,7 @@ use crate::{Cancellation, Clock, Spawner, TaskError, TaskHandle};
 /// spawning, and `tokio_util::sync::CancellationToken` for cancellation.
 ///
 /// Create one instance per logical service and pass it (cloned as needed)
-/// into components like `BatchDriver` and `HybridBlockSource`. All clones
+/// into components like `BatchDriver` and `PollingBlockSource`. All clones
 /// share the same cancellation scope; call [`cancel`](Cancellation::cancel)
 /// on any clone to shut down all components that share this runtime.
 #[derive(Clone, Debug)]

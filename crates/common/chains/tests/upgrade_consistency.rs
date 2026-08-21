@@ -11,13 +11,6 @@ use base_common_genesis::BaseUpgrade;
 fn mainnet_rollup_config_matches_chain_upgrades() {
     let chain = ChainUpgrades::mainnet();
     for fork in BaseUpgrade::VARIANTS {
-        // Regolith activated at genesis on Base and is stored as `regolith_time: Some(0)`
-        // in the derived rollup config. The `upgrade_activation` cascade returns Canyon's
-        // ForkCondition when traversing, which differs from ChainUpgrades'
-        // explicit Timestamp(0). Skip to avoid false mismatches.
-        if *fork == BaseUpgrade::Regolith {
-            continue;
-        }
         assert_eq!(
             BASE_MAINNET_ROLLUP_CONFIG.fork_condition(*fork),
             chain.fork_condition(*fork),
@@ -30,10 +23,6 @@ fn mainnet_rollup_config_matches_chain_upgrades() {
 fn sepolia_rollup_config_matches_chain_upgrades() {
     let chain = ChainUpgrades::sepolia();
     for fork in BaseUpgrade::VARIANTS {
-        // See comment in mainnet test above.
-        if *fork == BaseUpgrade::Regolith {
-            continue;
-        }
         assert_eq!(
             BASE_SEPOLIA_ROLLUP_CONFIG.fork_condition(*fork),
             chain.fork_condition(*fork),

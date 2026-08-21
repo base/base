@@ -752,6 +752,50 @@ fn golden_seize_selectors_unknown_at_v1() {
     }
 }
 
+/// The seize policy scopes were introduced at Cobalt (`StablecoinV2`). Although the
+/// `SEIZE_HOLDER_POLICY()` / `SEIZE_RECEIVER_POLICY()` getter selectors are absent from V1, the scope
+/// *values* must also not leak through the common `updatePolicy` selector, which is dialable on V1:
+/// V1 rejects them with `UnsupportedPolicyType`, matching the base-std `v1.0.0` reference.
+#[test]
+fn golden_update_policy_rejects_seize_scopes_at_v1() {
+    for scope in [B20PolicyType::SeizeHolder.id(), B20PolicyType::SeizeReceiver.id()] {
+        let mut s = fresh();
+        let mut policy = FakePolicyAccounting::new();
+        policy.create_existing_policy(7);
+        let err = op_privileged(
+            &mut s,
+            ADMIN,
+            policy,
+            IB20::updatePolicyCall { policyScope: scope, newPolicyId: 7 }.abi_encode(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::UnsupportedPolicyType { policyScope: scope })
+        );
+    }
+}
+
+/// Companion to [`golden_update_policy_rejects_seize_scopes_at_v1`] on the read path: the common
+/// `policyId` selector is dialable on V1 but must reject the V2-only seize scopes.
+#[test]
+fn golden_policy_id_rejects_seize_scopes_at_v1() {
+    for scope in [B20PolicyType::SeizeHolder.id(), B20PolicyType::SeizeReceiver.id()] {
+        let mut s = fresh();
+        let err = op(
+            &mut s,
+            ALICE,
+            FakePolicyAccounting::new(),
+            IB20::policyIdCall { policyScope: scope }.abi_encode(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::UnsupportedPolicyType { policyScope: scope })
+        );
+    }
+}
+
 // ============================================================================
 // pause / unpause
 // ============================================================================
@@ -793,6 +837,29 @@ fn golden_unpause_clears_feature_bit() {
     assert!(out.is_empty());
     assert_eq!(last_topic0(&s), IB20::Unpaused::SIGNATURE_HASH);
     assert_root("unpause", s, ROOT_UNPAUSE);
+}
+
+/// The `SEIZE` pause feature was introduced at Cobalt (`StablecoinV2`) as enum member 3. On the
+/// frozen V1 (Beryl) common wire the `PausableFeature` enum has only three members, so `pause`/
+/// `unpause`/`isPaused` carrying `SEIZE` fail to decode (`AbiDecodeFailed`) before any shared
+/// validation runs. Unlike the `bytes32` policy scope, the enum argument is range-checked by the
+/// wire decode itself.
+#[test]
+fn golden_seize_pause_feature_unknown_at_v1() {
+    let calls: Vec<Vec<u8>> = vec![
+        IB20::pauseCall { features: vec![IB20::PausableFeature::SEIZE] }.abi_encode(),
+        IB20::unpauseCall { features: vec![IB20::PausableFeature::SEIZE] }.abi_encode(),
+        IB20::isPausedCall { feature: IB20::PausableFeature::SEIZE }.abi_encode(),
+    ];
+    for calldata in calls {
+        let mut s = fresh();
+        let selector: [u8; 4] = calldata[..4].try_into().unwrap();
+        let err = op_privileged(&mut s, ADMIN, FakePolicyAccounting::new(), calldata).unwrap_err();
+        assert!(
+            matches!(err, BasePrecompileError::AbiDecodeFailed { selector: s, .. } if s == selector),
+            "expected AbiDecodeFailed for selector {selector:?}, got {err:?}"
+        );
+    }
 }
 
 #[test]
@@ -1783,7 +1850,9 @@ fn golden_grant_role_unchecked_bootstraps_first_admin() {
             FakePolicyAccounting::new(),
             PolicyVersion::V1,
         );
-        token.grant_role_unchecked(B20TokenRole::DefaultAdmin.id(), ADMIN, TOKEN).unwrap();
+        token
+            .grant_role_unchecked(B20TokenRole::DefaultAdmin.id(), ADMIN, TOKEN, BaseUpgrade::Beryl)
+            .unwrap();
     });
     read(&mut s, |t| {
         assert!(t.has_role(B20TokenRole::DefaultAdmin.id(), ADMIN).unwrap());
@@ -2104,11 +2173,13 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Stablecoin::IB20Stab
             golden_pause_sets_feature_bit,
             golden_pause_reverts_empty_feature_set,
             golden_pause_unprivileged_requires_role,
+            golden_seize_pause_feature_unknown_at_v1,
         ]),
         C::unpause(_) => covered(&[
             golden_unpause_clears_feature_bit,
             golden_unpause_reverts_empty_feature_set,
             golden_unpause_unprivileged_requires_role,
+            golden_seize_pause_feature_unknown_at_v1,
         ]),
         C::updateSupplyCap(_) => covered(&[
             golden_update_supply_cap,
@@ -2155,6 +2226,7 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Stablecoin::IB20Stab
             golden_update_policy,
             golden_update_policy_reverts_missing_policy,
             golden_update_policy_unprivileged_requires_role,
+            golden_update_policy_rejects_seize_scopes_at_v1,
         ]),
         C::permit(_) => covered(&[
             golden_permit_sets_allowance_and_increments_nonce,
@@ -2162,10 +2234,14 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Stablecoin::IB20Stab
         ]),
 
         // computed reads
-        C::isPaused(_) | C::pausedFeatures(_) => {
-            covered(&[golden_read_is_paused_and_paused_features])
-        }
-        C::policyId(_) => covered(&[golden_read_policy_id_and_unsupported_scope]),
+        C::isPaused(_) | C::pausedFeatures(_) => covered(&[
+            golden_read_is_paused_and_paused_features,
+            golden_seize_pause_feature_unknown_at_v1,
+        ]),
+        C::policyId(_) => covered(&[
+            golden_read_policy_id_and_unsupported_scope,
+            golden_policy_id_rejects_seize_scopes_at_v1,
+        ]),
         C::DOMAIN_SEPARATOR(_) => covered(&[golden_read_domain_separator]),
         C::eip712Domain(_) => covered(&[golden_read_eip712_domain]),
 

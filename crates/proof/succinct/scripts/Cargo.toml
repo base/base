@@ -21,14 +21,14 @@ path = "bin/parse_receipt.rs"
 clap.workspace = true
 tokio.workspace = true
 anyhow.workspace = true
-bincode.workspace = true
 serde_json.workspace = true
 alloy-primitives.workspace = true
+bincode = { workspace = true, features = ["serde"] }
 
 # local
+base-proof-zk-utils.workspace = true
 base-proof-succinct-elfs.workspace = true
-base-proof-succinct-proof-utils.workspace = true
-base-proof-succinct-client-utils.workspace = true
+base-proof-zk-backend = { workspace = true, default-features = false }
 
 # sp1
 sp1-sdk = { workspace = true, features = ["blocking"] }

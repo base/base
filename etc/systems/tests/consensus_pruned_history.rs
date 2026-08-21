@@ -21,7 +21,7 @@ use base_consensus_engine::{
 };
 use base_consensus_node::{
     DerivationClientResult, EngineActorRequest, EngineDerivationClient, EngineError,
-    EngineProcessor, EngineProcessorOptions, EngineRequestHandler, NodeMode, NoopCheckpointWriter,
+    EngineProcessor, NoopCheckpointWriter, ValidatorEngineRequestHandler,
 };
 use base_protocol::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
 use tokio::{
@@ -165,12 +165,11 @@ impl PrunedHistoryStartup {
             Arc::clone(&self.rollup),
             NoopDerivationClient,
             engine,
-            validator_options(),
             checkpoint_reader,
             Arc::new(NoopCheckpointWriter),
         );
         let (request_tx, request_rx) = mpsc::channel(8);
-        let handler = EngineRequestHandler::new(processor, None);
+        let handler = ValidatorEngineRequestHandler::new(processor);
         let handle = base_consensus_node::EngineRequestReceiver::start(handler, request_rx);
 
         RunningValidatorProcessor {
@@ -269,15 +268,6 @@ impl RunningValidatorProcessor {
     }
 }
 
-fn validator_options() -> EngineProcessorOptions {
-    EngineProcessorOptions {
-        node_mode: NodeMode::Validator,
-        unsafe_head_tx: None,
-        conductor: None,
-        sequencer_stopped: false,
-    }
-}
-
 fn test_rollup_config() -> Arc<RollupConfig> {
     Arc::new(RollupConfig {
         genesis: ChainGenesis {
@@ -358,6 +348,7 @@ fn l1_info_rpc_transaction(block_number: u64) -> BaseTransaction {
         },
         deposit_nonce: None,
         deposit_receipt_version: None,
+        block_timestamp_ms: None,
     }
 }
 

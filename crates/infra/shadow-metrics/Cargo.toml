@@ -1,0 +1,26 @@
+[package]
+name = "base-shadow-metrics"
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+tracing.workspace = true
+base-metrics.workspace = true
+alloy-consensus.workspace = true
+base-shadow-indexer-db.workspace = true
+metrics = { workspace = true, optional = true }
+anyhow = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["time"] }
+thiserror = { workspace = true, features = ["std"] }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "tls-native-tls"] }
+
+[features]
+default = [ "metrics" ]
+metrics = [ "base-metrics/metrics", "dep:metrics" ]

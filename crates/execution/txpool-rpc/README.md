@@ -2,14 +2,18 @@
 
 Transaction pool RPC APIs for Base.
 
-Provides RPC endpoints for querying transaction status and managing the transaction pool.
+Provides RPC endpoints for submitting transactions, querying transaction status, and managing the
+transaction pool.
 
 ## Overview
 
 Exposes JSON-RPC APIs for transaction pool administration and transaction lifecycle tracking.
 `AdminTxPoolApiImpl` provides admin-level pool management, while `TransactionStatusApiImpl`
-allows clients to query the current status and lifecycle events of individual transactions
-by hash. Both implement jsonrpsee server traits and are registered as node RPC extensions.
+allows clients to query the current status of individual transactions by hash. The separate
+`SendRawTransactionValidityExtension` registers local mempool ingress through
+`base_sendRawTransactionValidity`; typed validity predicates are preserved while forwarding to
+builders. This endpoint is experimental: predicates are not currently evaluated during block
+construction, so callers must not rely on them to prevent transaction inclusion.
 
 ## Usage
 
@@ -21,10 +25,13 @@ base-txpool-rpc = { workspace = true }
 ```
 
 ```rust,ignore
-use base_txpool_rpc::{AdminTxPoolApiImpl, TransactionStatusApiImpl, TxPoolRpcExtension};
+use base_txpool_rpc::{
+    SendRawTransactionValidityExtension, TxPoolRpcConfig, TxPoolRpcExtension,
+};
 
-let ext = TxPoolRpcExtension::new(pool.clone(), tracker.clone());
-rpc_module.merge(ext.into_rpc())?;
+runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig::default());
+// Install only when the node's explicit experimental validity flag is enabled.
+runner.install_ext::<SendRawTransactionValidityExtension>(());
 ```
 
 ## License

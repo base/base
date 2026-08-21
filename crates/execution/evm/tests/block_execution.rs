@@ -89,7 +89,7 @@ fn execute_same_block_base_time_read(getter_selector: [u8; 4]) -> U256 {
     let chain_spec = Arc::new(
         BaseChainSpecBuilder::base_mainnet()
             .cobalt_activated()
-            .with_fork(BaseUpgrade::Zenith, ForkCondition::Timestamp(0))
+            .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(0))
             .build(),
     );
 

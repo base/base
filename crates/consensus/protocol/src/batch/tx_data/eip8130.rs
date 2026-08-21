@@ -21,8 +21,11 @@ pub struct SpanBatchEip8130TransactionData {
     pub sender: Option<Address>,
     /// High bits of the compound nonce.
     pub nonce_key: U256,
-    /// Unix-seconds expiry timestamp; `0` means no expiry.
-    pub expiry: u64,
+    /// Lower bound of the validity window (Unix milliseconds; `0` = no lower
+    /// bound).
+    pub valid_after: u64,
+    /// Upper bound of the validity window (Unix milliseconds; `0` = no expiry).
+    pub valid_before: u64,
     /// Max priority fee per gas (tip).
     pub max_priority_fee_per_gas: u128,
     /// Max total fee per gas.
@@ -83,7 +86,8 @@ impl SpanBatchEip8130TransactionData {
     fn rlp_encoded_fields_length(&self) -> usize {
         Self::address_opt_encoded_length(&self.sender)
             + self.nonce_key.length()
-            + self.expiry.length()
+            + self.valid_after.length()
+            + self.valid_before.length()
             + self.max_priority_fee_per_gas.length()
             + self.max_fee_per_gas.length()
             + Self::address_opt_encoded_length(&self.payer)
@@ -126,6 +130,23 @@ impl SpanBatchEip8130TransactionData {
         }
     }
 
+    /// Enforces the decode-side invariant binding an actor's presence to the
+    /// length of its authenticator column: on the configured path (`configured`)
+    /// the authenticator is exactly the 20-byte leading account address, and on
+    /// the EOA/self-pay path it is empty. This is the counterpart of the split
+    /// [`Self::split_auth`] performs on the encode side, rejecting a span batch
+    /// whose columns disagree instead of silently reconstructing a corrupt auth
+    /// blob in [`Self::to_tx`].
+    fn validate_authenticator(authenticator: &Bytes, configured: bool) -> alloy_rlp::Result<()> {
+        let valid = if configured { authenticator.len() == 20 } else { authenticator.is_empty() };
+        if !valid {
+            return Err(alloy_rlp::Error::Custom(
+                "EIP-8130 authenticator length inconsistent with actor presence",
+            ));
+        }
+        Ok(())
+    }
+
     /// Reconstructs the signed [`Eip8130Signed`] from the remainder, the shared
     /// columns, and the trailing-column auth proofs.
     pub fn to_tx(
@@ -145,7 +166,8 @@ impl SpanBatchEip8130TransactionData {
             sender: self.sender,
             nonce_key: self.nonce_key,
             nonce_sequence: nonce,
-            expiry: self.expiry,
+            valid_after: self.valid_after,
+            valid_before: self.valid_before,
             max_priority_fee_per_gas: self.max_priority_fee_per_gas,
             max_fee_per_gas: self.max_fee_per_gas,
             gas_limit: gas,
@@ -163,7 +185,8 @@ impl Encodable for SpanBatchEip8130TransactionData {
         Header { list: true, payload_length: self.rlp_encoded_fields_length() }.encode(out);
         Self::encode_address_opt(&self.sender, out);
         self.nonce_key.encode(out);
-        self.expiry.encode(out);
+        self.valid_after.encode(out);
+        self.valid_before.encode(out);
         self.max_priority_fee_per_gas.encode(out);
         self.max_fee_per_gas.encode(out);
         Self::encode_address_opt(&self.payer, out);
@@ -185,7 +208,8 @@ impl Decodable for SpanBatchEip8130TransactionData {
         let this = Self {
             sender: Self::decode_address_opt(buf)?,
             nonce_key: Decodable::decode(buf)?,
-            expiry: Decodable::decode(buf)?,
+            valid_after: Decodable::decode(buf)?,
+            valid_before: Decodable::decode(buf)?,
             max_priority_fee_per_gas: Decodable::decode(buf)?,
             max_fee_per_gas: Decodable::decode(buf)?,
             payer: Self::decode_address_opt(buf)?,
@@ -195,6 +219,8 @@ impl Decodable for SpanBatchEip8130TransactionData {
             sender_authenticator: Decodable::decode(buf)?,
             payer_authenticator: Decodable::decode(buf)?,
         };
+        Self::validate_authenticator(&this.sender_authenticator, this.sender.is_some())?;
+        Self::validate_authenticator(&this.payer_authenticator, this.payer.is_some())?;
         let consumed = started - buf.len();
         if consumed != header.payload_length {
             return Err(alloy_rlp::Error::ListLengthMismatch {
@@ -221,7 +247,8 @@ mod tests {
         let tx = SpanBatchEip8130TransactionData {
             sender: Some(address!("0x00000000000000000000000000000000000000aa")),
             nonce_key: U256::from(0x1234u64),
-            expiry: 99,
+            valid_after: 42,
+            valid_before: 99,
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 5_000_000_000,
             payer: Some(address!("0x00000000000000000000000000000000000000bb")),
@@ -289,5 +316,54 @@ mod tests {
         assert_eq!(&auth[..], &[1u8; 20]);
         assert_eq!(&proof[..], &[9u8; 32]);
         assert_eq!(SpanBatchEip8130TransactionData::join_auth(&auth, &proof, true), full);
+    }
+
+    #[test]
+    fn decode_rejects_authenticator_actor_mismatch() {
+        // A configured-sender, self-pay tx with a valid 20-byte sender authenticator.
+        // Each case clones it and breaks exactly one presence<->length invariant, so
+        // decoding must reject it rather than reconstruct a corrupt auth blob.
+        let base = SpanBatchEip8130TransactionData {
+            sender: Some(Address::ZERO),
+            nonce_key: U256::ZERO,
+            valid_after: 0,
+            valid_before: 0,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 0,
+            payer: None,
+            account_changes: vec![],
+            calls: vec![],
+            metadata: Bytes::new(),
+            sender_authenticator: Bytes::from_static(&[0u8; 20]),
+            payer_authenticator: Bytes::new(),
+        };
+        let encode = |tx: &SpanBatchEip8130TransactionData| {
+            let mut buf = Vec::new();
+            SpanBatchTransactionData::Eip8130(tx.clone()).encode(&mut buf);
+            buf
+        };
+
+        // Sanity: the untampered, consistent tx decodes cleanly.
+        assert!(SpanBatchTransactionData::decode(&mut encode(&base).as_slice()).is_ok());
+
+        // Configured sender must carry a 20-byte authenticator, not empty.
+        let mut sender_empty = base.clone();
+        sender_empty.sender_authenticator = Bytes::new();
+        assert!(SpanBatchTransactionData::decode(&mut encode(&sender_empty).as_slice()).is_err());
+
+        // Configured sender must carry exactly 20 bytes, not more.
+        let mut sender_long = base.clone();
+        sender_long.sender_authenticator = Bytes::from_static(&[0u8; 21]);
+        assert!(SpanBatchTransactionData::decode(&mut encode(&sender_long).as_slice()).is_err());
+
+        // EOA sender (None) must carry an empty authenticator.
+        let mut sender_eoa = base.clone();
+        sender_eoa.sender = None;
+        assert!(SpanBatchTransactionData::decode(&mut encode(&sender_eoa).as_slice()).is_err());
+
+        // Absent payer must carry an empty authenticator.
+        let mut payer_set = base;
+        payer_set.payer_authenticator = Bytes::from_static(&[0u8; 20]);
+        assert!(SpanBatchTransactionData::decode(&mut encode(&payer_set).as_slice()).is_err());
     }
 }

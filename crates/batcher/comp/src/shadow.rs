@@ -1,40 +1,29 @@
 //! Contains the shadow compressor for Base.
-//!
-//! This is a port of the reference batcher's shadow compressor.
-
-use alloc::vec::Vec;
 
 use crate::{
-    ChannelCompressor, CompressorError, CompressorResult, CompressorWriter, Config,
-    VariantCompressor,
+    CompressionAlgo, CompressorError, CompressorResult, CompressorWriter, VariantCompressor,
 };
-
-/// The largest potential blow-up in bytes we expect to see when compressing
-/// arbitrary (e.g. random) data.  Here we account for a 2 byte header, 4 byte
-/// digest, 5 byte eof indicator, and then 5 byte flate block header for each 16k of potential
-/// data. Assuming frames are max 128k size (the current max blob size) this is 2+4+5+(5*8) = 51
-/// bytes.  If we start using larger frames (e.g. should max blob size increase) a larger blowup
-/// might be possible, but it would be highly unlikely, and the system still works if our
-/// estimate is wrong -- we just end up writing one more tx for the overflow.
-const SAFE_COMPRESSION_OVERHEAD: u64 = 51;
 
 // The number of final bytes a `zlib.Writer` call writes to the output buffer.
 const CLOSE_OVERHEAD_ZLIB: u64 = 9;
 
 /// Shadow Compressor
 ///
-/// The shadow compressor contains two compression buffers, one for size estimation, and
-/// one for the final compressed data. The first compression buffer is flushed on every
-/// write, and the second isn't, which means the final compressed data is always at least
-/// smaller than the size estimation.
+/// Maintains the channel's compressed output plus a shadow copy used for size
+/// checks in the Single producer.
 ///
-/// One exception to the rule is when the first write to the buffer is not checked against
-/// the target. This allows individual blocks larger than the target to be included.
-/// Notice, this will be split across multiple channel frames.
+/// This preserves the current Single behavior: the compressed target is checked
+/// only when an individual write is larger than the target. A sequence of
+/// smaller writes is not cumulatively bounded. The Span producer does not use
+/// this compressor, and the limitation remains until the Single producer is
+/// removed.
+///
+/// An oversized first write is accepted and marks the compressor full so one
+/// large block can make progress; framing later splits it across multiple frames.
 #[derive(Debug, Clone)]
 pub struct ShadowCompressor {
-    /// The compressor configuration.
-    config: Config,
+    /// Target compressed channel size.
+    target_output_size: u64,
     /// The inner [`VariantCompressor`] that will be used to compress the data.
     compressor: VariantCompressor,
     /// The shadow compressor.
@@ -42,32 +31,26 @@ pub struct ShadowCompressor {
 
     /// Flags that the buffer is full.
     is_full: bool,
-    /// An upper bound on the size of the compressed data.
-    bound: u64,
 }
 
 impl ShadowCompressor {
-    /// Creates a new [`ShadowCompressor`] with the given [`VariantCompressor`].
-    pub const fn new(
-        config: Config,
-        compressor: VariantCompressor,
-        shadow: VariantCompressor,
-    ) -> Self {
-        Self { config, is_full: false, compressor, shadow, bound: SAFE_COMPRESSION_OVERHEAD }
-    }
-}
-
-impl From<Config> for ShadowCompressor {
-    fn from(config: Config) -> Self {
-        let compressor = VariantCompressor::from(config.compression_algo);
-        let shadow = VariantCompressor::from(config.compression_algo);
-        Self::new(config, compressor, shadow)
+    /// Creates the bounded compressor used by the encoder's Single producer path.
+    ///
+    /// `target_output_size` is the compressed limit for the whole channel, not
+    /// the size of an individual frame.
+    pub fn new(target_output_size: u64, compression_algo: CompressionAlgo) -> Self {
+        Self {
+            target_output_size,
+            compressor: VariantCompressor::from(compression_algo),
+            shadow: VariantCompressor::from(compression_algo),
+            is_full: false,
+        }
     }
 }
 
 impl CompressorWriter for ShadowCompressor {
     fn write(&mut self, data: &[u8]) -> CompressorResult<usize> {
-        // If the buffer is full, error so the user can flush.
+        // Once full, the channel must close before this batch can be retried.
         if self.is_full {
             return Err(CompressorError::Full);
         }
@@ -75,64 +58,34 @@ impl CompressorWriter for ShadowCompressor {
         // Write to the shadow compressor.
         self.shadow.write(data)?;
 
-        // The new bound increases by the length of the compressed data.
-        let mut newbound = data.len() as u64;
-        if newbound > self.config.target_output_size {
-            // Don't flush the buffer if there's a chance we're over the size limit.
-            self.shadow.flush()?;
-            newbound = self.shadow.len() as u64 + CLOSE_OVERHEAD_ZLIB;
-            if newbound > self.config.target_output_size {
+        // Preserve the current per-write check. This is not a cumulative channel bound.
+        let input_size = data.len() as u64;
+        if input_size > self.target_output_size {
+            let output_size = self.shadow.compressed_len()? as u64 + CLOSE_OVERHEAD_ZLIB;
+            if output_size > self.target_output_size {
                 self.is_full = true;
                 // Only error if the buffer has been written to.
-                if self.compressor.len() > 0 {
+                if self.compressor.compressed_len()? > 0 {
                     return Err(CompressorError::Full);
                 }
             }
         }
 
-        // Update the bound and compress.
-        self.bound = newbound;
         self.compressor.write(data)
     }
 
-    fn len(&self) -> usize {
-        self.compressor.len()
-    }
-
-    fn flush(&mut self) -> CompressorResult<()> {
-        // Both the shadow and main compressors use lazy compression: they
-        // accumulate raw bytes on write() and only materialise the compressed
-        // output when len(), get_compressed(), or read() is called.  flush()
-        // is therefore a no-op on both underlying compressors, but we forward
-        // it to each for API completeness.
-        self.shadow.flush()?;
-        self.compressor.flush()
-    }
-
-    fn close(&mut self) -> CompressorResult<()> {
-        // Only the shadow compressor is closed. The main compressor does not
-        // require an explicit `close()` because its `compressed` buffer is
-        // always fully materialized after each `write()` — `read()` can drain
-        // it directly without any finalization step. See the comment on
-        // `flush()` above for more detail.
-        self.shadow.close()
+    fn compressed_len(&self) -> CompressorResult<usize> {
+        self.compressor.compressed_len()
     }
 
     fn reset(&mut self) {
         self.compressor.reset();
         self.shadow.reset();
         self.is_full = false;
-        self.bound = SAFE_COMPRESSION_OVERHEAD;
     }
 
     fn read(&mut self, buf: &mut [u8]) -> CompressorResult<usize> {
         self.compressor.read(buf)
-    }
-}
-
-impl ChannelCompressor for ShadowCompressor {
-    fn get_compressed(&self) -> Vec<u8> {
-        self.compressor.get_compressed()
     }
 
     fn channel_version_byte(&self) -> Option<u8> {

@@ -5,7 +5,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 use alloy_genesis::ChainConfig;
 use alloy_primitives::Address;
 use alloy_provider::RootProvider;
-use alloy_transport::TransportResult;
+use alloy_transport::{TransportErrorKind, TransportResult};
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_consensus_engine::BaseEngineClient;
@@ -53,6 +53,8 @@ pub struct L1ConfigBuilder {
     pub beacon: Url,
     /// The L1 RPC URL.
     pub rpc_url: Url,
+    /// Request timeout for general L1 execution JSON-RPC calls.
+    pub rpc_timeout: Duration,
     /// The duration in seconds of an L1 slot. This can be used to hardcode a fixed slot
     /// duration if the l1-beacon's slot configuration is not available.
     pub slot_duration_override: Option<u64>,
@@ -198,6 +200,7 @@ impl RollupNodeBuilder {
     /// remains lazy during startup. `file://` URLs still connect eagerly because IPC is an
     /// explicit opt-in transport.
     pub async fn build(self) -> TransportResult<RollupNode> {
+        let sequencer_config = self.sequencer_config.unwrap_or_default();
         let mut l1_beacon = OnlineBeaconClient::new_http(self.l1_config_builder.beacon.to_string());
         if let Some(l1_slot_duration) = self.l1_config_builder.slot_duration_override {
             l1_beacon = l1_beacon.with_l1_slot_duration_override(l1_slot_duration);
@@ -211,10 +214,21 @@ impl RollupNodeBuilder {
             chain_config: Arc::new(self.l1_config_builder.chain_config),
             trust_rpc: self.l1_config_builder.trust_rpc,
             beacon_client: l1_beacon,
-            engine_provider: L1RpcProvider::new_http(self.l1_config_builder.rpc_url.clone()),
+            engine_provider: L1RpcProvider::new_http_with_timeout(
+                self.l1_config_builder.rpc_url.clone(),
+                self.l1_config_builder.rpc_timeout,
+            ),
             finalized_poll_interval,
             verifier_l1_confs: self.l1_config_builder.verifier_l1_confs,
             da_batcher_sender_override: self.l1_config_builder.da_batcher_sender_override,
+        };
+        let sequencer_l1_provider = if self.engine_config.mode.is_sequencer() {
+            L1RpcProvider::new_http_with_timeout(
+                self.l1_config_builder.rpc_url.clone(),
+                sequencer_config.l1_rpc_timeout,
+            )
+        } else {
+            l1_config.engine_provider.clone()
         };
 
         let l2_provider_url = Self::derivation_l2_provider_url(self.engine_config.l2_url.clone());
@@ -230,7 +244,6 @@ impl RollupNodeBuilder {
         });
 
         let p2p_config = self.p2p_config;
-        let sequencer_config = self.sequencer_config.unwrap_or_default();
 
         let derivation_delegate_provider = self.derivation_delegate_config.as_ref().map(|config| {
             DerivationDelegateClient::new(config.l2_cl_url.clone()).expect(
@@ -238,18 +251,25 @@ impl RollupNodeBuilder {
             )
         });
 
-        let upgrade_signal_config = self.upgrade_signal_config.metrics_config.map(|config| {
-            UpgradeSignalNodeConfig::resolve(
-                config,
-                self.upgrade_signal_config.l1_rpc.as_ref(),
-                l1_config.engine_provider.clone(),
-                rollup_config.l2_chain_id.id(),
-            )
-        });
+        let upgrade_signal_config = self
+            .upgrade_signal_config
+            .metrics_config
+            .map(|mut config| {
+                config.request_timeout = self.l1_config_builder.rpc_timeout;
+                UpgradeSignalNodeConfig::resolve(
+                    config,
+                    self.upgrade_signal_config.l1_rpc.as_ref(),
+                    self.l1_config_builder.rpc_url.clone(),
+                    rollup_config.l2_chain_id.id(),
+                )
+            })
+            .transpose()
+            .map_err(TransportErrorKind::non_retryable)?;
 
         Ok(RollupNode {
             config: rollup_config,
             l1_config,
+            sequencer_l1_provider,
             l2_provider,
             l2_trust_rpc: self.l2_trust_rpc,
             engine_config: self.engine_config,
@@ -296,6 +316,7 @@ mod tests {
             trust_rpc: true,
             beacon: Url::parse("http://127.0.0.1:5052").unwrap(),
             rpc_url: Url::parse("http://127.0.0.1:8545").unwrap(),
+            rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,
             slot_duration_override: None,
             verifier_l1_confs: 0,
             da_batcher_sender_override: None,
@@ -305,6 +326,7 @@ mod tests {
             l2_url,
             l2_jwt_secret: JwtSecret::random(),
             l1_url: Url::parse("http://127.0.0.1:8545").unwrap(),
+            l1_rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,
             mode: NodeMode::Validator,
         };
         let discovery_listen = LocalNode::new(
@@ -353,5 +375,34 @@ mod tests {
             test_builder(Url::parse("ws://127.0.0.1:8551").unwrap()).build().await.unwrap();
 
         assert_eq!(rollup_node.engine_config.l2_url.scheme(), "ws");
+    }
+
+    #[tokio::test]
+    async fn build_applies_l1_request_timeout_to_upgrade_signal_reads() {
+        let request_timeout = Duration::from_millis(2_500);
+        let mut builder = test_builder(Url::parse("ws://127.0.0.1:8551").unwrap());
+        builder.l1_config_builder.rpc_timeout = request_timeout;
+        let builder = builder.with_upgrade_signal_config(UpgradeSignalBuilderConfig {
+            metrics_config: Some(UpgradeSignalConfig::new(Address::ZERO)),
+            l1_rpc: None,
+        });
+
+        let rollup_node = builder.build().await.unwrap();
+        let upgrade_signal_config = rollup_node.upgrade_signal_config.unwrap();
+
+        assert_eq!(upgrade_signal_config.config.request_timeout, request_timeout);
+    }
+
+    #[tokio::test]
+    async fn build_returns_error_for_unsupported_upgrade_signal_rpc() {
+        let builder = test_builder(Url::parse("ws://127.0.0.1:8551").unwrap())
+            .with_upgrade_signal_config(UpgradeSignalBuilderConfig {
+                metrics_config: Some(UpgradeSignalConfig::new(Address::ZERO)),
+                l1_rpc: Some(Url::parse("ws://127.0.0.1:8545").unwrap()),
+            });
+
+        let error = builder.build().await.expect_err("unsupported URL should fail");
+
+        assert!(error.to_string().contains("build upgrade signal HTTP client failed"));
     }
 }

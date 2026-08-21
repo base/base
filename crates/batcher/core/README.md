@@ -5,14 +5,14 @@ Async orchestration core for the Base batcher.
 `BatchDriver` is the central type exported by this crate. It is generic over a `Runtime`, a
 `BatchPipeline` (frame encoding), an `UnsafeBlockSource` (L2 block delivery), an `L1HeadSource`
 (L1 chain head tracking), a `TxManager` (L1 submission), and a `ThrottleClient` (DA limit
-application). The driver runs a single `tokio::select!` task that reacts to four concurrent
-event streams: new L2 unsafe blocks, settled L1 heads, completed in-flight transaction receipts,
-and a periodic DA throttle tick. Each arm of the loop advances the pipeline or adjusts submission
-pressure without blocking the others.
+application). Construction takes `BatchDriverHeads`, which seeds the pipeline from the live L1
+tip so channel duration is not measured from block 0. The driver runs a single `tokio::select!`
+task that reacts to unsafe L2 blocks, derivation-status updates, L1 heads, completed transaction
+receipts, admin commands, and cancellation.
+Each arm advances the pipeline or adjusts submission pressure without blocking the others.
 
-`BatchDriverConfig` carries the three parameters the driver needs at construction: the batcher
-inbox address on L1, the maximum number of concurrently in-flight transactions, and the drain
-timeout used during shutdown to wait for outstanding receipts before abandoning them.
+`BatchDriverConfig` carries the L1 inbox address, in-flight transaction limit, shutdown drain
+timeout, and DA-throttle submission policy.
 
 `SubmissionQueue` owns the entire L1 submission lifecycle. It holds the `TxManager`, a
 `FuturesUnordered` set of in-flight receipt futures, a counting `Semaphore` for backpressure, and
@@ -27,17 +27,17 @@ stuck transaction. On reorg, `SubmissionQueue::discard` drops all in-flight futu
 their permits so the freshly reset pipeline is not corrupted by stale completions.
 
 `TxOutcome` represents the three terminal states of an L1 submission: `Confirmed { l1_block }`,
-`Failed`, and `TxpoolBlocked`. Failed frames are always requeued for retry; txpool-blocked frames
-are also requeued but submission is suspended until the nonce slot is freed.
+`Failed`, and `TxpoolBlocked`. During normal operation, failed frames are requeued for retry;
+txpool-blocked frames are also requeued but submission is suspended until the nonce slot is freed.
 
 The throttle subsystem controls how much DA data the sequencer may include per block and per
 transaction based on the L1 DA backlog. `ThrottleController` takes a `ThrottleConfig` and a
 `ThrottleStrategy` and produces `ThrottleParams` from a raw backlog byte count.
 `ThrottleStrategy::Off` disables throttling entirely. `ThrottleStrategy::Step` applies full
 intensity when the backlog exceeds the configured threshold. `ThrottleStrategy::Linear` grows
-intensity linearly from zero at the threshold to `max_intensity` at twice the threshold, which
-matches the reference batcher implementation. `ThrottleParams` carries a fractional `intensity`
-value and the corresponding `max_block_size` and `max_tx_size` byte limits computed by
+intensity linearly from zero at the threshold to `max_intensity` at twice the threshold.
+`ThrottleParams` carries a fractional `intensity` value and the corresponding
+`max_block_size` and `max_tx_size` byte limits computed by
 interpolating between the upper and lower limits in `ThrottleConfig`. `DaThrottle` wraps a
 `ThrottleController` and a `ThrottleClient` with a last-applied dedup cache so that the
 `miner_setMaxDASize` RPC call is only issued when the computed limits actually change between ticks.

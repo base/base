@@ -15,10 +15,8 @@ use crate::{
     },
     output::{
         COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, COLOR_ROW_HIGHLIGHTED, COLOR_ROW_SELECTED,
-        L1BlocksTableParams, backlog_size_color, block_color, block_color_bright, build_gas_bar,
-        format_bytes, format_duration, format_gwei, format_rate, render_da_backlog_bar,
-        render_gas_usage_bar, render_l1_blocks_table, target_usage_color, time_diff_color,
-        truncate_block_number,
+        Format, L1BlocksTableParams, build_gas_bar, render_da_backlog_bar, render_gas_usage_bar,
+        render_l1_blocks_table,
     },
     tui::{Keybinding, Toast},
 };
@@ -548,7 +546,7 @@ fn format_gas_value(gas: u64) -> String {
 fn render_stats_panel(f: &mut Frame<'_>, area: Rect, resources: &Resources) {
     let tracker = &resources.da.tracker;
 
-    let backlog_color = backlog_size_color(tracker.da_backlog_bytes);
+    let backlog_color = Format::backlog_size_color(tracker.da_backlog_bytes);
     let growth_rate = tracker.growth_tracker.rate_over(RATE_WINDOW_2M);
     let burn_rate = tracker.burn_tracker.rate_over(RATE_WINDOW_2M);
     let time_since = tracker.last_base_blob_time.map(|t| t.elapsed());
@@ -577,22 +575,23 @@ fn render_stats_panel(f: &mut Frame<'_>, area: Rect, resources: &Resources) {
             ),
             Span::raw("  "),
             Span::styled("↑", Style::default().fg(COLOR_GROWTH)),
-            Span::styled(format_rate(growth_rate), Style::default().fg(COLOR_GROWTH)),
+            Span::styled(Format::rate(growth_rate), Style::default().fg(COLOR_GROWTH)),
             Span::raw(" "),
             Span::styled("↓", Style::default().fg(COLOR_BURN)),
-            Span::styled(format_rate(burn_rate), Style::default().fg(COLOR_BURN)),
+            Span::styled(Format::rate(burn_rate), Style::default().fg(COLOR_BURN)),
         ]),
         Line::from(vec![
             Span::styled("DA: ", Style::default().fg(Color::DarkGray)),
             Span::styled(
-                format_bytes(tracker.da_backlog_bytes),
+                Format::bytes(tracker.da_backlog_bytes),
                 Style::default().fg(backlog_color),
             ),
             Span::raw("  "),
             Span::styled("L1: ", Style::default().fg(Color::DarkGray)),
             Span::styled(
                 target_usage.map_or_else(|| "-".to_string(), |u| format!("{:.0}%", u * 100.0)),
-                Style::default().fg(target_usage.map_or(Color::DarkGray, target_usage_color)),
+                Style::default()
+                    .fg(target_usage.map_or(Color::DarkGray, Format::target_usage_color)),
             ),
             Span::raw("  "),
             Span::styled("Base: ", Style::default().fg(Color::DarkGray)),
@@ -603,7 +602,7 @@ fn render_stats_panel(f: &mut Frame<'_>, area: Rect, resources: &Resources) {
             Span::raw("  "),
             Span::styled("Last: ", Style::default().fg(Color::DarkGray)),
             Span::styled(
-                time_since.map(format_duration).unwrap_or_else(|| "-".to_string()),
+                time_since.map(Format::duration).unwrap_or_else(|| "-".to_string()),
                 Style::default().fg(Color::White),
             ),
         ]),
@@ -670,18 +669,18 @@ fn render_da_panel(
             let block_style = if is_safe {
                 Style::default().fg(Color::DarkGray)
             } else {
-                Style::default().fg(block_color(contrib.block_number))
+                Style::default().fg(Format::block_color(contrib.block_number))
             };
 
             let tx_str =
                 if contrib.tx_count > 0 { contrib.tx_count.to_string() } else { "-".to_string() };
 
             Row::new(vec![
-                Cell::from(truncate_block_number(contrib.block_number, block_col_width))
+                Cell::from(Format::truncate_block_number(contrib.block_number, block_col_width))
                     .style(block_style),
                 Cell::from(tx_str),
-                Cell::from(format_bytes(contrib.da_bytes)),
-                Cell::from(format_duration(Duration::from_secs(contrib.age_seconds()))),
+                Cell::from(Format::bytes(contrib.da_bytes)),
+                Cell::from(Format::duration(Duration::from_secs(contrib.age_seconds()))),
             ])
             .style(style)
         })
@@ -749,7 +748,7 @@ fn render_flash_panel(
             };
 
             let (base_fee_str, base_fee_style) = if entry.index == 0 {
-                let fee_str = entry.base_fee.map(format_gwei).unwrap_or_else(|| "-".to_string());
+                let fee_str = entry.base_fee.map(Format::gwei).unwrap_or_else(|| "-".to_string());
                 let style = match (entry.base_fee, entry.prev_base_fee) {
                     (Some(curr), Some(prev)) if curr > prev => Style::default().fg(Color::Red),
                     (Some(curr), Some(prev)) if curr < prev => Style::default().fg(Color::Green),
@@ -765,19 +764,19 @@ fn render_flash_panel(
 
             let (time_diff_str, time_style) = entry.time_diff_ms.map_or_else(
                 || ("-".to_string(), Style::default().fg(Color::DarkGray)),
-                |ms| (format!("+{ms}ms"), Style::default().fg(time_diff_color(ms))),
+                |ms| (format!("+{ms}ms"), Style::default().fg(Format::time_diff_color(ms))),
             );
 
             let block_style = if entry.index == 0 {
                 Style::default()
-                    .fg(block_color_bright(entry.block_number))
+                    .fg(Format::block_color_bright(entry.block_number))
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(block_color(entry.block_number))
+                Style::default().fg(Format::block_color(entry.block_number))
             };
 
             Row::new(vec![
-                Cell::from(truncate_block_number(entry.block_number, block_col_width))
+                Cell::from(Format::truncate_block_number(entry.block_number, block_col_width))
                     .style(block_style),
                 Cell::from(entry.index.to_string()).style(block_style),
                 Cell::from(entry.tx_count.to_string()).style(block_style),

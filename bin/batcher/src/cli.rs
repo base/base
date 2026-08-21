@@ -70,17 +70,11 @@ pub(crate) struct BatcherArgs {
     #[arg(long = "l1-ws-url", env = "BATCHER_L1_WS_URL")]
     pub l1_ws_url: Option<Url>,
 
-    /// Optional L2 WebSocket endpoint for new-block subscriptions.
+    /// Parity validator L2 RPC endpoint for shadow mode.
     ///
-    /// When provided, the batcher subscribes to new block headers over this
-    /// WebSocket connection. Without it, polling is used exclusively.
-    #[arg(long = "l2-ws-url", env = "BATCHER_L2_WS_URL")]
-    pub l2_ws_url: Option<Url>,
-
-    /// Optional derived-parity validator L2 RPC endpoint.
-    ///
-    /// When set, the batcher compares derived L2 block hashes from this
-    /// validator against the configured sequencer L2 RPC endpoint.
+    /// Required with `--dangerously-override-batch-inbox-address` and rejected
+    /// without it. Its safe L2 head anchors shadow batcher recovery, and its
+    /// derived block hashes are compared with the sequencer.
     #[arg(long = "parity-validator-l2-rpc-url", env = "BATCHER_PARITY_VALIDATOR_L2_RPC_URL")]
     pub parity_validator_l2_rpc_url: Option<Url>,
 
@@ -95,12 +89,6 @@ pub(crate) struct BatcherArgs {
         num_args = 1..
     )]
     pub rollup_rpc_url: Vec<Url>,
-
-    /// Optional L1 beacon API endpoint.
-    ///
-    /// Used by shadow-mode parity monitoring to fetch EIP-4844 blob sidecars.
-    #[arg(long = "l1-beacon-url", env = "BATCHER_L1_BEACON_URL")]
-    pub l1_beacon_url: Option<Url>,
 
     /// Signer configuration.
     #[command(flatten)]
@@ -167,14 +155,6 @@ pub(crate) struct BatcherArgs {
     )]
     da_type: base_batcher_encoder::DaType,
 
-    /// Approximate compression ratio used for span batch size estimation.
-    ///
-    /// Only relevant when `--batch-type=span`. Should be slightly below the
-    /// typical observed ratio to avoid creating a small leftover frame.
-    /// Matches the reference batcher's `--approx-compr-ratio` default.
-    #[arg(long = "approx-compr-ratio", default_value = "0.6", env = "BATCHER_APPROX_COMPR_RATIO")]
-    pub approx_compr_ratio: f64,
-
     /// Maximum number of in-flight (unconfirmed) transactions.
     #[arg(
         long = "max-pending-transactions",
@@ -198,8 +178,7 @@ pub(crate) struct BatcherArgs {
     /// DA backlog threshold in bytes at which throttling activates.
     ///
     /// When the estimated unsubmitted DA backlog exceeds this value, the batcher
-    /// signals the sequencer to reduce block throughput. Matches the reference batcher's
-    /// `--throttle-threshold` default of 1 MB.
+    /// signals the sequencer to reduce block throughput.
     #[arg(
         long = "throttle-threshold",
         default_value = "1000000",
@@ -209,20 +188,18 @@ pub(crate) struct BatcherArgs {
 
     /// Disable DA throttling.
     ///
-    /// By default throttling is enabled (matching reference batcher behavior). Pass
-    /// this flag to submit batches at full rate regardless of DA backlog.
+    /// Pass this flag to submit batches at full rate regardless of DA backlog.
     #[arg(long = "no-throttle", env = "BATCHER_NO_THROTTLE")]
     pub no_throttle: bool,
 
-    /// Number of recent L1 blocks to scan on startup for already-submitted batcher frames.
+    /// Number of recent L1 blocks to inspect for a confirmed batcher transaction.
     ///
-    /// When set to a nonzero value N, the batcher walks back N L1 blocks from the
-    /// current head on startup, decodes any calldata batcher frames it finds, and
-    /// advances the L2 block cursor past data already pending on L1. This avoids
-    /// re-submitting frames after an unclean shutdown. Maximum value is 128.
+    /// With `--wait-node-sync`, recent nonce activity selects the L1 synchronization
+    /// target within this window.
+    /// It does not decode batches or change the L2 backfill cursor. A non-zero
+    /// value requires `--wait-node-sync`.
     ///
-    /// A value of 0 (default) disables the scan. Matches the reference batcher's
-    /// `--check-recent-txs-depth` flag.
+    /// A value of 0 (default) disables the scan.
     #[arg(
         long = "check-recent-txs-depth",
         default_value = "0",
@@ -234,8 +211,7 @@ pub(crate) struct BatcherArgs {
     /// Maximum serialized size of a single L1 calldata transaction in bytes.
     ///
     /// Safety cap that prevents oversized calldata transactions from being rejected
-    /// by the mempool. No-op for blob DA. Equivalent to the reference batcher's
-    /// `--max-l1-tx-size-bytes` (default 120,000 bytes). Omit to disable the cap.
+    /// by the mempool. No-op for blob DA. Omit to disable the cap.
     #[arg(long = "max-l1-tx-size-bytes", env = "BATCHER_MAX_L1_TX_SIZE_BYTES")]
     pub max_l1_tx_size_bytes: Option<usize>,
 
@@ -261,18 +237,17 @@ pub(crate) struct BatcherArgs {
     #[arg(long = "stopped", env = "BATCHER_STOPPED")]
     pub stopped: bool,
 
-    /// Block startup until the rollup node reports a non-zero sync status.
+    /// Block startup until the rollup node has processed the selected L1 target.
     ///
-    /// Polls `optimism_syncStatus` on the poll interval until both `current_l1`
-    /// and `unsafe_l2` heads are non-zero. Useful when the batcher is started
-    /// alongside a fresh node so it does not race the node's initial sync.
-    /// Matches the reference batcher's `--wait-node-sync`.
+    /// By default the target is the current L1 head. `--check-recent-txs-depth`
+    /// may select an earlier target from the configured window.
     #[arg(long = "wait-node-sync", env = "BATCHER_WAIT_NODE_SYNC")]
     pub wait_node_sync: bool,
 
-    /// Maximum seconds to wait for the rollup node to report sync when
-    /// `--wait-node-sync` is set. On expiry the service exits with an error
-    /// rather than hanging indefinitely. Default: 600 seconds (10 minutes).
+    /// Budget for retrying one-shot startup RPCs, and the maximum seconds to
+    /// wait for the rollup node to report sync when `--wait-node-sync` is set.
+    /// On expiry the service exits with an error rather than hanging
+    /// indefinitely. Default: 600 seconds (10 minutes).
     #[arg(
         long = "wait-node-sync-timeout",
         default_value = "600",
@@ -284,10 +259,9 @@ pub(crate) struct BatcherArgs {
     ///
     /// By default, when DA-backlog throttling activates, the encoder is forced
     /// to emit blob-typed submissions even if `--data-availability-type=calldata`
-    /// is configured (matching reference batcher behavior, since blobs amortise DA
-    /// cost more efficiently under congestion). Pass this flag to keep the
-    /// configured DA type regardless of throttle state. No-op for blob-configured
-    /// batchers.
+    /// is configured because blobs amortise DA cost more efficiently under congestion.
+    /// Pass this flag to keep the configured DA type regardless of throttle state.
+    /// No-op for blob-configured batchers.
     #[arg(long = "no-force-blobs-when-throttling", env = "BATCHER_NO_FORCE_BLOBS_WHEN_THROTTLING")]
     pub no_force_blobs_when_throttling: bool,
 
@@ -324,7 +298,8 @@ impl BatcherArgs {
             max_blocks_per_span_batch: self.max_blocks_per_span_batch,
             batch_type: self.batch_type.into(),
             da_type: self.da_type,
-            approx_compr_ratio: self.approx_compr_ratio,
+            // The batcher binary only targets post-Fjord chains, so it always uses Brotli.
+            compression_algo: base_batcher_encoder::CompressionAlgo::Brotli10,
             max_l1_tx_size_bytes: self.max_l1_tx_size_bytes,
         };
         encoder_config.validate()?;
@@ -332,10 +307,8 @@ impl BatcherArgs {
             l1_rpc_url: self.l1_rpc_url,
             l1_ws_url: self.l1_ws_url,
             l2_rpc_url: self.l2_rpc_url,
-            l2_ws_url: self.l2_ws_url,
             parity_validator_l2_rpc_url: self.parity_validator_l2_rpc_url,
             rollup_rpc_url: self.rollup_rpc_url,
-            l1_beacon_url: self.l1_beacon_url,
             signer: Some(signer),
             metrics_enabled: self.metrics.enabled,
             batch_inbox_override: self.dangerously_override_batch_inbox_address,
@@ -523,11 +496,11 @@ mod tests {
     }
 
     #[test]
-    fn into_config_rejects_one_max_blocks_per_span_batch() {
+    fn into_config_accepts_one_max_blocks_per_span_batch() {
         let cli = parse_cli(&["--max-blocks-per-span-batch", "1"]);
-        let err = cli.args.into_config().expect_err("one-block span batch cap should fail");
+        let config = cli.args.into_config().expect("one-block span batch cap should be valid");
 
-        assert!(err.to_string().contains("max_blocks_per_span_batch"));
+        assert_eq!(config.encoder_config.max_blocks_per_span_batch, Some(1));
     }
 
     #[test]
@@ -608,14 +581,6 @@ mod tests {
         assert_eq!(config.l1_rpc_url.len(), 1);
         assert_eq!(config.l2_rpc_url.len(), 1);
         assert_eq!(config.rollup_rpc_url.len(), 1);
-    }
-
-    #[test]
-    fn into_config_accepts_l1_beacon_url() {
-        let cli = parse_cli(&["--l1-beacon-url", "http://localhost:5052"]);
-        let config = cli.args.into_config().expect("config should build");
-
-        assert_eq!(config.l1_beacon_url.unwrap().as_str(), "http://localhost:5052/");
     }
 
     #[test]

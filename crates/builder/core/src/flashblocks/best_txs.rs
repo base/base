@@ -1,33 +1,191 @@
-//! An adapter over `BestPayloadTransactions`
+//! Flashblocks adapters for parkable best-transaction iterators.
 
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashSet, marker::PhantomData, sync::Arc};
 
 use alloy_primitives::{Address, TxHash};
+use base_execution_txpool::{BasePooledTx, ParkableBestTransactions};
 use reth_payload_util::PayloadTransactions;
-use reth_transaction_pool::{PoolTransaction, ValidPoolTransaction};
+use reth_transaction_pool::{
+    BestTransactions, PoolTransaction, ValidPoolTransaction,
+    error::{InvalidPoolTransactionError, PoolTransactionError},
+};
 
 use crate::{BuilderMetrics, RejectionCache};
 
-/// An adapter over `BestPayloadTransactions` that allows to skip transactions that were already
-/// committed to the state. It also allows to refresh inner iterator on each flashblock building, to
-/// update priority boundaries.
-pub struct BestFlashblocksTxs<T, I>
+/// Indicates that the payload builder excluded a transaction from the current candidate iterator.
+#[derive(Debug, thiserror::Error)]
+#[error("transaction invalidated during payload construction")]
+pub struct PayloadTransactionInvalidated;
+
+impl PoolTransactionError for PayloadTransactionInvalidated {
+    fn is_bad_transaction(&self) -> bool {
+        false
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// Parking lifecycle callbacks used in addition to payload iteration.
+///
+/// A transaction returned by [`PayloadTransactions::next`] becomes current until the caller parks,
+/// commits, or invalidates it. Current-transaction callbacks use the exact validated pool
+/// transaction retained by the adapter rather than reconstructing its identity from a hash.
+pub trait ParkablePayloadTransactions: PayloadTransactions
+where
+    Self::Transaction: PoolTransaction,
+{
+    /// Parks and clears the current transaction.
+    ///
+    /// Returns `false` when this iterator does not support parking or has no current transaction.
+    fn park_current(&mut self) -> bool;
+
+    /// Commits and clears the current transaction, if any.
+    fn mark_current_committed(&mut self);
+
+    /// Promotes a predicate-parked transaction back into priority competition.
+    fn promote(&mut self, transaction_hash: TxHash) -> bool;
+
+    /// Excludes a predicate-parked transaction for the remainder of this iterator.
+    fn discard_parked(&mut self, transaction_hash: TxHash) -> bool;
+}
+
+impl<T, I> ParkablePayloadTransactions for reth_payload_util::BestPayloadTransactions<T, I>
 where
     T: PoolTransaction,
     I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
 {
-    inner: reth_payload_util::BestPayloadTransactions<T, I>,
+    fn park_current(&mut self) -> bool {
+        false
+    }
+
+    fn mark_current_committed(&mut self) {}
+
+    fn promote(&mut self, _transaction_hash: TxHash) -> bool {
+        false
+    }
+
+    fn discard_parked(&mut self, _transaction_hash: TxHash) -> bool {
+        false
+    }
+}
+
+/// Converts a parkable best iterator into the payload-transaction interface used by the builder.
+pub struct ParkableBestPayloadTransactions<T>
+where
+    T: BasePooledTx,
+{
+    inner: Box<dyn ParkableBestTransactions<T>>,
+    current: Option<Arc<ValidPoolTransaction<T>>>,
+}
+
+impl<T> std::fmt::Debug for ParkableBestPayloadTransactions<T>
+where
+    T: BasePooledTx,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ParkableBestPayloadTransactions")
+            .field("has_current", &self.current.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+impl<T> ParkableBestPayloadTransactions<T>
+where
+    T: BasePooledTx,
+{
+    /// Creates a payload adapter over a parkable best iterator.
+    pub fn new(inner: Box<dyn ParkableBestTransactions<T>>) -> Self {
+        Self { inner, current: None }
+    }
+}
+
+impl<T> PayloadTransactions for ParkableBestPayloadTransactions<T>
+where
+    T: BasePooledTx,
+{
+    type Transaction = T;
+
+    fn next(&mut self, _ctx: ()) -> Option<Self::Transaction> {
+        debug_assert!(
+            self.current.is_none(),
+            "previous transaction must be lifecycle-managed before next"
+        );
+        let transaction = self.inner.next()?;
+        self.current = Some(Arc::clone(&transaction));
+        Some(transaction.transaction.clone())
+    }
+
+    fn mark_invalid(&mut self, sender: Address, nonce: u64) {
+        let Some(transaction) = self.current.as_ref() else {
+            return;
+        };
+        let matches_current =
+            transaction.sender() == sender && transaction.transaction.nonce() == nonce;
+        debug_assert!(matches_current, "mark_invalid must identify the current transaction");
+        if !matches_current {
+            return;
+        }
+        let transaction = self.current.take().expect("current transaction was checked above");
+        self.inner.mark_invalid(
+            &transaction,
+            InvalidPoolTransactionError::other(PayloadTransactionInvalidated),
+        );
+    }
+}
+
+impl<T> ParkablePayloadTransactions for ParkableBestPayloadTransactions<T>
+where
+    T: BasePooledTx,
+{
+    fn park_current(&mut self) -> bool {
+        let Some(transaction) = self.current.take() else {
+            return false;
+        };
+        self.inner.park(&transaction);
+        true
+    }
+
+    fn mark_current_committed(&mut self) {
+        if let Some(transaction) = self.current.take() {
+            self.inner.mark_committed(&transaction);
+        }
+    }
+
+    fn promote(&mut self, transaction_hash: TxHash) -> bool {
+        self.inner.promote(transaction_hash)
+    }
+
+    fn discard_parked(&mut self, transaction_hash: TxHash) -> bool {
+        self.inner.discard_parked(
+            transaction_hash,
+            InvalidPoolTransactionError::other(PayloadTransactionInvalidated),
+        )
+    }
+}
+
+/// An adapter that skips transactions already committed or permanently rejected by flashblocks.
+pub struct BestFlashblocksTxs<T, I>
+where
+    T: PoolTransaction,
+    I: ParkablePayloadTransactions<Transaction = T>,
+{
+    inner: I,
     // Transactions that were already committed to the state. Using them again would cause NonceTooLow
     // so we skip them
     committed_transactions: HashSet<TxHash>,
     // Shared cross-block rejection cache (survives across blocks, TTL-bounded)
     rejection_cache: RejectionCache,
+    // Identity of the transaction most recently returned to the build loop.
+    current_transaction: Option<(TxHash, Address, u64)>,
+    transaction: PhantomData<T>,
 }
 
 impl<T, I> std::fmt::Debug for BestFlashblocksTxs<T, I>
 where
     T: PoolTransaction,
-    I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
+    I: ParkablePayloadTransactions<Transaction = T>,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BestFlashblocksTxs")
@@ -40,20 +198,24 @@ where
 impl<T, I> BestFlashblocksTxs<T, I>
 where
     T: PoolTransaction,
-    I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
+    I: ParkablePayloadTransactions<Transaction = T>,
 {
     /// Creates a new [`BestFlashblocksTxs`] wrapping the given payload transaction iterator.
-    pub fn new(
-        inner: reth_payload_util::BestPayloadTransactions<T, I>,
-        rejection_cache: RejectionCache,
-    ) -> Self {
-        Self { inner, committed_transactions: Default::default(), rejection_cache }
+    pub fn new(inner: I, rejection_cache: RejectionCache) -> Self {
+        Self {
+            inner,
+            committed_transactions: Default::default(),
+            rejection_cache,
+            current_transaction: None,
+            transaction: PhantomData,
+        }
     }
 
     /// Replaces current iterator with new one. We use it on new flashblock building, to refresh
     /// priority boundaries
-    pub fn refresh_iterator(&mut self, inner: reth_payload_util::BestPayloadTransactions<T, I>) {
+    pub fn refresh_iterator(&mut self, inner: I) {
         self.inner = inner;
+        self.current_transaction = None;
     }
 
     /// Remove transaction from next iteration since it is already in the state
@@ -76,7 +238,7 @@ where
 impl<T, I> PayloadTransactions for BestFlashblocksTxs<T, I>
 where
     T: PoolTransaction,
-    I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
+    I: ParkablePayloadTransactions<Transaction = T>,
 {
     type Transaction = T;
 
@@ -84,13 +246,21 @@ where
         loop {
             let tx = self.inner.next(ctx)?;
             let hash = *tx.hash();
+            self.current_transaction = Some((hash, tx.sender(), tx.nonce()));
 
             if self.committed_transactions.contains(&hash) {
+                self.inner.mark_current_committed();
+                self.current_transaction = None;
                 continue;
             }
 
             if self.rejection_cache.contains_key(&hash) {
                 BuilderMetrics::rejection_cache_hits().increment(1);
+                // Only intrinsically invalid transactions enter this cache. Their nonce-lane
+                // descendants cannot execute across the resulting gap, so exclude the lane for
+                // this iterator rather than treating the rejected head as committed.
+                self.inner.mark_invalid(tx.sender(), tx.nonce());
+                self.current_transaction = None;
                 continue;
             }
 
@@ -100,7 +270,45 @@ where
 
     /// Proxy to inner iterator
     fn mark_invalid(&mut self, sender: Address, nonce: u64) {
+        let matches_current =
+            self.current_transaction.is_some_and(|(_, current_sender, current_nonce)| {
+                current_sender == sender && current_nonce == nonce
+            });
+        debug_assert!(matches_current, "mark_invalid must identify the current transaction");
+        if !matches_current {
+            return;
+        }
         self.inner.mark_invalid(sender, nonce);
+        self.current_transaction = None;
+    }
+}
+
+impl<T, I> ParkablePayloadTransactions for BestFlashblocksTxs<T, I>
+where
+    T: PoolTransaction,
+    I: ParkablePayloadTransactions<Transaction = T>,
+{
+    fn park_current(&mut self) -> bool {
+        let parked = self.inner.park_current();
+        if parked {
+            self.current_transaction = None;
+        }
+        parked
+    }
+
+    fn mark_current_committed(&mut self) {
+        self.inner.mark_current_committed();
+        if let Some((transaction_hash, _, _)) = self.current_transaction.take() {
+            self.committed_transactions.insert(transaction_hash);
+        }
+    }
+
+    fn promote(&mut self, transaction_hash: TxHash) -> bool {
+        self.inner.promote(transaction_hash)
+    }
+
+    fn discard_parked(&mut self, transaction_hash: TxHash) -> bool {
+        self.inner.discard_parked(transaction_hash)
     }
 }
 
@@ -110,6 +318,7 @@ mod tests {
 
     use alloy_consensus::Transaction;
     use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
+    use alloy_primitives::Address;
     use reth_payload_util::{BestPayloadTransactions, PayloadTransactions};
     use reth_transaction_pool::{
         CoinbaseTipOrdering, PoolTransaction,
@@ -193,8 +402,6 @@ mod tests {
     /// and verifies that `TX_B` (100 gwei) is correctly ordered before `TX_C` (10 gwei).
     #[test]
     fn test_nonce_chain_gating_bug_across_flashblocks() {
-        use alloy_primitives::Address;
-
         let mut pool = PendingPool::new(CoinbaseTipOrdering::<MockTransaction>::default());
         let mut f = MockTransactionFactory::default();
 
@@ -409,6 +616,34 @@ mod tests {
             "tx rejected in block 1 should be skipped in block 2"
         );
         assert_eq!(seen_hashes.len(), 1, "only non-rejected tx should appear");
+    }
+
+    #[test]
+    fn rejection_cache_hit_excludes_nonce_descendants() {
+        let sender = Address::random();
+        let other_sender = Address::random();
+        let rejected =
+            MockTransaction::eip1559().with_sender(sender).with_nonce(0).with_priority_fee(3);
+        let descendant =
+            MockTransaction::eip1559().with_sender(sender).with_nonce(1).with_priority_fee(2);
+        let other =
+            MockTransaction::eip1559().with_sender(other_sender).with_nonce(0).with_priority_fee(1);
+        let rejected_hash = *rejected.hash();
+        let other_hash = *other.hash();
+        let mut factory = MockTransactionFactory::default();
+        let mut pool = PendingPool::new(CoinbaseTipOrdering::<MockTransaction>::default());
+        pool.add_transaction(Arc::new(factory.validated(rejected)), 0);
+        pool.add_transaction(Arc::new(factory.validated(descendant)), 0);
+        pool.add_transaction(Arc::new(factory.validated(other)), 0);
+        let cache = test_rejection_cache();
+        cache.insert(rejected_hash);
+        let mut iterator =
+            BestFlashblocksTxs::new(BestPayloadTransactions::new(pool.best()), cache);
+
+        let yielded_hashes: Vec<_> =
+            std::iter::from_fn(|| iterator.next(())).map(|tx| *tx.hash()).collect();
+
+        assert_eq!(yielded_hashes, vec![other_hash]);
     }
 
     /// A rejected transaction becomes eligible again after the cache TTL expires.

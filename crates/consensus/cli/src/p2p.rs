@@ -12,6 +12,7 @@ use std::{
 use alloy_primitives::{B256, b256};
 use alloy_provider::Provider;
 use alloy_signer_local::PrivateKeySigner;
+use backon::Retryable;
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::ChainProvider;
 use base_consensus_disc::LocalNode;
@@ -21,7 +22,8 @@ use base_consensus_gossip::{
 };
 use base_consensus_node::NetworkConfig;
 use base_consensus_peers::{BootNode, BootStoreFile, PeerMonitoring, PeerScoreLevel};
-use base_consensus_providers::AlloyChainProvider;
+use base_consensus_providers::{AlloyChainProvider, L1RpcProvider};
+use base_retry::RetryConfig;
 use clap::Parser;
 use discv5::enr::k256;
 use eyre::{Result, WrapErr};
@@ -272,6 +274,36 @@ pub struct P2PNetworkArgs {
     #[arg(long = "p2p.unsafe.block.signer", env = "BASE_NODE_P2P_UNSAFE_BLOCK_SIGNER")]
     pub unsafe_block_signer: Option<alloy_primitives::Address>,
 
+    /// Maximum number of retry attempts for each L1 JSON-RPC call made while resolving the
+    /// unsafe block signer address from L1 during startup.
+    ///
+    /// Retries use exponential backoff so a transient L1 RPC outage (e.g. a `502` from a
+    /// load-balanced RPC proxy) does not crash node startup.
+    #[arg(
+        long = "p2p.unsafe-block-signer.retry-max-attempts",
+        env = "BASE_NODE_P2P_UNSAFE_BLOCK_SIGNER_RETRY_MAX_ATTEMPTS",
+        default_value_t = base_retry::DEFAULT_BOUNDED_MAX_ATTEMPTS
+    )]
+    pub unsafe_block_signer_retry_max_attempts: u32,
+
+    /// Initial backoff delay, in milliseconds, between retries of the L1 JSON-RPC calls used
+    /// to resolve the unsafe block signer address from L1.
+    #[arg(
+        long = "p2p.unsafe-block-signer.retry-initial-delay",
+        env = "BASE_NODE_P2P_UNSAFE_BLOCK_SIGNER_RETRY_INITIAL_DELAY",
+        default_value_t = base_retry::DEFAULT_BOUNDED_INITIAL_DELAY.as_millis() as u64
+    )]
+    pub unsafe_block_signer_retry_initial_delay: u64,
+
+    /// Maximum backoff delay, in milliseconds, between retries of the L1 JSON-RPC calls used
+    /// to resolve the unsafe block signer address from L1.
+    #[arg(
+        long = "p2p.unsafe-block-signer.retry-max-delay",
+        env = "BASE_NODE_P2P_UNSAFE_BLOCK_SIGNER_RETRY_MAX_DELAY",
+        default_value_t = base_retry::DEFAULT_BOUNDED_MAX_DELAY.as_millis() as u64
+    )]
+    pub unsafe_block_signer_retry_max_delay: u64,
+
     /// An optional flag to remove random peers from discovery to rotate the peer set.
     ///
     /// This is the number of seconds to wait before removing a peer from the discovery
@@ -425,11 +457,16 @@ impl P2PArgs {
     ///
     /// This method fetches the unsafe block signer from L1 if an RPC URL is provided,
     /// otherwise falls back to the genesis signer or the configured unsafe block signer.
+    ///
+    /// Each L1 JSON-RPC call made while resolving the signer from L1 is retried independently
+    /// with exponential backoff (`--p2p.unsafe-block-signer.retry-*`) so a transient L1 RPC
+    /// outage does not crash startup.
     pub async fn unsafe_block_signer(
         &self,
         l2_chain_id: u64,
         rollup_config: &RollupConfig,
         l1_eth_rpc: Option<Url>,
+        l1_rpc_timeout: Duration,
         genesis_signer: Option<alloy_primitives::Address>,
     ) -> eyre::Result<alloy_primitives::Address> {
         if let Some(l1_eth_rpc) = l1_eth_rpc {
@@ -438,34 +475,121 @@ impl P2PArgs {
             const UNSAFE_BLOCK_SIGNER_ADDRESS_STORAGE_SLOT: B256 =
                 b256!("0x65a7ed542fb37fe237fdfbdd70b31598523fe5b32879e307bae27a0bd9581c08");
 
-            let mut provider = AlloyChainProvider::new_http(l1_eth_rpc, 1024);
-            let latest_block_num = provider.latest_block_number().await?;
+            let provider = AlloyChainProvider::new(
+                L1RpcProvider::new_http_with_timeout(l1_eth_rpc, l1_rpc_timeout),
+                1024,
+            );
+
+            let retry_config = RetryConfig::new(
+                self.unsafe_block_signer_retry_max_attempts,
+                Duration::from_millis(self.unsafe_block_signer_retry_initial_delay),
+                Duration::from_millis(self.unsafe_block_signer_retry_max_delay),
+            );
+            // `ExponentialBuilder` is `Copy`; each `.retry(backoff)` below independently
+            // starts its own fresh attempt/backoff sequence from this template.
+            let backoff = retry_config.to_backoff_builder();
+
+            // Every error here is `RpcError<TransportErrorKind>` (always transport-class) —
+            // no `.when()` filter needed, retry unconditionally on `Err`.
+            //
+            // Each closure below clones the provider/inner handle *inside* the sync closure
+            // body, before entering the `async move` block. Cloning `AlloyChainProvider`
+            // also clones its LRU caches, but they are empty in this startup-only path. A
+            // closure whose returned future instead borrowed `provider` across `.await`
+            // could only ever be called once (`FnOnce`), since the borrow would need to
+            // outlive individual invocations to satisfy `FnMut`. Giving each attempt's
+            // future its own owned clone sidesteps that entirely.
+            let latest_block_num = (|| {
+                let mut provider = provider.clone();
+                async move { provider.latest_block_number().await }
+            })
+            .retry(backoff)
+            .notify(|err, dur| {
+                warn!(
+                    target: "p2p::flags",
+                    error = %err,
+                    delay = ?dur,
+                    "Retrying L1 latest block number lookup for unsafe block signer resolution"
+                );
+            })
+            .await?;
 
             // The L1 EL may report a latest block number that it has not fully executed
-            // yet (race between header sync and execution). Retry once with the previous
-            // block to avoid a fatal startup crash on transient L1 RPC errors.
-            let block_info = match provider.block_info_by_number(latest_block_num).await {
+            // yet (race between header sync and execution). Fall back once to the previous
+            // block if the latest block is unavailable — this stays a one-shot decision, as
+            // before. Each of the two candidate-block fetches is independently retried;
+            // `block_info_by_number` only ever queries `BlockId::Number` here, so both
+            // reachable error variants map to `PipelineErrorKind::Temporary` — no `.when()`
+            // filter needed.
+            let first_attempt = (|| {
+                let mut provider = provider.clone();
+                async move { provider.block_info_by_number(latest_block_num).await }
+            })
+            .retry(backoff)
+            .notify(|err, dur| {
+                warn!(
+                    target: "p2p::flags",
+                    block_number = latest_block_num,
+                    error = %err,
+                    delay = ?dur,
+                    "Retrying L1 block info lookup for unsafe block signer resolution"
+                );
+            })
+            .await;
+            let block_info = match first_attempt {
                 Ok(info) => info,
                 Err(err) => {
                     warn!(
                         target: "p2p::flags",
                         block_number = latest_block_num,
                         error = %err,
-                        "Failed to fetch latest L1 block info, retrying with previous block"
+                        "Failed to fetch latest L1 block info after retries, retrying with previous block"
                     );
-                    provider.block_info_by_number(latest_block_num.saturating_sub(1)).await?
+                    let fallback_block_num = latest_block_num.saturating_sub(1);
+                    (|| {
+                        let mut provider = provider.clone();
+                        async move { provider.block_info_by_number(fallback_block_num).await }
+                    })
+                    .retry(backoff)
+                    .notify(|err, dur| {
+                        warn!(
+                            target: "p2p::flags",
+                            block_number = fallback_block_num,
+                            error = %err,
+                            delay = ?dur,
+                            "Retrying L1 previous-block info lookup for unsafe block signer resolution"
+                        );
+                    })
+                    .await?
                 }
             };
 
-            // Fetch the unsafe block signer address from the system config.
-            let unsafe_block_signer_address = provider
-                .inner
-                .get_storage_at(
-                    rollup_config.l1_system_config_address,
-                    UNSAFE_BLOCK_SIGNER_ADDRESS_STORAGE_SLOT.into(),
-                )
-                .hash(block_info.hash)
-                .await?;
+            // Fetch the unsafe block signer address from the system config. Raw `Provider`
+            // call returning `RpcError<TransportErrorKind>` directly — no `.when()` filter
+            // needed.
+            let unsafe_block_signer_address = (|| {
+                let inner = provider.inner.clone();
+                async move {
+                    inner
+                        .get_storage_at(
+                            rollup_config.l1_system_config_address,
+                            UNSAFE_BLOCK_SIGNER_ADDRESS_STORAGE_SLOT.into(),
+                        )
+                        .hash(block_info.hash)
+                        .await
+                }
+            })
+            .retry(backoff)
+            .notify(|err, dur| {
+                warn!(
+                    target: "p2p::flags",
+                    block_hash = %block_info.hash,
+                    error = %err,
+                    delay = ?dur,
+                    "Retrying L1 SystemConfig storage read for unsafe block signer resolution"
+                );
+            })
+            .await?;
 
             // Convert the unsafe block signer address to the correct type.
             let signer = alloy_primitives::Address::from_slice(
@@ -504,6 +628,7 @@ impl P2PArgs {
     /// - `config`: The rollup configuration.
     /// - `l2_chain_id`: The L2 chain ID.
     /// - `l1_rpc`: Optional L1 RPC URL for fetching the unsafe block signer.
+    /// - `l1_rpc_timeout`: Request timeout for calls made while fetching the unsafe block signer.
     /// - `genesis_signer`: Optional genesis signer address.
     ///
     /// Errors if the genesis unsafe block signer isn't available for the specified L2 Chain ID.
@@ -512,6 +637,7 @@ impl P2PArgs {
         config: &RollupConfig,
         l2_chain_id: u64,
         l1_rpc: Option<Url>,
+        l1_rpc_timeout: Duration,
         genesis_signer: Option<alloy_primitives::Address>,
     ) -> Result<NetworkConfig, P2PConfigError> {
         // Note: the advertised address is contained in the ENR for external peers from the
@@ -574,8 +700,9 @@ impl P2PArgs {
         let mut gossip_address = libp2p::Multiaddr::from(self.listen_ip);
         gossip_address.push(libp2p::multiaddr::Protocol::Tcp(self.listen_tcp_port));
 
-        let unsafe_block_signer =
-            self.unsafe_block_signer(l2_chain_id, config, l1_rpc, genesis_signer).await?;
+        let unsafe_block_signer = self
+            .unsafe_block_signer(l2_chain_id, config, l1_rpc, l1_rpc_timeout, genesis_signer)
+            .await?;
 
         let bootnodes = self
             .bootnode_strings()?
@@ -675,10 +802,18 @@ impl P2PArgs {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
     use alloy_primitives::{Address, b256};
     use base_common_genesis::RollupConfig;
     use base_consensus_peers::NodeRecord;
+    use base_consensus_providers::L1_RPC_TIMEOUT;
     use clap::Parser;
+    use httpmock::{HttpMockRequest, HttpMockResponse, Method::POST, MockServer};
+    use serde_json::{Value, json};
 
     use super::*;
 
@@ -890,7 +1025,13 @@ mod tests {
         let args = MockCommand::parse_from(["test"]).p2p;
         let genesis: Address = "0xAf6E19BE0F9cE7f8afd49a1824851023A8249e8a".parse().unwrap();
         let signer = args
-            .unsafe_block_signer(8453, &RollupConfig::default(), None, Some(genesis))
+            .unsafe_block_signer(
+                8453,
+                &RollupConfig::default(),
+                None,
+                L1_RPC_TIMEOUT,
+                Some(genesis),
+            )
             .await
             .unwrap();
         assert_eq!(signer, genesis);
@@ -905,8 +1046,10 @@ mod tests {
             "0xAf6E19BE0F9cE7f8afd49a1824851023A8249e8a",
         ])
         .p2p;
-        let signer =
-            args.unsafe_block_signer(8453, &RollupConfig::default(), None, None).await.unwrap();
+        let signer = args
+            .unsafe_block_signer(8453, &RollupConfig::default(), None, L1_RPC_TIMEOUT, None)
+            .await
+            .unwrap();
         assert_eq!(signer, expected);
     }
 
@@ -920,7 +1063,13 @@ mod tests {
         ])
         .p2p;
         let signer = args
-            .unsafe_block_signer(8453, &RollupConfig::default(), None, Some(genesis))
+            .unsafe_block_signer(
+                8453,
+                &RollupConfig::default(),
+                None,
+                L1_RPC_TIMEOUT,
+                Some(genesis),
+            )
             .await
             .unwrap();
         assert_eq!(signer, genesis);
@@ -930,11 +1079,176 @@ mod tests {
     async fn test_unsafe_block_signer_errors_with_no_fallbacks() {
         let args = MockCommand::parse_from(["test"]).p2p;
         let err = args
-            .unsafe_block_signer(99999, &RollupConfig::default(), None, None)
+            .unsafe_block_signer(99999, &RollupConfig::default(), None, L1_RPC_TIMEOUT, None)
             .await
             .unwrap_err()
             .to_string();
         assert!(err.contains("99999"));
+    }
+
+    #[test]
+    fn test_p2p_args_unsafe_block_signer_retry_defaults() {
+        let args = MockCommand::parse_from(["test"]).p2p;
+        assert_eq!(
+            args.unsafe_block_signer_retry_max_attempts,
+            base_retry::DEFAULT_BOUNDED_MAX_ATTEMPTS
+        );
+        assert_eq!(
+            args.unsafe_block_signer_retry_initial_delay,
+            base_retry::DEFAULT_BOUNDED_INITIAL_DELAY.as_millis() as u64
+        );
+        assert_eq!(
+            args.unsafe_block_signer_retry_max_delay,
+            base_retry::DEFAULT_BOUNDED_MAX_DELAY.as_millis() as u64
+        );
+    }
+
+    #[test]
+    fn test_p2p_args_unsafe_block_signer_retry_flags_override() {
+        let args = MockCommand::parse_from([
+            "test",
+            "--p2p.unsafe-block-signer.retry-max-attempts",
+            "7",
+            "--p2p.unsafe-block-signer.retry-initial-delay",
+            "50",
+            "--p2p.unsafe-block-signer.retry-max-delay",
+            "2000",
+        ])
+        .p2p;
+        assert_eq!(args.unsafe_block_signer_retry_max_attempts, 7);
+        assert_eq!(args.unsafe_block_signer_retry_initial_delay, 50);
+        assert_eq!(args.unsafe_block_signer_retry_max_delay, 2000);
+    }
+
+    fn args_with_retry(max_attempts: u32, delay_ms: u64) -> P2PArgs {
+        MockCommand::parse_from([
+            "test",
+            "--p2p.unsafe-block-signer.retry-max-attempts",
+            &max_attempts.to_string(),
+            "--p2p.unsafe-block-signer.retry-initial-delay",
+            &delay_ms.to_string(),
+            "--p2p.unsafe-block-signer.retry-max-delay",
+            &delay_ms.to_string(),
+        ])
+        .p2p
+    }
+
+    fn json_rpc_response(req: &HttpMockRequest, result: Value) -> String {
+        let id = serde_json::from_slice::<Value>(&req.body_vec())
+            .ok()
+            .and_then(|body| body.get("id").cloned())
+            .unwrap_or(Value::Null);
+        json!({ "jsonrpc": "2.0", "id": id, "result": result }).to_string()
+    }
+
+    fn block_json(number: u64) -> Value {
+        json!({
+            "hash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+            "parentHash": "0x2222222222222222222222222222222222222222222222222222222222222222",
+            "sha3Uncles": "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
+            "miner": "0x0000000000000000000000000000000000000000",
+            "stateRoot": "0x3333333333333333333333333333333333333333333333333333333333333333",
+            "transactionsRoot": "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+            "receiptsRoot": "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+            "logsBloom": format!("0x{}", "00".repeat(256)),
+            "difficulty": "0x0",
+            "number": format!("0x{number:x}"),
+            "gasLimit": "0x1c9c380",
+            "gasUsed": "0x0",
+            "timestamp": "0x1",
+            "extraData": "0x",
+            "mixHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+            "nonce": "0x0000000000000000",
+            "baseFeePerGas": "0x1",
+            "transactions": [],
+            "uncles": [],
+            "withdrawals": [],
+            "blobGasUsed": "0x0",
+            "excessBlobGas": "0x0"
+        })
+    }
+
+    /// Mocks a transient-then-success sequence for a single JSON-RPC method: the first hit
+    /// returns a `502`, every hit after that returns `success_result`.
+    async fn mock_transient_then_success(
+        server: &MockServer,
+        method: &'static str,
+        success_result: Value,
+    ) {
+        let hits = Arc::new(AtomicUsize::new(0));
+        server
+            .mock_async(move |when, then| {
+                when.method(POST)
+                    .path("/")
+                    .json_body_includes(format!(r#"{{"method":"{method}"}}"#));
+                then.respond_with(move |req| {
+                    if hits.fetch_add(1, Ordering::SeqCst) == 0 {
+                        HttpMockResponse::builder().status(502).build()
+                    } else {
+                        HttpMockResponse::builder()
+                            .status(200)
+                            .header("content-type", "application/json")
+                            .body(json_rpc_response(req, success_result.clone()))
+                            .build()
+                    }
+                });
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn test_unsafe_block_signer_retries_transient_l1_errors_then_succeeds() {
+        let server = MockServer::start_async().await;
+        let block_number = 42u64;
+        let expected_signer: Address =
+            "0x0000000000000000000000000000000000001234".parse().unwrap();
+        let storage_value = format!(
+            "0x{}{}",
+            "00".repeat(12),
+            alloy_primitives::hex::encode(expected_signer.as_slice())
+        );
+
+        mock_transient_then_success(
+            &server,
+            "eth_blockNumber",
+            json!(format!("0x{block_number:x}")),
+        )
+        .await;
+        mock_transient_then_success(&server, "eth_getBlockByNumber", block_json(block_number))
+            .await;
+        mock_transient_then_success(&server, "eth_getStorageAt", json!(storage_value)).await;
+
+        let args = args_with_retry(3, 1);
+        let l1_rpc = server.url("/").parse().unwrap();
+        let signer = args
+            .unsafe_block_signer(8453, &RollupConfig::default(), Some(l1_rpc), L1_RPC_TIMEOUT, None)
+            .await
+            .unwrap();
+
+        assert_eq!(signer, expected_signer);
+    }
+
+    #[tokio::test]
+    async fn test_unsafe_block_signer_exhausts_retries_on_persistent_l1_outage() {
+        let server = MockServer::start_async().await;
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(POST).path("/").json_body_includes(r#"{"method":"eth_blockNumber"}"#);
+                then.status(502);
+            })
+            .await;
+
+        // `max_attempts = 1` retry after the initial call => 2 total calls before giving up.
+        let args = args_with_retry(1, 1);
+        let l1_rpc = server.url("/").parse().unwrap();
+        let err = args
+            .unsafe_block_signer(8453, &RollupConfig::default(), Some(l1_rpc), L1_RPC_TIMEOUT, None)
+            .await
+            .unwrap_err();
+
+        let err = err.to_string();
+        assert!(err.contains("502"), "unexpected error: {err}");
+        mock.assert_calls_async(2).await;
     }
 
     #[tokio::test]
@@ -943,7 +1257,7 @@ mod tests {
 
         let err = args
             .p2p
-            .config(&RollupConfig::default(), 8453, None, Some(Address::ZERO))
+            .config(&RollupConfig::default(), 8453, None, L1_RPC_TIMEOUT, Some(Address::ZERO))
             .await
             .expect_err("invalid bootnode should fail config")
             .to_string();
@@ -957,7 +1271,7 @@ mod tests {
 
         let config = args
             .p2p
-            .config(&RollupConfig::default(), 8453, None, Some(Address::ZERO))
+            .config(&RollupConfig::default(), 8453, None, L1_RPC_TIMEOUT, Some(Address::ZERO))
             .await
             .unwrap();
 
@@ -972,7 +1286,7 @@ mod tests {
 
         let config = args
             .p2p
-            .config(&RollupConfig::default(), 8453, None, Some(Address::ZERO))
+            .config(&RollupConfig::default(), 8453, None, L1_RPC_TIMEOUT, Some(Address::ZERO))
             .await
             .unwrap();
 
@@ -985,7 +1299,7 @@ mod tests {
 
         let config = args
             .p2p
-            .config(&RollupConfig::default(), 8453, None, Some(Address::ZERO))
+            .config(&RollupConfig::default(), 8453, None, L1_RPC_TIMEOUT, Some(Address::ZERO))
             .await
             .unwrap();
 
@@ -998,7 +1312,7 @@ mod tests {
 
         let config = args
             .p2p
-            .config(&RollupConfig::default(), 8453, None, Some(Address::ZERO))
+            .config(&RollupConfig::default(), 8453, None, L1_RPC_TIMEOUT, Some(Address::ZERO))
             .await
             .unwrap();
 

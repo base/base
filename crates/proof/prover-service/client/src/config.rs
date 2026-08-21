@@ -1,6 +1,6 @@
 //! Client configuration for connecting to the prover service.
 
-use std::time::Duration;
+use std::{fmt, time::Duration};
 
 use base_retry::RetryConfig;
 use jsonrpsee::{
@@ -55,13 +55,28 @@ pub enum ProverServiceClientBuildError {
 }
 
 /// Configuration shared by prover-service client roles.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct ProverServiceClientConfig {
     endpoint: String,
     request_timeout: Duration,
     poll_interval: Duration,
     max_wait: Duration,
     retry: RetryConfig,
+}
+
+impl fmt::Debug for ProverServiceClientConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let endpoint = Url::parse(&self.endpoint)
+            .map(|url| url.origin().ascii_serialization())
+            .unwrap_or_else(|_| "<invalid>".to_string());
+        f.debug_struct("ProverServiceClientConfig")
+            .field("endpoint", &endpoint)
+            .field("request_timeout", &self.request_timeout)
+            .field("poll_interval", &self.poll_interval)
+            .field("max_wait", &self.max_wait)
+            .field("retry", &self.retry)
+            .finish()
+    }
 }
 
 impl ProverServiceClientConfig {
@@ -183,7 +198,7 @@ impl ProverServiceClientConfig {
 
         let builder = HttpClientBuilder::default().request_timeout(self.request_timeout);
 
-        debug!(endpoint = %self.endpoint, "building prover-service client");
+        debug!("building prover-service client");
         builder.build(&self.endpoint).map_err(ProverServiceClientBuildError::from)
     }
 }
@@ -204,6 +219,19 @@ mod tests {
             .with_max_wait(Duration::from_secs(10));
 
         config.validate().expect("valid config should pass validation");
+    }
+
+    #[test]
+    fn config_debug_redacts_endpoint_secrets() {
+        let config = ProverServiceClientConfig::new(
+            "https://user:password@prover.example/rpc/api-key?token=secret",
+        );
+        let debug = format!("{config:?}");
+
+        assert!(debug.contains("https://prover.example"));
+        for secret in ["user", "password", "api-key", "token=secret"] {
+            assert!(!debug.contains(secret));
+        }
     }
 
     #[rstest]

@@ -2,10 +2,14 @@
 
 use std::time::Duration;
 
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256};
+use alloy_signer_local::LocalSignerError;
 use alloy_transport::TransportError;
 use alloy_transport_http::reqwest;
+use base_proof_contracts::ContractError;
+use base_proof_submission::ProofSubmissionError;
 use base_prover_service_client::{ProverServiceClientBuildError, ProverServiceClientError};
+use base_tx_manager::TxManagerError;
 use jsonrpsee::core::client::Error as JsonRpcClientError;
 use thiserror::Error;
 
@@ -112,6 +116,15 @@ pub enum P2pTargetError {
         /// The target supplied by the caller.
         target: String,
     },
+    /// A reachability target was not an `enode://` URL, `enr:` record, or
+    /// public `IPv4` `/ip4/.../tcp/.../p2p/<peer-id>` multiaddr.
+    #[error(
+        "reachability target `{target}` must be an execution-layer `enode://` URL, a consensus-layer `enr:` record, or a public-IPv4 `/ip4/.../tcp/.../p2p/<peer-id>` multiaddr"
+    )]
+    ReachabilityTargetUnsupported {
+        /// The target supplied by the caller.
+        target: String,
+    },
     /// The CL peer ID was too short to plausibly be a libp2p peer ID.
     #[error(
         "CL peer ID `{target}` looks too short to be a valid libp2p peer ID; expected a base58-encoded string (e.g. 16Uiu2HAm...)"
@@ -174,7 +187,7 @@ pub enum ProofsCommandError {
     /// The proof did not reach a terminal status within the wait window.
     #[error(
         "proof session {session_id} did not complete within {waited:?}; \
-         last observed status: {last_status}"
+         last observed status: {last_status}; re-run the same command to resume this session"
     )]
     WaitTimeout {
         /// The proof session identifier being waited on.
@@ -183,6 +196,156 @@ pub enum ProofsCommandError {
         waited: Duration,
         /// The last proof status observed before the timeout.
         last_status: String,
+    },
+    /// The command could not resolve a `DisputeGameFactory` address from flags or config.
+    #[error(
+        "proofs games needs a DisputeGameFactory address.\n\
+         The '{config_name}' config does not set `proofs.dispute_game_factory`.\n\
+         Override with `--factory <address>` or set `proofs.dispute_game_factory` \
+         in your YAML config."
+    )]
+    MissingDisputeGameFactory {
+        /// The config name selected for the command.
+        config_name: String,
+    },
+    /// The dry-run backend cannot produce proof bytes for `proofs finalize`.
+    #[error(
+        "`--zk-backend dry-run` produces no submittable proof bytes and cannot finalize; \
+         use `basectl proofs propose --zk-backend dry-run` for sizing instead"
+    )]
+    DryRunCannotFinalize,
+    /// An L1 dispute-game contract read failed.
+    #[error("dispute game read failed against {endpoint}")]
+    L1Contract {
+        /// The L1 RPC endpoint origin, with credentials, path, and query
+        /// redacted so embedded API keys cannot leak into logs.
+        endpoint: String,
+        /// The underlying contract client error.
+        #[source]
+        source: ContractError,
+    },
+    /// The dispute game cannot accept a ZK proposal proof.
+    #[error("game {game} cannot be proven: {reason}")]
+    GameNotProvable {
+        /// The dispute game proxy address.
+        game: String,
+        /// Why the game cannot accept a ZK proposal proof.
+        reason: String,
+    },
+    /// A dispute game could not be resolved from an L1 transaction hash.
+    #[error("cannot resolve a dispute game from transaction {tx_hash}: {reason}")]
+    GameFromTransaction {
+        /// The L1 transaction hash supplied by the caller.
+        tx_hash: B256,
+        /// Why the transaction does not resolve to a created game.
+        reason: String,
+    },
+    /// The dispute game is not registered with the configured factory.
+    #[error(
+        "game {game} is not registered with the configured DisputeGameFactory at {factory}; \
+         check that --factory or proofs.dispute_game_factory matches the factory that created \
+         the game"
+    )]
+    GameNotFromFactory {
+        /// The dispute game proxy address supplied by the caller.
+        game: Address,
+        /// The configured `DisputeGameFactory` address.
+        factory: Address,
+    },
+    /// A proof command would requeue a failed session without explicit approval.
+    #[error(
+        "proof session {session_id} already exists and failed: {message}. \
+         Re-running requeues the proof request; pass --retry-failed to explicitly confirm \
+         the retry"
+    )]
+    FailedSessionRetry {
+        /// The failed proof session identifier.
+        session_id: String,
+        /// The prover-service failure message.
+        message: String,
+    },
+    /// The submitter private key could not be parsed.
+    #[error("invalid submitter private key")]
+    InvalidSubmitterKey {
+        /// The parser error returned by the signer.
+        #[source]
+        source: LocalSignerError,
+    },
+    /// No submitter private key was found in the key file or environment.
+    #[error(
+        "no submitter private key found. Set `BASECTL_SUBMITTER_PRIVATE_KEY` \
+         or pass `--private-key-file <path>`."
+    )]
+    MissingSubmitterKey,
+    /// The submitter key file could not be read.
+    #[error("reading submitter key file {path}")]
+    ReadSubmitterKeyFile {
+        /// The key file path supplied by the caller.
+        path: String,
+        /// The underlying IO error.
+        #[source]
+        source: std::io::Error,
+    },
+    /// The proof session has not reached a terminal status yet.
+    #[error(
+        "proof session {session_id} is not complete yet (status: {status}); \
+         re-run with `--wait` or try again later"
+    )]
+    ProofNotReady {
+        /// The proof session identifier.
+        session_id: String,
+        /// The last observed proof status.
+        status: String,
+    },
+    /// The proof session failed on the prover service.
+    #[error("proof session {session_id} failed: {message}")]
+    ProofFailed {
+        /// The proof session identifier.
+        session_id: String,
+        /// The prover-service error message.
+        message: String,
+    },
+    /// The completed proof session did not include a result payload.
+    #[error("proof session {session_id} succeeded but returned no result payload")]
+    ProofResultMissing {
+        /// The proof session identifier.
+        session_id: String,
+    },
+    /// The session's result is not a PLONK proposal proof.
+    #[error(
+        "proof session {session_id} does not hold a snark_plonk proposal proof; \
+         request one with `basectl proofs propose`"
+    )]
+    NotAProposalProof {
+        /// The proof session identifier.
+        session_id: String,
+    },
+    /// The PLONK result could not be decoded into an on-chain SP1 proof.
+    #[error("proof session {session_id} returned an invalid SP1 PLONK receipt: {message}")]
+    InvalidProposalProof {
+        /// The proof session identifier.
+        session_id: String,
+        /// The receipt decoding error.
+        message: String,
+    },
+    /// The L1 transaction manager could not be constructed.
+    #[error("failed to build L1 transaction manager for {endpoint}")]
+    BuildTxManager {
+        /// The L1 RPC endpoint origin, with credentials, path, and query
+        /// redacted so embedded API keys cannot leak into logs.
+        endpoint: String,
+        /// The underlying transaction manager construction error.
+        #[source]
+        source: TxManagerError,
+    },
+    /// The `verifyProposalProof` submission failed.
+    #[error("verifyProposalProof submission to game {game} failed")]
+    Submission {
+        /// The dispute game proxy address.
+        game: String,
+        /// The underlying proof submission error.
+        #[source]
+        source: ProofSubmissionError,
     },
 }
 

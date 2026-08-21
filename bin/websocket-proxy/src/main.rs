@@ -84,6 +84,7 @@ struct Args {
         long,
         env,
         value_delimiter = ',',
+        value_parser = TrustedProxyConfig::parse_cidr,
         help = "Proxy CIDRs trusted when resolving client IPs; include every forwarding hop"
     )]
     trusted_proxy_cidrs: Vec<IpNet>,

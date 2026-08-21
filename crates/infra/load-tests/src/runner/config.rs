@@ -1,6 +1,7 @@
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
 
 use alloy_primitives::{Address, U256};
+use base_execution_txpool::ValidityOperator;
 use revm::precompile::PrecompileId;
 use url::Url;
 
@@ -8,6 +9,63 @@ use crate::{
     config::OsakaTarget,
     utils::{BaselineError, Result},
 };
+
+/// Source for a validity predicate's address, resolved per transaction at
+/// prepare time (the concrete `from`/`to` are only known then).
+#[derive(Debug, Clone)]
+pub enum PredicateAddress {
+    /// The transaction's sender (`from`).
+    Sender,
+    /// The transaction's recipient (`to`).
+    Recipient,
+    /// A fixed, pre-resolved address.
+    Fixed(Address),
+}
+
+/// Source for a validity predicate's storage slot, resolved per transaction.
+#[derive(Debug, Clone)]
+pub enum SlotTemplate {
+    /// A static slot index.
+    Fixed(U256),
+    /// A Solidity mapping slot `keccak256(key ++ mapping_slot)`.
+    Mapping {
+        /// Declared position of the mapping in contract storage.
+        mapping_slot: U256,
+        /// Mapping key address, resolved per transaction.
+        key: PredicateAddress,
+    },
+}
+
+/// A runtime validity predicate template with literal values pre-parsed.
+///
+/// Addresses and slots may remain symbolic ([`PredicateAddress::Sender`],
+/// [`SlotTemplate::Mapping`]) and are resolved into concrete
+/// `ValidityPredicate` values against each transaction at prepare time.
+#[derive(Debug, Clone)]
+pub enum ValidityPredicateTemplate {
+    /// Balance comparison template.
+    Balance {
+        /// Account whose balance is read.
+        address: PredicateAddress,
+        /// Comparison operator.
+        op: ValidityOperator,
+        /// Right-hand comparison value.
+        value: U256,
+    },
+    /// Storage comparison template.
+    Storage {
+        /// Contract whose storage is read.
+        address: PredicateAddress,
+        /// Storage slot source.
+        slot: SlotTemplate,
+        /// Optional bit mask; `None` uses the server default (all ones).
+        mask: Option<U256>,
+        /// Comparison operator.
+        op: ValidityOperator,
+        /// Right-hand comparison value.
+        value: U256,
+    },
+}
 
 /// Configuration for a single transaction type with its weight.
 #[derive(Debug, Clone)]
@@ -103,96 +161,10 @@ pub enum TxType {
     },
 }
 
-/// Real-token setup executed before measured swap workloads.
-#[derive(Debug, Clone)]
-pub struct RealTokenSetup {
-    /// Whether chain ID 8453 is allowed for this setup.
-    pub allow_chain_id_8453: bool,
-    /// WETH contract address.
-    pub weth: Address,
-    /// Target WETH balance to leave each sender with after setup.
-    pub weth_amount_per_sender: U256,
-    /// Non-WETH token setup for bidirectional swap parity.
-    pub pair_token: RealTokenPairTokenSetup,
-    /// Allowance amount to approve for each measured router.
-    pub approval_amount: U256,
-}
-
-/// Summary of real-token balances recovered before native ETH drain.
-#[derive(Debug, Clone, Default)]
-pub struct RealTokenRecoverySummary {
-    /// Pair-token raw units swapped back into WETH.
-    pub pair_token_swapped: U256,
-    /// WETH unwrapped back into native ETH.
-    pub weth_unwrapped: U256,
-}
-
-/// Non-WETH side of the real-token pair.
-#[derive(Debug, Clone)]
-pub struct RealTokenPairTokenSetup {
-    /// Pair token contract address.
-    pub token: Address,
-    /// Target pair-token balance per sender.
-    pub amount_per_sender: U256,
-    /// How to acquire pair-token balances during setup.
-    pub acquisition: RealTokenAcquisition,
-}
-
-/// Explicit setup route for acquiring the pair token.
-#[derive(Debug, Clone)]
-pub enum RealTokenAcquisition {
-    /// Uniswap V3 `exactInputSingle` route.
-    UniswapV3ExactInput {
-        /// Router contract address.
-        router: Address,
-        /// Fee tier.
-        fee: u32,
-        /// WETH input amount per sender.
-        amount_in: U256,
-        /// Minimum pair-token output amount.
-        min_amount_out: U256,
-    },
-    /// Aerodrome Slipstream `exactInputSingle` route.
-    AerodromeClExactInput {
-        /// Router contract address.
-        router: Address,
-        /// Tick spacing.
-        tick_spacing: i32,
-        /// WETH input amount per sender.
-        amount_in: U256,
-        /// Minimum pair-token output amount.
-        min_amount_out: U256,
-    },
-}
-
-impl RealTokenAcquisition {
-    /// Returns the router used by this setup route.
-    pub const fn router(&self) -> Address {
-        match self {
-            Self::UniswapV3ExactInput { router, .. }
-            | Self::AerodromeClExactInput { router, .. } => *router,
-        }
-    }
-
-    /// Returns the input amount consumed by this setup route.
-    pub const fn amount_in(&self) -> U256 {
-        match self {
-            Self::UniswapV3ExactInput { amount_in, .. }
-            | Self::AerodromeClExactInput { amount_in, .. } => *amount_in,
-        }
-    }
-
-    /// Returns the minimum output amount expected by this setup route.
-    pub const fn min_amount_out(&self) -> U256 {
-        match self {
-            Self::UniswapV3ExactInput { min_amount_out, .. }
-            | Self::AerodromeClExactInput { min_amount_out, .. } => *min_amount_out,
-        }
-    }
-}
-
 /// Default maximum gas price cap (1000 gwei).
 pub const DEFAULT_MAX_GAS_PRICE: u128 = 1_000_000_000_000;
+/// Default per-sender in-flight limit, aligned with Reth's default account slots.
+pub const DEFAULT_MAX_IN_FLIGHT_PER_SENDER: usize = 16;
 
 /// Configuration for a load test run.
 #[derive(Debug, Clone)]
@@ -215,23 +187,49 @@ pub struct LoadConfig {
     pub sender_offset: usize,
     /// Transaction types with weights.
     pub transactions: Vec<TxConfig>,
-    /// Target gas per second.
-    pub target_gps: u64,
+    /// Optional gas-per-second target used to size each block's mempool floor.
+    pub target_gps: Option<u64>,
+    /// Optional block gas limit override used to size uncapped mempool inventory.
+    pub block_gas_limit: Option<u64>,
+    /// Expected cadence between canonical blocks.
+    pub block_time: Duration,
+    /// Benchmark-only control directory used to separate setup from measurement.
+    pub separate_setup: Option<PathBuf>,
     /// Duration of the load test. `None` means run indefinitely until stopped.
     pub duration: Option<Duration>,
     /// Maximum in-flight (unconfirmed) transactions per sender.
-    pub max_in_flight_per_sender: u64,
-    /// Number of transactions to batch together before submitting.
+    pub max_in_flight_per_sender: usize,
+    /// Optional ceiling on total in-flight (unconfirmed) transactions across all senders.
+    ///
+    /// Without this, the aggregate cap is implicitly `max_in_flight_per_sender *
+    /// account_count`. Setting this bounds the open-loop headroom target
+    /// independently of sender count, e.g. to protect a shared target node's
+    /// mempool size regardless of how many senders are configured. `None` keeps
+    /// the previous per-sender-derived behavior.
+    pub max_total_in_flight: Option<usize>,
+    /// Optional cap on concurrent outbound submission RPC requests across all
+    /// sender workers.
+    ///
+    /// This throttles request *rate* to the submission endpoint(s) directly,
+    /// independently of `max_in_flight_per_sender` / `max_total_in_flight`
+    /// (which bound unconfirmed transactions, not outbound requests). Useful
+    /// for staying under an RPC endpoint's rate limit without shrinking the
+    /// in-flight inventory target. `None` leaves concurrency bounded by sender
+    /// workers and the number of RPC chunks in each transaction batch.
+    pub max_concurrent_submit_requests: Option<usize>,
+    /// Maximum number of transactions in each JSON-RPC batch request.
     pub batch_size: usize,
-    /// Maximum time to wait for a batch to fill before flushing.
-    pub batch_timeout: Duration,
     /// Maximum gas price cap to prevent overspending during congestion.
     pub max_gas_price: u128,
-    /// Builder flashblocks broadcast WebSocket endpoint.
-    pub flashblocks_ws: Url,
+    /// Optional builder flashblocks WebSocket used for early inclusion signals.
+    pub flashblocks_ws: Option<Url>,
     /// Fraction of transactions that draw a fresh recipient address instead of cycling through
     /// the sender pool. Used to drive account-trie fan-out for account-create workloads.
     pub fresh_recipient_ratio: f64,
+    /// Fraction `0.0..=1.0` of senders routed through `base_sendRawTransactionValidity`.
+    pub validity_ratio: f64,
+    /// Predicate templates attached to each validity-bearing transaction.
+    pub validity_predicates: Vec<ValidityPredicateTemplate>,
 }
 
 impl LoadConfig {
@@ -243,20 +241,26 @@ impl LoadConfig {
             ],
             query_rpc: "http://localhost:8545".parse().expect("valid default query_rpc"),
             txpool_nodes: Vec::new(),
-            chain_id: 1337,
+            chain_id: 84538453,
             account_count: 10,
             seed: 42,
             mnemonic: None,
             sender_offset: 0,
             transactions: vec![TxConfig { weight: 100, tx_type: TxType::Transfer }],
-            target_gps: 2_100_000,
+            target_gps: None,
+            block_gas_limit: None,
+            block_time: Duration::from_secs(2),
+            separate_setup: None,
             duration: Some(Duration::from_secs(30)),
-            max_in_flight_per_sender: 128,
-            batch_size: 5,
-            batch_timeout: Duration::from_millis(50),
+            max_in_flight_per_sender: DEFAULT_MAX_IN_FLIGHT_PER_SENDER,
+            max_total_in_flight: None,
+            max_concurrent_submit_requests: None,
+            batch_size: crate::rpc::MAX_BATCH_RPC_SIZE,
             max_gas_price: DEFAULT_MAX_GAS_PRICE,
-            flashblocks_ws: "ws://localhost:7111".parse().expect("valid default flashblocks_ws"),
+            flashblocks_ws: None,
             fresh_recipient_ratio: 0.0,
+            validity_ratio: 0.0,
+            validity_predicates: Vec::new(),
         }
     }
 
@@ -272,20 +276,51 @@ impl LoadConfig {
         if self.account_count == 0 {
             return Err(BaselineError::Config("account_count must be > 0".into()));
         }
-        if self.target_gps == 0 {
-            return Err(BaselineError::Config("target_gps must be > 0".into()));
+        if self.target_gps == Some(0) {
+            return Err(BaselineError::Config("target_gps must be > 0 when set".into()));
+        }
+        if self.block_gas_limit == Some(0) {
+            return Err(BaselineError::Config("block_gas_limit must be > 0 when set".into()));
+        }
+        if self.block_time.is_zero() {
+            return Err(BaselineError::Config("block_time must be > 0".into()));
+        }
+        if self.max_in_flight_per_sender == 0 {
+            return Err(BaselineError::Config("max_in_flight_per_sender must be > 0".into()));
+        }
+        if self.max_total_in_flight == Some(0) {
+            return Err(BaselineError::Config("max_total_in_flight must be > 0 when set".into()));
+        }
+        if self.max_concurrent_submit_requests == Some(0) {
+            return Err(BaselineError::Config(
+                "max_concurrent_submit_requests must be > 0 when set".into(),
+            ));
+        }
+        if self.batch_size == 0 {
+            return Err(BaselineError::Config("batch_size must be > 0".into()));
         }
         if self.duration == Some(Duration::ZERO) {
             return Err(BaselineError::Config(
                 "duration must be > 0 (or omit for continuous)".into(),
             ));
         }
-        if self.batch_size == 0 {
-            return Err(BaselineError::Config("batch_size must be > 0".into()));
-        }
         if !(0.0..=1.0).contains(&self.fresh_recipient_ratio) {
             return Err(BaselineError::Config(
                 "fresh_recipient_ratio must be between 0.0 and 1.0".into(),
+            ));
+        }
+        if !(0.0..=1.0).contains(&self.validity_ratio) {
+            return Err(BaselineError::Config("validity_ratio must be between 0.0 and 1.0".into()));
+        }
+        if self.validity_predicates.len() > base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES {
+            return Err(BaselineError::Config(format!(
+                "validity_predicates exceeds the maximum of {}",
+                base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES
+            )));
+        }
+        if self.validity_ratio > 0.0 && self.validity_predicates.is_empty() {
+            return Err(BaselineError::Config(
+                "validity_predicates must be non-empty when validity_ratio > 0".into(),
             ));
         }
         if self.transactions.is_empty() {
@@ -313,7 +348,7 @@ impl LoadConfig {
                 ));
             }
         }
-        if !matches!(self.flashblocks_ws.scheme(), "ws" | "wss") {
+        if self.flashblocks_ws.as_ref().is_some_and(|url| !matches!(url.scheme(), "ws" | "wss")) {
             return Err(BaselineError::Config("flashblocks_ws must use ws:// or wss://".into()));
         }
         Ok(())
@@ -362,8 +397,8 @@ impl LoadConfig {
         self
     }
 
-    /// Sets the target gas per second.
-    pub const fn with_target_gps(mut self, gps: u64) -> Self {
+    /// Sets an optional gas-per-second ceiling.
+    pub const fn with_target_gps(mut self, gps: Option<u64>) -> Self {
         self.target_gps = gps;
         self
     }
@@ -381,20 +416,67 @@ impl LoadConfig {
     }
 
     /// Sets the maximum in-flight transactions per sender.
-    pub const fn with_max_in_flight_per_sender(mut self, max: u64) -> Self {
+    pub const fn with_max_in_flight_per_sender(mut self, max: usize) -> Self {
         self.max_in_flight_per_sender = max;
         self
     }
 
-    /// Sets the batch size for transaction submission.
-    pub const fn with_batch_size(mut self, size: usize) -> Self {
-        self.batch_size = size;
+    /// Sets an optional ceiling on total in-flight transactions across all senders.
+    pub const fn with_max_total_in_flight(mut self, max: Option<usize>) -> Self {
+        self.max_total_in_flight = max;
         self
     }
 
-    /// Sets the batch timeout.
-    pub const fn with_batch_timeout(mut self, timeout: Duration) -> Self {
-        self.batch_timeout = timeout;
+    /// Sets an optional cap on concurrent outbound submission RPC requests.
+    pub const fn with_max_concurrent_submit_requests(mut self, max: Option<usize>) -> Self {
+        self.max_concurrent_submit_requests = max;
         self
+    }
+
+    /// Returns the effective in-flight capacity for `account_count` senders: the
+    /// per-sender limit multiplied by the sender count, clamped by
+    /// [`Self::max_total_in_flight`] when set.
+    pub fn effective_in_flight_capacity(&self, account_count: usize) -> usize {
+        let per_sender_capacity = self.max_in_flight_per_sender.saturating_mul(account_count);
+        self.max_total_in_flight
+            .map_or(per_sender_capacity, |max_total| per_sender_capacity.min(max_total))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn effective_in_flight_capacity_defaults_to_per_sender_times_count() {
+        let config = LoadConfig::devnet().with_max_in_flight_per_sender(128);
+        assert_eq!(config.effective_in_flight_capacity(10), 1280);
+    }
+
+    #[test]
+    fn effective_in_flight_capacity_clamps_to_max_total_in_flight() {
+        let config = LoadConfig::devnet()
+            .with_max_in_flight_per_sender(128)
+            .with_max_total_in_flight(Some(500));
+        assert_eq!(config.effective_in_flight_capacity(10), 500, "clamped below per-sender total");
+        assert_eq!(config.effective_in_flight_capacity(2), 256, "per-sender total stays below cap");
+    }
+
+    #[test]
+    fn validate_rejects_zero_max_total_in_flight() {
+        let config = LoadConfig::devnet().with_max_total_in_flight(Some(0));
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_zero_max_concurrent_submit_requests() {
+        let config = LoadConfig::devnet().with_max_concurrent_submit_requests(Some(0));
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn validate_accepts_max_concurrent_submit_requests() {
+        let config = LoadConfig::devnet().with_max_concurrent_submit_requests(Some(4));
+        assert!(config.validate().is_ok());
     }
 }

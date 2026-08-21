@@ -28,11 +28,10 @@ impl OriginSelector for ActionOriginSelector {
     async fn next_l1_origin(
         &mut self,
         unsafe_head: L2BlockInfo,
-        is_recovery_mode: bool,
     ) -> Result<BlockInfo, base_consensus_node::L1OriginSelectorError> {
         if let Some(pin) = *self.pin.lock().expect("L1 origin pin lock poisoned") {
             return Ok(pin);
         }
-        self.inner.next_l1_origin(unsafe_head, is_recovery_mode).await
+        self.inner.next_l1_origin(unsafe_head).await
     }
 }

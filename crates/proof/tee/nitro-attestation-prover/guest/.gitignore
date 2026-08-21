@@ -1,4 +1,0 @@
-/target/
-/elfs/
-# Pre-downloaded risc0 toolchain (optional Docker build speedup, ~500MB)
-rust-toolchain-*.tar.gz

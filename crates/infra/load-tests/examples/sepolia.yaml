@@ -11,9 +11,9 @@ flashblocks_ws: "wss://sepolia.flashblocks.base.org/ws"
 
 sender_count: 200
 target_gps: 60000000
+block_time: "2s"
 in_flight_per_sender: 128
-batch_size: 50
-batch_timeout: "10ms"
+batch_size: 20
 duration: "60s"
 seed: 123456
 

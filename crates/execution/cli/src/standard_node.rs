@@ -14,11 +14,16 @@ use base_observability_events::{
     GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventWriterConfig,
 };
 use base_proofs_extension::ProofsHistoryExtension;
+use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension};
+use base_shadow_indexer_db::ShadowDbConfig;
 use base_tx_forwarding::{
     DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS, DEFAULT_RESEND_AFTER_MS, TxForwardingConfig,
     TxForwardingExtension,
 };
-use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
+use base_txpool_rpc::{
+    DEFAULT_MAX_VALIDITY_PREDICATES, SendRawTransactionValidityExtension, TxPoolRpcConfig,
+    TxPoolRpcExtension,
+};
 use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
 use base_upgrade_signal::UpgradeSignalStartupMode;
 use tracing::warn;
@@ -74,6 +79,61 @@ pub struct MeteringArgs {
     pub metering_metered_opcodes: Vec<String>,
 }
 
+/// Default maximum number of open shadow indexer database connections.
+const DEFAULT_SHADOW_INDEXER_MAX_CONNECTIONS: u32 = 5;
+/// Default timeout when acquiring a shadow indexer database connection.
+const DEFAULT_SHADOW_INDEXER_CONNECTION_TIMEOUT: &str = "30s";
+
+/// CLI arguments for the shadow indexer `ExEx` that persists committed execution blocks.
+#[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
+pub struct ShadowIndexerArgs {
+    /// Enable the shadow indexer `ExEx` that persists committed execution blocks to Postgres.
+    #[arg(long = "enable-shadow-indexer", env = "ENABLE_SHADOW_INDEXER")]
+    pub enable_shadow_indexer: bool,
+
+    /// `PostgreSQL` connection URL for the shadow indexer database.
+    #[arg(
+        long = "shadow-indexer.database-url",
+        env = "SHADOW_INDEXER_DATABASE_URL",
+        value_name = "SHADOW_INDEXER_DATABASE_URL",
+        requires = "enable_shadow_indexer"
+    )]
+    pub shadow_indexer_database_url: Option<String>,
+
+    /// Maximum number of open shadow indexer database connections.
+    #[arg(
+        long = "shadow-indexer.max-connections",
+        env = "SHADOW_INDEXER_MAX_CONNECTIONS",
+        default_value_t = DEFAULT_SHADOW_INDEXER_MAX_CONNECTIONS,
+        requires = "enable_shadow_indexer"
+    )]
+    pub shadow_indexer_max_connections: u32,
+
+    /// Timeout when acquiring a shadow indexer database connection.
+    #[arg(
+        long = "shadow-indexer.connection-timeout",
+        env = "SHADOW_INDEXER_CONNECTION_TIMEOUT",
+        default_value = DEFAULT_SHADOW_INDEXER_CONNECTION_TIMEOUT,
+        value_parser = humantime::parse_duration,
+        requires = "enable_shadow_indexer"
+    )]
+    pub shadow_indexer_connection_timeout: Duration,
+}
+
+impl Default for ShadowIndexerArgs {
+    fn default() -> Self {
+        Self {
+            enable_shadow_indexer: false,
+            shadow_indexer_database_url: None,
+            shadow_indexer_max_connections: DEFAULT_SHADOW_INDEXER_MAX_CONNECTIONS,
+            shadow_indexer_connection_timeout: humantime::parse_duration(
+                DEFAULT_SHADOW_INDEXER_CONNECTION_TIMEOUT,
+            )
+            .expect("valid default shadow indexer connection timeout"),
+        }
+    }
+}
+
 /// CLI arguments for a standard Base execution node.
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
 #[command(next_help_heading = "Rollup")]
@@ -86,49 +146,9 @@ pub struct StandardNodeArgs {
     #[command(flatten)]
     pub metering: MeteringArgs,
 
-    /// Enable transaction forwarding for mempool nodes to builder RPC endpoints
-    #[arg(
-        long = "enable-tx-forwarding",
-        value_name = "ENABLE_TX_FORWARDING",
-        requires = "builder_rpc_urls"
-    )]
-    pub enable_tx_forwarding: bool,
-
-    /// Builder RPC endpoints for transaction forwarding (one forwarder per URL), used by mempool nodes
-    #[arg(
-        long = "builder-rpc-urls",
-        value_name = "BUILDER_RPC_URLS",
-        value_delimiter = ',',
-        requires = "enable_tx_forwarding"
-    )]
-    pub builder_rpc_urls: Vec<Url>,
-
-    /// Resend transactions that haven't been included after this duration in ms (default: 2 blocks)
-    #[arg(
-        long = "tx-forwarding-resend-after-ms",
-        value_name = "TX_FORWARDING_RESEND_AFTER_MS",
-        default_value_t = DEFAULT_RESEND_AFTER_MS,
-        requires = "enable_tx_forwarding"
-    )]
-    pub tx_forwarding_resend_after_ms: u64,
-
-    /// Maximum number of transactions per forwarding batch
-    #[arg(
-        long = "tx-forwarding-batch-size",
-        value_name = "TX_FORWARDING_BATCH_SIZE",
-        default_value_t = DEFAULT_MAX_BATCH_SIZE,
-        requires = "enable_tx_forwarding"
-    )]
-    pub tx_forwarding_batch_size: usize,
-
-    /// Maximum RPC requests per second per forwarder (0 = unlimited).
-    #[arg(
-        long = "tx-forwarding-max-rps",
-        value_name = "TX_FORWARDING_MAX_RPS",
-        default_value_t = DEFAULT_MAX_RPS,
-        requires = "enable_tx_forwarding"
-    )]
-    pub tx_forwarding_max_rps: u32,
+    /// Shadow indexer `ExEx` arguments.
+    #[command(flatten)]
+    pub shadow_indexer: ShadowIndexerArgs,
 }
 
 /// CLI arguments for a Base execution node embedded by the unified RPC command.
@@ -197,6 +217,66 @@ pub struct RpcStandardNodeArgs {
         requires = "enable_transaction_event_journal"
     )]
     pub transaction_event_journal_path: Option<PathBuf>,
+
+    /// Enable transaction forwarding for mempool nodes to builder RPC endpoints
+    #[arg(
+        long = "enable-tx-forwarding",
+        value_name = "ENABLE_TX_FORWARDING",
+        requires = "builder_rpc_urls"
+    )]
+    pub enable_tx_forwarding: bool,
+
+    /// Enable the experimental validity transaction RPC.
+    ///
+    /// When transaction forwarding is enabled, validity predicates are forwarded to builders, but
+    /// they are not yet enforced. This can also be enabled on a standalone sequencer (e.g. a local
+    /// devnet) that builds blocks itself, in which case forwarding is not required.
+    #[arg(long = "enable-experimental-validity-transactions")]
+    pub enable_experimental_validity_transactions: bool,
+
+    /// Maximum validity predicates accepted per experimental transaction.
+    #[arg(
+        long = "experimental-validity-max-predicates",
+        default_value_t = DEFAULT_MAX_VALIDITY_PREDICATES,
+        requires = "enable_experimental_validity_transactions"
+    )]
+    pub experimental_validity_max_predicates: usize,
+
+    /// Builder RPC endpoints for transaction forwarding (one forwarder per URL), used by mempool nodes
+    #[arg(
+        long = "builder-rpc-urls",
+        value_name = "BUILDER_RPC_URLS",
+        value_delimiter = ',',
+        requires = "enable_tx_forwarding"
+    )]
+    pub builder_rpc_urls: Vec<Url>,
+
+    /// Resend transactions that haven't been included after this duration in ms (default: 2 blocks)
+    #[arg(
+        long = "tx-forwarding-resend-after-ms",
+        value_name = "TX_FORWARDING_RESEND_AFTER_MS",
+        default_value_t = DEFAULT_RESEND_AFTER_MS,
+        requires = "enable_tx_forwarding"
+    )]
+    pub tx_forwarding_resend_after_ms: u64,
+
+    /// Maximum number of transactions per forwarding batch
+    #[arg(
+        long = "tx-forwarding-batch-size",
+        value_name = "TX_FORWARDING_BATCH_SIZE",
+        default_value_t = DEFAULT_MAX_BATCH_SIZE,
+        requires = "enable_tx_forwarding"
+    )]
+    pub tx_forwarding_batch_size: usize,
+
+    /// Maximum RPC requests per second per forwarder (0 = unlimited).
+    #[arg(
+        long = "tx-forwarding-max-rps",
+        value_name = "TX_FORWARDING_MAX_RPS",
+        default_value_t = DEFAULT_MAX_RPS,
+        requires = "enable_tx_forwarding"
+    )]
+    pub tx_forwarding_max_rps: u32,
 }
 
 impl From<RpcStandardNodeArgs> for StandardNodeArgs {
@@ -208,11 +288,7 @@ impl From<RpcStandardNodeArgs> for StandardNodeArgs {
         Self {
             rpc: args,
             metering: MeteringArgs::default(),
-            enable_tx_forwarding: false,
-            builder_rpc_urls: Vec::new(),
-            tx_forwarding_resend_after_ms: DEFAULT_RESEND_AFTER_MS,
-            tx_forwarding_batch_size: DEFAULT_MAX_BATCH_SIZE,
-            tx_forwarding_max_rps: DEFAULT_MAX_RPS,
+            shadow_indexer: ShadowIndexerArgs::default(),
         }
     }
 }
@@ -222,6 +298,39 @@ impl StandardNodeArgs {
     pub fn with_metering(mut self, metering: MeteringArgs) -> Self {
         self.metering = metering;
         self
+    }
+
+    /// Sets the shadow indexer arguments on this standard node configuration.
+    pub fn with_shadow_indexer(mut self, shadow_indexer: ShadowIndexerArgs) -> Self {
+        self.shadow_indexer = shadow_indexer;
+        self
+    }
+}
+
+impl TryFrom<&ShadowIndexerArgs> for ShadowIndexerConfig {
+    type Error = eyre::Error;
+
+    fn try_from(args: &ShadowIndexerArgs) -> eyre::Result<Self> {
+        let url = if args.enable_shadow_indexer {
+            args.shadow_indexer_database_url.clone().ok_or_else(|| {
+                eyre::eyre!(
+                    "--enable-shadow-indexer (env ENABLE_SHADOW_INDEXER) requires \
+                     --shadow-indexer.database-url (env SHADOW_INDEXER_DATABASE_URL)"
+                )
+            })?
+        } else {
+            String::new()
+        };
+
+        Ok(Self {
+            enabled: args.enable_shadow_indexer,
+            db: ShadowDbConfig {
+                url,
+                max_connections: args.shadow_indexer_max_connections,
+                connection_timeout: args.shadow_indexer_connection_timeout,
+            },
+            builder_version: env!("CARGO_PKG_VERSION").to_string(),
+        })
     }
 }
 
@@ -242,14 +351,14 @@ impl From<&StandardNodeArgs> for Option<FlashblocksConfig> {
 
 impl From<&StandardNodeArgs> for TxForwardingConfig {
     fn from(args: &StandardNodeArgs) -> Self {
-        if !args.enable_tx_forwarding || args.builder_rpc_urls.is_empty() {
+        if !args.rpc.enable_tx_forwarding || args.rpc.builder_rpc_urls.is_empty() {
             return Self::default();
         }
 
-        Self::new(args.builder_rpc_urls.clone())
-            .with_resend_after_ms(args.tx_forwarding_resend_after_ms)
-            .with_max_batch_size(args.tx_forwarding_batch_size)
-            .with_max_rps(args.tx_forwarding_max_rps)
+        Self::new(args.rpc.builder_rpc_urls.clone())
+            .with_resend_after_ms(args.rpc.tx_forwarding_resend_after_ms)
+            .with_max_batch_size(args.rpc.tx_forwarding_batch_size)
+            .with_max_rps(args.rpc.tx_forwarding_max_rps)
     }
 }
 
@@ -423,8 +532,15 @@ impl StandardBaseRethNode {
             MeteringConfig::disabled()
         };
         runner.install_ext::<MeteringExtension>(metering_config);
+        runner.install_ext::<ShadowIndexerExtension>((&args.shadow_indexer).try_into()?);
         runner.install_ext::<BundleExtension>(());
-        runner.install_ext::<TxForwardingExtension>((&args).into());
+        let tx_forwarding_config: TxForwardingConfig = (&args).into();
+        if args.rpc.enable_experimental_validity_transactions {
+            runner.install_ext::<SendRawTransactionValidityExtension>(
+                args.rpc.experimental_validity_max_predicates,
+            );
+        }
+        runner.install_ext::<TxForwardingExtension>(tx_forwarding_config);
         runner.install_ext::<ProofsHistoryExtension>(rollup_args.clone());
         Self::install_upgrade_signal_runtime_extension(&mut runner, &rollup_args)?;
         let eip8130_rpc_mode = if flashblocks_config.is_some() {
@@ -592,6 +708,13 @@ mod tests {
             enable_transaction_tracing_logs: false,
             enable_transaction_event_journal: false,
             transaction_event_journal_path: None,
+            enable_tx_forwarding: false,
+            enable_experimental_validity_transactions: false,
+            experimental_validity_max_predicates: DEFAULT_MAX_VALIDITY_PREDICATES,
+            builder_rpc_urls: Vec::new(),
+            tx_forwarding_resend_after_ms: DEFAULT_RESEND_AFTER_MS,
+            tx_forwarding_batch_size: DEFAULT_MAX_BATCH_SIZE,
+            tx_forwarding_max_rps: DEFAULT_MAX_RPS,
         }
     }
 
@@ -709,8 +832,53 @@ mod tests {
         let config = TxForwardingConfig::from(&standard_args);
 
         assert_eq!(standard_args.rpc.rollup_args.sequencer, None);
+        assert!(!standard_args.rpc.enable_experimental_validity_transactions);
+        assert_eq!(
+            standard_args.rpc.experimental_validity_max_predicates,
+            DEFAULT_MAX_VALIDITY_PREDICATES
+        );
         assert!(!config.enabled);
         assert!(config.builder_urls.is_empty());
+    }
+
+    #[test]
+    fn experimental_validity_transactions_parse_without_forwarding() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
+            "base-reth",
+            "--enable-experimental-validity-transactions",
+        ])
+        .args;
+
+        assert!(args.rpc.enable_experimental_validity_transactions);
+        assert!(!args.rpc.enable_tx_forwarding);
+    }
+
+    #[test]
+    fn experimental_validity_transactions_parse_with_forwarding() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
+            "base-reth",
+            "--enable-tx-forwarding",
+            "--builder-rpc-urls",
+            "http://localhost:8545",
+            "--enable-experimental-validity-transactions",
+            "--experimental-validity-max-predicates",
+            "8",
+        ])
+        .args;
+
+        assert!(args.rpc.enable_tx_forwarding);
+        assert!(args.rpc.enable_experimental_validity_transactions);
+        assert_eq!(args.rpc.experimental_validity_max_predicates, 8);
+        assert_eq!(args.rpc.builder_rpc_urls.len(), 1);
+    }
+
+    #[test]
+    fn programmatic_validity_config_without_forwarding_is_valid() {
+        let mut args = StandardNodeArgs::from(default_rpc_standard_node_args());
+        args.rpc.enable_experimental_validity_transactions = true;
+
+        StandardBaseRethNode::runner(args)
+            .expect("validity transactions should not require forwarding");
     }
 
     #[test]
@@ -741,6 +909,60 @@ mod tests {
 
         assert!(args.metering.enable_metering);
         assert_eq!(args.metering.metering_gas_limit, Some(30_000_000));
+    }
+
+    #[test]
+    fn test_standard_node_args_parses_shadow_indexer_flags() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
+            "reth",
+            "--enable-shadow-indexer",
+            "--shadow-indexer.database-url",
+            "postgres://localhost/shadow",
+            "--shadow-indexer.max-connections",
+            "9",
+            "--shadow-indexer.connection-timeout",
+            "45s",
+        ])
+        .args;
+
+        assert!(args.shadow_indexer.enable_shadow_indexer);
+        assert_eq!(
+            args.shadow_indexer.shadow_indexer_database_url.as_deref(),
+            Some("postgres://localhost/shadow")
+        );
+        assert_eq!(args.shadow_indexer.shadow_indexer_max_connections, 9);
+        assert_eq!(args.shadow_indexer.shadow_indexer_connection_timeout, Duration::from_secs(45));
+    }
+
+    #[test]
+    fn test_shadow_indexer_database_url_requires_enable_flag() {
+        let error = CommandParser::<StandardNodeArgs>::try_parse_from([
+            "reth",
+            "--shadow-indexer.database-url",
+            "postgres://localhost/shadow",
+        ])
+        .expect_err("shadow indexer database url should require the enable flag");
+
+        assert!(error.to_string().contains("--enable-shadow-indexer"));
+    }
+
+    #[test]
+    fn test_shadow_indexer_config_requires_database_url_when_enabled() {
+        let args =
+            ShadowIndexerArgs { enable_shadow_indexer: true, ..ShadowIndexerArgs::default() };
+        let error = ShadowIndexerConfig::try_from(&args)
+            .expect_err("enabled shadow indexer should require a database url");
+
+        assert!(error.to_string().contains("--shadow-indexer.database-url"));
+    }
+
+    #[test]
+    fn test_shadow_indexer_config_disabled_by_default() {
+        let config = ShadowIndexerConfig::try_from(&ShadowIndexerArgs::default())
+            .expect("disabled shadow indexer config should build without a url");
+
+        assert!(!config.enabled);
+        assert_eq!(config.builder_version, env!("CARGO_PKG_VERSION"));
     }
 
     #[test]

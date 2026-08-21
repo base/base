@@ -24,8 +24,9 @@ tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 
 # misc
 backon.workspace = true
+chrono.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-chrono.workspace = true
+tokio = { workspace = true, features = ["test-util"] }

@@ -152,25 +152,30 @@ mod tests {
         assert_eq!(selectors, expected);
     }
 
-    /// The ERC-8056 scheduled-multiplier selectors were introduced at Cobalt (`AssetV2`), so
-    /// Beryl's frozen surface must not declare them. This absence is what rejects them as
-    /// `UnknownFunctionSelector` at V1, replacing the hand-written fork gate in `route`.
+    /// The 11 selectors introduced at Cobalt (`AssetV2`) — the ERC-8056 scheduled UI-multiplier
+    /// surface, the Conversion-extension `toUIAmount` / `fromUIAmount` aliases, and the
+    /// `MAX_UI_MULTIPLIER` getter — must be absent from Beryl's frozen surface. That absence is what
+    /// rejects them as `UnknownFunctionSelector` at V1, replacing the hand-written fork gate in
+    /// `route`. Kept in sync with the 11-selector delta pinned by `v1_selectors_are_a_subset_of_v2`.
     #[test]
-    fn asset_surface_excludes_scheduled_selectors() {
-        // The 8 V2-only selectors are named against the canonical (V2) surface via the crate root.
+    fn asset_surface_excludes_v2_only_selectors() {
+        // The V2-only selectors are named against the canonical (V2) surface via the crate root.
         for selector in [
             crate::IB20Asset::uiMultiplierCall::SELECTOR,
             crate::IB20Asset::newUIMultiplierCall::SELECTOR,
             crate::IB20Asset::effectiveAtCall::SELECTOR,
             crate::IB20Asset::balanceOfUICall::SELECTOR,
             crate::IB20Asset::totalSupplyUICall::SELECTOR,
-            crate::IB20Asset::setUIMultiplierCall::SELECTOR,
-            crate::IB20Asset::cancelScheduledMultiplierCall::SELECTOR,
+            crate::IB20Asset::updateUIMultiplierCall::SELECTOR,
+            crate::IB20Asset::cancelUIMultiplierUpdateCall::SELECTOR,
+            crate::IB20Asset::toUIAmountCall::SELECTOR,
+            crate::IB20Asset::fromUIAmountCall::SELECTOR,
+            crate::IB20Asset::MAX_UI_MULTIPLIERCall::SELECTOR,
             crate::IB20Asset::supportsInterfaceCall::SELECTOR,
         ] {
             assert!(
                 !IB20Asset::IB20AssetCalls::valid_selector(selector),
-                "Beryl surface must not declare scheduled selector {selector:?}"
+                "Beryl surface must not declare V2-only selector {selector:?}"
             );
         }
     }

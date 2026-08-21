@@ -66,9 +66,17 @@ alloy-primitives = { workspace = true, features = ["arbitrary"] }
 name = "batch_transaction"
 harness = false
 
+[[bench]]
+name = "frame_parse"
+harness = false
+
 [features]
 default = [ "std" ]
-test-utils = [ "dep:spin", "dep:tracing-subscriber" ]
+test-utils = [
+	"base-common-genesis/test-utils",
+	"dep:spin",
+	"dep:tracing-subscriber",
+]
 std = [
 	"alloy-consensus/std",
 	"alloy-eips/std",

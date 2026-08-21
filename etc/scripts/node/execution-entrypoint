@@ -1,0 +1,102 @@
+#!/bin/bash
+set -eu
+
+IPC_PATH="/data/reth.ipc"
+RETH_DATA_DIR=/data
+RPC_PORT="${RPC_PORT:-8545}"
+WS_PORT="${WS_PORT:-8546}"
+AUTHRPC_PORT="${AUTHRPC_PORT:-8551}"
+METRICS_PORT="${METRICS_PORT:-6060}"
+DISCOVERY_PORT="${DISCOVERY_PORT:-30303}"
+V5_DISCOVERY_PORT="${V5_DISCOVERY_PORT:-9200}"
+P2P_PORT="${P2P_PORT:-30303}"
+ADDITIONAL_ARGS=""
+BINARY="./base-reth-node"
+RETH_HISTORICAL_PROOFS="${RETH_HISTORICAL_PROOFS:-false}"
+RETH_HISTORICAL_PROOFS_STORAGE_PATH="${RETH_HISTORICAL_PROOFS_STORAGE_PATH:-}"
+LOG_LEVEL="${LOG_LEVEL:-info}"
+
+if [[ -z "${RETH_CHAIN:-}" ]]; then
+    echo "expected RETH_CHAIN to be set" 1>&2
+    exit 1
+fi
+
+# Enable Flashblocks support if websocket URL is provided
+if [[ -n "${RETH_FB_WEBSOCKET_URL:-}" ]]; then
+    ADDITIONAL_ARGS="$ADDITIONAL_ARGS --websocket-url=$RETH_FB_WEBSOCKET_URL"
+    echo "Enabling Flashblocks support with endpoint: $RETH_FB_WEBSOCKET_URL"
+else
+    echo "Running in vanilla node mode (no Flashblocks URL provided)"
+fi
+
+case "$LOG_LEVEL" in
+    "error")
+        LOG_LEVEL="v"
+        ;;
+    "warn")
+        LOG_LEVEL="vv"
+        ;;
+    "info")
+        LOG_LEVEL="vvv"
+        ;;
+    "debug")
+        LOG_LEVEL="vvvv"
+        ;;
+    "trace")
+        LOG_LEVEL="vvvvv"
+        ;;
+    *)
+        echo "Unknown log level: $LOG_LEVEL"
+        LOG_LEVEL="vvv"
+        ;;
+esac
+
+# Add pruning for base
+if [[ "${RETH_PRUNING_ARGS+x}" = x ]]; then
+    echo "Adding pruning arguments: $RETH_PRUNING_ARGS"
+    ADDITIONAL_ARGS="$ADDITIONAL_ARGS $RETH_PRUNING_ARGS"
+fi
+
+if [[ "$RETH_HISTORICAL_PROOFS" == "true" && -n "$RETH_HISTORICAL_PROOFS_STORAGE_PATH" ]]; then
+    ADDITIONAL_ARGS="$ADDITIONAL_ARGS --proofs-history --proofs-history.storage-path=$RETH_HISTORICAL_PROOFS_STORAGE_PATH"
+
+    # in this case, we need to run the init script first (idempotent)
+    "$BINARY" proofs init \
+        -$LOG_LEVEL \
+        --log.stdout.format json \
+        --chain "$RETH_CHAIN" \
+        --datadir="$RETH_DATA_DIR" \
+        --proofs-history.storage-path=$RETH_HISTORICAL_PROOFS_STORAGE_PATH
+fi
+
+mkdir -p "$RETH_DATA_DIR"
+echo "Starting reth with additional args: $ADDITIONAL_ARGS"
+echo "$BASE_NODE_L2_ENGINE_AUTH_RAW" > "$BASE_NODE_L2_ENGINE_AUTH"
+
+exec "$BINARY" node \
+  -$LOG_LEVEL \
+  --datadir="$RETH_DATA_DIR" \
+  --log.stdout.format json \
+  --ws \
+  --ws.origins="*" \
+  --ws.addr=0.0.0.0 \
+  --ws.port="$WS_PORT" \
+  --ws.api=web3,debug,eth,net,txpool \
+  --http \
+  --http.corsdomain="*" \
+  --http.addr=0.0.0.0 \
+  --http.port="$RPC_PORT" \
+  --http.api=web3,debug,eth,net,txpool,miner \
+  --ipcpath="$IPC_PATH" \
+  --authrpc.addr=0.0.0.0 \
+  --authrpc.port="$AUTHRPC_PORT" \
+  --authrpc.jwtsecret="$BASE_NODE_L2_ENGINE_AUTH" \
+  --metrics=0.0.0.0:"$METRICS_PORT" \
+  --max-outbound-peers=100 \
+  --chain "$RETH_CHAIN" \
+  --rollup.sequencer-http="$RETH_SEQUENCER_HTTP" \
+  --rollup.disable-tx-pool-gossip \
+  --discovery.port="$DISCOVERY_PORT" \
+  --discovery.v5.port="$V5_DISCOVERY_PORT" \
+  --port="$P2P_PORT" \
+  $ADDITIONAL_ARGS

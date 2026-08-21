@@ -161,10 +161,13 @@ RUN apt-get update && \
 WORKDIR /app
 
 FROM runtime-base AS base
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends supervisor && \
+    rm -rf /var/lib/apt/lists/*
+RUN mkdir -p /var/log/supervisor
 COPY --from=base-builder /app/base ./base
 # Compose uses this wrapper to source generated devnet upgrade-signal env before /app/base.
 COPY etc/scripts/devnet/base-entrypoint.sh ./base-entrypoint.sh
-RUN chmod +x ./base-entrypoint.sh
 # Keep split binaries here for now, needed for bare metal work
 # Remove only when there is an alternative available
 # e.g. when we publish independent separate Docker images for each
@@ -172,7 +175,12 @@ RUN chmod +x ./base-entrypoint.sh
 COPY --from=execution-builder /app/base-reth-node ./base-reth-node
 COPY --from=consensus-builder /app/base-consensus ./base-consensus
 COPY --from=snapshotter-builder /app/snapshotter ./snapshotter
-ENTRYPOINT ["./base"]
+COPY etc/scripts/node/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+COPY etc/scripts/node/execution-entrypoint .
+COPY etc/scripts/node/consensus-entrypoint .
+RUN chmod +x ./base-entrypoint.sh execution-entrypoint consensus-entrypoint
+# Operator default. Devnet compose overrides entrypoint to /app/base or base-entrypoint.sh.
+CMD ["/usr/bin/supervisord"]
 
 FROM runtime-base AS execution
 COPY --from=execution-builder /app/base-reth-node ./base-reth-node

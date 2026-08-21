@@ -7,6 +7,35 @@ use base_precompile_storage::Result;
 /// Maximum total supply for a B-20 token.
 pub const B20_MAX_SUPPLY_CAP: U256 = U256::from_limbs([u64::MAX, u64::MAX, 0, 0]);
 
+/// The three transfer policy ids read together from their shared packed slot.
+///
+/// The sender/receiver/executor ids all live in one storage word, so a transfer needs only a single
+/// SLOAD to fetch all three. See [`TokenAccounting::transfer_policy_ids`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TransferPolicyIds {
+    /// `TRANSFER_SENDER_POLICY` id.
+    pub sender: u64,
+    /// `TRANSFER_RECEIVER_POLICY` id.
+    pub receiver: u64,
+    /// `TRANSFER_EXECUTOR_POLICY` id.
+    pub executor: u64,
+}
+
+impl TransferPolicyIds {
+    /// Reads each id with a separate [`TokenAccounting::policy_id`] call.
+    ///
+    /// The fallback for adapters that have no packed-slot fast path (e.g. in-memory test doubles);
+    /// EVM-backed adapters implement [`TokenAccounting::transfer_policy_ids`] with a single SLOAD
+    /// instead. Depends only on the port interface, so it never touches EVM storage directly.
+    pub fn read_individually<T: TokenAccounting + ?Sized>(accounting: &T) -> Result<Self> {
+        Ok(Self {
+            sender: accounting.policy_id(crate::B20PolicyType::TransferSender.id())?,
+            receiver: accounting.policy_id(crate::B20PolicyType::TransferReceiver.id())?,
+            executor: accounting.policy_id(crate::B20PolicyType::TransferExecutor.id())?,
+        })
+    }
+}
+
 /// Outbound port: all data reads and writes the core business logic requires.
 ///
 /// Each token variant's `#[contract]` storage struct implements this trait.
@@ -99,6 +128,14 @@ pub trait TokenAccounting {
     fn policy_id(&self, policy_scope: B256) -> Result<u64>;
     /// Overwrites the policy ID assigned to `policy_scope`.
     fn set_policy_id(&mut self, policy_scope: B256, policy_id: u64) -> Result<()>;
+
+    /// Returns the sender/receiver/executor transfer policy ids together.
+    ///
+    /// The three ids share one storage word, so EVM-backed adapters implement this as a single
+    /// SLOAD (see the `TokenAccounting` derive). Adapters without a packed-slot fast path (e.g.
+    /// in-memory test doubles) delegate to [`TransferPolicyIds::read_individually`], which is
+    /// behaviorally identical.
+    fn transfer_policy_ids(&self) -> Result<TransferPolicyIds>;
 
     // --- Event emission ---
 

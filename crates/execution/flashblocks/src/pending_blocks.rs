@@ -12,6 +12,8 @@ use base_common_consensus::{BaseTxReceipt, OpTxType};
 use base_common_evm::{BaseHaltReason, BaseTxResult, L1BlockInfo as PendingL1BlockInfo};
 use base_common_flashblocks::{ExecutionPayloadBaseV1, Flashblock};
 use base_common_network::Base;
+#[cfg(test)]
+use base_common_rpc_types::BaseLogResponse;
 use base_common_rpc_types::{BaseTransactionReceipt, Transaction};
 use imbl::{HashMap, Vector};
 use reth_evm::eth::EthTxResult;
@@ -405,7 +407,7 @@ impl PendingBlocks {
     ) -> TransactionWithLogs {
         TransactionWithLogs {
             transaction: transaction.clone(),
-            logs: receipt.inner.logs().to_vec(),
+            logs: receipt.inner.logs().iter().map(|log| log.inner.clone()).collect(),
             gas_used: receipt.inner.gas_used,
             status: receipt.inner.inner.status_or_post_state(),
             cumulative_gas_used: receipt.inner.inner.cumulative_gas_used(),
@@ -657,8 +659,8 @@ impl PendingBlocks {
         for tx in &self.transactions {
             if let Some(receipt) = self.transaction_receipts.get(&tx.tx_hash()) {
                 for log in receipt.inner.logs() {
-                    if filter.matches(&log.inner) {
-                        logs.push(log.clone());
+                    if filter.matches(log.as_ref()) {
+                        logs.push(log.inner.clone());
                     }
                 }
             }
@@ -713,8 +715,8 @@ impl PendingBlocks {
         for tx in self.transactions.iter().skip(prev_count) {
             if let Some(receipt) = self.transaction_receipts.get(&tx.tx_hash()) {
                 for log in receipt.inner.logs() {
-                    if filter.matches(&log.inner) {
-                        logs.push(log.clone());
+                    if filter.matches(log.as_ref()) {
+                        logs.push(log.inner.clone());
                     }
                 }
             }
@@ -760,7 +762,7 @@ impl PendingBlocks {
                 let receipt = self.transaction_receipts.get(&tx.tx_hash())?;
                 let logs = receipt.inner.logs();
 
-                let has_match = logs.iter().any(|log| filter.matches(&log.inner));
+                let has_match = logs.iter().any(|log| filter.matches(log.as_ref()));
                 if !has_match {
                     return None;
                 }
@@ -896,6 +898,7 @@ mod tests {
                 transaction_index: Some(0),
                 effective_gas_price: Some(1_000_000_000),
             },
+            block_timestamp_ms: None,
             deposit_nonce: None,
             deposit_receipt_version: None,
         }
@@ -931,6 +934,7 @@ mod tests {
                 transaction_index: Some(0),
                 effective_gas_price: Some(1_000_000_000),
             },
+            block_timestamp_ms: None,
             deposit_nonce: None,
             deposit_receipt_version: None,
         }
@@ -959,6 +963,7 @@ mod tests {
                 transaction_index: Some(0),
                 effective_gas_price: Some(0),
             },
+            block_timestamp_ms: None,
             deposit_nonce: Some(42),
             deposit_receipt_version: Some(1),
         }
@@ -989,7 +994,7 @@ mod tests {
             },
             l1_block_info: L1BlockInfo::default(),
             payer: None,
-            phase_statuses: Vec::new(),
+            phase_statuses: None,
             metadata: None,
         }
     }
@@ -1007,18 +1012,20 @@ mod tests {
         cumulative_gas_used: u64,
     ) -> BaseTransactionReceipt {
         let logs = (0..log_count)
-            .map(|log_index| Log {
-                inner: PrimitiveLog {
-                    address: log_address,
-                    data: LogData::new_unchecked(vec![], Bytes::new()),
-                },
-                block_hash: Some(B256::ZERO),
-                block_number: Some(block_number),
-                block_timestamp: None,
-                transaction_hash: Some(tx_hash),
-                transaction_index: Some(0),
-                log_index: Some(log_index as u64),
-                removed: false,
+            .map(|log_index| {
+                BaseLogResponse::from(Log {
+                    inner: PrimitiveLog {
+                        address: log_address,
+                        data: LogData::new_unchecked(vec![], Bytes::new()),
+                    },
+                    block_hash: Some(B256::ZERO),
+                    block_number: Some(block_number),
+                    block_timestamp: None,
+                    transaction_hash: Some(tx_hash),
+                    transaction_index: Some(0),
+                    log_index: Some(log_index as u64),
+                    removed: false,
+                })
             })
             .collect();
 
@@ -1046,7 +1053,7 @@ mod tests {
             },
             l1_block_info: Default::default(),
             payer: None,
-            phase_statuses: Vec::new(),
+            phase_statuses: None,
             metadata: None,
         }
     }
@@ -1311,7 +1318,7 @@ mod tests {
                     receipt: BaseReceipt::Legacy(Receipt {
                         status: alloy_consensus::Eip658Value::Eip658(true),
                         cumulative_gas_used: 21_000,
-                        logs: vec![log],
+                        logs: vec![log.into()],
                     }),
                     logs_bloom: Bloom::default(),
                 },
@@ -1329,7 +1336,7 @@ mod tests {
             },
             l1_block_info: Default::default(),
             payer: None,
-            phase_statuses: Vec::new(),
+            phase_statuses: None,
             metadata: None,
         }
     }
@@ -1452,7 +1459,7 @@ mod tests {
                     receipt: BaseReceipt::Legacy(Receipt {
                         status: alloy_consensus::Eip658Value::Eip658(true),
                         cumulative_gas_used: 42_000,
-                        logs: vec![log_match, log_other],
+                        logs: vec![log_match.into(), log_other.into()],
                     }),
                     logs_bloom: Bloom::default(),
                 },
@@ -1470,7 +1477,7 @@ mod tests {
             },
             l1_block_info: Default::default(),
             payer: None,
-            phase_statuses: Vec::new(),
+            phase_statuses: None,
             metadata: None,
         };
 

@@ -2,14 +2,12 @@
 
 use core::time::Duration;
 
-use alloy_provider::RootProvider;
-use base_consensus_providers::L1RpcProvider;
 use base_upgrade_signal::{
-    AlloyUpgradeSignalReader, UpgradeSignalConfig, UpgradeSignalError, UpgradeSignalMetricLayer,
-    UpgradeSignalMonitor, UpgradeSignalRefresher,
+    AlloyUpgradeSignalReader, PackedProtocolVersion, UpgradeSignalConfig, UpgradeSignalError,
+    UpgradeSignalMetricLayer, UpgradeSignalMonitor, UpgradeSignalPollOutcome,
+    UpgradeSignalRefresher,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::warn;
 use url::Url;
 
 use crate::NodeActor;
@@ -19,8 +17,8 @@ use crate::NodeActor;
 pub struct UpgradeSignalNodeConfig {
     /// Schedule read configuration.
     pub config: UpgradeSignalConfig,
-    /// L1 provider used for upgrade signal reads.
-    pub l1_provider: RootProvider,
+    /// Shared L1 upgrade signal reader.
+    pub reader: AlloyUpgradeSignalReader,
     /// L2 chain ID.
     pub chain_id: u64,
 }
@@ -28,16 +26,16 @@ pub struct UpgradeSignalNodeConfig {
 impl UpgradeSignalNodeConfig {
     /// Builds consensus upgrade signal config from builder inputs.
     ///
-    /// Uses `l1_rpc` when provided, otherwise falls back to the node's L1 provider.
+    /// Uses `l1_rpc` when provided, otherwise falls back to the node's L1 RPC URL.
     pub fn resolve(
         config: UpgradeSignalConfig,
         l1_rpc: Option<&Url>,
-        default_l1_provider: RootProvider,
+        default_l1_rpc: Url,
         chain_id: u64,
-    ) -> Self {
-        let l1_provider =
-            l1_rpc.map(|url| L1RpcProvider::new_http(url.clone())).unwrap_or(default_l1_provider);
-        Self { config, l1_provider, chain_id }
+    ) -> Result<Self, UpgradeSignalError> {
+        let l1_rpc = l1_rpc.cloned().unwrap_or(default_l1_rpc);
+        let reader = config.reader(l1_rpc)?;
+        Ok(Self { config, reader, chain_id })
     }
 
     /// Builds the consensus metrics actor, with live auto-apply when runtime refresh is enabled.
@@ -47,8 +45,8 @@ impl UpgradeSignalNodeConfig {
         cancellation: CancellationToken,
     ) -> UpgradeSignalMetricsActor {
         UpgradeSignalMetricsActor::new(
-            self.config.clone(),
-            self.l1_provider.clone(),
+            self.reader.clone(),
+            self.config.l1_block_tag.poll_interval(),
             refresher,
             cancellation,
         )
@@ -59,7 +57,7 @@ impl UpgradeSignalNodeConfig {
         self.config.mode.allows_runtime_admin().then(|| {
             UpgradeSignalRefresher::new(
                 self.config.clone(),
-                self.l1_provider.clone(),
+                self.reader.clone(),
                 self.chain_id,
                 UpgradeSignalMetricLayer::Consensus,
             )
@@ -86,33 +84,20 @@ pub struct UpgradeSignalMetricsActor {
 impl UpgradeSignalMetricsActor {
     /// Creates a new upgrade signal metrics actor.
     pub fn new(
-        config: UpgradeSignalConfig,
-        l1_provider: RootProvider,
+        reader: AlloyUpgradeSignalReader,
+        poll_interval: Duration,
         refresher: Option<UpgradeSignalRefresher>,
         cancellation: CancellationToken,
     ) -> Self {
-        let poll_interval = config.l1_block_tag.poll_interval();
-        let reader = config.reader(l1_provider);
         let monitor = UpgradeSignalMonitor::new(UpgradeSignalMetricLayer::Consensus);
 
         Self { reader, monitor, poll_interval, refresher, cancellation }
     }
 
     /// Polls L1 upgrade signal state, records metrics, and auto-applies observed changes when
-    /// runtime refresh is enabled.
-    pub async fn poll_l1_signal(&mut self) {
-        let Some(schedule) = self.monitor.poll(&self.reader).await else {
-            return;
-        };
-        if let Some(refresher) = &self.refresher
-            && let Err(error) = refresher.apply(&schedule)
-        {
-            warn!(
-                target: "upgrade_signal",
-                error = %error,
-                "failed to auto-apply live upgrade signal update"
-            );
-        }
+    /// runtime refresh is enabled. Returns whether the node must fail closed.
+    pub async fn poll_l1_signal(&mut self) -> UpgradeSignalPollOutcome {
+        self.monitor.poll_and_apply(&self.reader, self.refresher.as_ref()).await
     }
 }
 
@@ -132,9 +117,30 @@ impl NodeActor for UpgradeSignalMetricsActor {
                 _ = interval.tick() => {}
             }
 
-            tokio::select! {
+            let outcome = tokio::select! {
                 _ = cancellation.cancelled() => return Ok(()),
-                _ = self.poll_l1_signal() => {}
+                outcome = self.poll_l1_signal() => outcome,
+            };
+
+            // Fail closed: a scheduled upgrade this node cannot support is activating imminently.
+            // Cancel the shared token so the whole node tears down, then return the fatal error so
+            // the supervisor logs it and the process exits non-zero rather than fork off the chain.
+            if let UpgradeSignalPollOutcome::HaltNode {
+                upgrade_id,
+                activation_timestamp,
+                minimum_protocol_version,
+                node_protocol_version,
+            } = outcome
+            {
+                cancellation.cancel();
+                return Err(UpgradeSignalError::NodeUpgradeRequired {
+                    upgrade_id: upgrade_id.contract_id().to_string(),
+                    activation_timestamp,
+                    minimum_protocol_version: PackedProtocolVersion::new(minimum_protocol_version)
+                        .to_string(),
+                    node_protocol_version: PackedProtocolVersion::new(node_protocol_version)
+                        .to_string(),
+                });
             }
         }
     }

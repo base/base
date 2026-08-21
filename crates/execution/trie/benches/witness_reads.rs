@@ -9,6 +9,7 @@ use std::{hint::black_box, sync::Arc};
 
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{Address, B256, U256, keccak256};
+use alloy_rpc_types_debug::ExecutionWitness;
 use base_execution_trie::{
     BaseProofsInitialStateStore, BaseProofsStorage, BaseProofsStore, RocksdbProofsStorage,
     provider::BaseProofsStateProviderRef,
@@ -16,11 +17,11 @@ use base_execution_trie::{
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rand_08::{RngCore, SeedableRng, rngs::StdRng};
 use reth_primitives_traits::Account;
-use reth_provider::{AccountReader, StateProofProvider, StateProvider, noop::NoopProvider};
+use reth_provider::{AccountReader, StateProvider, noop::NoopProvider};
 use reth_revm::{
     Database, State, database::StateProviderDatabase, witness::ExecutionWitnessRecord,
 };
-use reth_trie_common::{ExecutionWitnessMode, TrieInput};
+use reth_trie_common::ExecutionWitnessMode;
 use tempfile::TempDir;
 
 const BASE_ACCOUNTS: usize = 10_000;
@@ -207,23 +208,21 @@ fn read_accounts_and_storage(fixture: &WitnessReadFixture) -> usize {
 }
 
 fn read_accounts_storage_and_witness(fixture: &WitnessReadFixture) -> usize {
+    let block_provider = NoopProvider::default();
     let provider =
-        BaseProofsStateProviderRef::new(Box::<NoopProvider>::default(), &fixture.storage, 0);
+        BaseProofsStateProviderRef::new(Box::new(block_provider.clone()), &fixture.storage, 0);
     let mut state = State::builder()
         .with_database(StateProviderDatabase::new(&provider))
         .with_bundle_update()
         .build();
     let reads = read_accounts_and_storage_with_state(&mut state, fixture);
-    let ExecutionWitnessRecord { hashed_state, codes, keys, lowest_block_number } =
-        ExecutionWitnessRecord::from_executed_state(&state, ExecutionWitnessMode::default());
+    let ExecutionWitness { state, headers, codes, keys } = ExecutionWitnessRecord::new(&state)
+        .into_execution_witness(&provider, &block_provider, 0, ExecutionWitnessMode::default())
+        .expect("build witness");
     black_box(codes);
     black_box(keys);
-    black_box(lowest_block_number);
-    black_box(
-        provider
-            .witness(TrieInput::default(), hashed_state, ExecutionWitnessMode::default())
-            .expect("build witness"),
-    );
+    black_box(headers);
+    black_box(state);
     reads
 }
 

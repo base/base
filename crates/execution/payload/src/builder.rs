@@ -17,11 +17,12 @@ use reth_basic_payload_builder::{
 };
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_evm::{
-    ConfigureEvm, Database,
+    BlockExecutorForEvm, ConfigureEvm, Database,
     execute::{
         BlockBuilder, BlockBuilderOutcome, BlockExecutionError, BlockExecutor, BlockValidationError,
     },
 };
+use reth_execution_cache::{CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider};
 use reth_execution_types::BlockExecutionOutput;
 use reth_payload_builder_primitives::PayloadBuilderError;
 use reth_payload_primitives::{BuildNextEnv, BuiltPayloadExecutedBlock};
@@ -33,9 +34,10 @@ use reth_revm::{
     cancelled::CancelOnDrop, database::StateProviderDatabase, db::State,
     witness::ExecutionWitnessRecord,
 };
-use reth_storage_api::{StateProvider, StateProviderFactory, errors::ProviderError};
+use reth_storage_api::{BlockReader, StateProvider, StateProviderFactory, errors::ProviderError};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction, TransactionPool};
 use reth_trie_common::ExecutionWitnessMode;
+use reth_trie_parallel::state_root_task::PayloadStateRootHandle;
 use revm::context::{Block, BlockEnv};
 use tracing::{debug, debug_span, instrument, trace, warn};
 
@@ -53,8 +55,6 @@ pub struct BasePayloadBuilder<
     Txs = (),
     Attrs = BasePayloadBuilderAttributes<TxTy<<Evm as ConfigureEvm>::Primitives>>,
 > {
-    /// The rollup's compute pending block configuration option.
-    pub compute_pending_block: bool,
     /// The type responsible for creating the evm.
     pub evm_config: Evm,
     /// Transaction pool.
@@ -84,7 +84,6 @@ where
             client: self.client.clone(),
             config: self.config.clone(),
             best_transactions: self.best_transactions.clone(),
-            compute_pending_block: self.compute_pending_block,
             _pd: PhantomData,
         }
     }
@@ -105,58 +104,32 @@ impl<Pool, Client, Evm, Attrs> BasePayloadBuilder<Pool, Client, Evm, (), Attrs> 
         evm_config: Evm,
         config: BaseBuilderConfig,
     ) -> Self {
-        Self {
-            pool,
-            client,
-            compute_pending_block: true,
-            evm_config,
-            config,
-            best_transactions: (),
-            _pd: PhantomData,
-        }
+        Self { pool, client, evm_config, config, best_transactions: (), _pd: PhantomData }
     }
 }
 
 impl<Pool, Client, Evm, Txs, Attrs> BasePayloadBuilder<Pool, Client, Evm, Txs, Attrs> {
-    /// Sets the rollup's compute pending block configuration option.
-    pub const fn set_compute_pending_block(mut self, compute_pending_block: bool) -> Self {
-        self.compute_pending_block = compute_pending_block;
-        self
-    }
-
     /// Configures the type responsible for yielding the transactions that should be included in the
     /// payload.
     pub fn with_transactions<T>(
         self,
         best_transactions: T,
     ) -> BasePayloadBuilder<Pool, Client, Evm, T, Attrs> {
-        let Self { pool, client, compute_pending_block, evm_config, config, .. } = self;
         BasePayloadBuilder {
-            pool,
-            client,
-            compute_pending_block,
-            evm_config,
+            pool: self.pool,
+            client: self.client,
+            evm_config: self.evm_config,
             best_transactions,
-            config,
+            config: self.config,
             _pd: PhantomData,
         }
-    }
-
-    /// Enables the rollup's compute pending block configuration option.
-    pub const fn compute_pending_block(self) -> Self {
-        self.set_compute_pending_block(true)
-    }
-
-    /// Returns the rollup's compute pending block configuration option.
-    pub const fn is_compute_pending_block(&self) -> bool {
-        self.compute_pending_block
     }
 }
 
 impl<Pool, Client, Evm, N, T, Attrs> BasePayloadBuilder<Pool, Client, Evm, T, Attrs>
 where
     Pool: TransactionPool<Transaction: BasePooledTx<Consensus = N::SignedTx>>,
-    Client: StateProviderFactory + ChainSpecProvider<ChainSpec: Upgrades>,
+    Client: StateProviderFactory + ChainSpecProvider<ChainSpec: Upgrades> + BlockReader,
     N: PayloadPrimitives,
     Evm: ConfigureEvm<
             Primitives = N,
@@ -186,7 +159,14 @@ where
             Transaction: PoolTransaction<Consensus = N::SignedTx> + BasePooledTx,
         >,
     {
-        let BuildArguments { mut cached_reads, config, cancel, best_payload, .. } = args;
+        let BuildArguments {
+            mut cached_reads,
+            execution_cache,
+            state_root_handle,
+            config,
+            cancel,
+            best_payload,
+        } = args;
 
         let ctx = BasePayloadBuilderCtx {
             evm_config: self.evm_config.clone(),
@@ -201,14 +181,26 @@ where
 
         let builder = Builder::new(best);
 
-        let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
-        let state = StateProviderDatabase::new(&state_provider);
+        let mut state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
+        if let Some(execution_cache) = execution_cache {
+            state_provider = Box::new(CachedStateProvider::new(
+                state_provider,
+                execution_cache.cache().clone(),
+                Some(CachedStateMetrics::zeroed(CachedStateMetricsSource::Builder)),
+            ));
+        }
+        let state = StateProviderDatabase::new(state_provider.as_ref());
 
         if ctx.attributes().no_tx_pool() {
-            builder.build(state, &state_provider, ctx)
+            builder.build(state, state_provider.as_ref(), state_root_handle, ctx)
         } else {
             // sequencer mode we can reuse cachedreads from previous runs
-            builder.build(cached_reads.as_db_mut(state), &state_provider, ctx)
+            builder.build(
+                cached_reads.as_db_mut(state),
+                state_provider.as_ref(),
+                state_root_handle,
+                ctx,
+            )
         }
         .map(|out| out.with_cached_reads(cached_reads))
     }
@@ -239,7 +231,7 @@ where
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
 
         let builder = Builder::new(|_| NoopPayloadTransactions::<Pool::Transaction>::default());
-        builder.witness(state_provider, &ctx)
+        builder.witness(state_provider, &self.client, &ctx)
     }
 }
 
@@ -248,7 +240,7 @@ impl<Pool, Client, Evm, N, Txs, Attrs> PayloadBuilder
     for BasePayloadBuilder<Pool, Client, Evm, Txs, Attrs>
 where
     N: PayloadPrimitives,
-    Client: StateProviderFactory + ChainSpecProvider<ChainSpec: Upgrades> + Clone,
+    Client: StateProviderFactory + ChainSpecProvider<ChainSpec: Upgrades> + BlockReader + Clone,
     Pool: TransactionPool<Transaction: BasePooledTx<Consensus = N::SignedTx>>,
     Evm: ConfigureEvm<
             Primitives = N,
@@ -331,7 +323,8 @@ impl<Txs> Builder<'_, Txs> {
     pub fn build<Evm, ChainSpec, N, Attrs>(
         self,
         db: impl Database<Error = ProviderError>,
-        state_provider: impl StateProvider,
+        state_provider: &dyn StateProvider,
+        mut state_root_handle: Option<PayloadStateRootHandle>,
         ctx: BasePayloadBuilderCtx<Evm, ChainSpec, Attrs>,
     ) -> Result<BuildOutcomeKind<BaseBuiltPayload<N>>, PayloadBuilderError>
     where
@@ -358,6 +351,10 @@ impl<Txs> Builder<'_, Txs> {
 
         let mut builder = ctx.block_builder(&mut db)?;
 
+        if let Some(task) = state_root_handle.as_mut() {
+            builder.evm_mut().db_mut().set_state_hook(Some(Box::new(task.take_state_hook())));
+        }
+
         // 1. apply pre-execution changes
         builder.apply_pre_execution_changes().map_err(|err| {
             warn!(target: "payload_builder", %err, "failed to apply pre-execution changes");
@@ -375,13 +372,38 @@ impl<Txs> Builder<'_, Txs> {
             }
 
             // check if the new payload is even more valuable
-            if !ctx.is_better_payload(info.total_fees) {
+            if !ctx.is_denim_active() && !ctx.is_better_payload(info.total_fees) {
                 // can skip building the block
                 return Ok(BuildOutcomeKind::Aborted { fees: info.total_fees });
             }
         }
 
         let block_num = ctx.parent().number().saturating_add(1);
+        let state_root = state_root_handle.and_then(|mut task| {
+            // Dropping the hook closes the update stream so the parallel task can finish.
+            builder.evm_mut().db_mut().set_state_hook(None);
+            match task.state_root() {
+                Ok(outcome) => {
+                    debug!(
+                        target: "payload_builder",
+                        id = %ctx.payload_id(),
+                        state_root = ?outcome.state_root,
+                        job = task.name(),
+                        "received state root from state-root job"
+                    );
+                    Some((outcome.state_root, Arc::unwrap_or_clone(outcome.trie_updates)))
+                }
+                Err(error) => {
+                    warn!(
+                        target: "payload_builder",
+                        id = %ctx.payload_id(),
+                        error = %error,
+                        "state-root job failed, falling back to synchronous state root"
+                    );
+                    None
+                }
+            }
+        });
         let BlockBuilderOutcome {
             execution_result,
             hashed_state,
@@ -389,7 +411,7 @@ impl<Txs> Builder<'_, Txs> {
             block,
             block_access_list,
         } = debug_span!("finish_payload", block_num)
-            .in_scope(|| builder.finish(state_provider, None))?;
+            .in_scope(|| builder.finish(state_provider, state_root))?;
 
         let sealed_block = Arc::new(block.sealed_block().clone());
         debug!(target: "payload_builder", id=%ctx.payload_id(), sealed_block_header = ?sealed_block.header(), "sealed built block");
@@ -415,10 +437,11 @@ impl<Txs> Builder<'_, Txs> {
             block_access_list.map(|bal| alloy_rlp::encode(bal).into()),
         );
 
-        if no_tx_pool {
+        if no_tx_pool || ctx.is_denim_active() {
             // if `no_tx_pool` is set only transactions from the payload attributes will be included
             // in the payload. In other words, the payload is deterministic and we can
             // freeze it once we've successfully built it.
+            // Denim-active sequencer builds are one-shot, so this payload is also final.
             Ok(BuildOutcomeKind::Freeze(payload))
         } else {
             Ok(BuildOutcomeKind::Better { payload })
@@ -429,6 +452,7 @@ impl<Txs> Builder<'_, Txs> {
     pub fn witness<Evm, ChainSpec, N, Attrs>(
         self,
         state_provider: impl StateProvider,
+        header_provider: impl reth_storage_api::HeaderProvider,
         ctx: &BasePayloadBuilderCtx<Evm, ChainSpec, Attrs>,
     ) -> Result<ExecutionWitness, PayloadBuilderError>
     where
@@ -446,6 +470,8 @@ impl<Txs> Builder<'_, Txs> {
             .with_bundle_update()
             .build();
         let mut builder = ctx.block_builder(&mut db)?;
+        let block_number =
+            builder.evm().block().number().try_into().expect("block_number must be < u64::MAX");
 
         builder.apply_pre_execution_changes()?;
         ctx.execute_sequencer_transactions(&mut builder)?;
@@ -458,15 +484,13 @@ impl<Txs> Builder<'_, Txs> {
         }
 
         let mode = ExecutionWitnessMode::default();
-        let ExecutionWitnessRecord { hashed_state, codes, keys, lowest_block_number: _ } =
-            ExecutionWitnessRecord::from_executed_state(&db, mode);
-        let state = state_provider.witness(Default::default(), hashed_state, mode)?;
-        Ok(ExecutionWitness {
-            state: state.into_iter().collect(),
-            codes,
-            keys,
-            ..Default::default()
-        })
+        let witness = ExecutionWitnessRecord::new(&db).into_execution_witness(
+            &db.database.0,
+            &header_provider,
+            block_number,
+            mode,
+        )?;
+        Ok(witness)
     }
 }
 
@@ -602,6 +626,11 @@ where
         &self.config.attributes
     }
 
+    /// Returns `true` if Denim is active at this payload's timestamp.
+    pub fn is_denim_active(&self) -> bool {
+        self.chain_spec.is_denim_active_at_timestamp(self.attributes().timestamp())
+    }
+
     /// Returns the current fee settings for transactions from the mempool
     pub fn best_transaction_attributes(&self, block_env: impl Block) -> BestTransactionsAttributes {
         BestTransactionsAttributes::new(
@@ -624,7 +653,11 @@ where
     pub fn block_builder<'a, DB: Database>(
         &'a self,
         db: &'a mut State<DB>,
-    ) -> Result<impl BlockBuilder<Primitives = Evm::Primitives> + 'a, PayloadBuilderError> {
+    ) -> Result<
+        impl BlockBuilder<Primitives = Evm::Primitives, Executor = BlockExecutorForEvm<'a, Evm, DB>>
+        + 'a,
+        PayloadBuilderError,
+    > {
         self.evm_config
             .builder_for_next_block(
                 db,
@@ -726,7 +759,15 @@ where
         let base_fee = builder.evm_mut().block().basefee();
 
         let block_timestamp = self.attributes().timestamp();
+        let can_finalize_early = self.is_denim_active();
         while let Some(tx) = best_txs.next(()) {
+            if self.cancel.is_cancelled() {
+                return Ok(Some(()));
+            }
+            if can_finalize_early && self.cancel.is_finalization_requested() {
+                break;
+            }
+
             if self.builder_config.manifest_precheck_enabled
                 && let Some(manifest) = tx.watch_manifest()
                 && let Err(stale) = manifest.revalidate(builder.evm_mut().db_mut(), block_timestamp)
@@ -807,11 +848,6 @@ where
                 continue;
             }
 
-            // check if the job was cancelled, if so we can exit early
-            if self.cancel.is_cancelled() {
-                return Ok(Some(()));
-            }
-
             let gas_output = match builder.execute_transaction(tx.clone()) {
                 Ok(gas_output) => gas_output,
                 Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
@@ -840,13 +876,119 @@ where
             info.total_fees += U256::from(miner_fee) * U256::from(gas_output.tx_gas_used());
         }
 
+        // A cancellation that raced the finalization break (or an empty iterator) must still
+        // win, so re-check it before the finalized payload is assembled. Gated on Denim so
+        // pre-Denim control flow is unchanged.
+        if can_finalize_early && self.cancel.is_cancelled() {
+            return Ok(Some(()));
+        }
+
         Ok(None)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::ExecutionInfo;
+    use std::{collections::HashMap, mem::ManuallyDrop, sync::Arc};
+
+    use alloy_consensus::{Header, SignableTransaction, TxEip1559};
+    use alloy_eips::eip2718::Encodable2718;
+    use alloy_primitives::{Address, B256, Signature, StorageKey, TxKind, U256};
+    use base_common_chains::BaseUpgrade;
+    use base_common_consensus::{BasePrimitives, BaseTxEnvelope, Predeploys};
+    use base_common_evm::BaseTime;
+    use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
+    use base_execution_evm::BaseEvmConfig;
+    use base_execution_txpool::BasePooledTransaction;
+    use reth_basic_payload_builder::{BuildOutcomeKind, PayloadConfig};
+    use reth_chainspec::ChainSpec;
+    use reth_ethereum_forks::ForkCondition;
+    use reth_payload_builder::PayloadId;
+    use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
+    use reth_primitives_traits::{Account, SealedHeader, SignedTransaction};
+    use reth_provider::noop::NoopProvider;
+    use reth_revm::{
+        cancelled::CancelOnDrop, database::StateProviderDatabase, test_utils::StateProviderTest,
+    };
+    use reth_transaction_pool::PoolTransaction;
+    use reth_trie_common::{HashedPostState, updates::TrieUpdates};
+    use reth_trie_parallel::{
+        error::StateRootTaskError,
+        state_root_task::{
+            PayloadStateRootHandle, StateRootComputeOutcome, StateRootSink, StateRootUpdateStream,
+        },
+    };
+    use revm::state::EvmState;
+
+    use super::{BasePayloadBuilderCtx, Builder, ExecutionInfo};
+    use crate::{
+        BasePayloadBuilderAttributes, config::BaseBuilderConfig,
+        payload::EthPayloadBuilderAttributes,
+    };
+
+    #[derive(Debug)]
+    struct TestStateRootSink {
+        result: std::sync::mpsc::Sender<Result<StateRootComputeOutcome, StateRootTaskError>>,
+    }
+
+    impl StateRootSink for TestStateRootSink {
+        fn on_state_update(&self, _state: EvmState) {}
+
+        fn on_hashed_state_update(&self, _state: HashedPostState) {}
+
+        fn on_updates_finished(&self) {
+            _ = self.result.send(Ok(StateRootComputeOutcome {
+                state_root: B256::repeat_byte(0x42),
+                trie_updates: Arc::new(TrieUpdates::default()),
+                hashed_state: Arc::new(HashedPostState::default()),
+            }));
+        }
+    }
+
+    fn state_root_handle() -> PayloadStateRootHandle {
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        let hook = StateRootUpdateStream::new(Arc::new(TestStateRootSink { result: result_tx }))
+            .into_state_hook();
+        PayloadStateRootHandle::new("test", Some(hook), result_rx, None)
+    }
+
+    fn build_empty_payload(state_root_handle: PayloadStateRootHandle) -> B256 {
+        let chain_spec = Arc::new(BaseChainSpec::from(ChainSpec::default()));
+        let parent = Arc::new(SealedHeader::seal_slow(Header {
+            gas_limit: 30_000_000,
+            ..Default::default()
+        }));
+        let payload_id = PayloadId::new([0; 8]);
+        let attributes = BasePayloadBuilderAttributes::<BaseTxEnvelope> {
+            payload_attributes: EthPayloadBuilderAttributes {
+                id: payload_id,
+                parent: parent.hash(),
+                timestamp: 2,
+                parent_beacon_block_root: Some(B256::ZERO),
+                ..Default::default()
+            },
+            no_tx_pool: true,
+            gas_limit: Some(parent.gas_limit),
+            ..Default::default()
+        };
+        let ctx = BasePayloadBuilderCtx {
+            evm_config: BaseEvmConfig::<_, BasePrimitives>::base(Arc::clone(&chain_spec)),
+            builder_config: BaseBuilderConfig::default(),
+            chain_spec,
+            config: PayloadConfig::new(parent, attributes, payload_id),
+            cancel: Default::default(),
+            best_payload: None,
+        };
+        let provider = NoopProvider::default();
+        let builder = Builder::new(|_| NoopPayloadTransactions::<BasePooledTransaction>::default());
+        let outcome = builder
+            .build(StateProviderDatabase::new(&provider), &provider, Some(state_root_handle), ctx)
+            .expect("empty payload must build");
+        let BuildOutcomeKind::Freeze(payload) = outcome else {
+            panic!("no-tx-pool payload must freeze")
+        };
+        payload.block().state_root
+    }
 
     /// The block gas reservation must include EIP-8130 `payer_auth` on top of the
     /// declared `gas_limit`: a transaction that fits on `gas_limit` alone is still
@@ -862,5 +1004,158 @@ mod tests {
 
         // payer_auth metered on top (reserved = 21_000 + 2_100) pushes over the block limit.
         assert!(info.is_tx_over_limits(0, block_gas_limit, None, None, 21_000 + 2_100, None));
+    }
+
+    #[test]
+    fn parallel_state_root_is_used() {
+        assert_eq!(build_empty_payload(state_root_handle()), B256::repeat_byte(0x42));
+    }
+
+    const DENIM_TIMESTAMP: u64 = 1;
+
+    fn pool_payload_context(timestamp: u64) -> BasePayloadBuilderCtx<BaseEvmConfig, BaseChainSpec> {
+        let chain_spec = Arc::new(
+            BaseChainSpecBuilder::base_mainnet()
+                .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(DENIM_TIMESTAMP))
+                .build(),
+        );
+        let parent = Arc::new(SealedHeader::seal_slow(Header {
+            gas_limit: 30_000_000,
+            ..Default::default()
+        }));
+        let payload_id = PayloadId::new([0; 8]);
+        let attributes = BasePayloadBuilderAttributes::<BaseTxEnvelope> {
+            payload_attributes: EthPayloadBuilderAttributes {
+                id: payload_id,
+                parent: parent.hash(),
+                timestamp,
+                parent_beacon_block_root: Some(B256::ZERO),
+                ..Default::default()
+            },
+            gas_limit: Some(parent.gas_limit),
+            ..Default::default()
+        };
+        BasePayloadBuilderCtx {
+            evm_config: BaseEvmConfig::<_, BasePrimitives>::base(Arc::clone(&chain_spec)),
+            builder_config: BaseBuilderConfig::default(),
+            chain_spec,
+            config: PayloadConfig::new(parent, attributes, payload_id),
+            cancel: Default::default(),
+            best_payload: None,
+        }
+    }
+
+    fn build_pool_payload<Txs>(
+        ctx: BasePayloadBuilderCtx<BaseEvmConfig, BaseChainSpec>,
+        transactions: Txs,
+    ) -> BuildOutcomeKind<crate::BaseBuiltPayload<BasePrimitives>>
+    where
+        Txs: PayloadTransactions<Transaction = BasePooledTransaction> + Send + Sync,
+    {
+        let mut storage = HashMap::default();
+        storage.insert(
+            StorageKey::from(BaseTime::ADMIN_SLOT.to_be_bytes::<32>()),
+            U256::from_be_slice(Predeploys::PROXY_ADMIN.as_slice()),
+        );
+        let mut provider = StateProviderTest::default();
+        provider.insert_account(
+            Predeploys::BASE_TIME,
+            Account::default(),
+            Some(BaseTime::proxy_bytecode()),
+            storage,
+        );
+        provider.insert_account(
+            pool_transaction(0).sender(),
+            Account { balance: U256::MAX, ..Default::default() },
+            None,
+            HashMap::default(),
+        );
+        Builder::new(|_| transactions)
+            .build(StateProviderDatabase::new(&provider), &provider, Some(state_root_handle()), ctx)
+            .expect("payload must build")
+    }
+
+    fn pool_transaction(nonce: u64) -> BasePooledTransaction {
+        let envelope = BaseTxEnvelope::Eip1559(
+            TxEip1559 {
+                chain_id: 8_453,
+                nonce,
+                gas_limit: 100_000,
+                max_fee_per_gas: 2_000_000_000,
+                max_priority_fee_per_gas: 1,
+                to: TxKind::Call(Address::repeat_byte(0x11)),
+                ..Default::default()
+            }
+            .into_signed(Signature::test_signature()),
+        );
+        let encoded_len = envelope.encode_2718_len();
+        BasePooledTransaction::new(
+            envelope.try_into_recovered().expect("test signature must recover"),
+            encoded_len,
+        )
+    }
+
+    struct FinalizeAfterFirstTransaction {
+        transactions: std::vec::IntoIter<BasePooledTransaction>,
+        calls: usize,
+        // Models the resolver retaining its clone until the finalized payload is returned.
+        cancel: ManuallyDrop<CancelOnDrop>,
+    }
+
+    impl PayloadTransactions for FinalizeAfterFirstTransaction {
+        type Transaction = BasePooledTransaction;
+
+        fn next(&mut self, _ctx: ()) -> Option<Self::Transaction> {
+            self.calls += 1;
+            if self.calls == 2 {
+                self.cancel.request_finalization();
+            }
+            self.transactions.next()
+        }
+
+        fn mark_invalid(&mut self, _sender: Address, _nonce: u64) {}
+    }
+
+    #[test]
+    fn pre_denim_ignores_finalization_requests() {
+        let ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        ctx.cancel.request_finalization();
+        let transactions = FinalizeAfterFirstTransaction {
+            transactions: vec![pool_transaction(0)].into_iter(),
+            calls: 0,
+            cancel: ManuallyDrop::new(ctx.cancel.clone()),
+        };
+
+        let BuildOutcomeKind::Better { payload } = build_pool_payload(ctx, transactions) else {
+            panic!("pre-Denim payload must remain eligible for improvement")
+        };
+        assert_eq!(payload.block().body().transactions.len(), 1);
+    }
+
+    #[test]
+    fn denim_finalization_preserves_completed_pool_transactions() {
+        let ctx = pool_payload_context(DENIM_TIMESTAMP);
+        let transactions = FinalizeAfterFirstTransaction {
+            transactions: vec![pool_transaction(0), pool_transaction(1)].into_iter(),
+            calls: 0,
+            cancel: ManuallyDrop::new(ctx.cancel.clone()),
+        };
+
+        let BuildOutcomeKind::Freeze(payload) = build_pool_payload(ctx, transactions) else {
+            panic!("Denim payload must freeze")
+        };
+        assert_eq!(payload.block().body().transactions.len(), 1);
+    }
+
+    #[test]
+    fn cancellation_takes_precedence_over_finalization() {
+        let ctx = pool_payload_context(DENIM_TIMESTAMP);
+        ctx.cancel.request_finalization();
+        drop(ctx.cancel.clone());
+
+        assert!(matches!(
+            build_pool_payload(ctx, NoopPayloadTransactions::<BasePooledTransaction>::default()),
+            BuildOutcomeKind::Cancelled
+        ));
     }
 }

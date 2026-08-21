@@ -10,8 +10,8 @@ use clap::Args;
 use serde::Serialize;
 
 use crate::{
-    BlockRefParseError, JsonOutput, KeyValueTable, MonitoringConfig, TimestampJson, fetch_block,
-    format_bytes, format_gas, format_gwei, format_unix_timestamp,
+    BlockRefParseError, Format, JsonOutput, KeyValueTable, MonitoringConfig, TimestampJson,
+    fetch_block,
 };
 
 /// Arguments for inspecting a single L2 block.
@@ -154,24 +154,24 @@ impl BlockSummaryJson {
             .row("parent_hash", format!("{:#x}", header.parent_hash))
             .row(
                 "timestamp",
-                format!("{} ({})", header.timestamp, format_unix_timestamp(header.timestamp)),
+                format!("{} ({})", header.timestamp, Format::unix_timestamp(header.timestamp)),
             )
             .row("transactions", block.transactions.len().to_string())
-            .row("gas_used", format_gas(header.gas_used))
-            .row("gas_limit", format_gas(header.gas_limit));
+            .row("gas_used", Format::gas(header.gas_used))
+            .row("gas_limit", Format::gas(header.gas_limit));
         if let Some(base_fee) = header.base_fee_per_gas {
-            table.row("base_fee_per_gas", format_gwei(u128::from(base_fee)));
+            table.row("base_fee_per_gas", Format::gwei(u128::from(base_fee)));
         }
         if let Some(size) = header.size
             && let Ok(size_u64) = u64::try_from(size)
         {
-            table.row("size", format_bytes(size_u64));
+            table.row("size", Format::bytes(size_u64));
         }
         if let Some(blob_gas_used) = header.blob_gas_used {
-            table.row("blob_gas_used", format_gas(blob_gas_used));
+            table.row("blob_gas_used", Format::gas(blob_gas_used));
         }
         if let Some(excess_blob_gas) = header.excess_blob_gas {
-            table.row("excess_blob_gas", format_gas(excess_blob_gas));
+            table.row("excess_blob_gas", Format::gas(excess_blob_gas));
         }
         if let Some(withdrawals) = block.withdrawals.as_ref() {
             table.row("withdrawals", withdrawals.len().to_string());

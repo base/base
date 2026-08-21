@@ -1,8 +1,9 @@
 //! Payload builder for the sequencer.
 //!
 //! Contains [`PayloadBuilder`], which drives L1 origin selection, attribute
-//! preparation, and block build initiation, and [`UnsealedPayloadHandle`],
-//! which carries the resulting payload identifier forward to the seal stage.
+//! preparation, and block build initiation, [`BuildOutcome`], which preserves
+//! why a build could not start, and [`UnsealedPayloadHandle`], which carries the
+//! resulting payload identifier forward to the seal stage.
 
 use std::{sync::Arc, time::Instant};
 
@@ -13,16 +14,27 @@ use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 use tracing::instrument;
 
 use crate::{
-    Metrics, PoolActivation,
+    Metrics, PoolActivation, ResetReason,
     actors::{
         SequencerEngineClient,
         sequencer::{
             error::SequencerActorError,
-            origin_selector::{L1OriginSelectorError, OriginSelector},
+            l1_origin::{L1OriginSelectorError, OriginSelector},
             recovery::RecoveryModeGuard,
         },
     },
 };
+
+/// The outcome of a build step that may produce a value of type `T`.
+#[derive(Debug)]
+pub enum BuildOutcome<T> {
+    /// The build step produced its value.
+    Ready(T),
+    /// The build was deferred by a temporary condition unrelated to sequencer drift.
+    Deferred,
+    /// Sequencer drift requires advancing, but the next L1 origin is not ready yet.
+    AwaitingL1Origin,
+}
 
 /// A block that has been started on the execution layer but not yet sealed.
 #[derive(Debug)]
@@ -31,6 +43,13 @@ pub struct UnsealedPayloadHandle {
     pub payload_id: PayloadId,
     /// The [`AttributesWithParent`] used to start block building.
     pub attributes_with_parent: AttributesWithParent,
+}
+
+impl UnsealedPayloadHandle {
+    /// Returns the number of the block represented by this payload.
+    pub const fn block_number(&self) -> u64 {
+        self.attributes_with_parent.parent().block_info.number.saturating_add(1)
+    }
 }
 
 /// Drives payload attribute preparation and block build initiation.
@@ -57,9 +76,9 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
     /// Starts building the next L2 block, returning a handle to the in-flight payload.
     ///
     /// Uses the engine's current unsafe head (from the watch channel) as the parent.
-    /// Returns `Ok(None)` for temporary or reset conditions that should be retried on the
-    /// next tick.
-    pub async fn build(&mut self) -> Result<Option<UnsealedPayloadHandle>, SequencerActorError> {
+    pub async fn build(
+        &mut self,
+    ) -> Result<BuildOutcome<UnsealedPayloadHandle>, SequencerActorError> {
         let unsafe_head = self.engine_client.get_unsafe_head().await?;
         self.build_on(unsafe_head).await
     }
@@ -69,16 +88,15 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
     ///
     /// Use this when the caller already knows the correct parent, such as after an acknowledged
     /// local insert. That avoids racing the unsafe-head watch channel publication path.
-    ///
-    /// Returns `Ok(None)` for temporary or reset conditions that should be retried on the
-    /// next tick.
     #[instrument(skip_all, fields(parent_num = parent.block_info.number, l1_origin_num = tracing::field::Empty))]
     pub async fn build_on(
         &mut self,
         parent: L2BlockInfo,
-    ) -> Result<Option<UnsealedPayloadHandle>, SequencerActorError> {
-        let Some(l1_origin) = self.get_next_payload_l1_origin(parent).await? else {
-            return Ok(None);
+    ) -> Result<BuildOutcome<UnsealedPayloadHandle>, SequencerActorError> {
+        let l1_origin = match self.get_next_payload_l1_origin(parent).await? {
+            BuildOutcome::Ready(l1_origin) => l1_origin,
+            BuildOutcome::Deferred => return Ok(BuildOutcome::Deferred),
+            BuildOutcome::AwaitingL1Origin => return Ok(BuildOutcome::AwaitingL1Origin),
         };
         tracing::Span::current().record("l1_origin_num", l1_origin.number);
 
@@ -92,7 +110,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
         let attributes_build_start = Instant::now();
 
         let Some(attributes_with_parent) = self.build_attributes(parent, l1_origin).await? else {
-            return Ok(None);
+            return Ok(BuildOutcome::Deferred);
         };
 
         Metrics::sequencer_attributes_build_duration().record(attributes_build_start.elapsed());
@@ -105,21 +123,15 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
         Metrics::sequencer_block_building_start_task_duration()
             .record(build_request_start.elapsed());
 
-        Ok(Some(UnsealedPayloadHandle { payload_id, attributes_with_parent }))
+        Ok(BuildOutcome::Ready(UnsealedPayloadHandle { payload_id, attributes_with_parent }))
     }
 
     /// Determines and validates the L1 origin block for the provided L2 unsafe head.
-    ///
-    /// Returns `Ok(None)` for temporary errors that should be retried on the next tick.
     pub async fn get_next_payload_l1_origin(
         &mut self,
         unsafe_head: L2BlockInfo,
-    ) -> Result<Option<BlockInfo>, SequencerActorError> {
-        let l1_origin = match self
-            .origin_selector
-            .next_l1_origin(unsafe_head, self.recovery_mode.get())
-            .await
-        {
+    ) -> Result<BuildOutcome<BlockInfo>, SequencerActorError> {
+        let l1_origin = match self.origin_selector.next_l1_origin(unsafe_head).await {
             Ok(l1_origin) => l1_origin,
             Err(L1OriginSelectorError::OriginNotFound(hash)) => {
                 warn!(
@@ -127,8 +139,27 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
                     hash = %hash,
                     "L1 origin block not found (reorg or sync lag), triggering engine reset"
                 );
-                self.engine_client.reset_engine_forkchoice().await?;
-                return Ok(None);
+                self.engine_client
+                    .reset_engine_forkchoice(ResetReason::L1OriginUnavailable)
+                    .await?;
+                return Ok(BuildOutcome::Deferred);
+            }
+            Err(err @ L1OriginSelectorError::NextL1OriginOrphaned { .. }) => {
+                warn!(
+                    target: "sequencer",
+                    ?err,
+                    "Next L1 origin orphaned the accepted current origin, triggering engine reset"
+                );
+                self.engine_client.reset_engine_forkchoice(ResetReason::L1OriginOrphaned).await?;
+                return Ok(BuildOutcome::Deferred);
+            }
+            Err(err @ L1OriginSelectorError::NotEnoughData(_)) => {
+                warn!(
+                    target: "sequencer",
+                    ?err,
+                    "Next L1 origin is not ready after sequencer drift; deferring block build"
+                );
+                return Ok(BuildOutcome::AwaitingL1Origin);
             }
             Err(err) => {
                 warn!(
@@ -136,7 +167,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
                     ?err,
                     "Temporary error occurred while selecting next L1 origin. Re-attempting on next tick."
                 );
-                return Ok(None);
+                return Ok(BuildOutcome::Deferred);
             }
         };
 
@@ -150,11 +181,11 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
                 unsafe_head_l1_origin = ?unsafe_head.l1_origin,
                 "Cannot build new L2 block on inconsistent L1 origin, resetting engine"
             );
-            self.engine_client.reset_engine_forkchoice().await?;
-            return Ok(None);
+            self.engine_client.reset_engine_forkchoice(ResetReason::L1OriginInconsistent).await?;
+            return Ok(BuildOutcome::Deferred);
         }
 
-        Ok(Some(l1_origin))
+        Ok(BuildOutcome::Ready(l1_origin))
     }
 
     /// Builds the `AttributesWithParent` for the next block.

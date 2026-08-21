@@ -19,7 +19,8 @@ pub struct ZkForkDispute;
 impl ZkForkDispute {
     /// Runs the full fork-dispute workflow with the given config.
     pub async fn run(config: Config) -> Result<()> {
-        let verifier = AggregateVerifierContractClient::new(config.l1_rpc_url.clone())?;
+        let provider: RootProvider = RootProvider::new_http(config.l1_rpc_url.clone());
+        let verifier = AggregateVerifierContractClient::new(provider.clone());
 
         let status = verifier.status(config.game_address).await?;
         let before_zk = verifier.zk_prover(config.game_address).await?;
@@ -35,7 +36,6 @@ impl ZkForkDispute {
             before_countered,
         )?;
 
-        let provider: RootProvider = RootProvider::new_http(config.l1_rpc_url.clone());
         let challenger = config.private_key.address();
         provider
             .client()
@@ -67,7 +67,9 @@ impl ZkForkDispute {
             .await?,
         );
 
-        let proof_bytes = checkpoint.request_proof(&config, challenger, l1_head).await?;
+        let game_l2_block_number = verifier.game_info(config.game_address).await?.l2_block_number;
+        let proof_bytes =
+            checkpoint.request_proof(&config, challenger, l1_head, game_l2_block_number).await?;
 
         let tx_hash = submitter
             .submit_dispute(

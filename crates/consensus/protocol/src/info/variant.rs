@@ -621,7 +621,6 @@ mod tests {
 
         let ecotone =
             L1BlockInfoTx::Ecotone(L1BlockInfoEcotone::new_from_blob_base_fee_scalar(456));
-        //dbg!("{}", ecotone);
         assert_eq!(ecotone.blob_base_fee_scalar(), U256::from(456));
 
         let isthmus =
