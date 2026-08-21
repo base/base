@@ -336,8 +336,15 @@ where
                         }
                     }
                     EngineActorRequest::ProcessSafeL2SignalRequest(safe_signal) => {
-                        if let Some(gate) = self.active_shadow_gate() {
-                            gate.buffer_safe_signal(safe_signal);
+                        // Canonical ancestors of the cycle anchor cannot reorg the private unsafe
+                        // branch, so confirm them immediately and let derivation keep advancing.
+                        let should_defer = self
+                            .active_shadow_gate()
+                            .is_some_and(|gate| gate.should_defer_safe_signal(&safe_signal));
+                        if should_defer {
+                            self.active_shadow_gate()
+                                .expect("gate checked")
+                                .buffer_safe_signal(safe_signal);
                             continue;
                         }
                         let task = EngineTask::Consolidate(Box::new(ConsolidateTask::new(
@@ -350,8 +357,20 @@ where
                     EngineActorRequest::ProcessFinalizedL2BlockNumberRequest(
                         finalized_l2_block_number,
                     ) => {
-                        if let Some(gate) = self.active_shadow_gate() {
-                            gate.buffer_finalized(*finalized_l2_block_number);
+                        // Finalization is equally safe through the anchor once the corresponding
+                        // block is safe; applying it promptly also keeps ExEx WAL pruning moving.
+                        let safe_head_number =
+                            self.processor.engine_state().sync_state.safe_head().block_info.number;
+                        let should_defer = self.active_shadow_gate().is_some_and(|gate| {
+                            gate.should_defer_finalized(
+                                *finalized_l2_block_number,
+                                safe_head_number,
+                            )
+                        });
+                        if should_defer {
+                            self.active_shadow_gate()
+                                .expect("gate checked")
+                                .buffer_finalized(*finalized_l2_block_number);
                             continue;
                         }
                         // Finalize the L2 block at the provided block number.
