@@ -510,7 +510,7 @@ pub(crate) fn emit_builder_transaction_event<D, F>(
     D: Serialize,
     F: FnOnce() -> D,
 {
-    if !GlobalTransactionEventWriter::is_recording() {
+    if GlobalTransactionEventWriter::get().is_none() {
         return;
     }
 
@@ -560,7 +560,7 @@ pub(crate) fn emit_builder_payload_event<D, F>(
     D: Serialize,
     F: FnOnce() -> D,
 {
-    if !GlobalTransactionEventWriter::is_recording() {
+    if GlobalTransactionEventWriter::get().is_none() {
         return;
     }
 

@@ -216,6 +216,7 @@ test-utils = [
 	"base-execution-rpc/client",
 	"base-node-core/test-utils",
 	"base-node-runner/test-utils",
+	"base-observability-events/test-utils",
 	"ctor",
 	"http-body-util",
 	"hyper",

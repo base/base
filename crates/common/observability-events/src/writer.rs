@@ -4,7 +4,7 @@ use std::{
     io::{self, Write},
     path::{Path, PathBuf},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
     time::{SystemTime, UNIX_EPOCH},
@@ -70,13 +70,14 @@ struct WriterInner {
     dropped: Option<ErrorCounter>,
     observed_drops: AtomicUsize,
     _guard: Option<WorkerGuard>,
+    capture: Option<Mutex<Vec<TransactionEvent>>>,
     config: TransactionEventWriterConfig,
 }
 
 impl fmt::Debug for TransactionEventWriter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TransactionEventWriter")
-            .field("enabled", &self.inner.writer.is_some())
+            .field("enabled", &(self.inner.writer.is_some() || self.inner.capture.is_some()))
             .field("config", &self.inner.config)
             .finish_non_exhaustive()
     }
@@ -168,6 +169,7 @@ impl TransactionEventWriter {
                 dropped: Some(dropped),
                 observed_drops: AtomicUsize::new(0),
                 _guard: Some(guard),
+                capture: None,
                 config,
             }),
         })
@@ -181,13 +183,56 @@ impl TransactionEventWriter {
                 dropped: None,
                 observed_drops: AtomicUsize::new(0),
                 _guard: None,
+                capture: None,
                 config,
             }),
         }
     }
 
+    /// Creates an in-memory writer that records events for later inspection.
+    pub fn in_memory(network: impl Into<String>) -> Self {
+        Self {
+            inner: Arc::new(WriterInner {
+                writer: None,
+                dropped: None,
+                observed_drops: AtomicUsize::new(0),
+                _guard: None,
+                capture: Some(Mutex::new(Vec::new())),
+                config: TransactionEventWriterConfig {
+                    enabled: true,
+                    file_path: PathBuf::from("<memory>"),
+                    queue_capacity: DEFAULT_QUEUE_CAPACITY,
+                    max_file_bytes: DEFAULT_MAX_FILE_BYTES,
+                    max_files: DEFAULT_MAX_FILES,
+                    required: false,
+                    producer: TransactionEventProducer::BaseRethNode,
+                    network: network.into(),
+                },
+            }),
+        }
+    }
+
+    /// Returns events recorded by an in-memory writer.
+    pub fn recorded_events(&self) -> Vec<TransactionEvent> {
+        self.inner
+            .capture
+            .as_ref()
+            .map(|capture| capture.lock().unwrap_or_else(|err| err.into_inner()).clone())
+            .unwrap_or_default()
+    }
+
     /// Attempts to enqueue one event without blocking the caller.
     pub fn try_write(&self, event: &TransactionEvent) -> Result<(), WriteEventError> {
+        if let Some(capture) = &self.inner.capture {
+            event.validate().map_err(|err| {
+                Metrics::dropped_events("validation").increment(1);
+                WriteEventError::Invalid(err)
+            })?;
+            capture.lock().unwrap_or_else(|err| err.into_inner()).push(event.clone());
+            Metrics::submitted_events().increment(1);
+            return Ok(());
+        }
+
         let Some(writer) = &self.inner.writer else {
             Metrics::dropped_events("disabled").increment(1);
             return Err(WriteEventError::Disabled);
@@ -489,9 +534,20 @@ mod tests {
                 dropped: Some(dropped),
                 observed_drops: AtomicUsize::new(0),
                 _guard: Some(guard),
+                capture: None,
                 config,
             }),
         }
+    }
+
+    #[test]
+    fn in_memory_writer_records_events() {
+        let writer = TransactionEventWriter::in_memory("test");
+        writer.try_write(&sample_event()).unwrap();
+        let events = writer.recorded_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, TransactionEventType::Pending);
+        assert_eq!(events[0].network.as_deref(), Some("base-mainnet"));
     }
 
     #[test]

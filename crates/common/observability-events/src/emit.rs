@@ -1,6 +1,6 @@
 //! Transaction event emission helpers and process-global writer access.
 
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::sync::{Mutex, OnceLock};
 
 use alloy_primitives::{B256, TxHash};
 use chrono::Utc;
@@ -14,8 +14,6 @@ use crate::{
 
 static GLOBAL_TRANSACTION_EVENT_WRITER: OnceLock<TransactionEventWriter> = OnceLock::new();
 static GLOBAL_TRANSACTION_EVENT_WRITER_INIT_LOCK: Mutex<()> = Mutex::new(());
-static TEST_CAPTURE_SERIAL: Mutex<()> = Mutex::new(());
-static TEST_CAPTURE_EVENTS: Mutex<Option<Vec<TransactionEvent>>> = Mutex::new(None);
 
 /// Result of initializing the process-global transaction event writer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,55 +68,14 @@ impl GlobalTransactionEventWriter {
     }
 
     /// Returns the process-global transaction event writer, if configured.
-    pub fn get() -> Option<&'static TransactionEventWriter> {
-        GLOBAL_TRANSACTION_EVENT_WRITER.get()
-    }
-
-    /// Returns true when a configured writer or an installed test capture would record events.
-    pub fn is_recording() -> bool {
-        Self::get().is_some() || TransactionEventCapture::is_active()
-    }
-}
-
-/// Process-global capture of emitted transaction events for tests.
-///
-/// Installing a capture serializes other capture-using tests so parallel crates do not
-/// interleave recorded events. Production emission is unaffected until a capture is installed.
-#[derive(Debug)]
-pub struct TransactionEventCapture {
-    _serial: MutexGuard<'static, ()>,
-}
-
-impl TransactionEventCapture {
-    /// Installs a process-global event capture, replacing any previously recorded events.
-    pub fn install() -> Self {
-        let serial = TEST_CAPTURE_SERIAL.lock().unwrap_or_else(|err| err.into_inner());
-        *TEST_CAPTURE_EVENTS.lock().unwrap_or_else(|err| err.into_inner()) = Some(Vec::new());
-        Self { _serial: serial }
-    }
-
-    /// Returns true when a test capture is currently installed.
-    pub fn is_active() -> bool {
-        TEST_CAPTURE_EVENTS.lock().map(|guard| guard.is_some()).unwrap_or(false)
-    }
-
-    /// Returns a snapshot of events recorded since this capture was installed.
-    pub fn events(&self) -> Vec<TransactionEvent> {
-        TEST_CAPTURE_EVENTS.lock().ok().and_then(|guard| guard.clone()).unwrap_or_default()
-    }
-
-    fn record(event: &TransactionEvent) {
-        if let Ok(mut guard) = TEST_CAPTURE_EVENTS.lock()
-            && let Some(events) = guard.as_mut()
+    pub fn get() -> Option<TransactionEventWriter> {
+        #[cfg(any(test, feature = "test-utils"))]
         {
-            events.push(event.clone());
+            if let Some(writer) = crate::TransactionEventCapture::installed_writer() {
+                return Some(writer);
+            }
         }
-    }
-}
-
-impl Drop for TransactionEventCapture {
-    fn drop(&mut self) {
-        *TEST_CAPTURE_EVENTS.lock().unwrap_or_else(|err| err.into_inner()) = None;
+        GLOBAL_TRANSACTION_EVENT_WRITER.get().cloned()
     }
 }
 
@@ -272,23 +229,10 @@ impl TransactionEventBuilder {
 
     /// Emits the event through the process-global writer, if configured.
     pub fn emit_global(self) -> Result<TransactionEventEmitOutcome, WriteEventError> {
-        if let Some(writer) = GlobalTransactionEventWriter::get() {
-            let event = self.build(writer);
-            TransactionEventCapture::record(&event);
-            let result = writer.try_write(&event);
-            if let Err(err) = &result {
-                debug!(error = %err, event_type = %event.event_type, "transaction event not written");
-            }
-            return result.map(|()| TransactionEventEmitOutcome::Emitted);
-        }
-
-        if TransactionEventCapture::is_active() {
-            let event = self.build_with_network("test");
-            TransactionEventCapture::record(&event);
-            return Ok(TransactionEventEmitOutcome::Emitted);
-        }
-
-        Ok(TransactionEventEmitOutcome::NotConfigured)
+        let Some(writer) = GlobalTransactionEventWriter::get() else {
+            return Ok(TransactionEventEmitOutcome::NotConfigured);
+        };
+        self.emit_to(&writer)
     }
 }
 
@@ -497,6 +441,7 @@ mod tests {
 
     #[test]
     fn builder_none_writer_is_noop() {
+        let _serial = crate::TransactionEventCapture::hold_serial();
         let result = TransactionEventBuilder::new(
             TransactionEventProducer::BaseRethNode,
             TransactionEventType::Pending,
@@ -560,7 +505,7 @@ mod tests {
 
     #[test]
     fn capture_records_global_emits_without_a_writer() {
-        let capture = super::TransactionEventCapture::install();
+        let capture = crate::TransactionEventCapture::install();
         let tx_hash = TxHash::repeat_byte(0x42);
 
         let result = transaction_event!(

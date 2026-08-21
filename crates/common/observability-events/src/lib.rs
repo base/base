@@ -13,8 +13,13 @@ pub use event::*;
 mod emit;
 pub use emit::{
     GlobalTransactionEventWriter, GlobalTransactionEventWriterInitStatus, TransactionEventBuilder,
-    TransactionEventCapture, TransactionEventEmitOutcome,
+    TransactionEventEmitOutcome,
 };
+
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
+#[cfg(any(test, feature = "test-utils"))]
+pub use test_utils::TransactionEventCapture;
 
 mod id;
 pub use id::EventIdBuilder;
