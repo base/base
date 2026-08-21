@@ -540,8 +540,7 @@ mod tests {
             max_channel_duration: duration,
             ..EncoderConfig::default()
         };
-        Channel::new(id, Arc::new(RollupConfig::default()), &config, 0, opened_l1_block)
-            .unwrap()
+        Channel::new(id, Arc::new(RollupConfig::default()), &config, 0, opened_l1_block).unwrap()
     }
 
     fn incompressible_batch(transaction_len: usize) -> SingleBatch {
