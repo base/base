@@ -104,8 +104,10 @@ impl<'a> MetricsAggregator<'a> {
                 confirmed_before_target += 1;
             }
         }
-        let first_block_delta = first_confirmed_block
-            .map(|block| i64::try_from(block).unwrap_or(i64::MAX) - i64::try_from(target_block).unwrap_or(i64::MAX));
+        let first_block_delta = first_confirmed_block.map(|block| {
+            i64::try_from(block).unwrap_or(i64::MAX)
+                - i64::try_from(target_block).unwrap_or(i64::MAX)
+        });
         ValiditySpikeMetrics {
             target_block,
             first_confirmed_block,
