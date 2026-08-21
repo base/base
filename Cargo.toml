@@ -100,6 +100,14 @@ string-lit-as-bytes = "warn"
 [profile.dev]
 debug = "line-tables-only"
 
+# Dependencies are rarely stepped into, so strip their debug info. This applies
+# to all dependencies (`*`) but NOT workspace crates, which keep the
+# line-tables-only debug info above. It also disables debug info in C/C++ build
+# scripts (rocksdb, mdbx, jemalloc, ...), which is the single largest consumer
+# of `target` disk.
+[profile.dev.package."*"]
+debug = false
+
 [profile.release]
 opt-level = 3
 lto = "thin"
