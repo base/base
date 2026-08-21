@@ -59,6 +59,18 @@ pub struct L1ClientArgs {
     /// the verifier derives from the latest L1 head with no confirmation delay.
     #[arg(long = "l1.verifier-confs", default_value = "0", env = "BASE_NODE_VERIFIER_L1_CONFS")]
     pub l1_verifier_confs: u64,
+    /// Interval, in milliseconds, between polls of the L1 `finalized` block tag. This governs how
+    /// quickly the node observes new L1 finality checkpoints and, in turn, advances its finalized
+    /// L2 head. Controlled via `BASE_NODE_FINALIZED_POLL_INTERVAL_MS`. When unset, a
+    /// chain-specific default is used (one L1 epoch, ~384s, on Ethereum mainnet/Sepolia).
+    #[arg(
+        long = "l1.finalized-poll-interval-ms",
+        env = "BASE_NODE_FINALIZED_POLL_INTERVAL_MS",
+        value_parser = |arg: &str| -> Result<Duration, ParseIntError> {
+            Ok(Duration::from_millis(arg.parse()?))
+        }
+    )]
+    pub l1_finalized_poll_interval: Option<Duration>,
 }
 
 impl Default for L1ClientArgs {
@@ -71,6 +83,7 @@ impl Default for L1ClientArgs {
             l1_slot_duration_override: None,
             l1_da_batcher_sender_override: None,
             l1_verifier_confs: 0,
+            l1_finalized_poll_interval: None,
         }
     }
 }
@@ -108,5 +121,35 @@ mod tests {
         .args;
 
         assert_eq!(args.l1_rpc_timeout, Duration::from_millis(2500));
+    }
+
+    #[test]
+    fn finalized_poll_interval_defaults_to_none() {
+        let args = Command::parse_from([
+            "base-consensus",
+            "--l1-eth-rpc",
+            "http://localhost:8545",
+            "--l1-beacon",
+            "http://localhost:5052",
+        ])
+        .args;
+
+        assert_eq!(args.l1_finalized_poll_interval, None);
+    }
+
+    #[test]
+    fn parses_finalized_poll_interval_in_milliseconds() {
+        let args = Command::parse_from([
+            "base-consensus",
+            "--l1-eth-rpc",
+            "http://localhost:8545",
+            "--l1-beacon",
+            "http://localhost:5052",
+            "--l1.finalized-poll-interval-ms",
+            "60000",
+        ])
+        .args;
+
+        assert_eq!(args.l1_finalized_poll_interval, Some(Duration::from_millis(60000)));
     }
 }
