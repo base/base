@@ -177,6 +177,12 @@ impl TestRollupConfigBuilder {
         self
     }
 
+    /// Sets the Denim activation timestamp.
+    pub const fn with_denim_at(mut self, t: u64) -> Self {
+        self.config.upgrades.base.denim = Some(t);
+        self
+    }
+
     /// Activates every scheduled fork from genesis for tests that need it.
     ///
     /// `base_mainnet` intentionally keeps the harness's existing "Canyon through

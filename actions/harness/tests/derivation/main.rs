@@ -22,6 +22,7 @@ use base_protocol::{
     BatchType, BlockInfo, DERIVATION_VERSION_0, DepositDecodeError, Deposits, L2BlockInfo,
 };
 
+mod denim_span_batches;
 mod holocene_span_batches;
 mod node;
 

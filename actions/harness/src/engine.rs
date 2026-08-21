@@ -208,6 +208,13 @@ impl ActionEngineClient {
                 "beryl activation timestamp ({beryl}) must be <= cobalt activation timestamp ({cobalt})",
             );
         }
+        if let Some(denim) = hf.base.denim {
+            let cobalt = hf.base.cobalt.expect("denim requires cobalt to be configured");
+            assert!(
+                cobalt <= denim,
+                "cobalt activation timestamp ({cobalt}) must be <= denim activation timestamp ({denim})",
+            );
+        }
 
         // Base Azul requires Osaka (the EL counterpart).
         genesis.config.osaka_time = hf.base.azul;
@@ -220,6 +227,9 @@ impl ActionEngineClient {
         }
         if let Some(ts) = hf.base.cobalt {
             base.insert("cobalt".to_string(), serde_json::json!(ts));
+        }
+        if let Some(ts) = hf.base.denim {
+            base.insert("denim".to_string(), serde_json::json!(ts));
         }
         if base.is_empty() {
             genesis.config.extra_fields.remove("base");
