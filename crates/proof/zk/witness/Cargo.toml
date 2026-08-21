@@ -48,5 +48,8 @@ serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 
+[dev-dependencies]
+alloy-rpc-types-eth = { workspace = true, features = ["serde"] }
+
 [lints]
 workspace = true

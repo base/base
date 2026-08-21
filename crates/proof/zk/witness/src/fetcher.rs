@@ -9,7 +9,7 @@ use std::{
 
 use alloy_consensus::{BlockHeader, Header};
 use alloy_eips::{BlockId, BlockNumberOrTag};
-use alloy_network::{BlockResponse, Network, primitives::HeaderResponse};
+use alloy_network::{BlockResponse, primitives::HeaderResponse};
 use alloy_primitives::{Address, B256, U256, keccak256};
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use alloy_rlp::Decodable;
@@ -290,24 +290,7 @@ impl OPSuccinctDataFetcher {
 
     /// Finds the L1 block at the provided timestamp.
     pub async fn find_l1_block_by_timestamp(&self, target_timestamp: u64) -> Result<(B256, u64)> {
-        self.find_block_by_timestamp(&self.l1_provider, target_timestamp).await
-    }
-
-    /// Finds the L2 block at the provided timestamp.
-    pub async fn find_l2_block_by_timestamp(&self, target_timestamp: u64) -> Result<(B256, u64)> {
-        self.find_block_by_timestamp(&self.l2_provider, target_timestamp).await
-    }
-
-    /// Finds the block at the provided timestamp, using the provided provider.
-    async fn find_block_by_timestamp<N>(
-        &self,
-        provider: &RootProvider<N>,
-        target_timestamp: u64,
-    ) -> Result<(B256, u64)>
-    where
-        N: Network,
-    {
-        let latest_block = provider.get_block(BlockId::finalized()).await?;
+        let latest_block = self.l1_provider.get_block(BlockId::finalized()).await?;
         let mut low = 0;
         let mut high = if let Some(block) = latest_block {
             block.header().number()
@@ -315,18 +298,15 @@ impl OPSuccinctDataFetcher {
             bail!("Failed to get latest block");
         };
 
-        while low <= high {
-            let mid = (low + high) / 2;
-            let block = provider.get_block(mid.into()).await?;
+        while low < high {
+            let mid = low + (high - low) / 2;
+            let block = self.l1_provider.get_block(mid.into()).await?;
             if let Some(block) = block {
                 let block_timestamp = block.header().timestamp();
 
                 match block_timestamp.cmp(&target_timestamp) {
-                    Ordering::Equal => {
-                        return Ok((block.header().hash().0.into(), block.header().number()));
-                    }
+                    Ordering::Equal | Ordering::Greater => high = mid,
                     Ordering::Less => low = mid + 1,
-                    Ordering::Greater => high = mid - 1,
                 }
             } else {
                 bail!("Failed to get block for block {mid}");
@@ -334,8 +314,11 @@ impl OPSuccinctDataFetcher {
         }
 
         // Return the block hash of the closest block after the target timestamp
-        let block = provider.get_block(low.into()).await?;
+        let block = self.l1_provider.get_block(low.into()).await?;
         if let Some(block) = block {
+            if block.header().timestamp() < target_timestamp {
+                bail!("No finalized L1 block at or after timestamp {target_timestamp}");
+            }
             Ok((block.header().hash().0.into(), block.header().number()))
         } else {
             bail!("Failed to get block for block {low}");
@@ -827,5 +810,93 @@ impl OPSuccinctDataFetcher {
         };
 
         Ok(HostConfig { request, prover, data_dir: None })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_provider::{ProviderBuilder, mock::Asserter};
+    use alloy_rpc_types_eth::{Block, Header as RpcHeader};
+
+    use super::*;
+
+    fn block(number: u64, timestamp: u64) -> Block {
+        Block {
+            header: RpcHeader::new(Header { number, timestamp, ..Default::default() }),
+            ..Default::default()
+        }
+    }
+
+    fn fetcher(responses: &[Block]) -> OPSuccinctDataFetcher {
+        let asserter = Asserter::new();
+        for response in responses {
+            asserter.push_success(response);
+        }
+        let l1_provider = Arc::new(ProviderBuilder::default().connect_mocked_client(asserter));
+        let rpc_config = RPCConfig {
+            l1_rpc: "http://127.0.0.1:1".parse().unwrap(),
+            l1_beacon_rpc: None,
+            l2_rpc: "http://127.0.0.1:1".parse().unwrap(),
+            l2_node_rpc: "http://127.0.0.1:1".parse().unwrap(),
+        };
+        OPSuccinctDataFetcher {
+            l1_provider,
+            l2_provider: Arc::new(
+                ProviderBuilder::default().connect_http(rpc_config.l2_rpc.clone()),
+            ),
+            rpc_config,
+            rollup_config: None,
+            rollup_config_path: None,
+            l1_config_path: None,
+        }
+    }
+
+    async fn assert_l1_target(target: u64, responses: &[Block], expected: &Block) {
+        let fetcher = fetcher(responses);
+
+        let found = fetcher.find_l1_block_by_timestamp(target).await.unwrap();
+
+        assert_eq!(found, (expected.header.hash, expected.header.number));
+    }
+
+    #[tokio::test]
+    async fn l1_target_before_block_returns_that_block() {
+        let blocks = [block(0, 0), block(1, 10), block(2, 20)];
+        assert_l1_target(
+            9,
+            &[blocks[2].clone(), blocks[1].clone(), blocks[0].clone(), blocks[1].clone()],
+            &blocks[1],
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn l1_target_at_block_returns_that_block() {
+        let blocks = [block(0, 0), block(1, 10), block(2, 20)];
+        assert_l1_target(
+            10,
+            &[blocks[2].clone(), blocks[1].clone(), blocks[0].clone(), blocks[1].clone()],
+            &blocks[1],
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn l1_target_after_block_returns_next_block() {
+        let blocks = [block(0, 0), block(1, 10), block(2, 20)];
+        assert_l1_target(
+            11,
+            &[blocks[2].clone(), blocks[1].clone(), blocks[2].clone()],
+            &blocks[2],
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn l1_target_after_finalized_block_returns_error() {
+        let blocks = [block(0, 0), block(1, 10), block(2, 20)];
+        let fetcher = fetcher(&[blocks[2].clone(), blocks[1].clone(), blocks[2].clone()]);
+
+        assert!(fetcher.find_l1_block_by_timestamp(21).await.is_err());
     }
 }

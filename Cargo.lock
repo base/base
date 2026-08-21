@@ -5614,6 +5614,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-provider",
  "alloy-rlp",
+ "alloy-rpc-types-eth 2.4.1",
  "alloy-sol-types",
  "anyhow",
  "async-trait",
