@@ -245,19 +245,6 @@ impl UpgradeSignalConfig {
         Ok(schedule)
     }
 
-    /// Reads the L1 schedule via [`Self::read_schedule`] and validates its protocol versions.
-    pub async fn read_validated_schedule(
-        &self,
-        reader: &AlloyUpgradeSignalReader,
-        log_context: &'static str,
-        metrics_layers: &[UpgradeSignalMetricLayer],
-    ) -> Result<UpgradeSignalSchedule, UpgradeSignalError> {
-        let schedule = self.read_schedule(reader, log_context, metrics_layers).await?;
-        self.validate_schedule_protocol_versions(&schedule)?;
-
-        Ok(schedule)
-    }
-
     /// Reads the startup schedule and applies the fail-closed policy, returning whether it should be
     /// applied.
     ///
