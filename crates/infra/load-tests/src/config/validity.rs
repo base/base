@@ -322,7 +322,8 @@ mod tests {
 
     #[test]
     fn block_number_predicate_to_template() {
-        let config = ValidityPredicateConfig::BlockNumber { op: ">=".into(), value: "0x100".into() };
+        let config =
+            ValidityPredicateConfig::BlockNumber { op: ">=".into(), value: "0x100".into() };
         match config.to_template().unwrap() {
             ValidityPredicateTemplate::BlockNumber { op, value } => {
                 assert_eq!(op, ValidityOperator::GreaterThanOrEqual);
@@ -334,8 +335,7 @@ mod tests {
 
     #[test]
     fn flashblock_index_predicate_to_template() {
-        let config =
-            ValidityPredicateConfig::FlashblockIndex { op: "=".into(), value: "2".into() };
+        let config = ValidityPredicateConfig::FlashblockIndex { op: "=".into(), value: "2".into() };
         match config.to_template().unwrap() {
             ValidityPredicateTemplate::FlashblockIndex { op, value } => {
                 assert_eq!(op, ValidityOperator::Equal);
@@ -347,8 +347,7 @@ mod tests {
 
     #[test]
     fn position_predicate_surfaces_bad_operator() {
-        let config =
-            ValidityPredicateConfig::BlockNumber { op: "==".into(), value: "1".into() };
+        let config = ValidityPredicateConfig::BlockNumber { op: "==".into(), value: "1".into() };
         assert!(config.to_template().is_err());
     }
 
