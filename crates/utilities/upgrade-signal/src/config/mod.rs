@@ -1,6 +1,7 @@
 //! Upgrade signal configuration and CLI arguments.
 
 use core::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use alloy_primitives::U256;
 
@@ -10,7 +11,7 @@ mod args;
 pub use args::{UpgradeSignalArgs, UpgradeSignalL1RpcArgs, UpgradeSignalStartupConfig};
 
 mod schedule;
-pub use schedule::UpgradeSignalConfig;
+pub use schedule::{StartupScheduleAction, UpgradeSignalConfig};
 
 mod types;
 pub use types::{UpgradeSignalBlockTag, UpgradeSignalMode, UpgradeSignalStartupMode};
@@ -36,9 +37,34 @@ impl UpgradeSignalDefaults {
     /// not yet returned a valid schedule.
     ///
     /// Startup blocks indefinitely on an empty or unreachable contract (see
-    /// [`UpgradeSignalConfig::read_required_startup_schedule`](crate::UpgradeSignalConfig::read_required_startup_schedule)),
+    /// [`UpgradeSignalConfig::read_startup_schedule`](crate::UpgradeSignalConfig::read_startup_schedule)),
     /// so this is paced to keep the loud retry logs legible rather than to recover quickly.
     pub const STARTUP_SCHEDULE_RETRY_INTERVAL: Duration = Duration::from_secs(5);
+
+    /// Current unix time in seconds, used to compare against upgrade activation timestamps.
+    ///
+    /// A backwards clock (before the epoch) is treated as `0`, which only makes the fail-closed
+    /// check more conservative (an upgrade looks nearer), never less.
+    pub fn now_secs() -> u64 {
+        SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    }
+
+    /// Number of L1 read intervals before an unsupportable upgrade's activation at which the node
+    /// fails closed. See [`UpgradeSignalConfig::halt_lead_time`] for the derived window.
+    ///
+    /// The node must halt *before* activation to avoid forking, so the halt window has to be wide
+    /// enough that at least one poll reliably lands inside it — hence a small multiple of the poll
+    /// cadence rather than a fixed constant, which also keeps it correct across the `latest`,
+    /// `safe`, and `finalized` block tags.
+    ///
+    /// The window is deliberately short. A large lead would *front-run* the outage: it halts every
+    /// outdated node long before activation, and — worse — before governance could still correct a
+    /// mistakenly scheduled upgrade by clearing or rescheduling the signal (which a running node
+    /// would pick up on its next poll and never halt). Early operator warning does not depend on
+    /// this window: the sticky `apply_failed` alarm is raised on *every* failed apply regardless of
+    /// how far off the activation is. The halt only needs enough margin to stop just ahead of
+    /// activation.
+    pub const HALT_LEAD_POLL_INTERVALS: u32 = 2;
 
     /// Node protocol version supported by this binary for contract-backed upgrade signals.
     ///

@@ -30,8 +30,11 @@ impl UpgradeSignalRefresher {
 
     /// Validates and applies an already-read schedule without touching L1.
     ///
-    /// Callers do not retry failures: validation failures are deterministic, and failed reads
-    /// never advance the monitor baseline, so changed signals are re-detected next poll.
+    /// This is atomic: the whole schedule is validated before any registry mutation, so a
+    /// validation failure leaves the runtime registry unchanged. The live poller
+    /// ([`crate::UpgradeSignalMonitor::poll_and_apply`]) advances its applied baseline only when
+    /// this call succeeds, so a failed apply leaves the schedule offered for retry on the next
+    /// poll rather than being silently adopted as the baseline.
     pub fn apply(
         &self,
         schedule: &UpgradeSignalSchedule,
