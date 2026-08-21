@@ -288,8 +288,6 @@ fn kv_line_colored(label: &str, value: &str, color: Color) -> Line<'static> {
 }
 
 fn gap_line(label: &str, blocks: u64) -> Line<'static> {
-    let time_str = format_duration_from_blocks(blocks);
-
     let color = if blocks > 50_000 {
         Color::Red
     } else if blocks > 10_000 {
@@ -304,7 +302,6 @@ fn gap_line(label: &str, blocks: u64) -> Line<'static> {
             format!("{} blocks", format_number(blocks)),
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         ),
-        Span::styled(format!("  (~{time_str})"), Style::default().fg(Color::DarkGray)),
     ])
 }
 
@@ -324,21 +321,37 @@ fn format_number(n: u64) -> String {
     result.chars().rev().collect()
 }
 
-/// Estimates wall-clock duration from a block count using 2-second L2 block time.
-fn format_duration_from_blocks(blocks: u64) -> String {
-    let total_seconds = blocks * 2;
-    let days = total_seconds / 86400;
-    let hours = (total_seconds % 86400) / 3600;
-    let minutes = (total_seconds % 3600) / 60;
-    let seconds = total_seconds % 60;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    if days > 0 {
-        format!("{days}d {hours}h {minutes}m")
-    } else if hours > 0 {
-        format!("{hours}h {minutes}m")
-    } else if minutes > 0 {
-        format!("{minutes}m {seconds}s")
-    } else {
-        format!("{seconds}s")
+    fn assert_gap(blocks: u64, expected: &str, color: Color) {
+        assert_eq!(
+            gap_line("Gap", blocks),
+            Line::from(vec![
+                Span::styled("  Gap: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(expected, Style::default().fg(color).add_modifier(Modifier::BOLD),),
+            ])
+        );
+    }
+
+    #[test]
+    fn renders_zero_gap_as_blocks_only() {
+        assert_gap(0, "0 blocks", Color::Green);
+    }
+
+    #[test]
+    fn renders_small_gap_as_blocks_only() {
+        assert_gap(10_000, "10,000 blocks", Color::Green);
+    }
+
+    #[test]
+    fn renders_warning_gap_as_blocks_only() {
+        assert_gap(10_001, "10,001 blocks", Color::Yellow);
+    }
+
+    #[test]
+    fn renders_critical_gap_as_blocks_only() {
+        assert_gap(50_001, "50,001 blocks", Color::Red);
     }
 }
