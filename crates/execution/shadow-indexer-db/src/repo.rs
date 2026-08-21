@@ -1,4 +1,4 @@
-use std::collections::{HashMap, hash_map::Entry};
+use std::collections::HashMap;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -24,7 +24,7 @@ impl ShadowBlockRepo {
     /// # Errors
     /// Returns an error when the insert fails.
     pub async fn insert_batch(&self, rows: &[ShadowBlockRow]) -> Result<usize> {
-        // Five binds per row; 4,000 stays below Postgres's 65,535-parameter limit.
+        // Six binds per row; 4,000 stays below Postgres's 65,535-parameter limit.
         const CHUNK_SIZE: usize = 4_000;
 
         if rows.is_empty() {
@@ -39,20 +39,21 @@ impl ShadowBlockRepo {
         for chunk in deduped.chunks(CHUNK_SIZE) {
             let mut query_builder: QueryBuilder<'_, Postgres> = QueryBuilder::new(
                 "INSERT INTO shadow_blocks \
-                 (number, hash, canonical_hash, created_at, payload) ",
+                 (number, hash, reorged_out, canonical_hash, created_at, payload) ",
             );
 
             query_builder.push_values(chunk, |mut row, entry| {
                 row.push_bind(entry.number)
                     .push_bind(&entry.hash)
+                    .push_bind(entry.reorged_out)
                     .push_bind(&entry.canonical_hash)
                     .push_bind(entry.created_at)
                     .push_bind(Json(&entry.payload));
             });
 
             query_builder.push(
-                " ON CONFLICT (number) DO UPDATE SET \
-                 hash = EXCLUDED.hash, \
+                " ON CONFLICT (number, hash) DO UPDATE SET \
+                 reorged_out = EXCLUDED.reorged_out, \
                  canonical_hash = EXCLUDED.canonical_hash, \
                  payload = EXCLUDED.payload, \
                  updated_at = now()",
@@ -71,24 +72,11 @@ impl ShadowBlockRepo {
     }
 
     fn dedupe_last_write_wins(rows: &[ShadowBlockRow]) -> Vec<&ShadowBlockRow> {
-        let mut by_number: HashMap<i64, &ShadowBlockRow> = HashMap::with_capacity(rows.len());
+        let mut by_key: HashMap<(i64, &[u8]), &ShadowBlockRow> = HashMap::with_capacity(rows.len());
         for row in rows {
-            match by_number.entry(row.number) {
-                Entry::Vacant(entry) => {
-                    entry.insert(row);
-                }
-                Entry::Occupied(mut entry) => {
-                    let current = entry.get();
-                    if row.updated_at > current.updated_at
-                        || (row.updated_at == current.updated_at
-                            && row.hash.as_slice() > current.hash.as_slice())
-                    {
-                        entry.insert(row);
-                    }
-                }
-            }
+            by_key.insert((row.number, row.hash.as_slice()), row);
         }
-        by_number.into_values().collect()
+        by_key.into_values().collect()
     }
 
     /// Lists rows in an inclusive block-number range.
@@ -108,69 +96,70 @@ impl ShadowBlockRepo {
         Ok(rows)
     }
 
-    /// Lists rows after a composite cursor.
+    /// Lists reorged rows after a composite cursor.
     ///
-    /// Every row qualifies because `shadow_blocks` contains only reorged-out shadow blocks.
+    /// Unwinds remain in the query so Rust can count them and advance past them.
     ///
     /// # Errors
     /// Returns an error on query or payload decode failure.
-    pub async fn list_since(
+    pub async fn list_reorged_since(
         &self,
         after: &ShadowBlockCursor,
         limit: i64,
     ) -> Result<Vec<ShadowBlockRow>> {
         let rows = query_as::<_, ShadowBlockRow>(
-            "SELECT number, hash, canonical_hash, created_at, updated_at, payload \
+            "SELECT number, hash, reorged_out, canonical_hash, created_at, updated_at, payload \
              FROM shadow_blocks \
-             WHERE (updated_at, number) > ($1, $2) \
-             ORDER BY updated_at, number \
-             LIMIT $3",
+             WHERE reorged_out = true \
+               AND (updated_at, number, hash) > ($1, $2, $3) \
+             ORDER BY updated_at, number, hash \
+             LIMIT $4",
         )
         .bind(after.updated_at)
         .bind(after.number)
+        .bind(&after.hash)
         .bind(limit)
         .fetch_all(&self.pool)
         .await
-        .context("failed to list shadow blocks since cursor")?;
+        .context("failed to list reorged shadow blocks since cursor")?;
 
         Ok(rows)
     }
 
     /// Returns the newest cursor for first-boot initialization.
     ///
-    /// `None` is normal before the first reorg or when migration retained no rows.
-    ///
     /// # Errors
     /// Returns an error when the query fails.
     pub async fn max_cursor(&self) -> Result<Option<ShadowBlockCursor>> {
-        let row = query_as::<_, (DateTime<Utc>, i64)>(
-            "SELECT updated_at, number FROM shadow_blocks \
-             ORDER BY updated_at DESC, number DESC \
+        // Include unreconciled rows so first boot cannot replay them later.
+        let row = query_as::<_, (DateTime<Utc>, i64, Vec<u8>)>(
+            "SELECT updated_at, number, hash FROM shadow_blocks \
+             ORDER BY updated_at DESC, number DESC, hash DESC \
              LIMIT 1",
         )
         .fetch_optional(&self.pool)
         .await
         .context("failed to load newest shadow block cursor")?;
 
-        Ok(row.map(|(updated_at, number)| ShadowBlockCursor { updated_at, number }))
+        Ok(row.map(|(updated_at, number, hash)| ShadowBlockCursor { updated_at, number, hash }))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use chrono::TimeDelta;
     use reth_primitives_traits::RecoveredBlock;
 
     use super::*;
     use crate::ShadowBlockPayload;
 
-    fn sample_row(number: i64, hash: &[u8], updated_at: DateTime<Utc>) -> ShadowBlockRow {
+    fn sample_row(number: i64, hash: &[u8], reorged_out: bool) -> ShadowBlockRow {
         ShadowBlockRow {
             number,
             hash: hash.to_vec(),
+            reorged_out,
             canonical_hash: None,
-            created_at: updated_at,
-            updated_at,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
             payload: ShadowBlockPayload {
                 builder_version: String::new(),
                 block: RecoveredBlock::default(),
@@ -180,59 +169,29 @@ mod tests {
     }
 
     #[test]
-    fn dedupe_collapses_duplicate_number_hash_to_newest_update() {
-        let older = DateTime::<Utc>::UNIX_EPOCH + TimeDelta::seconds(1);
-        let newer = older + TimeDelta::seconds(1);
-        let rows = vec![sample_row(1, &[0xaa], newer), sample_row(1, &[0xaa], older)];
+    fn dedupe_collapses_duplicate_number_hash_to_last_write() {
+        let rows = vec![
+            sample_row(1, &[0xaa], false),
+            sample_row(2, &[0xbb], false),
+            sample_row(1, &[0xaa], true),
+        ];
 
         let deduped = ShadowBlockRepo::dedupe_last_write_wins(&rows);
 
-        assert_eq!(deduped.len(), 1);
-        assert_eq!(deduped[0].updated_at, newer);
+        assert_eq!(deduped.len(), 2);
+        let kept = deduped
+            .iter()
+            .find(|row| row.number == 1 && row.hash == [0xaa])
+            .expect("duplicated key survives");
+        assert!(kept.reorged_out, "duplicate key keeps the last write");
     }
 
     #[test]
-    fn dedupe_collapses_same_number_with_distinct_hash_deterministically() {
-        let older_at = DateTime::<Utc>::UNIX_EPOCH + TimeDelta::seconds(1);
-        let newer_at = older_at + TimeDelta::seconds(1);
-        let older = sample_row(7, &[0xaa; 32], older_at);
-        let newer = sample_row(7, &[0xbb; 32], newer_at);
-        let forward = vec![older.clone(), newer.clone()];
-        let reverse = vec![newer, older];
+    fn dedupe_keeps_same_number_with_distinct_hash() {
+        let rows = vec![sample_row(1, &[0xaa], true), sample_row(1, &[0xbb], false)];
 
-        for rows in [&forward, &reverse] {
-            let deduped = ShadowBlockRepo::dedupe_last_write_wins(rows);
+        let deduped = ShadowBlockRepo::dedupe_last_write_wins(&rows);
 
-            assert_eq!(deduped.len(), 1);
-            assert_eq!(deduped[0].updated_at, newer_at);
-            assert_eq!(deduped[0].hash, [0xbb; 32]);
-        }
-    }
-
-    #[test]
-    fn dedupe_breaks_equal_update_time_ties_by_greater_hash() {
-        let updated_at = DateTime::<Utc>::UNIX_EPOCH + TimeDelta::seconds(1);
-        let lower = sample_row(7, &[0xaa; 32], updated_at);
-        let greater = sample_row(7, &[0xbb; 32], updated_at);
-        let forward = vec![lower.clone(), greater.clone()];
-        let reverse = vec![greater, lower];
-
-        for rows in [&forward, &reverse] {
-            let deduped = ShadowBlockRepo::dedupe_last_write_wins(rows);
-
-            assert_eq!(deduped.len(), 1);
-            assert_eq!(deduped[0].hash, [0xbb; 32]);
-        }
-    }
-
-    #[test]
-    fn genesis_cursor_is_lower_than_any_real_cursor() {
-        let genesis = ShadowBlockCursor::genesis();
-        let real = ShadowBlockCursor {
-            updated_at: DateTime::<Utc>::UNIX_EPOCH + TimeDelta::seconds(1),
-            number: 1,
-        };
-
-        assert!((genesis.updated_at, genesis.number) < (real.updated_at, real.number));
+        assert_eq!(deduped.len(), 2, "distinct hashes at the same height are separate rows");
     }
 }

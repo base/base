@@ -1,12 +1,11 @@
-//! Postgres-backed tests for `ShadowMetricsReader` bootstrap against the final schema.
+//! Postgres-backed tests for `ShadowMetricsReader` bootstrap.
 //!
-//! Before the number-only rekey, `shadow_blocks` held a row for every committed canonical
-//! block, so the table was never empty and `ShadowBlockRepo::max_cursor` returning `None` was
-//! nearly unreachable. Now the table holds only reorged-out blocks, so a chain with no reorgs
-//! yet leaves it empty and the genesis-cursor branch in `ShadowMetricsReader::new` is a normal
-//! first-boot outcome. These tests exercise that branch plus the two existing branches it sits
-//! alongside (resuming from `max_cursor`, and resuming from a persisted cursor's already-covered
-//! sibling tests in `shadow_metrics_reader.rs`).
+//! While the indexer persisted a row for every committed canonical block, `shadow_blocks` was
+//! never empty and `ShadowBlockRepo::max_cursor` returning `None` was nearly unreachable. Now
+//! that only reorged-out blocks are written, a chain that has not reorged leaves the table
+//! empty and the genesis-cursor branch in `ShadowMetricsReader::new` is a normal first-boot
+//! outcome. These tests cover that branch alongside the resume-from-`max_cursor` branch;
+//! resuming from a persisted cursor is covered in `shadow_metrics_reader.rs`.
 
 use std::time::Duration;
 
@@ -56,6 +55,7 @@ fn sample_row(number: i64, hash_seed: u8, canonical_hash_seed: Option<u8>) -> Sh
     ShadowBlockRow {
         number,
         hash: vec![hash_seed; 32],
+        reorged_out: true,
         canonical_hash: canonical_hash_seed.map(|seed| vec![seed; 32]),
         created_at: now,
         updated_at: now,

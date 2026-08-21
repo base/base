@@ -19,11 +19,7 @@ base_metrics::define_metrics! {
     #[label(builder_version)]
     priority_fee_inversions: histogram,
 
-    #[describe("Total shadow candidate blocks inspected. Same-height reorgs collapse under the \
-                number-only primary key on shadow_blocks, so a height reorged repeatedly between \
-                two polls is inspected once: this counter is a lower bound whose value depends on \
-                poll timing. Use shadow_indexer_reorged_blocks_total for the exact write-time \
-                count.")]
+    #[describe("Total shadow candidate blocks inspected")]
     blocks_inspected_total: counter,
 
     #[describe("Total shadow candidate blocks with no non-deposit transactions")]

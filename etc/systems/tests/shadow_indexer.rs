@@ -71,16 +71,6 @@ async fn shadow_indexer_persists_no_canonical_blocks() -> Result<()> {
          to_regclass={shadow_blocks:?}, target_height={target}"
     );
 
-    let legacy_table: Option<String> =
-        sqlx::query_scalar("SELECT to_regclass('public.shadow_blocks_legacy')::text")
-            .fetch_one(&pool)
-            .await?;
-    ensure!(
-        legacy_table.as_deref() == Some("shadow_blocks_legacy"),
-        "shadow_blocks_legacy is missing, so migration 0004 was not applied: \
-         to_regclass={legacy_table:?}, target_height={target}"
-    );
-
     let repo = ShadowBlockRepo::new(pool);
 
     // Assert emptiness on every poll rather than once at the end: the writer flushes on a 1s tick,

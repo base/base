@@ -3,9 +3,8 @@
 base_metrics::define_metrics! {
     shadow_indexer, struct = ShadowIndexerMetrics,
 
-    #[describe("Total reorged-out shadow blocks emitted by the ExEx. Counted at write time so \
-                that same-height reorgs collapsed by the number-only primary key on \
-                shadow_blocks are still counted exactly.")]
+    #[describe("Total reorged-out shadow blocks emitted by the ExEx. Counted at write time, so it \
+                moves even when the metrics reader is down or lagging.")]
     reorged_blocks_total: counter,
 }
 

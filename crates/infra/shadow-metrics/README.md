@@ -4,15 +4,13 @@ Polling reader that turns persisted shadow blocks into Prometheus metrics.
 
 ## Overview
 
-`ShadowMetricsReader` polls `shadow_blocks` and emits gas used, transaction
-count, priority fee inversions, empty blocks, reverted blocks, and the latest
-block number. `shadow_blocks` is keyed by block number alone, so it contains
-only shadow candidate blocks that were reorged out; canonical blocks are not
-persisted, and every row the reader sees is therefore a reorg. A chain that has
-not reorged yet leaves the table empty. `ShadowMetricsStore` is the thin
-Postgres handle underneath it: it establishes an eager `PgPool` from a
-connection URL and exposes a schema-readiness check for Kubernetes-style
-`/readyz` probes. `base-shadow-indexer-db` owns and applies the shared schema.
+`ShadowMetricsReader` polls `shadow_blocks` for shadow candidate blocks that
+were reorged out and emits gas used, transaction count, priority fee
+inversions, empty blocks, reverted blocks, and the latest block number.
+`ShadowMetricsStore` is the thin Postgres handle underneath it: it establishes
+an eager `PgPool` from a connection URL and exposes a schema-readiness check for
+Kubernetes-style `/readyz` probes. `base-shadow-indexer-db` owns and applies the
+shared schema.
 
 Emission happens before the cursor is persisted, making delivery at-least-once.
 `ShadowMetricsReader::run` never returns an error: database errors leave the
@@ -20,15 +18,6 @@ cursor untouched so the next tick retries the same batch. Payloads deserialize
 during the database fetch, so one incompatible payload fails the entire poll,
 increments `poll_errors_total`, and stalls the reader until that row is repaired
 or deleted. This is an accepted trade-off for using one typed database row.
-
-## Deploy order
-
-shadow-indexer applies the migrations at startup and must roll out before
-shadow-metrics. During that window an old reader queries columns the new schema
-no longer has, so every poll fails and only `poll_errors_total` moves; a metrics
-gap for the length of the roll is expected. Deploying in the reverse order is
-also broken, and `check_schema_ready` fails `/readyz` for that case rather than
-reporting healthy while the cursor silently stalls.
 
 ## Usage
 
