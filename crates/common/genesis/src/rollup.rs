@@ -1,5 +1,6 @@
 //! Rollup Config Types
 
+use alloc::vec::Vec;
 use alloy_chains::Chain;
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::Address;
@@ -373,7 +374,9 @@ impl RollupConfig {
             panic!("rollup config: block time cannot be 0");
         }
 
-        Some(denim_timestamp.saturating_sub(self.genesis.l2_time).div_ceil(self.block_time))
+        Some(self.genesis.l2.number.saturating_add(
+            denim_timestamp.saturating_sub(self.genesis.l2_time).div_ceil(self.block_time),
+        ))
     }
 
     /// Returns the L2 block number at which the genesis-only Zenith testing gate activates.
@@ -410,20 +413,73 @@ impl RollupConfig {
             return legacy_millis;
         };
 
-        if blocks_since_genesis < denim_activation_block {
+        if block_number < denim_activation_block {
             return legacy_millis;
         }
 
+        let denim_blocks_since_genesis =
+            denim_activation_block.saturating_sub(self.genesis.l2.number);
         let denim_activation_seconds = self
             .genesis
             .l2_time
-            .saturating_add(denim_activation_block.saturating_mul(self.block_time));
+            .saturating_add(denim_blocks_since_genesis.saturating_mul(self.block_time));
         let denim_activation_full_millis = denim_activation_seconds.saturating_mul(1_000);
         denim_activation_full_millis.saturating_add(
-            blocks_since_genesis
+            block_number
                 .saturating_sub(denim_activation_block)
                 .saturating_mul(Self::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS),
         )
+    }
+
+    /// Returns the absolute L2 block numbers whose canonical whole-second timestamp is
+    /// `timestamp`.
+    ///
+    /// The result is empty outside the configured schedule, contains at most one legacy block,
+    /// and contains at most five blocks after Denim activation.
+    pub fn l2_block_number_candidates(&self, timestamp: u64) -> Vec<u64> {
+        if self.block_time == 0 {
+            panic!("rollup config: block time cannot be 0");
+        }
+
+        let mut candidates = Vec::with_capacity(5);
+        let denim_activation_block = self.denim_activation_block_number();
+        let legacy_delta = timestamp.saturating_sub(self.genesis.l2_time);
+        let legacy_offset = if timestamp == u64::MAX {
+            legacy_delta.div_ceil(self.block_time)
+        } else {
+            legacy_delta / self.block_time
+        };
+        let legacy_block = self.genesis.l2.number.saturating_add(legacy_offset);
+        if timestamp >= self.genesis.l2_time
+            && (timestamp == u64::MAX || legacy_delta.is_multiple_of(self.block_time))
+            && denim_activation_block.is_none_or(|activation| legacy_block < activation)
+            && self.l2_block_timestamp(legacy_block) == timestamp
+        {
+            candidates.push(legacy_block);
+        }
+
+        let Some(activation_block) = denim_activation_block else {
+            return candidates;
+        };
+        let activation_millis = self.l2_block_timestamp_millis(activation_block);
+        let second_millis = timestamp.saturating_mul(1_000);
+        for millis_part in [0, 200, 400, 600, 800] {
+            let target_millis = second_millis.saturating_add(millis_part);
+            if target_millis < activation_millis {
+                continue;
+            }
+            let delta = target_millis - activation_millis;
+            let offset = if target_millis == u64::MAX {
+                delta.div_ceil(Self::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS)
+            } else {
+                delta / Self::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS
+            };
+            let block = activation_block.saturating_add(offset);
+            if !candidates.contains(&block) && self.l2_block_timestamp(block) == timestamp {
+                candidates.push(block);
+            }
+        }
+        candidates
     }
 
     /// Returns the deterministic whole-second timestamp of an L2 block.
@@ -1200,6 +1256,54 @@ mod tests {
             assert_eq!(cfg.l2_block_timestamp(block_number), expected / 1_000);
             assert_eq!(cfg.l2_block_timestamp_parts(block_number), (expected / 1_000, 0));
         }
+    }
+
+    #[test]
+    fn l2_block_number_candidates_cover_legacy_and_denim_boundaries() {
+        let cfg = rollup_config_with_denim(10, 2, Some(15));
+
+        assert!(cfg.l2_block_number_candidates(9).is_empty());
+        assert_eq!(cfg.l2_block_number_candidates(12), [1]);
+        assert!(cfg.l2_block_number_candidates(13).is_empty());
+        assert_eq!(cfg.l2_block_number_candidates(14), [2]);
+        assert!(cfg.l2_block_number_candidates(15).is_empty());
+        assert_eq!(cfg.l2_block_number_candidates(16), [3, 4, 5, 6, 7]);
+        assert_eq!(cfg.l2_block_number_candidates(17), [8, 9, 10, 11, 12]);
+    }
+
+    #[test]
+    fn l2_block_number_candidates_are_absolute_for_nonzero_genesis() {
+        let mut cfg = rollup_config_with_denim(10, 2, Some(15));
+        cfg.genesis.l2.number = 100;
+
+        assert_eq!(cfg.denim_activation_block_number(), Some(103));
+        assert_eq!(cfg.l2_block_number_candidates(12), [101]);
+        assert_eq!(cfg.l2_block_number_candidates(16), [103, 104, 105, 106, 107]);
+        assert_eq!(cfg.l2_block_timestamp_millis(103), 16_000);
+    }
+
+    #[test]
+    fn l2_block_number_candidates_without_denim_preserve_legacy_schedule() {
+        let cfg = rollup_config_with_denim(11, 3, None);
+
+        assert!(cfg.l2_block_number_candidates(10).is_empty());
+        assert_eq!(cfg.l2_block_number_candidates(11), [0]);
+        assert!(cfg.l2_block_number_candidates(12).is_empty());
+        assert_eq!(cfg.l2_block_number_candidates(20), [3]);
+    }
+
+    #[test]
+    fn l2_block_number_candidates_deduplicate_saturation() {
+        let cfg = rollup_config_with_denim(u64::MAX, u64::MAX, Some(u64::MAX));
+        let saturated_timestamp = u64::MAX / 1_000;
+
+        assert_eq!(cfg.l2_block_number_candidates(saturated_timestamp), [0]);
+        assert!(cfg.l2_block_number_candidates(saturated_timestamp - 1).is_empty());
+
+        let mut absolute = cfg;
+        absolute.genesis.l2.number = u64::MAX;
+        assert_eq!(absolute.denim_activation_block_number(), Some(u64::MAX));
+        assert_eq!(absolute.l2_block_number_candidates(saturated_timestamp), [u64::MAX]);
     }
 
     #[test]
