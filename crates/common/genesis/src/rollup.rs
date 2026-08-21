@@ -375,12 +375,10 @@ impl RollupConfig {
             panic!("rollup config: block time cannot be 0");
         }
 
-        if denim_timestamp <= self.genesis.l2_time {
-            return Some(self.genesis.l2.number);
-        }
-
-        let activation_delay = denim_timestamp - self.genesis.l2_time;
-        Some(self.genesis.l2.number + activation_delay.div_ceil(self.block_time))
+        Some(
+            self.genesis.l2.number
+                + denim_timestamp.saturating_sub(self.genesis.l2_time).div_ceil(self.block_time),
+        )
     }
 
     /// Returns the L2 block number at which the genesis-only Zenith testing gate activates.
@@ -393,12 +391,10 @@ impl RollupConfig {
             panic!("rollup config: block time cannot be 0");
         }
 
-        if zenith_timestamp <= self.genesis.l2_time {
-            return Some(self.genesis.l2.number);
-        }
-
-        let activation_delay = zenith_timestamp - self.genesis.l2_time;
-        Some(self.genesis.l2.number + activation_delay.div_ceil(self.block_time))
+        Some(
+            self.genesis.l2.number
+                + zenith_timestamp.saturating_sub(self.genesis.l2_time).div_ceil(self.block_time),
+        )
     }
 
     /// Returns the deterministic timestamp of an L2 block in milliseconds.
