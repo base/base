@@ -18,7 +18,8 @@ async fn setup(
     accept_validity: bool,
     max_validity_predicates: usize,
 ) -> eyre::Result<(TestHarness, RpcClient)> {
-    let config = BuilderApiExtensionConfig::new(accept_validity, max_validity_predicates);
+    let config = BuilderApiExtensionConfig::new(accept_validity, max_validity_predicates)
+        .with_noop_metering();
     let harness = TestHarness::builder().with_ext::<BuilderApiExtension>(config).build().await?;
     let client = harness.rpc_client()?;
     Ok((harness, client))

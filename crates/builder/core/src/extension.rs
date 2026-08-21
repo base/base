@@ -1,10 +1,15 @@
 //! Builder API RPC extension for registering the `base_insertValidatedTransaction` endpoint.
 
-use base_execution_txpool::BuilderApiServer;
+use std::sync::Arc;
+
 pub use base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES;
+use base_execution_txpool::BuilderApiServer;
 use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
 
-use crate::{ShadowValidityBuilderApi, ShadowValidityConfig, ShadowValidityConfigError};
+use crate::{
+    NoopMeteringProvider, ShadowValidityBuilderApi, ShadowValidityConfig,
+    ShadowValidityConfigError, SharedMeteringProvider,
+};
 
 /// Builder RPC configuration for experimental validity-bearing transactions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,6 +50,19 @@ impl BuilderApiExtensionConfig {
         self.shadow_validity = shadow_validity;
         Ok(self)
     }
+
+    /// Pairs this validity config with a metering cache for insert.
+    pub fn with_metering_provider(
+        self,
+        metering_provider: SharedMeteringProvider,
+    ) -> BuilderApiExtensionArgs {
+        BuilderApiExtensionArgs { config: self, metering_provider }
+    }
+
+    /// Pairs this validity config with a no-op metering cache.
+    pub fn with_noop_metering(self) -> BuilderApiExtensionArgs {
+        self.with_metering_provider(Arc::new(NoopMeteringProvider))
+    }
 }
 
 impl Default for BuilderApiExtensionConfig {
@@ -53,20 +71,44 @@ impl Default for BuilderApiExtensionConfig {
     }
 }
 
+/// Install arguments for [`BuilderApiExtension`].
+#[derive(Clone)]
+pub struct BuilderApiExtensionArgs {
+    /// Validity-extension RPC settings.
+    pub config: BuilderApiExtensionConfig,
+    /// Shared builder metering cache written on `insertValidatedTransaction`.
+    pub metering_provider: SharedMeteringProvider,
+}
+
+impl core::fmt::Debug for BuilderApiExtensionArgs {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("BuilderApiExtensionArgs")
+            .field("config", &self.config)
+            .field("metering_provider", &self.metering_provider)
+            .finish()
+    }
+}
+
 /// Extension that registers the Builder API RPC module (`base_insertValidatedTransaction`).
 ///
 /// Its configuration controls validity metadata acceptance, predicate limits, and shadow-only
 /// validity injection. Ordinary validated transactions remain available in all modes.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone)]
 pub struct BuilderApiExtension {
     config: BuilderApiExtensionConfig,
+    metering_provider: SharedMeteringProvider,
 }
 
 impl BaseNodeExtension for BuilderApiExtension {
     fn apply(self: Box<Self>, builder: NodeHooks) -> NodeHooks {
         let config = self.config;
+        let metering_provider = self.metering_provider;
         builder.add_rpc_module(move |ctx: &mut BaseRpcContext<'_>| {
-            let api = ShadowValidityBuilderApi::new(ctx.pool().clone(), config);
+            let api = ShadowValidityBuilderApi::new(
+                ctx.pool().clone(),
+                config,
+                Arc::clone(&metering_provider),
+            );
             ctx.modules.merge_configured(api.into_rpc())?;
             Ok(())
         })
@@ -74,9 +116,9 @@ impl BaseNodeExtension for BuilderApiExtension {
 }
 
 impl FromExtensionConfig for BuilderApiExtension {
-    type Config = BuilderApiExtensionConfig;
+    type Config = BuilderApiExtensionArgs;
 
-    fn from_config(config: Self::Config) -> Self {
-        Self { config }
+    fn from_config(args: Self::Config) -> Self {
+        Self { config: args.config, metering_provider: args.metering_provider }
     }
 }
