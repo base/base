@@ -1,11 +1,20 @@
 //! Integration tests that stress Flashblocks state handling.
 
+use std::time::{Duration, Instant};
+
+use alloy_consensus::{Header, Sealed};
 use alloy_network::BlockResponse;
-use alloy_primitives::U256;
-use base_flashblocks::{FlashblocksAPI, PendingBlocksAPI};
+use alloy_primitives::{B256, U256};
+use base_common_flashblocks::{
+    ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
+};
+use base_flashblocks::{
+    FlashblocksAPI, FlashblocksReceiver, PendingBlocks, PendingBlocksAPI, PendingBlocksBuilder,
+};
 use base_flashblocks_node::test_harness::{FlashblockBuilder, FlashblocksBuilderTestHarness};
 use base_test_utils::Account;
 use reth_provider::{AccountReader, StateProviderFactory};
+use tokio::time::sleep;
 
 #[tokio::test]
 async fn test_state_overrides_persisted_across_flashblocks() {
@@ -303,25 +312,9 @@ async fn test_only_current_pending_state_cleared_upon_canonical_block_reorg() {
     )])
     .await;
 
-    let pending = test.flashblocks.get_pending_blocks().get_block(true);
-    assert!(pending.is_some());
-    let pending = pending.unwrap();
-    assert_eq!(pending.transactions.len(), 2);
-
-    let overrides = test
-        .flashblocks
-        .get_pending_blocks()
-        .get_state_overrides()
-        .expect("should be set from txn execution");
-
-    assert!(overrides.contains_key(&Account::Alice.address()));
-    assert_eq!(
-        overrides
-            .get(&Account::Bob.address())
-            .expect("should be set as txn receiver")
-            .balance
-            .expect("should be changed due to receiving funds"),
-        test.expected_pending_balance(Account::Bob, 100_000)
+    assert!(
+        test.flashblocks.get_pending_blocks().get_block(true).is_none(),
+        "overlap mismatch must clear pending instead of rebuilding a suffix from the old overlay"
     );
 }
 
@@ -653,12 +646,11 @@ async fn test_sequential_nonces_across_flashblocks() {
 }
 
 #[tokio::test]
-async fn test_flashblock_cached_and_applied_after_canonical_block() {
+async fn test_cached_wrong_parent_flashblock_is_discarded_after_canonical_advance() {
     let mut test = FlashblocksBuilderTestHarness::new().await;
 
-    // Send a flashblock targeting block 2 (canonical_block_number=1) before
-    // canonical block 1 exists. This triggers MissingCanonicalHeader and should
-    // be cached by the processor.
+    // This cached flashblock was built on the current genesis tip but claims to target block 2.
+    // Once canonical block 1 arrives, its parent hash is no longer valid for the cached payload.
     test.send_flashblock(FlashblockBuilder::new_base(&test).with_canonical_block_number(1).build())
         .await;
 
@@ -667,17 +659,32 @@ async fn test_flashblock_cached_and_applied_after_canonical_block() {
         "pending state should be empty because canonical block 1 does not exist yet"
     );
 
-    // Build canonical block 1 so the processor can replay the cached flashblock.
-    test.new_canonical_block(vec![]).await;
-    assert_eq!(test.node.latest_block().number, 1);
+    let block_one = test.new_canonical_block_without_processing(vec![]).await;
+    let block_one_number = block_one.number;
+    let block_one_hash = block_one.hash();
+    test.flashblocks.on_canonical_block_received(block_one);
 
-    let pending =
-        test.flashblocks.get_pending_blocks().get_block(true).expect("cached flashblock replayed");
-    assert_eq!(pending.header.number, 2, "replayed flashblock should produce pending block 2");
+    let resume = FlashblockBuilder::new_base(&test).build();
+    assert_eq!(resume.metadata.block_number, block_one_number + 1);
+    assert_eq!(resume.base.as_ref().map(|base| base.parent_hash), Some(block_one_hash));
+    test.flashblocks.on_flashblock_received(resume);
+
+    wait_until(
+        Duration::from_secs(5),
+        || {
+            test.flashblocks.get_pending_blocks().as_ref().is_some_and(|pending| {
+                pending.earliest_block_number() == block_one_number + 1
+                    && pending.latest_block_number() == block_one_number + 1
+                    && pending.parent_hash() == block_one_hash
+            })
+        },
+        "cached work from the old fork must be discarded before a matching flashblock resumes",
+    )
+    .await;
 }
 
 #[tokio::test]
-async fn test_cached_flashblock_with_transactions_applied_after_canonical() {
+async fn test_cached_wrong_parent_flashblocks_are_discarded_before_a_fresh_sequence() {
     let mut test = FlashblocksBuilderTestHarness::new().await;
 
     let transfer_amount = 100_000u128;
@@ -701,13 +708,37 @@ async fn test_cached_flashblock_with_transactions_applied_after_canonical() {
     .await;
     assert!(test.flashblocks.get_pending_blocks().is_none());
 
-    // Provide canonical block 1 to unlock the cache.
-    test.new_canonical_block(vec![]).await;
+    let block_one = test.new_canonical_block_without_processing(vec![]).await;
+    let block_one_number = block_one.number;
+    let block_one_hash = block_one.hash();
 
-    let pending =
-        test.flashblocks.get_pending_blocks().get_block(true).expect("cached flashblocks replayed");
-    assert_eq!(pending.header.number, 2);
-    assert_eq!(pending.transactions.len(), 2, "deposit tx from base + Alice->Bob transfer");
+    let resume = FlashblockBuilder::new_base(&test).build();
+    let append = FlashblockBuilder::new(&test, 1)
+        .with_canonical_block_number(block_one_number)
+        .with_transactions(vec![test.build_transaction_to_send_eth(
+            Account::Alice,
+            Account::Bob,
+            transfer_amount,
+        )])
+        .build();
+
+    test.flashblocks.on_canonical_block_received(block_one);
+    test.flashblocks.on_flashblock_received(resume);
+    test.flashblocks.on_flashblock_received(append);
+
+    wait_until(
+        Duration::from_secs(5),
+        || {
+            test.flashblocks.get_pending_blocks().as_ref().is_some_and(|pending| {
+                pending.earliest_block_number() == block_one_number + 1
+                    && pending.latest_block_number() == block_one_number + 1
+                    && pending.parent_hash() == block_one_hash
+                    && pending.pending_transaction_count() == 2
+            })
+        },
+        "cached work from the old fork must not contaminate the fresh flashblock sequence",
+    )
+    .await;
 
     let overrides = test
         .flashblocks
@@ -725,6 +756,91 @@ async fn test_cached_flashblock_with_transactions_applied_after_canonical() {
             .balance
             .expect("balance should be overridden"),
         test.expected_pending_balance(Account::Bob, transfer_amount)
+    );
+}
+
+#[tokio::test]
+async fn test_drops_deltas_after_preserving_tip_aligned_pending_from_a_wrong_parent() {
+    let mut test = FlashblocksBuilderTestHarness::new().await;
+    let old_transfer_amount = 50_000u128;
+    let fresh_transfer_amount = 100_000u128;
+
+    // Cache an old-fork base and delta for block 2 before canonical block 1 is available.
+    test.send_flashblock(FlashblockBuilder::new_base(&test).with_canonical_block_number(1).build())
+        .await;
+    test.send_flashblock(
+        FlashblockBuilder::new(&test, 1)
+            .with_canonical_block_number(1)
+            .with_transactions(vec![test.build_transaction_to_send_eth(
+                Account::Alice,
+                Account::Bob,
+                old_transfer_amount,
+            )])
+            .build(),
+    )
+    .await;
+
+    let block_one = test.new_canonical_block_without_processing(vec![]).await;
+    let block_one_number = block_one.number;
+    let block_one_hash = block_one.hash();
+
+    // Before the canonical notification drains the old cache, a valid current base establishes a
+    // healthy pending window for block 2.
+    test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
+    wait_until(
+        Duration::from_secs(5),
+        || {
+            test.flashblocks.get_pending_blocks().as_ref().is_some_and(|pending| {
+                pending.earliest_block_number() == block_one_number + 1
+                    && pending.parent_hash() == block_one_hash
+                    && pending.pending_transaction_count() == 1
+            })
+        },
+        "fresh base flashblock should establish a tip-aligned pending window",
+    )
+    .await;
+
+    let valid_duplicate_base = FlashblockBuilder::new_base(&test).build();
+    let fresh_delta = FlashblockBuilder::new(&test, 1)
+        .with_canonical_block_number(block_one_number)
+        .with_transactions(vec![test.build_transaction_to_send_eth(
+            Account::Charlie,
+            Account::Bob,
+            fresh_transfer_amount,
+        )])
+        .build();
+
+    test.flashblocks.on_canonical_block_received(block_one);
+    // A valid duplicate base clears the single-block quarantine before the fresh delta arrives.
+    test.flashblocks.on_flashblock_received(valid_duplicate_base);
+    test.flashblocks.on_flashblock_received(fresh_delta);
+
+    wait_until(
+        Duration::from_secs(5),
+        || {
+            test.flashblocks.get_pending_blocks().as_ref().is_some_and(|pending| {
+                pending.earliest_block_number() == block_one_number + 1
+                    && pending.latest_block_number() == block_one_number + 1
+                    && pending.parent_hash() == block_one_hash
+                    && pending.pending_transaction_count() == 2
+            })
+        },
+        "old-fork deltas must not extend a pending window preserved after their base is dropped",
+    )
+    .await;
+
+    let overrides = test
+        .flashblocks
+        .get_pending_blocks()
+        .get_state_overrides()
+        .expect("fresh delta should publish state overrides");
+    assert_eq!(
+        overrides
+            .get(&Account::Bob.address())
+            .expect("Bob should have a state override")
+            .balance
+            .expect("Bob balance should be overridden"),
+        test.expected_pending_balance(Account::Bob, fresh_transfer_amount)
     );
 }
 
@@ -850,4 +966,341 @@ async fn test_same_block_append_refreshes_pending_header() {
         after_second_append.header.transactions_root != first_transactions_root,
         "same-block append must publish a fresh header with updated transactions_root"
     );
+}
+
+fn dummy_flashblock(block_number: u64, parent_hash: B256) -> Flashblock {
+    Flashblock {
+        payload_id: Default::default(),
+        index: 0,
+        base: Some(ExecutionPayloadBaseV1 {
+            parent_beacon_block_root: B256::ZERO,
+            parent_hash,
+            fee_recipient: Default::default(),
+            prev_randao: B256::ZERO,
+            block_number,
+            gas_limit: 30_000_000,
+            timestamp: 1_700_000_000 + block_number,
+            extra_data: Default::default(),
+            base_fee_per_gas: U256::from(1_000_000_000u64),
+        }),
+        diff: ExecutionPayloadFlashblockDeltaV1::default(),
+        metadata: Metadata::new(block_number),
+    }
+}
+
+fn pending_spanning(
+    earliest: u64,
+    latest: u64,
+    parent_hash: B256,
+    suffix: Flashblock,
+) -> PendingBlocks {
+    let mut builder = PendingBlocksBuilder::new();
+    builder.with_header(Sealed::new_unchecked(
+        Header { number: earliest, parent_hash, ..Default::default() },
+        B256::ZERO,
+    ));
+    builder.with_header(Sealed::new_unchecked(
+        Header { number: latest, parent_hash: B256::ZERO, ..Default::default() },
+        B256::ZERO,
+    ));
+    builder.with_flashblocks([dummy_flashblock(earliest, parent_hash), suffix]);
+    builder.build().expect("pending snapshot should build")
+}
+
+fn pending_at_block(block_number: u64, parent_hash: B256) -> PendingBlocks {
+    let mut builder = PendingBlocksBuilder::new();
+    builder.with_header(Sealed::new_unchecked(
+        Header { number: block_number, parent_hash, ..Default::default() },
+        B256::ZERO,
+    ));
+    builder.with_flashblocks([dummy_flashblock(block_number, parent_hash)]);
+    builder.build().expect("pending snapshot should build")
+}
+
+async fn wait_until(timeout: Duration, mut check: impl FnMut() -> bool, failure: &str) {
+    let start = Instant::now();
+    loop {
+        if check() {
+            return;
+        }
+        if start.elapsed() > timeout {
+            panic!("{failure}");
+        }
+        sleep(Duration::from_millis(20)).await;
+    }
+}
+
+#[tokio::test]
+async fn test_matching_canonical_rebases_pending_onto_canonical_n() {
+    let mut test = FlashblocksBuilderTestHarness::new().await;
+    let genesis_hash = test.node.latest_block().hash();
+
+    let block_one = test.new_canonical_block_without_processing(vec![]).await;
+    assert!(
+        block_one.body().transactions.is_empty(),
+        "empty canonical block is required so injected pending txs match"
+    );
+
+    let suffix = FlashblockBuilder::new_base(&test).build();
+    assert_eq!(suffix.metadata.block_number, 2);
+
+    test.flashblocks.set_pending_blocks_for_testing(Some(pending_spanning(
+        1,
+        2,
+        genesis_hash,
+        suffix,
+    )));
+
+    test.flashblocks.on_canonical_block_received(block_one.clone());
+    wait_until(
+        Duration::from_secs(5),
+        || {
+            test.flashblocks.get_pending_blocks().as_ref().is_some_and(|pending| {
+                pending.earliest_block_number() == 2 && pending.parent_hash() == block_one.hash()
+            })
+        },
+        "pending snapshot should rebase onto canonical block 1",
+    )
+    .await;
+
+    let pending = test.flashblocks.get_pending_blocks();
+    let pending = pending.as_ref().expect("pending should remain after rebase");
+    assert_eq!(pending.latest_block_number(), 2);
+    assert_eq!(pending.earliest_block_number(), 2);
+}
+
+#[tokio::test]
+async fn test_failed_rebase_clears_pending_and_waits_for_recovery_resume() {
+    let mut test = FlashblocksBuilderTestHarness::new().await;
+    let genesis_hash = test.node.latest_block().hash();
+    let block_one = test.new_canonical_block_without_processing(vec![]).await;
+    let block_one_number = block_one.number;
+    let block_one_hash = block_one.hash();
+
+    // Rebuilding this suffix requires canonical block 2, which the provider does not have. This
+    // models a failed rebase while an old pending snapshot is still published.
+    let suffix = FlashblockBuilder::new_base(&test)
+        .with_canonical_block_number(block_one_number + 1)
+        .build();
+    assert_eq!(suffix.metadata.block_number, block_one_number + 2);
+    test.flashblocks.set_pending_blocks_for_testing(Some(pending_spanning(
+        block_one_number,
+        block_one_number + 2,
+        genesis_hash,
+        suffix,
+    )));
+
+    test.flashblocks.on_canonical_block_received(block_one);
+    wait_until(
+        Duration::from_secs(5),
+        || test.flashblocks.get_pending_blocks().is_none(),
+        "a failed rebase must clear the previously published pending snapshot",
+    )
+    .await;
+
+    let resume = FlashblockBuilder::new_base(&test).build();
+    assert_eq!(resume.metadata.block_number, block_one_number + 1);
+    assert_eq!(resume.base.as_ref().map(|base| base.parent_hash), Some(block_one_hash));
+    test.flashblocks.on_flashblock_received(resume);
+
+    wait_until(
+        Duration::from_secs(5),
+        || {
+            test.flashblocks.get_pending_blocks().as_ref().is_some_and(|pending| {
+                pending.earliest_block_number() == block_one_number + 1
+                    && pending.latest_block_number() == block_one_number + 1
+                    && pending.parent_hash() == block_one_hash
+            })
+        },
+        "the processor must remain in recovery until a matching current flashblock arrives",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn test_canonical_catch_up_without_future_flashblocks_clears_pending() {
+    let mut test = FlashblocksBuilderTestHarness::new().await;
+    let genesis_hash = test.node.latest_block().hash();
+    let block_one = test.new_canonical_block_without_processing(vec![]).await;
+
+    test.flashblocks.set_pending_blocks_for_testing(Some(pending_at_block(1, genesis_hash)));
+    test.flashblocks.on_canonical_block_received(block_one);
+    wait_until(
+        Duration::from_secs(5),
+        || test.flashblocks.get_pending_blocks().is_none(),
+        "pending should clear when canonical catches up with no future flashblocks",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn test_canonical_latest_mismatch_waits_for_matching_recovery_resume() {
+    let mut test = FlashblocksBuilderTestHarness::new().await;
+    test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
+
+    let block_one = test.new_canonical_block_without_processing(vec![]).await;
+    let block_one_number = block_one.number;
+    let block_one_hash = block_one.hash();
+    test.flashblocks.on_canonical_block_received(block_one);
+    wait_until(
+        Duration::from_secs(5),
+        || test.flashblocks.get_pending_blocks().is_none(),
+        "a latest-block transaction mismatch must clear pending state",
+    )
+    .await;
+
+    let mut wrong_parent = FlashblockBuilder::new_base(&test).build();
+    wrong_parent
+        .base
+        .as_mut()
+        .expect("index-zero flashblock must have a base payload")
+        .parent_hash = B256::repeat_byte(0x24);
+    test.flashblocks.on_flashblock_received(wrong_parent);
+
+    let resume = FlashblockBuilder::new_base(&test).build();
+    assert_eq!(resume.metadata.block_number, block_one_number + 1);
+    assert_eq!(resume.base.as_ref().map(|base| base.parent_hash), Some(block_one_hash));
+    test.flashblocks.on_flashblock_received(resume);
+
+    wait_until(
+        Duration::from_secs(5),
+        || {
+            test.flashblocks.get_pending_blocks().as_ref().is_some_and(|pending| {
+                pending.earliest_block_number() == block_one_number + 1
+                    && pending.latest_block_number() == block_one_number + 1
+                    && pending.parent_hash() == block_one_hash
+            })
+        },
+        "latest-block mismatch recovery must reject a wrong-parent flashblock before resuming",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn test_untracked_older_canonical_does_not_false_reorg() {
+    let test = FlashblocksBuilderTestHarness::new().await;
+    let genesis = test.node.latest_block();
+    assert_eq!(genesis.number, 0);
+
+    let suffix = FlashblockBuilder::new_base(&test).with_canonical_block_number(2).build();
+    test.flashblocks.set_pending_blocks_for_testing(Some(pending_spanning(
+        2,
+        3,
+        genesis.hash(),
+        suffix,
+    )));
+    assert!(test.flashblocks.get_pending_blocks().as_ref().is_some());
+
+    test.flashblocks.on_canonical_block_received(genesis);
+    sleep(Duration::from_millis(100)).await;
+
+    let pending = test.flashblocks.get_pending_blocks();
+    let pending =
+        pending.as_ref().expect("untracked genesis must not clear pending via empty-vector reorg");
+    assert_eq!(pending.earliest_block_number(), 2);
+    assert_eq!(pending.latest_block_number(), 3);
+}
+
+#[tokio::test]
+async fn test_anchor_hash_mismatch_waits_for_matching_recovery_resume() {
+    let test = FlashblocksBuilderTestHarness::new().await;
+    let genesis = test.node.latest_block();
+    let genesis_number = genesis.number;
+    let genesis_hash = genesis.hash();
+
+    let suffix = FlashblockBuilder::new_base(&test).build();
+    test.flashblocks.set_pending_blocks_for_testing(Some(pending_spanning(
+        1,
+        2,
+        B256::repeat_byte(0x42),
+        suffix,
+    )));
+
+    test.flashblocks.on_canonical_block_received(genesis);
+    wait_until(
+        Duration::from_secs(5),
+        || test.flashblocks.get_pending_blocks().is_none(),
+        "anchor hash mismatch must clear pending",
+    )
+    .await;
+
+    let mut wrong_parent = FlashblockBuilder::new_base(&test).build();
+    wrong_parent
+        .base
+        .as_mut()
+        .expect("index-zero flashblock must have a base payload")
+        .parent_hash = B256::repeat_byte(0x24);
+    test.flashblocks.on_flashblock_received(wrong_parent);
+
+    let resume = FlashblockBuilder::new_base(&test).build();
+    assert_eq!(resume.metadata.block_number, genesis_number + 1);
+    assert_eq!(resume.base.as_ref().map(|base| base.parent_hash), Some(genesis_hash));
+    test.flashblocks.on_flashblock_received(resume);
+
+    wait_until(
+        Duration::from_secs(5),
+        || {
+            test.flashblocks.get_pending_blocks().as_ref().is_some_and(|pending| {
+                pending.earliest_block_number() == genesis_number + 1
+                    && pending.latest_block_number() == genesis_number + 1
+                    && pending.parent_hash() == genesis_hash
+            })
+        },
+        "anchor mismatch recovery must reject a wrong-parent flashblock before accepting a matching resume",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn test_stale_queue_skips_historical_work_and_resumes_at_current_index_zero() {
+    let mut test = FlashblocksBuilderTestHarness::new().await;
+
+    test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
+    assert_eq!(
+        test.flashblocks
+            .get_pending_blocks()
+            .as_ref()
+            .expect("pending after first flashblock")
+            .latest_block_number(),
+        1
+    );
+
+    let mut stale_flashblocks = Vec::new();
+    for parent in 1..8 {
+        stale_flashblocks
+            .push(FlashblockBuilder::new_base(&test).with_canonical_block_number(parent).build());
+    }
+
+    let mut stale_canonicals = Vec::new();
+    for _ in 0..8 {
+        stale_canonicals.push(test.new_canonical_block_without_processing(vec![]).await);
+    }
+    let best = test.node.latest_block();
+    assert_eq!(best.number, 8);
+
+    for block in stale_canonicals {
+        test.flashblocks.on_canonical_block_received(block);
+    }
+    for flashblock in stale_flashblocks {
+        test.flashblocks.on_flashblock_received(flashblock);
+    }
+
+    let resume = FlashblockBuilder::new_base(&test).build();
+    assert_eq!(resume.index, 0);
+    assert_eq!(resume.metadata.block_number, best.number + 1);
+    assert_eq!(resume.base.as_ref().map(|base| base.parent_hash), Some(best.hash()));
+    test.flashblocks.on_flashblock_received(resume);
+
+    wait_until(
+        Duration::from_secs(5),
+        || {
+            test.flashblocks.get_pending_blocks().as_ref().is_some_and(|pending| {
+                pending.latest_block_number() == best.number + 1
+                    && pending.earliest_block_number() == best.number + 1
+                    && pending.parent_hash() == best.hash()
+            })
+        },
+        "processor should skip the stale queue and resume at the current index-0 flashblock",
+    )
+    .await;
 }

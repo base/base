@@ -20,6 +20,10 @@ base_metrics::define_metrics! {
     pending_clear_catchup: counter,
     #[describe("Number of times pending snapshot was cleared because of reorg")]
     pending_clear_reorg: counter,
+    #[describe("Number of queued flashblock or canonical events skipped as stale versus current tip")]
+    pending_stale_events_skipped: counter,
+    #[describe("Number of times the flashblock processor entered stale-queue recovery")]
+    pending_queue_recovery: counter,
     #[describe("Pending snapshot flashblock index (current)")]
     pending_snapshot_fb_index: gauge,
     #[describe("Pending snapshot block number (current)")]

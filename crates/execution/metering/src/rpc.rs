@@ -11,7 +11,7 @@ use base_common_evm::L1BlockInfo;
 use base_common_flz::flz_compress_len;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::extract_l1_info_from_tx;
-use base_flashblocks::{FlashblocksAPI, PendingBlocksAPI};
+use base_flashblocks::FlashblocksAPI;
 use jsonrpsee::core::{RpcResult, async_trait};
 use reth_primitives_traits::SealedHeader;
 use reth_provider::{
@@ -96,13 +96,52 @@ where
             "Starting bundle metering"
         );
 
-        // Get pending blocks from flashblocks API
-        let pending_blocks = self.flashblocks_api.get_pending_blocks();
+        // Take a consistent canonical tip before selecting pending overlay or looking up state.
+        let best = self
+            .provider
+            .sealed_header_by_number_or_tag(BlockNumberOrTag::Latest)
+            .map_err(|e| {
+                jsonrpsee::types::ErrorObjectOwned::owned(
+                    jsonrpsee::types::ErrorCode::InternalError.code(),
+                    format!("Failed to get canonical block header: {e}"),
+                    None::<()>,
+                )
+            })?
+            .ok_or_else(|| {
+                jsonrpsee::types::ErrorObjectOwned::owned(
+                    jsonrpsee::types::ErrorCode::InternalError.code(),
+                    "Canonical block not found".to_string(),
+                    None::<()>,
+                )
+            })?;
+
+        let pending_guard = self.flashblocks_api.get_pending_blocks();
+        let pending_blocks = pending_guard.as_ref().filter(|pb| {
+            let fresh = pb.is_based_on_canonical(best.number(), best.hash());
+            if !fresh {
+                debug!(
+                    tip = best.number(),
+                    tip_hash = %best.hash(),
+                    pending_canonical = %pb.canonical_block_number(),
+                    pending_parent = %pb.parent_hash(),
+                    pending_latest = pb.latest_block_number(),
+                    "ignoring stale flashblock pending for metering"
+                );
+            }
+            fresh
+        });
 
         // Get header and flashblock index from pending blocks
-        // If no pending blocks exist, fall back to latest canonical block
-        let (header, flashblock_index, canonical_block_number) =
-            if let Some(pb) = pending_blocks.as_ref() {
+        // If pending is absent or not based on the current tip, fall back to latest canonical.
+        let (header, flashblock_index, canonical_block_number) = pending_blocks.map_or_else(
+            || {
+                debug!(
+                    canonical_block = best.number(),
+                    "No fresh flashblocks available, using canonical block state for metering"
+                );
+                (best, 0, BlockNumberOrTag::Latest)
+            },
+            |pb| {
                 let latest_header: Sealed<Header> = pb.latest_header();
                 let flashblock_index = pb.latest_flashblock_index();
                 let canonical_block_number = pb.canonical_block_number();
@@ -114,38 +153,11 @@ where
                     "Using latest flashblock state for metering"
                 );
 
-                // Convert Sealed<Header> to SealedHeader
                 let sealed_header =
                     SealedHeader::new(latest_header.inner().clone(), latest_header.hash());
                 (sealed_header, flashblock_index, canonical_block_number)
-            } else {
-                // No pending blocks, use latest canonical block
-                let canonical_block_number = pending_blocks.get_canonical_block_number();
-                let header = self
-                    .provider
-                    .sealed_header_by_number_or_tag(canonical_block_number)
-                    .map_err(|e| {
-                        jsonrpsee::types::ErrorObjectOwned::owned(
-                            jsonrpsee::types::ErrorCode::InternalError.code(),
-                            format!("Failed to get canonical block header: {e}"),
-                            None::<()>,
-                        )
-                    })?
-                    .ok_or_else(|| {
-                        jsonrpsee::types::ErrorObjectOwned::owned(
-                            jsonrpsee::types::ErrorCode::InternalError.code(),
-                            "Canonical block not found".to_string(),
-                            None::<()>,
-                        )
-                    })?;
-
-                debug!(
-                    canonical_block = header.number,
-                    "No flashblocks available, using canonical block state for metering"
-                );
-
-                (header, 0, canonical_block_number)
-            };
+            },
+        );
 
         let parsed_bundle = ParsedBundle::try_from(bundle).map_err(|e| {
             jsonrpsee::types::ErrorObjectOwned::owned(
@@ -168,12 +180,12 @@ where
 
         // If we have pending blocks, extract the pending state for metering
         let pending_state =
-            pending_blocks.as_ref().map(|pb| PendingState { bundle_state: pb.get_bundle_state() });
+            pending_blocks.map(|pb| PendingState { bundle_state: pb.get_bundle_state() });
 
         // Pending flashblock headers can omit parent_beacon_block_root; prefer the CL-provided
         // value from the flashblock base payload when available, otherwise fall back to the header.
         let parent_beacon_block_root = header.parent_beacon_block_root().or_else(|| {
-            pending_blocks.as_ref().and_then(|pb| {
+            pending_blocks.and_then(|pb| {
                 pb.get_flashblocks()
                     .first()
                     .and_then(|fb| fb.base.as_ref().map(|base| base.parent_beacon_block_root))
@@ -239,7 +251,7 @@ where
             gas_fees: output.total_gas_fees,
             results: output.results,
             state_block_number: header.number,
-            state_flashblock_index: pending_blocks.as_ref().map(|pb| pb.latest_flashblock_index()),
+            state_flashblock_index: pending_blocks.map(|pb| pb.latest_flashblock_index()),
             total_gas_used: output.total_gas_used,
             total_execution_time_us,
         })
@@ -489,7 +501,7 @@ mod tests {
     use base_common_flashblocks::{
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
     };
-    use base_flashblocks::{FlashblocksConfig, PendingBlocksBuilder};
+    use base_flashblocks::{FlashblocksConfig, FlashblocksState, PendingBlocksBuilder};
     use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness};
     use base_test_utils::Account;
     use reth_transaction_pool::test_utils::TransactionBuilder;
@@ -539,6 +551,63 @@ mod tests {
                 .into_encoded()
                 .into_encoded_bytes(),
         ]
+    }
+
+    async fn setup_with_flashblocks()
+    -> eyre::Result<(TestHarness, RpcClient, Arc<FlashblocksState>)> {
+        let flashblocks_config =
+            FlashblocksConfig::new(Url::parse("ws://localhost:12345").unwrap(), 10);
+        let flashblocks_state = Arc::clone(&flashblocks_config.state);
+        let harness = TestHarness::builder()
+            .with_ext::<MeteringExtension>(MeteringConfig::with_flashblocks(flashblocks_config))
+            .build()
+            .await?;
+        let client = harness.rpc_client()?;
+        Ok((harness, client, flashblocks_state))
+    }
+
+    fn pending_blocks_on_parent(
+        pending_block_number: u64,
+        parent_hash: B256,
+    ) -> eyre::Result<base_flashblocks::PendingBlocks> {
+        let header = Header {
+            number: pending_block_number,
+            parent_hash,
+            timestamp: 1_700_000_000 + pending_block_number,
+            gas_limit: 30_000_000,
+            base_fee_per_gas: Some(1_000_000_000),
+            ..Default::default()
+        };
+        let mut builder = PendingBlocksBuilder::new();
+        builder.with_header(header.seal(B256::ZERO));
+        builder.with_flashblocks([Flashblock {
+            payload_id: Default::default(),
+            index: 0,
+            base: Some(ExecutionPayloadBaseV1 {
+                parent_beacon_block_root: B256::ZERO,
+                parent_hash,
+                fee_recipient: Default::default(),
+                prev_randao: B256::ZERO,
+                block_number: pending_block_number,
+                gas_limit: 30_000_000,
+                timestamp: 1_700_000_000 + pending_block_number,
+                extra_data: Default::default(),
+                base_fee_per_gas: alloy_primitives::U256::from(1_000_000_000u64),
+            }),
+            diff: ExecutionPayloadFlashblockDeltaV1 {
+                state_root: B256::ZERO,
+                receipts_root: B256::ZERO,
+                logs_bloom: Bloom::default(),
+                gas_used: 0,
+                block_hash: B256::ZERO,
+                transactions: vec![],
+                withdrawals: vec![],
+                withdrawals_root: B256::ZERO,
+                blob_gas_used: Some(0),
+            },
+            metadata: Metadata::new(pending_block_number),
+        }]);
+        Ok(builder.build()?)
     }
 
     #[tokio::test]
@@ -869,86 +938,108 @@ mod tests {
     /// "Block not found: 0x0000000000000000000000000000000000000000000000000000000000000000"
     #[tokio::test]
     async fn test_meter_bundle_with_flashblocks_zero_hash_header() -> eyre::Result<()> {
-        // Create a shared flashblocks state that we can inject pending blocks into
-        let flashblocks_config =
-            FlashblocksConfig::new(Url::parse("ws://localhost:12345").unwrap(), 10);
-        let flashblocks_state = Arc::clone(&flashblocks_config.state);
+        let (harness, client, flashblocks_state) = setup_with_flashblocks().await?;
 
-        // Setup harness with flashblocks-enabled metering
-        let harness = TestHarness::builder()
-            .with_ext::<MeteringExtension>(MeteringConfig::with_flashblocks(flashblocks_config))
-            .build()
-            .await?;
-        let client = harness.rpc_client()?;
-
-        // Build a canonical block with L1 block info deposit
         harness
             .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
             .await?;
+        let tip = harness.latest_block();
 
-        // Create a flashblock with a zero-hash header (this is how real flashblocks work)
-        // The header hash is B256::ZERO because the final block hash isn't known yet
-        let flashblock_header = Header {
-            number: 2, // Pending block on top of canonical block 1
-            timestamp: 1_700_000_001,
-            gas_limit: 30_000_000,
-            base_fee_per_gas: Some(1_000_000_000),
-            ..Default::default()
-        };
+        flashblocks_state.set_pending_blocks_for_testing(Some(pending_blocks_on_parent(
+            tip.number + 1,
+            tip.hash(),
+        )?));
 
-        // Seal with zero hash (this is what block_assembler.rs does)
-        let sealed_header = flashblock_header.seal(B256::ZERO);
-
-        // Create a minimal flashblock
-        let flashblock = Flashblock {
-            payload_id: Default::default(),
-            index: 0,
-            base: Some(ExecutionPayloadBaseV1 {
-                parent_beacon_block_root: B256::ZERO,
-                parent_hash: B256::ZERO,
-                fee_recipient: Default::default(),
-                prev_randao: B256::ZERO,
-                block_number: 2,
-                gas_limit: 30_000_000,
-                timestamp: 1_700_000_001,
-                extra_data: Default::default(),
-                base_fee_per_gas: alloy_primitives::U256::from(1_000_000_000u64),
-            }),
-            diff: ExecutionPayloadFlashblockDeltaV1 {
-                state_root: B256::ZERO,
-                receipts_root: B256::ZERO,
-                logs_bloom: Bloom::default(),
-                gas_used: 0,
-                block_hash: B256::ZERO,
-                transactions: vec![],
-                withdrawals: vec![],
-                withdrawals_root: B256::ZERO,
-                blob_gas_used: Some(0),
-            },
-            metadata: Metadata::new(2),
-        };
-
-        // Build PendingBlocks with zero-hash header
-        let mut builder = PendingBlocksBuilder::new();
-        builder.with_header(sealed_header);
-        builder.with_flashblocks([flashblock]);
-        let pending_blocks = builder.build()?;
-
-        // Inject the pending blocks into the flashblocks state
-        flashblocks_state.set_pending_blocks_for_testing(Some(pending_blocks));
-
-        // Now call meter_bundle - this should succeed with the fix
-        // Without the fix, it would fail with "Block not found: 0x0000..."
-        // because get_l1_block_info would try to look up block by zero hash
         let bundle = create_bundle(vec![], 0, None);
         let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
 
-        // Verify we got a response and it used the flashblock state
-        // state_block_number should be 2 (the pending block number)
-        assert_eq!(response.state_block_number, 2);
-        // state_flashblock_index should be present and be 0
+        assert_eq!(response.state_block_number, tip.number + 1);
         assert_eq!(response.state_flashblock_index, Some(0));
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_meter_bundle_uses_pending_for_exact_tip_hash_anchor() -> eyre::Result<()> {
+        let (harness, client, flashblocks_state) = setup_with_flashblocks().await?;
+        harness
+            .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
+            .await?;
+        let tip = harness.latest_block();
+
+        flashblocks_state.set_pending_blocks_for_testing(Some(pending_blocks_on_parent(
+            tip.number + 1,
+            tip.hash(),
+        )?));
+
+        let response: MeterBundleResponse =
+            client.request("base_meterBundle", (create_bundle(vec![], 0, None),)).await?;
+
+        assert_eq!(response.state_block_number, tip.number + 1);
+        assert_eq!(response.state_flashblock_index, Some(0));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_meter_bundle_falls_back_for_old_pending_anchor() -> eyre::Result<()> {
+        let (harness, client, flashblocks_state) = setup_with_flashblocks().await?;
+        harness
+            .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
+            .await?;
+        let tip = harness.latest_block();
+
+        // Pending canonical parent is 99, not the current tip. Must fall back before overlay.
+        flashblocks_state
+            .set_pending_blocks_for_testing(Some(pending_blocks_on_parent(100, tip.hash())?));
+
+        let response: MeterBundleResponse =
+            client.request("base_meterBundle", (create_bundle(vec![], 0, None),)).await?;
+
+        assert_eq!(response.state_block_number, tip.number);
+        assert_eq!(response.state_flashblock_index, None);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_meter_bundle_falls_back_for_wrong_pending_parent_hash() -> eyre::Result<()> {
+        let (harness, client, flashblocks_state) = setup_with_flashblocks().await?;
+        harness
+            .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
+            .await?;
+        let tip = harness.latest_block();
+
+        flashblocks_state.set_pending_blocks_for_testing(Some(pending_blocks_on_parent(
+            tip.number + 1,
+            B256::repeat_byte(0x42),
+        )?));
+
+        let response: MeterBundleResponse =
+            client.request("base_meterBundle", (create_bundle(vec![], 0, None),)).await?;
+
+        assert_eq!(response.state_block_number, tip.number);
+        assert_eq!(response.state_flashblock_index, None);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_meter_bundle_falls_back_when_pending_latest_is_not_ahead_of_tip()
+    -> eyre::Result<()> {
+        let (harness, client, flashblocks_state) = setup_with_flashblocks().await?;
+        harness
+            .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
+            .await?;
+        let tip = harness.latest_block();
+
+        flashblocks_state.set_pending_blocks_for_testing(Some(pending_blocks_on_parent(
+            tip.number,
+            tip.hash(),
+        )?));
+
+        let response: MeterBundleResponse =
+            client.request("base_meterBundle", (create_bundle(vec![], 0, None),)).await?;
+
+        assert_eq!(response.state_block_number, tip.number);
+        assert_eq!(response.state_flashblock_index, None);
         Ok(())
     }
 

@@ -79,6 +79,11 @@ impl FlashblockCache {
         self.entries.retain(|&bn, _| bn > block_number);
     }
 
+    /// Returns the latest canonical block number observed by this cache.
+    pub const fn latest_canonical_number(&self) -> Option<BlockNumber> {
+        self.latest_canonical
+    }
+
     /// Returns the number of distinct block numbers currently cached.
     pub fn len(&self) -> usize {
         self.entries.len()

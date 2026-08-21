@@ -428,6 +428,17 @@ impl PendingBlocks {
         BlockNumberOrTag::Number(self.earliest_header.number - 1)
     }
 
+    /// Returns `true` when this snapshot is pending state built directly on canonical `number`/`hash`.
+    ///
+    /// Used by `base_meterBundle` to ignore stale or reorged pending overlays before any historical
+    /// state lookup.
+    #[inline]
+    pub fn is_based_on_canonical(&self, number: BlockNumber, hash: B256) -> bool {
+        matches!(self.canonical_block_number(), BlockNumberOrTag::Number(n) if n == number)
+            && self.parent_hash() == hash
+            && self.latest_block_number() > number
+    }
+
     /// Returns the earliest block number in the pending state.
     #[inline]
     pub fn earliest_block_number(&self) -> BlockNumber {
@@ -1593,5 +1604,22 @@ mod tests {
 
         assert_eq!(txs.len(), 1);
         assert_eq!(txs[0].transaction.tx_hash(), hash_a);
+    }
+
+    #[test]
+    fn is_based_on_canonical_requires_matching_tip_and_future_latest() {
+        let parent = B256::repeat_byte(0x11);
+        let mut builder = PendingBlocksBuilder::new();
+        builder.with_header(Sealed::new_unchecked(
+            Header { number: 2, parent_hash: parent, ..Default::default() },
+            B256::ZERO,
+        ));
+        builder.with_flashblocks([test_flashblock_for_block(2)]);
+        let pending = builder.build().expect("build should succeed");
+
+        assert!(pending.is_based_on_canonical(1, parent));
+        assert!(!pending.is_based_on_canonical(1, B256::repeat_byte(0x22)));
+        assert!(!pending.is_based_on_canonical(0, parent));
+        assert!(!pending.is_based_on_canonical(2, parent));
     }
 }
