@@ -45,6 +45,14 @@ sha2.workspace = true
 tracing.workspace = true
 spin.workspace = true
 
+# `test-utils` feature dependencies
+base-comp = { workspace = true, optional = true }
+alloy-trie = { workspace = true, optional = true }
+alloy-signer = { workspace = true, optional = true }
+base-proof-mpt = { workspace = true, optional = true }
+alloy-signer-local = { workspace = true, optional = true }
+base-common-rpc-types-engine = { workspace = true, optional = true }
+
 # kzg
 kzg-rs = { workspace = true, features = ["serde", "rkyv"] }
 cfg-if.workspace = true
@@ -54,3 +62,16 @@ base-common-chains.workspace = true
 
 [lints]
 workspace = true
+
+[features]
+test-utils = [
+	"alloy-consensus/k256",
+	"base-common-genesis/serde",
+	"base-common-rpc-types-engine/k256",
+	"dep:alloy-signer",
+	"dep:alloy-signer-local",
+	"dep:alloy-trie",
+	"dep:base-common-rpc-types-engine",
+	"dep:base-comp",
+	"dep:base-proof-mpt",
+]

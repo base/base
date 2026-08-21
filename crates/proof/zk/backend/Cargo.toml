@@ -58,6 +58,7 @@ serde = { workspace = true, features = ["derive", "std"] }
 tracing.workspace = true
 
 [dev-dependencies]
+base-proof-zk-utils = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["macros", "rt"] }
 
 [features]
