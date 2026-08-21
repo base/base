@@ -422,16 +422,14 @@ impl RollupConfig {
             return legacy_millis;
         }
 
-        let denim_blocks_since_genesis =
-            denim_activation_block.saturating_sub(self.genesis.l2.number);
+        let denim_blocks_since_genesis = denim_activation_block - self.genesis.l2.number;
         let denim_activation_seconds = self
             .genesis
             .l2_time
             .saturating_add(denim_blocks_since_genesis.saturating_mul(self.block_time));
         let denim_activation_full_millis = denim_activation_seconds.saturating_mul(1_000);
         denim_activation_full_millis.saturating_add(
-            block_number
-                .saturating_sub(denim_activation_block)
+            (block_number - denim_activation_block)
                 .saturating_mul(Self::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS),
         )
     }
@@ -446,15 +444,17 @@ impl RollupConfig {
             panic!("rollup config: block time cannot be 0");
         }
 
+        if timestamp < self.genesis.l2_time {
+            return Vec::new();
+        }
+
         let mut candidates = Vec::with_capacity(5);
         let denim_activation_block = self.denim_activation_block_number();
-        let legacy_delta = timestamp.saturating_sub(self.genesis.l2_time);
+        let legacy_delta = timestamp - self.genesis.l2_time;
         let legacy_offset = legacy_delta / self.block_time;
         let legacy_block = self.genesis.l2.number + legacy_offset;
-        if timestamp >= self.genesis.l2_time
-            && legacy_delta.is_multiple_of(self.block_time)
+        if legacy_delta.is_multiple_of(self.block_time)
             && denim_activation_block.is_none_or(|activation| legacy_block < activation)
-            && self.l2_block_timestamp(legacy_block) == timestamp
         {
             candidates.push(legacy_block);
         }
@@ -462,19 +462,15 @@ impl RollupConfig {
         let Some(activation_block) = denim_activation_block else {
             return candidates;
         };
-        let activation_millis = self.l2_block_timestamp_millis(activation_block);
-        let second_millis = timestamp.saturating_mul(1_000);
-        for millis_part in [0, 200, 400, 600, 800] {
-            let target_millis = second_millis.saturating_add(millis_part);
-            if target_millis < activation_millis {
-                continue;
-            }
-            let delta = target_millis - activation_millis;
-            let offset = delta / Self::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS;
-            let block = activation_block + offset;
-            if !candidates.contains(&block) && self.l2_block_timestamp(block) == timestamp {
-                candidates.push(block);
-            }
+        let activation_timestamp = self.l2_block_timestamp(activation_block);
+        if timestamp < activation_timestamp {
+            return candidates;
+        }
+
+        let blocks_per_second = 1_000 / Self::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS;
+        let first_block = activation_block + (timestamp - activation_timestamp) * blocks_per_second;
+        for offset in 0..blocks_per_second {
+            candidates.push(first_block + offset);
         }
         candidates
     }
