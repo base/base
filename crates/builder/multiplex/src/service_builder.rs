@@ -68,6 +68,11 @@ where
         pool: Pool,
         evm_config: BaseEvmConfig,
     ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>> {
+        eyre::ensure!(
+            !(self.routing_config.cutover_enabled && self.basic_only),
+            "payload builder cutover and basic-only modes are mutually exclusive"
+        );
+
         if !self.routing_config.cutover_enabled && !self.basic_only {
             return FlashblocksServiceBuilder::new(self.builder_config)
                 .spawn_payload_builder_service(ctx, pool, evm_config)
