@@ -1,7 +1,7 @@
 use std::{marker::PhantomData, sync::Arc};
 
 use alloy_consensus::BlockHeader;
-use alloy_primitives::{B256, Bytes};
+use alloy_primitives::{B256, Bytes, U256};
 use alloy_rpc_types_engine::{ExecutionPayloadEnvelopeV2, ExecutionPayloadV1};
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseBlock, BaseTransaction, Predeploys};
@@ -10,11 +10,11 @@ use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
     ExecutionData,
 };
-use base_execution_consensus::{BaseConsensusError, isthmus};
+use base_execution_consensus::isthmus;
 use base_execution_payload_builder::{
     Attributes, BaseExecutionPayloadValidator, BasePayloadBuilderAttributes, BasePayloadTypes,
 };
-use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
+use base_protocol::BaseTimeUpdateTx;
 use reth_chainspec::EthChainSpec;
 use reth_consensus::ConsensusError;
 use reth_node_api::{
@@ -85,6 +85,8 @@ where
 pub struct BaseEngineValidator<Tx, ChainSpec> {
     inner: BaseExecutionPayloadValidator<ChainSpec>,
     hashed_addr_l2tol1_msg_passer: B256,
+    hashed_addr_base_time: B256,
+    hashed_base_time_slot: B256,
     phantom: PhantomData<Tx>,
 }
 
@@ -92,9 +94,13 @@ impl<Tx, ChainSpec> BaseEngineValidator<Tx, ChainSpec> {
     /// Instantiates a new validator.
     pub fn new<KH: KeyHasher>(chain_spec: Arc<ChainSpec>) -> Self {
         let hashed_addr_l2tol1_msg_passer = KH::hash_key(Predeploys::L2_TO_L1_MESSAGE_PASSER);
+        let hashed_addr_base_time = KH::hash_key(Predeploys::BASE_TIME);
+        let hashed_base_time_slot = KH::hash_key(B256::from(BaseTime::TIMESTAMP_MILLIS_PART_SLOT));
         Self {
             inner: BaseExecutionPayloadValidator::new(chain_spec),
             hashed_addr_l2tol1_msg_passer,
+            hashed_addr_base_time,
+            hashed_base_time_slot,
             phantom: PhantomData,
         }
     }
@@ -108,6 +114,8 @@ where
         Self {
             inner: BaseExecutionPayloadValidator::new(self.inner.clone()),
             hashed_addr_l2tol1_msg_passer: self.hashed_addr_l2tol1_msg_passer,
+            hashed_addr_base_time: self.hashed_addr_base_time,
+            hashed_base_time_slot: self.hashed_base_time_slot,
             phantom: Default::default(),
         }
     }
@@ -161,45 +169,60 @@ where
         parent_state: impl FnOnce() -> ProviderResult<StateProviderBox>,
     ) -> Result<(), InsertBlockErrorKind> {
         let timestamp = block.timestamp();
-        if !self.chain_spec().is_isthmus_active_at_timestamp(timestamp) {
+        let is_isthmus_active = self.chain_spec().is_isthmus_active_at_timestamp(timestamp);
+        let is_denim_active = self.chain_spec().is_denim_active_at_timestamp(timestamp);
+        if !is_isthmus_active && !is_denim_active {
             return Ok(());
         }
 
         let parent_state = parent_state()?;
         let state_updates = state_updates();
-        self.validate_isthmus_post_execution(state_updates, parent_state.as_ref(), block.header())?;
+        if is_isthmus_active {
+            self.validate_isthmus_post_execution(
+                state_updates,
+                parent_state.as_ref(),
+                block.header(),
+            )?;
+        }
 
-        if !self.chain_spec().is_denim_active_at_timestamp(timestamp) {
+        if !is_denim_active {
             return Ok(());
         }
 
-        let child_millis =
-            BaseTimeUpdateTx::extract_from_transactions(&block.body().transactions, block.number())
-                .map_err(ConsensusError::other)?
-                .timestamp_millis_part();
-
-        if !self.chain_spec().is_denim_active_at_timestamp(parent_header.timestamp()) {
-            return Ok(());
-        }
+        let base_time = BaseTimeUpdateTx::validate_denim_child_transactions(
+            &block.body().transactions,
+            block.number(),
+        )
+        .map_err(ConsensusError::other)?;
 
         let parent_millis = BaseTime::decode_timestamp_millis_part(
             parent_state
                 .storage(Predeploys::BASE_TIME, BaseTime::TIMESTAMP_MILLIS_PART_SLOT.into())?
                 .unwrap_or_default(),
         );
-        let parent_timestamp_ms =
-            u128::from(parent_header.timestamp()) * 1_000 + u128::from(parent_millis);
-        let child_timestamp_ms = u128::from(timestamp) * 1_000 + u128::from(child_millis);
-
-        if child_timestamp_ms
-            != parent_timestamp_ms + u128::from(BaseTimeUpdateTx::BLOCK_INTERVAL_MILLIS)
-        {
-            return Err(ConsensusError::other(BaseConsensusError::BaseTimeProgressionInvalid {
-                parent_timestamp_ms,
-                child_timestamp_ms,
-            })
-            .into());
+        if self.chain_spec().is_denim_active_at_timestamp(parent_header.timestamp()) {
+            base_time
+                .validate_progression(parent_header.timestamp(), parent_millis, timestamp)
+                .map_err(ConsensusError::other)?;
+        } else {
+            base_time.validate_first_denim_anchor().map_err(ConsensusError::other)?;
         }
+
+        let storage_update = state_updates.storages.get(&self.hashed_addr_base_time);
+        let child_value = storage_update
+            .and_then(|storage| storage.storage.get(&self.hashed_base_time_slot).copied())
+            .or_else(|| storage_update.is_some_and(|storage| storage.wiped).then_some(U256::ZERO))
+            .map_or_else(
+                || {
+                    parent_state
+                        .storage(Predeploys::BASE_TIME, BaseTime::TIMESTAMP_MILLIS_PART_SLOT.into())
+                        .map(|value| value.unwrap_or_default())
+                },
+                Ok,
+            )?;
+        base_time
+            .validate_final_state(BaseTime::decode_timestamp_millis_part(child_value))
+            .map_err(ConsensusError::other)?;
 
         Ok(())
     }
@@ -223,19 +246,11 @@ where
                 .ok_or(InvalidPayloadAttributesError::InvalidTimestamp);
         }
 
-        let invalid_metadata = |error: BaseTimeMetadataError| {
-            InvalidPayloadAttributesError::InvalidParams(Box::new(error))
-        };
-        let transaction = attributes
-            .sequencer_transactions()
-            .get(1)
-            .ok_or_else(|| invalid_metadata(BaseTimeMetadataError::Missing))?;
-        let deposit = transaction
-            .value()
-            .as_deposit()
-            .ok_or_else(|| invalid_metadata(BaseTimeMetadataError::NotDeposit))?;
-        BaseTimeUpdateTx::validate_deposit(deposit, header.number() + 1)
-            .map_err(invalid_metadata)?;
+        BaseTimeUpdateTx::validate_denim_child_transactions(
+            attributes.sequencer_transactions(),
+            header.number() + 1,
+        )
+        .map_err(|error| InvalidPayloadAttributesError::InvalidParams(Box::new(error)))?;
 
         // The parent header does not contain its millisecond component, so only whole-second
         // ordering can be checked here.
@@ -394,13 +409,14 @@ mod tests {
     use base_common_rpc_types_engine::BasePayloadAttributes;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_consensus::BaseConsensusError;
+    use base_protocol::{BaseTimeMetadataError, BaseTimeValidationError};
     use reth_ethereum_forks::ForkCondition;
     use reth_primitives_traits::WithEncoded;
     use reth_provider::{
         noop::NoopProvider,
         test_utils::{ExtendedAccount, MockEthProvider},
     };
-    use reth_trie_common::KeccakKeyHasher;
+    use reth_trie_common::{HashedStorage, KeccakKeyHasher};
 
     use super::*;
     use crate::engine;
@@ -697,6 +713,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_payload_attributes_post_denim_reject_additional_base_time_setter() {
+        let validator = denim_validator();
+        let mut attributes = denim_attributes(DENIM_TIMESTAMP);
+        add_base_time_transaction(&mut attributes, 200);
+        attributes.transactions.push(WithEncoded::from_2718_encodable(
+            BaseTimeUpdateTx::new(400).unwrap().into_deposit_tx(9).into(),
+        ));
+        let header = Header { number: 8, timestamp: DENIM_TIMESTAMP, ..Default::default() };
+
+        let result = <engine::BaseEngineValidator<_, _> as PayloadValidator<BaseEngineTypes>>::
+            validate_payload_attributes_against_header(&validator, &attributes, &header);
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid params: additional protocol-authorized BaseTime setter at tx[2]"
+        );
+    }
+
     fn post_execution_block(withdrawals_root: B256) -> RecoveredBlock<BaseBlock> {
         let block = BaseBlock {
             header: Header {
@@ -753,6 +788,16 @@ mod tests {
         provider
     }
 
+    fn base_time_state_updates(millis_part: u16) -> HashedPostState {
+        HashedPostState::from_hashed_storage(
+            KeccakKeyHasher::hash_key(Predeploys::BASE_TIME),
+            HashedStorage::from_iter([(
+                KeccakKeyHasher::hash_key(B256::from(BaseTime::TIMESTAMP_MILLIS_PART_SLOT)),
+                U256::from(millis_part),
+            )]),
+        )
+    }
+
     fn validate_base_time_progression(
         parent_timestamp: u64,
         parent_millis_part: u16,
@@ -768,7 +813,7 @@ mod tests {
         let block = base_time_block(child_timestamp, child_millis_part, withdrawals_root);
         let parent =
             SealedHeader::seal_slow(Header { timestamp: parent_timestamp, ..Default::default() });
-        let state_updates = HashedPostState::default();
+        let state_updates = base_time_state_updates(child_millis_part);
         let parent_state = parent_state(parent_millis_part);
 
         PayloadValidator::<BaseEngineTypes>::validate_block_post_execution_with_hashed_state(
@@ -787,7 +832,9 @@ mod tests {
         error.downcast_ref()
     }
 
-    fn base_time_metadata_error(error: &InsertBlockErrorKind) -> Option<&BaseTimeMetadataError> {
+    fn base_time_validation_error(
+        error: &InsertBlockErrorKind,
+    ) -> Option<&BaseTimeValidationError> {
         let InsertBlockErrorKind::Consensus(ConsensusError::Other(error)) = error else {
             return None;
         };
@@ -854,8 +901,8 @@ mod tests {
             )
             .unwrap_err();
             assert!(matches!(
-                base_consensus_error(&error),
-                Some(BaseConsensusError::BaseTimeProgressionInvalid { .. })
+                base_time_validation_error(&error),
+                Some(BaseTimeValidationError::ProgressionMismatch { .. })
             ));
         }
     }
@@ -876,8 +923,8 @@ mod tests {
             )
             .unwrap_err();
             assert!(matches!(
-                base_consensus_error(&error),
-                Some(BaseConsensusError::BaseTimeProgressionInvalid {
+                base_time_validation_error(&error),
+                Some(BaseTimeValidationError::ProgressionMismatch {
                     parent_timestamp_ms,
                     child_timestamp_ms,
                 }) if *parent_timestamp_ms == u128::from(parent_seconds) * 1_000
@@ -917,18 +964,21 @@ mod tests {
                 )
                 .unwrap_err();
 
-            assert_eq!(base_time_metadata_error(&error), Some(&expected));
+            assert_eq!(
+                base_time_validation_error(&error),
+                Some(&BaseTimeValidationError::Metadata(expected))
+            );
         }
     }
 
     #[test]
     fn post_execution_accepts_valid_claim_on_first_active_block() {
-        let block = base_time_block(DENIM_TIMESTAMP, 400, EMPTY_ROOT_HASH);
+        let block = base_time_block(DENIM_TIMESTAMP, 0, EMPTY_ROOT_HASH);
         let parent = SealedHeader::seal_slow(Header {
             timestamp: DENIM_TIMESTAMP - 1,
             ..Default::default()
         });
-        let state_updates = HashedPostState::default();
+        let state_updates = base_time_state_updates(0);
 
         PayloadValidator::<BaseEngineTypes>::validate_block_post_execution_with_hashed_state(
             &denim_validator(),
@@ -938,6 +988,31 @@ mod tests {
             || Ok(Box::new(parent_state(0))),
         )
         .unwrap();
+    }
+
+    #[test]
+    fn post_execution_rejects_nonzero_first_denim_anchor() {
+        let block = base_time_block(DENIM_TIMESTAMP, 400, EMPTY_ROOT_HASH);
+        let parent = SealedHeader::seal_slow(Header {
+            timestamp: DENIM_TIMESTAMP - 1,
+            ..Default::default()
+        });
+        let state_updates = base_time_state_updates(400);
+
+        let error =
+            PayloadValidator::<BaseEngineTypes>::validate_block_post_execution_with_hashed_state(
+                &denim_validator(),
+                || &state_updates,
+                &block,
+                &parent,
+                || Ok(Box::new(parent_state(0))),
+            )
+            .unwrap_err();
+
+        assert_eq!(
+            base_time_validation_error(&error),
+            Some(&BaseTimeValidationError::InvalidFirstDenimAnchor { timestamp_millis_part: 400 })
+        );
     }
 
     #[test]
@@ -962,7 +1037,95 @@ mod tests {
             )
             .unwrap_err();
 
-        assert_eq!(base_time_metadata_error(&error), Some(&BaseTimeMetadataError::Missing));
+        assert_eq!(
+            base_time_validation_error(&error),
+            Some(&BaseTimeValidationError::Metadata(BaseTimeMetadataError::Missing))
+        );
+    }
+
+    #[test]
+    fn post_execution_rejects_final_base_time_state_mismatch() {
+        let block = base_time_block(DENIM_TIMESTAMP, 400, EMPTY_ROOT_HASH);
+        let parent =
+            SealedHeader::seal_slow(Header { timestamp: DENIM_TIMESTAMP, ..Default::default() });
+        let state_updates = base_time_state_updates(600);
+
+        let error =
+            PayloadValidator::<BaseEngineTypes>::validate_block_post_execution_with_hashed_state(
+                &denim_validator(),
+                || &state_updates,
+                &block,
+                &parent,
+                || Ok(Box::new(parent_state(200))),
+            )
+            .unwrap_err();
+
+        assert_eq!(
+            base_time_validation_error(&error),
+            Some(&BaseTimeValidationError::FinalStateMismatch {
+                expected_timestamp_millis_part: 400,
+                actual_timestamp_millis_part: 600,
+            })
+        );
+    }
+
+    #[test]
+    fn post_execution_rejects_stale_base_time_state() {
+        let block = base_time_block(DENIM_TIMESTAMP, 400, EMPTY_ROOT_HASH);
+        let parent =
+            SealedHeader::seal_slow(Header { timestamp: DENIM_TIMESTAMP, ..Default::default() });
+        let state_updates = HashedPostState::default();
+
+        let error =
+            PayloadValidator::<BaseEngineTypes>::validate_block_post_execution_with_hashed_state(
+                &denim_validator(),
+                || &state_updates,
+                &block,
+                &parent,
+                || Ok(Box::new(parent_state(200))),
+            )
+            .unwrap_err();
+
+        assert_eq!(
+            base_time_validation_error(&error),
+            Some(&BaseTimeValidationError::FinalStateMismatch {
+                expected_timestamp_millis_part: 400,
+                actual_timestamp_millis_part: 200,
+            })
+        );
+    }
+
+    #[test]
+    fn post_execution_rejects_additional_protocol_setter() {
+        for millis_part in [200, 400] {
+            let transactions = vec![
+                TxDeposit::default().seal_slow().into(),
+                BaseTimeUpdateTx::new(400).unwrap().into_deposit_tx(9).into(),
+                BaseTimeUpdateTx::new(millis_part).unwrap().into_deposit_tx(9).into(),
+            ];
+            let block =
+                base_time_block_with_transactions(DENIM_TIMESTAMP, EMPTY_ROOT_HASH, transactions);
+            let parent = SealedHeader::seal_slow(Header {
+                timestamp: DENIM_TIMESTAMP,
+                ..Default::default()
+            });
+            let state_updates = base_time_state_updates(millis_part);
+
+            let error = PayloadValidator::<BaseEngineTypes>::
+                validate_block_post_execution_with_hashed_state(
+                    &denim_validator(),
+                    || &state_updates,
+                    &block,
+                    &parent,
+                    || Ok(Box::new(parent_state(200))),
+                )
+                .unwrap_err();
+
+            assert_eq!(
+                base_time_validation_error(&error),
+                Some(&BaseTimeValidationError::AdditionalProtocolSetter { index: 2 })
+            );
+        }
     }
 
     #[test]

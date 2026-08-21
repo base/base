@@ -11,7 +11,7 @@ use alloy_primitives::{B256, Bloom, Bytes};
 use alloy_trie::EMPTY_ROOT_HASH;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseTxEnvelope, DepositReceiptExt};
-use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
+use base_protocol::{BaseTimeUpdateTx, BaseTimeValidationError};
 use reth_consensus::ConsensusError;
 use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{BlockBody, GotExpected, receipt::gas_spent_by_transactions};
@@ -23,17 +23,18 @@ fn should_trust_precomputed_receipt_root(chain_spec: &impl Upgrades, timestamp: 
     chain_spec.is_canyon_active_at_timestamp(timestamp)
 }
 
-/// Validates the `BaseTime` metadata deposit when its activation gate is active.
+/// Validates the `BaseTime` transactions against the activation gate.
 pub fn validate_base_time_metadata(
     chain_spec: &impl Upgrades,
     timestamp: u64,
     block_number: u64,
     transactions: &[BaseTxEnvelope],
-) -> Result<(), BaseTimeMetadataError> {
-    if chain_spec.is_denim_active_at_timestamp(timestamp) {
-        BaseTimeUpdateTx::extract_from_transactions(transactions, block_number)?;
-    }
-
+) -> Result<(), BaseTimeValidationError> {
+    BaseTimeUpdateTx::validate_child_transactions(
+        transactions,
+        block_number,
+        chain_spec.is_denim_active_at_timestamp(timestamp),
+    )?;
     Ok(())
 }
 
@@ -249,7 +250,7 @@ mod tests {
     use base_common_consensus::{BaseReceipt, BaseTxEnvelope, DepositReceipt, TxDeposit};
     use base_common_genesis::BaseUpgrade;
     use base_execution_chainspec::BaseChainSpec;
-    use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
+    use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx, BaseTimeValidationError};
     use reth_chainspec::{BaseFeeParams, EthChainSpec, ForkCondition};
 
     use super::*;
@@ -304,9 +305,13 @@ mod tests {
         validate_base_time_metadata(&chain_spec, 10, 9, &base_time_transactions(9, 400)).unwrap();
         assert!(matches!(
             validate_base_time_metadata(&chain_spec, 10, 9, &[]),
-            Err(BaseTimeMetadataError::Missing)
+            Err(BaseTimeValidationError::Metadata(BaseTimeMetadataError::Missing))
         ));
         validate_base_time_metadata(&chain_spec, 9, 9, &[]).unwrap();
+        assert_eq!(
+            validate_base_time_metadata(&chain_spec, 9, 9, &base_time_transactions(9, 400)),
+            Err(BaseTimeValidationError::ProtocolSetterBeforeDenim { index: 1 })
+        );
     }
 
     fn plain_precomputed_receipt_root_bloom(receipts: &[BaseReceipt]) -> (B256, Bloom) {

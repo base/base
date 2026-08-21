@@ -20,6 +20,7 @@ use alloy_primitives::{B64, B256};
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseTxEnvelope, DepositReceiptExt};
 use base_execution_chainspec::BaseChainSpec;
+use base_protocol::BaseTimeUpdateTx;
 use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator, ReceiptRootBloom};
 use reth_consensus_common::validation::{
     validate_against_parent_eip1559_base_fee, validate_against_parent_hash_number,
@@ -79,6 +80,21 @@ where
         receipt_root_bloom: Option<ReceiptRootBloom>,
         _block_access_list_hash: Option<B256>,
     ) -> Result<(), ConsensusError> {
+        if BaseTimeUpdateTx::validate_child_transactions(
+            block.body().transactions(),
+            block.number(),
+            self.chain_spec.is_denim_active_at_timestamp(block.timestamp()),
+        )
+        .map_err(ConsensusError::other)?
+        .is_some()
+        {
+            BaseTimeUpdateTx::validate_receipts(
+                block.body().transactions().len(),
+                &result.receipts,
+            )
+            .map_err(ConsensusError::other)?;
+        }
+
         validate_block_post_execution(block.header(), &self.chain_spec, result, receipt_root_bloom)
     }
 }
@@ -283,18 +299,21 @@ impl HeaderValidator<Header> for BaseBeaconConsensus {
 mod tests {
     use std::sync::Arc;
 
-    use alloy_consensus::{BlockBody, Eip658Value, Header, Receipt, TxEip7702, TxReceipt};
+    use alloy_consensus::{
+        BlockBody, Eip658Value, Header, Receipt, Sealable, TxEip7702, TxReceipt,
+    };
     use alloy_eips::{
         eip4895::Withdrawals,
         eip7685::{EMPTY_REQUESTS_HASH, Requests},
     };
     use alloy_primitives::{Address, B256, Bytes, Log, Signature, U256};
     use base_common_consensus::{
-        BasePrimitives, BaseReceipt, BaseTransactionSigned, BaseTypedTransaction,
-        HoloceneExtraData, JovianExtraData,
+        BasePrimitives, BaseReceipt, BaseTransactionSigned, BaseTxEnvelope, BaseTypedTransaction,
+        HoloceneExtraData, JovianExtraData, TxDeposit,
     };
     use base_common_genesis::BaseUpgrade;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
+    use base_protocol::{BaseTimeUpdateTx, BaseTimeValidationError};
     use reth_chainspec::{BaseFeeParams, EthChainSpec, ForkCondition};
     use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator};
     use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader, proofs};
@@ -949,5 +968,59 @@ mod tests {
             beacon_consensus.validate_header(&header).unwrap_err(),
             ConsensusError::RequestsHashUnexpected,
         ));
+    }
+
+    #[test]
+    fn denim_post_execution_requires_complete_successful_receipts() {
+        let mut chain_spec = BaseChainSpec::mainnet();
+        chain_spec.set_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(10));
+        let consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
+        let transactions: Vec<BaseTxEnvelope> = vec![
+            TxDeposit::default().seal_slow().into(),
+            BaseTimeUpdateTx::new(0).unwrap().into_deposit_tx(9).into(),
+        ];
+        let block = alloy_consensus::Block {
+            header: Header { number: 9, timestamp: 10, ..Default::default() },
+            body: BlockBody { transactions, ..Default::default() },
+        };
+        let block = RecoveredBlock::new_sealed(
+            SealedBlock::seal_slow(block),
+            vec![Address::ZERO, Address::ZERO],
+        );
+        let successful = BaseReceipt::Eip7702(Receipt {
+            status: Eip658Value::success(),
+            cumulative_gas_used: 1,
+            logs: vec![],
+        });
+        let failed = BaseReceipt::Eip7702(Receipt {
+            status: Eip658Value::Eip658(false),
+            cumulative_gas_used: 2,
+            logs: vec![],
+        });
+
+        for (receipts, expected) in [
+            (
+                vec![successful.clone()],
+                BaseTimeValidationError::ReceiptCountMismatch {
+                    transaction_count: 2,
+                    receipt_count: 1,
+                },
+            ),
+            (vec![successful, failed], BaseTimeValidationError::MetadataExecutionFailed),
+        ] {
+            let result = BlockExecutionResult {
+                receipts,
+                requests: Requests::default(),
+                gas_used: 0,
+                blob_gas_used: 0,
+            };
+            let error = <BaseBeaconConsensus as FullConsensus<BasePrimitives>>::
+                validate_block_post_execution(&consensus, &block, &result, None, None)
+                .unwrap_err();
+            let ConsensusError::Other(error) = error else {
+                panic!("expected BaseTime validation error");
+            };
+            assert_eq!(error.downcast_ref(), Some(&expected));
+        }
     }
 }
