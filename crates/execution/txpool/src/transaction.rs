@@ -269,10 +269,8 @@ impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Po
             .get()
             .map_or(0, |manifest| core::mem::size_of_val(manifest.config_slots()));
         let validity_predicates_size = core::mem::size_of_val(self.validity_predicates.as_slice());
-        let metering_results_size = self
-            .metering
-            .as_ref()
-            .map_or(0, |metering| core::mem::size_of_val(metering.results.as_slice()));
+        let metering_heap_size =
+            self.metering.as_ref().map_or(0, MeterBundleResponse::heap_size);
         self.inner.size()
             + core::mem::size_of::<u128>()
             + core::mem::size_of::<Option<u64>>() * 4
@@ -284,7 +282,7 @@ impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Po
             + manifest_slots_size
             + validity_predicates_size
             + core::mem::size_of::<Option<MeterBundleResponse>>()
-            + metering_results_size
+            + metering_heap_size
     }
 }
 
@@ -639,7 +637,7 @@ mod tests {
     use alloy_primitives::{Address, Bytes, TxKind, U256};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
-    use base_bundles::{MeterBundleResponse, TransactionResult};
+    use base_bundles::{MeterBundleResponse, OpcodeGas, TransactionResult};
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
         BasePooledTransaction as ConsensusPooledTransaction, BasePrimitives, BaseTransactionSigned,
@@ -818,6 +816,31 @@ mod tests {
 
         assert_eq!(transaction.size(), size_without_metering + results_size);
         assert!(transaction.metering().is_some());
+    }
+
+    #[test]
+    fn in_memory_size_includes_opcode_gas_heap() {
+        let transaction = eip8130_pooled(U256::ZERO);
+        let size_without_metering = transaction.size();
+        let opcode = OpcodeGas {
+            contract_address: Address::ZERO,
+            opcode: "SSTORE".to_string(),
+            count: 1,
+            gas_used: 20_000,
+        };
+        let mut metering = meter_response(1);
+        metering.results[0].opcode_gas = vec![opcode];
+        let results_size = core::mem::size_of_val(metering.results.as_slice());
+        let opcode_gas_size = core::mem::size_of_val(metering.results[0].opcode_gas.as_slice());
+        let opcode_name_size = "SSTORE".len();
+
+        let transaction = transaction.with_metering(metering);
+
+        assert_eq!(
+            transaction.size(),
+            size_without_metering + results_size + opcode_gas_size + opcode_name_size,
+            "pool size should include opcode_gas entries and opcode name bytes"
+        );
     }
 
     #[test]
