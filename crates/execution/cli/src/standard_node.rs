@@ -281,8 +281,11 @@ pub struct RpcStandardNodeArgs {
 
     /// Run meter_bundle on the mempool node before inserting into the forwarding pool.
     ///
-    /// Has no effect until the sim-worker path is wired; keep off in production.
-    #[arg(long = "enable-inline-simulation", requires = "enable_tx_forwarding")]
+    /// Requires `--flashblocks-url` so sims use the live pending state, not an empty default.
+    #[arg(
+        long = "enable-inline-simulation",
+        requires_all = ["enable_tx_forwarding", "flashblocks_url"]
+    )]
     pub enable_inline_simulation: bool,
 
     /// Number of in-process meter_bundle workers.
@@ -588,9 +591,11 @@ impl StandardBaseRethNode {
         runner.install_ext::<BundleExtension>(());
         let mut tx_forwarding_config: TxForwardingConfig = (&args).into();
         if tx_forwarding_config.inline_simulation {
-            tx_forwarding_config = tx_forwarding_config.with_flashblocks_state(
-                flashblocks_config.as_ref().map(|config| Arc::clone(&config.state)),
-            );
+            let Some(flashblocks) = flashblocks_config.as_ref() else {
+                eyre::bail!("--enable-inline-simulation requires --flashblocks-url");
+            };
+            tx_forwarding_config =
+                tx_forwarding_config.with_flashblocks_state(Some(Arc::clone(&flashblocks.state)));
         }
         if args.rpc.enable_experimental_validity_transactions {
             runner.install_ext::<SendRawTransactionValidityExtension>(
@@ -946,6 +951,20 @@ mod tests {
     }
 
     #[test]
+    fn inline_simulation_requires_flashblocks_url() {
+        let error = CommandParser::<StandardNodeArgs>::try_parse_from([
+            "base-reth",
+            "--enable-tx-forwarding",
+            "--builder-rpc-urls",
+            "http://localhost:8545",
+            "--enable-inline-simulation",
+        ])
+        .expect_err("inline simulation should require a flashblocks websocket");
+
+        assert!(error.to_string().contains("--flashblocks-url"));
+    }
+
+    #[test]
     fn inline_simulation_workers_require_enable_flag() {
         let error = CommandParser::<StandardNodeArgs>::try_parse_from([
             "base-reth",
@@ -967,6 +986,8 @@ mod tests {
             "--enable-tx-forwarding",
             "--builder-rpc-urls",
             "http://localhost:8545",
+            "--flashblocks-url",
+            "wss://example.com/ws",
             "--enable-inline-simulation",
             "--inline-simulation-workers",
             "0",
@@ -1004,6 +1025,8 @@ mod tests {
             "--enable-tx-forwarding",
             "--builder-rpc-urls",
             "http://localhost:8545",
+            "--flashblocks-url",
+            "wss://example.com/ws",
             "--enable-inline-simulation",
             "--inline-simulation-workers",
             "8",
@@ -1032,6 +1055,8 @@ mod tests {
             "--enable-tx-forwarding",
             "--builder-rpc-urls",
             "http://localhost:8545",
+            "--flashblocks-url",
+            "wss://example.com/ws",
             "--enable-inline-simulation",
         ])
         .args;
@@ -1075,6 +1100,19 @@ mod tests {
 
         StandardBaseRethNode::runner(args)
             .expect("validity transactions should not require forwarding");
+    }
+
+    #[test]
+    fn runner_rejects_inline_simulation_without_flashblocks() {
+        let mut args = StandardNodeArgs::from(default_rpc_standard_node_args());
+        args.rpc.enable_tx_forwarding = true;
+        args.rpc.builder_rpc_urls = vec!["http://localhost:8545".parse().unwrap()];
+        args.rpc.enable_inline_simulation = true;
+
+        let error = StandardBaseRethNode::runner(args)
+            .expect_err("inline simulation must not start without flashblocks state");
+
+        assert!(error.to_string().contains("--flashblocks-url"));
     }
 
     #[test]

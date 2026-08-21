@@ -6,6 +6,7 @@ use std::{sync::Arc, time::Duration};
 use base_execution_txpool::{InlineSimQueue, TransactionValidity};
 use base_metering::{MeteredOpcodes, MeteringApiImpl};
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
+use eyre::eyre;
 use tokio::sync::mpsc;
 use tracing::info;
 
@@ -44,10 +45,15 @@ impl BaseNodeExtension for TxForwardingExtension {
 
         hooks.add_node_started_hook(move |ctx| {
             if let Some((sender, receiver)) = inline_chan {
+                let Some(flashblocks_state) = config.flashblocks_state.clone() else {
+                    return Err(eyre!(
+                        "inline simulation requires flashblocks state; set --flashblocks-url"
+                    ));
+                };
                 InlineSimQueue::install(sender);
                 let meter = Arc::new(MeteringApiImpl::new(
                     ctx.provider.clone(),
-                    config.flashblocks_state.clone().unwrap_or_default(),
+                    flashblocks_state,
                     Arc::new(MeteredOpcodes::default()),
                 ));
                 InlineSimQueue::spawn_workers(

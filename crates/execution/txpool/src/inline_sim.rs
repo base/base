@@ -204,8 +204,8 @@ where
             warn!(error = %error, hash = %job.transaction.hash(), "inline sim meter_bundle failed");
             InlineSimQueue::with_default_metering(job, "meter")
         }
-        Either::Left((Err(_), _)) => {
-            warn!(hash = %job.transaction.hash(), "inline sim worker task failed");
+        Either::Left((Err(join_error), _)) => {
+            warn!(error = %join_error, hash = %job.transaction.hash(), "inline sim worker task failed");
             InlineSimQueue::with_default_metering(job, "join")
         }
         Either::Right((_, handle)) => {
@@ -390,6 +390,19 @@ mod tests {
             out.transaction.metering(),
             Some(&MeterBundleResponse::default()),
             "timed-out meter_bundle must still insert with default metering"
+        );
+    }
+
+    #[tokio::test]
+    async fn meter_job_uses_default_metering_when_blocking_task_panics() {
+        let job = InlineSimJob { origin: TransactionOrigin::Local, transaction: pooled_tx() };
+
+        let out = meter_job(job, Arc::new(|_| panic!("meter panic")), Duration::from_secs(1)).await;
+
+        assert_eq!(
+            out.transaction.metering(),
+            Some(&MeterBundleResponse::default()),
+            "a panicked spawn_blocking task must still insert with default metering"
         );
     }
 }
