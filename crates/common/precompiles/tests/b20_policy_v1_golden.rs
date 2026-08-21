@@ -35,7 +35,7 @@ use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
 mod common;
 use common::{
-    ACTIVATION_ADMIN, ADMIN, ALICE, BOB, CHAIN_ID, bless_or_assert_gas, bless_or_assert_root,
+    ACTIVATION_ADMIN, ADMIN, ALICE, BOB, bless_or_assert_gas, bless_or_assert_root, provider_for,
 };
 
 // --- fixtures ---------------------------------------------------------------
@@ -91,7 +91,7 @@ fn activate(storage: &mut HashMapStorageProvider) {
 
 /// A fresh provider with the policy registry activated.
 fn fresh() -> HashMapStorageProvider {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    let mut storage = provider_for(BaseUpgrade::Beryl);
     activate(&mut storage);
     storage
 }
@@ -864,7 +864,7 @@ fn golden_reverts_nonzero_value() {
 #[test]
 fn golden_write_reverts_when_not_activated() {
     // No activation: a write op must revert; a read op still works.
-    let mut s = HashMapStorageProvider::new(CHAIN_ID);
+    let mut s = provider_for(BaseUpgrade::Beryl);
     let (rev, _) = call_policy(
         &mut s,
         ADMIN,
