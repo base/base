@@ -74,8 +74,27 @@ impl TryFrom<Bundle> for ParsedBundle {
     }
 }
 
+impl ParsedBundle {
+    /// Creates a one-transaction bundle from a recovered envelope.
+    pub fn from_recovered(tx: Recovered<BaseTxEnvelope>) -> Self {
+        Self {
+            txs: vec![tx],
+            min_block_number: None,
+            max_block_number: None,
+            flashblock_number_min: None,
+            flashblock_number_max: None,
+            min_timestamp: None,
+            max_timestamp: None,
+            reverting_tx_hashes: Vec::new(),
+            replacement_uuid: None,
+            dropping_tx_hashes: Vec::new(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use alloy_consensus::transaction::SignerRecoverable;
     use alloy_primitives::U256;
     use alloy_provider::network::eip2718::Encodable2718;
     use alloy_signer_local::PrivateKeySigner;
@@ -110,6 +129,21 @@ mod tests {
         assert_eq!(parsed.flashblock_number_max, Some(5));
         assert_eq!(parsed.min_timestamp, Some(1000));
         assert_eq!(parsed.max_timestamp, Some(2000));
+        assert!(parsed.replacement_uuid.is_none());
+    }
+
+    #[test]
+    fn from_recovered_wraps_a_single_transaction() {
+        let alice = PrivateKeySigner::random();
+        let bob = PrivateKeySigner::random();
+        let envelope = create_transaction(alice, 1, bob.address(), U256::from(10_000));
+        let recovered = envelope.clone().try_into_recovered().unwrap();
+        let hash = *recovered.hash();
+
+        let parsed = ParsedBundle::from_recovered(recovered);
+        assert_eq!(parsed.txs.len(), 1, "from_recovered must wrap exactly one transaction");
+        assert_eq!(*parsed.txs[0].hash(), hash);
+        assert!(parsed.min_block_number.is_none());
         assert!(parsed.replacement_uuid.is_none());
     }
 
