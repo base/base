@@ -30,10 +30,9 @@ use base_common_precompiles::{
     Asset, AssetAccounting, AssetV1, AssetVersion, AssetVersions, B20_MAX_SUPPLY_CAP, B20AssetInit,
     B20AssetStorage, B20AssetToken, B20PolicyType, B20TokenRole, FakePolicyAccounting, IB20,
     IB20Asset, NoopPrecompileCallObserver, PolicyVersion, TokenAccounting,
+    UpgradeGatedStorageFeatures,
 };
-use base_precompile_storage::{
-    BasePrecompileError, HashMapStorageProvider, StorageCtx, StorageFeatures,
-};
+use base_precompile_storage::{BasePrecompileError, HashMapStorageProvider, StorageCtx};
 
 mod common;
 use common::{
@@ -129,8 +128,10 @@ const ROOT_ANNOUNCE: B256 =
 
 /// Fresh provider with an initialized `Base Asset` at [`TOKEN`] (multiplier = 1 WAD).
 fn fresh() -> HashMapStorageProvider {
-    let mut storage =
-        HashMapStorageProvider::new_with_storage_features(CHAIN_ID, StorageFeatures::Legacy);
+    let mut storage = HashMapStorageProvider::new_with_storage_features(
+        CHAIN_ID,
+        UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Beryl),
+    );
     StorageCtx::enter(&mut storage, |ctx| {
         let mut token = B20AssetStorage::from_address(TOKEN, ctx);
         token
@@ -1454,8 +1455,10 @@ fn dispatch_reverts_before_beryl() {
 #[test]
 fn dispatch_reverts_when_uninitialized() {
     // No `fresh()` init and no marker bytecode => is_initialized is false.
-    let mut s =
-        HashMapStorageProvider::new_with_storage_features(CHAIN_ID, StorageFeatures::Legacy);
+    let mut s = HashMapStorageProvider::new_with_storage_features(
+        CHAIN_ID,
+        UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Beryl),
+    );
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
     let out = StorageCtx::enter(&mut s, |ctx| {
         B20AssetToken::with_storage_and_policy(
@@ -1844,8 +1847,10 @@ fn golden_revoke_role_noop_when_not_held() {
 #[test]
 fn golden_dispatch_no_observer_wrapper_reverts_uninitialized() {
     // Exercises the no-observer `dispatch()` wrapper + the is_initialized=false gate.
-    let mut s =
-        HashMapStorageProvider::new_with_storage_features(CHAIN_ID, StorageFeatures::Legacy);
+    let mut s = HashMapStorageProvider::new_with_storage_features(
+        CHAIN_ID,
+        UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Beryl),
+    );
     s.set_caller(ALICE);
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
     let out = StorageCtx::enter(&mut s, |ctx| {

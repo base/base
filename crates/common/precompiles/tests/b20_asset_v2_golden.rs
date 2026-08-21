@@ -37,11 +37,9 @@ use base_common_precompiles::{
     Asset, AssetAccounting, AssetV2, AssetVersion, AssetVersions, B20_MAX_SUPPLY_CAP, B20AssetInit,
     B20AssetStorage, B20AssetToken, B20PolicyType, B20TokenRole, ERC165_INTERFACE_ID,
     ERC8056_INTERFACE_IDS, FakePolicyAccounting, IB20, IB20Asset, NoopPrecompileCallObserver,
-    PolicyVersion, TokenAccounting,
+    PolicyVersion, TokenAccounting, UpgradeGatedStorageFeatures,
 };
-use base_precompile_storage::{
-    BasePrecompileError, HashMapStorageProvider, StorageCtx, StorageFeatures,
-};
+use base_precompile_storage::{BasePrecompileError, HashMapStorageProvider, StorageCtx};
 
 mod common;
 use common::{
@@ -157,8 +155,10 @@ const ROOT_ANNOUNCE_V2: B256 =
 
 /// Fresh provider with an initialized `Base Asset` at [`TOKEN`] (multiplier = 1 WAD).
 fn fresh() -> HashMapStorageProvider {
-    let mut storage =
-        HashMapStorageProvider::new_with_storage_features(CHAIN_ID, StorageFeatures::Cobalt);
+    let mut storage = HashMapStorageProvider::new_with_storage_features(
+        CHAIN_ID,
+        UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Cobalt),
+    );
     StorageCtx::enter(&mut storage, |ctx| {
         let mut token = B20AssetStorage::from_address(TOKEN, ctx);
         token
@@ -343,8 +343,10 @@ fn dispatch_rejects_nonzero_value() {
 
 #[test]
 fn dispatch_reverts_when_uninitialized() {
-    let mut s =
-        HashMapStorageProvider::new_with_storage_features(CHAIN_ID, StorageFeatures::Cobalt);
+    let mut s = HashMapStorageProvider::new_with_storage_features(
+        CHAIN_ID,
+        UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Cobalt),
+    );
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
     let out = StorageCtx::enter(&mut s, |ctx| {
         B20AssetToken::with_storage_and_policy(
@@ -367,8 +369,10 @@ fn dispatch_reverts_when_uninitialized() {
 #[test]
 fn golden_dispatch_no_observer_wrapper_reverts_uninitialized() {
     // Exercises the no-observer `dispatch()` wrapper + the is_initialized=false gate.
-    let mut s =
-        HashMapStorageProvider::new_with_storage_features(CHAIN_ID, StorageFeatures::Cobalt);
+    let mut s = HashMapStorageProvider::new_with_storage_features(
+        CHAIN_ID,
+        UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Cobalt),
+    );
     s.set_caller(ALICE);
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
     let out = StorageCtx::enter(&mut s, |ctx| {
