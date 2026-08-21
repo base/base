@@ -402,13 +402,14 @@ impl From<&StandardNodeArgs> for TxForwardingConfig {
 
 /// Metering RPC config for a standard node.
 ///
-/// Enabled when `--enable-metering` or `--enable-inline-simulation` is set so
-/// mempool nodes can run `meter_bundle` in-process before sim workers exist.
+/// RPC methods (`base_meterBundle`, `base_meterBlockByHash`, …) are registered
+/// only when `--enable-metering` is set. Inline simulation uses the in-process
+/// `meter_bundle` API and does not expose this surface.
 fn metering_config(
     args: &StandardNodeArgs,
     flashblocks_config: Option<FlashblocksConfig>,
 ) -> eyre::Result<MeteringConfig> {
-    if !args.metering.enable_metering && !args.rpc.enable_inline_simulation {
+    if !args.metering.enable_metering {
         return Ok(MeteringConfig::disabled());
     }
 
@@ -999,7 +1000,7 @@ mod tests {
     }
 
     #[test]
-    fn inline_simulation_enables_metering_without_enable_metering_flag() {
+    fn inline_simulation_does_not_enable_metering_rpc() {
         let args = CommandParser::<StandardNodeArgs>::parse_from([
             "base-reth",
             "--enable-tx-forwarding",
@@ -1010,7 +1011,20 @@ mod tests {
         .args;
 
         assert!(!args.metering.enable_metering);
-        let config = metering_config(&args, None).expect("inline sim should enable metering");
+        let config =
+            metering_config(&args, None).expect("inline sim should not register metering RPC");
+        assert!(!config.enabled);
+    }
+
+    #[test]
+    fn enable_metering_registers_metering_rpc() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
+            "base-reth",
+            "--enable-metering",
+        ])
+        .args;
+
+        let config = metering_config(&args, None).expect("enable-metering should register RPC");
         assert!(config.enabled);
     }
 

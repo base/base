@@ -105,19 +105,7 @@ where
             )
         })?;
 
-        self.meter_parsed_bundle(parsed_bundle).map_err(|e| {
-            let error_msg = e.to_string();
-            if error_msg.contains("nonce") {
-                debug!(error = %e, "Bundle metering failed");
-            } else {
-                info!(error = %e, "Bundle metering failed");
-            }
-            jsonrpsee::types::ErrorObjectOwned::owned(
-                jsonrpsee::types::ErrorCode::InternalError.code(),
-                format!("Bundle metering failed: {e}"),
-                None::<()>,
-            )
-        })
+        self.meter_parsed_bundle_result(parsed_bundle).map_err(meter_bundle_rpc_error)
     }
 
     async fn meter_block_by_hash(&self, hash: B256) -> RpcResult<MeterBlockResponse> {
@@ -268,6 +256,48 @@ where
     }
 }
 
+/// Distinguishes `base_meterBundle` InvalidParams from InternalError.
+#[derive(Debug, thiserror::Error)]
+enum MeterBundleError {
+    /// Caller-facing input/state errors (missing block, empty block, L1 info).
+    #[error("{0}")]
+    InvalidParams(String),
+    /// Execution or provider failures.
+    #[error("{0}")]
+    Internal(eyre::Error),
+}
+
+impl From<eyre::Error> for MeterBundleError {
+    fn from(error: eyre::Error) -> Self {
+        Self::Internal(error)
+    }
+}
+
+/// Maps [`MeterBundleError`] to the RPC codes `base_meterBundle` used before
+/// the shared in-process helper.
+fn meter_bundle_rpc_error(error: MeterBundleError) -> jsonrpsee::types::ErrorObjectOwned {
+    match error {
+        MeterBundleError::InvalidParams(message) => jsonrpsee::types::ErrorObjectOwned::owned(
+            jsonrpsee::types::ErrorCode::InvalidParams.code(),
+            message,
+            None::<()>,
+        ),
+        MeterBundleError::Internal(error) => {
+            let error_msg = error.to_string();
+            if error_msg.contains("nonce") {
+                debug!(error = %error, "Bundle metering failed");
+            } else {
+                info!(error = %error, "Bundle metering failed");
+            }
+            jsonrpsee::types::ErrorObjectOwned::owned(
+                jsonrpsee::types::ErrorCode::InternalError.code(),
+                format!("Bundle metering failed: {error}"),
+                None::<()>,
+            )
+        }
+    }
+}
+
 /// Computes resource demand from bundle metering results.
 fn compute_resource_demand(bundle: &Bundle, meter_result: &MeterBundleResponse) -> ResourceDemand {
     // Calculate DA bytes from bundle transactions
@@ -301,6 +331,13 @@ where
         &self,
         parsed_bundle: ParsedBundle,
     ) -> EyreResult<MeterBundleResponse> {
+        self.meter_parsed_bundle_result(parsed_bundle).map_err(|error| eyre!("{error}"))
+    }
+
+    fn meter_parsed_bundle_result(
+        &self,
+        parsed_bundle: ParsedBundle,
+    ) -> Result<MeterBundleResponse, MeterBundleError> {
         let pending_blocks = self.flashblocks_api.get_pending_blocks();
         let (header, flashblock_index, canonical_block_number) =
             if let Some(pb) = pending_blocks.as_ref() {
@@ -414,7 +451,10 @@ where
     /// Uses the block number/tag to look up the block, which works for both canonical blocks
     /// and when metering against pending flashblocks (where we use the canonical parent block
     /// to get L1 info, since flashblock headers have zero hashes and can't be looked up by hash).
-    fn get_l1_block_info(&self, block_id: BlockNumberOrTag) -> EyreResult<L1BlockInfo> {
+    fn get_l1_block_info(
+        &self,
+        block_id: BlockNumberOrTag,
+    ) -> Result<L1BlockInfo, MeterBundleError> {
         let first_tx = self
             .provider
             .block_by_number_or_tag(block_id)
@@ -422,15 +462,22 @@ where
                 error!(error = %e, block = ?block_id, "Failed to get block");
                 eyre!("Failed to get block: {e}")
             })?
-            .ok_or_else(|| eyre!("Block not found: {block_id:?}"))?
+            .ok_or_else(|| {
+                MeterBundleError::InvalidParams(format!("Block not found: {block_id:?}"))
+            })?
             .body
             .transactions
             .first()
-            .ok_or_else(|| eyre!("Block has no transactions: {block_id:?}"))?
+            .ok_or_else(|| {
+                MeterBundleError::InvalidParams(format!("Block has no transactions: {block_id:?}"))
+            })?
             .clone();
 
-        extract_l1_info_from_tx(&first_tx)
-            .map_err(|e| eyre!("Failed to extract L1 block info from transaction: {e}"))
+        extract_l1_info_from_tx(&first_tx).map_err(|e| {
+            MeterBundleError::InvalidParams(format!(
+                "Failed to extract L1 block info from transaction: {e}"
+            ))
+        })
     }
 
     /// Internal helper to meter a block's execution
@@ -1060,5 +1107,25 @@ mod tests {
         assert!(result.is_err());
 
         Ok(())
+    }
+
+    #[test]
+    fn l1_info_missing_block_maps_to_invalid_params() {
+        let err = super::meter_bundle_rpc_error(super::MeterBundleError::InvalidParams(
+            "Block not found: Number(1)".to_string(),
+        ));
+
+        assert_eq!(err.code(), jsonrpsee::types::ErrorCode::InvalidParams.code());
+        assert_eq!(err.message(), "Block not found: Number(1)");
+    }
+
+    #[test]
+    fn meter_bundle_internal_errors_keep_internal_error_code() {
+        let err = super::meter_bundle_rpc_error(super::MeterBundleError::Internal(eyre!(
+            "Failed to get state provider: boom"
+        )));
+
+        assert_eq!(err.code(), jsonrpsee::types::ErrorCode::InternalError.code());
+        assert_eq!(err.message(), "Bundle metering failed: Failed to get state provider: boom");
     }
 }
