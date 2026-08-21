@@ -6,6 +6,7 @@ use super::{
     BlockLoadMetrics, BlockRange, CohortMetrics, ConfigSummary, FlashblocksLatencyMetrics,
     GasMetrics, LatencyMetrics, PacingMetrics, SubmissionStats, SubmitCohortLabel,
     ThroughputMetrics, ThroughputPercentiles, ThroughputSample, TransactionMetrics,
+    ValiditySpikeMetrics,
 };
 
 /// Aggregates raw transaction metrics into summary statistics.
@@ -50,6 +51,12 @@ impl<'a> MetricsAggregator<'a> {
         let throughput_duration =
             block_range.block_time_duration(block_time).unwrap_or(wall_clock_duration);
 
+        // Only computed when a future-validity target was frozen for the run.
+        let validity_spike = config
+            .as_ref()
+            .and_then(|config| config.validity_target_block)
+            .map(|target| Self::compute_validity_spike(self.transactions, target));
+
         MetricsSummary {
             config,
             error: None,
@@ -71,6 +78,40 @@ impl<'a> MetricsAggregator<'a> {
             receipt_coverage,
             fresh_recipient_count,
             by_cohort: Self::compute_by_cohort(self.transactions),
+            validity_spike,
+        }
+    }
+
+    /// Summarizes how the `validity_pass` cohort landed relative to a frozen
+    /// future-validity `target_block`, to confirm the intended load spike landed.
+    pub fn compute_validity_spike(
+        transactions: &[TransactionMetrics],
+        target_block: u64,
+    ) -> ValiditySpikeMetrics {
+        let mut first_confirmed_block: Option<u64> = None;
+        let mut confirmed_at_or_after_target = 0u64;
+        let mut confirmed_before_target = 0u64;
+        for transaction in transactions
+            .iter()
+            .filter(|transaction| transaction.cohort == SubmitCohortLabel::ValidityPass)
+        {
+            let Some(block) = transaction.block_number else { continue };
+            first_confirmed_block =
+                Some(first_confirmed_block.map_or(block, |current| current.min(block)));
+            if block >= target_block {
+                confirmed_at_or_after_target += 1;
+            } else {
+                confirmed_before_target += 1;
+            }
+        }
+        let first_block_delta = first_confirmed_block
+            .map(|block| i64::try_from(block).unwrap_or(i64::MAX) - i64::try_from(target_block).unwrap_or(i64::MAX));
+        ValiditySpikeMetrics {
+            target_block,
+            first_confirmed_block,
+            confirmed_at_or_after_target,
+            confirmed_before_target,
+            first_block_delta,
         }
     }
 
@@ -322,6 +363,10 @@ pub struct MetricsSummary {
     /// unless validity transactions were exercised during the run.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub by_cohort: Vec<CohortMetrics>,
+    /// How the delayed-validity cohort landed relative to its frozen target
+    /// block. Present only when a `future_validity_delay` froze a target block.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validity_spike: Option<ValiditySpikeMetrics>,
 }
 
 impl MetricsSummary {
@@ -446,5 +491,55 @@ mod tests {
         assert_eq!(by_cohort[1].cohort, SubmitCohortLabel::ValidityPass);
         assert_eq!(by_cohort[1].confirmed, 2);
         assert_eq!(by_cohort[1].total_gas, 500);
+    }
+
+    #[test]
+    fn validity_spike_measures_landing_relative_to_target() {
+        // Target block 105. Two validity txs land at 105 and 106; a plain tx at
+        // 104 must be ignored.
+        let transactions = [
+            cohort_transaction(105, 100, SubmitCohortLabel::ValidityPass),
+            cohort_transaction(106, 100, SubmitCohortLabel::ValidityPass),
+            cohort_transaction(104, 100, SubmitCohortLabel::Plain),
+        ];
+
+        let spike = MetricsAggregator::compute_validity_spike(&transactions, 105);
+
+        assert_eq!(spike.target_block, 105);
+        assert_eq!(spike.first_confirmed_block, Some(105));
+        assert_eq!(spike.confirmed_at_or_after_target, 2);
+        assert_eq!(spike.confirmed_before_target, 0);
+        assert_eq!(spike.first_block_delta, Some(0));
+    }
+
+    #[test]
+    fn validity_spike_flags_transactions_landing_before_target() {
+        // A validity tx landing before the target signals the predicate was not
+        // enforced; the delta is negative.
+        let transactions = [
+            cohort_transaction(103, 100, SubmitCohortLabel::ValidityPass),
+            cohort_transaction(107, 100, SubmitCohortLabel::ValidityPass),
+        ];
+
+        let spike = MetricsAggregator::compute_validity_spike(&transactions, 105);
+
+        assert_eq!(spike.first_confirmed_block, Some(103));
+        assert_eq!(spike.confirmed_at_or_after_target, 1);
+        assert_eq!(spike.confirmed_before_target, 1);
+        assert_eq!(spike.first_block_delta, Some(-2));
+    }
+
+    #[test]
+    fn validity_spike_is_none_without_a_target_block() {
+        let transactions = [cohort_transaction(10, 100, SubmitCohortLabel::ValidityPass)];
+        let summary = MetricsAggregator::new(&transactions).summarize(
+            Duration::from_secs(1),
+            SubmissionStats { submitted: 1, failed: 0, failure_reasons: &Default::default() },
+            &[],
+            None,
+            ReceiptCoverage::default(),
+            None,
+        );
+        assert!(summary.validity_spike.is_none());
     }
 }

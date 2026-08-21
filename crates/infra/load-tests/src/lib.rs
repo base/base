@@ -31,7 +31,7 @@ pub use metrics::{
     GasMetrics, LatencyMetrics, MetricsAggregator, MetricsCollector, MetricsSummary,
     PacingCycleObservation, PacingCycleSource, PacingMetrics, ReceiptCoverage, RollingWindow,
     SubmissionStats, SubmitCohortLabel, ThroughputMetrics, ThroughputPercentiles, ThroughputSample,
-    TransactionMetrics,
+    TransactionMetrics, ValiditySpikeMetrics,
 };
 
 mod workload;

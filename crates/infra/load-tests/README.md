@@ -382,6 +382,13 @@ cohort stays simultaneous even if `block_time` is approximate (that only shifts
 which wall-clock second the spike lands). The delay consumes one predicate slot,
 requires `ratio > 0`, and may be used with no other predicates configured.
 
+When a delay is set, the summary reports the resolved `validity_target_block` in
+its config block and a `validity_spike` section quantifying how the cohort
+landed: the first block a `validity_pass` transaction confirmed in, its delta
+from the target (`0` = landed exactly at the target), and counts of transactions
+confirming at/after versus before the target (a non-zero "before" count means the
+predicate was not enforced).
+
 **Required flags for end-to-end evaluation.** For predicates to actually be
 evaluated (not merely transported), the target environment must be configured so
 that:

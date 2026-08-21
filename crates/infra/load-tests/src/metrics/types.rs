@@ -117,6 +117,31 @@ pub struct CohortMetrics {
     pub block_latency: LatencyMetrics,
 }
 
+/// How the delayed-validity cohort landed relative to its frozen target block.
+///
+/// Only produced when a `future_validity_delay` froze a target block, this
+/// quantifies whether the intended load spike landed at the target: the whole
+/// `validity_pass` cohort should first confirm at or after `target_block`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ValiditySpikeMetrics {
+    /// The absolute block the cohort was frozen to activate at.
+    pub target_block: u64,
+    /// First block containing a confirmed `validity_pass` transaction.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_confirmed_block: Option<u64>,
+    /// Confirmed `validity_pass` transactions that landed at or after the target.
+    pub confirmed_at_or_after_target: u64,
+    /// Confirmed `validity_pass` transactions that landed before the target.
+    ///
+    /// Should be zero: the `block_number >= target` predicate forbids earlier
+    /// inclusion, so a non-zero count signals the predicate was not enforced.
+    pub confirmed_before_target: u64,
+    /// `first_confirmed_block - target_block`: `0` means the cohort landed
+    /// exactly at the target, positive means later. `None` when nothing confirmed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_block_delta: Option<i64>,
+}
+
 /// Aggregated throughput metrics.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ThroughputMetrics {
@@ -392,6 +417,13 @@ pub struct ConfigSummary {
     /// Number of predicate templates attached to validity transactions.
     #[serde(default)]
     pub validity_predicate_count: usize,
+    /// Configured fixed future validity delay (e.g. `"10s"`), when set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validity_future_delay: Option<String>,
+    /// Absolute block the validity cohort was frozen to activate at, resolved at
+    /// run start from the observed tip and `validity_future_delay`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validity_target_block: Option<u64>,
     /// Address of the precompile looper contract.
     pub looper_contract: Option<String>,
     /// Amount of each swap token per sender (in wei, as string).

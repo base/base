@@ -414,6 +414,11 @@ impl LoadRunner {
                 let target =
                     ValidityRouter::future_target_block(tip, delay, self.config.block_time);
                 self.validity_router.set_target_block(target);
+                // Record the resolved target so the summary can report how the
+                // cohort landed relative to it.
+                if let Some(summary) = self.config_summary.as_mut() {
+                    summary.validity_target_block = Some(target);
+                }
                 info!(
                     tip,
                     target_block = target,

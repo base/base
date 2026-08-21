@@ -598,6 +598,9 @@ impl TestConfig {
             fresh_recipient_ratio: self.fresh_recipient_ratio,
             validity_ratio: self.validity.ratio,
             validity_predicate_count: self.validity.predicates.len(),
+            validity_future_delay: self.validity.future_validity_delay.clone(),
+            // Resolved at run start from the observed tip; unknown at config time.
+            validity_target_block: None,
             looper_contract: self.looper_contract.clone(),
             swap_token_amount: self.swap_token_amount.clone(),
             b20_mint_amount: self.b20_mint_amount.clone(),

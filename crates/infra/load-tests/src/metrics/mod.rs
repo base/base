@@ -5,7 +5,7 @@ pub use types::{
     BlockLoadMetrics, BlockRange, CohortMetrics, ConfigSummary, FlashblocksLatencyMetrics,
     GasMetrics, LatencyMetrics, PacingCycleObservation, PacingCycleSource, PacingMetrics,
     SubmissionStats, SubmitCohortLabel, ThroughputMetrics, ThroughputPercentiles, ThroughputSample,
-    TransactionMetrics,
+    TransactionMetrics, ValiditySpikeMetrics,
 };
 
 mod rolling_window;
