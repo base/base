@@ -41,6 +41,8 @@ base_metrics::define_metrics! {
     sim_default_inserts: counter,
     #[describe("Seconds waiting for meter_bundle to finish after the configured timeout fired")]
     sim_timeout_wait_seconds: histogram,
+    #[describe("Enqueued jobs whose pool insert failed after RPC already returned the hash")]
+    sim_insert_failures: counter,
 }
 
 /// Job waiting for an in-process meter_bundle worker.
@@ -143,6 +145,7 @@ impl InlineSimQueue {
                     let job = meter_job(job, Arc::clone(&meter), timeout).await;
                     if let Err(error) = pool.add_transaction(job.origin, job.transaction).await
                     {
+                        InlineSimMetrics::sim_insert_failures().increment(1);
                         debug!(error = %error, "inline sim pool insert failed");
                     }
                     InlineSimMetrics::sim_seconds().record(started.elapsed().as_secs_f64());
