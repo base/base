@@ -1380,10 +1380,7 @@ validity:
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
         let load_config = config.to_load_config(Some(1337)).unwrap();
-        assert_eq!(
-            load_config.validity_future_delay,
-            Some(std::time::Duration::from_secs(10)),
-        );
+        assert_eq!(load_config.validity_future_delay, Some(std::time::Duration::from_secs(10)),);
         // Delay alone satisfies the "non-empty predicates when enabled" rule.
         assert!(load_config.validity_predicates.is_empty());
     }

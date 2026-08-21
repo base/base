@@ -364,7 +364,8 @@ mod tests {
 
     #[test]
     fn block_number_predicate_to_template() {
-        let config = ValidityPredicateConfig::BlockNumber { op: ">=".into(), value: "0x100".into() };
+        let config =
+            ValidityPredicateConfig::BlockNumber { op: ">=".into(), value: "0x100".into() };
         match config.to_template().unwrap() {
             ValidityPredicateTemplate::BlockNumber { op, value } => {
                 assert_eq!(op, ValidityOperator::GreaterThanOrEqual);
@@ -376,8 +377,7 @@ mod tests {
 
     #[test]
     fn flashblock_index_predicate_to_template() {
-        let config =
-            ValidityPredicateConfig::FlashblockIndex { op: "=".into(), value: "2".into() };
+        let config = ValidityPredicateConfig::FlashblockIndex { op: "=".into(), value: "2".into() };
         match config.to_template().unwrap() {
             ValidityPredicateTemplate::FlashblockIndex { op, value } => {
                 assert_eq!(op, ValidityOperator::Equal);
@@ -389,8 +389,7 @@ mod tests {
 
     #[test]
     fn position_predicate_surfaces_bad_operator() {
-        let config =
-            ValidityPredicateConfig::BlockNumber { op: "==".into(), value: "1".into() };
+        let config = ValidityPredicateConfig::BlockNumber { op: "==".into(), value: "1".into() };
         assert!(config.to_template().is_err());
     }
 
@@ -445,17 +444,16 @@ mod tests {
 
     #[test]
     fn future_delay_parses_humantime() {
-        let config = ValidityConfig {
-            future_validity_delay: Some("10s".into()),
-            ..Default::default()
-        };
+        let config =
+            ValidityConfig { future_validity_delay: Some("10s".into()), ..Default::default() };
         assert_eq!(config.future_delay().unwrap(), Some(Duration::from_secs(10)));
     }
 
     #[test]
     fn future_delay_is_none_when_unset_or_blank() {
         assert_eq!(ValidityConfig::default().future_delay().unwrap(), None);
-        let blank = ValidityConfig { future_validity_delay: Some("  ".into()), ..Default::default() };
+        let blank =
+            ValidityConfig { future_validity_delay: Some("  ".into()), ..Default::default() };
         assert_eq!(blank.future_delay().unwrap(), None);
     }
 
