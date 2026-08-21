@@ -29,8 +29,8 @@ mod best;
 
 mod validity;
 pub use validity::{
-    DEFAULT_MAX_VALIDITY_PREDICATES, PredicateContext, TransactionValidity, ValidityOperator,
-    ValidityPredicate, ValidityPredicateError,
+    DEFAULT_MAX_VALIDITY_PREDICATES, FIRST_POOL_FLASHBLOCK_INDEX, PredicateContext,
+    TransactionValidity, ValidityOperator, ValidityPredicate, ValidityPredicateError,
 };
 
 mod block_expiry;

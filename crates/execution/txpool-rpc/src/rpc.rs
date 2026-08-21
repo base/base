@@ -440,6 +440,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn send_raw_transaction_validity_rejects_unsatisfiable_flashblock_index() {
+        let rpc = SendRawTransactionValidityApiImpl::new(NoopTransactionPool::<
+            BasePooledTransaction,
+        >::new());
+        let mut request = validity_request(Bytes::from_static(&[0x02]));
+        // A flashblock-index predicate that only holds at index 0, which pooled
+        // transactions never reach, would park forever if admitted.
+        request.validity = vec![ValidityPredicate::FlashblockIndex {
+            op: base_execution_txpool::ValidityOperator::Equal,
+            value: U256::ZERO,
+        }];
+
+        let error = rpc
+            .send_raw_transaction_validity(request)
+            .await
+            .expect_err("an unsatisfiable flashblock-index predicate should be rejected");
+
+        assert_eq!(error.code(), ErrorCode::InvalidParams.code());
+        assert!(error.message().contains("can never be satisfied"));
+    }
+
+    #[tokio::test]
     async fn test_transaction_status() -> eyre::Result<()> {
         let pool = testing_pool();
         let rpc =
