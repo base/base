@@ -9,7 +9,7 @@ exclude = [".github/"]
 
 [workspace]
 resolver = "2"
-exclude = ["actions/fixtures", "crates/proof/succinct/programs"]
+exclude = ["actions/fixtures", "crates/proof/zk/programs"]
 members = [
   "actions/*",
   "bin/[a-o]*",
@@ -28,8 +28,8 @@ members = [
   "crates/proof/[u-y]*",
   "crates/proof/prover-service/[a-r]*",
   "crates/proof/tee/*",
-  "crates/proof/succinct/scripts",
-  "crates/proof/succinct/utils/*",
+  "crates/proof/zk/backend/elfs",
+  "crates/proof/zk/backend/scripts",
   "crates/proof/zk/*",
   "crates/utilities/*",
   "etc/tools/*",
@@ -244,7 +244,7 @@ base-proof-preimage = { path = "crates/proof/preimage", default-features = false
 base-proof-primitives = { path = "crates/proof/primitives", default-features = false }
 
 # Succinct (OP Succinct / SP1 proving)
-base-proof-succinct-elfs = { path = "crates/proof/succinct/utils/elfs" }
+base-proof-succinct-elfs = { path = "crates/proof/zk/backend/elfs" }
 
 # Batcher
 base-blobs = { path = "crates/batcher/blobs" }
@@ -441,7 +441,7 @@ aws-sdk-ec2 = { version = "1.217.0", default-features = false }
 aws-credential-types = { version = "1.1.7", default-features = false }
 aws-sdk-elasticloadbalancingv2 = { version = "1.109.0", default-features = false }
 
-# SP1 v6.3.0 (Hypercube) — used by crates/proof/succinct
+# SP1 v6.3.0 (Hypercube) — used by crates/proof/zk
 sp1-prover-types = "=6.3.0"
 sp1-sdk = { version = "=6.3.0" }
 sp1-cluster-utils = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.5.1" }
