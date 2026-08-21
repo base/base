@@ -1,5 +1,7 @@
 //! Registrar metrics constants.
 
+use crate::CertKind;
+
 base_metrics::define_metrics! {
     base_registrar,
     struct = RegistrarMetrics,
@@ -46,23 +48,20 @@ base_metrics::define_metrics! {
     #[describe("Registrar L1 account balance in wei")]
     account_balance_wei: gauge,
 
-    #[describe("Registrar Boundless account balance in wei")]
-    boundless_balance_wei: gauge,
-
-    #[describe("Total number of proof-generation tasks spawned by the run() loop")]
+    #[describe("Total number of signer-registration tasks spawned by the run() loop")]
     proof_tasks_spawned: counter,
 
-    #[describe("Total number of proof-generation tasks the run() loop intentionally cancelled (vanished/ineligible instances or shutdown). Records the cancel intent; the task still terminates as a `completed` outcome.")]
+    #[describe("Total number of signer-registration tasks the run() loop intentionally cancelled (vanished/ineligible instances or shutdown). Records the cancel intent; the task still terminates as a `completed` outcome.")]
     proof_tasks_cancelled: counter,
 
-    #[describe("Total number of proof-generation tasks that ran to terminal state (success, error, panic, or cooperative cancellation)")]
+    #[describe("Total number of signer-registration tasks that ran to terminal state (success, error, panic, or cooperative cancellation)")]
     proof_tasks_completed: counter,
 
-    #[describe("Total number of proof-generation tasks that ran to terminal state by outcome")]
+    #[describe("Total number of signer-registration tasks that ran to terminal state by outcome")]
     #[label(name = "outcome", default = ["succeeded", "failed", "cancelled", "join_error"])]
     proof_tasks_completed_total: counter,
 
-    #[describe("Number of proof-generation tasks currently in-flight in the run() loop")]
+    #[describe("Number of signer-registration tasks currently in-flight in the run() loop")]
     proof_tasks_pending: gauge,
 
     #[describe("Number of prover instances discovered in the latest successful discovery cycle")]
@@ -80,31 +79,45 @@ base_metrics::define_metrics! {
     #[describe("Total number of Registrar registration lifecycle stage observations")]
     #[label(name = "stage", default = ["already_registered", "proof_started", "proof_succeeded", "proof_failed", "proof_cancelled", "proof_invalid", "proof_stale", "tx_submitted", "tx_retry", "tx_succeeded", "tx_failed", "tx_reverted", "tx_observed_registered"])]
     registration_stage_total: counter,
+
+    #[describe("P-384 inverse-hint stream size in bytes, sampled once per registration attempt")]
+    #[label(name = "kind", default = ["ca", "leaf", "attestation"])]
+    hint_size_bytes: histogram,
+
+    #[describe("Certificate cache lookups by kind and outcome")]
+    #[label(name = "kind", default = ["ca", "leaf"])]
+    #[label(name = "outcome", default = ["hit", "miss"])]
+    cert_cache_lookup_total: counter,
+
+    #[describe("Certificate cache transactions by kind and outcome")]
+    #[label(name = "kind", default = ["ca", "leaf"])]
+    #[label(name = "outcome", default = ["submitted", "succeeded", "reverted", "retry", "failed", "observed_cached", "cancelled"])]
+    cert_cache_tx_total: counter,
 }
 
 impl RegistrarMetrics {
-    /// Proof task completed successfully.
+    /// Signer-registration task completed successfully.
     pub const PROOF_TASK_OUTCOME_SUCCEEDED: &'static str = "succeeded";
-    /// Proof task completed with an error.
+    /// Signer-registration task completed with an error.
     pub const PROOF_TASK_OUTCOME_FAILED: &'static str = "failed";
-    /// Proof task completed after cooperative cancellation.
+    /// Signer-registration task completed after cooperative cancellation.
     pub const PROOF_TASK_OUTCOME_CANCELLED: &'static str = "cancelled";
-    /// Proof task failed to join because it panicked or was aborted.
+    /// Signer-registration task failed to join because it panicked or was aborted.
     pub const PROOF_TASK_OUTCOME_JOIN_ERROR: &'static str = "join_error";
 
-    /// Signer was already registered before this task started proof generation.
+    /// Signer was already registered before this task started hint generation.
     pub const REGISTRATION_STAGE_ALREADY_REGISTERED: &'static str = "already_registered";
-    /// Registrar started Boundless proof generation for a signer.
+    /// Registrar started hint generation for a signer.
     pub const REGISTRATION_STAGE_PROOF_STARTED: &'static str = "proof_started";
-    /// Boundless proof generation completed successfully.
+    /// Hint generation completed successfully.
     pub const REGISTRATION_STAGE_PROOF_SUCCEEDED: &'static str = "proof_succeeded";
-    /// Boundless proof generation failed.
+    /// Hint generation failed.
     pub const REGISTRATION_STAGE_PROOF_FAILED: &'static str = "proof_failed";
-    /// Boundless proof generation was cancelled.
+    /// Hint generation was cancelled.
     pub const REGISTRATION_STAGE_PROOF_CANCELLED: &'static str = "proof_cancelled";
-    /// Generated proof failed local validation before transaction submission.
+    /// Registration material failed local validation before transaction submission.
     pub const REGISTRATION_STAGE_PROOF_INVALID: &'static str = "proof_invalid";
-    /// Generated proof became stale before transaction submission.
+    /// Registration material became stale before transaction submission.
     pub const REGISTRATION_STAGE_PROOF_STALE: &'static str = "proof_stale";
     /// Registrar submitted a registration transaction candidate.
     pub const REGISTRATION_STAGE_TX_SUBMITTED: &'static str = "tx_submitted";
@@ -119,7 +132,7 @@ impl RegistrarMetrics {
     /// Signer was observed registered after a transaction submission error.
     pub const REGISTRATION_STAGE_TX_OBSERVED_REGISTERED: &'static str = "tx_observed_registered";
 
-    /// Records a proof-task terminal outcome.
+    /// Records a signer-registration task's terminal outcome.
     pub fn record_proof_task_completed(outcome: &'static str) {
         Self::proof_tasks_completed_total(outcome).increment(1);
     }
@@ -127,5 +140,59 @@ impl RegistrarMetrics {
     /// Records a registration lifecycle stage.
     pub fn record_registration_stage(stage: &'static str) {
         Self::registration_stage_total(stage).increment(1);
+    }
+
+    /// Bounded label for a certificate-cache kind.
+    pub const CERT_KIND_CA: &'static str = "ca";
+    /// Bounded label for a leaf certificate.
+    pub const CERT_KIND_LEAF: &'static str = "leaf";
+    /// Bounded label for the attestation signature hint stream.
+    pub const HINT_KIND_ATTESTATION: &'static str = "attestation";
+
+    /// Cache lookup found a usable cached certificate.
+    pub const CACHE_LOOKUP_HIT: &'static str = "hit";
+    /// Cache lookup found no usable cached certificate.
+    pub const CACHE_LOOKUP_MISS: &'static str = "miss";
+
+    /// Cache transaction was submitted.
+    pub const TX_OUTCOME_SUBMITTED: &'static str = "submitted";
+    /// Cache transaction succeeded and produced a usable cached certificate.
+    pub const TX_OUTCOME_SUCCEEDED: &'static str = "succeeded";
+    /// Cache transaction was included but reverted.
+    pub const TX_OUTCOME_REVERTED: &'static str = "reverted";
+    /// Registrar scheduled a retry after a retryable cache-transaction failure.
+    pub const TX_OUTCOME_RETRY: &'static str = "retry";
+    /// Cache transaction failed permanently, or its receipt succeeded without a usable certificate.
+    pub const TX_OUTCOME_FAILED: &'static str = "failed";
+    /// Certificate was observed cached after an ambiguous cache transaction.
+    pub const TX_OUTCOME_OBSERVED_CACHED: &'static str = "observed_cached";
+    /// Cache transaction was abandoned because the signer task was cancelled after send.
+    pub const TX_OUTCOME_CANCELLED: &'static str = "cancelled";
+
+    /// Returns the bounded cache-kind label for `kind`.
+    pub const fn cert_kind_label(kind: CertKind) -> &'static str {
+        match kind {
+            CertKind::Ca => Self::CERT_KIND_CA,
+            CertKind::Leaf => Self::CERT_KIND_LEAF,
+        }
+    }
+
+    /// Records one hint-stream size sample.
+    pub fn record_hint_size(kind: &'static str, size_bytes: usize) {
+        Self::hint_size_bytes(kind).record(size_bytes as f64);
+    }
+
+    /// Records a certificate-cache lookup.
+    pub fn record_cache_lookup(kind: CertKind, hit: bool) {
+        Self::cert_cache_lookup_total(
+            Self::cert_kind_label(kind),
+            if hit { Self::CACHE_LOOKUP_HIT } else { Self::CACHE_LOOKUP_MISS },
+        )
+        .increment(1);
+    }
+
+    /// Records a certificate-cache transaction outcome.
+    pub fn record_cache_tx(kind: CertKind, outcome: &'static str) {
+        Self::cert_cache_tx_total(Self::cert_kind_label(kind), outcome).increment(1);
     }
 }

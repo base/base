@@ -36,8 +36,8 @@ The `just tee nitro-local-worker` recipe wraps the same command.
 The registrar-facing RPC server exposes:
 
 - `GET /readyz` returns 200 once the host HTTP server is accepting requests. It
-  does not require an onchain-registered signer, so registrar target groups
-  should use it to bootstrap new instances.
+  does not require an onchain-registered signer, so the registrar probes it to
+  bootstrap new instances without depending on registration-gated health.
 - When `TEE_PROVER_REGISTRY_ADDRESS` is configured, `GET /healthz` requires a
   valid onchain signer.
 

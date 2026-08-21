@@ -36,6 +36,18 @@ pub use dispute_game_factory::{
 mod tee_prover_registry;
 pub use tee_prover_registry::{
     ITEEProverRegistry, TEEProverRegistryClient, TEEProverRegistryContractClient,
+    encode_register_signer_calldata,
+};
+
+mod nitro_validator;
+pub use nitro_validator::{INitroValidator, NitroValidatorClient, NitroValidatorContractClient};
+
+mod cert_manager;
+pub use cert_manager::{
+    CertManagerAuthorizationError, CertManagerClient, CertManagerContractClient, ICertManager,
+    VerifiedCert, cert_manager_not_owner_selector, cert_manager_not_revoker_selector,
+    decode_cert_manager_authorization_error, encode_revoke_cert_calldata,
+    encode_verify_ca_cert_with_hints_calldata, encode_verify_client_cert_with_hints_calldata,
 };
 
 mod nitro_enclave_verifier;

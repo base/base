@@ -17,12 +17,11 @@ pub trait InstanceDiscovery: Send + Sync {
     fn discover_instances(&self) -> impl Future<Output = Result<Vec<ProverInstance>>> + Send + '_;
 }
 
-/// Fetches signer identity data from a prover instance endpoint.
+/// Communicates with a prover instance endpoint.
 ///
 /// The primary implementation is [`ProverClient`](crate::ProverClient), which
-/// adapts a discovered endpoint [`Url`] to the shared
-/// `base_proof_primitives::EnclaveApiClient` JSON-RPC surface. Test code can
-/// substitute a mock to avoid real HTTP calls.
+/// sends readiness and signer JSON-RPC requests to a discovered endpoint
+/// [`Url`]. Test code can substitute a mock to avoid real HTTP calls.
 ///
 /// Implementations must return public keys and attestations in the same stable
 /// signer order across calls for a given endpoint. The registrar pairs each
@@ -30,6 +29,12 @@ pub trait InstanceDiscovery: Send + Sync {
 ///
 /// The `endpoint` parameter is a [`Url`] (e.g. `http://10.0.1.5:8000/`).
 pub trait EnclaveEndpointClient: Send + Sync {
+    /// Probes whether the host is accepting requests (`readyz`).
+    ///
+    /// Unlike `healthz`, readiness does not require onchain registration, so the
+    /// registrar can bootstrap new instances without a circular dependency.
+    fn readyz<'a>(&'a self, endpoint: &'a Url) -> impl Future<Output = Result<()>> + Send + 'a;
+
     /// Fetches the SEC1-encoded public key for each enclave signer at the given endpoint.
     fn signer_public_key<'a>(
         &'a self,

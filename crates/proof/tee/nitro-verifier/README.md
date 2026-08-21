@@ -3,9 +3,8 @@
 Pure verification logic for AWS Nitro Enclave attestation documents.
 
 Parses `COSE_Sign1` attestation envelopes, extracts and validates attestation
-documents, and provides Solidity-aligned types for on-chain proof submission.
-This crate has no ZK dependency — it can run natively or inside ZK VMs
-that support `std` (e.g. RISC Zero with the `std` feature).
+documents, and provides Solidity-aligned types used by the hinted registrar and
+native verification flows.
 
 ## Modules
 

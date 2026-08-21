@@ -1,9 +1,7 @@
 //! Top-level attestation verification orchestrating COSE parsing, certificate
 //! chain validation, signature verification, and content validation.
 //!
-//! [`AttestationVerifier::verify`] is the ZK guest entry point — called from the
-//! RISC Zero guest program in CHAIN-3560. It must be deterministic with no
-//! side effects.
+//! The end-to-end verification path is deterministic and has no side effects.
 
 use alloy_primitives::Bytes;
 use p384::ecdsa::{Signature, VerifyingKey, signature::Verifier};
@@ -98,18 +96,23 @@ impl AttestationVerifier {
         opt.as_ref().map_or_else(Bytes::new, |b| Bytes::copy_from_slice(b.as_ref()))
     }
 
-    /// Validates attestation document content (M-02 audit checks).
+    /// Validates attestation document content (M-02 / `NitroValidator` checks).
     ///
     /// Per `NitroValidator.sol` reference:
     /// - `module_id` non-empty
     /// - `timestamp` non-zero
     /// - `digest` == `"SHA384"`
-    /// - `cabundle` has >= 1 certificate
+    /// - `cabundle` has 1..=32 certificates, each 1..=1024 bytes
+    /// - leaf `certificate` is 1..=1024 bytes
     /// - PCR count between 1 and 32, each index 0-31
+    /// - PCRs are not all zero (AWS Nitro debug-mode attestations)
     /// - `public_key`: null or 1-1024 bytes (present-but-empty is rejected, matching Solidity)
     /// - `user_data`: null or <= 512 bytes
     /// - `nonce`: null or <= 512 bytes
-    fn validate_attestation_content(doc: &AttestationDocument) -> Result<()> {
+    ///
+    /// PCR duplicate detection requires a raw CBOR walk (maps collapse duplicates);
+    /// callers that need that should validate the payload bytes separately.
+    pub fn validate_attestation_content(doc: &AttestationDocument) -> Result<()> {
         if doc.module_id.is_empty() {
             return Err(VerifierError::ContentValidation("module_id is empty".into()));
         }
@@ -125,8 +128,25 @@ impl AttestationVerifier {
             )));
         }
 
-        if doc.cabundle.is_empty() {
-            return Err(VerifierError::ContentValidation("cabundle is empty".into()));
+        let cabundle_len = doc.cabundle.len();
+        if cabundle_len == 0 || cabundle_len > 32 {
+            return Err(VerifierError::ContentValidation(format!(
+                "cabundle has {cabundle_len} certificates, must be 1-32"
+            )));
+        }
+        for (i, cert) in doc.cabundle.iter().enumerate() {
+            if cert.is_empty() || cert.len() > 1024 {
+                return Err(VerifierError::ContentValidation(format!(
+                    "cabundle[{i}] length {} out of range (1-1024)",
+                    cert.len()
+                )));
+            }
+        }
+        if doc.certificate.is_empty() || doc.certificate.len() > 1024 {
+            return Err(VerifierError::ContentValidation(format!(
+                "certificate length {} out of range (1-1024)",
+                doc.certificate.len()
+            )));
         }
 
         // PCR count: 1-32, each index 0-31.
@@ -143,6 +163,11 @@ impl AttestationVerifier {
                     "PCR index {index} out of range (must be 0-31)"
                 )));
             }
+        }
+        if doc.pcrs.values().all(|pcr| pcr.iter().all(|&byte| byte == 0)) {
+            return Err(VerifierError::ContentValidation(
+                "all PCRs are zero (Nitro debug mode)".into(),
+            ));
         }
 
         // Optional field size limits. public_key min=1 means present-but-empty is
@@ -203,7 +228,7 @@ mod tests {
     /// A minimal valid `AttestationDocument` for M-02 unit tests.
     fn valid_doc() -> AttestationDocument {
         let mut pcrs = BTreeMap::new();
-        pcrs.insert(0, ByteArray::new([0u8; 48]));
+        pcrs.insert(0, ByteArray::new([1u8; 48]));
         AttestationDocument {
             module_id: "test-module".into(),
             timestamp: 1_700_000_000_000,
@@ -315,6 +340,15 @@ mod tests {
         doc.pcrs.clear();
         let err = AttestationVerifier::validate_attestation_content(&doc).unwrap_err();
         assert!(err.to_string().contains("PCR count"));
+    }
+
+    #[rstest]
+    fn m02_all_zero_pcrs_rejected() {
+        let mut doc = valid_doc();
+        doc.pcrs.insert(0, ByteArray::new([0u8; 48]));
+        doc.pcrs.insert(1, ByteArray::new([0u8; 48]));
+        let err = AttestationVerifier::validate_attestation_content(&doc).unwrap_err();
+        assert!(err.to_string().contains("debug mode"));
     }
 
     #[rstest]
