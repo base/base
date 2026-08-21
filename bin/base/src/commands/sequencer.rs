@@ -110,9 +110,11 @@ impl SequencerCommand {
                         .with_cutover_enabled(payload_builder_cutover)
                         .with_basic_only(basic_payload_builder),
                 );
-            runner.install_ext::<MeteringStoreExtension>(metering_provider);
+            runner.install_ext::<MeteringStoreExtension>(Arc::clone(&metering_provider));
             runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig { sequencer_rpc });
-            runner.install_ext::<BuilderApiExtension>(builder_api_config);
+            runner.install_ext::<BuilderApiExtension>(
+                builder_api_config.with_metering_provider(metering_provider),
+            );
             if builder_api_config.accept_experimental_validity_transactions {
                 runner.install_ext::<SendRawTransactionValidityExtension>(
                     SendRawTransactionValidityConfig {
