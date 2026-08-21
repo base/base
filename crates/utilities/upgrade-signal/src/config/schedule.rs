@@ -134,6 +134,20 @@ impl UpgradeSignalConfig {
         Ok(())
     }
 
+    /// Lead time before an unsupportable upgrade's activation at which the node fails closed.
+    ///
+    /// Derived from the configured L1 block tag's poll cadence
+    /// ([`UpgradeSignalDefaults::HALT_LEAD_POLL_INTERVALS`] × the tag's poll interval) rather than a
+    /// fixed constant, so the halt reliably lands one or more polls *before* activation whether the
+    /// node reads `latest`, `safe`, or `finalized`. See
+    /// [`UpgradeSignalDefaults::HALT_LEAD_POLL_INTERVALS`] for why the window is kept short.
+    pub const fn halt_lead_time(&self) -> Duration {
+        Duration::from_secs(
+            self.l1_block_tag.poll_interval().as_secs()
+                * UpgradeSignalDefaults::HALT_LEAD_POLL_INTERVALS as u64,
+        )
+    }
+
     /// Returns the first signal that requires the node to fail closed, if any.
     ///
     /// This is a signal whose activation is positive (an activation, not a clear), whose minimum
@@ -304,7 +318,7 @@ impl UpgradeSignalConfig {
         match self.evaluate_startup_schedule(
             &schedule,
             UpgradeSignalDefaults::now_secs(),
-            UpgradeSignalDefaults::APPLY_HALT_LEAD_TIME.as_secs(),
+            self.halt_lead_time().as_secs(),
             metrics_layers,
         )? {
             StartupScheduleAction::Apply => Ok(Some(schedule)),
@@ -497,6 +511,23 @@ mod tests {
         assert_eq!(config.request_timeout, UpgradeSignalDefaults::REQUEST_TIMEOUT);
     }
 
+    #[rstest]
+    #[case(UpgradeSignalBlockTag::Finalized)]
+    #[case(UpgradeSignalBlockTag::Safe)]
+    #[case(UpgradeSignalBlockTag::Latest)]
+    fn halt_lead_time_is_a_small_multiple_of_the_poll_interval(#[case] tag: UpgradeSignalBlockTag) {
+        // The halt window is derived from the read cadence (never a fixed 24h) so it lands one or
+        // more polls before activation regardless of the block tag, and is short enough not to
+        // front-run the outage.
+        let mut config = supported_config();
+        config.l1_block_tag = tag;
+
+        assert_eq!(
+            config.halt_lead_time(),
+            tag.poll_interval() * UpgradeSignalDefaults::HALT_LEAD_POLL_INTERVALS
+        );
+    }
+
     fn signal(protocol_version: U256) -> UpgradeSignal {
         UpgradeSignal { upgrade_id: BaseUpgrade::Azul, activation_timestamp: 42, protocol_version }
     }
@@ -666,7 +697,7 @@ mod tests {
     #[test]
     fn startup_applies_a_supported_schedule() {
         let config = config_with_mode(UpgradeSignalMode::RuntimeAdmin);
-        let lead = UpgradeSignalDefaults::APPLY_HALT_LEAD_TIME.as_secs();
+        let lead = config.halt_lead_time().as_secs();
         let schedule =
             schedule_at(1_000_000, UpgradeSignalDefaults::packed_protocol_version(1, 1, 0));
 
@@ -679,7 +710,7 @@ mod tests {
     #[test]
     fn startup_aborts_when_an_unsupportable_upgrade_is_imminent() {
         let config = config_with_mode(UpgradeSignalMode::RuntimeAdmin);
-        let lead = UpgradeSignalDefaults::APPLY_HALT_LEAD_TIME.as_secs();
+        let lead = config.halt_lead_time().as_secs();
         let activation = 1_000_000;
         let schedule =
             schedule_at(activation, UpgradeSignalDefaults::packed_protocol_version(1, 1, 1));
@@ -698,7 +729,7 @@ mod tests {
     #[test]
     fn startup_skips_a_distant_unsupportable_upgrade_when_a_live_poller_will_backstop_it() {
         let config = config_with_mode(UpgradeSignalMode::RuntimeAdmin);
-        let lead = UpgradeSignalDefaults::APPLY_HALT_LEAD_TIME.as_secs();
+        let lead = config.halt_lead_time().as_secs();
         let schedule =
             schedule_at(u64::MAX, UpgradeSignalDefaults::packed_protocol_version(1, 1, 1));
 
@@ -711,7 +742,7 @@ mod tests {
     #[test]
     fn startup_stays_strict_for_a_distant_unsupportable_upgrade_without_a_live_poller() {
         let config = config_with_mode(UpgradeSignalMode::StartupApply);
-        let lead = UpgradeSignalDefaults::APPLY_HALT_LEAD_TIME.as_secs();
+        let lead = config.halt_lead_time().as_secs();
         let schedule =
             schedule_at(u64::MAX, UpgradeSignalDefaults::packed_protocol_version(1, 1, 1));
 
@@ -721,7 +752,7 @@ mod tests {
     #[test]
     fn startup_skips_a_malformed_signal_in_runtime_admin_and_never_fails_closed_on_it() {
         let config = config_with_mode(UpgradeSignalMode::RuntimeAdmin);
-        let lead = UpgradeSignalDefaults::APPLY_HALT_LEAD_TIME.as_secs();
+        let lead = config.halt_lead_time().as_secs();
         // A malformed signal (positive activation, no minimum version), even long overdue.
         let schedule = schedule_at(1, U256::ZERO);
 

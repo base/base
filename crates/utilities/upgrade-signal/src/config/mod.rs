@@ -49,15 +49,22 @@ impl UpgradeSignalDefaults {
         SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
     }
 
-    /// Lead time before an unsupportable upgrade's activation at which the live poller fails the
-    /// node closed.
+    /// Number of L1 read intervals before an unsupportable upgrade's activation at which the node
+    /// fails closed. See [`UpgradeSignalConfig::halt_lead_time`] for the derived window.
     ///
-    /// When the runtime poller (in [`UpgradeSignalMode::RuntimeAdmin`]) observes a scheduled
-    /// upgrade this node's protocol version is too old to apply, it alarms loudly but keeps running
-    /// while the activation is more than this far away, giving the operator time to upgrade the
-    /// node. Once the activation is within this window (or already past), the node halts (fail
-    /// closed) rather than continue and fork off the network at activation.
-    pub const APPLY_HALT_LEAD_TIME: Duration = Duration::from_secs(24 * 60 * 60);
+    /// The node must halt *before* activation to avoid forking, so the halt window has to be wide
+    /// enough that at least one poll reliably lands inside it — hence a small multiple of the poll
+    /// cadence rather than a fixed constant, which also keeps it correct across the `latest`,
+    /// `safe`, and `finalized` block tags.
+    ///
+    /// The window is deliberately short. A large lead would *front-run* the outage: it halts every
+    /// outdated node long before activation, and — worse — before governance could still correct a
+    /// mistakenly scheduled upgrade by clearing or rescheduling the signal (which a running node
+    /// would pick up on its next poll and never halt). Early operator warning does not depend on
+    /// this window: the sticky `apply_failed` alarm is raised on *every* failed apply regardless of
+    /// how far off the activation is. The halt only needs enough margin to stop just ahead of
+    /// activation.
+    pub const HALT_LEAD_POLL_INTERVALS: u32 = 2;
 
     /// Node protocol version supported by this binary for contract-backed upgrade signals.
     ///

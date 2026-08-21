@@ -21,7 +21,7 @@ use base_upgrade_signal::{
 };
 use eyre::{Result, WrapErr};
 use tokio::{
-    task::JoinHandle,
+    task::{AbortHandle, JoinHandle},
     time::{MissedTickBehavior, interval},
 };
 use tracing::{error, info};
@@ -172,7 +172,12 @@ impl InProcessFollowConsensus {
         // clean it up.
         let upgrade_signal_handle = upgrade_signal
             .map(|signal_config| {
-                Self::spawn_upgrade_signal_monitor(signal_config, l1_rpc_url, l2_chain_id)
+                Self::spawn_upgrade_signal_monitor(
+                    signal_config,
+                    l1_rpc_url,
+                    l2_chain_id,
+                    handle.abort_handle(),
+                )
             })
             .transpose()?;
 
@@ -183,6 +188,7 @@ impl InProcessFollowConsensus {
         signal_config: UpgradeSignalConfig,
         l1_rpc_url: Url,
         l2_chain_id: u64,
+        node_abort: AbortHandle,
     ) -> Result<JoinHandle<()>> {
         let reader = signal_config.reader(l1_rpc_url)?;
         Ok(tokio::spawn(async move {
@@ -200,8 +206,11 @@ impl InProcessFollowConsensus {
 
             loop {
                 poll_interval.tick().await;
-                // Mirror production fail-closed: stop the monitor if a scheduled upgrade this node
-                // cannot support is activating imminently, rather than fork off the network.
+                // Mirror production fail-closed: when a scheduled upgrade this node cannot support is
+                // activating imminently, stop the follow node itself rather than fork off the
+                // network. Production cancels the shared token and exits the process; here the
+                // equivalent is aborting the follow node task (not just this monitor loop), so the
+                // node stops following past activation.
                 if let UpgradeSignalPollOutcome::HaltNode {
                     upgrade_id, activation_timestamp, ..
                 } = monitor.poll_and_apply(&reader, refresher.as_ref()).await
@@ -210,8 +219,9 @@ impl InProcessFollowConsensus {
                         target: "upgrade_signal",
                         upgrade = %upgrade_id.contract_id(),
                         activation_timestamp,
-                        "in-process follow node halting upgrade signal monitor (fail closed)"
+                        "in-process follow node failing closed: aborting follow node task"
                     );
+                    node_abort.abort();
                     break;
                 }
             }

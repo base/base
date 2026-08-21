@@ -26,7 +26,8 @@ use base_consensus_peers::{PeerScoreLevel, SecretKeyLoader};
 use base_consensus_rpc::{AdminApiClient, BaseP2PApiClient, RollupNodeApiClient, RpcBuilder};
 use base_consensus_sources::BlockSigner;
 use base_upgrade_signal::{
-    UpgradeSignalConfig, UpgradeSignalMetricLayer, UpgradeSignalRuntimeApplier,
+    UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalMetricLayer,
+    UpgradeSignalRuntimeApplier,
 };
 use eyre::{Result, WrapErr};
 use jsonrpsee::http_client::HttpClientBuilder;
@@ -116,27 +117,32 @@ impl InProcessConsensus {
         let mut rollup_config = config.rollup_config;
         let l1_chain_config = config.l1_chain_config;
 
-        // Mirror the standalone consensus CLI: read the validated L1 schedule and apply it to
-        // the rollup config before the node starts.
+        // Mirror the standalone consensus CLI: apply the fail-closed startup policy (see
+        // `read_startup_schedule`) and apply the schedule to the rollup config before the node
+        // starts. A distant unsupportable upgrade yields `None` (start with an alarm); an imminent
+        // one aborts startup.
         if let Some(signal_config) = &config.upgrade_signal
             && signal_config.mode.applies_at_startup()
         {
             let reader = signal_config.reader(config.l1_rpc_url.clone())?;
             let schedule = signal_config
-                .read_validated_schedule(
+                .read_startup_schedule(
                     &reader,
                     "system test consensus startup",
                     &[UpgradeSignalMetricLayer::Consensus],
+                    UpgradeSignalDefaults::STARTUP_SCHEDULE_RETRY_INTERVAL,
                 )
                 .await
                 .wrap_err("Failed to read upgrade signal schedule at startup")?;
-            UpgradeSignalRuntimeApplier::apply_schedule_to_sink(
-                rollup_config.l2_chain_id.id(),
-                &schedule,
-                &mut rollup_config,
-            )
-            .unwrap_or_else(|never| match never {})
-            .log("rollup config");
+            if let Some(schedule) = schedule {
+                UpgradeSignalRuntimeApplier::apply_schedule_to_sink(
+                    rollup_config.l2_chain_id.id(),
+                    &schedule,
+                    &mut rollup_config,
+                )
+                .unwrap_or_else(|never| match never {})
+                .log("rollup config");
+            }
         }
 
         let rpc_port = config.rpc_port.unwrap_or_else(get_available_port);

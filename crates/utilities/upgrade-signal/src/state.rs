@@ -240,8 +240,8 @@ impl UpgradeSignalMonitor {
     /// (and re-evaluated) on every subsequent poll. Handling depends on the cause:
     ///
     /// * **Outdated node** — the node cannot follow the upgrade and will fork off the network at its
-    ///   activation, so this is fail-closed. While the activation is more than
-    ///   [`UpgradeSignalDefaults::APPLY_HALT_LEAD_TIME`] away the poller only alarms loudly (giving
+    ///   activation, so this is fail-closed. While the activation is more than the halt lead time
+    ///   (see [`crate::UpgradeSignalConfig::halt_lead_time`]) away the poller only alarms loudly (giving
     ///   the operator time to upgrade); once the activation is within that window (or overdue) it
     ///   returns [`UpgradeSignalPollOutcome::HaltNode`] and the node stops. This escalates
     ///   automatically: a future-dated upgrade that is ignored becomes fatal as its activation
@@ -289,7 +289,7 @@ impl UpgradeSignalMonitor {
         if let Some(signal) = refresher.config.fail_closed_upgrade(
             schedule,
             now_secs,
-            UpgradeSignalDefaults::APPLY_HALT_LEAD_TIME.as_secs(),
+            refresher.config.halt_lead_time().as_secs(),
         ) {
             UpgradeSignalMetrics::record_fail_closed(self.metrics_layer, signal);
             error!(
@@ -670,7 +670,7 @@ mod tests {
         let mut monitor = monitor();
         monitor.update_schedule(schedule.clone());
         // "Now" is inside the halt lead time before activation.
-        let now = activation - UpgradeSignalDefaults::APPLY_HALT_LEAD_TIME.as_secs() + 1;
+        let now = activation - refresher.config.halt_lead_time().as_secs() + 1;
         let outcome = monitor.apply_and_evaluate(&refresher, &schedule, now);
 
         assert!(matches!(
@@ -705,7 +705,7 @@ mod tests {
     fn fail_closed_upgrade_only_flags_imminent_unsupportable_activations() {
         let mut config = UpgradeSignalConfig::new(Address::ZERO);
         config.node_protocol_version = UpgradeSignalDefaults::packed_protocol_version(1, 1, 0);
-        let lead = UpgradeSignalDefaults::APPLY_HALT_LEAD_TIME.as_secs();
+        let lead = config.halt_lead_time().as_secs();
         let activation = 1_000_000;
         let unsupported =
             versioned_schedule(activation, UpgradeSignalDefaults::packed_protocol_version(1, 1, 1));
