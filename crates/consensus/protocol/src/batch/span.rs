@@ -809,15 +809,68 @@ mod tests {
         let mut batch =
             SpanBatch { batches: vec![SpanBatchElement::default(); 8], ..Default::default() };
 
+        assert_eq!(batch.block_number(0), None);
+        assert_eq!(batch.final_block_number(), None);
+
         batch.apply_block_number_timestamps(&cfg, 1);
 
         assert_eq!(batch.start_block_number, Some(1));
+        assert_eq!(batch.block_number(0), Some(1));
         assert_eq!(batch.block_number(3), Some(4));
+        assert_eq!(batch.block_number(7), Some(8));
         assert_eq!(batch.block_number(8), None);
         assert_eq!(batch.final_block_number(), Some(8));
         assert_eq!(
             batch.batches.iter().map(|batch| batch.timestamp).collect::<Vec<_>>(),
             [2, 4, 6, 6, 6, 6, 6, 7]
+        );
+    }
+
+    #[test]
+    fn apply_block_number_timestamps_without_denim_uses_legacy_schedule() {
+        let cfg = RollupConfig {
+            genesis: ChainGenesis { l2_time: 10, ..Default::default() },
+            block_time: 2,
+            ..Default::default()
+        };
+        let mut batch =
+            SpanBatch { batches: vec![SpanBatchElement::default(); 3], ..Default::default() };
+
+        batch.apply_block_number_timestamps(&cfg, 2);
+
+        assert_eq!(batch.start_block_number, Some(2));
+        assert_eq!(batch.final_block_number(), Some(4));
+        assert_eq!(
+            batch.batches.iter().map(|batch| batch.timestamp).collect::<Vec<_>>(),
+            [14, 16, 18]
+        );
+    }
+
+    #[test]
+    fn apply_block_number_timestamps_uses_absolute_nonzero_genesis_numbers() {
+        let cfg = RollupConfig {
+            genesis: ChainGenesis {
+                l2: BlockNumHash { number: 100, ..Default::default() },
+                l2_time: 10,
+                ..Default::default()
+            },
+            block_time: 2,
+            upgrades: UpgradeConfig {
+                base: BaseUpgradeConfig { denim: Some(15), ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut batch =
+            SpanBatch { batches: vec![SpanBatchElement::default(); 4], ..Default::default() };
+
+        batch.apply_block_number_timestamps(&cfg, 101);
+
+        assert_eq!(batch.start_block_number, Some(101));
+        assert_eq!(batch.final_block_number(), Some(104));
+        assert_eq!(
+            batch.batches.iter().map(|batch| batch.timestamp).collect::<Vec<_>>(),
+            [12, 14, 16, 16]
         );
     }
 
