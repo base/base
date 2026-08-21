@@ -121,8 +121,10 @@ where
         let encoded_len = tx.raw.len();
 
         let recovered = Recovered::new_unchecked(consensus_tx, sender);
-        let pool_tx = BasePooledTransaction::new(recovered, encoded_len);
-
+        let mut pool_tx = BasePooledTransaction::new(recovered, encoded_len);
+        if let Some(metering) = tx.metering {
+            pool_tx = pool_tx.with_metering(metering);
+        }
         // Attach any extension data carried on the wire. This is a no-op for
         // `NoExtensions`, the default payload.
         let pool_tx = tx.extensions.apply(pool_tx).map_err(|e| {
@@ -200,6 +202,7 @@ mod tests {
     use alloy_consensus::TxEip1559;
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, Bytes, Signature, TxKind, U256};
+    use base_bundles::MeterBundleResponse;
     use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction, TxDeposit};
     use reth_transaction_pool::noop::NoopTransactionPool;
 
@@ -257,7 +260,7 @@ mod tests {
         raw: Bytes,
         extensions: E,
     ) -> ValidatedTransaction<E> {
-        ValidatedTransaction { sender, raw, extensions }
+        ValidatedTransaction { sender, raw, metering: None, extensions }
     }
 
     // ==========================================================================
@@ -362,6 +365,22 @@ mod tests {
         let err = handler.insert_validated_transaction(tx).await.unwrap_err();
 
         assert_eq!(err.code(), ErrorCode::InternalError.code());
+    }
+
+    #[tokio::test]
+    async fn metering_does_not_require_extension_opt_in() {
+        let handler = handler();
+        let (sender, raw) = create_eip1559_tx();
+        let mut tx = validated_transaction(sender, raw, NoExtensions {});
+        tx.metering = Some(MeterBundleResponse::default());
+
+        let err = handler.insert_validated_transaction(tx).await.unwrap_err();
+
+        assert_eq!(
+            err.code(),
+            ErrorCode::InternalError.code(),
+            "metering must not be gated on experimental validity extensions"
+        );
     }
 
     #[test]

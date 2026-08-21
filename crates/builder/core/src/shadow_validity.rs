@@ -176,6 +176,7 @@ mod tests {
         ValidatedTransaction {
             sender: Address::repeat_byte(0x11),
             raw,
+            metering: None,
             extensions: TransactionValidity::default(),
         }
     }

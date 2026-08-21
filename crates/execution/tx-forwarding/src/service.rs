@@ -292,6 +292,7 @@ mod tests {
             transaction: ValidatedTransaction {
                 sender: Address::repeat_byte(byte),
                 raw: Bytes::from(vec![byte]),
+                metering: None,
                 extensions: Default::default(),
             },
             tx_hash: B256::repeat_byte(byte),

@@ -1,6 +1,7 @@
 use core::fmt::Debug;
 
 use alloy_primitives::{Address, Bytes};
+use base_bundles::MeterBundleResponse;
 use reth_transaction_pool::{PoolTransaction, ValidPoolTransaction};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
@@ -92,6 +93,13 @@ pub struct ValidatedTransaction<E = NoExtensions> {
     pub sender: Address,
     /// EIP-2718 encoded transaction bytes.
     pub raw: Bytes,
+    /// In-process `meter_bundle` result. Nested so `u128` timing fields do not go
+    /// through `#[serde(flatten)]`, which serde_json cannot represent.
+    ///
+    /// Omitted when `None`, so existing payloads stay byte-compatible until
+    /// inline simulation starts sending it.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub metering: Option<MeterBundleResponse>,
     /// Extension fields, inlined into the top-level JSON object.
     ///
     /// Deliberately not `#[serde(default)]`: that would force an `E: Default`
@@ -104,6 +112,7 @@ pub struct ValidatedTransaction<E = NoExtensions> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::U256;
+    use base_bundles::MeterBundleResponse;
 
     use super::*;
     use crate::{TransactionValidity, ValidityOperator, ValidityPredicate};
@@ -133,9 +142,12 @@ mod tests {
     #[test]
     fn no_extensions_encoding_matches_legacy_layout() {
         let legacy = LegacyValidatedTransaction { sender: sender(), raw: raw() };
-        let current =
-            ValidatedTransaction { sender: sender(), raw: raw(), extensions: NoExtensions {} };
-
+        let current = ValidatedTransaction {
+            sender: sender(),
+            raw: raw(),
+            metering: None,
+            extensions: NoExtensions {},
+        };
         assert_eq!(
             serde_json::to_string(&legacy).unwrap(),
             serde_json::to_string(&current).unwrap(),
@@ -149,6 +161,7 @@ mod tests {
         let current = ValidatedTransaction {
             sender: sender(),
             raw: raw(),
+            metering: None,
             extensions: TransactionValidity::default(),
         };
 
@@ -167,6 +180,7 @@ mod tests {
         let tx = ValidatedTransaction {
             sender: sender(),
             raw: raw(),
+            metering: None,
             extensions: TransactionValidity { validity: vec![predicate.clone()] },
         };
 
@@ -178,12 +192,55 @@ mod tests {
         let decoded: ValidatedTransaction<TransactionValidity> =
             serde_json::from_value(value).unwrap();
         assert_eq!(decoded.extensions.validity, vec![predicate]);
+        assert!(decoded.metering.is_none());
+    }
+
+    #[test]
+    fn metering_is_nested_and_round_trips() {
+        let metering = MeterBundleResponse {
+            total_gas_used: 21_000,
+            total_execution_time_us: 500,
+            ..MeterBundleResponse::default()
+        };
+        let tx = ValidatedTransaction {
+            sender: sender(),
+            raw: raw(),
+            metering: Some(metering.clone()),
+            extensions: NoExtensions {},
+        };
+
+        let value = serde_json::to_value(&tx).unwrap();
+        assert!(value.get("extensions").is_none());
+        assert_eq!(value["metering"]["totalExecutionTimeUs"], 500);
+
+        let decoded: ValidatedTransaction = serde_json::from_value(value).unwrap();
+        assert_eq!(decoded.metering, Some(metering));
+    }
+
+    #[test]
+    fn default_reader_keeps_metering_when_present() {
+        let extended = ValidatedTransaction {
+            sender: sender(),
+            raw: raw(),
+            metering: Some(MeterBundleResponse::default()),
+            extensions: NoExtensions {},
+        };
+        let json = serde_json::to_string(&extended).unwrap();
+
+        let decoded: ValidatedTransaction = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.sender, sender());
+        assert!(decoded.metering.is_some());
+        assert_eq!(decoded.extensions, NoExtensions {});
     }
 
     #[test]
     fn no_extensions_adds_no_json_fields() {
-        let tx = ValidatedTransaction { sender: sender(), raw: raw(), extensions: NoExtensions {} };
-
+        let tx = ValidatedTransaction {
+            sender: sender(),
+            raw: raw(),
+            metering: None,
+            extensions: NoExtensions {},
+        };
         let json = serde_json::to_string(&tx).unwrap();
         assert!(!json.contains("extensions"), "flattened marker must not emit a key: {json}");
         assert_eq!(
@@ -197,6 +254,7 @@ mod tests {
         let tx = ValidatedTransaction {
             sender: sender(),
             raw: raw(),
+            metering: None,
             extensions: TestExtensions { extra: Some(9) },
         };
 
@@ -209,6 +267,7 @@ mod tests {
         let extended = ValidatedTransaction {
             sender: sender(),
             raw: raw(),
+            metering: None,
             extensions: TestExtensions { extra: Some(9) },
         };
         let json = serde_json::to_string(&extended).unwrap();
@@ -233,6 +292,7 @@ mod tests {
         let tx = ValidatedTransaction {
             sender: sender(),
             raw: raw(),
+            metering: None,
             extensions: TestExtensions { extra: Some(u64::MAX) },
         };
         let json = serde_json::to_string(&tx).unwrap();

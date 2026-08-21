@@ -117,6 +117,7 @@ async fn predicates_delay_priority_without_blocking_nonce_descendants() -> eyre:
     let validated_parent = ValidatedTransaction {
         sender: accounts[0].address(),
         raw: parent.encoded_2718().into(),
+        metering: None,
         extensions: TransactionValidity {
             validity: vec![ValidityPredicate::Balance {
                 address: watched,
@@ -216,6 +217,7 @@ async fn predicate_eval_hard_cutoff_defers_without_evaluating() -> eyre::Result<
             (ValidatedTransaction {
                 sender: accounts[0].address(),
                 raw: first.encoded_2718().into(),
+                metering: None,
                 extensions: TransactionValidity { validity: always_satisfied.clone() },
             },),
         )
@@ -237,6 +239,7 @@ async fn predicate_eval_hard_cutoff_defers_without_evaluating() -> eyre::Result<
             (ValidatedTransaction {
                 sender: accounts[1].address(),
                 raw: deferred.encoded_2718().into(),
+                metering: None,
                 extensions: TransactionValidity { validity: always_satisfied },
             },),
         )
@@ -301,6 +304,7 @@ async fn shadow_validity_injection_preserves_forwarded_transaction() -> eyre::Re
     let forwarded = ValidatedTransaction {
         sender: accounts[0].address(),
         raw: raw.clone().into(),
+        metering: None,
         extensions: TransactionValidity::default(),
     };
     driver
