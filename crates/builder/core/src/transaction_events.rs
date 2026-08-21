@@ -510,7 +510,7 @@ pub(crate) fn emit_builder_transaction_event<D, F>(
     D: Serialize,
     F: FnOnce() -> D,
 {
-    if GlobalTransactionEventWriter::get().is_none() {
+    if !GlobalTransactionEventWriter::is_recording() {
         return;
     }
 
@@ -560,7 +560,7 @@ pub(crate) fn emit_builder_payload_event<D, F>(
     D: Serialize,
     F: FnOnce() -> D,
 {
-    if GlobalTransactionEventWriter::get().is_none() {
+    if !GlobalTransactionEventWriter::is_recording() {
         return;
     }
 
@@ -606,6 +606,11 @@ fn serialize_builder_event_data<T: Serialize>(data: BuilderEventData<T>) -> Map<
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::{B256, TxHash};
+    use base_observability_events::{
+        TransactionEventBuilder, TransactionEventProducer, TransactionEventType,
+    };
+
     use super::*;
 
     fn context() -> BuilderTransactionEventContext {
@@ -698,6 +703,86 @@ mod tests {
                 ExecutionMeteringLimitExceeded::TransactionExecutionTime(1, 2),
             )),
             "tx_execution_time_exceeded"
+        );
+    }
+
+    #[test]
+    fn deferred_rejected_and_expired_event_payloads_are_distinguishable() {
+        let info = ExecutionInfo::default();
+        let limits = ResourceLimits::default();
+        let deferred = serde_json::to_value(BuilderDeferredEventData::new(
+            "validity_predicate_not_satisfied",
+            "a validity predicate is not satisfied by the current build state",
+            &info,
+            &limits,
+            None,
+        ))
+        .unwrap();
+        let rejected = serde_json::to_value(BuilderRejectedEventData::new(
+            "validity_predicate_not_satisfied",
+            "a validity predicate is not satisfied by the current build state",
+            false,
+            &info,
+            &limits,
+            None,
+        ))
+        .unwrap();
+        let expired = serde_json::to_value(BuilderExpiredEventData::new(
+            "validity_predicate_expired",
+            "a validity predicate can no longer be satisfied at or after the current build position",
+            &info,
+            &limits,
+            None,
+        ))
+        .unwrap();
+
+        assert_eq!(deferred["defer_reason"], "validity_predicate_not_satisfied");
+        assert!(deferred.get("rejection_reason").is_none());
+        assert!(deferred.get("expire_reason").is_none());
+        assert!(!deferred.as_object().unwrap().contains_key("validity_predicates"));
+
+        assert_eq!(rejected["rejection_reason"], "validity_predicate_not_satisfied");
+        assert!(rejected.get("defer_reason").is_none());
+        assert!(rejected.get("expire_reason").is_none());
+        assert!(!rejected.as_object().unwrap().contains_key("validity_predicates"));
+
+        assert_eq!(expired["expire_reason"], "validity_predicate_expired");
+        assert!(expired.get("defer_reason").is_none());
+        assert!(expired.get("rejection_reason").is_none());
+        assert!(!expired.as_object().unwrap().contains_key("validity_predicates"));
+    }
+
+    #[test]
+    fn repark_in_the_same_flashblock_uses_a_distinct_deferred_event_id() {
+        let tx_hash = TxHash::repeat_byte(0x33);
+        let first = TransactionEventBuilder::new(
+            TransactionEventProducer::BaseBuilder,
+            TransactionEventType::BuilderDeferred,
+        )
+        .tx_hash(tx_hash)
+        .payload_id("0x0102030405060708")
+        .id_part("flashblock_index", 2)
+        .id_part("ordering_position", 1)
+        .data_field("defer_reason", serde_json::json!("validity_predicate_not_satisfied"))
+        .build_with_network("base-devnet");
+        let second = TransactionEventBuilder::new(
+            TransactionEventProducer::BaseBuilder,
+            TransactionEventType::BuilderDeferred,
+        )
+        .tx_hash(tx_hash)
+        .payload_id("0x0102030405060708")
+        .id_part("flashblock_index", 2)
+        .id_part("ordering_position", 4)
+        .data_field("defer_reason", serde_json::json!("validity_predicate_not_satisfied"))
+        .build_with_network("base-devnet");
+
+        first.validate().expect("first deferred event should be valid");
+        second.validate().expect("second deferred event should be valid");
+        assert_eq!(first.tx_hash, second.tx_hash);
+        assert_eq!(first.payload_id, second.payload_id);
+        assert_ne!(
+            first.event_id, second.event_id,
+            "promote-and-repark in the same flashblock must emit a second BUILDER_DEFERRED with its own event_id"
         );
     }
 }

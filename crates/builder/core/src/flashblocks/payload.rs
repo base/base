@@ -895,7 +895,7 @@ where
         D: Serialize,
         F: FnOnce() -> D,
     {
-        if GlobalTransactionEventWriter::get().is_none() {
+        if !GlobalTransactionEventWriter::is_recording() {
             return;
         }
         let event_ctx = BuilderTransactionEventContext {
@@ -980,7 +980,7 @@ where
         ctx: &BasePayloadBuilderCtx,
         final_payload: &BaseBuiltPayload,
     ) {
-        if GlobalTransactionEventWriter::get().is_none() {
+        if !GlobalTransactionEventWriter::is_recording() {
             return;
         }
 

@@ -236,8 +236,15 @@ impl<Pool: TransactionPool + 'static> AdminTxPoolApiServer for AdminTxPoolApiImp
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::U256;
-    use base_observability_events::{TransactionEventBuilder, TransactionEventProducer};
+    use alloy_consensus::{SignableTransaction, TxEip1559};
+    use alloy_eips::eip2718::Encodable2718;
+    use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256};
+    use alloy_signer::SignerSync;
+    use alloy_signer_local::PrivateKeySigner;
+    use base_observability_events::{
+        TransactionEventBuilder, TransactionEventCapture, TransactionEventProducer,
+        TransactionEventType,
+    };
     use httpmock::prelude::*;
     use reth_transaction_pool::{
         PoolTransaction, TransactionOrigin,
@@ -284,6 +291,22 @@ mod tests {
                 value: U256::from(5),
             },
         ]
+    }
+
+    fn signed_eip1559(signer: &PrivateKeySigner, nonce: u64, priority_fee: u128) -> Bytes {
+        let mut tx = TxEip1559 {
+            chain_id: 8453,
+            nonce,
+            gas_limit: 21_000,
+            max_fee_per_gas: 1_000_000_000,
+            max_priority_fee_per_gas: priority_fee,
+            to: TxKind::Call(Address::repeat_byte(0x11)),
+            value: U256::ZERO,
+            access_list: Default::default(),
+            input: Default::default(),
+        };
+        let signature = signer.sign_hash_sync(&tx.signature_hash()).expect("test signer");
+        tx.into_signed(signature).encoded_2718().into()
     }
 
     #[test]
@@ -353,6 +376,104 @@ mod tests {
         assert_eq!(event.event_type.to_string(), "TXPOOL_SEND_RAW_TRANSACTION_VALIDITY");
         assert_eq!(event.tx_hash, Some(tx_hash));
         assert!(event.data.contains_key("validity_predicates"));
+    }
+
+    #[tokio::test]
+    async fn send_raw_transaction_validity_emits_predicate_list_on_admission() {
+        let capture = TransactionEventCapture::install();
+        let signer = PrivateKeySigner::random();
+        let raw = signed_eip1559(&signer, 0, 1);
+        let rpc = SendRawTransactionValidityApiImpl::new(NoopTransactionPool::<
+            BasePooledTransaction,
+        >::new());
+        let request =
+            SendRawTransactionValidityRequest { tx: raw, validity: all_predicate_variants() };
+
+        let tx_hash = rpc.send_raw_transaction_validity(request).await;
+        let tx_hash = match tx_hash {
+            Ok(tx_hash) => tx_hash,
+            Err(_) => capture.events().first().and_then(|event| event.tx_hash).expect(
+                "admission event should fire before pool insertion even if the noop pool rejects",
+            ),
+        };
+
+        let events: Vec<_> = capture
+            .events()
+            .into_iter()
+            .filter(|event| {
+                event.event_type == TransactionEventType::TxpoolSendRawTransactionValidity
+                    && event.tx_hash == Some(tx_hash)
+            })
+            .collect();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].data["rpc_method"], "base_sendRawTransactionValidity");
+        assert_eq!(
+            events[0].data["validity_predicates"],
+            serde_json::to_value(all_predicate_variants()).unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn replacement_emits_a_second_admission_event_joinable_by_replacement_hash() {
+        let capture = TransactionEventCapture::install();
+        let signer = PrivateKeySigner::random();
+        let original = signed_eip1559(&signer, 0, 1);
+        let replacement = signed_eip1559(&signer, 0, 2);
+        let rpc = SendRawTransactionValidityApiImpl::new(NoopTransactionPool::<
+            BasePooledTransaction,
+        >::new());
+
+        let original_predicates = vec![ValidityPredicate::BlockNumber {
+            op: base_execution_txpool::ValidityOperator::GreaterThanOrEqual,
+            value: U256::from(1),
+        }];
+        let replacement_predicates = vec![ValidityPredicate::FlashblockIndex {
+            op: base_execution_txpool::ValidityOperator::LessThan,
+            value: U256::from(5),
+        }];
+
+        let _ = rpc
+            .send_raw_transaction_validity(SendRawTransactionValidityRequest {
+                tx: original,
+                validity: original_predicates.clone(),
+            })
+            .await;
+        let _ = rpc
+            .send_raw_transaction_validity(SendRawTransactionValidityRequest {
+                tx: replacement,
+                validity: replacement_predicates.clone(),
+            })
+            .await;
+
+        let admissions: Vec<_> = capture
+            .events()
+            .into_iter()
+            .filter(|event| {
+                event.event_type == TransactionEventType::TxpoolSendRawTransactionValidity
+            })
+            .collect();
+        assert_eq!(admissions.len(), 2, "each submit, including a replacement, emits admission");
+        assert_ne!(admissions[0].tx_hash, admissions[1].tx_hash);
+        assert_eq!(
+            admissions[0].data["validity_predicates"],
+            serde_json::to_value(&original_predicates).unwrap()
+        );
+        assert_eq!(
+            admissions[1].data["validity_predicates"],
+            serde_json::to_value(&replacement_predicates).unwrap()
+        );
+
+        let original_hash = admissions[0].tx_hash.expect("original admission has tx_hash");
+        let replacement_hash = admissions[1].tx_hash.expect("replacement admission has tx_hash");
+        let replaced = TransactionEventBuilder::new(
+            TransactionEventProducer::BaseRethNode,
+            TransactionEventType::Replaced,
+        )
+        .tx_hash(original_hash)
+        .data_field("replacement_hash", json!(format!("{replacement_hash:#x}")))
+        .build_with_network("base-devnet");
+        replaced.validate().expect("replacement event should be valid");
+        assert_eq!(replaced.data["replacement_hash"], format!("{replacement_hash:#x}"));
     }
 
     #[test]

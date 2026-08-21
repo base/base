@@ -6368,7 +6368,11 @@ dependencies = [
 name = "base-txpool-rpc"
 version = "0.0.0"
 dependencies = [
+ "alloy-consensus 2.4.1",
+ "alloy-eips 2.4.1",
  "alloy-primitives",
+ "alloy-signer 2.4.1",
+ "alloy-signer-local 2.4.1",
  "base-execution-txpool",
  "base-node-runner",
  "base-observability-events",

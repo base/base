@@ -13,7 +13,7 @@ pub use event::*;
 mod emit;
 pub use emit::{
     GlobalTransactionEventWriter, GlobalTransactionEventWriterInitStatus, TransactionEventBuilder,
-    TransactionEventEmitOutcome,
+    TransactionEventCapture, TransactionEventEmitOutcome,
 };
 
 mod id;
