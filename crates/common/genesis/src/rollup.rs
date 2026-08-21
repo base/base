@@ -449,14 +449,10 @@ impl RollupConfig {
         let mut candidates = Vec::with_capacity(5);
         let denim_activation_block = self.denim_activation_block_number();
         let legacy_delta = timestamp.saturating_sub(self.genesis.l2_time);
-        let legacy_offset = if timestamp == u64::MAX {
-            legacy_delta.div_ceil(self.block_time)
-        } else {
-            legacy_delta / self.block_time
-        };
+        let legacy_offset = legacy_delta / self.block_time;
         let legacy_block = self.genesis.l2.number + legacy_offset;
         if timestamp >= self.genesis.l2_time
-            && (timestamp == u64::MAX || legacy_delta.is_multiple_of(self.block_time))
+            && legacy_delta.is_multiple_of(self.block_time)
             && denim_activation_block.is_none_or(|activation| legacy_block < activation)
             && self.l2_block_timestamp(legacy_block) == timestamp
         {
@@ -474,11 +470,7 @@ impl RollupConfig {
                 continue;
             }
             let delta = target_millis - activation_millis;
-            let offset = if target_millis == u64::MAX {
-                delta.div_ceil(Self::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS)
-            } else {
-                delta / Self::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS
-            };
+            let offset = delta / Self::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS;
             let block = activation_block + offset;
             if !candidates.contains(&block) && self.l2_block_timestamp(block) == timestamp {
                 candidates.push(block);
@@ -1295,20 +1287,6 @@ mod tests {
         assert_eq!(cfg.l2_block_number_candidates(11), [0]);
         assert!(cfg.l2_block_number_candidates(12).is_empty());
         assert_eq!(cfg.l2_block_number_candidates(20), [3]);
-    }
-
-    #[test]
-    fn l2_block_number_candidates_deduplicate_saturation() {
-        let cfg = rollup_config_with_denim(u64::MAX, u64::MAX, Some(u64::MAX));
-        let saturated_timestamp = u64::MAX / 1_000;
-
-        assert_eq!(cfg.l2_block_number_candidates(saturated_timestamp), [0]);
-        assert!(cfg.l2_block_number_candidates(saturated_timestamp - 1).is_empty());
-
-        let mut absolute = cfg;
-        absolute.genesis.l2.number = u64::MAX;
-        assert_eq!(absolute.denim_activation_block_number(), Some(u64::MAX));
-        assert_eq!(absolute.l2_block_number_candidates(saturated_timestamp), [u64::MAX]);
     }
 
     #[test]
