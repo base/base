@@ -11,8 +11,6 @@ use reth_primitives_traits::{AlloyBlockHeader, RecoveredBlock};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
-use crate::ShadowIndexerMetrics;
-
 /// Shadow indexer `ExEx` handler.
 #[derive(Debug)]
 pub struct ShadowIndexerExEx {
@@ -167,8 +165,6 @@ impl ShadowIndexerExEx {
             if !self.send_row(row).await? {
                 return Ok(false);
             }
-
-            ShadowIndexerMetrics::reorged_blocks_total().increment(1);
         }
 
         Ok(true)
@@ -188,8 +184,6 @@ impl ShadowIndexerExEx {
             if !self.send_row(row).await? {
                 return Ok(false);
             }
-
-            ShadowIndexerMetrics::reorged_blocks_total().increment(1);
         }
 
         Ok(true)
