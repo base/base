@@ -9,10 +9,10 @@ use base_precompile_storage::{BasePrecompileError, ContractStorage, Result};
 use revm::state::Bytecode;
 
 use crate::{
-    ActivationRegistryStorage, AssetVersion, B20AssetInit, B20AssetStorage, B20AssetToken,
+    ActivationRegistryStorage, AssetVersions, B20AssetInit, B20AssetStorage, B20AssetToken,
     B20FactoryStorage, B20StablecoinInit, B20StablecoinStorage, B20StablecoinToken, B20TokenRole,
     B20Variant, Factory, IB20Factory, NoopPrecompileCallObserver, PolicyRegistryStorage,
-    PolicyVersions, StablecoinVersion, Token,
+    PolicyVersions, StablecoinVersions, Token,
 };
 
 /// Version byte for `B20StablecoinEventParams` inside `B20Created.variantParams`.
@@ -81,14 +81,15 @@ impl FactoryV1 {
             )?;
         }
 
-        // Pinned to V1: factory-init setup calls run before any later fork can be relevant.
+        let stablecoin_version = StablecoinVersions::from_base_upgrade(upgrade)
+            .ok_or_else(|| BasePrecompileError::Revert(Bytes::new()))?;
         storage.storage().with_caller(B20FactoryStorage::ADDRESS, || {
             for (index, calldata) in init_calls.into_iter().enumerate() {
                 token
                     .route(
                         storage.storage(),
                         &calldata,
-                        StablecoinVersion::V1,
+                        stablecoin_version,
                         true,
                         NoopPrecompileCallObserver,
                     )
@@ -140,14 +141,15 @@ impl FactoryV1 {
             )?;
         }
 
-        // Pinned to V1: factory-init setup calls run before any later fork can be relevant.
+        let asset_version = AssetVersions::from_base_upgrade(upgrade)
+            .ok_or_else(|| BasePrecompileError::Revert(Bytes::new()))?;
         storage.storage().with_caller(B20FactoryStorage::ADDRESS, || {
             for (index, calldata) in init_calls.into_iter().enumerate() {
                 token
                     .route(
                         storage.storage(),
                         &calldata,
-                        AssetVersion::V1,
+                        asset_version,
                         true,
                         NoopPrecompileCallObserver,
                     )
