@@ -39,7 +39,7 @@ pub struct TxForwardingConfig {
     pub inline_simulation_workers: usize,
     /// Bounded pre-sim queue capacity.
     pub inline_simulation_queue_capacity: usize,
-    /// Per-transaction meter_bundle timeout in milliseconds.
+    /// Deadline for real vs default metering. Does not free the worker.
     pub inline_simulation_timeout_ms: u64,
     /// Shared flashblocks pending state used by in-process meter_bundle.
     pub flashblocks_state: Option<Arc<FlashblocksState>>,

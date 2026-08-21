@@ -29,29 +29,22 @@ impl BaseNodeExtension for TxForwardingExtension {
     /// Applies the extension to the supplied hooks.
     fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks {
         let config = self.config;
-        let inline_rx = if config.inline_simulation
+        let inline_chan = if config.inline_simulation
             && config.inline_simulation_workers > 0
             && config.inline_simulation_queue_capacity > 0
         {
-            let (sender, receiver) = mpsc::channel(config.inline_simulation_queue_capacity);
-            InlineSimQueue::install(sender);
-            info!(
-                workers = config.inline_simulation_workers,
-                queue_capacity = config.inline_simulation_queue_capacity,
-                timeout_ms = config.inline_simulation_timeout_ms,
-                "installed inline simulation queue"
-            );
-            Some(receiver)
+            Some(mpsc::channel(config.inline_simulation_queue_capacity))
         } else {
             None
         };
 
-        if (!config.enabled || config.builder_urls.is_empty()) && inline_rx.is_none() {
+        if (!config.enabled || config.builder_urls.is_empty()) && inline_chan.is_none() {
             return hooks;
         }
 
         hooks.add_node_started_hook(move |ctx| {
-            if let Some(receiver) = inline_rx {
+            if let Some((sender, receiver)) = inline_chan {
+                InlineSimQueue::install(sender);
                 let meter = Arc::new(MeteringApiImpl::new(
                     ctx.provider.clone(),
                     config.flashblocks_state.clone().unwrap_or_default(),
@@ -66,6 +59,8 @@ impl BaseNodeExtension for TxForwardingExtension {
                 );
                 info!(
                     workers = config.inline_simulation_workers,
+                    queue_capacity = config.inline_simulation_queue_capacity,
+                    timeout_ms = config.inline_simulation_timeout_ms,
                     "started inline simulation workers"
                 );
             }

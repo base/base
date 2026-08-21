@@ -307,7 +307,8 @@ pub struct RpcStandardNodeArgs {
 
     /// Deadline for attaching real metering versus `MeterBundleResponse::default`.
     ///
-    /// Does not free the worker: `meter_bundle` still runs to completion.
+    /// Does not free the worker or bound queue drain: `meter_bundle` still runs
+    /// to completion, and the worker joins that blocking task.
     #[arg(
         long = "inline-simulation-timeout-ms",
         value_name = "INLINE_SIMULATION_TIMEOUT_MS",

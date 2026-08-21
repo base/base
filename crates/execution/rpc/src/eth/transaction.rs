@@ -288,16 +288,23 @@ where
 
         match InlineSimQueue::try_enqueue(InlineSimJob { origin, transaction: validated }) {
             Ok(()) => Ok(hash),
-            Err(InlineSimEnqueueError::Full) => {
-                Err(EthApiError::PoolError(
-                    reth_rpc_eth_types::error::RpcPoolError::TxPoolOverflow,
-                )
-                .into())
+            Err(InlineSimEnqueueError::Full(job)) => {
+                let job = InlineSimQueue::with_default_metering(job, "queue_full");
+                let AddedTransactionOutcome { hash, .. } = self
+                    .pool()
+                    .add_transaction(job.origin, job.transaction)
+                    .await
+                    .map_err(BaseEthApiError::from_eth_err)?;
+                Ok(hash)
             }
-            Err(InlineSimEnqueueError::Disabled) => Err(EthApiError::PoolError(
-                PoolError::other(hash, "inline sim queue is not installed").into(),
-            )
-            .into()),
+            Err(InlineSimEnqueueError::Disabled(job)) => {
+                let AddedTransactionOutcome { hash, .. } = self
+                    .pool()
+                    .add_transaction(job.origin, job.transaction)
+                    .await
+                    .map_err(BaseEthApiError::from_eth_err)?;
+                Ok(hash)
+            }
         }
     }
 }

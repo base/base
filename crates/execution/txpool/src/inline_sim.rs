@@ -2,13 +2,11 @@
 //!
 //! RPC validates cheaply, then [`InlineSimQueue::try_enqueue`]. Workers pop, run
 //! `meter_bundle`, and insert with [`crate::BasePooledTransaction::with_metering`].
-//! The queue is installed at node start when `--enable-inline-simulation` is set.
+//! The queue is installed in the node-started hook together with the workers.
+//! Queue-full inserts [`MeterBundleResponse::default`] instead of rejecting.
 
 use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -30,12 +28,14 @@ base_metrics::define_metrics! {
     sim_queue_size: gauge,
     #[describe("Sim workers currently running meter_bundle")]
     sim_workers_busy: gauge,
+    #[describe("Sim worker tasks still in their recv loop")]
+    sim_workers_alive: gauge,
     #[describe("Wall time in seconds for one sim worker job (meter_bundle plus pool insert)")]
     sim_seconds: histogram,
-    #[describe("Transactions dropped because the pre-sim queue was full")]
+    #[describe("Queue-full events that inserted MeterBundleResponse::default instead of simulating")]
     sim_queue_full: counter,
     #[describe("meter_bundle failures that inserted MeterBundleResponse::default")]
-    #[label(name = "reason", default = ["timeout", "meter", "join"])]
+    #[label(name = "reason", default = ["timeout", "meter", "join", "queue_full"])]
     sim_failures: counter,
     #[describe("Pool inserts that carried MeterBundleResponse::default after a failed or timed-out sim")]
     sim_default_inserts: counter,
@@ -53,16 +53,15 @@ pub struct InlineSimJob {
 }
 
 /// Why [`InlineSimQueue::try_enqueue`] rejected a job.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum InlineSimEnqueueError {
     /// `--enable-inline-simulation` is off, or workers have not installed a queue.
-    Disabled,
-    /// Bounded pre-sim queue is full.
-    Full,
+    Disabled(InlineSimJob),
+    /// Bounded pre-sim queue is full. Caller inserts with default metering.
+    Full(InlineSimJob),
 }
 
 static QUEUE: RwLock<Option<mpsc::Sender<InlineSimJob>>> = RwLock::new(None);
-static QUEUE_LEN: AtomicUsize = AtomicUsize::new(0);
 
 /// Handle for the mempool pre-sim queue and worker pool.
 #[derive(Debug)]
@@ -71,7 +70,6 @@ pub struct InlineSimQueue;
 impl InlineSimQueue {
     /// Installs the enqueue sender used by `eth_sendRawTransaction`.
     pub fn install(sender: mpsc::Sender<InlineSimJob>) {
-        QUEUE_LEN.store(0, Ordering::Relaxed);
         InlineSimMetrics::sim_queue_size().set(0.0);
         *QUEUE.write() = Some(sender);
     }
@@ -84,21 +82,20 @@ impl InlineSimQueue {
     /// Pushes a validated transaction for a sim worker.
     pub fn try_enqueue(job: InlineSimJob) -> Result<(), InlineSimEnqueueError> {
         let Some(sender) = QUEUE.read().clone() else {
-            return Err(InlineSimEnqueueError::Disabled);
+            return Err(InlineSimEnqueueError::Disabled(job));
         };
         match sender.try_send(job) {
             Ok(()) => {
-                let len = QUEUE_LEN.fetch_add(1, Ordering::Relaxed) + 1;
-                InlineSimMetrics::sim_queue_size().set(len as f64);
+                InlineSimMetrics::sim_queue_size().increment(1.0);
                 Ok(())
             }
-            Err(TrySendError::Full(_)) => {
+            Err(TrySendError::Full(job)) => {
                 InlineSimMetrics::sim_queue_full().increment(1);
-                Err(InlineSimEnqueueError::Full)
+                Err(InlineSimEnqueueError::Full(job))
             }
-            Err(TrySendError::Closed(_)) => {
+            Err(TrySendError::Closed(job)) => {
                 Self::uninstall();
-                Err(InlineSimEnqueueError::Disabled)
+                Err(InlineSimEnqueueError::Disabled(job))
             }
         }
     }
@@ -133,13 +130,14 @@ impl InlineSimQueue {
             let rx = Arc::clone(&rx);
             let pool = pool.clone();
             tokio::spawn(async move {
+                InlineSimMetrics::sim_workers_alive().increment(1.0);
+                let _alive = WorkerAlive;
                 loop {
                     let job = rx.lock().await.recv().await;
                     let Some(job) = job else {
                         break;
                     };
-                    let len = QUEUE_LEN.fetch_sub(1, Ordering::Relaxed).saturating_sub(1);
-                    InlineSimMetrics::sim_queue_size().set(len as f64);
+                    InlineSimMetrics::sim_queue_size().decrement(1.0);
 
                     let started = Instant::now();
                     let job = meter_job(job, Arc::clone(&meter), timeout).await;
@@ -157,9 +155,29 @@ impl InlineSimQueue {
     #[cfg(test)]
     pub fn clear() {
         Self::uninstall();
-        QUEUE_LEN.store(0, Ordering::Relaxed);
         InlineSimMetrics::sim_queue_size().set(0.0);
         InlineSimMetrics::sim_workers_busy().set(0.0);
+        InlineSimMetrics::sim_workers_alive().set(0.0);
+    }
+
+    /// Attaches [`MeterBundleResponse::default`] after a failed, timed-out, or
+    /// queue-full sim so the Consumer can still forward.
+    pub fn with_default_metering(job: InlineSimJob, reason: &'static str) -> InlineSimJob {
+        InlineSimMetrics::sim_failures(reason).increment(1);
+        InlineSimMetrics::sim_default_inserts().increment(1);
+        InlineSimJob {
+            origin: job.origin,
+            transaction: job.transaction.with_metering(MeterBundleResponse::default()),
+        }
+    }
+}
+
+/// Decrements [`InlineSimMetrics::sim_workers_alive`] if a worker panics or exits.
+struct WorkerAlive;
+
+impl Drop for WorkerAlive {
+    fn drop(&mut self) {
+        InlineSimMetrics::sim_workers_alive().decrement(1.0);
     }
 }
 
@@ -171,8 +189,8 @@ where
     InlineSimMetrics::sim_workers_busy().increment(1.0);
 
     // `--inline-simulation-timeout-ms` only chooses real vs Default metering.
-    // spawn_blocking cannot be cancelled, so the worker stays busy until EVM
-    // finishes; that is what bounds the blocking pool.
+    // spawn_blocking cannot be cancelled. The worker joins so blocking tasks
+    // stay bounded by worker count and do not pile up.
     let handle = tokio::task::spawn_blocking(move || meter(recovered));
     let job = match future::select(handle, Box::pin(tokio::time::sleep(timeout))).await {
         Either::Left((Ok(Ok(metering)), _)) => InlineSimJob {
@@ -181,34 +199,23 @@ where
         },
         Either::Left((Ok(Err(error)), _)) => {
             warn!(error = %error, hash = %job.transaction.hash(), "inline sim meter_bundle failed");
-            with_default_metering(job, "meter")
+            InlineSimQueue::with_default_metering(job, "meter")
         }
         Either::Left((Err(_), _)) => {
             warn!(hash = %job.transaction.hash(), "inline sim worker task failed");
-            with_default_metering(job, "join")
+            InlineSimQueue::with_default_metering(job, "join")
         }
         Either::Right((_, handle)) => {
             warn!(hash = %job.transaction.hash(), "inline sim meter_bundle timed out");
             let waited = Instant::now();
             let _ = handle.await;
             InlineSimMetrics::sim_timeout_wait_seconds().record(waited.elapsed().as_secs_f64());
-            with_default_metering(job, "timeout")
+            InlineSimQueue::with_default_metering(job, "timeout")
         }
     };
 
     InlineSimMetrics::sim_workers_busy().decrement(1.0);
     job
-}
-
-/// Sim failed or timed out: still insert so the Consumer can forward.
-/// Builder skips cache write when metering is `Default`.
-fn with_default_metering(job: InlineSimJob, reason: &'static str) -> InlineSimJob {
-    InlineSimMetrics::sim_failures(reason).increment(1);
-    InlineSimMetrics::sim_default_inserts().increment(1);
-    InlineSimJob {
-        origin: job.origin,
-        transaction: job.transaction.with_metering(MeterBundleResponse::default()),
-    }
 }
 
 #[cfg(test)]
@@ -280,7 +287,7 @@ mod tests {
             origin: TransactionOrigin::Local,
             transaction: pooled_tx(),
         });
-        assert_eq!(err, Err(InlineSimEnqueueError::Disabled));
+        assert!(matches!(err, Err(InlineSimEnqueueError::Disabled(_))));
     }
 
     #[test]
@@ -294,13 +301,21 @@ mod tests {
             origin: TransactionOrigin::Local,
             transaction: pooled_tx(),
         });
-        assert_eq!(first, Ok(()));
+        assert!(first.is_ok(), "first enqueue must succeed");
 
         let second = InlineSimQueue::try_enqueue(InlineSimJob {
             origin: TransactionOrigin::Local,
             transaction: pooled_tx(),
         });
-        assert_eq!(second, Err(InlineSimEnqueueError::Full));
+        let InlineSimEnqueueError::Full(job) = second.expect_err("queue is full") else {
+            panic!("full queue must return the job so RPC can insert default metering");
+        };
+        let job = InlineSimQueue::with_default_metering(job, "queue_full");
+        assert_eq!(
+            job.transaction.metering(),
+            Some(&MeterBundleResponse::default()),
+            "queue-full fallback attaches default metering"
+        );
         InlineSimQueue::clear();
     }
 
@@ -316,7 +331,7 @@ mod tests {
             origin: TransactionOrigin::Local,
             transaction: pooled_tx(),
         });
-        assert_eq!(err, Err(InlineSimEnqueueError::Disabled));
+        assert!(matches!(err, Err(InlineSimEnqueueError::Disabled(_))));
         assert!(
             !InlineSimQueue::is_enabled(),
             "a closed worker channel must uninstall the queue"
