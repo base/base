@@ -2,7 +2,7 @@ use alloy_consensus::{
     Extended, InMemorySize, Sealable, Sealed, SignableTransaction, Signed, TransactionEnvelope,
     TxEip1559, TxEip2930, TxEip7702, TxEnvelope, TxLegacy,
     error::ValueError,
-    transaction::{TransactionInfo, TxHashRef},
+    transaction::{Recovered, TransactionInfo, TxHashRef},
 };
 use alloy_eips::eip2718::{Encodable2718, WithEncoded};
 #[cfg(feature = "evm")]
@@ -84,6 +84,20 @@ impl BaseTransaction for BaseTxEnvelope {
 
     fn as_eip8130(&self) -> Option<&Eip8130Signed> {
         self.as_eip8130()
+    }
+}
+
+impl<T: BaseTransaction> BaseTransaction for Recovered<T> {
+    fn is_deposit(&self) -> bool {
+        self.inner().is_deposit()
+    }
+
+    fn as_deposit(&self) -> Option<&Sealed<TxDeposit>> {
+        self.inner().as_deposit()
+    }
+
+    fn as_eip8130(&self) -> Option<&Eip8130Signed> {
+        self.inner().as_eip8130()
     }
 }
 
