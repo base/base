@@ -15,7 +15,7 @@ use base_retry::RetryConfig;
 use futures::future::try_join;
 use reqwest::Client;
 use tower::{ServiceExt, service_fn};
-use tracing::warn;
+use tracing::{debug, warn};
 use url::Url;
 
 use crate::{
@@ -290,6 +290,15 @@ impl AlloyUpgradeSignalReader {
     /// Records `l1_read_errors_total` for all contract-backed upgrades when the L1 block fetch or
     /// the schedule read fails; the whole schedule is read with one `getSchedule` call, so
     /// per-upgrade failures no longer exist.
+    ///
+    /// A successful read that yields no signals is rejected with
+    /// [`UpgradeSignalError::EmptySchedule`] rather than mapped to an empty schedule: applying an
+    /// empty schedule would replace every runtime override with base activations and report
+    /// success, silently diverging from the live poller, which ignores empty reads. An empty read
+    /// is not counted as an `l1_read_errors_total` failure, keeping empty success distinct from a
+    /// read failure. Callers decide how to treat it: startup retries then tolerates it (see
+    /// [`read_schedule_with_retries`](Self::read_schedule_with_retries)), while the manual admin
+    /// refresh surfaces it as an error instead of clearing overrides.
     pub async fn read_schedule(
         &self,
         metrics_layers: &[UpgradeSignalMetricLayer],
@@ -311,16 +320,28 @@ impl AlloyUpgradeSignalReader {
                 }
             };
 
-        Ok(Self::map_schedule(&timestamps, minimum_protocol_version, l1_block_number))
+        let schedule = Self::map_schedule(&timestamps, minimum_protocol_version, l1_block_number);
+        if schedule.signals.is_empty() {
+            return Err(UpgradeSignalError::EmptySchedule);
+        }
+
+        Ok(schedule)
     }
 
-    /// Reads the schedule, retrying transient failures with bounded exponential jitter before
-    /// giving up.
+    /// Reads the schedule, retrying transient provider failures with bounded exponential jitter
+    /// before giving up.
     ///
     /// Used on the startup path, where a single transient L1 error should not abort node launch
     /// outright; after `max_attempts` failures the last error is returned (fail-fast). This future
     /// is cancellation-safe: dropping it during shutdown cancels an in-flight HTTP request or
     /// retry sleep.
+    ///
+    /// Only [`UpgradeSignalError::Provider`] errors are retried. An empty schedule is not a
+    /// transient flake at the finalized or safe tags: the tag lags the initializing transaction by
+    /// epochs, far longer than the retry budget, so retrying would only delay startup and multiply
+    /// RPC calls without changing the outcome. Empty reads are surfaced immediately and left for the
+    /// caller to tolerate (startup) or reject (admin refresh). Decode and protocol-version errors
+    /// remain fail-fast.
     pub async fn read_schedule_with_retries(
         &self,
         max_attempts: u32,
@@ -354,14 +375,22 @@ impl AlloyUpgradeSignalReader {
 
     /// Reads the schedule, tolerating read failures.
     ///
-    /// Records `l1_read_errors_total` and returns `None` when the read fails. Intended for the live
-    /// metrics poller, which must not abort the node because a schedule read failed.
+    /// Returns `None` when the read fails, recording `l1_read_errors_total`, or when the contract
+    /// reports an empty schedule, which is not a read failure and so records no metric. Intended for
+    /// the live metrics poller, which must not abort the node because a schedule read failed.
     pub async fn read_schedule_tolerant(
         &self,
         metrics_layers: &[UpgradeSignalMetricLayer],
     ) -> Option<UpgradeSignalSchedule> {
         match self.read_schedule(metrics_layers).await {
             Ok(schedule) => Some(schedule),
+            Err(UpgradeSignalError::EmptySchedule) => {
+                debug!(
+                    target: "upgrade_signal",
+                    "L1 upgrade signal contract reported an empty schedule; skipping live apply"
+                );
+                None
+            }
             Err(error) => {
                 warn!(
                     target: "upgrade_signal",
@@ -381,6 +410,7 @@ mod tests {
     use httpmock::prelude::*;
 
     use super::*;
+    use crate::test_utils::MockL1;
 
     fn signals(schedule: &UpgradeSignalSchedule) -> Vec<(BaseUpgrade, u64)> {
         schedule
@@ -532,6 +562,43 @@ mod tests {
 
         assert!(matches!(error, UpgradeSignalError::Provider { .. }));
         mock.assert_calls_async(3).await;
+    }
+
+    #[tokio::test]
+    async fn rejects_empty_schedule_read() {
+        let server = MockL1::schedule_server(schedule_abi_header(U256::ZERO)).await;
+        let reader = AlloyUpgradeSignalReader::new(
+            server.url("/").parse().unwrap(),
+            Address::ZERO,
+            Duration::from_secs(1),
+        )
+        .unwrap();
+
+        let error = reader.read_schedule(&[]).await.unwrap_err();
+
+        assert!(matches!(error, UpgradeSignalError::EmptySchedule));
+    }
+
+    #[tokio::test]
+    async fn does_not_retry_empty_schedule_reads() {
+        let server = MockL1::block_and_min_protocol_server().await;
+        let schedule_mock =
+            MockL1::mock_get_schedule(&server, schedule_abi_header(U256::ZERO)).await;
+        let reader = AlloyUpgradeSignalReader::new(
+            server.url("/").parse().unwrap(),
+            Address::ZERO,
+            Duration::from_secs(1),
+        )
+        .unwrap();
+
+        let error = reader
+            .read_schedule_with_retries(3, Duration::ZERO, Duration::ZERO, &[])
+            .await
+            .unwrap_err();
+
+        // An empty read is surfaced immediately: it is not a transient flake, so it is not retried.
+        assert!(matches!(error, UpgradeSignalError::EmptySchedule));
+        schedule_mock.assert_calls_async(1).await;
     }
 
     #[tokio::test]

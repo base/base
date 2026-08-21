@@ -3,8 +3,9 @@
 use base_execution_chainspec::BaseChainSpec;
 use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
 use base_upgrade_signal::{
-    UpgradeSignalApplySummary, UpgradeSignalConfig, UpgradeSignalMetricLayer, UpgradeSignalMonitor,
-    UpgradeSignalRefresher, UpgradeSignalRuntimeApplier, UpgradeSignalSchedule,
+    UpgradeSignalApplySummary, UpgradeSignalConfig, UpgradeSignalDefaults,
+    UpgradeSignalMetricLayer, UpgradeSignalMonitor, UpgradeSignalRefresher,
+    UpgradeSignalRuntimeApplier, UpgradeSignalSchedule,
 };
 use jsonrpsee::{RpcModule, core::RpcResult, types::ErrorObject};
 use reth_chainspec::EthChainSpec;
@@ -34,10 +35,11 @@ impl ExecutionUpgradeSignal {
         let reader = config.signal_config.reader(config.l1_rpc.clone())?;
         let schedule = config
             .signal_config
-            .read_validated_schedule(
+            .read_required_startup_schedule(
                 &reader,
                 "execution startup",
                 &[UpgradeSignalMetricLayer::Execution],
+                UpgradeSignalDefaults::STARTUP_SCHEDULE_RETRY_INTERVAL,
             )
             .await?;
 

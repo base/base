@@ -37,3 +37,6 @@ pub use state::{UpgradeSignal, UpgradeSignalMonitor, UpgradeSignalSchedule};
 
 mod version;
 pub use version::PackedProtocolVersion;
+
+#[cfg(test)]
+pub mod test_utils;
