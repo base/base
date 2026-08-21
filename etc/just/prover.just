@@ -38,7 +38,7 @@ up network:
     fi
 
     for elf in range-elf-embedded aggregation-elf; do
-      elf_path="crates/proof/succinct/elf/${elf}"
+      elf_path="crates/proof/zk/programs/succinct/elf/${elf}"
       if [ ! -s "$elf_path" ]; then
         echo "ERROR: real SP1 ELF not found: ${elf_path}" >&2
         echo "Paid network proving requires reproducible ELFs. Build them first:" >&2

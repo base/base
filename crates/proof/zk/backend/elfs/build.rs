@@ -23,7 +23,7 @@
 //!   a hard error.
 //!
 //! `BASE_SUCCINCT_ELF_CACHE_DIR` overrides the default cache directory
-//! (`crates/proof/succinct/elf`). The script always declares a
+//! (`crates/proof/zk/programs/succinct/elf`). The script always declares a
 //! `cargo:rerun-if-changed` dependency on each expected real ELF path, so
 //! populating the cache (e.g. via `just succinct build-elfs`) after a stub-backed
 //! build triggers a rebuild.
@@ -40,10 +40,11 @@ const ELFS: &[&str] = &["range-elf-embedded", "aggregation-elf"];
 
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-    // crate is at crates/proof/succinct/utils/elfs; ELF cache lives at crates/proof/succinct/elf.
+    // crate is at crates/proof/zk/backend/elfs; ELF cache lives at
+    // crates/proof/zk/programs/succinct/elf.
     let cache_dir = env::var_os("BASE_SUCCINCT_ELF_CACHE_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|| manifest_dir.join("../../elf"));
+        .unwrap_or_else(|| manifest_dir.join("../../programs/succinct/elf"));
 
     println!("cargo:rerun-if-env-changed=BASE_SUCCINCT_ELF_STUB");
     println!("cargo:rerun-if-env-changed=BASE_SUCCINCT_ELF_REQUIRE");

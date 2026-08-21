@@ -1,7 +1,7 @@
 _cargo_prove := "~/.sp1/bin/cargo-prove"
 _sp1_tag := "v6.3.0"
 _repo_root := justfile_directory()
-_succinct_dir := justfile_directory() / "crates/proof/succinct"
+_succinct_dir := justfile_directory() / "crates/proof/zk/programs/succinct"
 
 # Show available succinct commands
 default:
@@ -15,7 +15,7 @@ build-range-elf:
     #!/usr/bin/env bash
     set -euo pipefail
     mkdir -p "{{ _succinct_dir }}/elf"
-    cd "{{ _succinct_dir }}/programs/range/ethereum"
+    cd "{{ _succinct_dir }}/range/ethereum"
     {{ _cargo_prove }} prove build \
         --elf-name range-elf-embedded \
         --tag {{ _sp1_tag }} \
@@ -28,7 +28,7 @@ build-agg-elf:
     #!/usr/bin/env bash
     set -euo pipefail
     mkdir -p "{{ _succinct_dir }}/elf"
-    cd "{{ _succinct_dir }}/programs/aggregation"
+    cd "{{ _succinct_dir }}/aggregation"
     {{ _cargo_prove }} prove build \
         --elf-name aggregation-elf \
         --tag {{ _sp1_tag }} \
