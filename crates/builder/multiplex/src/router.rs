@@ -2,7 +2,7 @@ use std::{
     collections::VecDeque,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, Ordering},
     },
     time::Instant,
 };
@@ -23,15 +23,6 @@ use crate::RoutingConfig;
 const FLASHBLOCKS_BUILDER: &str = "flashblocks";
 const BASIC_BUILDER: &str = "basic";
 const MAX_PAYLOAD_ROUTES: usize = 128;
-
-#[cfg(debug_assertions)]
-static DEBUG_DISPATCH_FLASHBLOCKS: AtomicU64 = AtomicU64::new(0);
-#[cfg(debug_assertions)]
-static DEBUG_DISPATCH_BASIC: AtomicU64 = AtomicU64::new(0);
-#[cfg(debug_assertions)]
-static DEBUG_SELECTED_FLASHBLOCKS: AtomicU64 = AtomicU64::new(0);
-#[cfg(debug_assertions)]
-static DEBUG_SELECTED_BASIC: AtomicU64 = AtomicU64::new(0);
 
 /// Shared health state for one inner service.
 #[derive(Debug, Clone)]
@@ -507,58 +498,11 @@ impl MultiplexRouter {
 
     /// Increments dispatch metric.
     pub fn inc_dispatch_metric(builder: &'static str) {
-        #[cfg(debug_assertions)]
-        if builder == FLASHBLOCKS_BUILDER {
-            DEBUG_DISPATCH_FLASHBLOCKS.fetch_add(1, Ordering::Relaxed);
-        } else if builder == BASIC_BUILDER {
-            DEBUG_DISPATCH_BASIC.fetch_add(1, Ordering::Relaxed);
-        }
-
         metrics::counter!("mux_builds_dispatched_total", "builder" => builder).increment(1);
-    }
-
-    /// Returns the in-process debug dispatch counter for flashblocks.
-    #[cfg(debug_assertions)]
-    pub fn debug_flashblocks_dispatch_count() -> u64 {
-        DEBUG_DISPATCH_FLASHBLOCKS.load(Ordering::Relaxed)
-    }
-
-    /// Returns the in-process debug dispatch counter for basic.
-    #[cfg(debug_assertions)]
-    pub fn debug_basic_dispatch_count() -> u64 {
-        DEBUG_DISPATCH_BASIC.load(Ordering::Relaxed)
-    }
-
-    /// Returns the in-process debug selected counter for flashblocks.
-    #[cfg(debug_assertions)]
-    pub fn debug_flashblocks_selected_count() -> u64 {
-        DEBUG_SELECTED_FLASHBLOCKS.load(Ordering::Relaxed)
-    }
-
-    /// Returns the in-process debug selected counter for basic.
-    #[cfg(debug_assertions)]
-    pub fn debug_basic_selected_count() -> u64 {
-        DEBUG_SELECTED_BASIC.load(Ordering::Relaxed)
-    }
-
-    /// Resets in-process debug dispatch counters.
-    #[cfg(debug_assertions)]
-    pub fn debug_reset_dispatch_counts() {
-        DEBUG_DISPATCH_FLASHBLOCKS.store(0, Ordering::Relaxed);
-        DEBUG_DISPATCH_BASIC.store(0, Ordering::Relaxed);
-        DEBUG_SELECTED_FLASHBLOCKS.store(0, Ordering::Relaxed);
-        DEBUG_SELECTED_BASIC.store(0, Ordering::Relaxed);
     }
 
     /// Increments selected metric.
     pub fn inc_selected_build_metric(builder: &'static str) {
-        #[cfg(debug_assertions)]
-        if builder == FLASHBLOCKS_BUILDER {
-            DEBUG_SELECTED_FLASHBLOCKS.fetch_add(1, Ordering::Relaxed);
-        } else if builder == BASIC_BUILDER {
-            DEBUG_SELECTED_BASIC.fetch_add(1, Ordering::Relaxed);
-        }
-
         metrics::counter!("mux_selected_builds_total", "builder" => builder).increment(1);
     }
 

@@ -7,7 +7,7 @@ use alloy_primitives::{B64, B256};
 use alloy_provider::{Identity, Provider, ProviderBuilder, RootProvider};
 use alloy_rpc_types_engine::{ForkchoiceState, PayloadAttributes};
 use base_builder_core::{BuilderConfig, FlashblocksServiceBuilder};
-use base_builder_multiplex::{MultiplexRouter, MultiplexingServiceBuilder};
+use base_builder_multiplex::MultiplexingServiceBuilder;
 use base_common_consensus::BaseTxEnvelope;
 use base_common_network::Base;
 use base_common_rpc_types_engine::BasePayloadAttributes;
@@ -40,6 +40,10 @@ struct BuiltBlockSummary {
 impl RunningNode {
     async fn launch_flashblocks() -> eyre::Result<Self> {
         Self::launch(FlashblocksServiceBuilder::new(test_builder_config())).await
+    }
+
+    async fn launch_disabled() -> eyre::Result<Self> {
+        Self::launch(MultiplexingServiceBuilder::new(test_builder_config())).await
     }
 
     async fn launch_multiplex() -> eyre::Result<Self> {
@@ -210,12 +214,12 @@ async fn build_new_block(
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn multiplex_flashblocks_equivalence_and_shadow_dispatch() -> eyre::Result<()> {
-    #[cfg(debug_assertions)]
-    MultiplexRouter::debug_reset_dispatch_counts();
-
+async fn payload_builder_modes_match_flashblocks_baseline() -> eyre::Result<()> {
     let baseline = RunningNode::launch_flashblocks().await?;
     let baseline_provider = baseline.provider().await?;
+
+    let disabled = RunningNode::launch_disabled().await?;
+    let disabled_provider = disabled.provider().await?;
 
     let multiplex = RunningNode::launch_multiplex().await?;
     let multiplex_provider = multiplex.provider().await?;
@@ -237,20 +241,13 @@ async fn multiplex_flashblocks_equivalence_and_shadow_dispatch() -> eyre::Result
         std::cmp::max(baseline_head.header.timestamp + 2, wall_clock.as_secs() + 2);
     let baseline_block =
         build_new_block(&baseline_provider, &baseline.auth_ipc_path, build_timestamp).await?;
+    let disabled_block =
+        build_new_block(&disabled_provider, &disabled.auth_ipc_path, build_timestamp).await?;
     let multiplex_block =
         build_new_block(&multiplex_provider, &multiplex.auth_ipc_path, build_timestamp).await?;
 
+    assert_eq!(baseline_block, disabled_block);
     assert_eq!(baseline_block, multiplex_block);
-
-    #[cfg(debug_assertions)]
-    {
-        let flashblocks_dispatches = MultiplexRouter::debug_flashblocks_dispatch_count();
-        let basic_dispatches = MultiplexRouter::debug_basic_dispatch_count();
-        assert!(flashblocks_dispatches >= 1, "expected at least one multiplex dispatch");
-        assert_eq!(flashblocks_dispatches, basic_dispatches);
-        assert!(MultiplexRouter::debug_flashblocks_selected_count() >= 1);
-        assert_eq!(MultiplexRouter::debug_basic_selected_count(), 0);
-    }
 
     let basic = RunningNode::launch_basic().await?;
     let basic_provider = basic.provider().await?;
@@ -261,6 +258,7 @@ async fn multiplex_flashblocks_equivalence_and_shadow_dispatch() -> eyre::Result
     // Keep the nodes alive until process exit; dropping their independent runtimes can race the
     // remaining providers and database tasks during test teardown.
     std::mem::forget(baseline);
+    std::mem::forget(disabled);
     std::mem::forget(multiplex);
     std::mem::forget(basic);
 

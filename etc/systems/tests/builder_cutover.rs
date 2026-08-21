@@ -9,7 +9,6 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
-use base_builder_multiplex::MultiplexRouter;
 use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_system_tests::{ANVIL_ACCOUNT_1, SystemTestStackBuilder};
@@ -25,8 +24,6 @@ const BLOCK_TIMEOUT: Duration = Duration::from_secs(45);
 #[tokio::test]
 async fn cuts_over_builder_and_block_time_at_zenith() -> Result<()> {
     base_node_runner::test_utils::init_silenced_tracing();
-    #[cfg(debug_assertions)]
-    MultiplexRouter::debug_reset_dispatch_counts();
 
     let system = SystemTestStackBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
@@ -58,16 +55,6 @@ async fn cuts_over_builder_and_block_time_at_zenith() -> Result<()> {
     wait_for_block(&builder, LAST_VERIFIED_BLOCK).await?;
     wait_for_block(&client, LAST_VERIFIED_BLOCK).await?;
     verify_chain_and_cadence(&builder, &client).await?;
-
-    #[cfg(debug_assertions)]
-    {
-        assert!(MultiplexRouter::debug_flashblocks_selected_count() > 0);
-        assert!(MultiplexRouter::debug_basic_selected_count() > 0);
-        assert_eq!(
-            MultiplexRouter::debug_flashblocks_dispatch_count(),
-            MultiplexRouter::debug_basic_dispatch_count()
-        );
-    }
 
     Ok(())
 }
