@@ -1,6 +1,6 @@
 //! Rollup Config Types
 
-use alloc::vec::Vec;
+use core::ops::RangeInclusive;
 
 use alloy_chains::Chain;
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
@@ -434,21 +434,27 @@ impl RollupConfig {
         )
     }
 
-    /// Returns the absolute L2 block numbers whose canonical whole-second timestamp is
-    /// `timestamp`.
+    /// Returns the contiguous range of absolute L2 block numbers whose whole-second header
+    /// timestamp equals `timestamp`.
     ///
-    /// The result is empty outside the configured schedule, contains at most one legacy block,
-    /// and contains at most five blocks after Denim activation.
-    pub fn l2_block_number_candidates(&self, timestamp: u64) -> Vec<u64> {
+    /// Before Denim, an aligned timestamp identifies one block. After Denim, five consecutive
+    /// 200ms blocks share each whole-second header timestamp.
+    ///
+    /// Returns [`None`] when no canonical L2 block has the given timestamp. This does not resolve
+    /// one exact Denim block; callers must use additional context, such as a span batch's parent
+    /// check, to select a block from the returned range.
+    pub fn l2_block_range_for_header_timestamp(
+        &self,
+        timestamp: u64,
+    ) -> Option<RangeInclusive<u64>> {
         if self.block_time == 0 {
             panic!("rollup config: block time cannot be 0");
         }
 
         if timestamp < self.genesis.l2_time {
-            return Vec::new();
+            return None;
         }
 
-        let mut candidates = Vec::with_capacity(5);
         let denim_activation_block = self.denim_activation_block_number();
         let legacy_delta = timestamp - self.genesis.l2_time;
         let legacy_offset = legacy_delta / self.block_time;
@@ -456,23 +462,18 @@ impl RollupConfig {
         if legacy_delta.is_multiple_of(self.block_time)
             && denim_activation_block.is_none_or(|activation| legacy_block < activation)
         {
-            candidates.push(legacy_block);
+            return Some(legacy_block..=legacy_block);
         }
 
-        let Some(activation_block) = denim_activation_block else {
-            return candidates;
-        };
+        let activation_block = denim_activation_block?;
         let activation_timestamp = self.l2_block_timestamp(activation_block);
         if timestamp < activation_timestamp {
-            return candidates;
+            return None;
         }
 
         let blocks_per_second = 1_000 / Self::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS;
         let first_block = activation_block + (timestamp - activation_timestamp) * blocks_per_second;
-        for offset in 0..blocks_per_second {
-            candidates.push(first_block + offset);
-        }
-        candidates
+        Some(first_block..=first_block + blocks_per_second - 1)
     }
 
     /// Returns the deterministic whole-second timestamp of an L2 block.
@@ -1252,37 +1253,37 @@ mod tests {
     }
 
     #[test]
-    fn l2_block_number_candidates_cover_legacy_and_denim_boundaries() {
+    fn l2_block_range_for_header_timestamp_covers_legacy_and_denim_boundaries() {
         let cfg = rollup_config_with_denim(10, 2, Some(15));
 
-        assert!(cfg.l2_block_number_candidates(9).is_empty());
-        assert_eq!(cfg.l2_block_number_candidates(12), [1]);
-        assert!(cfg.l2_block_number_candidates(13).is_empty());
-        assert_eq!(cfg.l2_block_number_candidates(14), [2]);
-        assert!(cfg.l2_block_number_candidates(15).is_empty());
-        assert_eq!(cfg.l2_block_number_candidates(16), [3, 4, 5, 6, 7]);
-        assert_eq!(cfg.l2_block_number_candidates(17), [8, 9, 10, 11, 12]);
+        assert_eq!(cfg.l2_block_range_for_header_timestamp(9), None);
+        assert_eq!(cfg.l2_block_range_for_header_timestamp(12), Some(1..=1));
+        assert_eq!(cfg.l2_block_range_for_header_timestamp(13), None);
+        assert_eq!(cfg.l2_block_range_for_header_timestamp(14), Some(2..=2));
+        assert_eq!(cfg.l2_block_range_for_header_timestamp(15), None);
+        assert_eq!(cfg.l2_block_range_for_header_timestamp(16), Some(3..=7));
+        assert_eq!(cfg.l2_block_range_for_header_timestamp(17), Some(8..=12));
     }
 
     #[test]
-    fn l2_block_number_candidates_are_absolute_for_nonzero_genesis() {
+    fn l2_block_range_for_header_timestamp_is_absolute_for_nonzero_genesis() {
         let mut cfg = rollup_config_with_denim(10, 2, Some(15));
         cfg.genesis.l2.number = 100;
 
         assert_eq!(cfg.denim_activation_block_number(), Some(103));
-        assert_eq!(cfg.l2_block_number_candidates(12), [101]);
-        assert_eq!(cfg.l2_block_number_candidates(16), [103, 104, 105, 106, 107]);
+        assert_eq!(cfg.l2_block_range_for_header_timestamp(12), Some(101..=101));
+        assert_eq!(cfg.l2_block_range_for_header_timestamp(16), Some(103..=107));
         assert_eq!(cfg.l2_block_timestamp_millis(103), 16_000);
     }
 
     #[test]
-    fn l2_block_number_candidates_without_denim_preserve_legacy_schedule() {
+    fn l2_block_range_for_header_timestamp_without_denim_preserves_legacy_schedule() {
         let cfg = rollup_config_with_denim(11, 3, None);
 
-        assert!(cfg.l2_block_number_candidates(10).is_empty());
-        assert_eq!(cfg.l2_block_number_candidates(11), [0]);
-        assert!(cfg.l2_block_number_candidates(12).is_empty());
-        assert_eq!(cfg.l2_block_number_candidates(20), [3]);
+        assert_eq!(cfg.l2_block_range_for_header_timestamp(10), None);
+        assert_eq!(cfg.l2_block_range_for_header_timestamp(11), Some(0..=0));
+        assert_eq!(cfg.l2_block_range_for_header_timestamp(12), None);
+        assert_eq!(cfg.l2_block_range_for_header_timestamp(20), Some(3..=3));
     }
 
     #[test]
