@@ -2125,10 +2125,6 @@ fn golden_gas_footprints() {
         ("revoke_role", (1, 1, 0)),
         ("set_role_admin", (1, 1, 0)),
         ("update_policy", (2, 1, 0)),
-        // BOP-549: the old policyId SLOAD must still happen even though newPolicyId=99
-        // doesn't exist and the call reverts. A check-new-first regression returns via
-        // `?` before ever reading the old policyId, so its footprint here would be
-        // (0, 0, 0) instead.
         ("update_policy_reverts_missing_policy", (1, 0, 0)),
     ];
 
