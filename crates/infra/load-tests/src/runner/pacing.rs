@@ -36,7 +36,7 @@ use super::{
 use crate::{
     BaselineError, Result,
     metrics::{MetricsCollector, MetricsSummary, PacingCycleObservation, PacingCycleSource},
-    rpc::BaseFeeExt,
+    rpc::{BaseFeeExt, LatestBlockExt},
     workload::{KeyStream, SeededRng, WorkloadGenerator},
 };
 
@@ -405,6 +405,22 @@ impl LoadRunner {
 
         if !self.validity_router.is_disabled() {
             self.probe_validity_endpoint().await?;
+            // Freeze one absolute target block for the whole validity cohort so
+            // every validity transaction carries the same `block_number >= target`
+            // predicate and the cohort becomes valid simultaneously. Done before
+            // the router is cloned into per-sender submission state below.
+            if let Some(delay) = self.config.validity_future_delay {
+                let tip = self.client.latest_block_number().await?;
+                let target =
+                    ValidityRouter::future_target_block(tip, delay, self.config.block_time);
+                self.validity_router.set_target_block(target);
+                info!(
+                    tip,
+                    target_block = target,
+                    delay_secs = delay.as_secs_f64(),
+                    "froze future validity target block"
+                );
+            }
         }
 
         for account in self.accounts.accounts() {

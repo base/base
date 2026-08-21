@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use base_execution_txpool::{DEFAULT_MAX_VALIDITY_PREDICATES, ValidityOperator};
 use serde::{Deserialize, Serialize};
 
@@ -24,6 +26,19 @@ pub struct ValidityConfig {
     /// Must be non-empty when `ratio > 0`, and must contain at most
     /// [`DEFAULT_MAX_VALIDITY_PREDICATES`] entries.
     pub predicates: Vec<ValidityPredicateConfig>,
+
+    /// Optional fixed future validity delay (e.g. `"10s"`) applied to the whole
+    /// validity cohort.
+    ///
+    /// When set, one absolute target block is computed at run start
+    /// (`tip + ceil(delay / block_time)`, at least one block ahead) and frozen
+    /// into every validity transaction as a `block_number >= target` predicate,
+    /// so the entire cohort parks until that block and then becomes valid
+    /// simultaneously — a predictable, precisely-timed sequencer load spike.
+    /// Requires `ratio > 0` and consumes one of the
+    /// [`DEFAULT_MAX_VALIDITY_PREDICATES`] predicate slots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub future_validity_delay: Option<String>,
 }
 
 /// A configured validity predicate template.
@@ -137,20 +152,47 @@ pub enum PredicateSlotConfig {
 }
 
 impl ValidityConfig {
+    /// Parses the configured future validity delay, if any.
+    ///
+    /// Returns `None` when unset or blank. Surfaces a config error for an
+    /// unparseable humantime string.
+    pub fn future_delay(&self) -> Result<Option<Duration>> {
+        self.future_validity_delay
+            .as_deref()
+            .map(str::trim)
+            .filter(|delay| !delay.is_empty())
+            .map(|delay| {
+                humantime::parse_duration(delay).map_err(|e| {
+                    BaselineError::Config(format!(
+                        "invalid validity.future_validity_delay '{delay}': {e}"
+                    ))
+                })
+            })
+            .transpose()
+    }
+
     /// Validates the validity configuration.
     pub fn validate(&self) -> Result<()> {
         if !(0.0..=1.0).contains(&self.ratio) {
             return Err(BaselineError::Config("validity.ratio must be between 0.0 and 1.0".into()));
         }
-        if self.predicates.len() > DEFAULT_MAX_VALIDITY_PREDICATES {
+        // A configured future delay adds one `block_number` predicate to every
+        // validity transaction, so it consumes a predicate slot.
+        let future_delay = self.future_delay()?;
+        let effective_predicates = self.predicates.len() + usize::from(future_delay.is_some());
+        if effective_predicates > DEFAULT_MAX_VALIDITY_PREDICATES {
             return Err(BaselineError::Config(format!(
-                "validity.predicates has {} entries, exceeding the maximum of {DEFAULT_MAX_VALIDITY_PREDICATES}",
-                self.predicates.len()
+                "validity carries {effective_predicates} predicates (including the future-validity target), exceeding the maximum of {DEFAULT_MAX_VALIDITY_PREDICATES}"
             )));
         }
-        if self.ratio > 0.0 && self.predicates.is_empty() {
+        if self.ratio > 0.0 && self.predicates.is_empty() && future_delay.is_none() {
             return Err(BaselineError::Config(
-                "validity.predicates must be non-empty when validity.ratio > 0".into(),
+                "validity.predicates must be non-empty when validity.ratio > 0 (unless validity.future_validity_delay is set)".into(),
+            ));
+        }
+        if future_delay.is_some() && self.ratio <= 0.0 {
+            return Err(BaselineError::Config(
+                "validity.future_validity_delay requires validity.ratio > 0".into(),
             ));
         }
         // Surface parse errors (operators, addresses, values) eagerly.
@@ -381,6 +423,7 @@ mod tests {
         let config = ValidityConfig {
             ratio: 1.0,
             predicates: vec![predicate; DEFAULT_MAX_VALIDITY_PREDICATES + 1],
+            ..Default::default()
         };
         let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("exceeding the maximum"));
@@ -395,7 +438,72 @@ mod tests {
                 op: "==".into(),
                 value: "0".into(),
             }],
+            ..Default::default()
         };
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn future_delay_parses_humantime() {
+        let config = ValidityConfig {
+            future_validity_delay: Some("10s".into()),
+            ..Default::default()
+        };
+        assert_eq!(config.future_delay().unwrap(), Some(Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn future_delay_is_none_when_unset_or_blank() {
+        assert_eq!(ValidityConfig::default().future_delay().unwrap(), None);
+        let blank = ValidityConfig { future_validity_delay: Some("  ".into()), ..Default::default() };
+        assert_eq!(blank.future_delay().unwrap(), None);
+    }
+
+    #[test]
+    fn validate_rejects_unparseable_future_delay() {
+        let config = ValidityConfig {
+            ratio: 1.0,
+            predicates: vec![balance_ge_zero()],
+            future_validity_delay: Some("soon".into()),
+        };
+        assert!(config.validate().unwrap_err().to_string().contains("future_validity_delay"));
+    }
+
+    #[test]
+    fn validate_allows_future_delay_without_configured_predicates() {
+        let config = ValidityConfig {
+            ratio: 1.0,
+            predicates: Vec::new(),
+            future_validity_delay: Some("10s".into()),
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_future_delay_without_ratio() {
+        let config = ValidityConfig {
+            ratio: 0.0,
+            predicates: Vec::new(),
+            future_validity_delay: Some("10s".into()),
+        };
+        assert!(config.validate().unwrap_err().to_string().contains("requires validity.ratio > 0"));
+    }
+
+    #[test]
+    fn validate_counts_future_target_against_predicate_maximum() {
+        let config = ValidityConfig {
+            ratio: 1.0,
+            predicates: vec![balance_ge_zero(); DEFAULT_MAX_VALIDITY_PREDICATES],
+            future_validity_delay: Some("10s".into()),
+        };
+        assert!(config.validate().unwrap_err().to_string().contains("exceeding the maximum"));
+    }
+
+    fn balance_ge_zero() -> ValidityPredicateConfig {
+        ValidityPredicateConfig::Balance {
+            address: PredicateAddressConfig::Sender,
+            op: ">=".into(),
+            value: "0".into(),
+        }
     }
 }

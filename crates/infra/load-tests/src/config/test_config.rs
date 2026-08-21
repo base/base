@@ -666,6 +666,7 @@ impl TestConfig {
             fresh_recipient_ratio: self.fresh_recipient_ratio,
             validity_ratio: self.validity.ratio,
             validity_predicates: self.validity.to_templates()?,
+            validity_future_delay: self.validity.future_delay()?,
         })
     }
 
@@ -1365,6 +1366,26 @@ validity:
         let summary = config.to_summary();
         assert_eq!(summary.validity_ratio, 0.25);
         assert_eq!(summary.validity_predicate_count, 2);
+    }
+
+    #[test]
+    fn validity_future_delay_threads_into_load_config() {
+        let yaml = r#"
+transaction_submission_rpcs: http://localhost:8545
+flashblocks_ws: ws://localhost:7111
+block_time: 2s
+validity:
+  ratio: 1.0
+  future_validity_delay: "10s"
+"#;
+        let config = TestConfig::from_yaml(yaml).unwrap();
+        let load_config = config.to_load_config(Some(1337)).unwrap();
+        assert_eq!(
+            load_config.validity_future_delay,
+            Some(std::time::Duration::from_secs(10)),
+        );
+        // Delay alone satisfies the "non-empty predicates when enabled" rule.
+        assert!(load_config.validity_predicates.is_empty());
     }
 
     #[test]

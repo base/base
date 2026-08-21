@@ -81,6 +81,21 @@ impl BaseFeeExt for QueryProvider {
     }
 }
 
+/// Extension trait for reading the current chain tip from a query provider.
+pub trait LatestBlockExt {
+    /// Returns the number of the latest block.
+    ///
+    /// Used to anchor a future-validity target block against the observed tip at
+    /// run start.
+    fn latest_block_number(&self) -> impl std::future::Future<Output = Result<u64>> + Send;
+}
+
+impl LatestBlockExt for QueryProvider {
+    async fn latest_block_number(&self) -> Result<u64> {
+        self.get_block_number().await.rpc("get latest block number")
+    }
+}
+
 /// Extension trait for converting Alloy RPC results into load-test errors.
 pub trait RpcResultExt<T> {
     /// Converts an RPC result into the load-test result type with context.

@@ -252,6 +252,12 @@ pub struct LoadConfig {
     pub validity_ratio: f64,
     /// Predicate templates attached to each validity-bearing transaction.
     pub validity_predicates: Vec<ValidityPredicateTemplate>,
+    /// Optional fixed future validity delay for the validity cohort.
+    ///
+    /// When set, one absolute target block is frozen at run start and attached to
+    /// every validity transaction as a `block_number >= target` predicate, so the
+    /// cohort becomes valid simultaneously at that block.
+    pub validity_future_delay: Option<Duration>,
 }
 
 impl LoadConfig {
@@ -283,6 +289,7 @@ impl LoadConfig {
             fresh_recipient_ratio: 0.0,
             validity_ratio: 0.0,
             validity_predicates: Vec::new(),
+            validity_future_delay: None,
         }
     }
 
@@ -334,15 +341,27 @@ impl LoadConfig {
         if !(0.0..=1.0).contains(&self.validity_ratio) {
             return Err(BaselineError::Config("validity_ratio must be between 0.0 and 1.0".into()));
         }
-        if self.validity_predicates.len() > base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES {
+        // A configured future validity delay adds one `block_number` predicate to
+        // every validity transaction, so it consumes a predicate slot.
+        let effective_predicates =
+            self.validity_predicates.len() + usize::from(self.validity_future_delay.is_some());
+        if effective_predicates > base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES {
             return Err(BaselineError::Config(format!(
-                "validity_predicates exceeds the maximum of {}",
+                "validity_predicates (including the future-validity target) exceeds the maximum of {}",
                 base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES
             )));
         }
-        if self.validity_ratio > 0.0 && self.validity_predicates.is_empty() {
+        if self.validity_ratio > 0.0
+            && self.validity_predicates.is_empty()
+            && self.validity_future_delay.is_none()
+        {
             return Err(BaselineError::Config(
                 "validity_predicates must be non-empty when validity_ratio > 0".into(),
+            ));
+        }
+        if self.validity_future_delay.is_some() && self.validity_ratio <= 0.0 {
+            return Err(BaselineError::Config(
+                "validity_future_delay requires validity_ratio > 0".into(),
             ));
         }
         if self.transactions.is_empty() {

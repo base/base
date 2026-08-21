@@ -6,8 +6,10 @@
 //! templates are resolved into concrete [`ValidityPredicate`] values against
 //! each transaction's `from`/`to` at prepare time.
 
+use std::time::Duration;
+
 use alloy_primitives::{Address, B256, U256, keccak256};
-use base_execution_txpool::ValidityPredicate;
+use base_execution_txpool::{ValidityOperator, ValidityPredicate};
 
 use super::{LoadConfig, PredicateAddress, SlotTemplate, SubmitCohort, ValidityPredicateTemplate};
 
@@ -20,6 +22,10 @@ pub struct ValidityRouter {
     ratio: f64,
     predicates: Vec<ValidityPredicateTemplate>,
     seed: u64,
+    /// Absolute block at which the whole validity cohort becomes valid, when a
+    /// future validity delay is configured. Frozen once at run start so every
+    /// cloned router shares the same target and the cohort activates together.
+    target_block: Option<u64>,
 }
 
 impl ValidityRouter {
@@ -29,12 +35,40 @@ impl ValidityRouter {
             ratio: config.validity_ratio,
             predicates: config.validity_predicates.clone(),
             seed: config.seed,
+            target_block: None,
         }
     }
 
     /// Returns true when no transaction will ever be routed to the validity path.
     pub fn is_disabled(&self) -> bool {
         self.ratio <= 0.0
+    }
+
+    /// Computes the absolute target block for a future validity delay.
+    ///
+    /// The delay is rounded up to whole blocks using `block_time` and clamped to
+    /// at least one block ahead of `tip`, so transactions are submitted and
+    /// parked before the target block is built. Block-time inaccuracy only shifts
+    /// which wall-clock second the cohort activates, not its simultaneity: every
+    /// transaction shares this one absolute target.
+    #[must_use]
+    pub fn future_target_block(tip: u64, delay: Duration, block_time: Duration) -> u64 {
+        let block_ms = block_time.as_millis().max(1);
+        let delay_blocks = delay.as_millis().div_ceil(block_ms).max(1);
+        tip.saturating_add(u64::try_from(delay_blocks).unwrap_or(u64::MAX))
+    }
+
+    /// Freezes the absolute block at which the validity cohort becomes valid.
+    ///
+    /// Call before the router is cloned into per-sender submission state so every
+    /// validity transaction carries the same `block_number >= target` predicate.
+    pub const fn set_target_block(&mut self, target_block: u64) {
+        self.target_block = Some(target_block);
+    }
+
+    /// Returns the frozen future-validity target block, if any.
+    pub const fn target_block(&self) -> Option<u64> {
+        self.target_block
     }
 
     /// Determines the submission cohort for a sender.
@@ -61,7 +95,18 @@ impl ValidityRouter {
     ) -> Vec<ValidityPredicate> {
         match cohort {
             SubmitCohort::ValidityPass => {
-                self.predicates.iter().map(|t| Self::resolve(t, from, to)).collect()
+                let mut predicates: Vec<ValidityPredicate> =
+                    self.predicates.iter().map(|t| Self::resolve(t, from, to)).collect();
+                // Every validity transaction shares the frozen future target, so
+                // the whole cohort parks until that block and then activates
+                // together.
+                if let Some(target) = self.target_block {
+                    predicates.push(ValidityPredicate::BlockNumber {
+                        op: ValidityOperator::GreaterThanOrEqual,
+                        value: U256::from(target),
+                    });
+                }
+                predicates
             }
             SubmitCohort::Plain => Vec::new(),
         }
@@ -159,7 +204,7 @@ mod tests {
     use super::*;
 
     fn router(ratio: f64, predicates: Vec<ValidityPredicateTemplate>) -> ValidityRouter {
-        ValidityRouter { ratio, predicates, seed: 12345 }
+        ValidityRouter { ratio, predicates, seed: 12345, target_block: None }
     }
 
     #[test]
@@ -266,6 +311,62 @@ mod tests {
                 },
             ],
         );
+    }
+
+    #[test]
+    fn future_target_block_rounds_up_and_clamps_to_one_block() {
+        let bt = Duration::from_secs(2);
+        // 10s / 2s = 5 blocks ahead.
+        assert_eq!(ValidityRouter::future_target_block(100, Duration::from_secs(10), bt), 105);
+        // 9s / 2s rounds up to 5 blocks.
+        assert_eq!(ValidityRouter::future_target_block(100, Duration::from_secs(9), bt), 105);
+        // A sub-block delay still lands at least one block ahead.
+        assert_eq!(ValidityRouter::future_target_block(100, Duration::from_millis(1), bt), 101);
+        // A zero delay is clamped to one block ahead so txs park before the target.
+        assert_eq!(ValidityRouter::future_target_block(100, Duration::ZERO, bt), 101);
+    }
+
+    #[test]
+    fn frozen_target_appends_block_number_predicate_to_validity_cohort() {
+        let mut r = router(
+            1.0,
+            vec![ValidityPredicateTemplate::Balance {
+                address: PredicateAddress::Sender,
+                op: ValidityOperator::GreaterThanOrEqual,
+                value: U256::ZERO,
+            }],
+        );
+        r.set_target_block(500);
+        assert_eq!(r.target_block(), Some(500));
+
+        let from = Address::repeat_byte(0xaa);
+        let predicates = r.predicates_for(SubmitCohort::ValidityPass, from, None);
+        assert_eq!(predicates.len(), 2, "configured predicate plus the frozen target");
+        assert_eq!(
+            predicates[1],
+            ValidityPredicate::BlockNumber {
+                op: ValidityOperator::GreaterThanOrEqual,
+                value: U256::from(500),
+            },
+        );
+
+        // The plain cohort never carries the target predicate.
+        assert!(r.predicates_for(SubmitCohort::Plain, from, None).is_empty());
+    }
+
+    #[test]
+    fn without_frozen_target_no_extra_predicate_is_added() {
+        let r = router(
+            1.0,
+            vec![ValidityPredicateTemplate::Balance {
+                address: PredicateAddress::Sender,
+                op: ValidityOperator::GreaterThanOrEqual,
+                value: U256::ZERO,
+            }],
+        );
+        let predicates =
+            r.predicates_for(SubmitCohort::ValidityPass, Address::repeat_byte(0xaa), None);
+        assert_eq!(predicates.len(), 1);
     }
 
     #[test]

@@ -360,6 +360,28 @@ The final summary's `by_cohort` breakdown reports confirmed transactions split
 across the `plain` and `validity_pass` cohorts, so plain traffic can be compared
 against validity traffic when the workload is enabled.
 
+##### Delayed (fixed future) validity
+
+Set `future_validity_delay` to make the whole validity cohort become valid at the
+same future block, producing a predictable, precisely-timed sequencer load spike:
+
+```yaml
+validity:
+  ratio: 1.0
+  future_validity_delay: "10s"   # e.g. 10 seconds ahead of run start
+  predicates: []                  # optional; the delay adds its own predicate
+```
+
+At run start the tool reads the current chain tip and freezes one absolute target
+block, `tip + ceil(future_validity_delay / block_time)` (at least one block
+ahead). That single target is attached to every validity transaction as a
+`block_number >= target` predicate, so the whole cohort parks in the pool until
+the target block and then activates together — letting you craft a precise
+transaction pool for a given block. Because one absolute target is shared, the
+cohort stays simultaneous even if `block_time` is approximate (that only shifts
+which wall-clock second the spike lands). The delay consumes one predicate slot,
+requires `ratio > 0`, and may be used with no other predicates configured.
+
 **Required flags for end-to-end evaluation.** For predicates to actually be
 evaluated (not merely transported), the target environment must be configured so
 that:
