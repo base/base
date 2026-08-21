@@ -45,10 +45,14 @@ use crate::{
     witness::{DefaultWitnessData, preimage_store::PreimageStore},
 };
 
-const CHAIN_ID: u64 = 999_999_999;
+/// Synthetic L2 chain ID used by the fixture.
+pub const DENIM_CHAIN_ID: u64 = 999_999_999;
 const L1_CHAIN_ID: u64 = 999_999_998;
 /// Final claimed L2 block in the fixture.
 pub const CLAIM_BLOCK: u64 = 7;
+/// Canonical per-chain config hash committed by the fixture.
+pub const DENIM_CONFIG_HASH: B256 =
+    b256!("80cc3f230d72195dde768904e4c6860232383ab0cd6786f12072ae7870aeae1a");
 /// SHA-256 commitment to the sorted canonical fixture preimages.
 pub const DENIM_FIXTURE_CONTENT_HASH: B256 =
     b256!("c0e191d340440075b3743ffe091a53cbdc5277c19e5d2ff596b5139d3061b83c");
@@ -187,7 +191,7 @@ impl DenimFixture {
             seq_window_size: 4,
             channel_timeout: 10,
             l1_chain_id: L1_CHAIN_ID,
-            l2_chain_id: CHAIN_ID.into(),
+            l2_chain_id: DENIM_CHAIN_ID.into(),
             batch_inbox_address: Address::repeat_byte(0x22),
             upgrades: UpgradeConfig {
                 base: BaseUpgradeConfig { denim: Some(DENIM_TIMESTAMP), ..Default::default() },
@@ -323,7 +327,7 @@ impl DenimFixture {
         insert_local(&mut store, L2_OUTPUT_ROOT_KEY, agreed_output.hash().to_vec());
         insert_local(&mut store, L2_CLAIM_KEY, claim.to_vec());
         insert_local(&mut store, L2_CLAIM_BLOCK_NUMBER_KEY, CLAIM_BLOCK.to_be_bytes().to_vec());
-        insert_local(&mut store, L2_CHAIN_ID_KEY, CHAIN_ID.to_be_bytes().to_vec());
+        insert_local(&mut store, L2_CHAIN_ID_KEY, DENIM_CHAIN_ID.to_be_bytes().to_vec());
         insert_local(&mut store, L2_ROLLUP_CONFIG_KEY, serde_json::to_vec(&config).unwrap());
         insert_local(&mut store, L1_CONFIG_KEY, serde_json::to_vec(&l1_config).unwrap());
         insert_local(&mut store, INTERMEDIATE_BLOCK_INTERVAL_KEY, interval.to_be_bytes().to_vec());
@@ -339,6 +343,10 @@ impl DenimFixture {
         let mut pinned = config.clone();
         let schedule_timestamp = pinned.l2_block_timestamp(schedule_block.unwrap_or(CLAIM_BLOCK));
         let schedule_id = ScheduleId::pin(&mut pinned, schedule_timestamp);
+        let mut per_chain = base_proof_primitives::PerChainConfig::from_rollup_config(&pinned)
+            .expect("fixture rollup config has a system config");
+        per_chain.force_defaults();
+        assert_eq!(per_chain.hash(), DENIM_CONFIG_HASH);
         let agreed_block_number = agreed_index.map(|index| expected[index].number).unwrap_or(1);
         Self { store, expected, schedule_id, config, agreed_block_number, interval }
     }

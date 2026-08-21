@@ -36,6 +36,11 @@ static CONFIG_HASHES: LazyLock<HashMap<u64, B256>> = LazyLock::new(|| {
             map.insert(cfg.chain_id, per_chain.hash());
         }
     }
+    #[cfg(test)]
+    map.insert(
+        base_proof_zk_utils::test_utils::DENIM_CHAIN_ID,
+        base_proof_zk_utils::test_utils::DENIM_CONFIG_HASH,
+    );
     map
 });
 
@@ -258,6 +263,9 @@ impl Server {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::b256;
+    use base_proof_zk_utils::test_utils::{
+        CLAIM_BLOCK, DENIM_CONFIG_HASH, DENIM_FIXTURE_CONTENT_HASH, DenimFixture,
+    };
 
     use super::*;
 
@@ -351,5 +359,95 @@ mod tests {
             config_hash_for_chain(763360).unwrap(),
             b256!("d14ddabfc0ad1dd737d6e5917cf271fd479bd539c9b3d85a602589c679a9983a"),
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn proves_denim_fixture_with_native_roots_and_signed_journals() {
+        let fixture = DenimFixture::new();
+        assert_eq!(fixture.content_hash(), DENIM_FIXTURE_CONTENT_HASH);
+        let boot_info = BootInfo::load(&fixture.store).await.unwrap();
+        let expected_public_values = fixture.expected_public_values().await;
+        assert_eq!(expected_public_values.rollupConfigHash, DENIM_CONFIG_HASH);
+
+        let server = Server::new_local().unwrap();
+        let result = server.prove(fixture.store.preimage_map.clone()).await.unwrap();
+        assert_eq!(fixture.content_hash(), DENIM_FIXTURE_CONTENT_HASH);
+
+        let ProofResult::Tee { aggregate_proposal, proposals, tee_signer } = result else {
+            panic!("expected TEE proof result");
+        };
+        assert_eq!(tee_signer, server.signer_address());
+        assert_eq!(proposals.len(), fixture.expected.len());
+
+        let public_key = server.signer_public_key();
+        let mut prev_output_root = boot_info.agreed_l2_output_root;
+        for (proposal, expected) in proposals.iter().zip(&fixture.expected) {
+            assert_eq!(proposal.output_root, expected.output_root);
+            assert_eq!(proposal.prev_output_root, prev_output_root);
+            assert_eq!(proposal.l2_block_number, expected.number);
+            assert_eq!(proposal.l1_origin_hash, boot_info.l1_head);
+            assert_eq!(proposal.l1_origin_number, boot_info.l1_head_number);
+            assert_eq!(proposal.config_hash, DENIM_CONFIG_HASH);
+            assert_eq!(proposal.schedule_id, fixture.schedule_id);
+
+            let journal = ProofJournal {
+                proposer: boot_info.proposer,
+                l1_origin_hash: boot_info.l1_head,
+                prev_output_root,
+                starting_l2_block: expected.number - 1,
+                output_root: expected.output_root,
+                ending_l2_block: expected.number,
+                intermediate_roots: vec![],
+                config_hash: DENIM_CONFIG_HASH,
+                tee_image_hash: B256::ZERO,
+                schedule_id: fixture.schedule_id,
+            };
+            assert!(Signing::verify(&public_key, &journal.encode(), &proposal.signature).unwrap());
+            prev_output_root = expected.output_root;
+        }
+
+        let expected_final = fixture.expected.last().unwrap();
+        assert_eq!(aggregate_proposal.output_root, expected_final.output_root);
+        assert_eq!(aggregate_proposal.prev_output_root, boot_info.agreed_l2_output_root);
+        assert_eq!(aggregate_proposal.l2_block_number, CLAIM_BLOCK);
+        assert_eq!(aggregate_proposal.config_hash, DENIM_CONFIG_HASH);
+        assert_eq!(aggregate_proposal.schedule_id, fixture.schedule_id);
+
+        let aggregate_journal = ProofJournal {
+            proposer: boot_info.proposer,
+            l1_origin_hash: boot_info.l1_head,
+            prev_output_root: boot_info.agreed_l2_output_root,
+            starting_l2_block: fixture.expected.first().unwrap().number - 1,
+            output_root: expected_final.output_root,
+            ending_l2_block: expected_final.number,
+            intermediate_roots: fixture.expected.iter().map(|block| block.output_root).collect(),
+            config_hash: DENIM_CONFIG_HASH,
+            tee_image_hash: B256::ZERO,
+            schedule_id: fixture.schedule_id,
+        };
+        assert!(
+            Signing::verify(
+                &public_key,
+                &aggregate_journal.encode(),
+                &aggregate_proposal.signature,
+            )
+            .unwrap()
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn rejects_denim_fixture_with_wrong_claim_or_schedule() {
+        let server = Server::new_local().unwrap();
+        let wrong_claim = DenimFixture::new().with_claimed_output_root(B256::repeat_byte(0xaa));
+        assert!(matches!(
+            server.prove(wrong_claim.store.preimage_map).await,
+            Err(NitroError::ProofPipeline(_))
+        ));
+
+        let wrong_schedule = DenimFixture::new().with_schedule_block(CLAIM_BLOCK - 1);
+        assert!(matches!(
+            server.prove(wrong_schedule.store.preimage_map).await,
+            Err(NitroError::ProofPipeline(_))
+        ));
     }
 }

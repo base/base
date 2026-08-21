@@ -5378,6 +5378,7 @@ dependencies = [
  "base-proof-client",
  "base-proof-preimage",
  "base-proof-primitives",
+ "base-proof-zk-utils",
  "bincode 2.0.1",
  "eyre",
  "hex",
