@@ -61,29 +61,31 @@ impl ShadowMetricsReader {
                 info!(
                     updated_at = %cursor.updated_at,
                     number = cursor.number,
-                    hash = ?cursor.hash,
                     "resuming shadow metrics reader from persisted cursor"
                 );
                 cursor
             }
             None => {
-                let cursor = match block_repo.max_cursor().await? {
-                    Some(cursor) => {
+                // `shadow_blocks` retains only reorged-out blocks, so the newest row is the last
+                // reorg rather than a seconds-old canonical block. This tip is expected to be
+                // hours or days old on a chain that reorgs rarely; staleness is not a fault.
+                let cursor = block_repo.max_cursor().await?.map_or_else(
+                    || {
+                        // Ordinary first boot: a chain with no reorgs yet stores no rows at all.
+                        info!(
+                            "no persisted shadow metrics cursor and no recorded reorgs; starting at genesis"
+                        );
+                        ShadowBlockCursor::genesis()
+                    },
+                    |cursor| {
                         info!(
                             updated_at = %cursor.updated_at,
                             number = cursor.number,
-                            hash = ?cursor.hash,
-                            "no persisted shadow metrics cursor; starting at current table tip"
+                            "no persisted shadow metrics cursor; starting at last recorded reorg"
                         );
                         cursor
-                    }
-                    None => {
-                        info!(
-                            "no persisted shadow metrics cursor and shadow block table is empty; starting at genesis"
-                        );
-                        ShadowBlockCursor::genesis()
-                    }
-                };
+                    },
+                );
 
                 // Persist now so restart before first batch cannot skip intervening rows.
                 cursor_repo.store(&cursor).await?;
@@ -103,7 +105,7 @@ impl ShadowMetricsReader {
     pub async fn poll_once(&mut self) -> Result<Vec<ShadowBlockStats>> {
         let rows = self
             .block_repo
-            .list_reorged_since(&self.cursor, i64::from(self.config.max_rows_per_poll))
+            .list_since(&self.cursor, i64::from(self.config.max_rows_per_poll))
             .await?;
         let mut emitted = Vec::with_capacity(rows.len());
         let mut next_cursor = self.cursor.clone();

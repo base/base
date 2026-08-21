@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 # workspace
+base-metrics.workspace = true
 base-node-runner.workspace = true
 base-shadow-indexer-db = { path = "../shadow-indexer-db" }
 base-common-consensus = { workspace = true, features = ["reth"] }
@@ -38,8 +39,15 @@ chrono.workspace = true
 eyre.workspace = true
 futures.workspace = true
 
+# metrics
+metrics = { workspace = true, optional = true }
+
 [dev-dependencies]
 mockall.workspace = true
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 reth-primitives-traits = { workspace = true, features = ["test-utils"] }
+
+[features]
+default = [ "metrics" ]
+metrics = [ "base-metrics/metrics", "dep:metrics" ]

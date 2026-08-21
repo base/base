@@ -6,14 +6,14 @@ use serde::{Deserialize, Serialize};
 use crate::ShadowBlockCursor;
 
 /// Persisted shadow block row.
+///
+/// Every row in `shadow_blocks` is a reorged-out shadow block; canonical blocks are not persisted.
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct ShadowBlockRow {
     /// Block number.
     pub number: i64,
     /// Raw block hash.
     pub hash: Vec<u8>,
-    /// Whether block was reorged out.
-    pub reorged_out: bool,
     /// Replacement block hash after reorg.
     pub canonical_hash: Option<Vec<u8>>,
     /// Creation time.
@@ -30,12 +30,8 @@ pub struct ShadowBlockRow {
 impl ShadowBlockRow {
     /// Returns this row's stream position.
     #[must_use]
-    pub fn cursor(&self) -> ShadowBlockCursor {
-        ShadowBlockCursor {
-            updated_at: self.updated_at,
-            number: self.number,
-            hash: self.hash.clone(),
-        }
+    pub const fn cursor(&self) -> ShadowBlockCursor {
+        ShadowBlockCursor { updated_at: self.updated_at, number: self.number }
     }
 }
 
