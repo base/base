@@ -441,12 +441,12 @@ aws-sdk-ec2 = { version = "1.217.0", default-features = false }
 aws-credential-types = { version = "1.1.7", default-features = false }
 aws-sdk-elasticloadbalancingv2 = { version = "1.109.0", default-features = false }
 
-# SP1 v6.3.0 (Hypercube) — used by crates/proof/zk
-sp1-prover-types = "=6.3.0"
-sp1-sdk = { version = "=6.3.0" }
-sp1-cluster-utils = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.5.1" }
-sp1-cluster-common = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.5.1" }
-sp1-cluster-artifact = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.5.1" }
+# SP1 v6.4.0 (Hypercube) — used by crates/proof/zk
+sp1-prover-types = "=6.4.0"
+sp1-sdk = { version = "=6.4.0" }
+sp1-cluster-utils = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.7.2" }
+sp1-cluster-common = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.7.2" }
+sp1-cluster-artifact = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.7.2" }
 
 # crypto
 sha3 = "0.10"
