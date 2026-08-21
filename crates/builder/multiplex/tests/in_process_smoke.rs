@@ -258,6 +258,8 @@ async fn multiplex_flashblocks_equivalence_and_shadow_dispatch() -> eyre::Result
         build_new_block(&basic_provider, &basic.auth_ipc_path, build_timestamp).await?;
     assert_eq!(baseline_block, basic_block);
 
+    // Keep the nodes alive until process exit; dropping their independent runtimes can race the
+    // remaining providers and database tasks during test teardown.
     std::mem::forget(baseline);
     std::mem::forget(multiplex);
     std::mem::forget(basic);

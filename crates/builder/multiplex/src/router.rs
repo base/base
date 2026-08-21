@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::VecDeque,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -16,12 +16,13 @@ use reth_payload_builder::{BuildNewPayload, PayloadBuilderHandle, PayloadService
 use reth_payload_builder_primitives::{Events, PayloadBuilderError};
 use reth_payload_primitives::{PayloadAttributes, PayloadKind, PayloadTypes};
 use tokio::sync::{Mutex, broadcast, mpsc};
-use tracing::info;
+use tracing::{error, info, warn};
 
 use crate::RoutingConfig;
 
 const FLASHBLOCKS_BUILDER: &str = "flashblocks";
 const BASIC_BUILDER: &str = "basic";
+const MAX_PAYLOAD_ROUTES: usize = 128;
 
 #[cfg(debug_assertions)]
 static DEBUG_DISPATCH_FLASHBLOCKS: AtomicU64 = AtomicU64::new(0);
@@ -95,8 +96,8 @@ pub struct MultiplexRouter {
     pub basic_health: HealthState,
     /// Chain spec that owns the Zenith activation condition.
     pub chain_spec: Arc<BaseChainSpec>,
-    /// Whether each active payload ID is routed to the basic builder.
-    pub payload_routes: Arc<Mutex<HashMap<PayloadId, bool>>>,
+    /// Whether recent payload IDs are routed to the basic builder, ordered oldest first.
+    pub payload_routes: Arc<Mutex<VecDeque<(PayloadId, bool)>>>,
     /// Deadline used to flag slow selected `getPayload` resolutions.
     pub getpayload_deadline: std::time::Duration,
 }
@@ -117,7 +118,7 @@ impl MultiplexRouter {
             flashblocks_health,
             basic_health,
             chain_spec,
-            payload_routes: Arc::new(Mutex::new(HashMap::new())),
+            payload_routes: Arc::new(Mutex::new(VecDeque::new())),
             getpayload_deadline: config.getpayload_deadline,
         }
     }
@@ -129,7 +130,25 @@ impl MultiplexRouter {
 
     /// Returns the recorded route for a payload, defaulting unknown payloads to flashblocks.
     pub async fn basic_selected_for_payload(&self, payload_id: PayloadId) -> bool {
-        self.payload_routes.lock().await.get(&payload_id).copied().unwrap_or(false)
+        self.payload_routes
+            .lock()
+            .await
+            .iter()
+            .rev()
+            .find_map(|(id, selected_basic)| (*id == payload_id).then_some(*selected_basic))
+            .unwrap_or(false)
+    }
+
+    /// Records a payload route while bounding abandoned payload state.
+    pub async fn record_payload_route(&self, payload_id: PayloadId, selected_basic: bool) {
+        let mut routes = self.payload_routes.lock().await;
+        if let Some(position) = routes.iter().position(|(id, _)| *id == payload_id) {
+            routes.remove(position);
+        }
+        if routes.len() == MAX_PAYLOAD_ROUTES {
+            routes.pop_front();
+        }
+        routes.push_back((payload_id, selected_basic));
     }
 
     /// Returns the timestamp represented by a payload-builder event.
@@ -182,7 +201,7 @@ impl MultiplexRouter {
     ) {
         let payload_id = input.payload_id();
         let selected_basic = self.basic_selected_at(input.attributes.timestamp());
-        self.payload_routes.lock().await.insert(payload_id, selected_basic);
+        self.record_payload_route(payload_id, selected_basic).await;
 
         let mut shadow_attributes = input.attributes.clone();
         shadow_attributes.no_tx_pool = true;
@@ -250,7 +269,10 @@ impl MultiplexRouter {
             Err(Self::unavailable_error(selected_builder))
         });
         if selected_result.is_err() {
-            self.payload_routes.lock().await.remove(&payload_id);
+            let mut routes = self.payload_routes.lock().await;
+            if let Some(position) = routes.iter().position(|(id, _)| *id == payload_id) {
+                routes.remove(position);
+            }
         }
 
         info!(
@@ -329,7 +351,11 @@ impl MultiplexRouter {
             let started = Instant::now();
             let result = handle.resolve_kind(payload_id, kind).await;
             let elapsed = started.elapsed();
-            payload_routes.lock().await.remove(&payload_id);
+            let mut routes = payload_routes.lock().await;
+            if let Some(position) = routes.iter().position(|(id, _)| *id == payload_id) {
+                routes.remove(position);
+            }
+            drop(routes);
 
             Self::record_selected_getpayload_latency(elapsed.as_secs_f64());
             if elapsed > deadline {
@@ -368,17 +394,27 @@ impl MultiplexRouter {
     ) {
         let mut flashblocks_events = match self.flashblocks_handle.subscribe().await {
             Ok(events) => events.receiver,
-            Err(_) => {
+            Err(error) => {
                 self.flashblocks_health.mark_unavailable();
                 Self::set_service_health_metric(FLASHBLOCKS_BUILDER, false);
+                error!(
+                    builder = FLASHBLOCKS_BUILDER,
+                    error = %error,
+                    "failed to subscribe to payload builder events"
+                );
                 return;
             }
         };
         let mut basic_events = match self.basic_handle.subscribe().await {
             Ok(events) => events.receiver,
-            Err(_) => {
+            Err(error) => {
                 self.basic_health.mark_unavailable();
                 Self::set_service_health_metric(BASIC_BUILDER, false);
+                error!(
+                    builder = BASIC_BUILDER,
+                    error = %error,
+                    "failed to subscribe to payload builder events"
+                );
                 return;
             }
         };
@@ -404,7 +440,18 @@ impl MultiplexRouter {
                             router.flashblocks_health.mark_unavailable();
                             Self::set_service_health_metric(FLASHBLOCKS_BUILDER, false);
                         }
-                        Err(broadcast::error::RecvError::Lagged(_)) => {}
+                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                            metrics::counter!(
+                                "mux_subscription_lagged_events_total",
+                                "builder" => FLASHBLOCKS_BUILDER
+                            )
+                            .increment(skipped);
+                            warn!(
+                                builder = FLASHBLOCKS_BUILDER,
+                                skipped,
+                                "payload builder event forwarding lagged"
+                            );
+                        }
                     },
                     result = basic_events.recv(), if !basic_closed => match result {
                         Ok(event) => {
@@ -417,7 +464,18 @@ impl MultiplexRouter {
                             router.basic_health.mark_unavailable();
                             Self::set_service_health_metric(BASIC_BUILDER, false);
                         }
-                        Err(broadcast::error::RecvError::Lagged(_)) => {}
+                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                            metrics::counter!(
+                                "mux_subscription_lagged_events_total",
+                                "builder" => BASIC_BUILDER
+                            )
+                            .increment(skipped);
+                            warn!(
+                                builder = BASIC_BUILDER,
+                                skipped,
+                                "payload builder event forwarding lagged"
+                            );
+                        }
                     },
                 }
             }
@@ -643,7 +701,7 @@ mod tests {
     async fn best_payload_reads_recorded_builder() {
         let (router, mut flash_rx, mut basic_rx) = test_router();
         let payload_id = payload_id_from_byte(7);
-        router.payload_routes.lock().await.insert(payload_id, true);
+        router.record_payload_route(payload_id, true).await;
         let (tx, rx) = tokio::sync::oneshot::channel();
 
         tokio::spawn(async move {
@@ -729,7 +787,7 @@ mod tests {
     async fn resolve_uses_recorded_builder() {
         let (router, mut flash_rx, mut basic_rx) = test_router();
         let payload_id = payload_id_from_byte(11);
-        router.payload_routes.lock().await.insert(payload_id, true);
+        router.record_payload_route(payload_id, true).await;
         let (resolve_tx, resolve_rx) = tokio::sync::oneshot::channel();
 
         tokio::spawn(async move {
@@ -752,5 +810,19 @@ mod tests {
 
         let resolved = resolve_task.await.expect("resolve task join");
         assert!(matches!(resolved, Err(PayloadBuilderError::MissingPayload)));
+    }
+
+    #[tokio::test]
+    async fn payload_routes_evict_oldest_abandoned_payload() {
+        let (router, _, _) = test_router();
+        for value in 0..=MAX_PAYLOAD_ROUTES {
+            router.record_payload_route(payload_id_from_byte(value as u8), true).await;
+        }
+
+        assert_eq!(router.payload_routes.lock().await.len(), MAX_PAYLOAD_ROUTES);
+        assert!(!router.basic_selected_for_payload(payload_id_from_byte(0)).await);
+        assert!(
+            router.basic_selected_for_payload(payload_id_from_byte(MAX_PAYLOAD_ROUTES as u8)).await
+        );
     }
 }
