@@ -137,6 +137,12 @@ pub enum OracleProviderError {
         /// The L2 block number used to pin the upgrade schedule.
         schedule_block: u64,
     },
+    /// Computing the claimed L2 block timestamp overflowed `u64`.
+    #[error("L2 claim block timestamp overflow for block {claim_block}")]
+    L2ClaimTimestampOverflow {
+        /// The claimed L2 block number.
+        claim_block: u64,
+    },
     /// The rollup config has a zero L2 block time.
     #[error("L2 block time must be non-zero")]
     InvalidL2BlockTime,
