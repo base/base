@@ -509,6 +509,9 @@ impl ConsensusNodeArgs {
             l1_rpc: upgrade_signal_l1_rpc,
         });
 
+        if let Some(interval) = self.config.l1_rpc_args.l1_finalized_poll_interval {
+            builder = builder.with_finalized_poll_interval(interval);
+        }
         if let Some(path) = self.config.checkpoint_path.clone() {
             builder = builder.with_checkpoint_path(path);
         }
