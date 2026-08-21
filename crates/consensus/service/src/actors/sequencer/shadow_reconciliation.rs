@@ -197,12 +197,26 @@ impl ShadowReconciliationGate {
         }
     }
 
+    /// Returns whether a safe signal must wait for canonical reconciliation.
+    pub const fn should_defer_safe_signal(&self, signal: &ConsolidateInput) -> bool {
+        let block_number = match signal {
+            ConsolidateInput::Attributes(attributes) => attributes.block_number(),
+            ConsolidateInput::BlockInfo(block_info) => block_info.block_info.number,
+        };
+        block_number > self.anchor.block_info.number
+    }
+
     /// Records the latest finalized block.
     pub const fn buffer_finalized(&mut self, number: u64) {
         self.latest_finalized = Some(match self.latest_finalized {
             Some(previous) if previous > number => previous,
             _ => number,
         });
+    }
+
+    /// Returns whether a finalized update must wait for the safe head or canonical anchor.
+    pub const fn should_defer_finalized(&self, number: u64, safe_head_number: u64) -> bool {
+        number > safe_head_number || number > self.anchor.block_info.number
     }
 
     /// Selects a complete reconciliation range, removing the matched payloads from the buffer.
@@ -312,7 +326,7 @@ mod tests {
     use alloy_primitives::{Address, B256, Bloom, U256};
     use alloy_rpc_types_engine::ExecutionPayloadV1;
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
-    use base_consensus_engine::ConsolidateInput;
+    use base_consensus_engine::{ConsolidateInput, test_utils::TestAttributesBuilder};
     use base_protocol::{BlockInfo, L2BlockInfo};
 
     use super::{CanonicalUnsafeCatchup, ShadowReconciliationGate};
@@ -527,6 +541,31 @@ mod tests {
         gate.buffer_finalized(10);
 
         assert_eq!(gate.latest_finalized, Some(12));
+    }
+
+    #[test]
+    fn only_defers_safe_signals_above_canonical_anchor() {
+        let gate = ShadowReconciliationGate::new(head(10, B256::ZERO));
+
+        assert!(
+            !gate.should_defer_safe_signal(&ConsolidateInput::BlockInfo(head(10, B256::ZERO,)))
+        );
+        assert!(gate.should_defer_safe_signal(&ConsolidateInput::BlockInfo(head(11, B256::ZERO,))));
+        assert!(!gate.should_defer_safe_signal(&ConsolidateInput::Attributes(Box::new(
+            TestAttributesBuilder::new().with_parent(head(9, B256::ZERO)).build(),
+        ))));
+        assert!(gate.should_defer_safe_signal(&ConsolidateInput::Attributes(Box::new(
+            TestAttributesBuilder::new().with_parent(head(10, B256::ZERO)).build(),
+        ))));
+    }
+
+    #[test]
+    fn only_defers_finalized_updates_above_safe_head_or_canonical_anchor() {
+        let gate = ShadowReconciliationGate::new(head(10, B256::ZERO));
+
+        assert!(!gate.should_defer_finalized(9, 9));
+        assert!(gate.should_defer_finalized(10, 9));
+        assert!(gate.should_defer_finalized(11, 11));
     }
 
     #[test]

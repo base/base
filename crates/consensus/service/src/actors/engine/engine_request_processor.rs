@@ -650,8 +650,9 @@ mod tests {
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
     use base_consensus_derive::Signal;
     use base_consensus_engine::{
-        Engine, EngineClient, EngineState, EngineTaskError, EngineTaskErrorSeverity,
-        ForkchoiceCheckpointError, ForkchoiceCheckpointLabel, ForkchoiceCheckpointReader,
+        ConsolidateInput, Engine, EngineClient, EngineState, EngineTaskError,
+        EngineTaskErrorSeverity, ForkchoiceCheckpointError, ForkchoiceCheckpointLabel,
+        ForkchoiceCheckpointReader,
         test_utils::{
             TestAttributesBuilder, TestEngineStateBuilder, test_block_info,
             test_engine_client_builder,
@@ -1292,6 +1293,114 @@ mod tests {
             matches!(result, Err(super::EngineError::ShadowInternalReset)),
             "uncoordinated reset during private work must terminate shadow handling, got: {result:?}"
         );
+    }
+
+    /// Exercises safe and finalized updates through the live shadow coordinator while its unsafe
+    /// head is on a private branch. Canonical updates through the reconciliation anchor must drain
+    /// immediately; updates entering the private range must remain deferred.
+    #[tokio::test]
+    async fn shadow_cycle_advances_safe_and_finalized_heads_through_canonical_anchor() {
+        let l1_origin = BlockNumHash { number: 1, hash: B256::with_last_byte(1) };
+        let block_96 = full_reth_l2_block_with_l1_info(96, B256::with_last_byte(95), l1_origin);
+        let block_97 = full_reth_l2_block_with_l1_info(97, block_96.header.hash, l1_origin);
+        let safe_96 = l2_head(96, block_96.header.hash);
+        let safe_97 = l2_head(97, block_97.header.hash);
+        let anchor = l2_head(100, B256::with_last_byte(100));
+        let private_unsafe = l2_head(105, B256::with_last_byte(105));
+
+        let client = Arc::new(
+            test_engine_client_builder()
+                .with_l2_block_by_label(BlockNumberOrTag::Number(96), block_96.clone())
+                .with_l2_block_by_label(BlockNumberOrTag::Number(97), block_97.clone())
+                .with_l2_block(BlockId::from(96u64), block_96)
+                .with_l2_block(BlockId::from(97u64), block_97)
+                .with_fork_choice_updated_v2_response(valid_fcu())
+                .with_fork_choice_updated_v3_response(valid_fcu())
+                .build(),
+        );
+        let mut derivation = MockEngineDerivationClient::new();
+        derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));
+        derivation.expect_notify_sync_completed().returning(|_| Ok(()));
+
+        let initial_state = TestEngineStateBuilder::new()
+            .with_unsafe_head(private_unsafe)
+            .with_safe_head(l2_head(95, B256::with_last_byte(95)))
+            .with_finalized_head(l2_head(95, B256::with_last_byte(95)))
+            .with_el_sync_finished(false)
+            .build();
+        let (state_tx, state_rx) = watch::channel(initial_state);
+        let (queue_tx, _) = watch::channel(0usize);
+        let engine = Engine::new(initial_state, state_tx, queue_tx);
+        let processor =
+            EngineProcessor::new(client, Arc::new(RollupConfig::default()), derivation, engine);
+        let (unsafe_head_tx, _) = watch::channel(private_unsafe);
+        let (request_tx, request_rx) = mpsc::channel(8);
+        let mut coordinator =
+            SequencerEngineRequestCoordinator::new(processor, true, None, false, unsafe_head_tx);
+        *coordinator.sequencer_state_mut() =
+            SequencerEngineState::ShadowActive(Box::new(ShadowReconciliationGate::new(anchor)));
+        let mut handle = coordinator.start(request_rx);
+
+        request_tx
+            .send(EngineActorRequest::ProcessSafeL2SignalRequest(ConsolidateInput::BlockInfo(
+                safe_96,
+            )))
+            .await
+            .expect("failed to send safe block 96");
+        let mut safe_96_state = state_rx.clone();
+        tokio::select! {
+            result = safe_96_state.wait_for(|state| {
+                state.sync_state.safe_head().block_info.number == 96
+            }) => {
+                if result.is_err() {
+                    let engine_result = handle.await;
+                    panic!("engine exited while applying safe block 96: {engine_result:?}");
+                }
+            }
+            result = &mut handle => panic!("engine exited while applying safe block 96: {result:?}"),
+        }
+
+        request_tx
+            .send(EngineActorRequest::ProcessFinalizedL2BlockNumberRequest(Box::new(96)))
+            .await
+            .expect("failed to send finalized block 96");
+        state_rx
+            .clone()
+            .wait_for(|state| state.sync_state.finalized_head().block_info.number == 96)
+            .await
+            .expect("finalized block 96 was not applied during the shadow cycle");
+
+        request_tx
+            .send(EngineActorRequest::ProcessSafeL2SignalRequest(ConsolidateInput::BlockInfo(
+                safe_97,
+            )))
+            .await
+            .expect("failed to send safe block 97");
+        state_rx
+            .clone()
+            .wait_for(|state| state.sync_state.safe_head().block_info.number == 97)
+            .await
+            .expect("safe block 97 was not applied during the same shadow cycle");
+
+        request_tx
+            .send(EngineActorRequest::ProcessSafeL2SignalRequest(ConsolidateInput::BlockInfo(
+                l2_head(101, B256::with_last_byte(101)),
+            )))
+            .await
+            .expect("failed to send safe block above the anchor");
+        request_tx
+            .send(EngineActorRequest::ProcessFinalizedL2BlockNumberRequest(Box::new(101)))
+            .await
+            .expect("failed to send finalized block above the anchor");
+
+        drop(request_tx);
+        let result = handle.await.expect("engine task panicked");
+        assert!(matches!(result, Err(super::EngineError::ChannelClosed)));
+
+        let state = state_rx.borrow();
+        assert_eq!(state.sync_state.unsafe_head(), private_unsafe);
+        assert_eq!(state.sync_state.safe_head().block_info.number, 97);
+        assert_eq!(state.sync_state.finalized_head().block_info.number, 96);
     }
 
     /// Regression test: demonstrates that a validator node (`unsafe_head_tx` = None) was
