@@ -59,7 +59,34 @@ impl TransactionEventWriterConfig {
     }
 }
 
-/// Handle for appending transaction events to a file or an in-memory buffer.
+/// Shared buffer for events written by an in-memory [`TransactionEventWriter`].
+#[derive(Clone, Debug, Default)]
+pub struct TransactionEventRecorder {
+    events: Arc<Mutex<Vec<TransactionEvent>>>,
+}
+
+impl TransactionEventRecorder {
+    /// Creates an empty recorder.
+    pub fn new() -> Self {
+        Self { events: Arc::new(Mutex::new(Vec::new())) }
+    }
+
+    /// Returns a snapshot of recorded events.
+    pub fn events(&self) -> Vec<TransactionEvent> {
+        self.events.lock().unwrap_or_else(|err| err.into_inner()).clone()
+    }
+
+    /// Removes all recorded events.
+    pub fn clear(&self) {
+        self.events.lock().unwrap_or_else(|err| err.into_inner()).clear();
+    }
+
+    fn push(&self, event: TransactionEvent) {
+        self.events.lock().unwrap_or_else(|err| err.into_inner()).push(event);
+    }
+}
+
+/// Non-blocking handle for appending transaction events to JSONL.
 #[derive(Clone)]
 pub struct TransactionEventWriter {
     inner: Arc<WriterInner>,
@@ -79,7 +106,7 @@ enum WriterBackend {
         _guard: WorkerGuard,
     },
     Memory {
-        events: Mutex<Vec<TransactionEvent>>,
+        recorder: TransactionEventRecorder,
     },
 }
 
@@ -193,30 +220,13 @@ impl TransactionEventWriter {
         Self::new(WriterBackend::Disabled, config.network)
     }
 
-    /// Creates an in-memory writer that records events for later inspection.
-    pub fn in_memory(network: impl Into<String>) -> Self {
-        Self::new(WriterBackend::Memory { events: Mutex::new(Vec::new()) }, network)
+    /// Creates an in-memory writer that appends events to `recorder`.
+    pub fn in_memory(network: impl Into<String>, recorder: TransactionEventRecorder) -> Self {
+        Self::new(WriterBackend::Memory { recorder }, network)
     }
 
     fn new(backend: WriterBackend, network: impl Into<String>) -> Self {
         Self { inner: Arc::new(WriterInner { backend, network: network.into() }) }
-    }
-
-    /// Returns events recorded by an in-memory writer.
-    pub fn recorded_events(&self) -> Vec<TransactionEvent> {
-        match &self.inner.backend {
-            WriterBackend::Memory { events } => {
-                events.lock().unwrap_or_else(|err| err.into_inner()).clone()
-            }
-            WriterBackend::Disabled | WriterBackend::File { .. } => Vec::new(),
-        }
-    }
-
-    /// Clears events recorded by an in-memory writer.
-    pub fn clear_recorded_events(&self) {
-        if let WriterBackend::Memory { events } = &self.inner.backend {
-            events.lock().unwrap_or_else(|err| err.into_inner()).clear();
-        }
     }
 
     /// Attempts to enqueue one event without blocking the caller.
@@ -226,9 +236,9 @@ impl TransactionEventWriter {
                 Metrics::dropped_events("disabled").increment(1);
                 Err(WriteEventError::Disabled)
             }
-            WriterBackend::Memory { events } => {
+            WriterBackend::Memory { recorder } => {
                 Self::validate_event(event)?;
-                events.lock().unwrap_or_else(|err| err.into_inner()).push(event.clone());
+                recorder.push(event.clone());
                 Metrics::submitted_events().increment(1);
                 Ok(())
             }
@@ -538,27 +548,17 @@ mod tests {
 
     #[test]
     fn in_memory_writer_records_and_clears_events() {
-        let writer = TransactionEventWriter::in_memory("test");
+        let recorder = TransactionEventRecorder::new();
+        let writer = TransactionEventWriter::in_memory("test", recorder.clone());
         writer.try_write(&sample_event()).unwrap();
-        let events = writer.recorded_events();
+        let events = recorder.events();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event_type, TransactionEventType::Pending);
         assert_eq!(events[0].network.as_deref(), Some("base-mainnet"));
         assert_eq!(writer.network(), "test");
 
-        writer.clear_recorded_events();
-        assert!(writer.recorded_events().is_empty());
-    }
-
-    #[test]
-    fn disabled_writer_has_no_recorded_events() {
-        let disabled = TransactionEventWriter::disabled(TransactionEventWriterConfig::disabled(
-            TransactionEventProducer::BaseRethNode,
-            "base-devnet",
-            "disabled.jsonl",
-        ));
-        assert!(disabled.try_write(&sample_event()).is_err());
-        assert!(disabled.recorded_events().is_empty());
+        recorder.clear();
+        assert!(recorder.events().is_empty());
     }
 
     #[test]

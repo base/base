@@ -28,7 +28,9 @@ mod metrics;
 pub use metrics::Metrics;
 
 mod writer;
-pub use writer::{TransactionEventWriter, TransactionEventWriterConfig, WriteEventError};
+pub use writer::{
+    TransactionEventRecorder, TransactionEventWriter, TransactionEventWriterConfig, WriteEventError,
+};
 
 #[doc(hidden)]
 pub mod __private {
