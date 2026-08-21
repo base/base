@@ -84,6 +84,7 @@ std = [
 ]
 test-utils = [
 	"base-common-chains?/test-utils",
+	"base-common-genesis/serde",
 	"base-common-genesis/test-utils",
 	"base-protocol/test-utils",
 	"dep:alloy-provider",

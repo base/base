@@ -2,6 +2,7 @@
 
 use alloc::vec::Vec;
 
+use alloy_consensus::TxReceipt;
 use alloy_primitives::{Bytes, Sealable, Sealed, TxKind, U256};
 use base_common_consensus::{
     BaseTimeDepositSource, BaseTransaction, DepositSourceDomain, Predeploys, SystemAddresses,
@@ -90,6 +91,138 @@ impl BaseTimeUpdateTx {
         let base_time = Self::validate_deposit(deposit, block_number)?;
 
         Ok(base_time)
+    }
+
+    /// Returns whether a transaction is a protocol-authorized `BaseTime` setter call.
+    pub fn is_protocol_authorized_setter<T: BaseTransaction>(transaction: &T) -> bool {
+        transaction.as_deposit().is_some_and(|deposit| {
+            deposit.from == SystemAddresses::DEPOSITOR_ACCOUNT
+                && deposit.to == TxKind::Call(Predeploys::BASE_TIME)
+                && deposit.input.starts_with(&Self::SELECTOR)
+        })
+    }
+
+    /// Validates the `BaseTime` transactions for a child block.
+    ///
+    /// Before Denim, protocol-authorized setter deposits are forbidden. At and after Denim, the
+    /// canonical metadata deposit must be at `tx[1]`, and no other protocol-authorized setter may
+    /// appear in the block.
+    pub fn validate_child_transactions<T: BaseTransaction>(
+        transactions: &[T],
+        block_number: u64,
+        denim_active: bool,
+    ) -> Result<Option<Self>, BaseTimeValidationError> {
+        if !denim_active {
+            if let Some(index) = transactions.iter().position(Self::is_protocol_authorized_setter) {
+                return Err(BaseTimeValidationError::ProtocolSetterBeforeDenim { index });
+            }
+            return Ok(None);
+        }
+
+        Self::validate_denim_child_transactions(transactions, block_number).map(Some)
+    }
+
+    /// Validates the canonical metadata and unique protocol writer for a Denim child block.
+    pub fn validate_denim_child_transactions<T: BaseTransaction>(
+        transactions: &[T],
+        block_number: u64,
+    ) -> Result<Self, BaseTimeValidationError> {
+        let base_time = Self::extract_from_transactions(transactions, block_number)?;
+        if let Some(index) = transactions.iter().enumerate().find_map(|(index, transaction)| {
+            (index != 1 && Self::is_protocol_authorized_setter(transaction)).then_some(index)
+        }) {
+            return Err(BaseTimeValidationError::AdditionalProtocolSetter { index });
+        }
+
+        Ok(base_time)
+    }
+
+    /// Validates this update against the configured child timestamp.
+    pub const fn validate_scheduled_timestamp(
+        &self,
+        block_timestamp: u64,
+        expected_timestamp: u64,
+        expected_timestamp_millis_part: u16,
+    ) -> Result<(), BaseTimeValidationError> {
+        if block_timestamp != expected_timestamp
+            || self.timestamp_millis_part != expected_timestamp_millis_part
+        {
+            return Err(BaseTimeValidationError::ScheduledTimestampMismatch {
+                expected_timestamp_ms: expected_timestamp as u128 * 1_000
+                    + expected_timestamp_millis_part as u128,
+                actual_timestamp_ms: block_timestamp as u128 * 1_000
+                    + self.timestamp_millis_part as u128,
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Validates that the first Denim block starts at the `.000` lattice point.
+    pub const fn validate_first_denim_anchor(&self) -> Result<(), BaseTimeValidationError> {
+        if self.timestamp_millis_part != 0 {
+            return Err(BaseTimeValidationError::InvalidFirstDenimAnchor {
+                timestamp_millis_part: self.timestamp_millis_part,
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Validates that this child advances exactly one `BaseTime` slot from an active parent.
+    pub const fn validate_progression(
+        &self,
+        parent_timestamp: u64,
+        parent_timestamp_millis_part: u16,
+        child_timestamp: u64,
+    ) -> Result<(), BaseTimeValidationError> {
+        let parent_timestamp_ms =
+            parent_timestamp as u128 * 1_000 + parent_timestamp_millis_part as u128;
+        let child_timestamp_ms =
+            child_timestamp as u128 * 1_000 + self.timestamp_millis_part as u128;
+        if child_timestamp_ms != parent_timestamp_ms + Self::BLOCK_INTERVAL_MILLIS as u128 {
+            return Err(BaseTimeValidationError::ProgressionMismatch {
+                parent_timestamp_ms,
+                child_timestamp_ms,
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Validates receipt cardinality and successful execution of the metadata transaction.
+    pub fn validate_receipts<R: TxReceipt>(
+        transaction_count: usize,
+        receipts: &[R],
+    ) -> Result<(), BaseTimeValidationError> {
+        if receipts.len() != transaction_count {
+            return Err(BaseTimeValidationError::ReceiptCountMismatch {
+                transaction_count,
+                receipt_count: receipts.len(),
+            });
+        }
+        let receipt = receipts.get(1).ok_or(BaseTimeValidationError::MetadataReceiptMissing)?;
+
+        if !receipt.status() {
+            return Err(BaseTimeValidationError::MetadataExecutionFailed);
+        }
+
+        Ok(())
+    }
+
+    /// Validates the final child `BaseTime` storage value.
+    pub const fn validate_final_state(
+        &self,
+        timestamp_millis_part: u16,
+    ) -> Result<(), BaseTimeValidationError> {
+        if timestamp_millis_part != self.timestamp_millis_part {
+            return Err(BaseTimeValidationError::FinalStateMismatch {
+                expected_timestamp_millis_part: self.timestamp_millis_part,
+                actual_timestamp_millis_part: timestamp_millis_part,
+            });
+        }
+
+        Ok(())
     }
 
     /// Extracts the block timestamp in milliseconds from its transactions and header fields.
@@ -219,6 +352,78 @@ pub enum BaseTimeMetadataError {
     /// The deposit calldata is not a canonical `BaseTime` setter call.
     #[error("invalid BaseTime metadata calldata: {0}")]
     InvalidCalldata(BaseTimeUpdateDecodeError),
+}
+
+/// An error validating a complete `BaseTime` child-state transition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum BaseTimeValidationError {
+    /// The canonical metadata deposit is malformed or missing.
+    #[error(transparent)]
+    Metadata(#[from] BaseTimeMetadataError),
+    /// A protocol-authorized setter deposit appeared before Denim activation.
+    #[error("protocol-authorized BaseTime setter at tx[{index}] before Denim")]
+    ProtocolSetterBeforeDenim {
+        /// The transaction index.
+        index: usize,
+    },
+    /// A protocol-authorized setter appeared outside the canonical `tx[1]` position.
+    #[error("additional protocol-authorized BaseTime setter at tx[{index}]")]
+    AdditionalProtocolSetter {
+        /// The transaction index.
+        index: usize,
+    },
+    /// The child header and metadata do not match the configured schedule.
+    #[error(
+        "BaseTime scheduled timestamp mismatch: expected {expected_timestamp_ms}ms, got {actual_timestamp_ms}ms"
+    )]
+    ScheduledTimestampMismatch {
+        /// The configured child timestamp in milliseconds.
+        expected_timestamp_ms: u128,
+        /// The child header and metadata timestamp in milliseconds.
+        actual_timestamp_ms: u128,
+    },
+    /// The first Denim block does not start at `.000`.
+    #[error("invalid first Denim BaseTime anchor: expected 0ms, got {timestamp_millis_part}ms")]
+    InvalidFirstDenimAnchor {
+        /// The metadata millisecond component.
+        timestamp_millis_part: u16,
+    },
+    /// Consecutive Denim blocks did not advance by exactly one 200ms slot.
+    #[error(
+        "invalid BaseTime progression from {parent_timestamp_ms}ms to {child_timestamp_ms}ms; expected exactly 200ms"
+    )]
+    ProgressionMismatch {
+        /// The parent's full-millisecond timestamp.
+        parent_timestamp_ms: u128,
+        /// The child's full-millisecond timestamp.
+        child_timestamp_ms: u128,
+    },
+    /// Execution produced a different number of receipts than transactions.
+    #[error(
+        "BaseTime receipt count mismatch: {transaction_count} transactions, {receipt_count} receipts"
+    )]
+    ReceiptCountMismatch {
+        /// The block transaction count.
+        transaction_count: usize,
+        /// The execution receipt count.
+        receipt_count: usize,
+    },
+    /// Execution did not produce the metadata receipt at `tx[1]`.
+    #[error("missing BaseTime metadata receipt at tx[1]")]
+    MetadataReceiptMissing,
+    /// The metadata transaction reverted.
+    #[error("BaseTime metadata transaction execution failed")]
+    MetadataExecutionFailed,
+    /// The final `BaseTime` slot does not match the metadata value.
+    #[error(
+        "BaseTime final state mismatch: expected {expected_timestamp_millis_part}ms, got {actual_timestamp_millis_part}ms"
+    )]
+    FinalStateMismatch {
+        /// The millisecond component committed by `tx[1]`.
+        expected_timestamp_millis_part: u16,
+        /// The millisecond component in final child state.
+        actual_timestamp_millis_part: u16,
+    },
 }
 
 #[cfg(test)]

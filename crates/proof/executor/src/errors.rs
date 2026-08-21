@@ -9,6 +9,7 @@ use alloc::string::String;
 use alloy_evm::block::BlockExecutionError;
 use base_common_consensus::EIP1559ParamError;
 use base_proof_mpt::TrieNodeError;
+use base_protocol::BaseTimeValidationError;
 use revm::context::DBErrorMarker;
 use thiserror::Error;
 
@@ -150,6 +151,9 @@ pub enum ExecutorError {
     /// - Protocol version mismatches
     #[error("Unsupported transaction type: {0}")]
     UnsupportedTransactionType(u8),
+    /// The child block violates the `BaseTime` transition invariant.
+    #[error("BaseTime validation error: {0}")]
+    BaseTimeValidation(#[from] BaseTimeValidationError),
     /// Trie database operation failed.
     ///
     /// This error wraps [`TrieDBError`] variants that occur during state
@@ -309,6 +313,9 @@ mod tests {
             ExecutorError::MissingEIP1559Params,
             ExecutorError::MissingParentBeaconBlockRoot,
             ExecutorError::InvalidExtraData(Eip1559ValidationError::ZeroDenominator),
+            ExecutorError::BaseTimeValidation(BaseTimeValidationError::InvalidFirstDenimAnchor {
+                timestamp_millis_part: 200,
+            }),
             // Witness-level / prover-influenced — must not trigger silent recovery.
             ExecutorError::TrieDBError(TrieDBError::Provider("missing preimage".to_string())),
             ExecutorError::ExecutionError(BlockExecutionError::Internal(
