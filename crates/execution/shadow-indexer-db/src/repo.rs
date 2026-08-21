@@ -188,46 +188,6 @@ impl ShadowBlockRepo {
         Ok(rows)
     }
 
-    /// Lists canonical rows whose hashes are in the provided list.
-    ///
-    /// # Errors
-    /// Returns an error when the query fails.
-    pub async fn list_canonical_by_hashes(
-        &self,
-        hashes: &[Vec<u8>],
-    ) -> Result<Vec<ShadowBlockRow>> {
-        if hashes.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let rows = query_as::<_, ShadowBlockRow>(
-            "SELECT * FROM shadow_blocks WHERE reorged_out = false AND hash = ANY($1)",
-        )
-        .bind(hashes)
-        .fetch_all(&self.pool)
-        .await
-        .context("failed to list canonical shadow blocks by hashes")?;
-
-        Ok(rows)
-    }
-
-    /// Returns the canonical row at a block number.
-    ///
-    /// # Errors
-    /// Returns an error when the query fails.
-    pub async fn get_canonical_by_number(&self, number: i64) -> Result<Option<ShadowBlockRow>> {
-        let row = query_as::<_, ShadowBlockRow>(
-            "SELECT * FROM shadow_blocks WHERE number = $1 AND reorged_out = false \
-             ORDER BY updated_at DESC LIMIT 1",
-        )
-        .bind(number)
-        .fetch_optional(&self.pool)
-        .await
-        .context("failed to load shadow block by number")?;
-
-        Ok(row)
-    }
-
     /// Returns the block with a given hash, whether canonical or reorged out (shadow).
     ///
     /// Prefers a canonical row if the same hash somehow exists in both states.

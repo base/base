@@ -42,11 +42,7 @@ pub fn api_router(store: Option<ShadowMetricsStore>) -> Router {
         .with_state(ApiState { store })
 }
 
-/// One reorged-out shadow block paired with the canonical block that replaced it.
-///
-/// The `*_diff` fields are `shadow - canonical`, so a positive value means the shadow
-/// block used more. Canonical-derived fields are `None` when the replacement row is not
-/// found (for example, still pending persistence).
+/// One reorged-out shadow block summary.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ShadowBlockSummary {
@@ -55,23 +51,9 @@ struct ShadowBlockSummary {
     canonical_hash: String,
     timestamp: u64,
     shadow_builder_version: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    canonical_builder_version: Option<String>,
     shadow_gas_used: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    canonical_gas_used: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    gas_diff_abs: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    gas_diff_pct: Option<f64>,
     shadow_tx_count: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    canonical_tx_count: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tx_count_diff: Option<i64>,
     shadow_non_deposit_tx_count: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    canonical_non_deposit_tx_count: Option<usize>,
     shadow_priority_fee_inversions: usize,
 }
 
@@ -156,20 +138,15 @@ async fn get_shadow_candidates(
 ) -> Result<Json<Vec<ShadowBlockSummary>>, ApiError> {
     let repo = state.repo()?;
     let canonical_hash = match parse_block_id(&id)? {
-        BlockId::Number(number) => match repo.get_canonical_by_number(number).await? {
-            Some(row) => row.hash,
-            None => return Ok(Json(Vec::new())),
-        },
+        BlockId::Number(number) => {
+            let _ = number;
+            return Err(ApiError::BadRequest);
+        }
         BlockId::Hash(hash) => hash.to_vec(),
     };
 
     let shadows = repo.list_reorged_by_canonical(canonical_hash.as_slice()).await?;
-    let canonical = repo.get_by_block_hash(canonical_hash.as_slice()).await?;
-
-    let blocks =
-        shadows.iter().map(|shadow| shadow_block_summary(shadow, canonical.as_ref())).collect();
-
-    Ok(Json(blocks))
+    Ok(Json(shadows.iter().map(shadow_block_summary).collect::<Vec<_>>()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -197,7 +174,11 @@ async fn get_shadow_candidates_batch(
         }
         match parse_block_id(trimmed) {
             Ok(BlockId::Hash(hash)) => parsed.push(hash),
-            Ok(BlockId::Number(_)) | Err(_) => continue,
+            Ok(BlockId::Number(number)) => {
+                let _ = number;
+                continue;
+            }
+            Err(_) => continue,
         }
     }
 
@@ -208,9 +189,6 @@ async fn get_shadow_candidates_batch(
     let hashes: Vec<Vec<u8>> = parsed.into_iter().map(|hash| hash.to_vec()).collect();
     let repo = state.repo()?;
     let shadows = repo.list_reorged_by_canonicals(&hashes).await?;
-    let canonicals = repo.list_canonical_by_hashes(&hashes).await?;
-    let canonical_by_hash: HashMap<&[u8], &ShadowBlockRow> =
-        canonicals.iter().map(|row| (row.hash.as_slice(), row)).collect();
 
     let mut result: HashMap<String, Vec<ShadowBlockSummary>> = HashMap::new();
     for shadow in &shadows {
@@ -218,15 +196,13 @@ async fn get_shadow_candidates_batch(
             continue;
         };
         let key = hex::encode_prefixed(canonical_hash.as_slice());
-        let canonical = canonical_by_hash.get(canonical_hash.as_slice()).copied();
-        result.entry(key).or_default().push(shadow_block_summary(shadow, canonical));
+        result.entry(key).or_default().push(shadow_block_summary(shadow));
     }
 
     Ok(Json(result))
 }
 
-/// A single reorged-out shadow block paired with its canonical replacement,
-/// including the health verdict. Addressed by shadow block hash.
+/// A single reorged-out shadow block summary addressed by shadow block hash.
 async fn get_shadow_block(
     State(state): State<ApiState>,
     Path(id): Path<String>,
@@ -241,12 +217,7 @@ async fn get_shadow_block(
         return Err(ApiError::NotFound);
     }
 
-    let canonical = match row.canonical_hash.as_ref() {
-        Some(hash) => repo.get_by_block_hash(hash).await?,
-        None => None,
-    };
-
-    Ok(Json(shadow_block_summary(&row, canonical.as_ref())))
+    Ok(Json(shadow_block_summary(&row)))
 }
 
 /// A block identifier accepted in the path: a decimal block number or a block hash.
@@ -264,29 +235,20 @@ fn parse_block_id(id: &str) -> Result<BlockId, ApiError> {
     id.parse::<B256>().map(BlockId::Hash).map_err(|_| ApiError::BadRequest)
 }
 
-/// Resolves a block by number (canonical) or by hash (canonical or reorged-out shadow).
+/// Resolves a block by hash (canonical or reorged-out shadow).
 async fn resolve_block(repo: &ShadowBlockRepo, id: &str) -> Result<ShadowBlockRow, ApiError> {
     let row = match parse_block_id(id)? {
-        BlockId::Number(number) => repo.get_canonical_by_number(number).await?,
+        BlockId::Number(number) => {
+            let _ = number;
+            return Err(ApiError::BadRequest);
+        }
         BlockId::Hash(hash) => repo.get_by_block_hash(hash.as_slice()).await?,
     };
     row.ok_or(ApiError::NotFound)
 }
 
-fn shadow_block_summary(
-    row: &ShadowBlockRow,
-    canonical: Option<&ShadowBlockRow>,
-) -> ShadowBlockSummary {
+fn shadow_block_summary(row: &ShadowBlockRow) -> ShadowBlockSummary {
     let shadow = ShadowBlockStats::from_row(row);
-    let canonical = canonical.map(ShadowBlockStats::from_row);
-
-    let gas_diff_abs = canonical.as_ref().map(|c| shadow.gas_used as i64 - c.gas_used as i64);
-    let gas_diff_pct = canonical.as_ref().and_then(|c| {
-        (c.gas_used != 0)
-            .then(|| (shadow.gas_used as f64 - c.gas_used as f64) / c.gas_used as f64 * 100.0)
-    });
-    let tx_count_diff =
-        canonical.as_ref().map(|c| shadow.transaction_count as i64 - c.transaction_count as i64);
 
     ShadowBlockSummary {
         number: row.number,
@@ -294,16 +256,9 @@ fn shadow_block_summary(
         canonical_hash: row.canonical_hash.as_ref().map(hex::encode_prefixed).unwrap_or_default(),
         timestamp: row.payload.block.header().timestamp,
         shadow_gas_used: shadow.gas_used,
-        canonical_gas_used: canonical.as_ref().map(|c| c.gas_used),
-        gas_diff_abs,
-        gas_diff_pct,
         shadow_tx_count: shadow.transaction_count,
-        canonical_tx_count: canonical.as_ref().map(|c| c.transaction_count),
-        tx_count_diff,
         shadow_non_deposit_tx_count: shadow.non_deposit_tx_count,
-        canonical_non_deposit_tx_count: canonical.as_ref().map(|c| c.non_deposit_tx_count),
         shadow_priority_fee_inversions: shadow.priority_fee_inversions,
-        canonical_builder_version: canonical.as_ref().map(|c| c.builder_version.clone()),
         shadow_builder_version: shadow.builder_version,
     }
 }
@@ -513,52 +468,14 @@ mod tests {
     }
 
     #[test]
-    fn shadow_block_summary_computes_signed_diffs_against_canonical() {
+    fn shadow_block_summary_reports_shadow_only_fields() {
         let shadow = sample_row_full(100, 30_000, "shadow", true, Some(vec![0xcd; 32]));
-        let canonical = sample_row_full(100, 20_000, "canonical", false, None);
-        let summary = shadow_block_summary(&shadow, Some(&canonical));
+        let summary = shadow_block_summary(&shadow);
 
         assert_eq!(summary.number, 100);
         assert_eq!(summary.canonical_hash, format!("0x{}", "cd".repeat(32)));
         assert_eq!(summary.shadow_gas_used, 30_000);
-        assert_eq!(summary.canonical_gas_used, Some(20_000));
-        assert_eq!(summary.gas_diff_abs, Some(10_000));
-        assert_eq!(summary.gas_diff_pct, Some(50.0));
+        assert_eq!(summary.shadow_tx_count, 1);
         assert_eq!(summary.shadow_builder_version, "shadow");
-        assert_eq!(summary.canonical_builder_version.as_deref(), Some("canonical"));
-        assert_eq!(summary.tx_count_diff, Some(0));
-    }
-
-    #[test]
-    fn shadow_block_summary_reports_negative_diff_when_shadow_uses_less() {
-        let shadow = sample_row_full(1, 10_000, "shadow", true, Some(vec![0xcd; 32]));
-        let canonical = sample_row_full(1, 20_000, "canonical", false, None);
-        let summary = shadow_block_summary(&shadow, Some(&canonical));
-
-        assert_eq!(summary.gas_diff_abs, Some(-10_000));
-        assert_eq!(summary.gas_diff_pct, Some(-50.0));
-    }
-
-    #[test]
-    fn shadow_block_summary_omits_canonical_fields_when_absent() {
-        let shadow = sample_row_full(7, 21_000, "shadow", true, Some(vec![0xcd; 32]));
-        let summary = shadow_block_summary(&shadow, None);
-
-        assert!(summary.canonical_gas_used.is_none());
-        assert!(summary.gas_diff_abs.is_none());
-        assert!(summary.gas_diff_pct.is_none());
-        assert!(summary.canonical_tx_count.is_none());
-        assert!(summary.tx_count_diff.is_none());
-        assert!(summary.canonical_builder_version.is_none());
-    }
-
-    #[test]
-    fn shadow_block_summary_guards_against_zero_canonical_gas() {
-        let shadow = sample_row_full(9, 21_000, "shadow", true, Some(vec![0xcd; 32]));
-        let canonical = sample_row_full(9, 0, "canonical", false, None);
-        let summary = shadow_block_summary(&shadow, Some(&canonical));
-
-        assert_eq!(summary.gas_diff_abs, Some(21_000));
-        assert!(summary.gas_diff_pct.is_none());
     }
 }
