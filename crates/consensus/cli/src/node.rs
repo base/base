@@ -374,6 +374,21 @@ impl ConsensusNodeArgs {
         Ok(())
     }
 
+    /// Validates that synthetic account funding is confined to shadow sequencers.
+    pub fn validate_shadow_funding(&self) -> eyre::Result<()> {
+        let sequencer = &self.config.sequencer_flags;
+        if sequencer.shadow_funding_amount.is_some() && sequencer.shadow_funding_address.is_none() {
+            eyre::bail!("shadow funding amount requires a shadow funding address");
+        }
+        if sequencer.shadow_funding_address.is_some()
+            && (!self.config.node_mode.is_sequencer()
+                || sequencer.shadow_blocks_per_cycle.is_none())
+        {
+            eyre::bail!("shadow funding is only supported in shadow sequencer mode");
+        }
+        Ok(())
+    }
+
     /// Validates that the dangerous DA batcher sender override is only used by validators.
     pub fn validate_da_batcher_sender_override(&self) -> eyre::Result<()> {
         if self.config.l1_rpc_args.l1_da_batcher_sender_override.is_some()
@@ -417,6 +432,7 @@ impl ConsensusNodeArgs {
         startup_mode: UpgradeSignalStartupMode,
     ) -> eyre::Result<RollupNode> {
         self.validate_sequencer_key()?;
+        self.validate_shadow_funding()?;
         self.validate_da_batcher_sender_override()?;
         if let Some(sender) = self.config.l1_rpc_args.l1_da_batcher_sender_override {
             warn!(
@@ -929,6 +945,45 @@ mod tests {
         );
 
         assert!(args.validate_sequencer_key().is_ok());
+    }
+
+    #[test]
+    fn shadow_funding_is_rejected_outside_shadow_sequencer_mode() {
+        let args = ConsensusNodeArgs::new(
+            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
+            ConsensusNodeConfigArgs {
+                node_mode: NodeMode::Sequencer,
+                sequencer_flags: SequencerArgs {
+                    shadow_funding_address: Some(address!(
+                        "2222222222222222222222222222222222222222"
+                    )),
+                    ..SequencerArgs::default()
+                },
+                ..default_node_config_args()
+            },
+        );
+
+        assert!(args.validate_shadow_funding().is_err());
+    }
+
+    #[test]
+    fn shadow_funding_is_accepted_in_shadow_sequencer_mode() {
+        let args = ConsensusNodeArgs::new(
+            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
+            ConsensusNodeConfigArgs {
+                node_mode: NodeMode::Sequencer,
+                sequencer_flags: SequencerArgs {
+                    shadow_blocks_per_cycle: std::num::NonZeroU64::new(10),
+                    shadow_funding_address: Some(address!(
+                        "2222222222222222222222222222222222222222"
+                    )),
+                    ..SequencerArgs::default()
+                },
+                ..default_node_config_args()
+            },
+        );
+
+        assert!(args.validate_shadow_funding().is_ok());
     }
 
     #[test]

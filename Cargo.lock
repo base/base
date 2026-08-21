@@ -3950,6 +3950,7 @@ dependencies = [
  "base-consensus-sources",
  "base-health",
  "base-metrics",
+ "base-node-runner",
  "base-protocol",
  "base-upgrade-signal",
  "bytes",

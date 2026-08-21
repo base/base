@@ -6,6 +6,8 @@ use std::{num::NonZeroU64, time::Duration};
 
 use url::Url;
 
+use super::ShadowFunding;
+
 /// Default conductor RPC timeout (1 second), matching the CLI default.
 const DEFAULT_CONDUCTOR_RPC_TIMEOUT: Duration = Duration::from_secs(1);
 
@@ -22,6 +24,8 @@ pub struct SequencerConfig {
     ///
     /// When [`None`], the node runs as a normal sequencer.
     pub shadow_blocks_per_cycle: Option<NonZeroU64>,
+    /// Optional account funding for the first private block of each shadow cycle.
+    pub shadow_funding: Option<ShadowFunding>,
     /// The [`Url`] for the conductor RPC endpoint. If [`Some`], enables the conductor service.
     pub conductor_rpc_url: Option<Url>,
     /// Use the conductor's SSZ-binary commit endpoint (`POST /commit-unsafe-payload`)
@@ -64,6 +68,7 @@ impl Default for SequencerConfig {
             sequencer_stopped: false,
             sequencer_recovery_mode: false,
             shadow_blocks_per_cycle: None,
+            shadow_funding: None,
             conductor_rpc_url: None,
             conductor_binary_commit: false,
             conductor_rpc_timeout: DEFAULT_CONDUCTOR_RPC_TIMEOUT,

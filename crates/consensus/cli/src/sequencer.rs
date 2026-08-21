@@ -5,7 +5,11 @@ use std::{
     time::Duration,
 };
 
-use base_consensus_node::SequencerConfig;
+use alloy_primitives::{
+    Address, U256,
+    utils::{Unit, parse_ether},
+};
+use base_consensus_node::{SequencerConfig, ShadowFunding};
 use base_protocol::DEFAULT_SEAL_OFFSET;
 use clap::Parser;
 use url::Url;
@@ -58,6 +62,23 @@ pub struct SequencerArgs {
     )]
     pub shadow_blocks_per_cycle: Option<NonZeroU64>,
 
+    /// Account to fund in the first private block of every shadow sequencing cycle.
+    #[arg(
+        long = "sequencer.shadow-funding-address",
+        env = "BASE_NODE_SEQUENCER_SHADOW_FUNDING_ADDRESS",
+        requires = "shadow_blocks_per_cycle"
+    )]
+    pub shadow_funding_address: Option<Address>,
+
+    /// ETH to mint into the shadow funding account. Defaults to 10,000 ETH when funding is enabled.
+    #[arg(
+        long = "sequencer.shadow-funding-amount-eth",
+        env = "BASE_NODE_SEQUENCER_SHADOW_FUNDING_AMOUNT_ETH",
+        requires = "shadow_funding_address",
+        value_parser = parse_ether
+    )]
+    pub shadow_funding_amount: Option<U256>,
+
     /// Conductor service RPC endpoint. Providing this value enables the conductor service.
     #[arg(long = "conductor.rpc", env = "BASE_NODE_CONDUCTOR_RPC")]
     pub conductor_rpc: Option<Url>,
@@ -97,6 +118,13 @@ impl SequencerArgs {
             sequencer_stopped: self.stopped,
             sequencer_recovery_mode: self.recover,
             shadow_blocks_per_cycle: self.shadow_blocks_per_cycle,
+            shadow_funding: self.shadow_funding_address.map(|address| {
+                ShadowFunding::new(
+                    address,
+                    self.shadow_funding_amount
+                        .unwrap_or_else(|| U256::from(10_000) * Unit::ETHER.wei()),
+                )
+            }),
             conductor_rpc_url: self.conductor_rpc.clone(),
             conductor_binary_commit: self.conductor_binary_commit,
             conductor_rpc_timeout: self.conductor_rpc_timeout,
@@ -111,6 +139,11 @@ impl SequencerArgs {
 mod tests {
     use std::{num::NonZeroU64, time::Duration};
 
+    use alloy_primitives::{
+        Address, U256, address,
+        utils::{Unit, parse_ether},
+    };
+    use base_consensus_node::ShadowFunding;
     use clap::Parser;
 
     use super::{SequencerArgs, SequencerConfig};
@@ -169,6 +202,54 @@ mod tests {
 
         assert_eq!(args.shadow_blocks_per_cycle, NonZeroU64::new(12));
         assert_eq!(args.config().shadow_blocks_per_cycle, NonZeroU64::new(12));
+    }
+
+    #[test]
+    fn defaults_shadow_funding_to_ten_thousand_eth() {
+        let funding_address = address!("1111111111111111111111111111111111111111");
+        let args = SequencerArgs::parse_from([
+            "base-consensus",
+            "--sequencer.shadow-blocks-per-cycle",
+            "12",
+            "--sequencer.shadow-funding-address",
+            "0x1111111111111111111111111111111111111111",
+        ]);
+
+        assert_eq!(
+            args.config().shadow_funding,
+            Some(ShadowFunding::new(funding_address, U256::from(10_000) * Unit::ETHER.wei()))
+        );
+    }
+
+    #[test]
+    fn parses_configured_shadow_funding_amount_in_eth() {
+        let args = SequencerArgs::parse_from([
+            "base-consensus",
+            "--sequencer.shadow-blocks-per-cycle",
+            "12",
+            "--sequencer.shadow-funding-address",
+            "0x1111111111111111111111111111111111111111",
+            "--sequencer.shadow-funding-amount-eth",
+            "12345",
+        ]);
+
+        let amount = parse_ether("12345").unwrap();
+        assert_eq!(args.shadow_funding_amount, Some(amount));
+        assert_eq!(
+            args.config().shadow_funding,
+            Some(ShadowFunding::new(Address::repeat_byte(0x11), amount))
+        );
+    }
+
+    #[test]
+    fn rejects_shadow_funding_without_shadow_mode() {
+        let result = SequencerArgs::try_parse_from([
+            "base-consensus",
+            "--sequencer.shadow-funding-address",
+            "0x1111111111111111111111111111111111111111",
+        ]);
+
+        assert!(result.is_err());
     }
 
     #[test]
