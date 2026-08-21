@@ -675,7 +675,7 @@ fn golden_create_reverts_when_not_activated() {
 }
 
 // ============================================================================
-// createB20 — Cobalt bootstrap resolves the active token version (BOP-550)
+// createB20 — test correct base upgrade logic is used when creating
 // ============================================================================
 
 /// Drives one factory call through `dispatch` at `upgrade`, returning `(is_revert, bytes)`.
