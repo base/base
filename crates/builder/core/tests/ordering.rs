@@ -121,6 +121,7 @@ async fn predicates_delay_priority_without_blocking_nonce_descendants() -> eyre:
         max_block_number: None,
         min_timestamp: None,
         max_timestamp: None,
+        metering: None,
         extensions: TransactionValidity {
             validity: vec![ValidityPredicate::Balance {
                 address: watched,
@@ -224,6 +225,7 @@ async fn predicate_eval_hard_cutoff_defers_without_evaluating() -> eyre::Result<
                 max_block_number: None,
                 min_timestamp: None,
                 max_timestamp: None,
+                metering: None,
                 extensions: TransactionValidity { validity: always_satisfied.clone() },
             },),
         )
@@ -249,6 +251,7 @@ async fn predicate_eval_hard_cutoff_defers_without_evaluating() -> eyre::Result<
                 max_block_number: None,
                 min_timestamp: None,
                 max_timestamp: None,
+                metering: None,
                 extensions: TransactionValidity { validity: always_satisfied },
             },),
         )
@@ -317,6 +320,7 @@ async fn shadow_validity_injection_preserves_forwarded_transaction() -> eyre::Re
         max_block_number: None,
         min_timestamp: None,
         max_timestamp: None,
+        metering: None,
         extensions: TransactionValidity::default(),
     };
     driver

@@ -189,6 +189,7 @@ mod tests {
             max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            metering: None,
             extensions: TransactionValidity::default(),
         }
     }

@@ -1,6 +1,7 @@
 use core::fmt::Debug;
 
 use alloy_primitives::{Address, Bytes};
+use base_bundles::MeterBundleResponse;
 use reth_transaction_pool::{PoolTransaction, ValidPoolTransaction};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
@@ -104,6 +105,13 @@ pub struct ValidatedTransaction<E = NoExtensions> {
     /// Milliseconds since Unix epoch.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub max_timestamp: Option<u64>,
+    /// In-process meter_bundle result. Nested so `u128` timing fields do not go
+    /// through `#[serde(flatten)]`, which serde_json cannot represent.
+    ///
+    /// Omitted when `None`, so existing payloads stay byte-compatible until
+    /// inline simulation starts sending it.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub metering: Option<MeterBundleResponse>,
     /// Extension fields, inlined into the top-level JSON object.
     ///
     /// Deliberately not `#[serde(default)]`: that would force an `E: Default`
@@ -116,6 +124,7 @@ pub struct ValidatedTransaction<E = NoExtensions> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::U256;
+    use base_bundles::MeterBundleResponse;
 
     use super::*;
     use crate::{TransactionValidity, ValidityOperator, ValidityPredicate};
@@ -167,6 +176,7 @@ mod tests {
             max_block_number: None,
             min_timestamp: None,
             max_timestamp: Some(7),
+            metering: None,
             extensions: NoExtensions {},
         };
 
@@ -194,6 +204,7 @@ mod tests {
             max_block_number: None,
             min_timestamp: None,
             max_timestamp: Some(7),
+            metering: None,
             extensions: TransactionValidity::default(),
         };
 
@@ -216,6 +227,7 @@ mod tests {
             max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            metering: None,
             extensions: TransactionValidity { validity: vec![predicate.clone()] },
         };
 
@@ -227,6 +239,54 @@ mod tests {
         let decoded: ValidatedTransaction<TransactionValidity> =
             serde_json::from_value(value).unwrap();
         assert_eq!(decoded.extensions.validity, vec![predicate]);
+        assert!(decoded.metering.is_none());
+    }
+
+    #[test]
+    fn metering_is_nested_and_round_trips() {
+        let metering = MeterBundleResponse {
+            total_gas_used: 21_000,
+            total_execution_time_us: 500,
+            ..MeterBundleResponse::default()
+        };
+        let tx = ValidatedTransaction {
+            sender: sender(),
+            raw: raw(),
+            min_block_number: None,
+            max_block_number: None,
+            min_timestamp: None,
+            max_timestamp: None,
+            metering: Some(metering.clone()),
+            extensions: NoExtensions {},
+        };
+
+        let value = serde_json::to_value(&tx).unwrap();
+        assert!(value.get("extensions").is_none());
+        assert_eq!(value["metering"]["totalExecutionTimeUs"], 500);
+
+        let decoded: ValidatedTransaction = serde_json::from_value(value).unwrap();
+        assert_eq!(decoded.metering, Some(metering));
+    }
+
+    #[test]
+    fn default_reader_keeps_metering_when_present() {
+        let extended = ValidatedTransaction {
+            sender: sender(),
+            raw: raw(),
+            min_block_number: Some(3),
+            max_block_number: None,
+            min_timestamp: None,
+            max_timestamp: None,
+            metering: Some(MeterBundleResponse::default()),
+            extensions: NoExtensions {},
+        };
+        let json = serde_json::to_string(&extended).unwrap();
+
+        let decoded: ValidatedTransaction = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.sender, sender());
+        assert_eq!(decoded.min_block_number, Some(3));
+        assert!(decoded.metering.is_some());
+        assert_eq!(decoded.extensions, NoExtensions {});
     }
 
     #[test]
@@ -238,6 +298,7 @@ mod tests {
             max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            metering: None,
             extensions: NoExtensions {},
         };
 
@@ -258,6 +319,7 @@ mod tests {
             max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            metering: None,
             extensions: TestExtensions { extra: Some(9) },
         };
 
@@ -274,6 +336,7 @@ mod tests {
             max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            metering: None,
             extensions: TestExtensions { extra: Some(9) },
         };
         let json = serde_json::to_string(&extended).unwrap();
@@ -310,6 +373,7 @@ mod tests {
             max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            metering: None,
             extensions: NoExtensions {},
         };
         let json = serde_json::to_string(&tx).unwrap();

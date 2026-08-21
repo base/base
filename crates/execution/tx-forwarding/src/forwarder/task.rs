@@ -420,6 +420,7 @@ mod tests {
                 max_block_number: None,
                 min_timestamp: None,
                 max_timestamp: None,
+                metering: None,
                 extensions: E::default(),
             },
             tx_hash: B256::with_last_byte(nonce as u8),

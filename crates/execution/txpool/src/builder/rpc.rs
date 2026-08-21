@@ -127,6 +127,10 @@ where
             tx.min_timestamp,
             tx.max_timestamp,
         );
+        let pool_tx = match tx.metering {
+            Some(metering) => pool_tx.with_metering(metering),
+            None => pool_tx,
+        };
 
         // Attach any extension data carried on the wire. This is a no-op for
         // `NoExtensions`, the default payload.
@@ -205,6 +209,7 @@ mod tests {
     use alloy_consensus::TxEip1559;
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, Bytes, Signature, TxKind, U256};
+    use base_bundles::MeterBundleResponse;
     use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction, TxDeposit};
     use reth_transaction_pool::noop::NoopTransactionPool;
 
@@ -269,6 +274,7 @@ mod tests {
             max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            metering: None,
             extensions,
         }
     }
@@ -375,6 +381,22 @@ mod tests {
         let err = handler.insert_validated_transaction(tx).await.unwrap_err();
 
         assert_eq!(err.code(), ErrorCode::InternalError.code());
+    }
+
+    #[tokio::test]
+    async fn metering_does_not_require_extension_opt_in() {
+        let handler = handler();
+        let (sender, raw) = create_eip1559_tx();
+        let mut tx = validated_transaction(sender, raw, NoExtensions {});
+        tx.metering = Some(MeterBundleResponse::default());
+
+        let err = handler.insert_validated_transaction(tx).await.unwrap_err();
+
+        assert_eq!(
+            err.code(),
+            ErrorCode::InternalError.code(),
+            "metering must not be gated on experimental validity extensions"
+        );
     }
 
     #[test]
