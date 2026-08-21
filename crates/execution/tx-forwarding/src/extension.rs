@@ -4,7 +4,7 @@
 use std::{sync::Arc, time::Duration};
 
 use base_execution_txpool::{InlineSimQueue, TransactionValidity};
-use base_metering::MeteringApiImpl;
+use base_metering::{MeteredOpcodes, MeteringApiImpl};
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use tokio::sync::mpsc;
 use tracing::info;
@@ -52,7 +52,7 @@ impl BaseNodeExtension for TxForwardingExtension {
                 let meter = Arc::new(MeteringApiImpl::new(
                     ctx.provider.clone(),
                     config.flashblocks_state.clone().unwrap_or_default(),
-                    Arc::clone(&config.metered_opcodes),
+                    Arc::new(MeteredOpcodes::default()),
                 ));
                 InlineSimQueue::spawn_workers(
                     ctx.pool().clone(),

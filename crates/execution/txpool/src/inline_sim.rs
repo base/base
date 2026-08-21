@@ -15,9 +15,10 @@ use std::{
 use alloy_consensus::transaction::Recovered;
 use base_bundles::MeterBundleResponse;
 use base_common_consensus::BaseTxEnvelope;
+use futures::future::{self, Either};
 use parking_lot::RwLock;
 use reth_transaction_pool::{PoolTransaction, TransactionOrigin, TransactionPool};
-use tokio::sync::mpsc;
+use tokio::sync::mpsc::{self, error::TrySendError};
 use tracing::{debug, warn};
 
 use crate::BasePooledTransaction;
@@ -33,9 +34,11 @@ base_metrics::define_metrics! {
     sim_seconds: histogram,
     #[describe("Transactions dropped because the pre-sim queue was full")]
     sim_queue_full: counter,
-    #[describe("meter_bundle failures that skipped pool insert")]
+    #[describe("meter_bundle failures that inserted MeterBundleResponse::default")]
     #[label(name = "reason", default = ["timeout", "meter", "join"])]
     sim_failures: counter,
+    #[describe("Pool inserts that carried MeterBundleResponse::default after a failed or timed-out sim")]
+    sim_default_inserts: counter,
 }
 
 /// Job waiting for an in-process meter_bundle worker.
@@ -82,13 +85,25 @@ impl InlineSimQueue {
         let Some(sender) = QUEUE.read().clone() else {
             return Err(InlineSimEnqueueError::Disabled);
         };
-        sender.try_send(job).map_err(|_| {
-            InlineSimMetrics::sim_queue_full().increment(1);
-            InlineSimEnqueueError::Full
-        })?;
-        let len = QUEUE_LEN.fetch_add(1, Ordering::Relaxed) + 1;
-        InlineSimMetrics::sim_queue_size().set(len as f64);
-        Ok(())
+        match sender.try_send(job) {
+            Ok(()) => {
+                let len = QUEUE_LEN.fetch_add(1, Ordering::Relaxed) + 1;
+                InlineSimMetrics::sim_queue_size().set(len as f64);
+                Ok(())
+            }
+            Err(TrySendError::Full(_)) => {
+                InlineSimMetrics::sim_queue_full().increment(1);
+                Err(InlineSimEnqueueError::Full)
+            }
+            Err(TrySendError::Closed(_)) => {
+                Self::uninstall();
+                Err(InlineSimEnqueueError::Disabled)
+            }
+        }
+    }
+
+    fn uninstall() {
+        *QUEUE.write() = None;
     }
 
     /// Spawns `workers` tasks that meter and insert queued transactions.
@@ -123,9 +138,8 @@ impl InlineSimQueue {
                     InlineSimMetrics::sim_queue_size().set(len as f64);
 
                     let started = Instant::now();
-                    if let Some(job) = meter_job(job, Arc::clone(&meter), timeout).await
-                        && let Err(error) =
-                            pool.add_transaction(job.origin, job.transaction).await
+                    let job = meter_job(job, Arc::clone(&meter), timeout).await;
+                    if let Err(error) = pool.add_transaction(job.origin, job.transaction).await
                     {
                         debug!(error = %error, "inline sim pool insert failed");
                     }
@@ -138,7 +152,7 @@ impl InlineSimQueue {
     /// Drops the enqueue sender so workers exit after draining.
     #[cfg(test)]
     pub fn clear() {
-        *QUEUE.write() = None;
+        Self::uninstall();
         QUEUE_LEN.store(0, Ordering::Relaxed);
         WORKERS_BUSY.store(0, Ordering::Relaxed);
         InlineSimMetrics::sim_queue_size().set(0.0);
@@ -146,7 +160,7 @@ impl InlineSimQueue {
     }
 }
 
-async fn meter_job<F>(job: InlineSimJob, meter: Arc<F>, timeout: Duration) -> Option<InlineSimJob>
+async fn meter_job<F>(job: InlineSimJob, meter: Arc<F>, timeout: Duration) -> InlineSimJob
 where
     F: Fn(Recovered<BaseTxEnvelope>) -> Result<MeterBundleResponse, String> + Send + Sync + 'static,
 {
@@ -154,36 +168,42 @@ where
     let busy = WORKERS_BUSY.fetch_add(1, Ordering::Relaxed) + 1;
     InlineSimMetrics::sim_workers_busy().set(busy as f64);
 
-    // ponytail: spawn_blocking cannot be cancelled; timeout only drops the wait
-    let result = tokio::time::timeout(
-        timeout,
-        tokio::task::spawn_blocking(move || meter(recovered)),
-    )
-    .await;
+    // Timeout must not drop the JoinHandle: spawn_blocking cannot be cancelled,
+    // so the worker joins before taking another job.
+    let handle = tokio::task::spawn_blocking(move || meter(recovered));
+    let job = match future::select(handle, Box::pin(tokio::time::sleep(timeout))).await {
+        Either::Left((Ok(Ok(metering)), _)) => InlineSimJob {
+            origin: job.origin,
+            transaction: job.transaction.with_metering(metering),
+        },
+        Either::Left((Ok(Err(error)), _)) => {
+            warn!(error = %error, hash = %job.transaction.hash(), "inline sim meter_bundle failed");
+            with_default_metering(job, "meter")
+        }
+        Either::Left((Err(_), _)) => {
+            warn!(hash = %job.transaction.hash(), "inline sim worker task failed");
+            with_default_metering(job, "join")
+        }
+        Either::Right((_, handle)) => {
+            warn!(hash = %job.transaction.hash(), "inline sim meter_bundle timed out");
+            let _ = handle.await;
+            with_default_metering(job, "timeout")
+        }
+    };
 
     let busy = WORKERS_BUSY.fetch_sub(1, Ordering::Relaxed).saturating_sub(1);
     InlineSimMetrics::sim_workers_busy().set(busy as f64);
+    job
+}
 
-    match result {
-        Ok(Ok(Ok(metering))) => Some(InlineSimJob {
-            origin: job.origin,
-            transaction: job.transaction.with_metering(metering),
-        }),
-        Ok(Ok(Err(error))) => {
-            InlineSimMetrics::sim_failures("meter").increment(1);
-            warn!(error = %error, hash = %job.transaction.hash(), "inline sim meter_bundle failed");
-            None
-        }
-        Ok(Err(_)) => {
-            InlineSimMetrics::sim_failures("join").increment(1);
-            warn!(hash = %job.transaction.hash(), "inline sim worker task failed");
-            None
-        }
-        Err(_) => {
-            InlineSimMetrics::sim_failures("timeout").increment(1);
-            warn!(hash = %job.transaction.hash(), "inline sim meter_bundle timed out");
-            None
-        }
+/// Sim failed or timed out: still insert so the Consumer can forward.
+/// Builder skips cache write when metering is `Default`.
+fn with_default_metering(job: InlineSimJob, reason: &'static str) -> InlineSimJob {
+    InlineSimMetrics::sim_failures(reason).increment(1);
+    InlineSimMetrics::sim_default_inserts().increment(1);
+    InlineSimJob {
+        origin: job.origin,
+        transaction: job.transaction.with_metering(MeterBundleResponse::default()),
     }
 }
 
@@ -280,6 +300,26 @@ mod tests {
         InlineSimQueue::clear();
     }
 
+    #[test]
+    fn try_enqueue_disables_when_workers_drop_the_queue() {
+        let _guard = TEST_GUARD.lock();
+        InlineSimQueue::clear();
+        let (tx, rx) = mpsc::channel(1);
+        InlineSimQueue::install(tx);
+        drop(rx);
+
+        let err = InlineSimQueue::try_enqueue(InlineSimJob {
+            origin: TransactionOrigin::Local,
+            transaction: pooled_tx(),
+        });
+        assert_eq!(err, Err(InlineSimEnqueueError::Disabled));
+        assert!(
+            !InlineSimQueue::is_enabled(),
+            "a closed worker channel must uninstall the queue"
+        );
+        InlineSimQueue::clear();
+    }
+
     #[tokio::test]
     async fn meter_job_attaches_metering_on_success() {
         let job = InlineSimJob { origin: TransactionOrigin::Local, transaction: pooled_tx() };
@@ -291,24 +331,27 @@ mod tests {
             Arc::new(move |_| Ok(expected_clone.clone())),
             Duration::from_secs(1),
         )
-        .await
-        .expect("successful meter must insert");
+        .await;
 
         assert_eq!(out.transaction.metering(), Some(&expected));
     }
 
     #[tokio::test]
-    async fn meter_job_skips_insert_on_meter_error() {
+    async fn meter_job_uses_default_metering_on_meter_error() {
         let job = InlineSimJob { origin: TransactionOrigin::Local, transaction: pooled_tx() };
 
         let out =
             meter_job(job, Arc::new(|_| Err("boom".to_string())), Duration::from_secs(1)).await;
 
-        assert!(out.is_none(), "failed meter_bundle must not produce an insert");
+        assert_eq!(
+            out.transaction.metering(),
+            Some(&MeterBundleResponse::default()),
+            "failed meter_bundle must still insert with default metering"
+        );
     }
 
     #[tokio::test]
-    async fn meter_job_skips_insert_on_timeout() {
+    async fn meter_job_uses_default_metering_on_timeout() {
         let job = InlineSimJob { origin: TransactionOrigin::Local, transaction: pooled_tx() };
 
         let out = meter_job(
@@ -321,6 +364,10 @@ mod tests {
         )
         .await;
 
-        assert!(out.is_none(), "timed-out meter_bundle must not produce an insert");
+        assert_eq!(
+            out.transaction.metering(),
+            Some(&MeterBundleResponse::default()),
+            "timed-out meter_bundle must still insert with default metering"
+        );
     }
 }

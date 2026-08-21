@@ -3,7 +3,6 @@
 use std::{sync::Arc, time::Duration};
 
 use base_flashblocks::FlashblocksState;
-use base_metering::MeteredOpcodes;
 use url::Url;
 
 use crate::{forwarder::ForwarderConfig, reader::ReaderConfig};
@@ -44,8 +43,6 @@ pub struct TxForwardingConfig {
     pub inline_simulation_timeout_ms: u64,
     /// Shared flashblocks pending state used by in-process meter_bundle.
     pub flashblocks_state: Option<Arc<FlashblocksState>>,
-    /// Opcodes and precompiles tracked during in-process meter_bundle.
-    pub metered_opcodes: Arc<MeteredOpcodes>,
 }
 
 impl Default for TxForwardingConfig {
@@ -62,7 +59,6 @@ impl Default for TxForwardingConfig {
             inline_simulation_queue_capacity: DEFAULT_INLINE_SIMULATION_QUEUE_CAPACITY,
             inline_simulation_timeout_ms: DEFAULT_INLINE_SIMULATION_TIMEOUT_MS,
             flashblocks_state: None,
-            metered_opcodes: Arc::new(MeteredOpcodes::default()),
         }
     }
 }
@@ -123,12 +119,6 @@ impl TxForwardingConfig {
     /// Sets the shared flashblocks pending state used by in-process meter_bundle.
     pub fn with_flashblocks_state(mut self, state: Option<Arc<FlashblocksState>>) -> Self {
         self.flashblocks_state = state;
-        self
-    }
-
-    /// Sets opcodes and precompiles tracked during in-process meter_bundle.
-    pub fn with_metered_opcodes(mut self, opcodes: Arc<MeteredOpcodes>) -> Self {
-        self.metered_opcodes = opcodes;
         self
     }
 

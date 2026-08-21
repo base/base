@@ -583,17 +583,9 @@ impl StandardBaseRethNode {
         runner.install_ext::<BundleExtension>(());
         let mut tx_forwarding_config: TxForwardingConfig = (&args).into();
         if tx_forwarding_config.inline_simulation {
-            let metered_opcodes = if args.metering.metering_metered_opcodes.is_empty() {
-                MeteredOpcodes::default()
-            } else {
-                MeteredOpcodes::parse(&args.metering.metering_metered_opcodes)?
-            }
-            .with_all_precompiles();
-            tx_forwarding_config = tx_forwarding_config
-                .with_flashblocks_state(
-                    flashblocks_config.as_ref().map(|config| Arc::clone(&config.state)),
-                )
-                .with_metered_opcodes(Arc::new(metered_opcodes));
+            tx_forwarding_config = tx_forwarding_config.with_flashblocks_state(
+                flashblocks_config.as_ref().map(|config| Arc::clone(&config.state)),
+            );
         }
         if args.rpc.enable_experimental_validity_transactions {
             runner.install_ext::<SendRawTransactionValidityExtension>(
