@@ -1,10 +1,12 @@
 //! This module contains the prologue phase of the client program, pulling in the boot information
 //! through the `PreimageOracle` ABI as local keys.
 
+use alloc::vec::Vec;
+
 use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, B256, U256, uint};
 use base_common_genesis::{BaseUpgrade, RollupConfig};
-use base_proof_preimage::{PreimageKey, PreimageOracleClient};
+use base_proof_preimage::{PreimageKey, PreimageOracleClient, errors::PreimageOracleError};
 use serde::{Deserialize, Serialize};
 
 use crate::{ScheduleId, errors::OracleProviderError};
@@ -193,6 +195,37 @@ pub struct BootInfo {
 }
 
 impl BootInfo {
+    /// Read an optional local preimage by key.
+    ///
+    /// Returns `Ok(None)` only when the oracle reports the key as absent, which callers may safely
+    /// default. Every other oracle failure — timeout, I/O error, closed channel, etc. — is
+    /// propagated as [`OracleProviderError::Preimage`] so a genuine operational failure is not
+    /// silently treated as a missing optional value.
+    ///
+    /// Two error variants are treated as "absent" because backends disagree on how they signal a
+    /// miss:
+    /// - [`PreimageOracleError::KeyNotFound`], returned by the hosted/enclave oracles.
+    /// - [`PreimageOracleError::InvalidPreimageKey`], returned by the in-memory zkVM
+    ///   `PreimageStore` on a map miss. This is unambiguous for local keys: they are never
+    ///   hash-validated (`check_preimage` skips `PreimageKeyType::Local`), so `InvalidPreimageKey`
+    ///   on a local key can only mean the key is absent, never corrupt. Tolerating it preserves the
+    ///   backwards-compatibility defaults on the ZK path, which would otherwise abort the load.
+    pub async fn get_optional_local<O>(
+        oracle: &O,
+        key: U256,
+    ) -> Result<Option<Vec<u8>>, OracleProviderError>
+    where
+        O: PreimageOracleClient + Send,
+    {
+        match oracle.get(PreimageKey::new_local(key.to())).await {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(PreimageOracleError::KeyNotFound | PreimageOracleError::InvalidPreimageKey) => {
+                Ok(None)
+            }
+            Err(e) => Err(OracleProviderError::Preimage(e)),
+        }
+    }
+
     /// Load the boot information from the preimage oracle.
     ///
     /// This method retrieves all the necessary boot parameters from the preimage oracle
@@ -326,16 +359,15 @@ impl BootInfo {
         );
 
         // Load proposer address (optional — defaults to zero for backwards compatibility).
-        let proposer = match oracle.get(PreimageKey::new_local(PROPOSER_KEY.to())).await {
-            Ok(bytes) => {
+        let proposer = match Self::get_optional_local(oracle, PROPOSER_KEY).await? {
+            Some(bytes) => {
                 let buf: [u8; 20] =
                     bytes.as_slice().try_into().map_err(OracleProviderError::SliceConversion)?;
                 Address::from(buf)
             }
-            Err(e) => {
+            None => {
                 debug!(
                     target: "boot_loader",
-                    error = %e,
                     "Proposer preimage not found, defaulting to Address::ZERO"
                 );
                 Address::ZERO
@@ -344,14 +376,13 @@ impl BootInfo {
 
         // Load intermediate block interval (optional — defaults to 0 for backwards compatibility).
         let intermediate_block_interval =
-            match oracle.get(PreimageKey::new_local(INTERMEDIATE_BLOCK_INTERVAL_KEY.to())).await {
-                Ok(bytes) => u64::from_be_bytes(
+            match Self::get_optional_local(oracle, INTERMEDIATE_BLOCK_INTERVAL_KEY).await? {
+                Some(bytes) => u64::from_be_bytes(
                     bytes.as_slice().try_into().map_err(OracleProviderError::SliceConversion)?,
                 ),
-                Err(e) => {
+                None => {
                     debug!(
                         target: "boot_loader",
-                        error = %e,
                         "Intermediate block interval preimage not found, defaulting to 0"
                     );
                     0
@@ -359,15 +390,13 @@ impl BootInfo {
             };
 
         // Load L1 head block number (optional — defaults to 0 for backwards compatibility).
-        let l1_head_number = match oracle.get(PreimageKey::new_local(L1_HEAD_NUMBER_KEY.to())).await
-        {
-            Ok(bytes) => u64::from_be_bytes(
+        let l1_head_number = match Self::get_optional_local(oracle, L1_HEAD_NUMBER_KEY).await? {
+            Some(bytes) => u64::from_be_bytes(
                 bytes.as_slice().try_into().map_err(OracleProviderError::SliceConversion)?,
             ),
-            Err(e) => {
+            None => {
                 debug!(
                     target: "boot_loader",
-                    error = %e,
                     "L1 head number preimage not found, defaulting to 0"
                 );
                 0
@@ -375,20 +404,21 @@ impl BootInfo {
         };
 
         // Missing or zero values default to the claimed block.
-        let schedule_l2_block_number = match oracle
-            .get(PreimageKey::new_local(L2_SCHEDULE_BLOCK_NUMBER_KEY.to()))
-            .await
+        let schedule_l2_block_number = match Self::get_optional_local(
+            oracle,
+            L2_SCHEDULE_BLOCK_NUMBER_KEY,
+        )
+        .await?
         {
-            Ok(bytes) => {
+            Some(bytes) => {
                 let value = u64::from_be_bytes(
                     bytes.as_slice().try_into().map_err(OracleProviderError::SliceConversion)?,
                 );
                 if value == 0 { l2_claim_block } else { value }
             }
-            Err(e) => {
+            None => {
                 debug!(
                     target: "boot_loader",
-                    error = %e,
                     "Schedule L2 block number preimage not found, defaulting to claimed L2 block number"
                 );
                 l2_claim_block
@@ -484,15 +514,30 @@ mod tests {
 
     struct MockOracle {
         data: Vec<(PreimageKey, Vec<u8>)>,
+        /// Keys that should surface an operational failure (`Timeout`) instead of `KeyNotFound`.
+        timeout_keys: Vec<PreimageKey>,
+        /// When set, a missing key surfaces as `InvalidPreimageKey` rather than `KeyNotFound`,
+        /// emulating the in-memory zkVM `PreimageStore` instead of the hosted/enclave oracles.
+        miss_returns_invalid_key: bool,
     }
 
     impl MockOracle {
         fn new() -> Self {
-            Self { data: Vec::new() }
+            Self { data: Vec::new(), timeout_keys: Vec::new(), miss_returns_invalid_key: false }
         }
 
         fn insert(&mut self, key: U256, value: Vec<u8>) {
             self.data.push((PreimageKey::new_local(key.to()), value));
+        }
+
+        fn fail_with_timeout(&mut self, key: U256) {
+            self.timeout_keys.push(PreimageKey::new_local(key.to()));
+        }
+
+        /// Emulate the zkVM `PreimageStore`, which returns `InvalidPreimageKey` on a map miss.
+        const fn with_zk_store_miss_semantics(mut self) -> Self {
+            self.miss_returns_invalid_key = true;
+            self
         }
 
         fn insert_rollup_config(&mut self, chain_id: u64, rollup_config: &RollupConfig) {
@@ -510,10 +555,18 @@ mod tests {
     #[async_trait]
     impl PreimageOracleClient for MockOracle {
         async fn get(&self, key: PreimageKey) -> PreimageOracleResult<Vec<u8>> {
+            if self.timeout_keys.contains(&key) {
+                return Err(PreimageOracleError::Timeout);
+            }
+            let miss_error = if self.miss_returns_invalid_key {
+                PreimageOracleError::InvalidPreimageKey
+            } else {
+                PreimageOracleError::KeyNotFound
+            };
             self.data
                 .iter()
                 .find_map(|(entry_key, value)| (*entry_key == key).then(|| value.clone()))
-                .ok_or(PreimageOracleError::KeyNotFound)
+                .ok_or(miss_error)
         }
 
         async fn get_exact(&self, key: PreimageKey, buf: &mut [u8]) -> PreimageOracleResult<()> {
@@ -1065,5 +1118,92 @@ mod tests {
             err,
             OracleProviderError::MissingActivationAdminAddress { chain_id: ORACLE_CHAIN_ID }
         ));
+    }
+
+    /// Builds an oracle with all required boot keys present for a built-in chain, so that only the
+    /// optional preimage reads remain to exercise.
+    fn oracle_with_required_keys() -> MockOracle {
+        let chain_config = BaseChainConfig::MAINNET;
+        let rollup_config = chain_config.rollup_config();
+
+        let mut oracle = MockOracle::new();
+        oracle.insert(L1_HEAD_KEY, B256::repeat_byte(0x11).to_vec());
+        oracle.insert(L2_OUTPUT_ROOT_KEY, B256::repeat_byte(0x22).to_vec());
+        oracle.insert(L2_CLAIM_KEY, B256::repeat_byte(0x33).to_vec());
+        oracle.insert(L2_CLAIM_BLOCK_NUMBER_KEY, 100u64.to_be_bytes().to_vec());
+        oracle.insert(L2_CHAIN_ID_KEY, chain_config.chain_id.to_be_bytes().to_vec());
+        oracle.insert(
+            L2_ROLLUP_CONFIG_KEY,
+            serde_json::to_vec(&rollup_config).expect("rollup config should serialize"),
+        );
+        oracle
+    }
+
+    #[tokio::test]
+    async fn defaults_optional_keys_when_absent() {
+        let oracle = oracle_with_required_keys();
+
+        let boot_info = BootInfo::load(&oracle).await.expect("boot info should load");
+
+        assert_eq!(boot_info.proposer, Address::ZERO);
+        assert_eq!(boot_info.intermediate_block_interval, 0);
+        assert_eq!(boot_info.l1_head_number, 0);
+        assert_eq!(boot_info.claimed_l2_block_number, 100);
+    }
+
+    #[tokio::test]
+    async fn propagates_non_keynotfound_errors_from_optional_reads() {
+        for key in [
+            PROPOSER_KEY,
+            INTERMEDIATE_BLOCK_INTERVAL_KEY,
+            L1_HEAD_NUMBER_KEY,
+            L2_SCHEDULE_BLOCK_NUMBER_KEY,
+        ] {
+            let mut oracle = oracle_with_required_keys();
+            oracle.fail_with_timeout(key);
+
+            let err = BootInfo::load(&oracle)
+                .await
+                .expect_err("operational oracle failure on an optional read should abort the load");
+            assert!(
+                matches!(err, OracleProviderError::Preimage(PreimageOracleError::Timeout)),
+                "expected timeout to propagate, got {err:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn defaults_optional_keys_when_zk_store_reports_invalid_key() {
+        // The in-memory zkVM `PreimageStore` returns `InvalidPreimageKey` (not `KeyNotFound`) on a
+        // map miss. The optional boot keys must still default there so replaying a witness that
+        // predates one of them does not abort the load.
+        let oracle = oracle_with_required_keys().with_zk_store_miss_semantics();
+
+        let boot_info = BootInfo::load(&oracle).await.expect("boot info should load");
+
+        assert_eq!(boot_info.proposer, Address::ZERO);
+        assert_eq!(boot_info.intermediate_block_interval, 0);
+        assert_eq!(boot_info.l1_head_number, 0);
+        assert_eq!(boot_info.claimed_l2_block_number, 100);
+    }
+
+    #[tokio::test]
+    async fn get_optional_local_maps_keynotfound_to_none() {
+        let oracle = MockOracle::new();
+
+        let result = BootInfo::get_optional_local(&oracle, PROPOSER_KEY)
+            .await
+            .expect("absent key should not be an error");
+        assert_eq!(result, None);
+    }
+
+    #[tokio::test]
+    async fn get_optional_local_maps_invalid_key_to_none() {
+        let oracle = MockOracle::new().with_zk_store_miss_semantics();
+
+        let result = BootInfo::get_optional_local(&oracle, PROPOSER_KEY)
+            .await
+            .expect("zk store map miss should be treated as absent");
+        assert_eq!(result, None);
     }
 }
