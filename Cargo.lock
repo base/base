@@ -6339,6 +6339,7 @@ dependencies = [
  "alloy-signer-local 2.0.5",
  "alloy-sol-types",
  "async-trait",
+ "base-batcher-encoder",
  "base-batcher-service",
  "base-builder-core",
  "base-bundle-extension",
