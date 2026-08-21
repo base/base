@@ -53,7 +53,9 @@ pub enum ValidityPredicateError {
     /// index is below that would never be includable and would park indefinitely,
     /// so it is rejected at ingress. `index` is the position of the offending
     /// predicate within the batch.
-    #[error("flashblock-index predicate at index {index} can never be satisfied by a pooled transaction")]
+    #[error(
+        "flashblock-index predicate at index {index} can never be satisfied by a pooled transaction"
+    )]
     UnsatisfiableFlashblockIndex {
         /// Position of the offending predicate within the batch.
         index: usize,
@@ -863,10 +865,10 @@ mod tests {
         // Every shape whose greatest satisfiable index is below the first pool
         // flashblock index (1): pooled transactions never run at index 0.
         let unsatisfiable = [
-            (ValidityOperator::LessThan, U256::ZERO),        // < 0: never holds
-            (ValidityOperator::LessThan, U256::from(1)),     // < 1: only index 0
+            (ValidityOperator::LessThan, U256::ZERO), // < 0: never holds
+            (ValidityOperator::LessThan, U256::from(1)), // < 1: only index 0
             (ValidityOperator::LessThanOrEqual, U256::ZERO), // <= 0: only index 0
-            (ValidityOperator::Equal, U256::ZERO),           // = 0: only index 0
+            (ValidityOperator::Equal, U256::ZERO),    // = 0: only index 0
         ];
         for (op, value) in unsatisfiable {
             let predicate = ValidityPredicate::FlashblockIndex { op, value };
@@ -882,12 +884,12 @@ mod tests {
     fn validate_params_accepts_satisfiable_flashblock_index() {
         // Shapes that some index >= 1 can still satisfy.
         let satisfiable = [
-            (ValidityOperator::LessThan, U256::from(2)),          // < 2: index 1
-            (ValidityOperator::LessThanOrEqual, U256::from(1)),   // <= 1: index 1
-            (ValidityOperator::Equal, U256::from(1)),             // = 1
-            (ValidityOperator::NotEqual, U256::ZERO),             // != 0: any index >= 1
-            (ValidityOperator::GreaterThan, U256::ZERO),          // > 0: index >= 1
-            (ValidityOperator::GreaterThanOrEqual, U256::from(3)),// >= 3
+            (ValidityOperator::LessThan, U256::from(2)), // < 2: index 1
+            (ValidityOperator::LessThanOrEqual, U256::from(1)), // <= 1: index 1
+            (ValidityOperator::Equal, U256::from(1)),    // = 1
+            (ValidityOperator::NotEqual, U256::ZERO),    // != 0: any index >= 1
+            (ValidityOperator::GreaterThan, U256::ZERO), // > 0: index >= 1
+            (ValidityOperator::GreaterThanOrEqual, U256::from(3)), // >= 3
         ];
         for (op, value) in satisfiable {
             let predicate = ValidityPredicate::FlashblockIndex { op, value };
