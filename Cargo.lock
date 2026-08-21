@@ -5965,6 +5965,7 @@ dependencies = [
  "mockall",
  "reth-execution-types",
  "reth-exex",
+ "reth-network-api",
  "reth-node-api",
  "reth-primitives-traits",
  "reth-tasks",

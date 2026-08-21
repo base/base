@@ -344,6 +344,7 @@ reth-consensus = { git = "https://github.com/paradigmxyz/reth", tag = "v2.5.1" }
 reth-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v2.5.1" }
 reth-cli-runner = { git = "https://github.com/paradigmxyz/reth", tag = "v2.5.1" }
 reth-rpc-convert = { git = "https://github.com/paradigmxyz/reth", tag = "v2.5.1" }
+reth-network-api = { git = "https://github.com/paradigmxyz/reth", tag = "v2.5.1" }
 reth-network-p2p = { git = "https://github.com/paradigmxyz/reth", tag = "v2.5.1" }
 reth-storage-api = { git = "https://github.com/paradigmxyz/reth", tag = "v2.5.1" }
 reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", tag = "v2.5.1" }

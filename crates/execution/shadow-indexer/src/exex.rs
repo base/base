@@ -5,6 +5,7 @@ use eyre::Result;
 use futures::TryStreamExt;
 use reth_execution_types::Chain;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification};
+use reth_network_api::NetworkInfo;
 use reth_node_api::{FullNodeComponents, NodeTypes};
 use reth_primitives_traits::{AlloyBlockHeader, RecoveredBlock};
 use tokio::sync::mpsc;
@@ -29,6 +30,7 @@ impl ShadowIndexerExEx {
         Node::Types: NodeTypes<Primitives = BasePrimitives>,
     {
         while let Some(notification) = ctx.notifications.try_next().await? {
+            let is_syncing = ctx.network().is_syncing();
             let fully_processed = match &notification {
                 ExExNotification::ChainCommitted { new } => {
                     debug!(
@@ -73,7 +75,11 @@ impl ShadowIndexerExEx {
                 break;
             }
 
-            if let Some(committed_chain) = notification.committed_chain() {
+            // Historical commits are canonical, but live commits are speculative shadow blocks.
+            // In live mode only the replacement chain is safe to expose as the WAL watermark.
+            if Self::should_emit_finished_height(&notification, is_syncing)
+                && let Some(committed_chain) = notification.committed_chain()
+            {
                 let tip = committed_chain.tip().num_hash();
                 debug!(
                     target: "base::shadow-indexer",
@@ -86,6 +92,17 @@ impl ShadowIndexerExEx {
         }
 
         Ok(())
+    }
+
+    const fn should_emit_finished_height(
+        notification: &ExExNotification<BasePrimitives>,
+        is_syncing: bool,
+    ) -> bool {
+        match notification {
+            ExExNotification::ChainCommitted { .. } => is_syncing,
+            ExExNotification::ChainReorged { .. } => !is_syncing,
+            ExExNotification::ChainReverted { .. } => false,
+        }
     }
 
     fn build_row(
@@ -200,6 +217,8 @@ impl ShadowIndexerExEx {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use alloy_consensus::Receipt;
     use alloy_primitives::B256;
     use reth_execution_types::{Chain, ExecutionOutcome};
@@ -348,5 +367,22 @@ mod tests {
                 "reverted rows have no replacement canonical hash"
             );
         }
+    }
+
+    #[test]
+    fn finished_height_policy_tracks_sync_and_authoritative_reorgs() {
+        let committed = ExExNotification::ChainCommitted { new: Arc::new(mk_chain(1, 1, 0)) };
+        let reorged = ExExNotification::ChainReorged {
+            old: Arc::new(mk_chain(1, 1, 0)),
+            new: Arc::new(mk_chain(1, 1, NEW_CHAIN_VARIANT)),
+        };
+        let reverted = ExExNotification::ChainReverted { old: Arc::new(mk_chain(1, 1, 0)) };
+
+        assert!(ShadowIndexerExEx::should_emit_finished_height(&committed, true));
+        assert!(!ShadowIndexerExEx::should_emit_finished_height(&committed, false));
+        assert!(!ShadowIndexerExEx::should_emit_finished_height(&reorged, true));
+        assert!(ShadowIndexerExEx::should_emit_finished_height(&reorged, false));
+        assert!(!ShadowIndexerExEx::should_emit_finished_height(&reverted, true));
+        assert!(!ShadowIndexerExEx::should_emit_finished_height(&reverted, false));
     }
 }
