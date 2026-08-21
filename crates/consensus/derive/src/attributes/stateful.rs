@@ -611,12 +611,13 @@ mod tests {
         };
 
         let next_l2_block_number = l2_parent.block_info.number + 1;
-        let (_, expected_millis_part) = cfg.l2_block_timestamp_parts(next_l2_block_number);
+        let (expected_timestamp, expected_millis_part) =
+            cfg.l2_block_timestamp_parts(next_l2_block_number);
+        assert_eq!(expected_timestamp, 102);
+        assert_eq!(expected_millis_part, 0);
+
         let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
-        assert_eq!(
-            payload.payload_attributes.timestamp,
-            cfg.l2_block_timestamp(next_l2_block_number)
-        );
+        assert_eq!(payload.payload_attributes.timestamp, expected_timestamp);
         let transactions = payload.transactions.unwrap();
         assert_eq!(transactions.len(), 8);
         let envelope = BaseTxEnvelope::decode_2718_exact(&transactions[1]).unwrap();
