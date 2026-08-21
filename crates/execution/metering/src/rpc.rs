@@ -138,8 +138,18 @@ where
             .cloned();
 
         // Use pending only when it is based on the current canonical tip.
-        let (header, flashblock_index, canonical_block_number) =
-            if let Some(pb) = pending_blocks.as_ref() {
+        let (header, flashblock_index, canonical_block_number) = pending_blocks.as_ref().map_or_else(
+            || {
+                let canonical_block_number = BlockNumberOrTag::Number(canonical_tip.number());
+
+                debug!(
+                    canonical_block = canonical_tip.number(),
+                    "No tip-aligned flashblocks available, using canonical block state for metering"
+                );
+
+                (canonical_tip, 0, canonical_block_number)
+            },
+            |pb| {
                 let latest_header: Sealed<Header> = pb.latest_header();
                 let flashblock_index = pb.latest_flashblock_index();
                 let canonical_block_number = pb.canonical_block_number();
@@ -155,16 +165,8 @@ where
                 let sealed_header =
                     SealedHeader::new(latest_header.inner().clone(), latest_header.hash());
                 (sealed_header, flashblock_index, canonical_block_number)
-            } else {
-                let canonical_block_number = BlockNumberOrTag::Number(canonical_tip.number());
-
-                debug!(
-                    canonical_block = canonical_tip.number(),
-                    "No tip-aligned flashblocks available, using canonical block state for metering"
-                );
-
-                (canonical_tip, 0, canonical_block_number)
-            };
+            },
+        );
 
         let parsed_bundle = ParsedBundle::try_from(bundle).map_err(|e| {
             jsonrpsee::types::ErrorObjectOwned::owned(
