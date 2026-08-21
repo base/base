@@ -79,7 +79,7 @@ impl TrackingPipeline {
     }
 
     /// Make `flush` fail after recording the call.
-    pub const fn with_flush_error(mut self, error: StepError) -> Self {
+    pub fn with_flush_error(mut self, error: StepError) -> Self {
         self.flush_error = Some(error);
         self
     }
