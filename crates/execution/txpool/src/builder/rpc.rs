@@ -154,10 +154,10 @@ where
             tx.min_timestamp,
             tx.max_timestamp,
         );
-        // `MeterBundleResponse::default` is a mempool placeholder after sim
-        // timeout/error. Keep it on the pooled tx; do not treat it as real cache data.
+        // `is_placeholder` is a mempool timeout/error sentinel. Keep it on the
+        // pooled tx; do not treat it as real cache data.
         let pool_tx = match tx.metering {
-            Some(metering) if metering != MeterBundleResponse::default() => {
+            Some(metering) if !metering.is_placeholder() => {
                 if let Some(cache) = &self.metering_cache {
                     cache.insert_metering(tx_hash, metering.clone());
                 }

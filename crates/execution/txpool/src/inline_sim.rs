@@ -39,6 +39,8 @@ base_metrics::define_metrics! {
     sim_failures: counter,
     #[describe("Pool inserts that carried MeterBundleResponse::default after a failed or timed-out sim")]
     sim_default_inserts: counter,
+    #[describe("Seconds waiting for meter_bundle to finish after the configured timeout fired")]
+    sim_timeout_wait_seconds: histogram,
 }
 
 /// Job waiting for an in-process meter_bundle worker.
@@ -61,7 +63,6 @@ pub enum InlineSimEnqueueError {
 
 static QUEUE: RwLock<Option<mpsc::Sender<InlineSimJob>>> = RwLock::new(None);
 static QUEUE_LEN: AtomicUsize = AtomicUsize::new(0);
-static WORKERS_BUSY: AtomicUsize = AtomicUsize::new(0);
 
 /// Handle for the mempool pre-sim queue and worker pool.
 #[derive(Debug)]
@@ -122,6 +123,9 @@ impl InlineSimQueue {
             + Sync
             + 'static,
     {
+        if workers == 0 {
+            return;
+        }
         let meter = Arc::new(meter);
         let rx = Arc::new(tokio::sync::Mutex::new(rx));
         for _ in 0..workers {
@@ -154,7 +158,6 @@ impl InlineSimQueue {
     pub fn clear() {
         Self::uninstall();
         QUEUE_LEN.store(0, Ordering::Relaxed);
-        WORKERS_BUSY.store(0, Ordering::Relaxed);
         InlineSimMetrics::sim_queue_size().set(0.0);
         InlineSimMetrics::sim_workers_busy().set(0.0);
     }
@@ -165,11 +168,11 @@ where
     F: Fn(Recovered<BaseTxEnvelope>) -> Result<MeterBundleResponse, String> + Send + Sync + 'static,
 {
     let recovered = job.transaction.clone_into_consensus();
-    let busy = WORKERS_BUSY.fetch_add(1, Ordering::Relaxed) + 1;
-    InlineSimMetrics::sim_workers_busy().set(busy as f64);
+    InlineSimMetrics::sim_workers_busy().increment(1.0);
 
-    // Timeout must not drop the JoinHandle: spawn_blocking cannot be cancelled,
-    // so the worker joins before taking another job.
+    // `--inline-simulation-timeout-ms` only chooses real vs Default metering.
+    // spawn_blocking cannot be cancelled, so the worker stays busy until EVM
+    // finishes; that is what bounds the blocking pool.
     let handle = tokio::task::spawn_blocking(move || meter(recovered));
     let job = match future::select(handle, Box::pin(tokio::time::sleep(timeout))).await {
         Either::Left((Ok(Ok(metering)), _)) => InlineSimJob {
@@ -186,13 +189,14 @@ where
         }
         Either::Right((_, handle)) => {
             warn!(hash = %job.transaction.hash(), "inline sim meter_bundle timed out");
+            let waited = Instant::now();
             let _ = handle.await;
+            InlineSimMetrics::sim_timeout_wait_seconds().record(waited.elapsed().as_secs_f64());
             with_default_metering(job, "timeout")
         }
     };
 
-    let busy = WORKERS_BUSY.fetch_sub(1, Ordering::Relaxed).saturating_sub(1);
-    InlineSimMetrics::sim_workers_busy().set(busy as f64);
+    InlineSimMetrics::sim_workers_busy().decrement(1.0);
     job
 }
 

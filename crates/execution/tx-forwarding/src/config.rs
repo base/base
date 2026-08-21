@@ -98,15 +98,15 @@ impl TxForwardingConfig {
         self
     }
 
-    /// Sets the number of meter_bundle worker tasks.
+    /// Sets the number of meter_bundle worker tasks. Zero is treated as 1.
     pub const fn with_inline_simulation_workers(mut self, workers: usize) -> Self {
-        self.inline_simulation_workers = workers;
+        self.inline_simulation_workers = if workers == 0 { 1 } else { workers };
         self
     }
 
-    /// Sets the pre-sim queue capacity.
+    /// Sets the pre-sim queue capacity. Zero is treated as 1.
     pub const fn with_inline_simulation_queue_capacity(mut self, capacity: usize) -> Self {
-        self.inline_simulation_queue_capacity = capacity;
+        self.inline_simulation_queue_capacity = if capacity == 0 { 1 } else { capacity };
         self
     }
 
@@ -178,5 +178,15 @@ mod tests {
         assert_eq!(config.inline_simulation_workers, 8);
         assert_eq!(config.inline_simulation_queue_capacity, 32);
         assert_eq!(config.inline_simulation_timeout_ms, 500);
+    }
+
+    #[test]
+    fn zero_workers_or_queue_capacity_clamp_to_one() {
+        let config = TxForwardingConfig::new(vec!["http://builder.test".parse().unwrap()])
+            .with_inline_simulation_workers(0)
+            .with_inline_simulation_queue_capacity(0);
+
+        assert_eq!(config.inline_simulation_workers, 1);
+        assert_eq!(config.inline_simulation_queue_capacity, 1);
     }
 }

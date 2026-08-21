@@ -290,6 +290,7 @@ pub struct RpcStandardNodeArgs {
         long = "inline-simulation-workers",
         value_name = "INLINE_SIMULATION_WORKERS",
         default_value_t = DEFAULT_INLINE_SIMULATION_WORKERS,
+        value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..),
         requires = "enable_inline_simulation"
     )]
     pub inline_simulation_workers: usize,
@@ -299,11 +300,14 @@ pub struct RpcStandardNodeArgs {
         long = "inline-simulation-queue-capacity",
         value_name = "INLINE_SIMULATION_QUEUE_CAPACITY",
         default_value_t = DEFAULT_INLINE_SIMULATION_QUEUE_CAPACITY,
+        value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..),
         requires = "enable_inline_simulation"
     )]
     pub inline_simulation_queue_capacity: usize,
 
-    /// Per-transaction meter_bundle timeout in milliseconds.
+    /// Deadline for attaching real metering versus `MeterBundleResponse::default`.
+    ///
+    /// Does not free the worker: `meter_bundle` still runs to completion.
     #[arg(
         long = "inline-simulation-timeout-ms",
         value_name = "INLINE_SIMULATION_TIMEOUT_MS",
@@ -953,6 +957,22 @@ mod tests {
         .expect_err("worker count should require --enable-inline-simulation");
 
         assert!(error.to_string().contains("--enable-inline-simulation"));
+    }
+
+    #[test]
+    fn inline_simulation_rejects_zero_workers() {
+        let error = CommandParser::<StandardNodeArgs>::try_parse_from([
+            "base-reth",
+            "--enable-tx-forwarding",
+            "--builder-rpc-urls",
+            "http://localhost:8545",
+            "--enable-inline-simulation",
+            "--inline-simulation-workers",
+            "0",
+        ])
+        .expect_err("zero workers would install a queue with no consumers");
+
+        assert!(error.to_string().contains("inline-simulation-workers"));
     }
 
     #[test]

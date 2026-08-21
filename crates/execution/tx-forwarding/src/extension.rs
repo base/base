@@ -29,7 +29,10 @@ impl BaseNodeExtension for TxForwardingExtension {
     /// Applies the extension to the supplied hooks.
     fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks {
         let config = self.config;
-        let inline_rx = if config.inline_simulation {
+        let inline_rx = if config.inline_simulation
+            && config.inline_simulation_workers > 0
+            && config.inline_simulation_queue_capacity > 0
+        {
             let (sender, receiver) = mpsc::channel(config.inline_simulation_queue_capacity);
             InlineSimQueue::install(sender);
             info!(
