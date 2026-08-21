@@ -79,6 +79,19 @@ pub struct MeterBundleResponse {
     pub total_execution_time_us: u128,
 }
 
+impl MeterBundleResponse {
+    /// Heap bytes owned beyond `size_of::<Self>()`: the results buffer, each
+    /// `opcode_gas` buffer, and opcode name strings.
+    pub fn heap_size(&self) -> usize {
+        let mut size = core::mem::size_of_val(self.results.as_slice());
+        for result in &self.results {
+            size += core::mem::size_of_val(result.opcode_gas.as_slice());
+            size += result.opcode_gas.iter().map(|gas| gas.opcode.len()).sum::<usize>();
+        }
+        size
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloy_primitives::address;
@@ -237,5 +250,47 @@ mod tests {
         assert_eq!(deserialized.state_flashblock_index, None);
         assert_eq!(deserialized.state_block_number, 12345);
         assert_eq!(deserialized.total_gas_used, 21000);
+    }
+
+    #[test]
+    fn heap_size_counts_results_opcode_gas_and_names() {
+        let empty = MeterBundleResponse::default();
+        assert_eq!(empty.heap_size(), 0);
+
+        let response = MeterBundleResponse {
+            results: vec![TransactionResult {
+                coinbase_diff: U256::ZERO,
+                eth_sent_to_coinbase: U256::ZERO,
+                from_address: Address::ZERO,
+                gas_fees: U256::ZERO,
+                gas_price: U256::ZERO,
+                gas_used: 21_000,
+                to_address: None,
+                tx_hash: B256::default(),
+                value: U256::ZERO,
+                execution_time_us: 1,
+                opcode_gas: vec![
+                    OpcodeGas {
+                        contract_address: Address::ZERO,
+                        opcode: "SSTORE".to_string(),
+                        count: 1,
+                        gas_used: 20_000,
+                    },
+                    OpcodeGas {
+                        contract_address: Address::ZERO,
+                        opcode: "SLOAD".to_string(),
+                        count: 2,
+                        gas_used: 2_100,
+                    },
+                ],
+            }],
+            ..MeterBundleResponse::default()
+        };
+
+        let results_size = core::mem::size_of_val(response.results.as_slice());
+        let opcode_gas_size = core::mem::size_of_val(response.results[0].opcode_gas.as_slice());
+        let opcode_names_size = "SSTORE".len() + "SLOAD".len();
+
+        assert_eq!(response.heap_size(), results_size + opcode_gas_size + opcode_names_size);
     }
 }
