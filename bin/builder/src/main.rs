@@ -41,8 +41,9 @@ fn main() {
 
         let builder_api_config = builder_args.builder_api_config()?;
         let shadow_indexer_config = ShadowIndexerConfig::try_from(&builder_args.shadow_indexer)?;
+        let payload_builder_cutover = builder_args.payload_builder_cutover;
+        let basic_payload_builder = builder_args.basic_payload_builder;
         let builder_config = builder_args
-            .clone()
             .into_builder_config(Arc::clone(&metering_provider))
             .expect("Failed to convert rollup args to builder config");
         let da_config = builder_config.da_config.clone();
@@ -55,8 +56,8 @@ fn main() {
             .with_manifest_precheck_enabled(manifest_precheck_enabled)
             .with_service_builder(
                 MultiplexingServiceBuilder::new(builder_config)
-                    .with_cutover_enabled(builder_args.payload_builder_cutover)
-                    .with_basic_only(builder_args.basic_payload_builder),
+                    .with_cutover_enabled(payload_builder_cutover)
+                    .with_basic_only(basic_payload_builder),
             );
         runner.install_ext::<MeteringStoreExtension>(metering_provider);
         runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig::default());

@@ -78,7 +78,7 @@ where
             base_execution_payload_builder::BasePayloadBuilder::with_builder_config(
                 pool.clone(),
                 ctx.provider().clone(),
-                evm_config,
+                evm_config.clone(),
                 BaseBuilderConfig {
                     da_config: self.builder_config.da_config.clone(),
                     gas_limit_config: self.builder_config.gas_limit_config.clone(),
@@ -116,7 +116,7 @@ where
         }
 
         let flashblocks_handle = FlashblocksServiceBuilder::new(self.builder_config.clone())
-            .spawn_payload_builder_service(ctx, pool, BaseEvmConfig::base(ctx.chain_spec()))
+            .spawn_payload_builder_service(ctx, pool, evm_config)
             .await?;
 
         let flashblocks_health = HealthState::new();
