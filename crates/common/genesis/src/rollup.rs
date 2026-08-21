@@ -1,6 +1,7 @@
 //! Rollup Config Types
 
 use alloc::vec::Vec;
+
 use alloy_chains::Chain;
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::Address;
@@ -374,9 +375,10 @@ impl RollupConfig {
             panic!("rollup config: block time cannot be 0");
         }
 
-        Some(self.genesis.l2.number.saturating_add(
-            denim_timestamp.saturating_sub(self.genesis.l2_time).div_ceil(self.block_time),
-        ))
+        Some(
+            self.genesis.l2.number
+                + denim_timestamp.saturating_sub(self.genesis.l2_time).div_ceil(self.block_time),
+        )
     }
 
     /// Returns the L2 block number at which the genesis-only Zenith testing gate activates.
@@ -389,7 +391,10 @@ impl RollupConfig {
             panic!("rollup config: block time cannot be 0");
         }
 
-        Some(zenith_timestamp.saturating_sub(self.genesis.l2_time).div_ceil(self.block_time))
+        Some(
+            self.genesis.l2.number
+                + zenith_timestamp.saturating_sub(self.genesis.l2_time).div_ceil(self.block_time),
+        )
     }
 
     /// Returns the deterministic timestamp of an L2 block in milliseconds.
@@ -449,7 +454,7 @@ impl RollupConfig {
         } else {
             legacy_delta / self.block_time
         };
-        let legacy_block = self.genesis.l2.number.saturating_add(legacy_offset);
+        let legacy_block = self.genesis.l2.number + legacy_offset;
         if timestamp >= self.genesis.l2_time
             && (timestamp == u64::MAX || legacy_delta.is_multiple_of(self.block_time))
             && denim_activation_block.is_none_or(|activation| legacy_block < activation)
@@ -474,7 +479,7 @@ impl RollupConfig {
             } else {
                 delta / Self::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS
             };
-            let block = activation_block.saturating_add(offset);
+            let block = activation_block + offset;
             if !candidates.contains(&block) && self.l2_block_timestamp(block) == timestamp {
                 candidates.push(block);
             }
@@ -1335,6 +1340,10 @@ mod tests {
             Some(3)
         );
         assert_eq!(rollup_config_with_zenith(10, 2, None).zenith_activation_block_number(), None);
+
+        let mut nonzero_genesis = rollup_config_with_zenith(10, 2, Some(15));
+        nonzero_genesis.genesis.l2.number = 100;
+        assert_eq!(nonzero_genesis.zenith_activation_block_number(), Some(103));
     }
 
     #[test]
