@@ -922,6 +922,11 @@ where
                 }) {
                     Ok(Some(gas_output)) => gas_output,
                     Ok(None) => {
+                        trace!(
+                            target: "payload_builder",
+                            tx_hash = %tx_hash,
+                            "skipping transaction excluded by resource metering"
+                        );
                         best_txs.mark_invalid(tx.signer(), tx.nonce());
                         continue;
                     }
