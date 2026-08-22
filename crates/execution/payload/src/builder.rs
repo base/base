@@ -731,9 +731,16 @@ where
                         &tx_hash,
                         result_and_state.result.tx_gas_used(),
                         &result_and_state.state,
-                    ) && usage.fits_in(&info.resource_metering_usage).is_ok()
-                    {
-                        pending_resource_usage = Some(usage);
+                    ) {
+                        if usage.fits_in(&info.resource_metering_usage).is_ok() {
+                            pending_resource_usage = Some(usage);
+                        } else {
+                            warn!(
+                                target: "payload_builder",
+                                tx_hash = %tx_hash,
+                                "resource metering usage could not be applied to sequencer transaction"
+                            );
+                        }
                     }
                     CommitChanges::Yes
                 },
@@ -861,6 +868,11 @@ where
             let (simulated, predicted) =
                 resource_metering.predict(&tx_hash, &info.resource_metering_usage);
             if predicted.should_exclude() {
+                trace!(
+                    target: "payload_builder",
+                    tx_hash = %tx_hash,
+                    "skipping transaction excluded by predicted resource metering"
+                );
                 best_txs.mark_invalid(tx.sender(), tx.nonce());
                 continue;
             }
