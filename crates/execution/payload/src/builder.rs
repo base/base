@@ -722,40 +722,30 @@ where
             })?;
 
             let mut pending_resource_usage = None;
-            let mut resource_account_error = None;
             let tx_hash = *sequencer_tx.tx_hash();
             let gas_output = match builder.execute_transaction_with_commit_condition(
                 sequencer_tx.clone(),
                 |result| {
                     let result_and_state = result.result();
-                    match resource_metering.unthrottled_usage(
+                    if let Ok(Some(usage)) = resource_metering.unthrottled_usage(
                         &tx_hash,
                         result_and_state.result.tx_gas_used(),
                         &result_and_state.state,
-                    ) {
-                        Ok(None) => CommitChanges::Yes,
-                        Ok(Some(usage)) => match usage.fits_in(&info.resource_metering_usage) {
-                            Ok(()) => {
-                                pending_resource_usage = Some(usage);
-                                CommitChanges::Yes
-                            }
-                            Err(error) => {
-                                resource_account_error = Some(error);
-                                CommitChanges::No
-                            }
-                        },
-                        Err(error) => {
-                            resource_account_error = Some(error);
-                            CommitChanges::No
-                        }
+                    ) && usage.fits_in(&info.resource_metering_usage).is_ok()
+                    {
+                        pending_resource_usage = Some(usage);
                     }
+                    CommitChanges::Yes
                 },
             ) {
                 Ok(Some(gas_output)) => gas_output,
                 Ok(None) => {
-                    return Err(PayloadBuilderError::other(resource_account_error.expect(
-                        "sequencer commit is refused only when resource accounting fails",
-                    )));
+                    warn!(
+                        target: "payload_builder",
+                        tx_hash = %tx_hash,
+                        "sequencer transaction commit was refused"
+                    );
+                    continue;
                 }
                 Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
                     error,
