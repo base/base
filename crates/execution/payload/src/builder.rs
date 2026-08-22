@@ -767,10 +767,14 @@ where
             };
 
             info.cumulative_gas_used += gas_output.tx_gas_used();
-            if let Some(usage) = pending_resource_usage {
-                usage
-                    .add_to(&mut info.resource_metering_usage)
-                    .expect("sequencer resource usage was checked before commit");
+            if let Some(usage) = pending_resource_usage
+                && usage.add_to(&mut info.resource_metering_usage).is_err()
+            {
+                warn!(
+                    target: "payload_builder",
+                    tx_hash = %tx_hash,
+                    "resource metering usage could not be applied to sequencer transaction"
+                );
             }
         }
 
