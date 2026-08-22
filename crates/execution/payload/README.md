@@ -11,12 +11,18 @@ verifies
 built payloads against consensus rules. Also provides data availability configuration via
 `BaseDAConfig` for fee calculation.
 
-Resource metering is an optional native-builder admission guardrail. Metering
-converts `meterBundle` opcode, precompile, and pseudo-opcode aggregates into
-independent resource-unit dimensions. Resource throttling then excludes
-transactions whose metered usage exceeds a budget. Dry-run observes those
-over-budget transactions without excluding them. The startup schedule is a JSON
-file; this does not change protocol gas, fees, or validity.
+Resource metering is an optional native-builder admission guardrail. A
+file-backed schedule prices named observations into independent resource-unit
+dimensions. Simulated `meterBundle` data is used only to skip candidates that
+are predicted to exceed a remaining budget. Committed usage is accounted from
+executed results when they exist: actual gas used, net post-state effects
+(`STATE_NEW_STORAGE_SLOT`, `STATE_CHANGED_STORAGE_SLOT`,
+`STATE_CLEARED_STORAGE_SLOT`, `STATE_TOUCHED_ACCOUNT`,
+`STATE_CHANGED_ACCOUNT`), and simulated opcode bags only for measurements the
+production EVM did not record. Resource throttling then excludes transactions
+whose accounted usage exceeds a budget. Dry-run observes those over-budget
+transactions without excluding them, but still accumulates actual usage. This
+does not change protocol gas, fees, or validity.
 
 ## Usage
 

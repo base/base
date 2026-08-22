@@ -19,7 +19,8 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
-    BasePayloadBuilderAttributes, error::BasePayloadBuilderError,
+    BasePayloadBuilderAttributes, ResourceMeteringMetrics, ResourceSample,
+    ResourceThrottlingDecision, error::BasePayloadBuilderError,
 };
 use base_execution_txpool::{
     BasePooledTx, BundleTransaction, GuardMetrics, PredicateContext, TimestampedTransaction,
@@ -111,6 +112,8 @@ pub struct FlashblockDiagnostics {
     pub txs_rejected_uncompressed_size: u64,
     /// Number skipped because metering data has not yet arrived.
     pub txs_rejected_metering_data_pending: u64,
+    /// Number rejected by resource-metering budgets.
+    pub txs_rejected_resource_throttling: u64,
     /// Number rejected or skipped for other reasons.
     pub txs_rejected_other: u64,
     /// Minimum effective priority fee (tip per gas) among included transactions.
@@ -132,7 +135,7 @@ impl FlashblockDiagnostics {
     }
 
     /// Returns the rejection counts keyed by their metric/log reason labels.
-    pub const fn rejection_counts(&self) -> [(&'static str, u64); 7] {
+    pub const fn rejection_counts(&self) -> [(&'static str, u64); 8] {
         [
             ("gas_limit", self.txs_rejected_gas),
             ("da_size", self.txs_rejected_da),
@@ -140,6 +143,7 @@ impl FlashblockDiagnostics {
             ("execution_time", self.txs_rejected_execution_time),
             ("uncompressed_size", self.txs_rejected_uncompressed_size),
             ("metering_data_pending", self.txs_rejected_metering_data_pending),
+            ("resource_throttling", self.txs_rejected_resource_throttling),
             ("other", self.txs_rejected_other),
         ]
     }
@@ -160,6 +164,7 @@ impl FlashblockDiagnostics {
             + self.txs_rejected_execution_time
             + self.txs_rejected_uncompressed_size
             + self.txs_rejected_metering_data_pending
+            + self.txs_rejected_resource_throttling
             + self.txs_rejected_other
     }
 
@@ -634,6 +639,23 @@ impl BasePayloadBuilderCtx {
             let gas_used = result.tx_gas_used();
             info.cumulative_gas_used += gas_used;
 
+            let resource_metering = &self.builder_config.resource_metering;
+            if resource_metering.throttling_mode.is_enabled()
+                && !resource_metering.schedule.is_empty()
+            {
+                let sample = ResourceSample::from_execution(gas_used, &state, None);
+                if let Ok(usage) =
+                    resource_metering.schedule.evaluate(sample.gas_used, &sample.operations)
+                    && let Err(error) = usage.add_to(&mut info.resource_metering_usage)
+                {
+                    warn!(
+                        target: "payload_builder",
+                        error = %error,
+                        "resource metering cumulative usage overflowed on sequencer transaction"
+                    );
+                }
+            }
+
             if !sequencer_tx.is_deposit() {
                 info.cumulative_da_bytes_used += base_common_flz::tx_estimated_size_fjord_bytes(
                     sequencer_tx.encoded_2718().as_slice(),
@@ -769,6 +791,10 @@ impl BasePayloadBuilderCtx {
         // evaluation, so it both accumulates and records whether any validity
         // transaction was seen; emitted once when the loop finishes.
         let mut predicate_eval_total: Option<Duration> = None;
+        let resource_metering = &self.builder_config.resource_metering;
+        let resource_schedule = resource_metering.schedule.as_ref();
+        let resource_metering_active =
+            resource_metering.throttling_mode.is_enabled() && !resource_schedule.is_empty();
 
         while let Some(tx) = best_txs.next(()) {
             if tx.is_bundle_expired(block_number, block_timestamp) {
@@ -1189,6 +1215,20 @@ impl BasePayloadBuilderCtx {
                 }
             }
 
+            if resource_metering_active {
+                let predicted = resource_schedule.evaluate_transaction(
+                    resource_usage.as_ref(),
+                    &tx_hash,
+                    &info.resource_metering_usage,
+                );
+                self.record_resource_throttling_decision(tx_hash, &predicted);
+                if predicted.should_exclude(resource_metering.throttling_mode) {
+                    diag.txs_rejected_resource_throttling += 1;
+                    best_txs.mark_invalid(tx.signer(), tx.nonce());
+                    continue;
+                }
+            }
+
             // Extract predicted execution time from metering data
             let predicted_execution_time_us =
                 resource_usage.as_ref().map(|m| m.total_execution_time_us);
@@ -1486,11 +1526,43 @@ impl BasePayloadBuilderCtx {
                 continue;
             }
 
+            let simulated =
+                resource_usage.as_ref().map(|meter| ResourceSample::from_meter(meter, &tx_hash));
+            let mut pending_resource_usage = None;
+            if resource_metering_active {
+                let sample = ResourceSample::from_execution(gas_used, &state, simulated.as_ref());
+                let decision =
+                    resource_schedule.decide_sample(&sample, &info.resource_metering_usage);
+                self.record_resource_throttling_decision(tx_hash, &decision);
+                if decision.should_exclude(resource_metering.throttling_mode) {
+                    diag.txs_rejected_resource_throttling += 1;
+                    best_txs.mark_invalid(tx.signer(), tx.nonce());
+                    continue;
+                }
+                match decision {
+                    ResourceThrottlingDecision::Allow(usage)
+                    | ResourceThrottlingDecision::Throttle { usage, .. } => {
+                        pending_resource_usage = Some(usage);
+                    }
+                    ResourceThrottlingDecision::CalculationFailed => {}
+                }
+            }
+
             info.cumulative_gas_used += gas_used;
             // record tx da size
             info.cumulative_da_bytes_used += tx_da_size;
             // record uncompressed tx size
             info.cumulative_uncompressed_bytes += tx_uncompressed_size;
+            if let Some(usage) = pending_resource_usage
+                && let Err(error) = usage.add_to(&mut info.resource_metering_usage)
+            {
+                warn!(
+                    target: "payload_builder",
+                    tx_hash = %tx_hash,
+                    error = %error,
+                    "resource metering cumulative usage overflowed"
+                );
+            }
 
             self.emit_builder_decision_event(
                 &payload_id,
@@ -1689,6 +1761,38 @@ impl BasePayloadBuilderCtx {
             }
         }
     }
+
+    fn record_resource_throttling_decision(
+        &self,
+        tx_hash: TxHash,
+        decision: &ResourceThrottlingDecision,
+    ) {
+        match decision {
+            ResourceThrottlingDecision::Allow(_) => {}
+            ResourceThrottlingDecision::Throttle { error, .. } => {
+                let dry_run = self.builder_config.resource_metering.throttling_mode.is_dry_run();
+                ResourceMeteringMetrics::record_limit(error, !dry_run);
+                warn!(
+                    target: "payload_builder",
+                    tx_hash = %tx_hash,
+                    dimension = %error.dimension,
+                    scope = %error.scope,
+                    used = error.used,
+                    limit = error.limit,
+                    dry_run,
+                    "resource throttling budget exceeded"
+                );
+            }
+            ResourceThrottlingDecision::CalculationFailed => {
+                ResourceMeteringMetrics::calculation_failed().increment(1);
+                warn!(
+                    target: "payload_builder",
+                    tx_hash = %tx_hash,
+                    "resource metering usage calculation failed"
+                );
+            }
+        }
+    }
 }
 
 #[cfg(any(test, feature = "test-utils"))]
@@ -1801,6 +1905,7 @@ mod tests {
                 ("execution_time", 0),
                 ("uncompressed_size", 0),
                 ("metering_data_pending", 0),
+                ("resource_throttling", 0),
                 ("other", 0),
             ]
         );

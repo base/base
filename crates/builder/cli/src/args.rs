@@ -1,11 +1,12 @@
 //! Builder CLI arguments and config conversion helpers.
 
 use core::{net::SocketAddr, time::Duration};
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use base_builder_core::{
     BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
-    ExecutionMeteringMode, RejectionCache, ShadowValidityConfig, SharedMeteringProvider,
+    ExecutionMeteringMode, RejectionCache, ResourceMeteringConfig, ResourceThrottlingMode,
+    ShadowValidityConfig, SharedMeteringProvider,
 };
 use base_builder_metering::MeteringStore;
 use base_execution_cli::ShadowIndexerArgs;
@@ -177,6 +178,18 @@ pub struct Args {
     #[arg(long = "builder.execution-metering-mode", value_enum, default_value = "off")]
     pub execution_metering_mode: ExecutionMeteringMode,
 
+    /// Resource throttling mode for payload admission: off, dry-run, or enforce.
+    #[arg(
+        long = "payload.resource-throttling-mode",
+        env = "PAYLOAD_RESOURCE_THROTTLING_MODE",
+        default_value_t = ResourceThrottlingMode::Off
+    )]
+    pub resource_throttling_mode: ResourceThrottlingMode,
+
+    /// JSON file containing the startup resource-metering schedule.
+    #[arg(long = "payload.resource-metering-schedule", env = "PAYLOAD_RESOURCE_METERING_SCHEDULE")]
+    pub resource_metering_schedule: Option<PathBuf>,
+
     /// How much extra time to wait for the block building job to complete and not get garbage collected
     #[arg(long = "builder.extra-block-deadline-secs", default_value = "20")]
     pub extra_block_deadline_secs: u64,
@@ -294,7 +307,9 @@ impl Args {
     /// Creates a [`MeteringStore`] from the CLI arguments.
     pub fn build_metering_store(&self) -> MeteringStore {
         MeteringStore::new(
-            self.enable_resource_metering || self.execution_metering_mode.is_enabled(),
+            self.enable_resource_metering
+                || self.execution_metering_mode.is_enabled()
+                || self.resource_throttling_mode.is_enabled(),
             self.tx_data_store_buffer_size,
             Duration::from_secs(self.metering_store_ttl_secs),
         )
@@ -313,6 +328,8 @@ impl Default for Args {
             state_root_gas_coefficient: None,
             state_root_gas_anchor_us: None,
             execution_metering_mode: ExecutionMeteringMode::Off,
+            resource_throttling_mode: ResourceThrottlingMode::Off,
+            resource_metering_schedule: None,
             extra_block_deadline_secs: 20,
             enable_resource_metering: false,
             enable_experimental_validity_transactions: false,
@@ -372,6 +389,12 @@ impl Args {
             warn!("deprecated builder resource limit flags are ignored");
         }
 
+        let resource_metering = ResourceMeteringConfig::from_parts(
+            self.resource_throttling_mode,
+            self.resource_metering_schedule.as_deref(),
+            Arc::clone(&metering_provider),
+        )?;
+
         let flashblocks_ws_addr = SocketAddr::new(
             self.flashblocks.flashblocks_addr.parse()?,
             self.flashblocks.flashblocks_port,
@@ -395,6 +418,7 @@ impl Args {
             metering_wait_duration: self.metering_wait_duration_ms.map(Duration::from_millis),
             predicate_eval_hard_cutoff: Duration::from_millis(self.predicate_eval_hard_cutoff_ms),
             metering_provider,
+            resource_metering,
             rejection_cache: RejectionCache::new(
                 self.rejection_cache_max_capacity,
                 Duration::from_secs(self.rejection_cache_ttl_secs),
@@ -448,6 +472,26 @@ mod tests {
         assert_eq!(config.block_time, Duration::from_millis(1000));
         assert!(config.max_gas_per_txn.is_none());
         assert!(config.manifest_precheck_enabled);
+        assert_eq!(config.resource_metering.throttling_mode, ResourceThrottlingMode::Off);
+        assert!(config.resource_metering.schedule.is_empty());
+    }
+
+    #[test]
+    fn resource_throttling_flags_map_to_config() {
+        let parsed = CommandParser::parse_from([
+            "builder",
+            "--payload.resource-throttling-mode",
+            "dry-run",
+            "--payload.resource-metering-schedule",
+            "/tmp/resource-metering.json",
+        ]);
+
+        assert_eq!(parsed.args.resource_throttling_mode, ResourceThrottlingMode::DryRun);
+        assert_eq!(
+            parsed.args.resource_metering_schedule.as_deref(),
+            Some(std::path::Path::new("/tmp/resource-metering.json"))
+        );
+        assert!(parsed.args.build_metering_store().is_enabled());
     }
 
     #[test]

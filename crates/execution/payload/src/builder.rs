@@ -2,8 +2,11 @@
 use std::{marker::PhantomData, sync::Arc};
 
 use alloy_consensus::{BlockHeader, Transaction, Typed2718};
-use alloy_evm::Evm as AlloyEvm;
-use alloy_primitives::{B256, U256};
+use alloy_evm::{
+    Evm as AlloyEvm,
+    block::{CommitChanges, TxResult},
+};
+use alloy_primitives::{B256, TxHash, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
 use base_common_chains::Upgrades;
@@ -43,8 +46,8 @@ use tracing::{debug, debug_span, instrument, trace, warn};
 
 use crate::{
     Attributes, BasePayloadBuilderAttributes, PayloadPrimitives, ResourceMeteringMetrics,
-    ResourceThrottlingDecision, config::BaseBuilderConfig, error::BasePayloadBuilderError,
-    payload::BaseBuiltPayload,
+    ResourceSample, ResourceThrottlingDecision, config::BaseBuilderConfig,
+    error::BasePayloadBuilderError, payload::BaseBuiltPayload,
 };
 
 /// Base payload builder
@@ -718,7 +721,27 @@ where
                 PayloadBuilderError::other(BasePayloadBuilderError::TransactionEcRecoverFailed)
             })?;
 
-            let gas_output = match builder.execute_transaction(sequencer_tx.clone()) {
+            let resource_metering = &self.builder_config.resource_metering;
+            let resource_schedule = resource_metering.schedule.as_ref();
+            let account_sequencer_usage =
+                resource_metering.throttling_mode.is_enabled() && !resource_schedule.is_empty();
+            let mut sequencer_usage = None;
+            let gas_output = match builder.execute_transaction_with_result_closure(
+                sequencer_tx.clone(),
+                |result| {
+                    if !account_sequencer_usage {
+                        return;
+                    }
+                    let result_and_state = result.result();
+                    let sample = ResourceSample::from_execution(
+                        result_and_state.result.tx_gas_used(),
+                        &result_and_state.state,
+                        None,
+                    );
+                    sequencer_usage =
+                        resource_schedule.evaluate(sample.gas_used, &sample.operations).ok();
+                },
+            ) {
                 Ok(gas_output) => gas_output,
                 Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
                     error,
@@ -733,6 +756,15 @@ where
             };
 
             info.cumulative_gas_used += gas_output.tx_gas_used();
+            if let Some(usage) = sequencer_usage
+                && let Err(error) = usage.add_to(&mut info.resource_metering_usage)
+            {
+                warn!(
+                    target: "payload_builder",
+                    error = %error,
+                    "resource metering cumulative usage overflowed on sequencer transaction"
+                );
+            }
         }
 
         Ok(info)
@@ -829,48 +861,26 @@ where
             };
 
             let tx_hash = *tx.hash();
-            let mut pending_resource_usage = None;
+            let meter = resource_metering_active
+                .then(|| {
+                    crate::MeteringProvider::get(resource_metering.provider.as_ref(), &tx_hash)
+                })
+                .flatten();
+            let simulated = meter.as_ref().map(|meter| ResourceSample::from_meter(meter, &tx_hash));
             if resource_metering_active {
-                let meter =
-                    crate::MeteringProvider::get(resource_metering.provider.as_ref(), &tx_hash);
-
-                match resource_schedule.evaluate_transaction(
+                let predicted = resource_schedule.evaluate_transaction(
                     meter.as_ref(),
                     &tx_hash,
                     &info.resource_metering_usage,
-                ) {
-                    ResourceThrottlingDecision::Allow(usage) => {
-                        pending_resource_usage = Some(usage);
-                    }
-                    ResourceThrottlingDecision::Throttle { error, usage } => {
-                        let enforced = !resource_metering.throttling_mode.is_dry_run();
-                        ResourceMeteringMetrics::record_limit(&error, enforced);
-                        warn!(
-                            target: "payload_builder",
-                            tx_hash = %tx_hash,
-                            dimension = %error.dimension,
-                            scope = %error.scope,
-                            used = error.used,
-                            limit = error.limit,
-                            dry_run = !enforced,
-                            "resource throttling budget exceeded"
-                        );
-                        if enforced {
-                            best_txs.mark_invalid(tx.sender(), tx.nonce());
-                            continue;
-                        }
-                        pending_resource_usage = Some(usage);
-                    }
-                    ResourceThrottlingDecision::CalculationFailed => {
-                        ResourceMeteringMetrics::calculation_failed().increment(1);
-                        warn!(
-                            target: "payload_builder",
-                            tx_hash = %tx_hash,
-                            "resource metering usage calculation failed"
-                        );
-                        best_txs.mark_invalid(tx.sender(), tx.nonce());
-                        continue;
-                    }
+                );
+                record_resource_throttling_decision(
+                    tx_hash,
+                    &predicted,
+                    resource_metering.throttling_mode.is_dry_run(),
+                );
+                if predicted.should_exclude(resource_metering.throttling_mode) {
+                    best_txs.mark_invalid(tx.sender(), tx.nonce());
+                    continue;
                 }
             }
 
@@ -906,22 +916,80 @@ where
                 continue;
             }
 
-            let gas_output = match builder.execute_transaction(tx.clone()) {
-                Ok(gas_output) => gas_output,
-                Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
-                    error,
-                    ..
-                })) => {
-                    if error.is_nonce_too_low() {
-                        trace!(target: "payload_builder", %error, ?tx, "skipping nonce too low transaction");
+            // check if the job was cancelled, if so we can exit early
+            if self.cancel.is_cancelled() {
+                return Ok(Some(()));
+            }
+
+            let mut pending_resource_usage = None;
+            let gas_output = if resource_metering_active {
+                match builder.execute_transaction_with_commit_condition(tx.clone(), |result| {
+                    let result_and_state = result.result();
+                    let sample = ResourceSample::from_execution(
+                        result_and_state.result.tx_gas_used(),
+                        &result_and_state.state,
+                        simulated.as_ref(),
+                    );
+                    let decision =
+                        resource_schedule.decide_sample(&sample, &info.resource_metering_usage);
+                    record_resource_throttling_decision(
+                        tx_hash,
+                        &decision,
+                        resource_metering.throttling_mode.is_dry_run(),
+                    );
+                    let exclude = decision.should_exclude(resource_metering.throttling_mode);
+                    if !exclude {
+                        match decision {
+                            ResourceThrottlingDecision::Allow(usage)
+                            | ResourceThrottlingDecision::Throttle { usage, .. } => {
+                                pending_resource_usage = Some(usage);
+                            }
+                            ResourceThrottlingDecision::CalculationFailed => {}
+                        }
+                        CommitChanges::Yes
                     } else {
-                        trace!(target: "payload_builder", %error, ?tx, "skipping invalid transaction and its descendants");
-                        best_txs.mark_invalid(tx.signer(), tx.nonce());
+                        CommitChanges::No
                     }
-                    continue;
+                }) {
+                    Ok(Some(gas_output)) => gas_output,
+                    Ok(None) => {
+                        best_txs.mark_invalid(tx.signer(), tx.nonce());
+                        continue;
+                    }
+                    Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
+                        error,
+                        ..
+                    })) => {
+                        if error.is_nonce_too_low() {
+                            trace!(target: "payload_builder", %error, ?tx, "skipping nonce too low transaction");
+                        } else {
+                            trace!(target: "payload_builder", %error, ?tx, "skipping invalid transaction and its descendants");
+                            best_txs.mark_invalid(tx.signer(), tx.nonce());
+                        }
+                        continue;
+                    }
+                    Err(err) => {
+                        return Err(PayloadBuilderError::EvmExecutionError(Box::new(err)));
+                    }
                 }
-                Err(err) => {
-                    return Err(PayloadBuilderError::EvmExecutionError(Box::new(err)));
+            } else {
+                match builder.execute_transaction(tx.clone()) {
+                    Ok(gas_output) => gas_output,
+                    Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
+                        error,
+                        ..
+                    })) => {
+                        if error.is_nonce_too_low() {
+                            trace!(target: "payload_builder", %error, ?tx, "skipping nonce too low transaction");
+                        } else {
+                            trace!(target: "payload_builder", %error, ?tx, "skipping invalid transaction and its descendants");
+                            best_txs.mark_invalid(tx.signer(), tx.nonce());
+                        }
+                        continue;
+                    }
+                    Err(err) => {
+                        return Err(PayloadBuilderError::EvmExecutionError(Box::new(err)));
+                    }
                 }
             };
 
@@ -952,6 +1020,37 @@ where
         }
 
         Ok(None)
+    }
+}
+
+fn record_resource_throttling_decision(
+    tx_hash: TxHash,
+    decision: &ResourceThrottlingDecision,
+    dry_run: bool,
+) {
+    match decision {
+        ResourceThrottlingDecision::Allow(_) => {}
+        ResourceThrottlingDecision::Throttle { error, .. } => {
+            ResourceMeteringMetrics::record_limit(error, !dry_run);
+            warn!(
+                target: "payload_builder",
+                tx_hash = %tx_hash,
+                dimension = %error.dimension,
+                scope = %error.scope,
+                used = error.used,
+                limit = error.limit,
+                dry_run,
+                "resource throttling budget exceeded"
+            );
+        }
+        ResourceThrottlingDecision::CalculationFailed => {
+            ResourceMeteringMetrics::calculation_failed().increment(1);
+            warn!(
+                target: "payload_builder",
+                tx_hash = %tx_hash,
+                "resource metering usage calculation failed"
+            );
+        }
     }
 }
 

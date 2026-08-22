@@ -1,16 +1,19 @@
 //! Versioned resource-metering schedules and their transaction-cost evaluator.
 //!
-//! Resource metering is the system: simulate a transaction, measure its resource
-//! usage, and optionally throttle selection from those measurements. Metering
-//! reweights `meterBundle` opcode, precompile, and pseudo-opcode aggregates into
-//! independent resource-unit dimensions. Throttling excludes a transaction from
-//! the payload when that metered usage exceeds a budget. Neither changes
-//! protocol gas, fees, or validity.
+//! Resource metering reweights named observations into independent resource-unit
+//! dimensions. Simulated `meterBundle` data is a candidate pre-filter.
+//! Committed payload usage is accounted from executed observations when they
+//! exist: actual gas used, net post-state effects such as
+//! [`ResourceSample::STATE_NEW_STORAGE_SLOT`], and simulated opcode bags only
+//! for measurements the production EVM did not record. Throttling excludes a
+//! transaction when that usage exceeds a budget. Neither changes protocol gas,
+//! fees, or validity.
 
 use std::{collections::HashMap, fmt, fs, path::Path, str::FromStr};
 
-use alloy_primitives::TxHash;
+use alloy_primitives::{Address, TxHash};
 use base_bundles::{MeterBundleResponse, OpcodeGas};
+use revm::state::EvmState;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -153,6 +156,158 @@ impl ResourceMeteringUsage {
             cumulative[index] += value;
         }
         Ok(())
+    }
+}
+
+/// Named resource observations for one transaction.
+///
+/// `gas_used` and net post-state effects are taken from builder execution when
+/// that result is available. Opcode and precompile counts stay on the simulated
+/// `meterBundle` bag unless a production inspector attached them here.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ResourceSample {
+    /// Transaction gas used for `baseGasWeight`.
+    pub gas_used: u64,
+    /// Opcode, precompile, pseudo-opcode, and post-state effect observations.
+    pub operations: Vec<OpcodeGas>,
+}
+
+impl ResourceSample {
+    /// Zero-to-nonzero storage transitions observed in post-EVM account state.
+    ///
+    /// Duplicate writes to one fresh slot count once. This is not `SSTORE`.
+    pub const STATE_NEW_STORAGE_SLOT: &'static str = "STATE_NEW_STORAGE_SLOT";
+
+    /// Storage slots whose present value differs from the original value.
+    ///
+    /// Includes new slots, in-place updates, and clears. Loaded but unwritten
+    /// slots are omitted. This is a superset of
+    /// [`Self::STATE_NEW_STORAGE_SLOT`] and [`Self::STATE_CLEARED_STORAGE_SLOT`].
+    pub const STATE_CHANGED_STORAGE_SLOT: &'static str = "STATE_CHANGED_STORAGE_SLOT";
+
+    /// Nonzero-to-zero storage transitions observed in post-EVM account state.
+    ///
+    /// Duplicate writes to one cleared slot count once. This is not `SSTORE`.
+    pub const STATE_CLEARED_STORAGE_SLOT: &'static str = "STATE_CLEARED_STORAGE_SLOT";
+
+    /// Accounts marked touched in post-EVM state.
+    ///
+    /// This is not `state.len()`: loaded but unwritten accounts are omitted.
+    pub const STATE_TOUCHED_ACCOUNT: &'static str = "STATE_TOUCHED_ACCOUNT";
+
+    /// Accounts whose balance, nonce, or code changed from the original info.
+    ///
+    /// Storage-only writes are counted by the slot operations, not here.
+    pub const STATE_CHANGED_ACCOUNT: &'static str = "STATE_CHANGED_ACCOUNT";
+
+    const EXECUTED_STATE_OPERATIONS: [&'static str; 5] = [
+        Self::STATE_NEW_STORAGE_SLOT,
+        Self::STATE_CHANGED_STORAGE_SLOT,
+        Self::STATE_CLEARED_STORAGE_SLOT,
+        Self::STATE_TOUCHED_ACCOUNT,
+        Self::STATE_CHANGED_ACCOUNT,
+    ];
+
+    /// Builds a predicted sample from `meterBundle` output.
+    pub fn from_meter(meter: &MeterBundleResponse, tx_hash: &TxHash) -> Self {
+        let result = meter.results.iter().find(|result| result.tx_hash == *tx_hash);
+        Self {
+            gas_used: result.map_or(meter.total_gas_used, |result| result.gas_used),
+            operations: result.map(|result| result.opcode_gas.clone()).unwrap_or_default(),
+        }
+    }
+
+    /// Builds an executed-preferred sample.
+    ///
+    /// Actual gas and net post-state effects replace simulated values.
+    /// Simulated opcode rows are kept only for names execution did not observe.
+    pub fn from_execution(gas_used: u64, state: &EvmState, simulated: Option<&Self>) -> Self {
+        let mut operations = simulated.map(|sample| sample.operations.clone()).unwrap_or_default();
+        operations.retain(|entry| {
+            let name = ResourceMeteringSchedule::normalize_operation_name(&entry.opcode);
+            !Self::EXECUTED_STATE_OPERATIONS.iter().any(|operation| name == *operation)
+        });
+        Self::push_count(
+            &mut operations,
+            Self::STATE_NEW_STORAGE_SLOT,
+            Self::count_new_storage_slots(state),
+        );
+        Self::push_count(
+            &mut operations,
+            Self::STATE_CHANGED_STORAGE_SLOT,
+            Self::count_changed_storage_slots(state),
+        );
+        Self::push_count(
+            &mut operations,
+            Self::STATE_CLEARED_STORAGE_SLOT,
+            Self::count_cleared_storage_slots(state),
+        );
+        Self::push_count(
+            &mut operations,
+            Self::STATE_TOUCHED_ACCOUNT,
+            Self::count_touched_accounts(state),
+        );
+        Self::push_count(
+            &mut operations,
+            Self::STATE_CHANGED_ACCOUNT,
+            Self::count_changed_accounts(state),
+        );
+        Self { gas_used, operations }
+    }
+
+    /// Counts changed storage slots whose value transitions from zero to non-zero.
+    pub fn count_new_storage_slots(state: &EvmState) -> u64 {
+        state
+            .values()
+            .flat_map(|account| account.storage.values())
+            .filter(|slot| slot.original_value().is_zero() && !slot.present_value().is_zero())
+            .fold(0, |count, _| count.saturating_add(1))
+    }
+
+    /// Counts storage slots whose present value differs from the original value.
+    pub fn count_changed_storage_slots(state: &EvmState) -> u64 {
+        state
+            .values()
+            .flat_map(|account| account.storage.values())
+            .filter(|slot| slot.is_changed())
+            .fold(0, |count, _| count.saturating_add(1))
+    }
+
+    /// Counts changed storage slots whose value transitions from non-zero to zero.
+    pub fn count_cleared_storage_slots(state: &EvmState) -> u64 {
+        state
+            .values()
+            .flat_map(|account| account.storage.values())
+            .filter(|slot| !slot.original_value().is_zero() && slot.present_value().is_zero())
+            .fold(0, |count, _| count.saturating_add(1))
+    }
+
+    /// Counts accounts marked touched in post-EVM state.
+    pub fn count_touched_accounts(state: &EvmState) -> u64 {
+        state
+            .values()
+            .filter(|account| account.is_touched())
+            .fold(0, |count, _| count.saturating_add(1))
+    }
+
+    /// Counts accounts whose balance, nonce, or code changed from the original info.
+    pub fn count_changed_accounts(state: &EvmState) -> u64 {
+        state
+            .values()
+            .filter(|account| account.is_changed())
+            .fold(0, |count, _| count.saturating_add(1))
+    }
+
+    fn push_count(operations: &mut Vec<OpcodeGas>, name: &'static str, count: u64) {
+        if count == 0 {
+            return;
+        }
+        operations.push(OpcodeGas {
+            contract_address: Address::ZERO,
+            opcode: name.to_string(),
+            count,
+            gas_used: 0,
+        });
     }
 }
 
@@ -536,10 +691,25 @@ pub enum ResourceThrottlingDecision {
     CalculationFailed,
 }
 
-impl CompiledResourceMeteringSchedule {
-    /// Meters one transaction and returns a throttling decision.
+impl ResourceThrottlingDecision {
+    /// Returns whether enforce mode should exclude this transaction from the payload.
     ///
-    /// Missing metering data fails open with zero operation-specific usage.
+    /// Dry-run still observes [`Self::Throttle`] without excluding. Calculation
+    /// failures exclude so a corrupt sample cannot silently blow a budget.
+    pub const fn should_exclude(&self, mode: ResourceThrottlingMode) -> bool {
+        match self {
+            Self::Allow(_) => false,
+            Self::Throttle { .. } => !mode.is_dry_run(),
+            Self::CalculationFailed => true,
+        }
+    }
+}
+
+impl CompiledResourceMeteringSchedule {
+    /// Predicted admission check from `meterBundle` data.
+    ///
+    /// Missing metering data fails open with zero predicted usage so the
+    /// transaction can still execute and be accounted from actual results.
     pub fn evaluate_transaction(
         &self,
         meter: Option<&MeterBundleResponse>,
@@ -551,11 +721,16 @@ impl CompiledResourceMeteringSchedule {
                 self.dimensions.len(),
             ));
         };
+        self.decide_sample(&ResourceSample::from_meter(meter, tx_hash), cumulative)
+    }
 
-        let result = meter.results.iter().find(|result| result.tx_hash == *tx_hash);
-        let gas_used = result.map_or(meter.total_gas_used, |result| result.gas_used);
-        let opcode_gas = result.map(|result| result.opcode_gas.as_slice()).unwrap_or_default();
-        let usage = match self.evaluate(gas_used, opcode_gas) {
+    /// Evaluates a sample against transaction and cumulative block budgets.
+    pub fn decide_sample(
+        &self,
+        sample: &ResourceSample,
+        cumulative: &[u128],
+    ) -> ResourceThrottlingDecision {
+        let usage = match self.evaluate(sample.gas_used, &sample.operations) {
             Ok(usage) => usage,
             Err(_) => return ResourceThrottlingDecision::CalculationFailed,
         };
@@ -574,7 +749,8 @@ impl CompiledResourceMeteringSchedule {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::Address;
+    use alloy_primitives::{Address, U256};
+    use revm::state::{Account, EvmStorageSlot, TransactionId};
 
     use super::*;
 
@@ -793,5 +969,164 @@ mod tests {
         let compiled = CompiledResourceMeteringSchedule::compile(schedule).unwrap();
         let decision = compiled.evaluate_transaction(None, &TxHash::ZERO, &[]);
         assert_eq!(decision, ResourceThrottlingDecision::Allow(ResourceMeteringUsage::zero(1)));
+        assert!(!decision.should_exclude(ResourceThrottlingMode::Enforce));
+    }
+
+    fn state_with_slots(slots: &[(U256, U256, U256)]) -> EvmState {
+        state_with_account(Address::ZERO, Account::default(), slots)
+    }
+
+    fn state_with_account(
+        address: Address,
+        mut account: Account,
+        slots: &[(U256, U256, U256)],
+    ) -> EvmState {
+        for (key, original, present) in slots {
+            account.storage.insert(
+                *key,
+                EvmStorageSlot::new_changed(*original, *present, TransactionId::ZERO),
+            );
+        }
+        let mut state = EvmState::default();
+        state.insert(address, account);
+        state
+    }
+
+    fn operation_count(sample: &ResourceSample, name: &str) -> Option<u64> {
+        sample.operations.iter().find(|entry| entry.opcode == name).map(|entry| entry.count)
+    }
+
+    #[test]
+    fn counts_only_zero_to_nonzero_storage_transitions() {
+        let state = state_with_slots(&[
+            (U256::from(1), U256::ZERO, U256::from(7)),
+            (U256::from(2), U256::from(1), U256::from(2)),
+            (U256::from(3), U256::from(4), U256::ZERO),
+        ]);
+        assert_eq!(ResourceSample::count_new_storage_slots(&state), 1);
+        assert_eq!(ResourceSample::count_changed_storage_slots(&state), 3);
+        assert_eq!(ResourceSample::count_cleared_storage_slots(&state), 1);
+    }
+
+    #[test]
+    fn duplicate_writes_to_one_fresh_slot_count_once() {
+        let state = state_with_slots(&[(U256::from(1), U256::ZERO, U256::from(9))]);
+        assert_eq!(ResourceSample::count_new_storage_slots(&state), 1);
+        assert_eq!(ResourceSample::count_changed_storage_slots(&state), 1);
+    }
+
+    #[test]
+    fn ignores_loaded_but_unwritten_slots_and_accounts() {
+        let mut account = Account::default();
+        account
+            .storage
+            .insert(U256::from(1), EvmStorageSlot::new(U256::from(5), TransactionId::ZERO));
+        let mut state = EvmState::default();
+        state.insert(Address::ZERO, account);
+
+        assert_eq!(ResourceSample::count_new_storage_slots(&state), 0);
+        assert_eq!(ResourceSample::count_changed_storage_slots(&state), 0);
+        assert_eq!(ResourceSample::count_cleared_storage_slots(&state), 0);
+        assert_eq!(ResourceSample::count_touched_accounts(&state), 0);
+        assert_eq!(ResourceSample::count_changed_accounts(&state), 0);
+        let sample = ResourceSample::from_execution(21_000, &state, None);
+        assert!(sample.operations.is_empty());
+    }
+
+    #[test]
+    fn counts_touched_and_changed_accounts_without_journal_loads() {
+        let mut loaded = Account::default();
+        loaded
+            .storage
+            .insert(U256::from(1), EvmStorageSlot::new(U256::from(5), TransactionId::ZERO));
+
+        let mut touched = Account::default();
+        touched.mark_touch();
+
+        let mut changed = Account::default();
+        changed.info.balance = U256::from(1);
+
+        let mut both = Account::default();
+        both.mark_touch();
+        both.info.nonce = 1;
+
+        let mut state = EvmState::default();
+        state.insert(Address::repeat_byte(0x01), loaded);
+        state.insert(Address::repeat_byte(0x02), touched);
+        state.insert(Address::repeat_byte(0x03), changed);
+        state.insert(Address::repeat_byte(0x04), both);
+
+        assert_eq!(ResourceSample::count_touched_accounts(&state), 2);
+        assert_eq!(ResourceSample::count_changed_accounts(&state), 2);
+        assert_eq!(state.len(), 4);
+    }
+
+    #[test]
+    fn executed_sample_prefers_actual_gas_and_state_effects_over_simulation() {
+        let simulated = ResourceSample {
+            gas_used: 99_999,
+            operations: vec![
+                opcode_gas("SSTORE", 6, 200_000),
+                opcode_gas(ResourceSample::STATE_NEW_STORAGE_SLOT, 40, 0),
+                opcode_gas(ResourceSample::STATE_CHANGED_STORAGE_SLOT, 99, 0),
+                opcode_gas(ResourceSample::STATE_TOUCHED_ACCOUNT, 7, 0),
+            ],
+        };
+        let mut account = Account::default();
+        account.mark_touch();
+        let state = state_with_account(
+            Address::ZERO,
+            account,
+            &[
+                (U256::from(1), U256::ZERO, U256::from(1)),
+                (U256::from(2), U256::from(4), U256::ZERO),
+            ],
+        );
+        let sample = ResourceSample::from_execution(21_000, &state, Some(&simulated));
+
+        assert_eq!(sample.gas_used, 21_000);
+        assert_eq!(operation_count(&sample, "SSTORE"), Some(6));
+        assert_eq!(operation_count(&sample, ResourceSample::STATE_NEW_STORAGE_SLOT), Some(1));
+        assert_eq!(operation_count(&sample, ResourceSample::STATE_CHANGED_STORAGE_SLOT), Some(2));
+        assert_eq!(operation_count(&sample, ResourceSample::STATE_CLEARED_STORAGE_SLOT), Some(1));
+        assert_eq!(operation_count(&sample, ResourceSample::STATE_TOUCHED_ACCOUNT), Some(1));
+        assert!(operation_count(&sample, ResourceSample::STATE_CHANGED_ACCOUNT).is_none());
+    }
+
+    #[test]
+    fn executed_slots_are_accounted_without_simulated_data() {
+        let schedule = ResourceMeteringSchedule {
+            dimensions: vec![dimension(
+                "stateRoot",
+                50,
+                Some(40),
+                0,
+                vec![operation(ResourceSample::STATE_NEW_STORAGE_SLOT, 0, 10)],
+            )],
+            ..Default::default()
+        };
+        let compiled = CompiledResourceMeteringSchedule::compile(schedule).unwrap();
+        let state = state_with_slots(&[
+            (U256::from(1), U256::ZERO, U256::from(1)),
+            (U256::from(2), U256::ZERO, U256::from(1)),
+            (U256::from(3), U256::ZERO, U256::from(1)),
+            (U256::from(4), U256::ZERO, U256::from(1)),
+            (U256::from(5), U256::ZERO, U256::from(1)),
+            (U256::from(6), U256::ZERO, U256::from(1)),
+        ]);
+        let sample = ResourceSample::from_execution(21_000, &state, None);
+        let decision = compiled.decide_sample(&sample, &[]);
+        assert!(matches!(
+            decision,
+            ResourceThrottlingDecision::Throttle {
+                error: ResourceThrottlingLimitExceeded {
+                    scope: ResourceThrottlingLimitScope::Transaction,
+                    ..
+                },
+                ..
+            }
+        ));
+        assert!(decision.should_exclude(ResourceThrottlingMode::Enforce));
+        assert!(!decision.should_exclude(ResourceThrottlingMode::DryRun));
     }
 }

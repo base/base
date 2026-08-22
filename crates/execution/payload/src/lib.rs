@@ -21,8 +21,9 @@ mod resource_metering;
 pub use resource_metering::{
     CompiledResourceMeteringDimension, CompiledResourceMeteringSchedule, ResourceMeteringDimension,
     ResourceMeteringError, ResourceMeteringOperation, ResourceMeteringSchedule,
-    ResourceMeteringUsage, ResourceThrottlingCheckError, ResourceThrottlingDecision,
-    ResourceThrottlingLimitExceeded, ResourceThrottlingLimitScope, ResourceThrottlingMode,
+    ResourceMeteringUsage, ResourceSample, ResourceThrottlingCheckError,
+    ResourceThrottlingDecision, ResourceThrottlingLimitExceeded, ResourceThrottlingLimitScope,
+    ResourceThrottlingMode,
 };
 pub mod payload;
 pub use payload::{BaseBuiltPayload, BasePayloadBuilderAttributes};

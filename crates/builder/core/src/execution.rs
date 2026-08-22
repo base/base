@@ -219,6 +219,8 @@ pub struct ExecutionInfo {
     pub cumulative_uncompressed_bytes: u64,
     /// Tracks fees from executed mempool transactions
     pub total_fees: U256,
+    /// Cumulative resource-metering units for the current payload.
+    pub resource_metering_usage: Vec<u128>,
     /// Extra execution information for the Flashblocks builder
     pub extra: FlashblocksExecutionInfo,
     /// DA Footprint Scalar for Jovian
@@ -241,6 +243,7 @@ impl ExecutionInfo {
             extra: Default::default(),
             da_footprint_scalar: None,
             rejected_txs: Vec::new(),
+            resource_metering_usage: Vec::new(),
         }
     }
 

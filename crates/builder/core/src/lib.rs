@@ -26,7 +26,8 @@ mod traits;
 pub use traits::{ClientBounds, NodeBounds, PayloadTxsBounds, PoolBounds};
 
 pub use base_execution_payload_builder::{
-    MeteringProvider, NoopMeteringProvider, SharedMeteringProvider,
+    MeteringProvider, NoopMeteringProvider, ResourceThrottlingMode, SharedMeteringProvider,
+    config::ResourceMeteringConfig,
 };
 
 mod rejected_tx_forwarder;
