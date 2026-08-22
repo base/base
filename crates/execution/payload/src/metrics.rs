@@ -1,4 +1,4 @@
-//! Metrics for native payload resource metering by opcode.
+//! Metrics for payload resource metering by opcode.
 
 use crate::resource_metering::{ResourceThrottlingLimitExceeded, ResourceThrottlingLimitScope};
 

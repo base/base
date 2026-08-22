@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use alloy_consensus::{Eip658Value, Transaction};
+use alloy_consensus::{Eip658Value, Transaction, transaction::TxHashRef};
 use alloy_eips::{Encodable2718, Typed2718};
 use alloy_evm::Database;
 #[cfg(any(test, feature = "test-utils"))]
@@ -19,8 +19,7 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
-    BasePayloadBuilderAttributes, ResourceMeteringMetrics, ResourceSample,
-    ResourceThrottlingDecision, error::BasePayloadBuilderError,
+    BasePayloadBuilderAttributes, error::BasePayloadBuilderError,
 };
 use base_execution_txpool::{
     BasePooledTx, BundleTransaction, GuardMetrics, PredicateContext, TimestampedTransaction,
@@ -198,6 +197,10 @@ impl FlashblockDiagnostics {
             }
             TxnExecutionError::MeteringDataPending => {
                 self.txs_rejected_metering_data_pending += 1;
+            }
+            TxnExecutionError::ResourceThrottling(_)
+            | TxnExecutionError::ResourceMeteringCalculationFailed => {
+                self.txs_rejected_resource_throttling += 1;
             }
             TxnExecutionError::SequencerTransaction
             | TxnExecutionError::NonceTooLow
@@ -637,24 +640,16 @@ impl BasePayloadBuilderCtx {
 
             // add gas used by the transaction to cumulative gas used, before creating the receipt
             let gas_used = result.tx_gas_used();
+            self.builder_config
+                .resource_metering
+                .account_unthrottled(
+                    sequencer_tx.tx_hash(),
+                    gas_used,
+                    &state,
+                    &mut info.resource_metering_usage,
+                )
+                .map_err(PayloadBuilderError::other)?;
             info.cumulative_gas_used += gas_used;
-
-            let resource_metering = &self.builder_config.resource_metering;
-            if resource_metering.throttling_mode.is_enabled()
-                && !resource_metering.schedule.is_empty()
-            {
-                let sample = ResourceSample::from_execution(gas_used, &state, None);
-                if let Ok(usage) =
-                    resource_metering.schedule.evaluate(sample.gas_used, &sample.operations)
-                    && let Err(error) = usage.add_to(&mut info.resource_metering_usage)
-                {
-                    warn!(
-                        target: "payload_builder",
-                        error = %error,
-                        "resource metering cumulative usage overflowed on sequencer transaction"
-                    );
-                }
-            }
 
             if !sequencer_tx.is_deposit() {
                 info.cumulative_da_bytes_used += base_common_flz::tx_estimated_size_fjord_bytes(
@@ -792,9 +787,6 @@ impl BasePayloadBuilderCtx {
         // transaction was seen; emitted once when the loop finishes.
         let mut predicate_eval_total: Option<Duration> = None;
         let resource_metering = &self.builder_config.resource_metering;
-        let resource_schedule = resource_metering.schedule.as_ref();
-        let resource_metering_active =
-            resource_metering.throttling_mode.is_enabled() && !resource_schedule.is_empty();
 
         while let Some(tx) = best_txs.next(()) {
             if tx.is_bundle_expired(block_number, block_timestamp) {
@@ -1141,7 +1133,7 @@ impl BasePayloadBuilderCtx {
             };
 
             let tx = tx.into_consensus();
-            let tx_hash = tx.tx_hash();
+            let tx_hash = *tx.tx_hash();
             let tx_uncompressed_size = tx.encode_2718_len() as u64;
 
             let log_txn = |result: Result<TxnOutcome, TxnExecutionError>| {
@@ -1215,20 +1207,6 @@ impl BasePayloadBuilderCtx {
                 }
             }
 
-            if resource_metering_active {
-                let predicted = resource_schedule.evaluate_transaction(
-                    resource_usage.as_ref(),
-                    &tx_hash,
-                    &info.resource_metering_usage,
-                );
-                self.record_resource_throttling_decision(tx_hash, &predicted);
-                if predicted.should_exclude(resource_metering.throttling_mode) {
-                    diag.txs_rejected_resource_throttling += 1;
-                    best_txs.mark_invalid(tx.signer(), tx.nonce());
-                    continue;
-                }
-            }
-
             // Extract predicted execution time from metering data
             let predicted_execution_time_us =
                 resource_usage.as_ref().map(|m| m.total_execution_time_us);
@@ -1248,6 +1226,34 @@ impl BasePayloadBuilderCtx {
                 Some(ordering_position),
                 || BuilderConsideredEventData::new(info, limits, Some(&tx_resources)),
             );
+
+            let (simulated, predicted) =
+                resource_metering.predict(&tx_hash, &info.resource_metering_usage);
+            if predicted.should_exclude()
+                && let Some(err) = TxnExecutionError::from_resource_decision(&predicted)
+            {
+                diag.record_rejection(&err);
+                if err.is_permanent() {
+                    diag.permanently_rejected_txs.push(tx_hash);
+                }
+                self.emit_builder_decision_event(
+                    &payload_id,
+                    TransactionEventType::BuilderRejected,
+                    tx_hash,
+                    Some(ordering_position),
+                    || {
+                        BuilderRejectedEventData::from_error(
+                            &err,
+                            info,
+                            limits,
+                            Some(&tx_resources),
+                        )
+                    },
+                );
+                log_txn(Err(err));
+                best_txs.mark_invalid(tx.signer(), tx.nonce());
+                continue;
+            }
 
             // ensure we still have capacity for this transaction
             if let Err(err) = info.is_tx_over_limits(&tx_resources, limits) {
@@ -1526,26 +1532,41 @@ impl BasePayloadBuilderCtx {
                 continue;
             }
 
-            let simulated =
-                resource_usage.as_ref().map(|meter| ResourceSample::from_meter(meter, &tx_hash));
             let mut pending_resource_usage = None;
-            if resource_metering_active {
-                let sample = ResourceSample::from_execution(gas_used, &state, simulated.as_ref());
-                let decision =
-                    resource_schedule.decide_sample(&sample, &info.resource_metering_usage);
-                self.record_resource_throttling_decision(tx_hash, &decision);
-                if decision.should_exclude(resource_metering.throttling_mode) {
-                    diag.txs_rejected_resource_throttling += 1;
+            if resource_metering.is_active() {
+                let decision = resource_metering.decide_executed(
+                    &tx_hash,
+                    gas_used,
+                    &state,
+                    simulated.as_ref(),
+                    &info.resource_metering_usage,
+                );
+                if decision.should_exclude()
+                    && let Some(err) = TxnExecutionError::from_resource_decision(&decision)
+                {
+                    diag.record_rejection(&err);
+                    if err.is_permanent() {
+                        diag.permanently_rejected_txs.push(tx_hash);
+                    }
+                    self.emit_builder_decision_event(
+                        &payload_id,
+                        TransactionEventType::BuilderRejected,
+                        tx_hash,
+                        Some(ordering_position),
+                        || {
+                            BuilderRejectedEventData::from_error(
+                                &err,
+                                info,
+                                limits,
+                                Some(&tx_resources),
+                            )
+                        },
+                    );
+                    log_txn(Err(err));
                     best_txs.mark_invalid(tx.signer(), tx.nonce());
                     continue;
                 }
-                match decision {
-                    ResourceThrottlingDecision::Allow(usage)
-                    | ResourceThrottlingDecision::Throttle { usage, .. } => {
-                        pending_resource_usage = Some(usage);
-                    }
-                    ResourceThrottlingDecision::CalculationFailed => {}
-                }
+                pending_resource_usage = decision.committed_usage();
             }
 
             info.cumulative_gas_used += gas_used;
@@ -1553,15 +1574,10 @@ impl BasePayloadBuilderCtx {
             info.cumulative_da_bytes_used += tx_da_size;
             // record uncompressed tx size
             info.cumulative_uncompressed_bytes += tx_uncompressed_size;
-            if let Some(usage) = pending_resource_usage
-                && let Err(error) = usage.add_to(&mut info.resource_metering_usage)
-            {
-                warn!(
-                    target: "payload_builder",
-                    tx_hash = %tx_hash,
-                    error = %error,
-                    "resource metering cumulative usage overflowed"
-                );
+            if let Some(usage) = pending_resource_usage {
+                usage
+                    .add_to(&mut info.resource_metering_usage)
+                    .map_err(PayloadBuilderError::other)?;
             }
 
             self.emit_builder_decision_event(
@@ -1758,38 +1774,6 @@ impl BasePayloadBuilderCtx {
         match limit {
             ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _) => {
                 BuilderMetrics::tx_execution_time_exceeded_total().increment(1);
-            }
-        }
-    }
-
-    fn record_resource_throttling_decision(
-        &self,
-        tx_hash: TxHash,
-        decision: &ResourceThrottlingDecision,
-    ) {
-        match decision {
-            ResourceThrottlingDecision::Allow(_) => {}
-            ResourceThrottlingDecision::Throttle { error, .. } => {
-                let dry_run = self.builder_config.resource_metering.throttling_mode.is_dry_run();
-                ResourceMeteringMetrics::record_limit(error, !dry_run);
-                warn!(
-                    target: "payload_builder",
-                    tx_hash = %tx_hash,
-                    dimension = %error.dimension,
-                    scope = %error.scope,
-                    used = error.used,
-                    limit = error.limit,
-                    dry_run,
-                    "resource throttling budget exceeded"
-                );
-            }
-            ResourceThrottlingDecision::CalculationFailed => {
-                ResourceMeteringMetrics::calculation_failed().increment(1);
-                warn!(
-                    target: "payload_builder",
-                    tx_hash = %tx_hash,
-                    "resource metering usage calculation failed"
-                );
             }
         }
     }

@@ -6,8 +6,7 @@ use base_builder_metering::{MeteringStore, MeteringStoreExtension};
 use base_bundle_extension::BundleExtension;
 use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
 use base_execution_payload_builder::{
-    NoopMeteringProvider, ResourceThrottlingMode, SharedMeteringProvider,
-    config::ResourceMeteringConfig,
+    NoopMeteringProvider, ResourceMeteringConfig, SharedMeteringProvider,
 };
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
@@ -41,8 +40,11 @@ use crate::upgrade_signal::{
 /// CLI arguments for metering RPC and priority-fee resource budgets.
 #[derive(Debug, Clone, PartialEq, Eq, Default, clap::Args)]
 pub struct MeteringArgs {
-    /// Enable metering RPC for transaction bundle simulation
-    #[arg(long = "enable-metering", value_name = "ENABLE_METERING")]
+    /// Enable metering RPC for transaction bundle simulation.
+    ///
+    /// Also the kill switch for payload resource metering: a loaded schedule
+    /// is evaluated only when this is set.
+    #[arg(long = "enable-metering", env = "ENABLE_METERING", value_name = "ENABLE_METERING")]
     pub enable_metering: bool,
 
     /// Whole-block gas budget for priority fee estimation.
@@ -80,18 +82,24 @@ pub struct MeteringArgs {
 
     /// Comma-separated list of EVM opcodes to track for gas metering
     /// (e.g., "SSTORE,SLOAD,KECCAK256"). Precompile gas is always tracked.
+    /// Resource-metering schedule operations are always unioned in when a
+    /// schedule is loaded.
     #[arg(long = "metering.metered-opcodes", requires = "enable_metering", value_delimiter = ',')]
     pub metering_metered_opcodes: Vec<String>,
 
-    /// Resource throttling mode for native payload admission: off, dry-run, or enforce.
-    #[arg(
-        long = "payload.resource-throttling-mode",
-        env = "PAYLOAD_RESOURCE_THROTTLING_MODE",
-        default_value_t = ResourceThrottlingMode::Off
-    )]
-    pub resource_throttling_mode: ResourceThrottlingMode,
+    /// Resource-metering schedule. Evaluated when `--enable-metering` is set.
+    #[command(flatten)]
+    pub resource_metering: ResourceMeteringArgs,
+}
 
+/// CLI arguments for payload resource metering and throttling.
+#[derive(Debug, Clone, PartialEq, Eq, Default, clap::Args)]
+pub struct ResourceMeteringArgs {
     /// JSON file containing the startup resource-metering schedule.
+    ///
+    /// Resource metering runs when metering is enabled and this schedule is
+    /// non-empty. Per-dimension `dryRun` in the file observes a budget without
+    /// excluding transactions.
     #[arg(long = "payload.resource-metering-schedule", env = "PAYLOAD_RESOURCE_METERING_SCHEDULE")]
     pub resource_metering_schedule: Option<PathBuf>,
 }
@@ -480,8 +488,10 @@ impl StandardBaseRethNode {
         // Fail fast on an incomplete upgrade-signal configuration before installing extensions.
         Self::validate_upgrade_signal_args(&rollup_args)?;
         let mut runner = BaseNodeRunner::new(rollup_args.clone());
-        let resource_throttling_mode = args.metering.resource_throttling_mode;
-        let provider: SharedMeteringProvider = if resource_throttling_mode.is_enabled() {
+        let resource_metering_enabled = args.metering.enable_metering;
+        let provider: SharedMeteringProvider = if resource_metering_enabled
+            && args.metering.resource_metering.resource_metering_schedule.is_some()
+        {
             // Match the builder CLI defaults for capacity and TTL.
             let store: SharedMeteringProvider =
                 Arc::new(MeteringStore::new(true, 10_000, Duration::from_secs(30)));
@@ -491,10 +501,12 @@ impl StandardBaseRethNode {
             Arc::new(NoopMeteringProvider)
         };
         let resource_metering = ResourceMeteringConfig::from_parts(
-            resource_throttling_mode,
-            args.metering.resource_metering_schedule.as_deref(),
+            resource_metering_enabled,
+            args.metering.resource_metering.resource_metering_schedule.as_deref(),
             provider,
         )?;
+        let schedule_operation_names: Vec<String> =
+            resource_metering.schedule.priced_operation_names().map(str::to_string).collect();
         runner = runner.with_resource_metering(resource_metering);
 
         // Create flashblocks config first so we can share its state with metering.
@@ -544,10 +556,16 @@ impl StandardBaseRethNode {
             da_bytes: args.metering.metering_da_bytes,
         };
         let metering_config = if args.metering.enable_metering {
-            let metered_opcodes = if args.metering.metering_metered_opcodes.is_empty() {
+            let mut opcode_names = args.metering.metering_metered_opcodes.clone();
+            for name in &schedule_operation_names {
+                if !opcode_names.iter().any(|existing| existing.eq_ignore_ascii_case(name)) {
+                    opcode_names.push(name.clone());
+                }
+            }
+            let metered_opcodes = if opcode_names.is_empty() {
                 MeteredOpcodes::default()
             } else {
-                MeteredOpcodes::parse(&args.metering.metering_metered_opcodes)?
+                MeteredOpcodes::parse(&opcode_names)?
             }
             .with_all_precompiles();
 
@@ -1003,16 +1021,15 @@ mod tests {
     fn test_standard_node_args_parses_resource_metering_flags() {
         let args = CommandParser::<StandardNodeArgs>::parse_from([
             "reth",
-            "--payload.resource-throttling-mode",
-            "dry-run",
+            "--enable-metering",
             "--payload.resource-metering-schedule",
             "/tmp/resource-metering.json",
         ])
         .args;
 
-        assert_eq!(args.metering.resource_throttling_mode, ResourceThrottlingMode::DryRun);
+        assert!(args.metering.enable_metering);
         assert_eq!(
-            args.metering.resource_metering_schedule.as_deref(),
+            args.metering.resource_metering.resource_metering_schedule.as_deref(),
             Some(std::path::Path::new("/tmp/resource-metering.json"))
         );
     }

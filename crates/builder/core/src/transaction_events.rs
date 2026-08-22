@@ -495,6 +495,10 @@ pub(crate) const fn rejection_reason_code(err: &TxnExecutionError) -> &'static s
         TxnExecutionError::EvmError => "evm_error",
         TxnExecutionError::MaxGasUsageExceeded => "max_gas_usage_exceeded",
         TxnExecutionError::MeteringDataPending => "metering_data_pending",
+        TxnExecutionError::ResourceThrottling(_) => "resource_throttling",
+        TxnExecutionError::ResourceMeteringCalculationFailed => {
+            "resource_metering_calculation_failed"
+        }
     }
 }
 
@@ -606,6 +610,10 @@ fn serialize_builder_event_data<T: Serialize>(data: BuilderEventData<T>) -> Map<
 
 #[cfg(test)]
 mod tests {
+    use base_execution_payload_builder::{
+        ResourceThrottlingLimitExceeded, ResourceThrottlingLimitScope,
+    };
+
     use super::*;
 
     fn context() -> BuilderTransactionEventContext {
@@ -698,6 +706,23 @@ mod tests {
                 ExecutionMeteringLimitExceeded::TransactionExecutionTime(1, 2),
             )),
             "tx_execution_time_exceeded"
+        );
+        assert_eq!(
+            rejection_reason_code(&TxnExecutionError::ResourceThrottling(
+                ResourceThrottlingLimitExceeded {
+                    dimension: "cpu".into(),
+                    scope: ResourceThrottlingLimitScope::Transaction,
+                    used: 1,
+                    transaction_cost: 1,
+                    limit: 1,
+                    dry_run: false,
+                },
+            )),
+            "resource_throttling"
+        );
+        assert_eq!(
+            rejection_reason_code(&TxnExecutionError::ResourceMeteringCalculationFailed),
+            "resource_metering_calculation_failed"
         );
     }
 }

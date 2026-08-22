@@ -12,6 +12,7 @@ extern crate alloc;
 pub mod builder;
 pub use builder::BasePayloadBuilder;
 pub mod config;
+pub use config::ResourceMeteringConfig;
 pub mod error;
 mod metering;
 pub use metering::{MeteringProvider, NoopMeteringProvider, SharedMeteringProvider};
@@ -23,7 +24,6 @@ pub use resource_metering::{
     ResourceMeteringError, ResourceMeteringOperation, ResourceMeteringSchedule,
     ResourceMeteringUsage, ResourceSample, ResourceThrottlingCheckError,
     ResourceThrottlingDecision, ResourceThrottlingLimitExceeded, ResourceThrottlingLimitScope,
-    ResourceThrottlingMode,
 };
 pub mod payload;
 pub use payload::{BaseBuiltPayload, BasePayloadBuilderAttributes};

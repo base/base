@@ -942,6 +942,7 @@ mod tests {
     use reth_transaction_pool::test_utils::TransactionBuilder;
 
     use super::*;
+    use revm::state::{Account as RevmAccount, EvmStorageSlot, TransactionId};
 
     fn create_parsed_bundle(txs: Vec<BaseTransactionSigned>) -> eyre::Result<ParsedBundle> {
         let txs: Vec<Bytes> = txs.iter().map(|tx| Bytes::from(tx.encoded_2718())).collect();
@@ -1032,8 +1033,6 @@ mod tests {
 
     #[test]
     fn state_effect_entries_count_net_original_to_present() {
-        use revm::state::{Account as RevmAccount, EvmStorageSlot, TransactionId};
-
         let mut account = RevmAccount::default();
         account.mark_touch();
         account.storage.insert(

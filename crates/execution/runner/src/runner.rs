@@ -210,9 +210,10 @@ mod tests {
             .with_da_config(da_config.clone())
             .with_gas_limit_config(gas_limit_config.clone())
             .with_manifest_precheck_enabled(false)
-            .with_resource_metering(ResourceMeteringConfig::enabled(
-                base_execution_payload_builder::ResourceThrottlingMode::DryRun,
-            ))
+            .with_resource_metering(ResourceMeteringConfig {
+                enabled: true,
+                ..ResourceMeteringConfig::default()
+            })
             .with_service_builder(TestPayloadServiceBuilder);
 
         assert!(!runner.manifest_precheck_enabled);
@@ -224,10 +225,7 @@ mod tests {
         assert_eq!(configured_da.max_da_tx_size(), Some(100));
         assert_eq!(configured_da.max_da_block_size(), Some(200));
         assert_eq!(configured_gas.gas_limit(), Some(30_000_000));
-        assert_eq!(
-            configured_metering.throttling_mode,
-            base_execution_payload_builder::ResourceThrottlingMode::DryRun
-        );
+        assert!(configured_metering.enabled);
 
         da_config.set_max_da_size(300, 400);
         gas_limit_config.set_gas_limit(40_000_000);

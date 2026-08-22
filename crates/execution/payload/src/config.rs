@@ -5,9 +5,14 @@ use std::{
     sync::{Arc, atomic::AtomicU64},
 };
 
+use alloy_primitives::TxHash;
+use revm::state::EvmState;
+use tracing::{debug, warn};
+
 use crate::{
-    CompiledResourceMeteringSchedule, NoopMeteringProvider, ResourceMeteringError,
-    ResourceMeteringSchedule, ResourceThrottlingMode, SharedMeteringProvider,
+    CompiledResourceMeteringSchedule, MeteringProvider, NoopMeteringProvider,
+    ResourceMeteringError, ResourceMeteringMetrics, ResourceMeteringSchedule,
+    ResourceMeteringUsage, ResourceSample, ResourceThrottlingDecision, SharedMeteringProvider,
 };
 
 /// Settings for the Base payload builder.
@@ -20,7 +25,7 @@ pub struct BaseBuilderConfig {
     /// Whether to drop positively stale EIP-8130 transactions using their
     /// captured authorization manifest before execution.
     pub manifest_precheck_enabled: bool,
-    /// Resource metering and throttling configuration for native payload admission.
+    /// Resource metering and throttling configuration for payload admission.
     pub resource_metering: ResourceMeteringConfig,
 }
 
@@ -50,7 +55,7 @@ impl BaseBuilderConfig {
         }
     }
 
-    /// Sets resource metering and throttling for native payload admission.
+    /// Sets resource metering and throttling for payload admission.
     pub fn with_resource_metering(mut self, resource_metering: ResourceMeteringConfig) -> Self {
         self.resource_metering = resource_metering;
         self
@@ -64,11 +69,12 @@ impl BaseBuilderConfig {
     }
 }
 
-/// Native payload resource metering and throttling.
+/// Payload resource metering and throttling.
 #[derive(Clone)]
 pub struct ResourceMeteringConfig {
-    /// Whether metered usage is ignored, observed, or used to throttle selection.
-    pub throttling_mode: ResourceThrottlingMode,
+    /// Kill switch for the evaluator. Limits take effect from the schedule when
+    /// this is set and the schedule is non-empty.
+    pub enabled: bool,
     /// Compiled startup schedule.
     pub schedule: Arc<CompiledResourceMeteringSchedule>,
     /// `meterBundle` results used to evaluate the schedule.
@@ -78,7 +84,7 @@ pub struct ResourceMeteringConfig {
 impl std::fmt::Debug for ResourceMeteringConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ResourceMeteringConfig")
-            .field("throttling_mode", &self.throttling_mode)
+            .field("enabled", &self.enabled)
             .field("schedule_empty", &self.schedule.is_empty())
             .field("provider_enabled", &crate::MeteringProvider::is_enabled(self.provider.as_ref()))
             .finish()
@@ -88,7 +94,7 @@ impl std::fmt::Debug for ResourceMeteringConfig {
 impl Default for ResourceMeteringConfig {
     fn default() -> Self {
         Self {
-            throttling_mode: ResourceThrottlingMode::Off,
+            enabled: false,
             schedule: Arc::new(
                 CompiledResourceMeteringSchedule::compile(ResourceMeteringSchedule::default())
                     .expect("the default resource metering schedule is valid"),
@@ -101,22 +107,151 @@ impl Default for ResourceMeteringConfig {
 impl ResourceMeteringConfig {
     /// Builds a shared config from startup flags.
     pub fn from_parts(
-        throttling_mode: ResourceThrottlingMode,
+        enabled: bool,
         schedule_path: Option<&Path>,
         provider: SharedMeteringProvider,
     ) -> Result<Self, ResourceMeteringError> {
-        let schedule = match schedule_path {
-            Some(path) => CompiledResourceMeteringSchedule::compile(
-                ResourceMeteringSchedule::from_file(path)?,
-            )?,
-            None => CompiledResourceMeteringSchedule::compile(ResourceMeteringSchedule::default())?,
+        let schedule = if enabled {
+            match schedule_path {
+                Some(path) => CompiledResourceMeteringSchedule::compile(
+                    ResourceMeteringSchedule::from_file(path)?,
+                )?,
+                None => {
+                    CompiledResourceMeteringSchedule::compile(ResourceMeteringSchedule::default())?
+                }
+            }
+        } else {
+            CompiledResourceMeteringSchedule::compile(ResourceMeteringSchedule::default())
+                .expect("the default resource metering schedule is valid")
         };
-        Ok(Self { throttling_mode, schedule: Arc::new(schedule), provider })
+        Ok(Self { enabled, schedule: Arc::new(schedule), provider })
     }
 
-    /// Builds a config that uses a no-op provider whenever `throttling_mode` is active.
-    pub fn enabled(throttling_mode: ResourceThrottlingMode) -> Self {
-        Self { throttling_mode, ..Self::default() }
+    /// Returns whether throttling is enabled with a non-empty schedule.
+    pub fn is_active(&self) -> bool {
+        self.enabled && !self.schedule.is_empty()
+    }
+
+    /// Looks up the predicted sample for `tx_hash`, if the provider has a matching result.
+    pub fn simulated_sample(&self, tx_hash: &TxHash) -> Option<ResourceSample> {
+        if !self.is_active() {
+            return None;
+        }
+        MeteringProvider::get(self.provider.as_ref(), tx_hash)
+            .and_then(|meter| ResourceSample::from_meter(&meter, tx_hash))
+    }
+
+    /// Predicted skip check. Records telemetry only when this decision excludes the tx.
+    pub fn predict(
+        &self,
+        tx_hash: &TxHash,
+        cumulative: &[u128],
+    ) -> (Option<ResourceSample>, ResourceThrottlingDecision) {
+        if !self.is_active() {
+            return (None, ResourceThrottlingDecision::Allow(ResourceMeteringUsage::zero(0)));
+        }
+        let simulated = self.simulated_sample(tx_hash);
+        let decision = simulated.as_ref().map_or_else(
+            || {
+                ResourceThrottlingDecision::Allow(ResourceMeteringUsage::zero(
+                    self.schedule.dimensions.len(),
+                ))
+            },
+            |sample| self.schedule.decide_sample(sample, cumulative),
+        );
+        if decision.should_exclude() {
+            self.record_decision(tx_hash, &decision);
+        }
+        (simulated, decision)
+    }
+
+    /// Executed admission check. Records the final decision.
+    pub fn decide_executed(
+        &self,
+        tx_hash: &TxHash,
+        gas_used: u64,
+        state: &EvmState,
+        simulated: Option<&ResourceSample>,
+        cumulative: &[u128],
+    ) -> ResourceThrottlingDecision {
+        if !self.is_active() {
+            return ResourceThrottlingDecision::Allow(ResourceMeteringUsage::zero(0));
+        }
+        let sample = ResourceSample::from_execution(gas_used, state, simulated);
+        let decision = self.schedule.decide_sample(&sample, cumulative);
+        self.record_decision(tx_hash, &decision);
+        decision
+    }
+
+    /// Calculates usage for an unthrottled transaction without applying it.
+    pub fn unthrottled_usage(
+        &self,
+        tx_hash: &TxHash,
+        gas_used: u64,
+        state: &EvmState,
+    ) -> Result<Option<ResourceMeteringUsage>, ResourceMeteringError> {
+        if !self.is_active() {
+            return Ok(None);
+        }
+        let simulated = self.simulated_sample(tx_hash);
+        let sample = ResourceSample::from_execution(gas_used, state, simulated.as_ref());
+        Ok(Some(self.schedule.evaluate(sample.gas_used, &sample.operations)?))
+    }
+
+    /// Accounts an unthrottled transaction into cumulative usage.
+    ///
+    /// Sequencer transactions always commit when execution succeeds. If usage
+    /// cannot be calculated or applied, the caller must abort the payload so
+    /// state and the ledger stay aligned.
+    pub fn account_unthrottled(
+        &self,
+        tx_hash: &TxHash,
+        gas_used: u64,
+        state: &EvmState,
+        cumulative: &mut Vec<u128>,
+    ) -> Result<(), ResourceMeteringError> {
+        let Some(usage) = self.unthrottled_usage(tx_hash, gas_used, state)? else {
+            return Ok(());
+        };
+        usage.add_to(cumulative)
+    }
+
+    fn record_decision(&self, tx_hash: &TxHash, decision: &ResourceThrottlingDecision) {
+        match decision {
+            ResourceThrottlingDecision::Allow(_) => {}
+            ResourceThrottlingDecision::Throttle { error, .. } => {
+                ResourceMeteringMetrics::record_limit(error, !error.dry_run);
+                if error.dry_run {
+                    debug!(
+                        target: "payload_builder",
+                        tx_hash = %tx_hash,
+                        dimension = %error.dimension,
+                        scope = %error.scope,
+                        used = error.used,
+                        limit = error.limit,
+                        "resource throttling budget exceeded"
+                    );
+                } else {
+                    warn!(
+                        target: "payload_builder",
+                        tx_hash = %tx_hash,
+                        dimension = %error.dimension,
+                        scope = %error.scope,
+                        used = error.used,
+                        limit = error.limit,
+                        "resource throttling budget exceeded"
+                    );
+                }
+            }
+            ResourceThrottlingDecision::CalculationFailed => {
+                ResourceMeteringMetrics::calculation_failed().increment(1);
+                warn!(
+                    target: "payload_builder",
+                    tx_hash = %tx_hash,
+                    "resource metering usage calculation failed"
+                );
+            }
+        }
     }
 }
 
@@ -219,7 +354,14 @@ impl GasLimitConfig {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
+    use alloy_primitives::TxHash;
+    use base_bundles::{MeterBundleResponse, OpcodeGas, TransactionResult};
+    use revm::state::EvmState;
+
     use super::*;
+    use crate::{ResourceMeteringDimension, ResourceMeteringOperation};
 
     #[test]
     fn test_da() {
@@ -255,5 +397,134 @@ mod tests {
         assert_eq!(gas_limit.gas_limit(), Some(50000));
         gas_limit.set_gas_limit(0);
         assert_eq!(gas_limit.gas_limit(), None);
+    }
+
+    fn compiled_cpu_schedule() -> CompiledResourceMeteringSchedule {
+        CompiledResourceMeteringSchedule::compile(ResourceMeteringSchedule {
+            dimensions: vec![ResourceMeteringDimension {
+                name: "cpu".to_string(),
+                block_limit: 1_000,
+                transaction_limit: None,
+                base_gas_weight: 1,
+                operations: vec![ResourceMeteringOperation {
+                    name: "SSTORE".to_string(),
+                    gas_used_weight: 0,
+                    count_cost: 10,
+                }],
+                dry_run: false,
+            }],
+            ..Default::default()
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn predict_fails_open_without_meter_data() {
+        let config = ResourceMeteringConfig {
+            enabled: true,
+            schedule: Arc::new(compiled_cpu_schedule()),
+            provider: Arc::new(NoopMeteringProvider),
+        };
+        let (simulated, decision) = config.predict(&TxHash::ZERO, &[]);
+        assert!(simulated.is_none());
+        assert!(!decision.should_exclude());
+    }
+
+    #[derive(Debug)]
+    struct MapProvider(std::sync::Mutex<std::collections::HashMap<TxHash, MeterBundleResponse>>);
+
+    impl MeteringProvider for MapProvider {
+        fn get(&self, tx_hash: &TxHash) -> Option<MeterBundleResponse> {
+            self.0.lock().unwrap().get(tx_hash).cloned()
+        }
+    }
+
+    #[test]
+    fn unthrottled_usage_overlays_simulated_opcodes() {
+        let tx_hash = TxHash::repeat_byte(0x42);
+        let meter = MeterBundleResponse {
+            results: vec![TransactionResult {
+                coinbase_diff: Default::default(),
+                eth_sent_to_coinbase: Default::default(),
+                from_address: Default::default(),
+                gas_fees: Default::default(),
+                gas_price: Default::default(),
+                gas_used: 21_000,
+                to_address: None,
+                tx_hash,
+                value: Default::default(),
+                execution_time_us: 0,
+                opcode_gas: vec![OpcodeGas {
+                    contract_address: Default::default(),
+                    opcode: "SSTORE".to_string(),
+                    count: 3,
+                    gas_used: 0,
+                }],
+            }],
+            ..Default::default()
+        };
+        let config = ResourceMeteringConfig {
+            enabled: true,
+            schedule: Arc::new(compiled_cpu_schedule()),
+            provider: Arc::new(MapProvider(std::sync::Mutex::new(HashMap::from([(
+                tx_hash, meter,
+            )])))),
+        };
+        let usage = config
+            .unthrottled_usage(&tx_hash, 21_000, &EvmState::default())
+            .unwrap()
+            .expect("active config should produce usage");
+        assert_eq!(usage.values, vec![21_000 + 30]);
+    }
+
+    #[test]
+    fn predict_excludes_in_enforce_but_not_dry_run() {
+        let tx_hash = TxHash::repeat_byte(0x42);
+        let meter = MeterBundleResponse {
+            results: vec![TransactionResult {
+                coinbase_diff: Default::default(),
+                eth_sent_to_coinbase: Default::default(),
+                from_address: Default::default(),
+                gas_fees: Default::default(),
+                gas_price: Default::default(),
+                gas_used: 21_000,
+                to_address: None,
+                tx_hash,
+                value: Default::default(),
+                execution_time_us: 0,
+                opcode_gas: Vec::new(),
+            }],
+            ..Default::default()
+        };
+        let provider: SharedMeteringProvider =
+            Arc::new(MapProvider(std::sync::Mutex::new(HashMap::from([(tx_hash, meter)]))));
+        let enforce = ResourceMeteringConfig {
+            enabled: true,
+            schedule: Arc::new(compiled_cpu_schedule()),
+            provider: Arc::clone(&provider),
+        };
+        let (_, decision) = enforce.predict(&tx_hash, &[]);
+        assert!(decision.should_exclude());
+
+        let dry_run = ResourceMeteringConfig {
+            enabled: true,
+            schedule: Arc::new(
+                CompiledResourceMeteringSchedule::compile(ResourceMeteringSchedule {
+                    dimensions: vec![ResourceMeteringDimension {
+                        name: "cpu".to_string(),
+                        block_limit: 1_000,
+                        transaction_limit: None,
+                        base_gas_weight: 1,
+                        operations: Vec::new(),
+                        dry_run: true,
+                    }],
+                    ..Default::default()
+                })
+                .unwrap(),
+            ),
+            provider,
+        };
+        let (_, decision) = dry_run.predict(&tx_hash, &[]);
+        assert!(!decision.should_exclude());
     }
 }

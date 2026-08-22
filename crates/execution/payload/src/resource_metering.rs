@@ -6,10 +6,11 @@
 //! exist: actual gas used, net post-state effects such as
 //! [`ResourceSample::STATE_NEW_STORAGE_SLOT`], and simulated opcode bags only
 //! for measurements the production EVM did not record. Throttling excludes a
-//! transaction when that usage exceeds a budget. Neither changes protocol gas,
-//! fees, or validity.
+//! transaction when an enforced dimension exceeds a budget. A dimension with
+//! [`ResourceMeteringDimension::dry_run`] set is observed without excluding.
+//! Neither changes protocol gas, fees, or validity.
 
-use std::{collections::HashMap, fmt, fs, path::Path, str::FromStr};
+use std::{collections::HashMap, fmt, fs, path::Path};
 
 use alloy_primitives::{Address, TxHash};
 use base_bundles::{MeterBundleResponse, OpcodeGas};
@@ -22,57 +23,6 @@ const MAX_DIMENSIONS: usize = 128;
 const MAX_DIMENSION_NAME_LENGTH: usize = 64;
 const MAX_OPERATIONS_PER_DIMENSION: usize = 512;
 const MAX_OPERATION_NAME_LENGTH: usize = 128;
-
-/// How the native payload builder throttles from metered resource usage.
-///
-/// Metering still computes resource units whenever this mode is enabled. Dry-run
-/// observes over-budget transactions without excluding them; enforce throttles
-/// them out of the payload.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum ResourceThrottlingMode {
-    /// Ignore metered usage and do not throttle.
-    #[default]
-    Off,
-    /// Record metrics for transactions that would be throttled, but still include them.
-    DryRun,
-    /// Exclude transactions that exceed a configured budget.
-    Enforce,
-}
-
-impl ResourceThrottlingMode {
-    /// Returns true if usage should be metered and compared to throttling budgets.
-    pub const fn is_enabled(self) -> bool {
-        matches!(self, Self::DryRun | Self::Enforce)
-    }
-
-    /// Returns true if over-budget transactions should be included and only observed.
-    pub const fn is_dry_run(self) -> bool {
-        matches!(self, Self::DryRun)
-    }
-}
-
-impl fmt::Display for ResourceThrottlingMode {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Off => "off",
-            Self::DryRun => "dry-run",
-            Self::Enforce => "enforce",
-        })
-    }
-}
-
-impl FromStr for ResourceThrottlingMode {
-    type Err = String;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "off" => Ok(Self::Off),
-            "dry-run" => Ok(Self::DryRun),
-            "enforce" => Ok(Self::Enforce),
-            other => Err(format!("invalid resource throttling mode: {other}")),
-        }
-    }
-}
 
 /// A serializable resource-metering schedule.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -108,6 +58,12 @@ pub struct ResourceMeteringDimension {
     /// Additional prices for measured opcodes, precompiles, and pseudo-opcodes.
     #[serde(default)]
     pub operations: Vec<ResourceMeteringOperation>,
+    /// Observe over-budget usage without excluding the transaction.
+    ///
+    /// Limits take effect unless this flag is set. Dry-run is the explicit
+    /// opt-out used while rolling out a dimension.
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
 /// A price applied to one measured operation.
@@ -142,12 +98,18 @@ impl ResourceMeteringUsage {
         self.values.get(index).copied().unwrap_or_default()
     }
 
-    /// Adds this usage to cumulative block usage.
-    pub fn add_to(&self, cumulative: &mut Vec<u128>) -> Result<(), ResourceMeteringError> {
+    /// Returns whether this usage can be added to `cumulative` without overflow.
+    pub fn fits_in(&self, cumulative: &[u128]) -> Result<(), ResourceMeteringError> {
         for (index, value) in self.values.iter().copied().enumerate() {
             let current = cumulative.get(index).copied().unwrap_or_default();
             current.checked_add(value).ok_or(ResourceMeteringError::ArithmeticOverflow)?;
         }
+        Ok(())
+    }
+
+    /// Adds this usage to cumulative block usage.
+    pub fn add_to(&self, cumulative: &mut Vec<u128>) -> Result<(), ResourceMeteringError> {
+        self.fits_in(cumulative)?;
 
         if cumulative.len() < self.values.len() {
             cumulative.resize(self.values.len(), 0);
@@ -208,13 +170,16 @@ impl ResourceSample {
         Self::STATE_CHANGED_ACCOUNT,
     ];
 
-    /// Builds a predicted sample from `meterBundle` output.
-    pub fn from_meter(meter: &MeterBundleResponse, tx_hash: &TxHash) -> Self {
-        let result = meter.results.iter().find(|result| result.tx_hash == *tx_hash);
-        Self {
-            gas_used: result.map_or(meter.total_gas_used, |result| result.gas_used),
-            operations: result.map(|result| result.opcode_gas.clone()).unwrap_or_default(),
-        }
+    /// Builds a predicted sample from the matching `meterBundle` transaction.
+    ///
+    /// Returns `None` when the response has no result for `tx_hash` so callers
+    /// can fail open instead of attributing bundle totals to the wrong tx.
+    pub fn from_meter(meter: &MeterBundleResponse, tx_hash: &TxHash) -> Option<Self> {
+        meter
+            .results
+            .iter()
+            .find(|result| result.tx_hash == *tx_hash)
+            .map(|result| Self { gas_used: result.gas_used, operations: result.opcode_gas.clone() })
     }
 
     /// Builds an executed-preferred sample.
@@ -332,6 +297,8 @@ pub struct CompiledResourceMeteringDimension {
     pub transaction_limit: Option<u64>,
     /// Resource units charged per unit of actual transaction gas used.
     pub base_gas_weight: u64,
+    /// Observe over-budget usage without excluding the transaction.
+    pub dry_run: bool,
 }
 
 impl CompiledResourceMeteringSchedule {
@@ -348,6 +315,7 @@ impl CompiledResourceMeteringSchedule {
                 block_limit: dimension.block_limit,
                 transaction_limit: dimension.transaction_limit,
                 base_gas_weight: dimension.base_gas_weight,
+                dry_run: dimension.dry_run,
             });
 
             for operation in &dimension.operations {
@@ -364,6 +332,11 @@ impl CompiledResourceMeteringSchedule {
     /// Returns whether the schedule has no metering dimensions.
     pub const fn is_empty(&self) -> bool {
         self.dimensions.is_empty()
+    }
+
+    /// Operation names priced by this schedule, including post-state effects.
+    pub fn priced_operation_names(&self) -> impl Iterator<Item = &str> {
+        self.operation_index.keys().map(String::as_str)
     }
 
     /// Calculates all dimension costs for one metered transaction.
@@ -406,26 +379,37 @@ impl CompiledResourceMeteringSchedule {
     }
 
     /// Checks transaction and cumulative block budgets for one transaction.
+    ///
+    /// Enforced dimension overruns are preferred over dry-run overruns so a
+    /// later enforced budget still excludes the transaction.
     pub fn check(
         &self,
         usage: &ResourceMeteringUsage,
         cumulative: &[u128],
     ) -> Result<(), ResourceThrottlingCheckError> {
+        let mut dry_run_error = None;
+
         for (index, dimension) in self.dimensions.iter().enumerate() {
             let transaction_cost = usage.get(index);
 
             if let Some(transaction_limit) = dimension.transaction_limit
                 && transaction_cost > u128::from(transaction_limit)
             {
-                return Err(ResourceThrottlingCheckError::LimitExceeded(
-                    ResourceThrottlingLimitExceeded {
-                        dimension: dimension.name.clone(),
-                        scope: ResourceThrottlingLimitScope::Transaction,
-                        used: transaction_cost,
-                        transaction_cost,
-                        limit: transaction_limit,
-                    },
-                ));
+                let error = ResourceThrottlingLimitExceeded {
+                    dimension: dimension.name.clone(),
+                    scope: ResourceThrottlingLimitScope::Transaction,
+                    used: transaction_cost,
+                    transaction_cost,
+                    limit: transaction_limit,
+                    dry_run: dimension.dry_run,
+                };
+                if !dimension.dry_run {
+                    return Err(ResourceThrottlingCheckError::LimitExceeded(error));
+                }
+                if dry_run_error.is_none() {
+                    dry_run_error = Some(error);
+                }
+                continue;
             }
 
             let used = cumulative
@@ -435,16 +419,25 @@ impl CompiledResourceMeteringSchedule {
                 .checked_add(transaction_cost)
                 .ok_or(ResourceThrottlingCheckError::ArithmeticOverflow)?;
             if used > u128::from(dimension.block_limit) {
-                return Err(ResourceThrottlingCheckError::LimitExceeded(
-                    ResourceThrottlingLimitExceeded {
-                        dimension: dimension.name.clone(),
-                        scope: ResourceThrottlingLimitScope::Block,
-                        used,
-                        transaction_cost,
-                        limit: dimension.block_limit,
-                    },
-                ));
+                let error = ResourceThrottlingLimitExceeded {
+                    dimension: dimension.name.clone(),
+                    scope: ResourceThrottlingLimitScope::Block,
+                    used,
+                    transaction_cost,
+                    limit: dimension.block_limit,
+                    dry_run: dimension.dry_run,
+                };
+                if !dimension.dry_run {
+                    return Err(ResourceThrottlingCheckError::LimitExceeded(error));
+                }
+                if dry_run_error.is_none() {
+                    dry_run_error = Some(error);
+                }
             }
+        }
+
+        if let Some(error) = dry_run_error {
+            return Err(ResourceThrottlingCheckError::LimitExceeded(error));
         }
 
         Ok(())
@@ -486,6 +479,8 @@ pub struct ResourceThrottlingLimitExceeded {
     pub transaction_cost: u128,
     /// Configured budget.
     pub limit: u64,
+    /// Whether this overrun should be observed without excluding the transaction.
+    pub dry_run: bool,
 }
 
 /// Failure while checking a resource-throttling budget.
@@ -692,15 +687,22 @@ pub enum ResourceThrottlingDecision {
 }
 
 impl ResourceThrottlingDecision {
-    /// Returns whether enforce mode should exclude this transaction from the payload.
+    /// Returns whether this decision should exclude the transaction from the payload.
     ///
-    /// Dry-run still observes [`Self::Throttle`] without excluding. Calculation
-    /// failures exclude so a corrupt sample cannot silently blow a budget.
-    pub const fn should_exclude(&self, mode: ResourceThrottlingMode) -> bool {
+    /// [`Self::CalculationFailed`] fails open. [`Self::Throttle`] excludes unless
+    /// the exceeded dimension is marked [`ResourceMeteringDimension::dry_run`].
+    pub const fn should_exclude(&self) -> bool {
         match self {
-            Self::Allow(_) => false,
-            Self::Throttle { .. } => !mode.is_dry_run(),
-            Self::CalculationFailed => true,
+            Self::Allow(_) | Self::CalculationFailed => false,
+            Self::Throttle { error, .. } => !error.dry_run,
+        }
+    }
+
+    /// Usage to add when this decision is included in the payload.
+    pub fn committed_usage(self) -> Option<ResourceMeteringUsage> {
+        match self {
+            Self::Allow(usage) | Self::Throttle { usage, .. } => Some(usage),
+            Self::CalculationFailed => None,
         }
     }
 }
@@ -716,12 +718,13 @@ impl CompiledResourceMeteringSchedule {
         tx_hash: &TxHash,
         cumulative: &[u128],
     ) -> ResourceThrottlingDecision {
-        let Some(meter) = meter else {
+        let Some(sample) = meter.and_then(|meter| ResourceSample::from_meter(meter, tx_hash))
+        else {
             return ResourceThrottlingDecision::Allow(ResourceMeteringUsage::zero(
                 self.dimensions.len(),
             ));
         };
-        self.decide_sample(&ResourceSample::from_meter(meter, tx_hash), cumulative)
+        self.decide_sample(&sample, cumulative)
     }
 
     /// Evaluates a sample against transaction and cumulative block budgets.
@@ -771,26 +774,12 @@ mod tests {
             transaction_limit,
             base_gas_weight,
             operations,
+            dry_run: false,
         }
     }
 
     fn opcode_gas(opcode: &str, count: u64, gas_used: u64) -> OpcodeGas {
         OpcodeGas { contract_address: Address::ZERO, opcode: opcode.to_string(), count, gas_used }
-    }
-
-    #[test]
-    fn parses_throttling_mode_from_str() {
-        assert_eq!(ResourceThrottlingMode::from_str("off").unwrap(), ResourceThrottlingMode::Off);
-        assert_eq!(
-            ResourceThrottlingMode::from_str("dry-run").unwrap(),
-            ResourceThrottlingMode::DryRun
-        );
-        assert_eq!(
-            ResourceThrottlingMode::from_str("enforce").unwrap(),
-            ResourceThrottlingMode::Enforce
-        );
-        assert!(ResourceThrottlingMode::from_str("inactive").is_err());
-        assert_eq!(ResourceThrottlingMode::DryRun.to_string(), "dry-run");
     }
 
     #[test]
@@ -958,6 +947,25 @@ mod tests {
 
         assert_eq!(schedule.dimensions[0].transaction_limit, Some(50));
         assert_eq!(schedule.dimensions[0].operations[0].count_cost, 4);
+        assert!(!schedule.dimensions[0].dry_run);
+    }
+
+    #[test]
+    fn parses_explicit_dry_run_flag() {
+        let schedule = ResourceMeteringSchedule::from_json(
+            r#"{
+                "version": 1,
+                "dimensions": [{
+                    "name": "execution",
+                    "blockLimit": 100,
+                    "baseGasWeight": 1,
+                    "dryRun": true
+                }]
+            }"#,
+        )
+        .unwrap();
+
+        assert!(schedule.dimensions[0].dry_run);
     }
 
     #[test]
@@ -969,7 +977,7 @@ mod tests {
         let compiled = CompiledResourceMeteringSchedule::compile(schedule).unwrap();
         let decision = compiled.evaluate_transaction(None, &TxHash::ZERO, &[]);
         assert_eq!(decision, ResourceThrottlingDecision::Allow(ResourceMeteringUsage::zero(1)));
-        assert!(!decision.should_exclude(ResourceThrottlingMode::Enforce));
+        assert!(!decision.should_exclude());
     }
 
     fn state_with_slots(slots: &[(U256, U256, U256)]) -> EvmState {
@@ -1126,7 +1134,98 @@ mod tests {
                 ..
             }
         ));
-        assert!(decision.should_exclude(ResourceThrottlingMode::Enforce));
-        assert!(!decision.should_exclude(ResourceThrottlingMode::DryRun));
+        assert!(decision.should_exclude());
+        let mut dry_run = ResourceMeteringSchedule {
+            dimensions: vec![dimension(
+                "stateRoot",
+                50,
+                Some(40),
+                0,
+                vec![operation(ResourceSample::STATE_NEW_STORAGE_SLOT, 0, 10)],
+            )],
+            ..Default::default()
+        };
+        dry_run.dimensions[0].dry_run = true;
+        let compiled = CompiledResourceMeteringSchedule::compile(dry_run).unwrap();
+        let decision = compiled.decide_sample(&sample, &[]);
+        assert!(matches!(decision, ResourceThrottlingDecision::Throttle { .. }));
+        assert!(!decision.should_exclude());
+    }
+
+    fn meter_response(
+        tx_hash: TxHash,
+        gas_used: u64,
+        operations: Vec<OpcodeGas>,
+    ) -> MeterBundleResponse {
+        MeterBundleResponse {
+            total_gas_used: gas_used.saturating_mul(2),
+            results: vec![base_bundles::TransactionResult {
+                coinbase_diff: U256::ZERO,
+                eth_sent_to_coinbase: U256::ZERO,
+                from_address: Address::ZERO,
+                gas_fees: U256::ZERO,
+                gas_price: U256::ZERO,
+                gas_used,
+                to_address: None,
+                tx_hash,
+                value: U256::ZERO,
+                execution_time_us: 0,
+                opcode_gas: operations,
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn from_meter_returns_none_when_the_response_lacks_the_transaction() {
+        let meter =
+            meter_response(TxHash::repeat_byte(0x11), 21_000, vec![opcode_gas("SSTORE", 1, 10)]);
+        assert!(ResourceSample::from_meter(&meter, &TxHash::repeat_byte(0x22)).is_none());
+    }
+
+    #[test]
+    fn missing_transaction_result_fails_open_like_missing_meter_data() {
+        let schedule = ResourceMeteringSchedule {
+            dimensions: vec![dimension("cpu", 100, None, 1, Vec::new())],
+            ..Default::default()
+        };
+        let compiled = CompiledResourceMeteringSchedule::compile(schedule).unwrap();
+        let meter = meter_response(TxHash::repeat_byte(0x11), 90, Vec::new());
+        let decision = compiled.evaluate_transaction(Some(&meter), &TxHash::repeat_byte(0x22), &[]);
+        assert_eq!(decision, ResourceThrottlingDecision::Allow(ResourceMeteringUsage::zero(1)));
+        assert!(!decision.should_exclude());
+    }
+
+    #[test]
+    fn calculation_failures_fail_open() {
+        let decision = ResourceThrottlingDecision::CalculationFailed;
+        assert!(!decision.should_exclude());
+        assert!(ResourceThrottlingDecision::CalculationFailed.committed_usage().is_none());
+    }
+
+    #[test]
+    fn enforced_dimension_excludes_even_when_an_earlier_dry_run_dimension_exceeds() {
+        let schedule = ResourceMeteringSchedule {
+            dimensions: vec![
+                {
+                    let mut cpu = dimension("cpu", 10, None, 1, Vec::new());
+                    cpu.dry_run = true;
+                    cpu
+                },
+                dimension("storage", 10, None, 1, Vec::new()),
+            ],
+            ..Default::default()
+        };
+        let compiled = CompiledResourceMeteringSchedule::compile(schedule).unwrap();
+        let decision = compiled
+            .decide_sample(&ResourceSample { gas_used: 21_000, operations: Vec::new() }, &[]);
+        assert!(matches!(
+            decision,
+            ResourceThrottlingDecision::Throttle {
+                error: ResourceThrottlingLimitExceeded { ref dimension, dry_run: false, .. },
+                ..
+            } if dimension == "storage"
+        ));
+        assert!(decision.should_exclude());
     }
 }

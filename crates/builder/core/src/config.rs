@@ -6,8 +6,9 @@ use core::{
 };
 use std::sync::Arc;
 
-use base_execution_payload_builder::config::{
-    BaseDAConfig, GasLimitConfig, ResourceMeteringConfig,
+use base_execution_payload_builder::{
+    ResourceMeteringConfig,
+    config::{BaseDAConfig, GasLimitConfig},
 };
 
 use crate::{ExecutionMeteringMode, NoopMeteringProvider, RejectionCache, SharedMeteringProvider};
@@ -69,7 +70,7 @@ pub struct BuilderConfig {
     /// Resource metering provider
     pub metering_provider: SharedMeteringProvider,
 
-    /// Native resource-metering schedule and throttling mode for payload admission.
+    /// Resource-metering schedule and throttling mode for payload admission.
     pub resource_metering: ResourceMeteringConfig,
 
     /// Cache of permanently rejected transaction hashes, shared across blocks.

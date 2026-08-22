@@ -1,12 +1,12 @@
 //! Base payload builder implementation.
 use std::{marker::PhantomData, sync::Arc};
 
-use alloy_consensus::{BlockHeader, Transaction, Typed2718};
+use alloy_consensus::{BlockHeader, Transaction, Typed2718, transaction::TxHashRef};
 use alloy_evm::{
     Evm as AlloyEvm,
     block::{CommitChanges, TxResult},
 };
-use alloy_primitives::{B256, TxHash, U256};
+use alloy_primitives::{B256, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
 use base_common_chains::Upgrades;
@@ -45,8 +45,7 @@ use revm::context::{Block, BlockEnv};
 use tracing::{debug, debug_span, instrument, trace, warn};
 
 use crate::{
-    Attributes, BasePayloadBuilderAttributes, PayloadPrimitives, ResourceMeteringMetrics,
-    ResourceSample, ResourceThrottlingDecision, config::BaseBuilderConfig,
+    Attributes, BasePayloadBuilderAttributes, PayloadPrimitives, config::BaseBuilderConfig,
     error::BasePayloadBuilderError, payload::BaseBuiltPayload,
 };
 
@@ -722,27 +721,42 @@ where
             })?;
 
             let resource_metering = &self.builder_config.resource_metering;
-            let resource_schedule = resource_metering.schedule.as_ref();
-            let account_sequencer_usage =
-                resource_metering.throttling_mode.is_enabled() && !resource_schedule.is_empty();
-            let mut sequencer_usage = None;
-            let gas_output = match builder.execute_transaction_with_result_closure(
+            let mut pending_resource_usage = None;
+            let mut resource_account_error = None;
+            let tx_hash = *sequencer_tx.tx_hash();
+            let gas_output = match builder.execute_transaction_with_commit_condition(
                 sequencer_tx.clone(),
                 |result| {
-                    if !account_sequencer_usage {
-                        return;
-                    }
                     let result_and_state = result.result();
-                    let sample = ResourceSample::from_execution(
+                    match resource_metering.unthrottled_usage(
+                        &tx_hash,
                         result_and_state.result.tx_gas_used(),
                         &result_and_state.state,
-                        None,
-                    );
-                    sequencer_usage =
-                        resource_schedule.evaluate(sample.gas_used, &sample.operations).ok();
+                    ) {
+                        Ok(None) => CommitChanges::Yes,
+                        Ok(Some(usage)) => match usage.fits_in(&info.resource_metering_usage) {
+                            Ok(()) => {
+                                pending_resource_usage = Some(usage);
+                                CommitChanges::Yes
+                            }
+                            Err(error) => {
+                                resource_account_error = Some(error);
+                                CommitChanges::No
+                            }
+                        },
+                        Err(error) => {
+                            resource_account_error = Some(error);
+                            CommitChanges::No
+                        }
+                    }
                 },
             ) {
-                Ok(gas_output) => gas_output,
+                Ok(Some(gas_output)) => gas_output,
+                Ok(None) => {
+                    return Err(PayloadBuilderError::other(resource_account_error.expect(
+                        "sequencer commit is refused only when resource accounting fails",
+                    )));
+                }
                 Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
                     error,
                     ..
@@ -756,14 +770,10 @@ where
             };
 
             info.cumulative_gas_used += gas_output.tx_gas_used();
-            if let Some(usage) = sequencer_usage
-                && let Err(error) = usage.add_to(&mut info.resource_metering_usage)
-            {
-                warn!(
-                    target: "payload_builder",
-                    error = %error,
-                    "resource metering cumulative usage overflowed on sequencer transaction"
-                );
+            if let Some(usage) = pending_resource_usage {
+                usage
+                    .add_to(&mut info.resource_metering_usage)
+                    .expect("sequencer resource usage was checked before commit");
             }
         }
 
@@ -801,9 +811,6 @@ where
         let block_timestamp = self.attributes().timestamp();
         let can_finalize_early = self.is_denim_active();
         let resource_metering = &self.builder_config.resource_metering;
-        let resource_schedule = resource_metering.schedule.as_ref();
-        let resource_metering_active =
-            resource_metering.throttling_mode.is_enabled() && !resource_schedule.is_empty();
         while let Some(tx) = best_txs.next(()) {
             if self.cancel.is_cancelled() {
                 return Ok(Some(()));
@@ -861,27 +868,11 @@ where
             };
 
             let tx_hash = *tx.hash();
-            let meter = resource_metering_active
-                .then(|| {
-                    crate::MeteringProvider::get(resource_metering.provider.as_ref(), &tx_hash)
-                })
-                .flatten();
-            let simulated = meter.as_ref().map(|meter| ResourceSample::from_meter(meter, &tx_hash));
-            if resource_metering_active {
-                let predicted = resource_schedule.evaluate_transaction(
-                    meter.as_ref(),
-                    &tx_hash,
-                    &info.resource_metering_usage,
-                );
-                record_resource_throttling_decision(
-                    tx_hash,
-                    &predicted,
-                    resource_metering.throttling_mode.is_dry_run(),
-                );
-                if predicted.should_exclude(resource_metering.throttling_mode) {
-                    best_txs.mark_invalid(tx.sender(), tx.nonce());
-                    continue;
-                }
+            let (simulated, predicted) =
+                resource_metering.predict(&tx_hash, &info.resource_metering_usage);
+            if predicted.should_exclude() {
+                best_txs.mark_invalid(tx.sender(), tx.nonce());
+                continue;
             }
 
             let tx = tx.into_consensus();
@@ -922,33 +913,21 @@ where
             }
 
             let mut pending_resource_usage = None;
-            let gas_output = if resource_metering_active {
+            let gas_output = if resource_metering.is_active() {
                 match builder.execute_transaction_with_commit_condition(tx.clone(), |result| {
                     let result_and_state = result.result();
-                    let sample = ResourceSample::from_execution(
+                    let decision = resource_metering.decide_executed(
+                        &tx_hash,
                         result_and_state.result.tx_gas_used(),
                         &result_and_state.state,
                         simulated.as_ref(),
+                        &info.resource_metering_usage,
                     );
-                    let decision =
-                        resource_schedule.decide_sample(&sample, &info.resource_metering_usage);
-                    record_resource_throttling_decision(
-                        tx_hash,
-                        &decision,
-                        resource_metering.throttling_mode.is_dry_run(),
-                    );
-                    let exclude = decision.should_exclude(resource_metering.throttling_mode);
-                    if !exclude {
-                        match decision {
-                            ResourceThrottlingDecision::Allow(usage)
-                            | ResourceThrottlingDecision::Throttle { usage, .. } => {
-                                pending_resource_usage = Some(usage);
-                            }
-                            ResourceThrottlingDecision::CalculationFailed => {}
-                        }
-                        CommitChanges::Yes
-                    } else {
+                    if decision.should_exclude() {
                         CommitChanges::No
+                    } else {
+                        pending_resource_usage = decision.committed_usage();
+                        CommitChanges::Yes
                     }
                 }) {
                     Ok(Some(gas_output)) => gas_output,
@@ -995,15 +974,10 @@ where
 
             info.cumulative_gas_used += gas_output.tx_gas_used();
             info.cumulative_da_bytes_used += tx_da_size;
-            if let Some(usage) = pending_resource_usage
-                && let Err(error) = usage.add_to(&mut info.resource_metering_usage)
-            {
-                warn!(
-                    target: "payload_builder",
-                    tx_hash = %tx_hash,
-                    error = %error,
-                    "resource metering cumulative usage overflowed"
-                );
+            if let Some(usage) = pending_resource_usage {
+                usage
+                    .add_to(&mut info.resource_metering_usage)
+                    .map_err(PayloadBuilderError::other)?;
             }
 
             let miner_fee = tx
@@ -1020,37 +994,6 @@ where
         }
 
         Ok(None)
-    }
-}
-
-fn record_resource_throttling_decision(
-    tx_hash: TxHash,
-    decision: &ResourceThrottlingDecision,
-    dry_run: bool,
-) {
-    match decision {
-        ResourceThrottlingDecision::Allow(_) => {}
-        ResourceThrottlingDecision::Throttle { error, .. } => {
-            ResourceMeteringMetrics::record_limit(error, !dry_run);
-            warn!(
-                target: "payload_builder",
-                tx_hash = %tx_hash,
-                dimension = %error.dimension,
-                scope = %error.scope,
-                used = error.used,
-                limit = error.limit,
-                dry_run,
-                "resource throttling budget exceeded"
-            );
-        }
-        ResourceThrottlingDecision::CalculationFailed => {
-            ResourceMeteringMetrics::calculation_failed().increment(1);
-            warn!(
-                target: "payload_builder",
-                tx_hash = %tx_hash,
-                "resource metering usage calculation failed"
-            );
-        }
     }
 }
 

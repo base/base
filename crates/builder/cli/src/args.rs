@@ -5,11 +5,11 @@ use std::{path::PathBuf, sync::Arc};
 
 use base_builder_core::{
     BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
-    ExecutionMeteringMode, RejectionCache, ResourceMeteringConfig, ResourceThrottlingMode,
-    ShadowValidityConfig, SharedMeteringProvider,
+    ExecutionMeteringMode, RejectionCache, ResourceMeteringConfig, ShadowValidityConfig,
+    SharedMeteringProvider,
 };
 use base_builder_metering::MeteringStore;
-use base_execution_cli::ShadowIndexerArgs;
+use base_execution_cli::{ResourceMeteringArgs, ShadowIndexerArgs};
 use base_node_core::{HasRollupArgs, RollupArgs};
 use base_observability_events::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, TransactionEventProducer,
@@ -178,23 +178,16 @@ pub struct Args {
     #[arg(long = "builder.execution-metering-mode", value_enum, default_value = "off")]
     pub execution_metering_mode: ExecutionMeteringMode,
 
-    /// Resource throttling mode for payload admission: off, dry-run, or enforce.
-    #[arg(
-        long = "payload.resource-throttling-mode",
-        env = "PAYLOAD_RESOURCE_THROTTLING_MODE",
-        default_value_t = ResourceThrottlingMode::Off
-    )]
-    pub resource_throttling_mode: ResourceThrottlingMode,
-
-    /// JSON file containing the startup resource-metering schedule.
-    #[arg(long = "payload.resource-metering-schedule", env = "PAYLOAD_RESOURCE_METERING_SCHEDULE")]
-    pub resource_metering_schedule: Option<PathBuf>,
+    /// Resource-metering schedule. Evaluated when `--builder.enable-resource-metering` is set.
+    #[command(flatten)]
+    pub resource_metering: ResourceMeteringArgs,
 
     /// How much extra time to wait for the block building job to complete and not get garbage collected
     #[arg(long = "builder.extra-block-deadline-secs", default_value = "20")]
     pub extra_block_deadline_secs: u64,
 
-    /// Whether to enable TIPS Resource Metering
+    /// Whether to enable TIPS resource metering and payload resource-metering
+    /// schedule evaluation.
     #[arg(long = "builder.enable-resource-metering", default_value = "false")]
     pub enable_resource_metering: bool,
 
@@ -307,9 +300,7 @@ impl Args {
     /// Creates a [`MeteringStore`] from the CLI arguments.
     pub fn build_metering_store(&self) -> MeteringStore {
         MeteringStore::new(
-            self.enable_resource_metering
-                || self.execution_metering_mode.is_enabled()
-                || self.resource_throttling_mode.is_enabled(),
+            self.enable_resource_metering || self.execution_metering_mode.is_enabled(),
             self.tx_data_store_buffer_size,
             Duration::from_secs(self.metering_store_ttl_secs),
         )
@@ -328,8 +319,7 @@ impl Default for Args {
             state_root_gas_coefficient: None,
             state_root_gas_anchor_us: None,
             execution_metering_mode: ExecutionMeteringMode::Off,
-            resource_throttling_mode: ResourceThrottlingMode::Off,
-            resource_metering_schedule: None,
+            resource_metering: ResourceMeteringArgs::default(),
             extra_block_deadline_secs: 20,
             enable_resource_metering: false,
             enable_experimental_validity_transactions: false,
@@ -390,8 +380,8 @@ impl Args {
         }
 
         let resource_metering = ResourceMeteringConfig::from_parts(
-            self.resource_throttling_mode,
-            self.resource_metering_schedule.as_deref(),
+            self.enable_resource_metering,
+            self.resource_metering.resource_metering_schedule.as_deref(),
             Arc::clone(&metering_provider),
         )?;
 
@@ -472,26 +462,33 @@ mod tests {
         assert_eq!(config.block_time, Duration::from_millis(1000));
         assert!(config.max_gas_per_txn.is_none());
         assert!(config.manifest_precheck_enabled);
-        assert_eq!(config.resource_metering.throttling_mode, ResourceThrottlingMode::Off);
+        assert!(!config.resource_metering.enabled);
         assert!(config.resource_metering.schedule.is_empty());
     }
 
     #[test]
-    fn resource_throttling_flags_map_to_config() {
+    fn resource_metering_schedule_is_gated_by_enable_resource_metering() {
         let parsed = CommandParser::parse_from([
             "builder",
-            "--payload.resource-throttling-mode",
-            "dry-run",
+            "--builder.enable-resource-metering",
             "--payload.resource-metering-schedule",
             "/tmp/resource-metering.json",
         ]);
 
-        assert_eq!(parsed.args.resource_throttling_mode, ResourceThrottlingMode::DryRun);
+        assert!(parsed.args.enable_resource_metering);
         assert_eq!(
-            parsed.args.resource_metering_schedule.as_deref(),
+            parsed.args.resource_metering.resource_metering_schedule.as_deref(),
             Some(std::path::Path::new("/tmp/resource-metering.json"))
         );
         assert!(parsed.args.build_metering_store().is_enabled());
+
+        let gated = CommandParser::parse_from([
+            "builder",
+            "--payload.resource-metering-schedule",
+            "/tmp/resource-metering.json",
+        ]);
+        assert!(!gated.args.enable_resource_metering);
+        assert!(!gated.args.build_metering_store().is_enabled());
     }
 
     #[test]
