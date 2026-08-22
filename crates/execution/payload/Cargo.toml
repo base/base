@@ -66,5 +66,5 @@ base-execution-chainspec.workspace = true
 reth-revm = { workspace = true, features = ["test-utils"] }
 
 [features]
-default = ["metrics"]
-metrics = ["base-metrics/metrics", "dep:metrics"]
+default = [ "metrics" ]
+metrics = [ "base-metrics/metrics", "dep:metrics" ]

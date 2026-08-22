@@ -703,6 +703,7 @@ where
     ) -> Result<ExecutionInfo, PayloadBuilderError> {
         let mut info = ExecutionInfo::new();
         let no_tx_pool = self.attributes().no_tx_pool();
+        let resource_metering = &self.builder_config.resource_metering;
 
         for sequencer_tx in self.attributes().sequencer_transactions() {
             // A sequencer's block should never contain blob transactions.
@@ -720,7 +721,6 @@ where
                 PayloadBuilderError::other(BasePayloadBuilderError::TransactionEcRecoverFailed)
             })?;
 
-            let resource_metering = &self.builder_config.resource_metering;
             let mut pending_resource_usage = None;
             let mut resource_account_error = None;
             let tx_hash = *sequencer_tx.tx_hash();

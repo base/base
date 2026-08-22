@@ -115,7 +115,9 @@ impl ResourceMeteringUsage {
             cumulative.resize(self.values.len(), 0);
         }
         for (index, value) in self.values.iter().copied().enumerate() {
-            cumulative[index] += value;
+            cumulative[index] = cumulative[index]
+                .checked_add(value)
+                .ok_or(ResourceMeteringError::ArithmeticOverflow)?;
         }
         Ok(())
     }
@@ -1201,6 +1203,14 @@ mod tests {
         let decision = ResourceThrottlingDecision::CalculationFailed;
         assert!(!decision.should_exclude());
         assert!(ResourceThrottlingDecision::CalculationFailed.committed_usage().is_none());
+    }
+
+    #[test]
+    fn add_to_rejects_overflow_without_partial_writes() {
+        let usage = ResourceMeteringUsage { values: vec![1, 2] };
+        let mut cumulative = vec![u128::MAX, 0];
+        assert_eq!(usage.add_to(&mut cumulative), Err(ResourceMeteringError::ArithmeticOverflow));
+        assert_eq!(cumulative, vec![u128::MAX, 0]);
     }
 
     #[test]

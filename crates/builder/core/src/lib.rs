@@ -23,11 +23,10 @@ mod execution_metering_mode;
 pub use execution_metering_mode::ExecutionMeteringMode;
 
 mod traits;
-pub use traits::{ClientBounds, NodeBounds, PayloadTxsBounds, PoolBounds};
-
 pub use base_execution_payload_builder::{
     MeteringProvider, NoopMeteringProvider, ResourceMeteringConfig, SharedMeteringProvider,
 };
+pub use traits::{ClientBounds, NodeBounds, PayloadTxsBounds, PoolBounds};
 
 mod rejected_tx_forwarder;
 pub use rejected_tx_forwarder::RejectedTxForwarder;
