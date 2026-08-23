@@ -11,7 +11,7 @@ use base_execution_payload_builder::{
     config::{BaseDAConfig, GasLimitConfig},
 };
 
-use crate::{ExecutionMeteringMode, NoopMeteringProvider, RejectionCache, SharedMeteringProvider};
+use crate::{NoopMeteringProvider, RejectionCache, SharedMeteringProvider};
 
 /// Configuration values for the flashblocks builder.
 #[derive(Clone)]
@@ -47,12 +47,6 @@ pub struct BuilderConfig {
 
     /// Maximum gas a transaction can use before being excluded.
     pub max_gas_per_txn: Option<u64>,
-
-    /// Maximum execution time per transaction in microseconds.
-    pub max_execution_time_per_tx_us: Option<u128>,
-
-    /// Execution metering mode: off, dry-run, or enforce.
-    pub execution_metering_mode: ExecutionMeteringMode,
 
     /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes.
     pub max_uncompressed_block_size: Option<u64>,
@@ -116,8 +110,6 @@ impl core::fmt::Debug for BuilderConfig {
             .field("flashblocks_interval", &self.flashblocks_interval)
             .field("flashblocks_leeway_time", &self.flashblocks_leeway_time)
             .field("max_gas_per_txn", &self.max_gas_per_txn)
-            .field("max_execution_time_per_tx_us", &self.max_execution_time_per_tx_us)
-            .field("execution_metering_mode", &self.execution_metering_mode)
             .field("max_uncompressed_block_size", &self.max_uncompressed_block_size)
             .field("metering_wait_duration", &self.metering_wait_duration)
             .field("predicate_eval_hard_cutoff", &self.predicate_eval_hard_cutoff)
@@ -144,8 +136,6 @@ impl Default for BuilderConfig {
             flashblocks_leeway_time: Duration::from_millis(50),
             sampling_ratio: 100,
             max_gas_per_txn: None,
-            max_execution_time_per_tx_us: None,
-            execution_metering_mode: ExecutionMeteringMode::Off,
             max_uncompressed_block_size: None,
             metering_wait_duration: None,
             predicate_eval_hard_cutoff: Duration::from_millis(10),

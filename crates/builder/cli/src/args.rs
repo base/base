@@ -4,9 +4,8 @@ use core::{net::SocketAddr, time::Duration};
 use std::{path::PathBuf, sync::Arc};
 
 use base_builder_core::{
-    BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
-    ExecutionMeteringMode, RejectionCache, ResourceMeteringConfig, ShadowValidityConfig,
-    SharedMeteringProvider,
+    BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES, RejectionCache,
+    ResourceMeteringConfig, ShadowValidityConfig, SharedMeteringProvider,
 };
 use base_builder_metering::MeteringStore;
 use base_execution_cli::{ResourceMeteringArgs, ShadowIndexerArgs};
@@ -134,6 +133,21 @@ impl TransactionEventsArgs {
     }
 }
 
+/// Deprecated wall-clock execution-time throttle mode.
+///
+/// Kept so older deployment configurations remain accepted. Payload admission
+/// no longer uses predicted execution time.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
+pub enum DeprecatedExecutionMeteringMode {
+    /// Time limits disabled.
+    #[default]
+    Off,
+    /// Observe time-limit violations without rejecting.
+    DryRun,
+    /// Reject transactions that exceed time limits.
+    Enforce,
+}
+
 /// Parameters for rollup configuration
 #[derive(Debug, Clone, clap::Args)]
 #[command(next_help_heading = "Rollup")]
@@ -150,8 +164,9 @@ pub struct Args {
     #[arg(long = "builder.max_gas_per_txn")]
     pub max_gas_per_txn: Option<u64>,
 
-    /// Maximum execution time per transaction in microseconds (requires resource metering)
-    #[arg(long = "builder.max-execution-time-per-tx-us")]
+    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
+    /// Scheduled for removal in v1.4.0 after rolling deployments have migrated.
+    #[arg(long = "builder.max-execution-time-per-tx-us", hide = true)]
     pub max_execution_time_per_tx_us: Option<u128>,
 
     /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
@@ -174,9 +189,15 @@ pub struct Args {
     #[arg(long = "builder.state-root-gas-anchor-us", hide = true)]
     pub state_root_gas_anchor_us: Option<u128>,
 
-    /// Execution metering mode: off, dry-run, or enforce
-    #[arg(long = "builder.execution-metering-mode", value_enum, default_value = "off")]
-    pub execution_metering_mode: ExecutionMeteringMode,
+    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
+    /// Scheduled for removal in v1.4.0 after rolling deployments have migrated.
+    #[arg(
+        long = "builder.execution-metering-mode",
+        value_enum,
+        default_value = "off",
+        hide = true
+    )]
+    pub execution_metering_mode: DeprecatedExecutionMeteringMode,
 
     /// Resource-metering schedule. Evaluated when `--builder.enable-resource-metering` is set.
     #[command(flatten)]
@@ -300,7 +321,7 @@ impl Args {
     /// Creates a [`MeteringStore`] from the CLI arguments.
     pub fn build_metering_store(&self) -> MeteringStore {
         MeteringStore::new(
-            self.enable_resource_metering || self.execution_metering_mode.is_enabled(),
+            self.enable_resource_metering,
             self.tx_data_store_buffer_size,
             Duration::from_secs(self.metering_store_ttl_secs),
         )
@@ -318,7 +339,7 @@ impl Default for Args {
             block_state_root_gas_limit: None,
             state_root_gas_coefficient: None,
             state_root_gas_anchor_us: None,
-            execution_metering_mode: ExecutionMeteringMode::Off,
+            execution_metering_mode: DeprecatedExecutionMeteringMode::Off,
             resource_metering: ResourceMeteringArgs::default(),
             extra_block_deadline_secs: 20,
             enable_resource_metering: false,
@@ -371,10 +392,12 @@ impl Args {
         self,
         metering_provider: SharedMeteringProvider,
     ) -> eyre::Result<BuilderConfig> {
-        if self.flashblock_execution_time_budget_us.is_some()
+        if self.max_execution_time_per_tx_us.is_some()
+            || self.flashblock_execution_time_budget_us.is_some()
             || self.block_state_root_gas_limit.is_some()
             || self.state_root_gas_coefficient.is_some()
             || self.state_root_gas_anchor_us.is_some()
+            || self.execution_metering_mode != DeprecatedExecutionMeteringMode::Off
         {
             warn!("deprecated builder resource limit flags are ignored");
         }
@@ -402,8 +425,6 @@ impl Args {
                 self.flashblocks.flashblocks_leeway_time,
             ),
             max_gas_per_txn: self.max_gas_per_txn,
-            max_execution_time_per_tx_us: self.max_execution_time_per_tx_us,
-            execution_metering_mode: self.execution_metering_mode,
             max_uncompressed_block_size: self.max_uncompressed_block_size,
             metering_wait_duration: self.metering_wait_duration_ms.map(Duration::from_millis),
             predicate_eval_hard_cutoff: Duration::from_millis(self.predicate_eval_hard_cutoff_ms),
@@ -678,6 +699,10 @@ mod tests {
     fn deprecated_resource_limit_flags_remain_accepted() {
         let args = CommandParser::parse_from([
             "builder",
+            "--builder.max-execution-time-per-tx-us",
+            "5000",
+            "--builder.execution-metering-mode",
+            "enforce",
             "--builder.flashblock-execution-time-budget-us",
             "5000000",
             "--builder.block-state-root-gas-limit",
@@ -689,10 +714,15 @@ mod tests {
         ])
         .args;
 
+        assert_eq!(args.max_execution_time_per_tx_us, Some(5_000));
+        assert_eq!(args.execution_metering_mode, DeprecatedExecutionMeteringMode::Enforce);
         assert_eq!(args.flashblock_execution_time_budget_us, Some(5_000_000));
         assert_eq!(args.block_state_root_gas_limit, Some(1_000_000));
         assert_eq!(args.state_root_gas_coefficient, Some(0.1));
         assert_eq!(args.state_root_gas_anchor_us, Some(5_000));
+
+        let config = convert(args);
+        assert!(config.max_gas_per_txn.is_none());
     }
 
     #[test]
@@ -700,8 +730,6 @@ mod tests {
         let args = Args {
             chain_block_time: 2000,
             max_gas_per_txn: Some(100000),
-            max_execution_time_per_tx_us: Some(5000),
-            execution_metering_mode: ExecutionMeteringMode::Enforce,
             extra_block_deadline_secs: 10,
             flashblocks: FlashblocksArgs {
                 flashblocks_block_time: 200,
@@ -714,8 +742,6 @@ mod tests {
 
         assert_eq!(config.block_time, Duration::from_millis(2000));
         assert_eq!(config.max_gas_per_txn, Some(100000));
-        assert_eq!(config.max_execution_time_per_tx_us, Some(5000));
-        assert_eq!(config.execution_metering_mode, ExecutionMeteringMode::Enforce);
         assert_eq!(config.block_time_leeway, Duration::from_secs(10));
         assert_eq!(config.flashblocks_interval, Duration::from_millis(200));
         assert_eq!(config.flashblocks_leeway_time, Duration::from_millis(50));

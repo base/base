@@ -146,14 +146,6 @@ base_metrics::define_metrics! {
     block_uncompressed_size_exceeded_total: counter,
     #[describe("Cumulative uncompressed block size at end of block")]
     block_uncompressed_size: histogram,
-    #[describe("Transactions that would be rejected by execution metering limits")]
-    resource_limit_would_reject_total: counter,
-    #[describe("Transactions that exceeded per-tx execution time limit")]
-    tx_execution_time_exceeded_total: counter,
-    #[describe("Histogram of (predicted - actual) execution time per transaction in microseconds")]
-    execution_time_prediction_error_us: histogram,
-    #[describe("Distribution of predicted execution times from metering service (microseconds)")]
-    tx_predicted_execution_time_us: histogram,
     #[describe("Flashblock selection total")]
     #[label(flashblock_index)]
     #[label(outcome)]
@@ -196,8 +188,6 @@ base_metrics::define_metrics! {
     #[describe("Priority fee of rejected transactions")]
     #[label(reason)]
     rejected_tx_priority_fee: histogram,
-    #[describe("Actual execution time for transactions without metering data (microseconds)")]
-    unmetered_tx_actual_execution_time_us: histogram,
     #[describe("Metering responses that arrived after unmetered payload inclusion")]
     metering_late_arrival_total: counter,
     #[describe("Time between unmetered payload inclusion and metering data arrival (milliseconds)")]

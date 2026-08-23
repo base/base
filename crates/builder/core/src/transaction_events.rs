@@ -9,10 +9,7 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 use tracing::warn;
 
-use crate::{
-    BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded, ResourceLimits, TxResources,
-    TxnExecutionError,
-};
+use crate::{BuilderMetrics, ExecutionInfo, ResourceLimits, TxResources, TxnExecutionError};
 
 /// Stable decision context attached to each builder transaction event.
 #[derive(Debug, Clone)]
@@ -81,7 +78,6 @@ pub(crate) struct BuilderBudgetFields {
     tx_data_limit: Option<u64>,
     block_data_limit: Option<u64>,
     block_da_footprint_limit: Option<u64>,
-    tx_execution_time_limit_us: Option<u128>,
     block_uncompressed_size_limit: Option<u64>,
     #[serde(flatten)]
     transaction_resources: Option<BuilderTransactionResources>,
@@ -91,7 +87,6 @@ pub(crate) struct BuilderBudgetFields {
 struct BuilderTransactionResources {
     tx_da_size: u64,
     tx_gas_limit: u64,
-    tx_execution_time_us: Option<u128>,
     tx_uncompressed_size: u64,
 }
 
@@ -110,7 +105,6 @@ impl BuilderBudgetFields {
             tx_data_limit: limits.tx_data_limit,
             block_data_limit: limits.block_data_limit,
             block_da_footprint_limit: limits.block_da_footprint_limit,
-            tx_execution_time_limit_us: limits.tx_execution_time_limit_us,
             block_uncompressed_size_limit: limits.block_uncompressed_size_limit,
             transaction_resources: resources.map(BuilderTransactionResources::from),
         }
@@ -122,7 +116,6 @@ impl From<&TxResources> for BuilderTransactionResources {
         Self {
             tx_da_size: resources.da_size,
             tx_gas_limit: resources.gas_limit,
-            tx_execution_time_us: resources.execution_time_us,
             tx_uncompressed_size: resources.uncompressed_size,
         }
     }
@@ -279,12 +272,6 @@ impl BuilderRejectedEventData {
     ) -> Self {
         self.tx_age_ms = Some(tx_age_ms);
         self.metering_wait_duration_ms = Some(metering_wait_duration_ms);
-        self
-    }
-
-    /// Adds the execution metering mode to the rejected-event payload.
-    pub(crate) const fn with_dry_run(mut self, dry_run: bool) -> Self {
-        self.dry_run = Some(dry_run);
         self
     }
 }
@@ -484,11 +471,6 @@ pub(crate) const fn rejection_reason_code(err: &TxnExecutionError) -> &'static s
         TxnExecutionError::BlockUncompressedSizeExceeded { .. } => {
             "block_uncompressed_size_exceeded"
         }
-        TxnExecutionError::ExecutionMeteringLimitExceeded(inner) => match inner {
-            ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _) => {
-                "tx_execution_time_exceeded"
-            }
-        },
         TxnExecutionError::SequencerTransaction => "sequencer_transaction",
         TxnExecutionError::NonceTooLow => "nonce_too_low",
         TxnExecutionError::InternalError(_) => "internal_error",
@@ -651,7 +633,6 @@ mod tests {
                     da_size: 120,
                     gas_limit: 21_000,
                     payer_auth: 0,
-                    execution_time_us: Some(100),
                     uncompressed_size: 110,
                 }),
             ),
@@ -700,12 +681,6 @@ mod tests {
                 block_gas_limit: 3,
             }),
             "transaction_gas_limit_exceeded"
-        );
-        assert_eq!(
-            rejection_reason_code(&TxnExecutionError::ExecutionMeteringLimitExceeded(
-                ExecutionMeteringLimitExceeded::TransactionExecutionTime(1, 2),
-            )),
-            "tx_execution_time_exceeded"
         );
         assert_eq!(
             rejection_reason_code(&TxnExecutionError::ResourceThrottling(
