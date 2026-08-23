@@ -15,7 +15,10 @@ const L1_BLOCK_ECOTONE_SELECTOR: [u8; 4] = hex!("440a5e20");
 /// The function selector of the "setL1BlockValuesIsthmus" function in the `L1Block` contract.
 const L1_BLOCK_ISTHMUS_SELECTOR: [u8; 4] = hex!("098999be");
 
-/// The function selector of the "setL1BlockValuesJovian" function in the `L1Block` contract.
+/// The function selector of the pre-Ecotone `setL1BlockValues` function.
+const L1_BLOCK_BEDROCK_SELECTOR: [u8; 4] = hex!("015d8eb9");
+
+/// The function selector of the `setL1BlockValuesJovian` function in the `L1Block` contract.
 /// This is the first 4 bytes of `keccak256("setL1BlockValuesJovian()")`.
 const L1_BLOCK_JOVIAN_SELECTOR: [u8; 4] = hex!("3db6be2b");
 
@@ -53,23 +56,28 @@ pub fn extract_l1_info_from_tx<T: Transaction>(
 /// Caution this expects that the input is the calldata of the [`L1BlockInfo`] transaction (first
 /// transaction) in the L2 block.
 ///
-/// # Panics
-/// If the input is shorter than 4 bytes.
+
+/// Parses the input of the first transaction in the L2 block into [`L1BlockInfo`].
+///
+/// Returns an error if the input is too short, the selector is unknown, or the
+/// calldata has an unexpected length.
 pub fn parse_l1_info(input: &[u8]) -> Result<L1BlockInfo, BaseBlockExecutionError> {
-    // Parse the L1 info transaction into an L1BlockInfo struct, depending on the function selector.
-    // There are currently 4 variants:
-    // - Jovian
-    // - Isthmus
-    // - Ecotone
-    // - Bedrock
-    if input[0..4] == L1_BLOCK_JOVIAN_SELECTOR {
-        parse_l1_info_tx_jovian(input[4..].as_ref())
-    } else if input[0..4] == L1_BLOCK_ISTHMUS_SELECTOR {
-        parse_l1_info_tx_isthmus(input[4..].as_ref())
-    } else if input[0..4] == L1_BLOCK_ECOTONE_SELECTOR {
-        parse_l1_info_tx_ecotone(input[4..].as_ref())
-    } else {
-        parse_l1_info_tx_bedrock(input[4..].as_ref())
+    if input.len() < 4 {
+        return Err(BaseBlockExecutionError::L1BlockInfo(
+            L1BlockInfoError::InvalidCalldata,
+        ));
+    }
+
+    let selector = [input[0], input[1], input[2], input[3]];
+
+    match selector {
+        L1_BLOCK_BEDROCK_SELECTOR => parse_l1_info_tx_bedrock(&input[4..]),
+        L1_BLOCK_ECOTONE_SELECTOR => parse_l1_info_tx_ecotone(&input[4..]),
+        L1_BLOCK_ISTHMUS_SELECTOR => parse_l1_info_tx_isthmus(&input[4..]),
+        L1_BLOCK_JOVIAN_SELECTOR => parse_l1_info_tx_jovian(&input[4..]),
+        _ => Err(BaseBlockExecutionError::L1BlockInfo(
+            L1BlockInfoError::InvalidSelector,
+        )),
     }
 }
 
