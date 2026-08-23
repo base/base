@@ -11,6 +11,9 @@ pub enum L1BlockInfoError {
     /// Invalid L1 block info transaction calldata
     #[error("invalid l1 block info transaction calldata in the L2 block")]
     InvalidCalldata,
+    /// Unknown L1 block info transaction selector.
+    #[error("unknown l1 block info transaction selector")]
+    InvalidSelector,
     /// Unexpected L1 block info transaction calldata length
     #[error("unexpected l1 block info tx calldata length found")]
     UnexpectedCalldataLength,
