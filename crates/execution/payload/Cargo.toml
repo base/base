@@ -57,6 +57,7 @@ tracing.workspace = true
 thiserror.workspace = true
 derive_more.workspace = true
 serde_json.workspace = true
+moka = { workspace = true, features = ["sync"] }
 metrics = { workspace = true, optional = true }
 
 [dev-dependencies]

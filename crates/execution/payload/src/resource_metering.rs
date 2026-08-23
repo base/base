@@ -8,7 +8,10 @@
 //! for measurements the production EVM did not record. Throttling excludes a
 //! transaction when an enforced dimension exceeds a budget. A dimension with
 //! [`ResourceMeteringDimension::dry_run`] set is observed without excluding.
-//! Neither changes protocol gas, fees, or validity.
+//! Block-scope excludes skip only the current payload scan. Transaction-scope
+//! excludes (predicted or executed) are permanent pool evictions: the
+//! transaction cannot fit any block. Neither changes protocol gas, fees, or
+//! validity.
 
 use std::{collections::HashMap, fmt, fs, path::Path};
 
@@ -700,6 +703,21 @@ impl ResourceThrottlingDecision {
         }
     }
 
+    /// Returns `true` if this decision is intrinsic to the transaction.
+    ///
+    /// A transaction-scope throttle cannot fit any block, so the pool should
+    /// permanently evict the transaction. Callers must also check
+    /// [`Self::should_exclude`]: block-scope throttles, dry-run observations,
+    /// and [`Self::CalculationFailed`] are not permanent pool evictions.
+    pub const fn is_permanent(&self) -> bool {
+        match self {
+            Self::Throttle { error, .. } => {
+                matches!(error.scope, ResourceThrottlingLimitScope::Transaction)
+            }
+            Self::Allow(_) | Self::CalculationFailed => false,
+        }
+    }
+
     /// Usage to add when this decision is included in the payload.
     pub fn committed_usage(self) -> Option<ResourceMeteringUsage> {
         match self {
@@ -1202,7 +1220,55 @@ mod tests {
     fn calculation_failures_fail_open() {
         let decision = ResourceThrottlingDecision::CalculationFailed;
         assert!(!decision.should_exclude());
+        assert!(!decision.is_permanent());
         assert!(ResourceThrottlingDecision::CalculationFailed.committed_usage().is_none());
+    }
+
+    #[test]
+    fn transaction_scope_throttle_is_permanent() {
+        let transaction_scope = ResourceThrottlingDecision::Throttle {
+            error: ResourceThrottlingLimitExceeded {
+                dimension: "cpu".to_string(),
+                scope: ResourceThrottlingLimitScope::Transaction,
+                used: 50,
+                transaction_cost: 50,
+                limit: 30,
+                dry_run: false,
+            },
+            usage: ResourceMeteringUsage { values: vec![50] },
+        };
+        assert!(transaction_scope.should_exclude());
+        assert!(transaction_scope.is_permanent());
+
+        let block_scope = ResourceThrottlingDecision::Throttle {
+            error: ResourceThrottlingLimitExceeded {
+                dimension: "cpu".to_string(),
+                scope: ResourceThrottlingLimitScope::Block,
+                used: 120,
+                transaction_cost: 30,
+                limit: 100,
+                dry_run: false,
+            },
+            usage: ResourceMeteringUsage { values: vec![30] },
+        };
+        assert!(block_scope.should_exclude());
+        assert!(!block_scope.is_permanent());
+
+        let dry_run = ResourceThrottlingDecision::Throttle {
+            error: ResourceThrottlingLimitExceeded {
+                dimension: "cpu".to_string(),
+                scope: ResourceThrottlingLimitScope::Transaction,
+                used: 50,
+                transaction_cost: 50,
+                limit: 30,
+                dry_run: true,
+            },
+            usage: ResourceMeteringUsage { values: vec![50] },
+        };
+        assert!(!dry_run.should_exclude());
+        assert!(dry_run.is_permanent());
+
+        assert!(!ResourceThrottlingDecision::Allow(ResourceMeteringUsage::zero(0)).is_permanent());
     }
 
     #[test]

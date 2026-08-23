@@ -21,8 +21,14 @@ executed results when they exist: actual gas used, net post-state effects
 `STATE_CHANGED_ACCOUNT`), and simulated opcode bags only for measurements the
 production EVM did not record. Resource metering then excludes transactions
 whose accounted usage exceeds an enforced budget. A dimension may set
-`dryRun` to observe that budget without excluding. This does not change
-protocol gas, fees, or validity.
+`dryRun` to observe that budget without excluding. Block-scope skips apply
+only to the current payload scan; the transaction stays in the pool for a
+later block. Transaction-scope skips (predicted or executed) are permanent
+pool evictions and are recorded in a shared TTL rejection cache (30
+minutes), matching Flashblocks: later payload jobs skip that hash even if
+the transaction is re-gossiped into the pool. Nonce-lane descendants are
+skipped for the current scan; skipping those descendants across later jobs
+is Flashblocks-only. This does not change protocol gas, fees, or validity.
 
 ## Usage
 

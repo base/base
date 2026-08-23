@@ -10,7 +10,7 @@ use revm::state::EvmState;
 use tracing::{debug, warn};
 
 use crate::{
-    CompiledResourceMeteringSchedule, MeteringProvider, NoopMeteringProvider,
+    CompiledResourceMeteringSchedule, MeteringProvider, NoopMeteringProvider, RejectionCache,
     ResourceMeteringError, ResourceMeteringMetrics, ResourceMeteringSchedule,
     ResourceMeteringUsage, ResourceSample, ResourceThrottlingDecision, SharedMeteringProvider,
 };
@@ -27,6 +27,13 @@ pub struct BaseBuilderConfig {
     pub manifest_precheck_enabled: bool,
     /// Resource metering and throttling configuration for payload admission.
     pub resource_metering: ResourceMeteringConfig,
+    /// Shared, cross-job cache of permanently rejected transaction hashes.
+    ///
+    /// Native payload jobs skip hashes already in this cache even if the
+    /// transaction is re-gossiped into the pool. Nonce-lane descendants are
+    /// skipped for the current scan via `PayloadTransactions::mark_invalid`;
+    /// skipping those descendants across later jobs is Flashblocks-only.
+    pub rejection_cache: RejectionCache,
 }
 
 impl Default for BaseBuilderConfig {
@@ -36,6 +43,7 @@ impl Default for BaseBuilderConfig {
             gas_limit_config: GasLimitConfig::default(),
             manifest_precheck_enabled: true,
             resource_metering: ResourceMeteringConfig::default(),
+            rejection_cache: RejectionCache::default(),
         }
     }
 }
@@ -52,6 +60,7 @@ impl BaseBuilderConfig {
             gas_limit_config,
             manifest_precheck_enabled,
             resource_metering: ResourceMeteringConfig::default(),
+            rejection_cache: RejectionCache::default(),
         }
     }
 

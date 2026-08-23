@@ -1155,6 +1155,7 @@ where
                     gas_limit_config: self.gas_limit_config,
                     manifest_precheck_enabled: self.manifest_precheck_enabled,
                     resource_metering: self.resource_metering,
+                    rejection_cache: Default::default(),
                 },
             )
             .with_transactions(self.best_transactions);

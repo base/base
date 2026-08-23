@@ -13,6 +13,8 @@ pub mod builder;
 pub use builder::BasePayloadBuilder;
 pub mod config;
 pub use config::ResourceMeteringConfig;
+mod rejection_cache;
+pub use rejection_cache::{REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL, RejectionCache};
 pub mod error;
 mod metering;
 pub use metering::{MeteringProvider, NoopMeteringProvider, SharedMeteringProvider};

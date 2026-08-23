@@ -24,7 +24,8 @@ pub use execution_metering_mode::ExecutionMeteringMode;
 
 mod traits;
 pub use base_execution_payload_builder::{
-    MeteringProvider, NoopMeteringProvider, ResourceMeteringConfig, SharedMeteringProvider,
+    MeteringProvider, NoopMeteringProvider, RejectionCache, ResourceMeteringConfig,
+    SharedMeteringProvider,
 };
 pub use traits::{ClientBounds, NodeBounds, PayloadTxsBounds, PoolBounds};
 
@@ -35,9 +36,6 @@ pub use rejected_tx_forwarder::RejectedTxForwarder;
 // is shared via `base-observability-events`, while this module keeps
 // builder-specific payload construction private to the builder crate.
 mod transaction_events;
-
-mod rejection_cache;
-pub use rejection_cache::RejectionCache;
 
 mod flashblocks;
 pub use flashblocks::{

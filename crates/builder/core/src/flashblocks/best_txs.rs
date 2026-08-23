@@ -227,9 +227,7 @@ where
     /// subsequent flashblocks within this block and across future blocks via
     /// the shared rejection cache.
     pub fn mark_rejected(&mut self, tx_hashes: &[TxHash]) {
-        for hash in tx_hashes {
-            self.rejection_cache.insert(*hash);
-        }
+        self.rejection_cache.mark_rejected(tx_hashes);
         BuilderMetrics::rejection_cache_insertions().increment(tx_hashes.len() as u64);
         BuilderMetrics::rejection_cache_size().set(self.rejection_cache.entry_count() as f64);
     }
@@ -254,7 +252,7 @@ where
                 continue;
             }
 
-            if self.rejection_cache.contains_key(&hash) {
+            if self.rejection_cache.is_rejected(&hash) {
                 BuilderMetrics::rejection_cache_hits().increment(1);
                 // Only intrinsically invalid transactions enter this cache. Their nonce-lane
                 // descendants cannot execute across the resulting gap, so exclude the lane for
