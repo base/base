@@ -538,4 +538,30 @@ mod tests {
         assert_eq!(l1_block_info.operator_fee_constant, operator_fee_constant);
         assert_eq!(l1_block_info.da_footprint_gas_scalar, da_footprint_gas_scalar);
     }
+        #[test]
+    fn parse_l1_info_rejects_unknown_selector() {
+        let mut data = vec![0_u8; 4 + 256];
+        data[..4].copy_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
+
+        assert_eq!(
+            parse_l1_info(&data),
+            Err(BaseBlockExecutionError::L1BlockInfo(
+                L1BlockInfoError::InvalidSelector,
+            ))
+        );
+    }
+
+    #[test]
+    fn parse_l1_info_rejects_short_input_without_panicking() {
+        for length in 0..4 {
+            let data = vec![0_u8; length];
+
+            assert_eq!(
+                parse_l1_info(&data),
+                Err(BaseBlockExecutionError::L1BlockInfo(
+                    L1BlockInfoError::InvalidCalldata,
+                ))
+            );
+        }
+    }
 }
