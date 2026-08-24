@@ -1130,10 +1130,10 @@ mod tests {
 
     use super::{BasePayloadBuilderCtx, Builder, ExecutionInfo};
     use crate::{
-        BasePayloadBuilderAttributes, CompiledResourceMeteringSchedule, MeteringProvider,
-        NoopMeteringProvider, ResourceMeteringConfig, ResourceMeteringDimension,
-        ResourceMeteringOperation, ResourceMeteringSchedule, SharedMeteringProvider,
-        config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes,
+        BasePayloadBuilderAttributes, MeteringProvider, NoopMeteringProvider,
+        ResourceMeteringConfig, ResourceMeteringDimension, ResourceMeteringOperation,
+        ResourceMeteringSchedule, SharedMeteringProvider, config::BaseBuilderConfig,
+        payload::EthPayloadBuilderAttributes,
     };
 
     #[derive(Debug)]
@@ -1412,17 +1412,14 @@ mod tests {
         transaction_limit: Option<u64>,
         dry_run: bool,
     ) -> ResourceMeteringSchedule {
-        ResourceMeteringSchedule {
-            dimensions: vec![ResourceMeteringDimension {
-                name: "cpu".to_string(),
-                block_limit,
-                transaction_limit,
-                base_gas_weight: 1,
-                operations: Vec::new(),
-                dry_run,
-            }],
-            ..Default::default()
-        }
+        ResourceMeteringSchedule::new(vec![ResourceMeteringDimension {
+            name: "cpu".to_string(),
+            block_limit,
+            transaction_limit: transaction_limit.unwrap_or(block_limit),
+            base_gas_weight: 1,
+            operations: Vec::new(),
+            dry_run,
+        }])
     }
 
     fn metering_config(
@@ -1431,7 +1428,7 @@ mod tests {
     ) -> ResourceMeteringConfig {
         ResourceMeteringConfig {
             enabled: true,
-            schedule: Arc::new(CompiledResourceMeteringSchedule::compile(schedule).unwrap()),
+            schedule: Arc::new(schedule.compile().unwrap()),
             provider,
         }
     }
@@ -1456,21 +1453,18 @@ mod tests {
     }
 
     fn overflowing_schedule() -> ResourceMeteringSchedule {
-        ResourceMeteringSchedule {
-            dimensions: vec![ResourceMeteringDimension {
-                name: "cpu".to_string(),
-                block_limit: 1,
-                transaction_limit: None,
-                base_gas_weight: u64::MAX,
-                operations: vec![ResourceMeteringOperation {
-                    name: "SSTORE".to_string(),
-                    gas_used_weight: u64::MAX,
-                    count_cost: 0,
-                }],
-                dry_run: false,
+        ResourceMeteringSchedule::new(vec![ResourceMeteringDimension {
+            name: "cpu".to_string(),
+            block_limit: 1,
+            transaction_limit: 1,
+            base_gas_weight: u64::MAX,
+            operations: vec![ResourceMeteringOperation {
+                name: "SSTORE".to_string(),
+                gas_used_weight: u64::MAX,
+                count_cost: 0,
             }],
-            ..Default::default()
-        }
+            dry_run: false,
+        }])
     }
 
     fn overflowing_meter(tx_hash: TxHash) -> MeterBundleResponse {
@@ -1823,21 +1817,18 @@ mod tests {
         transaction_limit: Option<u64>,
         sstore_count_cost: u64,
     ) -> ResourceMeteringSchedule {
-        ResourceMeteringSchedule {
-            dimensions: vec![ResourceMeteringDimension {
-                name: "cpu".to_string(),
-                block_limit,
-                transaction_limit,
-                base_gas_weight: 1,
-                operations: vec![ResourceMeteringOperation {
-                    name: "SSTORE".to_string(),
-                    gas_used_weight: 0,
-                    count_cost: sstore_count_cost,
-                }],
-                dry_run: false,
+        ResourceMeteringSchedule::new(vec![ResourceMeteringDimension {
+            name: "cpu".to_string(),
+            block_limit,
+            transaction_limit: transaction_limit.unwrap_or(block_limit),
+            base_gas_weight: 1,
+            operations: vec![ResourceMeteringOperation {
+                name: "SSTORE".to_string(),
+                gas_used_weight: 0,
+                count_cost: sstore_count_cost,
             }],
-            ..Default::default()
-        }
+            dry_run: false,
+        }])
     }
 
     fn test_state_provider() -> StateProviderTest {

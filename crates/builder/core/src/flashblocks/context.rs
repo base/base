@@ -1645,8 +1645,8 @@ mod tests {
     use base_common_consensus::{BaseTxEnvelope, BaseTypedTransaction, TxDeposit};
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_payload_builder::{
-        CompiledResourceMeteringSchedule, ResourceMeteringConfig, ResourceMeteringDimension,
-        ResourceMeteringOperation, ResourceMeteringSchedule, ResourceMeteringUsage,
+        ResourceMeteringConfig, ResourceMeteringDimension, ResourceMeteringOperation,
+        ResourceMeteringSchedule, ResourceMeteringUsage,
     };
     use base_execution_txpool::BasePooledTransaction;
     use reth_chainspec::ChainSpec;
@@ -1874,17 +1874,14 @@ mod tests {
         transaction_limit: Option<u64>,
         dry_run: bool,
     ) -> ResourceMeteringSchedule {
-        ResourceMeteringSchedule {
-            dimensions: vec![ResourceMeteringDimension {
-                name: "cpu".to_string(),
-                block_limit,
-                transaction_limit,
-                base_gas_weight: 1,
-                operations: Vec::new(),
-                dry_run,
-            }],
-            ..Default::default()
-        }
+        ResourceMeteringSchedule::new(vec![ResourceMeteringDimension {
+            name: "cpu".to_string(),
+            block_limit,
+            transaction_limit: transaction_limit.unwrap_or(block_limit),
+            base_gas_weight: 1,
+            operations: Vec::new(),
+            dry_run,
+        }])
     }
 
     fn metering_config(
@@ -1893,7 +1890,7 @@ mod tests {
     ) -> ResourceMeteringConfig {
         ResourceMeteringConfig {
             enabled: true,
-            schedule: Arc::new(CompiledResourceMeteringSchedule::compile(schedule).unwrap()),
+            schedule: Arc::new(schedule.compile().unwrap()),
             provider,
         }
     }
@@ -1918,21 +1915,18 @@ mod tests {
     }
 
     fn overflowing_schedule() -> ResourceMeteringSchedule {
-        ResourceMeteringSchedule {
-            dimensions: vec![ResourceMeteringDimension {
-                name: "cpu".to_string(),
-                block_limit: 1,
-                transaction_limit: None,
-                base_gas_weight: u64::MAX,
-                operations: vec![ResourceMeteringOperation {
-                    name: "SSTORE".to_string(),
-                    gas_used_weight: u64::MAX,
-                    count_cost: 0,
-                }],
-                dry_run: false,
+        ResourceMeteringSchedule::new(vec![ResourceMeteringDimension {
+            name: "cpu".to_string(),
+            block_limit: 1,
+            transaction_limit: 1,
+            base_gas_weight: u64::MAX,
+            operations: vec![ResourceMeteringOperation {
+                name: "SSTORE".to_string(),
+                gas_used_weight: u64::MAX,
+                count_cost: 0,
             }],
-            ..Default::default()
-        }
+            dry_run: false,
+        }])
     }
 
     fn overflowing_meter(tx_hash: TxHash) -> MeterBundleResponse {

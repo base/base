@@ -28,48 +28,74 @@ const MAX_DIMENSION_NAME_LENGTH: usize = 64;
 const MAX_OPERATIONS_PER_DIMENSION: usize = 512;
 const MAX_OPERATION_NAME_LENGTH: usize = 128;
 
-/// A serializable resource-metering schedule.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+/// A resource-metering schedule used by the builder.
+///
+/// JSON files are parsed through a private DTO. Omitted `transactionLimit`
+/// becomes [`ResourceMeteringDimension::block_limit`] during
+/// [`Self::compile`]. The inverted operation index is rebuilt in that same
+/// step and is not part of the file format.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct ResourceMeteringSchedule {
     /// Schedule schema version.
     pub version: u32,
     /// Independently budgeted resource dimensions.
-    #[serde(default)]
     pub dimensions: Vec<ResourceMeteringDimension>,
+    #[serde(skip)]
+    operation_index: HashMap<String, Vec<(usize, u64, u64)>>,
 }
 
 impl Default for ResourceMeteringSchedule {
     fn default() -> Self {
-        Self { version: CURRENT_SCHEDULE_VERSION, dimensions: Vec::new() }
+        Self::new(Vec::new())
     }
 }
 
 /// One resource-metering dimension.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct ResourceMeteringDimension {
     /// Stable operator-facing dimension name.
     pub name: String,
     /// Cumulative resource-unit budget for a block.
     pub block_limit: u64,
-    /// Optional resource-unit budget for one transaction.
+    /// Resource-unit budget for one transaction.
     ///
-    /// Omitted JSON `transactionLimit` compiles to [`Self::block_limit`].
-    #[serde(default)]
-    pub transaction_limit: Option<u64>,
+    /// Omitted JSON `transactionLimit` becomes [`Self::block_limit`] during
+    /// parse/compile. Serializing a live schedule always writes this field.
+    pub transaction_limit: u64,
     /// Resource units charged per unit of actual transaction gas used.
-    #[serde(default)]
     pub base_gas_weight: u64,
     /// Additional prices for measured opcodes, precompiles, and pseudo-opcodes.
-    #[serde(default)]
     pub operations: Vec<ResourceMeteringOperation>,
     /// Observe over-budget usage without excluding the transaction.
     ///
     /// Limits take effect unless this flag is set. Dry-run is the explicit
     /// opt-out used while rolling out a dimension.
-    #[serde(default)]
     pub dry_run: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ResourceMeteringScheduleFile {
+    version: u32,
+    #[serde(default)]
+    dimensions: Vec<ResourceMeteringDimensionFile>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ResourceMeteringDimensionFile {
+    name: String,
+    block_limit: u64,
+    #[serde(default)]
+    transaction_limit: Option<u64>,
+    #[serde(default)]
+    base_gas_weight: u64,
+    #[serde(default)]
+    operations: Vec<ResourceMeteringOperation>,
+    #[serde(default)]
+    dry_run: bool,
 }
 
 /// A price applied to one measured operation.
@@ -86,7 +112,7 @@ pub struct ResourceMeteringOperation {
     pub count_cost: u64,
 }
 
-/// Resource-unit usage aligned with a compiled schedule's dimensions.
+/// Resource-unit usage aligned with a schedule's dimensions.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ResourceMeteringUsage {
     /// Resource units used by each schedule dimension.
@@ -290,60 +316,34 @@ impl ResourceSample {
     }
 }
 
-/// A compiled schedule used by the builder's hot path.
-#[derive(Debug, Clone)]
-pub struct CompiledResourceMeteringSchedule {
-    /// Validated source schedule.
-    pub schedule: ResourceMeteringSchedule,
-    /// Compiled dimensions in stable schedule order.
-    pub dimensions: Vec<CompiledResourceMeteringDimension>,
-    operation_index: HashMap<String, Vec<(usize, u64, u64)>>,
-}
-
-/// A compiled resource-metering dimension.
-#[derive(Debug, Clone)]
-pub struct CompiledResourceMeteringDimension {
-    /// Stable operator-facing dimension name.
-    pub name: String,
-    /// Cumulative resource-unit budget for a block.
-    pub block_limit: u64,
-    /// Resource-unit budget for one transaction.
+impl ResourceMeteringSchedule {
+    /// Creates an uncompiled schedule with the current schema version.
     ///
-    /// Always set: omitted JSON `transactionLimit` compiles to
-    /// [`ResourceMeteringDimension::block_limit`].
-    pub transaction_limit: u64,
-    /// Resource units charged per unit of actual transaction gas used.
-    pub base_gas_weight: u64,
-    /// Observe over-budget usage without excluding the transaction.
-    pub dry_run: bool,
-}
+    /// Call [`Self::compile`] before [`Self::evaluate`]. [`Self::from_json`]
+    /// and [`Self::from_file`] compile automatically.
+    pub fn new(dimensions: Vec<ResourceMeteringDimension>) -> Self {
+        Self { version: CURRENT_SCHEDULE_VERSION, dimensions, operation_index: HashMap::new() }
+    }
 
-impl CompiledResourceMeteringSchedule {
-    /// Compiles a validated schedule for the builder hot path.
-    pub fn compile(schedule: ResourceMeteringSchedule) -> Result<Self, ResourceMeteringError> {
-        schedule.validate()?;
+    /// Validates this schedule and builds the inverted operation index.
+    ///
+    /// Hand-built schedules must go through this step before
+    /// [`Self::evaluate`]. JSON loaders call it automatically.
+    pub fn compile(mut self) -> Result<Self, ResourceMeteringError> {
+        self.validate()?;
 
-        let mut dimensions = Vec::with_capacity(schedule.dimensions.len());
         let mut operation_index: HashMap<String, Vec<(usize, u64, u64)>> = HashMap::new();
-
-        for (dimension_index, dimension) in schedule.dimensions.iter().enumerate() {
-            dimensions.push(CompiledResourceMeteringDimension {
-                name: dimension.name.trim().to_string(),
-                block_limit: dimension.block_limit,
-                transaction_limit: dimension.transaction_limit.unwrap_or(dimension.block_limit),
-                base_gas_weight: dimension.base_gas_weight,
-                dry_run: dimension.dry_run,
-            });
-
+        for (dimension_index, dimension) in self.dimensions.iter_mut().enumerate() {
+            dimension.name = dimension.name.trim().to_string();
             for operation in &dimension.operations {
                 operation_index
-                    .entry(ResourceMeteringSchedule::normalize_operation_name(&operation.name))
+                    .entry(Self::normalize_operation_name(&operation.name))
                     .or_default()
                     .push((dimension_index, operation.gas_used_weight, operation.count_cost));
             }
         }
-
-        Ok(Self { schedule, dimensions, operation_index })
+        self.operation_index = operation_index;
+        Ok(self)
     }
 
     /// Returns whether the schedule has no metering dimensions.
@@ -371,7 +371,7 @@ impl CompiledResourceMeteringSchedule {
         }
 
         for entry in opcode_gas {
-            let operation_name = ResourceMeteringSchedule::normalize_operation_name(&entry.opcode);
+            let operation_name = Self::normalize_operation_name(&entry.opcode);
             let Some(prices) = self.operation_index.get(&operation_name) else {
                 continue;
             };
@@ -593,20 +593,46 @@ impl ResourceMeteringSchedule {
         CURRENT_SCHEDULE_VERSION
     }
 
-    /// Parses a schedule from JSON.
+    /// Parses a schedule from JSON and compiles it.
     pub fn from_json(json: &str) -> Result<Self, ResourceMeteringError> {
-        serde_json::from_str(json)
-            .map_err(|error| ResourceMeteringError::ParseJson(error.to_string()))
+        let file: ResourceMeteringScheduleFile = serde_json::from_str(json)
+            .map_err(|error| ResourceMeteringError::ParseJson(error.to_string()))?;
+        Self::from_file_dto(file)
     }
 
-    /// Loads a schedule from a JSON file.
+    /// Loads a schedule from a JSON file and compiles it.
     pub fn from_file(path: &Path) -> Result<Self, ResourceMeteringError> {
         let json = fs::read_to_string(path)
             .map_err(|error| ResourceMeteringError::ReadFile(error.to_string()))?;
         Self::from_json(&json)
     }
 
-    /// Validates the schedule before it is compiled or activated.
+    fn from_file_dto(file: ResourceMeteringScheduleFile) -> Result<Self, ResourceMeteringError> {
+        Self {
+            version: file.version,
+            dimensions: file
+                .dimensions
+                .into_iter()
+                .map(|dimension| {
+                    let block_limit = dimension.block_limit;
+                    ResourceMeteringDimension {
+                        name: dimension.name,
+                        block_limit,
+                        transaction_limit: dimension.transaction_limit.unwrap_or(block_limit),
+                        base_gas_weight: dimension.base_gas_weight,
+                        operations: dimension.operations,
+                        dry_run: dimension.dry_run,
+                    }
+                })
+                .collect(),
+            operation_index: HashMap::new(),
+        }
+        .compile()
+    }
+
+    /// Validates names, limits, and prices.
+    ///
+    /// [`Self::compile`] calls this before building the operation index.
     pub fn validate(&self) -> Result<(), ResourceMeteringError> {
         if self.version != CURRENT_SCHEDULE_VERSION {
             return Err(ResourceMeteringError::UnsupportedVersion(self.version));
@@ -625,10 +651,10 @@ impl ResourceMeteringSchedule {
             if dimension.block_limit == 0 {
                 return Err(ResourceMeteringError::ZeroBlockLimit(dimension.name.clone()));
             }
-            if let Some(transaction_limit) = dimension.transaction_limit
-                && (transaction_limit == 0 || transaction_limit > dimension.block_limit)
+            if dimension.transaction_limit == 0
+                || dimension.transaction_limit > dimension.block_limit
             {
-                return if transaction_limit == 0 {
+                return if dimension.transaction_limit == 0 {
                     Err(ResourceMeteringError::NoopDimension(dimension.name.clone()))
                 } else {
                     Err(ResourceMeteringError::TransactionLimitExceedsBlock {
@@ -747,7 +773,7 @@ impl ResourceThrottlingDecision {
     }
 }
 
-impl CompiledResourceMeteringSchedule {
+impl ResourceMeteringSchedule {
     /// Predicted admission check from `meterBundle` data.
     ///
     /// Missing metering data fails open with zero predicted usage so the
@@ -811,7 +837,7 @@ mod tests {
         ResourceMeteringDimension {
             name: name.to_string(),
             block_limit,
-            transaction_limit,
+            transaction_limit: transaction_limit.unwrap_or(block_limit),
             base_gas_weight,
             operations,
             dry_run: false,
@@ -827,7 +853,7 @@ mod tests {
         let schedule = ResourceMeteringSchedule::default();
         assert_eq!(schedule.version, ResourceMeteringSchedule::current_version());
         assert!(schedule.dimensions.is_empty());
-        assert!(CompiledResourceMeteringSchedule::compile(schedule).unwrap().is_empty());
+        assert!(schedule.compile().unwrap().is_empty());
     }
 
     #[test]
@@ -842,7 +868,7 @@ mod tests {
             )],
             ..Default::default()
         };
-        let compiled = CompiledResourceMeteringSchedule::compile(schedule).unwrap();
+        let compiled = schedule.compile().unwrap();
         let usage = compiled.evaluate(100, &[opcode_gas("sstore", 4, 10)]).unwrap();
 
         assert_eq!(usage.values, vec![250]);
@@ -860,7 +886,7 @@ mod tests {
             )],
             ..Default::default()
         };
-        let compiled = CompiledResourceMeteringSchedule::compile(schedule).unwrap();
+        let compiled = schedule.compile().unwrap();
         let usage = compiled
             .evaluate(0, &[opcode_gas("TX_EFFECT_ETH_TRANSFER_TO_NONEXISTENT_ACCOUNT", 1, 0)])
             .unwrap();
@@ -877,7 +903,7 @@ mod tests {
             ],
             ..Default::default()
         };
-        let compiled = CompiledResourceMeteringSchedule::compile(schedule).unwrap();
+        let compiled = schedule.compile().unwrap();
         let usage = compiled.evaluate(0, &[opcode_gas("CALL", 4, 10)]).unwrap();
 
         assert_eq!(usage.values, vec![20, 12]);
@@ -889,7 +915,7 @@ mod tests {
             dimensions: vec![dimension("cpu", 100, Some(30), 1, Vec::new())],
             ..Default::default()
         };
-        let compiled = CompiledResourceMeteringSchedule::compile(schedule).unwrap();
+        let compiled = schedule.compile().unwrap();
         let usage = compiled.evaluate(40, &[]).unwrap();
 
         let error = compiled.check(&usage, &[]).unwrap_err();
@@ -957,7 +983,7 @@ mod tests {
             )],
             ..Default::default()
         };
-        let compiled = CompiledResourceMeteringSchedule::compile(schedule).unwrap();
+        let compiled = schedule.compile().unwrap();
 
         assert_eq!(
             compiled.evaluate(u64::MAX, &[opcode_gas("CALL", 1, u64::MAX)]),
@@ -985,7 +1011,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(schedule.dimensions[0].transaction_limit, Some(50));
+        assert_eq!(schedule.dimensions[0].transaction_limit, 50);
         assert_eq!(schedule.dimensions[0].operations[0].count_cost, 4);
         assert!(!schedule.dimensions[0].dry_run);
     }
@@ -1009,12 +1035,41 @@ mod tests {
     }
 
     #[test]
+    fn rejects_unknown_json_fields() {
+        let error = ResourceMeteringSchedule::from_json(
+            r#"{
+                "version": 1,
+                "unknownField": true
+            }"#,
+        )
+        .unwrap_err();
+        assert!(matches!(error, ResourceMeteringError::ParseJson(_)));
+    }
+
+    #[test]
+    fn from_json_rejects_explicit_zero_transaction_limit() {
+        let error = ResourceMeteringSchedule::from_json(
+            r#"{
+                "version": 1,
+                "dimensions": [{
+                    "name": "cpu",
+                    "blockLimit": 100,
+                    "transactionLimit": 0,
+                    "baseGasWeight": 1
+                }]
+            }"#,
+        )
+        .unwrap_err();
+        assert!(matches!(error, ResourceMeteringError::NoopDimension(_)));
+    }
+
+    #[test]
     fn missing_metering_data_fails_open_with_zero_usage() {
         let schedule = ResourceMeteringSchedule {
             dimensions: vec![dimension("cpu", 100, None, 1, Vec::new())],
             ..Default::default()
         };
-        let compiled = CompiledResourceMeteringSchedule::compile(schedule).unwrap();
+        let compiled = schedule.compile().unwrap();
         let decision = compiled.evaluate_transaction(None, &TxHash::ZERO, &[]);
         assert_eq!(decision, ResourceThrottlingDecision::Allow(ResourceMeteringUsage::zero(1)));
         assert!(!decision.should_exclude());
@@ -1153,7 +1208,7 @@ mod tests {
             )],
             ..Default::default()
         };
-        let compiled = CompiledResourceMeteringSchedule::compile(schedule).unwrap();
+        let compiled = schedule.compile().unwrap();
         let state = state_with_slots(&[
             (U256::from(1), U256::ZERO, U256::from(1)),
             (U256::from(2), U256::ZERO, U256::from(1)),
@@ -1186,7 +1241,7 @@ mod tests {
             ..Default::default()
         };
         dry_run.dimensions[0].dry_run = true;
-        let compiled = CompiledResourceMeteringSchedule::compile(dry_run).unwrap();
+        let compiled = dry_run.compile().unwrap();
         let decision = compiled.decide_sample(&sample, &[]);
         assert!(matches!(decision, ResourceThrottlingDecision::Throttle { .. }));
         assert!(!decision.should_exclude());
@@ -1229,7 +1284,7 @@ mod tests {
             dimensions: vec![dimension("cpu", 100, None, 1, Vec::new())],
             ..Default::default()
         };
-        let compiled = CompiledResourceMeteringSchedule::compile(schedule).unwrap();
+        let compiled = schedule.compile().unwrap();
         let meter = meter_response(TxHash::repeat_byte(0x11), 90, Vec::new());
         let decision = compiled.evaluate_transaction(Some(&meter), &TxHash::repeat_byte(0x22), &[]);
         assert_eq!(decision, ResourceThrottlingDecision::Allow(ResourceMeteringUsage::zero(1)));
@@ -1312,7 +1367,7 @@ mod tests {
             ],
             ..Default::default()
         };
-        let compiled = CompiledResourceMeteringSchedule::compile(schedule).unwrap();
+        let compiled = schedule.compile().unwrap();
         let decision = compiled
             .decide_sample(&ResourceSample { gas_used: 21_000, operations: Vec::new() }, &[]);
         assert!(matches!(
@@ -1338,10 +1393,8 @@ mod tests {
             }"#,
         )
         .unwrap();
-        assert_eq!(schedule.dimensions[0].transaction_limit, None);
-        let compiled = CompiledResourceMeteringSchedule::compile(schedule).unwrap();
-        assert_eq!(compiled.dimensions[0].transaction_limit, 100);
-        assert_eq!(compiled.dimensions[0].transaction_limit, compiled.dimensions[0].block_limit);
+        assert_eq!(schedule.dimensions[0].transaction_limit, 100);
+        assert_eq!(schedule.dimensions[0].transaction_limit, schedule.dimensions[0].block_limit);
     }
 
     #[test]
@@ -1350,7 +1403,7 @@ mod tests {
             dimensions: vec![dimension("cpu", 50, None, 1, Vec::new())],
             ..Default::default()
         };
-        let compiled = CompiledResourceMeteringSchedule::compile(schedule).unwrap();
+        let compiled = schedule.compile().unwrap();
         assert_eq!(compiled.dimensions[0].transaction_limit, 50);
         let decision =
             compiled.decide_sample(&ResourceSample { gas_used: 60, operations: Vec::new() }, &[]);
@@ -1387,7 +1440,7 @@ mod tests {
             ],
             ..Default::default()
         };
-        let compiled = CompiledResourceMeteringSchedule::compile(schedule).unwrap();
+        let compiled = schedule.compile().unwrap();
         let decision = compiled
             .decide_sample(&ResourceSample { gas_used: 40, operations: Vec::new() }, &[90, 0]);
         assert!(matches!(
@@ -1495,7 +1548,7 @@ mod tests {
             dimensions: vec![dimension("cpu", 1_000, None, 0, vec![operation("SSTORE", 2, 0)])],
             ..Default::default()
         };
-        let compiled = CompiledResourceMeteringSchedule::compile(schedule).unwrap();
+        let compiled = schedule.compile().unwrap();
         let usage = compiled
             .evaluate(
                 0,

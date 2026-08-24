@@ -10,9 +10,9 @@ use revm::state::EvmState;
 use tracing::{debug, warn};
 
 use crate::{
-    CompiledResourceMeteringSchedule, MeteringProvider, NoopMeteringProvider, RejectionCache,
-    ResourceMeteringError, ResourceMeteringMetrics, ResourceMeteringSchedule,
-    ResourceMeteringUsage, ResourceSample, ResourceThrottlingDecision, SharedMeteringProvider,
+    MeteringProvider, NoopMeteringProvider, RejectionCache, ResourceMeteringError,
+    ResourceMeteringMetrics, ResourceMeteringSchedule, ResourceMeteringUsage, ResourceSample,
+    ResourceThrottlingDecision, SharedMeteringProvider,
 };
 
 /// Settings for the Base payload builder.
@@ -84,8 +84,8 @@ pub struct ResourceMeteringConfig {
     /// Kill switch for the evaluator. Limits take effect from the schedule when
     /// this is set and the schedule is non-empty.
     pub enabled: bool,
-    /// Compiled startup schedule.
-    pub schedule: Arc<CompiledResourceMeteringSchedule>,
+    /// Startup schedule held by the builder.
+    pub schedule: Arc<ResourceMeteringSchedule>,
     /// `meterBundle` results used to evaluate the schedule.
     pub provider: SharedMeteringProvider,
 }
@@ -104,10 +104,7 @@ impl Default for ResourceMeteringConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            schedule: Arc::new(
-                CompiledResourceMeteringSchedule::compile(ResourceMeteringSchedule::default())
-                    .expect("the default resource metering schedule is valid"),
-            ),
+            schedule: Arc::new(ResourceMeteringSchedule::default()),
             provider: Arc::new(NoopMeteringProvider),
         }
     }
@@ -122,12 +119,8 @@ impl ResourceMeteringConfig {
     ) -> Result<Self, ResourceMeteringError> {
         let schedule = if enabled {
             match schedule_path {
-                Some(path) => CompiledResourceMeteringSchedule::compile(
-                    ResourceMeteringSchedule::from_file(path)?,
-                )?,
-                None => {
-                    CompiledResourceMeteringSchedule::compile(ResourceMeteringSchedule::default())?
-                }
+                Some(path) => ResourceMeteringSchedule::from_file(path)?,
+                None => ResourceMeteringSchedule::default(),
             }
         } else {
             if let Some(path) = schedule_path {
@@ -136,8 +129,7 @@ impl ResourceMeteringConfig {
                     "resource metering schedule is ignored because metering is disabled"
                 );
             }
-            CompiledResourceMeteringSchedule::compile(ResourceMeteringSchedule::default())
-                .expect("the default resource metering schedule is valid")
+            ResourceMeteringSchedule::default()
         };
         Ok(Self { enabled, schedule: Arc::new(schedule), provider })
     }
@@ -444,22 +436,20 @@ mod tests {
         assert!(!config.is_active());
     }
 
-    fn compiled_cpu_schedule() -> CompiledResourceMeteringSchedule {
-        CompiledResourceMeteringSchedule::compile(ResourceMeteringSchedule {
-            dimensions: vec![ResourceMeteringDimension {
-                name: "cpu".to_string(),
-                block_limit: 1_000,
-                transaction_limit: None,
-                base_gas_weight: 1,
-                operations: vec![ResourceMeteringOperation {
-                    name: "SSTORE".to_string(),
-                    gas_used_weight: 0,
-                    count_cost: 10,
-                }],
-                dry_run: false,
+    fn compiled_cpu_schedule() -> ResourceMeteringSchedule {
+        ResourceMeteringSchedule::new(vec![ResourceMeteringDimension {
+            name: "cpu".to_string(),
+            block_limit: 1_000,
+            transaction_limit: 1_000,
+            base_gas_weight: 1,
+            operations: vec![ResourceMeteringOperation {
+                name: "SSTORE".to_string(),
+                gas_used_weight: 0,
+                count_cost: 10,
             }],
-            ..Default::default()
-        })
+            dry_run: false,
+        }])
+        .compile()
         .unwrap()
     }
 
@@ -553,17 +543,15 @@ mod tests {
         let dry_run = ResourceMeteringConfig {
             enabled: true,
             schedule: Arc::new(
-                CompiledResourceMeteringSchedule::compile(ResourceMeteringSchedule {
-                    dimensions: vec![ResourceMeteringDimension {
-                        name: "cpu".to_string(),
-                        block_limit: 1_000,
-                        transaction_limit: None,
-                        base_gas_weight: 1,
-                        operations: Vec::new(),
-                        dry_run: true,
-                    }],
-                    ..Default::default()
-                })
+                ResourceMeteringSchedule::new(vec![ResourceMeteringDimension {
+                    name: "cpu".to_string(),
+                    block_limit: 1_000,
+                    transaction_limit: 1_000,
+                    base_gas_weight: 1,
+                    operations: Vec::new(),
+                    dry_run: true,
+                }])
+                .compile()
                 .unwrap(),
             ),
             provider,
@@ -572,22 +560,20 @@ mod tests {
         assert!(!decision.should_exclude());
     }
 
-    fn overflowing_schedule() -> CompiledResourceMeteringSchedule {
-        CompiledResourceMeteringSchedule::compile(ResourceMeteringSchedule {
-            dimensions: vec![ResourceMeteringDimension {
-                name: "cpu".to_string(),
-                block_limit: 1,
-                transaction_limit: None,
-                base_gas_weight: u64::MAX,
-                operations: vec![ResourceMeteringOperation {
-                    name: "SSTORE".to_string(),
-                    gas_used_weight: u64::MAX,
-                    count_cost: 0,
-                }],
-                dry_run: false,
+    fn overflowing_schedule() -> ResourceMeteringSchedule {
+        ResourceMeteringSchedule::new(vec![ResourceMeteringDimension {
+            name: "cpu".to_string(),
+            block_limit: 1,
+            transaction_limit: 1,
+            base_gas_weight: u64::MAX,
+            operations: vec![ResourceMeteringOperation {
+                name: "SSTORE".to_string(),
+                gas_used_weight: u64::MAX,
+                count_cost: 0,
             }],
-            ..Default::default()
-        })
+            dry_run: false,
+        }])
+        .compile()
         .unwrap()
     }
 
