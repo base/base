@@ -9,7 +9,7 @@ use base_action_harness::{
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
-use base_protocol::{BatchType, SpanBatchError, SpanBatchTransactions, SpanDecodingError};
+use base_protocol::{SpanBatchError, SpanBatchTransactions, SpanDecodingError};
 use base_test_utils::Account;
 
 /// Runtime that stores `1` at slot 0, then stops.
@@ -295,11 +295,7 @@ async fn setcode_batch_is_dropped_before_isthmus() {
 /// [`SpanBatchTransactions::full_txs`]: base_protocol::SpanBatchTransactions::full_txs
 #[tokio::test]
 async fn setcode_span_batch_creation_bit_is_rejected() {
-    let batcher_cfg = BatcherConfig {
-        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
-        batch_type: BatchType::Span,
-        ..BatcherConfig::default()
-    };
+    let batcher_cfg = calldata_batcher();
     let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).through_isthmus().build();
     let chain_id = rollup_cfg.l2_chain_id.id();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
@@ -330,9 +326,8 @@ async fn setcode_span_batch_creation_bit_is_rejected() {
         "SetCode with the contract-creation bit set must fail span reconstruction"
     );
 
-    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg);
-    batcher.push_block(block);
-    batcher.advance(&mut h.l1).await;
+    h.submit_span_batch_calldata(&batcher_cfg, &[block], 0)
+        .expect("well-formed span-batch SetCode fixture submission");
 
     let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
         &mut sequencer,
