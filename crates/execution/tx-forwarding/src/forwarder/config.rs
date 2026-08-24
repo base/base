@@ -6,9 +6,10 @@ use crate::config::{DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS};
 ///
 /// Each forwarder receives from its own queue and forwards transactions via
 /// `base_insertValidatedTransaction`.
-/// Under normal load, transactions are sent immediately (batch of 1). When the
-/// sliding window rate limit is hit, incoming transactions buffer and flush as
-/// a single batch once the window opens.
+/// An isolated request is sent immediately, but any other requests already
+/// waiting in the queue are drained into the same batch (capped at
+/// `max_batch_size`). When the sliding window rate limit is hit, incoming
+/// transactions buffer and flush as a single batch once the window opens.
 #[derive(Debug, Clone)]
 pub(crate) struct ForwarderConfig {
     /// Maximum RPC requests per second per forwarder (sliding window). 0 = unlimited.

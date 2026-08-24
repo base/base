@@ -529,6 +529,19 @@ mod tests {
         received.lock().unwrap().iter().map(|(_, params)| params.clone()).collect()
     }
 
+    /// Nonce of every recorded insert, in arrival order, recovered from the single `raw` byte
+    /// [`transaction`] encodes. Lets a `run`-driven test assert end-to-end delivery order without
+    /// observing internal batch boundaries the server never sees.
+    fn nonces(received: &Calls) -> Vec<u64> {
+        payloads(received)
+            .iter()
+            .map(|params| {
+                let raw = params["raw"].as_str().expect("raw hex string");
+                u64::from_str_radix(raw.trim_start_matches("0x"), 16).expect("single nonce byte")
+            })
+            .collect()
+    }
+
     fn forwarder<R: ForwardRequest>(
         url: url::Url,
         receiver: mpsc::Receiver<R>,
@@ -615,8 +628,12 @@ mod tests {
         assert_eq!(received.lock().unwrap().len(), 5);
     }
 
+    /// Focused unit test of `fill_buffer_from_queue`: a queue with more ready requests than
+    /// `max_batch_size` forms successive full batches (100, 100, 50), in submission order. The
+    /// server never sees batch boundaries, so this asserts them directly on the buffer; the
+    /// `run`-driven tests below cover the surrounding loop wiring end-to-end.
     #[tokio::test]
-    async fn ready_queue_is_drained_into_full_batches() {
+    async fn fill_buffer_from_queue_forms_capped_batches_in_order() {
         let (sender, receiver) = mpsc::channel(250);
         for nonce in 0..250 {
             sender.send(transaction::<NoExtensions>(nonce)).await.unwrap();
@@ -646,6 +663,53 @@ mod tests {
             hashes,
             (0..250).map(|nonce| B256::with_last_byte(nonce as u8)).collect::<Vec<_>>()
         );
+    }
+
+    /// The whole point of the change: an isolated request is forwarded without waiting to
+    /// accumulate a batch. The sender stays open, so the forwarder cannot be draining on shutdown;
+    /// if `run` blocked to fill a batch, the request would never arrive and the timeout would fire.
+    #[tokio::test]
+    async fn run_forwards_an_isolated_request_without_waiting() {
+        let (url, received, _server) = rpc_server().await;
+        let (sender, receiver) = mpsc::channel(8);
+        let forwarder =
+            forwarder::<InsertValidatedTransaction<NoExtensions>>(url, receiver, config(0, 100));
+        let task = tokio::spawn(forwarder.run());
+
+        sender.send(transaction(0)).await.unwrap();
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while received.lock().unwrap().is_empty() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("isolated request was not forwarded promptly");
+
+        assert_eq!(nonces(&received), vec![0], "the lone request is sent on its own");
+
+        drop(sender);
+        task.await.unwrap();
+    }
+
+    /// End-to-end through `run`: a queue holding more than `max_batch_size` ready requests is
+    /// drained across successive batches and every request reaches the destination in submission
+    /// order. Exercises the real loop wiring — recv guard, queue drain, batch chunking, and the
+    /// final `flush_remaining` on channel close — that the focused unit test above bypasses.
+    #[tokio::test]
+    async fn run_batches_ready_requests_and_preserves_order() {
+        let (url, received, _server) = rpc_server().await;
+        let (sender, receiver) = mpsc::channel(250);
+        for nonce in 0..250 {
+            sender.send(transaction::<NoExtensions>(nonce)).await.unwrap();
+        }
+        drop(sender);
+
+        let forwarder =
+            forwarder::<InsertValidatedTransaction<NoExtensions>>(url, receiver, config(0, 100));
+        forwarder.run().await;
+
+        assert_eq!(nonces(&received), (0..250).collect::<Vec<_>>());
     }
 
     #[tokio::test]
