@@ -121,7 +121,9 @@ impl BaseRpc {
     /// The outer `Option` distinguishes a cache hit from a miss; the inner `Result` is the cached
     /// outcome — a schedule (`Ok(None)` = empty contract) or a failed read reconstructed as a
     /// generic error. A poisoned lock degrades to a miss (a fresh read).
-    fn fresh_cached_read(&self) -> Option<Result<Option<UpgradeSignalSchedule>, UpgradeSignalError>> {
+    fn fresh_cached_read(
+        &self,
+    ) -> Option<Result<Option<UpgradeSignalSchedule>, UpgradeSignalError>> {
         let guard = self.schedule_cache.lock().ok()?;
         let cached = guard.as_ref()?;
         if !Self::outcome_is_fresh(&cached.outcome, cached.read_at.elapsed()) {
