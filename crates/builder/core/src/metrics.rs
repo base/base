@@ -372,11 +372,11 @@ impl BuilderMetrics {
     /// transaction, uses `bid=priority_fee`.
     pub fn record_tip_per_gas(
         has_validity_predicates: bool,
-        has_statically_analyzable_tip: bool,
+        has_coinbase_tip: bool,
         tip_per_gas: f64,
     ) {
         let flow = if has_validity_predicates { "validity" } else { "standard" };
-        let bid = if has_statically_analyzable_tip { "coinbase_tip" } else { "priority_fee" };
+        let bid = if has_coinbase_tip { "coinbase_tip" } else { "priority_fee" };
         Self::tip_per_gas(flow, bid).record(tip_per_gas);
     }
 }

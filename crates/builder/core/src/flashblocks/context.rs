@@ -861,7 +861,7 @@ impl BasePayloadBuilderCtx {
 
             let tx_hash = *tx.hash();
             let has_validity_predicates = !tx.validity_predicates().is_empty();
-            let has_statically_analyzable_tip =
+            let has_coinbase_tip =
                 tx.as_eip8130().is_some_and(|signed| signed.tx().coinbase_tip().is_some());
 
             // Defer without evaluating once this flashblock's predicate-eval time budget is
@@ -1620,7 +1620,7 @@ impl BasePayloadBuilderCtx {
             // left to Datadog percentile aggregations — do not bake it in here.
             BuilderMetrics::record_tip_per_gas(
                 has_validity_predicates,
-                has_statically_analyzable_tip,
+                has_coinbase_tip,
                 miner_fee as f64,
             );
 
