@@ -12,7 +12,7 @@ use axum::{
     routing::get,
 };
 use base_common_consensus::BaseTxEnvelope;
-use base_shadow_indexer_db::{ShadowBlockRepo, ShadowBlockRow};
+use base_shadow_indexer_db::{ShadowBlockRepo, ShadowBlockRow, ShadowSummaryRow};
 use serde::{Deserialize, Serialize};
 
 use crate::{ShadowBlockStats, ShadowMetricsStore};
@@ -20,26 +20,26 @@ use crate::{ShadowBlockStats, ShadowMetricsStore};
 /// Shared state for the block API handlers.
 #[derive(Clone)]
 struct ApiState {
-    store: Option<ShadowMetricsStore>,
+    repo: Option<ShadowBlockRepo>,
 }
 
 impl ApiState {
-    /// Returns a repository handle, or [`ApiError::DbDisabled`] when Postgres is not configured.
-    fn repo(&self) -> Result<ShadowBlockRepo, ApiError> {
-        let store = self.store.as_ref().ok_or(ApiError::DbDisabled)?;
-        Ok(ShadowBlockRepo::new(store.pool().clone()))
+    /// Returns the repository handle, or [`ApiError::DbDisabled`] when Postgres is not configured.
+    fn repo(&self) -> Result<&ShadowBlockRepo, ApiError> {
+        self.repo.as_ref().ok_or(ApiError::DbDisabled)
     }
 }
 
 /// Builds the block explorer API router. Consumed server-to-server over the mesh
 /// (no browser origin), so it carries no CORS layer.
 pub fn api_router(store: Option<ShadowMetricsStore>) -> Router {
+    let repo = store.map(|store| ShadowBlockRepo::new(store.pool().clone()));
     Router::new()
         .route("/shadow-candidates", get(get_shadow_candidates_batch))
         .route("/blocks/{id}", get(get_block))
         .route("/blocks/{id}/shadow-candidates", get(get_shadow_candidates))
         .route("/shadow-blocks/{id}", get(get_shadow_block))
-        .with_state(ApiState { store })
+        .with_state(ApiState { repo })
 }
 
 /// One reorged-out shadow block summary.
@@ -48,13 +48,14 @@ pub fn api_router(store: Option<ShadowMetricsStore>) -> Router {
 struct ShadowBlockSummary {
     number: i64,
     hash: String,
-    canonical_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    canonical_hash: Option<String>,
     timestamp: u64,
-    shadow_builder_version: String,
-    shadow_gas_used: u64,
-    shadow_tx_count: usize,
-    shadow_non_deposit_tx_count: usize,
-    shadow_priority_fee_inversions: usize,
+    builder_version: String,
+    gas_used: u64,
+    tx_count: usize,
+    non_deposit_tx_count: usize,
+    priority_fee_inversions: usize,
 }
 
 /// Block overview plus its transaction summaries.
@@ -127,7 +128,7 @@ async fn get_block(
     State(state): State<ApiState>,
     Path(id): Path<String>,
 ) -> Result<Json<BlockDetail>, ApiError> {
-    let row = resolve_block(&state.repo()?, &id).await?;
+    let row = resolve_block(state.repo()?, &id).await?;
     Ok(Json(block_detail(&row)))
 }
 
@@ -137,13 +138,7 @@ async fn get_shadow_candidates(
     Path(id): Path<String>,
 ) -> Result<Json<Vec<ShadowBlockSummary>>, ApiError> {
     let repo = state.repo()?;
-    let canonical_hash = match parse_block_id(&id)? {
-        BlockId::Number(number) => {
-            let _ = number;
-            return Err(ApiError::BadRequest);
-        }
-        BlockId::Hash(hash) => hash.to_vec(),
-    };
+    let canonical_hash = parse_block_id(&id)?;
 
     let shadows = repo.list_reorged_by_canonical(canonical_hash.as_slice()).await?;
     Ok(Json(shadows.iter().map(shadow_block_summary).collect::<Vec<_>>()))
@@ -172,13 +167,8 @@ async fn get_shadow_candidates_batch(
         if trimmed.is_empty() {
             continue;
         }
-        match parse_block_id(trimmed) {
-            Ok(BlockId::Hash(hash)) => parsed.push(hash),
-            Ok(BlockId::Number(number)) => {
-                let _ = number;
-                continue;
-            }
-            Err(_) => continue,
+        if let Ok(hash) = parse_block_id(trimmed) {
+            parsed.push(hash);
         }
     }
 
@@ -207,59 +197,43 @@ async fn get_shadow_block(
     State(state): State<ApiState>,
     Path(id): Path<String>,
 ) -> Result<Json<ShadowBlockSummary>, ApiError> {
-    let BlockId::Hash(hash) = parse_block_id(&id)? else {
-        return Err(ApiError::BadRequest);
-    };
+    let hash = parse_block_id(&id)?;
 
     let repo = state.repo()?;
-    let row = repo.get_by_block_hash(hash.as_slice()).await?.ok_or(ApiError::NotFound)?;
-    if !row.reorged_out || row.canonical_hash.is_none() {
-        return Err(ApiError::NotFound);
-    }
+    let row = repo.get_summary_by_block_hash(hash.as_slice()).await?.ok_or(ApiError::NotFound)?;
 
     Ok(Json(shadow_block_summary(&row)))
 }
 
-/// A block identifier accepted in the path: a decimal block number or a block hash.
-enum BlockId {
-    Number(i64),
-    Hash(B256),
+/// Parses a path segment as a `0x`-prefixed block hash.
+fn parse_block_id(id: &str) -> Result<B256, ApiError> {
+    id.trim().parse::<B256>().map_err(|_| ApiError::BadRequest)
 }
 
-/// Parses a path segment as a decimal block number, else a `0x`-hex block hash.
-fn parse_block_id(id: &str) -> Result<BlockId, ApiError> {
-    let id = id.trim();
-    if let Ok(number) = id.parse::<i64>() {
-        return Ok(BlockId::Number(number));
-    }
-    id.parse::<B256>().map(BlockId::Hash).map_err(|_| ApiError::BadRequest)
-}
-
-/// Resolves a block by hash (canonical or reorged-out shadow).
+/// Resolves a stored block by hash (canonical or reorged-out shadow).
 async fn resolve_block(repo: &ShadowBlockRepo, id: &str) -> Result<ShadowBlockRow, ApiError> {
-    let row = match parse_block_id(id)? {
-        BlockId::Number(number) => {
-            let _ = number;
-            return Err(ApiError::BadRequest);
-        }
-        BlockId::Hash(hash) => repo.get_by_block_hash(hash.as_slice()).await?,
-    };
-    row.ok_or(ApiError::NotFound)
+    let hash = parse_block_id(id)?;
+    repo.get_by_block_hash(hash.as_slice()).await?.ok_or(ApiError::NotFound)
 }
 
-fn shadow_block_summary(row: &ShadowBlockRow) -> ShadowBlockSummary {
-    let shadow = ShadowBlockStats::from_row(row);
+fn shadow_block_summary(row: &ShadowSummaryRow) -> ShadowBlockSummary {
+    let stats = ShadowBlockStats::from_parts(
+        row.number,
+        row.builder_version.clone(),
+        &row.header.0,
+        &row.transactions.0,
+    );
 
     ShadowBlockSummary {
         number: row.number,
         hash: hex::encode_prefixed(&row.hash),
-        canonical_hash: row.canonical_hash.as_ref().map(hex::encode_prefixed).unwrap_or_default(),
-        timestamp: row.payload.block.header().timestamp,
-        shadow_gas_used: shadow.gas_used,
-        shadow_tx_count: shadow.transaction_count,
-        shadow_non_deposit_tx_count: shadow.non_deposit_tx_count,
-        shadow_priority_fee_inversions: shadow.priority_fee_inversions,
-        shadow_builder_version: shadow.builder_version,
+        canonical_hash: row.canonical_hash.as_ref().map(hex::encode_prefixed),
+        timestamp: row.header.0.timestamp,
+        builder_version: stats.builder_version,
+        gas_used: stats.gas_used,
+        tx_count: stats.transaction_count,
+        non_deposit_tx_count: stats.non_deposit_tx_count,
+        priority_fee_inversions: stats.priority_fee_inversions,
     }
 }
 
@@ -358,6 +332,7 @@ mod tests {
     use base_shadow_indexer_db::ShadowBlockPayload;
     use chrono::Utc;
     use reth_primitives_traits::RecoveredBlock;
+    use sqlx::types::Json;
 
     use super::*;
 
@@ -456,26 +431,39 @@ mod tests {
     }
 
     #[test]
-    fn parse_block_id_distinguishes_number_from_hash() {
-        assert!(matches!(parse_block_id("42"), Ok(BlockId::Number(42))));
-        assert!(matches!(parse_block_id("  42 "), Ok(BlockId::Number(42))));
-
+    fn parse_block_id_accepts_hash_and_rejects_non_hash() {
         let hash = format!("0x{}", "ab".repeat(32));
-        assert!(matches!(parse_block_id(&hash), Ok(BlockId::Hash(_))));
+        assert!(parse_block_id(&hash).is_ok());
+        assert!(parse_block_id(&format!("  {hash} ")).is_ok());
 
+        assert!(matches!(parse_block_id("42"), Err(ApiError::BadRequest)));
         assert!(matches!(parse_block_id("nothex"), Err(ApiError::BadRequest)));
         assert!(matches!(parse_block_id("0x1234"), Err(ApiError::BadRequest)));
+    }
+
+    fn sample_summary_row(row: &ShadowBlockRow) -> ShadowSummaryRow {
+        ShadowSummaryRow {
+            number: row.number,
+            hash: row.hash.clone(),
+            canonical_hash: row.canonical_hash.clone(),
+            builder_version: row.payload.builder_version.clone(),
+            header: Json(row.payload.block.header().clone()),
+            transactions: Json(row.payload.block.body().transactions.clone()),
+        }
     }
 
     #[test]
     fn shadow_block_summary_reports_shadow_only_fields() {
         let shadow = sample_row_full(100, 30_000, "shadow", true, Some(vec![0xcd; 32]));
-        let summary = shadow_block_summary(&shadow);
+        let summary = shadow_block_summary(&sample_summary_row(&shadow));
 
         assert_eq!(summary.number, 100);
-        assert_eq!(summary.canonical_hash, format!("0x{}", "cd".repeat(32)));
-        assert_eq!(summary.shadow_gas_used, 30_000);
-        assert_eq!(summary.shadow_tx_count, 1);
-        assert_eq!(summary.shadow_builder_version, "shadow");
+        assert_eq!(
+            summary.canonical_hash.as_deref(),
+            Some(format!("0x{}", "cd".repeat(32)).as_str())
+        );
+        assert_eq!(summary.gas_used, 30_000);
+        assert_eq!(summary.tx_count, 1);
+        assert_eq!(summary.builder_version, "shadow");
     }
 }

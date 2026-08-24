@@ -1,16 +1,44 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, Result};
+use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, QueryBuilder, query_as, types::Json};
 
 use crate::{ShadowBlockCursor, ShadowBlockRow};
 
 /// Shadow block repository.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ShadowBlockRepo {
     pool: PgPool,
 }
+
+/// Concrete block header type stored in the shadow payload.
+type BlockHeader = <BaseBlock as reth_primitives_traits::Block>::Header;
+
+/// Summary projection for a reorged-out shadow block.
+///
+/// Selects only the header and transactions from the JSONB `payload` (never the
+/// receipts or recovered senders), so summary endpoints avoid materializing full
+/// block bodies while still deriving transaction-level stats in Rust.
+#[derive(Clone, Debug, sqlx::FromRow)]
+pub struct ShadowSummaryRow {
+    /// Persisted block number.
+    pub number: i64,
+    /// Raw shadow block hash.
+    pub hash: Vec<u8>,
+    /// Replacement (canonical) block hash after reorg.
+    pub canonical_hash: Option<Vec<u8>>,
+    /// Writer-stamped builder version.
+    pub builder_version: String,
+    /// Block header extracted from the payload.
+    pub header: Json<BlockHeader>,
+    /// Transaction envelopes extracted from the payload.
+    pub transactions: Json<Vec<BaseTxEnvelope>>,
+}
+
+const MAX_CANDIDATES_PER_CANONICAL: i64 = 50;
+const MAX_CANDIDATES_PER_BATCH: i64 = 500;
 
 impl ShadowBlockRepo {
     /// Creates a repository.
@@ -151,12 +179,19 @@ impl ShadowBlockRepo {
     pub async fn list_reorged_by_canonical(
         &self,
         canonical_hash: &[u8],
-    ) -> Result<Vec<ShadowBlockRow>> {
-        let rows = query_as::<_, ShadowBlockRow>(
-            "SELECT * FROM shadow_blocks WHERE reorged_out = true AND canonical_hash = $1 \
-             ORDER BY number DESC, created_at DESC",
+    ) -> Result<Vec<ShadowSummaryRow>> {
+        let rows = query_as::<_, ShadowSummaryRow>(
+            "SELECT number, hash, canonical_hash, \
+             payload->>'builder_version' AS builder_version, \
+             payload#>'{block,block,header,header}' AS header, \
+             payload#>'{block,block,body,transactions}' AS transactions \
+             FROM shadow_blocks \
+             WHERE reorged_out = true AND canonical_hash = $1 \
+             ORDER BY number DESC, created_at DESC \
+             LIMIT $2",
         )
         .bind(canonical_hash)
+        .bind(MAX_CANDIDATES_PER_CANONICAL)
         .fetch_all(&self.pool)
         .await
         .context("failed to list shadow candidates by canonical hash")?;
@@ -171,16 +206,23 @@ impl ShadowBlockRepo {
     pub async fn list_reorged_by_canonicals(
         &self,
         canonical_hashes: &[Vec<u8>],
-    ) -> Result<Vec<ShadowBlockRow>> {
+    ) -> Result<Vec<ShadowSummaryRow>> {
         if canonical_hashes.is_empty() {
             return Ok(Vec::new());
         }
 
-        let rows = query_as::<_, ShadowBlockRow>(
-            "SELECT * FROM shadow_blocks WHERE reorged_out = true AND canonical_hash = ANY($1) \
-             ORDER BY number DESC, created_at DESC",
+        let rows = query_as::<_, ShadowSummaryRow>(
+            "SELECT number, hash, canonical_hash, \
+             payload->>'builder_version' AS builder_version, \
+             payload#>'{block,block,header,header}' AS header, \
+             payload#>'{block,block,body,transactions}' AS transactions \
+             FROM shadow_blocks \
+             WHERE reorged_out = true AND canonical_hash = ANY($1) \
+             ORDER BY number DESC, created_at DESC \
+             LIMIT $2",
         )
         .bind(canonical_hashes)
+        .bind(MAX_CANDIDATES_PER_BATCH)
         .fetch_all(&self.pool)
         .await
         .context("failed to list shadow candidates by canonical hashes")?;
@@ -203,6 +245,29 @@ impl ShadowBlockRepo {
         .fetch_optional(&self.pool)
         .await
         .context("failed to load shadow block by hash")?;
+
+        Ok(row)
+    }
+
+    /// Returns the summary projection for a reorged-out shadow block by its hash.
+    ///
+    /// # Errors
+    /// Returns an error when the query fails.
+    pub async fn get_summary_by_block_hash(&self, hash: &[u8]) -> Result<Option<ShadowSummaryRow>> {
+        let row = query_as::<_, ShadowSummaryRow>(
+            "SELECT number, hash, canonical_hash, \
+             payload->>'builder_version' AS builder_version, \
+             payload#>'{block,block,header,header}' AS header, \
+             payload#>'{block,block,body,transactions}' AS transactions \
+             FROM shadow_blocks \
+             WHERE reorged_out = true AND canonical_hash IS NOT NULL AND hash = $1 \
+             ORDER BY number DESC \
+             LIMIT 1",
+        )
+        .bind(hash)
+        .fetch_optional(&self.pool)
+        .await
+        .context("failed to load shadow summary by hash")?;
 
         Ok(row)
     }
@@ -256,5 +321,24 @@ mod tests {
         let deduped = ShadowBlockRepo::dedupe_last_write_wins(&rows);
 
         assert_eq!(deduped.len(), 2, "distinct hashes at the same height are separate rows");
+    }
+
+    #[test]
+    fn payload_json_paths_expose_header_and_transactions() {
+        let payload = sample_row(1, &[0xaa], false).payload;
+        let value = serde_json::to_value(&payload).expect("payload to json");
+
+        let header_value = json_path(&value, &["block", "block", "header", "header"]);
+        serde_json::from_value::<BlockHeader>(header_value.clone()).expect("header json roundtrip");
+
+        let tx_value = json_path(&value, &["block", "block", "body", "transactions"]);
+        serde_json::from_value::<Vec<BaseTxEnvelope>>(tx_value.clone())
+            .expect("transactions json roundtrip");
+    }
+
+    fn json_path<'a>(root: &'a serde_json::Value, path: &[&str]) -> &'a serde_json::Value {
+        path.iter().fold(root, |value, key| {
+            value.get(*key).unwrap_or_else(|| panic!("missing json path {path:?}"))
+        })
     }
 }
