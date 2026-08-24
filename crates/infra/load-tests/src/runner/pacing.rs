@@ -1319,14 +1319,8 @@ impl LoadRunner {
         // happens once the enqueue loop returns (deadline reached or channel closed).
         loop {
             // Resolve offset-based block_number predicates against the chain
-            // height once per prepare round (not per transaction). Skip the
-            // extra read entirely unless an offset bound is actually configured,
-            // so absolute-only (and non-validity) runs keep their prior behavior.
-            let current_block = if config.validity_router.needs_current_block() {
-                Self::current_block_height(&config.query_client).await?
-            } else {
-                0
-            };
+            // height once per prepare round (not per transaction).
+            let current_block = Self::current_block_height(&config.query_client).await?;
             let sender_jobs = Self::build_sender_jobs(
                 &mut producer_state.generator,
                 &mut producer_state.recipient_keys,
