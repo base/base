@@ -366,16 +366,17 @@ impl BuilderMetrics {
     /// (`effective_tip_per_gas` / tip-per-gas-limit) — no execution result or
     /// price feed is required. Observations are tagged `flow=validity` only when
     /// the transaction carries validity predicates, otherwise `flow=standard`.
-    /// Bid mechanism is independent of flow: `bid=coinbase_tip` for EIP-8130,
-    /// `bid=priority_fee` otherwise. An 8130 transaction without predicates is
-    /// therefore `flow=standard, bid=coinbase_tip`.
+    /// Bid mechanism is independent of flow: `bid=coinbase_tip` only when
+    /// `TxEip8130::coinbase_tip` returns `Some` (a statically-analyzable
+    /// phase-0 coinbase tip). EIP-8130 without that, and every non-8130
+    /// transaction, uses `bid=priority_fee`.
     pub fn record_tip_per_gas(
         has_validity_predicates: bool,
-        is_eip8130: bool,
+        has_statically_analyzable_tip: bool,
         tip_per_gas: f64,
     ) {
         let flow = if has_validity_predicates { "validity" } else { "standard" };
-        let bid = if is_eip8130 { "coinbase_tip" } else { "priority_fee" };
+        let bid = if has_statically_analyzable_tip { "coinbase_tip" } else { "priority_fee" };
         Self::tip_per_gas(flow, bid).record(tip_per_gas);
     }
 }
@@ -550,36 +551,39 @@ mod tests {
             BuilderMetrics::record_tip_per_gas(false, false, 30.0);
             // Pre-8130 validity: flow=validity, bid=priority_fee.
             BuilderMetrics::record_tip_per_gas(true, false, 50.0);
-            // EIP-8130 with predicates: flow=validity, bid=coinbase_tip.
+            // EIP-8130 with predicates and a static phase-0 tip.
             BuilderMetrics::record_tip_per_gas(true, true, 80.0);
-            // EIP-8130 without predicates: flow=standard, bid=coinbase_tip.
+            // EIP-8130 without predicates, but with a static phase-0 tip.
             BuilderMetrics::record_tip_per_gas(false, true, 20.0);
+            // EIP-8130 without a statically-analyzable tip: bid=priority_fee.
+            BuilderMetrics::record_tip_per_gas(false, false, 5.0);
+            BuilderMetrics::record_tip_per_gas(true, false, 15.0);
         });
 
         let rendered = handle.render();
         assert!(
             rendered.contains(
-                "base_builder_tip_per_gas_count{bid=\"priority_fee\",flow=\"standard\"} 2"
+                "base_builder_tip_per_gas_count{bid=\"priority_fee\",flow=\"standard\"} 3"
             ),
-            "expected two standard priority-fee observations, got: {rendered}"
+            "expected three standard priority-fee observations, got: {rendered}"
         );
         assert!(
             rendered.contains(
-                "base_builder_tip_per_gas_sum{bid=\"priority_fee\",flow=\"standard\"} 40"
+                "base_builder_tip_per_gas_sum{bid=\"priority_fee\",flow=\"standard\"} 45"
             ),
-            "expected standard priority-fee sum 40, got: {rendered}"
+            "expected standard priority-fee sum 45, got: {rendered}"
         );
         assert!(
             rendered.contains(
-                "base_builder_tip_per_gas_count{bid=\"priority_fee\",flow=\"validity\"} 1"
+                "base_builder_tip_per_gas_count{bid=\"priority_fee\",flow=\"validity\"} 2"
             ),
-            "expected one pre-8130 validity observation, got: {rendered}"
+            "expected two validity priority-fee observations, got: {rendered}"
         );
         assert!(
             rendered.contains(
-                "base_builder_tip_per_gas_sum{bid=\"priority_fee\",flow=\"validity\"} 50"
+                "base_builder_tip_per_gas_sum{bid=\"priority_fee\",flow=\"validity\"} 65"
             ),
-            "expected pre-8130 validity sum 50, got: {rendered}"
+            "expected validity priority-fee sum 65, got: {rendered}"
         );
         assert!(
             rendered.contains(

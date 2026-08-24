@@ -89,6 +89,34 @@ pub struct TxEip8130 {
 }
 
 impl TxEip8130 {
+    /// Statically-decoded phase-0 coinbase tip, if one can be recovered without
+    /// executing the transaction.
+    ///
+    /// EIP-8130 `calls` is an array of phases. Atomicity is per phase: if any
+    /// call in a phase reverts, that phase is discarded and later phases are
+    /// skipped. The bid therefore lives in **phase 0**; a tip in a later phase
+    /// is not statically meaningful.
+    ///
+    /// Protocol calls have no value field (`call = rlp([to, data])`). ETH
+    /// moves only when the account's wallet bytecode issues a `CALL`. The
+    /// statically-analyzable encoding is therefore:
+    ///
+    /// - the sender uses [`super::Eip8130Contracts::DEFAULT_ACCOUNT`]
+    ///   (auto-delegated for a code-less account, or explicitly delegated)
+    /// - phase 0 is the default account's ETH-transfer entrypoint
+    /// - invoked on the sender itself
+    /// - coinbase as recipient
+    /// - the tip as amount
+    ///
+    /// # TODO
+    /// Pin the DefaultAccount ETH-transfer selector and argument encoding
+    /// against [`super::Eip8130Contracts::DEFAULT_ACCOUNT`] and decode phase
+    /// 0. Until that static decode exists this returns [`None`].
+    pub fn coinbase_tip(&self) -> Option<U256> {
+        let _ = self;
+        None
+    }
+
     /// Encodes an `Option<Address>` as the AA wire format: zero-length byte
     /// string when `None`, 20-byte string when `Some`.
     fn encode_address_opt(addr: &Option<Address>, out: &mut dyn BufMut) {
@@ -1004,5 +1032,10 @@ mod tests {
             bare.size(),
             with_auth.size()
         );
+    }
+
+    #[test]
+    fn coinbase_tip_is_none_until_static_decode() {
+        assert_eq!(sample_tx().coinbase_tip(), None);
     }
 }
