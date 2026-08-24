@@ -36,6 +36,22 @@ pub enum SlotTemplate {
     },
 }
 
+/// Bound for a `block_number` validity predicate.
+///
+/// A block-number predicate may target a fixed absolute block height, or an
+/// offset that is resolved against the current chain height at submission time
+/// (`current_block + offset`). The offset form makes delayed-validity spikes
+/// self-configuring: it accounts for the variable number of funding/setup blocks
+/// that run before measured submission begins.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockNumberBound {
+    /// A fixed, absolute block number used as-is.
+    Absolute(U256),
+    /// An offset added to the current block height when the template is
+    /// resolved (`current_block + offset`).
+    Offset(U256),
+}
+
 /// A runtime validity predicate template with literal values pre-parsed.
 ///
 /// Addresses and slots may remain symbolic ([`PredicateAddress::Sender`],
@@ -68,13 +84,14 @@ pub enum ValidityPredicateTemplate {
     /// Block-number comparison template.
     ///
     /// Carries no address or slot: the block being built is read from the
-    /// builder's context, so this template resolves to the same predicate for
-    /// every transaction.
+    /// builder's context. The [`BlockNumberBound`] is either a fixed absolute
+    /// value (same predicate for every transaction) or an offset resolved
+    /// against the current chain height per prepare round.
     BlockNumber {
         /// Comparison operator.
         op: ValidityOperator,
-        /// Right-hand comparison value.
-        value: U256,
+        /// Right-hand comparison bound (absolute value or runtime offset).
+        bound: BlockNumberBound,
     },
     /// Flashblock-index comparison template.
     ///
