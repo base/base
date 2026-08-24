@@ -67,5 +67,6 @@ mod tests {
         let payload = TransferPayload::default();
         assert_eq!(payload.name(), "transfer");
         assert!(payload.uses_runner_recipient());
+        assert!(!payload.uses_pair_recipient());
     }
 }

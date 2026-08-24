@@ -96,6 +96,10 @@ impl Payload for B20TransferPayload {
         true
     }
 
+    fn uses_pair_recipient(&self) -> bool {
+        true
+    }
+
     fn generate(&self, rng: &mut SeededRng, from: Address, to: Address) -> TransactionRequest {
         let run_salt =
             self.run_salt().expect("b20 run salt must be set by prepare before generate");
@@ -191,6 +195,16 @@ mod tests {
             tx.input.input().expect("input set").as_ref(),
             expected.abi_encode().as_slice(),
             "calldata must be a transfer of the chosen amount to the recipient"
+        );
+    }
+
+    #[test]
+    fn b20_payload_uses_pair_recipient() {
+        let payload = B20TransferPayload::pending(U256::from(1), U256::from(1));
+        assert!(payload.uses_runner_recipient(), "B-20 transfers consume the runner recipient");
+        assert!(
+            payload.uses_pair_recipient(),
+            "B-20 transfers target the pair partner, not a ring"
         );
     }
 

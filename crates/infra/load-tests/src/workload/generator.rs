@@ -30,9 +30,9 @@ impl SelectedPayload {
         self.payload.uses_runner_recipient()
     }
 
-    /// Returns the payload type name (for example `"b20"`).
-    pub(crate) fn name(&self) -> &'static str {
-        self.payload.name()
+    /// Returns true when the runner recipient should be this sender's pair partner.
+    pub(crate) fn uses_pair_recipient(&self) -> bool {
+        self.payload.uses_pair_recipient()
     }
 }
 

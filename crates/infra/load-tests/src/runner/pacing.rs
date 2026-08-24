@@ -1188,7 +1188,7 @@ impl LoadRunner {
             for _ in 0..txs_per_sender {
                 let payload = generator.select_payload()?;
                 let sender_pool_recipient =
-                    if payload.name() == "b20" { pair_recipient } else { ring_recipient };
+                    if payload.uses_pair_recipient() { pair_recipient } else { ring_recipient };
                 let to = if payload.uses_runner_recipient() {
                     Self::select_recipient(
                         recipient_keys,

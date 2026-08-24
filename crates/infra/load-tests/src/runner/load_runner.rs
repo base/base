@@ -439,7 +439,7 @@ impl LoadRunner {
     /// Index of the paired B-20 counterparty (`0<->1`, `2<->3`, ...).
     ///
     /// Odd leftover senders pair with the previous account so the index stays in range.
-    pub(super) fn b20_partner_index(sender_index: usize, sender_count: usize) -> usize {
+    pub(super) const fn b20_partner_index(sender_index: usize, sender_count: usize) -> usize {
         if sender_count < 2 {
             sender_index
         } else if (sender_index ^ 1) < sender_count {
