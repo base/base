@@ -563,49 +563,49 @@ mod tests {
         let rendered = handle.render();
         assert!(
             rendered.contains(
-                "base_builder_tip_per_gas_count{bid=\"priority_fee\",flow=\"standard\"} 3"
+                "base_builder_tip_per_gas_count{flow=\"standard\",bid=\"priority_fee\"} 3"
             ),
             "expected three standard priority-fee observations, got: {rendered}"
         );
         assert!(
             rendered.contains(
-                "base_builder_tip_per_gas_sum{bid=\"priority_fee\",flow=\"standard\"} 45"
+                "base_builder_tip_per_gas_sum{flow=\"standard\",bid=\"priority_fee\"} 45"
             ),
             "expected standard priority-fee sum 45, got: {rendered}"
         );
         assert!(
             rendered.contains(
-                "base_builder_tip_per_gas_count{bid=\"priority_fee\",flow=\"validity\"} 2"
+                "base_builder_tip_per_gas_count{flow=\"validity\",bid=\"priority_fee\"} 2"
             ),
             "expected two validity priority-fee observations, got: {rendered}"
         );
         assert!(
             rendered.contains(
-                "base_builder_tip_per_gas_sum{bid=\"priority_fee\",flow=\"validity\"} 65"
+                "base_builder_tip_per_gas_sum{flow=\"validity\",bid=\"priority_fee\"} 65"
             ),
             "expected validity priority-fee sum 65, got: {rendered}"
         );
         assert!(
             rendered.contains(
-                "base_builder_tip_per_gas_count{bid=\"coinbase_tip\",flow=\"validity\"} 1"
+                "base_builder_tip_per_gas_count{flow=\"validity\",bid=\"coinbase_tip\"} 1"
             ),
             "expected one 8130 validity observation, got: {rendered}"
         );
         assert!(
             rendered.contains(
-                "base_builder_tip_per_gas_sum{bid=\"coinbase_tip\",flow=\"validity\"} 80"
+                "base_builder_tip_per_gas_sum{flow=\"validity\",bid=\"coinbase_tip\"} 80"
             ),
             "expected 8130 validity sum 80, got: {rendered}"
         );
         assert!(
             rendered.contains(
-                "base_builder_tip_per_gas_count{bid=\"coinbase_tip\",flow=\"standard\"} 1"
+                "base_builder_tip_per_gas_count{flow=\"standard\",bid=\"coinbase_tip\"} 1"
             ),
             "expected one 8130 standard observation, got: {rendered}"
         );
         assert!(
             rendered.contains(
-                "base_builder_tip_per_gas_sum{bid=\"coinbase_tip\",flow=\"standard\"} 20"
+                "base_builder_tip_per_gas_sum{flow=\"standard\",bid=\"coinbase_tip\"} 20"
             ),
             "expected 8130 standard sum 20, got: {rendered}"
         );
