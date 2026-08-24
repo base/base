@@ -38,10 +38,10 @@ pub use state::{
 };
 
 mod readiness;
-pub use readiness::{UpgradeReadiness, UpgradeReadinessEntry, UpgradeReadinessTarget};
+pub use readiness::{UpgradeReadiness, UpgradeReadinessEntry};
 
 mod version;
-pub use version::{PackedProtocolVersion, ParseProtocolVersionError};
+pub use version::PackedProtocolVersion;
 
 #[cfg(test)]
 pub mod test_utils;

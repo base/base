@@ -2,7 +2,7 @@
 
 use core::str::FromStr;
 use std::{
-    sync::{Arc, Mutex},
+    sync::Mutex,
     time::{Duration, Instant},
 };
 
@@ -21,7 +21,7 @@ use tracing::warn;
 use crate::BaseApiServer;
 
 /// A cached L1 schedule read, used to collapse bursts of readiness queries into one L1 read.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct CachedSchedule {
     /// When the read completed.
     read_at: Instant,
@@ -34,14 +34,14 @@ struct CachedSchedule {
 /// Holds the node's upgrade-signal configuration and a contract reader so it can answer readiness
 /// queries with a fresh, authoritative L1 read (which also confirms the node can reach the contract).
 /// It is read-only and never mutates node state, so it is safe to expose on the public RPC.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct BaseRpc {
     /// Upgrade-signal schedule read configuration (carries this node's advertised protocol version).
     pub upgrade_signal_config: UpgradeSignalConfig,
     /// Hardened L1 contract reader built from `upgrade_signal_config`.
     pub upgrade_signal_reader: AlloyUpgradeSignalReader,
-    /// Short-TTL cache of the last L1 schedule read, shared across all clones of this server.
-    schedule_cache: Arc<Mutex<Option<CachedSchedule>>>,
+    /// Short-TTL cache of the last L1 schedule read, shared across concurrent RPC requests.
+    schedule_cache: Mutex<Option<CachedSchedule>>,
 }
 
 impl BaseRpc {
@@ -55,15 +55,11 @@ impl BaseRpc {
     const CACHE_TTL: Duration = Duration::from_secs(5);
 
     /// Creates a new `base`-namespace RPC server from the node's upgrade-signal config and reader.
-    pub fn new(
+    pub const fn new(
         upgrade_signal_config: UpgradeSignalConfig,
         upgrade_signal_reader: AlloyUpgradeSignalReader,
     ) -> Self {
-        Self {
-            upgrade_signal_config,
-            upgrade_signal_reader,
-            schedule_cache: Arc::new(Mutex::new(None)),
-        }
+        Self { upgrade_signal_config, upgrade_signal_reader, schedule_cache: Mutex::new(None) }
     }
 
     /// Parses an optional `major.minor.patch[-rc.N]` target version into a packed value.
@@ -79,7 +75,7 @@ impl BaseRpc {
             })
             .transpose()
             .map_err(|error| {
-                ErrorObject::owned(ErrorCode::InvalidParams.code(), error.to_string(), None::<()>)
+                ErrorObject::owned(ErrorCode::InvalidParams.code(), error, None::<()>)
             })
     }
 
@@ -136,8 +132,8 @@ impl BaseApiServer for BaseRpc {
         let now_secs = UpgradeSignalDefaults::now_secs();
 
         // An empty contract is a valid pre-schedule state (the operator is likely checking a
-        // `target_version` ahead of #4), so it is reported as "nothing scheduled" rather than as an
-        // error.
+        // `target_version` ahead of the schedule being published on L1), so it is reported as
+        // "nothing scheduled" rather than as an error.
         let schedule = self.cached_schedule().await.map_err(|error| {
             warn!(
                 target: "upgrade_signal",
@@ -151,15 +147,18 @@ impl BaseApiServer for BaseRpc {
             )
         })?;
 
-        Ok(match schedule {
-            Some(schedule) => self.upgrade_signal_config.evaluate_readiness(
-                &schedule.signals,
-                Some(schedule.l1_block_number),
-                now_secs,
-                target,
-            ),
-            None => self.upgrade_signal_config.evaluate_readiness(&[], None, now_secs, target),
-        })
+        // Derive the readiness inputs from the optional schedule so both the scheduled and
+        // pre-schedule (empty contract) paths flow through a single `evaluate_readiness` call.
+        let (signals, l1_block_number) = schedule.as_ref().map_or((&[][..], None), |schedule| {
+            (schedule.signals.as_slice(), Some(schedule.l1_block_number))
+        });
+
+        Ok(self.upgrade_signal_config.evaluate_readiness(
+            signals,
+            l1_block_number,
+            now_secs,
+            target,
+        ))
     }
 }
 

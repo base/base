@@ -102,34 +102,10 @@ impl PackedProtocolVersion {
     }
 }
 
-/// Error returned when a string cannot be parsed as a `major.minor.patch[-rc.N]` protocol version.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParseProtocolVersionError {
-    /// The input that failed to parse.
-    pub input: String,
-}
-
-impl ParseProtocolVersionError {
-    /// Creates a new parse error for `input`.
-    pub fn new(input: impl Into<String>) -> Self {
-        Self { input: input.into() }
-    }
-}
-
-impl core::fmt::Display for ParseProtocolVersionError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "invalid protocol version '{}', expected 'major.minor.patch' with an optional '-rc.N'",
-            self.input
-        )
-    }
-}
-
-impl std::error::Error for ParseProtocolVersionError {}
-
 impl core::str::FromStr for PackedProtocolVersion {
-    type Err = ParseProtocolVersionError;
+    /// A descriptive message naming the rejected input; the parse error carries no structured
+    /// information any caller consumes, so a plain `String` avoids a bespoke public error type.
+    type Err = String;
 
     /// Parses a human-readable `major.minor.patch` version (with an optional `-rc.N` pre-release)
     /// into the packed version-type-`0` layout, the inverse of the [`Display`](Self) impl.
@@ -137,15 +113,20 @@ impl core::str::FromStr for PackedProtocolVersion {
     /// This lets operators pass an announced upgrade version as plain semver (e.g. `1.2.3` or
     /// `1.2.3-rc.4`) rather than the >70-digit packed decimal.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let invalid = || {
+            format!(
+                "invalid protocol version '{s}', expected 'major.minor.patch' with an optional '-rc.N'"
+            )
+        };
+
         let (core, prerelease) = match s.split_once("-rc.") {
             Some((core, rc)) => {
-                let prerelease =
-                    rc.parse::<u32>().map_err(|_| ParseProtocolVersionError::new(s))?;
+                let prerelease = rc.parse::<u32>().map_err(|_| invalid())?;
                 // `prerelease == 0` is the sentinel for a final release, so `-rc.0` would silently
                 // round-trip to `major.minor.patch` and drop the suffix. Reject it rather than
                 // accept a pre-release string that means the opposite of what it says.
                 if prerelease == 0 {
-                    return Err(ParseProtocolVersionError::new(s));
+                    return Err(invalid());
                 }
                 (core, prerelease)
             }
@@ -158,7 +139,7 @@ impl core::str::FromStr for PackedProtocolVersion {
         let patch = parts.next().and_then(|p| p.parse::<u32>().ok());
         let extra = parts.next();
         let (Some(major), Some(minor), Some(patch), None) = (major, minor, patch, extra) else {
-            return Err(ParseProtocolVersionError::new(s));
+            return Err(invalid());
         };
 
         Ok(Self::pack(major, minor, patch, prerelease))

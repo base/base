@@ -25,32 +25,18 @@ use crate::{PackedProtocolVersion, UpgradeSignal, UpgradeSignalConfig};
 pub struct UpgradeReadiness {
     /// Whether this node is ready.
     ///
-    /// When a [`target`](Self::target) version was supplied, this is simply whether the node
-    /// supports that version. Otherwise it is whether the node supports every upgrade currently
-    /// scheduled on L1 (vacuously `true` when nothing is scheduled — so a `false` here is always an
-    /// actionable "this node needs upgrading", never "nothing to check").
+    /// When a caller-supplied target version was supplied, this is simply whether the node supports
+    /// that version. Otherwise it is whether the node supports every upgrade currently scheduled on
+    /// L1 (vacuously `true` when nothing is scheduled — so a `false` here is always an actionable
+    /// "this node needs upgrading", never "nothing to check").
     pub ready: bool,
     /// This node's advertised protocol version, rendered as `major.minor.patch` semver.
     pub node_protocol_version: String,
     /// L1 block number the schedule was read at, or `None` when the contract has no schedule yet.
     pub l1_block_number: Option<u64>,
-    /// Result of comparing the node against a caller-supplied target version, when one was given.
-    ///
-    /// Operators use this to verify support for an *announced* upgrade before it is scheduled on L1,
-    /// when the contract does not yet carry the new minimum. Absent when no target was supplied.
-    pub target: Option<UpgradeReadinessTarget>,
     /// Per-upgrade readiness for every activation currently scheduled on L1 (cleared/unscheduled
     /// entries are omitted).
     pub upgrades: Vec<UpgradeReadinessEntry>,
-}
-
-/// Readiness against a caller-supplied target protocol version.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UpgradeReadinessTarget {
-    /// The requested target minimum, rendered as `major.minor.patch` semver.
-    pub required_protocol_version: String,
-    /// Whether this node's advertised version satisfies the target.
-    pub supported: bool,
 }
 
 /// A node's readiness for one scheduled contract-backed upgrade.
@@ -108,16 +94,11 @@ impl UpgradeSignalConfig {
             })
             .collect();
 
-        let target = target_version.map(|version| UpgradeReadinessTarget {
-            required_protocol_version: PackedProtocolVersion::new(version).to_string(),
-            supported: self.supports_protocol_version(version),
-        });
-
         // A supplied target is the operator's explicit "am I ready for the announced upgrade?"
         // question and takes precedence; otherwise fall back to the upgrades currently on L1.
-        let ready = target.as_ref().map_or_else(
+        let ready = target_version.map_or_else(
             || upgrades.iter().all(|upgrade| upgrade.supported),
-            |target| target.supported,
+            |version| self.supports_protocol_version(version),
         );
 
         UpgradeReadiness {
@@ -125,7 +106,6 @@ impl UpgradeSignalConfig {
             node_protocol_version: PackedProtocolVersion::new(self.node_protocol_version)
                 .to_string(),
             l1_block_number,
-            target,
             upgrades,
         }
     }
@@ -226,14 +206,10 @@ mod tests {
         assert!(ready.ready);
         assert_eq!(ready.l1_block_number, None);
         assert!(ready.upgrades.is_empty());
-        let target = ready.target.expect("target reported");
-        assert_eq!(target.required_protocol_version, "1.0.0");
-        assert!(target.supported);
 
         // An unsupported target is not ready, even with nothing scheduled.
         let unsupported_target = UpgradeSignalDefaults::packed_protocol_version(2, 0, 0);
         let not_ready = config.evaluate_readiness(&[], None, 0, Some(unsupported_target));
         assert!(!not_ready.ready);
-        assert!(!not_ready.target.unwrap().supported);
     }
 }

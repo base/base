@@ -65,12 +65,6 @@ fn print_pretty(network: &str, readiness: &UpgradeReadiness) -> Result<()> {
                 .map_or_else(|| "none (no schedule on L1)".to_string(), |block| block.to_string()),
         );
 
-    if let Some(target) = &readiness.target {
-        table
-            .row("target_version", &target.required_protocol_version)
-            .row("target_supported", target.supported.to_string());
-    }
-
     if readiness.upgrades.is_empty() {
         table.row("scheduled_upgrades", "none");
     } else {
