@@ -29,6 +29,11 @@ impl SelectedPayload {
     pub(crate) fn uses_runner_recipient(&self) -> bool {
         self.payload.uses_runner_recipient()
     }
+
+    /// Returns the payload type name (for example `"b20"`).
+    pub(crate) fn name(&self) -> &'static str {
+        self.payload.name()
+    }
 }
 
 /// Generates transaction workloads from configured payloads.

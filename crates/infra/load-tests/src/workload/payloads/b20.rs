@@ -42,7 +42,8 @@ pub(crate) fn b20_token_for(sender: Address, run_salt: B256) -> Address {
 /// Generates B-20 precompile token transfer transactions.
 ///
 /// During the load phase, each generated transaction calls `transfer(address,uint256)` on the
-/// sender's own B-20 token precompile. The B-20 `transfer` selector is ERC-20 compatible, so this
+/// sender's own B-20 token precompile, sending to the runner-supplied recipient (the paired
+/// counterparty: alice <-> bob). The B-20 `transfer` selector is ERC-20 compatible, so this
 /// exercises the precompile's state-mutation code path (balance updates, event emission) under
 /// sustained load.
 ///
