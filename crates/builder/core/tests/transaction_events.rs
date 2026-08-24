@@ -119,6 +119,10 @@ async fn expired_position_predicate_emits_builder_expired() -> eyre::Result<()> 
     let driver = instance.driver().await?;
     let accounts = driver.fund_accounts(1, ONE_ETH).await?;
 
+    // Pooled transactions never run at flashblock index 0, so a flashblock-index
+    // bound below that is rejected at ingress. A block-number upper bound on the
+    // already-mined head is admitted, then terminal on the next payload build.
+    let latest = driver.latest().await?;
     let expired = driver
         .create_transaction()
         .with_signer(&accounts[0])
@@ -139,9 +143,9 @@ async fn expired_position_predicate_emits_builder_expired() -> eyre::Result<()> 
                 min_timestamp: None,
                 max_timestamp: None,
                 extensions: TransactionValidity {
-                    validity: vec![ValidityPredicate::FlashblockIndex {
-                        op: ValidityOperator::LessThan,
-                        value: U256::ZERO,
+                    validity: vec![ValidityPredicate::BlockNumber {
+                        op: ValidityOperator::LessThanOrEqual,
+                        value: U256::from(latest.header.number),
                     }],
                 },
             },),

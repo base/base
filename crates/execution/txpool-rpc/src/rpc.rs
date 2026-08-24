@@ -294,7 +294,7 @@ mod tests {
     }
 
     fn signed_eip1559(signer: &PrivateKeySigner, nonce: u64, priority_fee: u128) -> Bytes {
-        let mut tx = TxEip1559 {
+        let tx = TxEip1559 {
             chain_id: 8453,
             nonce,
             gas_limit: 21_000,
@@ -389,13 +389,11 @@ mod tests {
         let request =
             SendRawTransactionValidityRequest { tx: raw, validity: all_predicate_variants() };
 
-        let tx_hash = rpc.send_raw_transaction_validity(request).await;
-        let tx_hash = match tx_hash {
-            Ok(tx_hash) => tx_hash,
-            Err(_) => capture.events().first().and_then(|event| event.tx_hash).expect(
+        let tx_hash = rpc.send_raw_transaction_validity(request).await.unwrap_or_else(|_| {
+            capture.events().first().and_then(|event| event.tx_hash).expect(
                 "admission event should fire before pool insertion even if the noop pool rejects",
-            ),
-        };
+            )
+        });
 
         let events: Vec<_> = capture
             .events()

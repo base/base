@@ -1,10 +1,12 @@
+#[cfg(any(test, feature = "test-utils"))]
+use std::sync::Mutex;
 use std::{
     fmt,
     fs::{File, OpenOptions, create_dir_all, read_dir, remove_file, rename},
     io::{self, Write},
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicUsize, Ordering},
     },
     time::{SystemTime, UNIX_EPOCH},
@@ -60,11 +62,13 @@ impl TransactionEventWriterConfig {
 }
 
 /// Shared buffer for events written by an in-memory [`TransactionEventWriter`].
+#[cfg(any(test, feature = "test-utils"))]
 #[derive(Clone, Debug, Default)]
 pub struct TransactionEventRecorder {
     events: Arc<Mutex<Vec<TransactionEvent>>>,
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 impl TransactionEventRecorder {
     /// Creates an empty recorder.
     pub fn new() -> Self {
@@ -105,6 +109,7 @@ enum WriterBackend {
         observed_drops: AtomicUsize,
         _guard: WorkerGuard,
     },
+    #[cfg(any(test, feature = "test-utils"))]
     Memory {
         recorder: TransactionEventRecorder,
     },
@@ -115,6 +120,7 @@ impl fmt::Debug for TransactionEventWriter {
         let backend = match &self.inner.backend {
             WriterBackend::Disabled => "disabled",
             WriterBackend::File { .. } => "file",
+            #[cfg(any(test, feature = "test-utils"))]
             WriterBackend::Memory { .. } => "memory",
         };
         f.debug_struct("TransactionEventWriter")
@@ -221,6 +227,7 @@ impl TransactionEventWriter {
     }
 
     /// Creates an in-memory writer that appends events to `recorder`.
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn in_memory(network: impl Into<String>, recorder: TransactionEventRecorder) -> Self {
         Self::new(WriterBackend::Memory { recorder }, network)
     }
@@ -236,6 +243,7 @@ impl TransactionEventWriter {
                 Metrics::dropped_events("disabled").increment(1);
                 Err(WriteEventError::Disabled)
             }
+            #[cfg(any(test, feature = "test-utils"))]
             WriterBackend::Memory { recorder } => {
                 Self::validate_event(event)?;
                 recorder.push(event.clone());
