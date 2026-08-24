@@ -25,9 +25,6 @@ base_metrics::define_metrics! {
     #[describe("Total shadow candidate blocks with no non-deposit transactions")]
     empty_blocks_total: counter,
 
-    #[describe("Total rows reorged out by pipeline unwind rather than shadow reconciliation")]
-    reverted_blocks_total: counter,
-
     #[describe("Highest shadow block number inspected")]
     #[no_zero]
     latest_block_number: gauge,

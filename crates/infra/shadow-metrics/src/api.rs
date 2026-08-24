@@ -295,7 +295,9 @@ fn block_detail(row: &ShadowBlockRow) -> BlockDetail {
         gas_used: header.gas_used,
         gas_limit: header.gas_limit,
         base_fee_per_gas: header.base_fee_per_gas,
-        reorged_out: row.reorged_out,
+        // Constant so the response shape survives the column drop: the table only ever holds
+        // blocks the chain discarded.
+        reorged_out: true,
         canonical_hash: row.canonical_hash.as_ref().map(hex::encode_prefixed),
         tx_count: block.body().transactions.len(),
         transactions,
@@ -378,18 +380,17 @@ mod tests {
     const RECIPIENT: Address = Address::repeat_byte(0x11);
 
     fn sample_row() -> ShadowBlockRow {
-        sample_row_with(false, None)
+        sample_row_with(None)
     }
 
-    fn sample_row_with(reorged_out: bool, canonical_hash: Option<Vec<u8>>) -> ShadowBlockRow {
-        sample_row_full(42, 21_000, "test", reorged_out, canonical_hash)
+    fn sample_row_with(canonical_hash: Option<Vec<u8>>) -> ShadowBlockRow {
+        sample_row_full(42, 21_000, "test", canonical_hash)
     }
 
     fn sample_row_full(
         number: i64,
         gas_used: u64,
         builder_version: &str,
-        reorged_out: bool,
         canonical_hash: Option<Vec<u8>>,
     ) -> ShadowBlockRow {
         let deposit = TxDeposit {
@@ -414,7 +415,6 @@ mod tests {
         ShadowBlockRow {
             number,
             hash: vec![0xab; 32],
-            reorged_out,
             canonical_hash,
             created_at: now,
             updated_at: now,
@@ -452,15 +452,15 @@ mod tests {
     }
 
     #[test]
-    fn block_detail_marks_canonical_row() {
+    fn block_detail_omits_canonical_hash_when_unresolved() {
         let detail = block_detail(&sample_row());
-        assert!(!detail.reorged_out);
+        assert!(detail.reorged_out);
         assert!(detail.canonical_hash.is_none());
     }
 
     #[test]
     fn block_detail_exposes_shadow_status_and_replacement_hash() {
-        let detail = block_detail(&sample_row_with(true, Some(vec![0xcd; 32])));
+        let detail = block_detail(&sample_row_with(Some(vec![0xcd; 32])));
         assert!(detail.reorged_out);
         assert_eq!(
             detail.canonical_hash.as_deref(),
@@ -492,7 +492,7 @@ mod tests {
 
     #[test]
     fn shadow_block_summary_reports_shadow_only_fields() {
-        let shadow = sample_row_full(100, 30_000, "shadow", true, Some(vec![0xcd; 32]));
+        let shadow = sample_row_full(100, 30_000, "shadow", Some(vec![0xcd; 32]));
         let summary = shadow_block_summary(&sample_summary_row(&shadow));
 
         assert_eq!(summary.number, 100);

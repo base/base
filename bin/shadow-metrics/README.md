@@ -12,9 +12,10 @@ spawns the poll loop, and starts an HTTP health server (`GET /healthz`, `GET
 /readyz`).
 
 Each poll reads shadow block rows newer than the persisted cursor and emits
-gas used, transaction count, priority fee inversions, empty blocks, reverted
-blocks, and the latest block number. Metrics are emitted before the cursor is
-persisted, so delivery is at-least-once. Payloads deserialize during the database
+gas used, transaction count, priority fee inversions, empty blocks, and the
+latest block number. Rows whose canonical hash is not yet known are skipped
+and revisited once `shadow-indexer` resolves them. Metrics are emitted before
+the cursor is persisted, so delivery is at-least-once. Payloads deserialize during the database
 fetch, so one incompatible payload fails the entire poll, increments
 `poll_errors_total`, and leaves the cursor untouched. This accepted trade-off
 stalls the reader on the same batch until the offending row is repaired or

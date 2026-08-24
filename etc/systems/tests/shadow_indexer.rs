@@ -13,9 +13,13 @@ use base_shadow_indexer_db::{ShadowBlockRepo, ShadowDbConfig};
 use base_system_tests::{SystemTestProviderExt, SystemTestStackBuilder};
 use eyre::{Result, WrapErr, ensure};
 use sqlx::postgres::PgPoolOptions;
-use testcontainers::runners::AsyncRunner;
+use testcontainers::{ImageExt, runners::AsyncRunner};
 use testcontainers_modules::postgres::Postgres;
 use tokio::time::{Instant, sleep};
+
+/// `testcontainers-modules` still defaults to Postgres 11, which predates the
+/// `jsonb_path_query_array` used by migration 0004.
+const POSTGRES_TAG: &str = "16-alpine";
 
 const L1_CHAIN_ID: u64 = 1337;
 const L2_CHAIN_ID: u64 = 84538453;
@@ -25,7 +29,7 @@ const DB_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 #[tokio::test]
 async fn shadow_indexer_persists_no_canonical_blocks() -> Result<()> {
-    let container = Postgres::default().start().await?;
+    let container = Postgres::default().with_tag(POSTGRES_TAG).start().await?;
     let port = container.get_host_port_ipv4(5432).await?;
     let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
 

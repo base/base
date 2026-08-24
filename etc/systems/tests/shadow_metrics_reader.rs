@@ -7,17 +7,21 @@ use alloy_primitives::{Address, Signature};
 use anyhow::Result;
 use base_common_consensus::{BaseTxEnvelope, TxDeposit};
 use base_shadow_indexer_db::{
-    ShadowBlockCursor, ShadowBlockPayload, ShadowBlockRepo, ShadowBlockRow, ShadowDbConfig,
-    ShadowMetricsCursorRepo,
+    ShadowBlockCursor, ShadowBlockPayload, ShadowBlockRepo, ShadowBlockRow, ShadowCanonicalRef,
+    ShadowDbConfig, ShadowMetricsCursorRepo,
 };
 use base_shadow_metrics::{ShadowMetricsReader, ShadowMetricsReaderConfig, ShadowMetricsStore};
 use chrono::Utc;
 use reth_primitives_traits::RecoveredBlock;
 use serde_json::json;
 use sqlx::{PgPool, types::Json};
-use testcontainers::{ContainerAsync, runners::AsyncRunner};
+use testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner};
 use testcontainers_modules::postgres::Postgres;
 use tokio::time::sleep;
+
+/// `testcontainers-modules` still defaults to Postgres 11, which predates the
+/// `jsonb_path_query_array` used by migration 0004.
+const POSTGRES_TAG: &str = "16-alpine";
 
 const DEFAULT_TEST_MAX_ROWS: u32 = 100;
 const TEST_POLL_INTERVAL: Duration = Duration::from_secs(1);
@@ -29,7 +33,7 @@ struct TestDatabase {
 
 impl TestDatabase {
     async fn start() -> Result<Self> {
-        let container = Postgres::default().start().await?;
+        let container = Postgres::default().with_tag(POSTGRES_TAG).start().await?;
         let port = container.get_host_port_ipv4(5432).await?;
         let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
         let pool =
@@ -95,12 +99,7 @@ impl ShadowBlockFixture {
         self
     }
 
-    fn into_row(
-        self,
-        hash_seed: u8,
-        reorged_out: bool,
-        canonical_hash_seed: Option<u8>,
-    ) -> ShadowBlockRow {
+    fn into_row(self, hash_seed: u8, canonical_hash_seed: Option<u8>) -> ShadowBlockRow {
         let number = self.number;
         let payload = self.into_payload();
         let now = Utc::now();
@@ -108,7 +107,6 @@ impl ShadowBlockFixture {
         ShadowBlockRow {
             number,
             hash: vec![hash_seed; 32],
-            reorged_out,
             canonical_hash: canonical_hash_seed.map(|seed| vec![seed; 32]),
             created_at: now,
             updated_at: now,
@@ -160,15 +158,15 @@ async fn emits_only_reconciled_shadow_row_once() -> Result<()> {
     let mut reader = database.reader(DEFAULT_TEST_MAX_ROWS).await?;
     let repo = ShadowBlockRepo::new(database.pool.clone());
     let rows = [
-        ShadowBlockFixture::new(7).builder_version("shadow").into_row(0x11, true, Some(0x91)),
-        ShadowBlockFixture::new(7).builder_version("canonical").into_row(0x12, false, None),
+        ShadowBlockFixture::new(7).builder_version("first").into_row(0x11, Some(0x91)),
+        ShadowBlockFixture::new(7).builder_version("second").into_row(0x12, Some(0x93)),
     ];
-    repo.insert_batch(&rows).await?;
+    repo.flush(&rows, &[]).await?;
 
     let emitted = reader.poll_once().await?;
-    assert_eq!(emitted.len(), 1);
+    assert_eq!(emitted.len(), 1, "a height keys one row, so the flush collapses to the last write");
     assert_eq!(emitted[0].number, 7);
-    assert_eq!(emitted[0].builder_version, "shadow");
+    assert_eq!(emitted[0].builder_version, "second");
     assert!(reader.poll_once().await?.is_empty(), "row must not be emitted twice");
 
     Ok(())
@@ -179,12 +177,12 @@ async fn emits_unreconciled_row_after_reconciliation() -> Result<()> {
     let database = TestDatabase::start().await?;
     let mut reader = database.reader(DEFAULT_TEST_MAX_ROWS).await?;
     let repo = ShadowBlockRepo::new(database.pool.clone());
-    repo.insert_batch(&[ShadowBlockFixture::new(11).into_row(0x21, false, None)]).await?;
+    repo.flush(&[ShadowBlockFixture::new(11).into_row(0x21, None)], &[]).await?;
 
     assert!(reader.poll_once().await?.is_empty());
 
     sleep(Duration::from_millis(2)).await;
-    repo.insert_batch(&[ShadowBlockFixture::new(11).into_row(0x21, true, Some(0xa1))]).await?;
+    repo.flush(&[ShadowBlockFixture::new(11).into_row(0x21, Some(0xa1))], &[]).await?;
 
     let emitted = reader.poll_once().await?;
     assert_eq!(emitted.len(), 1);
@@ -195,11 +193,11 @@ async fn emits_unreconciled_row_after_reconciliation() -> Result<()> {
 }
 
 #[tokio::test]
-async fn skips_unwind_and_advances_cursor() -> Result<()> {
+async fn skips_unresolved_row_and_advances_cursor() -> Result<()> {
     let database = TestDatabase::start().await?;
     let mut reader = database.reader(DEFAULT_TEST_MAX_ROWS).await?;
     ShadowBlockRepo::new(database.pool.clone())
-        .insert_batch(&[ShadowBlockFixture::new(21).into_row(0x31, true, None)])
+        .flush(&[ShadowBlockFixture::new(21).into_row(0x31, None)], &[])
         .await?;
 
     assert!(reader.poll_once().await?.is_empty());
@@ -208,7 +206,63 @@ async fn skips_unwind_and_advances_cursor() -> Result<()> {
         .await?
         .expect("reader initialization persists a cursor");
     assert_eq!(cursor.number, 21);
-    assert_eq!(cursor.hash, vec![0x31; 32]);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn canonical_block_resolves_a_row_the_reorg_left_unresolved() -> Result<()> {
+    let database = TestDatabase::start().await?;
+    let mut reader = database.reader(DEFAULT_TEST_MAX_ROWS).await?;
+    let repo = ShadowBlockRepo::new(database.pool.clone());
+    repo.flush(&[ShadowBlockFixture::new(61).into_row(0x81, None)], &[]).await?;
+
+    assert!(reader.poll_once().await?.is_empty(), "unresolved rows are not classified");
+
+    sleep(Duration::from_millis(2)).await;
+    let outcome =
+        repo.flush(&[], &[ShadowCanonicalRef { number: 61, hash: vec![0x82; 32] }]).await?;
+    assert_eq!(outcome.rows_reconciled, 1);
+
+    let emitted = reader.poll_once().await?;
+    assert_eq!(emitted.len(), 1, "resolving the row brings it back past the cursor");
+    assert_eq!(emitted[0].number, 61);
+    assert!(reader.poll_once().await?.is_empty(), "row is emitted exactly once");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn canonical_block_never_clears_an_established_hash() -> Result<()> {
+    let database = TestDatabase::start().await?;
+    let repo = ShadowBlockRepo::new(database.pool.clone());
+    repo.flush(&[ShadowBlockFixture::new(71).into_row(0x91, Some(0x92))], &[]).await?;
+
+    // A redelivered notification carries no canonical hash and must not erase the known one.
+    repo.flush(&[ShadowBlockFixture::new(71).into_row(0x91, None)], &[]).await?;
+
+    let rows = repo.list_by_number_range(71, 71).await?;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].canonical_hash, Some(vec![0x92; 32]), "canonical hash is monotonic");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_later_candidate_at_a_height_does_not_inherit_the_replaced_hash() -> Result<()> {
+    let database = TestDatabase::start().await?;
+    let repo = ShadowBlockRepo::new(database.pool.clone());
+    repo.flush(&[ShadowBlockFixture::new(81).into_row(0xa1, Some(0xa2))], &[]).await?;
+
+    repo.flush(&[ShadowBlockFixture::new(81).into_row(0xa3, None)], &[]).await?;
+
+    let rows = repo.list_by_number_range(81, 81).await?;
+    assert_eq!(rows.len(), 1, "a height keys one row");
+    assert_eq!(rows[0].hash, vec![0xa3; 32], "the new candidate replaces the old one");
+    assert_eq!(
+        rows[0].canonical_hash, None,
+        "the replaced candidate's canonical hash must not carry over to a different block"
+    );
 
     Ok(())
 }
@@ -222,12 +276,12 @@ async fn poison_payload_fails_the_whole_poll() -> Result<()> {
     let cursor_repo = ShadowMetricsCursorRepo::new(database.pool.clone());
     let initial_cursor =
         cursor_repo.load().await?.expect("reader initialization persists a cursor");
-    repo.insert_batch(&[ShadowBlockFixture::new(31).into_row(0x41, true, Some(0xb1))]).await?;
+    repo.flush(&[ShadowBlockFixture::new(31).into_row(0x41, Some(0xb1))], &[]).await?;
     sleep(Duration::from_millis(2)).await;
     sqlx::query(
         "INSERT INTO shadow_blocks \
-         (number, hash, reorged_out, canonical_hash, payload) \
-         VALUES ($1, $2, true, $3, $4)",
+         (number, hash, canonical_hash, payload) \
+         VALUES ($1, $2, $3, $4)",
     )
     .bind(32_i64)
     .bind(vec![0x42_u8; 32])
@@ -236,7 +290,7 @@ async fn poison_payload_fails_the_whole_poll() -> Result<()> {
     .execute(&database.pool)
     .await?;
     sleep(Duration::from_millis(2)).await;
-    repo.insert_batch(&[ShadowBlockFixture::new(33).into_row(0x43, true, Some(0xb3))]).await?;
+    repo.flush(&[ShadowBlockFixture::new(33).into_row(0x43, Some(0xb3))], &[]).await?;
 
     let error = reader.poll_once().await.expect_err("poison payload must fail the whole poll");
     let error_chain = format!("{error:#}");
@@ -246,7 +300,7 @@ async fn poison_payload_fails_the_whole_poll() -> Result<()> {
             && error_chain.contains("block"),
         "unexpected poll error: {error_chain}"
     );
-    assert_eq!(cursor_repo.load().await?, Some(initial_cursor.clone()));
+    assert_eq!(cursor_repo.load().await?, Some(initial_cursor));
     assert!(reader.poll_once().await.is_err(), "reader must remain stuck before repair");
     assert_eq!(cursor_repo.load().await?, Some(initial_cursor));
 
@@ -258,12 +312,15 @@ async fn counts_deposits_but_excludes_them_from_fee_ordering() -> Result<()> {
     let database = TestDatabase::start().await?;
     let mut reader = database.reader(DEFAULT_TEST_MAX_ROWS).await?;
     ShadowBlockRepo::new(database.pool.clone())
-        .insert_batch(&[ShadowBlockFixture::new(41)
-            .gas_used(555_555)
-            .base_fee_per_gas(0)
-            .deposits(2)
-            .tips(&[30, 20, 40])
-            .into_row(0x51, true, Some(0xc1))])
+        .flush(
+            &[ShadowBlockFixture::new(41)
+                .gas_used(555_555)
+                .base_fee_per_gas(0)
+                .deposits(2)
+                .tips(&[30, 20, 40])
+                .into_row(0x51, Some(0xc1))],
+            &[],
+        )
         .await?;
 
     let emitted = reader.poll_once().await?;
@@ -281,15 +338,16 @@ async fn counts_sawtooth_boundaries_and_accepts_non_increasing_fees() -> Result<
     let database = TestDatabase::start().await?;
     let mut reader = database.reader(DEFAULT_TEST_MAX_ROWS).await?;
     ShadowBlockRepo::new(database.pool.clone())
-        .insert_batch(&[
-            ShadowBlockFixture::new(51).tips(&[100, 90, 80, 120, 110, 100, 130, 120]).into_row(
-                0x61,
-                true,
-                Some(0xd1),
-            ),
-            ShadowBlockFixture::new(52).tips(&[120, 110, 100, 90]).into_row(0x62, true, Some(0xd2)),
-            ShadowBlockFixture::new(53).tips(&[50, 50, 40]).into_row(0x63, true, Some(0xd3)),
-        ])
+        .flush(
+            &[
+                ShadowBlockFixture::new(51)
+                    .tips(&[100, 90, 80, 120, 110, 100, 130, 120])
+                    .into_row(0x61, Some(0xd1)),
+                ShadowBlockFixture::new(52).tips(&[120, 110, 100, 90]).into_row(0x62, Some(0xd2)),
+                ShadowBlockFixture::new(53).tips(&[50, 50, 40]).into_row(0x63, Some(0xd3)),
+            ],
+            &[],
+        )
         .await?;
 
     let emitted = reader.poll_once().await?;
@@ -310,8 +368,8 @@ async fn persisted_cursor_never_moves_backwards() -> Result<()> {
     let database = TestDatabase::start().await?;
     let repo = ShadowMetricsCursorRepo::new(database.pool.clone());
     let updated_at = Utc::now();
-    let older = ShadowBlockCursor { updated_at, number: 1, hash: vec![0x71; 32] };
-    let newer = ShadowBlockCursor { updated_at, number: 2, hash: vec![0x72; 32] };
+    let older = ShadowBlockCursor { updated_at, number: 1 };
+    let newer = ShadowBlockCursor { updated_at, number: 2 };
 
     repo.store(&older).await?;
     repo.store(&newer).await?;
@@ -330,14 +388,10 @@ async fn respects_poll_cap_and_advances_by_cap() -> Result<()> {
     let mut reader = database.reader(MAX_ROWS).await?;
     let rows = (1_u8..=7)
         .map(|offset| {
-            ShadowBlockFixture::new(60 + i64::from(offset)).into_row(
-                offset,
-                true,
-                Some(0xe0 + offset),
-            )
+            ShadowBlockFixture::new(60 + i64::from(offset)).into_row(offset, Some(0xe0 + offset))
         })
         .collect::<Vec<_>>();
-    ShadowBlockRepo::new(database.pool.clone()).insert_batch(&rows).await?;
+    ShadowBlockRepo::new(database.pool.clone()).flush(&rows, &[]).await?;
 
     let first = reader.poll_once().await?;
     assert_eq!(first.iter().map(|stats| stats.number).collect::<Vec<_>>(), [61, 62, 63]);
@@ -370,12 +424,11 @@ async fn drains_timestamp_tie_group_without_loss_or_duplicates() -> Result<()> {
         .map(|(index, number)| {
             ShadowBlockFixture::new(number).into_row(
                 u8::try_from(index + 1).expect("fixture hash seed fits in u8"),
-                true,
                 Some(0xf1),
             )
         })
         .collect::<Vec<_>>();
-    ShadowBlockRepo::new(database.pool.clone()).insert_batch(&rows).await?;
+    ShadowBlockRepo::new(database.pool.clone()).flush(&rows, &[]).await?;
 
     let distinct_timestamps: i64 =
         sqlx::query_scalar("SELECT COUNT(DISTINCT updated_at) FROM shadow_blocks")
@@ -410,10 +463,13 @@ async fn resumes_from_persisted_cursor_after_restart() -> Result<()> {
     let database = TestDatabase::start().await?;
     let mut reader = database.reader(MAX_ROWS).await?;
     ShadowBlockRepo::new(database.pool.clone())
-        .insert_batch(&[
-            ShadowBlockFixture::new(201).into_row(0x71, true, Some(0x81)),
-            ShadowBlockFixture::new(202).into_row(0x72, true, Some(0x82)),
-        ])
+        .flush(
+            &[
+                ShadowBlockFixture::new(201).into_row(0x71, Some(0x81)),
+                ShadowBlockFixture::new(202).into_row(0x72, Some(0x82)),
+            ],
+            &[],
+        )
         .await?;
 
     let first = reader.poll_once().await?;
