@@ -611,15 +611,18 @@ impl PgTransactionEventSink {
                 let cutoff = Utc::now() - Duration::days(i64::from(config.class_days(class)));
                 let event_types = class.event_type_labels();
                 while batches < u64::from(config.max_batches) {
+                    // Delete by ctid via Tid Scan so the batch is not a second
+                    // primary-key lookup. ANY(ARRAY(ctid)) keeps that plan as
+                    // catch-up shrinks the heap; USING ctid can seq-scan.
                     let deleted = sqlx::query(
                         "WITH doomed AS ( \
-                            SELECT event_id \
+                            SELECT ctid \
                             FROM transaction_events \
                             WHERE event_type = ANY($1) AND ingested_at < $2 \
                             LIMIT $3 \
                          ) \
                          DELETE FROM transaction_events \
-                         WHERE event_id IN (SELECT event_id FROM doomed)",
+                         WHERE ctid = ANY (ARRAY(SELECT ctid FROM doomed)::tid[])",
                     )
                     .bind(&event_types)
                     .bind(cutoff)
