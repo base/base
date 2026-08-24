@@ -34,7 +34,8 @@ use reth_storage_api::{
 };
 use reth_transaction_pool::{
     AddedTransactionOutcome, PoolTransaction, TransactionOrigin, TransactionPool,
-    TransactionValidationOutcome, ValidatingPool, error::PoolError,
+    TransactionValidationOutcome, ValidatingPool,
+    error::{PoolError, PoolErrorKind},
 };
 use tracing::{debug, instrument, warn};
 
@@ -264,7 +265,7 @@ where
     N::Pool: ValidatingPool<Transaction = BasePooledTransaction>,
     Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
 {
-    /// Cheap-validate, enqueue for meter_bundle workers, and return the hash without waiting.
+    /// Cheap-validate, enqueue for meter_bundle workers, and wait for pool insert.
     async fn send_inline_sim(
         &self,
         origin: TransactionOrigin,
@@ -286,17 +287,20 @@ where
             }
         };
 
-        match InlineSimQueue::try_enqueue(InlineSimJob { origin, transaction: validated }) {
-            Ok(()) => Ok(hash),
-            Err(InlineSimEnqueueError::Full(job)) => {
-                let job = InlineSimQueue::with_default_metering(job, "queue_full");
-                let AddedTransactionOutcome { hash, .. } = self
-                    .pool()
-                    .add_transaction(job.origin, job.transaction)
-                    .await
-                    .map_err(BaseEthApiError::from_eth_err)?;
-                Ok(hash)
-            }
+        let (job, inserted) = InlineSimJob::new(origin, validated);
+        match InlineSimQueue::try_enqueue(job) {
+            Ok(()) => match inserted.await {
+                Ok(Ok(outcome)) => Ok(outcome.hash),
+                Ok(Err(err)) => Err(EthApiError::PoolError(err.into()).into()),
+                Err(_) => Err(EthApiError::PoolError(
+                    PoolError::other(hash, "inline sim worker dropped the insert result").into(),
+                )
+                .into()),
+            },
+            Err(InlineSimEnqueueError::Full(hash)) => Err(EthApiError::PoolError(
+                PoolError::new(hash, PoolErrorKind::DiscardedOnInsert).into(),
+            )
+            .into()),
             Err(InlineSimEnqueueError::Disabled(job)) => {
                 let AddedTransactionOutcome { hash, .. } = self
                     .pool()
