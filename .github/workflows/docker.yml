@@ -15,7 +15,7 @@ permissions:
 jobs:
   build-and-push:
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         settings:
           - arch: linux/amd64
