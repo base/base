@@ -5,16 +5,20 @@
 //! `cancelUIMultiplierUpdate`, ERC-165 advertisement) and the common `seizeWithMemo` surface.
 //! Every op that does not touch those two additions carries V1's verbatim body, and storage is
 //! append-only, so — following the same precedent as `b20_policy_v2_golden.rs` — the
-//! behavior-preserving ops below reuse V1's pinned roots verbatim: this suite still locks V2's
-//! behavior independently (a future edit to V2 that changes state, events, or gas must re-bless
-//! these roots, and can never silently diverge under V1's frozen pins). Ops that do differ at V2
-//! (`updateMultiplier`'s event, `announce`'s inner-call event) get their own fresh pins, as do the
-//! wholly new ops (`updateUIMultiplier`, `cancelUIMultiplierUpdate`, `seizeWithMemo`,
+//! behavior-preserving ops below pin their own roots independently: this suite locks V2's
+//! behavior on its own (a future edit to V2 that changes state, events, or gas must re-bless
+//! these roots). Because these goldens run production Cobalt storage features (see below) while
+//! the V1 suite runs Legacy, a behavior-preserving op's root matches V1's only when the op does
+//! not trigger Cobalt's dynamic tail cleanup; ops that write shrinking dynamic values
+//! (name/symbol/contract-URI) can legitimately diverge from V1's Legacy pin. Ops that differ at
+//! V2 (`updateMultiplier`'s event, `announce`'s inner-call event) get their own fresh pins, as do
+//! the wholly new ops (`updateUIMultiplier`, `cancelUIMultiplierUpdate`, `seizeWithMemo`,
 //! `supportsInterface`).
 //!
 //! Every op is driven through the **version-resolver-gated** dispatch path
 //! (`BaseUpgrade::Cobalt` -> `AssetVersion::V2`) against the real EVM-backed `B20AssetStorage`
-//! over `HashMapStorageProvider`, with a `FakePolicyAccounting` for deterministic allow/block
+//! over `HashMapStorageProvider` configured with `StorageFeatures::Cobalt` (the production
+//! storage config at Cobalt), with a `FakePolicyAccounting` for deterministic allow/block
 //! decisions. Each case asserts:
 //!   1. exact returned ABI bytes (or the typed revert),
 //!   2. resulting state (balances / supply / roles / allowances / multiplier / metadata / storage),
@@ -33,7 +37,7 @@ use base_common_precompiles::{
     Asset, AssetAccounting, AssetV2, AssetVersion, AssetVersions, B20_MAX_SUPPLY_CAP, B20AssetInit,
     B20AssetStorage, B20AssetToken, B20PolicyType, B20TokenRole, ERC165_INTERFACE_ID,
     ERC8056_INTERFACE_IDS, FakePolicyAccounting, IB20, IB20Asset, NoopPrecompileCallObserver,
-    PolicyVersion, TokenAccounting,
+    PolicyVersion, TokenAccounting, UpgradeGatedStorageFeatures,
 };
 use base_precompile_storage::{BasePrecompileError, Handler, HashMapStorageProvider, StorageCtx};
 
@@ -56,8 +60,10 @@ const POLICY_ID_2: u64 = (1u64 << 56) | 8;
 
 // --- pinned storage hashes (bless with BLESS_GOLDEN=1; see module docs) --------
 //
-// Reused verbatim from `b20_asset_v1_golden.rs`: these ops carry V1's unmodified body at V2, and
-// storage is append-only, so dispatching through V2 at Cobalt yields the same snapshot as V1.
+// These ops carry V1's unmodified body at V2 and storage is append-only, so their snapshots track
+// V1's — but pinned independently here: these goldens run `StorageFeatures::Cobalt` while the V1
+// suite runs Legacy, so an op that triggers Cobalt dynamic tail cleanup can diverge from its V1
+// pin. Re-blessing reflects the true Cobalt snapshot for each.
 
 const ROOT_FRESH: B256 = b256!("e29cabf2f5d0e0eedebf4697b61ad93a4a24fa2d911d4004d641bb0b123fa091");
 const ROOT_TRANSFER_PRIV: B256 =
@@ -150,7 +156,10 @@ const ROOT_ANNOUNCE_V2: B256 =
 /// Fresh provider with an initialized `Base Asset` at [`TOKEN`], matching the factory
 /// bootstrap: the multiplier slot is left physically zero and the getter normalizes it to WAD.
 fn fresh() -> HashMapStorageProvider {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    let mut storage = HashMapStorageProvider::new_with_storage_features(
+        CHAIN_ID,
+        UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Cobalt),
+    );
     StorageCtx::enter(&mut storage, |ctx| {
         let mut token = B20AssetStorage::from_address(TOKEN, ctx);
         token
@@ -335,7 +344,10 @@ fn dispatch_rejects_nonzero_value() {
 
 #[test]
 fn dispatch_reverts_when_uninitialized() {
-    let mut s = HashMapStorageProvider::new(CHAIN_ID);
+    let mut s = HashMapStorageProvider::new_with_storage_features(
+        CHAIN_ID,
+        UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Cobalt),
+    );
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
     let out = StorageCtx::enter(&mut s, |ctx| {
         B20AssetToken::with_storage_and_policy(
@@ -358,7 +370,10 @@ fn dispatch_reverts_when_uninitialized() {
 #[test]
 fn golden_dispatch_no_observer_wrapper_reverts_uninitialized() {
     // Exercises the no-observer `dispatch()` wrapper + the is_initialized=false gate.
-    let mut s = HashMapStorageProvider::new(CHAIN_ID);
+    let mut s = HashMapStorageProvider::new_with_storage_features(
+        CHAIN_ID,
+        UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Cobalt),
+    );
     s.set_caller(ALICE);
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
     let out = StorageCtx::enter(&mut s, |ctx| {
@@ -3406,9 +3421,9 @@ fn golden_gas_footprints() {
         ("pause", (1, 1, 0)),
         ("unpause", (1, 1, 0)),
         ("update_supply_cap", (2, 1, 0)),
-        ("update_name", (0, 1, 0)),
-        ("update_symbol", (0, 1, 0)),
-        ("update_contract_uri", (0, 1, 0)),
+        ("update_name", (1, 1, 0)),
+        ("update_symbol", (1, 1, 0)),
+        ("update_contract_uri", (1, 1, 0)),
         ("grant_role", (1, 1, 0)),
         ("revoke_role", (1, 1, 0)),
         ("set_role_admin", (1, 1, 0)),
@@ -3418,7 +3433,7 @@ fn golden_gas_footprints() {
         ("cancel_ui_multiplier_update", (3, 1, 0)),
         ("batch_mint", (11, 4, 0)),
         ("announce", (1, 1, 0)),
-        ("update_extra_metadata", (0, 1, 0)),
+        ("update_extra_metadata", (1, 1, 0)),
     ];
 
     bless_or_assert_gas(&actual, expected);

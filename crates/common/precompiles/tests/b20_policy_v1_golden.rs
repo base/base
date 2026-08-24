@@ -30,6 +30,7 @@ use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
     ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, IPolicyRegistry,
     IPolicyRegistryV1, PolicyRegistryStorage, PolicyVersion, PolicyVersions,
+    UpgradeGatedStorageFeatures,
 };
 use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
@@ -91,7 +92,10 @@ fn activate(storage: &mut HashMapStorageProvider) {
 
 /// A fresh provider with the policy registry activated.
 fn fresh() -> HashMapStorageProvider {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    let mut storage = HashMapStorageProvider::new_with_storage_features(
+        CHAIN_ID,
+        UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Beryl),
+    );
     activate(&mut storage);
     storage
 }
@@ -893,7 +897,10 @@ fn golden_reverts_nonzero_value() {
 #[test]
 fn golden_write_reverts_when_not_activated() {
     // No activation: a write op must revert; a read op still works.
-    let mut s = HashMapStorageProvider::new(CHAIN_ID);
+    let mut s = HashMapStorageProvider::new_with_storage_features(
+        CHAIN_ID,
+        UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Beryl),
+    );
     let (rev, _) = call_policy(
         &mut s,
         ADMIN,
