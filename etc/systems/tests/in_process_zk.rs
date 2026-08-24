@@ -11,7 +11,7 @@ use eyre::{Result, WrapErr, ensure};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-/// Boots Postgres + prover JSON-RPC + a DryRun ZK host. Does not execute SP1.
+/// Boots Postgres + prover JSON-RPC + a `DryRun` ZK host. Does not execute SP1.
 #[tokio::test(flavor = "multi_thread")]
 async fn in_process_prover_and_zk_host_start() -> Result<()> {
     let _ = tracing_subscriber::fmt()

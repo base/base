@@ -17,6 +17,7 @@ pub(crate) const BASE_BERYL_ACTIVATION_BLOCK: u64 = 3;
 pub(crate) const BASE_COBALT_ACTIVATION_BLOCK: u64 = 5;
 pub(crate) const BLOCK_PRODUCTION_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) const BLOCK_POLL_INTERVAL: Duration = Duration::from_millis(500);
+#[allow(dead_code)]
 pub(crate) const TX_RECEIPT_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Starts a system test stack with Beryl active at block 3 and waits for block 4.
@@ -80,6 +81,7 @@ pub(crate) async fn wait_for_block(provider: &RootProvider<Base>, min_block: u64
 }
 
 /// Polls until `address` has a non-zero ETH balance on the L2.
+#[allow(dead_code)]
 pub(crate) async fn wait_for_balance(
     provider: &RootProvider<Base>,
     address: Address,
