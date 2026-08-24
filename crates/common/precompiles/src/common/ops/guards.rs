@@ -106,12 +106,13 @@ impl B20Guards {
         }
     }
 
-    /// Ensures `account` is seizable, i.e. a member of the current seize-holder policy.
+    /// Ensures `account` is seizable, i.e. NOT authorized by the current seize-holder policy.
     ///
     /// Mirrors [`Self::ensure_blocked`] but consults `SEIZE_HOLDER_POLICY` instead of the
     /// transfer-sender policy: an account is seizable only when the configured registry policy does
-    /// not authorize it. Used by `seizeWithMemo`. Enforced unconditionally, including in the factory
-    /// bootstrap window. Reverts `AccountNotSeizable` (distinct from `ensure_blocked`'s
+    /// not authorize it, so the unset always-allow default keeps seizure closed until an issuer
+    /// configures the slot. Used by `seizeWithMemo`. Enforced unconditionally, including in the
+    /// factory bootstrap window. Reverts `AccountNotSeizable` (distinct from `ensure_blocked`'s
     /// `AccountNotBlocked`) so the seize path and the deprecated `burnBlocked` report separately.
     pub fn ensure_seizable<T: Token + ?Sized>(token: &T, account: Address) -> Result<()> {
         let policy_scope = B20PolicyType::SeizeHolder.id();
