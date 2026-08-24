@@ -288,6 +288,8 @@ where
 
         let (job, inserted) = InlineSimJob::new(origin, validated);
         match self.pool().try_enqueue_inline_sim(job) {
+            // No oneshot deadline: Ok(hash) is insert. Sim timeout does not
+            // cancel spawn_blocking; the worker joins, so this waits out the EVM.
             Ok(()) => match inserted.await {
                 Ok(Ok(outcome)) => Ok(outcome.hash),
                 Ok(Err(err)) => Err(EthApiError::PoolError(err.into()).into()),
