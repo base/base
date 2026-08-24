@@ -299,6 +299,14 @@ where
     /// Returns the next valid batch upon the given safe head.
     /// Also returns the boolean that indicates if the batch is the last block in the batch.
     async fn next_batch(&mut self, parent: L2BlockInfo) -> PipelineResult<SingleBatch> {
+        let next = parent.block_info.number.saturating_add(1);
+        if self.cfg.is_denim_active(self.cfg.l2_block_timestamp(next))
+            && !self.next_spans.is_empty()
+        {
+            warn!(target: "batch_queue", next_block_number = next, cached_batches = self.next_spans.len(), "Dropping cached span batches after Denim activation");
+            self.next_spans.clear();
+        }
+
         if !self.next_spans.is_empty() {
             // There are cached singular batches derived from the span batch.
             // Check if the next cached batch matches the given parent block.
@@ -502,7 +510,9 @@ mod tests {
     use alloy_eips::BlockNumHash;
     use alloy_primitives::{B256, address, b256};
     use base_common_consensus::BaseBlock;
-    use base_common_genesis::{ChainGenesis, RollupConfig, SystemConfig, UpgradeConfig};
+    use base_common_genesis::{
+        BaseUpgradeConfig, ChainGenesis, RollupConfig, SystemConfig, UpgradeConfig,
+    };
     use base_protocol::{BatchReader, BatchValidationProvider, SpanBatch, SpanBatchElement};
     use tracing::Level;
 
@@ -580,6 +590,29 @@ mod tests {
         let next = bq.pop_next_batch(parent).unwrap();
         assert_eq!(next.timestamp, second.timestamp);
         assert_eq!(next.parent_hash, parent.block_info.hash);
+        assert!(bq.next_spans.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_cached_span_is_not_emitted_at_denim() {
+        let cfg = Arc::new(RollupConfig {
+            block_time: 2,
+            upgrades: UpgradeConfig {
+                base: BaseUpgradeConfig { denim: Some(6), ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let mock = TestNextBatchProvider::new(vec![]);
+        let fetcher = TestL2ChainProvider::default();
+        let mut bq = BatchQueue::new(cfg, mock, fetcher);
+        bq.next_spans.push_back(SingleBatch { timestamp: 6, ..Default::default() });
+        let parent = L2BlockInfo {
+            block_info: BlockInfo { number: 2, timestamp: 4, ..Default::default() },
+            ..Default::default()
+        };
+
+        assert!(bq.next_batch(parent).await.is_err());
         assert!(bq.next_spans.is_empty());
     }
 

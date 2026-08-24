@@ -131,6 +131,15 @@ where
             return self.prev.next_batch().await;
         }
 
+        let next = parent.block_info.number.saturating_add(1);
+        if self.config.is_denim_active(self.config.l2_block_timestamp(next))
+            && (self.span.is_some() || !self.buffer.is_empty())
+        {
+            warn!(target: "batch_span", next_block_number = next, "Dropping cached span state after Denim activation");
+            self.flush();
+            return Err(PipelineError::NotEnoughData.temp());
+        }
+
         // If the buffer is empty, attempt to pull a batch from the previous stage.
         if self.buffer.is_empty() {
             // Safety: bubble up any errors from the batch reader.
@@ -258,7 +267,7 @@ mod tests {
     use alloy_eips::{BlockNumHash, NumHash};
     use alloy_primitives::{FixedBytes, b256};
     use base_common_consensus::BaseBlock;
-    use base_common_genesis::{ChainGenesis, SystemConfig, UpgradeConfig};
+    use base_common_genesis::{BaseUpgradeConfig, ChainGenesis, SystemConfig, UpgradeConfig};
     use base_protocol::{SingleBatch, SpanBatchElement};
 
     use super::*;
@@ -418,6 +427,53 @@ mod tests {
         let err = stream.next_batch(Default::default(), &mock_origins).await.unwrap_err();
         assert_eq!(err, PipelineError::Eof.temp());
         assert_eq!(stream.span_buffer_size(), 0);
+        assert!(stream.span.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_crossing_span_stops_before_first_denim_block() {
+        let span = SpanBatch {
+            batches: vec![
+                SpanBatchElement { epoch_num: 1, timestamp: 2, ..Default::default() },
+                SpanBatchElement { epoch_num: 1, timestamp: 4, ..Default::default() },
+                SpanBatchElement { epoch_num: 1, timestamp: 6, ..Default::default() },
+                SpanBatchElement { epoch_num: 1, timestamp: 8, ..Default::default() },
+            ],
+            ..Default::default()
+        };
+        let origins = [BlockInfo { number: 1, ..Default::default() }];
+        let config = Arc::new(RollupConfig {
+            block_time: 2,
+            upgrades: UpgradeConfig {
+                delta_time: Some(0),
+                holocene_time: Some(0),
+                base: BaseUpgradeConfig { denim: Some(6), ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let prev = TestBatchStreamProvider::new(vec![Ok(Batch::Span(span))]);
+        let mut stream = BatchStream::new(prev, config, TestL2ChainProvider::default());
+
+        let first = stream.next_batch(L2BlockInfo::default(), &origins).await.unwrap();
+        assert_eq!(first.timestamp(), 2);
+
+        let second_parent = L2BlockInfo {
+            block_info: BlockInfo { number: 1, timestamp: 2, ..Default::default() },
+            ..Default::default()
+        };
+        let second = stream.next_batch(second_parent, &origins).await.unwrap();
+        assert_eq!(second.timestamp(), 4);
+
+        let denim_parent = L2BlockInfo {
+            block_info: BlockInfo { number: 2, timestamp: 4, ..Default::default() },
+            ..Default::default()
+        };
+        assert_eq!(
+            stream.next_batch(denim_parent, &origins).await,
+            Err(PipelineError::NotEnoughData.temp())
+        );
+        assert!(stream.buffer.is_empty());
         assert!(stream.span.is_none());
     }
 
