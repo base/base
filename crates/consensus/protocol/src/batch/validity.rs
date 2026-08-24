@@ -50,6 +50,8 @@ pub enum BatchDropReason {
     // === Span batch specific drops ===
     /// Span batch received before Delta upgrade.
     SpanBatchPreDelta,
+    /// Span batch would produce a block after Denim activation.
+    SpanBatchPostDenim,
     /// Span batch has no new blocks after safe head (Holocene inactive).
     SpanBatchNoNewBlocksPreHolocene,
     /// Span batch timestamp is misaligned with block time.
@@ -98,6 +100,7 @@ impl core::fmt::Display for BatchDropReason {
             Self::Eip8130PreCobalt => write!(f, "EIP-8130 transaction before Cobalt activation"),
             Self::NonEmptyTransitionBlock => write!(f, "non-empty batch in transition block"),
             Self::SpanBatchPreDelta => write!(f, "span batch received before Delta upgrade"),
+            Self::SpanBatchPostDenim => write!(f, "span batch received after Denim activation"),
             Self::SpanBatchNoNewBlocksPreHolocene => {
                 write!(f, "span batch has no new blocks after safe head")
             }
