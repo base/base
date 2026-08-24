@@ -75,6 +75,32 @@ pub struct RPCConfig {
     // TODO(fakedev9999): Make optional if possible.
     /// L2 consensus node RPC URL.
     pub l2_node_rpc: Url,
+    /// Directory containing `<chain_id>.json` L1 chain configs.
+    ///
+    /// When unset, [`Self::l1_config_directory`] falls back to `L1_CONFIG_DIR`, then `configs/L1`.
+    pub l1_config_dir: Option<PathBuf>,
+    /// Directory where fetched L2 rollup configs are written.
+    ///
+    /// When unset, [`Self::l2_config_directory`] falls back to `L2_CONFIG_DIR`, then `configs/L2`.
+    pub l2_config_dir: Option<PathBuf>,
+}
+
+impl RPCConfig {
+    /// Directory containing `<chain_id>.json` L1 chain configs.
+    pub fn l1_config_directory(&self) -> PathBuf {
+        resolve_config_dir(self.l1_config_dir.as_ref(), "L1_CONFIG_DIR", "configs/L1")
+    }
+
+    /// Directory where fetched L2 rollup configs are written.
+    pub fn l2_config_directory(&self) -> PathBuf {
+        resolve_config_dir(self.l2_config_dir.as_ref(), "L2_CONFIG_DIR", "configs/L2")
+    }
+}
+
+fn resolve_config_dir(explicit: Option<&PathBuf>, env_name: &str, default: &str) -> PathBuf {
+    explicit.cloned().unwrap_or_else(|| {
+        env::var_os(env_name).map(PathBuf::from).unwrap_or_else(|| PathBuf::from(default))
+    })
 }
 
 /// The mode corresponding to the chain we are fetching data for.
@@ -115,6 +141,8 @@ pub fn get_rpcs_from_env() -> RPCConfig {
         l1_beacon_rpc,
         l2_rpc: Url::parse(&l2_rpc).expect("L2_RPC must be a valid URL"),
         l2_node_rpc: Url::parse(&l2_node_rpc).expect("L2_NODE_RPC must be a valid URL"),
+        l1_config_dir: None,
+        l2_config_dir: None,
     }
 }
 
@@ -196,7 +224,7 @@ impl OPSuccinctDataFetcher {
         }
 
         // Fetch and save L1 config based on the rollup config's L1 chain ID
-        let l1_config_path = Self::fetch_and_save_l1_config(&rollup_config).await?;
+        let l1_config_path = Self::fetch_and_save_l1_config(&rollup_config, &rpc_config).await?;
 
         Ok(Self {
             rpc_config,
@@ -363,9 +391,7 @@ impl OPSuccinctDataFetcher {
         let rollup_config: RollupConfig =
             Self::fetch_rpc_data(&rpc_config.l2_node_rpc, "optimism_rollupConfig", vec![]).await?;
 
-        // Create configs directory if it doesn't exist
-        let default_dir = PathBuf::from("configs/L2");
-        let l2_config_dir = env::var("L2_CONFIG_DIR").map(PathBuf::from).unwrap_or(default_dir);
+        let l2_config_dir = rpc_config.l2_config_directory();
         fs::create_dir_all(&l2_config_dir)?;
 
         // Save rollup config to a file named by chain ID
@@ -386,9 +412,11 @@ impl OPSuccinctDataFetcher {
     }
 
     /// Fetch and save the L1 config based on the rollup config's L1 chain ID.
-    async fn fetch_and_save_l1_config(rollup_config: &RollupConfig) -> Result<PathBuf> {
-        let default_dir = PathBuf::from("configs/L1");
-        let l1_config_dir = env::var("L1_CONFIG_DIR").map(PathBuf::from).unwrap_or(default_dir);
+    async fn fetch_and_save_l1_config(
+        rollup_config: &RollupConfig,
+        rpc_config: &RPCConfig,
+    ) -> Result<PathBuf> {
+        let l1_config_dir = rpc_config.l1_config_directory();
 
         // Check if the L1 config file exists. If it does, return the path to the file.
         let l1_config_path = l1_config_dir.join(format!("{}.json", rollup_config.l1_chain_id));
@@ -827,5 +855,28 @@ impl OPSuccinctDataFetcher {
         };
 
         Ok(HostConfig { request, prover, data_dir: None })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rpc_config(l1: Option<PathBuf>, l2: Option<PathBuf>) -> RPCConfig {
+        RPCConfig {
+            l1_rpc: "http://l1".parse().unwrap(),
+            l1_beacon_rpc: None,
+            l2_rpc: "http://l2".parse().unwrap(),
+            l2_node_rpc: "http://l2-node".parse().unwrap(),
+            l1_config_dir: l1,
+            l2_config_dir: l2,
+        }
+    }
+
+    #[test]
+    fn explicit_config_dirs_win_over_defaults() {
+        let rpc = rpc_config(Some(PathBuf::from("/tmp/l1")), Some(PathBuf::from("/tmp/l2")));
+        assert_eq!(rpc.l1_config_directory(), PathBuf::from("/tmp/l1"));
+        assert_eq!(rpc.l2_config_directory(), PathBuf::from("/tmp/l2"));
     }
 }

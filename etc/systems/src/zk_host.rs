@@ -30,7 +30,7 @@ const RANGE_GAS_LIMIT: u64 = 1_000_000_000_000;
 pub struct InProcessZkHost {
     cancel: CancellationToken,
     join: Option<JoinHandle<()>>,
-    /// Keeps `L1_CONFIG_DIR` / `L2_CONFIG_DIR` on disk for the host lifetime.
+    /// Keeps OP Succinct L1/L2 config files on disk for the host lifetime.
     _config_dir: TempDir,
 }
 
@@ -82,6 +82,8 @@ impl InProcessZkHost {
             range_gas_limit: RANGE_GAS_LIMIT,
             aggregation_cycle_limit: RANGE_CYCLE_LIMIT,
             aggregation_gas_limit: RANGE_GAS_LIMIT,
+            l1_config_dir: Some(config_dir.path().join("L1")),
+            l2_config_dir: Some(config_dir.path().join("L2")),
         };
         let Some(provers) = config
             .build_until_cancelled(&cancel)
@@ -121,11 +123,11 @@ impl InProcessZkHost {
         Ok(Self { cancel, join: Some(join), _config_dir: config_dir })
     }
 
-    /// Writes the stack's L1 chain config for OP Succinct and points the fetcher at it.
+    /// Writes the stack's L1 chain config into a temp dir for the OP Succinct fetcher.
     ///
     /// System-test L1 is chain 1337, which is not in the built-in `L1_CONFIGS` map. The
-    /// fetcher reads `<L1_CONFIG_DIR>/<chain_id>.json` before that map. `L2_CONFIG_DIR`
-    /// is set so rollup config is not written into the process cwd.
+    /// fetcher reads `<l1_config_dir>/<chain_id>.json` before that map. L2 configs are
+    /// written to a sibling directory so rollup config is not written into the process cwd.
     fn install_succinct_chain_configs(stack: &SystemTestStack) -> Result<TempDir> {
         let genesis: serde_json::Value = serde_json::from_str(
             &stack.l1_genesis().read_el_genesis().wrap_err("failed to read L1 genesis")?,
@@ -148,12 +150,6 @@ impl InProcessZkHost {
         )
         .wrap_err("failed to write L1 chain config for succinct fetcher")?;
 
-        // SAFETY: only one in-process ZK host runs at a time in these tests, and the
-        // directories live as long as this host.
-        unsafe {
-            std::env::set_var("L1_CONFIG_DIR", &l1_dir);
-            std::env::set_var("L2_CONFIG_DIR", &l2_dir);
-        }
         info!(chain_id, "installed succinct L1/L2 config directories");
         Ok(dir)
     }

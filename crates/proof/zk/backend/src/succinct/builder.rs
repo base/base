@@ -1,6 +1,9 @@
 //! Backend construction for Succinct ZK provers.
 
-use std::{collections::HashMap, error::Error, fmt, future::Future, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap, error::Error, fmt, future::Future, path::PathBuf, sync::Arc,
+    time::Duration,
+};
 
 use base_proof_zk_host::{ZkBackend, ZkProver};
 use base_proof_zk_witness::fetcher::{OPSuccinctDataFetcher, RPCConfig};
@@ -97,6 +100,14 @@ pub struct SuccinctRpcConfig {
     pub l2_rpc: Url,
     /// Default sequence window for L1 head calculations.
     pub default_sequence_window: u64,
+    /// Directory containing `<chain_id>.json` L1 chain configs.
+    ///
+    /// When unset, the witness fetcher falls back to `L1_CONFIG_DIR`, then `configs/L1`.
+    pub l1_config_dir: Option<PathBuf>,
+    /// Directory where fetched L2 rollup configs are written.
+    ///
+    /// When unset, the witness fetcher falls back to `L2_CONFIG_DIR`, then `configs/L2`.
+    pub l2_config_dir: Option<PathBuf>,
 }
 
 /// Configuration for all Succinct proving backends available to one worker.
@@ -134,6 +145,14 @@ pub struct SuccinctZkProversConfig {
     pub aggregation_cycle_limit: u64,
     /// Gas limit for aggregation proof requests.
     pub aggregation_gas_limit: u64,
+    /// Directory containing `<chain_id>.json` L1 chain configs.
+    ///
+    /// When unset, the witness fetcher falls back to `L1_CONFIG_DIR`, then `configs/L1`.
+    pub l1_config_dir: Option<PathBuf>,
+    /// Directory where fetched L2 rollup configs are written.
+    ///
+    /// When unset, the witness fetcher falls back to `L2_CONFIG_DIR`, then `configs/L2`.
+    pub l2_config_dir: Option<PathBuf>,
 }
 
 impl fmt::Debug for SuccinctZkProversConfig {
@@ -221,6 +240,8 @@ impl SuccinctZkProversConfig {
                     l1_beacon_rpc: l1_beacon_rpc.clone(),
                     l2_rpc: l2_rpc.clone(),
                     default_sequence_window: self.default_sequence_window,
+                    l1_config_dir: self.l1_config_dir.clone(),
+                    l2_config_dir: self.l2_config_dir.clone(),
                 }))
             }
             _ => Err(SuccinctZkProverBuildError::config(
@@ -401,6 +422,8 @@ impl SuccinctZkProverBuilder {
             l1_beacon_rpc: Some(rpc.l1_beacon_rpc),
             l2_rpc: rpc.l2_rpc,
             l2_node_rpc: rpc.base_consensus_rpc,
+            l1_config_dir: rpc.l1_config_dir,
+            l2_config_dir: rpc.l2_config_dir,
         };
         let Some(fetcher) = Self::complete_unless_cancelled(
             cancel,
@@ -470,6 +493,8 @@ mod tests {
             range_gas_limit: 1_000_000_000_000,
             aggregation_cycle_limit: 1_000_000_000_000,
             aggregation_gas_limit: 1_000_000_000_000,
+            l1_config_dir: None,
+            l2_config_dir: None,
         }
     }
 

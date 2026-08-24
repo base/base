@@ -129,7 +129,11 @@ async fn apply_prover_migrations(pool: &sqlx::PgPool) -> Result<()> {
         .wrap_err_with(|| {
             format!("failed to read prover migrations at {}", migrations_dir.display())
         })?
-        .filter_map(std::result::Result::ok)
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .wrap_err_with(|| {
+            format!("failed to list prover migrations in {}", migrations_dir.display())
+        })?
+        .into_iter()
         .map(|entry| entry.path())
         .filter(|path| path.extension().is_some_and(|ext| ext == "sql"))
         .collect::<Vec<_>>();
