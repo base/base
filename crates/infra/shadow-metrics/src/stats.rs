@@ -1,6 +1,7 @@
 //! Statistics derived from persisted shadow blocks.
 
-use alloy_consensus::Transaction;
+use alloy_consensus::{Header, Transaction};
+use base_common_consensus::BaseTxEnvelope;
 use base_shadow_indexer_db::ShadowBlockRow;
 
 /// Statistics for one shadow candidate block.
@@ -28,10 +29,27 @@ impl ShadowBlockStats {
     /// Strict `next > previous` matches the builder assertion and excludes equal tips.
     #[must_use]
     pub fn from_row(row: &ShadowBlockRow) -> Self {
-        let payload = &row.payload;
-        let block = &payload.block;
-        let header = block.header();
-        let transactions = &block.body().transactions;
+        let block = &row.payload.block;
+        Self::from_parts(
+            row.number,
+            row.payload.builder_version.clone(),
+            block.header(),
+            &block.body().transactions,
+        )
+    }
+
+    /// Derives metrics from a header and transaction list, without a full row.
+    ///
+    /// Deposits stay in totals but leave the fee vector because they are not fee-ordered.
+    /// Missing tips are skipped, not zeroed; zero would invent an inversion.
+    /// Strict `next > previous` matches the builder assertion and excludes equal tips.
+    #[must_use]
+    pub fn from_parts(
+        number: i64,
+        builder_version: String,
+        header: &Header,
+        transactions: &[BaseTxEnvelope],
+    ) -> Self {
         let base_fee = header.base_fee_per_gas.unwrap_or_default();
         let tips: Vec<u128> = transactions
             .iter()
@@ -44,12 +62,12 @@ impl ShadowBlockStats {
             tips.windows(2).filter(|window| window[1] > window[0]).count();
 
         Self {
-            number: row.number,
+            number,
             gas_used: header.gas_used,
             transaction_count: transactions.len(),
             non_deposit_tx_count,
             priority_fee_inversions,
-            builder_version: payload.builder_version.clone(),
+            builder_version,
         }
     }
 }
