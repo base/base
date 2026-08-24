@@ -114,17 +114,18 @@ impl ResourceMeteringUsage {
     }
 
     /// Adds this usage to cumulative block usage.
+    ///
+    /// The write is atomic: overflow leaves `cumulative` unchanged.
     pub fn add_to(&self, cumulative: &mut Vec<u128>) -> Result<(), ResourceMeteringError> {
-        self.fits_in(cumulative)?;
-
-        if cumulative.len() < self.values.len() {
-            cumulative.resize(self.values.len(), 0);
+        let mut next = cumulative.clone();
+        if next.len() < self.values.len() {
+            next.resize(self.values.len(), 0);
         }
         for (index, value) in self.values.iter().copied().enumerate() {
-            cumulative[index] = cumulative[index]
-                .checked_add(value)
-                .ok_or(ResourceMeteringError::ArithmeticOverflow)?;
+            next[index] =
+                next[index].checked_add(value).ok_or(ResourceMeteringError::ArithmeticOverflow)?;
         }
+        *cumulative = next;
         Ok(())
     }
 }

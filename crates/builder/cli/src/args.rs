@@ -7,7 +7,9 @@ use base_builder_core::{
     BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES, RejectionCache,
     ResourceMeteringConfig, ShadowValidityConfig, SharedMeteringProvider,
 };
-use base_builder_metering::MeteringStore;
+use base_builder_metering::{
+    DEFAULT_METERING_STORE_MAX_CAPACITY, DEFAULT_METERING_STORE_TTL_SECS, MeteringStore,
+};
 use base_execution_cli::{ResourceMeteringArgs, ShadowIndexerArgs};
 use base_node_core::{HasRollupArgs, RollupArgs};
 use base_observability_events::{
@@ -267,13 +269,22 @@ pub struct Args {
     #[arg(long = "builder.max-rejected-txs-per-block", default_value = "500")]
     pub max_rejected_txs_per_block: usize,
 
-    /// Buffer size for tx data store (LRU eviction when full)
-    #[arg(long = "builder.tx-data-store-buffer-size", default_value = "10000")]
+    /// Buffer size for tx data store (LRU eviction when full).
+    ///
+    /// Also used as the [`MeteringStore`] capacity. Default matches
+    /// [`DEFAULT_METERING_STORE_MAX_CAPACITY`].
+    #[arg(
+        long = "builder.tx-data-store-buffer-size",
+        default_value_t = DEFAULT_METERING_STORE_MAX_CAPACITY as usize
+    )]
     pub tx_data_store_buffer_size: usize,
 
     /// TTL in seconds for entries in the metering store cache.
     /// Stale entries are evicted after this duration.
-    #[arg(long = "builder.metering-store-ttl-secs", default_value = "30")]
+    #[arg(
+        long = "builder.metering-store-ttl-secs",
+        default_value_t = DEFAULT_METERING_STORE_TTL_SECS
+    )]
     pub metering_store_ttl_secs: u64,
 
     /// Maximum number of entries in the rejection cache for permanently rejected transactions
@@ -361,8 +372,8 @@ impl Default for Args {
             audit_archiver_url: None,
             rejected_tx_channel_size: 500,
             max_rejected_txs_per_block: 500,
-            tx_data_store_buffer_size: 10000,
-            metering_store_ttl_secs: 30,
+            tx_data_store_buffer_size: DEFAULT_METERING_STORE_MAX_CAPACITY as usize,
+            metering_store_ttl_secs: DEFAULT_METERING_STORE_TTL_SECS,
             rejection_cache_max_capacity: 100_000,
             rejection_cache_ttl_secs: 1800,
             sampling_ratio: 100,

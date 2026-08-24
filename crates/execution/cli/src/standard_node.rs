@@ -2,7 +2,10 @@
 
 use std::{env, path::PathBuf, sync::Arc, time::Duration};
 
-use base_builder_metering::{MeteringStore, MeteringStoreExtension};
+use base_builder_metering::{
+    DEFAULT_METERING_STORE_MAX_CAPACITY, DEFAULT_METERING_STORE_TTL_SECS, MeteringStore,
+    MeteringStoreExtension,
+};
 use base_bundle_extension::BundleExtension;
 use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
 use base_execution_payload_builder::{
@@ -519,9 +522,12 @@ impl StandardBaseRethNode {
         let provider: SharedMeteringProvider = if resource_metering_enabled
             && args.metering.resource_metering.resource_metering_schedule.is_some()
         {
-            // Match the builder CLI defaults for capacity and TTL.
-            let store: SharedMeteringProvider =
-                Arc::new(MeteringStore::new(true, 10_000, Duration::from_secs(30)));
+            // Shared defaults with the Flashblocks builder CLI.
+            let store: SharedMeteringProvider = Arc::new(MeteringStore::new(
+                true,
+                DEFAULT_METERING_STORE_MAX_CAPACITY as usize,
+                Duration::from_secs(DEFAULT_METERING_STORE_TTL_SECS),
+            ));
             runner.install_ext::<MeteringStoreExtension>(Arc::clone(&store));
             store
         } else {

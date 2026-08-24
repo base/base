@@ -773,6 +773,8 @@ where
                 },
             ) {
                 Ok(Some(gas_output)) => gas_output,
+                // Resource metering always returns [`CommitChanges::Yes`]. This arm
+                // is the BlockBuilder commit-condition contract, not a metering skip.
                 Ok(None) => {
                     warn!(
                         target: "payload_builder",
