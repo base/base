@@ -1368,6 +1368,20 @@ validity:
     }
 
     #[test]
+    fn validity_devnet_example_parses_and_validates() {
+        // Guards the committed example against schema drift: it must parse,
+        // validate, and lower to a runnable LoadConfig with the validity cohort.
+        let yaml = include_str!("../../examples/validity-devnet.yaml");
+        let config = TestConfig::from_yaml(yaml).expect("validity-devnet.yaml must parse");
+        assert_eq!(config.validity.ratio, 0.5);
+        assert_eq!(config.validity.predicates.len(), 1);
+
+        let load_config = config.to_load_config(Some(1337)).expect("must lower to LoadConfig");
+        assert_eq!(load_config.validity_ratio, 0.5);
+        assert_eq!(load_config.validity_predicates.len(), 1);
+    }
+
+    #[test]
     fn validity_rejects_ratio_above_one() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545

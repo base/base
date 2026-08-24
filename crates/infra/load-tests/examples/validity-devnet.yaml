@@ -1,0 +1,116 @@
+# Load Test Configuration - Local Devnet, Validity (Conditional) Transactions
+#
+# A ready-to-run example that exercises the validity-transaction workload: a
+# fraction of senders route their entire traffic through
+# base_sendRawTransactionValidity, attaching state predicates to every tx.
+#
+# Run against a local devnet (just devnet up):
+#   FUNDER_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
+#     just load-test run validity-devnet
+#
+# Or directly:
+#   cargo run -p base-load-tester-bin --bin base-load-tester -- \
+#     crates/infra/load-tests/examples/validity-devnet.yaml
+#
+# For predicates to be ENFORCED (not merely transported), the target devnet must run:
+#   - ingress/mempool node: --enable-experimental-validity-transactions
+#     (also requires transaction forwarding to the builder)
+#   - builder: --builder.enable-experimental-validity-transactions on the flashblocks builder
+# Against a stock devnet without these flags, validity txs are rejected at ingress.
+
+# HTTP submission endpoints. Batches are distributed across all configured URLs.
+transaction_submission_rpcs:
+  - "http://localhost:7545"
+
+# RPC endpoint for reads and balance checks.
+query_rpc: "http://localhost:8545"
+
+# Optional txpool admin nodes to clear for all sender addresses before startup.
+txpool_nodes:
+  - "http://localhost:7545"
+  - "http://localhost:8545"
+
+# Optional early inclusion source; canonical polling remains the fallback.
+flashblocks_ws: "ws://localhost:7111"
+
+# Number of sender accounts.
+sender_count: 100
+block_time: "2s"
+
+# Optional gas/s ceiling; omit for fully adaptive throughput.
+target_gps: 20000000
+
+in_flight_per_sender: 96
+batch_size: 20
+
+# Test duration.
+duration: "30s"
+
+# Fixed seed for reproducible account generation.
+seed: 12345
+
+# 0.01 ETH per account (drained after the test).
+funding_amount: "10000000000000000"
+
+# Plain value transfers; the validity block below decides which senders route
+# through the validity endpoint.
+transactions:
+  - weight: 100
+    type: transfer
+
+# Validity (conditional) transaction workload.
+#
+# Half of the senders route their entire nonce stream through
+# base_sendRawTransactionValidity, attaching the predicates below to every
+# transaction. The final summary's `by_cohort` breakdown then compares the
+# `plain` and `validity_pass` cohorts side by side.
+validity:
+  ratio: 0.5
+  predicates:
+    # Always-satisfiable baseline: the sender's balance is non-negative, so
+    # these transactions stay includable and exercise the full
+    # ingress -> forward -> build predicate-evaluation path without gating
+    # inclusion. Swap in the gating examples below to test parking/eviction.
+    - type: balance
+      address: sender # sender | recipient | 0x-literal
+      op: ">="
+      value: "0"
+
+  # ---------------------------------------------------------------------------
+  # Additional predicate shapes (uncomment and adjust as needed):
+  #
+  #   # Masked storage slot equals a value:
+  #   - type: storage
+  #     address: "0x1234567890123456789012345678901234567890"
+  #     slot:
+  #       kind: fixed
+  #       value: "0x1"
+  #     mask: "0xff"             # optional; defaults to all ones server-side
+  #     op: "="
+  #     value: "0x0"
+  #
+  #   # balanceOf(sender) against a token's mapping slot:
+  #   - type: storage
+  #     address: "0xTOKEN000000000000000000000000000000000000"
+  #     slot:
+  #       kind: mapping
+  #       mapping_slot: "0x0"
+  #       key: sender
+  #     op: ">="
+  #     value: "0x0"
+  #
+  # Build-position predicates (block_number / flashblock_index) become available
+  # once https://github.com/base/base/pull/4614 lands. A future block_number
+  # lower bound parks the whole validity cohort until that block, then releases
+  # it together as a predictable, precisely-timed load spike (BASE-164). Choose
+  # the target beyond the blocks consumed by funding/setup before submission:
+  #
+  #   - type: block_number
+  #     op: ">="
+  #     value: "<current_tip + N>"
+  #
+  # Restrict inclusion to a flashblock index within each block:
+  #
+  #   - type: flashblock_index
+  #     op: ">="
+  #     value: "1"
