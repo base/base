@@ -152,7 +152,6 @@ where
             flashblocks_health,
             basic_health,
             ctx.chain_spec(),
-            self.routing_config,
         );
 
         let (router_tx, router_rx) = mpsc::unbounded_channel();

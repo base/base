@@ -18,8 +18,6 @@ use reth_payload_primitives::{PayloadAttributes, PayloadKind, PayloadTypes};
 use tokio::sync::{Mutex, broadcast, mpsc};
 use tracing::{error, info, warn};
 
-use crate::RoutingConfig;
-
 const FLASHBLOCKS_BUILDER: &str = "flashblocks";
 const BASIC_BUILDER: &str = "basic";
 const MAX_PAYLOAD_ROUTES: usize = 128;
@@ -89,8 +87,6 @@ pub struct MultiplexRouter {
     pub chain_spec: Arc<BaseChainSpec>,
     /// Whether recent payload IDs are routed to the basic builder, ordered oldest first.
     pub payload_routes: Arc<Mutex<VecDeque<(PayloadId, bool)>>>,
-    /// Deadline used to flag slow selected `getPayload` resolutions.
-    pub getpayload_deadline: std::time::Duration,
 }
 
 impl MultiplexRouter {
@@ -101,7 +97,6 @@ impl MultiplexRouter {
         flashblocks_health: HealthState,
         basic_health: HealthState,
         chain_spec: Arc<BaseChainSpec>,
-        config: RoutingConfig,
     ) -> Self {
         Self {
             flashblocks_handle,
@@ -110,7 +105,6 @@ impl MultiplexRouter {
             basic_health,
             chain_spec,
             payload_routes: Arc::new(Mutex::new(VecDeque::new())),
-            getpayload_deadline: config.getpayload_deadline,
         }
     }
 
@@ -336,7 +330,6 @@ impl MultiplexRouter {
         } else {
             (self.flashblocks_handle.clone(), self.flashblocks_health.clone(), FLASHBLOCKS_BUILDER)
         };
-        let deadline = self.getpayload_deadline;
         let payload_routes = Arc::clone(&self.payload_routes);
         let future = async move {
             let started = Instant::now();
@@ -349,9 +342,6 @@ impl MultiplexRouter {
             drop(routes);
 
             Self::record_selected_getpayload_latency(elapsed.as_secs_f64());
-            if elapsed > deadline {
-                Self::inc_selected_deadline_miss();
-            }
 
             match result {
                 Some(Ok(payload)) => Ok(payload),
@@ -531,11 +521,6 @@ impl MultiplexRouter {
     pub fn record_selected_getpayload_latency(seconds: f64) {
         metrics::histogram!("mux_selected_getpayload_latency_seconds").record(seconds);
     }
-
-    /// Increments selected deadline miss counter.
-    pub fn inc_selected_deadline_miss() {
-        metrics::counter!("mux_selected_deadline_miss_total").increment(1);
-    }
 }
 
 #[cfg(test)]
@@ -571,7 +556,6 @@ mod tests {
                     .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(DENIM_TIMESTAMP))
                     .build(),
             ),
-            RoutingConfig::default(),
         );
         (router, flash_rx, basic_rx)
     }
