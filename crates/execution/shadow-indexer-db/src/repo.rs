@@ -52,7 +52,7 @@ impl ShadowBlockRepo {
     /// # Errors
     /// Returns an error when the insert fails.
     pub async fn insert_batch(&self, rows: &[ShadowBlockRow]) -> Result<usize> {
-        // Six binds per row; 4,000 stays below Postgres's 65,535-parameter limit.
+        // Five binds per row; 4,000 stays below Postgres's 65,535-parameter limit.
         const CHUNK_SIZE: usize = 4_000;
 
         if rows.is_empty() {
@@ -67,13 +67,12 @@ impl ShadowBlockRepo {
         for chunk in deduped.chunks(CHUNK_SIZE) {
             let mut query_builder: QueryBuilder<'_, Postgres> = QueryBuilder::new(
                 "INSERT INTO shadow_blocks \
-                 (number, hash, reorged_out, canonical_hash, created_at, payload) ",
+                 (number, hash, canonical_hash, created_at, payload) ",
             );
 
             query_builder.push_values(chunk, |mut row, entry| {
                 row.push_bind(entry.number)
                     .push_bind(&entry.hash)
-                    .push_bind(entry.reorged_out)
                     .push_bind(&entry.canonical_hash)
                     .push_bind(entry.created_at)
                     .push_bind(Json(&entry.payload));
@@ -81,7 +80,6 @@ impl ShadowBlockRepo {
 
             query_builder.push(
                 " ON CONFLICT (number, hash) DO UPDATE SET \
-                 reorged_out = EXCLUDED.reorged_out, \
                  canonical_hash = EXCLUDED.canonical_hash, \
                  payload = EXCLUDED.payload, \
                  updated_at = now()",
@@ -113,7 +111,10 @@ impl ShadowBlockRepo {
     /// Returns an error when the query fails.
     pub async fn list_by_number_range(&self, start: i64, end: i64) -> Result<Vec<ShadowBlockRow>> {
         let rows = query_as::<_, ShadowBlockRow>(
-            "SELECT * FROM shadow_blocks WHERE number BETWEEN $1 AND $2 ORDER BY number, created_at",
+            "SELECT number, hash, canonical_hash, created_at, updated_at, payload \
+             FROM shadow_blocks \
+             WHERE number BETWEEN $1 AND $2 \
+             ORDER BY number, created_at",
         )
         .bind(start)
         .bind(end)
@@ -126,6 +127,7 @@ impl ShadowBlockRepo {
 
     /// Lists reorged rows after a composite cursor.
     ///
+    /// Every persisted row is reorged out, so the table needs no predicate beyond the cursor.
     /// Unwinds remain in the query so Rust can count them and advance past them.
     ///
     /// # Errors
@@ -136,10 +138,9 @@ impl ShadowBlockRepo {
         limit: i64,
     ) -> Result<Vec<ShadowBlockRow>> {
         let rows = query_as::<_, ShadowBlockRow>(
-            "SELECT number, hash, reorged_out, canonical_hash, created_at, updated_at, payload \
+            "SELECT number, hash, canonical_hash, created_at, updated_at, payload \
              FROM shadow_blocks \
-             WHERE reorged_out = true \
-               AND (updated_at, number, hash) > ($1, $2, $3) \
+             WHERE (updated_at, number, hash) > ($1, $2, $3) \
              ORDER BY updated_at, number, hash \
              LIMIT $4",
         )
@@ -186,7 +187,7 @@ impl ShadowBlockRepo {
              payload#>'{block,block,header,header}' AS header, \
              payload#>'{block,block,body,transactions}' AS transactions \
              FROM shadow_blocks \
-             WHERE reorged_out = true AND canonical_hash = $1 \
+             WHERE canonical_hash = $1 \
              ORDER BY number DESC, created_at DESC \
              LIMIT $2",
         )
@@ -217,7 +218,7 @@ impl ShadowBlockRepo {
              payload#>'{block,block,header,header}' AS header, \
              payload#>'{block,block,body,transactions}' AS transactions \
              FROM shadow_blocks \
-             WHERE reorged_out = true AND canonical_hash = ANY($1) \
+             WHERE canonical_hash = ANY($1) \
              ORDER BY number DESC, created_at DESC \
              LIMIT $2",
         )
@@ -230,16 +231,17 @@ impl ShadowBlockRepo {
         Ok(rows)
     }
 
-    /// Returns the block with a given hash, whether canonical or reorged out (shadow).
-    ///
-    /// Prefers a canonical row if the same hash somehow exists in both states.
+    /// Returns the reorged-out block with a given hash.
     ///
     /// # Errors
     /// Returns an error when the query fails.
     pub async fn get_by_block_hash(&self, hash: &[u8]) -> Result<Option<ShadowBlockRow>> {
         let row = query_as::<_, ShadowBlockRow>(
-            "SELECT * FROM shadow_blocks WHERE hash = $1 \
-             ORDER BY reorged_out, number DESC LIMIT 1",
+            "SELECT number, hash, canonical_hash, created_at, updated_at, payload \
+             FROM shadow_blocks \
+             WHERE hash = $1 \
+             ORDER BY number DESC \
+             LIMIT 1",
         )
         .bind(hash)
         .fetch_optional(&self.pool)
@@ -260,7 +262,7 @@ impl ShadowBlockRepo {
              payload#>'{block,block,header,header}' AS header, \
              payload#>'{block,block,body,transactions}' AS transactions \
              FROM shadow_blocks \
-             WHERE reorged_out = true AND canonical_hash IS NOT NULL AND hash = $1 \
+             WHERE canonical_hash IS NOT NULL AND hash = $1 \
              ORDER BY number DESC \
              LIMIT 1",
         )
@@ -280,12 +282,11 @@ mod tests {
     use super::*;
     use crate::ShadowBlockPayload;
 
-    fn sample_row(number: i64, hash: &[u8], reorged_out: bool) -> ShadowBlockRow {
+    fn sample_row(number: i64, hash: &[u8], canonical_hash: Option<Vec<u8>>) -> ShadowBlockRow {
         ShadowBlockRow {
             number,
             hash: hash.to_vec(),
-            reorged_out,
-            canonical_hash: None,
+            canonical_hash,
             created_at: Utc::now(),
             updated_at: Utc::now(),
             payload: ShadowBlockPayload {
@@ -299,9 +300,9 @@ mod tests {
     #[test]
     fn dedupe_collapses_duplicate_number_hash_to_last_write() {
         let rows = vec![
-            sample_row(1, &[0xaa], false),
-            sample_row(2, &[0xbb], false),
-            sample_row(1, &[0xaa], true),
+            sample_row(1, &[0xaa], None),
+            sample_row(2, &[0xbb], None),
+            sample_row(1, &[0xaa], Some(vec![0xcc])),
         ];
 
         let deduped = ShadowBlockRepo::dedupe_last_write_wins(&rows);
@@ -311,12 +312,12 @@ mod tests {
             .iter()
             .find(|row| row.number == 1 && row.hash == [0xaa])
             .expect("duplicated key survives");
-        assert!(kept.reorged_out, "duplicate key keeps the last write");
+        assert_eq!(kept.canonical_hash, Some(vec![0xcc]), "duplicate key keeps the last write");
     }
 
     #[test]
     fn dedupe_keeps_same_number_with_distinct_hash() {
-        let rows = vec![sample_row(1, &[0xaa], true), sample_row(1, &[0xbb], false)];
+        let rows = vec![sample_row(1, &[0xaa], None), sample_row(1, &[0xbb], None)];
 
         let deduped = ShadowBlockRepo::dedupe_last_write_wins(&rows);
 
@@ -325,7 +326,7 @@ mod tests {
 
     #[test]
     fn payload_json_paths_expose_header_and_transactions() {
-        let payload = sample_row(1, &[0xaa], false).payload;
+        let payload = sample_row(1, &[0xaa], None).payload;
         let value = serde_json::to_value(&payload).expect("payload to json");
 
         let header_value = json_path(&value, &["block", "block", "header", "header"]);

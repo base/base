@@ -127,9 +127,6 @@ impl ShadowIndexerExEx {
         Ok(ShadowBlockRow {
             number,
             hash: block.hash().as_slice().to_vec(),
-            // Always set: only reorged-out and reverted blocks are persisted now. The column
-            // stays so the reader keeps filtering out canonical rows written by earlier builds.
-            reorged_out: true,
             canonical_hash,
             created_at: now,
             updated_at: now,
@@ -271,7 +268,6 @@ mod tests {
         assert_eq!(rows.len(), old.blocks().len(), "only old-chain blocks are emitted");
 
         for row in &rows {
-            assert!(row.reorged_out, "every persisted row is reorged out");
             assert_eq!(row.hash.as_slice(), block_hash(row.number as u64, 0).as_slice());
             assert_eq!(
                 row.canonical_hash,
@@ -314,7 +310,6 @@ mod tests {
         let rows = drain(rx);
         assert_eq!(rows.iter().map(|row| row.number).collect::<Vec<_>>(), vec![4, 5, 6]);
         for row in &rows {
-            assert!(row.reorged_out, "reverted rows are marked reorged out");
             assert_eq!(
                 row.canonical_hash, None,
                 "reverted rows have no replacement canonical hash"

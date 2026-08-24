@@ -12,8 +12,6 @@ pub struct ShadowBlockRow {
     pub number: i64,
     /// Raw block hash.
     pub hash: Vec<u8>,
-    /// Whether block was reorged out.
-    pub reorged_out: bool,
     /// Replacement block hash after reorg.
     pub canonical_hash: Option<Vec<u8>>,
     /// Creation time.

@@ -168,7 +168,6 @@ mod tests {
         ShadowBlockRow {
             number,
             hash: b"hash".to_vec(),
-            reorged_out: true,
             canonical_hash: None,
             created_at,
             updated_at: created_at,
