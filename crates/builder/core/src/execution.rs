@@ -12,6 +12,8 @@ use base_common_evm::BaseTransactionError;
 use derive_more::Display;
 use thiserror::Error;
 
+use crate::PredicateLoadTracker;
+
 /// Resource limits configuration for transaction and block constraints.
 ///
 /// This struct encapsulates all the resource limit parameters used to determine
@@ -225,6 +227,8 @@ pub struct ExecutionInfo {
     pub da_footprint_scalar: Option<u16>,
     /// Rejected transactions accumulated during block building, flushed after finalization.
     pub rejected_txs: Vec<RejectedTransaction>,
+    /// Validity-predicate state loads accumulated across the block's flashblock builds.
+    pub predicate_loads: PredicateLoadTracker,
 }
 
 impl ExecutionInfo {
@@ -241,6 +245,7 @@ impl ExecutionInfo {
             extra: Default::default(),
             da_footprint_scalar: None,
             rejected_txs: Vec::new(),
+            predicate_loads: PredicateLoadTracker::default(),
         }
     }
 

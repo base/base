@@ -45,8 +45,8 @@ use tracing::{Level, debug, span, trace, warn};
 
 use crate::{
     BuilderConfig, BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded,
-    ParkedPredicateIndex, PayloadTxsBounds, ResourceLimits, StateChangeEffects, TxResources,
-    TxnExecutionError, TxnOutcome, ValidityPredicateKey,
+    ParkedPredicateIndex, PayloadTxsBounds, PredicateReadRecorder, ResourceLimits,
+    StateChangeEffects, TxResources, TxnExecutionError, TxnOutcome, ValidityPredicateKey,
     transaction_events::{
         BuilderAcceptedEventData, BuilderConsideredEventData, BuilderDeferredEventData,
         BuilderExpiredEventData, BuilderRejectedEventData, BuilderTransactionEventContext,
@@ -905,9 +905,11 @@ impl BasePayloadBuilderCtx {
             let mut predicate_read_failed = false;
             let blocking_predicate = if has_validity_predicates {
                 match Self::accumulate_elapsed(&mut predicate_eval_total, || {
+                    let mut recorder =
+                        PredicateReadRecorder::new(&mut **evm.db_mut(), &mut info.predicate_loads);
                     ValidityPredicateKey::first_unsatisfied(
                         tx.validity_predicates(),
-                        evm.db_mut(),
+                        &mut recorder,
                         &predicate_context,
                     )
                 }) {
@@ -1560,9 +1562,13 @@ impl BasePayloadBuilderCtx {
                 };
                 let blocking_predicate =
                     match Self::accumulate_elapsed(&mut predicate_eval_total, || {
+                        let mut recorder = PredicateReadRecorder::new(
+                            &mut **evm.db_mut(),
+                            &mut info.predicate_loads,
+                        );
                         ValidityPredicateKey::first_unsatisfied(
                             parked_transaction.validity_predicates(),
-                            evm.db_mut(),
+                            &mut recorder,
                             &predicate_context,
                         )
                     }) {

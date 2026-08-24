@@ -2,7 +2,10 @@
 
 use std::time::Duration;
 
-use crate::{ExecutionInfo, FlashblockDiagnostics, ParkedPredicateIndex, ResourceLimits};
+use crate::{
+    ExecutionInfo, FlashblockDiagnostics, ParkedPredicateIndex, PredicateLoadTracker,
+    ResourceLimits,
+};
 
 const PRIORITY_FEE_THRESHOLDS_WEI: [(&str, u64); 3] =
     [("100wei", 100), ("100kwei", 100_000), ("1mwei", 1_000_000)];
@@ -126,6 +129,22 @@ base_metrics::define_metrics! {
         "Depth (parked transaction count) of validity-predicate index buckets, sampled once per flashblock build"
     )]
     predicate_bucket_depth: histogram,
+    #[describe(
+        "Accounts read while evaluating validity predicates per block, counting every read"
+    )]
+    predicate_accounts_loaded_total: histogram,
+    #[describe(
+        "Distinct accounts read while evaluating validity predicates per block"
+    )]
+    predicate_accounts_loaded_unique: histogram,
+    #[describe(
+        "Storage slots read while evaluating validity predicates per block, counting every read including re-reads"
+    )]
+    predicate_slots_loaded_total: histogram,
+    #[describe(
+        "Distinct storage slots read while evaluating validity predicates per block (predicate state footprint)"
+    )]
+    predicate_slots_loaded_unique: histogram,
     #[describe("Validity predicate evaluation attempts")]
     #[label(outcome)]
     validity_predicate_evaluations_total: counter,
@@ -289,6 +308,22 @@ impl BuilderMetrics {
         }
     }
 
+    /// Records the block's accumulated validity-predicate state loads as
+    /// per-block histogram observations (total and distinct accounts/slots).
+    ///
+    /// Emits nothing when the block carried no validity transactions, so the
+    /// histograms are not diluted with zero observations from ordinary blocks.
+    pub fn record_predicate_loads(tracker: &PredicateLoadTracker) {
+        if !tracker.has_activity() {
+            return;
+        }
+
+        Self::predicate_accounts_loaded_total().record(tracker.account_reads() as f64);
+        Self::predicate_accounts_loaded_unique().record(tracker.unique_accounts() as f64);
+        Self::predicate_slots_loaded_total().record(tracker.slot_reads() as f64);
+        Self::predicate_slots_loaded_unique().record(tracker.unique_slots() as f64);
+    }
+
     /// Records payload builder metrics.
     pub fn set_payload_builder_metrics(
         payload_transaction_simulation_time: f64,
@@ -322,7 +357,7 @@ impl BuilderMetrics {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, B256};
+    use alloy_primitives::{Address, B256, U256};
     use metrics_exporter_prometheus::PrometheusBuilder;
 
     use super::*;
@@ -439,5 +474,43 @@ mod tests {
         assert!(rendered.contains("base_builder_predicate_bucket_wakeups_sum 3"));
         assert!(rendered.contains("base_builder_predicate_bucket_depth_count 2"));
         assert!(rendered.contains("base_builder_predicate_bucket_depth_sum 3"));
+    }
+
+    #[test]
+    fn record_predicate_loads_emits_total_and_unique_histograms() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+
+        let account = Address::with_last_byte(1);
+        let slot = U256::from(7);
+        let mut tracker = PredicateLoadTracker::default();
+        // Account read twice; slot read three times — one distinct location each.
+        tracker.record_account(account);
+        tracker.record_account(account);
+        tracker.record_slot(account, slot);
+        tracker.record_slot(account, slot);
+        tracker.record_slot(account, slot);
+
+        metrics::with_local_recorder(&recorder, || {
+            BuilderMetrics::record_predicate_loads(&tracker);
+        });
+
+        let rendered = handle.render();
+        assert!(rendered.contains("base_builder_predicate_accounts_loaded_total_sum 2"));
+        assert!(rendered.contains("base_builder_predicate_accounts_loaded_unique_sum 1"));
+        assert!(rendered.contains("base_builder_predicate_slots_loaded_total_sum 3"));
+        assert!(rendered.contains("base_builder_predicate_slots_loaded_unique_sum 1"));
+    }
+
+    #[test]
+    fn record_predicate_loads_emits_nothing_without_activity() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+
+        metrics::with_local_recorder(&recorder, || {
+            BuilderMetrics::record_predicate_loads(&PredicateLoadTracker::default());
+        });
+
+        assert!(!handle.render().contains("predicate_accounts_loaded_total"));
     }
 }
