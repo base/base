@@ -16,6 +16,7 @@ thiserror.workspace = true
 miniz_oxide.workspace = true
 
 brotli = { workspace = true, optional = true }
+derive_more = { workspace = true, features = ["debug"], optional = true }
 
 [dev-dependencies]
 base-protocol = { workspace = true, features = ["std"] }
@@ -24,4 +25,11 @@ base-common-genesis = { workspace = true, features = ["std"] }
 
 [features]
 default = []
-std = [ "brotli?/std", "dep:brotli", "miniz_oxide/std", "thiserror/std" ]
+std = [
+	"brotli?/std",
+	"dep:brotli",
+	"dep:derive_more",
+	"derive_more?/std",
+	"miniz_oxide/std",
+	"thiserror/std",
+]

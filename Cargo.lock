@@ -3768,6 +3768,7 @@ dependencies = [
  "base-common-genesis",
  "base-protocol",
  "brotli",
+ "derive_more 2.1.1",
  "miniz_oxide 0.9.1",
  "thiserror 2.0.19",
 ]
