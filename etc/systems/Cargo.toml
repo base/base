@@ -71,13 +71,21 @@ base-common-network.workspace = true
 base-common-rpc-types.workspace = true
 base-common-precompiles.workspace = true
 
+# proof
+base-prover-service.workspace = true
+base-proof-zk-host.workspace = true
+base-prover-service-db.workspace = true
+base-proof-zk-backend.workspace = true
+base-prover-service-client.workspace = true
+base-prover-service-protocol = { workspace = true, features = ["rpc-server"] }
+
 # tokio
 tokio-util.workspace = true
 tokio = { workspace = true, features = ["full", "rt-multi-thread", "macros"] }
 
 # rpc
 axum = { workspace = true, features = ["http1", "tokio"] }
-jsonrpsee = { workspace = true, features = ["http-client"] }
+jsonrpsee = { workspace = true, features = ["http-client", "server"] }
 reth-rpc-layer.workspace = true
 tower.workspace = true
 
@@ -97,7 +105,9 @@ async-trait.workspace = true
 tracing = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive", "std"] }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "tls-native-tls"] }
 testcontainers = { workspace = true, features = ["blocking", "host-port-exposure"] }
+testcontainers-modules = { workspace = true, features = ["postgres"] }
 
 [features]
 default = [ "upgrade-signal" ]
@@ -129,8 +139,6 @@ base-common-rpc-types-engine.workspace = true
 
 # proof
 base-optimism-rpc.workspace = true
-base-prover-service-client.workspace = true
-base-prover-service-protocol.workspace = true
 
 # execution
 base-shadow-indexer.workspace = true
@@ -149,6 +157,7 @@ anyhow.workspace = true
 futures.workspace = true
 indicatif.workspace = true
 tokio-tungstenite.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 testcontainers-modules = { workspace = true, features = ["postgres"] }
 
 [[bench]]

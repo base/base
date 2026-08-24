@@ -6235,8 +6235,12 @@ dependencies = [
  "base-node-core",
  "base-node-runner",
  "base-optimism-rpc",
+ "base-proof-zk-backend",
+ "base-proof-zk-host",
  "base-protocol",
+ "base-prover-service",
  "base-prover-service-client",
+ "base-prover-service-db",
  "base-prover-service-protocol",
  "base-runtime",
  "base-shadow-indexer",
@@ -6278,6 +6282,7 @@ dependencies = [
  "tokio-util",
  "tower 0.5.3",
  "tracing",
+ "tracing-subscriber",
  "url",
 ]
 

@@ -3,18 +3,12 @@
 mod common;
 
 use alloy_primitives::{Address, B256, LogData};
-use alloy_provider::RootProvider;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolEvent};
-use base_common_network::Base;
 use base_common_precompiles::{ActivationFeature, ActivationRegistryStorage, IActivationRegistry};
 use base_common_rpc_types::BaseTransactionReceipt;
-use base_system_tests::{
-    ANVIL_ACCOUNT_5, ANVIL_ACCOUNT_6, B20PrecompileClient, SystemTestStack, SystemTestStackBuilder,
-};
+use base_system_tests::{ANVIL_ACCOUNT_5, ANVIL_ACCOUNT_6, B20PrecompileClient};
 use eyre::{Result, WrapErr};
-
-const BASE_COBALT_ACTIVATION_BLOCK: u64 = 5;
 
 /// `isActivated` returns `false` for every feature id by default.
 #[tokio::test]
@@ -90,7 +84,7 @@ async fn test_activation_registry_set_admin_reverts_before_cobalt() -> Result<()
 /// At Cobalt, `setAdmin` updates the stored admin and future activation authority.
 #[tokio::test]
 async fn test_activation_registry_cobalt_admin_rotation() -> Result<()> {
-    let (_system, provider) = start_cobalt_system().await?;
+    let (_system, provider) = common::start_cobalt_system().await?;
     let admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key)
         .wrap_err("Failed to parse system test admin private key")?;
     let new_admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_6.private_key)
@@ -290,20 +284,6 @@ async fn is_activated(client: &B20PrecompileClient<'_>, feature: B256) -> Result
         .await?;
     IActivationRegistry::isActivatedCall::abi_decode_returns(output.as_ref())
         .wrap_err("Failed to decode isActivated")
-}
-
-async fn start_cobalt_system() -> Result<(SystemTestStack, RootProvider<Base>)> {
-    let system = SystemTestStackBuilder::new()
-        .with_l1_chain_id(common::L1_CHAIN_ID)
-        .with_l2_chain_id(common::L2_CHAIN_ID)
-        .with_base_azul_activation_block(common::BASE_AZUL_ACTIVATION_BLOCK)
-        .with_base_beryl_activation_block(common::BASE_BERYL_ACTIVATION_BLOCK)
-        .with_base_cobalt_activation_block(BASE_COBALT_ACTIVATION_BLOCK)
-        .build()
-        .await?;
-    let provider = system.l2_builder_provider()?;
-    common::wait_for_block(&provider, BASE_COBALT_ACTIVATION_BLOCK + 1).await?;
-    Ok((system, provider))
 }
 
 async fn admin_address(client: &B20PrecompileClient<'_>) -> Result<Address> {
