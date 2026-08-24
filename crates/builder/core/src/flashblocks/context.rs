@@ -1,7 +1,7 @@
 use core::fmt::Debug;
 use std::{
     sync::Arc,
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, Instant},
 };
 
 use alloy_consensus::{Eip658Value, Transaction, transaction::TxHashRef};
@@ -22,8 +22,8 @@ use base_execution_payload_builder::{
     BasePayloadBuilderAttributes, error::BasePayloadBuilderError,
 };
 use base_execution_txpool::{
-    BasePooledTx, BundleTransaction, GuardMetrics, PredicateContext, TimestampedTransaction,
-    ValidityPredicate, estimated_da_size::DataAvailabilitySized,
+    BasePooledTx, BundleTransaction, GuardMetrics, PredicateContext, ValidityPredicate,
+    estimated_da_size::DataAvailabilitySized,
 };
 use base_observability_events::TransactionEventType;
 use reth_basic_payload_builder::PayloadConfig;
@@ -107,8 +107,6 @@ pub struct FlashblockDiagnostics {
     pub txs_rejected_da_footprint: u64,
     /// Number rejected by uncompressed size limit.
     pub txs_rejected_uncompressed_size: u64,
-    /// Number skipped because metering data has not yet arrived.
-    pub txs_rejected_metering_data_pending: u64,
     /// Number rejected by resource-metering budgets.
     pub txs_rejected_resource_throttling: u64,
     /// Number rejected or skipped for other reasons.
@@ -132,13 +130,12 @@ impl FlashblockDiagnostics {
     }
 
     /// Returns the rejection counts keyed by their metric/log reason labels.
-    pub const fn rejection_counts(&self) -> [(&'static str, u64); 7] {
+    pub const fn rejection_counts(&self) -> [(&'static str, u64); 6] {
         [
             ("gas_limit", self.txs_rejected_gas),
             ("da_size", self.txs_rejected_da),
             ("da_footprint", self.txs_rejected_da_footprint),
             ("uncompressed_size", self.txs_rejected_uncompressed_size),
-            ("metering_data_pending", self.txs_rejected_metering_data_pending),
             ("resource_throttling", self.txs_rejected_resource_throttling),
             ("other", self.txs_rejected_other),
         ]
@@ -158,7 +155,6 @@ impl FlashblockDiagnostics {
             + self.txs_rejected_da
             + self.txs_rejected_da_footprint
             + self.txs_rejected_uncompressed_size
-            + self.txs_rejected_metering_data_pending
             + self.txs_rejected_resource_throttling
             + self.txs_rejected_other
     }
@@ -187,11 +183,7 @@ impl FlashblockDiagnostics {
             TxnExecutionError::BlockUncompressedSizeExceeded { .. } => {
                 self.txs_rejected_uncompressed_size += 1;
             }
-            TxnExecutionError::MeteringDataPending => {
-                self.txs_rejected_metering_data_pending += 1;
-            }
-            TxnExecutionError::ResourceThrottling(_)
-            | TxnExecutionError::ResourceMeteringCalculationFailed => {
+            TxnExecutionError::ResourceThrottling(_) => {
                 self.txs_rejected_resource_throttling += 1;
             }
             TxnExecutionError::SequencerTransaction
@@ -1071,7 +1063,6 @@ impl BasePayloadBuilderCtx {
             }
 
             let tx_da_size = tx.estimated_da_size();
-            let tx_received_at_ms = tx.received_at();
 
             // EIP-8130 meters payer authentication gas on top of the declared gas limit, so it must
             // be reserved against the block gas budget in addition to `gas_limit`. Reserve a
@@ -1115,59 +1106,6 @@ impl BasePayloadBuilderCtx {
             num_txs_considered += 1;
             let ordering_position = num_txs_considered;
 
-            let resource_usage = self.builder_config.metering_provider.get(&tx_hash);
-
-            // Skip transactions that are too young and don't have metering data yet
-            if self.builder_config.metering_provider.is_enabled()
-                && resource_usage.is_none()
-                && let Some(wait_duration) = self.builder_config.metering_wait_duration
-            {
-                let now_ms = SystemTime::now()
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .map(|d| d.as_millis())
-                    .unwrap_or(0);
-                let tx_age_ms = now_ms.saturating_sub(tx_received_at_ms);
-                if tx_age_ms < wait_duration.as_millis() {
-                    let err = TxnExecutionError::MeteringDataPending;
-                    let tx_resources = TxResources {
-                        da_size: tx_da_size,
-                        gas_limit: tx.gas_limit(),
-                        payer_auth: tx_payer_auth,
-                        uncompressed_size: tx_uncompressed_size,
-                    };
-                    self.emit_builder_decision_event(
-                        &payload_id,
-                        TransactionEventType::BuilderConsidered,
-                        tx_hash,
-                        Some(ordering_position),
-                        || {
-                            BuilderConsideredEventData::new(info, limits, Some(&tx_resources))
-                                .with_metering_wait(tx_age_ms, wait_duration.as_millis())
-                        },
-                    );
-                    self.emit_builder_decision_event(
-                        &payload_id,
-                        TransactionEventType::BuilderRejected,
-                        tx_hash,
-                        Some(ordering_position),
-                        || {
-                            BuilderRejectedEventData::from_error(
-                                &err,
-                                info,
-                                limits,
-                                Some(&tx_resources),
-                            )
-                            .with_metering_wait(tx_age_ms, wait_duration.as_millis())
-                        },
-                    );
-                    log_txn(Err(err));
-                    BuilderMetrics::metering_data_pending_skip().increment(1);
-                    self.builder_config.metering_provider.skip(&tx_hash);
-                    best_txs.mark_invalid(tx.signer(), tx.nonce());
-                    continue;
-                }
-            }
-
             // Build tx resources struct
             let tx_resources = TxResources {
                 da_size: tx_da_size,
@@ -1185,9 +1123,7 @@ impl BasePayloadBuilderCtx {
 
             let (simulated, predicted) =
                 resource_metering.predict(&tx_hash, &info.resource_metering_usage);
-            if predicted.should_exclude()
-                && let Some(err) = TxnExecutionError::from_resource_decision(&predicted)
-            {
+            if let Some(err) = TxnExecutionError::from_resource_decision(&predicted) {
                 diag.record_rejection(&err);
                 if err.is_permanent() {
                     diag.permanently_rejected_txs.push(tx_hash);
@@ -1365,11 +1301,9 @@ impl BasePayloadBuilderCtx {
             let gas_used = result.tx_gas_used();
             let is_success = result.is_success();
             if is_success {
-                log_txn(Ok(TxnOutcome::Success));
                 num_txs_simulated_success += 1;
                 BuilderMetrics::successful_tx_gas_used().record(gas_used as f64);
             } else {
-                log_txn(Ok(TxnOutcome::Reverted));
                 num_txs_simulated_fail += 1;
                 reverted_gas_used += gas_used;
                 BuilderMetrics::reverted_tx_gas_used().record(gas_used as f64);
@@ -1415,9 +1349,7 @@ impl BasePayloadBuilderCtx {
                     simulated.as_ref(),
                     &info.resource_metering_usage,
                 );
-                if decision.should_exclude()
-                    && let Some(err) = TxnExecutionError::from_resource_decision(&decision)
-                {
+                if let Some(err) = TxnExecutionError::from_resource_decision(&decision) {
                     diag.record_rejection(&err);
                     if err.is_permanent() {
                         diag.permanently_rejected_txs.push(tx_hash);
@@ -1442,6 +1374,8 @@ impl BasePayloadBuilderCtx {
                 }
                 pending_resource_usage = decision.committed_usage();
             }
+
+            log_txn(Ok(if is_success { TxnOutcome::Success } else { TxnOutcome::Reverted }));
 
             info.cumulative_gas_used += gas_used;
             // record tx da size
@@ -1574,6 +1508,7 @@ impl BasePayloadBuilderCtx {
 
             // Record metering hit/miss only for committed transactions so the
             // metric reflects actual payload inclusion, not speculative lookups.
+            let resource_usage = self.builder_config.metering_provider.get(&tx_hash);
             if self.builder_config.metering_provider.is_enabled() && resource_usage.is_some() {
                 BuilderMetrics::metering_known_transaction().increment(1);
             } else {
@@ -1702,19 +1637,34 @@ impl BasePayloadBuilderCtx {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{Header, TxEip1559};
+    use alloy_consensus::{Header, SignableTransaction, TxEip1559};
     use alloy_eips::Encodable2718;
-    use alloy_primitives::{TxKind, U256};
+    use alloy_primitives::{Address, B256, Signature, TxHash, TxKind, U256};
     use alloy_signer_local::PrivateKeySigner;
-    use base_common_consensus::BaseTypedTransaction;
+    use base_bundles::{MeterBundleResponse, OpcodeGas, TransactionResult};
+    use base_common_consensus::{BaseTxEnvelope, BaseTypedTransaction, TxDeposit};
     use base_execution_chainspec::BaseChainSpec;
+    use base_execution_payload_builder::{
+        CompiledResourceMeteringSchedule, ResourceMeteringConfig, ResourceMeteringDimension,
+        ResourceMeteringOperation, ResourceMeteringSchedule, ResourceMeteringUsage,
+    };
+    use base_execution_txpool::BasePooledTransaction;
     use reth_chainspec::ChainSpec;
+    use reth_payload_util::PayloadTransactions;
     use reth_primitives_traits::{SealedHeader, WithEncoded};
     use reth_provider::noop::NoopProvider;
     use reth_revm::{State, database::StateProviderDatabase};
+    use reth_transaction_pool::PoolTransaction;
+    use revm::{
+        database::{CacheDB, EmptyDB},
+        state::{AccountInfo, EvmState},
+    };
 
     use super::*;
-    use crate::test_utils::sign_base_tx;
+    use crate::{
+        BestFlashblocksTxs, MeteringProvider, NoopMeteringProvider, ParkablePayloadTransactions,
+        RejectionCache, SharedMeteringProvider, test_utils::sign_base_tx,
+    };
 
     #[test]
     fn diagnostics_report_selection_outcome() {
@@ -1753,7 +1703,6 @@ mod tests {
                 ("da_size", 0),
                 ("da_footprint", 0),
                 ("uncompressed_size", 0),
-                ("metering_data_pending", 0),
                 ("resource_throttling", 0),
                 ("other", 0),
             ]
@@ -1766,11 +1715,9 @@ mod tests {
         diag.record_rejection(&TxnExecutionError::SequencerTransaction);
         diag.record_rejection(&TxnExecutionError::NonceTooLow);
         diag.record_rejection(&TxnExecutionError::MaxGasUsageExceeded);
-        diag.record_rejection(&TxnExecutionError::MeteringDataPending);
 
-        assert_eq!(diag.txs_rejected_metering_data_pending, 1);
         assert_eq!(diag.txs_rejected_other, 3);
-        assert_eq!(diag.txs_rejected_total(), 4);
+        assert_eq!(diag.txs_rejected_total(), 3);
     }
 
     #[test]
@@ -1907,5 +1854,347 @@ mod tests {
             .expect("invalid pre-include is skipped when no_tx_pool=false");
         assert_eq!(info.cumulative_gas_used, 0, "skipped tx should not consume gas");
         assert!(info.receipts.is_empty(), "skipped tx should not produce a receipt");
+    }
+
+    fn test_chain_spec() -> (Arc<BaseChainSpec>, Arc<SealedHeader>) {
+        let genesis: serde_json::Value = serde_json::json!({
+            "config": { "chainId": 901 },
+            "gasLimit": "0x1C9C380",
+            "timestamp": "0x0"
+        });
+        let genesis = serde_json::from_value(genesis).expect("valid genesis");
+        let inner =
+            ChainSpec::builder().chain(901.into()).genesis(genesis).cancun_activated().build();
+        let parent_header = Header { gas_limit: 30_000_000, timestamp: 0, ..Default::default() };
+        (Arc::new(BaseChainSpec::from(inner)), Arc::new(SealedHeader::seal_slow(parent_header)))
+    }
+
+    fn cpu_schedule(
+        block_limit: u64,
+        transaction_limit: Option<u64>,
+        dry_run: bool,
+    ) -> ResourceMeteringSchedule {
+        ResourceMeteringSchedule {
+            dimensions: vec![ResourceMeteringDimension {
+                name: "cpu".to_string(),
+                block_limit,
+                transaction_limit,
+                base_gas_weight: 1,
+                operations: Vec::new(),
+                dry_run,
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn metering_config(
+        schedule: ResourceMeteringSchedule,
+        provider: SharedMeteringProvider,
+    ) -> ResourceMeteringConfig {
+        ResourceMeteringConfig {
+            enabled: true,
+            schedule: Arc::new(CompiledResourceMeteringSchedule::compile(schedule).unwrap()),
+            provider,
+        }
+    }
+
+    fn meter_for(tx_hash: TxHash, gas_used: u64) -> MeterBundleResponse {
+        MeterBundleResponse {
+            results: vec![TransactionResult {
+                coinbase_diff: Default::default(),
+                eth_sent_to_coinbase: Default::default(),
+                from_address: Default::default(),
+                gas_fees: Default::default(),
+                gas_price: Default::default(),
+                gas_used,
+                to_address: None,
+                tx_hash,
+                value: Default::default(),
+                execution_time_us: 0,
+                opcode_gas: Vec::new(),
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn overflowing_schedule() -> ResourceMeteringSchedule {
+        ResourceMeteringSchedule {
+            dimensions: vec![ResourceMeteringDimension {
+                name: "cpu".to_string(),
+                block_limit: 1,
+                transaction_limit: None,
+                base_gas_weight: u64::MAX,
+                operations: vec![ResourceMeteringOperation {
+                    name: "SSTORE".to_string(),
+                    gas_used_weight: u64::MAX,
+                    count_cost: 0,
+                }],
+                dry_run: false,
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn overflowing_meter(tx_hash: TxHash) -> MeterBundleResponse {
+        MeterBundleResponse {
+            results: vec![TransactionResult {
+                coinbase_diff: Default::default(),
+                eth_sent_to_coinbase: Default::default(),
+                from_address: Default::default(),
+                gas_fees: Default::default(),
+                gas_price: Default::default(),
+                gas_used: u64::MAX,
+                to_address: None,
+                tx_hash,
+                value: Default::default(),
+                execution_time_us: 0,
+                opcode_gas: vec![OpcodeGas {
+                    contract_address: Default::default(),
+                    opcode: "SSTORE".to_string(),
+                    count: 1,
+                    gas_used: u64::MAX,
+                }],
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[derive(Debug)]
+    struct MapProvider(std::sync::Mutex<std::collections::HashMap<TxHash, MeterBundleResponse>>);
+
+    impl MeteringProvider for MapProvider {
+        fn get(&self, tx_hash: &TxHash) -> Option<MeterBundleResponse> {
+            self.0.lock().unwrap().get(tx_hash).cloned()
+        }
+    }
+
+    struct RecordingTransactions {
+        transactions: std::vec::IntoIter<BasePooledTransaction>,
+        invalid: Vec<(Address, u64)>,
+    }
+
+    impl PayloadTransactions for RecordingTransactions {
+        type Transaction = BasePooledTransaction;
+
+        fn next(&mut self, _ctx: ()) -> Option<Self::Transaction> {
+            self.transactions.next()
+        }
+
+        fn mark_invalid(&mut self, sender: Address, nonce: u64) {
+            self.invalid.push((sender, nonce));
+        }
+    }
+
+    impl ParkablePayloadTransactions for RecordingTransactions {
+        fn park_current(&mut self) -> bool {
+            false
+        }
+
+        fn mark_current_committed(&mut self) {}
+
+        fn promote(&mut self, _transaction_hash: TxHash) -> bool {
+            false
+        }
+
+        fn discard_parked(&mut self, _transaction_hash: TxHash) -> bool {
+            false
+        }
+    }
+
+    fn pool_transaction() -> BasePooledTransaction {
+        let envelope = BaseTxEnvelope::Eip1559(
+            TxEip1559 {
+                chain_id: 901,
+                nonce: 0,
+                gas_limit: 100_000,
+                max_fee_per_gas: 2_000_000_000,
+                max_priority_fee_per_gas: 1,
+                to: TxKind::Call(Address::repeat_byte(0x11)),
+                ..Default::default()
+            }
+            .into_signed(Signature::test_signature()),
+        );
+        let encoded_len = envelope.encode_2718_len();
+        BasePooledTransaction::new(
+            envelope.try_into_recovered().expect("test signature must recover"),
+            encoded_len,
+        )
+    }
+
+    fn generous_limits() -> ResourceLimits {
+        ResourceLimits { block_gas_limit: 30_000_000, ..Default::default() }
+    }
+
+    fn execute_pool_scan(
+        resource_metering: ResourceMeteringConfig,
+        tx: BasePooledTransaction,
+        rejection_cache: RejectionCache,
+    ) -> (ExecutionInfo, FlashblockDiagnostics, RejectionCache, Address) {
+        let (chain_spec, parent) = test_chain_spec();
+        let mut ctx = BasePayloadBuilderCtx::for_test(chain_spec, parent);
+        ctx.builder_config.resource_metering = resource_metering;
+        ctx.builder_config.rejection_cache = rejection_cache.clone();
+
+        let sender = tx.sender();
+        let mut db = CacheDB::<EmptyDB>::default();
+        db.insert_account_info(sender, AccountInfo { balance: U256::MAX, ..Default::default() });
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
+
+        let inner =
+            RecordingTransactions { transactions: vec![tx].into_iter(), invalid: Vec::new() };
+        let mut best_txs = BestFlashblocksTxs::new(inner, rejection_cache.clone());
+        let mut info = ExecutionInfo::default();
+        let diag = ctx
+            .execute_best_transactions(&mut info, &mut state, &mut best_txs, &generous_limits())
+            .expect("flashblock scan must succeed");
+        if !diag.permanently_rejected_txs.is_empty() {
+            best_txs.mark_rejected(&diag.permanently_rejected_txs);
+        }
+        (info, diag, rejection_cache, sender)
+    }
+
+    #[test]
+    fn missing_meter_bundle_fails_open_and_executes() {
+        let tx = pool_transaction();
+        let (info, diag, cache, _) = execute_pool_scan(
+            metering_config(
+                cpu_schedule(1_000_000, Some(1_000_000), false),
+                Arc::new(NoopMeteringProvider),
+            ),
+            tx,
+            RejectionCache::default(),
+        );
+
+        assert_eq!(diag.txs_included, 1);
+        assert_eq!(info.executed_transactions.len(), 1);
+        assert!(!info.resource_metering_usage.is_empty());
+        assert!(diag.permanently_rejected_txs.is_empty());
+        assert_eq!(cache.entry_count(), 0);
+    }
+
+    #[test]
+    fn predicted_transaction_scope_exclude_is_permanent() {
+        let tx = pool_transaction();
+        let tx_hash = *tx.hash();
+        let provider: SharedMeteringProvider = Arc::new(MapProvider(std::sync::Mutex::new(
+            std::collections::HashMap::from([(tx_hash, meter_for(tx_hash, 21_000))]),
+        )));
+        let cache = RejectionCache::default();
+        let (info, diag, cache, _) = execute_pool_scan(
+            metering_config(cpu_schedule(1_000_000, Some(100), false), provider),
+            tx,
+            cache,
+        );
+
+        assert_eq!(diag.txs_included, 0);
+        assert!(info.executed_transactions.is_empty());
+        assert!(info.resource_metering_usage.is_empty());
+        assert_eq!(diag.permanently_rejected_txs, vec![tx_hash]);
+        assert!(cache.is_rejected(&tx_hash));
+    }
+
+    #[test]
+    fn executed_exclude_does_not_commit_or_account_usage() {
+        let tx = pool_transaction();
+        let tx_hash = *tx.hash();
+        let (info, diag, cache, _) = execute_pool_scan(
+            metering_config(
+                cpu_schedule(1_000_000, Some(100), false),
+                Arc::new(NoopMeteringProvider),
+            ),
+            tx,
+            RejectionCache::default(),
+        );
+
+        assert_eq!(diag.txs_included, 0);
+        assert!(info.executed_transactions.is_empty());
+        assert!(info.resource_metering_usage.is_empty());
+        assert_eq!(diag.permanently_rejected_txs, vec![tx_hash]);
+        assert!(cache.is_rejected(&tx_hash));
+    }
+
+    #[test]
+    fn dry_run_and_calculation_failed_do_not_exclude() {
+        let tx = pool_transaction();
+        let tx_hash = *tx.hash();
+        let dry_run_provider: SharedMeteringProvider =
+            Arc::new(MapProvider(std::sync::Mutex::new(std::collections::HashMap::from([(
+                tx_hash,
+                meter_for(tx_hash, 21_000),
+            )]))));
+        let (info, diag, cache, _) = execute_pool_scan(
+            metering_config(cpu_schedule(1_000_000, Some(100), true), dry_run_provider),
+            tx.clone(),
+            RejectionCache::default(),
+        );
+        assert_eq!(diag.txs_included, 1);
+        assert_eq!(info.executed_transactions.len(), 1);
+        assert!(!cache.is_rejected(&tx_hash));
+
+        let overflowing_provider: SharedMeteringProvider =
+            Arc::new(MapProvider(std::sync::Mutex::new(std::collections::HashMap::from([(
+                tx_hash,
+                overflowing_meter(tx_hash),
+            )]))));
+        let (info, diag, cache, _) = execute_pool_scan(
+            metering_config(overflowing_schedule(), overflowing_provider),
+            tx,
+            RejectionCache::default(),
+        );
+        assert_eq!(diag.txs_included, 1);
+        assert_eq!(info.executed_transactions.len(), 1);
+        assert!(!cache.is_rejected(&tx_hash));
+    }
+
+    #[test]
+    fn sequencer_path_accounts_unthrottled_usage() {
+        let (chain_spec, parent) = test_chain_spec();
+        let deposit = TxDeposit {
+            source_hash: B256::default(),
+            from: Address::repeat_byte(0x11),
+            to: TxKind::Call(Address::repeat_byte(0x11)),
+            mint: 0,
+            value: U256::default(),
+            gas_limit: 21_000,
+            is_system_transaction: false,
+            input: Default::default(),
+        };
+        let signer = PrivateKeySigner::random();
+        let recovered =
+            sign_base_tx(&signer, BaseTypedTransaction::Deposit(deposit)).expect("sign deposit");
+        let signed = recovered.into_inner();
+        let encoded = signed.encoded_2718().into();
+
+        let mut ctx = BasePayloadBuilderCtx::for_test(chain_spec, parent);
+        ctx.builder_config.resource_metering =
+            metering_config(cpu_schedule(100, Some(1), false), Arc::new(NoopMeteringProvider));
+        ctx.config.attributes.no_tx_pool = true;
+        ctx.config.attributes.transactions = vec![WithEncoded::new(encoded, signed)];
+
+        let db = StateProviderDatabase::new(NoopProvider::default());
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
+        let info = ctx
+            .execute_sequencer_transactions(&mut state)
+            .expect("sequencer deposit must execute without throttling");
+        assert_eq!(info.executed_transactions.len(), 1);
+        assert!(
+            !info.resource_metering_usage.is_empty(),
+            "unthrottled sequencer txs still account usage"
+        );
+    }
+
+    #[test]
+    fn apply_accounted_usage_overflow_fails_open() {
+        let config = metering_config(
+            cpu_schedule(1_000_000, Some(1_000_000), false),
+            Arc::new(NoopMeteringProvider),
+        );
+        let mut cumulative = vec![u128::MAX];
+        config.account_unthrottled(&TxHash::ZERO, 21_000, &EvmState::default(), &mut cumulative);
+        assert_eq!(cumulative, vec![u128::MAX]);
+
+        let usage = ResourceMeteringUsage { values: vec![1] };
+        config.apply_accounted_usage(&TxHash::ZERO, &usage, &mut cumulative);
+        assert_eq!(cumulative, vec![u128::MAX]);
     }
 }

@@ -2,8 +2,9 @@
 
 use std::fmt;
 
-use base_execution_payload_builder::config::{
-    BaseDAConfig, GasLimitConfig, ResourceMeteringConfig,
+use base_execution_payload_builder::{
+    RejectionCache,
+    config::{BaseDAConfig, GasLimitConfig, ResourceMeteringConfig},
 };
 use base_node_core::args::RollupArgs;
 use eyre::Result;
@@ -43,6 +44,8 @@ pub struct BaseNodeRunner<SB: PayloadServiceBuilder = DefaultPayloadServiceBuild
     manifest_precheck_enabled: bool,
     /// Shared resource-metering configuration for the native payload builder.
     resource_metering: Option<ResourceMeteringConfig>,
+    /// Shared rejection cache for permanently rejected transaction hashes.
+    rejection_cache: Option<RejectionCache>,
     /// Binary-owned callbacks to run after the node has started.
     started_callbacks: Vec<StartedCallback>,
 }
@@ -58,6 +61,7 @@ impl BaseNodeRunner<DefaultPayloadServiceBuilder> {
             gas_limit_config: None,
             manifest_precheck_enabled: true,
             resource_metering: None,
+            rejection_cache: None,
             started_callbacks: Vec::new(),
         }
     }
@@ -72,6 +76,7 @@ impl<SB: PayloadServiceBuilder> fmt::Debug for BaseNodeRunner<SB> {
             .field("gas_limit_config", &self.gas_limit_config)
             .field("manifest_precheck_enabled", &self.manifest_precheck_enabled)
             .field("resource_metering", &self.resource_metering)
+            .field("rejection_cache", &self.rejection_cache)
             .field("started_callbacks", &self.started_callbacks.len())
             .finish()
     }
@@ -102,6 +107,12 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
         self
     }
 
+    /// Sets the shared rejection cache for permanently rejected transactions.
+    pub fn with_rejection_cache(mut self, rejection_cache: RejectionCache) -> Self {
+        self.rejection_cache = Some(rejection_cache);
+        self
+    }
+
     /// Swap the payload service builder.
     pub fn with_service_builder<SB2: PayloadServiceBuilder>(self, sb: SB2) -> BaseNodeRunner<SB2> {
         BaseNodeRunner {
@@ -112,6 +123,7 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
             gas_limit_config: self.gas_limit_config,
             manifest_precheck_enabled: self.manifest_precheck_enabled,
             resource_metering: self.resource_metering,
+            rejection_cache: self.rejection_cache,
             started_callbacks: self.started_callbacks,
         }
     }
@@ -156,6 +168,7 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
             gas_limit_config,
             manifest_precheck_enabled,
             resource_metering,
+            rejection_cache,
             started_callbacks,
         } = self;
         let mut base_node = BaseNode::new(rollup_args);
@@ -168,6 +181,9 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
         base_node = base_node.with_manifest_precheck_enabled(manifest_precheck_enabled);
         if let Some(resource_metering) = resource_metering {
             base_node = base_node.with_resource_metering(resource_metering);
+        }
+        if let Some(rejection_cache) = rejection_cache {
+            base_node = base_node.with_rejection_cache(rejection_cache);
         }
         let components = service_builder.build_components(&base_node);
 
@@ -214,6 +230,7 @@ mod tests {
                 enabled: true,
                 ..ResourceMeteringConfig::default()
             })
+            .with_rejection_cache(RejectionCache::default())
             .with_service_builder(TestPayloadServiceBuilder);
 
         assert!(!runner.manifest_precheck_enabled);
@@ -221,11 +238,13 @@ mod tests {
         let configured_gas = runner.gas_limit_config.expect("gas-limit config should be preserved");
         let configured_metering =
             runner.resource_metering.expect("resource metering should be preserved");
+        let configured_cache = runner.rejection_cache.expect("rejection cache should be preserved");
 
         assert_eq!(configured_da.max_da_tx_size(), Some(100));
         assert_eq!(configured_da.max_da_block_size(), Some(200));
         assert_eq!(configured_gas.gas_limit(), Some(30_000_000));
         assert!(configured_metering.enabled);
+        assert_eq!(configured_cache.entry_count(), 0);
 
         da_config.set_max_da_size(300, 400);
         gas_limit_config.set_gas_limit(40_000_000);

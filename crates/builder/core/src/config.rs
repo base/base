@@ -51,10 +51,6 @@ pub struct BuilderConfig {
     /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes.
     pub max_uncompressed_block_size: Option<u64>,
 
-    /// Duration to wait for metering data before including a transaction.
-    /// Transactions younger than this without metering data will be skipped.
-    pub metering_wait_duration: Option<Duration>,
-
     /// Hard cutoff on cumulative validity-predicate evaluation time per flashblock build.
     /// Once the cutoff is exceeded, further validity-gated transactions are deferred to a
     /// later flashblock rather than evaluated. This is the guardrail backing the
@@ -64,7 +60,9 @@ pub struct BuilderConfig {
     /// Resource metering provider
     pub metering_provider: SharedMeteringProvider,
 
-    /// Resource-metering schedule and throttling mode for payload admission.
+    /// Resource-metering schedule for payload admission.
+    ///
+    /// Per-dimension `dryRun` observes over-budget usage without excluding.
     pub resource_metering: ResourceMeteringConfig,
 
     /// Cache of permanently rejected transaction hashes, shared across blocks.
@@ -111,7 +109,6 @@ impl core::fmt::Debug for BuilderConfig {
             .field("flashblocks_leeway_time", &self.flashblocks_leeway_time)
             .field("max_gas_per_txn", &self.max_gas_per_txn)
             .field("max_uncompressed_block_size", &self.max_uncompressed_block_size)
-            .field("metering_wait_duration", &self.metering_wait_duration)
             .field("predicate_eval_hard_cutoff", &self.predicate_eval_hard_cutoff)
             .field("metering_provider", &self.metering_provider)
             .field("resource_metering", &self.resource_metering)
@@ -137,7 +134,6 @@ impl Default for BuilderConfig {
             sampling_ratio: 100,
             max_gas_per_txn: None,
             max_uncompressed_block_size: None,
-            metering_wait_duration: None,
             predicate_eval_hard_cutoff: Duration::from_millis(10),
             metering_provider: Arc::new(NoopMeteringProvider),
             resource_metering: ResourceMeteringConfig::default(),
@@ -198,16 +194,6 @@ impl BuilderConfig {
         max_uncompressed_block_size: Option<u64>,
     ) -> Self {
         self.max_uncompressed_block_size = max_uncompressed_block_size;
-        self
-    }
-
-    /// Sets the metering wait duration.
-    #[must_use]
-    pub const fn with_metering_wait_duration(
-        mut self,
-        metering_wait_duration: Option<Duration>,
-    ) -> Self {
-        self.metering_wait_duration = metering_wait_duration;
         self
     }
 

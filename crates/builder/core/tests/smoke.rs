@@ -10,10 +10,14 @@ use alloy_primitives::TxHash;
 #[cfg(target_os = "linux")]
 use base_builder_core::test_utils::ExternalNode;
 use base_builder_core::{
-    BuilderConfig,
+    BuilderConfig, NoopMeteringProvider,
     test_utils::{
         TransactionBuilderExt, setup_test_instance, setup_test_instance_with_builder_config,
     },
+};
+use base_execution_payload_builder::{
+    CompiledResourceMeteringSchedule, ResourceMeteringConfig, ResourceMeteringDimension,
+    ResourceMeteringSchedule,
 };
 use tokio::{join, task::yield_now};
 use tracing::info;
@@ -249,9 +253,26 @@ async fn chain_produces_big_tx_without_gas_limit() -> eyre::Result<()> {
 }
 
 #[tokio::test]
-async fn metering_wait_duration_does_not_delay_txs_when_metering_is_disabled() -> eyre::Result<()> {
-    let config =
-        BuilderConfig::for_tests().with_metering_wait_duration(Some(Duration::from_secs(60)));
+async fn missing_meter_bundle_fails_open_when_metering_is_enabled() -> eyre::Result<()> {
+    let schedule = ResourceMeteringSchedule {
+        dimensions: vec![ResourceMeteringDimension {
+            name: "cpu".to_string(),
+            block_limit: 1_000_000,
+            transaction_limit: Some(1_000_000),
+            base_gas_weight: 1,
+            operations: Vec::new(),
+            dry_run: false,
+        }],
+        ..Default::default()
+    };
+    let mut config = BuilderConfig::for_tests();
+    config.resource_metering = ResourceMeteringConfig {
+        enabled: true,
+        schedule: std::sync::Arc::new(
+            CompiledResourceMeteringSchedule::compile(schedule).expect("valid schedule"),
+        ),
+        provider: std::sync::Arc::new(NoopMeteringProvider),
+    };
     let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;
 
@@ -267,7 +288,7 @@ async fn metering_wait_duration_does_not_delay_txs_when_metering_is_disabled() -
 
     assert!(
         txs.hashes().any(|hash| hash == *tx.tx_hash()),
-        "fresh tx should not be delayed when metering is disabled"
+        "missing meterBundle data must fail open and still include the transaction"
     );
 
     Ok(())

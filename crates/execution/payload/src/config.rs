@@ -130,13 +130,19 @@ impl ResourceMeteringConfig {
                 }
             }
         } else {
+            if let Some(path) = schedule_path {
+                warn!(
+                    path = %path.display(),
+                    "resource metering schedule is ignored because metering is disabled"
+                );
+            }
             CompiledResourceMeteringSchedule::compile(ResourceMeteringSchedule::default())
                 .expect("the default resource metering schedule is valid")
         };
         Ok(Self { enabled, schedule: Arc::new(schedule), provider })
     }
 
-    /// Returns whether throttling is enabled with a non-empty schedule.
+    /// Returns whether metering is enabled with a non-empty schedule.
     pub fn is_active(&self) -> bool {
         self.enabled && !self.schedule.is_empty()
     }
@@ -150,7 +156,11 @@ impl ResourceMeteringConfig {
             .and_then(|meter| ResourceSample::from_meter(&meter, tx_hash))
     }
 
-    /// Predicted skip check. Records exclusions and calculation failures.
+    /// Predicted skip check. Records throttles that skip execution.
+    ///
+    /// [`ResourceThrottlingDecision::CalculationFailed`] is not recorded here:
+    /// the transaction still executes, and [`Self::decide_executed`] records
+    /// the final outcome, including a later calculation failure.
     pub fn predict(
         &self,
         tx_hash: &TxHash,
@@ -168,9 +178,7 @@ impl ResourceMeteringConfig {
             },
             |sample| self.schedule.decide_sample(sample, cumulative),
         );
-        if decision.should_exclude()
-            || matches!(decision, ResourceThrottlingDecision::CalculationFailed)
-        {
+        if decision.should_exclude() {
             self.record_decision(tx_hash, &decision);
         }
         (simulated, decision)
@@ -209,13 +217,13 @@ impl ResourceMeteringConfig {
         }
         let simulated = self.simulated_sample(tx_hash);
         let sample = ResourceSample::from_execution(gas_used, state, simulated.as_ref());
-        match self.schedule.evaluate(sample.gas_used, &sample.operations) {
-            Ok(usage) => Some(usage),
-            Err(_) => {
+        self.schedule.evaluate(sample.gas_used, &sample.operations).map_or_else(
+            |_| {
                 self.record_decision(tx_hash, &ResourceThrottlingDecision::CalculationFailed);
                 None
-            }
-        }
+            },
+            Some,
+        )
     }
 
     /// Accounts an unthrottled transaction into cumulative usage.
@@ -256,27 +264,15 @@ impl ResourceMeteringConfig {
             ResourceThrottlingDecision::Allow(_) => {}
             ResourceThrottlingDecision::Throttle { error, .. } => {
                 ResourceMeteringMetrics::record_limit(error, !error.dry_run);
-                if error.dry_run {
-                    debug!(
-                        target: "payload_builder",
-                        tx_hash = %tx_hash,
-                        dimension = %error.dimension,
-                        scope = %error.scope,
-                        used = error.used,
-                        limit = error.limit,
-                        "resource throttling budget exceeded"
-                    );
-                } else {
-                    warn!(
-                        target: "payload_builder",
-                        tx_hash = %tx_hash,
-                        dimension = %error.dimension,
-                        scope = %error.scope,
-                        used = error.used,
-                        limit = error.limit,
-                        "resource throttling budget exceeded"
-                    );
-                }
+                debug!(
+                    target: "payload_builder",
+                    tx_hash = %tx_hash,
+                    dimension = %error.dimension,
+                    scope = %error.scope,
+                    used = error.used,
+                    limit = error.limit,
+                    "resource throttling budget exceeded"
+                );
             }
             ResourceThrottlingDecision::CalculationFailed => {
                 ResourceMeteringMetrics::calculation_failed().increment(1);
@@ -389,7 +385,7 @@ impl GasLimitConfig {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::{collections::HashMap, path::Path};
 
     use alloy_primitives::TxHash;
     use base_bundles::{MeterBundleResponse, OpcodeGas, TransactionResult};
@@ -432,6 +428,20 @@ mod tests {
         assert_eq!(gas_limit.gas_limit(), Some(50000));
         gas_limit.set_gas_limit(0);
         assert_eq!(gas_limit.gas_limit(), None);
+    }
+
+    #[test]
+    fn disabled_metering_ignores_schedule_path_without_reading_file() {
+        let missing = Path::new("/this/path/does/not/exist/resource-metering.json");
+        let config = ResourceMeteringConfig::from_parts(
+            false,
+            Some(missing),
+            Arc::new(NoopMeteringProvider),
+        )
+        .expect("disabled metering must not read the schedule file");
+        assert!(!config.enabled);
+        assert!(config.schedule.is_empty());
+        assert!(!config.is_active());
     }
 
     fn compiled_cpu_schedule() -> CompiledResourceMeteringSchedule {

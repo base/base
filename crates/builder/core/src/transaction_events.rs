@@ -130,10 +130,6 @@ pub(crate) struct BuilderConsideredEventData {
     bundle_min_block: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     bundle_max_block: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tx_age_ms: Option<u128>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    metering_wait_duration_ms: Option<u128>,
 }
 
 impl BuilderConsideredEventData {
@@ -147,8 +143,6 @@ impl BuilderConsideredEventData {
             budget: BuilderBudgetFields::new(info, limits, resources),
             bundle_min_block: None,
             bundle_max_block: None,
-            tx_age_ms: None,
-            metering_wait_duration_ms: None,
         }
     }
 
@@ -160,17 +154,6 @@ impl BuilderConsideredEventData {
     ) -> Self {
         self.bundle_min_block = min_block_number;
         self.bundle_max_block = max_block_number;
-        self
-    }
-
-    /// Adds metering wait details to the considered-event payload.
-    pub(crate) const fn with_metering_wait(
-        mut self,
-        tx_age_ms: u128,
-        metering_wait_duration_ms: u128,
-    ) -> Self {
-        self.tx_age_ms = Some(tx_age_ms);
-        self.metering_wait_duration_ms = Some(metering_wait_duration_ms);
         self
     }
 }
@@ -191,10 +174,6 @@ pub(crate) struct BuilderRejectedEventData {
     current_block: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     block_timestamp: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tx_age_ms: Option<u128>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    metering_wait_duration_ms: Option<u128>,
     #[serde(skip_serializing_if = "Option::is_none")]
     dry_run: Option<bool>,
 }
@@ -218,8 +197,6 @@ impl BuilderRejectedEventData {
             bundle_max_block: None,
             current_block: None,
             block_timestamp: None,
-            tx_age_ms: None,
-            metering_wait_duration_ms: None,
             dry_run: None,
         }
     }
@@ -261,17 +238,6 @@ impl BuilderRejectedEventData {
     /// Adds the block timestamp associated with a bundle rejection.
     pub(crate) const fn with_block_timestamp(mut self, timestamp: u64) -> Self {
         self.block_timestamp = Some(timestamp);
-        self
-    }
-
-    /// Adds metering wait details to the rejected-event payload.
-    pub(crate) const fn with_metering_wait(
-        mut self,
-        tx_age_ms: u128,
-        metering_wait_duration_ms: u128,
-    ) -> Self {
-        self.tx_age_ms = Some(tx_age_ms);
-        self.metering_wait_duration_ms = Some(metering_wait_duration_ms);
         self
     }
 }
@@ -476,11 +442,7 @@ pub(crate) const fn rejection_reason_code(err: &TxnExecutionError) -> &'static s
         TxnExecutionError::InternalError(_) => "internal_error",
         TxnExecutionError::EvmError => "evm_error",
         TxnExecutionError::MaxGasUsageExceeded => "max_gas_usage_exceeded",
-        TxnExecutionError::MeteringDataPending => "metering_data_pending",
         TxnExecutionError::ResourceThrottling(_) => "resource_throttling",
-        TxnExecutionError::ResourceMeteringCalculationFailed => {
-            "resource_metering_calculation_failed"
-        }
     }
 }
 
@@ -694,10 +656,6 @@ mod tests {
                 },
             )),
             "resource_throttling"
-        );
-        assert_eq!(
-            rejection_reason_code(&TxnExecutionError::ResourceMeteringCalculationFailed),
-            "resource_metering_calculation_failed"
         );
     }
 }

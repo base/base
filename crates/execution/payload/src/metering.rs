@@ -24,10 +24,6 @@ pub trait MeteringProvider: Debug + Send + Sync + 'static {
     /// payload inclusion.
     fn mark_included_without_metering(&self, _tx_hash: &TxHash) {}
 
-    /// Signals that a transaction was skipped (e.g. `MeteringDataPending`) and
-    /// will be retried later, clearing any pending late-arrival tracking.
-    fn skip(&self, _tx_hash: &TxHash) {}
-
     /// Removes metering data for the given transaction hashes.
     ///
     /// Used to eagerly evict entries for transactions that have been included in

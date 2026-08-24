@@ -16,7 +16,7 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::{BaseEvmConfig, BaseRethReceiptBuilder};
 use base_execution_payload_builder::{
-    Attributes, BaseBuiltPayload, BasePayloadBuilderAttributes, PayloadPrimitives,
+    Attributes, BaseBuiltPayload, BasePayloadBuilderAttributes, PayloadPrimitives, RejectionCache,
     builder::BasePayloadTransactions,
     config::{BaseBuilderConfig, BaseDAConfig, GasLimitConfig, ResourceMeteringConfig},
 };
@@ -1046,6 +1046,8 @@ pub struct BasePayloadBuilder<Txs = ()> {
     pub manifest_precheck_enabled: bool,
     /// Resource metering by opcode for native payload admission.
     pub resource_metering: ResourceMeteringConfig,
+    /// Shared, cross-job cache of permanently rejected transaction hashes.
+    pub rejection_cache: RejectionCache,
 }
 
 impl<Txs: Default> Default for BasePayloadBuilder<Txs> {
@@ -1056,6 +1058,7 @@ impl<Txs: Default> Default for BasePayloadBuilder<Txs> {
             gas_limit_config: GasLimitConfig::default(),
             manifest_precheck_enabled: true,
             resource_metering: ResourceMeteringConfig::default(),
+            rejection_cache: RejectionCache::default(),
         }
     }
 }
@@ -1069,6 +1072,7 @@ impl BasePayloadBuilder {
             gas_limit_config: GasLimitConfig::default(),
             manifest_precheck_enabled: true,
             resource_metering: ResourceMeteringConfig::default(),
+            rejection_cache: RejectionCache::default(),
         }
     }
 
@@ -1095,6 +1099,12 @@ impl BasePayloadBuilder {
         self.resource_metering = resource_metering;
         self
     }
+
+    /// Configure the shared rejection cache for permanently rejected transactions.
+    pub fn with_rejection_cache(mut self, rejection_cache: RejectionCache) -> Self {
+        self.rejection_cache = rejection_cache;
+        self
+    }
 }
 
 impl<Txs> BasePayloadBuilder<Txs> {
@@ -1107,6 +1117,7 @@ impl<Txs> BasePayloadBuilder<Txs> {
             gas_limit_config: self.gas_limit_config,
             manifest_precheck_enabled: self.manifest_precheck_enabled,
             resource_metering: self.resource_metering,
+            rejection_cache: self.rejection_cache,
         }
     }
 }
@@ -1155,7 +1166,7 @@ where
                     gas_limit_config: self.gas_limit_config,
                     manifest_precheck_enabled: self.manifest_precheck_enabled,
                     resource_metering: self.resource_metering,
-                    rejection_cache: Default::default(),
+                    rejection_cache: self.rejection_cache,
                 },
             )
             .with_transactions(self.best_transactions);

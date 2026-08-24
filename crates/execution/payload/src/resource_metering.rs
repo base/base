@@ -3,9 +3,10 @@
 //! Resource metering reweights named observations into independent resource-unit
 //! dimensions. Simulated `meterBundle` data is a candidate pre-filter.
 //! Committed payload usage is accounted from executed observations when they
-//! exist: actual gas used, net post-state effects such as
-//! [`ResourceSample::STATE_NEW_STORAGE_SLOT`], and simulated opcode bags only
-//! for measurements the production EVM did not record. Throttling excludes a
+//! exist: actual gas used and net post-state effects such as
+//! [`ResourceSample::STATE_NEW_STORAGE_SLOT`] replace simulated `STATE_*`
+//! rows, while other simulated opcode and precompile rows are kept.
+//! Production execution does not attach opcode bags. Throttling excludes a
 //! transaction when an enforced dimension exceeds a budget. A dimension with
 //! [`ResourceMeteringDimension::dry_run`] set is observed without excluding.
 //! Block-scope excludes skip only the current payload scan. Transaction-scope
@@ -53,6 +54,8 @@ pub struct ResourceMeteringDimension {
     /// Cumulative resource-unit budget for a block.
     pub block_limit: u64,
     /// Optional resource-unit budget for one transaction.
+    ///
+    /// Omitted JSON `transactionLimit` compiles to [`Self::block_limit`].
     #[serde(default)]
     pub transaction_limit: Option<u64>,
     /// Resource units charged per unit of actual transaction gas used.
@@ -130,7 +133,7 @@ impl ResourceMeteringUsage {
 ///
 /// `gas_used` and net post-state effects are taken from builder execution when
 /// that result is available. Opcode and precompile counts stay on the simulated
-/// `meterBundle` bag unless a production inspector attached them here.
+/// `meterBundle` bag. Production execution does not attach opcode bags.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ResourceSample {
     /// Transaction gas used for `baseGasWeight`.
@@ -162,11 +165,13 @@ impl ResourceSample {
     /// This is not `state.len()`: loaded but unwritten accounts are omitted.
     pub const STATE_TOUCHED_ACCOUNT: &'static str = "STATE_TOUCHED_ACCOUNT";
 
-    /// Accounts whose revm journal marked them changed.
+    /// Accounts whose balance, nonce, or code changed from the original info.
     ///
-    /// `Account::is_changed()` is true for any journaled mutation, including
-    /// storage-only writes. Those accounts are also counted by the slot
-    /// operations.
+    /// revm 42 `Account::is_changed()` compares `AccountInfo` only. Storage-only
+    /// writes do not set it; those are [`Self::STATE_CHANGED_STORAGE_SLOT`],
+    /// [`Self::STATE_NEW_STORAGE_SLOT`], and
+    /// [`Self::STATE_CLEARED_STORAGE_SLOT`]. Touch without an info change is
+    /// [`Self::STATE_TOUCHED_ACCOUNT`].
     pub const STATE_CHANGED_ACCOUNT: &'static str = "STATE_CHANGED_ACCOUNT";
 
     const EXECUTED_STATE_OPERATIONS: [&'static str; 5] = [
@@ -191,8 +196,9 @@ impl ResourceSample {
 
     /// Builds an executed-preferred sample.
     ///
-    /// Actual gas and net post-state effects replace simulated values.
-    /// Simulated opcode rows are kept only for names execution did not observe.
+    /// Actual gas and `STATE_*` counts from post-state replace simulated
+    /// `STATE_*` rows. Other simulated opcode and precompile rows are kept.
+    /// Production execution does not attach opcode bags.
     pub fn from_execution(gas_used: u64, state: &EvmState, simulated: Option<&Self>) -> Self {
         let mut operations = simulated.map(|sample| sample.operations.clone()).unwrap_or_default();
         operations.retain(|entry| {
@@ -262,7 +268,7 @@ impl ResourceSample {
             .fold(0, |count, _| count.saturating_add(1))
     }
 
-    /// Counts accounts whose revm journal marked them changed, including storage-only writes.
+    /// Counts accounts whose balance, nonce, or code changed from the original info.
     pub fn count_changed_accounts(state: &EvmState) -> u64 {
         state
             .values()
@@ -300,8 +306,11 @@ pub struct CompiledResourceMeteringDimension {
     pub name: String,
     /// Cumulative resource-unit budget for a block.
     pub block_limit: u64,
-    /// Optional resource-unit budget for one transaction.
-    pub transaction_limit: Option<u64>,
+    /// Resource-unit budget for one transaction.
+    ///
+    /// Always set: omitted JSON `transactionLimit` compiles to
+    /// [`ResourceMeteringDimension::block_limit`].
+    pub transaction_limit: u64,
     /// Resource units charged per unit of actual transaction gas used.
     pub base_gas_weight: u64,
     /// Observe over-budget usage without excluding the transaction.
@@ -320,7 +329,7 @@ impl CompiledResourceMeteringSchedule {
             dimensions.push(CompiledResourceMeteringDimension {
                 name: dimension.name.trim().to_string(),
                 block_limit: dimension.block_limit,
-                transaction_limit: dimension.transaction_limit,
+                transaction_limit: dimension.transaction_limit.unwrap_or(dimension.block_limit),
                 base_gas_weight: dimension.base_gas_weight,
                 dry_run: dimension.dry_run,
             });
@@ -387,34 +396,40 @@ impl CompiledResourceMeteringSchedule {
 
     /// Checks transaction and cumulative block budgets for one transaction.
     ///
-    /// Enforced dimension overruns are preferred over dry-run overruns so a
-    /// later enforced budget still excludes the transaction.
+    /// Overruns are ranked so a later dimension can still exclude the
+    /// transaction: enforced transaction-scope, then enforced block-scope,
+    /// then the first dry-run overrun in schedule order. Arithmetic overflow
+    /// is returned immediately.
     pub fn check(
         &self,
         usage: &ResourceMeteringUsage,
         cumulative: &[u128],
     ) -> Result<(), ResourceThrottlingCheckError> {
+        let mut enforced_transaction = None;
+        let mut enforced_block = None;
         let mut dry_run_error = None;
 
         for (index, dimension) in self.dimensions.iter().enumerate() {
             let transaction_cost = usage.get(index);
 
-            if let Some(transaction_limit) = dimension.transaction_limit
-                && transaction_cost > u128::from(transaction_limit)
-            {
+            // Check the per-tx budget before adding to the block cumulative so
+            // an overflow cannot fail-open a transaction that cannot fit any
+            // empty block.
+            if transaction_cost > u128::from(dimension.transaction_limit) {
                 let error = ResourceThrottlingLimitExceeded {
                     dimension: dimension.name.clone(),
                     scope: ResourceThrottlingLimitScope::Transaction,
                     used: transaction_cost,
                     transaction_cost,
-                    limit: transaction_limit,
+                    limit: dimension.transaction_limit,
                     dry_run: dimension.dry_run,
                 };
-                if !dimension.dry_run {
-                    return Err(ResourceThrottlingCheckError::LimitExceeded(error));
-                }
-                if dry_run_error.is_none() {
-                    dry_run_error = Some(error);
+                if dimension.dry_run {
+                    if dry_run_error.is_none() {
+                        dry_run_error = Some(error);
+                    }
+                } else if enforced_transaction.is_none() {
+                    enforced_transaction = Some(error);
                 }
                 continue;
             }
@@ -434,16 +449,17 @@ impl CompiledResourceMeteringSchedule {
                     limit: dimension.block_limit,
                     dry_run: dimension.dry_run,
                 };
-                if !dimension.dry_run {
-                    return Err(ResourceThrottlingCheckError::LimitExceeded(error));
-                }
-                if dry_run_error.is_none() {
-                    dry_run_error = Some(error);
+                if dimension.dry_run {
+                    if dry_run_error.is_none() {
+                        dry_run_error = Some(error);
+                    }
+                } else if enforced_block.is_none() {
+                    enforced_block = Some(error);
                 }
             }
         }
 
-        if let Some(error) = dry_run_error {
+        if let Some(error) = enforced_transaction.or(enforced_block).or(dry_run_error) {
             return Err(ResourceThrottlingCheckError::LimitExceeded(error));
         }
 
@@ -454,7 +470,7 @@ impl CompiledResourceMeteringSchedule {
 /// Scope of a resource-throttling budget violation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResourceThrottlingLimitScope {
-    /// The transaction exceeded its optional individual budget.
+    /// The transaction exceeded its individual budget.
     Transaction,
     /// Adding the transaction would exceed the block budget.
     Block,
@@ -705,16 +721,17 @@ impl ResourceThrottlingDecision {
         }
     }
 
-    /// Returns `true` if this decision is intrinsic to the transaction.
+    /// Returns `true` if this decision should permanently evict the transaction.
     ///
-    /// A transaction-scope throttle cannot fit any block, so the pool should
-    /// permanently evict the transaction. Callers must also check
-    /// [`Self::should_exclude`]: block-scope throttles, dry-run observations,
-    /// and [`Self::CalculationFailed`] are not permanent pool evictions.
+    /// True only when the transaction should be excluded
+    /// ([`Self::should_exclude`]) and the overrun is transaction-scope. Dry-run
+    /// transaction-scope observations, block-scope throttles, and
+    /// [`Self::CalculationFailed`] are not permanent pool evictions.
     pub const fn is_permanent(&self) -> bool {
         match self {
             Self::Throttle { error, .. } => {
-                matches!(error.scope, ResourceThrottlingLimitScope::Transaction)
+                self.should_exclude()
+                    && matches!(error.scope, ResourceThrottlingLimitScope::Transaction)
             }
             Self::Allow(_) | Self::CalculationFailed => false,
         }
@@ -1268,7 +1285,7 @@ mod tests {
             usage: ResourceMeteringUsage { values: vec![50] },
         };
         assert!(!dry_run.should_exclude());
-        assert!(dry_run.is_permanent());
+        assert!(!dry_run.is_permanent());
 
         assert!(!ResourceThrottlingDecision::Allow(ResourceMeteringUsage::zero(0)).is_permanent());
     }
@@ -1305,5 +1322,190 @@ mod tests {
             } if dimension == "storage"
         ));
         assert!(decision.should_exclude());
+    }
+
+    #[test]
+    fn omitted_transaction_limit_compiles_to_block_limit() {
+        let schedule = ResourceMeteringSchedule::from_json(
+            r#"{
+                "version": 1,
+                "dimensions": [{
+                    "name": "cpu",
+                    "blockLimit": 100,
+                    "baseGasWeight": 1
+                }]
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(schedule.dimensions[0].transaction_limit, None);
+        let compiled = CompiledResourceMeteringSchedule::compile(schedule).unwrap();
+        assert_eq!(compiled.dimensions[0].transaction_limit, 100);
+        assert_eq!(compiled.dimensions[0].transaction_limit, compiled.dimensions[0].block_limit);
+    }
+
+    #[test]
+    fn omitted_transaction_limit_overrun_is_transaction_scope() {
+        let schedule = ResourceMeteringSchedule {
+            dimensions: vec![dimension("cpu", 50, None, 1, Vec::new())],
+            ..Default::default()
+        };
+        let compiled = CompiledResourceMeteringSchedule::compile(schedule).unwrap();
+        assert_eq!(compiled.dimensions[0].transaction_limit, 50);
+        let decision =
+            compiled.decide_sample(&ResourceSample { gas_used: 60, operations: Vec::new() }, &[]);
+        assert!(matches!(
+            decision,
+            ResourceThrottlingDecision::Throttle {
+                error: ResourceThrottlingLimitExceeded {
+                    scope: ResourceThrottlingLimitScope::Transaction,
+                    dry_run: false,
+                    ..
+                },
+                ..
+            }
+        ));
+        assert!(decision.should_exclude());
+        assert!(decision.is_permanent());
+    }
+
+    #[test]
+    fn explicit_zero_transaction_limit_fails_validate() {
+        let schedule = ResourceMeteringSchedule {
+            dimensions: vec![dimension("cpu", 100, Some(0), 1, Vec::new())],
+            ..Default::default()
+        };
+        assert!(matches!(schedule.validate(), Err(ResourceMeteringError::NoopDimension(_))));
+    }
+
+    #[test]
+    fn enforced_transaction_scope_is_not_masked_by_earlier_enforced_block_scope() {
+        let schedule = ResourceMeteringSchedule {
+            dimensions: vec![
+                dimension("cpu", 100, None, 1, Vec::new()),
+                dimension("storage", 100, Some(30), 1, Vec::new()),
+            ],
+            ..Default::default()
+        };
+        let compiled = CompiledResourceMeteringSchedule::compile(schedule).unwrap();
+        let decision = compiled
+            .decide_sample(&ResourceSample { gas_used: 40, operations: Vec::new() }, &[90, 0]);
+        assert!(matches!(
+            decision,
+            ResourceThrottlingDecision::Throttle {
+                error: ResourceThrottlingLimitExceeded {
+                    ref dimension,
+                    scope: ResourceThrottlingLimitScope::Transaction,
+                    dry_run: false,
+                    ..
+                },
+                ..
+            } if dimension == "storage"
+        ));
+        assert!(decision.should_exclude());
+        assert!(decision.is_permanent());
+    }
+
+    #[test]
+    fn mark_touch_and_storage_slot_changes_do_not_count_as_changed_account() {
+        let mut account = Account::default();
+        account.mark_touch();
+        let state = state_with_account(
+            Address::ZERO,
+            account,
+            &[(U256::from(1), U256::ZERO, U256::from(7))],
+        );
+
+        assert_eq!(ResourceSample::count_touched_accounts(&state), 1);
+        assert_eq!(ResourceSample::count_changed_storage_slots(&state), 1);
+        assert_eq!(ResourceSample::count_changed_accounts(&state), 0);
+
+        let sample = ResourceSample::from_execution(21_000, &state, None);
+        assert_eq!(operation_count(&sample, ResourceSample::STATE_TOUCHED_ACCOUNT), Some(1));
+        assert_eq!(operation_count(&sample, ResourceSample::STATE_CHANGED_STORAGE_SLOT), Some(1));
+        assert!(operation_count(&sample, ResourceSample::STATE_CHANGED_ACCOUNT).is_none());
+    }
+
+    #[test]
+    fn from_execution_drops_simulated_state_rows_but_keeps_sstore() {
+        let simulated = ResourceSample {
+            gas_used: 99_999,
+            operations: vec![
+                opcode_gas("SSTORE", 4, 50_000),
+                opcode_gas(ResourceSample::STATE_CHANGED_STORAGE_SLOT, 99, 0),
+            ],
+        };
+        let mut account = Account::default();
+        account.mark_touch();
+        let state = state_with_account(
+            Address::ZERO,
+            account,
+            &[(U256::from(1), U256::from(1), U256::from(2))],
+        );
+        let sample = ResourceSample::from_execution(21_000, &state, Some(&simulated));
+
+        assert_eq!(sample.gas_used, 21_000);
+        assert_eq!(operation_count(&sample, "SSTORE"), Some(4));
+        assert_eq!(operation_count(&sample, ResourceSample::STATE_CHANGED_STORAGE_SLOT), Some(1));
+        assert!(operation_count(&sample, ResourceSample::STATE_CHANGED_ACCOUNT).is_none());
+        assert_eq!(
+            sample
+                .operations
+                .iter()
+                .filter(|entry| entry.opcode == ResourceSample::STATE_CHANGED_STORAGE_SLOT)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn from_meter_uses_matching_tx_row_gas_used_not_bundle_total() {
+        let first = TxHash::repeat_byte(0x11);
+        let second = TxHash::repeat_byte(0x22);
+        let mut meter = meter_response(first, 21_000, vec![opcode_gas("SSTORE", 1, 10)]);
+        meter.total_gas_used = 99_999;
+        meter.results.push(base_bundles::TransactionResult {
+            coinbase_diff: U256::ZERO,
+            eth_sent_to_coinbase: U256::ZERO,
+            from_address: Address::ZERO,
+            gas_fees: U256::ZERO,
+            gas_price: U256::ZERO,
+            gas_used: 50_000,
+            to_address: None,
+            tx_hash: second,
+            value: U256::ZERO,
+            execution_time_us: 0,
+            opcode_gas: vec![opcode_gas("SLOAD", 2, 20)],
+        });
+
+        let first_sample = ResourceSample::from_meter(&meter, &first).unwrap();
+        assert_eq!(first_sample.gas_used, 21_000);
+        assert_eq!(first_sample.operations, vec![opcode_gas("SSTORE", 1, 10)]);
+
+        let second_sample = ResourceSample::from_meter(&meter, &second).unwrap();
+        assert_eq!(second_sample.gas_used, 50_000);
+        assert_eq!(second_sample.operations, vec![opcode_gas("SLOAD", 2, 20)]);
+        assert_ne!(first_sample.gas_used, meter.total_gas_used);
+        assert_ne!(second_sample.gas_used, meter.total_gas_used);
+    }
+
+    #[test]
+    fn evaluate_ignores_unknown_opcode_observation_names() {
+        let schedule = ResourceMeteringSchedule {
+            dimensions: vec![dimension("cpu", 1_000, None, 0, vec![operation("SSTORE", 2, 0)])],
+            ..Default::default()
+        };
+        let compiled = CompiledResourceMeteringSchedule::compile(schedule).unwrap();
+        let usage = compiled
+            .evaluate(
+                0,
+                &[
+                    opcode_gas("SSTORE", 1, 10),
+                    opcode_gas("UNKNOWN_OPCODE", 99, 1_000),
+                    opcode_gas("ECREC", 3, 50),
+                ],
+            )
+            .unwrap();
+
+        assert_eq!(usage.values, vec![20]);
     }
 }

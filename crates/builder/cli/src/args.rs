@@ -138,7 +138,7 @@ impl TransactionEventsArgs {
 /// Kept so older deployment configurations remain accepted. Payload admission
 /// no longer uses predicted execution time.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
-pub enum DeprecatedExecutionMeteringMode {
+pub(crate) enum DeprecatedExecutionMeteringMode {
     /// Time limits disabled.
     #[default]
     Off,
@@ -197,7 +197,7 @@ pub struct Args {
         default_value = "off",
         hide = true
     )]
-    pub execution_metering_mode: DeprecatedExecutionMeteringMode,
+    pub(crate) execution_metering_mode: DeprecatedExecutionMeteringMode,
 
     /// Resource-metering schedule. Evaluated when `--builder.enable-resource-metering` is set.
     #[command(flatten)]
@@ -244,9 +244,9 @@ pub struct Args {
     #[arg(long = "builder.max-uncompressed-block-size")]
     pub max_uncompressed_block_size: Option<u64>,
 
-    /// Duration in milliseconds to wait for metering data before including a transaction.
-    /// Transactions younger than this without metering data will be skipped.
-    #[arg(long = "builder.metering-wait-duration-ms")]
+    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
+    /// Simulation wait now belongs on the mempool consumer, not the builder.
+    #[arg(long = "builder.metering-wait-duration-ms", hide = true)]
     pub metering_wait_duration_ms: Option<u64>,
 
     /// Hard cutoff, in milliseconds, on cumulative validity-predicate evaluation time per
@@ -277,11 +277,19 @@ pub struct Args {
     pub metering_store_ttl_secs: u64,
 
     /// Maximum number of entries in the rejection cache for permanently rejected transactions
-    #[arg(long = "builder.rejection-cache-max-capacity", default_value = "100000")]
+    #[arg(
+        long = "builder.rejection-cache-max-capacity",
+        default_value = "100000",
+        id = "builder_rejection_cache_max_capacity"
+    )]
     pub rejection_cache_max_capacity: u64,
 
     /// TTL in seconds for entries in the rejection cache
-    #[arg(long = "builder.rejection-cache-ttl-secs", default_value = "1800")]
+    #[arg(
+        long = "builder.rejection-cache-ttl-secs",
+        default_value = "1800",
+        id = "builder_rejection_cache_ttl_secs"
+    )]
     pub rejection_cache_ttl_secs: u64,
 
     /// Inverted sampling frequency in blocks. 1 - each block, 100 - every 100th block.
@@ -401,6 +409,9 @@ impl Args {
         {
             warn!("deprecated builder resource limit flags are ignored");
         }
+        if self.metering_wait_duration_ms.is_some() {
+            warn!("deprecated --builder.metering-wait-duration-ms is ignored");
+        }
 
         let resource_metering = ResourceMeteringConfig::from_parts(
             self.enable_resource_metering,
@@ -426,7 +437,6 @@ impl Args {
             ),
             max_gas_per_txn: self.max_gas_per_txn,
             max_uncompressed_block_size: self.max_uncompressed_block_size,
-            metering_wait_duration: self.metering_wait_duration_ms.map(Duration::from_millis),
             predicate_eval_hard_cutoff: Duration::from_millis(self.predicate_eval_hard_cutoff_ms),
             metering_provider,
             resource_metering,
@@ -640,16 +650,49 @@ mod tests {
     }
 
     #[rstest]
-    #[case::some_duration(Some(500), Some(Duration::from_millis(500)))]
-    #[case::none(None, None)]
-    #[case::zero(Some(0), Some(Duration::from_millis(0)))]
-    fn metering_wait_duration_maps_correctly(
-        #[case] input: Option<u64>,
-        #[case] expected: Option<Duration>,
-    ) {
+    #[case::some_duration(Some(500))]
+    #[case::none(None)]
+    #[case::zero(Some(0))]
+    fn metering_wait_duration_flag_is_ignored_and_fails_open(#[case] input: Option<u64>) {
         let args = Args { metering_wait_duration_ms: input, ..Default::default() };
+        assert_eq!(args.metering_wait_duration_ms, input);
+
         let config = convert(args);
-        assert_eq!(config.metering_wait_duration, expected);
+        assert!(!config.resource_metering.enabled);
+        assert!(config.resource_metering.schedule.is_empty());
+        let (_, decision) = config.resource_metering.predict(&TxHash::random(), &[]);
+        assert!(!decision.should_exclude(), "missing meter data must fail open rather than skip");
+    }
+
+    #[test]
+    fn metering_wait_flag_parses_without_enabling_or_skipping() {
+        let schedule_path =
+            std::env::temp_dir().join("builder-ignored-wait-resource-metering.json");
+        std::fs::write(
+            &schedule_path,
+            r#"{"version":1,"dimensions":[{"name":"cpu","blockLimit":1000000,"transactionLimit":1000000,"baseGasWeight":1}]}"#,
+        )
+        .expect("write schedule");
+
+        let parsed = CommandParser::parse_from([
+            "builder",
+            "--builder.metering-wait-duration-ms",
+            "500",
+            "--builder.enable-resource-metering",
+            "--payload.resource-metering-schedule",
+            schedule_path.to_str().expect("utf8 path"),
+        ]);
+        assert_eq!(parsed.args.metering_wait_duration_ms, Some(500));
+        assert!(parsed.args.enable_resource_metering);
+
+        let config = convert(parsed.args);
+        assert!(config.resource_metering.enabled);
+        assert!(!config.resource_metering.schedule.is_empty());
+        let (_, decision) = config.resource_metering.predict(&TxHash::random(), &[]);
+        assert!(
+            !decision.should_exclude(),
+            "hidden wait flag must not skip txs missing meterBundle data"
+        );
     }
 
     #[rstest]
@@ -711,6 +754,8 @@ mod tests {
             "0.1",
             "--builder.state-root-gas-anchor-us",
             "5000",
+            "--builder.metering-wait-duration-ms",
+            "500",
         ])
         .args;
 
@@ -720,9 +765,17 @@ mod tests {
         assert_eq!(args.block_state_root_gas_limit, Some(1_000_000));
         assert_eq!(args.state_root_gas_coefficient, Some(0.1));
         assert_eq!(args.state_root_gas_anchor_us, Some(5_000));
+        assert_eq!(args.metering_wait_duration_ms, Some(500));
 
         let config = convert(args);
         assert!(config.max_gas_per_txn.is_none());
+        assert!(!config.resource_metering.enabled);
+        assert!(config.resource_metering.schedule.is_empty());
+        let (_, decision) = config.resource_metering.predict(&TxHash::random(), &[]);
+        assert!(
+            !decision.should_exclude(),
+            "deprecated flags must not skip txs or enable resource metering"
+        );
     }
 
     #[test]

@@ -46,7 +46,8 @@ use tracing::{debug, debug_span, info, instrument, trace, warn};
 
 use crate::{
     Attributes, BasePayloadBuilderAttributes, MeteringProvider, PayloadPrimitives,
-    config::BaseBuilderConfig, error::BasePayloadBuilderError, payload::BaseBuiltPayload,
+    config::BaseBuilderConfig, error::BasePayloadBuilderError, metrics::RejectionCacheMetrics,
+    payload::BaseBuiltPayload,
 };
 
 /// Base payload builder
@@ -388,6 +389,9 @@ impl<Txs> Builder<'_, Txs> {
                 let rejected = std::mem::take(&mut info.permanently_rejected_txs);
                 let count = rejected.len();
                 ctx.builder_config.rejection_cache.mark_rejected(&rejected);
+                RejectionCacheMetrics::insertions().increment(count as u64);
+                RejectionCacheMetrics::size()
+                    .set(ctx.builder_config.rejection_cache.entry_count() as f64);
                 MeteringProvider::remove(
                     ctx.builder_config.resource_metering.provider.as_ref(),
                     &rejected,
@@ -841,6 +845,7 @@ where
         let block_timestamp = self.attributes().timestamp();
         let can_finalize_early = self.is_denim_active();
         let resource_metering = &self.builder_config.resource_metering;
+        let mut resource_throttled = 0u64;
         while let Some(tx) = best_txs.next(()) {
             if self.cancel.is_cancelled() {
                 return Ok(Some(()));
@@ -851,6 +856,9 @@ where
 
             let tx_hash = *tx.hash();
             if self.builder_config.rejection_cache.is_rejected(&tx_hash) {
+                RejectionCacheMetrics::hits().increment(1);
+                RejectionCacheMetrics::size()
+                    .set(self.builder_config.rejection_cache.entry_count() as f64);
                 trace!(
                     target: "payload_builder",
                     tx_hash = %tx_hash,
@@ -911,6 +919,7 @@ where
             let (simulated, predicted) =
                 resource_metering.predict(&tx_hash, &info.resource_metering_usage);
             if predicted.should_exclude() {
+                resource_throttled += 1;
                 // Transaction-scope excludes cannot fit any block and are collected for
                 // permanent pool eviction after this scan. Block-scope excludes only skip
                 // the current iterator.
@@ -985,6 +994,7 @@ where
                 }) {
                     Ok(Some(gas_output)) => gas_output,
                     Ok(None) => {
+                        resource_throttled += 1;
                         // Transaction-scope excludes cannot fit any block and are collected for
                         // permanent pool eviction after this scan. Block-scope excludes only skip
                         // the current iterator.
@@ -1055,6 +1065,15 @@ where
             info.total_fees += U256::from(miner_fee) * U256::from(gas_output.tx_gas_used());
         }
 
+        if resource_throttled > 0 {
+            info!(
+                target: "payload_builder",
+                throttled = resource_throttled,
+                permanently_rejected = info.permanently_rejected_txs.len(),
+                "resource metering throttled transactions during payload scan"
+            );
+        }
+
         // A cancellation that raced the finalization break (or an empty iterator) must still
         // win, so re-check it before the finalized payload is assembled. Gated on Denim so
         // pre-Denim control flow is unchanged.
@@ -1076,6 +1095,7 @@ mod tests {
 
     use alloy_consensus::{Header, SignableTransaction, TxEip1559};
     use alloy_eips::eip2718::Encodable2718;
+    use alloy_evm::Evm;
     use alloy_primitives::{Address, B256, Signature, StorageKey, TxHash, TxKind, U256};
     use base_bundles::{MeterBundleResponse, OpcodeGas, TransactionResult};
     use base_common_chains::BaseUpgrade;
@@ -1087,12 +1107,14 @@ mod tests {
     use reth_basic_payload_builder::{BuildOutcomeKind, PayloadConfig};
     use reth_chainspec::ChainSpec;
     use reth_ethereum_forks::ForkCondition;
+    use reth_evm::execute::BlockBuilder;
     use reth_payload_builder::PayloadId;
     use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
-    use reth_primitives_traits::{Account, SealedHeader, SignedTransaction};
+    use reth_primitives_traits::{Account, SealedHeader, SignedTransaction, WithEncoded};
     use reth_provider::noop::NoopProvider;
     use reth_revm::{
-        cancelled::CancelOnDrop, database::StateProviderDatabase, test_utils::StateProviderTest,
+        cancelled::CancelOnDrop, database::StateProviderDatabase, db::State,
+        test_utils::StateProviderTest,
     };
     use reth_transaction_pool::PoolTransaction;
     use reth_trie_common::{HashedPostState, updates::TrieUpdates};
@@ -1102,7 +1124,7 @@ mod tests {
             PayloadStateRootHandle, StateRootComputeOutcome, StateRootSink, StateRootUpdateStream,
         },
     };
-    use revm::state::EvmState;
+    use revm::{Database, state::EvmState};
 
     use super::{BasePayloadBuilderCtx, Builder, ExecutionInfo};
     use crate::{
@@ -1479,9 +1501,18 @@ mod tests {
         evicted: Arc<Mutex<Vec<TxHash>>>,
         invalid: Arc<Mutex<Vec<(Address, u64)>>>,
     ) -> BuildOutcomeKind<crate::BaseBuiltPayload<BasePrimitives>> {
+        pool_scan_outcomes(resource_metering, vec![tx], evicted, invalid)
+    }
+
+    fn pool_scan_outcomes(
+        resource_metering: ResourceMeteringConfig,
+        txs: Vec<BasePooledTransaction>,
+        evicted: Arc<Mutex<Vec<TxHash>>>,
+        invalid: Arc<Mutex<Vec<(Address, u64)>>>,
+    ) -> BuildOutcomeKind<crate::BaseBuiltPayload<BasePrimitives>> {
         let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
         ctx.builder_config.resource_metering = resource_metering;
-        let transactions = RecordingTransactions { transactions: vec![tx].into_iter(), invalid };
+        let transactions = RecordingTransactions { transactions: txs.into_iter(), invalid };
         build_pool_payload_with(ctx, transactions, move |hashes| {
             evicted.lock().unwrap().extend(hashes);
         })
@@ -1544,40 +1575,44 @@ mod tests {
 
     #[test]
     fn block_scope_exclude_skips_scan_without_pool_eviction() {
-        let tx = pool_transaction(0);
+        let first = pool_transaction(0);
+        let second = pool_transaction(1);
         let evicted = Arc::new(Mutex::new(Vec::new()));
         let invalid = Arc::new(Mutex::new(Vec::new()));
-        let outcome = pool_scan_outcome(
-            metering_config(cpu_schedule(100, None, false), Arc::new(NoopMeteringProvider)),
-            tx,
+        // Own cost (~21_000) is ≤ block_limit so an omitted transaction limit still
+        // classifies the second tx as block-scope after the first fills the budget.
+        let outcome = pool_scan_outcomes(
+            metering_config(cpu_schedule(30_000, None, false), Arc::new(NoopMeteringProvider)),
+            vec![first, second],
             Arc::clone(&evicted),
             Arc::clone(&invalid),
         );
 
-        assert_eq!(included_tx_count(outcome), 0);
+        assert_eq!(included_tx_count(outcome), 1);
         assert!(evicted.lock().unwrap().is_empty());
         assert_eq!(invalid.lock().unwrap().len(), 1);
     }
 
     #[test]
     fn predicted_block_scope_exclude_skips_scan_without_pool_eviction() {
-        let tx = pool_transaction(0);
-        let tx_hash = *tx.hash();
-        let provider: SharedMeteringProvider =
-            Arc::new(MapProvider(Mutex::new(HashMap::from([(
-                tx_hash,
-                meter_for(tx_hash, 21_000),
-            )]))));
+        let first = pool_transaction(0);
+        let second = pool_transaction(1);
+        let first_hash = *first.hash();
+        let second_hash = *second.hash();
+        let provider: SharedMeteringProvider = Arc::new(MapProvider(Mutex::new(HashMap::from([
+            (first_hash, meter_for(first_hash, 21_000)),
+            (second_hash, meter_for(second_hash, 21_000)),
+        ]))));
         let evicted = Arc::new(Mutex::new(Vec::new()));
         let invalid = Arc::new(Mutex::new(Vec::new()));
-        let outcome = pool_scan_outcome(
-            metering_config(cpu_schedule(100, None, false), provider),
-            tx,
+        let outcome = pool_scan_outcomes(
+            metering_config(cpu_schedule(30_000, None, false), provider),
+            vec![first, second],
             Arc::clone(&evicted),
             Arc::clone(&invalid),
         );
 
-        assert_eq!(included_tx_count(outcome), 0);
+        assert_eq!(included_tx_count(outcome), 1);
         assert!(evicted.lock().unwrap().is_empty());
         assert_eq!(invalid.lock().unwrap().len(), 1);
     }
@@ -1682,20 +1717,28 @@ mod tests {
 
     #[test]
     fn block_scope_exclude_is_not_cached() {
-        let tx = pool_transaction(0);
-        let tx_hash = *tx.hash();
+        let first = pool_transaction(0);
+        let second = pool_transaction(1);
+        let second_hash = *second.hash();
         let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
         ctx.builder_config.resource_metering =
-            metering_config(cpu_schedule(100, None, false), Arc::new(NoopMeteringProvider));
+            metering_config(cpu_schedule(30_000, None, false), Arc::new(NoopMeteringProvider));
         let cache = ctx.builder_config.rejection_cache.clone();
 
         let evicted = Arc::new(Mutex::new(Vec::new()));
         let invalid = Arc::new(Mutex::new(Vec::new()));
-        let outcome = pool_scan_with_ctx(ctx, tx, Arc::clone(&evicted), Arc::clone(&invalid));
+        let transactions =
+            RecordingTransactions { transactions: vec![first, second].into_iter(), invalid };
+        let outcome = build_pool_payload_with(ctx, transactions, {
+            let evicted = Arc::clone(&evicted);
+            move |hashes| {
+                evicted.lock().unwrap().extend(hashes);
+            }
+        });
 
-        assert_eq!(included_tx_count(outcome), 0);
+        assert_eq!(included_tx_count(outcome), 1);
         assert!(evicted.lock().unwrap().is_empty());
-        assert!(!cache.is_rejected(&tx_hash));
+        assert!(!cache.is_rejected(&second_hash));
     }
 
     #[test]
@@ -1741,5 +1784,186 @@ mod tests {
         assert_eq!(included_tx_count(outcome), 1);
         assert!(evicted.lock().unwrap().is_empty());
         assert!(!cache.is_rejected(&tx_hash));
+    }
+
+    fn sequencer_attribute_tx(tx: &BasePooledTransaction) -> WithEncoded<BaseTxEnvelope> {
+        let encoded = tx.encoded_2718().clone();
+        let envelope = tx.clone_into_consensus().into_inner();
+        WithEncoded::new(encoded, envelope)
+    }
+
+    fn meter_with_sstore(tx_hash: TxHash, gas_used: u64, sstore_count: u64) -> MeterBundleResponse {
+        MeterBundleResponse {
+            results: vec![TransactionResult {
+                coinbase_diff: Default::default(),
+                eth_sent_to_coinbase: Default::default(),
+                from_address: Default::default(),
+                gas_fees: Default::default(),
+                gas_price: Default::default(),
+                gas_used,
+                to_address: None,
+                tx_hash,
+                value: Default::default(),
+                execution_time_us: 0,
+                opcode_gas: vec![OpcodeGas {
+                    contract_address: Default::default(),
+                    opcode: "SSTORE".to_string(),
+                    count: sstore_count,
+                    gas_used: 0,
+                }],
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn cpu_schedule_with_sstore(
+        block_limit: u64,
+        transaction_limit: Option<u64>,
+        sstore_count_cost: u64,
+    ) -> ResourceMeteringSchedule {
+        ResourceMeteringSchedule {
+            dimensions: vec![ResourceMeteringDimension {
+                name: "cpu".to_string(),
+                block_limit,
+                transaction_limit,
+                base_gas_weight: 1,
+                operations: vec![ResourceMeteringOperation {
+                    name: "SSTORE".to_string(),
+                    gas_used_weight: 0,
+                    count_cost: sstore_count_cost,
+                }],
+                dry_run: false,
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn test_state_provider() -> StateProviderTest {
+        let mut storage = HashMap::default();
+        storage.insert(
+            StorageKey::from(BaseTime::ADMIN_SLOT.to_be_bytes::<32>()),
+            U256::from_be_slice(Predeploys::PROXY_ADMIN.as_slice()),
+        );
+        let mut provider = StateProviderTest::default();
+        provider.insert_account(
+            Predeploys::BASE_TIME,
+            Account::default(),
+            Some(BaseTime::proxy_bytecode()),
+            storage,
+        );
+        provider.insert_account(
+            pool_transaction(0).sender(),
+            Account { balance: U256::MAX, ..Default::default() },
+            None,
+            HashMap::default(),
+        );
+        provider
+    }
+
+    #[test]
+    fn sequencer_over_budget_is_included_and_counted_against_mempool() {
+        let sequencer = pool_transaction(0);
+        let mempool = pool_transaction(1);
+        let sequencer_hash = *sequencer.hash();
+        let provider: SharedMeteringProvider =
+            Arc::new(MapProvider(Mutex::new(HashMap::from([(
+                sequencer_hash,
+                meter_with_sstore(sequencer_hash, 21_000, 3),
+            )]))));
+        let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        ctx.config.attributes.transactions = vec![sequencer_attribute_tx(&sequencer)];
+        // Sequencer cost is 21_000 + 3 * 10_000 = 51_000, which exceeds block_limit.
+        // Mempool cost is ~21_000, which would fit an empty block.
+        ctx.builder_config.resource_metering =
+            metering_config(cpu_schedule_with_sstore(40_000, None, 10_000), provider);
+
+        let evicted = Arc::new(Mutex::new(Vec::new()));
+        let invalid = Arc::new(Mutex::new(Vec::new()));
+        let transactions = RecordingTransactions {
+            transactions: vec![mempool].into_iter(),
+            invalid: Arc::clone(&invalid),
+        };
+        let outcome = build_pool_payload_with(ctx, transactions, {
+            let evicted = Arc::clone(&evicted);
+            move |hashes| {
+                evicted.lock().unwrap().extend(hashes);
+            }
+        });
+
+        let payload = match outcome {
+            BuildOutcomeKind::Better { payload } | BuildOutcomeKind::Freeze(payload) => payload,
+            other => panic!("expected a built payload, got {other:?}"),
+        };
+        let hashes: Vec<_> =
+            payload.block().body().transactions.iter().map(|tx| *tx.tx_hash()).collect();
+        assert_eq!(hashes, vec![sequencer_hash]);
+        assert!(evicted.lock().unwrap().is_empty());
+        assert_eq!(invalid.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn executed_throttle_discards_state_and_usage() {
+        let tx = pool_transaction(0);
+        let sender = tx.sender();
+        let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        ctx.builder_config.resource_metering = metering_config(
+            cpu_schedule(1_000_000, Some(100), false),
+            Arc::new(NoopMeteringProvider),
+        );
+        let provider = test_state_provider();
+        let mut db = State::builder()
+            .with_database(StateProviderDatabase::new(&provider))
+            .with_bundle_update()
+            .build();
+        db.load_cache_account(Predeploys::L1_BLOCK_INFO).expect("L1 block info must load");
+        let mut builder = ctx.block_builder(&mut db).expect("block builder");
+        builder.apply_pre_execution_changes().expect("pre-execution changes");
+        let mut info = ctx.execute_sequencer_transactions(&mut builder).expect("sequencer");
+        let usage_before = info.resource_metering_usage.clone();
+        let nonce_before = builder
+            .evm_mut()
+            .db_mut()
+            .basic(sender)
+            .ok()
+            .flatten()
+            .map(|account| account.nonce)
+            .unwrap_or(0);
+
+        let invalid = Arc::new(Mutex::new(Vec::new()));
+        let transactions = RecordingTransactions { transactions: vec![tx].into_iter(), invalid };
+        ctx.execute_best_transactions(&mut info, &mut builder, transactions).expect("mempool scan");
+        let nonce_after = builder
+            .evm_mut()
+            .db_mut()
+            .basic(sender)
+            .ok()
+            .flatten()
+            .map(|account| account.nonce)
+            .unwrap_or(0);
+
+        assert_eq!(info.resource_metering_usage, usage_before);
+        assert_eq!(nonce_after, nonce_before);
+        assert_eq!(info.cumulative_gas_used, 0);
+        assert!(!info.permanently_rejected_txs.is_empty());
+    }
+
+    #[test]
+    fn predict_missing_meter_data_still_executes() {
+        let tx = pool_transaction(0);
+        let evicted = Arc::new(Mutex::new(Vec::new()));
+        let invalid = Arc::new(Mutex::new(Vec::new()));
+        let outcome = pool_scan_outcome(
+            metering_config(
+                cpu_schedule(1_000_000, Some(1_000_000), false),
+                Arc::new(NoopMeteringProvider),
+            ),
+            tx,
+            Arc::clone(&evicted),
+            Arc::clone(&invalid),
+        );
+
+        assert_eq!(included_tx_count(outcome), 1);
+        assert!(evicted.lock().unwrap().is_empty());
+        assert!(invalid.lock().unwrap().is_empty());
     }
 }

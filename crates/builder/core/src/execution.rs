@@ -136,17 +136,9 @@ pub enum TxnExecutionError {
     #[error("max gas usage exceeded")]
     MaxGasUsageExceeded,
 
-    /// Metering data has not yet arrived for this transaction.
-    #[error("metering data pending")]
-    MeteringDataPending,
-
     /// Resource-throttling budget exceeded.
     #[error("{0}")]
     ResourceThrottling(ResourceThrottlingLimitExceeded),
-
-    /// Resource-metering usage could not be calculated.
-    #[error("resource metering usage calculation failed")]
-    ResourceMeteringCalculationFailed,
 }
 
 impl TxnExecutionError {
@@ -167,15 +159,18 @@ impl TxnExecutionError {
     }
 
     /// Converts a resource-throttling exclude decision into a builder error.
+    ///
+    /// Returns `None` unless [`ResourceThrottlingDecision::should_exclude`] is
+    /// true, so allow, dry-run throttle, and calculation-failure outcomes fail
+    /// open.
     pub fn from_resource_decision(decision: &ResourceThrottlingDecision) -> Option<Self> {
         match decision {
-            ResourceThrottlingDecision::Allow(_) => None,
-            ResourceThrottlingDecision::Throttle { error, .. } => {
+            ResourceThrottlingDecision::Throttle { error, .. } if decision.should_exclude() => {
                 Some(Self::ResourceThrottling(error.clone()))
             }
-            ResourceThrottlingDecision::CalculationFailed => {
-                Some(Self::ResourceMeteringCalculationFailed)
-            }
+            ResourceThrottlingDecision::Allow(_)
+            | ResourceThrottlingDecision::Throttle { .. }
+            | ResourceThrottlingDecision::CalculationFailed => None,
         }
     }
 }
@@ -537,15 +532,34 @@ mod tests {
             dry_run: false,
         });
         assert!(!block_scope.is_permanent());
-        assert!(!TxnExecutionError::ResourceMeteringCalculationFailed.is_permanent());
     }
 
     #[test]
-    fn from_resource_decision_maps_exclude_outcomes() {
+    fn from_resource_decision_is_none_for_dry_run_and_calculation_failed() {
         assert!(
             TxnExecutionError::from_resource_decision(&ResourceThrottlingDecision::Allow(
                 Default::default(),
             ))
+            .is_none()
+        );
+        assert!(
+            TxnExecutionError::from_resource_decision(
+                &ResourceThrottlingDecision::CalculationFailed
+            )
+            .is_none()
+        );
+        assert!(
+            TxnExecutionError::from_resource_decision(&ResourceThrottlingDecision::Throttle {
+                error: ResourceThrottlingLimitExceeded {
+                    dimension: "cpu".into(),
+                    scope: ResourceThrottlingLimitScope::Transaction,
+                    used: 1,
+                    transaction_cost: 1,
+                    limit: 1,
+                    dry_run: true,
+                },
+                usage: Default::default(),
+            })
             .is_none()
         );
         assert!(matches!(
@@ -561,12 +575,6 @@ mod tests {
                 usage: Default::default(),
             }),
             Some(TxnExecutionError::ResourceThrottling(_))
-        ));
-        assert!(matches!(
-            TxnExecutionError::from_resource_decision(
-                &ResourceThrottlingDecision::CalculationFailed
-            ),
-            Some(TxnExecutionError::ResourceMeteringCalculationFailed)
         ));
     }
 }
