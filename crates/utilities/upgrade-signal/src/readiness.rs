@@ -14,7 +14,7 @@
 use alloy_primitives::U256;
 use serde::{Deserialize, Serialize};
 
-use crate::{PackedProtocolVersion, UpgradeSignal, UpgradeSignalConfig};
+use crate::{PackedProtocolVersion, UpgradeSignal, UpgradeSignalConfig, UpgradeSignalMode};
 
 /// A node's readiness for the currently scheduled contract-backed upgrades.
 ///
@@ -25,13 +25,28 @@ use crate::{PackedProtocolVersion, UpgradeSignal, UpgradeSignalConfig};
 pub struct UpgradeReadiness {
     /// Whether this node is ready.
     ///
-    /// When a caller-supplied target version was supplied, this is simply whether the node supports
-    /// that version. Otherwise it is whether the node supports every upgrade currently scheduled on
-    /// L1 (vacuously `true` when nothing is scheduled — so a `false` here is always an actionable
-    /// "this node needs upgrading", never "nothing to check").
+    /// When a caller-supplied target version was supplied, this is a pure binary-support check: does
+    /// this node's version satisfy the target, independent of mode.
+    ///
+    /// Otherwise it reflects whether the node will actually follow the upgrades currently scheduled
+    /// on L1, which requires both that the node's [`mode`](Self::mode) applies the live schedule
+    /// *and* that the schedule passes the same validation the apply path runs (every activation has
+    /// a supported, well-formed minimum version). A `false` here is therefore always actionable —
+    /// see [`reason`](Self::reason) — never "nothing to check" (an empty schedule is vacuously
+    /// ready for an applying mode).
     pub ready: bool,
     /// This node's advertised protocol version, rendered as `major.minor.patch` semver.
     pub node_protocol_version: String,
+    /// This node's upgrade-signal mode, which determines whether it applies the live L1 schedule.
+    ///
+    /// Only [`UpgradeSignalMode::RuntimeAdmin`] tracks and applies the schedule after startup, so
+    /// for the other modes the on-chain schedule below is reported for visibility but the node will
+    /// not follow a live change to it (reflected in `ready`).
+    pub mode: UpgradeSignalMode,
+    /// When `ready` is `false`, a human-readable explanation: an unsupported node version, a
+    /// malformed on-chain schedule, or a mode that does not apply the live schedule. `None` when
+    /// ready.
+    pub reason: Option<String>,
     /// L1 block number the schedule was read at, or `None` when the contract has no schedule yet.
     pub l1_block_number: Option<u64>,
     /// Per-upgrade readiness for every activation currently scheduled on L1 (cleared/unscheduled
@@ -53,9 +68,17 @@ pub struct UpgradeReadinessEntry {
     /// This is the pure version comparison, independent of the activation timing, so it stays
     /// meaningful the instant a minimum is published — even before an activation timestamp is set.
     pub supported: bool,
-    /// Whether the node would fail closed (halt) for this upgrade right now: it is unsupported *and*
-    /// the activation is within the halt lead window (or already past). This tracks the node's real
-    /// halt decision exactly, so it only becomes `true` as an unsupported upgrade nears activation.
+    /// Whether this scheduled signal is malformed: it has an activation timestamp but no minimum
+    /// protocol version (see [`UpgradeSignalConfig::validate_signal_has_protocol_version`]).
+    ///
+    /// The node would refuse to apply such a schedule, so a malformed entry makes the overall report
+    /// unready even though its zero minimum version compares as trivially `supported`.
+    pub malformed: bool,
+    /// Whether the node would fail closed (halt) for this upgrade right now: its mode applies the
+    /// live schedule, it is unsupported, *and* the activation is within the halt lead window (or
+    /// already past). This tracks the node's real halt decision exactly — so it stays `false` in a
+    /// mode that never halts live, and otherwise only becomes `true` as an unsupported upgrade nears
+    /// activation.
     pub would_halt: bool,
 }
 
@@ -64,14 +87,17 @@ impl UpgradeSignalConfig {
     ///
     /// `now_secs` is the wall-clock used for the halt-window ([`UpgradeReadinessEntry::would_halt`])
     /// check. `target_version`, when `Some`, overrides the on-chain minimum for the top-level
-    /// [`UpgradeReadiness::ready`] answer: it lets an operator confirm support for an *announced*
-    /// upgrade before it is scheduled on L1 (the gap between rolling out a release and publishing the
-    /// schedule), when the contract does not yet carry the new minimum. When `None`, readiness is
-    /// judged against the upgrades currently scheduled on L1.
+    /// [`UpgradeReadiness::ready`] answer with a pure binary-support check: it lets an operator
+    /// confirm support for an *announced* upgrade before it is scheduled on L1 (the gap between
+    /// rolling out a release and publishing the schedule), independent of this node's mode. When
+    /// `None`, readiness is judged against the upgrades currently scheduled on L1.
     ///
-    /// Only signals with a positive activation timestamp are reported (a clear carries no meaningful
-    /// minimum), and every field is computed with the same predicates the live poller uses so the
-    /// report cannot diverge from the node's actual behavior.
+    /// For that on-chain path, `ready` requires both that this node's [mode](UpgradeSignalConfig)
+    /// applies the live schedule and that the schedule passes the same validation the apply path
+    /// runs ([`Self::validate_signal_protocol_version`]) — so the report can never claim the node
+    /// will follow a schedule it would refuse to apply, or that a non-applying mode will follow one
+    /// at all. Only signals with a positive activation timestamp are itemized (a clear carries no
+    /// meaningful minimum).
     pub fn evaluate_readiness(
         &self,
         signals: &[UpgradeSignal],
@@ -80,6 +106,10 @@ impl UpgradeSignalConfig {
         target_version: Option<U256>,
     ) -> UpgradeReadiness {
         let lead_secs = self.halt_lead_time().as_secs();
+        // Only a live-applying mode actually follows a live schedule change or halts at activation;
+        // in the other modes the node observes the schedule but never applies or halts on it, so the
+        // report must not claim it will.
+        let applies_live = self.mode.applies_live_schedule();
 
         let upgrades: Vec<UpgradeReadinessEntry> = signals
             .iter()
@@ -90,21 +120,47 @@ impl UpgradeSignalConfig {
                     .to_string(),
                 activation_timestamp: signal.activation_timestamp,
                 supported: self.supports_signal_protocol_version(signal),
-                would_halt: self.signal_fails_closed(signal, now_secs, lead_secs),
+                malformed: self.validate_signal_has_protocol_version(signal).is_err(),
+                would_halt: applies_live && self.signal_fails_closed(signal, now_secs, lead_secs),
             })
             .collect();
 
-        // A supplied target is the operator's explicit "am I ready for the announced upgrade?"
-        // question and takes precedence; otherwise fall back to the upgrades currently on L1.
-        let ready = target_version.map_or_else(
-            || upgrades.iter().all(|upgrade| upgrade.supported),
-            |version| self.supports_protocol_version(version),
-        );
+        let (ready, reason) = match target_version {
+            // A supplied target is the operator's explicit "does my binary support the announced
+            // version?" probe used to gate a rollout before the upgrade is scheduled on L1. It is a
+            // pure binary-capability check, independent of this node's apply mode.
+            Some(version) if self.supports_protocol_version(version) => (true, None),
+            Some(version) => (
+                false,
+                Some(format!(
+                    "node protocol version {} does not support target {}",
+                    PackedProtocolVersion::new(self.node_protocol_version),
+                    PackedProtocolVersion::new(version),
+                )),
+            ),
+            // Otherwise judge against the upgrades currently scheduled on L1: the node must be in a
+            // mode that applies the live schedule and pass the same validation the apply path runs.
+            None if !applies_live => (
+                false,
+                Some(
+                    "node's upgrade-signal mode does not apply the live L1 schedule; it will not \
+                     follow a live change to it (per-upgrade `supported` still reflects binary \
+                     capability)"
+                        .to_string(),
+                ),
+            ),
+            None => signals
+                .iter()
+                .find_map(|signal| self.validate_signal_protocol_version(signal).err())
+                .map_or((true, None), |error| (false, Some(error.to_string()))),
+        };
 
         UpgradeReadiness {
             ready,
             node_protocol_version: PackedProtocolVersion::new(self.node_protocol_version)
                 .to_string(),
+            mode: self.mode,
+            reason,
             l1_block_number,
             upgrades,
         }
@@ -119,11 +175,17 @@ mod tests {
     use super::*;
     use crate::UpgradeSignalDefaults;
 
-    fn config() -> UpgradeSignalConfig {
+    fn config_with_mode(mode: UpgradeSignalMode) -> UpgradeSignalConfig {
         let mut config = UpgradeSignalConfig::new(Address::ZERO);
         // Node advertises 1.1.0.
         config.node_protocol_version = UpgradeSignalDefaults::packed_protocol_version(1, 1, 0);
+        config.mode = mode;
         config
+    }
+
+    /// A live-applying node, for which the on-chain readiness verdict is meaningful.
+    fn config() -> UpgradeSignalConfig {
+        config_with_mode(UpgradeSignalMode::RuntimeAdmin)
     }
 
     fn signal(upgrade_id: BaseUpgrade, activation_timestamp: u64, version: U256) -> UpgradeSignal {
@@ -142,6 +204,8 @@ mod tests {
         let readiness = config.evaluate_readiness(&signals, Some(42), 0, None);
 
         assert!(readiness.ready);
+        assert!(readiness.reason.is_none());
+        assert_eq!(readiness.mode, UpgradeSignalMode::RuntimeAdmin);
         assert_eq!(readiness.node_protocol_version, "1.1.0");
         assert_eq!(readiness.l1_block_number, Some(42));
         assert_eq!(readiness.upgrades.len(), 1);
@@ -149,6 +213,7 @@ mod tests {
         assert_eq!(entry.upgrade_id, "azul");
         assert_eq!(entry.required_protocol_version, "1.1.0");
         assert!(entry.supported);
+        assert!(!entry.malformed);
         assert!(!entry.would_halt);
     }
 
@@ -167,6 +232,7 @@ mod tests {
             None,
         );
         assert!(!distant.ready);
+        assert!(distant.reason.is_some());
         assert!(!distant.upgrades[0].supported);
         assert!(!distant.upgrades[0].would_halt);
 
@@ -197,6 +263,48 @@ mod tests {
     }
 
     #[test]
+    fn malformed_scheduled_signal_is_not_ready() {
+        let config = config();
+        // A positive activation with a zero minimum version is malformed: the node would refuse to
+        // apply this schedule, so readiness must be false even though the zero version compares as
+        // trivially supported.
+        let signals = [signal(BaseUpgrade::Azul, 1_000, U256::ZERO)];
+
+        let readiness = config.evaluate_readiness(&signals, Some(1), 0, None);
+
+        assert!(!readiness.ready);
+        assert!(readiness.reason.is_some());
+        let entry = &readiness.upgrades[0];
+        assert!(entry.malformed);
+        // The zero version trivially compares as supported, which is exactly why `malformed` (not
+        // `supported`) is what makes the report unready.
+        assert!(entry.supported);
+        assert!(!entry.would_halt);
+    }
+
+    #[test]
+    fn non_applying_mode_is_not_ready_even_when_supported() {
+        // A supportable, well-formed schedule that a runtime-admin node would follow.
+        let signals = [signal(
+            BaseUpgrade::Azul,
+            1_000,
+            UpgradeSignalDefaults::packed_protocol_version(1, 1, 0),
+        )];
+
+        for mode in [UpgradeSignalMode::MetricsOnly, UpgradeSignalMode::StartupApply] {
+            let readiness = config_with_mode(mode).evaluate_readiness(&signals, Some(1), 0, None);
+
+            // The node's mode never applies a live schedule change, so it cannot be reported ready
+            // for the on-chain schedule, and it never halts live either.
+            assert!(!readiness.ready, "{mode:?} should not be ready for the live schedule");
+            assert!(readiness.reason.is_some());
+            assert_eq!(readiness.mode, mode);
+            assert!(readiness.upgrades[0].supported);
+            assert!(!readiness.upgrades[0].would_halt);
+        }
+    }
+
+    #[test]
     fn target_version_overrides_the_ready_answer_before_anything_is_scheduled() {
         let config = config();
 
@@ -204,6 +312,7 @@ mod tests {
         let supported_target = UpgradeSignalDefaults::packed_protocol_version(1, 0, 0);
         let ready = config.evaluate_readiness(&[], None, 0, Some(supported_target));
         assert!(ready.ready);
+        assert!(ready.reason.is_none());
         assert_eq!(ready.l1_block_number, None);
         assert!(ready.upgrades.is_empty());
 
@@ -211,5 +320,23 @@ mod tests {
         let unsupported_target = UpgradeSignalDefaults::packed_protocol_version(2, 0, 0);
         let not_ready = config.evaluate_readiness(&[], None, 0, Some(unsupported_target));
         assert!(!not_ready.ready);
+        assert!(not_ready.reason.is_some());
+    }
+
+    #[test]
+    fn target_version_check_is_mode_independent() {
+        // The target probe is a pure binary-capability check for gating a rollout, so it answers the
+        // same regardless of whether this node's mode applies the live schedule.
+        let supported_target = UpgradeSignalDefaults::packed_protocol_version(1, 0, 0);
+
+        for mode in [
+            UpgradeSignalMode::MetricsOnly,
+            UpgradeSignalMode::StartupApply,
+            UpgradeSignalMode::RuntimeAdmin,
+        ] {
+            let readiness =
+                config_with_mode(mode).evaluate_readiness(&[], None, 0, Some(supported_target));
+            assert!(readiness.ready, "{mode:?} should support the target version");
+        }
     }
 }

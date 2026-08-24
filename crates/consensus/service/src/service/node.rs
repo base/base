@@ -634,7 +634,9 @@ impl RollupNode {
             .as_ref()
             .map(|_| (engine_rpc_processor, (cancellation.clone(), engine_rpc_request_rx)));
         // Public `base` namespace, available whenever the upgrade signal is configured (any mode),
-        // built from the same config and reader the node uses so readiness reflects reality.
+        // built from the same config and reader the node uses. The readiness report accounts for the
+        // configured mode, so a node whose mode does not apply the live schedule is not reported
+        // ready for it.
         let base_rpc = self
             .upgrade_signal_config
             .as_ref()

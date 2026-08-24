@@ -57,6 +57,7 @@ fn print_pretty(network: &str, readiness: &UpgradeReadiness) -> Result<()> {
     table
         .row("network", network)
         .row("ready", readiness.ready.to_string())
+        .row("mode", format!("{:?}", readiness.mode))
         .row("node_protocol_version", &readiness.node_protocol_version)
         .row(
             "l1_block_number",
@@ -65,6 +66,10 @@ fn print_pretty(network: &str, readiness: &UpgradeReadiness) -> Result<()> {
                 .map_or_else(|| "none (no schedule on L1)".to_string(), |block| block.to_string()),
         );
 
+    if let Some(reason) = &readiness.reason {
+        table.row("reason", reason);
+    }
+
     if readiness.upgrades.is_empty() {
         table.row("scheduled_upgrades", "none");
     } else {
@@ -72,10 +77,11 @@ fn print_pretty(network: &str, readiness: &UpgradeReadiness) -> Result<()> {
             table.row(
                 format!("upgrade[{}]", upgrade.upgrade_id),
                 format!(
-                    "required={} activation={} supported={} would_halt={}",
+                    "required={} activation={} supported={} malformed={} would_halt={}",
                     upgrade.required_protocol_version,
                     upgrade.activation_timestamp,
                     upgrade.supported,
+                    upgrade.malformed,
                     upgrade.would_halt,
                 ),
             );

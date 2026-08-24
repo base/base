@@ -3,7 +3,18 @@ use core::time::Duration;
 use alloy_rpc_types_eth::BlockNumberOrTag;
 
 /// Controls which local schedule mutation paths are enabled for the L1 upgrade signal.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    clap::ValueEnum,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+#[serde(rename_all = "kebab-case")]
 pub enum UpgradeSignalMode {
     /// Do not mutate local upgrade schedules; live L1 metrics are still observed.
     #[default]
@@ -19,6 +30,16 @@ impl UpgradeSignalMode {
     /// Returns true if this mode applies the schedule before node startup.
     pub const fn applies_at_startup(self) -> bool {
         matches!(self, Self::StartupApply | Self::RuntimeAdmin)
+    }
+
+    /// Returns true if this mode applies live L1 schedule changes after startup (and fails closed
+    /// on an unsupportable one).
+    ///
+    /// Only [`Self::RuntimeAdmin`] tracks the schedule live; the other modes observe it for metrics
+    /// but never apply or halt on a change seen after startup. Upgrade-readiness reporting uses this
+    /// to avoid claiming a node will follow the current L1 schedule when its mode never will.
+    pub const fn applies_live_schedule(self) -> bool {
+        matches!(self, Self::RuntimeAdmin)
     }
 
     /// Returns true if this mode allows manual runtime schedule refresh.
