@@ -50,7 +50,7 @@ impl BaseNodeExtension for TxForwardingExtension {
                         "inline simulation requires flashblocks state; set --flashblocks-url"
                     ));
                 };
-                InlineSimQueue::install(sender);
+                ctx.pool().install_inline_sim(sender);
                 let meter = Arc::new(MeteringApiImpl::new(
                     ctx.provider.clone(),
                     flashblocks_state,

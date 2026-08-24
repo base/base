@@ -1,9 +1,10 @@
 //! Pre-sim queue shared by `eth_sendRawTransaction` and mempool meter_bundle workers.
 //!
-//! RPC validates cheaply, then [`InlineSimQueue::try_enqueue`], then waits for the
-//! worker to `meter_bundle` and `add_transaction`. Queue-full returns
-//! [`reth_transaction_pool::error::PoolErrorKind::DiscardedOnInsert`] (`TxPoolOverflow`).
-//! The queue is installed in the node-started hook together with the workers.
+//! RPC validates cheaply, then [`InlineSimPool::try_enqueue_inline_sim`], then
+//! waits for the worker to `meter_bundle` and `add_transaction`. Queue-full and
+//! a dead worker channel fall back to `add_transaction` without metering.
+//! The enqueue sender lives on [`crate::BaseTransactionPool`]; the node-started
+//! hook installs it together with the workers.
 
 use std::{
     sync::Arc,
@@ -11,7 +12,6 @@ use std::{
 };
 
 use alloy_consensus::transaction::Recovered;
-use alloy_primitives::TxHash;
 use base_bundles::MeterBundleResponse;
 use base_common_consensus::BaseTxEnvelope;
 use futures::future::{self, Either};
@@ -38,7 +38,7 @@ base_metrics::define_metrics! {
     sim_workers_alive: gauge,
     #[describe("Wall time in seconds for one sim worker job (meter_bundle plus pool insert)")]
     sim_seconds: histogram,
-    #[describe("Queue-full rejections mapped to TxPoolOverflow")]
+    #[describe("Queue-full events that skipped sim and inserted without metering")]
     sim_queue_full: counter,
     #[describe("meter_bundle failures that inserted MeterBundleResponse::default")]
     #[label(name = "reason", default = ["timeout", "meter", "join"])]
@@ -85,31 +85,43 @@ impl InlineSimJob {
 pub enum InlineSimEnqueueError {
     /// `--enable-inline-simulation` is off, or workers have not installed a queue.
     Disabled(InlineSimJob),
-    /// Bounded pre-sim queue is full. RPC maps this to `TxPoolOverflow`.
-    Full(TxHash),
+    /// Bounded pre-sim queue is full. RPC inserts without metering.
+    Full(InlineSimJob),
 }
 
-static QUEUE: RwLock<Option<mpsc::Sender<InlineSimJob>>> = RwLock::new(None);
+/// Pool that can enqueue cheap-validated txs for in-process `meter_bundle` workers.
+pub trait InlineSimPool {
+    /// Returns true when workers have installed an enqueue sender.
+    fn is_inline_sim_enabled(&self) -> bool;
 
-/// Handle for the mempool pre-sim queue and worker pool.
-#[derive(Debug)]
-pub struct InlineSimQueue;
+    /// Pushes a validated transaction for a sim worker.
+    fn try_enqueue_inline_sim(&self, job: InlineSimJob) -> Result<(), InlineSimEnqueueError>;
+}
+
+/// Per-pool enqueue handle for mempool `meter_bundle` workers.
+///
+/// Clone shares the sender slot, so the node-started hook can install after
+/// RPC already holds a pool clone.
+#[derive(Clone, Debug, Default)]
+pub struct InlineSimQueue {
+    sender: Arc<RwLock<Option<mpsc::Sender<InlineSimJob>>>>,
+}
 
 impl InlineSimQueue {
     /// Installs the enqueue sender used by `eth_sendRawTransaction`.
-    pub fn install(sender: mpsc::Sender<InlineSimJob>) {
+    pub fn install(&self, sender: mpsc::Sender<InlineSimJob>) {
         InlineSimMetrics::sim_queue_size().set(0.0);
-        *QUEUE.write() = Some(sender);
+        *self.sender.write() = Some(sender);
     }
 
     /// Returns true when RPC should validate-then-enqueue instead of `add_transaction`.
-    pub fn is_enabled() -> bool {
-        QUEUE.read().is_some()
+    pub fn is_enabled(&self) -> bool {
+        self.sender.read().is_some()
     }
 
     /// Pushes a validated transaction for a sim worker.
-    pub fn try_enqueue(job: InlineSimJob) -> Result<(), InlineSimEnqueueError> {
-        let Some(sender) = QUEUE.read().clone() else {
+    pub fn try_enqueue(&self, job: InlineSimJob) -> Result<(), InlineSimEnqueueError> {
+        let Some(sender) = self.sender.read().clone() else {
             return Err(InlineSimEnqueueError::Disabled(job));
         };
         match sender.try_send(job) {
@@ -119,17 +131,17 @@ impl InlineSimQueue {
             }
             Err(TrySendError::Full(job)) => {
                 InlineSimMetrics::sim_queue_full().increment(1);
-                Err(InlineSimEnqueueError::Full(*job.transaction.hash()))
+                Err(InlineSimEnqueueError::Full(job))
             }
             Err(TrySendError::Closed(job)) => {
-                Self::uninstall();
+                self.uninstall();
                 Err(InlineSimEnqueueError::Disabled(job))
             }
         }
     }
 
-    fn uninstall() {
-        *QUEUE.write() = None;
+    fn uninstall(&self) {
+        *self.sender.write() = None;
     }
 
     /// Spawns `workers` tasks that meter and insert queued transactions.
@@ -176,15 +188,6 @@ impl InlineSimQueue {
                 }
             });
         }
-    }
-
-    /// Drops the enqueue sender so workers exit after draining.
-    #[cfg(test)]
-    pub fn clear() {
-        Self::uninstall();
-        InlineSimMetrics::sim_queue_size().set(0.0);
-        InlineSimMetrics::sim_workers_busy().set(0.0);
-        InlineSimMetrics::sim_workers_alive().set(0.0);
     }
 
     /// Attaches [`MeterBundleResponse::default`] after a failed or timed-out
@@ -273,13 +276,10 @@ mod tests {
     use alloy_signer_local::PrivateKeySigner;
     use base_bundles::{MeterBundleResponse, TransactionResult};
     use base_common_consensus::BaseTxEnvelope;
-    use parking_lot::Mutex;
     use reth_transaction_pool::TransactionOrigin;
     use tokio::sync::mpsc;
 
     use super::*;
-
-    static TEST_GUARD: Mutex<()> = Mutex::new(());
 
     fn sim_job() -> InlineSimJob {
         InlineSimJob::new(TransactionOrigin::Local, pooled_tx()).0
@@ -326,46 +326,59 @@ mod tests {
 
     #[test]
     fn try_enqueue_reports_disabled_without_install() {
-        let _guard = TEST_GUARD.lock();
-        InlineSimQueue::clear();
+        let queue = InlineSimQueue::default();
 
-        let err = InlineSimQueue::try_enqueue(sim_job());
+        let err = queue.try_enqueue(sim_job());
         assert!(matches!(err, Err(InlineSimEnqueueError::Disabled(_))));
     }
 
     #[test]
     fn try_enqueue_rejects_when_queue_is_full() {
-        let _guard = TEST_GUARD.lock();
-        InlineSimQueue::clear();
+        let queue = InlineSimQueue::default();
         let (tx, _rx) = mpsc::channel(1);
-        InlineSimQueue::install(tx);
+        queue.install(tx);
 
-        let first = InlineSimQueue::try_enqueue(sim_job());
+        let first = queue.try_enqueue(sim_job());
         assert!(first.is_ok(), "first enqueue must succeed");
 
-        let second = InlineSimQueue::try_enqueue(sim_job());
+        let second = queue.try_enqueue(sim_job());
         assert!(
             matches!(second, Err(InlineSimEnqueueError::Full(_))),
-            "full queue must return TxPoolOverflow, not skip-sim insert"
+            "full queue returns the job so RPC can insert without metering"
         );
-        InlineSimQueue::clear();
     }
 
     #[test]
     fn try_enqueue_disables_when_workers_drop_the_queue() {
-        let _guard = TEST_GUARD.lock();
-        InlineSimQueue::clear();
+        let queue = InlineSimQueue::default();
         let (tx, rx) = mpsc::channel(1);
-        InlineSimQueue::install(tx);
+        queue.install(tx);
         drop(rx);
 
-        let err = InlineSimQueue::try_enqueue(sim_job());
+        let err = queue.try_enqueue(sim_job());
         assert!(matches!(err, Err(InlineSimEnqueueError::Disabled(_))));
-        assert!(
-            !InlineSimQueue::is_enabled(),
-            "a closed worker channel must uninstall the queue"
-        );
-        InlineSimQueue::clear();
+        assert!(!queue.is_enabled(), "a closed worker channel must uninstall the queue");
+    }
+
+    #[test]
+    fn queues_do_not_share_the_sender_slot() {
+        let a = InlineSimQueue::default();
+        let b = InlineSimQueue::default();
+        let (tx, _rx) = mpsc::channel(1);
+        a.install(tx);
+
+        assert!(a.is_enabled(), "installed queue must be enabled");
+        assert!(!b.is_enabled(), "a sibling queue must not see another pool's sender");
+    }
+
+    #[test]
+    fn cloned_queue_shares_the_sender_slot() {
+        let a = InlineSimQueue::default();
+        let b = a.clone();
+        let (tx, _rx) = mpsc::channel(1);
+        a.install(tx);
+
+        assert!(b.is_enabled(), "pool clones must see install on the shared slot");
     }
 
     #[tokio::test]

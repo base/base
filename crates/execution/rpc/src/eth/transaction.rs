@@ -14,7 +14,7 @@ use base_common_consensus::{
     BaseTransaction, BaseTransactionInfo, DepositInfo, DepositReceiptExt, EIP8130_TX_TYPE_ID,
 };
 use base_execution_txpool::{
-    BasePooledTransaction, InlineSimEnqueueError, InlineSimJob, InlineSimQueue,
+    BasePooledTransaction, InlineSimEnqueueError, InlineSimJob, InlineSimPool,
 };
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
@@ -34,8 +34,7 @@ use reth_storage_api::{
 };
 use reth_transaction_pool::{
     AddedTransactionOutcome, PoolTransaction, TransactionOrigin, TransactionPool,
-    TransactionValidationOutcome, ValidatingPool,
-    error::{PoolError, PoolErrorKind},
+    TransactionValidationOutcome, ValidatingPool, error::PoolError,
 };
 use tracing::{debug, instrument, warn};
 
@@ -46,7 +45,7 @@ impl<N, Rpc> EthTransactions for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
     N::Provider: BlockReaderIdExt + ChainSpecProvider<ChainSpec: Upgrades>,
-    N::Pool: ValidatingPool<Transaction = BasePooledTransaction>,
+    N::Pool: ValidatingPool<Transaction = BasePooledTransaction> + InlineSimPool,
     BaseEthApiError: FromEvmError<N::Evm>,
     Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
 {
@@ -105,7 +104,7 @@ where
             return Ok(hash);
         }
 
-        if InlineSimQueue::is_enabled() {
+        if self.pool().is_inline_sim_enabled() {
             return self.send_inline_sim(origin, pool_transaction).await;
         }
 
@@ -262,7 +261,7 @@ where
 impl<N, Rpc> BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    N::Pool: ValidatingPool<Transaction = BasePooledTransaction>,
+    N::Pool: ValidatingPool<Transaction = BasePooledTransaction> + InlineSimPool,
     Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
 {
     /// Cheap-validate, enqueue for meter_bundle workers, and wait for pool insert.
@@ -288,7 +287,7 @@ where
         };
 
         let (job, inserted) = InlineSimJob::new(origin, validated);
-        match InlineSimQueue::try_enqueue(job) {
+        match self.pool().try_enqueue_inline_sim(job) {
             Ok(()) => match inserted.await {
                 Ok(Ok(outcome)) => Ok(outcome.hash),
                 Ok(Err(err)) => Err(EthApiError::PoolError(err.into()).into()),
@@ -297,11 +296,7 @@ where
                 )
                 .into()),
             },
-            Err(InlineSimEnqueueError::Full(hash)) => Err(EthApiError::PoolError(
-                PoolError::new(hash, PoolErrorKind::DiscardedOnInsert).into(),
-            )
-            .into()),
-            Err(InlineSimEnqueueError::Disabled(job)) => {
+            Err(InlineSimEnqueueError::Full(job) | InlineSimEnqueueError::Disabled(job)) => {
                 let AddedTransactionOutcome { hash, .. } = self
                     .pool()
                     .add_transaction(job.origin, job.transaction)

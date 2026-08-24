@@ -44,7 +44,7 @@ pub use transaction::{
 };
 
 mod inline_sim;
-pub use inline_sim::{InlineSimEnqueueError, InlineSimJob, InlineSimQueue};
+pub use inline_sim::{InlineSimEnqueueError, InlineSimJob, InlineSimPool, InlineSimQueue};
 
 mod ordering;
 pub use ordering::{BaseOrdering, BestTransactionPriority, TimestampOrdering};
