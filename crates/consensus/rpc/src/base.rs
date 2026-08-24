@@ -20,13 +20,21 @@ use tracing::warn;
 
 use crate::BaseApiServer;
 
-/// A cached L1 schedule read, used to collapse bursts of readiness queries into one L1 read.
+/// A cached outcome of an L1 schedule read, used to collapse bursts of readiness queries into a
+/// single read.
+///
+/// Both successes and failures are cached (failures for a shorter window, see
+/// [`BaseRpc::ERROR_CACHE_TTL`]): during an L1 outage a burst of queries would otherwise turn into
+/// one full retrying read per caller, since the refresh lock only serializes them. Caching the
+/// failure lets waiters fail fast off the first caller's result and recover quickly once L1 is
+/// healthy again.
 #[derive(Debug)]
-struct CachedSchedule {
+struct CachedRead {
     /// When the read completed.
     read_at: Instant,
-    /// The schedule read from L1; `None` means the contract had no schedule (empty).
-    schedule: Option<UpgradeSignalSchedule>,
+    /// The outcome of the read: `Ok(None)` = the contract had no schedule (empty), `Ok(Some)` = the
+    /// schedule read from L1, `Err` = the read failed (message retained for server-side logging).
+    outcome: Result<Option<UpgradeSignalSchedule>, String>,
 }
 
 /// Server implementation of the public [`crate::BaseApiServer`] (`base` namespace).
@@ -40,8 +48,8 @@ pub struct BaseRpc {
     pub upgrade_signal_config: UpgradeSignalConfig,
     /// Hardened L1 contract reader built from `upgrade_signal_config`.
     pub upgrade_signal_reader: AlloyUpgradeSignalReader,
-    /// Short-TTL cache of the last L1 schedule read, shared across concurrent RPC requests.
-    schedule_cache: Mutex<Option<CachedSchedule>>,
+    /// Short-TTL cache of the last L1 schedule read outcome, shared across concurrent RPC requests.
+    schedule_cache: Mutex<Option<CachedRead>>,
     /// Serializes L1 schedule refreshes so a burst of cache misses coalesces into one read.
     ///
     /// Unlike [`schedule_cache`](Self::schedule_cache) (only locked to read or write the cached
@@ -60,6 +68,13 @@ impl BaseRpc {
     /// only dedups bursts and does not meaningfully stale the answer: the node itself polls L1 far
     /// less often, and a schedule changes only on a (rare) governance action.
     const CACHE_TTL: Duration = Duration::from_secs(5);
+
+    /// How long a *failed* read is cached before the next query reads L1 again.
+    ///
+    /// Kept shorter than [`Self::CACHE_TTL`] so a burst during an L1 outage collapses into one
+    /// retrying read (rather than one per queued caller) while still recovering quickly once L1 is
+    /// healthy again.
+    const ERROR_CACHE_TTL: Duration = Duration::from_secs(1);
 
     /// Creates a new `base`-namespace RPC server from the node's upgrade-signal config and reader.
     pub const fn new(
@@ -89,23 +104,46 @@ impl BaseRpc {
             .map_err(|error| ErrorObject::owned(ErrorCode::InvalidParams.code(), error, None::<()>))
     }
 
-    /// Returns the cached schedule when the entry is still within [`Self::CACHE_TTL`].
+    /// Whether a cached outcome recorded `elapsed` ago is still fresh.
     ///
-    /// The outer `Option` distinguishes a cache hit from a miss; the inner `Option` is the cached
-    /// value (`None` = the contract was empty). A poisoned lock degrades to a miss (a fresh read).
-    fn fresh_cached_schedule(&self) -> Option<Option<UpgradeSignalSchedule>> {
+    /// Failures expire after the shorter [`Self::ERROR_CACHE_TTL`]; successes after
+    /// [`Self::CACHE_TTL`].
+    const fn outcome_is_fresh(
+        outcome: &Result<Option<UpgradeSignalSchedule>, String>,
+        elapsed: Duration,
+    ) -> bool {
+        let ttl = if outcome.is_ok() { Self::CACHE_TTL } else { Self::ERROR_CACHE_TTL };
+        elapsed.as_nanos() < ttl.as_nanos()
+    }
+
+    /// Returns the cached read outcome when the entry is still within its TTL.
+    ///
+    /// The outer `Option` distinguishes a cache hit from a miss; the inner `Result` is the cached
+    /// outcome — a schedule (`Ok(None)` = empty contract) or a failed read reconstructed as a
+    /// generic error. A poisoned lock degrades to a miss (a fresh read).
+    fn fresh_cached_read(&self) -> Option<Result<Option<UpgradeSignalSchedule>, UpgradeSignalError>> {
         let guard = self.schedule_cache.lock().ok()?;
         let cached = guard.as_ref()?;
-        (cached.read_at.elapsed() < Self::CACHE_TTL).then(|| cached.schedule.clone())
+        if !Self::outcome_is_fresh(&cached.outcome, cached.read_at.elapsed()) {
+            return None;
+        }
+        Some(match &cached.outcome {
+            Ok(schedule) => Ok(schedule.clone()),
+            Err(message) => Err(UpgradeSignalError::provider("cached upgrade readiness", message)),
+        })
     }
 
     /// Reads the L1 schedule, serving a recent read from the cache when one is available.
     ///
-    /// Returns `Ok(None)` for an empty contract (a valid pre-schedule state). Read errors propagate
-    /// and are never cached, so a transient failure is retried by the next query.
+    /// Returns `Ok(None)` for an empty contract. An empty read is *not* an authoritative
+    /// "nothing scheduled" — a healthy append-only contract always carries at least the oldest
+    /// upgrade — but it is cached and surfaced so the readiness evaluator can report it (unready
+    /// unless a `target_version` probe was supplied). Read failures are cached briefly (see
+    /// [`CachedRead`]) so a burst during an L1 outage does not turn into one retrying read per
+    /// caller, then retried once the short error TTL expires.
     async fn cached_schedule(&self) -> Result<Option<UpgradeSignalSchedule>, UpgradeSignalError> {
-        if let Some(cached) = self.fresh_cached_schedule() {
-            return Ok(cached);
+        if let Some(cached) = self.fresh_cached_read() {
+            return cached;
         }
 
         // Coalesce concurrent misses: hold the refresh lock across the L1 read so a burst of
@@ -113,12 +151,12 @@ impl BaseRpc {
         let _refresh = self.refresh_lock.lock().await;
 
         // Re-check under the refresh lock: a caller that held it before us may have just populated
-        // the cache, in which case we skip the L1 read entirely.
-        if let Some(cached) = self.fresh_cached_schedule() {
-            return Ok(cached);
+        // the cache, in which case we skip the L1 read entirely (including a just-cached failure).
+        if let Some(cached) = self.fresh_cached_read() {
+            return cached;
         }
 
-        let schedule = match self
+        let outcome = match self
             .upgrade_signal_config
             .read_schedule(
                 &self.upgrade_signal_reader,
@@ -127,16 +165,24 @@ impl BaseRpc {
             )
             .await
         {
-            Ok(schedule) => Some(schedule),
-            Err(UpgradeSignalError::EmptySchedule) => None,
-            Err(error) => return Err(error),
+            Ok(schedule) => Ok(Some(schedule)),
+            Err(UpgradeSignalError::EmptySchedule) => Ok(None),
+            Err(error) => Err(error),
         };
 
+        // Cache the outcome (success or failure) so the rest of the burst reuses it. The failure is
+        // stored as its message string; waiters get a generic error reconstructed from it.
         if let Ok(mut guard) = self.schedule_cache.lock() {
-            *guard = Some(CachedSchedule { read_at: Instant::now(), schedule: schedule.clone() });
+            *guard = Some(CachedRead {
+                read_at: Instant::now(),
+                outcome: match &outcome {
+                    Ok(schedule) => Ok(schedule.clone()),
+                    Err(error) => Err(error.to_string()),
+                },
+            });
         }
 
-        Ok(schedule)
+        outcome
     }
 }
 
@@ -151,9 +197,10 @@ impl BaseApiServer for BaseRpc {
         let target = Self::parse_target_version(target_version)?;
         let now_secs = UpgradeSignalDefaults::now_secs();
 
-        // An empty contract is a valid pre-schedule state (the operator is likely checking a
-        // `target_version` ahead of the schedule being published on L1), so it is reported as
-        // "nothing scheduled" rather than as an error.
+        // An empty read is surfaced (not errored) so the evaluator can still answer a
+        // `target_version` probe against it — but it is not treated as an authoritative "nothing
+        // scheduled": a healthy append-only contract always carries at least the oldest upgrade, so
+        // without a target the evaluator reports it unready rather than vacuously ready.
         let schedule = self.cached_schedule().await.map_err(|error| {
             // The error string can carry the L1 endpoint URL and upstream response body, and this is
             // the public, unauthenticated namespace — so log the detail server-side and return a
@@ -183,9 +230,29 @@ impl BaseApiServer for BaseRpc {
 
 #[cfg(test)]
 mod tests {
+    use core::time::Duration;
+
     use base_upgrade_signal::UpgradeSignalDefaults;
 
     use super::BaseRpc;
+
+    #[test]
+    fn failed_reads_expire_sooner_than_successful_ones() {
+        // A success stays fresh across the short error window but expires by the success TTL.
+        let success = Ok(None);
+        assert!(BaseRpc::outcome_is_fresh(&success, BaseRpc::ERROR_CACHE_TTL));
+        assert!(BaseRpc::outcome_is_fresh(&success, BaseRpc::CACHE_TTL - Duration::from_millis(1)));
+        assert!(!BaseRpc::outcome_is_fresh(&success, BaseRpc::CACHE_TTL));
+
+        // A failure is only reused within the shorter error TTL, so a burst during an outage
+        // collapses into one retrying read while recovery stays fast.
+        let failure = Err("boom".to_string());
+        assert!(BaseRpc::outcome_is_fresh(
+            &failure,
+            BaseRpc::ERROR_CACHE_TTL - Duration::from_millis(1)
+        ));
+        assert!(!BaseRpc::outcome_is_fresh(&failure, BaseRpc::ERROR_CACHE_TTL));
+    }
 
     #[test]
     fn parses_or_rejects_target_version() {

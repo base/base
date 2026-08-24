@@ -32,17 +32,13 @@ impl UpgradeSignalMode {
         matches!(self, Self::StartupApply | Self::RuntimeAdmin)
     }
 
-    /// Returns true if this mode applies live L1 schedule changes after startup (and fails closed
-    /// on an unsupportable one).
-    ///
-    /// Only [`Self::RuntimeAdmin`] tracks the schedule live; the other modes observe it for metrics
-    /// but never apply or halt on a change seen after startup. Upgrade-readiness reporting uses this
-    /// to avoid claiming a node will follow the current L1 schedule when its mode never will.
-    pub const fn applies_live_schedule(self) -> bool {
-        matches!(self, Self::RuntimeAdmin)
-    }
-
     /// Returns true if this mode allows manual runtime schedule refresh.
+    ///
+    /// This is also the predicate for whether the mode applies live L1 schedule changes after
+    /// startup (and fails closed on an unsupportable one): only [`Self::RuntimeAdmin`] tracks the
+    /// schedule live, so the other modes observe it for metrics but never apply or halt on a change
+    /// seen after startup. Upgrade-readiness reporting relies on this to avoid claiming a node will
+    /// follow the current L1 schedule when its mode never will.
     pub const fn allows_runtime_admin(self) -> bool {
         matches!(self, Self::RuntimeAdmin)
     }

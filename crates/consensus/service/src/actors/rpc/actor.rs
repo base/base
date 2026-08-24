@@ -17,7 +17,7 @@ use derive_more::Constructor;
 use http::StatusCode;
 use jsonrpsee::{
     RpcModule,
-    server::{Server, ServerHandle, middleware::http::ProxyGetRequestLayer},
+    server::{Server, ServerConfig, ServerHandle, middleware::http::ProxyGetRequestLayer},
 };
 use tokio::sync::mpsc;
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
@@ -84,7 +84,22 @@ pub(crate) async fn launch_rpc_server(
             ProxyGetRequestLayer::new([("/healthz", "healthz")])
                 .expect("Critical: Failed to build GET method proxy"),
         );
-    let server = Server::builder().set_http_middleware(middleware).build(config.socket).await?;
+    // The tower HTTP middleware above (concurrency limit, timeout, load shed) only bounds HTTP
+    // requests — it does not see individual JSON-RPC calls streamed over a WebSocket connection, and
+    // jsonrpsee serves WS by default even when the WS engine module is not merged. So a WS client
+    // could otherwise stream unauthenticated `base_*` calls past those limits. Disable the WS
+    // transport entirely unless it is explicitly enabled, and cap total concurrent connections
+    // (transport-independent) as a backstop.
+    let mut server_config = ServerConfig::builder()
+        .max_connections(u32::try_from(config.max_concurrent_requests.get()).unwrap_or(u32::MAX));
+    if !config.ws_enabled() {
+        server_config = server_config.http_only();
+    }
+    let server = Server::builder()
+        .set_config(server_config.build())
+        .set_http_middleware(middleware)
+        .build(config.socket)
+        .await?;
 
     if let Ok(addr) = server.local_addr() {
         info!(target: "rpc", addr = ?addr, "RPC server bound to address");

@@ -32,8 +32,9 @@ pub struct UpgradeReadiness {
     /// on L1, which requires both that the node's [`mode`](Self::mode) applies the live schedule
     /// *and* that the schedule passes the same validation the apply path runs (every activation has
     /// a supported, well-formed minimum version). A `false` here is therefore always actionable —
-    /// see [`reason`](Self::reason) — never "nothing to check" (an empty schedule is vacuously
-    /// ready for an applying mode).
+    /// see [`reason`](Self::reason). An empty read is *not* treated as vacuously ready: an
+    /// append-only contract always carries at least the oldest upgrade, so an empty schedule signals
+    /// a misconfigured, uninitialized, or unreachable contract and is reported unready.
     pub ready: bool,
     /// This node's advertised protocol version, rendered as `major.minor.patch` semver.
     pub node_protocol_version: String,
@@ -108,8 +109,9 @@ impl UpgradeSignalConfig {
         let lead_secs = self.halt_lead_time().as_secs();
         // Only a live-applying mode actually follows a live schedule change or halts at activation;
         // in the other modes the node observes the schedule but never applies or halts on it, so the
-        // report must not claim it will.
-        let applies_live = self.mode.applies_live_schedule();
+        // report must not claim it will. `allows_runtime_admin` is that predicate (only
+        // `RuntimeAdmin` tracks the schedule live).
+        let applies_live = self.mode.allows_runtime_admin();
 
         let upgrades: Vec<UpgradeReadinessEntry> = signals
             .iter()
@@ -146,6 +148,23 @@ impl UpgradeSignalConfig {
                     "node's upgrade-signal mode does not apply the live L1 schedule; it will not \
                      follow a live change to it (per-upgrade `supported` still reflects binary \
                      capability)"
+                        .to_string(),
+                ),
+            ),
+            // No authoritative schedule to judge against. A healthy append-only `ProtocolVersions`
+            // contract always carries at least the oldest registered upgrade, so an empty read is a
+            // misconfigured, uninitialized, or unreachable contract rather than an authoritative
+            // "nothing scheduled" — the node's own apply paths refuse it (startup retries, admin
+            // rejects), so readiness must not vacuously claim the node is ready. An operator
+            // checking an announced upgrade before it is scheduled should pass `target_version`,
+            // which is judged above independently of the schedule.
+            None if signals.is_empty() => (
+                false,
+                Some(
+                    "no upgrade schedule is published on L1 (an append-only ProtocolVersions \
+                     contract always carries at least the oldest upgrade, so an empty read means a \
+                     misconfigured, uninitialized, or unreachable contract); pass a target version \
+                     to check binary support for an announced upgrade"
                         .to_string(),
                 ),
             ),
@@ -301,6 +320,23 @@ mod tests {
             assert_eq!(readiness.mode, mode);
             assert!(readiness.upgrades[0].supported);
             assert!(!readiness.upgrades[0].would_halt);
+        }
+    }
+
+    #[test]
+    fn empty_schedule_without_target_is_not_ready() {
+        // An append-only contract always carries at least the oldest upgrade, so an empty read is a
+        // misconfigured/uninitialized/unreachable contract, not an authoritative "nothing
+        // scheduled". Without a target to check against, the report must not claim readiness.
+        for mode in [
+            UpgradeSignalMode::MetricsOnly,
+            UpgradeSignalMode::StartupApply,
+            UpgradeSignalMode::RuntimeAdmin,
+        ] {
+            let readiness = config_with_mode(mode).evaluate_readiness(&[], None, 0, None);
+            assert!(!readiness.ready, "{mode:?} must not be ready against an empty schedule");
+            assert!(readiness.reason.is_some());
+            assert!(readiness.upgrades.is_empty());
         }
     }
 
