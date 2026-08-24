@@ -162,9 +162,11 @@ impl ResourceSample {
     /// This is not `state.len()`: loaded but unwritten accounts are omitted.
     pub const STATE_TOUCHED_ACCOUNT: &'static str = "STATE_TOUCHED_ACCOUNT";
 
-    /// Accounts whose balance, nonce, or code changed from the original info.
+    /// Accounts whose revm journal marked them changed.
     ///
-    /// Storage-only writes are counted by the slot operations, not here.
+    /// `Account::is_changed()` is true for any journaled mutation, including
+    /// storage-only writes. Those accounts are also counted by the slot
+    /// operations.
     pub const STATE_CHANGED_ACCOUNT: &'static str = "STATE_CHANGED_ACCOUNT";
 
     const EXECUTED_STATE_OPERATIONS: [&'static str; 5] = [
@@ -260,7 +262,7 @@ impl ResourceSample {
             .fold(0, |count, _| count.saturating_add(1))
     }
 
-    /// Counts accounts whose balance, nonce, or code changed from the original info.
+    /// Counts accounts whose revm journal marked them changed, including storage-only writes.
     pub fn count_changed_accounts(state: &EvmState) -> u64 {
         state
             .values()

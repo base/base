@@ -760,21 +760,11 @@ where
                 sequencer_tx.clone(),
                 |result| {
                     let result_and_state = result.result();
-                    if let Ok(Some(usage)) = resource_metering.unthrottled_usage(
+                    pending_resource_usage = resource_metering.unthrottled_usage(
                         &tx_hash,
                         result_and_state.result.tx_gas_used(),
                         &result_and_state.state,
-                    ) {
-                        if usage.fits_in(&info.resource_metering_usage).is_ok() {
-                            pending_resource_usage = Some(usage);
-                        } else {
-                            warn!(
-                                target: "payload_builder",
-                                tx_hash = %tx_hash,
-                                "resource metering usage could not be applied to sequencer transaction"
-                            );
-                        }
-                    }
+                    );
                     CommitChanges::Yes
                 },
             ) {
@@ -800,13 +790,11 @@ where
             };
 
             info.cumulative_gas_used += gas_output.tx_gas_used();
-            if let Some(usage) = pending_resource_usage
-                && usage.add_to(&mut info.resource_metering_usage).is_err()
-            {
-                warn!(
-                    target: "payload_builder",
-                    tx_hash = %tx_hash,
-                    "resource metering usage could not be applied to sequencer transaction"
+            if let Some(usage) = pending_resource_usage {
+                resource_metering.apply_accounted_usage(
+                    &tx_hash,
+                    &usage,
+                    &mut info.resource_metering_usage,
                 );
             }
         }
@@ -1054,9 +1042,11 @@ where
             info.cumulative_gas_used += gas_output.tx_gas_used();
             info.cumulative_da_bytes_used += tx_da_size;
             if let Some(usage) = pending_resource_usage {
-                usage
-                    .add_to(&mut info.resource_metering_usage)
-                    .map_err(PayloadBuilderError::other)?;
+                resource_metering.apply_accounted_usage(
+                    &tx_hash,
+                    &usage,
+                    &mut info.resource_metering_usage,
+                );
             }
 
             let miner_fee = tx

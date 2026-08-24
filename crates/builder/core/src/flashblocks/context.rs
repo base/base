@@ -606,15 +606,12 @@ impl BasePayloadBuilderCtx {
 
             // add gas used by the transaction to cumulative gas used, before creating the receipt
             let gas_used = result.tx_gas_used();
-            self.builder_config
-                .resource_metering
-                .account_unthrottled(
-                    sequencer_tx.tx_hash(),
-                    gas_used,
-                    &state,
-                    &mut info.resource_metering_usage,
-                )
-                .map_err(PayloadBuilderError::other)?;
+            self.builder_config.resource_metering.account_unthrottled(
+                sequencer_tx.tx_hash(),
+                gas_used,
+                &state,
+                &mut info.resource_metering_usage,
+            );
             info.cumulative_gas_used += gas_used;
 
             if !sequencer_tx.is_deposit() {
@@ -1452,9 +1449,11 @@ impl BasePayloadBuilderCtx {
             // record uncompressed tx size
             info.cumulative_uncompressed_bytes += tx_uncompressed_size;
             if let Some(usage) = pending_resource_usage {
-                usage
-                    .add_to(&mut info.resource_metering_usage)
-                    .map_err(PayloadBuilderError::other)?;
+                resource_metering.apply_accounted_usage(
+                    &tx_hash,
+                    &usage,
+                    &mut info.resource_metering_usage,
+                );
             }
 
             self.emit_builder_decision_event(

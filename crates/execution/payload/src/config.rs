@@ -195,22 +195,25 @@ impl ResourceMeteringConfig {
     }
 
     /// Calculates usage for an unthrottled transaction without applying it.
+    ///
+    /// Evaluate failures fail open: the method records
+    /// [`ResourceThrottlingDecision::CalculationFailed`] and returns `None`.
     pub fn unthrottled_usage(
         &self,
         tx_hash: &TxHash,
         gas_used: u64,
         state: &EvmState,
-    ) -> Result<Option<ResourceMeteringUsage>, ResourceMeteringError> {
+    ) -> Option<ResourceMeteringUsage> {
         if !self.is_active() {
-            return Ok(None);
+            return None;
         }
         let simulated = self.simulated_sample(tx_hash);
         let sample = ResourceSample::from_execution(gas_used, state, simulated.as_ref());
         match self.schedule.evaluate(sample.gas_used, &sample.operations) {
-            Ok(usage) => Ok(Some(usage)),
+            Ok(usage) => Some(usage),
             Err(_) => {
                 self.record_decision(tx_hash, &ResourceThrottlingDecision::CalculationFailed);
-                Ok(None)
+                None
             }
         }
     }
@@ -226,14 +229,26 @@ impl ResourceMeteringConfig {
         gas_used: u64,
         state: &EvmState,
         cumulative: &mut Vec<u128>,
-    ) -> Result<(), ResourceMeteringError> {
-        let Some(usage) = self.unthrottled_usage(tx_hash, gas_used, state)? else {
-            return Ok(());
-        };
+    ) {
+        if let Some(usage) = self.unthrottled_usage(tx_hash, gas_used, state) {
+            self.apply_accounted_usage(tx_hash, &usage, cumulative);
+        }
+    }
+
+    /// Adds accounted usage to the block totals.
+    ///
+    /// Overflow fails open: the transaction stays included and this method
+    /// records [`ResourceThrottlingDecision::CalculationFailed`] instead of
+    /// aborting the payload.
+    pub fn apply_accounted_usage(
+        &self,
+        tx_hash: &TxHash,
+        usage: &ResourceMeteringUsage,
+        cumulative: &mut Vec<u128>,
+    ) {
         if usage.add_to(cumulative).is_err() {
             self.record_decision(tx_hash, &ResourceThrottlingDecision::CalculationFailed);
         }
-        Ok(())
     }
 
     fn record_decision(&self, tx_hash: &TxHash, decision: &ResourceThrottlingDecision) {
@@ -492,7 +507,6 @@ mod tests {
         };
         let usage = config
             .unthrottled_usage(&tx_hash, 21_000, &EvmState::default())
-            .unwrap()
             .expect("active config should produce usage");
         assert_eq!(usage.values, vec![21_000 + 30]);
     }
@@ -598,9 +612,7 @@ mod tests {
                 tx_hash, meter,
             )])))),
         };
-        assert!(
-            config.unthrottled_usage(&tx_hash, u64::MAX, &EvmState::default()).unwrap().is_none()
-        );
+        assert!(config.unthrottled_usage(&tx_hash, u64::MAX, &EvmState::default()).is_none());
     }
 
     #[test]
@@ -611,9 +623,7 @@ mod tests {
             provider: Arc::new(NoopMeteringProvider),
         };
         let mut cumulative = vec![u128::MAX];
-        config
-            .account_unthrottled(&TxHash::ZERO, 21_000, &EvmState::default(), &mut cumulative)
-            .unwrap();
+        config.account_unthrottled(&TxHash::ZERO, 21_000, &EvmState::default(), &mut cumulative);
         assert_eq!(cumulative, vec![u128::MAX]);
     }
 
