@@ -12,10 +12,11 @@ use alloy_rpc_types_engine::PayloadId;
 use base_common_chains::Upgrades;
 use base_execution_chainspec::BaseChainSpec;
 use base_node_core::BaseEngineTypes;
+use futures::{FutureExt, StreamExt, future::BoxFuture, stream::FuturesUnordered};
 use reth_payload_builder::{BuildNewPayload, PayloadBuilderHandle, PayloadServiceCommand};
 use reth_payload_builder_primitives::{Events, PayloadBuilderError};
 use reth_payload_primitives::{PayloadAttributes, PayloadKind, PayloadTypes};
-use tokio::sync::{Mutex, broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc};
 use tracing::{error, info, warn};
 
 const FLASHBLOCKS_BUILDER: &str = "flashblocks";
@@ -73,7 +74,7 @@ pub type ResolveFuture = std::pin::Pin<
 >;
 
 /// Router that cuts payload selection from flashblocks to basic when Denim activates.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct MultiplexRouter {
     /// Flashblocks payload-builder handle.
     pub flashblocks_handle: PayloadBuilderHandle<BaseEngineTypes>,
@@ -86,12 +87,12 @@ pub struct MultiplexRouter {
     /// Chain spec that owns the Denim activation condition.
     pub chain_spec: Arc<BaseChainSpec>,
     /// Whether recent payload IDs are routed to the basic builder, ordered oldest first.
-    pub payload_routes: Arc<Mutex<VecDeque<(PayloadId, bool)>>>,
+    pub payload_routes: VecDeque<(PayloadId, bool)>,
 }
 
 impl MultiplexRouter {
     /// Creates a new router.
-    pub fn new(
+    pub const fn new(
         flashblocks_handle: PayloadBuilderHandle<BaseEngineTypes>,
         basic_handle: PayloadBuilderHandle<BaseEngineTypes>,
         flashblocks_health: HealthState,
@@ -104,7 +105,7 @@ impl MultiplexRouter {
             flashblocks_health,
             basic_health,
             chain_spec,
-            payload_routes: Arc::new(Mutex::new(VecDeque::new())),
+            payload_routes: VecDeque::new(),
         }
     }
 
@@ -114,26 +115,23 @@ impl MultiplexRouter {
     }
 
     /// Returns the recorded route for a payload, defaulting unknown payloads to flashblocks.
-    pub async fn basic_selected_for_payload(&self, payload_id: PayloadId) -> bool {
+    pub fn basic_selected_for_payload(&self, payload_id: PayloadId) -> bool {
         self.payload_routes
-            .lock()
-            .await
             .iter()
-            .rev()
             .find_map(|(id, selected_basic)| (*id == payload_id).then_some(*selected_basic))
             .unwrap_or(false)
     }
 
     /// Records a payload route while bounding abandoned payload state.
-    pub async fn record_payload_route(&self, payload_id: PayloadId, selected_basic: bool) {
-        let mut routes = self.payload_routes.lock().await;
-        if let Some(position) = routes.iter().position(|(id, _)| *id == payload_id) {
-            routes.remove(position);
+    pub fn record_payload_route(&mut self, payload_id: PayloadId, selected_basic: bool) {
+        if let Some((_, route)) = self.payload_routes.iter_mut().find(|(id, _)| *id == payload_id) {
+            *route = selected_basic;
+            return;
         }
-        if routes.len() == MAX_PAYLOAD_ROUTES {
-            routes.pop_front();
+        if self.payload_routes.len() == MAX_PAYLOAD_ROUTES {
+            self.payload_routes.pop_front();
         }
-        routes.push_back((payload_id, selected_basic));
+        self.payload_routes.push_back((payload_id, selected_basic));
     }
 
     /// Returns the timestamp represented by a payload-builder event.
@@ -146,47 +144,59 @@ impl MultiplexRouter {
 
     /// Runs the router command loop.
     pub async fn run(
-        self,
+        mut self,
         mut rx: mpsc::UnboundedReceiver<PayloadServiceCommand<BaseEngineTypes>>,
     ) {
-        while let Some(command) = rx.recv().await {
-            let router = self.clone();
-            tokio::spawn(async move {
-                router.handle_command(command).await;
-            });
+        let mut responses: FuturesUnordered<BoxFuture<'static, ()>> = FuturesUnordered::new();
+        loop {
+            // Poll newly queued response work before accepting another command so each inner
+            // service observes commands in the same order as this router.
+            tokio::select! {
+                biased;
+                Some(()) = responses.next(), if !responses.is_empty() => {}
+                command = rx.recv() => match command {
+                    Some(command) => {
+                        if let Some(response) = self.handle_command(command) {
+                            responses.push(response);
+                        }
+                    }
+                    None => break,
+                }
+            }
         }
     }
 
     /// Handles a single command.
-    pub async fn handle_command(&self, command: PayloadServiceCommand<BaseEngineTypes>) {
+    pub fn handle_command(
+        &mut self,
+        command: PayloadServiceCommand<BaseEngineTypes>,
+    ) -> Option<BoxFuture<'static, ()>> {
         match command {
             PayloadServiceCommand::BuildNewPayload(input, _span, tx) => {
-                self.handle_build_new_payload(*input, tx).await;
+                Some(self.handle_build_new_payload(*input, tx))
             }
             PayloadServiceCommand::BestPayload(payload_id, tx) => {
-                self.handle_best_payload(payload_id, tx).await;
+                Some(self.handle_best_payload(payload_id, tx))
             }
             PayloadServiceCommand::PayloadTimestamp(payload_id, tx) => {
-                self.handle_payload_timestamp(payload_id, tx).await;
+                Some(self.handle_payload_timestamp(payload_id, tx))
             }
             PayloadServiceCommand::Resolve(payload_id, kind, tx) => {
-                self.handle_resolve(payload_id, kind, tx).await;
+                Some(self.handle_resolve(payload_id, kind, tx))
             }
-            PayloadServiceCommand::Subscribe(tx) => {
-                self.handle_subscribe(tx).await;
-            }
+            PayloadServiceCommand::Subscribe(tx) => Some(self.handle_subscribe(tx)),
         }
     }
 
     /// Handles build fan-out.
-    pub async fn handle_build_new_payload(
-        &self,
+    pub fn handle_build_new_payload(
+        &mut self,
         input: BuildNewPayload<<BaseEngineTypes as PayloadTypes>::PayloadAttributes>,
         tx: tokio::sync::oneshot::Sender<Result<PayloadId, PayloadBuilderError>>,
-    ) {
+    ) -> BoxFuture<'static, ()> {
         let payload_id = input.payload_id();
         let selected_basic = self.basic_selected_at(input.attributes.timestamp());
-        self.record_payload_route(payload_id, selected_basic).await;
+        self.record_payload_route(payload_id, selected_basic);
 
         let mut shadow_attributes = input.attributes.clone();
         shadow_attributes.no_tx_pool = true;
@@ -232,118 +242,109 @@ impl MultiplexRouter {
         };
 
         Self::inc_selected_build_metric(selected_builder);
-        tokio::spawn(async move {
-            let shadow_result = shadow_rx.await.unwrap_or_else(|_| {
-                shadow_health.mark_unavailable();
-                Self::set_service_health_metric(shadow_builder, false);
-                Err(Self::unavailable_error(shadow_builder))
-            });
-            Self::inc_shadow_metric(shadow_builder, shadow_result.is_ok());
-            info!(
-                builder = shadow_builder,
-                payload_id = ?payload_id,
-                selected = false,
-                result = if shadow_result.is_ok() { "ok" } else { "err" },
-                "multiplex shadow build request completed"
-            );
-        });
-
-        let selected_result = selected_rx.await.unwrap_or_else(|_| {
-            selected_health.mark_unavailable();
-            Self::set_service_health_metric(selected_builder, false);
-            Err(Self::unavailable_error(selected_builder))
-        });
-        if selected_result.is_err() {
-            let mut routes = self.payload_routes.lock().await;
-            if let Some(position) = routes.iter().position(|(id, _)| *id == payload_id) {
-                routes.remove(position);
-            }
+        async move {
+            let selected_response = async move {
+                let selected_result = selected_rx.await.unwrap_or_else(|_| {
+                    selected_health.mark_unavailable();
+                    Self::set_service_health_metric(selected_builder, false);
+                    Err(Self::unavailable_error(selected_builder))
+                });
+                info!(
+                    builder = selected_builder,
+                    payload_id = ?payload_id,
+                    selected = true,
+                    result = if selected_result.is_ok() { "ok" } else { "err" },
+                    "multiplex build request completed"
+                );
+                let _ = tx.send(selected_result);
+            };
+            let shadow_response = async move {
+                let shadow_result = shadow_rx.await.unwrap_or_else(|_| {
+                    shadow_health.mark_unavailable();
+                    Self::set_service_health_metric(shadow_builder, false);
+                    Err(Self::unavailable_error(shadow_builder))
+                });
+                Self::inc_shadow_metric(shadow_builder, shadow_result.is_ok());
+                info!(
+                    builder = shadow_builder,
+                    payload_id = ?payload_id,
+                    selected = false,
+                    result = if shadow_result.is_ok() { "ok" } else { "err" },
+                    "multiplex shadow build request completed"
+                );
+            };
+            futures::join!(selected_response, shadow_response);
         }
-
-        info!(
-            builder = selected_builder,
-            payload_id = ?payload_id,
-            selected = true,
-            result = if selected_result.is_ok() { "ok" } else { "err" },
-            "multiplex build request completed"
-        );
-
-        let _ = tx.send(selected_result);
+        .boxed()
     }
 
     /// Handles best payload lookup.
-    pub async fn handle_best_payload(
+    pub fn handle_best_payload(
         &self,
         payload_id: PayloadId,
         tx: tokio::sync::oneshot::Sender<
             Option<Result<<BaseEngineTypes as PayloadTypes>::BuiltPayload, PayloadBuilderError>>,
         >,
-    ) {
-        let selected_basic = self.basic_selected_for_payload(payload_id).await;
-        let (result, builder, health) = if selected_basic {
-            (self.basic_handle.best_payload(payload_id).await, BASIC_BUILDER, &self.basic_health)
+    ) -> BoxFuture<'static, ()> {
+        let selected_basic = self.basic_selected_for_payload(payload_id);
+        let (handle, builder, health) = if selected_basic {
+            (self.basic_handle.clone(), BASIC_BUILDER, self.basic_health.clone())
         } else {
-            (
-                self.flashblocks_handle.best_payload(payload_id).await,
-                FLASHBLOCKS_BUILDER,
-                &self.flashblocks_health,
-            )
+            (self.flashblocks_handle.clone(), FLASHBLOCKS_BUILDER, self.flashblocks_health.clone())
         };
-        let mapped = self.map_read_result(result, builder, health);
-        let _ = tx.send(mapped);
+        async move {
+            let result = handle.best_payload(payload_id).await;
+            let mapped = Self::map_read_result(result, builder, &health);
+            let _ = tx.send(mapped);
+        }
+        .boxed()
     }
 
     /// Handles payload timestamp lookup.
-    pub async fn handle_payload_timestamp(
+    pub fn handle_payload_timestamp(
         &self,
         payload_id: PayloadId,
         tx: tokio::sync::oneshot::Sender<Option<Result<u64, PayloadBuilderError>>>,
-    ) {
-        let selected_basic = self.basic_selected_for_payload(payload_id).await;
-        let (result, builder, health) = if selected_basic {
-            (
-                self.basic_handle.payload_timestamp(payload_id).await,
-                BASIC_BUILDER,
-                &self.basic_health,
-            )
+    ) -> BoxFuture<'static, ()> {
+        let selected_basic = self.basic_selected_for_payload(payload_id);
+        let (handle, builder, health) = if selected_basic {
+            (self.basic_handle.clone(), BASIC_BUILDER, self.basic_health.clone())
         } else {
-            (
-                self.flashblocks_handle.payload_timestamp(payload_id).await,
-                FLASHBLOCKS_BUILDER,
-                &self.flashblocks_health,
-            )
+            (self.flashblocks_handle.clone(), FLASHBLOCKS_BUILDER, self.flashblocks_health.clone())
         };
-        let mapped = self.map_read_result(result, builder, health);
-        let _ = tx.send(mapped);
+        async move {
+            let result = handle.payload_timestamp(payload_id).await;
+            let mapped = Self::map_read_result(result, builder, &health);
+            let _ = tx.send(mapped);
+        }
+        .boxed()
     }
 
     /// Handles payload resolve.
-    pub async fn handle_resolve(
+    pub fn handle_resolve(
         &self,
         payload_id: PayloadId,
         kind: PayloadKind,
-        tx: tokio::sync::oneshot::Sender<Option<ResolveFuture>>,
-    ) {
-        let selected_basic = self.basic_selected_for_payload(payload_id).await;
+        mut tx: tokio::sync::oneshot::Sender<Option<ResolveFuture>>,
+    ) -> BoxFuture<'static, ()> {
+        let selected_basic = self.basic_selected_for_payload(payload_id);
         let (handle, health, builder) = if selected_basic {
             (self.basic_handle.clone(), self.basic_health.clone(), BASIC_BUILDER)
         } else {
             (self.flashblocks_handle.clone(), self.flashblocks_health.clone(), FLASHBLOCKS_BUILDER)
         };
-        let payload_routes = Arc::clone(&self.payload_routes);
-        let future = async move {
+        async move {
             let started = Instant::now();
-            let result = handle.resolve_kind(payload_id, kind).await;
+            let resolve = handle.resolve_kind(payload_id, kind);
+            tokio::pin!(resolve);
+            let result = tokio::select! {
+                result = &mut resolve => result,
+                _ = tx.closed() => return,
+            };
             let elapsed = started.elapsed();
-            let mut routes = payload_routes.lock().await;
-            if let Some(position) = routes.iter().position(|(id, _)| *id == payload_id) {
-                routes.remove(position);
-            }
-            drop(routes);
-
             Self::record_selected_getpayload_latency(elapsed.as_secs_f64());
 
-            match result {
+            let result = match result {
                 Some(Ok(payload)) => Ok(payload),
                 Some(Err(PayloadBuilderError::ChannelClosed)) => {
                     health.mark_unavailable();
@@ -358,54 +359,59 @@ impl MultiplexRouter {
                         Err(PayloadBuilderError::MissingPayload)
                     }
                 }
-            }
-        };
+            };
 
-        let _ = tx.send(Some(Box::pin(future)));
+            let _ = tx.send(Some(Box::pin(async move { result })));
+        }
+        .boxed()
     }
 
     /// Handles subscriptions.
-    pub async fn handle_subscribe(
+    pub fn handle_subscribe(
         &self,
         tx: tokio::sync::oneshot::Sender<
             tokio::sync::broadcast::Receiver<
                 reth_payload_builder_primitives::Events<BaseEngineTypes>,
             >,
         >,
-    ) {
-        let mut flashblocks_events = match self.flashblocks_handle.subscribe().await {
-            Ok(events) => events.receiver,
-            Err(error) => {
-                self.flashblocks_health.mark_unavailable();
-                Self::set_service_health_metric(FLASHBLOCKS_BUILDER, false);
-                error!(
-                    builder = FLASHBLOCKS_BUILDER,
-                    error = %error,
-                    "failed to subscribe to payload builder events"
-                );
+    ) -> BoxFuture<'static, ()> {
+        let flashblocks_handle = self.flashblocks_handle.clone();
+        let basic_handle = self.basic_handle.clone();
+        let flashblocks_health = self.flashblocks_health.clone();
+        let basic_health = self.basic_health.clone();
+        let chain_spec = Arc::clone(&self.chain_spec);
+        async move {
+            let mut flashblocks_events = match flashblocks_handle.subscribe().await {
+                Ok(events) => events.receiver,
+                Err(error) => {
+                    flashblocks_health.mark_unavailable();
+                    Self::set_service_health_metric(FLASHBLOCKS_BUILDER, false);
+                    error!(
+                        builder = FLASHBLOCKS_BUILDER,
+                        error = %error,
+                        "failed to subscribe to payload builder events"
+                    );
+                    return;
+                }
+            };
+            let mut basic_events = match basic_handle.subscribe().await {
+                Ok(events) => events.receiver,
+                Err(error) => {
+                    basic_health.mark_unavailable();
+                    Self::set_service_health_metric(BASIC_BUILDER, false);
+                    error!(
+                        builder = BASIC_BUILDER,
+                        error = %error,
+                        "failed to subscribe to payload builder events"
+                    );
+                    return;
+                }
+            };
+            let (events_tx, events_rx) = broadcast::channel(64);
+            if tx.send(events_rx).is_err() {
                 return;
             }
-        };
-        let mut basic_events = match self.basic_handle.subscribe().await {
-            Ok(events) => events.receiver,
-            Err(error) => {
-                self.basic_health.mark_unavailable();
-                Self::set_service_health_metric(BASIC_BUILDER, false);
-                error!(
-                    builder = BASIC_BUILDER,
-                    error = %error,
-                    "failed to subscribe to payload builder events"
-                );
-                return;
-            }
-        };
-        let (events_tx, events_rx) = broadcast::channel(64);
-        if tx.send(events_rx).is_err() {
-            return;
-        }
 
-        let router = self.clone();
-        tokio::spawn(async move {
             let mut flashblocks_closed = false;
             let mut basic_closed = false;
             while !flashblocks_closed || !basic_closed {
@@ -413,13 +419,13 @@ impl MultiplexRouter {
                     _ = events_tx.closed() => break,
                     result = flashblocks_events.recv(), if !flashblocks_closed => match result {
                         Ok(event) => {
-                            if !router.basic_selected_at(Self::event_timestamp(&event)) {
+                            if !chain_spec.is_denim_active_at_timestamp(Self::event_timestamp(&event)) {
                                 let _ = events_tx.send(event);
                             }
                         }
                         Err(broadcast::error::RecvError::Closed) => {
                             flashblocks_closed = true;
-                            router.flashblocks_health.mark_unavailable();
+                            flashblocks_health.mark_unavailable();
                             Self::set_service_health_metric(FLASHBLOCKS_BUILDER, false);
                         }
                         Err(broadcast::error::RecvError::Lagged(skipped)) => {
@@ -437,13 +443,13 @@ impl MultiplexRouter {
                     },
                     result = basic_events.recv(), if !basic_closed => match result {
                         Ok(event) => {
-                            if router.basic_selected_at(Self::event_timestamp(&event)) {
+                            if chain_spec.is_denim_active_at_timestamp(Self::event_timestamp(&event)) {
                                 let _ = events_tx.send(event);
                             }
                         }
                         Err(broadcast::error::RecvError::Closed) => {
                             basic_closed = true;
-                            router.basic_health.mark_unavailable();
+                            basic_health.mark_unavailable();
                             Self::set_service_health_metric(BASIC_BUILDER, false);
                         }
                         Err(broadcast::error::RecvError::Lagged(skipped)) => {
@@ -461,12 +467,12 @@ impl MultiplexRouter {
                     },
                 }
             }
-        });
+        }
+        .boxed()
     }
 
     /// Maps selected-builder read results with unavailable conversion.
     pub fn map_read_result<T>(
-        &self,
         result: Option<Result<T, PayloadBuilderError>>,
         builder: &'static str,
         health: &HealthState,
@@ -581,14 +587,12 @@ mod tests {
     #[tokio::test]
     async fn build_fans_to_both_and_selects_by_denim_activation() {
         for (timestamp, selected_basic) in [(DENIM_TIMESTAMP - 1, false), (DENIM_TIMESTAMP, true)] {
-            let (router, mut flash_rx, mut basic_rx) = test_router();
+            let (mut router, mut flash_rx, mut basic_rx) = test_router();
             let (tx, rx) = tokio::sync::oneshot::channel();
 
             let input = sample_input(timestamp);
             let payload_id = input.payload_id();
-            tokio::spawn(async move {
-                router.handle_build_new_payload(input, tx).await;
-            });
+            let response = router.handle_build_new_payload(input, tx);
 
             let flash_cmd = flash_rx.recv().await.expect("flash cmd");
             let basic_cmd = basic_rx.recv().await.expect("basic cmd");
@@ -623,29 +627,30 @@ mod tests {
 
             assert!(flash_seen);
             assert!(basic_seen);
+            response.await;
             assert!(rx.await.expect("selected response").is_ok());
         }
     }
 
     #[tokio::test]
     async fn best_payload_reads_recorded_builder() {
-        let (router, mut flash_rx, mut basic_rx) = test_router();
+        let (mut router, mut flash_rx, mut basic_rx) = test_router();
         let payload_id = payload_id_from_byte(7);
-        router.record_payload_route(payload_id, true).await;
+        router.record_payload_route(payload_id, true);
         let (tx, rx) = tokio::sync::oneshot::channel();
 
-        tokio::spawn(async move {
-            router.handle_best_payload(payload_id, tx).await;
-        });
-
-        let basic_cmd = basic_rx.recv().await.expect("basic command");
-        assert!(flash_rx.try_recv().is_err());
-        if let PayloadServiceCommand::BestPayload(inner_payload_id, tx) = basic_cmd {
-            assert_eq!(inner_payload_id, payload_id);
-            tx.send(None).expect("send basic response");
-        } else {
-            panic!("expected BestPayload command");
-        }
+        let response = router.handle_best_payload(payload_id, tx);
+        let inner = async {
+            let basic_cmd = basic_rx.recv().await.expect("basic command");
+            assert!(flash_rx.try_recv().is_err());
+            if let PayloadServiceCommand::BestPayload(inner_payload_id, tx) = basic_cmd {
+                assert_eq!(inner_payload_id, payload_id);
+                tx.send(None).expect("send basic response");
+            } else {
+                panic!("expected BestPayload command");
+            }
+        };
+        tokio::join!(response, inner);
 
         assert!(rx.await.expect("best response").is_none());
     }
@@ -720,45 +725,128 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolve_uses_recorded_builder() {
+    async fn run_preserves_build_then_resolve_fifo_order() {
         let (router, mut flash_rx, mut basic_rx) = test_router();
-        let payload_id = payload_id_from_byte(11);
-        router.record_payload_route(payload_id, true).await;
-        let (resolve_tx, resolve_rx) = tokio::sync::oneshot::channel();
+        let (router_tx, router_rx) = mpsc::unbounded_channel();
+        let handle = PayloadBuilderHandle::new(router_tx);
+        let router_task = tokio::spawn(router.run(router_rx));
+        let input = sample_input(DENIM_TIMESTAMP);
+        let payload_id = input.payload_id();
 
-        tokio::spawn(async move {
-            router.handle_resolve(payload_id, PayloadKind::Earliest, resolve_tx).await;
-        });
+        let build_rx = handle.send_new_payload(input);
+        let resolve = handle.resolve_kind(payload_id, PayloadKind::Earliest);
 
-        let future =
-            resolve_rx.await.expect("resolve response").expect("resolve future should be present");
-
-        let resolve_task = tokio::spawn(future);
-
-        let basic_cmd = basic_rx.recv().await.expect("basic resolve command");
+        let flash_cmd = flash_rx.recv().await.expect("flash build command");
+        let PayloadServiceCommand::BuildNewPayload(_, _, flash_build_tx) = flash_cmd else {
+            panic!("expected flash BuildNewPayload command");
+        };
+        let basic_cmd = basic_rx.recv().await.expect("basic build command");
+        let PayloadServiceCommand::BuildNewPayload(_, _, basic_build_tx) = basic_cmd else {
+            panic!("expected basic BuildNewPayload command");
+        };
+        let basic_resolve = tokio::time::timeout(Duration::from_secs(1), basic_rx.recv())
+            .await
+            .expect("resolve should not wait for build responses")
+            .expect("basic resolve command");
+        let PayloadServiceCommand::Resolve(inner_payload_id, _, basic_resolve_tx) = basic_resolve
+        else {
+            panic!("expected basic Resolve command after BuildNewPayload");
+        };
+        assert_eq!(inner_payload_id, payload_id);
         assert!(flash_rx.try_recv().is_err());
-        if let PayloadServiceCommand::Resolve(inner_payload_id, _, tx) = basic_cmd {
-            assert_eq!(inner_payload_id, payload_id);
-            assert!(tx.send(None).is_ok(), "send basic resolve response");
-        } else {
-            panic!("expected Resolve command");
-        }
 
-        let resolved = resolve_task.await.expect("resolve task join");
-        assert!(matches!(resolved, Err(PayloadBuilderError::MissingPayload)));
+        basic_build_tx.send(Ok(payload_id)).expect("basic build response");
+        flash_build_tx.send(Ok(payload_id)).expect("flash build response");
+        assert!(basic_resolve_tx.send(None).is_ok(), "basic resolve response");
+
+        assert_eq!(
+            build_rx.await.expect("selected build response").expect("successful build"),
+            payload_id
+        );
+        assert!(matches!(resolve.await, Some(Err(PayloadBuilderError::MissingPayload))));
+
+        drop(handle);
+        router_task.await.expect("router task");
     }
 
     #[tokio::test]
-    async fn payload_routes_evict_oldest_abandoned_payload() {
-        let (router, _, _) = test_router();
-        for value in 0..=MAX_PAYLOAD_ROUTES {
-            router.record_payload_route(payload_id_from_byte(value as u8), true).await;
+    async fn stalled_shadow_does_not_block_selected_builder() {
+        for (timestamp, selected_basic) in [(DENIM_TIMESTAMP - 1, false), (DENIM_TIMESTAMP, true)] {
+            let (router, mut flash_rx, mut basic_rx) = test_router();
+            let (router_tx, router_rx) = mpsc::unbounded_channel();
+            let handle = PayloadBuilderHandle::new(router_tx);
+            let router_task = tokio::spawn(router.run(router_rx));
+            let input = sample_input(timestamp);
+            let payload_id = input.payload_id();
+            let build_rx = handle.send_new_payload(input);
+
+            let flash_cmd = flash_rx.recv().await.expect("flash build command");
+            let PayloadServiceCommand::BuildNewPayload(_, _, flash_tx) = flash_cmd else {
+                panic!("expected flash BuildNewPayload command");
+            };
+            let basic_cmd = basic_rx.recv().await.expect("basic build command");
+            let PayloadServiceCommand::BuildNewPayload(_, _, basic_tx) = basic_cmd else {
+                panic!("expected basic BuildNewPayload command");
+            };
+            let (selected_tx, stalled_tx) =
+                if selected_basic { (basic_tx, flash_tx) } else { (flash_tx, basic_tx) };
+            selected_tx.send(Ok(payload_id)).expect("selected build response");
+
+            let result = tokio::time::timeout(Duration::from_secs(1), build_rx)
+                .await
+                .expect("selected response should not wait for shadow")
+                .expect("selected response channel")
+                .expect("successful selected response");
+            assert_eq!(result, payload_id);
+
+            drop(stalled_tx);
+            drop(handle);
+            router_task.await.expect("router task");
+        }
+    }
+
+    #[tokio::test]
+    async fn repeated_resolve_uses_recorded_builder() {
+        let (mut router, mut flash_rx, mut basic_rx) = test_router();
+        let payload_id = payload_id_from_byte(11);
+        router.record_payload_route(payload_id, true);
+
+        for _ in 0..2 {
+            let (resolve_tx, resolve_rx) = tokio::sync::oneshot::channel();
+            let response = router.handle_resolve(payload_id, PayloadKind::Earliest, resolve_tx);
+            let inner = async {
+                let basic_cmd = basic_rx.recv().await.expect("basic resolve command");
+                assert!(flash_rx.try_recv().is_err());
+                if let PayloadServiceCommand::Resolve(inner_payload_id, _, tx) = basic_cmd {
+                    assert_eq!(inner_payload_id, payload_id);
+                    assert!(tx.send(None).is_ok(), "send basic resolve response");
+                } else {
+                    panic!("expected Resolve command");
+                }
+            };
+            tokio::join!(response, inner);
+            let future = resolve_rx
+                .await
+                .expect("resolve response")
+                .expect("resolve future should be present");
+            let resolved = future.await;
+            assert!(matches!(resolved, Err(PayloadBuilderError::MissingPayload)));
         }
 
-        assert_eq!(router.payload_routes.lock().await.len(), MAX_PAYLOAD_ROUTES);
-        assert!(!router.basic_selected_for_payload(payload_id_from_byte(0)).await);
-        assert!(
-            router.basic_selected_for_payload(payload_id_from_byte(MAX_PAYLOAD_ROUTES as u8)).await
-        );
+        assert!(router.basic_selected_for_payload(payload_id));
+    }
+
+    #[tokio::test]
+    async fn payload_routes_preserve_fifo_when_rerecorded() {
+        let (mut router, _, _) = test_router();
+        for value in 0..MAX_PAYLOAD_ROUTES {
+            router.record_payload_route(payload_id_from_byte(value as u8), true);
+        }
+        router.record_payload_route(payload_id_from_byte(0), true);
+        router.record_payload_route(payload_id_from_byte(MAX_PAYLOAD_ROUTES as u8), true);
+
+        assert_eq!(router.payload_routes.len(), MAX_PAYLOAD_ROUTES);
+        assert!(!router.basic_selected_for_payload(payload_id_from_byte(0)));
+        assert!(router.basic_selected_for_payload(payload_id_from_byte(MAX_PAYLOAD_ROUTES as u8)));
     }
 }
