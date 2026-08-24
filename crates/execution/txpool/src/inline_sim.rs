@@ -229,33 +229,38 @@ async fn meter_job<F>(job: InlineSimJob, meter: Arc<F>, timeout: Duration) -> In
 where
     F: Fn(Recovered<BaseTxEnvelope>) -> Result<MeterBundleResponse, String> + Send + Sync + 'static,
 {
-    let recovered = job.transaction.clone_into_consensus();
     InlineSimMetrics::sim_workers_busy().increment(1.0);
 
     // `--inline-simulation-timeout-ms` only chooses real vs Default metering.
     // spawn_blocking cannot be cancelled. The worker joins so blocking tasks
     // stay bounded by worker count and do not pile up.
-    let handle = tokio::task::spawn_blocking(move || meter(recovered));
-    let job = match future::select(handle, Box::pin(tokio::time::sleep(timeout))).await {
-        Either::Left((Ok(Ok(metering)), _)) => InlineSimJob {
-            origin: job.origin,
-            transaction: job.transaction.with_metering(metering),
-            inserted: job.inserted,
-        },
-        Either::Left((Ok(Err(error)), _)) => {
-            warn!(error = %error, hash = %job.transaction.hash(), "inline sim meter_bundle failed");
-            InlineSimQueue::with_default_metering(job, "meter")
-        }
-        Either::Left((Err(join_error), _)) => {
-            warn!(error = %join_error, hash = %job.transaction.hash(), "inline sim worker task failed");
-            InlineSimQueue::with_default_metering(job, "join")
-        }
-        Either::Right((_, handle)) => {
-            warn!(hash = %job.transaction.hash(), "inline sim meter_bundle timed out");
-            let waited = Instant::now();
-            let _ = handle.await;
-            InlineSimMetrics::sim_timeout_wait_seconds().record(waited.elapsed().as_secs_f64());
-            InlineSimQueue::with_default_metering(job, "timeout")
+    // `sleep(0)` is not Ready on first poll, so a zero deadline skips meter.
+    let job = if timeout.is_zero() {
+        InlineSimQueue::with_default_metering(job, "timeout")
+    } else {
+        let recovered = job.transaction.clone_into_consensus();
+        let handle = tokio::task::spawn_blocking(move || meter(recovered));
+        match future::select(handle, Box::pin(tokio::time::sleep(timeout))).await {
+            Either::Left((Ok(Ok(metering)), _)) => InlineSimJob {
+                origin: job.origin,
+                transaction: job.transaction.with_metering(metering),
+                inserted: job.inserted,
+            },
+            Either::Left((Ok(Err(error)), _)) => {
+                warn!(error = %error, hash = %job.transaction.hash(), "inline sim meter_bundle failed");
+                InlineSimQueue::with_default_metering(job, "meter")
+            }
+            Either::Left((Err(join_error), _)) => {
+                warn!(error = %join_error, hash = %job.transaction.hash(), "inline sim worker task failed");
+                InlineSimQueue::with_default_metering(job, "join")
+            }
+            Either::Right((_, handle)) => {
+                warn!(hash = %job.transaction.hash(), "inline sim meter_bundle timed out");
+                let waited = Instant::now();
+                let _ = handle.await;
+                InlineSimMetrics::sim_timeout_wait_seconds().record(waited.elapsed().as_secs_f64());
+                InlineSimQueue::with_default_metering(job, "timeout")
+            }
         }
     };
 
@@ -429,6 +434,19 @@ mod tests {
             out.transaction.metering(),
             Some(&MeterBundleResponse::default()),
             "timed-out meter_bundle must still insert with default metering"
+        );
+    }
+
+    #[tokio::test]
+    async fn meter_job_timeout_zero_uses_default() {
+        let job = sim_job();
+
+        let out = meter_job(job, Arc::new(|_| Ok(metering())), Duration::ZERO).await;
+
+        assert_eq!(
+            out.transaction.metering(),
+            Some(&MeterBundleResponse::default()),
+            "timeout 0 must attach Default without racing spawn_blocking"
         );
     }
 

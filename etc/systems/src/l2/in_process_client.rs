@@ -2,10 +2,16 @@
 //!
 //! Replaces Docker-based `ClientContainer` with an in-process node for faster tests.
 
-use std::{any::Any, net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{
+    any::Any,
+    net::{Ipv4Addr, SocketAddr},
+    path::PathBuf,
+    sync::Arc,
+};
 
 use alloy_primitives::hex::ToHexExt;
 use alloy_rpc_types_engine::JwtSecret;
+use base_builder_core::test_utils::get_available_port;
 use base_bundle_extension::BundleExtension;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{
@@ -25,7 +31,7 @@ use reth_db::{
 };
 use reth_node_builder::{Node, NodeBuilder, NodeConfig, NodeHandle};
 use reth_node_core::{
-    args::{DatadirArgs, DiscoveryArgs, NetworkArgs, RpcServerArgs},
+    args::{DatadirArgs, DiscoveryArgs, MetricArgs, NetworkArgs, RpcServerArgs},
     dirs::{DataDirPath, MaybePlatformPath},
     exit::NodeExitFuture,
 };
@@ -80,6 +86,7 @@ pub struct InProcessClient {
     http_api_addr: SocketAddr,
     ws_api_addr: SocketAddr,
     engine_addr: SocketAddr,
+    metrics_addr: Option<SocketAddr>,
     chain_spec: Arc<BaseChainSpec>,
     _node_exit_future: NodeExitFuture,
     _node: Box<dyn Any + Sync + Send>,
@@ -100,6 +107,7 @@ impl std::fmt::Debug for InProcessClient {
             .field("http_api_addr", &self.http_api_addr)
             .field("ws_api_addr", &self.ws_api_addr)
             .field("engine_addr", &self.engine_addr)
+            .field("metrics_addr", &self.metrics_addr)
             .finish_non_exhaustive()
     }
 }
@@ -169,9 +177,14 @@ impl InProcessClient {
             rpc_args.auth_port = port;
         }
 
-        // Configure rollup args with sequencer URL
-        let rollup_args =
-            RollupArgs { sequencer: Some(config.builder_rpc_url.clone()), ..Default::default() };
+        // Sequencer HTTP short-circuits `eth_sendRawTransaction` before the pool.
+        // Forwarding tests (and inline sim) need sendRaw to insert locally so
+        // TxForwardingExtension can `insertValidatedTransaction` on the builder.
+        let sequencer = match &config.tx_forwarding_config {
+            Some(fwd) if fwd.enabled => None,
+            _ => Some(config.builder_rpc_url.clone()),
+        };
+        let rollup_args = RollupArgs { sequencer, ..Default::default() };
 
         let base_node = BaseNode::new(rollup_args.clone());
 
@@ -185,6 +198,17 @@ impl InProcessClient {
             && config.p2p_port.is_none()
         {
             node_config = node_config.with_unused_ports();
+        }
+
+        let metrics_addr = config.tx_forwarding_config.as_ref().and_then(|fwd| {
+            fwd.inline_simulation
+                .then(|| SocketAddr::from((Ipv4Addr::LOCALHOST, get_available_port())))
+        });
+        if let Some(addr) = metrics_addr {
+            node_config = node_config.with_metrics(MetricArgs {
+                prometheus: Some(addr),
+                ..Default::default()
+            });
         }
 
         let datadir_path = MaybePlatformPath::<DataDirPath>::from(db_path.clone());
@@ -228,6 +252,7 @@ impl InProcessClient {
             http_api_addr,
             ws_api_addr,
             engine_addr,
+            metrics_addr,
             chain_spec,
             _node_exit_future: node_exit_future,
             _node: Box::new(node_handle),
@@ -240,6 +265,14 @@ impl InProcessClient {
     /// schedule applied at startup.
     pub const fn chain_spec(&self) -> &Arc<BaseChainSpec> {
         &self.chain_spec
+    }
+
+    /// Returns the Prometheus metrics URL. Bound when inline simulation is enabled.
+    pub fn metrics_url(&self) -> Result<Url> {
+        let addr =
+            self.metrics_addr.ok_or_else(|| eyre!("client metrics endpoint is not enabled"))?;
+        Url::parse(&format!("http://{addr}/"))
+            .map_err(|e| eyre!("Failed to build metrics URL: {e}"))
     }
 
     /// Returns the HTTP RPC URL for the client.
@@ -316,7 +349,7 @@ impl InProcessClient {
         extensions.push(Box::new(TxPoolExtension::new(txpool_config)));
 
         // TxForwarding extension (optional - forwards txs to builder RPC)
-        if let Some(ref tx_fwd_config) = config.tx_forwarding_config {
+        if let Some(mut tx_fwd_config) = config.tx_forwarding_config.clone() {
             if config.enable_experimental_validity_transactions
                 && tx_fwd_config.enabled
                 && !tx_fwd_config.builder_urls.is_empty()
@@ -325,7 +358,11 @@ impl InProcessClient {
                     DEFAULT_MAX_VALIDITY_PREDICATES,
                 )));
             }
-            extensions.push(Box::new(TxForwardingExtension::from_config(tx_fwd_config.clone())));
+            if tx_fwd_config.inline_simulation {
+                tx_fwd_config = tx_fwd_config
+                    .with_flashblocks_state(Some(Arc::clone(&flashblocks_config.state)));
+            }
+            extensions.push(Box::new(TxForwardingExtension::from_config(tx_fwd_config)));
         }
 
         // Upgrade signal runtime extension (optional - live L1 schedule polling)
