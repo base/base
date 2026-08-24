@@ -3,8 +3,8 @@
 use std::time::Duration;
 
 use crate::{
-    ExecutionInfo, FlashblockDiagnostics, ParkedPredicateIndex, PredicateLoadTracker,
-    ResourceLimits,
+    ExecutionInfo, FLOW_STANDARD, FLOW_VALIDITY, FlashblockDiagnostics, InclusionTracker,
+    ParkedPredicateIndex, PredicateLoadTracker, ResourceLimits,
 };
 
 const PRIORITY_FEE_THRESHOLDS_WEI: [(&str, u64); 3] =
@@ -145,6 +145,21 @@ base_metrics::define_metrics! {
         "Distinct storage slots read while evaluating validity predicates per block (predicate state footprint)"
     )]
     predicate_slots_loaded_unique: histogram,
+    #[describe("Transactions included per block, segmented by flow")]
+    #[label(flow)]
+    txs_included_per_block: histogram,
+    #[describe("Gas consumed by included transactions per block, segmented by flow")]
+    #[label(flow)]
+    tx_gas_used_per_block: histogram,
+    #[describe("Per-block EIP-1559 priority-fee revenue in wei, segmented by flow")]
+    #[label(flow)]
+    priority_fee_revenue_wei: histogram,
+    #[describe("Per-block EIP-1559 base-fee revenue in wei, segmented by flow")]
+    #[label(flow)]
+    base_fee_revenue_wei: histogram,
+    #[describe("Per-block EIP-8130 coinbase-tip revenue in wei, segmented by flow")]
+    #[label(flow)]
+    coinbase_tip_revenue_wei: histogram,
     #[describe("Validity predicate evaluation attempts")]
     #[label(outcome)]
     validity_predicate_evaluations_total: counter,
@@ -328,6 +343,25 @@ impl BuilderMetrics {
         Self::predicate_accounts_loaded_unique().record(tracker.unique_accounts() as f64);
         Self::predicate_slots_loaded_total().record(tracker.slot_reads() as f64);
         Self::predicate_slots_loaded_unique().record(tracker.unique_slots() as f64);
+    }
+
+    /// Records per-block inclusion and EIP-1559 fee revenue.
+    ///
+    /// Always emits one observation per built block, including zeros, so the
+    /// histograms describe the full per-block distribution. Each series is
+    /// labeled `flow=standard` then `flow=validity`. Coinbase-tip observations
+    /// are currently zero until the EIP-8130 phase-0 tip is decoded.
+    pub fn record_inclusion(tracker: &InclusionTracker) {
+        Self::txs_included_per_block(FLOW_STANDARD).record(tracker.standard.txs as f64);
+        Self::txs_included_per_block(FLOW_VALIDITY).record(tracker.validity.txs as f64);
+        Self::tx_gas_used_per_block(FLOW_STANDARD).record(tracker.standard.gas as f64);
+        Self::tx_gas_used_per_block(FLOW_VALIDITY).record(tracker.validity.gas as f64);
+        Self::priority_fee_revenue_wei(FLOW_STANDARD).record(tracker.standard.priority_fees_f64());
+        Self::priority_fee_revenue_wei(FLOW_VALIDITY).record(tracker.validity.priority_fees_f64());
+        Self::base_fee_revenue_wei(FLOW_STANDARD).record(tracker.standard.base_fees_f64());
+        Self::base_fee_revenue_wei(FLOW_VALIDITY).record(tracker.validity.base_fees_f64());
+        Self::coinbase_tip_revenue_wei(FLOW_STANDARD).record(tracker.standard.coinbase_tips_f64());
+        Self::coinbase_tip_revenue_wei(FLOW_VALIDITY).record(tracker.validity.coinbase_tips_f64());
     }
 
     /// Records payload builder metrics.
@@ -608,6 +642,116 @@ mod tests {
                 "base_builder_tip_per_gas_sum{flow=\"standard\",bid=\"coinbase_tip\"} 20"
             ),
             "expected 8130 standard sum 20, got: {rendered}"
+        );
+    }
+
+    #[test]
+    fn record_inclusion_emits_per_block_histograms_including_zeros() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+
+        let mut tracker = InclusionTracker::default();
+        tracker.record(true, 21_000, 2, 10);
+        tracker.record(false, 10_000, 4, 10);
+        tracker.record(true, 8_000, 9, 10);
+
+        metrics::with_local_recorder(&recorder, || {
+            BuilderMetrics::record_inclusion(&tracker);
+        });
+
+        let rendered = handle.render();
+        assert!(
+            rendered.contains("base_builder_txs_included_per_block_sum{flow=\"standard\"} 1"),
+            "expected one included standard tx, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("base_builder_txs_included_per_block_sum{flow=\"validity\"} 2"),
+            "expected two included validity txs, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("base_builder_tx_gas_used_per_block_sum{flow=\"standard\"} 10000"),
+            "expected 10000 standard gas, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("base_builder_tx_gas_used_per_block_sum{flow=\"validity\"} 29000"),
+            "expected 29000 validity gas, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("base_builder_priority_fee_revenue_wei_sum{flow=\"standard\"} 40000"),
+            "expected 40000 standard priority-fee wei, got: {rendered}"
+        );
+        assert!(
+            rendered
+                .contains("base_builder_priority_fee_revenue_wei_sum{flow=\"validity\"} 114000"),
+            "expected 114000 validity priority-fee wei, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("base_builder_base_fee_revenue_wei_sum{flow=\"standard\"} 100000"),
+            "expected 100000 standard base-fee wei, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("base_builder_base_fee_revenue_wei_sum{flow=\"validity\"} 290000"),
+            "expected 290000 validity base-fee wei, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("base_builder_coinbase_tip_revenue_wei_sum{flow=\"standard\"} 0"),
+            "expected coinbase tips to stay zero until decoded, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("base_builder_coinbase_tip_revenue_wei_sum{flow=\"validity\"} 0"),
+            "expected coinbase tips to stay zero until decoded, got: {rendered}"
+        );
+    }
+
+    #[test]
+    fn record_inclusion_emits_zero_observations_for_empty_blocks() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+
+        metrics::with_local_recorder(&recorder, || {
+            BuilderMetrics::record_inclusion(&InclusionTracker::default());
+        });
+
+        let rendered = handle.render();
+        assert!(
+            rendered.contains("base_builder_txs_included_per_block_count{flow=\"standard\"} 1"),
+            "empty blocks must still emit a standard inclusion observation, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("base_builder_txs_included_per_block_count{flow=\"validity\"} 1"),
+            "empty blocks must still emit a validity inclusion observation, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("base_builder_tx_gas_used_per_block_count{flow=\"standard\"} 1"),
+            "empty blocks must still emit a standard gas observation, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("base_builder_tx_gas_used_per_block_count{flow=\"validity\"} 1"),
+            "empty blocks must still emit a validity gas observation, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("base_builder_priority_fee_revenue_wei_count{flow=\"standard\"} 1"),
+            "empty blocks must still emit a standard-revenue observation, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("base_builder_priority_fee_revenue_wei_count{flow=\"validity\"} 1"),
+            "empty blocks must still emit a validity-revenue observation, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("base_builder_base_fee_revenue_wei_count{flow=\"standard\"} 1"),
+            "empty blocks must still emit a standard base-fee observation, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("base_builder_base_fee_revenue_wei_count{flow=\"validity\"} 1"),
+            "empty blocks must still emit a validity base-fee observation, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("base_builder_coinbase_tip_revenue_wei_count{flow=\"standard\"} 1"),
+            "empty blocks must still emit a standard coinbase-tip observation, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("base_builder_coinbase_tip_revenue_wei_count{flow=\"validity\"} 1"),
+            "empty blocks must still emit a validity coinbase-tip observation, got: {rendered}"
         );
     }
 }
