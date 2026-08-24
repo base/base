@@ -242,6 +242,12 @@ base_metrics::define_metrics! {
     #[label(event_type)]
     #[label(reason)]
     builder_transaction_events_dropped: counter,
+    #[describe(
+        "Per-included-transaction tip per gas (the builder priority score), tagged by flow cohort and bid mechanism"
+    )]
+    #[label(name = "flow", default = ["standard", "validity"])]
+    #[label(name = "bid", default = ["coinbase_tip", "priority_fee"])]
+    tip_per_gas: histogram,
 }
 
 impl BuilderMetrics {
@@ -352,6 +358,25 @@ impl BuilderMetrics {
         for depth in index.bucket_depths() {
             Self::predicate_bucket_depth().record(depth as f64);
         }
+    }
+
+    /// Records one included transaction's tip per gas.
+    ///
+    /// The value is the builder's existing inclusion priority score
+    /// (`effective_tip_per_gas` / tip-per-gas-limit) — no execution result or
+    /// price feed is required. Observations are tagged `flow=validity` only when
+    /// the transaction carries validity predicates, otherwise `flow=standard`.
+    /// Bid mechanism is independent of flow: `bid=coinbase_tip` for EIP-8130,
+    /// `bid=priority_fee` otherwise. An 8130 transaction without predicates is
+    /// therefore `flow=standard, bid=coinbase_tip`.
+    pub fn record_tip_per_gas(
+        has_validity_predicates: bool,
+        is_eip8130: bool,
+        tip_per_gas: f64,
+    ) {
+        let flow = if has_validity_predicates { "validity" } else { "standard" };
+        let bid = if is_eip8130 { "coinbase_tip" } else { "priority_fee" };
+        Self::tip_per_gas(flow, bid).record(tip_per_gas);
     }
 }
 
@@ -512,5 +537,73 @@ mod tests {
         });
 
         assert!(!handle.render().contains("predicate_accounts_loaded_total"));
+    }
+
+    #[test]
+    fn record_tip_per_gas_tags_flow_and_bid() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+
+        metrics::with_local_recorder(&recorder, || {
+            // Standard EIP-1559: flow=standard, bid=priority_fee.
+            BuilderMetrics::record_tip_per_gas(false, false, 10.0);
+            BuilderMetrics::record_tip_per_gas(false, false, 30.0);
+            // Pre-8130 validity: flow=validity, bid=priority_fee.
+            BuilderMetrics::record_tip_per_gas(true, false, 50.0);
+            // EIP-8130 with predicates: flow=validity, bid=coinbase_tip.
+            BuilderMetrics::record_tip_per_gas(true, true, 80.0);
+            // EIP-8130 without predicates: flow=standard, bid=coinbase_tip.
+            BuilderMetrics::record_tip_per_gas(false, true, 20.0);
+        });
+
+        let rendered = handle.render();
+        assert!(
+            rendered.contains(
+                "base_builder_tip_per_gas_count{bid=\"priority_fee\",flow=\"standard\"} 2"
+            ),
+            "expected two standard priority-fee observations, got: {rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "base_builder_tip_per_gas_sum{bid=\"priority_fee\",flow=\"standard\"} 40"
+            ),
+            "expected standard priority-fee sum 40, got: {rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "base_builder_tip_per_gas_count{bid=\"priority_fee\",flow=\"validity\"} 1"
+            ),
+            "expected one pre-8130 validity observation, got: {rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "base_builder_tip_per_gas_sum{bid=\"priority_fee\",flow=\"validity\"} 50"
+            ),
+            "expected pre-8130 validity sum 50, got: {rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "base_builder_tip_per_gas_count{bid=\"coinbase_tip\",flow=\"validity\"} 1"
+            ),
+            "expected one 8130 validity observation, got: {rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "base_builder_tip_per_gas_sum{bid=\"coinbase_tip\",flow=\"validity\"} 80"
+            ),
+            "expected 8130 validity sum 80, got: {rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "base_builder_tip_per_gas_count{bid=\"coinbase_tip\",flow=\"standard\"} 1"
+            ),
+            "expected one 8130 standard observation, got: {rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "base_builder_tip_per_gas_sum{bid=\"coinbase_tip\",flow=\"standard\"} 20"
+            ),
+            "expected 8130 standard sum 20, got: {rendered}"
+        );
     }
 }
