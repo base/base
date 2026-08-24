@@ -1,7 +1,7 @@
 use std::{
     cmp::{Ordering, min},
     env, fmt, fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
@@ -88,17 +88,17 @@ pub struct RPCConfig {
 impl RPCConfig {
     /// Directory containing `<chain_id>.json` L1 chain configs.
     pub fn l1_config_directory(&self) -> PathBuf {
-        resolve_config_dir(self.l1_config_dir.as_ref(), "L1_CONFIG_DIR", "configs/L1")
+        resolve_config_dir(self.l1_config_dir.as_deref(), "L1_CONFIG_DIR", "configs/L1")
     }
 
     /// Directory where fetched L2 rollup configs are written.
     pub fn l2_config_directory(&self) -> PathBuf {
-        resolve_config_dir(self.l2_config_dir.as_ref(), "L2_CONFIG_DIR", "configs/L2")
+        resolve_config_dir(self.l2_config_dir.as_deref(), "L2_CONFIG_DIR", "configs/L2")
     }
 }
 
-fn resolve_config_dir(explicit: Option<&PathBuf>, env_name: &str, default: &str) -> PathBuf {
-    explicit.cloned().unwrap_or_else(|| {
+fn resolve_config_dir(explicit: Option<&Path>, env_name: &str, default: &str) -> PathBuf {
+    explicit.map(Path::to_path_buf).unwrap_or_else(|| {
         env::var_os(env_name).map(PathBuf::from).unwrap_or_else(|| PathBuf::from(default))
     })
 }
