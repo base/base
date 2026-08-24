@@ -1073,23 +1073,24 @@ mod tests {
             ..Default::default()
         };
         let mut fetcher = TestBatchValidator::default();
+        let l1_origins = [BlockInfo::default()];
 
         let pre_denim_parent = L2BlockInfo {
             block_info: BlockInfo { number: 40, timestamp: 100, ..Default::default() },
             ..Default::default()
         };
-        assert_eq!(
+        assert_ne!(
             batch
                 .check_batch_prefix(
                     &cfg,
-                    &[],
+                    &l1_origins,
                     pre_denim_parent,
                     &BlockInfo::default(),
                     &mut fetcher,
                 )
                 .await
                 .0,
-            BatchValidity::Undecided
+            BatchValidity::Drop(BatchDropReason::SpanBatchPostDenim)
         );
 
         let denim_parent = L2BlockInfo {
@@ -1100,7 +1101,7 @@ mod tests {
             batch
                 .check_batch_prefix(
                     &cfg,
-                    &[BlockInfo::default()],
+                    &l1_origins,
                     denim_parent,
                     &BlockInfo::default(),
                     &mut fetcher,
