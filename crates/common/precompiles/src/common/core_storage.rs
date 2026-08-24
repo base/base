@@ -82,7 +82,9 @@ pub struct B20CoreStorage {
     pub nonces: Mapping<Address, U256>, // offset 13
     // The base-std mock keeps an `initialized` bootstrap flag as its last field; this impl checks
     // factory-init via deployed marker bytecode instead, so it stores no such field.
-    /// Seizable-account policy ID, consulted against `from` by the seize operations.
+    /// Seize-holder policy ID, consulted against `from` by the seize operations. `from` is
+    /// seizable only when NOT authorized by this policy; the unset always-allow default keeps
+    /// seizure closed until an issuer configures it.
     #[accessor]
     #[mutator]
     pub seize_holder_policy_id: u64, // slot 14, offset 0
