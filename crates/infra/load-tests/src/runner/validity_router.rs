@@ -40,6 +40,24 @@ impl ValidityRouter {
         self.ratio <= 0.0
     }
 
+    /// Returns true when resolving this router's predicates requires the current
+    /// chain height, i.e. at least one [`BlockNumberBound::Offset`] template is
+    /// configured on the validity path. Absolute, balance, storage, and
+    /// flashblock-index predicates never read the current height, so absolute-only
+    /// configurations avoid the per-round latest-block fetch entirely.
+    pub fn needs_current_block(&self) -> bool {
+        !self.is_disabled()
+            && self.predicates.iter().any(|template| {
+                matches!(
+                    template,
+                    ValidityPredicateTemplate::BlockNumber {
+                        bound: BlockNumberBound::Offset(_),
+                        ..
+                    }
+                )
+            })
+    }
+
     /// Determines the submission cohort for a sender.
     ///
     /// The decision is deterministic in `(seed, sender)` so a sender's entire
@@ -337,6 +355,52 @@ mod tests {
                 value: U256::MAX,
             }],
         );
+    }
+
+    #[test]
+    fn needs_current_block_only_with_an_offset_bound() {
+        let offset = router(
+            1.0,
+            vec![ValidityPredicateTemplate::BlockNumber {
+                op: ValidityOperator::GreaterThanOrEqual,
+                bound: BlockNumberBound::Offset(U256::from(10)),
+            }],
+        );
+        assert!(offset.needs_current_block(), "an offset bound requires the current height");
+
+        let absolute = router(
+            1.0,
+            vec![ValidityPredicateTemplate::BlockNumber {
+                op: ValidityOperator::GreaterThanOrEqual,
+                bound: BlockNumberBound::Absolute(U256::from(12345)),
+            }],
+        );
+        assert!(!absolute.needs_current_block(), "an absolute bound must not trigger the fetch");
+
+        let balance = router(
+            1.0,
+            vec![ValidityPredicateTemplate::Balance {
+                address: PredicateAddress::Sender,
+                op: ValidityOperator::GreaterThanOrEqual,
+                value: U256::ZERO,
+            }],
+        );
+        assert!(
+            !balance.needs_current_block(),
+            "non-position predicates must not trigger the fetch"
+        );
+    }
+
+    #[test]
+    fn disabled_router_never_needs_current_block() {
+        let r = router(
+            0.0,
+            vec![ValidityPredicateTemplate::BlockNumber {
+                op: ValidityOperator::GreaterThanOrEqual,
+                bound: BlockNumberBound::Offset(U256::from(10)),
+            }],
+        );
+        assert!(!r.needs_current_block(), "a disabled router routes nothing to the validity path");
     }
 
     #[test]
