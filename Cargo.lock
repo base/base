@@ -6300,6 +6300,8 @@ dependencies = [
  "base-common-rpc-types",
  "base-execution-chainspec",
  "base-execution-txpool",
+ "base-flashblocks",
+ "base-metering",
  "base-metrics",
  "base-node-runner",
  "base-observability-events",

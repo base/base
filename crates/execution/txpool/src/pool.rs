@@ -26,7 +26,8 @@ use tracing::debug;
 
 use crate::{
     Admission, BasePooledTx, BaseTransactionValidator, GuardLimits, GuardMetrics,
-    InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard, ParkableBestTransactions,
+    InlineSimEnqueueError, InlineSimJob, InlineSimPool, InlineSimQueue, InvalidationCause,
+    InvalidationKey, LimitRejection, MempoolGuard, ParkableBestTransactions,
     ParkableTransactionPool, ParkedBestTransactions, StateDiffInvalidation, ValidityPoolMetrics,
     best::MergeBestTransactions,
     two_d_nonce_pool::{InsertOutcome, TwoDNoncePool},
@@ -99,6 +100,9 @@ pub struct BaseTransactionPool<
     /// concurrent same-nonce replacement cannot leave a stale guard record.
     /// Validation remains outside this lock.
     protocol_admission_lock: Arc<Mutex<()>>,
+    /// Enqueue slot for in-process meter_bundle workers. Empty means the
+    /// flag is off or workers have not installed yet.
+    inline_sim: InlineSimQueue,
 }
 
 impl<Client, S, Evm, T, O> fmt::Debug for BaseTransactionPool<Client, S, Evm, T, O>
@@ -133,6 +137,7 @@ where
             guard: Arc::clone(&self.guard),
             block_expiry: Arc::clone(&self.block_expiry),
             protocol_admission_lock: Arc::clone(&self.protocol_admission_lock),
+            inline_sim: self.inline_sim.clone(),
         }
     }
 }
@@ -175,6 +180,7 @@ where
             guard: Arc::new(RwLock::new(MempoolGuard::unlimited())),
             block_expiry: Arc::new(RwLock::new(crate::BlockExpiryIndex::new())),
             protocol_admission_lock: Arc::new(Mutex::new(())),
+            inline_sim: InlineSimQueue::default(),
         }
     }
 
@@ -183,6 +189,11 @@ where
     pub fn with_guard_limits(self, limits: GuardLimits) -> Self {
         *self.guard.write() = MempoolGuard::new(limits);
         self
+    }
+
+    /// Installs the enqueue sender used by `eth_sendRawTransaction`.
+    pub fn install_inline_sim(&self, sender: mpsc::Sender<InlineSimJob>) {
+        self.inline_sim.install(sender);
     }
 
     /// Builds guard admission metadata carried by a validated EIP-8130 transaction.
@@ -1442,6 +1453,24 @@ where
 
     fn validator(&self) -> &Self::Validator {
         self.protocol_pool.validator()
+    }
+}
+
+impl<Client, S, Evm, T, O> InlineSimPool for BaseTransactionPool<Client, S, Evm, T, O>
+where
+    Client: 'static,
+    Evm: 'static,
+    BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
+    T: BasePooledTx + reth_transaction_pool::EthPoolTransaction + 'static,
+    O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
+    S: BlobStore + Clone,
+{
+    fn is_inline_sim_enabled(&self) -> bool {
+        self.inline_sim.is_enabled()
+    }
+
+    fn try_enqueue_inline_sim(&self, job: InlineSimJob) -> Result<(), InlineSimEnqueueError> {
+        self.inline_sim.try_enqueue(job)
     }
 }
 

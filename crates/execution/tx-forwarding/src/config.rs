@@ -1,7 +1,8 @@
 //! Configuration for the transaction forwarding extension.
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
+use base_flashblocks::FlashblocksState;
 use url::Url;
 
 use crate::{forwarder::ForwarderConfig, reader::ReaderConfig};
@@ -33,16 +34,15 @@ pub struct TxForwardingConfig {
     /// Maximum RPC requests per second per forwarder (0 = unlimited).
     pub max_rps: u32,
     /// When true, meter_bundle runs on the mempool node before pool insert.
-    ///
-    /// Stored only until the sim-worker path is wired; forwarding behavior is
-    /// unchanged while this flag is unused.
     pub inline_simulation: bool,
     /// Number of meter_bundle worker tasks.
     pub inline_simulation_workers: usize,
     /// Bounded pre-sim queue capacity.
     pub inline_simulation_queue_capacity: usize,
-    /// Per-transaction meter_bundle timeout in milliseconds.
+    /// Deadline for real vs default metering. Does not free the worker.
     pub inline_simulation_timeout_ms: u64,
+    /// Shared flashblocks pending state used by in-process meter_bundle.
+    pub flashblocks_state: Option<Arc<FlashblocksState>>,
 }
 
 impl Default for TxForwardingConfig {
@@ -58,6 +58,7 @@ impl Default for TxForwardingConfig {
             inline_simulation_workers: DEFAULT_INLINE_SIMULATION_WORKERS,
             inline_simulation_queue_capacity: DEFAULT_INLINE_SIMULATION_QUEUE_CAPACITY,
             inline_simulation_timeout_ms: DEFAULT_INLINE_SIMULATION_TIMEOUT_MS,
+            flashblocks_state: None,
         }
     }
 }
@@ -97,21 +98,27 @@ impl TxForwardingConfig {
         self
     }
 
-    /// Sets the number of meter_bundle worker tasks.
+    /// Sets the number of meter_bundle worker tasks. Zero is treated as 1.
     pub const fn with_inline_simulation_workers(mut self, workers: usize) -> Self {
-        self.inline_simulation_workers = workers;
+        self.inline_simulation_workers = if workers == 0 { 1 } else { workers };
         self
     }
 
-    /// Sets the pre-sim queue capacity.
+    /// Sets the pre-sim queue capacity. Zero is treated as 1.
     pub const fn with_inline_simulation_queue_capacity(mut self, capacity: usize) -> Self {
-        self.inline_simulation_queue_capacity = capacity;
+        self.inline_simulation_queue_capacity = if capacity == 0 { 1 } else { capacity };
         self
     }
 
     /// Sets the per-transaction meter_bundle timeout in milliseconds.
     pub const fn with_inline_simulation_timeout_ms(mut self, ms: u64) -> Self {
         self.inline_simulation_timeout_ms = ms;
+        self
+    }
+
+    /// Sets the shared flashblocks pending state used by in-process meter_bundle.
+    pub fn with_flashblocks_state(mut self, state: Option<Arc<FlashblocksState>>) -> Self {
+        self.flashblocks_state = state;
         self
     }
 
@@ -171,5 +178,15 @@ mod tests {
         assert_eq!(config.inline_simulation_workers, 8);
         assert_eq!(config.inline_simulation_queue_capacity, 32);
         assert_eq!(config.inline_simulation_timeout_ms, 500);
+    }
+
+    #[test]
+    fn zero_workers_or_queue_capacity_clamp_to_one() {
+        let config = TxForwardingConfig::new(vec!["http://builder.test".parse().unwrap()])
+            .with_inline_simulation_workers(0)
+            .with_inline_simulation_queue_capacity(0);
+
+        assert_eq!(config.inline_simulation_workers, 1);
+        assert_eq!(config.inline_simulation_queue_capacity, 1);
     }
 }

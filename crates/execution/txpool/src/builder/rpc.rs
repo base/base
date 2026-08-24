@@ -154,13 +154,16 @@ where
             tx.min_timestamp,
             tx.max_timestamp,
         );
+        // `is_placeholder` is a mempool timeout/error sentinel. Keep it on the
+        // pooled tx; do not treat it as real cache data.
         let pool_tx = match tx.metering {
-            Some(metering) => {
+            Some(metering) if !metering.is_placeholder() => {
                 if let Some(cache) = &self.metering_cache {
                     cache.insert_metering(tx_hash, metering.clone());
                 }
                 pool_tx.with_metering(metering)
             }
+            Some(metering) => pool_tx.with_metering(metering),
             None => pool_tx,
         };
 
@@ -464,6 +467,23 @@ mod tests {
         assert_eq!(inserted.len(), 1, "insert should write metering even if the pool later rejects");
         assert_eq!(inserted[0].0, expected_hash);
         assert_eq!(inserted[0].1, metering);
+    }
+
+    #[tokio::test]
+    async fn insert_skips_default_metering_in_the_builder_cache() {
+        let cache = Arc::new(RecordingMetering::default());
+        let handler = handler().with_metering_cache(Arc::clone(&cache) as Arc<dyn InsertMetering>);
+        let (sender, raw) = create_eip1559_tx();
+        let mut tx = validated_transaction(sender, raw, NoExtensions {});
+        tx.metering = Some(MeterBundleResponse::default());
+
+        let _ = handler.insert_validated_transaction(tx).await;
+
+        let inserted = cache.inserted.lock().expect("recording lock");
+        assert!(
+            inserted.is_empty(),
+            "placeholder MeterBundleResponse::default must not enter the builder cache"
+        );
     }
 
     #[test]

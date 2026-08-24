@@ -22,12 +22,15 @@ reth-transaction-pool.workspace = true
 
 # workspace
 base-metrics.workspace = true
+base-metering.workspace = true
+base-flashblocks.workspace = true
 base-node-runner.workspace = true
 base-execution-txpool.workspace = true
 base-observability-events.workspace = true
 
 # misc
 url.workspace = true
+eyre.workspace = true
 serde.workspace = true
 futures.workspace = true
 tracing.workspace = true
@@ -54,7 +57,6 @@ base-execution-chainspec.workspace = true
 base-node-runner = { workspace = true, features = ["test-utils"] }
 
 # misc
-eyre.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 jsonrpsee = { workspace = true, features = ["server"] }
