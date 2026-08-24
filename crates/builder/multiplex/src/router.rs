@@ -345,23 +345,19 @@ impl MultiplexRouter {
             Self::record_selected_getpayload_latency(elapsed.as_secs_f64());
 
             let result = match result {
-                Some(Ok(payload)) => Ok(payload),
+                Some(Ok(payload)) => Some(Ok(payload)),
                 Some(Err(PayloadBuilderError::ChannelClosed)) => {
                     health.mark_unavailable();
                     Self::set_service_health_metric(builder, false);
-                    Err(Self::unavailable_error(builder))
+                    Some(Err(Self::unavailable_error(builder)))
                 }
-                Some(Err(err)) => Err(err),
-                None => {
-                    if !health.is_healthy() {
-                        Err(Self::unavailable_error(builder))
-                    } else {
-                        Err(PayloadBuilderError::MissingPayload)
-                    }
-                }
+                Some(Err(err)) => Some(Err(err)),
+                None if !health.is_healthy() => Some(Err(Self::unavailable_error(builder))),
+                None => None,
             };
 
-            let _ = tx.send(Some(Box::pin(async move { result })));
+            let response = result.map(|result| Box::pin(async move { result }) as ResolveFuture);
+            let _ = tx.send(response);
         }
         .boxed()
     }
@@ -763,7 +759,7 @@ mod tests {
             build_rx.await.expect("selected build response").expect("successful build"),
             payload_id
         );
-        assert!(matches!(resolve.await, Some(Err(PayloadBuilderError::MissingPayload))));
+        assert!(resolve.await.is_none());
 
         drop(handle);
         router_task.await.expect("router task");
@@ -825,12 +821,7 @@ mod tests {
                 }
             };
             tokio::join!(response, inner);
-            let future = resolve_rx
-                .await
-                .expect("resolve response")
-                .expect("resolve future should be present");
-            let resolved = future.await;
-            assert!(matches!(resolved, Err(PayloadBuilderError::MissingPayload)));
+            assert!(resolve_rx.await.expect("resolve response").is_none());
         }
 
         assert!(router.basic_selected_for_payload(payload_id));

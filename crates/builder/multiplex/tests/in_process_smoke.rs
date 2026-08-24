@@ -203,6 +203,12 @@ async fn build_new_block(
     tokio::time::sleep(Duration::from_secs(1)).await;
 
     let payload = engine_get_payload(auth_ipc_path, payload_id).await?.execution_payload;
+    let repeated_payload = engine_get_payload(auth_ipc_path, payload_id).await?.execution_payload;
+    assert_eq!(
+        payload.payload_inner.payload_inner.block_hash,
+        repeated_payload.payload_inner.payload_inner.block_hash,
+        "repeated getPayload returned a different block"
+    );
     let payload = payload.payload_inner.payload_inner;
 
     Ok(BuiltBlockSummary {

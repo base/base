@@ -120,7 +120,7 @@ where
             return Ok(basic_handle);
         }
 
-        let flashblocks_handle = FlashblocksServiceBuilder::new(self.builder_config.clone())
+        let flashblocks_handle = FlashblocksServiceBuilder::new(self.builder_config)
             .spawn_payload_builder_service(ctx, pool, evm_config)
             .await?;
 
