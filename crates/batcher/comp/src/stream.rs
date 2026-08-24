@@ -1,7 +1,7 @@
 //! Incremental derivation-channel compression.
 
 use alloc::{boxed::Box, vec::Vec};
-use std::{fmt, io::Write};
+use std::io::Write;
 
 use brotli::{CompressorWriter, enc::BrotliEncoderMaxCompressedSize};
 use miniz_oxide::{
@@ -15,49 +15,100 @@ use miniz_oxide::{
 use crate::{CompressionAlgo, CompressionError};
 
 /// Concrete state owned by one [`CompressionStream`].
+#[derive(derive_more::Debug)]
 pub enum CompressionBackend {
     /// Streaming zlib encoder and bytes emitted since the last transfer.
     Zlib {
         /// Miniz encoder state.
+        #[debug(skip)]
         compressor: Box<CompressorOxide>,
         /// Bytes emitted since the last transfer.
+        #[debug(skip)]
         output: Vec<u8>,
     },
     /// Streaming Brotli encoder writing into its transferable output buffer.
-    Brotli(Box<CompressorWriter<Vec<u8>>>),
+    Brotli(#[debug(skip)] Box<CompressorWriter<Vec<u8>>>),
 }
 
-impl fmt::Debug for CompressionBackend {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl CompressionBackend {
+    /// Buffer size used by the Brotli writer.
+    const BROTLI_BUFFER_SIZE: usize = 4096;
+
+    /// Brotli sliding-window exponent (`2^22` bytes).
+    const BROTLI_LGWIN: u32 = 22;
+
+    /// Appends input and returns newly emitted compressed bytes.
+    pub fn append(&mut self, input: &[u8]) -> Result<Vec<u8>, CompressionError> {
         match self {
-            Self::Zlib { output, .. } => {
-                f.debug_struct("Zlib").field("buffered_bytes", &output.len()).finish()
+            Self::Zlib { compressor, output } => {
+                // miniz reports consumed input; treat the append as committed only
+                // when every byte was accepted.
+                let (status, consumed) =
+                    compress_to_output(compressor, input, TDEFLFlush::None, |bytes| {
+                        output.extend_from_slice(bytes);
+                        true
+                    });
+                if status != TDEFLStatus::Okay || consumed != input.len() {
+                    return Err(CompressionError::Zlib);
+                }
+                Ok(core::mem::take(output))
             }
-            Self::Brotli(compressor) => f
-                .debug_struct("Brotli")
-                .field("buffered_bytes", &compressor.get_ref().len())
-                .finish(),
+            Self::Brotli(compressor) => {
+                compressor.write_all(input)?;
+                Ok(core::mem::take(compressor.get_mut()))
+            }
+        }
+    }
+
+    /// Returns a conservative upper bound for a finished stream of `input_size`.
+    pub fn max_output_size(&self, input_size: usize) -> usize {
+        match self {
+            Self::Zlib { .. } => {
+                // miniz `mz_compressBound`.
+                input_size.saturating_add(input_size / 16).saturating_add(67)
+            }
+            Self::Brotli(_) => {
+                // Channel-version prefix byte.
+                BrotliEncoderMaxCompressedSize(input_size).saturating_add(1)
+            }
+        }
+    }
+
+    /// Finishes the stream and returns compressed bytes not previously transferred.
+    pub fn finish(self) -> Result<Vec<u8>, CompressionError> {
+        match self {
+            Self::Zlib { mut compressor, mut output } => {
+                let (status, consumed) =
+                    compress_to_output(&mut compressor, &[], TDEFLFlush::Finish, |bytes| {
+                        output.extend_from_slice(bytes);
+                        true
+                    });
+                if status != TDEFLStatus::Done || consumed != 0 {
+                    return Err(CompressionError::Zlib);
+                }
+                Ok(output)
+            }
+            // Consuming the writer emits Brotli's stream trailer.
+            Self::Brotli(compressor) => Ok((*compressor).into_inner()),
         }
     }
 }
 
-/// A single incremental compressor for one derivation channel.
-pub struct CompressionStream {
-    backend: CompressionBackend,
-    /// Total bytes returned by prior [`append`](Self::append) calls.
-    output_size: usize,
-}
-
-impl CompressionStream {
-    /// Creates an empty compressor for `algorithm`.
-    pub fn new(algorithm: CompressionAlgo) -> Self {
+impl From<CompressionAlgo> for CompressionBackend {
+    fn from(algorithm: CompressionAlgo) -> Self {
         let brotli = |quality| {
-            let mut output = Vec::with_capacity(4096);
+            let mut output = Vec::with_capacity(Self::BROTLI_BUFFER_SIZE);
             output.push(CompressionAlgo::BROTLI_CHANNEL_VERSION);
-            CompressionBackend::Brotli(Box::new(CompressorWriter::new(output, 4096, quality, 22)))
+            Self::Brotli(Box::new(CompressorWriter::new(
+                output,
+                Self::BROTLI_BUFFER_SIZE,
+                quality,
+                Self::BROTLI_LGWIN,
+            )))
         };
-        let backend = match algorithm {
-            CompressionAlgo::Zlib => CompressionBackend::Zlib {
+
+        match algorithm {
+            CompressionAlgo::Zlib => Self::Zlib {
                 compressor: Box::new(CompressorOxide::with_format_and_level(
                     DataFormat::Zlib,
                     CompressionLevel::BestCompression,
@@ -67,32 +118,33 @@ impl CompressionStream {
             CompressionAlgo::Brotli9 => brotli(9),
             CompressionAlgo::Brotli10 => brotli(10),
             CompressionAlgo::Brotli11 => brotli(11),
-        };
-        Self { backend, output_size: 0 }
+        }
+    }
+}
+
+/// A single incremental compressor for one derivation channel.
+#[derive(derive_more::Debug)]
+pub struct CompressionStream {
+    backend: CompressionBackend,
+    /// Total bytes returned by prior [`append`](Self::append) calls.
+    output_size: usize,
+}
+
+impl From<CompressionAlgo> for CompressionStream {
+    fn from(algorithm: CompressionAlgo) -> Self {
+        Self { backend: algorithm.into(), output_size: 0 }
+    }
+}
+
+impl CompressionStream {
+    /// Creates an empty compressor for `algorithm`.
+    pub fn new(algorithm: CompressionAlgo) -> Self {
+        algorithm.into()
     }
 
     /// Append input and return newly emitted compressed bytes.
     pub fn append(&mut self, input: &[u8]) -> Result<Vec<u8>, CompressionError> {
-        // miniz reports consumed input; treat the append as committed only
-        // when every byte was accepted.
-        match &mut self.backend {
-            CompressionBackend::Zlib { compressor, output } => {
-                let (status, consumed) =
-                    compress_to_output(compressor, input, TDEFLFlush::None, |bytes| {
-                        output.extend_from_slice(bytes);
-                        true
-                    });
-                if status != TDEFLStatus::Okay || consumed != input.len() {
-                    return Err(CompressionError::Zlib);
-                }
-            }
-            CompressionBackend::Brotli(compressor) => compressor.write_all(input)?,
-        }
-
-        let output = match &mut self.backend {
-            CompressionBackend::Zlib { output, .. } => core::mem::take(output),
-            CompressionBackend::Brotli(compressor) => core::mem::take(compressor.get_mut()),
-        };
+        let output = self.backend.append(input)?;
         self.output_size += output.len();
         Ok(output)
     }
@@ -104,44 +156,12 @@ impl CompressionStream {
 
     /// Conservative upper bound for a finished stream of `input_size` uncompressed bytes.
     pub fn max_output_size(&self, input_size: usize) -> usize {
-        match &self.backend {
-            CompressionBackend::Zlib { .. } => {
-                // miniz `mz_compressBound`.
-                input_size.saturating_add(input_size / 16).saturating_add(67)
-            }
-            CompressionBackend::Brotli(_) => {
-                // Channel-version prefix byte.
-                BrotliEncoderMaxCompressedSize(input_size).saturating_add(1)
-            }
-        }
+        self.backend.max_output_size(input_size)
     }
 
     /// Finishes the stream and returns compressed bytes not previously transferred.
     pub fn finish(self) -> Result<Vec<u8>, CompressionError> {
-        match self.backend {
-            CompressionBackend::Zlib { mut compressor, mut output } => {
-                let (status, consumed) =
-                    compress_to_output(&mut compressor, &[], TDEFLFlush::Finish, |bytes| {
-                        output.extend_from_slice(bytes);
-                        true
-                    });
-                if status != TDEFLStatus::Done || consumed != 0 {
-                    return Err(CompressionError::Zlib);
-                }
-                Ok(output)
-            }
-            // Dropping the writer emits Brotli's stream trailer.
-            CompressionBackend::Brotli(compressor) => Ok((*compressor).into_inner()),
-        }
-    }
-}
-
-impl fmt::Debug for CompressionStream {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("CompressionStream")
-            .field("backend", &self.backend)
-            .field("output_size", &self.output_size())
-            .finish_non_exhaustive()
+        self.backend.finish()
     }
 }
 
