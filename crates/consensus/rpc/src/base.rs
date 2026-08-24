@@ -42,6 +42,13 @@ pub struct BaseRpc {
     pub upgrade_signal_reader: AlloyUpgradeSignalReader,
     /// Short-TTL cache of the last L1 schedule read, shared across concurrent RPC requests.
     schedule_cache: Mutex<Option<CachedSchedule>>,
+    /// Serializes L1 schedule refreshes so a burst of cache misses coalesces into one read.
+    ///
+    /// Unlike [`schedule_cache`](Self::schedule_cache) (only locked to read or write the cached
+    /// value), this is held across the L1 read. Concurrent missing callers wait here, then re-check
+    /// the cache and serve the value the first caller wrote — so the public endpoint never amplifies
+    /// a burst into one L1 read per caller.
+    refresh_lock: tokio::sync::Mutex<()>,
 }
 
 impl BaseRpc {
@@ -59,7 +66,12 @@ impl BaseRpc {
         upgrade_signal_config: UpgradeSignalConfig,
         upgrade_signal_reader: AlloyUpgradeSignalReader,
     ) -> Self {
-        Self { upgrade_signal_config, upgrade_signal_reader, schedule_cache: Mutex::new(None) }
+        Self {
+            upgrade_signal_config,
+            upgrade_signal_reader,
+            schedule_cache: Mutex::new(None),
+            refresh_lock: tokio::sync::Mutex::const_new(()),
+        }
     }
 
     /// Parses an optional `major.minor.patch[-rc.N]` target version into a packed value.
@@ -74,9 +86,7 @@ impl BaseRpc {
                 PackedProtocolVersion::from_str(&version).map(PackedProtocolVersion::into_inner)
             })
             .transpose()
-            .map_err(|error| {
-                ErrorObject::owned(ErrorCode::InvalidParams.code(), error, None::<()>)
-            })
+            .map_err(|error| ErrorObject::owned(ErrorCode::InvalidParams.code(), error, None::<()>))
     }
 
     /// Returns the cached schedule when the entry is still within [`Self::CACHE_TTL`].
@@ -94,6 +104,16 @@ impl BaseRpc {
     /// Returns `Ok(None)` for an empty contract (a valid pre-schedule state). Read errors propagate
     /// and are never cached, so a transient failure is retried by the next query.
     async fn cached_schedule(&self) -> Result<Option<UpgradeSignalSchedule>, UpgradeSignalError> {
+        if let Some(cached) = self.fresh_cached_schedule() {
+            return Ok(cached);
+        }
+
+        // Coalesce concurrent misses: hold the refresh lock across the L1 read so a burst of
+        // queries collapses into a single in-flight read rather than one read per caller.
+        let _refresh = self.refresh_lock.lock().await;
+
+        // Re-check under the refresh lock: a caller that held it before us may have just populated
+        // the cache, in which case we skip the L1 read entirely.
         if let Some(cached) = self.fresh_cached_schedule() {
             return Ok(cached);
         }
@@ -135,16 +155,15 @@ impl BaseApiServer for BaseRpc {
         // `target_version` ahead of the schedule being published on L1), so it is reported as
         // "nothing scheduled" rather than as an error.
         let schedule = self.cached_schedule().await.map_err(|error| {
+            // The error string can carry the L1 endpoint URL and upstream response body, and this is
+            // the public, unauthenticated namespace — so log the detail server-side and return a
+            // generic error with no `data`, matching the redaction in `admin.rs`.
             warn!(
                 target: "upgrade_signal",
                 error = %error,
                 "failed to read L1 upgrade schedule for readiness query"
             );
-            ErrorObject::owned(
-                -32006,
-                "failed to read L1 upgrade schedule",
-                Some(error.to_string()),
-            )
+            ErrorObject::owned(-32006, "failed to read L1 upgrade schedule", None::<()>)
         })?;
 
         // Derive the readiness inputs from the optional schedule so both the scheduled and
