@@ -23,21 +23,14 @@ pub enum BatchComposeError {
 pub struct BatchComposer;
 
 impl BatchComposer {
-    /// Convert an L2 [`BaseBlock`] into a [`SingleBatch`] and the decoded
-    /// [`L1BlockInfoTx`].
+    /// Convert an L2 [`BaseBlock`] into a [`SingleBatch`].
     ///
     /// 1. The first transaction must be a deposit carrying L1 block info calldata.
     /// 2. All deposit transactions are filtered out; remaining user transactions
     ///    are EIP-2718-encoded.
     /// 3. [`SingleBatch`] fields are populated from the block header and decoded
     ///    L1 block info.
-    ///
-    /// The [`L1BlockInfoTx`] is returned alongside the batch so callers can
-    /// access the sequence number for span batch construction without
-    /// re-decoding the deposit.
-    pub fn block_to_single_batch(
-        block: &BaseBlock,
-    ) -> Result<(SingleBatch, L1BlockInfoTx), BatchComposeError> {
+    pub fn block_to_single_batch(block: &BaseBlock) -> Result<SingleBatch, BatchComposeError> {
         if block.body.transactions.is_empty() {
             return Err(BatchComposeError::EmptyBlock);
         }
@@ -58,16 +51,13 @@ impl BatchComposer {
             .map(|tx| tx.encoded_2718().into())
             .collect();
 
-        Ok((
-            SingleBatch {
-                parent_hash: block.header.parent_hash,
-                epoch_num: epoch.number,
-                epoch_hash: epoch.hash,
-                timestamp: block.header.timestamp,
-                transactions,
-            },
-            l1_info,
-        ))
+        Ok(SingleBatch {
+            parent_hash: block.header.parent_hash,
+            epoch_num: epoch.number,
+            epoch_hash: epoch.hash,
+            timestamp: block.header.timestamp,
+            transactions,
+        })
     }
 }
 
@@ -117,7 +107,7 @@ mod tests {
     fn test_deposits_filtered() {
         // The L1 info deposit plus an extra deposit — both must be stripped.
         let block = make_block(vec![valid_deposit_tx(), deposit_tx(Bytes::new())]);
-        let (batch, _) = BatchComposer::block_to_single_batch(&block).unwrap();
+        let batch = BatchComposer::block_to_single_batch(&block).unwrap();
         assert!(batch.transactions.is_empty());
     }
 
@@ -126,7 +116,7 @@ mod tests {
         let user_tx = non_deposit_tx();
         let expected: Bytes = user_tx.encoded_2718().into();
         let block = make_block(vec![valid_deposit_tx(), user_tx]);
-        let (batch, _) = BatchComposer::block_to_single_batch(&block).unwrap();
+        let batch = BatchComposer::block_to_single_batch(&block).unwrap();
         assert_eq!(batch.transactions, vec![expected]);
     }
 
@@ -139,20 +129,11 @@ mod tests {
         block.header.timestamp = timestamp;
 
         let info = L1BlockInfoTx::Bedrock(L1BlockInfoBedrock::default());
-        let (batch, _) = BatchComposer::block_to_single_batch(&block).unwrap();
+        let batch = BatchComposer::block_to_single_batch(&block).unwrap();
 
         assert_eq!(batch.parent_hash, parent_hash);
         assert_eq!(batch.timestamp, timestamp);
         assert_eq!(batch.epoch_num, info.id().number);
         assert_eq!(batch.epoch_hash, info.id().hash);
-    }
-
-    #[test]
-    fn test_l1_info_returned() {
-        let block = make_block(vec![valid_deposit_tx()]);
-        let (_, l1_info) = BatchComposer::block_to_single_batch(&block).unwrap();
-        let expected = L1BlockInfoTx::Bedrock(L1BlockInfoBedrock::default());
-        assert_eq!(l1_info.sequence_number(), expected.sequence_number());
-        assert_eq!(l1_info.id(), expected.id());
     }
 }

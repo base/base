@@ -18,9 +18,9 @@ pub enum StepResult {
 /// Returned by [`BatchPipeline::step`](crate::BatchPipeline::step) when a block cannot be
 /// encoded and the pipeline cannot continue.
 ///
-/// Encoding failures are fatal. Continuing after a block-composition, span-construction,
-/// or channel-output error could omit part of the contiguous L2 block sequence required
-/// by the derivation spec.
+/// Encoding failures are fatal. Continuing after a block-composition or channel-output
+/// error could omit part of the contiguous L2 block sequence required by the derivation
+/// spec.
 #[derive(Debug, thiserror::Error)]
 pub enum StepError {
     /// The block could not be converted to a [`SingleBatch`].

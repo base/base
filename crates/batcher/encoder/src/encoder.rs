@@ -502,7 +502,7 @@ impl BatchPipeline for BatchEncoder {
 
         // Convert block to a SingleBatch. Failure here is fatal: skipping the block
         // would produce a gap in the L2 block sequence submitted to L1.
-        let (single_batch, l1_info) = BatchComposer::block_to_single_batch(block)
+        let single_batch = BatchComposer::block_to_single_batch(block)
             .map_err(|source| StepError::CompositionFailed { cursor: self.block_cursor, source })?;
 
         if self.current_channel.is_none() {
@@ -510,23 +510,16 @@ impl BatchPipeline for BatchEncoder {
         }
 
         let open = self.current_channel.as_mut().expect("channel exists after open_new_channel");
-        let outcome =
-            open.add_block(single_batch, l1_info.sequence_number(), block_da_backlog_bytes)?;
+        let outcome = open.add_block(single_batch, block_da_backlog_bytes)?;
 
         match outcome {
-            ChannelAddOutcome::Accepted | ChannelAddOutcome::AcceptedAndFull => {
+            ChannelAddOutcome::Accepted => {
                 // The queue cursor is the acceptance boundary. Advancing it
                 // earlier would lose a block when the channel rejects a candidate.
                 BatcherMetrics::input_bytes(BatcherMetrics::STAGE_ADDED)
                     .set(open.input_bytes() as f64);
                 self.block_cursor += 1;
-
-                if outcome == ChannelAddOutcome::AcceptedAndFull {
-                    self.close_current_channel("size_full")?;
-                    Ok(StepResult::ChannelClosed)
-                } else {
-                    Ok(StepResult::BlockEncoded)
-                }
+                Ok(StepResult::BlockEncoded)
             }
             ChannelAddOutcome::Rejected(reason) => {
                 // A hard RLP rejection in an empty channel cannot be resolved
@@ -792,9 +785,8 @@ mod tests {
     use alloy_consensus::{BlockBody, Header, SignableTransaction, TxLegacy};
     use alloy_primitives::{Bytes, Sealed, Signature};
     use base_common_consensus::{BaseTxEnvelope, TxDeposit};
-    use base_common_genesis::ChainGenesis;
     use base_comp::BatchComposeError;
-    use base_protocol::{Batch, BatchReader, BatchType, L1BlockInfoBedrock, L1BlockInfoTx};
+    use base_protocol::{L1BlockInfoBedrock, L1BlockInfoTx};
     use rstest::rstest;
 
     use super::*;
@@ -826,20 +818,6 @@ mod tests {
         }
     }
 
-    fn make_user_block_at(
-        parent_hash: B256,
-        number: u64,
-        timestamp: u64,
-        input_len: usize,
-    ) -> BaseBlock {
-        let mut block = make_block_at(parent_hash, number, timestamp);
-        let signed =
-            TxLegacy { nonce: number, input: vec![0; input_len].into(), ..Default::default() }
-                .into_signed(Signature::test_signature());
-        block.body.transactions.push(BaseTxEnvelope::Legacy(signed));
-        block
-    }
-
     fn make_user_tx_chain(len: usize) -> Vec<BaseBlock> {
         let mut parent_hash = B256::ZERO;
         (0..len)
@@ -850,13 +828,6 @@ mod tests {
                 block
             })
             .collect()
-    }
-
-    fn make_block_at(parent_hash: B256, number: u64, timestamp: u64) -> BaseBlock {
-        let mut block = make_block(parent_hash);
-        block.header.number = number;
-        block.header.timestamp = timestamp;
-        block
     }
 
     fn default_encoder() -> BatchEncoder {
@@ -1015,35 +986,6 @@ mod tests {
             encoder.confirm(id, 0);
         }
         assert_eq!(encoder.da_backlog_bytes(), 0);
-    }
-
-    #[test]
-    fn test_da_backlog_counts_blocks_in_open_span_channel() {
-        let config = EncoderConfig {
-            batch_type: BatchType::Span,
-            target_frame_size: EncoderConfig::MAX_BLOB_FRAME_SIZE,
-            max_channel_duration: 1000,
-            ..EncoderConfig::default()
-        };
-        let mut encoder = BatchEncoder::new(Arc::new(RollupConfig::default()), config);
-        for block in make_user_tx_chain(3) {
-            encoder.add_block(block).unwrap();
-        }
-
-        let queued_backlog = encoder.da_backlog_bytes();
-        assert!(queued_backlog > 0);
-
-        for _ in 0..3 {
-            assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
-        }
-
-        assert_eq!(encoder.block_cursor, 3);
-        assert_eq!(encoder.current_channel.as_ref().unwrap().blocks_added, 3);
-        assert_eq!(encoder.da_backlog_bytes(), queued_backlog);
-
-        encoder.force_close_channel();
-        assert!(!encoder.ready_channels.is_empty());
-        assert!(encoder.da_backlog_bytes() > 0);
     }
 
     #[test]
@@ -1613,392 +1555,6 @@ mod tests {
         assert!(encoder.ready_channels.is_empty());
     }
 
-    // --- Span batch tests ---
-
-    fn span_encoder_tiny_target() -> BatchEncoder {
-        let config = EncoderConfig {
-            batch_type: BatchType::Span,
-            target_frame_size: Frame::ENCODED_OVERHEAD + 2,
-            max_frame_size: EncoderConfig::MAX_BLOB_FRAME_SIZE,
-            ..EncoderConfig::default()
-        };
-        BatchEncoder::new(Arc::new(RollupConfig::default()), config)
-    }
-
-    #[test]
-    fn test_span_batch_commits_blocks_to_open_channel() {
-        let config = EncoderConfig {
-            batch_type: BatchType::Span,
-            target_frame_size: EncoderConfig::MAX_BLOB_FRAME_SIZE,
-            max_channel_duration: 1000,
-            ..EncoderConfig::default()
-        };
-        let mut encoder = BatchEncoder::new(Arc::new(RollupConfig::default()), config);
-
-        let b1 = make_block(B256::ZERO);
-        let b1_hash = b1.header.hash_slow();
-        encoder.add_block(b1).unwrap();
-        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
-
-        let b2 = make_block(b1_hash);
-        let b2_hash = b2.header.hash_slow();
-        encoder.add_block(b2).unwrap();
-        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
-
-        let b3 = make_block(b2_hash);
-        encoder.add_block(b3).unwrap();
-        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
-
-        let open = encoder.current_channel.as_ref().expect("span channel should remain open");
-        assert_eq!(open.blocks_added, 3);
-        assert!(open.input_bytes() > 0);
-        assert_eq!(encoder.block_cursor, 3);
-        assert!(encoder.next_submission().is_none());
-    }
-
-    #[test]
-    fn test_first_span_block_over_target_is_accepted_and_closed() {
-        let mut encoder = span_encoder_tiny_target();
-
-        let block = make_block(B256::ZERO);
-        encoder.add_block(block).unwrap();
-
-        assert_eq!(encoder.step().unwrap(), StepResult::ChannelClosed);
-        assert_eq!(encoder.block_cursor, 1);
-        assert!(encoder.current_channel.is_none());
-        assert!(encoder.next_submission().is_some());
-    }
-
-    #[test]
-    fn test_rejected_span_candidate_does_not_advance_block_cursor() {
-        let rollup_config = Arc::new(RollupConfig::default());
-        let first = make_block_at(B256::ZERO, 0, 1);
-        let first_hash = first.header.hash_slow();
-        let second = make_block_at(first_hash, 1, 2);
-        let probe_config = EncoderConfig {
-            batch_type: BatchType::Span,
-            compression_algo: crate::CompressionAlgo::Zlib,
-            ..EncoderConfig::default()
-        };
-        let mut probe = crate::channel::SpanChannel::new(
-            ChannelId::default(),
-            Arc::clone(&rollup_config),
-            &probe_config,
-        );
-        let (first_batch, first_l1_info) = BatchComposer::block_to_single_batch(&first).unwrap();
-        let (second_batch, second_l1_info) = BatchComposer::block_to_single_batch(&second).unwrap();
-        probe.add_block(first_batch, first_l1_info.sequence_number()).unwrap();
-        let one_block_size = probe.compress_accepted().unwrap();
-        probe.add_block(second_batch, second_l1_info.sequence_number()).unwrap();
-        let two_block_size = probe.compress_accepted().unwrap();
-        assert!(two_block_size > one_block_size + 1);
-
-        let config = EncoderConfig {
-            batch_type: BatchType::Span,
-            compression_algo: crate::CompressionAlgo::Zlib,
-            target_frame_size: Frame::ENCODED_OVERHEAD + one_block_size + 1,
-            max_channel_duration: 1000,
-            ..EncoderConfig::default()
-        };
-        let mut encoder = BatchEncoder::new(rollup_config, config);
-        encoder.add_block(first).unwrap();
-        encoder.add_block(second).unwrap();
-
-        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
-        assert_eq!(encoder.step().unwrap(), StepResult::ChannelClosed);
-        assert_eq!(encoder.block_cursor, 1);
-        assert_eq!(encoder.ready_channels[0].encoded_block_range, 0..1);
-
-        assert_eq!(encoder.step().unwrap(), StepResult::ChannelClosed);
-        assert_eq!(encoder.block_cursor, 2);
-    }
-
-    #[test]
-    fn test_span_rlp_rejection_closes_without_advancing_cursor() {
-        let rollup_config = Arc::new(RollupConfig::default());
-        let max_rlp_bytes = rollup_config.max_rlp_bytes_per_channel(1) as usize;
-        let input_len = max_rlp_bytes / 2 + 1_024;
-        let first = make_user_block_at(B256::ZERO, 0, 1, input_len);
-        let second = make_user_block_at(first.header.hash_slow(), 1, 2, input_len);
-        let config = EncoderConfig {
-            batch_type: BatchType::Span,
-            compression_algo: crate::CompressionAlgo::Zlib,
-            max_channel_duration: 1_000,
-            ..EncoderConfig::default()
-        };
-
-        let mut encoder = BatchEncoder::new(rollup_config, config);
-        encoder.add_block(first).unwrap();
-        encoder.add_block(second).unwrap();
-
-        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
-        assert_eq!(encoder.block_cursor, 1);
-
-        assert_eq!(encoder.step().unwrap(), StepResult::ChannelClosed);
-        assert_eq!(encoder.block_cursor, 1, "rejected block must remain at the cursor");
-        assert!(encoder.current_channel.is_none());
-        assert_eq!(encoder.ready_channels[0].encoded_block_range, 0..1);
-
-        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
-        assert_eq!(encoder.block_cursor, 2);
-        let retry_channel = encoder.current_channel.as_ref().expect("retry channel should be open");
-        assert_eq!(retry_channel.block_start, 1);
-        assert_eq!(retry_channel.blocks_added, 1);
-    }
-
-    #[rstest]
-    #[case(1)]
-    #[case(2)]
-    fn test_span_batch_max_blocks_seals_without_closing_channel(#[case] max_blocks: usize) {
-        let rollup_config = Arc::new(RollupConfig::default());
-        let config = EncoderConfig {
-            batch_type: BatchType::Span,
-            target_frame_size: EncoderConfig::MAX_BLOB_FRAME_SIZE, // large: size won't trigger
-            max_frame_size: EncoderConfig::MAX_BLOB_FRAME_SIZE,
-            max_channel_duration: 1000,
-            max_blocks_per_span_batch: Some(max_blocks),
-            ..EncoderConfig::default()
-        };
-        let mut encoder = BatchEncoder::new(Arc::clone(&rollup_config), config);
-
-        let mut parent_hash = B256::ZERO;
-        let blocks = (0..4)
-            .map(|number| {
-                let block = make_user_block_at(
-                    parent_hash,
-                    number,
-                    (number + 1) * rollup_config.block_time,
-                    0,
-                );
-                parent_hash = block.header.hash_slow();
-                block
-            })
-            .collect::<Vec<_>>();
-        let expected = blocks
-            .iter()
-            .map(|block| BatchComposer::block_to_single_batch(block).unwrap().0)
-            .collect::<Vec<_>>();
-
-        for block in blocks {
-            encoder.add_block(block).unwrap();
-            assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
-        }
-        assert!(encoder.current_channel.is_some());
-        assert!(encoder.ready_channels.is_empty());
-        assert!(encoder.next_submission().is_none());
-
-        encoder.force_close_channel();
-
-        let submission = encoder.next_submission().expect("submission should be available");
-        let channel_data = submission
-            .frames
-            .iter()
-            .flat_map(|frame| frame.data.iter().copied())
-            .collect::<Vec<_>>();
-        let mut reader = BatchReader::new(
-            channel_data,
-            RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize,
-            true,
-        );
-        let mut span_count = 0;
-        let mut actual = Vec::new();
-        while let Some(decoded) = reader.next_batch(rollup_config.as_ref()) {
-            let Batch::Span(span_batch) = decoded else {
-                panic!("expected span batch");
-            };
-            assert!(span_batch.batches.len() <= max_blocks);
-            span_count += 1;
-            actual.extend(span_batch.batches);
-        }
-
-        assert_eq!(span_count, expected.len().div_ceil(max_blocks));
-        assert_eq!(actual.len(), expected.len());
-        for (actual, expected) in actual.iter().zip(expected) {
-            assert_eq!(actual.epoch_num, expected.epoch_num);
-            assert_eq!(actual.timestamp, expected.timestamp);
-            assert_eq!(actual.transactions, expected.transactions);
-        }
-    }
-
-    /// Span batches encode their timestamp relative to the rollup genesis timestamp.
-    #[test]
-    fn test_span_batch_uses_rollup_genesis_timestamp() {
-        let genesis_l2_time = 1_000_000;
-        let block_time = 2;
-        let rollup_config = Arc::new(RollupConfig {
-            genesis: ChainGenesis { l2_time: genesis_l2_time, ..Default::default() },
-            block_time,
-            ..Default::default()
-        });
-        let config = EncoderConfig {
-            batch_type: BatchType::Span,
-            target_frame_size: EncoderConfig::MAX_BLOB_FRAME_SIZE,
-            max_frame_size: EncoderConfig::MAX_BLOB_FRAME_SIZE,
-            max_channel_duration: 1000,
-            ..EncoderConfig::default()
-        };
-        let mut encoder = BatchEncoder::new(Arc::clone(&rollup_config), config);
-
-        let first = make_block_at(B256::ZERO, 1, genesis_l2_time + block_time);
-        let first_hash = first.header.hash_slow();
-        let second = make_block_at(first_hash, 2, genesis_l2_time + 2 * block_time);
-
-        encoder.add_block(first).unwrap();
-        encoder.add_block(second).unwrap();
-        let frames = encoder.encode_and_drain().expect("span frames");
-        assert!(!frames.is_empty(), "span encoding must produce frames");
-
-        let channel_data =
-            frames.iter().flat_map(|frame| frame.data.iter().copied()).collect::<Vec<_>>();
-        let mut reader = BatchReader::new(
-            channel_data,
-            RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize,
-            true,
-        );
-        let decoded = reader.next_batch(rollup_config.as_ref()).expect("decoded span batch");
-        let Batch::Span(span_batch) = decoded else {
-            panic!("expected span batch");
-        };
-
-        assert_eq!(span_batch.batches.len(), 2);
-        assert_eq!(span_batch.batches[0].timestamp, genesis_l2_time + block_time);
-        assert_eq!(span_batch.batches[1].timestamp, genesis_l2_time + 2 * block_time);
-        assert!(reader.next_batch(rollup_config.as_ref()).is_none());
-    }
-
-    /// In Span mode, `advance_l1_head` closes the open channel when the effective
-    /// duration (`max_channel_duration - sub_safety_margin`) has elapsed.
-    #[rstest]
-    #[case(5, 0, 4, 5)] // no margin; full duration=5
-    #[case(10, 4, 5, 6)] // effective = 10-4 = 6
-    fn test_span_batch_timeout(
-        #[case] max_channel_duration: u64,
-        #[case] sub_safety_margin: u64,
-        #[case] below: u64,
-        #[case] at_threshold: u64,
-    ) {
-        let config = EncoderConfig {
-            batch_type: BatchType::Span,
-            target_frame_size: EncoderConfig::MAX_BLOB_FRAME_SIZE, // large: size won't trigger
-            max_frame_size: EncoderConfig::MAX_BLOB_FRAME_SIZE,
-            max_channel_duration,
-            sub_safety_margin,
-            ..EncoderConfig::default()
-        };
-        let mut encoder = BatchEncoder::new(Arc::new(RollupConfig::default()), config);
-
-        encoder.add_block(make_block(B256::ZERO)).unwrap();
-        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
-        assert!(encoder.current_channel.is_some());
-
-        encoder.advance_l1_head(below);
-        assert!(encoder.current_channel.is_some(), "channel must remain open before timeout");
-        assert!(encoder.ready_channels.is_empty());
-
-        encoder.advance_l1_head(at_threshold);
-        assert!(encoder.current_channel.is_none(), "channel must close at timeout");
-        assert!(!encoder.ready_channels.is_empty(), "a ready channel must exist after close");
-        assert!(
-            encoder.next_submission().is_some(),
-            "should have a submission after timeout close"
-        );
-    }
-
-    /// End-to-end span batch path through confirmation and safe-head pruning.
-    #[test]
-    fn test_span_batch_end_to_end() {
-        let mut encoder = span_encoder_tiny_target();
-
-        let b1 = make_block(B256::ZERO);
-        let safe_l2 = BlockInfo::from(&b1);
-        encoder.add_block(b1).unwrap();
-        assert_eq!(encoder.step().unwrap(), StepResult::ChannelClosed);
-
-        let sub = encoder.next_submission().expect("submission must be available");
-        let sub_id = sub.id;
-
-        assert!(!encoder.blocks.is_empty());
-
-        encoder.confirm(sub_id, 10);
-        assert_eq!(encoder.blocks.len(), 1, "confirmation keeps the block buffered");
-        assert!(encoder.prune_safe(safe_l2));
-        assert!(encoder.blocks.is_empty());
-        assert_eq!(encoder.block_cursor, 0);
-    }
-
-    /// `reset()` in Span mode discards the open transactional channel.
-    #[test]
-    fn test_span_batch_reset_clears_span_state() {
-        let config = EncoderConfig {
-            batch_type: BatchType::Span,
-            target_frame_size: EncoderConfig::MAX_BLOB_FRAME_SIZE, // large: size won't trigger
-            max_channel_duration: 1000,
-            ..EncoderConfig::default()
-        };
-        let mut encoder = BatchEncoder::new(Arc::new(RollupConfig::default()), config);
-
-        let block = make_block(B256::ZERO);
-        encoder.add_block(block).unwrap();
-        encoder.step().unwrap();
-
-        assert!(encoder.current_channel.is_some());
-
-        encoder.reset();
-
-        assert!(encoder.current_channel.is_none());
-    }
-
-    /// Multiple successive Span channels confirm independently and prune on safe-head advance.
-    #[test]
-    fn test_span_batch_multiple_channels() {
-        let mut encoder = span_encoder_tiny_target();
-
-        // First block → size threshold → first channel closed.
-        let b1 = make_block(B256::ZERO);
-        let b1_hash = b1.header.hash_slow();
-        encoder.add_block(b1).unwrap();
-        assert_eq!(encoder.step().unwrap(), StepResult::ChannelClosed);
-        assert_eq!(encoder.ready_channels.len(), 1);
-
-        // Second block → size threshold → second channel closed.
-        let mut b2 = make_block(b1_hash);
-        b2.header.number = 1;
-        let safe_l2 = BlockInfo::from(&b2);
-        encoder.add_block(b2).unwrap();
-        assert_eq!(encoder.step().unwrap(), StepResult::ChannelClosed);
-        assert_eq!(encoder.ready_channels.len(), 2);
-
-        let sub1 = encoder.next_submission().expect("ch1 must have a submission");
-        let sub2 = encoder.next_submission().expect("ch2 must have a submission");
-        encoder.confirm(sub2.id, 11);
-        encoder.confirm(sub1.id, 10);
-        assert_eq!(encoder.ready_channels.len(), 2);
-        assert!(encoder.pending.is_empty());
-        assert_eq!(encoder.blocks.len(), 2);
-
-        assert!(encoder.prune_safe(safe_l2));
-        assert!(encoder.ready_channels.is_empty());
-        assert!(encoder.blocks.is_empty());
-    }
-
-    /// A span-mode requeue makes the submission frames ready again.
-    #[test]
-    fn test_span_batch_requeue_marks_frames_ready() {
-        let mut encoder = span_encoder_tiny_target();
-
-        let block = make_block(B256::ZERO);
-        encoder.add_block(block).unwrap();
-        assert_eq!(encoder.step().unwrap(), StepResult::ChannelClosed);
-
-        let sub = encoder.next_submission().unwrap();
-        let sub_id = sub.id;
-
-        encoder.requeue(sub_id);
-
-        let resub = encoder.next_submission();
-        assert!(resub.is_some(), "requeued span frames must be available again");
-    }
-
     // --- prune_safe tests ---
 
     fn make_numbered_block(parent_hash: B256, number: u64) -> BaseBlock {
@@ -2133,19 +1689,6 @@ mod tests {
         let mut encoder = default_encoder();
         let frames = encoder.encode_and_drain().expect("encode_and_drain");
         assert!(frames.is_empty(), "no blocks → encode_and_drain must return empty");
-    }
-
-    /// `encode_and_drain` in Span mode encodes and drains frames correctly.
-    #[test]
-    fn test_encode_and_drain_span_mode() {
-        let rollup_config = Arc::new(RollupConfig::default());
-        let config = EncoderConfig { batch_type: BatchType::Span, ..EncoderConfig::default() };
-        let mut encoder = BatchEncoder::new(rollup_config, config);
-        encoder.add_block(make_block_with_user_tx(B256::ZERO)).expect("add block 1");
-        let hash = make_block_with_user_tx(B256::ZERO).header.hash_slow();
-        encoder.add_block(make_block_with_user_tx(hash)).expect("add block 2");
-        let frames = encoder.encode_and_drain().expect("encode_and_drain span");
-        assert!(!frames.is_empty(), "span encode_and_drain must produce frames");
     }
 
     /// Encoding with a small `max_frame_size` fragments a multi-block channel

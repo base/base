@@ -244,9 +244,9 @@ impl SpanBatch {
 
     /// Encodes this span directly into its raw wire format.
     ///
-    /// [`crate::Batch::encode`] and the batcher's Span candidate builder call
-    /// this after writing the batch type byte. Encoding from the derived caches
-    /// avoids cloning them into an owned [`crate::RawSpanBatch`].
+    /// [`crate::Batch::encode`] and protocol-level fixture builders call this
+    /// after writing the batch type byte. Encoding from the derived caches avoids
+    /// cloning them into an owned [`crate::RawSpanBatch`].
     ///
     /// Returns [`SpanBatchError::EmptySpanBatch`] when no block has been appended.
     pub fn encode(&self, w: &mut dyn bytes::BufMut) -> Result<(), SpanBatchError> {

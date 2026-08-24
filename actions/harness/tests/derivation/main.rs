@@ -18,9 +18,7 @@ use base_consensus_derive::{
     EthereumDataSource, PipelineBuilder, PipelineEncodingError, PipelineError, PipelineErrorKind,
     StatefulAttributesBuilder, StepResult,
 };
-use base_protocol::{
-    BatchType, BlockInfo, DERIVATION_VERSION_0, DepositDecodeError, Deposits, L2BlockInfo,
-};
+use base_protocol::{BlockInfo, DERIVATION_VERSION_0, DepositDecodeError, Deposits, L2BlockInfo};
 
 mod holocene_span_batches;
 mod node;
@@ -1369,12 +1367,11 @@ async fn multi_frame_channel_reassembled() {
 /// block.
 ///
 /// Mirrors [`single_l2_block_derived_from_batcher_frame`] but uses
-/// [`BatchType::Span`] encoding. The derivation pipeline must correctly parse
+/// a protocol-level Span fixture. The derivation pipeline must correctly parse
 /// the span-encoded channel and advance the safe head.
 #[tokio::test]
 async fn single_l2_block_derived_from_span_batch() {
     let batcher_cfg = BatcherConfig {
-        batch_type: BatchType::Span,
         encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
         ..BatcherConfig::default()
     };
@@ -1383,9 +1380,8 @@ async fn single_l2_block_derived_from_span_batch() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let mut source = ActionL2Source::new();
-    source.push(sequencer.build_next_block_with_single_transaction().await);
-    Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
+    let block = sequencer.build_next_block_with_single_transaction().await;
+    h.submit_span_batch_calldata(&batcher_cfg, &[block], 0).expect("span fixture submission");
 
     let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
         &mut sequencer,
@@ -1407,7 +1403,6 @@ async fn single_l2_block_derived_from_span_batch() {
 #[tokio::test]
 async fn three_l2_blocks_derived_from_span_batch() {
     let batcher_cfg = BatcherConfig {
-        batch_type: BatchType::Span,
         encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
         ..BatcherConfig::default()
     };
@@ -1417,12 +1412,12 @@ async fn three_l2_blocks_derived_from_span_batch() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
 
-    let mut source = ActionL2Source::new();
+    let mut blocks = Vec::new();
     for _ in 1..=3u64 {
         let block = sequencer.build_next_block_with_single_transaction().await;
-        source.push(block);
+        blocks.push(block);
     }
-    Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
+    h.submit_span_batch_calldata(&batcher_cfg, &blocks, 0).expect("span fixture submission");
 
     let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
         &mut sequencer,
@@ -2367,7 +2362,6 @@ async fn pipeline_l1_origin_advance_observable_after_epoch_exhausted() {
 #[tokio::test]
 async fn span_batch_crossing_l1_epoch_boundary() {
     let batcher_cfg = BatcherConfig {
-        batch_type: BatchType::Span,
         encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
         ..BatcherConfig::default()
     };
@@ -2382,9 +2376,9 @@ async fn span_batch_crossing_l1_epoch_boundary() {
     let mut builder = h.create_l2_sequencer(l1_chain);
 
     // Blocks 1–5 (ts=2..10) reference epoch 0; block 6 (ts=12) references epoch 1.
-    let mut source = ActionL2Source::new();
+    let mut blocks = Vec::new();
     for _ in 1..=6u64 {
-        source.push(builder.build_next_block_with_single_transaction().await);
+        blocks.push(builder.build_next_block_with_single_transaction().await);
     }
     assert_eq!(builder.head().l1_origin.number, 1, "block 6 must reference epoch 1");
 
@@ -2394,7 +2388,7 @@ async fn span_batch_crossing_l1_epoch_boundary() {
     );
 
     // Encode all 6 blocks as a single span batch and submit in L1 block 2.
-    Batcher::new(source, &h.rollup_config, batcher_cfg).advance(&mut h.l1).await;
+    h.submit_span_batch_calldata(&batcher_cfg, &blocks, 0).expect("span fixture submission");
     chain.push(h.l1.tip().clone()); // L1 block 2: span batch for all 6 L2 blocks
 
     node.initialize().await;
@@ -2430,7 +2424,6 @@ async fn span_batch_crossing_l1_epoch_boundary() {
 #[tokio::test]
 async fn out_of_order_span_batches_reordered_by_batch_queue() {
     let span_cfg = BatcherConfig {
-        batch_type: BatchType::Span,
         encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
         ..BatcherConfig::default()
     };
@@ -2449,19 +2442,12 @@ async fn out_of_order_span_batches_reordered_by_batch_queue() {
     );
 
     // L1 block 1: span batch for L2 block 2 (future batch, submitted out of order).
-    {
-        let mut source = ActionL2Source::new();
-        source.push(block2);
-        Batcher::new(source, &h.rollup_config, span_cfg.clone()).advance(&mut h.l1).await;
-    }
+    h.submit_span_batch_calldata(&span_cfg, &[block2], 0).expect("future span fixture submission");
     chain.push(h.l1.tip().clone()); // L1 block 1: future span batch
 
     // L1 block 2: span batch for L2 block 1 (the expected-next batch).
-    {
-        let mut source = ActionL2Source::new();
-        source.push(block1);
-        Batcher::new(source, &h.rollup_config, span_cfg).advance(&mut h.l1).await;
-    }
+    h.submit_span_batch_calldata(&span_cfg, &[block1], 100)
+        .expect("expected span fixture submission");
     // Do NOT push block 2 yet — let the pipeline see only block 1 first.
 
     node.initialize().await;

@@ -6,7 +6,6 @@ use base_action_harness::{
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
 use base_common_genesis::UpgradeConfig;
-use base_protocol::BatchType;
 
 // ---------------------------------------------------------------------------
 // Section 1: Base mainnet config — upgrade boundary tests
@@ -274,17 +273,15 @@ async fn span_batch_rejected_before_delta() {
     let mut builder = h.create_l2_sequencer(l1_chain);
 
     let span_cfg = BatcherConfig {
-        batch_type: BatchType::Span,
         encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
         ..batcher_cfg.clone()
     };
 
-    // Both blocks in one source, one advance produces a span batch.
-    let mut source = ActionL2Source::new();
-    source.push(builder.build_next_block_with_single_transaction().await);
-    source.push(builder.build_next_block_with_single_transaction().await);
-    let mut batcher = Batcher::new(source, &h.rollup_config, span_cfg);
-    batcher.advance(&mut h.l1).await;
+    let blocks = [
+        builder.build_next_block_with_single_transaction().await,
+        builder.build_next_block_with_single_transaction().await,
+    ];
+    h.submit_span_batch_calldata(&span_cfg, &blocks, 0).expect("pre-Delta span fixture submission");
 
     let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
         &mut builder,
@@ -317,17 +314,16 @@ async fn span_batch_derives_after_delta() {
     let mut builder = h.create_l2_sequencer(l1_chain);
 
     let span_cfg = BatcherConfig {
-        batch_type: BatchType::Span,
         encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
         ..batcher_cfg.clone()
     };
 
-    // Both blocks in one source → one span batch in one L1 block.
-    let mut source = ActionL2Source::new();
-    source.push(builder.build_next_block_with_single_transaction().await);
-    source.push(builder.build_next_block_with_single_transaction().await);
-    let mut batcher = Batcher::new(source, &h.rollup_config, span_cfg);
-    batcher.advance(&mut h.l1).await;
+    let blocks = [
+        builder.build_next_block_with_single_transaction().await,
+        builder.build_next_block_with_single_transaction().await,
+    ];
+    h.submit_span_batch_calldata(&span_cfg, &blocks, 0)
+        .expect("post-Delta span fixture submission");
 
     let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
         &mut builder,

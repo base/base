@@ -4,7 +4,7 @@ use base_common_genesis::RollupConfig;
 pub use base_comp::CompressionAlgo;
 use base_protocol::{
     BLOB_DERIVATION_PREFIX_SIZE as PROTOCOL_BLOB_DERIVATION_PREFIX_SIZE,
-    BLOB_MAX_DATA_SIZE as PROTOCOL_BLOB_MAX_DATA_SIZE, BatchType, Frame,
+    BLOB_MAX_DATA_SIZE as PROTOCOL_BLOB_MAX_DATA_SIZE, Frame,
     MAX_BLOB_FRAME_SIZE as PROTOCOL_MAX_BLOB_FRAME_SIZE,
 };
 
@@ -54,22 +54,6 @@ pub struct EncoderConfig {
     /// Default: 1 (one blob per transaction).
     pub target_num_frames: usize,
 
-    /// Maximum number of L2 blocks to accumulate into one span batch.
-    ///
-    /// Reaching the limit seals the current span batch and starts another in the
-    /// same channel. It does not close the channel. When unset, a channel contains
-    /// one span batch.
-    ///
-    /// Default: `None`.
-    pub max_blocks_per_span_batch: Option<usize>,
-
-    /// Whether to encode blocks as individual
-    /// [`SingleBatch`](base_protocol::batch::SingleBatch)es
-    /// or group them into [`SpanBatch`](base_protocol::SpanBatch)es.
-    ///
-    /// Default: [`BatchType::Single`].
-    pub batch_type: BatchType,
-
     /// How frames should be encoded for L1 submission.
     ///
     /// When set to [`DaType::Calldata`], set [`target_num_frames`] to `1` so
@@ -114,8 +98,6 @@ impl Default for EncoderConfig {
             max_channel_duration: 2,
             sub_safety_margin: 0,
             target_num_frames: 1,
-            max_blocks_per_span_batch: None,
-            batch_type: BatchType::Single,
             da_type: DaType::Blob,
             compression_algo: CompressionAlgo::Brotli10,
             max_l1_tx_size_bytes: None,
@@ -133,22 +115,6 @@ impl EncoderConfig {
     /// Largest serialized frame that can fit in one blob after reserving the
     /// derivation-version prefix.
     pub const MAX_BLOB_FRAME_SIZE: usize = PROTOCOL_MAX_BLOB_FRAME_SIZE;
-
-    /// Returns the compressed channel bytes that fit in the target frames.
-    ///
-    /// Frame metadata is reserved in every frame. Brotli's channel-version byte
-    /// is reserved once at the start of the first frame. The Span producer uses
-    /// this value as its channel-size boundary.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the configuration has not passed [`Self::validate`].
-    pub fn target_output_size(&self) -> usize {
-        let channel_version_size =
-            usize::from(!matches!(self.compression_algo, CompressionAlgo::Zlib));
-        (self.target_frame_size - Frame::ENCODED_OVERHEAD) * self.target_num_frames
-            - channel_version_size
-    }
 
     /// Validate the configuration, returning an error if any constraint is violated.
     ///
@@ -188,22 +154,10 @@ impl EncoderConfig {
             return Err(EncoderConfigError::TargetNumFramesZero);
         }
 
-        let target_payload_bytes = self.target_frame_size - Frame::ENCODED_OVERHEAD;
-        if target_payload_bytes.checked_mul(self.target_num_frames).is_none() {
-            return Err(EncoderConfigError::TargetOutputSizeOverflow {
-                target_frame_size: self.target_frame_size,
-                target_num_frames: self.target_num_frames,
-            });
-        }
-
         if matches!(self.da_type, DaType::Calldata) && self.target_num_frames != 1 {
             return Err(EncoderConfigError::CalldataRequiresSingleFrame {
                 target_num_frames: self.target_num_frames,
             });
-        }
-
-        if matches!(self.max_blocks_per_span_batch, Some(0)) {
-            return Err(EncoderConfigError::MaxBlocksPerSpanBatchZero);
         }
 
         if matches!(self.da_type, DaType::Blob) && self.max_frame_size > Self::MAX_BLOB_FRAME_SIZE {
@@ -228,25 +182,14 @@ impl EncoderConfig {
     /// Validate the configuration against the active rollup state.
     ///
     /// `next_l2_timestamp` should be the timestamp of the next L2 block the
-    /// batcher may encode. Span batches and Brotli compression are only valid
-    /// once Fjord is active for that next block.
+    /// batcher may encode. Brotli compression is only valid once Fjord is active
+    /// for that next block.
     pub fn validate_for_rollup_config(
         &self,
         rollup_config: &RollupConfig,
         next_l2_timestamp: u64,
     ) -> Result<(), EncoderConfigError> {
         self.validate()?;
-
-        if matches!(self.batch_type, BatchType::Span)
-            && !rollup_config.is_fjord_active(next_l2_timestamp)
-        {
-            return rollup_config.upgrades.fjord_time.map_or(
-                Err(EncoderConfigError::SpanBatchRequiresScheduledFjord { next_l2_timestamp }),
-                |fjord_time| {
-                    Err(EncoderConfigError::SpanBatchBeforeFjord { next_l2_timestamp, fjord_time })
-                },
-            );
-        }
 
         if !matches!(self.compression_algo, CompressionAlgo::Zlib)
             && !rollup_config.is_fjord_active(next_l2_timestamp)
@@ -301,17 +244,6 @@ pub enum EncoderConfigError {
     /// `target_num_frames == 0`.
     #[error("target_num_frames must be greater than zero")]
     TargetNumFramesZero,
-    /// The total target output size does not fit in a `usize`.
-    #[error(
-        "target output size overflows usize for target_frame_size {target_frame_size} \
-         and target_num_frames {target_num_frames}"
-    )]
-    TargetOutputSizeOverflow {
-        /// The configured target frame size.
-        target_frame_size: usize,
-        /// The configured target number of frames.
-        target_num_frames: usize,
-    },
     /// `da_type == DaType::Calldata` but `target_num_frames != 1`.
     ///
     /// Calldata mode submits one frame per L1 transaction. Set
@@ -321,9 +253,6 @@ pub enum EncoderConfigError {
         /// The configured target number of frames.
         target_num_frames: usize,
     },
-    /// `max_blocks_per_span_batch == 0`.
-    #[error("max_blocks_per_span_batch must be greater than zero when set")]
-    MaxBlocksPerSpanBatchZero,
     /// `da_type == DaType::Blob` but `max_frame_size` leaves no room for the
     /// derivation-version prefix.
     #[error(
@@ -347,26 +276,6 @@ pub enum EncoderConfigError {
         target_frame_size: usize,
         /// The maximum frame size that leaves room for the derivation-version prefix.
         max_blob_frame_size: usize,
-    },
-    /// `batch_type == BatchType::Span` before Fjord activates.
-    #[error(
-        "span batches require Fjord to be active for the next L2 block; \
-         next_l2_timestamp ({next_l2_timestamp}) is before fjord_time ({fjord_time})"
-    )]
-    SpanBatchBeforeFjord {
-        /// The timestamp of the next L2 block the batcher may encode.
-        next_l2_timestamp: u64,
-        /// The configured Fjord activation timestamp.
-        fjord_time: u64,
-    },
-    /// `batch_type == BatchType::Span` but Fjord is not scheduled.
-    #[error(
-        "span batches require Fjord to be scheduled and active for the next L2 block; \
-         next_l2_timestamp is {next_l2_timestamp}"
-    )]
-    SpanBatchRequiresScheduledFjord {
-        /// The timestamp of the next L2 block the batcher may encode.
-        next_l2_timestamp: u64,
     },
     /// Brotli compression is configured before Fjord activates.
     #[error(
@@ -400,24 +309,6 @@ mod tests {
             cfg.max_frame_size + EncoderConfig::BLOB_DERIVATION_PREFIX_SIZE,
             EncoderConfig::BLOB_MAX_DATA_SIZE
         );
-        assert_eq!(cfg.max_blocks_per_span_batch, None);
-    }
-
-    #[rstest]
-    #[case(CompressionAlgo::Zlib, 154)]
-    #[case(CompressionAlgo::Brotli10, 153)]
-    fn target_output_size_reserves_frame_overhead(
-        #[case] compression_algo: CompressionAlgo,
-        #[case] expected: usize,
-    ) {
-        let cfg = EncoderConfig {
-            target_frame_size: 100,
-            target_num_frames: 2,
-            compression_algo,
-            ..EncoderConfig::default()
-        };
-
-        assert_eq!(cfg.target_output_size(), expected);
     }
 
     #[rstest]
@@ -507,20 +398,6 @@ mod tests {
     }
 
     #[test]
-    fn validate_rejects_target_output_size_overflow() {
-        let cfg = EncoderConfig {
-            target_frame_size: usize::MAX,
-            target_num_frames: 2,
-            ..EncoderConfig::default()
-        };
-
-        assert!(matches!(
-            cfg.validate().unwrap_err(),
-            EncoderConfigError::TargetOutputSizeOverflow { .. }
-        ));
-    }
-
-    #[test]
     fn validate_rejects_blob_frame_size_that_leaves_no_prefix_room() {
         let cfg = EncoderConfig {
             max_frame_size: EncoderConfig::BLOB_MAX_DATA_SIZE,
@@ -570,21 +447,6 @@ mod tests {
         assert!(cfg.validate().is_ok());
     }
 
-    #[test]
-    fn validate_rejects_zero_max_blocks_per_span_batch() {
-        let cfg = EncoderConfig { max_blocks_per_span_batch: Some(0), ..EncoderConfig::default() };
-
-        let err = cfg.validate().unwrap_err();
-        assert!(matches!(err, EncoderConfigError::MaxBlocksPerSpanBatchZero));
-    }
-
-    #[test]
-    fn validate_allows_one_block_per_span_batch() {
-        let cfg = EncoderConfig { max_blocks_per_span_batch: Some(1), ..EncoderConfig::default() };
-
-        assert!(cfg.validate().is_ok());
-    }
-
     fn rollup_config_with(block_time: u64, fjord_time: Option<u64>) -> RollupConfig {
         RollupConfig {
             block_time,
@@ -609,37 +471,5 @@ mod tests {
 
         let err = cfg.validate_for_rollup_config(&rollup_config, 98).unwrap_err();
         assert!(matches!(err, EncoderConfigError::BrotliRequiresFjord { next_l2_timestamp: 98 }));
-    }
-
-    #[test]
-    fn validate_for_rollup_config_rejects_span_before_fjord() {
-        let cfg = EncoderConfig { batch_type: BatchType::Span, ..EncoderConfig::default() };
-        let rollup_config = rollup_config_with(2, Some(100));
-
-        let err = cfg.validate_for_rollup_config(&rollup_config, 98).unwrap_err();
-        assert!(matches!(
-            err,
-            EncoderConfigError::SpanBatchBeforeFjord { next_l2_timestamp: 98, fjord_time: 100 }
-        ));
-    }
-
-    #[test]
-    fn validate_for_rollup_config_allows_span_at_fjord_activation() {
-        let cfg = EncoderConfig { batch_type: BatchType::Span, ..EncoderConfig::default() };
-        let rollup_config = rollup_config_with(2, Some(100));
-
-        assert!(cfg.validate_for_rollup_config(&rollup_config, 100).is_ok());
-    }
-
-    #[test]
-    fn validate_for_rollup_config_rejects_unscheduled_fjord_for_span() {
-        let cfg = EncoderConfig { batch_type: BatchType::Span, ..EncoderConfig::default() };
-        let rollup_config = rollup_config_with(2, None);
-
-        let err = cfg.validate_for_rollup_config(&rollup_config, 2).unwrap_err();
-        assert!(matches!(
-            err,
-            EncoderConfigError::SpanBatchRequiresScheduledFjord { next_l2_timestamp: 2 }
-        ));
     }
 }

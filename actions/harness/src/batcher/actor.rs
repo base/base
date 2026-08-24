@@ -10,7 +10,6 @@ use base_batcher_encoder::{BatchEncoder, EncoderConfig};
 use base_batcher_source::{ChannelBlockSource, ChannelL1HeadSource, L2BlockEvent};
 use base_common_consensus::BaseBlock;
 use base_common_genesis::RollupConfig;
-use base_protocol::BatchType;
 use base_runtime::TokioRuntime;
 use base_tx_manager::TxManager;
 use tokio_util::sync::CancellationToken;
@@ -25,9 +24,6 @@ pub struct BatcherConfig {
     pub batcher_address: alloy_primitives::Address,
     /// Batch inbox address on L1. Used as the `to` field on L1 transactions.
     pub inbox_address: alloy_primitives::Address,
-    /// Whether to encode blocks as [`SingleBatch`](base_protocol::SingleBatch)es
-    /// or a [`SpanBatch`](base_protocol::SpanBatch).
-    pub batch_type: BatchType,
     /// Encoder configuration forwarded to [`BatchEncoder`].
     pub encoder: EncoderConfig,
     /// L1 signer used to produce signed `TxEnvelope`s for production-mode DA tests.
@@ -44,7 +40,6 @@ impl Default for BatcherConfig {
         Self {
             batcher_address: l1_signer.address(),
             inbox_address: alloy_primitives::Address::repeat_byte(0xCA),
-            batch_type: BatchType::Single,
             encoder: EncoderConfig::default(),
             l1_signer,
         }
@@ -141,9 +136,7 @@ impl<S: L2BlockProvider> Batcher<S> {
     fn build(l2_source: S, rollup_config: &RollupConfig, config: BatcherConfig) -> Self {
         let l1_chain_id = rollup_config.l1_chain_id;
         let rollup_config = Arc::new(rollup_config.clone());
-        let mut encoder_config = config.encoder.clone();
-        encoder_config.batch_type = config.batch_type;
-        let pipeline = BatchEncoder::new(rollup_config, encoder_config);
+        let pipeline = BatchEncoder::new(rollup_config, config.encoder.clone());
 
         let (source, block_tx) = ChannelBlockSource::new();
 
