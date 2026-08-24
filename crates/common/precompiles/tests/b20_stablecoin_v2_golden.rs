@@ -47,8 +47,8 @@ use common::{
 
 // --- fixtures ---------------------------------------------------------------
 
-const NAME: &str = "USD Coin";
-const SYMBOL: &str = "USDC";
+const NAME: &str = "Base Dollar";
+const SYMBOL: &str = "bUSD";
 const CURRENCY: &str = "USD";
 const LOGIC: StablecoinV2 = StablecoinV2;
 
@@ -63,71 +63,71 @@ const POLICY_ID_2: u64 = (1u64 << 56) | 8;
 // suite runs Legacy, so an op that triggers Cobalt dynamic tail cleanup (name/symbol/contract-URI)
 // can diverge from its V1 pin. Re-blessing reflects the true Cobalt snapshot for each.
 
-const ROOT_FRESH: B256 = b256!("7f52ac593dc5c5de5e040f65148db8c081010c85db757516d9eb2c19e8903951");
+const ROOT_FRESH: B256 = b256!("bf580eac849e894561daeeecac9e412373430ad50b65434c0dca29025b00fdd7");
 const ROOT_TRANSFER_PRIV: B256 =
-    b256!("55bdd0b008a5e28bd9dee4572766a7bce75b0147fb614c9b4874963fc18ef390");
+    b256!("0ee1464bf7b842fec4fca6802f1fb3397087a99171c3da757d8aafa27322eda1");
 const ROOT_TRANSFER_UNPRIV: B256 =
-    b256!("dc5dfb01848c6061b25b98deee929c2bc9dd05191e1892186254aedef4445ace");
+    b256!("94535be95a5043e812a723a89d80632b6455091c93049601afc5ead6b3237a65");
 const ROOT_TRANSFER_WITH_MEMO: B256 =
-    b256!("8c9923a10e52e0dd795aed030a844bcff443ee66d4908caf897a525e1de4f867");
+    b256!("9424567f766f42badffca4e54588a67091a583400c9bdb881bc74d9df81f6428");
 const ROOT_TRANSFER_FROM_FINITE: B256 =
-    b256!("9f644119a7130cd4fabba18dae6980e4b9a48f5416819c1954e9e932e514e6e7");
+    b256!("2924377d5e2d504195dfd71a19563ba6a390af8fe58e2a1950aa8baed03703c5");
 const ROOT_TRANSFER_FROM_INFINITE: B256 =
-    b256!("82e62dc5394bea0ebfe17dd63a093c52b4ceae8facf063b44ccc0597480cc49c");
+    b256!("2ad40ca237386a1e6fb2ca314b7eba660d58b8f97724c385c42c2eb9676713a7");
 const ROOT_TRANSFER_FROM_WITH_MEMO: B256 =
-    b256!("982762526afaf9b37c8bc0090352cb27d2150603791690d7344ea19ae7143269");
+    b256!("96bcdc5001debd10e63f42a4dfe0430eb05ac44ac80390aa4b3e42f2e364577c");
 const ROOT_APPROVE: B256 =
-    b256!("9837570caf42d864a0bac32087df15d3666a0de714567d951564b145b2b5a41e");
+    b256!("c53db8b6c550d1dd55943584f5e0beaaac8553368beeb3c56243498d6fb1cbe7");
 const ROOT_MINT_PRIV: B256 =
-    b256!("749a0f706e60853de51cd87c7312c104b0783c731b39d34016be07f9c76c0c50");
+    b256!("e3ff114e985b47774ef4291604546e2ebd1f0d208b3e58dd054232767760ffaf");
 const ROOT_MINT_UNPRIV: B256 =
-    b256!("1d5cf40eb04aafe96b4a32c9734f58a94ee0eca0ddbffbc3d6ab9f45db9cc587");
+    b256!("e6764fa78f04eb3cc3f64658600a11353e6d8a7822f6219fb5f7817eb4349c28");
 const ROOT_MINT_WITH_MEMO: B256 =
-    b256!("aea0744daa897ae140dc5fdabbd66bd520815e87c75086f1caf5bd5d8db45455");
-const ROOT_BURN: B256 = b256!("e292d12852ea52c48bf7869feac153e12aff28fdc301d0c641fa3629d258dcef");
+    b256!("b573c425885d631f1dc025c72190dca8af773bd08ea08a1201f500efbad07dc9");
+const ROOT_BURN: B256 = b256!("dbafa7df680e7c0f9314a08d133d92467c39e90d3000f020f6a0887f69dceaaa");
 const ROOT_BURN_WITH_MEMO: B256 =
-    b256!("a261f181fb9c7b7143307339be3844de4584275bac4bc002a1cdbc2547757898");
+    b256!("8e498187967c8c4a9b44731b97cff8371df4fe878b21d87c79d53663dff9a574");
 const ROOT_BURN_BLOCKED: B256 =
-    b256!("adc5a77aca0c7da11dd25ff69d2434badf8d0f035eacd2de7cdf5592efc31c2a");
-const ROOT_PAUSE: B256 = b256!("8fc4e227c8dcc72faebe02a2f0154ff0834d5a99cf472e15ea6e49d742c299ef");
+    b256!("8c0903882ce06f44f39f712095e04fe4043dee99ff9a0ea7dd4d29f59bdb92dc");
+const ROOT_PAUSE: B256 = b256!("bd750dfb76762b748ead6ec237eac189bda7ff7d2ef3e315b9c65003c5d6ed6d");
 const ROOT_UNPAUSE: B256 =
-    b256!("67f1ec70420578aafb490cdc86a5e450211342259aa79b0fb18944bffe3de1e8");
+    b256!("46c5e87f7aa51dab8813d94294dfc2586f4d6ec6444f3c3180e4023297f95074");
 const ROOT_UPDATE_SUPPLY_CAP: B256 =
-    b256!("18b9e262e9471a0013e0600b698ef9c74bcfccefcfcad83a46251c9f8e817e27");
+    b256!("db5b9601b07844e2a2b0f65c77b923e61b4760ae12193fd18157743587190797");
 const ROOT_UPDATE_NAME: B256 =
-    b256!("a9b4b1d35935031022f5f9da53db1b75cca0f290cd0c477d88452806abfb802c");
+    b256!("b03cee01b5a69496527aab9a87371b6e32048271d1a37d9f4a85275decbf4f00");
 const ROOT_UPDATE_SYMBOL: B256 =
-    b256!("aad153e419c17753d3bf730d6183164458c858379a81e4eb35687b08005617ad");
+    b256!("b13fcaa2a3805825974cb5ccf27a7c78ac28794c3797ebbff1f0ce75bb36755a");
 const ROOT_UPDATE_CONTRACT_URI: B256 =
-    b256!("2678f67a192fd017125a2b1b9616a894a156018956e7bb99a15ac8bdf475a7a1");
+    b256!("dcb77fabcbb0ef4c32ccb66e79f8d9b6ff6c12215acba7fb790d6a40add7bf03");
 const ROOT_GRANT_ROLE: B256 =
-    b256!("e8ec8239f7b10e736151fc068e82a2d0940a4f6ebf184bf71616d9058467570f");
+    b256!("4fef96b846b5c7ea29959887578d2df0b55cfe9609f4e84c8f0d126bf40e3489");
 const ROOT_REVOKE_ROLE: B256 =
-    b256!("9cd346a450843658a0d04ec37a78709b1faf2a973cbdcf796b44f03643243bad");
+    b256!("b60badc66c4ae9e16a4e3d9cd2e44af737b2d48035533c8162afbf4aa4965b80");
 const ROOT_RENOUNCE_ROLE: B256 =
-    b256!("4de44c01372b636686247aea8724576df6e778f2a94535a2efd71b6b81625441");
+    b256!("b5e95421f5739bda693e190082faa6f91fd880356efea89fcf72793eb70714fd");
 const ROOT_RENOUNCE_LAST_ADMIN: B256 =
-    b256!("143ade4c83f79a0ebc2bbc75c7d6e8a4ce7ace0235c0ffce003e5f6518276826");
+    b256!("9ebc86ddc23454c7fa99cc88d8e1d1c546d11aa3740906178e3258d488c561dc");
 const ROOT_SET_ROLE_ADMIN: B256 =
-    b256!("fd229bb98a9695f489f482515f62a4389565473c86517c76de97e7731a60c5fe");
+    b256!("e3da1c91ceb11ba3b0384052609b85c946ba9cd2832ab857ff154dad0130b1fc");
 const ROOT_UPDATE_POLICY: B256 =
-    b256!("b2c704ab3f2d4cb586548ef9374a83d1727515c33d599295904056fcecd97775");
-const ROOT_PERMIT: B256 = b256!("7c710860355d6a906d9342a724549a59f7359b2d8aff6bf8b5039562c93c71a6");
+    b256!("e5bbb9b1b1bda4eb1fb180508c911c51f45162554bd36bfac773ee45ad32ba02");
+const ROOT_PERMIT: B256 = b256!("24182d9464353e2ab9200272dd2ec1efe319e0bf29998e4d65e04a75b66ffd34");
 const ROOT_GRANT_DEFAULT_ADMIN: B256 =
-    b256!("c828bb784b6ca1d7a3a255a7e5264350ce4293acc38820a57bcc93853abea9f4");
+    b256!("0b14e2c61be5bd28090aeaa21c1dcade5f8ce590daf9ed548ae41ad0f35cc8aa");
 const ROOT_GRANT_IDEMPOTENT: B256 =
-    b256!("76f5d7e14530b4534e18e2e3c4a3a3035da857704c314ccfc7f9445ecfe90da8");
+    b256!("0899e7aa92d9ada391e535276cc089dc8f3a231511284ec623e22d00e05b4b3c");
 
 // --- pinned storage hashes: V2-only (bless with BLESS_GOLDEN=1) --------------
 //
 // `seizeWithMemo` is genuinely new at V2 (V1's default trait body rejects it), so it gets its
 // own fresh pin.
 
-const ROOT_SEIZE: B256 = b256!("949bcedb68b9804f2c5b939d7189ac09ecca6ef17e7897181c24891dbd628f5d");
+const ROOT_SEIZE: B256 = b256!("9314f58649ea21b77a277a7ac8a0cd455286315bd0454fd7ec1a03ab306354d1");
 
 // --- harness ----------------------------------------------------------------
 
-/// Fresh provider with an initialized `USD Coin` stablecoin at [`TOKEN`].
+/// Fresh provider with an initialized `Base Dollar` stablecoin at [`TOKEN`].
 fn fresh() -> HashMapStorageProvider {
     let mut storage = HashMapStorageProvider::new_with_storage_features(
         CHAIN_ID,
