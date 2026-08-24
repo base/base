@@ -50,12 +50,16 @@ pub struct BaseRpc {
     pub upgrade_signal_reader: AlloyUpgradeSignalReader,
     /// Short-TTL cache of the last L1 schedule read outcome, shared across concurrent RPC requests.
     schedule_cache: Mutex<Option<CachedRead>>,
-    /// Serializes L1 schedule refreshes so a burst of cache misses coalesces into one read.
+    /// Single-flights L1 schedule refreshes so a burst of cache misses never queues behind the read.
     ///
     /// Unlike [`schedule_cache`](Self::schedule_cache) (only locked to read or write the cached
-    /// value), this is held across the L1 read. Concurrent missing callers wait here, then re-check
-    /// the cache and serve the value the first caller wrote — so the public endpoint never amplifies
-    /// a burst into one L1 read per caller.
+    /// value), this guards the L1 read itself. Only the caller that wins [`try_lock`] performs the
+    /// read; concurrent missers decline rather than wait, serving the most recent cached value (even
+    /// if past its TTL) or failing fast when none exists. This both keeps the public endpoint from
+    /// amplifying a burst into one L1 read per caller and keeps that burst from tying up the node's
+    /// shared RPC slots on a slow or unavailable L1 read.
+    ///
+    /// [`try_lock`]: tokio::sync::Mutex::try_lock
     refresh_lock: tokio::sync::Mutex<()>,
 }
 
@@ -116,6 +120,19 @@ impl BaseRpc {
         elapsed.as_nanos() < ttl.as_nanos()
     }
 
+    /// Reconstructs the caller-facing outcome from a cached read.
+    ///
+    /// A cached failure is surfaced as a generic provider error rebuilt from the retained message;
+    /// the original error is not stored.
+    fn cached_outcome(
+        cached: &CachedRead,
+    ) -> Result<Option<UpgradeSignalSchedule>, UpgradeSignalError> {
+        match &cached.outcome {
+            Ok(schedule) => Ok(schedule.clone()),
+            Err(message) => Err(UpgradeSignalError::provider("cached upgrade readiness", message)),
+        }
+    }
+
     /// Returns the cached read outcome when the entry is still within its TTL.
     ///
     /// The outer `Option` distinguishes a cache hit from a miss; the inner `Result` is the cached
@@ -126,13 +143,20 @@ impl BaseRpc {
     ) -> Option<Result<Option<UpgradeSignalSchedule>, UpgradeSignalError>> {
         let guard = self.schedule_cache.lock().ok()?;
         let cached = guard.as_ref()?;
-        if !Self::outcome_is_fresh(&cached.outcome, cached.read_at.elapsed()) {
-            return None;
-        }
-        Some(match &cached.outcome {
-            Ok(schedule) => Ok(schedule.clone()),
-            Err(message) => Err(UpgradeSignalError::provider("cached upgrade readiness", message)),
-        })
+        Self::outcome_is_fresh(&cached.outcome, cached.read_at.elapsed())
+            .then(|| Self::cached_outcome(cached))
+    }
+
+    /// Returns the most recent read outcome regardless of its TTL, if any read has completed.
+    ///
+    /// Refresh followers that decline to queue behind an in-flight L1 read serve this (possibly
+    /// stale) value rather than waiting; `None` means no read has ever completed (cold cache). A
+    /// poisoned lock degrades to `None`.
+    fn last_cached_read(
+        &self,
+    ) -> Option<Result<Option<UpgradeSignalSchedule>, UpgradeSignalError>> {
+        let guard = self.schedule_cache.lock().ok()?;
+        guard.as_ref().map(Self::cached_outcome)
     }
 
     /// Reads the L1 schedule, serving a recent read from the cache when one is available.
@@ -143,17 +167,31 @@ impl BaseRpc {
     /// unless a `target_version` probe was supplied). Read failures are cached briefly (see
     /// [`CachedRead`]) so a burst during an L1 outage does not turn into one retrying read per
     /// caller, then retried once the short error TTL expires.
+    ///
+    /// Only one caller reads L1 at a time; concurrent missers decline the refresh and serve the most
+    /// recent cached value (or fail fast on a cold cache) rather than queuing behind the read, so a
+    /// public burst cannot tie up the node's shared RPC slots on a slow or unavailable L1 read.
     async fn cached_schedule(&self) -> Result<Option<UpgradeSignalSchedule>, UpgradeSignalError> {
         if let Some(cached) = self.fresh_cached_read() {
             return cached;
         }
 
-        // Coalesce concurrent misses: hold the refresh lock across the L1 read so a burst of
-        // queries collapses into a single in-flight read rather than one read per caller.
-        let _refresh = self.refresh_lock.lock().await;
+        // Single-flight the refresh without queuing behind the L1 read: only the caller that wins
+        // `try_lock` reads L1. Followers decline instead of awaiting, so a burst can never pile up
+        // on the shared RPC slots while a slow or unavailable L1 read is in flight.
+        let Ok(_refresh) = self.refresh_lock.try_lock() else {
+            // A refresh is already in flight: serve the most recent read (even if past its TTL), or
+            // fail fast when no read has ever completed rather than blocking on L1.
+            return self.last_cached_read().unwrap_or_else(|| {
+                Err(UpgradeSignalError::provider(
+                    "upgrade readiness",
+                    "L1 schedule refresh already in flight",
+                ))
+            });
+        };
 
-        // Re-check under the refresh lock: a caller that held it before us may have just populated
-        // the cache, in which case we skip the L1 read entirely (including a just-cached failure).
+        // Re-check under the refresh lock: the previous holder may have just populated the cache,
+        // in which case we skip the L1 read entirely (including a just-cached failure).
         if let Some(cached) = self.fresh_cached_read() {
             return cached;
         }
@@ -197,7 +235,6 @@ impl BaseApiServer for BaseRpc {
         Metrics::rpc_calls("base_upgradeReadiness").increment(1.0);
 
         let target = Self::parse_target_version(target_version)?;
-        let now_secs = UpgradeSignalDefaults::now_secs();
 
         // An empty read is surfaced (not errored) so the evaluator can still answer a
         // `target_version` probe against it — but it is not treated as an authoritative "nothing
@@ -214,6 +251,10 @@ impl BaseApiServer for BaseRpc {
             );
             ErrorObject::owned(-32006, "failed to read L1 upgrade schedule", None::<()>)
         })?;
+
+        // Sample the clock after the (possibly slow) schedule read, immediately before evaluating,
+        // so a read that spans the halt-lead window cannot report a stale `would_halt`.
+        let now_secs = UpgradeSignalDefaults::now_secs();
 
         // Derive the readiness inputs from the optional schedule so both the scheduled and
         // pre-schedule (empty contract) paths flow through a single `evaluate_readiness` call.
