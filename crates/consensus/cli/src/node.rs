@@ -8,9 +8,11 @@ use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_chains::ChainConfig;
 use base_common_genesis::RollupConfig;
 use base_consensus_node::{
-    EngineConfig, L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder,
+    EngineConfig, L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder, TelemetryNodeConfig,
     UpgradeSignalBuilderConfig,
 };
+use base_telemetry_client::TelemetryConfig;
+use base_telemetry_types::{NetworkName, NodeConfigReport};
 use base_upgrade_signal::{
     UpgradeSignalArgs, UpgradeSignalConfig, UpgradeSignalMetricLayer, UpgradeSignalRuntimeApplier,
     UpgradeSignalSchedule, UpgradeSignalStartupMode,
@@ -126,6 +128,8 @@ pub struct ConsensusNodeStartOptions {
     pub cancellation: CancellationToken,
     /// Startup behavior for contract-backed upgrade signal application.
     pub upgrade_signal_startup_mode: UpgradeSignalStartupMode,
+    /// Telemetry settings, or `None` when this node reports nothing.
+    pub telemetry: Option<TelemetryNodeConfig>,
 }
 
 impl ConsensusNodeStartOptions {
@@ -136,6 +140,7 @@ impl ConsensusNodeStartOptions {
             overrides: ConsensusNodeOverrides::default(),
             cancellation: CancellationToken::new(),
             upgrade_signal_startup_mode: UpgradeSignalStartupMode::ReadAndApply,
+            telemetry: None,
         }
     }
 
@@ -156,6 +161,11 @@ impl ConsensusNodeStartOptions {
     ) -> Self {
         Self { upgrade_signal_startup_mode, ..self }
     }
+
+    /// Sets the telemetry settings for the node.
+    pub fn with_telemetry(self, telemetry: Option<TelemetryNodeConfig>) -> Self {
+        Self { telemetry, ..self }
+    }
 }
 
 /// Consensus node arguments shared by the standalone and unified binaries.
@@ -174,6 +184,37 @@ impl ConsensusNodeArgs {
     /// Creates reusable consensus node arguments from typed chain and node config components.
     pub const fn new(chain: ConsensusChainArgs, config: ConsensusNodeConfigArgs) -> Self {
         Self { chain, config }
+    }
+
+    /// Builds the telemetry settings for this node from resolved client settings.
+    ///
+    /// Only the allowlisted, normalized values in [`NodeConfigReport`] are reported. The raw
+    /// command line is never sent: it carries L1 RPC URLs with credentials, JWT paths, and
+    /// signer endpoints.
+    pub fn telemetry_node_config(
+        &self,
+        client: TelemetryConfig,
+        metrics_enabled: bool,
+    ) -> TelemetryNodeConfig {
+        let node_config = NodeConfigReport {
+            // A consensus node holds no chain history, so pruning is not a property it has.
+            prune_mode: None,
+            p2p_enabled: true,
+            discovery_enabled: !self.config.p2p_flags.no_discovery,
+            sequencer_enabled: self.config.node_mode.is_sequencer(),
+            supervisor_enabled: false,
+            flashblocks_enabled: false,
+            metrics_enabled,
+            experimental_flags: Vec::new(),
+            report_interval_secs: client.report_interval.as_secs(),
+            sample_interval_secs: client.sample_interval.as_secs(),
+        };
+        TelemetryNodeConfig::new(
+            client,
+            env!("CARGO_PKG_VERSION").to_string(),
+            NetworkName::for_chain_id(self.chain.l2_chain_id.id()),
+            node_config,
+        )
     }
 }
 
@@ -405,6 +446,7 @@ impl ConsensusNodeArgs {
             cfg,
             overrides,
             UpgradeSignalStartupMode::ReadAndApply,
+            None,
         )
         .await
     }
@@ -415,6 +457,7 @@ impl ConsensusNodeArgs {
         mut cfg: RollupConfig,
         overrides: ConsensusNodeOverrides,
         startup_mode: UpgradeSignalStartupMode,
+        telemetry: Option<TelemetryNodeConfig>,
     ) -> eyre::Result<RollupNode> {
         self.validate_sequencer_key()?;
         self.validate_da_batcher_sender_override()?;
@@ -507,7 +550,8 @@ impl ConsensusNodeArgs {
         .with_upgrade_signal_config(UpgradeSignalBuilderConfig {
             metrics_config: upgrade_signal_config,
             l1_rpc: upgrade_signal_l1_rpc,
-        });
+        })
+        .with_telemetry_config(telemetry);
 
         if let Some(interval) = self.config.l1_rpc_args.l1_finalized_poll_interval {
             builder = builder.with_finalized_poll_interval(interval);
@@ -601,11 +645,13 @@ impl ConsensusNodeArgs {
             overrides,
             cancellation,
             upgrade_signal_startup_mode,
+            telemetry,
         } = options;
         self.build_rollup_node_with_overrides_and_upgrade_signal_startup(
             rollup_config,
             overrides,
             upgrade_signal_startup_mode,
+            telemetry,
         )
         .await?
         .start_with_cancellation(cancellation)

@@ -72,6 +72,9 @@ mod smoke;
 pub use smoke::RuntimeUpgradeSignalGuard;
 pub use smoke::{SystemTestStack, SystemTestStackBuilder};
 
+mod telemetry;
+pub use telemetry::{ChannelRecorder, TelemetryIngest, TelemetryStackOptions};
+
 mod system_config;
 pub use system_config::{StableSystemTestConfig, SystemTestPorts};
 

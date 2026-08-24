@@ -31,6 +31,8 @@ base-upgrade-signal.workspace = true
 base-builder-metering.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-consensus.workspace = true
+base-telemetry-types.workspace = true
+base-telemetry-client.workspace = true
 
 # alloy
 alloy-chains = { workspace = true, features = ["std"] }
@@ -49,6 +51,7 @@ tokio.workspace = true
 tracing.workspace = true
 tokio-util.workspace = true
 serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["std"] }
 figment = { workspace = true, features = ["env", "toml"] }
 
 [dev-dependencies]
