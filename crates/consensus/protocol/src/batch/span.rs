@@ -592,7 +592,7 @@ impl SpanBatch {
             warn!(target: "batch_span", "empty span batch, cannot proceed with batch checking");
             return (BatchValidity::Undecided, None);
         }
-        let next = l2_safe_head.block_info.number.saturating_add(1);
+        let next = l2_safe_head.block_info.number + 1;
         if cfg.is_denim_active(cfg.l2_block_timestamp(next)) {
             warn!(target: "batch_span", next_block_number = next, "Dropping span batch after Denim activation");
             return (BatchValidity::Drop(BatchDropReason::SpanBatchPostDenim), None);

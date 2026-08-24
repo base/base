@@ -131,7 +131,7 @@ where
             return self.prev.next_batch().await;
         }
 
-        let next = parent.block_info.number.saturating_add(1);
+        let next = parent.block_info.number + 1;
         if self.config.is_denim_active(self.config.l2_block_timestamp(next))
             && (self.span.is_some() || !self.buffer.is_empty())
         {

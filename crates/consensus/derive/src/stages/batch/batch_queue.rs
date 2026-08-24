@@ -299,7 +299,7 @@ where
     /// Returns the next valid batch upon the given safe head.
     /// Also returns the boolean that indicates if the batch is the last block in the batch.
     async fn next_batch(&mut self, parent: L2BlockInfo) -> PipelineResult<SingleBatch> {
-        let next = parent.block_info.number.saturating_add(1);
+        let next = parent.block_info.number + 1;
         if self.cfg.is_denim_active(self.cfg.l2_block_timestamp(next))
             && !self.next_spans.is_empty()
         {
