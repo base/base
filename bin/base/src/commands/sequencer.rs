@@ -21,7 +21,7 @@ use clap::Args;
 use reth_cli_runner::CliRunner;
 use tokio_util::sync::CancellationToken;
 
-use crate::{commands::rpc::engine_ipc_url, config::ResolvedChainConfig};
+use crate::{cli::TelemetryArgs, commands::rpc::engine_ipc_url, config::ResolvedChainConfig};
 
 /// Arguments for `base sequencer`.
 #[derive(Args, Clone, Debug)]
@@ -49,6 +49,7 @@ impl SequencerCommand {
         self,
         resolved_chain: ResolvedChainConfig,
         metrics_enabled: bool,
+        telemetry: TelemetryArgs,
     ) -> eyre::Result<()> {
         let Self { execution_chain, execution, mut builder, consensus } = self;
         let mut execution_chain = match execution_chain {
@@ -63,6 +64,10 @@ impl SequencerCommand {
             .apply_default_from(&consensus_config.l1_rpc_args.l1_eth_rpc);
         consensus_config.upgrade_signal = builder.rollup_args.upgrade_signal.clone();
         let consensus_args = ConsensusNodeArgs::new(consensus_chain, consensus_config);
+        let telemetry = consensus_args.telemetry_node_config(
+            telemetry.config(consensus_args.chain.l2_chain_id.id()),
+            metrics_enabled,
+        );
         let mut rollup_config = consensus_args.load_rollup_config()?;
 
         let rollup_args = builder.rollup_args.clone();
@@ -134,7 +139,8 @@ impl SequencerCommand {
                         upgrade_signal_l1_rpc,
                     ))
                     .with_cancellation(consensus_cancellation.clone())
-                    .with_upgrade_signal_startup_mode(UpgradeSignalStartupMode::AlreadyApplied),
+                    .with_upgrade_signal_startup_mode(UpgradeSignalStartupMode::AlreadyApplied)
+                    .with_telemetry(Some(telemetry)),
             );
             tokio::pin!(execution_exit);
             tokio::pin!(consensus_exit);

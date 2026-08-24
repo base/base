@@ -8,6 +8,55 @@ Axum backend for Base telemetry services.
 - `GET /readyz`
 - `POST /v1/p2p/reachability/el`
 - `POST /v1/p2p/reachability/cl`
+- `POST /v1/ingest`
+
+## Node report ingest
+
+`POST /v1/ingest` accepts one `node_report` from a Base node. The payload schema
+lives in [`base-telemetry-types`](../../common/telemetry-types) so the client
+and this service cannot drift apart.
+
+```http
+POST /v1/ingest
+Content-Type: application/json
+
+{
+  "schema_version": 1,
+  "telemetry_id": "01234567-89ab-cdef-0123-456789abcdef",
+  "reported_at": "2026-08-21T17:04:11Z",
+  "client_version": "1.2.3",
+  "git_sha": "abc1234",
+  "l2_chain_id": 8453,
+  "network": "mainnet",
+  "layer": "consensus",
+  "role": "validator",
+  "uptime_secs": 86400,
+  "heads": { "unsafe": 42, "local_safe": 40, "safe": 38, ... },
+  "hardware": { "platform": "cloud", "fs_type": "ext4", ... },
+  "config": { ... },
+  "net_health": { "peer_count": 17, ... }
+}
+```
+
+The response is `202 Accepted` with an empty body. Recording is asynchronous:
+a node must never wait on our storage to finish its reporting cycle. Malformed
+bodies return `400` and bodies over 16 `KiB` return `413`. A report declaring an
+unrecognized `schema_version` is still recorded with a warning, because a node
+must keep reporting across a schema change. The version is an integer major so a
+receiver can order it and reject an unknown major; this build warns rather than
+rejects, and tightening that is a backend decision, not a client one.
+
+Accepted reports are emitted as a structured log event and, when
+`--node-report-path` (or `BASE_TELEMETRY_NODE_REPORT_PATH`) is set, appended as
+JSONL through a non-blocking background writer. Each recorded line is the report
+plus the three fields only the server can supply: `received_at`, `reported_ip`,
+and `ip_source`. `reported_ip` is the node's advertised address when it sent
+one and the observed edge IP otherwise.
+
+Ingest has its own rate limit, separate from the probe quota: 60 reports per
+hour per client IP by default, configurable with
+`--node-report-requests-per-hour` or
+`BASE_TELEMETRY_NODE_REPORT_REQUESTS_PER_HOUR`.
 
 ## Execution-layer reachability
 

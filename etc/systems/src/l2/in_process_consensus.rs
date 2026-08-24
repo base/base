@@ -20,7 +20,7 @@ use base_common_genesis::RollupConfig;
 use base_consensus_disc::LocalNode;
 use base_consensus_node::{
     EngineConfig, L1ConfigBuilder, NetworkConfig, NodeMode, RollupNodeBuilder, SequencerConfig,
-    UpgradeSignalBuilderConfig,
+    TelemetryNodeConfig, UpgradeSignalBuilderConfig,
 };
 use base_consensus_peers::{PeerScoreLevel, SecretKeyLoader};
 use base_consensus_rpc::{AdminApiClient, BaseP2PApiClient, RollupNodeApiClient, RpcBuilder};
@@ -90,6 +90,11 @@ pub struct InProcessConsensusConfig {
     /// CLI. The config is also passed to the node for live polling (and, in runtime-admin mode,
     /// automatic re-application of observed L1 changes).
     pub upgrade_signal: Option<UpgradeSignalConfig>,
+    /// Optional node telemetry configuration.
+    ///
+    /// When set, the node reports to the configured endpoint on the configured cadence. When
+    /// [`None`], the telemetry actor is never built and the node sends nothing.
+    pub telemetry: Option<TelemetryNodeConfig>,
 }
 
 /// A running in-process consensus node.
@@ -242,7 +247,8 @@ impl InProcessConsensus {
             metrics_config: config.upgrade_signal,
             l1_rpc: None,
         })
-        .with_checkpoint_path(checkpoint_path);
+        .with_checkpoint_path(checkpoint_path)
+        .with_telemetry_config(config.telemetry);
 
         if config.mode == NodeMode::Sequencer {
             builder = builder.with_sequencer_config(SequencerConfig {

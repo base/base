@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 ipnet.workspace = true
+chrono.workspace = true
 discv5.workspace = true
 futures.workspace = true
 governor.workspace = true
@@ -19,9 +20,12 @@ tokio-util.workspace = true
 async-trait.workspace = true
 reth-ecies.workspace = true
 reth-eth-wire.workspace = true
+tracing-appender.workspace = true
 alloy-primitives.workspace = true
 base-trusted-proxy.workspace = true
+base-telemetry-types.workspace = true
 anyhow = { workspace = true, features = ["std"] }
+serde_json = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 secp256k1 = { workspace = true, features = ["rand"] }
@@ -35,5 +39,11 @@ libp2p = { workspace = true, features = ["tokio", "tcp", "noise", "yamux", "iden
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 
 [dev-dependencies]
+url.workspace = true
+uuid.workspace = true
 mockall.workspace = true
+tempfile.workspace = true
+base-retry.workspace = true
+tokio-util.workspace = true
+base-telemetry-client.workspace = true
 reqwest = { workspace = true, features = ["json"] }

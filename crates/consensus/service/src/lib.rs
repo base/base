@@ -43,8 +43,8 @@ pub use actors::{
     L1WatcherQueryProcessor, L2Finalizer, LogRetrier, NetworkActor, NetworkActorError,
     NetworkBuilder, NetworkBuilderError, NetworkConfig, NetworkDriver, NetworkDriverError,
     NetworkEngineClient, NetworkHandler, NetworkInboundData, NodeActor, NoopCheckpointWriter,
-    OriginSelector, PayloadBuilder, PayloadSealer, PendingStopSender, PoolActivation,
-    PrefetchedChainProvider, PrefetchedChainProviderError, PreparedL1Origin,
+    OriginSelector, P2P_QUERY_TIMEOUT, PayloadBuilder, PayloadSealer, PendingStopSender,
+    PoolActivation, PrefetchedChainProvider, PrefetchedChainProviderError, PreparedL1Origin,
     QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
     QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient,
     QueuedSequencerEngineClient, QueuedUnsafePayloadGossipClient, ReconcileShadowRequest,
@@ -53,6 +53,7 @@ pub use actors::{
     SealStepOutcome, SequencerActor, SequencerActorError, SequencerAdminQuery, SequencerConfig,
     SequencerEngineClient, SequencerEngineRequestCoordinator, SequencerEngineState, ShadowCycle,
     ShadowFunding, ShadowReconciliationGate, ShadowReconciliationTask, ShadowSequencingState,
+    TelemetryActor, TelemetryNodeConfig, TelemetryNodeFacts, TelemetrySources,
     UnsafePayloadGossipClient, UnsafePayloadGossipClientError, UnsealedPayloadHandle,
     UpgradeSignalMetricsActor, UpgradeSignalNodeConfig, ValidatorEngineRequestHandler,
 };
