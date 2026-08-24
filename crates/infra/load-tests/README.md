@@ -337,10 +337,14 @@ validity:
         key: sender
       op: ">="
       value: "0x0"
-    # build-position predicates carry only an operator and value:
+    # build-position predicates read the block/flashblock being built:
     - type: block_number
       op: ">="
-      value: "0x0"
+      value: "0x0"                # absolute block number
+    # ...or a runtime-resolved offset (current_block + offset at prepare time):
+    - type: block_number
+      op: ">="
+      offset: "10"
     - type: flashblock_index
       op: ">="
       value: "1"
@@ -350,11 +354,12 @@ Predicate addresses resolve per transaction: `sender` → the tx `from`,
 `recipient` → the tx `to` (falling back to `from` for contract creation), or a
 fixed `0x` address. Storage slots are either a `fixed` slot or a `mapping`
 slot, which computes the Solidity mapping slot `keccak256(key ++ mapping_slot)`
-so `balanceOf(key)` slots are expressible. The `block_number` and
-`flashblock_index` predicates carry only an `op` and `value` and read the
-build position rather than any address or slot. Values, slots, and masks accept
-hex (`0x...`) or decimal strings. At most 64 predicates may be attached per
-transaction.
+so `balanceOf(key)` slots are expressible. The `flashblock_index` predicate
+carries an `op` and `value`, and `block_number` carries an `op` plus exactly one
+of `value` (a fixed absolute block number) or `offset` (resolved to
+`current_block + offset` at prepare time); both read the build position rather
+than any address or slot. Values, slots, masks, and offsets accept hex (`0x...`)
+or decimal strings. At most 64 predicates may be attached per transaction.
 
 The final summary's `by_cohort` breakdown reports confirmed transactions split
 across the `plain` and `validity_pass` cohorts, so plain traffic can be compared
@@ -364,7 +369,26 @@ against validity traffic when the workload is enabled.
 
 To make the whole validity cohort become valid at the same future block —
 parking it in the pool until then and releasing it as one predictable spike —
-attach a lower-bound `block_number` predicate targeting a future block:
+attach a lower-bound `block_number` predicate targeting a future block.
+
+**Recommended: self-configuring `offset` form.** Give the `block_number`
+predicate an `offset` instead of an absolute `value`. The runner resolves it to
+`current_block + offset` once per prepare round, reading the chain height as
+each round of transactions is prepared, so it automatically accounts for the
+variable number of funding/setup blocks that run before measured submission
+begins:
+
+```yaml
+validity:
+  ratio: 1.0
+  predicates:
+    - type: block_number
+      op: ">="
+      offset: "10"     # resolves to current_block + 10 at prepare time
+```
+
+**Manual alternative: absolute `value` form.** You may instead hand-pick an
+absolute future block number:
 
 ```yaml
 validity:
@@ -375,14 +399,17 @@ validity:
       value: "12345"   # a block that is still in the future when submission starts
 ```
 
-Every validity transaction carries `block_number >= 12345`, so the builder skips
-them until block 12345 and then includes the accumulated backlog together. Choose
-the target relative to the block height **at which measured submission begins**,
-not run-invocation time: account funding and token setup run first and advance the
-chain by a variable number of blocks, so a target that is too low will already be
-satisfied by the time submission starts (no spike). Pick a value comfortably
-beyond the expected setup duration, and confirm the spike landed via the
-`by_cohort` / `fullest_block` breakdown in the summary.
+Either way, every validity transaction carries a lower-bound `block_number`
+predicate, so the builder skips them until the target block and then includes the
+accumulated backlog together. With the absolute form, choose the target relative
+to the block height **at which measured submission begins**, not run-invocation
+time: account funding and token setup run first and advance the chain by a
+variable number of blocks, so a target that is too low will already be satisfied
+by the time submission starts (no spike). Pick a value comfortably beyond the
+expected setup duration. The `offset` form avoids this guesswork. Either way,
+confirm the spike landed via the `by_cohort` / `fullest_block` breakdown in the
+summary. Exactly one of `value` or `offset` may be set on a `block_number`
+predicate; setting both or neither is a configuration error.
 
 **Required flags for end-to-end evaluation.** For predicates to actually be
 evaluated (not merely transported), the target environment must be configured so
