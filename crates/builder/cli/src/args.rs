@@ -269,7 +269,7 @@ pub struct Args {
     #[command(flatten)]
     pub flashblocks: FlashblocksArgs,
 
-    /// Runs both payload builders and selects the basic builder when Zenith activates.
+    /// Runs both payload builders and selects the basic builder when Denim activates.
     #[arg(
         long = "builder.payload-builder-cutover",
         default_value = "false",

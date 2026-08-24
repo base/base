@@ -77,7 +77,7 @@ pub struct L2StackConfig {
     pub tx_forwarding_config: Option<TxForwardingConfig>,
     /// Whether both L2 nodes enable experimental validity transaction transport.
     pub enable_experimental_validity_transactions: bool,
-    /// Whether the active builder cuts over from flashblocks to basic at Zenith.
+    /// Whether the active builder cuts over from flashblocks to basic at Denim.
     pub payload_builder_cutover: bool,
     /// Number of L1 blocks to keep distance from the L1 head for the client (validator)
     /// consensus node's derivation pipeline.

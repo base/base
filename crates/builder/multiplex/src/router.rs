@@ -74,7 +74,7 @@ pub type ResolveFuture = std::pin::Pin<
     >,
 >;
 
-/// Router that cuts payload selection from flashblocks to basic when Zenith activates.
+/// Router that cuts payload selection from flashblocks to basic when Denim activates.
 #[derive(Debug, Clone)]
 pub struct MultiplexRouter {
     /// Flashblocks payload-builder handle.
@@ -85,7 +85,7 @@ pub struct MultiplexRouter {
     pub flashblocks_health: HealthState,
     /// Basic health state.
     pub basic_health: HealthState,
-    /// Chain spec that owns the Zenith activation condition.
+    /// Chain spec that owns the Denim activation condition.
     pub chain_spec: Arc<BaseChainSpec>,
     /// Whether recent payload IDs are routed to the basic builder, ordered oldest first.
     pub payload_routes: Arc<Mutex<VecDeque<(PayloadId, bool)>>>,
@@ -114,9 +114,9 @@ impl MultiplexRouter {
         }
     }
 
-    /// Returns whether Zenith selects the basic builder at `timestamp`.
+    /// Returns whether Denim selects the basic builder at `timestamp`.
     pub fn basic_selected_at(&self, timestamp: u64) -> bool {
-        self.chain_spec.is_zenith_active_at_timestamp(timestamp)
+        self.chain_spec.is_denim_active_at_timestamp(timestamp)
     }
 
     /// Returns the recorded route for a payload, defaulting unknown payloads to flashblocks.
@@ -552,7 +552,7 @@ mod tests {
 
     use super::*;
 
-    const ZENITH_TIMESTAMP: u64 = 10;
+    const DENIM_TIMESTAMP: u64 = 10;
 
     fn test_router() -> (
         MultiplexRouter,
@@ -568,7 +568,7 @@ mod tests {
             HealthState::new(),
             Arc::new(
                 BaseChainSpecBuilder::base_mainnet()
-                    .with_fork(BaseUpgrade::Zenith, ForkCondition::Timestamp(ZENITH_TIMESTAMP))
+                    .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(DENIM_TIMESTAMP))
                     .build(),
             ),
             RoutingConfig::default(),
@@ -595,9 +595,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn build_fans_to_both_and_selects_by_zenith_activation() {
-        for (timestamp, selected_basic) in [(ZENITH_TIMESTAMP - 1, false), (ZENITH_TIMESTAMP, true)]
-        {
+    async fn build_fans_to_both_and_selects_by_denim_activation() {
+        for (timestamp, selected_basic) in [(DENIM_TIMESTAMP - 1, false), (DENIM_TIMESTAMP, true)] {
             let (router, mut flash_rx, mut basic_rx) = test_router();
             let (tx, rx) = tokio::sync::oneshot::channel();
 
@@ -714,19 +713,19 @@ mod tests {
         let mut sub = sub_rx.await.expect("outer subscribe receiver");
 
         flash_events_tx
-            .send(Events::Attributes(sample_input(ZENITH_TIMESTAMP - 1).attributes))
-            .expect("send pre-Zenith flash event");
+            .send(Events::Attributes(sample_input(DENIM_TIMESTAMP - 1).attributes))
+            .expect("send pre-Denim flash event");
         assert_eq!(
             MultiplexRouter::event_timestamp(&sub.recv().await.expect("receive flash event")),
-            ZENITH_TIMESTAMP - 1
+            DENIM_TIMESTAMP - 1
         );
 
         basic_events_tx
-            .send(Events::Attributes(sample_input(ZENITH_TIMESTAMP).attributes))
-            .expect("send post-Zenith basic event");
+            .send(Events::Attributes(sample_input(DENIM_TIMESTAMP).attributes))
+            .expect("send post-Denim basic event");
         assert_eq!(
             MultiplexRouter::event_timestamp(&sub.recv().await.expect("receive basic event")),
-            ZENITH_TIMESTAMP
+            DENIM_TIMESTAMP
         );
 
         drop(sub);

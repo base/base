@@ -54,7 +54,7 @@ pub struct InProcessBuilderConfig {
     pub flashblocks_port: Option<u16>,
     /// Whether to accept experimental validity-bearing transactions.
     pub enable_experimental_validity_transactions: bool,
-    /// Whether to run both payload builders and cut over to basic at Zenith.
+    /// Whether to run both payload builders and cut over to basic at Denim.
     pub payload_builder_cutover: bool,
     /// Additional node extensions installed after the builder's built-in RPC wiring.
     ///

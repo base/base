@@ -1,4 +1,4 @@
-//! End-to-end test for the Zenith payload-builder and block-time cutover.
+//! End-to-end test for the Denim payload-builder and block-time cutover.
 
 use std::time::Duration;
 
@@ -17,19 +17,18 @@ use tokio::time::{sleep, timeout};
 
 const L1_CHAIN_ID: u64 = 1337;
 const L2_CHAIN_ID: u64 = 84538453;
-const ZENITH_ACTIVATION_BLOCK: u64 = 10;
-const LAST_VERIFIED_BLOCK: u64 = ZENITH_ACTIVATION_BLOCK + 4;
+const DENIM_ACTIVATION_BLOCK: u64 = 10;
+const LAST_VERIFIED_BLOCK: u64 = DENIM_ACTIVATION_BLOCK + 4;
 const BLOCK_TIMEOUT: Duration = Duration::from_secs(45);
 
 #[tokio::test]
-async fn cuts_over_builder_and_block_time_at_zenith() -> Result<()> {
+async fn cuts_over_builder_and_block_time_at_denim() -> Result<()> {
     base_node_runner::test_utils::init_silenced_tracing();
 
     let system = SystemTestStackBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
         .with_l2_chain_id(L2_CHAIN_ID)
-        .with_base_denim_activation_block(ZENITH_ACTIVATION_BLOCK)
-        .with_base_zenith_activation_block(ZENITH_ACTIVATION_BLOCK)
+        .with_base_denim_activation_block(DENIM_ACTIVATION_BLOCK)
         .with_payload_builder_cutover()
         .build()
         .await?;
@@ -40,15 +39,15 @@ async fn cuts_over_builder_and_block_time_at_zenith() -> Result<()> {
     let pre_cutover_receipt_block =
         send_transaction(&builder, &signer).await.wrap_err("pre-cutover transaction failed")?;
     assert!(
-        pre_cutover_receipt_block < ZENITH_ACTIVATION_BLOCK,
+        pre_cutover_receipt_block < DENIM_ACTIVATION_BLOCK,
         "pre-cutover transaction landed at block {pre_cutover_receipt_block}"
     );
 
-    wait_for_block(&builder, ZENITH_ACTIVATION_BLOCK + 1).await?;
+    wait_for_block(&builder, DENIM_ACTIVATION_BLOCK + 1).await?;
     let post_cutover_receipt_block =
         send_transaction(&builder, &signer).await.wrap_err("post-cutover transaction failed")?;
     assert!(
-        post_cutover_receipt_block > ZENITH_ACTIVATION_BLOCK,
+        post_cutover_receipt_block > DENIM_ACTIVATION_BLOCK,
         "post-cutover transaction landed at block {post_cutover_receipt_block}"
     );
 
@@ -129,7 +128,7 @@ async fn verify_chain_and_cadence(
             .timestamp_ms
             .unwrap_or_else(|| builder_block.header.timestamp.saturating_mul(1_000));
         if let Some(previous) = previous_timestamp_ms {
-            let expected_delta = if number <= ZENITH_ACTIVATION_BLOCK { 2_000 } else { 200 };
+            let expected_delta = if number <= DENIM_ACTIVATION_BLOCK { 2_000 } else { 200 };
             assert_eq!(timestamp_ms - previous, expected_delta, "block {number} cadence mismatch");
         }
 

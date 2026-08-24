@@ -3,7 +3,7 @@ use std::time::Duration;
 /// Runtime routing configuration.
 #[derive(Debug, Clone)]
 pub struct RoutingConfig {
-    /// Enables the Zenith payload-builder cutover while running both builders.
+    /// Enables the Denim payload-builder cutover while running both builders.
     pub cutover_enabled: bool,
     /// Expected maximum time between a build dispatch and the selected
     /// builder's `getPayload` resolve completing. Exceeding this records a
