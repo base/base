@@ -588,6 +588,10 @@ impl SpanBatch {
         inclusion_block: &BlockInfo,
         fetcher: &mut BF,
     ) -> (BatchValidity, Option<L2BlockInfo>) {
+        if l1_origins.is_empty() {
+            warn!(target: "batch_span", "missing L1 block input, cannot proceed with batch checking");
+            return (BatchValidity::Undecided, None);
+        }
         if self.batches.is_empty() {
             warn!(target: "batch_span", "empty span batch, cannot proceed with batch checking");
             return (BatchValidity::Undecided, None);
@@ -596,10 +600,6 @@ impl SpanBatch {
         if cfg.is_denim_active(cfg.l2_block_timestamp(next)) {
             warn!(target: "batch_span", next_block_number = next, "Dropping span batch after Denim activation");
             return (BatchValidity::Drop(BatchDropReason::SpanBatchPostDenim), None);
-        }
-        if l1_origins.is_empty() {
-            warn!(target: "batch_span", "missing L1 block input, cannot proceed with batch checking");
-            return (BatchValidity::Undecided, None);
         }
 
         let epoch = l1_origins[0];
@@ -934,7 +934,7 @@ mod tests {
         let l2_safe_head = L2BlockInfo::default();
         let inclusion_block = BlockInfo::default();
         let mut fetcher: TestBatchValidator = TestBatchValidator::default();
-        let batch = SpanBatch { batches: vec![SpanBatchElement::default()], ..Default::default() };
+        let batch = SpanBatch::default();
         assert_eq!(
             batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
             BatchValidity::Undecided
@@ -1098,7 +1098,13 @@ mod tests {
         };
         assert_eq!(
             batch
-                .check_batch_prefix(&cfg, &[], denim_parent, &BlockInfo::default(), &mut fetcher,)
+                .check_batch_prefix(
+                    &cfg,
+                    &[BlockInfo::default()],
+                    denim_parent,
+                    &BlockInfo::default(),
+                    &mut fetcher,
+                )
                 .await
                 .0,
             BatchValidity::Drop(BatchDropReason::SpanBatchPostDenim)
