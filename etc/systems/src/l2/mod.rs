@@ -18,6 +18,17 @@ pub use in_process_consensus::{InProcessConsensus, InProcessConsensusConfig};
 mod in_process_follow_consensus;
 pub use in_process_follow_consensus::{InProcessFollowConsensus, InProcessFollowConsensusConfig};
 
+mod in_process_standalone_consensus;
+pub use in_process_standalone_consensus::{
+    InProcessStandaloneConsensus, InProcessStandaloneConsensusConfig,
+};
+
+mod snapshot_boundary;
+pub use snapshot_boundary::SnapshotBoundary;
+
+mod snapshot_stack;
+pub use snapshot_stack::{SnapshotL2Stack, SnapshotL2StackConfig};
+
 mod shadow_sequencer;
 pub use shadow_sequencer::{ShadowSequencer, ShadowSequencerConfig};
 

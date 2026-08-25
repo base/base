@@ -209,7 +209,7 @@ mod tests {
         let sender = Address::with_last_byte(1);
         let tx_hash = TxHash::repeat_byte(2);
         let tracker = ResultsTracker::new(&[sender]);
-        tracker.begin_measurement();
+        tracker.begin_measurement(0, None);
         tracker.sent_transactions(vec![SentTransaction {
             tx_hash,
             from: sender,

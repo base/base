@@ -373,6 +373,8 @@ pub struct ConfigSummary {
     pub batch_size: u32,
     /// Test duration.
     pub duration: Option<String>,
+    /// Optional measured canonical block window size.
+    pub measurement_blocks: Option<u64>,
     /// Optional gas-per-second target used to size the per-block mempool floor.
     pub target_gps: Option<u64>,
     /// Expected cadence between canonical blocks.

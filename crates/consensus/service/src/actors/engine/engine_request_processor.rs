@@ -71,6 +71,8 @@ where
     checkpoint_reader: Arc<dyn ForkchoiceCheckpointReader>,
     /// Writes checkpointed forkchoice state after engine state changes.
     checkpoint_writer: Arc<dyn CheckpointWriter>,
+    /// Whether resets retain the bootstrapped L2 head without consulting L1.
+    l1_free: bool,
 }
 
 impl<EngineClient_, DerivationClient> EngineProcessor<EngineClient_, DerivationClient>
@@ -120,6 +122,18 @@ where
         )
     }
 
+    /// Constructs an L1-free processor whose resets retain the bootstrapped execution head.
+    pub fn new_l1_free(
+        client: Arc<EngineClient_>,
+        config: Arc<RollupConfig>,
+        derivation_client: DerivationClient,
+        engine: Engine<EngineClient_>,
+    ) -> Self {
+        let mut processor = Self::new(client, config, derivation_client, engine);
+        processor.l1_free = true;
+        processor
+    }
+
     /// Constructs a new [`EngineProcessor`] with checkpoint persistence.
     pub fn new_with_checkpoint(
         client: Arc<EngineClient_>,
@@ -136,6 +150,7 @@ where
             derivation_client,
             el_sync_complete: false,
             engine,
+            l1_free: false,
             last_finalized_head_checkpointed: L2BlockInfo::default(),
             last_safe_head_checkpointed: L2BlockInfo::default(),
             last_safe_head_sent: L2BlockInfo::default(),
@@ -145,6 +160,13 @@ where
 
     /// Resets the inner [`Engine`] without notifying derivation.
     pub async fn reset_engine_state(&mut self) -> Result<L2BlockInfo, EngineError> {
+        if self.l1_free {
+            let head = self.engine.state().sync_state.unsafe_head();
+            if head != L2BlockInfo::default() {
+                return Ok(head);
+            }
+        }
+
         // Reset the engine, consulting the checkpoint reader if reth has pruned the labeled
         // safe / finalized block bodies (so the L1 info deposit cannot be reconstructed).
         let l2_safe_head = self

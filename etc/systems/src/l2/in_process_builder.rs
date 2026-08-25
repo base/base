@@ -9,7 +9,7 @@ use std::{any::Any, path::PathBuf, sync::Arc, time::Duration};
 
 use alloy_primitives::hex::ToHexExt;
 use alloy_rpc_types_engine::JwtSecret;
-use base_builder_core::{BuilderConfig, test_utils::get_available_port};
+use base_builder_core::{BuilderConfig, FlashblocksServiceBuilder, test_utils::get_available_port};
 use base_builder_multiplex::MultiplexingServiceBuilder;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{
@@ -18,18 +18,18 @@ use base_execution_txpool::{
 use base_node_core::{args::RollupArgs, node::BasePoolBuilder};
 use base_node_runner::{BaseNode, BaseNodeExtension, NodeHooks};
 use eyre::{Result, WrapErr, eyre};
-use nanoid::nanoid;
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db,
     mdbx::{DatabaseArguments, KILOBYTE, MEGABYTE, MaxReadTransactionDuration},
 };
 use reth_node_builder::{NodeBuilder, NodeConfig, NodeHandle};
 use reth_node_core::{
-    args::{DatadirArgs, NetworkArgs, RpcServerArgs},
+    args::{DatadirArgs, MetricArgs, NetworkArgs, RpcServerArgs},
     dirs::{DataDirPath, MaybePlatformPath},
     exit::NodeExitFuture,
 };
-use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
+use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig, TokioConfig};
+use tempfile::TempDir;
 use tracing::warn;
 use url::Url;
 
@@ -40,6 +40,10 @@ use crate::{config::BUILDER, setup::BUILDER_ENODE_ID};
 pub struct InProcessBuilderConfig {
     /// L2 genesis JSON content.
     pub genesis_json: Vec<u8>,
+    /// Optional pre-built chain specification, used instead of `genesis_json` when provided.
+    pub chain_spec: Option<Arc<BaseChainSpec>>,
+    /// Existing caller-owned datadir. A temporary datadir is created when omitted.
+    pub datadir: Option<PathBuf>,
     /// JWT secret hex for Engine API authentication.
     pub jwt_secret: JwtSecret,
     /// Optional fixed HTTP RPC port (uses random if None).
@@ -52,6 +56,8 @@ pub struct InProcessBuilderConfig {
     pub p2p_port: Option<u16>,
     /// Optional fixed Flashblocks port (uses random if None).
     pub flashblocks_port: Option<u16>,
+    /// Optional fixed Prometheus metrics port (uses random if None).
+    pub metrics_port: Option<u16>,
     /// Whether to accept experimental validity-bearing transactions.
     pub enable_experimental_validity_transactions: bool,
     /// Whether to run both payload builders and cut over to basic at Denim.
@@ -61,6 +67,18 @@ pub struct InProcessBuilderConfig {
     /// Lets downstream consumers layer their own [`BaseNodeExtension`] onto the standard
     /// in-process builder wiring without forking this crate.
     pub extra_extensions: Vec<Box<dyn BaseNodeExtension>>,
+    /// Interval used by the payload builder.
+    pub block_time: Duration,
+    /// Whether to replace the standard payload service with the Flashblocks builder.
+    pub flashblocks_enabled: bool,
+    /// Optional canonical block persistence threshold.
+    pub persistence_threshold: Option<u64>,
+    /// Optional pending/basefee/queued transaction count limit for benchmark workloads.
+    pub txpool_max_transactions: Option<usize>,
+    /// Optional pending/basefee/queued transaction size limit in megabytes.
+    pub txpool_max_size_mb: Option<usize>,
+    /// Optional maximum number of transaction slots retained per sender.
+    pub txpool_max_account_slots: Option<usize>,
 }
 
 /// An in-process builder node that replaces Docker-based `BuilderContainer`.
@@ -71,20 +89,14 @@ pub struct InProcessBuilder {
     http_api_addr: SocketAddr,
     ws_api_addr: SocketAddr,
     engine_addr: SocketAddr,
+    metrics_addr: SocketAddr,
     flashblocks_port: u16,
     p2p_port: u16,
     data_dir: PathBuf,
     _node_exit_future: NodeExitFuture,
     _node: Box<dyn Any + Sync + Send>,
     _runtime: Runtime,
-}
-
-impl Drop for InProcessBuilder {
-    fn drop(&mut self) {
-        if let Err(e) = std::fs::remove_dir_all(&self.data_dir) {
-            warn!(dir = ?self.data_dir, error = %e, "Failed to remove temp data directory");
-        }
-    }
+    _temp_dir: Option<TempDir>,
 }
 
 impl std::fmt::Debug for InProcessBuilder {
@@ -93,6 +105,7 @@ impl std::fmt::Debug for InProcessBuilder {
             .field("http_api_addr", &self.http_api_addr)
             .field("ws_api_addr", &self.ws_api_addr)
             .field("engine_addr", &self.engine_addr)
+            .field("metrics_addr", &self.metrics_addr)
             .field("flashblocks_port", &self.flashblocks_port)
             .field("p2p_port", &self.p2p_port)
             .finish_non_exhaustive()
@@ -104,22 +117,31 @@ impl InProcessBuilder {
     pub async fn start(config: InProcessBuilderConfig) -> Result<Self> {
         clear_otel_env_vars();
 
-        let tempdir = std::env::temp_dir();
-        let random_id = nanoid!();
-        let data_path = tempdir.join(format!("in-process-builder.{random_id}"));
+        let (data_path, temp_dir) = Self::prepare_datadir(config.datadir.clone())?;
         let jwt_path = data_path.join("jwt.hex");
 
         std::fs::create_dir_all(&data_path).wrap_err("Failed to create data directory")?;
         std::fs::write(&jwt_path, config.jwt_secret.as_bytes().encode_hex().as_bytes())
             .wrap_err("Failed to write JWT secret")?;
 
-        let runtime = RuntimeBuilder::new(RuntimeConfig::default()).build()?;
+        let runtime = RuntimeBuilder::new(
+            RuntimeConfig::default()
+                .with_tokio(TokioConfig::existing_handle(tokio::runtime::Handle::current())),
+        )
+        .build()?;
 
-        let chain_spec = parse_genesis(&config.genesis_json)?;
+        let chain_spec = match &config.chain_spec {
+            Some(chain_spec) => Arc::clone(chain_spec),
+            None => parse_genesis(&config.genesis_json)?,
+        };
 
         let flashblocks_port = config.flashblocks_port.unwrap_or_else(get_available_port);
+        let metrics_addr = SocketAddr::new(
+            Ipv4Addr::LOCALHOST.into(),
+            config.metrics_port.unwrap_or_else(get_available_port),
+        );
         let builder_config = BuilderConfig {
-            block_time: Duration::from_millis(2000),
+            block_time: config.block_time,
             flashblocks_ws_addr: SocketAddr::new(Ipv4Addr::LOCALHOST.into(), flashblocks_port),
             flashblocks_interval: Duration::from_millis(200),
             ..Default::default()
@@ -145,46 +167,86 @@ impl InProcessBuilder {
             .with_gas_limit_config(gas_limit_config)
             .build();
 
-        let (db, _db_path) = create_test_db(&data_path)?;
-
-        let node_config = create_node_config(chain_spec, &data_path, &jwt_path, &config)?;
+        let mut node_config = create_node_config(chain_spec, &data_path, &jwt_path, &config)?;
+        node_config.metrics = MetricArgs { prometheus: Some(metrics_addr), ..Default::default() };
+        let db_path = node_config.datadir().db();
+        let db = if config.datadir.is_some() {
+            init_db(db_path, node_config.db.database_args())
+                .wrap_err("Failed to open builder database")?
+        } else {
+            create_test_db(&db_path)?
+        };
         let p2p_port = node_config.network.port;
 
         let accept_validity_transactions = config.enable_experimental_validity_transactions;
         let node_builder = NodeBuilder::new(node_config.clone())
             .with_database(db)
             .with_launch_context(runtime.clone())
-            .with_types::<BaseNode>()
-            .with_components(
-                base_node
-                    .components()
-                    .pool(pool_component(&rollup_args))
-                    .payload(
-                        MultiplexingServiceBuilder::new(builder_config)
-                            .with_cutover_enabled(config.payload_builder_cutover),
-                    ),
-            )
-            .with_add_ons(addons)
-            .on_component_initialized(move |_ctx| Ok(()))
-            // Register the builder API RPC module (base_insertValidatedTransaction)
-            .extend_rpc_modules(move |ctx| {
-                let api = BuilderApiImpl::<_, base_execution_txpool::TransactionValidity>::with_extensions(
-                    ctx.pool().clone(),
-                    accept_validity_transactions,
-                    DEFAULT_MAX_VALIDITY_PREDICATES,
-                );
-                ctx.modules.merge_configured(api.into_rpc())?;
-                Ok(())
-            });
+            .with_types::<BaseNode>();
 
-        let NodeHandle { node: node_handle, node_exit_future } = config
-            .extra_extensions
-            .into_iter()
-            .fold(NodeHooks::new(), |hooks, ext| ext.apply(hooks))
-            .apply_to(node_builder)
-            .launch()
-            .await
-            .wrap_err("Failed to launch builder node")?;
+        // Flashblocks replaces the multiplexing/cutover payload service; both arms keep the
+        // builder API RPC (base_insertValidatedTransaction) and caller-supplied extensions.
+        let launched = if config.flashblocks_enabled {
+            config
+                .extra_extensions
+                .into_iter()
+                .fold(NodeHooks::new(), |hooks, ext| ext.apply(hooks))
+                .apply_to(
+                    node_builder
+                        .with_components(
+                            base_node
+                                .components()
+                                .pool(pool_component(&rollup_args))
+                                .payload(FlashblocksServiceBuilder::new(builder_config)),
+                        )
+                        .with_add_ons(addons)
+                        .on_component_initialized(move |_ctx| Ok(()))
+                        .extend_rpc_modules(move |ctx| {
+                            let api = BuilderApiImpl::<_, base_execution_txpool::TransactionValidity>::with_extensions(
+                                ctx.pool().clone(),
+                                accept_validity_transactions,
+                                DEFAULT_MAX_VALIDITY_PREDICATES,
+                            );
+                            ctx.modules.merge_configured(api.into_rpc())?;
+                            Ok(())
+                        }),
+                )
+                .launch()
+                .await
+        } else {
+            config
+                .extra_extensions
+                .into_iter()
+                .fold(NodeHooks::new(), |hooks, ext| ext.apply(hooks))
+                .apply_to(
+                    node_builder
+                        .with_components(
+                            base_node
+                                .components()
+                                .pool(pool_component(&rollup_args))
+                                .payload(
+                                    MultiplexingServiceBuilder::new(builder_config)
+                                        .with_cutover_enabled(config.payload_builder_cutover),
+                                ),
+                        )
+                        .with_add_ons(addons)
+                        .on_component_initialized(move |_ctx| Ok(()))
+                        .extend_rpc_modules(move |ctx| {
+                            let api = BuilderApiImpl::<_, base_execution_txpool::TransactionValidity>::with_extensions(
+                                ctx.pool().clone(),
+                                accept_validity_transactions,
+                                DEFAULT_MAX_VALIDITY_PREDICATES,
+                            );
+                            ctx.modules.merge_configured(api.into_rpc())?;
+                            Ok(())
+                        }),
+                )
+                .launch()
+                .await
+        };
+
+        let NodeHandle { node: node_handle, node_exit_future } =
+            launched.wrap_err("Failed to launch builder node")?;
 
         let http_api_addr = node_handle
             .rpc_server_handle()
@@ -202,13 +264,30 @@ impl InProcessBuilder {
             http_api_addr,
             ws_api_addr,
             engine_addr,
+            metrics_addr,
             flashblocks_port: flashblocks_ws_addr.port(),
             p2p_port,
             data_dir: data_path,
             _node_exit_future: node_exit_future,
             _node: Box::new(node_handle),
             _runtime: runtime,
+            _temp_dir: temp_dir,
         })
+    }
+
+    fn prepare_datadir(datadir: Option<PathBuf>) -> Result<(PathBuf, Option<TempDir>)> {
+        if let Some(path) = datadir {
+            eyre::ensure!(path.is_dir(), "caller-owned builder datadir does not exist");
+            eyre::ensure!(
+                path.join("db/mdbx.dat").is_file(),
+                "caller-owned builder datadir does not contain an existing database"
+            );
+            return Ok((path, None));
+        }
+
+        let temp_dir = TempDir::new().wrap_err("Failed to create temporary builder datadir")?;
+        let path = temp_dir.path().into();
+        Ok((path, Some(temp_dir)))
     }
 
     /// Returns the HTTP RPC URL (`localhost:actual_port`).
@@ -231,9 +310,41 @@ impl InProcessBuilder {
         format!("ws://127.0.0.1:{}/", self.flashblocks_port)
     }
 
+    /// Returns the Prometheus metrics URL.
+    pub fn metrics_url(&self) -> Result<Url> {
+        Url::parse(&format!("http://{}/metrics", self.metrics_addr))
+            .wrap_err("Failed to parse metrics URL")
+    }
+
     /// Returns the P2P enode URL with actual bound port.
     pub fn p2p_enode(&self) -> String {
         format!("enode://{BUILDER_ENODE_ID}@127.0.0.1:{}", self.p2p_port)
+    }
+
+    /// Returns the execution datadir used by this builder.
+    pub fn datadir(&self) -> &std::path::Path {
+        &self.data_dir
+    }
+
+    /// Requests graceful node shutdown before releasing the private runtime.
+    pub async fn shutdown(self) -> Result<()> {
+        let shutdown = self
+            ._runtime
+            .initiate_graceful_shutdown()
+            .map_err(|_| eyre!("builder runtime shutdown channel closed"))?;
+        shutdown.ignore_guard().await;
+        match tokio::time::timeout(Duration::from_secs(60), self._node_exit_future).await {
+            Ok(result) => result?,
+            Err(error) => {
+                warn!(error = %error, "forcing builder runtime shutdown after graceful timeout");
+            }
+        }
+        drop(self._node);
+        let runtime = self._runtime;
+        tokio::task::spawn_blocking(move || drop(runtime))
+            .await
+            .wrap_err("failed to release builder runtime")?;
+        Ok(())
     }
 
     /// Returns the Engine URL for Docker containers using testcontainers host port exposure.
@@ -349,6 +460,23 @@ fn create_node_config(
         .with_rpc(rpc)
         .with_network(network);
 
+    if let Some(persistence_threshold) = config.persistence_threshold {
+        node_config.engine.persistence_threshold = persistence_threshold;
+    }
+    if let Some(max_transactions) = config.txpool_max_transactions {
+        node_config.txpool.pending_max_count = max_transactions;
+        node_config.txpool.basefee_max_count = max_transactions;
+        node_config.txpool.queued_max_count = max_transactions;
+    }
+    if let Some(max_size_mb) = config.txpool_max_size_mb {
+        node_config.txpool.pending_max_size = max_size_mb;
+        node_config.txpool.basefee_max_size = max_size_mb;
+        node_config.txpool.queued_max_size = max_size_mb;
+    }
+    if let Some(max_account_slots) = config.txpool_max_account_slots {
+        node_config.txpool.max_account_slots = max_account_slots;
+    }
+
     if config.http_port.is_none()
         && config.ws_port.is_none()
         && config.auth_port.is_none()
@@ -360,12 +488,11 @@ fn create_node_config(
     Ok(node_config)
 }
 
-fn create_test_db(data_path: &std::path::Path) -> Result<(DatabaseEnv, PathBuf)> {
-    let db_path = data_path.join("db");
-    std::fs::create_dir_all(&db_path).wrap_err("Failed to create db directory")?;
+fn create_test_db(db_path: &std::path::Path) -> Result<DatabaseEnv> {
+    std::fs::create_dir_all(db_path).wrap_err("Failed to create db directory")?;
 
     let db = init_db(
-        db_path.as_path(),
+        db_path,
         DatabaseArguments::new(ClientVersion::default())
             .with_max_read_transaction_duration(Some(MaxReadTransactionDuration::Unbounded))
             .with_geometry_max_size(Some(4 * MEGABYTE))
@@ -373,9 +500,53 @@ fn create_test_db(data_path: &std::path::Path) -> Result<(DatabaseEnv, PathBuf)>
     )
     .wrap_err("Failed to initialize database")?;
 
-    Ok((db, db_path))
+    Ok(db)
 }
 
 fn pool_component(_rollup_args: &RollupArgs) -> BasePoolBuilder<BasePooledTransaction> {
     BasePoolBuilder::<BasePooledTransaction>::default()
+}
+
+#[cfg(test)]
+mod tests {
+    use tempfile::TempDir;
+
+    use super::InProcessBuilder;
+
+    #[test]
+    fn retains_caller_owned_datadir() {
+        let parent = TempDir::new().unwrap();
+        let datadir = parent.path().join("builder");
+        std::fs::create_dir_all(datadir.join("db")).unwrap();
+        std::fs::write(datadir.join("db/mdbx.dat"), []).unwrap();
+        let sentinel = datadir.join("caller-owned");
+        std::fs::write(&sentinel, []).unwrap();
+
+        let (actual, owner) = InProcessBuilder::prepare_datadir(Some(datadir.clone())).unwrap();
+        assert_eq!(actual, datadir);
+        assert!(owner.is_none());
+        drop(owner);
+
+        assert!(sentinel.exists());
+    }
+
+    #[test]
+    fn rejects_empty_caller_owned_datadir() {
+        let datadir = TempDir::new().unwrap();
+
+        let error = InProcessBuilder::prepare_datadir(Some(datadir.path().to_path_buf()))
+            .expect_err("empty caller-owned datadir should be rejected");
+
+        assert!(error.to_string().contains("does not contain an existing database"));
+    }
+
+    #[test]
+    fn removes_temporary_datadir() {
+        let (datadir, owner) = InProcessBuilder::prepare_datadir(None).unwrap();
+        assert!(datadir.exists());
+
+        drop(owner);
+
+        assert!(!datadir.exists());
+    }
 }

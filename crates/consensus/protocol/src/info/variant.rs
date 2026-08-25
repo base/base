@@ -16,7 +16,7 @@ use crate::{
     info::{
         L1BlockInfoBedrockBaseFields, L1BlockInfoEcotoneBaseFields as _, L1BlockInfoJovian,
         bedrock::L1BlockInfoBedrockOnlyFields as _, ecotone::L1BlockInfoEcotoneOnlyFields as _,
-        isthmus::L1BlockInfoIsthmusBaseFields as _,
+        isthmus::L1BlockInfoIsthmusBaseFields as _, jovian::L1BlockInfoJovianBaseFields as _,
     },
 };
 
@@ -202,8 +202,19 @@ impl L1BlockInfoTx {
             l2_block_time,
         )?;
 
+        let deposit_tx = l1_info.into_deposit_tx(rollup_config, l2_block_time);
+        Ok((l1_info, deposit_tx))
+    }
+
+    /// Converts this L1 block info into the deposit transaction placed first in an L2 block.
+    pub fn into_deposit_tx(
+        self,
+        rollup_config: &RollupConfig,
+        l2_block_time: u64,
+    ) -> Sealed<TxDeposit> {
+        let sequence_number = self.sequence_number();
         let source = DepositSourceDomain::L1Info(L1InfoDepositSource {
-            l1_block_hash: l1_info.block_hash(),
+            l1_block_hash: self.block_hash(),
             seq_number: sequence_number,
         });
 
@@ -215,7 +226,7 @@ impl L1BlockInfoTx {
             value: U256::ZERO,
             gas_limit: 150_000_000,
             is_system_transaction: true,
-            input: l1_info.encode_calldata(),
+            input: self.encode_calldata(),
         };
 
         // With the regolith upgrade, system transactions were deprecated, and we allocate
@@ -225,7 +236,7 @@ impl L1BlockInfoTx {
             deposit_tx.gas_limit = REGOLITH_SYSTEM_TX_GAS;
         }
 
-        Ok((l1_info, deposit_tx.seal_slow()))
+        deposit_tx.seal_slow()
     }
 
     /// Decodes the [`L1BlockInfoTx`] object from Ethereum transaction calldata.
@@ -387,6 +398,65 @@ impl L1BlockInfoTx {
             Self::Jovian(block) => block.sequence_number(),
         }
     }
+
+    /// Returns this L1 block info transaction with a different L2 sequence number.
+    ///
+    /// All L1 origin, fee, and system configuration fields are preserved. This is useful when
+    /// producing additional L2 blocks in the same sequencing epoch.
+    pub fn with_sequence_number(self, sequence_number: u64) -> Self {
+        match self {
+            Self::Bedrock(info) => Self::Bedrock(L1BlockInfoBedrock::new(
+                info.number(),
+                info.time(),
+                info.base_fee(),
+                info.block_hash(),
+                sequence_number,
+                info.batcher_address(),
+                info.l1_fee_overhead(),
+                info.l1_fee_scalar(),
+            )),
+            Self::Ecotone(info) => Self::Ecotone(L1BlockInfoEcotone::new(
+                info.number(),
+                info.time(),
+                info.base_fee(),
+                info.block_hash(),
+                sequence_number,
+                info.batcher_address(),
+                info.blob_base_fee(),
+                info.blob_base_fee_scalar(),
+                info.base_fee_scalar(),
+                info.empty_scalars(),
+                info.l1_fee_overhead(),
+            )),
+            Self::Isthmus(info) => Self::Isthmus(L1BlockInfoIsthmus::new(
+                info.number(),
+                info.time(),
+                info.base_fee(),
+                info.block_hash(),
+                sequence_number,
+                info.batcher_address(),
+                info.blob_base_fee(),
+                info.blob_base_fee_scalar(),
+                info.base_fee_scalar(),
+                info.operator_fee_scalar(),
+                info.operator_fee_constant(),
+            )),
+            Self::Jovian(info) => Self::Jovian(L1BlockInfoJovian::new(
+                info.number(),
+                info.time(),
+                info.base_fee(),
+                info.block_hash(),
+                sequence_number,
+                info.batcher_address(),
+                info.blob_base_fee(),
+                info.blob_base_fee_scalar(),
+                info.base_fee_scalar(),
+                info.operator_fee_scalar(),
+                info.operator_fee_constant(),
+                info.da_footprint_gas_scalar(),
+            )),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -518,6 +588,38 @@ mod tests {
 
         let isthmus = L1BlockInfoTx::Isthmus(L1BlockInfoIsthmus::new_from_sequence_number(101112));
         assert_eq!(isthmus.sequence_number(), 101112);
+    }
+
+    #[test]
+    fn test_l1_block_info_with_sequence_number() {
+        let variants = [
+            L1BlockInfoTx::Bedrock(L1BlockInfoBedrock::new_from_sequence_number(1)),
+            L1BlockInfoTx::Ecotone(L1BlockInfoEcotone::new_from_sequence_number(1)),
+            L1BlockInfoTx::Isthmus(L1BlockInfoIsthmus::new_from_sequence_number(1)),
+            L1BlockInfoTx::Jovian(L1BlockInfoJovian::new(
+                0,
+                0,
+                0,
+                B256::ZERO,
+                1,
+                Address::ZERO,
+                0,
+                0,
+                0,
+                0,
+                0,
+                L1BlockInfoJovian::DEFAULT_DA_FOOTPRINT_GAS_SCALAR,
+            )),
+        ];
+
+        for original in variants {
+            let updated = original.with_sequence_number(42);
+            assert_eq!(updated.sequence_number(), 42);
+            assert_eq!(updated.id(), original.id());
+            assert_eq!(updated.batcher_address(), original.batcher_address());
+            assert_eq!(updated.l1_base_fee(), original.l1_base_fee());
+            assert_eq!(updated.blob_base_fee(), original.blob_base_fee());
+        }
     }
 
     #[test]

@@ -32,16 +32,12 @@ use crate::{
     l1::{L1ContainerConfig, L1Execution, L1RpcProxy, L1Stack, L1StackConfig},
     l2::{
         L2ClientConsensusMode, L2ContainerConfig, L2Stack, L2StackConfig, ShadowSequencersConfig,
+        SnapshotL2Stack, SnapshotL2StackConfig,
     },
     setup::{L1GenesisOutput, L2DeploymentOutput, SetupContainer},
-    system_config::StableSystemTestConfig,
+    system_config::{DevnetConfig, DevnetL1Mode, DevnetL2State},
 };
 
-const DEFAULT_L1_CHAIN_ID: u64 = 1337;
-const DEFAULT_L2_CHAIN_ID: u64 = 84538453;
-/// L1 beacon slot duration. Live `op-deployer` confirms one transaction per L1
-/// slot, so this dominates stack startup time.
-const DEFAULT_SLOT_DURATION: u64 = 1;
 const DEFAULT_SHADOW_BLOCKS_PER_CYCLE: NonZeroU64 = NonZeroU64::new(3).unwrap();
 
 /// Longest wait for a live L1 schedule change to be re-applied by a runtime-admin node (the
@@ -277,9 +273,7 @@ impl SystemTestStack {
 /// Builder for creating a new `SystemTestStack`.
 #[derive(Debug, Default)]
 pub struct SystemTestStackBuilder {
-    l1_chain_id: Option<u64>,
-    l2_chain_id: Option<u64>,
-    slot_duration: Option<u64>,
+    devnet_config: DevnetConfig,
     isthmus_activation_block: Option<u64>,
     base_azul_activation_block: Option<u64>,
     base_beryl_activation_block: Option<u64>,
@@ -287,7 +281,6 @@ pub struct SystemTestStackBuilder {
     base_denim_activation_block: Option<u64>,
     base_zenith_activation_block: Option<u64>,
     output_dir: Option<PathBuf>,
-    stable_config: Option<StableSystemTestConfig>,
     tx_forwarding_config: Option<TxForwardingConfig>,
     enable_experimental_validity_transactions: bool,
     payload_builder_cutover: bool,
@@ -310,21 +303,27 @@ impl SystemTestStackBuilder {
         Self::default()
     }
 
+    /// Sets the canonical devnet configuration.
+    pub fn with_devnet_config(mut self, config: DevnetConfig) -> Self {
+        self.devnet_config = config;
+        self
+    }
+
     /// Sets the L1 chain ID.
     pub const fn with_l1_chain_id(mut self, chain_id: u64) -> Self {
-        self.l1_chain_id = Some(chain_id);
+        self.devnet_config.l1_chain_id = chain_id;
         self
     }
 
     /// Sets the L2 chain ID.
     pub const fn with_l2_chain_id(mut self, chain_id: u64) -> Self {
-        self.l2_chain_id = Some(chain_id);
+        self.devnet_config.l2_chain_id = chain_id;
         self
     }
 
     /// Sets the L1 beacon slot duration in seconds.
     pub const fn with_slot_duration(mut self, slot_duration: u64) -> Self {
-        self.slot_duration = Some(slot_duration);
+        self.devnet_config.l1_slot_duration = slot_duration;
         self
     }
 
@@ -371,8 +370,8 @@ impl SystemTestStackBuilder {
     }
 
     /// Enables stable container names and ports matching docker-compose.yml.
-    pub fn with_stable_config(mut self) -> Self {
-        self.stable_config = Some(StableSystemTestConfig::standard());
+    pub const fn with_stable_config(mut self) -> Self {
+        self.devnet_config.use_stable_ports = true;
         self
     }
 
@@ -479,11 +478,62 @@ impl SystemTestStackBuilder {
         self
     }
 
+    /// Builds the L1-free snapshot stack represented by this devnet configuration.
+    pub async fn build_snapshot(self) -> Result<SnapshotL2Stack> {
+        let mut stack = self.build_snapshot_sequencer().await?;
+        stack.start_validator().await?;
+        stack.wait_for_validator().await?;
+        Ok(stack)
+    }
+
+    /// Builds the snapshot stack with only the sequencer phase active.
+    pub async fn build_snapshot_sequencer(self) -> Result<SnapshotL2Stack> {
+        self.devnet_config.validate().wrap_err("Invalid devnet configuration")?;
+        eyre::ensure!(
+            self.devnet_config.l1_mode == DevnetL1Mode::None,
+            "snapshot launcher requires L1-free mode"
+        );
+        let DevnetL2State::Snapshot(snapshot) = self.devnet_config.l2_state else {
+            eyre::bail!("snapshot launcher requires snapshot-backed L2 state")
+        };
+        let container_config = self.devnet_config.use_stable_ports.then(|| {
+            let ports = &self.devnet_config.stable.ports;
+            L2ContainerConfig {
+                use_stable_names: true,
+                network_name: Some(self.devnet_config.stable.network_name),
+                builder_http_port: Some(ports.l2_builder_http),
+                builder_ws_port: Some(ports.l2_builder_ws),
+                builder_auth_port: Some(ports.l2_builder_auth),
+                builder_p2p_port: Some(ports.l2_builder_p2p),
+                builder_flashblocks_port: Some(ports.l2_builder_flashblocks),
+                client_http_port: Some(ports.l2_client_http),
+                client_ws_port: Some(ports.l2_client_ws),
+                client_auth_port: Some(ports.l2_client_auth),
+                client_p2p_port: Some(ports.l2_client_p2p),
+                builder_consensus_rpc_port: None,
+                builder_consensus_p2p_tcp_port: None,
+                builder_consensus_p2p_udp_port: None,
+                client_consensus_rpc_port: Some(ports.l2_client_cl_rpc),
+                client_consensus_p2p_tcp_port: None,
+                client_consensus_p2p_udp_port: None,
+            }
+        });
+
+        SnapshotL2Stack::start_sequencer(SnapshotL2StackConfig { snapshot, container_config }).await
+    }
+
     /// Builds and starts the system test stack.
     pub async fn build(self) -> Result<SystemTestStack> {
-        let l1_chain_id = self.l1_chain_id.unwrap_or(DEFAULT_L1_CHAIN_ID);
-        let l2_chain_id = self.l2_chain_id.unwrap_or(DEFAULT_L2_CHAIN_ID);
-        let slot_duration = self.slot_duration.unwrap_or(DEFAULT_SLOT_DURATION);
+        self.devnet_config.validate().wrap_err("Invalid devnet configuration")?;
+        eyre::ensure!(
+            self.devnet_config.l1_mode == DevnetL1Mode::Real
+                && self.devnet_config.l2_state == DevnetL2State::Fresh,
+            "system test launcher currently supports only real L1 with fresh L2 state"
+        );
+
+        let l1_chain_id = self.devnet_config.l1_chain_id;
+        let l2_chain_id = self.devnet_config.l2_chain_id;
+        let slot_duration = self.devnet_config.l1_slot_duration;
 
         // Acquire runtime-registry ownership before any node starts, so live overrides are
         // cleared even when a later startup step fails, and so a chain-ID conflict with a
@@ -531,8 +581,8 @@ impl SystemTestStackBuilder {
             setup = setup.with_base_zenith_activation_block(block);
         }
 
-        if let Some(ref config) = self.stable_config {
-            setup = setup.with_network_name(&config.network_name);
+        if self.devnet_config.use_stable_ports {
+            setup = setup.with_network_name(&self.devnet_config.stable.network_name);
         }
 
         let l1_genesis = tokio::task::spawn_blocking({
@@ -546,39 +596,41 @@ impl SystemTestStackBuilder {
         let el_genesis_json = l1_genesis.read_el_genesis()?;
         let jwt_secret_hex = l1_genesis.read_jwt_secret()?;
 
-        let (l1_container_config, l2_container_config) =
-            self.stable_config.as_ref().map_or((None, None), |config| {
-                let l1_config = L1ContainerConfig {
-                    use_stable_names: true,
-                    network_name: Some(config.network_name.clone()),
-                    http_port: Some(config.ports.l1_http),
-                    engine_port: Some(config.ports.l1_auth),
-                    beacon_http_port: Some(config.ports.l1_cl_http),
-                    beacon_p2p_port: Some(config.ports.l1_cl_p2p),
-                    tmpfs_datadir: self.tmpfs_datadirs,
-                    enable_reorg_control: self.l1_fault_injection,
-                };
-                let l2_config = L2ContainerConfig {
-                    use_stable_names: true,
-                    network_name: Some(config.network_name.clone()),
-                    builder_http_port: Some(config.ports.l2_builder_http),
-                    builder_ws_port: Some(config.ports.l2_builder_ws),
-                    builder_auth_port: Some(config.ports.l2_builder_auth),
-                    builder_p2p_port: Some(config.ports.l2_builder_p2p),
-                    builder_flashblocks_port: Some(config.ports.l2_builder_flashblocks),
-                    client_http_port: Some(config.ports.l2_client_http),
-                    client_ws_port: Some(config.ports.l2_client_ws),
-                    client_auth_port: Some(config.ports.l2_client_auth),
-                    client_p2p_port: Some(config.ports.l2_client_p2p),
-                    builder_consensus_rpc_port: Some(config.ports.l2_builder_cl_rpc),
-                    builder_consensus_p2p_tcp_port: Some(config.ports.l2_builder_cl_p2p),
-                    builder_consensus_p2p_udp_port: None,
-                    client_consensus_rpc_port: Some(config.ports.l2_client_cl_rpc),
-                    client_consensus_p2p_tcp_port: Some(config.ports.l2_client_cl_p2p),
-                    client_consensus_p2p_udp_port: None,
-                };
-                (Some(l1_config), Some(l2_config))
-            });
+        let (l1_container_config, l2_container_config) = if self.devnet_config.use_stable_ports {
+            let config = &self.devnet_config.stable;
+            let l1_config = L1ContainerConfig {
+                use_stable_names: true,
+                network_name: Some(config.network_name.clone()),
+                http_port: Some(config.ports.l1_http),
+                engine_port: Some(config.ports.l1_auth),
+                beacon_http_port: Some(config.ports.l1_cl_http),
+                beacon_p2p_port: Some(config.ports.l1_cl_p2p),
+                tmpfs_datadir: self.tmpfs_datadirs,
+                enable_reorg_control: self.l1_fault_injection,
+            };
+            let l2_config = L2ContainerConfig {
+                use_stable_names: true,
+                network_name: Some(config.network_name.clone()),
+                builder_http_port: Some(config.ports.l2_builder_http),
+                builder_ws_port: Some(config.ports.l2_builder_ws),
+                builder_auth_port: Some(config.ports.l2_builder_auth),
+                builder_p2p_port: Some(config.ports.l2_builder_p2p),
+                builder_flashblocks_port: Some(config.ports.l2_builder_flashblocks),
+                client_http_port: Some(config.ports.l2_client_http),
+                client_ws_port: Some(config.ports.l2_client_ws),
+                client_auth_port: Some(config.ports.l2_client_auth),
+                client_p2p_port: Some(config.ports.l2_client_p2p),
+                builder_consensus_rpc_port: Some(config.ports.l2_builder_cl_rpc),
+                builder_consensus_p2p_tcp_port: Some(config.ports.l2_builder_cl_p2p),
+                builder_consensus_p2p_udp_port: None,
+                client_consensus_rpc_port: Some(config.ports.l2_client_cl_rpc),
+                client_consensus_p2p_tcp_port: Some(config.ports.l2_client_cl_p2p),
+                client_consensus_p2p_udp_port: None,
+            };
+            (Some(l1_config), Some(l2_config))
+        } else {
+            (None, None)
+        };
 
         // Ensure the tmpfs-datadir request reaches the L1 containers even without a stable config.
         let l1_container_config = l1_container_config.or_else(|| {
@@ -680,6 +732,8 @@ impl SystemTestStackBuilder {
 
         let l2_config = L2StackConfig {
             l2_genesis: l2_genesis_bytes,
+            builder_datadir: None,
+            client_datadir: None,
             rollup_config: rollup_config_bytes,
             l1_genesis: l1_genesis_bytes,
             jwt_secret,

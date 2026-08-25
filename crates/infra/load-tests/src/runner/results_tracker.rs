@@ -103,6 +103,10 @@ struct ResultsTrackerInner {
     /// the end-of-run `eth_getBlockReceipts` pass to only relevant blocks.
     landed_blocks: BTreeSet<u64>,
     measurement_started: bool,
+    measurement_start_block: Option<u64>,
+    measurement_end_block: Option<u64>,
+    measurement_target_count: Option<u64>,
+    measurement_finished: bool,
     measured_landed: HashSet<TxHash>,
     completed_batches: HashMap<u64, Instant>,
     pending_refills: VecDeque<PendingRefill>,
@@ -182,6 +186,10 @@ impl ResultsTracker {
                 confirmed_gas: 0,
                 landed_blocks: BTreeSet::new(),
                 measurement_started: false,
+                measurement_start_block: None,
+                measurement_end_block: None,
+                measurement_target_count: None,
+                measurement_finished: false,
                 measured_landed: HashSet::new(),
                 completed_batches: HashMap::new(),
                 pending_refills: VecDeque::new(),
@@ -318,6 +326,7 @@ impl ResultsTracker {
         tx_hashes: Vec<TxHash>,
     ) -> BlockMatch {
         let mut inner = self.inner.write();
+        inner.observe_measurement_block(block.number);
         let mut block_match = BlockMatch::default();
         for tx_hash in tx_hashes {
             if let Some((estimated_gas, released)) = inner.land_if_pending(tx_hash, &block) {
@@ -460,9 +469,14 @@ impl ResultsTracker {
     }
 
     /// Starts measurement. Transactions already accepted remain warmup transactions.
-    pub fn begin_measurement(&self) {
+    pub fn begin_measurement(&self, start_block: u64, measurement_blocks: Option<u64>) {
         let mut inner = self.inner.write();
         inner.measurement_started = true;
+        inner.measurement_start_block = Some(start_block);
+        inner.measurement_target_count = measurement_blocks;
+        inner.measurement_end_block =
+            measurement_blocks.map(|count| start_block.saturating_add(count));
+        inner.measurement_finished = false;
         inner.unreported_confirmations.clear();
         inner.unreported_flashblock_observations.clear();
         inner.landed_blocks.clear();
@@ -510,6 +524,21 @@ impl ResultsTracker {
     /// that actually contained our transactions.
     pub fn landed_block_numbers(&self) -> Vec<u64> {
         self.inner.read().landed_blocks.iter().copied().collect()
+    }
+
+    /// Returns whether the configured measurement block target has been observed.
+    pub fn measurement_finished(&self) -> bool {
+        self.inner.read().measurement_finished
+    }
+
+    /// Returns the configured measurement window boundaries.
+    pub fn measurement_window(&self) -> (Option<u64>, Option<u64>, u64) {
+        let inner = self.inner.read();
+        let measurement_block_count = inner
+            .measurement_start_block
+            .zip(inner.measurement_end_block)
+            .map_or(0, |(start, end)| end.saturating_sub(start));
+        (inner.measurement_start_block, inner.measurement_end_block, measurement_block_count)
     }
 }
 
@@ -586,6 +615,17 @@ impl ResultsTrackerInner {
             }
         }
     }
+
+    const fn observe_measurement_block(&mut self, observed_block: u64) {
+        if !self.measurement_started || self.measurement_finished {
+            return;
+        }
+        if let Some(target_end_block) = self.measurement_end_block
+            && observed_block >= target_end_block
+        {
+            self.measurement_finished = true;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -613,7 +653,7 @@ mod tests {
         let from = address!("0000000000000000000000000000000000000001");
         let tx_hash = TxHash::repeat_byte(1);
         let tracker = ResultsTracker::new(&[from]);
-        tracker.begin_measurement();
+        tracker.begin_measurement(6, Some(1));
 
         tracker.sent_transactions(vec![sent(tx_hash, from, true)]);
         assert_eq!(tracker.unconfirmed_gas(), 21_000);
@@ -647,7 +687,7 @@ mod tests {
         let from = address!("0000000000000000000000000000000000000001");
         let tx_hash = TxHash::repeat_byte(7);
         let tracker = ResultsTracker::new(&[from]);
-        tracker.begin_measurement();
+        tracker.begin_measurement(10, Some(2));
 
         tracker.sent_transactions(vec![sent(tx_hash, from, true)]);
         let now = Instant::now();
@@ -665,7 +705,7 @@ mod tests {
         let from = address!("0000000000000000000000000000000000000001");
         let tx_hash = TxHash::repeat_byte(2);
         let tracker = ResultsTracker::new(&[from]);
-        tracker.begin_measurement();
+        tracker.begin_measurement(7, Some(1));
 
         tracker.sent_transactions(vec![sent(tx_hash, from, true)]);
         let now = Instant::now();
@@ -695,7 +735,7 @@ mod tests {
         let from = address!("0000000000000000000000000000000000000001");
         let tx_hash = TxHash::repeat_byte(4);
         let tracker = ResultsTracker::new(&[from]);
-        tracker.begin_measurement();
+        tracker.begin_measurement(9, Some(1));
 
         tracker.sent_transactions(vec![sent(tx_hash, from, true)]);
         assert_eq!(tracker.total_in_flight(), 1);
@@ -750,7 +790,7 @@ mod tests {
         let tx_hash = TxHash::repeat_byte(6);
         let (pulse_tx, mut pulse_rx) = mpsc::channel(1);
         let tracker = ResultsTracker::new_with_pulse_sender(&[from], pulse_tx);
-        tracker.begin_measurement();
+        tracker.begin_measurement(0, None);
 
         let flashblock = tracker
             .on_new_flashblock(vec![FlashblockInclusion { tx_hash, included_at: Instant::now() }]);
@@ -792,7 +832,7 @@ mod tests {
         let tracker = ResultsTracker::new(&[from]);
 
         tracker.sent_transactions(vec![sent(tx_hash, from, false)]);
-        tracker.begin_measurement();
+        tracker.begin_measurement(0, None);
 
         assert_eq!(tracker.expire_pending(Duration::ZERO), 0);
         assert_eq!(tracker.pending_count(), 0);
@@ -822,7 +862,7 @@ mod tests {
         let tracker = ResultsTracker::new(&[from]);
 
         tracker.sent_transactions(vec![sent(tx_hash, from, false)]);
-        tracker.begin_measurement();
+        tracker.begin_measurement(3, Some(1));
         tracker.on_new_block_hashes(block_at(4, Instant::now()), vec![tx_hash]);
 
         assert_eq!(tracker.total_in_flight(), 0);
@@ -843,5 +883,41 @@ mod tests {
         tracker.record_batch_completed(11, started_at + Duration::from_millis(145));
 
         assert_eq!(tracker.drain_completed_refill_lags(), vec![Duration::from_millis(145)]);
+    }
+
+    #[test]
+    fn measurement_window_counts_exact_target_with_empty_blocks() {
+        let tracker = ResultsTracker::new(&[]);
+        tracker.begin_measurement(100, Some(4));
+
+        tracker.on_new_block_hashes(block_at(101, Instant::now()), Vec::new());
+        tracker.on_new_block_hashes(block_at(102, Instant::now()), Vec::new());
+        tracker.on_new_block_hashes(block_at(103, Instant::now()), Vec::new());
+        assert!(!tracker.measurement_finished());
+
+        tracker.on_new_block_hashes(block_at(104, Instant::now()), Vec::new());
+
+        let (start, end, count) = tracker.measurement_window();
+        assert_eq!(start, Some(100));
+        assert_eq!(end, Some(104));
+        assert_eq!(count, 4);
+        assert!(tracker.measurement_finished());
+    }
+
+    #[test]
+    fn measurement_window_handles_skipped_height_observation_order() {
+        let tracker = ResultsTracker::new(&[]);
+        tracker.begin_measurement(200, Some(3));
+
+        // Newest block arrives first; skipped heights can be recovered later.
+        tracker.on_new_block_hashes(block_at(204, Instant::now()), Vec::new());
+        assert!(tracker.measurement_finished());
+        tracker.on_new_block_hashes(block_at(202, Instant::now()), Vec::new());
+        tracker.on_new_block_hashes(block_at(203, Instant::now()), Vec::new());
+
+        let (start, end, count) = tracker.measurement_window();
+        assert_eq!(start, Some(200));
+        assert_eq!(end, Some(203));
+        assert_eq!(count, 3);
     }
 }
