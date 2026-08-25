@@ -10,7 +10,7 @@ use reth_provider::providers::BlockchainProvider;
 use tracing::info;
 
 use crate::{
-    BaseNodeBuilder, BaseNodeExtension, FromExtensionConfig, NodeHooks,
+    BaseNodeBuilder, BaseNodeExtension, ExExWalRepair, FromExtensionConfig, NodeHooks,
     node::BaseNode,
     service::{DefaultPayloadServiceBuilder, PayloadServiceBuilder},
 };
@@ -154,11 +154,15 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
         base_node = base_node.with_manifest_precheck_enabled(manifest_precheck_enabled);
         let components = service_builder.build_components(&base_node);
 
+        // Runs after the datadir is locked but before reth loads the ExEx WAL, which is the only
+        // window in which the WAL can be repaired.
+        let wal_repair = ExExWalRepair::new(builder.config().datadir().exex_wal());
+
         let builder = builder
             .with_types_and_provider::<BaseNode, BlockchainProvider<_>>()
             .with_components(components)
             .with_add_ons(base_node.add_ons())
-            .on_component_initialized(move |_ctx| Ok(()));
+            .on_component_initialized(move |_ctx| wal_repair.run());
 
         let hooks = extensions.into_iter().fold(NodeHooks::new(), |hooks, ext| ext.apply(hooks));
         let hooks = started_callbacks

@@ -12,6 +12,7 @@ aliases for building modular node extensions.
 - **`FromExtensionConfig`**: Trait for extensions that can be constructed from a configuration type.
 - **`BaseNodeRunner`**: Orchestrates Base node wiring and launch.
 - **`NodeHooks`**: Hook accumulator used by extensions to register RPC and node-start hooks.
+- **`ExExWalRepair`**: Closes holes in the `ExEx` WAL file-id sequence before reth loads it.
 - **`BaseNodeBuilder`**: Type alias for the node builder with launch context.
 - **`BaseProvider`**: Type alias for the blockchain provider instance.
 

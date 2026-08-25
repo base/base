@@ -10,6 +10,9 @@
 mod builder;
 pub use builder::{BaseNodeAdapter, BaseRpcContext, NodeHooks, RethNodeBuilder};
 
+mod exex_wal;
+pub use exex_wal::ExExWalRepair;
+
 mod extension;
 pub use extension::{BaseNodeExtension, FromExtensionConfig};
 
