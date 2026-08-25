@@ -34,7 +34,7 @@ impl ShadowFunding {
             source_hash,
             from: self.address,
             to: TxKind::Call(self.address),
-            mint: self.amount.to::<u128>(),
+            mint: self.amount.try_into().expect("shadow funding amount must fit in u128"),
             value: U256::ZERO,
             gas_limit: 21_000,
             is_system_transaction: false,
