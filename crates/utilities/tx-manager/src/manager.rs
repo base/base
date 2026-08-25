@@ -248,12 +248,6 @@ where
     /// Fixed delay between retry attempts in [`Self::prepare`].
     pub const PREPARE_RETRY_DELAY: Duration = Duration::from_secs(2);
 
-    /// Maximum retries when an RPC temporarily rejects an ordered nonce.
-    pub const PUBLISH_MAX_RETRIES: usize = 30;
-
-    /// Fixed delay between nonce-too-high publication retries.
-    pub const PUBLISH_RETRY_DELAY: Duration = Duration::from_secs(2);
-
     /// Creates a new [`SimpleTxManager`] with an injected runtime.
     ///
     /// This mirrors [`Self::new`] but lets deterministic tests control
@@ -1377,8 +1371,8 @@ where
         (|| self.publish_tx(send_state, raw_tx, None))
             .retry(
                 ConstantBuilder::default()
-                    .with_delay(Self::PUBLISH_RETRY_DELAY)
-                    .with_max_times(Self::PUBLISH_MAX_RETRIES),
+                    .with_delay(self.config.publish_retry_delay)
+                    .with_max_times(self.config.publish_max_retries),
             )
             .when(|error| matches!(error, TxManagerError::NonceTooHigh))
             .notify(|error, delay| {
@@ -1868,15 +1862,15 @@ mod tests {
 
         let provider = ProviderBuilder::new().connect_mocked_client(asserter);
         let wallet = EthereumWallet::from(PrivateKeySigner::random());
-        let manager = SimpleTxManager::from_wallet(
-            provider,
-            wallet,
-            TxManagerConfig::default(),
-            1,
-            Arc::new(NoopTxMetrics),
-        )
-        .await
-        .expect("should construct manager");
+        let config = TxManagerConfig {
+            publish_max_retries: 2,
+            publish_retry_delay: Duration::from_millis(1),
+            ..TxManagerConfig::default()
+        };
+        let manager =
+            SimpleTxManager::from_wallet(provider, wallet, config, 1, Arc::new(NoopTxMetrics))
+                .await
+                .expect("should construct manager");
         let send_state = SendState::new(3).expect("should construct send state");
 
         let hash = manager
