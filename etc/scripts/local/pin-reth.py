@@ -189,11 +189,18 @@ def parse_pin(raw: str, path: Path) -> Pin:
 
 
 def set_top_level_rev(raw: str, rev: str) -> str:
-    """Replace the top-level `rev` field without touching `[[patches]]`."""
-    updated, count = TOP_LEVEL_REV_RE.subn(f'rev = "{rev}"', raw, count=1)
+    """Replace the top-level `rev` field without touching later tables.
+
+    Only the preamble before the first `[` section header is rewritten, so
+    `[upstream_base].rev` cannot be updated by accident.
+    """
+    match = re.search(r"(?m)^\[", raw)
+    preamble = raw if match is None else raw[: match.start()]
+    rest = "" if match is None else raw[match.start() :]
+    updated, count = TOP_LEVEL_REV_RE.subn(f'rev = "{rev}"', preamble)
     if count != 1:
         raise PinError("could not update top-level `rev` in the pin manifest")
-    return updated
+    return updated + rest
 
 
 def workspace_deps_span(text: str) -> tuple[int, int]:
@@ -696,6 +703,26 @@ head = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
             normalize_git_url("https://github.com/paradigmxyz/reth.git/"),
             "https://github.com/paradigmxyz/reth",
         )
+
+    def test_set_top_level_rev_skips_section_rev(self) -> None:
+        updated = set_top_level_rev(
+            SAMPLE_PIN, "d80b19e5b597f047268c6593300cbbe1f235631b"
+        )
+        self.assertIn(
+            'rev = "d80b19e5b597f047268c6593300cbbe1f235631b"',
+            updated.split("[upstream_base]", 1)[0],
+        )
+        self.assertIn(
+            'rev = "6dec1b96b625584956883c34ad0eafbe550480ac"',
+            updated.split("[upstream_base]", 1)[1],
+        )
+
+    def test_set_top_level_rev_rejects_section_only_rev(self) -> None:
+        with self.assertRaises(PinError):
+            set_top_level_rev(
+                '[upstream_base]\nrev = "6dec1b96b625584956883c34ad0eafbe550480ac"\n',
+                "d80b19e5b597f047268c6593300cbbe1f235631b",
+            )
 
 
 def run_tests() -> int:
