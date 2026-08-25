@@ -105,19 +105,26 @@ impl TxEip8130 {
     /// Returns [`Some`] when the sender uses
     /// [`Eip8130Contracts::DEFAULT_ACCOUNT`] (EOA auto-delegation, or an
     /// explicit delegation to that implementation), phase 0 contains exactly
-    /// one call, that call is invoked on the sender when the sender is
-    /// explicit, and the calldata is `DefaultAccount.execute` (or a
-    /// one-element `executeBatch`) transferring ETH to
-    /// [`Predeploys::SEQUENCER_FEE_VAULT`] with empty calldata.
+    /// one call invoked on `resolved_sender`, and the calldata is
+    /// `DefaultAccount.execute` (or a one-element `executeBatch`) transferring
+    /// ETH to [`Predeploys::SEQUENCER_FEE_VAULT`] with empty calldata.
+    ///
+    /// `resolved_sender` is the account that will dispatch the call: the
+    /// explicit [`Self::sender`] when present, otherwise the recovered EOA.
+    /// The protocol call's `to` must equal that address, matching execution
+    /// (`from` is the sender; `execute` must run on the sender itself).
     #[must_use]
-    pub fn coinbase_tip(&self) -> Option<U256> {
+    pub fn coinbase_tip(&self, resolved_sender: Address) -> Option<U256> {
         if !self.statically_uses_default_account() {
+            return None;
+        }
+        if self.sender.is_some_and(|sender| sender != resolved_sender) {
             return None;
         }
         let [call] = self.calls.first()?.as_slice() else {
             return None;
         };
-        if self.sender.is_some_and(|sender| call.to != sender) {
+        if call.to != resolved_sender {
             return None;
         }
         let (recipient, amount) = Self::default_account_eth_transfer(&call.data)?;
@@ -157,10 +164,10 @@ impl TxEip8130 {
     /// `execute(target, value, "")` or a one-element `executeBatch` of the same
     /// shape.
     fn default_account_eth_transfer(calldata: &[u8]) -> Option<(Address, U256)> {
-        if let Ok(call) = IDefaultAccount::executeCall::abi_decode(calldata) {
+        if let Ok(call) = IDefaultAccount::executeCall::abi_decode_validate(calldata) {
             return call.data.is_empty().then_some((call.target, call.value));
         }
-        let batch = IDefaultAccount::executeBatchCall::abi_decode(calldata).ok()?;
+        let batch = IDefaultAccount::executeBatchCall::abi_decode_validate(calldata).ok()?;
         let [inner] = batch.calls.as_slice() else {
             return None;
         };
@@ -1089,6 +1096,7 @@ mod tests {
         );
     }
 
+    const SENDER: Address = address!("0x00000000000000000000000000000000000000bb");
     const COINBASE: Address = Predeploys::SEQUENCER_FEE_VAULT;
     const OTHER_RECIPIENT: Address = address!("0x00000000000000000000000000000000000000cc");
     const TIP_AMOUNT: u64 = 123;
@@ -1132,70 +1140,68 @@ mod tests {
 
     #[test]
     fn coinbase_tip_eoa_execute_returns_amount() {
-        let sender = address!("0x00000000000000000000000000000000000000bb");
-        let tx = eoa_with_phase0(vec![execute_call(sender)]);
-        assert_eq!(tx.coinbase_tip(), Some(U256::from(TIP_AMOUNT)));
+        let tx = eoa_with_phase0(vec![execute_call(SENDER)]);
+        assert_eq!(tx.coinbase_tip(SENDER), Some(U256::from(TIP_AMOUNT)));
         let other = eoa_with_phase0(vec![Call {
-            to: sender,
+            to: SENDER,
             data: encode_execute(OTHER_RECIPIENT, U256::from(TIP_AMOUNT), &[]),
         }]);
-        assert_eq!(other.coinbase_tip(), None);
+        assert_eq!(other.coinbase_tip(SENDER), None);
+        let not_self = eoa_with_phase0(vec![execute_call(COINBASE)]);
+        assert_eq!(not_self.coinbase_tip(SENDER), None);
     }
 
     #[test]
     fn coinbase_tip_eoa_execute_batch_single_send_returns_amount() {
-        let sender = address!("0x00000000000000000000000000000000000000bb");
         let tx = eoa_with_phase0(vec![Call {
-            to: sender,
+            to: SENDER,
             data: encode_execute_batch_one(COINBASE, U256::from(TIP_AMOUNT)),
         }]);
-        assert_eq!(tx.coinbase_tip(), Some(U256::from(TIP_AMOUNT)));
+        assert_eq!(tx.coinbase_tip(SENDER), Some(U256::from(TIP_AMOUNT)));
         let other = eoa_with_phase0(vec![Call {
-            to: sender,
+            to: SENDER,
             data: encode_execute_batch_one(OTHER_RECIPIENT, U256::from(TIP_AMOUNT)),
         }]);
-        assert_eq!(other.coinbase_tip(), None);
+        assert_eq!(other.coinbase_tip(SENDER), None);
     }
 
     #[test]
     fn coinbase_tip_explicit_sender_requires_self_call_and_default_delegation() {
-        let sender = address!("0x00000000000000000000000000000000000000bb");
         let delegated = TxEip8130 {
-            sender: Some(sender),
+            sender: Some(SENDER),
             account_changes: vec![AccountChange::Delegation(Delegation {
                 target: Eip8130Contracts::DEFAULT_ACCOUNT,
             })],
-            calls: vec![vec![execute_call(sender)]],
+            calls: vec![vec![execute_call(SENDER)]],
             ..Default::default()
         };
-        assert_eq!(delegated.coinbase_tip(), Some(U256::from(TIP_AMOUNT)));
+        assert_eq!(delegated.coinbase_tip(SENDER), Some(U256::from(TIP_AMOUNT)));
 
-        let not_self =
-            TxEip8130 { calls: vec![vec![execute_call(COINBASE)]], ..delegated.clone() };
-        assert_eq!(not_self.coinbase_tip(), None);
+        let not_self = TxEip8130 { calls: vec![vec![execute_call(COINBASE)]], ..delegated.clone() };
+        assert_eq!(not_self.coinbase_tip(SENDER), None);
+        assert_eq!(delegated.coinbase_tip(OTHER_RECIPIENT), None);
 
         let no_delegation = TxEip8130 { account_changes: vec![], ..delegated };
-        assert_eq!(no_delegation.coinbase_tip(), None);
+        assert_eq!(no_delegation.coinbase_tip(SENDER), None);
     }
 
     #[test]
     fn coinbase_tip_rejects_non_default_account() {
-        let sender = address!("0x00000000000000000000000000000000000000bb");
         let other_impl = TxEip8130 {
-            sender: Some(sender),
+            sender: Some(SENDER),
             account_changes: vec![AccountChange::Delegation(Delegation {
                 target: Eip8130Contracts::CANONICAL_HIGH_RATE_PAYER_ACCOUNT,
             })],
-            calls: vec![vec![execute_call(sender)]],
+            calls: vec![vec![execute_call(SENDER)]],
             ..Default::default()
         };
-        assert_eq!(other_impl.coinbase_tip(), None);
+        assert_eq!(other_impl.coinbase_tip(SENDER), None);
 
         let cleared = TxEip8130 {
             account_changes: vec![AccountChange::Delegation(Delegation { target: Address::ZERO })],
             ..other_impl
         };
-        assert_eq!(cleared.coinbase_tip(), None);
+        assert_eq!(cleared.coinbase_tip(SENDER), None);
 
         let created = TxEip8130 {
             sender: None,
@@ -1204,34 +1210,33 @@ mod tests {
                 code: bytes!("01"),
                 initial_actors: vec![],
             })],
-            calls: vec![vec![execute_call(sender)]],
+            calls: vec![vec![execute_call(SENDER)]],
             ..Default::default()
         };
-        assert_eq!(created.coinbase_tip(), None);
+        assert_eq!(created.coinbase_tip(SENDER), None);
     }
 
     #[test]
     fn coinbase_tip_requires_single_phase0_eth_transfer() {
-        let sender = address!("0x00000000000000000000000000000000000000bb");
-        let call = execute_call(sender);
+        let call = execute_call(SENDER);
 
-        assert_eq!(eoa_with_phase0(vec![call.clone(), call.clone()]).coinbase_tip(), None);
-        assert_eq!(eoa_with_phase0(vec![]).coinbase_tip(), None);
+        assert_eq!(eoa_with_phase0(vec![call.clone(), call.clone()]).coinbase_tip(SENDER), None);
+        assert_eq!(eoa_with_phase0(vec![]).coinbase_tip(SENDER), None);
 
         let later_phase =
             TxEip8130 { sender: None, calls: vec![vec![], vec![call]], ..Default::default() };
-        assert_eq!(later_phase.coinbase_tip(), None);
+        assert_eq!(later_phase.coinbase_tip(SENDER), None);
 
         let with_calldata = eoa_with_phase0(vec![Call {
-            to: sender,
+            to: SENDER,
             data: encode_execute(COINBASE, U256::from(TIP_AMOUNT), &[0x01]),
         }]);
-        assert_eq!(with_calldata.coinbase_tip(), None);
+        assert_eq!(with_calldata.coinbase_tip(SENDER), None);
 
-        let wrong_selector = eoa_with_phase0(vec![Call { to: sender, data: bytes!("deadbeef") }]);
-        assert_eq!(wrong_selector.coinbase_tip(), None);
+        let wrong_selector = eoa_with_phase0(vec![Call { to: SENDER, data: bytes!("deadbeef") }]);
+        assert_eq!(wrong_selector.coinbase_tip(SENDER), None);
 
-        assert_eq!(sample_tx().coinbase_tip(), None);
+        assert_eq!(sample_tx().coinbase_tip(sample_tx().sender.unwrap()), None);
     }
 
     #[test]
@@ -1244,20 +1249,24 @@ mod tests {
                 changes: vec![],
                 signature: Bytes::new(),
             })],
-            calls: vec![vec![execute_call(address!("0x00000000000000000000000000000000000000bb"))]],
+            calls: vec![vec![execute_call(SENDER)]],
             ..Default::default()
         };
-        assert_eq!(tx.coinbase_tip(), Some(U256::from(TIP_AMOUNT)));
+        assert_eq!(tx.coinbase_tip(SENDER), Some(U256::from(TIP_AMOUNT)));
     }
 
     #[test]
-    fn coinbase_tip_rejects_truncated_calldata() {
-        let mut data = encode_execute(COINBASE, U256::from(TIP_AMOUNT), &[]).to_vec();
-        data.truncate(data.len().saturating_sub(32));
-        let tx = eoa_with_phase0(vec![Call {
-            to: address!("0x00000000000000000000000000000000000000bb"),
-            data: Bytes::from(data),
-        }]);
-        assert_eq!(tx.coinbase_tip(), None);
+    fn coinbase_tip_rejects_truncated_or_dirty_calldata() {
+        let mut truncated = encode_execute(COINBASE, U256::from(TIP_AMOUNT), &[]).to_vec();
+        truncated.truncate(truncated.len().saturating_sub(32));
+        let truncated_tx = eoa_with_phase0(vec![Call { to: SENDER, data: Bytes::from(truncated) }]);
+        assert_eq!(truncated_tx.coinbase_tip(SENDER), None);
+
+        // High bytes of the address word must be zero; `abi_decode_validate` rejects
+        // that dirty padding even though a lenient decoder would still yield a tip.
+        let mut dirty = encode_execute(COINBASE, U256::from(TIP_AMOUNT), &[]).to_vec();
+        dirty[4] = 0xff;
+        let dirty_tx = eoa_with_phase0(vec![Call { to: SENDER, data: Bytes::from(dirty) }]);
+        assert_eq!(dirty_tx.coinbase_tip(SENDER), None);
     }
 }
