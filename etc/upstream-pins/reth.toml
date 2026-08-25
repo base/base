@@ -1,23 +1,10 @@
 # Authoritative Reth git pin for [workspace.dependencies].
+# See etc/upstream-pins/README.md.
 #
-# Workflow and limitations: etc/upstream-pins/README.md
-#
-# `just pin-reth` rewrites every git-based `reth-*` crate to this repository
-# and reference, then refreshes Cargo.lock.
-# `just check-reth-pin` verifies Cargo.toml and Cargo.lock match this file.
+# `just pin-reth` rewrites git `reth-*` crates to this repository and
+# reference. `just check-reth-pin` verifies Cargo.toml and Cargo.lock.
 # `just reth-prepare-release` builds the fork tag and writes this file.
-#
-# `reference` is the human-facing git ref (release tag, fork tag, or SHA).
-# `rev` is the immutable commit that `reference` currently resolves to.
-# Cargo.toml uses `tag =` when `reference` is not a SHA, and `rev =` otherwise.
-#
-# Each [[patches]] entry is a whole GitHub PR squashed to one fork commit.
-# Identity is the PR URL, including the repository: paradigmxyz/reth for
-# upstream backports, or the Base fork (`base/reth`) for patches that
-# must not be opened upstream. `head` is the PR tip (or merge commit).
-#
-# `[[resolved]]` is only for upstream PRs that landed in an official
-# Reth release. Do not record a base/reth PR against an upstream tag.
+# To return to an official Reth tag, edit this file and run `just pin-reth`.
 
 repository = "https://github.com/base/reth"
 reference = "v2.5.1-base.1"

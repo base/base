@@ -147,7 +147,7 @@ hack:
     cargo hack check --feature-powerset --no-dev-deps
 
 # Apply etc/upstream-pins/reth.toml to every git-based reth-* workspace dep.
-# Workflow and limitations: etc/upstream-pins/README.md
+# Workflow: etc/upstream-pins/README.md
 pin-reth:
     python3 etc/scripts/local/pin-reth.py apply
 
@@ -159,13 +159,9 @@ check-reth-pin:
 pin-reth-test:
     python3 etc/scripts/local/pin-reth.py test
 
-# Squash GitHub PRs (upstream or base/reth) onto an official tag, publish the fork tag, and pin it
+# Squash GitHub PRs onto an official tag, publish the fork tag, and pin it
 reth-prepare-release *args:
     python3 etc/scripts/local/pin-reth.py prepare {{ args }}
-
-# Retarget the pin at an official Reth release that contains the carried *upstream* PRs
-reth-drop-pin *args:
-    python3 etc/scripts/local/pin-reth.py drop {{ args }}
 
 # Fixes any formatting issues
 format-fix:

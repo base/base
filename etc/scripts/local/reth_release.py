@@ -1,19 +1,11 @@
 """Build a squashed base/reth tag and pin it from base/base.
 
 `prepare` resolves GitHub PRs, recreates a backport branch from an official
-Reth tag, squash-picks each PR, tags the tip, writes the pin manifest, rewrites
-workspace git deps, and opens a base/base PR.
+Reth tag, squash-picks each PR, tags the tip, writes the pin manifest, and
+rewrites workspace git deps. It does not commit or open a base/base PR.
 
-PR identity includes the repository. Bare `--pr N` is a PR on `--upstream-repo`.
-A full URL may point at that repo or at `--fork` (default `base/reth`) so
-Base-specific patches do not have to be opened upstream.
-
-`drop` records upstream PRs in `[[resolved]]` and retargets the pin at an
-official Reth release. It refuses while `[[patches]]` still lists fork PRs:
-those never land in paradigmxyz/reth.
-
-Pin commits are created from `origin/<base>` (`releases/<line>` or `main`),
-not from the local HEAD. See `etc/upstream-pins/README.md`.
+Bare `--pr N` is a PR on `--upstream-repo`. A full URL may point at that repo
+or at `--fork` so Base-specific patches do not have to be opened upstream.
 """
 
 from __future__ import annotations
@@ -29,11 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 MANIFEST_REL = Path("etc/upstream-pins/reth.toml")
-CARGO_TOML = Path("Cargo.toml")
-CARGO_LOCK = Path("Cargo.lock")
 FORK_CLONE_REL = Path(".tmp/base-reth")
-DEFAULT_UPSTREAM_REPO = "https://github.com/paradigmxyz/reth"
-DEFAULT_FORK_REPO = "https://github.com/base/reth"
 PR_SPEC_RE = re.compile(
     r"^(?:https://github\.com/(?P<owner>[^/]+)/(?P<name>[^/]+)/pull/)?"
     r"(?P<num>\d+)/?$",
@@ -42,7 +30,7 @@ PR_SPEC_RE = re.compile(
 
 
 class ReleaseError(RuntimeError):
-    """Raised when preparing or dropping a Reth fork pin fails."""
+    """Raised when preparing a Reth fork pin fails."""
 
 
 @dataclass(frozen=True)
@@ -91,7 +79,7 @@ def resolve_pr_repo(spec: PrSpec, *, upstream_url: str, fork_url: str) -> str:
     """Return `owner/repo` for a PR spec.
 
     Allowed sources are `--upstream-repo` and `--fork`. Bare numbers use
-    `--upstream-repo`. Fork PRs are the path for Base-specific patches.
+    `--upstream-repo`.
     """
     upstream = owner_repo(upstream_url)
     fork = owner_repo(fork_url)
@@ -117,8 +105,6 @@ def next_base_tag(upstream_tag: str, existing: list[str]) -> str:
     numbers: list[int] = []
     for tag in existing:
         name = tag.removeprefix("refs/tags/")
-        if name.startswith("refs/tags/"):
-            name = name[len("refs/tags/") :]
         if name.startswith(prefix) and name[len(prefix) :].isdigit():
             numbers.append(int(name[len(prefix) :]))
     return f"{prefix}{max(numbers, default=0) + 1}"
@@ -194,9 +180,8 @@ def fetch_pr(repo: str, number: int) -> PatchPr:
     )
     if not isinstance(data, dict):
         raise ReleaseError(f"unexpected gh pr view payload for {repo}#{number}")
-    commits_raw = data.get("commits") or []
     commits: list[str] = []
-    for entry in commits_raw:
+    for entry in data.get("commits") or []:
         if not isinstance(entry, dict):
             continue
         oid = entry.get("oid")
@@ -260,11 +245,7 @@ def already_squashed(clone: Path, upstream_tag: str, pr: PatchPr) -> bool:
     return any(line.startswith(needle) for line in log.splitlines())
 
 
-def squash_pr(
-    clone: Path,
-    pr: PatchPr,
-    env: dict[str, str],
-) -> None:
+def squash_pr(clone: Path, pr: PatchPr, env: dict[str, str]) -> None:
     """Cherry-pick every PR commit and squash them into one commit."""
     source = f"https://github.com/{pr.repo}"
     local_ref = f"refs/reths/{pr.repo.replace('/', '-')}-{pr.number}"
@@ -301,6 +282,23 @@ def squash_pr(
     run(["git", "commit", "-m", message], cwd=clone, env=env)
 
 
+def current_resolved(root: Path) -> list[tuple[str, str]]:
+    """Return existing `[[resolved]]` pairs from the pin manifest, if any."""
+    path = root / MANIFEST_REL
+    if not path.exists():
+        return []
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    pairs: list[tuple[str, str]] = []
+    for entry in data.get("resolved") or []:
+        if not isinstance(entry, dict):
+            continue
+        pr = entry.get("pr")
+        release = entry.get("release")
+        if isinstance(pr, str) and isinstance(release, str):
+            pairs.append((pr, release))
+    return pairs
+
+
 def render_manifest(
     *,
     repository: str,
@@ -314,25 +312,12 @@ def render_manifest(
     """Render `etc/upstream-pins/reth.toml`."""
     lines = [
         "# Authoritative Reth git pin for [workspace.dependencies].",
+        "# See etc/upstream-pins/README.md.",
         "#",
-        "# Workflow and limitations: etc/upstream-pins/README.md",
-        "#",
-        "# `just pin-reth` rewrites every git-based `reth-*` crate to this repository",
-        "# and reference, then refreshes Cargo.lock.",
-        "# `just check-reth-pin` verifies Cargo.toml and Cargo.lock match this file.",
+        "# `just pin-reth` rewrites git `reth-*` crates to this repository and",
+        "# reference. `just check-reth-pin` verifies Cargo.toml and Cargo.lock.",
         "# `just reth-prepare-release` builds the fork tag and writes this file.",
-        "#",
-        "# `reference` is the human-facing git ref (release tag, fork tag, or SHA).",
-        "# `rev` is the immutable commit that `reference` currently resolves to.",
-        "# Cargo.toml uses `tag =` when `reference` is not a SHA, and `rev =` otherwise.",
-        "#",
-        "# Each [[patches]] entry is a whole GitHub PR squashed to one fork commit.",
-        "# Identity is the PR URL, including the repository: paradigmxyz/reth for",
-        "# upstream backports, or the Base fork (`base/reth`) for patches that",
-        "# must not be opened upstream. `head` is the PR tip (or merge commit).",
-        "#",
-        "# `[[resolved]]` is only for upstream PRs that landed in an official",
-        "# Reth release. Do not record a base/reth PR against an upstream tag.",
+        "# To return to an official Reth tag, edit this file and run `just pin-reth`.",
         "",
         f'repository = "{repository}"',
         f'reference = "{reference}"',
@@ -343,26 +328,24 @@ def render_manifest(
         f'rev = "{upstream_rev}"',
         "",
     ]
-    if patches:
-        for pr in patches:
-            lines.extend(
-                [
-                    "[[patches]]",
-                    f'pr = "{pr.url}"',
-                    f'head = "{pr.head}"',
-                    "",
-                ]
-            )
-    if resolved:
-        for pr_url, release in resolved:
-            lines.extend(
-                [
-                    "[[resolved]]",
-                    f'pr = "{pr_url}"',
-                    f'release = "{release}"',
-                    "",
-                ]
-            )
+    for pr in patches:
+        lines.extend(
+            [
+                "[[patches]]",
+                f'pr = "{pr.url}"',
+                f'head = "{pr.head}"',
+                "",
+            ]
+        )
+    for pr_url, release in resolved:
+        lines.extend(
+            [
+                "[[resolved]]",
+                f'pr = "{pr_url}"',
+                f'release = "{release}"',
+                "",
+            ]
+        )
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -390,21 +373,12 @@ def git_identity_env(root: Path) -> dict[str, str]:
     return env
 
 
-def current_resolved(root: Path) -> list[tuple[str, str]]:
-    """Return existing `[[resolved]]` pairs from the pin manifest, if any."""
-    path = root / MANIFEST_REL
-    if not path.exists():
-        return []
-    data = tomllib.loads(path.read_text(encoding="utf-8"))
-    pairs: list[tuple[str, str]] = []
-    for entry in data.get("resolved") or []:
-        if not isinstance(entry, dict):
-            continue
-        pr = entry.get("pr")
-        release = entry.get("release")
-        if isinstance(pr, str) and isinstance(release, str):
-            pairs.append((pr, release))
-    return pairs
+def annotated_tag_message(upstream_tag: str, prs: list[PatchPr]) -> str:
+    """Body for the immutable fork tag."""
+    lines = [f"Reth {upstream_tag} plus squashed PRs.", ""]
+    for pr in prs:
+        lines.append(f"- {pr.url} ({pr.head[:12]})")
+    return "\n".join(lines)
 
 
 def prepare_release(
@@ -415,14 +389,9 @@ def prepare_release(
     line: str | None,
     fork_url: str,
     upstream_url: str,
-    dry_run: bool,
     skip_push: bool,
-    skip_lock: bool,
-    no_commit: bool,
-    no_pr: bool,
-    base_branch: str | None,
 ) -> None:
-    """Build the fork tag, write the pin, and open the base/base PR."""
+    """Build the fork tag, write the pin, and rewrite workspace git deps."""
     if not pr_specs:
         raise ReleaseError("pass at least one --pr")
     line = line or infer_line(root)
@@ -431,7 +400,13 @@ def prepare_release(
         repo = resolve_pr_repo(spec, upstream_url=upstream_url, fork_url=fork_url)
         prs.append(fetch_pr(repo, spec.number))
     clone = ensure_fork_clone(root, fork_url, upstream_url)
-    git(clone, "fetch", "upstream", f"refs/tags/{upstream_tag}:refs/tags/{upstream_tag}", "--force")
+    git(
+        clone,
+        "fetch",
+        "upstream",
+        f"refs/tags/{upstream_tag}:refs/tags/{upstream_tag}",
+        "--force",
+    )
     upstream_rev = git(clone, "rev-parse", f"{upstream_tag}^{{commit}}").strip().lower()
     fork_tag = next_base_tag(upstream_tag, existing_tags(clone))
     backport_branch = f"backport/{upstream_tag}/{line}"
@@ -454,8 +429,7 @@ def prepare_release(
         print(f"squashing {pr.url} ({len(pr.commits)} commits) onto {upstream_tag}")
         squash_pr(clone, pr, env)
     fork_rev = git(clone, "rev-parse", "HEAD").strip().lower()
-    existing_local_tag = git(clone, "tag", "--list", fork_tag).strip()
-    if existing_local_tag:
+    if git(clone, "tag", "--list", fork_tag).strip():
         git(clone, "tag", "-d", fork_tag)
     run(
         ["git", "tag", "-a", fork_tag, "-m", annotated_tag_message(upstream_tag, prs)],
@@ -463,14 +437,9 @@ def prepare_release(
         env=env,
     )
 
-    if not dry_run and not skip_push:
+    if not skip_push:
         git(clone, "push", "-u", "origin", backport_branch)
         git(clone, "push", "origin", f"refs/tags/{fork_tag}")
-
-    pin_branch = f"chore/reth-{fork_tag}"
-    target_branch = base_branch or default_base_branch(root, line)
-    if not no_commit and not dry_run:
-        checkout_from_origin(root, branch=pin_branch, base_branch=target_branch)
 
     manifest = render_manifest(
         repository=fork_url.rstrip("/").removesuffix(".git"),
@@ -484,232 +453,11 @@ def prepare_release(
     (root / MANIFEST_REL).parent.mkdir(parents=True, exist_ok=True)
     (root / MANIFEST_REL).write_text(manifest, encoding="utf-8")
     print(f"wrote {MANIFEST_REL} -> {fork_url} {fork_tag} ({fork_rev})")
-
-    apply_args = ["apply"]
-    if skip_lock:
-        apply_args.append("--skip-lock")
-    pin_reth(root, *apply_args)
-
-    if not no_commit and not dry_run:
-        commit_pin_files(root, fork_tag)
-        if not skip_push:
-            git(root, "push", "-u", "origin", "HEAD")
-            if not no_pr:
-                create_base_pr(
-                    root,
-                    fork_tag=fork_tag,
-                    prs=prs,
-                    base_branch=target_branch,
-                )
+    pin_reth(root, "apply")
     print(
         f"prepared {fork_tag} on {backport_branch} "
         f"({len(prs)} PR(s) squashed from {upstream_tag})"
     )
-
-
-def annotated_tag_message(upstream_tag: str, prs: list[PatchPr]) -> str:
-    """Body for the immutable fork tag."""
-    lines = [
-        f"Reth {upstream_tag} plus squashed PRs.",
-        "",
-    ]
-    for pr in prs:
-        lines.append(f"- {pr.url} ({pr.head[:12]})")
-    return "\n".join(lines)
-
-
-def default_base_branch(root: Path, line: str) -> str:
-    """Prefer `releases/<line>` when that branch exists on origin."""
-    release_branch = f"releases/{line}"
-    result = run(
-        ["git", "ls-remote", "--heads", "origin", release_branch],
-        cwd=root,
-        check=False,
-    )
-    if result.stdout.strip():
-        return release_branch
-    return "main"
-
-
-def checkout_from_origin(root: Path, *, branch: str, base_branch: str) -> None:
-    """Create `branch` at the current tip of `origin/{base_branch}`."""
-    fetch = run(["git", "fetch", "origin", base_branch], cwd=root, check=False)
-    if fetch.returncode != 0:
-        raise ReleaseError(
-            f"could not fetch origin {base_branch}:\n"
-            f"{(fetch.stderr or fetch.stdout).strip()}"
-        )
-    checkout = run(
-        ["git", "checkout", "-B", branch, "FETCH_HEAD"],
-        cwd=root,
-        check=False,
-    )
-    if checkout.returncode != 0:
-        raise ReleaseError(
-            f"could not create {branch} from origin/{base_branch}. "
-            "Commit or stash local changes that conflict with that branch, "
-            "then rerun.\n"
-            f"{(checkout.stderr or checkout.stdout).strip()}"
-        )
-
-
-def commit_pin_files(root: Path, fork_tag: str) -> None:
-    """Commit the pin manifest and rewritten Cargo files on the current branch."""
-    git(root, "add", str(MANIFEST_REL), str(CARGO_TOML), str(CARGO_LOCK))
-    cached = run(["git", "diff", "--cached", "--quiet"], cwd=root, check=False)
-    if cached.returncode == 0:
-        print("no pin file changes to commit")
-        return
-    git(
-        root,
-        "commit",
-        "-m",
-        f"chore(deps): pin reth {fork_tag}",
-    )
-
-
-def create_base_pr(
-    root: Path,
-    *,
-    fork_tag: str,
-    prs: list[PatchPr],
-    base_branch: str,
-) -> None:
-    """Open a base/base PR for the generated pin."""
-    rows = "\n".join(f"| {pr.url} | `{pr.head}` |" for pr in prs)
-    body = f"""## Summary
-
-Pin Reth git workspace deps to `{fork_tag}`.
-
-| PR | Head |
-| --- | --- |
-{rows}
-
-## Test plan
-
-- [x] `just pin-reth-test`
-- [x] `just check-reth-pin`
-- [ ] `cargo check --locked -p base-reth-node -p base-builder-bin -p base-consensus`
-"""
-    run(
-        [
-            "gh",
-            "pr",
-            "create",
-            "--base",
-            base_branch,
-            "--title",
-            f"chore(deps): pin reth {fork_tag}",
-            "--body",
-            body,
-        ],
-        cwd=root,
-    )
-
-
-def fork_only_patch_urls(patches: object, *, upstream_url: str) -> list[str]:
-    """Return PR URLs that are not on `--upstream-repo`.
-
-    `drop` cannot claim those landed in an official Reth release. Retiring
-    Base-specific fork PRs is a later step; until then they stay in
-    `[[patches]]`.
-    """
-    if not isinstance(patches, list):
-        return []
-    upstream = owner_repo(upstream_url).lower()
-    leftover: list[str] = []
-    for entry in patches:
-        if not isinstance(entry, dict) or not isinstance(entry.get("pr"), str):
-            continue
-        spec = parse_pr_spec(entry["pr"])
-        repo = (spec.repo or upstream).lower()
-        if repo != upstream:
-            leftover.append(entry["pr"])
-    return leftover
-
-
-def drop_pin(
-    root: Path,
-    *,
-    release: str,
-    upstream_url: str,
-    skip_lock: bool,
-    dry_run: bool,
-    no_commit: bool,
-    no_pr: bool,
-    skip_push: bool,
-    base_branch: str | None,
-) -> None:
-    """Retarget the pin at an official release that contains the carried PRs."""
-    path = root / MANIFEST_REL
-    data = tomllib.loads(path.read_text(encoding="utf-8"))
-    patches = data.get("patches") or []
-    if not patches:
-        raise ReleaseError("no [[patches]] to resolve")
-    leftover = fork_only_patch_urls(patches, upstream_url=upstream_url)
-    if leftover:
-        details = ", ".join(leftover)
-        raise ReleaseError(
-            "cannot drop the fork pin while carrying Base-specific PRs "
-            f"({details}). Those stay on the fork until they are replaced; "
-            "`drop` only records official Reth releases for "
-            f"{owner_repo(upstream_url)} PRs."
-        )
-    resolved = list(data.get("resolved") or [])
-    for entry in patches:
-        if not isinstance(entry, dict) or not isinstance(entry.get("pr"), str):
-            raise ReleaseError("each [[patches]] entry needs `pr`")
-        resolved.append({"pr": entry["pr"], "release": release})
-    dropped_prs: list[PatchPr] = []
-    for entry in patches:
-        if not isinstance(entry, dict) or not isinstance(entry.get("pr"), str):
-            continue
-        spec = parse_pr_spec(entry["pr"])
-        dropped_prs.append(
-            PatchPr(
-                number=spec.number,
-                repo=spec.repo or owner_repo(upstream_url),
-                url=entry["pr"],
-                title="",
-                head=str(entry.get("head") or "0" * 40),
-                commits=(),
-            )
-        )
-    clone = ensure_fork_clone(root, DEFAULT_FORK_REPO, upstream_url)
-    git(clone, "fetch", "upstream", f"refs/tags/{release}:refs/tags/{release}", "--force")
-    upstream_rev = git(clone, "rev-parse", f"{release}^{{commit}}").strip().lower()
-    resolved_pairs = [(str(item["pr"]), str(item["release"])) for item in resolved]
-    manifest = render_manifest(
-        repository=upstream_url.rstrip("/").removesuffix(".git"),
-        reference=release,
-        rev=upstream_rev,
-        upstream_tag=release,
-        upstream_rev=upstream_rev,
-        patches=[],
-        resolved=resolved_pairs,
-    )
-    pin_branch = f"chore/reth-{release}"
-    target_branch = base_branch or "main"
-    if not no_commit and not dry_run:
-        checkout_from_origin(root, branch=pin_branch, base_branch=target_branch)
-
-    path.write_text(manifest, encoding="utf-8")
-    apply_args = ["apply"]
-    if skip_lock:
-        apply_args.append("--skip-lock")
-    pin_reth(root, *apply_args)
-    if not no_commit and not dry_run:
-        commit_pin_files(root, release)
-        if not skip_push:
-            git(root, "push", "-u", "origin", "HEAD")
-            if not no_pr:
-                create_base_pr(
-                    root,
-                    fork_tag=release,
-                    prs=dropped_prs,
-                    base_branch=target_branch,
-                )
-    print(f"dropped fork pin; now tracking {upstream_url} {release} ({upstream_rev})")
 
 
 class ReleaseTests(unittest.TestCase):
@@ -775,34 +523,6 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(squash_marker(fork), "backport(base/reth#26708):")
         self.assertNotEqual(squash_marker(upstream), squash_marker(fork))
 
-    def test_drop_refuses_fork_only_prs(self) -> None:
-        leftover = fork_only_patch_urls(
-            [
-                {
-                    "pr": "https://github.com/paradigmxyz/reth/pull/26708",
-                    "head": "0b5608325ca86fc2381b49de10b01c975e0ec99f",
-                },
-                {
-                    "pr": "https://github.com/base/reth/pull/12",
-                    "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-                },
-            ],
-            upstream_url="https://github.com/paradigmxyz/reth",
-        )
-        self.assertEqual(leftover, ["https://github.com/base/reth/pull/12"])
-        self.assertEqual(
-            fork_only_patch_urls(
-                [
-                    {
-                        "pr": "https://github.com/paradigmxyz/reth/pull/26708",
-                        "head": "0b5608325ca86fc2381b49de10b01c975e0ec99f",
-                    }
-                ],
-                upstream_url="https://github.com/paradigmxyz/reth",
-            ),
-            [],
-        )
-
     def test_next_base_tag(self) -> None:
         self.assertEqual(next_base_tag("v2.5.1", []), "v2.5.1-base.1")
         self.assertEqual(
@@ -838,10 +558,6 @@ class ReleaseTests(unittest.TestCase):
         )
         self.assertIn('repository = "https://github.com/base/reth"', text)
         self.assertIn("etc/upstream-pins/README.md", text)
-        self.assertIn('reference = "v2.5.1-base.1"', text)
-        self.assertIn("[[patches]]", text)
         self.assertIn(pr.url, text)
         self.assertIn(fork_pr.url, text)
-        self.assertIn(pr.head, text)
         self.assertNotIn("commit =", text)
-        self.assertIn("must not be opened upstream", text)

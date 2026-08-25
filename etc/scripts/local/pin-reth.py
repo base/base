@@ -2,12 +2,11 @@
 """Apply and verify the workspace Reth git pin.
 
 Reads `etc/upstream-pins/reth.toml` and keeps every git-based `reth-*`
-workspace dependency on one repository and one ref. Carried backports are
-whole GitHub PRs (upstream or the Base fork), each squashed to one fork
-commit. Crates.io Reth crates (`reth-codecs`, `reth-primitives-traits`,
-`reth-zstd-compressors`, …) are left unchanged.
+workspace dependency on one repository and one ref. Crates.io Reth crates
+(`reth-codecs`, `reth-primitives-traits`, `reth-zstd-compressors`, …) are
+left unchanged.
 
-See `etc/upstream-pins/README.md` for the workflow and limitations.
+See `etc/upstream-pins/README.md`.
 """
 
 from __future__ import annotations
@@ -53,25 +52,12 @@ class PinError(RuntimeError):
 class Patch:
     """One GitHub PR squashed onto `upstream_base`.
 
-    `pr` is the full pull URL, including the repository: paradigmxyz/reth for
-    upstream backports, or the Base fork for patches that must not be opened
-    upstream. `head` is the PR tip (or merge commit) that the squash used.
+    `pr` is the full pull URL, including the repository. `head` is the PR tip
+    or merge commit that the squash used.
     """
 
     pr: str
     head: str
-
-
-@dataclass(frozen=True)
-class ResolvedPatch:
-    """A previously carried upstream PR that an official release now contains.
-
-    Do not record a base/reth PR here against an upstream tag. Those patches
-    never land in paradigmxyz/reth.
-    """
-
-    pr: str
-    release: str
 
 
 @dataclass(frozen=True)
@@ -91,7 +77,6 @@ class Pin:
     rev: str
     upstream_base: UpstreamBase
     patches: list[Patch] = field(default_factory=list)
-    resolved: list[ResolvedPatch] = field(default_factory=list)
     raw: str = ""
 
 
@@ -104,13 +89,10 @@ class GitDep:
     kind: str
     value: str
     rest: str
-    line: str
 
 
-def repo_root_from(start: Path | None = None) -> Path:
+def repo_root_from() -> Path:
     """Return the workspace root that contains the pin manifest."""
-    if start is not None:
-        return start.resolve()
     return Path(__file__).resolve().parents[3]
 
 
@@ -130,11 +112,7 @@ def is_full_sha(value: str) -> bool:
 
 
 def cargo_ref(pin: Pin) -> tuple[str, str]:
-    """Return the Cargo.toml (`kind`, `value`) pair for this pin.
-
-    Official and fork tags stay as `tag =` so the manifest is self-documenting.
-    A raw SHA reference is written as `rev =`.
-    """
+    """Return the Cargo.toml (`kind`, `value`) pair for this pin."""
     if is_full_sha(pin.reference):
         return "rev", pin.rev
     return "tag", pin.reference
@@ -178,9 +156,8 @@ def parse_pin(raw: str, path: Path) -> Pin:
             raise PinError(f"{path}: `[[patches]]` entries must be tables")
         if "commit" in entry:
             raise PinError(
-                f"{path}: `[[patches]]` records a whole PR squashed onto the "
-                "fork. Set `head` to the PR tip or merge commit; do not use "
-                "`commit` (that form only described single-commit PRs)"
+                f"{path}: `[[patches]]` records a whole PR. Set `head` to the "
+                "PR tip or merge commit; do not use `commit`"
             )
         pr = entry.get("pr")
         head = entry.get("head")
@@ -190,40 +167,16 @@ def parse_pin(raw: str, path: Path) -> Pin:
         if not GITHUB_PR_URL_RE.fullmatch(pr):
             raise PinError(
                 f"{path}: `[[patches]].pr` must be a GitHub pull URL so the "
-                "repository is part of the identity (paradigmxyz/reth or "
-                "base/reth). Do not use a bare number."
+                "repository is part of the identity"
             )
         if pr in seen_prs:
             raise PinError(f"{path}: duplicate `[[patches]]` PR {pr}")
         if not isinstance(head, str) or not SHORT_SHA_RE.fullmatch(head):
             raise PinError(
-                f"{path}: `[[patches]].head` must be the PR tip or merge "
-                "commit SHA that was squashed"
+                f"{path}: `[[patches]].head` must be the PR tip or merge commit SHA"
             )
         seen_prs.add(pr)
         patches.append(Patch(pr=pr, head=head.lower()))
-
-    resolved: list[ResolvedPatch] = []
-    seen_resolved: set[str] = set()
-    for entry in data.get("resolved") or []:
-        if not isinstance(entry, dict):
-            raise PinError(f"{path}: `[[resolved]]` entries must be tables")
-        pr = entry.get("pr")
-        release = entry.get("release")
-        if not isinstance(pr, str) or not pr:
-            raise PinError(f"{path}: `[[resolved]].pr` is required")
-        pr = pr.rstrip("/")
-        if not GITHUB_PR_URL_RE.fullmatch(pr):
-            raise PinError(
-                f"{path}: `[[resolved]].pr` must be a GitHub pull URL so the "
-                "repository is part of the identity"
-            )
-        if pr in seen_resolved:
-            raise PinError(f"{path}: duplicate `[[resolved]]` PR {pr}")
-        if not isinstance(release, str) or not release:
-            raise PinError(f"{path}: `[[resolved]].release` is required")
-        seen_resolved.add(pr)
-        resolved.append(ResolvedPatch(pr=pr, release=release))
 
     return Pin(
         repository=repository.rstrip("/"),
@@ -231,7 +184,6 @@ def parse_pin(raw: str, path: Path) -> Pin:
         rev=rev,
         upstream_base=UpstreamBase(tag=base_tag, rev=base_rev.lower()),
         patches=patches,
-        resolved=resolved,
         raw=raw,
     )
 
@@ -284,7 +236,6 @@ def parse_git_deps(cargo_toml: str) -> list[GitDep]:
                 kind=match.group("kind"),
                 value=match.group("value"),
                 rest=match.group("rest"),
-                line=line,
             )
         )
     if not deps:
@@ -440,39 +391,6 @@ def resolve_reference(repository: str, reference: str) -> str:
         raise PinError(f"could not resolve {reference} on {repository}") from exc
 
 
-def previous_pin(root: Path) -> Pin | None:
-    """Load the last committed pin manifest, if any."""
-    result = subprocess.run(
-        ["git", "show", f"HEAD:{MANIFEST_REL.as_posix()}"],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        return None
-    return parse_pin(result.stdout, MANIFEST_REL)
-
-
-def assert_patches_not_dropped(old: Pin, new: Pin) -> None:
-    """Fail when a carried PR disappears without a `[[resolved]]` entry."""
-    new_prs = {patch.pr for patch in new.patches}
-    resolved_prs = {item.pr for item in new.resolved}
-    dropped = [
-        patch
-        for patch in old.patches
-        if patch.pr not in new_prs and patch.pr not in resolved_prs
-    ]
-    if dropped:
-        details = ", ".join(patch.pr for patch in dropped)
-        raise PinError(
-            "carried PR removed without `[[resolved]]`: "
-            f"{details}. Upstream PRs record the official Reth tag that "
-            "contains them. Do not resolve a base/reth PR against an "
-            "upstream tag."
-        )
-
-
 def run_cargo(root: Path, args: list[str]) -> None:
     """Run a cargo command at `root` and surface stderr on failure."""
     result = subprocess.run(args, cwd=root, capture_output=True, text=True, check=False)
@@ -497,21 +415,16 @@ def write_if_changed(path: Path, contents: str) -> bool:
     return True
 
 
-def apply_pin(root: Path, *, skip_lock: bool, offline: bool) -> None:
-    """Resolve, rewrite, and optionally refresh the lockfile."""
+def apply_pin(root: Path) -> None:
+    """Resolve, rewrite, and refresh the lockfile."""
     manifest_path = root / MANIFEST_REL
     pin = load_pin(manifest_path)
-    old = previous_pin(root)
-    if old is not None:
-        assert_patches_not_dropped(old, pin)
-
-    if not offline:
-        resolved = resolve_reference(pin.repository, pin.reference)
-        if resolved != pin.rev:
-            pin.raw = set_top_level_rev(pin.raw, resolved)
-            pin.rev = resolved
-            write_if_changed(manifest_path, pin.raw)
-            print(f"updated {MANIFEST_REL} rev = {resolved}")
+    resolved = resolve_reference(pin.repository, pin.reference)
+    if resolved != pin.rev:
+        pin.raw = set_top_level_rev(pin.raw, resolved)
+        pin.rev = resolved
+        write_if_changed(manifest_path, pin.raw)
+        print(f"updated {MANIFEST_REL} rev = {resolved}")
 
     cargo_path = root / CARGO_TOML
     cargo_toml = cargo_path.read_text(encoding="utf-8")
@@ -520,40 +433,26 @@ def apply_pin(root: Path, *, skip_lock: bool, offline: bool) -> None:
     deps = parse_git_deps(rewritten)
     if cargo_changed:
         print(f"updated {len(deps)} git `reth-*` workspace dependencies")
+        update_lockfile(root, deps)
     else:
         print(f"{CARGO_TOML} already matches {MANIFEST_REL}")
 
-    if skip_lock:
-        return
-    if cargo_changed:
-        update_lockfile(root, deps)
     run_cargo(root, ["cargo", "metadata", "--format-version", "1", "--no-deps", "--locked"])
     verify_lockfile((root / CARGO_LOCK).read_text(encoding="utf-8"), pin)
     print(f"Reth pin is {pin.repository} {cargo_ref(pin)[0]}={cargo_ref(pin)[1]} ({pin.rev})")
 
 
-def check_pin(root: Path, *, skip_lock: bool, offline: bool) -> None:
+def check_pin(root: Path) -> None:
     """Verify the working tree matches the pin manifest."""
-    manifest_path = root / MANIFEST_REL
-    pin = load_pin(manifest_path)
-    old = previous_pin(root)
-    if old is not None:
-        assert_patches_not_dropped(old, pin)
-
-    if not offline:
-        resolved = resolve_reference(pin.repository, pin.reference)
-        if resolved != pin.rev:
-            raise PinError(
-                f"`reference` {pin.reference} resolves to {resolved}, "
-                f"but `rev` is {pin.rev}"
-            )
-
-    cargo_toml = (root / CARGO_TOML).read_text(encoding="utf-8")
-    deps = parse_git_deps(cargo_toml)
+    pin = load_pin(root / MANIFEST_REL)
+    resolved = resolve_reference(pin.repository, pin.reference)
+    if resolved != pin.rev:
+        raise PinError(
+            f"`reference` {pin.reference} resolves to {resolved}, "
+            f"but `rev` is {pin.rev}"
+        )
+    deps = parse_git_deps((root / CARGO_TOML).read_text(encoding="utf-8"))
     verify_cargo_toml(deps, pin)
-    if skip_lock:
-        print(f"{CARGO_TOML} matches {MANIFEST_REL} ({len(deps)} git `reth-*` crates)")
-        return
     run_cargo(root, ["cargo", "metadata", "--format-version", "1", "--no-deps", "--locked"])
     verify_lockfile((root / CARGO_LOCK).read_text(encoding="utf-8"), pin)
     print(
@@ -565,28 +464,10 @@ def check_pin(root: Path, *, skip_lock: bool, offline: bool) -> None:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse CLI arguments."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--repo-root",
-        type=Path,
-        help="workspace root (default: inferred from this script)",
-    )
-    parser.add_argument(
-        "--check",
-        action="store_true",
-        help="alias for the `check` command",
-    )
     sub = parser.add_subparsers(dest="command")
-
-    apply_p = sub.add_parser("apply", help="rewrite workspace git deps from the manifest")
-    apply_p.add_argument("--skip-lock", action="store_true")
-    apply_p.add_argument("--offline", action="store_true")
-
-    check_p = sub.add_parser("check", help="verify Cargo.toml and Cargo.lock match the manifest")
-    check_p.add_argument("--skip-lock", action="store_true")
-    check_p.add_argument("--offline", action="store_true")
-
+    sub.add_parser("apply", help="rewrite workspace git deps from the manifest")
+    sub.add_parser("check", help="verify Cargo.toml and Cargo.lock match the manifest")
     sub.add_parser("test", help="run unit tests")
-
     prepare_p = sub.add_parser(
         "prepare",
         help="squash GitHub PRs onto a Reth tag, publish the fork tag, and pin it",
@@ -598,36 +479,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         required=True,
         help=(
             "PR number on --upstream-repo, or a GitHub pull URL on that repo "
-            "or --fork (repeatable). Use a base/reth URL for Base-specific "
-            "patches instead of opening them upstream."
+            "or --fork (repeatable)"
         ),
     )
     prepare_p.add_argument("--line", help="consumer line, for example v1.3.0")
     prepare_p.add_argument("--fork", default="https://github.com/base/reth")
     prepare_p.add_argument("--upstream-repo", default="https://github.com/paradigmxyz/reth")
-    prepare_p.add_argument("--dry-run", action="store_true")
     prepare_p.add_argument("--skip-push", action="store_true")
-    prepare_p.add_argument("--skip-lock", action="store_true")
-    prepare_p.add_argument("--no-commit", action="store_true")
-    prepare_p.add_argument("--no-pr", action="store_true")
-    prepare_p.add_argument("--base-branch", help="base/base PR target; pin commit is created from origin/<this> (default: releases/<line> or main)")
-
-    drop_p = sub.add_parser(
-        "drop",
-        help="retarget the pin at an official Reth release (upstream PRs only)",
-    )
-    drop_p.add_argument("--release", required=True, help="official Reth tag that contains the carried PRs")
-    drop_p.add_argument("--upstream-repo", default="https://github.com/paradigmxyz/reth")
-    drop_p.add_argument("--skip-lock", action="store_true")
-    drop_p.add_argument("--dry-run", action="store_true")
-    drop_p.add_argument("--no-commit", action="store_true")
-    drop_p.add_argument("--no-pr", action="store_true")
-    drop_p.add_argument("--skip-push", action="store_true")
-    drop_p.add_argument("--base-branch", help="base/base PR target; pin commit is created from origin/<this> (default: main)")
-
     args = parser.parse_args(argv)
-    if args.check:
-        args.command = "check"
     if not args.command:
         args.command = "apply"
     return args
@@ -646,59 +505,34 @@ def load_release_mod():
 def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint."""
     args = parse_args(argv)
-    command = args.command
-    if command == "test":
+    if args.command == "test":
         return run_tests()
-    root = repo_root_from(args.repo_root)
-    skip_lock = bool(getattr(args, "skip_lock", False))
-    offline = bool(getattr(args, "offline", False))
+    root = repo_root_from()
     try:
-        if command in {"prepare", "drop"}:
+        if args.command == "prepare":
             release = load_release_mod()
             try:
-                if command == "prepare":
-                    release.prepare_release(
-                        root,
-                        upstream_tag=args.upstream,
-                        pr_specs=args.pr,
-                        line=args.line,
-                        fork_url=args.fork,
-                        upstream_url=args.upstream_repo,
-                        dry_run=args.dry_run,
-                        skip_push=args.skip_push,
-                        skip_lock=skip_lock,
-                        no_commit=args.no_commit,
-                        no_pr=args.no_pr,
-                        base_branch=args.base_branch,
-                    )
-                else:
-                    release.drop_pin(
-                        root,
-                        release=args.release,
-                        upstream_url=args.upstream_repo,
-                        skip_lock=skip_lock,
-                        dry_run=args.dry_run,
-                        no_commit=args.no_commit,
-                        no_pr=args.no_pr,
-                        skip_push=args.skip_push,
-                        base_branch=args.base_branch,
-                    )
+                release.prepare_release(
+                    root,
+                    upstream_tag=args.upstream,
+                    pr_specs=args.pr,
+                    line=args.line,
+                    fork_url=args.fork,
+                    upstream_url=args.upstream_repo,
+                    skip_push=args.skip_push,
+                )
             except release.ReleaseError as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 1
-        elif command == "check":
-            check_pin(root, skip_lock=skip_lock, offline=offline)
+        elif args.command == "check":
+            check_pin(root)
         else:
-            apply_pin(root, skip_lock=skip_lock, offline=offline)
+            apply_pin(root)
     except PinError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     return 0
 
-
-# ---------------------------------------------------------------------------
-# Unit tests
-# ---------------------------------------------------------------------------
 
 SAMPLE_CARGO = """[workspace.dependencies]
 # reth
@@ -759,10 +593,7 @@ class PinRethTests(unittest.TestCase):
                 'repository = "https://github.com/niran/reth"',
             )
             .replace('reference = "v2.5.1"', f'reference = "{sha}"')
-            .replace(
-                "6dec1b96b625584956883c34ad0eafbe550480ac",
-                sha,
-            )
+            .replace("6dec1b96b625584956883c34ad0eafbe550480ac", sha)
         )
         rewritten = rewrite_git_deps(SAMPLE_CARGO, pin)
         self.assertIn(
@@ -776,27 +607,24 @@ class PinRethTests(unittest.TestCase):
             'reth-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v2.5.1" }',
             'reth-cli = { git = "https://github.com/niran/reth", rev = "2fa11e6417e638207aefc11b33028b000a2b1f68" }',
         )
-        deps = parse_git_deps(mixed)
         with self.assertRaises(PinError):
-            require_uniform_git_deps(deps)
+            require_uniform_git_deps(parse_git_deps(mixed))
 
     def test_lockfile_query_and_sha(self) -> None:
-        pin = _pin_from(SAMPLE_PIN)
         lock = (
             'source = "git+https://github.com/paradigmxyz/reth?'
             'tag=v2.5.1#6dec1b96b625584956883c34ad0eafbe550480ac"\n'
         )
-        verify_lockfile(lock, pin)
+        verify_lockfile(lock, _pin_from(SAMPLE_PIN))
 
     def test_lockfile_rejects_stale_fork(self) -> None:
-        pin = _pin_from(SAMPLE_PIN)
         lock = (
             'source = "git+https://github.com/niran/reth?'
             'rev=2fa11e6417e638207aefc11b33028b000a2b1f68#'
             '2fa11e6417e638207aefc11b33028b000a2b1f68"\n'
         )
         with self.assertRaises(PinError):
-            verify_lockfile(lock, pin)
+            verify_lockfile(lock, _pin_from(SAMPLE_PIN))
 
     def test_ls_remote_peels_annotated_tag(self) -> None:
         output = (
@@ -809,54 +637,11 @@ class PinRethTests(unittest.TestCase):
         )
 
     def test_ls_remote_lightweight_tag(self) -> None:
-        output = (
-            "6dec1b96b625584956883c34ad0eafbe550480ac\trefs/tags/v2.5.1\n"
-        )
+        output = "6dec1b96b625584956883c34ad0eafbe550480ac\trefs/tags/v2.5.1\n"
         self.assertEqual(
             commit_from_ls_remote(output, "v2.5.1"),
             "6dec1b96b625584956883c34ad0eafbe550480ac",
         )
-
-    def test_dropped_patch_requires_resolved(self) -> None:
-        old = _pin_from(
-            SAMPLE_PIN
-            + """
-[[patches]]
-pr = "https://github.com/paradigmxyz/reth/pull/26708"
-head = "0b5608325ca86fc2381b49de10b01c975e0ec99f"
-"""
-        )
-        new = _pin_from(SAMPLE_PIN)
-        with self.assertRaises(PinError):
-            assert_patches_not_dropped(old, new)
-        resolved = _pin_from(
-            SAMPLE_PIN
-            + """
-[[resolved]]
-pr = "https://github.com/paradigmxyz/reth/pull/26708"
-release = "v2.6.0"
-"""
-        )
-        assert_patches_not_dropped(old, resolved)
-
-    def test_patch_identity_is_pr_not_head(self) -> None:
-        old = _pin_from(
-            SAMPLE_PIN
-            + """
-[[patches]]
-pr = "https://github.com/paradigmxyz/reth/pull/26708"
-head = "0b5608325ca86fc2381b49de10b01c975e0ec99f"
-"""
-        )
-        updated_head = _pin_from(
-            SAMPLE_PIN
-            + """
-[[patches]]
-pr = "https://github.com/paradigmxyz/reth/pull/26708"
-head = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-"""
-        )
-        assert_patches_not_dropped(old, updated_head)
 
     def test_commit_field_is_rejected(self) -> None:
         with self.assertRaises(PinError):
