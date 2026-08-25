@@ -27,6 +27,9 @@ const BLOCK_PRODUCTION_TIMEOUT: Duration = Duration::from_secs(30);
 const BLOCK_POLL_INTERVAL: Duration = Duration::from_millis(500);
 /// The client must derive the chain purely from L1 within this window.
 const CLIENT_SYNC_TIMEOUT: Duration = Duration::from_secs(90);
+/// The batcher must post at least one batch within this window. Submission lags block production:
+/// the batcher accumulates L2 blocks into a channel and only submits once the channel closes.
+const BATCH_SUBMISSION_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[tokio::test]
 async fn l3_smoke_calldata_da_derivation() -> Result<()> {
@@ -81,10 +84,24 @@ async fn l3_smoke_calldata_da_derivation() -> Result<()> {
     //    Base-format client sync above, a positive nonce confirms the calldata-DA path: had the
     //    batcher posted blob transactions, the client's Base-format L1 decoding would have failed
     //    and step 2 would have timed out.
-    let batcher_l1_nonce = l1_provider
-        .get_transaction_count(BATCHER.address)
-        .await
-        .wrap_err("failed to read batcher L1 nonce")?;
+    //
+    //    Poll rather than sample once: batch submission lags block production because the batcher
+    //    accumulates L2 blocks into a channel and only posts once the channel closes, which can
+    //    happen after the client has already advanced past block 0.
+    let batcher_l1_nonce = timeout(BATCH_SUBMISSION_TIMEOUT, async {
+        loop {
+            let nonce = l1_provider
+                .get_transaction_count(BATCHER.address)
+                .await
+                .wrap_err("failed to read batcher L1 nonce")?;
+            if nonce > 0 {
+                return Ok::<_, eyre::Error>(nonce);
+            }
+            sleep(BLOCK_POLL_INTERVAL).await;
+        }
+    })
+    .await
+    .wrap_err("batcher did not submit any L1 batch transaction")??;
     assert!(
         batcher_l1_nonce > 0,
         "batcher should have submitted at least one L1 batch transaction"
