@@ -36,9 +36,6 @@ pub enum ForwardingSetupError {
     },
 }
 
-/// Default maximum time allowed for destination queues and in-flight requests to drain.
-const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
-
 /// Owns transaction forwarding configuration and starts destination pipelines.
 #[derive(Debug)]
 pub struct TxForwardingService {
@@ -75,7 +72,7 @@ impl TxForwardingService {
                 reader_cancel,
                 reader_tasks: Vec::new(),
                 forwarder_tasks: Vec::new(),
-                shutdown_timeout: DEFAULT_SHUTDOWN_TIMEOUT,
+                shutdown_timeout: TxForwardingHandle::DEFAULT_SHUTDOWN_TIMEOUT,
             };
         }
 
@@ -130,7 +127,7 @@ impl TxForwardingService {
             reader_cancel,
             reader_tasks,
             forwarder_tasks,
-            shutdown_timeout: DEFAULT_SHUTDOWN_TIMEOUT,
+            shutdown_timeout: TxForwardingHandle::DEFAULT_SHUTDOWN_TIMEOUT,
         }
     }
 
@@ -180,7 +177,7 @@ impl TxForwardingService {
             reader_cancel: CancellationToken::new(),
             reader_tasks: Vec::new(),
             forwarder_tasks,
-            shutdown_timeout: DEFAULT_SHUTDOWN_TIMEOUT,
+            shutdown_timeout: TxForwardingHandle::DEFAULT_SHUTDOWN_TIMEOUT,
         })
     }
 }
@@ -194,6 +191,9 @@ pub struct TxForwardingHandle {
 }
 
 impl TxForwardingHandle {
+    /// Default maximum time allowed for destination queues and in-flight requests to drain.
+    pub const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
+
     /// Overrides how long [`Self::shutdown`] lets forwarders drain before aborting them.
     #[must_use]
     pub const fn with_shutdown_timeout(mut self, timeout: Duration) -> Self {
@@ -372,7 +372,7 @@ mod tests {
             reader_cancel,
             reader_tasks: vec![reader_task],
             forwarder_tasks: vec![forwarder_task],
-            shutdown_timeout: DEFAULT_SHUTDOWN_TIMEOUT,
+            shutdown_timeout: TxForwardingHandle::DEFAULT_SHUTDOWN_TIMEOUT,
         };
 
         let report = handle.shutdown().await;
@@ -389,7 +389,7 @@ mod tests {
             reader_cancel: CancellationToken::new(),
             reader_tasks: vec![tokio::spawn(async { panic!("reader failed") })],
             forwarder_tasks: vec![tokio::spawn(async { panic!("forwarder failed") })],
-            shutdown_timeout: DEFAULT_SHUTDOWN_TIMEOUT,
+            shutdown_timeout: TxForwardingHandle::DEFAULT_SHUTDOWN_TIMEOUT,
         };
 
         let report = handle.shutdown().await;
