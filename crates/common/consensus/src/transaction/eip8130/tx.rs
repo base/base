@@ -109,10 +109,10 @@ impl TxEip8130 {
     /// - the tip as amount
     ///
     /// # TODO
-    /// Pin the DefaultAccount ETH-transfer selector and argument encoding
+    /// Pin the `DefaultAccount` ETH-transfer selector and argument encoding
     /// against [`super::Eip8130Contracts::DEFAULT_ACCOUNT`] and decode phase
     /// 0. Until that static decode exists this returns [`None`].
-    pub fn coinbase_tip(&self) -> Option<U256> {
+    pub const fn coinbase_tip(&self) -> Option<U256> {
         let _ = self;
         None
     }
