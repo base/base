@@ -236,8 +236,15 @@ impl<Pool: TransactionPool + 'static> AdminTxPoolApiServer for AdminTxPoolApiImp
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::U256;
-    use base_observability_events::{TransactionEventBuilder, TransactionEventProducer};
+    use alloy_consensus::{SignableTransaction, TxEip1559};
+    use alloy_eips::eip2718::Encodable2718;
+    use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256};
+    use alloy_signer::SignerSync;
+    use alloy_signer_local::PrivateKeySigner;
+    use base_observability_events::{
+        TransactionEventBuilder, TransactionEventCapture, TransactionEventProducer,
+        TransactionEventType,
+    };
     use httpmock::prelude::*;
     use reth_transaction_pool::{
         PoolTransaction, TransactionOrigin,
@@ -284,6 +291,22 @@ mod tests {
                 value: U256::from(5),
             },
         ]
+    }
+
+    fn signed_eip1559(signer: &PrivateKeySigner, nonce: u64, priority_fee: u128) -> Bytes {
+        let tx = TxEip1559 {
+            chain_id: 8453,
+            nonce,
+            gas_limit: 21_000,
+            max_fee_per_gas: 1_000_000_000,
+            max_priority_fee_per_gas: priority_fee,
+            to: TxKind::Call(Address::repeat_byte(0x11)),
+            value: U256::ZERO,
+            access_list: Default::default(),
+            input: Default::default(),
+        };
+        let signature = signer.sign_hash_sync(&tx.signature_hash()).expect("test signer");
+        tx.into_signed(signature).encoded_2718().into()
     }
 
     #[test]
@@ -353,6 +376,39 @@ mod tests {
         assert_eq!(event.event_type.to_string(), "TXPOOL_SEND_RAW_TRANSACTION_VALIDITY");
         assert_eq!(event.tx_hash, Some(tx_hash));
         assert!(event.data.contains_key("validity_predicates"));
+    }
+
+    #[tokio::test]
+    async fn send_raw_transaction_validity_emits_predicate_list_on_admission() {
+        let capture = TransactionEventCapture::install();
+        let signer = PrivateKeySigner::random();
+        let raw = signed_eip1559(&signer, 0, 1);
+        let rpc = SendRawTransactionValidityApiImpl::new(NoopTransactionPool::<
+            BasePooledTransaction,
+        >::new());
+        let request =
+            SendRawTransactionValidityRequest { tx: raw, validity: all_predicate_variants() };
+
+        let tx_hash = rpc.send_raw_transaction_validity(request).await.unwrap_or_else(|_| {
+            capture.events().first().and_then(|event| event.tx_hash).expect(
+                "admission event should fire before pool insertion even if the noop pool rejects",
+            )
+        });
+
+        let events: Vec<_> = capture
+            .events()
+            .into_iter()
+            .filter(|event| {
+                event.event_type == TransactionEventType::TxpoolSendRawTransactionValidity
+                    && event.tx_hash == Some(tx_hash)
+            })
+            .collect();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].data["rpc_method"], "base_sendRawTransactionValidity");
+        assert_eq!(
+            events[0].data["validity_predicates"],
+            serde_json::to_value(all_predicate_variants()).unwrap()
+        );
     }
 
     #[test]

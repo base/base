@@ -33,8 +33,15 @@ serde.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+# workspace
+base-observability-events = { workspace = true, features = ["test-utils"] }
+
 eyre.workspace = true
 tokio.workspace = true
 httpmock.workspace = true
+alloy-eips.workspace = true
 serde_json.workspace = true
+alloy-signer.workspace = true
+alloy-consensus.workspace = true
+alloy-signer-local.workspace = true
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }

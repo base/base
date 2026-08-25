@@ -63,13 +63,21 @@ impl GlobalTransactionEventWriter {
         }
 
         let writer = TransactionEventWriter::from_config(config)?;
-        let _ = GLOBAL_TRANSACTION_EVENT_WRITER.set(writer);
-        Ok(GlobalTransactionEventWriterInitStatus::Initialized)
+        match GLOBAL_TRANSACTION_EVENT_WRITER.set(writer) {
+            Ok(()) => Ok(GlobalTransactionEventWriterInitStatus::Initialized),
+            Err(_) => Ok(GlobalTransactionEventWriterInitStatus::AlreadyInitialized),
+        }
     }
 
     /// Returns the process-global transaction event writer, if configured.
     pub fn get() -> Option<&'static TransactionEventWriter> {
         GLOBAL_TRANSACTION_EVENT_WRITER.get()
+    }
+
+    /// Returns the process-global writer, storing `writer` if the slot is empty.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn get_or_init(writer: TransactionEventWriter) -> &'static TransactionEventWriter {
+        GLOBAL_TRANSACTION_EVENT_WRITER.get_or_init(|| writer)
     }
 }
 
@@ -226,7 +234,6 @@ impl TransactionEventBuilder {
         let Some(writer) = GlobalTransactionEventWriter::get() else {
             return Ok(TransactionEventEmitOutcome::NotConfigured);
         };
-
         self.emit_to(writer)
     }
 }
@@ -435,17 +442,6 @@ mod tests {
     }
 
     #[test]
-    fn builder_none_writer_is_noop() {
-        let result = TransactionEventBuilder::new(
-            TransactionEventProducer::BaseRethNode,
-            TransactionEventType::Pending,
-        )
-        .emit_global();
-
-        assert_eq!(result.unwrap(), TransactionEventEmitOutcome::NotConfigured);
-    }
-
-    #[test]
     fn macro_emits_inline_data_fields() {
         let writer = disabled_writer();
 
@@ -485,6 +481,7 @@ mod tests {
     #[test]
     fn macro_noops_when_global_writer_is_not_configured() {
         let result = transaction_event!(
+            writer: Option::<&TransactionEventWriter>::None,
             producer: TransactionEventProducer::BaseRethNode,
             event_type: TransactionEventType::Pending,
             tx_hash: TxHash::repeat_byte(0x11),
@@ -494,5 +491,47 @@ mod tests {
         );
 
         assert_eq!(result.unwrap(), TransactionEventEmitOutcome::NotConfigured);
+    }
+
+    #[test]
+    fn capture_records_global_emits_without_a_writer() {
+        let capture = crate::TransactionEventCapture::install();
+        let tx_hash = TxHash::repeat_byte(0x42);
+
+        let result = transaction_event!(
+            producer: TransactionEventProducer::BaseRethNode,
+            event_type: TransactionEventType::TxpoolSendRawTransactionValidity,
+            tx_hash: tx_hash,
+            data: {
+                "rpc_method" => "base_sendRawTransactionValidity",
+            },
+        );
+
+        assert_eq!(result.unwrap(), TransactionEventEmitOutcome::Emitted);
+        let events = capture.events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, TransactionEventType::TxpoolSendRawTransactionValidity);
+        assert_eq!(events[0].tx_hash, Some(tx_hash));
+        assert_eq!(events[0].data["rpc_method"], "base_sendRawTransactionValidity");
+    }
+
+    #[test]
+    fn capture_clears_events_between_installs() {
+        {
+            let capture = crate::TransactionEventCapture::install();
+            let result = transaction_event!(
+                producer: TransactionEventProducer::BaseRethNode,
+                event_type: TransactionEventType::Pending,
+                tx_hash: TxHash::repeat_byte(0x43),
+            );
+            assert_eq!(result.unwrap(), TransactionEventEmitOutcome::Emitted);
+            assert_eq!(capture.events().len(), 1);
+        }
+
+        let capture = crate::TransactionEventCapture::install();
+        assert!(
+            capture.events().is_empty(),
+            "a later capture should not see events from the previous install"
+        );
     }
 }
