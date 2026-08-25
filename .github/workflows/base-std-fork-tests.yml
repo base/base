@@ -144,6 +144,15 @@ jobs:
 
       - name: Run base-std fork tests
         shell: bash
+        # The `l3` branch is a temporary Base-on-Base fork whose B-20 / PolicyRegistry
+        # precompiles intentionally diverge from the base-std `main` spec, so this
+        # conformance suite fails branch-wide on the l3 family and cannot be reconciled
+        # here without a large precompile change. Do not let it block PRs targeting an
+        # l3-family branch, while keeping enforcement intact for `main` and everywhere
+        # else. The suite still runs and the divergence is reported in the PR comment
+        # below (see the "Comment fork test results" step), so the signal is preserved.
+        # Remove this once the l3 precompiles are reconciled with the base-std spec.
+        continue-on-error: ${{ startsWith(github.base_ref, 'l3') }}
         run: |
           set -euo pipefail
 
