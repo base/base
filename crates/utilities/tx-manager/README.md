@@ -36,6 +36,8 @@ confirmation.
 
 - **`TxManagerError`** — error variants categorized as critical (non-retryable),
   fee/replacement (retryable via fee bumps), or infrastructure (transient/retryable).
+  `NonceTooHigh` is transient because concurrent publications can reach RPC
+  backends out of order; the same signed transaction is retried.
 - **`RpcErrorClassifier`** — classifies alloy `TransportError`s into `TxManagerError` variants.
 - **`RevertDisplay`** — display wrapper for decoded revert reasons.
 - **`TxManagerResult<T>`** — result type alias.

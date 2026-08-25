@@ -30,7 +30,6 @@ struct SendStateInner {
     mined_txs: Vec<B256>,
     has_published: bool,
     nonce_too_low_count: u64,
-    nonce_too_high: bool,
     already_reserved: bool,
     bump_fees: bool,
     bump_count: u64,
@@ -61,7 +60,6 @@ impl SendState {
                 mined_txs: Vec::new(),
                 has_published: false,
                 nonce_too_low_count: 0,
-                nonce_too_high: false,
                 already_reserved: false,
                 bump_fees: false,
                 bump_count: 0,
@@ -74,8 +72,9 @@ impl SendState {
     /// Processes a send error, updating internal state accordingly.
     ///
     /// - [`TxManagerError::NonceTooLow`] increments the nonce-too-low counter.
+    /// - [`TxManagerError::NonceTooHigh`] is transient and leaves no state.
     /// - [`TxManagerError::AlreadyReserved`] sets the already-reserved flag.
-    /// - Any [retryable](TxManagerError::is_retryable) error sets the
+    /// - Any other [retryable](TxManagerError::is_retryable) error sets the
     ///   bump-fees flag for the next send attempt.
     /// - Other critical errors are no-ops (handled at a higher level).
     ///
@@ -87,9 +86,10 @@ impl SendState {
             TxManagerError::NonceTooLow => {
                 inner.nonce_too_low_count += 1;
             }
-            TxManagerError::NonceTooHigh => {
-                inner.nonce_too_high = true;
-            }
+            // A higher nonce can reach an RPC before a lower concurrent
+            // publication has propagated. Retrying the same signed
+            // transaction requires no persistent state change.
+            TxManagerError::NonceTooHigh => {}
             TxManagerError::AlreadyReserved => {
                 inner.already_reserved = true;
             }
@@ -133,21 +133,18 @@ impl SendState {
     /// 1. If any transaction is mined, returns `None` (wait for confirmation).
     /// 2. If the nonce slot was already reserved, returns
     ///    [`TxManagerError::AlreadyReserved`].
-    /// 3. If a nonce-too-high error was seen, returns
-    ///    [`TxManagerError::NonceTooHigh`] (immediate abort — the nonce is
-    ///    ahead of chain state and no tx entered the mempool).
-    /// 4. If no successful publish has occurred and a nonce-too-low error was
+    /// 3. If no successful publish has occurred and a nonce-too-low error was
     ///    seen, returns [`TxManagerError::NonceTooLow`] (immediate abort).
-    /// 5. If nonce-too-low errors have reached the threshold, returns
+    /// 4. If nonce-too-low errors have reached the threshold, returns
     ///    [`TxManagerError::NonceTooLow`].
-    /// 6. If the mempool deadline has expired *and* no transaction has been
+    /// 5. If the mempool deadline has expired *and* no transaction has been
     ///    successfully published, returns
     ///    [`TxManagerError::MempoolDeadlineExpired`]. Once a publish has
     ///    succeeded the tx is in the mempool and the deadline's purpose is
     ///    served — further waiting is governed by the receipt timeout and
     ///    bump cycle, not by aborting (which would leak a pre-reserved nonce
     ///    and stall publication on lower nonces still live on L1).
-    /// 7. Otherwise, returns `None`.
+    /// 6. Otherwise, returns `None`.
     #[must_use]
     pub fn critical_error(&self) -> Option<TxManagerError> {
         self.critical_error_with(None)
@@ -167,9 +164,6 @@ impl SendState {
         }
         if inner.already_reserved {
             return Some(TxManagerError::AlreadyReserved);
-        }
-        if inner.nonce_too_high {
-            return Some(TxManagerError::NonceTooHigh);
         }
         if !inner.has_published && inner.nonce_too_low_count > 0 {
             return Some(TxManagerError::NonceTooLow);
@@ -555,31 +549,10 @@ mod tests {
     // ── NonceTooHigh ───────────────────────────────────────────────────
 
     #[test]
-    fn nonce_too_high_triggers_immediate_abort() {
+    fn nonce_too_high_is_transient() {
         let state = SendState::new(3).unwrap();
         state.process_send_error(&TxManagerError::NonceTooHigh);
-        assert_eq!(state.critical_error(), Some(TxManagerError::NonceTooHigh));
-    }
-
-    #[test]
-    fn mined_tx_suppresses_nonce_too_high_abort() {
-        let state = SendState::new(3).unwrap();
-        state.process_send_error(&TxManagerError::NonceTooHigh);
-        assert_eq!(state.critical_error(), Some(TxManagerError::NonceTooHigh));
-
-        state.tx_mined(B256::with_last_byte(1));
         assert!(state.critical_error().is_none());
-    }
-
-    #[test]
-    fn nonce_too_high_takes_priority_over_nonce_too_low() {
-        let state = SendState::new(3).unwrap();
-        state.process_send_error(&TxManagerError::NonceTooHigh);
-        state.process_send_error(&TxManagerError::NonceTooLow);
-
-        // NonceTooHigh (priority 3) wins over pre-publish NonceTooLow
-        // (priority 4).
-        assert_eq!(state.critical_error(), Some(TxManagerError::NonceTooHigh));
     }
 
     #[test]
