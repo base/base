@@ -443,23 +443,13 @@ impl BootInfo {
                 claim_block: l2_claim_block,
             });
         }
-        let blocks_since_genesis = schedule_l2_block_number - rollup_config.genesis.l2.number;
-        let l2_schedule_timestamp = blocks_since_genesis
-            .checked_mul(rollup_config.block_time)
-            .and_then(|offset| rollup_config.genesis.l2_time.checked_add(offset))
-            .ok_or(OracleProviderError::L2ScheduleTimestampOverflow {
-                schedule_block: schedule_l2_block_number,
-            })?;
 
         // The proven range ends at the claimed block, so execution-fork activation must be evaluated
         // against the claim timestamp, not the (possibly later) schedule pin horizon. A game-wide
         // schedule block only fixes a shared schedule ID across subranges; it must never make an
         // upgrade look active for a subrange whose execution never reaches it.
-        let claim_blocks_since_genesis = l2_claim_block - rollup_config.genesis.l2.number;
-        let l2_claim_timestamp = claim_blocks_since_genesis
-            .checked_mul(rollup_config.block_time)
-            .and_then(|offset| rollup_config.genesis.l2_time.checked_add(offset))
-            .ok_or(OracleProviderError::L2ClaimTimestampOverflow { claim_block: l2_claim_block })?;
+        let l2_schedule_timestamp = rollup_config.l2_block_timestamp(schedule_l2_block_number);
+        let l2_claim_timestamp = rollup_config.l2_block_timestamp(l2_claim_block);
 
         // Zenith is not contract-backed, so reject it when active within the proven range and remove
         // it when it only activates after the claimed block.
@@ -861,29 +851,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_l2_schedule_timestamp_overflow() {
-        let chain_config = BaseChainConfig::MAINNET;
-        let mut rollup_config = chain_config.rollup_config();
-        rollup_config.genesis.l2.number = 0;
-        rollup_config.genesis.l2_time = u64::MAX;
-        rollup_config.block_time = 2;
-
-        let mut oracle = MockOracle::new();
-        oracle.insert(L1_HEAD_KEY, B256::repeat_byte(0x11).to_vec());
-        oracle.insert(L2_OUTPUT_ROOT_KEY, B256::repeat_byte(0x22).to_vec());
-        oracle.insert(L2_CLAIM_KEY, B256::repeat_byte(0x33).to_vec());
-        oracle.insert(L2_CLAIM_BLOCK_NUMBER_KEY, 1u64.to_be_bytes().to_vec());
-        oracle.insert(L2_SCHEDULE_BLOCK_NUMBER_KEY, 2u64.to_be_bytes().to_vec());
-        oracle.insert_rollup_config(ORACLE_CHAIN_ID, &rollup_config);
-
-        let err = BootInfo::load(&oracle).await.expect_err("overflowing timestamp should fail");
-        assert!(matches!(
-            err,
-            OracleProviderError::L2ScheduleTimestampOverflow { schedule_block: 2 }
-        ));
-    }
-
-    #[tokio::test]
     async fn rejects_active_zenith_upgrade() {
         let chain_config = BaseChainConfig::MAINNET;
 
@@ -995,6 +962,84 @@ mod tests {
         let err = BootInfo::load(&oracle)
             .await
             .expect_err("Zenith active within the claim range should fail");
+        assert!(matches!(err, OracleProviderError::UncommittedZenithUpgrade));
+    }
+
+    #[tokio::test]
+    async fn pins_schedule_using_denim_block_timestamp() {
+        const GENESIS_BLOCK: u64 = 1_000;
+        const CLAIM_BLOCK: u64 = 1_003;
+
+        let mut rollup_config = BaseChainConfig::MAINNET.rollup_config();
+        rollup_config.genesis.l2.number = GENESIS_BLOCK;
+        rollup_config.genesis.l2_time = 1_000;
+        rollup_config.block_time = 2;
+        rollup_config.upgrades = UpgradeConfig {
+            base: BaseUpgradeConfig { denim: Some(1_004), ..Default::default() },
+            ..Default::default()
+        };
+
+        for (schedule_block, expected_timestamp) in [(CLAIM_BLOCK, 1_004), (1_007, 1_005)] {
+            let mut oracle = MockOracle::new();
+            oracle.insert(L1_HEAD_KEY, B256::repeat_byte(0x11).to_vec());
+            oracle.insert(L2_OUTPUT_ROOT_KEY, B256::repeat_byte(0x22).to_vec());
+            oracle.insert(L2_CLAIM_KEY, B256::repeat_byte(0x33).to_vec());
+            oracle.insert(L2_CLAIM_BLOCK_NUMBER_KEY, CLAIM_BLOCK.to_be_bytes().to_vec());
+            if schedule_block != CLAIM_BLOCK {
+                oracle.insert(L2_SCHEDULE_BLOCK_NUMBER_KEY, schedule_block.to_be_bytes().to_vec());
+            }
+            oracle.insert_rollup_config(ORACLE_CHAIN_ID, &rollup_config);
+
+            let boot_info = BootInfo::load(&oracle).await.expect("boot info should load");
+            let mut expected_rollup_config = rollup_config.clone();
+            expected_rollup_config.l2_chain_id = boot_info.rollup_config.l2_chain_id;
+
+            assert_eq!(boot_info.rollup_config, expected_rollup_config);
+            assert_eq!(
+                boot_info.schedule_id,
+                ScheduleId::pin(&mut expected_rollup_config, expected_timestamp)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn gates_zenith_using_denim_claim_timestamp() {
+        const GENESIS_BLOCK: u64 = 1_000;
+
+        let mut rollup_config = BaseChainConfig::MAINNET.rollup_config();
+        rollup_config.genesis.l2.number = GENESIS_BLOCK;
+        rollup_config.genesis.l2_time = 1_000;
+        rollup_config.block_time = 2;
+        rollup_config.upgrades = UpgradeConfig {
+            base: BaseUpgradeConfig {
+                denim: Some(1_004),
+                zenith: Some(1_005),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let mut oracle = MockOracle::new();
+        oracle.insert(L1_HEAD_KEY, B256::repeat_byte(0x11).to_vec());
+        oracle.insert(L2_OUTPUT_ROOT_KEY, B256::repeat_byte(0x22).to_vec());
+        oracle.insert(L2_CLAIM_KEY, B256::repeat_byte(0x33).to_vec());
+        oracle.insert(L2_CLAIM_BLOCK_NUMBER_KEY, 1_003u64.to_be_bytes().to_vec());
+        oracle.insert(L2_SCHEDULE_BLOCK_NUMBER_KEY, 1_007u64.to_be_bytes().to_vec());
+        oracle.insert_rollup_config(ORACLE_CHAIN_ID, &rollup_config);
+
+        let boot_info =
+            BootInfo::load(&oracle).await.expect("Zenith activates after the claimed Denim block");
+        assert_eq!(boot_info.rollup_config.upgrades.base.zenith, None);
+
+        let mut oracle = MockOracle::new();
+        oracle.insert(L1_HEAD_KEY, B256::repeat_byte(0x11).to_vec());
+        oracle.insert(L2_OUTPUT_ROOT_KEY, B256::repeat_byte(0x22).to_vec());
+        oracle.insert(L2_CLAIM_KEY, B256::repeat_byte(0x33).to_vec());
+        oracle.insert(L2_CLAIM_BLOCK_NUMBER_KEY, 1_007u64.to_be_bytes().to_vec());
+        oracle.insert_rollup_config(ORACLE_CHAIN_ID, &rollup_config);
+
+        let err =
+            BootInfo::load(&oracle).await.expect_err("Zenith is active at the claimed Denim block");
         assert!(matches!(err, OracleProviderError::UncommittedZenithUpgrade));
     }
 
