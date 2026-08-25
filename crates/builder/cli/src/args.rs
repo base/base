@@ -532,6 +532,33 @@ mod tests {
         assert_eq!(config.block_time, Duration::from_millis(1000));
         assert!(config.max_gas_per_txn.is_none());
         assert!(config.manifest_precheck_enabled);
+        assert!(!config.resource_metering.enabled);
+        assert!(config.resource_metering.schedule.is_empty());
+    }
+
+    #[test]
+    fn resource_metering_schedule_is_gated_by_enable_resource_metering() {
+        let parsed = CommandParser::parse_from([
+            "builder",
+            "--builder.enable-resource-metering",
+            "--payload.resource-metering-schedule",
+            "/tmp/resource-metering.json",
+        ]);
+
+        assert!(parsed.args.enable_resource_metering);
+        assert_eq!(
+            parsed.args.resource_metering.resource_metering_schedule.as_deref(),
+            Some(std::path::Path::new("/tmp/resource-metering.json"))
+        );
+        assert!(parsed.args.build_metering_store().is_enabled());
+
+        let gated = CommandParser::parse_from([
+            "builder",
+            "--payload.resource-metering-schedule",
+            "/tmp/resource-metering.json",
+        ]);
+        assert!(!gated.args.enable_resource_metering);
+        assert!(!gated.args.build_metering_store().is_enabled());
     }
 
     #[test]
