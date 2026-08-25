@@ -102,6 +102,50 @@ impl PackedProtocolVersion {
     }
 }
 
+impl core::str::FromStr for PackedProtocolVersion {
+    /// A descriptive message naming the rejected input; the parse error carries no structured
+    /// information any caller consumes, so a plain `String` avoids a bespoke public error type.
+    type Err = String;
+
+    /// Parses a human-readable `major.minor.patch` version (with an optional `-rc.N` pre-release)
+    /// into the packed version-type-`0` layout, the inverse of the [`Display`](Self) impl.
+    ///
+    /// This lets operators pass an announced upgrade version as plain semver (e.g. `1.2.3` or
+    /// `1.2.3-rc.4`) rather than the >70-digit packed decimal.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let invalid = || {
+            format!(
+                "invalid protocol version '{s}', expected 'major.minor.patch' with an optional '-rc.N'"
+            )
+        };
+
+        let (core, prerelease) = match s.split_once("-rc.") {
+            Some((core, rc)) => {
+                let prerelease = rc.parse::<u32>().map_err(|_| invalid())?;
+                // `prerelease == 0` is the sentinel for a final release, so `-rc.0` would silently
+                // round-trip to `major.minor.patch` and drop the suffix. Reject it rather than
+                // accept a pre-release string that means the opposite of what it says.
+                if prerelease == 0 {
+                    return Err(invalid());
+                }
+                (core, prerelease)
+            }
+            None => (s, 0),
+        };
+
+        let mut parts = core.splitn(4, '.');
+        let major = parts.next().and_then(|p| p.parse::<u32>().ok());
+        let minor = parts.next().and_then(|p| p.parse::<u32>().ok());
+        let patch = parts.next().and_then(|p| p.parse::<u32>().ok());
+        let extra = parts.next();
+        let (Some(major), Some(minor), Some(patch), None) = (major, minor, patch, extra) else {
+            return Err(invalid());
+        };
+
+        Ok(Self::pack(major, minor, patch, prerelease))
+    }
+}
+
 impl core::fmt::Display for PackedProtocolVersion {
     /// Renders the version as human-readable semver for logs and error messages.
     ///
@@ -155,6 +199,28 @@ mod tests {
             PackedProtocolVersion::new(U256::from(2) << 248).to_string(),
             "unknown-version-type-2"
         );
+    }
+
+    #[test]
+    fn parses_semver_round_trip_and_rejects_garbage() {
+        use core::str::FromStr;
+
+        assert_eq!(
+            PackedProtocolVersion::from_str("1.2.3").unwrap(),
+            PackedProtocolVersion::pack(1, 2, 3, 0)
+        );
+        assert_eq!(
+            PackedProtocolVersion::from_str("1.2.3-rc.4").unwrap(),
+            PackedProtocolVersion::pack(1, 2, 3, 4)
+        );
+        // Round-trips through Display.
+        assert_eq!(PackedProtocolVersion::from_str("10.0.7").unwrap().to_string(), "10.0.7");
+
+        for bad in
+            ["", "1", "1.2", "1.2.3.4", "1.2.x", "1.2.3-rc.", "1.2.3-rc.x", "1.2.3-rc.0", "v1.2.3"]
+        {
+            assert!(PackedProtocolVersion::from_str(bad).is_err(), "expected {bad:?} to fail");
+        }
     }
 
     #[test]

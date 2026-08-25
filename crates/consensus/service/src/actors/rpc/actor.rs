@@ -5,9 +5,10 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use base_consensus_gossip::P2pRpcRequest;
 use base_consensus_rpc::{
-    AdminApiServer, AdminRpc, BaseP2PApiServer, DevEngineApiServer, DevEngineRpc, EngineRpcClient,
-    HealthzApiServer, HealthzRpc, L1WatcherQueries, NetworkAdminQuery, P2pRpc, RollupNodeApiServer,
-    RollupRpc, RpcBuilder, SequencerAdminAPIClient, WsRPC, WsServer,
+    AdminApiServer, AdminRpc, BaseApiServer, BaseP2PApiServer, BaseRpc, DevEngineApiServer,
+    DevEngineRpc, EngineRpcClient, HealthzApiServer, HealthzRpc, L1WatcherQueries,
+    NetworkAdminQuery, P2pRpc, RollupNodeApiServer, RollupRpc, RpcBuilder, SequencerAdminAPIClient,
+    WsRPC, WsServer,
 };
 use base_consensus_safedb::SafeDBReader;
 use base_health::EthHealthCheckLayer;
@@ -16,7 +17,7 @@ use derive_more::Constructor;
 use http::StatusCode;
 use jsonrpsee::{
     RpcModule,
-    server::{Server, ServerHandle, middleware::http::ProxyGetRequestLayer},
+    server::{Server, ServerConfig, ServerHandle, middleware::http::ProxyGetRequestLayer},
 };
 use tokio::sync::mpsc;
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
@@ -38,6 +39,8 @@ where
     sequencer_admin_rpc_client: Option<SequencerAdminApiClient_>,
     safe_db_reader: Arc<dyn SafeDBReader>,
     upgrade_signal_refresher: Option<UpgradeSignalRefresher>,
+    /// Public `base`-namespace RPC server, present when the upgrade signal is configured.
+    base_rpc: Option<BaseRpc>,
 }
 
 /// The communication context used by the RPC actor.
@@ -81,7 +84,22 @@ pub(crate) async fn launch_rpc_server(
             ProxyGetRequestLayer::new([("/healthz", "healthz")])
                 .expect("Critical: Failed to build GET method proxy"),
         );
-    let server = Server::builder().set_http_middleware(middleware).build(config.socket).await?;
+    // The tower HTTP middleware above (concurrency limit, timeout, load shed) only bounds HTTP
+    // requests — it does not see individual JSON-RPC calls streamed over a WebSocket connection, and
+    // jsonrpsee serves WS by default even when the WS engine module is not merged. So a WS client
+    // could otherwise stream unauthenticated `base_*` calls past those limits. Disable the WS
+    // transport entirely unless it is explicitly enabled, and cap total concurrent connections
+    // (transport-independent) as a backstop.
+    let mut server_config = ServerConfig::builder()
+        .max_connections(u32::try_from(config.max_concurrent_requests.get()).unwrap_or(u32::MAX));
+    if !config.ws_enabled() {
+        server_config = server_config.http_only();
+    }
+    let server = Server::builder()
+        .set_config(server_config.build())
+        .set_http_middleware(middleware)
+        .build(config.socket)
+        .await?;
 
     if let Ok(addr) = server.local_addr() {
         info!(target: "rpc", addr = ?addr, "RPC server bound to address");
@@ -138,6 +156,12 @@ where
             Arc::clone(&self.safe_db_reader),
         );
         modules.merge(rollup_rpc.into_rpc())?;
+
+        // Public `base` namespace (read-only, non-admin), enabled when the upgrade signal is
+        // configured so operators — including external ones — can query upgrade readiness.
+        if let Some(base_rpc) = self.base_rpc {
+            modules.merge(base_rpc.into_rpc())?;
+        }
 
         // Add development RPC module for engine state introspection if enabled
         if self.config.dev_enabled() {
