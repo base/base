@@ -665,8 +665,8 @@ mod tests {
         );
     }
 
-    /// The whole point of the change: an isolated request is forwarded without waiting to
-    /// accumulate a batch. The sender stays open, so the forwarder cannot be draining on shutdown;
+    /// An isolated request is forwarded without waiting to accumulate a batch. The sender stays
+    /// open, so the forwarder cannot be draining on shutdown;
     /// if `run` blocked to fill a batch, the request would never arrive and the timeout would fire.
     #[tokio::test]
     async fn run_forwards_an_isolated_request_without_waiting() {
