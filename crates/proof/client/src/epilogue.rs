@@ -10,6 +10,8 @@ use crate::FaultProofProgramError;
 pub struct Epilogue {
     /// The L2 block that was derived.
     pub safe_head: L2BlockInfo,
+    /// The claimed L2 block number.
+    pub claimed_l2_block_number: u64,
     /// The computed output root from execution.
     pub output_root: B256,
     /// The claimed output root to validate against.
@@ -17,12 +19,19 @@ pub struct Epilogue {
 }
 
 impl Epilogue {
-    /// Validates that the computed output root matches the claimed output root.
+    /// Validates that the derived block and output root match the claim.
     ///
     /// # Errors
     ///
-    /// Returns an error if the computed and claimed output roots do not match.
+    /// Returns an error if the derived block number or computed output root does not match the
+    /// claim.
     pub fn validate(self) -> Result<(), Box<FaultProofProgramError>> {
+        if self.safe_head.block_info.number != self.claimed_l2_block_number {
+            return Err(Box::new(FaultProofProgramError::InvalidClaimBlock {
+                derived: self.safe_head.block_info.number,
+                claimed: self.claimed_l2_block_number,
+            }));
+        }
         if self.output_root != self.claimed_output_root {
             return Err(Box::new(FaultProofProgramError::InvalidClaim {
                 computed: self.output_root,
@@ -50,6 +59,7 @@ mod tests {
     fn epilogue(computed: B256, claimed: B256) -> Epilogue {
         Epilogue {
             safe_head: L2BlockInfo::default(),
+            claimed_l2_block_number: 0,
             output_root: computed,
             claimed_output_root: claimed,
         }
@@ -78,5 +88,18 @@ mod tests {
             }
             other => panic!("unexpected error: {other}"),
         }
+    }
+
+    #[test]
+    fn test_validate_requires_claimed_block() {
+        let mut epilogue = epilogue(B256::ZERO, B256::ZERO);
+        epilogue.safe_head.block_info.number = 6;
+        epilogue.claimed_l2_block_number = 7;
+
+        let error = epilogue.validate().unwrap_err();
+        assert!(matches!(
+            *error,
+            FaultProofProgramError::InvalidClaimBlock { derived: 6, claimed: 7 }
+        ));
     }
 }
