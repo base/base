@@ -85,51 +85,31 @@ impl ShadowBlockRepo {
         let mut tx = self.pool.begin().await.context("failed to begin shadow block transaction")?;
         let mut outcome = ShadowFlushOutcome::default();
 
-        for run in Self::variant_runs(writes) {
-            let rows: Vec<&ShadowBlockRow> = run
-                .iter()
-                .filter_map(|write| match write {
-                    ShadowWrite::Reorged(row) => Some(row.as_ref()),
-                    ShadowWrite::Canonical(_) => None,
-                })
-                .collect();
+        let mut rows: Vec<&ShadowBlockRow> = Vec::new();
+        let mut canonical: Vec<&ShadowCanonicalRef> = Vec::new();
 
-            if rows.is_empty() {
-                let canonical: Vec<&ShadowCanonicalRef> = run
-                    .iter()
-                    .filter_map(|write| match write {
-                        ShadowWrite::Canonical(entry) => Some(entry),
-                        ShadowWrite::Reorged(_) => None,
-                    })
-                    .collect();
-                let reconciled = Self::resolve_canonical_hashes(&mut tx, &canonical).await?;
-                outcome.rows_reconciled = outcome.rows_reconciled.saturating_add(reconciled);
-            } else {
-                let written = Self::insert_rows(&mut tx, &rows).await?;
-                outcome.rows_written = outcome.rows_written.saturating_add(written);
+        for write in writes {
+            match write {
+                ShadowWrite::Reorged(row) => {
+                    outcome.rows_reconciled +=
+                        Self::resolve_canonical_hashes(&mut tx, &canonical).await?;
+                    canonical.clear();
+                    rows.push(row);
+                }
+                ShadowWrite::Canonical(entry) => {
+                    outcome.rows_written += Self::insert_rows(&mut tx, &rows).await?;
+                    rows.clear();
+                    canonical.push(entry);
+                }
             }
         }
+
+        outcome.rows_written += Self::insert_rows(&mut tx, &rows).await?;
+        outcome.rows_reconciled += Self::resolve_canonical_hashes(&mut tx, &canonical).await?;
 
         tx.commit().await.context("failed to commit shadow block transaction")?;
 
         Ok(outcome)
-    }
-
-    /// Splits writes into maximal runs of one kind, preserving their relative order.
-    fn variant_runs(writes: &[ShadowWrite]) -> impl Iterator<Item = &[ShadowWrite]> {
-        let mut remaining = writes;
-
-        std::iter::from_fn(move || {
-            let reorged = matches!(remaining.first()?, ShadowWrite::Reorged(_));
-            let run_len = remaining
-                .iter()
-                .take_while(|write| matches!(write, ShadowWrite::Reorged(_)) == reorged)
-                .count();
-
-            let (run, tail) = remaining.split_at(run_len);
-            remaining = tail;
-            Some(run)
-        })
     }
 
     async fn insert_rows(
@@ -156,24 +136,17 @@ impl ShadowBlockRepo {
                     .push_bind(Json(&entry.payload));
             });
 
-            // Same hash means a redelivered notification: it carries `NULL` and must not erase a
-            // hash the backfill already established, and it describes the block already stored, so
-            // `created_at` stays put. A different hash is a second reorg at that height replacing
-            // the candidate outright, so neither the stale replacement hash nor the displaced
-            // block's creation time may survive.
+            // The WHERE drops redeliveries that say nothing new, so the row keeps the replacement
+            // hash and creation time it already has. Anything else is news and lands wholesale.
             query_builder.push(
                 " ON CONFLICT (number) DO UPDATE SET \
                  hash = EXCLUDED.hash, \
-                 canonical_hash = CASE \
-                   WHEN shadow_blocks.hash = EXCLUDED.hash \
-                   THEN COALESCE(EXCLUDED.canonical_hash, shadow_blocks.canonical_hash) \
-                   ELSE EXCLUDED.canonical_hash END, \
-                 created_at = CASE \
-                   WHEN shadow_blocks.hash = EXCLUDED.hash \
-                   THEN shadow_blocks.created_at \
-                   ELSE EXCLUDED.created_at END, \
+                 canonical_hash = EXCLUDED.canonical_hash, \
+                 created_at = EXCLUDED.created_at, \
                  payload = EXCLUDED.payload, \
-                 updated_at = now()",
+                 updated_at = now() \
+                 WHERE shadow_blocks.hash <> EXCLUDED.hash \
+                    OR EXCLUDED.canonical_hash IS NOT NULL",
             );
 
             let result = query_builder
@@ -474,25 +447,6 @@ mod tests {
 
         assert_eq!(deduped.len(), 1, "a height keys one row regardless of hash");
         assert_eq!(deduped[0].hash, [0xbb], "the later candidate at a height wins");
-    }
-
-    #[test]
-    fn variant_runs_keep_canonical_refs_between_the_rows_they_follow() {
-        let writes = vec![
-            ShadowWrite::Reorged(Box::new(sample_row(1, &[0xaa], None))),
-            ShadowWrite::Canonical(ShadowCanonicalRef { number: 1, hash: vec![0xbb] }),
-            ShadowWrite::Reorged(Box::new(sample_row(1, &[0xcc], None))),
-        ];
-
-        let kinds: Vec<bool> = ShadowBlockRepo::variant_runs(&writes)
-            .map(|run| matches!(run[0], ShadowWrite::Reorged(_)))
-            .collect();
-
-        assert_eq!(
-            kinds,
-            vec![true, false, true],
-            "a canonical ref must not be hoisted past a candidate stored after it"
-        );
     }
 
     #[test]
