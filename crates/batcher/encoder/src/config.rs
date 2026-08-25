@@ -181,9 +181,12 @@ impl EncoderConfig {
         }
 
         let channel_timeout = Self::confirmation_channel_timeout(rollup_config);
-        if channel_timeout > 0 && self.max_channel_duration >= channel_timeout {
+        let effective_channel_duration = self.max_channel_duration - self.sub_safety_margin;
+        if channel_timeout > 0 && effective_channel_duration >= channel_timeout {
             return Err(EncoderConfigError::ChannelDurationExceedsTimeout {
                 max_channel_duration: self.max_channel_duration,
+                sub_safety_margin: self.sub_safety_margin,
+                effective_channel_duration,
                 channel_timeout,
             });
         }
@@ -266,14 +269,19 @@ pub enum EncoderConfigError {
         /// The timestamp of the next L2 block the batcher may encode.
         next_l2_timestamp: u64,
     },
-    /// `max_channel_duration >= channel_timeout`.
+    /// `max_channel_duration - sub_safety_margin >= channel_timeout`.
     #[error(
-        "max_channel_duration ({max_channel_duration}) must be less than \
+        "effective channel duration ({max_channel_duration} - {sub_safety_margin} = \
+         {effective_channel_duration}) must be less than \
          the derivation channel_timeout ({channel_timeout})"
     )]
     ChannelDurationExceedsTimeout {
         /// Configured duration in L1 blocks.
         max_channel_duration: u64,
+        /// Safety margin subtracted from the configured duration.
+        sub_safety_margin: u64,
+        /// Operational duration after subtracting the safety margin.
+        effective_channel_duration: u64,
         /// Derivation channel timeout in L1 blocks.
         channel_timeout: u64,
     },
@@ -474,23 +482,33 @@ mod tests {
     }
 
     #[test]
-    fn validate_for_rollup_config_rejects_duration_at_channel_timeout() {
-        let cfg = EncoderConfig { max_channel_duration: 50, ..EncoderConfig::default() };
+    fn validate_for_rollup_config_rejects_effective_duration_at_channel_timeout() {
+        let cfg = EncoderConfig {
+            max_channel_duration: 60,
+            sub_safety_margin: 10,
+            ..EncoderConfig::default()
+        };
         let rollup_config = rollup_config_with_channel_timeouts(300, 50, Some(10));
 
         let err = cfg.validate_for_rollup_config(&rollup_config, 0).unwrap_err();
         assert!(matches!(
             err,
             EncoderConfigError::ChannelDurationExceedsTimeout {
-                max_channel_duration: 50,
+                max_channel_duration: 60,
+                sub_safety_margin: 10,
+                effective_channel_duration: 50,
                 channel_timeout: 50,
             }
         ));
     }
 
     #[test]
-    fn validate_for_rollup_config_allows_duration_below_channel_timeout() {
-        let cfg = EncoderConfig { max_channel_duration: 49, ..EncoderConfig::default() };
+    fn validate_for_rollup_config_allows_effective_duration_below_channel_timeout() {
+        let cfg = EncoderConfig {
+            max_channel_duration: 50,
+            sub_safety_margin: 10,
+            ..EncoderConfig::default()
+        };
         let rollup_config = rollup_config_with_channel_timeouts(300, 50, Some(10));
 
         assert!(cfg.validate_for_rollup_config(&rollup_config, 0).is_ok());
