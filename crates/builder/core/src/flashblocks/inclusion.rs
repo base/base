@@ -51,17 +51,17 @@ impl InclusionFlow {
 
     /// Base-fee revenue as `f64` wei for histogram emission.
     pub fn base_fees_f64(&self) -> f64 {
-        wei_as_f64(self.base_fees)
+        u128::try_from(self.base_fees).map(|wei| wei as f64).unwrap_or(f64::MAX)
     }
 
     /// Priority-fee revenue as `f64` wei for histogram emission.
     pub fn priority_fees_f64(&self) -> f64 {
-        wei_as_f64(self.priority_fees)
+        u128::try_from(self.priority_fees).map(|wei| wei as f64).unwrap_or(f64::MAX)
     }
 
     /// Coinbase-tip revenue as `f64` wei for histogram emission.
     pub fn coinbase_tips_f64(&self) -> f64 {
-        wei_as_f64(self.coinbase_tips)
+        u128::try_from(self.coinbase_tips).map(|wei| wei as f64).unwrap_or(f64::MAX)
     }
 }
 
@@ -82,15 +82,6 @@ impl InclusionTracker {
         let flow = if is_validity { &mut self.validity } else { &mut self.standard };
         flow.record(gas_used, miner_fee, base_fee);
     }
-}
-
-/// Converts a wei total to `f64` for histogram emission.
-///
-/// Values that do not fit in `u128` saturate to [`f64::MAX`]. Integer
-/// precision is already lost above 2^53, which is acceptable for per-block
-/// revenue distributions.
-fn wei_as_f64(value: U256) -> f64 {
-    u128::try_from(value).map(|wei| wei as f64).unwrap_or(f64::MAX)
 }
 
 #[cfg(test)]
