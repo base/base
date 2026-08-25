@@ -11,7 +11,8 @@ repository.workspace = true
 rkyv.workspace = true
 
 # base-consensus / base-proof
-base-proof.workspace = true
+# EIP-8130 execution without Tokio (`base-proof/std` pulls Tokio).
+base-proof = { workspace = true, features = ["evm-std"] }
 
 # sp1
 sp1-zkvm.workspace = true
