@@ -10,7 +10,7 @@ mod constants;
 pub use constants::Eip8130Constants;
 
 mod addresses;
-pub use addresses::Eip8130Contracts;
+pub use addresses::{Eip8130Contracts, IDefaultAccount};
 
 mod call;
 pub use call::Call;

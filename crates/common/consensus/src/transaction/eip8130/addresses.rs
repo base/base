@@ -22,6 +22,7 @@
 //! [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
 
 use alloy_primitives::{Address, B256, address, b256, keccak256};
+use alloy_sol_types::sol;
 
 /// Canonical [EIP-8130] contract addresses and the node authenticator allowlist.
 ///
@@ -198,6 +199,24 @@ impl Eip8130Contracts {
     #[must_use]
     pub fn erc1167_proxy_code_hash(implementation: Address) -> B256 {
         keccak256(Self::erc1167_proxy_runtime(implementation))
+    }
+}
+
+sol! {
+    /// ABI of [`Eip8130Contracts::DEFAULT_ACCOUNT`] (`execute` / `executeBatch`).
+    interface IDefaultAccount {
+        /// Inner call of `executeBatch`.
+        struct Call {
+            address target;
+            uint256 value;
+            bytes data;
+        }
+
+        /// Single call from the account; equivalent to a one-element batch.
+        function execute(address target, uint256 value, bytes data) external;
+
+        /// Ordered batch of calls from the account.
+        function executeBatch(Call[] calls) external;
     }
 }
 

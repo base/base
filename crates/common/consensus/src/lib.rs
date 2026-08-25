@@ -32,8 +32,8 @@ pub use transaction::{
     BaseTransactionInfo, BaseTxEnvelope, BaseTypedTransaction, Call, ChangeType, CreateEntry,
     DEPOSIT_TX_TYPE_ID, Delegation, DepositInfo, DepositTransaction, EIP8130_REJECTION_MSG,
     EIP8130_TX_TYPE_ID, Eip8130Constants, Eip8130Contracts, Eip8130Signed, Eip8130StaticError,
-    Eip8130TimestampError, InitialActor, OpTxType, Scope, SignedAccountChanges, SignedChange,
-    TxDeposit, TxEip8130,
+    Eip8130TimestampError, IDefaultAccount, InitialActor, OpTxType, Scope, SignedAccountChanges,
+    SignedChange, TxDeposit, TxEip8130,
 };
 
 mod extra;
