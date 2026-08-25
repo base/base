@@ -9,10 +9,7 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 use tracing::warn;
 
-use crate::{
-    BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded, ResourceLimits, TxResources,
-    TxnExecutionError,
-};
+use crate::{BuilderMetrics, ExecutionInfo, ResourceLimits, TxResources, TxnExecutionError};
 
 /// Stable decision context attached to each builder transaction event.
 #[derive(Debug, Clone)]
@@ -81,7 +78,6 @@ pub(crate) struct BuilderBudgetFields {
     tx_data_limit: Option<u64>,
     block_data_limit: Option<u64>,
     block_da_footprint_limit: Option<u64>,
-    tx_execution_time_limit_us: Option<u128>,
     block_uncompressed_size_limit: Option<u64>,
     #[serde(flatten)]
     transaction_resources: Option<BuilderTransactionResources>,
@@ -91,7 +87,6 @@ pub(crate) struct BuilderBudgetFields {
 struct BuilderTransactionResources {
     tx_da_size: u64,
     tx_gas_limit: u64,
-    tx_execution_time_us: Option<u128>,
     tx_uncompressed_size: u64,
 }
 
@@ -110,7 +105,6 @@ impl BuilderBudgetFields {
             tx_data_limit: limits.tx_data_limit,
             block_data_limit: limits.block_data_limit,
             block_da_footprint_limit: limits.block_da_footprint_limit,
-            tx_execution_time_limit_us: limits.tx_execution_time_limit_us,
             block_uncompressed_size_limit: limits.block_uncompressed_size_limit,
             transaction_resources: resources.map(BuilderTransactionResources::from),
         }
@@ -122,7 +116,6 @@ impl From<&TxResources> for BuilderTransactionResources {
         Self {
             tx_da_size: resources.da_size,
             tx_gas_limit: resources.gas_limit,
-            tx_execution_time_us: resources.execution_time_us,
             tx_uncompressed_size: resources.uncompressed_size,
         }
     }
@@ -134,9 +127,9 @@ pub(crate) struct BuilderConsideredEventData {
     #[serde(flatten)]
     budget: BuilderBudgetFields,
     #[serde(skip_serializing_if = "Option::is_none")]
-    tx_age_ms: Option<u128>,
+    bundle_min_block: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    metering_wait_duration_ms: Option<u128>,
+    bundle_max_block: Option<u64>,
 }
 
 impl BuilderConsideredEventData {
@@ -148,19 +141,19 @@ impl BuilderConsideredEventData {
     ) -> Self {
         Self {
             budget: BuilderBudgetFields::new(info, limits, resources),
-            tx_age_ms: None,
-            metering_wait_duration_ms: None,
+            bundle_min_block: None,
+            bundle_max_block: None,
         }
     }
 
-    /// Adds metering wait details to the considered-event payload.
-    pub(crate) const fn with_metering_wait(
+    /// Adds the block window associated with a bundle transaction.
+    pub(crate) const fn with_bundle_block_window(
         mut self,
-        tx_age_ms: u128,
-        metering_wait_duration_ms: u128,
+        min_block_number: Option<u64>,
+        max_block_number: Option<u64>,
     ) -> Self {
-        self.tx_age_ms = Some(tx_age_ms);
-        self.metering_wait_duration_ms = Some(metering_wait_duration_ms);
+        self.bundle_min_block = min_block_number;
+        self.bundle_max_block = max_block_number;
         self
     }
 }
@@ -174,9 +167,13 @@ pub(crate) struct BuilderRejectedEventData {
     rejection_detail: String,
     permanent: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    tx_age_ms: Option<u128>,
+    bundle_min_block: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    metering_wait_duration_ms: Option<u128>,
+    bundle_max_block: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    current_block: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    block_timestamp: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     dry_run: Option<bool>,
 }
@@ -196,8 +193,10 @@ impl BuilderRejectedEventData {
             rejection_reason,
             rejection_detail: rejection_detail.into(),
             permanent,
-            tx_age_ms: None,
-            metering_wait_duration_ms: None,
+            bundle_min_block: None,
+            bundle_max_block: None,
+            current_block: None,
+            block_timestamp: None,
             dry_run: None,
         }
     }
@@ -219,20 +218,26 @@ impl BuilderRejectedEventData {
         )
     }
 
-    /// Adds metering wait details to the rejected-event payload.
-    pub(crate) const fn with_metering_wait(
+    /// Adds the block window associated with a bundle transaction.
+    pub(crate) const fn with_bundle_block_window(
         mut self,
-        tx_age_ms: u128,
-        metering_wait_duration_ms: u128,
+        min_block_number: Option<u64>,
+        max_block_number: Option<u64>,
     ) -> Self {
-        self.tx_age_ms = Some(tx_age_ms);
-        self.metering_wait_duration_ms = Some(metering_wait_duration_ms);
+        self.bundle_min_block = min_block_number;
+        self.bundle_max_block = max_block_number;
         self
     }
 
-    /// Adds the execution metering mode to the rejected-event payload.
-    pub(crate) const fn with_dry_run(mut self, dry_run: bool) -> Self {
-        self.dry_run = Some(dry_run);
+    /// Adds the current block associated with a bundle rejection.
+    pub(crate) const fn with_current_block(mut self, block_number: u64) -> Self {
+        self.current_block = Some(block_number);
+        self
+    }
+
+    /// Adds the block timestamp associated with a bundle rejection.
+    pub(crate) const fn with_block_timestamp(mut self, timestamp: u64) -> Self {
+        self.block_timestamp = Some(timestamp);
         self
     }
 }
@@ -432,17 +437,11 @@ pub(crate) const fn rejection_reason_code(err: &TxnExecutionError) -> &'static s
         TxnExecutionError::BlockUncompressedSizeExceeded { .. } => {
             "block_uncompressed_size_exceeded"
         }
-        TxnExecutionError::ExecutionMeteringLimitExceeded(inner) => match inner {
-            ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _) => {
-                "tx_execution_time_exceeded"
-            }
-        },
         TxnExecutionError::SequencerTransaction => "sequencer_transaction",
         TxnExecutionError::NonceTooLow => "nonce_too_low",
         TxnExecutionError::InternalError(_) => "internal_error",
         TxnExecutionError::EvmError => "evm_error",
         TxnExecutionError::MaxGasUsageExceeded => "max_gas_usage_exceeded",
-        TxnExecutionError::MeteringDataPending => "metering_data_pending",
         TxnExecutionError::ResourceThrottling(_) => "resource_throttling",
     }
 }
@@ -597,7 +596,6 @@ mod tests {
                     da_size: 120,
                     gas_limit: 21_000,
                     payer_auth: 0,
-                    execution_time_us: Some(100),
                     uncompressed_size: 110,
                 }),
             ),
@@ -646,12 +644,6 @@ mod tests {
                 block_gas_limit: 3,
             }),
             "transaction_gas_limit_exceeded"
-        );
-        assert_eq!(
-            rejection_reason_code(&TxnExecutionError::ExecutionMeteringLimitExceeded(
-                ExecutionMeteringLimitExceeded::TransactionExecutionTime(1, 2),
-            )),
-            "tx_execution_time_exceeded"
         );
         assert_eq!(
             rejection_reason_code(&TxnExecutionError::ResourceThrottling(

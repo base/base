@@ -4,7 +4,6 @@
 
 use core::fmt::Debug;
 
-use ExecutionMeteringLimitExceeded::TransactionExecutionTime;
 use alloy_primitives::{Address, U256};
 use base_bundles::RejectedTransaction;
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned};
@@ -21,7 +20,7 @@ use crate::{InclusionTracker, PredicateLoadTracker};
 ///
 /// This struct encapsulates all the resource limit parameters used to determine
 /// whether a transaction can be included in a block without exceeding various
-/// resource budgets (gas, DA, and per-transaction execution time).
+/// resource budgets (gas and DA).
 #[derive(Debug, Clone, Default)]
 pub struct ResourceLimits {
     /// The block gas limit.
@@ -34,8 +33,6 @@ pub struct ResourceLimits {
     pub da_footprint_gas_scalar: Option<u16>,
     /// Maximum DA footprint for the block (optional).
     pub block_da_footprint_limit: Option<u64>,
-    /// Maximum execution time per transaction in microseconds (optional).
-    pub tx_execution_time_limit_us: Option<u128>,
     /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes (optional).
     pub block_uncompressed_size_limit: Option<u64>,
 }
@@ -43,7 +40,7 @@ pub struct ResourceLimits {
 /// Resource usage for a single transaction.
 ///
 /// This struct contains the resource consumption values for a transaction,
-/// both predicted (from metering data) and declared (from tx fields).
+/// both estimated (DA size) and declared (from tx fields).
 #[derive(Debug, Clone, Default)]
 pub struct TxResources {
     /// Estimated DA size for the transaction.
@@ -55,19 +52,8 @@ pub struct TxResources {
     /// in addition to `gas_limit`, since the payer reimburses its own
     /// authentication beyond the declared limit.
     pub payer_auth: u64,
-    /// Predicted execution time in microseconds (from metering data, if available).
-    pub execution_time_us: Option<u128>,
     /// Raw EIP-2718 encoded transaction size in bytes.
     pub uncompressed_size: u64,
-}
-
-/// Execution metering limits that depend on metering service predictions.
-/// These can operate in dry-run or enforcement mode via the execution metering mode setting.
-#[derive(Debug, Error, Clone)]
-pub enum ExecutionMeteringLimitExceeded {
-    /// A single transaction's predicted execution time exceeded its per-tx limit.
-    #[error("transaction execution time exceeded: tx_time_us={0} limit_us={1}")]
-    TransactionExecutionTime(u128, u128),
 }
 
 /// Error returned when a transaction fails execution or exceeds block limits.
@@ -131,11 +117,6 @@ pub enum TxnExecutionError {
         block_limit: u64,
     },
 
-    // Execution metering limits (optionally enforced, depend on metering service predictions)
-    /// Execution metering limit exceeded.
-    #[error("{0}")]
-    ExecutionMeteringLimitExceeded(ExecutionMeteringLimitExceeded),
-
     // Transaction status
     /// Transaction is a sequencer transaction (skipped).
     #[error("sequencer transaction")]
@@ -157,10 +138,6 @@ pub enum TxnExecutionError {
     #[error("max gas usage exceeded")]
     MaxGasUsageExceeded,
 
-    /// Metering data has not yet arrived for this transaction.
-    #[error("metering data pending")]
-    MeteringDataPending,
-
     /// Resource-throttling budget exceeded.
     #[error("{0}")]
     ResourceThrottling(ResourceThrottlingLimitExceeded),
@@ -175,11 +152,7 @@ impl TxnExecutionError {
     /// succeed in a future block or flashblock with different cumulative values.
     pub const fn is_permanent(&self) -> bool {
         match self {
-            Self::TransactionDASizeExceeded(_, _)
-            | Self::ExecutionMeteringLimitExceeded(
-                ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _),
-            )
-            | Self::MaxGasUsageExceeded => true,
+            Self::TransactionDASizeExceeded(_, _) | Self::MaxGasUsageExceeded => true,
             Self::ResourceThrottling(error) => {
                 matches!(error.scope, ResourceThrottlingLimitScope::Transaction)
             }
@@ -201,12 +174,6 @@ impl TxnExecutionError {
             | ResourceThrottlingDecision::Throttle { .. }
             | ResourceThrottlingDecision::CalculationFailed => None,
         }
-    }
-}
-
-impl From<ExecutionMeteringLimitExceeded> for TxnExecutionError {
-    fn from(err: ExecutionMeteringLimitExceeded) -> Self {
-        Self::ExecutionMeteringLimitExceeded(err)
     }
 }
 
@@ -287,8 +254,6 @@ impl ExecutionInfo {
     ///   per tx.
     /// - block DA limit: if configured, ensures the transaction's DA size does not exceed the
     ///   maximum allowed DA limit per block.
-    /// - execution time limit: if configured with metering data, ensures the transaction's
-    ///   predicted execution time does not exceed the per-transaction limit.
     pub fn is_tx_over_limits(
         &self,
         tx: &TxResources,
@@ -347,16 +312,6 @@ impl ExecutionInfo {
                     tx_uncompressed_size: tx.uncompressed_size,
                     block_limit: limit,
                 });
-            }
-        }
-
-        // Check execution time limits (if metering data is available)
-        if let Some(tx_time) = tx.execution_time_us {
-            // Check per-transaction execution time limit
-            if let Some(tx_limit) = limits.tx_execution_time_limit_us
-                && tx_time > tx_limit
-            {
-                return Err(TransactionExecutionTime(tx_time, tx_limit).into());
             }
         }
 
@@ -463,72 +418,16 @@ mod tests {
         assert!(matches!(result, Err(TxnExecutionError::DAFootprintLimitExceeded { .. })));
     }
 
-    // ==================== Execution Time Tests ====================
-
-    #[test]
-    fn test_tx_execution_time_exceeded() {
-        let info = ExecutionInfo::with_capacity(10);
-        let limits =
-            ResourceLimits { tx_execution_time_limit_us: Some(1_000_000), ..default_limits() };
-        let tx = TxResources {
-            gas_limit: 21_000,
-            execution_time_us: Some(1_500_000), // 1.5s > 1s limit
-            ..Default::default()
-        };
-
-        let result = info.is_tx_over_limits(&tx, &limits);
-        assert!(matches!(
-            result,
-            Err(TxnExecutionError::ExecutionMeteringLimitExceeded(
-                ExecutionMeteringLimitExceeded::TransactionExecutionTime(1_500_000, 1_000_000)
-            ))
-        ));
-    }
-
-    #[test]
-    fn test_execution_time_within_limits() {
-        let info = ExecutionInfo::with_capacity(10);
-
-        let limits =
-            ResourceLimits { tx_execution_time_limit_us: Some(1_000_000), ..default_limits() };
-        let tx = TxResources {
-            gas_limit: 21_000,
-            execution_time_us: Some(500_000), // 0.5s within both limits
-            ..Default::default()
-        };
-
-        assert!(info.is_tx_over_limits(&tx, &limits).is_ok());
-    }
-
-    #[test]
-    fn test_execution_time_no_metering_data_skips_check() {
-        let info = ExecutionInfo::with_capacity(10);
-        let limits = ResourceLimits { tx_execution_time_limit_us: Some(1_000), ..default_limits() };
-        // No execution_time_us set - should skip the check
-        let tx = TxResources { gas_limit: 21_000, execution_time_us: None, ..Default::default() };
-
-        assert!(info.is_tx_over_limits(&tx, &limits).is_ok());
-    }
-
     // ==================== Combined Resource Tests ====================
 
     #[test]
     fn test_multiple_limits_first_exceeded_wins() {
         let info = ExecutionInfo::with_capacity(10);
-        let limits = ResourceLimits {
-            tx_data_limit: Some(100),
-            tx_execution_time_limit_us: Some(1_000_000),
-            ..default_limits()
-        };
+        let limits = ResourceLimits { tx_data_limit: Some(100), ..default_limits() };
 
-        // DA limit exceeded first (checked before execution time)
-        let tx = TxResources {
-            da_size: 200,
-            gas_limit: 21_000,
-            payer_auth: 0,
-            execution_time_us: Some(2_000_000),
-            uncompressed_size: 0,
-        };
+        // DA limit exceeded first
+        let tx =
+            TxResources { da_size: 200, gas_limit: 21_000, payer_auth: 0, uncompressed_size: 0 };
 
         let result = info.is_tx_over_limits(&tx, &limits);
         // DA size limit is checked first
@@ -542,17 +441,11 @@ mod tests {
             block_gas_limit: 30_000_000,
             tx_data_limit: Some(10_000),
             block_data_limit: Some(1_000_000),
-            tx_execution_time_limit_us: Some(1_000_000),
             ..Default::default()
         };
 
-        let tx = TxResources {
-            da_size: 500,
-            gas_limit: 100_000,
-            payer_auth: 0,
-            execution_time_us: Some(100_000),
-            uncompressed_size: 0,
-        };
+        let tx =
+            TxResources { da_size: 500, gas_limit: 100_000, payer_auth: 0, uncompressed_size: 0 };
 
         assert!(info.is_tx_over_limits(&tx, &limits).is_ok());
     }
@@ -562,12 +455,8 @@ mod tests {
     #[test]
     fn test_zero_limits() {
         let info = ExecutionInfo::with_capacity(10);
-        let limits = ResourceLimits {
-            block_gas_limit: 0,
-            tx_execution_time_limit_us: Some(0),
-            ..Default::default()
-        };
-        let tx = TxResources { gas_limit: 1, execution_time_us: Some(1), ..Default::default() };
+        let limits = ResourceLimits { block_gas_limit: 0, ..Default::default() };
+        let tx = TxResources { gas_limit: 1, ..Default::default() };
 
         // Should fail on gas limit
         let result = info.is_tx_over_limits(&tx, &limits);
