@@ -94,7 +94,6 @@ impl ShadowSequencer {
             metrics_port: None,
             enable_experimental_validity_transactions: false,
             payload_builder_cutover: false,
-            enable_proofs_history: false,
             extra_extensions: Vec::new(),
             block_time: Duration::from_secs(config.rollup_config.block_time),
             persistence_threshold: None,

@@ -293,7 +293,6 @@ pub struct SystemTestStackBuilder {
     payload_builder_cutover: bool,
     verifier_l1_confs: u64,
     force_batch_submission: bool,
-    enable_proofs_history: bool,
     client_consensus_mode: L2ClientConsensusMode,
     shadow_sequencer_count: usize,
     shadow_blocks_per_cycle: Option<NonZeroU64>,
@@ -429,12 +428,6 @@ impl SystemTestStackBuilder {
     /// that progress on this stack.
     pub const fn with_force_batch_submission(mut self) -> Self {
         self.force_batch_submission = true;
-        self
-    }
-
-    /// Installs proofs-history on the L2 builder so `eth_getProof` works at historical blocks.
-    pub const fn with_proofs_history(mut self) -> Self {
-        self.enable_proofs_history = true;
         self
     }
 
@@ -715,7 +708,6 @@ impl SystemTestStackBuilder {
             payload_builder_cutover: self.payload_builder_cutover,
             verifier_l1_confs: self.verifier_l1_confs,
             force_batch_submission: self.force_batch_submission,
-            enable_proofs_history: self.enable_proofs_history,
             client_consensus_mode: self.client_consensus_mode,
             upgrade_signal: l2_upgrade_signal,
             execution_upgrade_signal: l2_execution_upgrade_signal,

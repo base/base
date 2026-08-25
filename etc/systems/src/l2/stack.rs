@@ -89,8 +89,6 @@ pub struct L2StackConfig {
     /// When set, the in-process batcher posts short-lived calldata channels instead of blobs
     /// so the derived safe head can catch up in tests that wait on safe L2.
     pub force_batch_submission: bool,
-    /// When set, the builder installs proofs-history so `eth_getProof` works at historical blocks.
-    pub enable_proofs_history: bool,
     /// Consensus mode for the L2 client node.
     pub client_consensus_mode: L2ClientConsensusMode,
     /// Optional L1 upgrade signal configuration shared by both consensus nodes.
@@ -218,7 +216,6 @@ impl L2Stack {
             enable_experimental_validity_transactions: config
                 .enable_experimental_validity_transactions,
             payload_builder_cutover: config.payload_builder_cutover,
-            enable_proofs_history: config.enable_proofs_history,
             extra_extensions: config.extra_builder_extensions,
             block_time: Duration::from_secs(rollup_config.block_time),
             persistence_threshold: None,

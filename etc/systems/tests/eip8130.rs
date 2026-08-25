@@ -76,7 +76,7 @@ async fn eip8130_block_dry_run_proves() -> Result<()> {
     );
 
     let (system, provider) = cobalt::start_cobalt_stack(
-        SystemTestStackBuilder::new().with_force_batch_submission().with_proofs_history(),
+        SystemTestStackBuilder::new().with_force_batch_submission(),
     )
     .await?;
     let (_tx_hash, receipt) = send_minimal_eip8130(&provider).await?;

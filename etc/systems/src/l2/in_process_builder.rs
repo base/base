@@ -17,7 +17,6 @@ use base_execution_txpool::{
 };
 use base_node_core::{args::RollupArgs, node::BasePoolBuilder};
 use base_node_runner::{BaseNode, BaseNodeExtension, NodeHooks};
-use base_proofs_extension::ProofsHistoryExtension;
 use eyre::{Result, WrapErr, eyre};
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db,
@@ -61,8 +60,6 @@ pub struct InProcessBuilderConfig {
     pub enable_experimental_validity_transactions: bool,
     /// Whether to run both payload builders and cut over to basic at Denim.
     pub payload_builder_cutover: bool,
-    /// When set, installs proofs-history so `eth_getProof` works at historical L2 blocks.
-    pub enable_proofs_history: bool,
     /// Additional node extensions installed after the builder's built-in RPC wiring.
     ///
     /// Lets downstream consumers layer their own [`BaseNodeExtension`] onto the standard
@@ -160,12 +157,7 @@ impl InProcessBuilder {
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
 
-        let mut rollup_args = RollupArgs::default();
-        if config.enable_proofs_history {
-            rollup_args.proofs_history = true;
-            rollup_args.proofs_history_storage_path = Some(data_path.join("proofs-history"));
-        }
-
+        let rollup_args = RollupArgs::default();
         let base_node = BaseNode::new(rollup_args.clone());
 
         let addons: base_node_runner::BaseAddOns<
@@ -196,12 +188,8 @@ impl InProcessBuilder {
             .with_launch_context(runtime.clone())
             .with_types::<BaseNode>();
 
-        let mut extensions: Vec<Box<dyn BaseNodeExtension>> = Vec::new();
-        if config.enable_proofs_history {
-            extensions.push(Box::new(ProofsHistoryExtension::new(rollup_args)));
-        }
-        extensions.extend(config.extra_extensions);
-        let launched = extensions
+        let launched = config
+            .extra_extensions
             .into_iter()
             .fold(NodeHooks::new(), |hooks, ext| ext.apply(hooks))
             .apply_to(
@@ -391,6 +379,9 @@ fn create_node_config(
     rpc.http_addr = Ipv4Addr::LOCALHOST.into();
     rpc.ws_addr = Ipv4Addr::LOCALHOST.into();
     rpc.auth_jwtsecret = Some(jwt_path.to_path_buf());
+    // Reth default is 0 (latest only). Devnet `base rpc` and docker-compose set
+    // `--rpc.eth-proof-window=1209600` so vanilla `eth_getProof` works behind tip.
+    rpc.rpc_eth_proof_window = 1_209_600;
 
     if let Some(port) = config.http_port {
         rpc.http_port = port;
