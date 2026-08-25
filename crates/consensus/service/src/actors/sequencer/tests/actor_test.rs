@@ -7,9 +7,10 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256, utils::parse_ether};
 use alloy_rpc_types_engine::ExecutionPayloadV1;
 use alloy_transport::TransportErrorKind;
+use base_common_consensus::BaseTxEnvelope;
 use base_common_genesis::{BaseUpgradeConfig, ChainGenesis, RollupConfig, UpgradeConfig};
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BasePayloadAttributes,
@@ -24,7 +25,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::{
     ConductorError, L1OriginSelectorError, NodeActor, ResetReason, ScheduledTicker, SealState,
     SealStepError, SealStepOutcome, SequencerActor, SequencerActorError, SequencerAdminQuery,
-    UnsafePayloadGossipClientError, UnsealedPayloadHandle,
+    ShadowFunding, UnsafePayloadGossipClientError, UnsealedPayloadHandle,
     actors::{
         MockConductor, MockOriginSelector, MockSequencerEngineClient,
         MockUnsafePayloadGossipClient,
@@ -203,6 +204,75 @@ async fn test_on_time_or_late_insert_starts_child_build_immediately(#[case] seco
     assert_eq!(
         tokio::time::timeout(Duration::from_millis(1), build_rx.recv()).await.unwrap().unwrap(),
         inserted_head.block_info.number
+    );
+
+    cancellation_token.cancel();
+    actor_task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn shadow_funding_only_applies_to_first_private_block() {
+    let block_time = 2;
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let initial_head = head_at_timestamp(0, B256::ZERO, now - block_time);
+    let inserted_head = head_at_timestamp(1, B256::ZERO, now);
+    let funding = ShadowFunding::new(Address::repeat_byte(0x44), parse_ether("12345").unwrap());
+
+    let (build_tx, mut build_rx) = mpsc::unbounded_channel();
+
+    let mut client = MockSequencerEngineClient::new();
+    client.expect_reset_engine_forkchoice_coordinated().times(1).return_once(|_| Ok(()));
+    client.expect_get_unsafe_head().times(3).returning(move || Ok(initial_head));
+    client.expect_start_build_block().times(2).returning(move |attributes| {
+        build_tx
+            .send((
+                attributes.parent().block_info.number,
+                attributes.attributes.transactions.as_ref().is_some_and(|txs| !txs.is_empty()),
+            ))
+            .unwrap();
+        Ok(Default::default())
+    });
+    client.expect_get_sealed_payload().times(1).return_once(|_, _| Ok(dummy_envelope()));
+    client.expect_insert_unsafe_payload().times(1).return_once(move |_| Ok(inserted_head));
+
+    let mut origin_selector = MockOriginSelector::new();
+    origin_selector.expect_next_l1_origin().times(2).returning(|_| Ok(BlockInfo::default()));
+
+    let rollup_config = Arc::new(RollupConfig {
+        block_time,
+        genesis: ChainGenesis {
+            l2_time: initial_head
+                .block_info
+                .timestamp
+                .saturating_sub(initial_head.block_info.number.saturating_mul(block_time)),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    let engine_client = Arc::new(client);
+
+    let mut actor = test_actor();
+    actor.builder.attributes_builder = TestAttributesBuilder {
+        attributes: vec![
+            Ok(attributes_at(inserted_head.block_info.timestamp + block_time)),
+            Ok(attributes_at(inserted_head.block_info.timestamp)),
+        ],
+    };
+    actor.builder.engine_client = Arc::clone(&engine_client);
+    actor.builder.origin_selector = origin_selector;
+    actor.builder.rollup_config = Arc::clone(&rollup_config);
+    actor.engine_client = engine_client;
+    actor.rollup_config = rollup_config;
+    actor.shadow_blocks_per_cycle = NonZeroU64::new(2);
+    actor.shadow_funding = Some(funding);
+
+    let cancellation_token = actor.cancellation_token.clone();
+    let actor_task = tokio::spawn(actor.start(()));
+
+    assert_eq!(build_rx.recv().await.unwrap(), (initial_head.block_info.number, true));
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(1), build_rx.recv()).await.unwrap().unwrap(),
+        (inserted_head.block_info.number, false)
     );
 
     cancellation_token.cancel();
@@ -605,6 +675,45 @@ async fn test_build_retries_are_paced_after_immediate_budget(
 // --- build tests ---
 
 #[tokio::test]
+async fn shadow_funding_is_included_in_payload_attributes() {
+    let unsafe_head = head_at_with_hash(10, B256::repeat_byte(0x22));
+    let l1_origin = BlockInfo::default();
+    let mut client = MockSequencerEngineClient::new();
+    client.expect_get_unsafe_head().times(1).return_once(move || Ok(unsafe_head));
+    client.expect_start_build_block().times(1).return_once(|_| Ok(Default::default()));
+
+    let mut origin_selector = MockOriginSelector::new();
+    origin_selector.expect_next_l1_origin().times(1).return_once(move |_| Ok(l1_origin));
+
+    let address = Address::repeat_byte(0x44);
+    let amount = parse_ether("12345").unwrap();
+    let mut actor = test_actor();
+    actor.builder.origin_selector = origin_selector;
+    actor.builder.engine_client = Arc::new(client);
+    actor.builder.attributes_builder =
+        TestAttributesBuilder { attributes: vec![Ok(BasePayloadAttributes::default())] };
+
+    let crate::BuildOutcome::Ready(handle) =
+        actor.builder.build(Some(ShadowFunding::new(address, amount))).await.unwrap()
+    else {
+        panic!("shadow payload build should start");
+    };
+    let transaction = handle
+        .attributes_with_parent
+        .attributes
+        .decoded_transactions()
+        .next()
+        .expect("funding transaction should be present")
+        .unwrap();
+    let BaseTxEnvelope::Deposit(deposit) = transaction else {
+        panic!("funding transaction should be a deposit");
+    };
+
+    assert_eq!(deposit.from, address);
+    assert_eq!(deposit.mint, amount.to::<u128>());
+}
+
+#[tokio::test]
 async fn test_orphaned_l1_origin_resets_once_without_starting_block_build() {
     let unsafe_head = L2BlockInfo::default();
     let mut client = MockSequencerEngineClient::new();
@@ -628,7 +737,7 @@ async fn test_orphaned_l1_origin_resets_once_without_starting_block_build() {
     actor.builder.origin_selector = origin_selector;
     actor.builder.engine_client = Arc::new(client);
 
-    assert!(matches!(actor.builder.build().await.unwrap(), crate::BuildOutcome::Deferred));
+    assert!(matches!(actor.builder.build(None).await.unwrap(), crate::BuildOutcome::Deferred));
 }
 
 #[tokio::test]
@@ -656,7 +765,7 @@ async fn test_orphaned_l1_origin_propagates_engine_reset_failure() {
     actor.builder.engine_client = Arc::new(client);
 
     assert!(matches!(
-        actor.builder.build().await,
+        actor.builder.build(None).await,
         Err(SequencerActorError::EngineError(EngineClientError::ResetForkchoiceError(error)))
             if error == "mock reset failure"
     ));
@@ -691,7 +800,7 @@ async fn test_build_unsealed_payload_prepare_payload_attributes_error(
     actor.builder.engine_client = Arc::new(client);
     actor.builder.attributes_builder = attributes_builder;
 
-    let result = actor.builder.build().await;
+    let result = actor.builder.build(None).await;
     if expect_err {
         assert!(result.is_err());
         assert!(matches!(
