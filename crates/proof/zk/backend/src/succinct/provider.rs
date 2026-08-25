@@ -273,10 +273,11 @@ impl OpSuccinctWitnessProvider {
 
         debug!(start_block = start_block, end_block = end_block, "host args fetched");
 
-        let witness =
-            self.host.run(&host_args).await.map_err(|cause| WitnessError::HostRun {
-                cause: cause.into_boxed_dyn_error(),
-            })?;
+        let witness = self
+            .host
+            .run(&host_args)
+            .await
+            .map_err(|cause| WitnessError::HostRun { cause: cause.into_boxed_dyn_error() })?;
         get_sp1_stdin(witness)
             .map_err(|source| WitnessError::Stdin { source: source.into_boxed_dyn_error() })
     }

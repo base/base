@@ -1,7 +1,7 @@
 //! System tests for EIP-8130 (type `0x79`) inclusion and dry-run proving.
 
-#[path = "common/beryl.rs"]
-mod beryl;
+#[path = "common/balance.rs"]
+mod balance;
 #[path = "common/cobalt.rs"]
 mod cobalt;
 mod common;
@@ -108,7 +108,7 @@ async fn send_minimal_eip8130(
 ) -> Result<(B256, BaseTransactionReceipt)> {
     let signer = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_1.private_key)
         .wrap_err("Failed to parse system test private key")?;
-    beryl::wait_for_balance(provider, signer.address()).await?;
+    balance::wait_for_balance(provider, signer.address()).await?;
 
     let nonce_sequence = provider.get_transaction_count(signer.address()).await?;
     let tx = TxEip8130 {
@@ -143,7 +143,7 @@ async fn send_minimal_eip8130(
     ensure!(*pending.tx_hash() == tx_hash, "sent EIP-8130 hash must match the signed envelope");
     drop(pending);
     let receipt = provider
-        .wait_for_receipt(tx_hash, beryl::TX_RECEIPT_TIMEOUT)
+        .wait_for_receipt(tx_hash, balance::TX_RECEIPT_TIMEOUT)
         .await
         .wrap_err("EIP-8130 receipt timed out")?;
     Ok((tx_hash, receipt))

@@ -1,5 +1,7 @@
 //! System tests for B-20 precompiles over Base node RPC.
 
+#[path = "common/balance.rs"]
+mod balance;
 #[path = "common/beryl.rs"]
 mod beryl;
 mod common;
