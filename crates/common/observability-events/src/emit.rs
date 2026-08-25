@@ -75,6 +75,7 @@ impl GlobalTransactionEventWriter {
     }
 
     /// Returns the process-global writer, storing `writer` if the slot is empty.
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn get_or_init(writer: TransactionEventWriter) -> &'static TransactionEventWriter {
         GLOBAL_TRANSACTION_EVENT_WRITER.get_or_init(|| writer)
     }
