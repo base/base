@@ -10,10 +10,13 @@ use alloy_primitives::TxHash;
 #[cfg(target_os = "linux")]
 use base_builder_core::test_utils::ExternalNode;
 use base_builder_core::{
-    BuilderConfig,
+    BuilderConfig, NoopMeteringProvider,
     test_utils::{
         TransactionBuilderExt, setup_test_instance, setup_test_instance_with_builder_config,
     },
+};
+use base_execution_payload_builder::{
+    ResourceMeteringConfig, ResourceMeteringDimension, ResourceMeteringSchedule,
 };
 use tokio::{join, task::yield_now};
 use tracing::info;
@@ -268,6 +271,43 @@ async fn metering_wait_duration_does_not_delay_txs_when_metering_is_disabled() -
     assert!(
         txs.hashes().any(|hash| hash == *tx.tx_hash()),
         "fresh tx should not be delayed when metering is disabled"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn missing_meter_bundle_fails_open_when_metering_is_enabled() -> eyre::Result<()> {
+    let schedule = ResourceMeteringSchedule::new(vec![ResourceMeteringDimension {
+        name: "cpu".to_string(),
+        block_limit: 1_000_000,
+        transaction_limit: 1_000_000,
+        base_gas_weight: 1,
+        operations: Vec::new(),
+        dry_run: false,
+    }]);
+    let mut config = BuilderConfig::for_tests();
+    config.resource_metering = ResourceMeteringConfig {
+        enabled: true,
+        schedule: std::sync::Arc::new(schedule.compile().expect("valid schedule")),
+        provider: std::sync::Arc::new(NoopMeteringProvider),
+    };
+    let rbuilder = setup_test_instance_with_builder_config(config).await?;
+    let driver = rbuilder.driver().await?;
+
+    let tx = driver
+        .create_transaction()
+        .random_valid_transfer()
+        .send()
+        .await
+        .expect("Failed to send transaction");
+
+    let block = driver.build_new_block_with_current_timestamp(None).await?;
+    let txs = block.transactions;
+
+    assert!(
+        txs.hashes().any(|hash| hash == *tx.tx_hash()),
+        "missing meterBundle data must fail open and still include the transaction"
     );
 
     Ok(())

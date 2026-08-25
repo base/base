@@ -6,7 +6,10 @@ use core::{
 };
 use std::sync::Arc;
 
-use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
+use base_execution_payload_builder::{
+    ResourceMeteringConfig,
+    config::{BaseDAConfig, GasLimitConfig},
+};
 
 use crate::{ExecutionMeteringMode, NoopMeteringProvider, RejectionCache, SharedMeteringProvider};
 
@@ -67,6 +70,11 @@ pub struct BuilderConfig {
     /// Resource metering provider
     pub metering_provider: SharedMeteringProvider,
 
+    /// Resource-metering schedule for payload admission.
+    ///
+    /// Per-dimension `dryRun` observes over-budget usage without excluding.
+    pub resource_metering: ResourceMeteringConfig,
+
     /// Cache of permanently rejected transaction hashes, shared across blocks.
     /// Transactions in this cache are skipped by the iterator without re-evaluation.
     pub rejection_cache: RejectionCache,
@@ -116,6 +124,7 @@ impl core::fmt::Debug for BuilderConfig {
             .field("metering_wait_duration", &self.metering_wait_duration)
             .field("predicate_eval_hard_cutoff", &self.predicate_eval_hard_cutoff)
             .field("metering_provider", &self.metering_provider)
+            .field("resource_metering", &self.resource_metering)
             .field("rejection_cache_size", &self.rejection_cache.entry_count())
             .field("audit_archiver_url", &self.audit_archiver_url)
             .field("rejected_tx_channel_size", &self.rejected_tx_channel_size)
@@ -143,6 +152,7 @@ impl Default for BuilderConfig {
             metering_wait_duration: None,
             predicate_eval_hard_cutoff: Duration::from_millis(10),
             metering_provider: Arc::new(NoopMeteringProvider),
+            resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
             audit_archiver_url: None,
             rejected_tx_channel_size: 500,
