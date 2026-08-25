@@ -81,11 +81,11 @@ pub enum ZkProverError {
         backend: ZkBackend,
     },
     /// The proving backend failed to produce a proof.
-    #[error("zk proving backend failed: {0}")]
-    Backend(Box<dyn std::error::Error + Send + Sync>),
+    #[error("zk proving backend failed")]
+    Backend(#[source] Box<dyn std::error::Error + Send + Sync>),
     /// Recording or reading backend session state via the prover service failed.
-    #[error("zk session tracking failed: {0}")]
-    Session(Box<dyn std::error::Error + Send + Sync>),
+    #[error("zk session tracking failed")]
+    Session(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
 /// Drives a single ZK proving job on a backend.
