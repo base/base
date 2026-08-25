@@ -832,7 +832,9 @@ impl PgTransactionEventSink {
     /// Optional filters are omitted from SQL when unset so Postgres can use
     /// `transaction_events_rejected_event_time_idx` for a bounded `LIMIT`
     /// list. The previous `($1 IS NULL OR ...)` shape forced a heap scan on
-    /// large journals and missed the Internal Explorer 3s timeout.
+    /// large journals and missed the Internal Explorer 3s timeout. `event_id`
+    /// is a tie-break only; `ingested_at` is not in `ORDER BY` so the planner
+    /// can keep the partial index.
     pub async fn rejected_transaction_events(
         &self,
         query: RejectedTransactionEventQuery,
@@ -859,7 +861,10 @@ impl PgTransactionEventSink {
         if let Some(to_time) = query.to_time {
             query_builder.push(" AND event_time < ").push_bind(to_time);
         }
-        query_builder.push(" ORDER BY event_time DESC LIMIT ").push_bind(limit);
+        // event_id is a tie-break only. The partial index is (event_type, event_time DESC);
+        // LIMIT lists still use that leading column. ingested_at is omitted so the
+        // planner does not drop the index for a three-column sort.
+        query_builder.push(" ORDER BY event_time DESC, event_id DESC LIMIT ").push_bind(limit);
 
         let rows = query_builder.build().fetch_all(&self.pool).await?;
         rows.into_iter().map(record_from_row).collect()
