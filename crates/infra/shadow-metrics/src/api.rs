@@ -129,6 +129,13 @@ async fn get_block(
     Path(id): Path<String>,
 ) -> Result<Json<BlockDetail>, ApiError> {
     let row = resolve_block(state.repo()?, &id).await?;
+    tracing::info!(
+        target: "shadow_metrics::api",
+        endpoint = "blocks",
+        id = %id,
+        number = row.number,
+        "served block detail"
+    );
     Ok(Json(block_detail(&row)))
 }
 
@@ -141,6 +148,13 @@ async fn get_shadow_candidates(
     let canonical_hash = parse_block_id(&id)?;
 
     let shadows = repo.list_reorged_by_canonical(canonical_hash.as_slice()).await?;
+    tracing::info!(
+        target: "shadow_metrics::api",
+        endpoint = "shadow-candidates",
+        canonical_hash = %hex::encode_prefixed(canonical_hash.as_slice()),
+        count = shadows.len(),
+        "served shadow candidates by canonical hash"
+    );
     Ok(Json(shadows.iter().map(shadow_block_summary).collect::<Vec<_>>()))
 }
 
@@ -189,6 +203,14 @@ async fn get_shadow_candidates_batch(
         result.entry(key).or_default().push(shadow_block_summary(shadow));
     }
 
+    tracing::info!(
+        target: "shadow_metrics::api",
+        endpoint = "shadow-candidates-batch",
+        requested = hashes.len(),
+        rows = shadows.len(),
+        groups = result.len(),
+        "served batch shadow candidates"
+    );
     Ok(Json(result))
 }
 
@@ -200,8 +222,24 @@ async fn get_shadow_block(
     let hash = parse_block_id(&id)?;
 
     let repo = state.repo()?;
-    let row = repo.get_summary_by_block_hash(hash.as_slice()).await?.ok_or(ApiError::NotFound)?;
+    let Some(row) = repo.get_summary_by_block_hash(hash.as_slice()).await? else {
+        tracing::info!(
+            target: "shadow_metrics::api",
+            endpoint = "shadow-blocks",
+            hash = %hex::encode_prefixed(hash.as_slice()),
+            found = false,
+            "shadow block not found"
+        );
+        return Err(ApiError::NotFound);
+    };
 
+    tracing::info!(
+        target: "shadow_metrics::api",
+        endpoint = "shadow-blocks",
+        hash = %hex::encode_prefixed(hash.as_slice()),
+        found = true,
+        "served shadow block"
+    );
     Ok(Json(shadow_block_summary(&row)))
 }
 
