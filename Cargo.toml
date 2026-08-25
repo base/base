@@ -156,6 +156,7 @@ base-observability-events = { path = "crates/common/observability-events", defau
 # Builder
 base-builder-cli = { path = "crates/builder/cli" }
 base-builder-core = { path = "crates/builder/core" }
+base-builder-multiplex = { path = "crates/builder/multiplex" }
 base-builder-publish = { path = "crates/builder/publish" }
 base-builder-metering = { path = "crates/builder/metering" }
 

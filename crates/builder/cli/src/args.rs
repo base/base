@@ -275,6 +275,22 @@ pub struct Args {
     #[command(flatten)]
     pub flashblocks: FlashblocksArgs,
 
+    /// Runs both payload builders and selects the basic builder when Denim activates.
+    #[arg(
+        long = "builder.payload-builder-cutover",
+        default_value = "false",
+        conflicts_with = "basic_payload_builder"
+    )]
+    pub payload_builder_cutover: bool,
+
+    /// Runs only the basic payload builder after the cutover is complete.
+    #[arg(
+        long = "builder.basic-payload-builder",
+        default_value = "false",
+        conflicts_with = "payload_builder_cutover"
+    )]
+    pub basic_payload_builder: bool,
+
     /// Transaction event journal configuration
     #[command(flatten)]
     pub transaction_events: TransactionEventsArgs,
@@ -332,6 +348,8 @@ impl Default for Args {
             sampling_ratio: 100,
             manifest_precheck_enabled: true,
             flashblocks: FlashblocksArgs::default(),
+            payload_builder_cutover: false,
+            basic_payload_builder: false,
             transaction_events: TransactionEventsArgs::default(),
             shadow_indexer: ShadowIndexerArgs::default(),
         }
@@ -502,6 +520,35 @@ mod tests {
         let parsed =
             CommandParser::parse_from(["test", "--builder.eip8130-manifest-precheck=false"]);
         assert!(!parsed.args.manifest_precheck_enabled);
+    }
+
+    #[test]
+    fn payload_builder_cutover_defaults_to_disabled() {
+        let parsed = CommandParser::parse_from(["test"]);
+        assert!(!parsed.args.payload_builder_cutover);
+        assert!(!parsed.args.basic_payload_builder);
+    }
+
+    #[test]
+    fn payload_builder_cutover_requires_explicit_opt_in() {
+        let parsed = CommandParser::parse_from(["test", "--builder.payload-builder-cutover"]);
+        assert!(parsed.args.payload_builder_cutover);
+    }
+
+    #[test]
+    fn basic_payload_builder_requires_explicit_opt_in() {
+        let parsed = CommandParser::parse_from(["test", "--builder.basic-payload-builder"]);
+        assert!(parsed.args.basic_payload_builder);
+    }
+
+    #[test]
+    fn payload_builder_modes_are_mutually_exclusive() {
+        let parsed = CommandParser::try_parse_from([
+            "test",
+            "--builder.payload-builder-cutover",
+            "--builder.basic-payload-builder",
+        ]);
+        assert!(parsed.is_err());
     }
 
     #[rstest]
