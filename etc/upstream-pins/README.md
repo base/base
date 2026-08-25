@@ -25,7 +25,7 @@ publishing the fork.
 
 1. Decide the official Reth tag and the PRs to carry.
 2. Run `just reth-prepare-release`. It squashes each PR onto that tag in
-   the fork, publishes `vX.Y.Z-base.N`, writes this manifest, and rewrites
+   the fork, publishes `base-vX.Y.Z.N`, writes this manifest, and rewrites
    Cargo.toml in the current tree.
 3. Commit and open the `base/base` PR yourself.
 4. After merge, `just check-reth-pin` confirms Cargo still matches this file.
@@ -37,5 +37,6 @@ A squash conflict is the only hard stop. Fix the PR against that official
 tag and rerun.
 
 `--pr` replaces the patch set. Pass every PR you still want to carry.
-Protect `v*-base.*` tags on `base/reth` so they cannot be moved after
+Backport tags are `base-vX.Y.Z.N` so they do not match `base/reth`'s
+`v*` release workflow. Protect those tags so they cannot be moved after
 publish.

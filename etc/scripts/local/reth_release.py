@@ -100,8 +100,12 @@ def squash_marker(pr: PatchPr) -> str:
 
 
 def next_base_tag(upstream_tag: str, existing: list[str]) -> str:
-    """Return the next `{upstream_tag}-base.N` tag."""
-    prefix = f"{upstream_tag}-base."
+    """Return the next `base-{upstream_tag}.N` tag.
+
+    Names must not match `v*`. `base/reth`'s release workflow builds
+    binaries for every `v*` tag.
+    """
+    prefix = f"base-{upstream_tag}."
     numbers: list[int] = []
     for tag in existing:
         name = tag.removeprefix("refs/tags/")
@@ -524,10 +528,13 @@ class ReleaseTests(unittest.TestCase):
         self.assertNotEqual(squash_marker(upstream), squash_marker(fork))
 
     def test_next_base_tag(self) -> None:
-        self.assertEqual(next_base_tag("v2.5.1", []), "v2.5.1-base.1")
+        self.assertEqual(next_base_tag("v2.5.1", []), "base-v2.5.1.1")
         self.assertEqual(
-            next_base_tag("v2.5.1", ["v2.5.1-base.1", "v2.5.1-base.2", "v2.4.0-base.9"]),
-            "v2.5.1-base.3",
+            next_base_tag(
+                "v2.5.1",
+                ["base-v2.5.1.1", "base-v2.5.1.2", "v2.5.1-base.1"],
+            ),
+            "base-v2.5.1.3",
         )
 
     def test_render_manifest_records_prs(self) -> None:
@@ -549,7 +556,7 @@ class ReleaseTests(unittest.TestCase):
         )
         text = render_manifest(
             repository="https://github.com/base/reth",
-            reference="v2.5.1-base.1",
+            reference="base-v2.5.1.1",
             rev="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             upstream_tag="v2.5.1",
             upstream_rev="6dec1b96b625584956883c34ad0eafbe550480ac",
