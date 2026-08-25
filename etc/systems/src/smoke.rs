@@ -1,6 +1,9 @@
 //! System test stack orchestration and lifecycle management.
 
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use alloy_network::Ethereum;
 use alloy_provider::RootProvider;
@@ -321,24 +324,51 @@ impl SystemTestStackBuilder {
         let l1_genesis_bytes =
             std::fs::read(l1_genesis.el_genesis_path()).wrap_err("Failed to read L1 genesis")?;
 
-        // Set the genesis `extraData` to the Jovian EIP-1559 parameters encoding.
+        // Patch the generated L2 genesis so an in-process validator can sync from it.
         //
-        // All L2 hardforks activate at genesis, so the sequencer stamps every block (including
-        // block 1) with Jovian-encoded `extraData`. A validator importing block 1 computes its base
-        // fee from the parent (genesis) header, decoding the parent `extraData` as Jovian params;
-        // the generated genesis carries no such `extraData`, so the decode fails with "base fee
-        // missing" and the import is rejected. The 17-byte value below is the Jovian form (version
-        // byte 0x01 followed by zeroed denominator, elasticity, and minimum base fee); zeroed
-        // denominator/elasticity make the base-fee computation fall back to the chain spec's
-        // configured parameters, so no devnet-specific values are hardcoded here. The genesis hash
-        // is recomputed from `genesis.json` at builder startup, so the rollup config's placeholder
-        // hash is patched to match (see `L2Stack::start`).
-        let l2_genesis_bytes = {
+        // Two fixups are applied to the deploy artifacts before the stack starts:
+        //
+        // 1. Re-anchor the genesis timestamp to wall-clock. The genesis time is fixed to the L1
+        //    genesis time captured at the very start of setup, but bringing up the L1 devnet and
+        //    deploying the L2 contracts takes tens of seconds. By the time the sequencer starts,
+        //    the genesis time is far enough in the past that the first blocks it produces carry
+        //    timestamps more than 60s behind wall-clock, which the validator's gossip
+        //    block-validity check rejects — stalling client EL sync and derivation. Anchoring
+        //    genesis to now keeps produced block timestamps inside the gossip validity window.
+        //    Safe re: sequencer drift (the FJORD budget is 1800s).
+        //
+        // 2. Set the genesis `extraData` to the Jovian EIP-1559 parameters encoding. All L2
+        //    hardforks activate at genesis, so the sequencer stamps every block (including
+        //    block 1) with Jovian-encoded `extraData`. A validator importing block 1 computes its
+        //    base fee from the parent (genesis) header, decoding the parent `extraData` as Jovian
+        //    params; the generated genesis carries no such `extraData`, so the decode fails with
+        //    "base fee missing" and the import is rejected. The 17-byte value below is the Jovian
+        //    form (version byte 0x01 followed by zeroed denominator, elasticity, and minimum base
+        //    fee); zeroed denominator/elasticity make the base-fee computation fall back to the
+        //    chain spec's configured parameters, so no devnet-specific values are hardcoded here.
+        //
+        // The genesis hash is recomputed from `genesis.json` when the builder initialises, so the
+        // placeholder hash in the rollup config is patched to match (see `L2Stack::start`).
+        let (l2_genesis_bytes, rollup_config_bytes) = {
+            let l2_genesis_time = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock is before UNIX_EPOCH")
+                .as_secs();
+
             let mut l2_genesis: serde_json::Value =
                 serde_json::from_slice(&l2_genesis_bytes).wrap_err("Failed to parse L2 genesis")?;
+            l2_genesis["timestamp"] = serde_json::Value::String(format!("0x{l2_genesis_time:x}"));
             l2_genesis["extraData"] =
                 serde_json::Value::String("0x0100000000000000000000000000000000".to_string());
-            serde_json::to_vec(&l2_genesis).wrap_err("Failed to re-encode L2 genesis")?
+
+            let mut rollup_config: serde_json::Value = serde_json::from_slice(&rollup_config_bytes)
+                .wrap_err("Failed to parse rollup config")?;
+            rollup_config["genesis"]["l2_time"] = serde_json::Value::from(l2_genesis_time);
+
+            (
+                serde_json::to_vec(&l2_genesis).wrap_err("Failed to re-encode L2 genesis")?,
+                serde_json::to_vec(&rollup_config).wrap_err("Failed to re-encode rollup config")?,
+            )
         };
 
         let l2_config = L2StackConfig {
