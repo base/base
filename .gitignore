@@ -17,5 +17,6 @@ crates/proof/zk/programs/succinct/elf/range-elf-embedded
 crates/proof/zk/programs/succinct/elf/aggregation-elf
 crates/proof/zk/programs/succinct/elf/*.bin
 /etc/scripts/local/__pycache__/
+/.tmp/
 
 crates/infra/load-tests/examples/*.yaml

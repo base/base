@@ -1,0 +1,23 @@
+# Authoritative Reth git pin for [workspace.dependencies].
+# See etc/upstream-pins/README.md.
+#
+# `just pin-reth` rewrites git `reth-*` crates to this repository and
+# reference. `just check-reth-pin` verifies Cargo.toml and Cargo.lock.
+# `just reth-prepare-release` builds the fork tag and writes this file.
+# To return to an official Reth tag, edit this file and run `just pin-reth`.
+
+repository = "https://github.com/base/reth"
+reference = "base-v2.5.1.1"
+rev = "d80b19e5b597f047268c6593300cbbe1f235631b"
+
+[upstream_base]
+tag = "v2.5.1"
+rev = "6dec1b96b625584956883c34ad0eafbe550480ac"
+
+[[patches]]
+pr = "https://github.com/paradigmxyz/reth/pull/26708"
+head = "f213ff930925e0912a2f6907cec0c62d473bc330"
+
+[[patches]]
+pr = "https://github.com/paradigmxyz/reth/pull/26766"
+head = "f47fd63a3762d8add2e07f1d4afa9363e60d0853"

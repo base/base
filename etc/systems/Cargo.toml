@@ -18,6 +18,7 @@ base-test-utils = { workspace = true, optional = true }
 base-txpool-rpc.workspace = true
 base-tx-manager.workspace = true
 base-flashblocks.workspace = true
+base-builder-multiplex.workspace = true
 base-tx-forwarding.workspace = true
 base-execution-cli.workspace = true
 base-txpool-tracing.workspace = true
