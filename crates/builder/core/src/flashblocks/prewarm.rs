@@ -49,6 +49,10 @@ use crate::traits::{ClientBounds, PoolBounds};
 /// Maximum time a single warming batch executes before releasing the state provider and publishing.
 const REFRESH_INTERVAL: Duration = Duration::from_millis(100);
 
+/// Poll slice used while idling on a drained pool, so a superseded pass stops promptly instead of
+/// blocking the whole [`REFRESH_INTERVAL`].
+const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
 /// Upper bound on how long a single warming pass keeps warming one parent.
 ///
 /// A new canonical head normally cancels the pass well before this; the cap only bounds a stalled
@@ -168,15 +172,17 @@ where
             };
 
             // Claim the next epoch. This supersedes any in-flight pass: it observes the bump and
-            // stops, and can no longer publish over the snapshot this new pass produces.
-            let epoch = self.epoch.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
+            // stops, and can no longer publish over the snapshot this new pass produces. `Release`
+            // here pairs with the worker's `Acquire` loads so the bump is seen promptly on
+            // weakly-ordered targets.
+            let epoch = self.epoch.fetch_add(1, Ordering::Release).wrapping_add(1);
 
             let worker = self.clone();
             self.runtime.spawn_blocking(move || worker.warm(parent_hash, evm_env, epoch));
         }
 
         // Supersede the final pass so it stops once the stream ends.
-        self.epoch.fetch_add(1, Ordering::Relaxed);
+        self.epoch.fetch_add(1, Ordering::Release);
     }
 
     /// Speculatively executes the pool's best transactions against `parent_hash`'s state,
@@ -197,7 +203,7 @@ where
         let mut published = (0usize, 0usize, 0usize);
         let mut best = self.pool.best_transactions_with_attributes(attributes);
 
-        while self.epoch.load(Ordering::Relaxed) == epoch && Instant::now() < lifetime_deadline {
+        while self.epoch.load(Ordering::Acquire) == epoch && Instant::now() < lifetime_deadline {
             // Reopen the state provider each batch rather than holding one for the whole pass: a
             // pass can span up to `MAX_WARM_LIFETIME`, and keeping a single MDBX read transaction
             // open that long would pin the freelist. `CachedReads` already serves prior reads, so
@@ -230,7 +236,7 @@ where
 
             let batch_deadline = Instant::now() + REFRESH_INTERVAL;
             let mut exhausted = false;
-            while self.epoch.load(Ordering::Relaxed) == epoch && Instant::now() < batch_deadline {
+            while self.epoch.load(Ordering::Acquire) == epoch && Instant::now() < batch_deadline {
                 let Some(transaction) = best.next() else {
                     exhausted = true;
                     break;
@@ -255,11 +261,11 @@ where
                 cache.accounts.values().map(|account| account.storage.len()).sum::<usize>(),
                 cache.contracts.len(),
             );
-            if counts != published && self.epoch.load(Ordering::Relaxed) == epoch {
+            if counts != published && self.epoch.load(Ordering::Acquire) == epoch {
                 let mut latest = self.latest.write();
                 // Re-check under the write lock so a superseded pass can never overwrite the
                 // snapshot the current pass published for the new head.
-                if self.epoch.load(Ordering::Relaxed) == epoch {
+                if self.epoch.load(Ordering::Acquire) == epoch {
                     *latest =
                         Some(TxPoolPrewarmCacheSnapshot::new(parent_hash, Arc::new(cache.clone())));
                     published = counts;
@@ -277,8 +283,13 @@ where
 
             if exhausted {
                 // Pool is drained for now; wait for maintenance to surface more pending
-                // transactions, then reopen a fresh iterator against the same parent.
-                std::thread::sleep(REFRESH_INTERVAL);
+                // transactions before reopening a fresh iterator against the same parent. Sleep in
+                // short slices so a superseded pass exits promptly instead of blocking the whole
+                // interval.
+                let wake = Instant::now() + REFRESH_INTERVAL;
+                while self.epoch.load(Ordering::Acquire) == epoch && Instant::now() < wake {
+                    std::thread::sleep(IDLE_POLL_INTERVAL);
+                }
                 best = self.pool.best_transactions_with_attributes(attributes);
             }
         }
