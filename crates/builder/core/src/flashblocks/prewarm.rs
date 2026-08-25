@@ -277,10 +277,11 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use alloy_primitives::B256;
     use reth_execution_cache::TxPoolPrewarmCacheSnapshot;
     use reth_revm::cached::CachedReads;
-    use std::sync::Arc;
 
     use super::PrewarmHandle;
 
