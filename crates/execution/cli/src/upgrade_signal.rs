@@ -1,5 +1,6 @@
 //! Execution-node upgrade signal schedule application.
 
+use alloy_consensus::BlockHeader;
 use base_execution_chainspec::BaseChainSpec;
 use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
 use base_upgrade_signal::{
@@ -8,7 +9,9 @@ use base_upgrade_signal::{
     UpgradeSignalRefresher, UpgradeSignalRuntimeApplier, UpgradeSignalSchedule,
 };
 use jsonrpsee::{RpcModule, core::RpcResult, types::ErrorObject};
-use reth_chainspec::EthChainSpec;
+use reth_chainspec::{EthChainSpec, ForkId, Head};
+use reth_network_p2p::sync::NetworkSyncUpdater;
+use reth_provider::{BlockNumReader, HeaderProvider};
 use reth_rpc_server_types::RethRpcModule;
 use tracing::{info, warn};
 use url::Url;
@@ -62,6 +65,83 @@ impl ExecutionUpgradeSignal {
         summary.log("execution chain spec");
 
         Ok(summary.applied_upgrades)
+    }
+
+    /// Rebuilds the runtime-aware P2P [`ForkFilter`](reth_chainspec::ForkFilter) for `head` and
+    /// installs it on the network, returning the freshly advertised [`ForkId`].
+    ///
+    /// reth builds its `ForkFilter` once at startup and only advances its head, so a node that adopts
+    /// an L1-signalled fork schedule at runtime keeps advertising the fork id it cached before the
+    /// schedule changed. It then looks stale to fresh peers once the fork activates and gets
+    /// partitioned even though it enforces the new rules. Re-deriving the filter from the updated
+    /// chain spec and installing it through [`NetworkSyncUpdater::set_fork_filter`] keeps the node's
+    /// advertised fork identity aligned with the rules it now enforces.
+    pub fn install_runtime_fork_filter<Net: NetworkSyncUpdater>(
+        chain_spec: &BaseChainSpec,
+        head: Head,
+        network: &Net,
+    ) -> ForkId {
+        let fork_filter = chain_spec.fork_filter(head);
+        let fork_id = fork_filter.current();
+        network.set_fork_filter(fork_filter);
+        fork_id
+    }
+
+    /// A fork id that folds in the entire runtime schedule, used as a change signal for runtime
+    /// schedule updates.
+    ///
+    /// It is [`BaseChainSpec::fork_id`] evaluated at a far-future head, so every scheduled fork is
+    /// active regardless of the node's current head. It therefore changes exactly when the runtime
+    /// schedule changes, not as the chain advances between forks. Unlike
+    /// [`BaseChainSpec::latest_fork_id`] it never panics on a spec whose newest fork is still
+    /// unscheduled (`Never`) — the normal state of a running node before an upgrade.
+    pub fn schedule_fork_id(chain_spec: &BaseChainSpec) -> ForkId {
+        chain_spec.fork_id(&Head { number: u64::MAX, timestamp: u64::MAX, ..Default::default() })
+    }
+
+    /// Reinstalls the P2P fork filter if the runtime schedule changed since it was last installed,
+    /// returning the newly advertised [`ForkId`] (or `None` when the schedule is unchanged).
+    ///
+    /// This is the per-poll routine the runtime monitor runs after every schedule read. A runtime
+    /// schedule update lands via the auto-apply path or the manual `admin_refreshUpgradeSignal` RPC;
+    /// both mutate the same runtime registry that [`Self::schedule_fork_id`] reads, so a single
+    /// check covers both. `schedule_id` tracks the last installed schedule and is advanced only when
+    /// a new filter is installed, so the network message is sent once per change rather than every
+    /// block.
+    pub fn refresh_advertised_fork_filter<Net: NetworkSyncUpdater>(
+        chain_spec: &BaseChainSpec,
+        head: Head,
+        network: &Net,
+        schedule_id: &mut ForkId,
+    ) -> Option<ForkId> {
+        let current = Self::schedule_fork_id(chain_spec);
+        if current == *schedule_id {
+            return None;
+        }
+
+        let fork_id = Self::install_runtime_fork_filter(chain_spec, head, network);
+        *schedule_id = current;
+        Some(fork_id)
+    }
+
+    /// Reads the node's current canonical head, used as the reference point for rebuilding the P2P
+    /// fork filter after a runtime schedule change.
+    pub fn current_head<Provider: BlockNumReader + HeaderProvider>(
+        provider: &Provider,
+    ) -> eyre::Result<Head> {
+        let number = provider.best_block_number()?;
+        let header = provider
+            .sealed_header(number)?
+            .ok_or_else(|| eyre::eyre!("missing header for head block {number}"))?;
+
+        // Only `number` and `timestamp` affect the Base (timestamp-gated) fork filter; reth keeps
+        // the installed filter's head current via `set_head` as new blocks arrive.
+        Ok(Head {
+            number,
+            hash: header.hash(),
+            timestamp: header.timestamp(),
+            ..Default::default()
+        })
     }
 
     /// Refreshes the runtime upgrade signal schedule for a running execution node.
@@ -165,6 +245,13 @@ impl BaseNodeExtension for ExecutionUpgradeSignalRuntimeExtension {
                 )
             });
             let mut monitor = UpgradeSignalMonitor::new(UpgradeSignalMetricLayer::Execution);
+
+            // Captured for the P2P fork-filter fix: after a runtime schedule change the node must
+            // re-derive its advertised fork id from the updated chain spec and install it on the
+            // live network, or it partitions from fresh peers at activation.
+            let network = ctx.network.clone();
+            let provider = ctx.provider.clone();
+            let chain_spec = ctx.chain_spec();
             let executor = ctx.task_executor;
 
             // Spawned as a critical task so a fail-closed panic propagates to reth's TaskManager and
@@ -176,6 +263,12 @@ impl BaseNodeExtension for ExecutionUpgradeSignalRuntimeExtension {
                         let mut interval = tokio::time::interval(poll_interval);
                         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
                         let mut signal = Box::pin(signal);
+
+                        // Baseline for detecting runtime schedule changes. Advanced only when the
+                        // fork filter is reinstalled, so a single check covers both the auto-apply
+                        // path and the manual admin RPC without re-installing on every block.
+                        let mut schedule_id =
+                            ExecutionUpgradeSignal::schedule_fork_id(chain_spec.as_ref());
 
                         loop {
                             tokio::select! {
@@ -204,6 +297,39 @@ impl BaseNodeExtension for ExecutionUpgradeSignalRuntimeExtension {
                                             PackedProtocolVersion::new(minimum_protocol_version),
                                             PackedProtocolVersion::new(node_protocol_version),
                                         );
+                                    }
+
+                                    // Adopt any runtime schedule change into the live P2P fork
+                                    // filter so this node advertises the fork id it now enforces
+                                    // instead of the one cached at startup. The cheap schedule-fork-id
+                                    // compare guards the provider read so an unchanged schedule never
+                                    // reads the head or logs a spurious head-read failure.
+                                    if ExecutionUpgradeSignal::schedule_fork_id(chain_spec.as_ref())
+                                        != schedule_id
+                                    {
+                                        match ExecutionUpgradeSignal::current_head(&provider) {
+                                            Ok(head) => {
+                                                if let Some(fork_id) =
+                                                    ExecutionUpgradeSignal::refresh_advertised_fork_filter(
+                                                        chain_spec.as_ref(),
+                                                        head,
+                                                        &network,
+                                                        &mut schedule_id,
+                                                    )
+                                                {
+                                                    info!(
+                                                        target: "upgrade_signal",
+                                                        fork_id = ?fork_id,
+                                                        "reinstalled P2P fork filter after runtime schedule change"
+                                                    );
+                                                }
+                                            }
+                                            Err(error) => warn!(
+                                                target: "upgrade_signal",
+                                                error = %error,
+                                                "failed to rebuild P2P fork filter after runtime schedule change; will retry on next poll"
+                                            ),
+                                        }
                                     }
                                 }
                             }
@@ -357,6 +483,113 @@ mod tests {
         assert_eq!(
             RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Azul),
             Some(UpgradeActivation::Timestamp(42))
+        );
+
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+    }
+
+    /// Records the last [`ForkFilter`] installed via [`NetworkSyncUpdater::set_fork_filter`].
+    ///
+    /// Hand-rolled rather than `mockall::automock`: [`NetworkSyncUpdater`] is defined in reth, and
+    /// `automock` can only be applied at a trait's own definition, so it cannot mock a foreign trait.
+    #[derive(Debug, Default)]
+    struct RecordingNetwork {
+        installed: std::sync::Mutex<Option<reth_chainspec::ForkFilter>>,
+    }
+
+    impl RecordingNetwork {
+        fn installed_opt(&self) -> Option<reth_chainspec::ForkFilter> {
+            self.installed.lock().unwrap().clone()
+        }
+
+        fn installed(&self) -> reth_chainspec::ForkFilter {
+            self.installed_opt().expect("set_fork_filter was never called")
+        }
+    }
+
+    impl NetworkSyncUpdater for RecordingNetwork {
+        fn update_sync_state(&self, _state: reth_network_p2p::sync::SyncState) {}
+
+        fn update_status(&self, _head: Head) {}
+
+        fn update_block_range(&self, _update: reth_eth_wire_types::BlockRangeUpdate) {}
+
+        fn set_fork_filter(&self, fork_filter: reth_chainspec::ForkFilter) {
+            *self.installed.lock().unwrap() = Some(fork_filter);
+        }
+    }
+
+    /// Regression test for the runtime fork-filter fix.
+    ///
+    /// Audit finding: a runtime schedule update left reth's P2P fork filter stale, so a running node
+    /// kept advertising the fork id it cached at startup and partitioned from freshly restarted
+    /// peers once the fork activated. The fix reinstalls the fork filter whenever the runtime
+    /// schedule changes. This exercises the exact per-poll routine the monitor loop runs and asserts
+    /// it (1) is a no-op while the schedule is unchanged, (2) installs a filter matching a freshly
+    /// restarted node the moment a fork is scheduled at runtime, and (3) is idempotent afterwards.
+    /// If the fix regresses, the node would keep the stale filter and these assertions fail.
+    #[test]
+    fn refresh_advertised_fork_filter_tracks_runtime_schedule_changes() {
+        use alloy_genesis::Genesis;
+        use base_execution_chainspec::BaseChainSpecBuilder;
+        use reth_chainspec::Chain;
+
+        let chain_id = 9_100_100;
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+
+        let spec = BaseChainSpecBuilder::default()
+            .chain(Chain::from_id(chain_id))
+            .genesis(Genesis::default())
+            .with_fork(EthereumHardfork::Osaka, ForkCondition::Never)
+            .with_fork(BaseUpgrade::Azul, ForkCondition::Never)
+            .build();
+
+        let head = Head { timestamp: 43, ..Default::default() };
+        let network = RecordingNetwork::default();
+        let mut schedule_id = ExecutionUpgradeSignal::schedule_fork_id(&spec);
+
+        // Nothing scheduled yet: the routine must not touch the network.
+        assert_eq!(
+            ExecutionUpgradeSignal::refresh_advertised_fork_filter(
+                &spec,
+                head,
+                &network,
+                &mut schedule_id,
+            ),
+            None
+        );
+        assert!(network.installed_opt().is_none());
+
+        // Azul is scheduled at runtime via the L1 signal (mutating the runtime registry).
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Azul, 42);
+
+        // The routine now reinstalls a filter identical to the one a freshly restarted node builds,
+        // and advances the schedule baseline to the new schedule.
+        let restarted = spec.fork_filter(head);
+        let installed_id = ExecutionUpgradeSignal::refresh_advertised_fork_filter(
+            &spec,
+            head,
+            &network,
+            &mut schedule_id,
+        )
+        .expect("a runtime schedule change must reinstall the fork filter");
+        let running = network.installed();
+
+        assert_eq!(installed_id, restarted.current());
+        assert_eq!(running.current(), restarted.current());
+        assert!(running.validate(restarted.current()).is_ok());
+        assert!(restarted.validate(running.current()).is_ok());
+        assert_eq!(schedule_id, ExecutionUpgradeSignal::schedule_fork_id(&spec));
+
+        // Idempotent: with no further schedule change, the routine stays a no-op.
+        assert_eq!(
+            ExecutionUpgradeSignal::refresh_advertised_fork_filter(
+                &spec,
+                head,
+                &network,
+                &mut schedule_id,
+            ),
+            None
         );
 
         RuntimeUpgradeRegistry::clear_chain(chain_id);
