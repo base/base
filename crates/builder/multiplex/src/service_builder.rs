@@ -89,6 +89,8 @@ where
                     gas_limit_config: self.builder_config.gas_limit_config.clone(),
                     manifest_precheck_enabled: self.builder_config.manifest_precheck_enabled,
                     predicate_eval_hard_cutoff: self.builder_config.predicate_eval_hard_cutoff,
+                    resource_metering: self.builder_config.resource_metering.clone(),
+                    rejection_cache: self.builder_config.rejection_cache.clone(),
                 },
             );
 

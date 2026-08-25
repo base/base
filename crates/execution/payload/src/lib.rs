@@ -27,7 +27,7 @@ pub use resource_metering::{
     ResourceThrottlingDecision, ResourceThrottlingLimitExceeded, ResourceThrottlingLimitScope,
 };
 mod resource_metering_metrics;
-pub use resource_metering_metrics::ResourceMeteringMetrics;
+pub use resource_metering_metrics::{RejectionCacheMetrics, ResourceMeteringMetrics};
 pub mod payload;
 pub use payload::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 

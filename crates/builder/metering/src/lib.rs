@@ -14,4 +14,6 @@ mod extension;
 pub use extension::MeteringStoreExtension;
 
 mod store;
-pub use store::MeteringStore;
+pub use store::{
+    DEFAULT_METERING_STORE_MAX_CAPACITY, DEFAULT_METERING_STORE_TTL_SECS, MeteringStore,
+};
