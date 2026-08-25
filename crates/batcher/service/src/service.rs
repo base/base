@@ -21,7 +21,7 @@ use base_consensus_rpc::RollupNodeApiClient;
 use base_protocol::BlockInfo;
 use base_retry::{DEFAULT_UNBOUNDED_MAX_DELAY, RetryConfig};
 use base_runtime::TokioRuntime;
-use base_tx_manager::{BaseTxMetrics, SimpleTxManager, TxManagerConfig};
+use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
 use futures::{
     StreamExt,
     future::BoxFuture,
@@ -671,15 +671,11 @@ impl BatcherService {
         let l1_chain_id =
             Self::rpc_retry("l1-chain-id", retry, rpc_timeout, || l1_provider.get_chain_id())
                 .await?;
-        let tx_manager_config = TxManagerConfig {
-            resubmission_timeout: self.config.resubmission_timeout,
-            num_confirmations: self.config.num_confirmations as u64,
-            ..TxManagerConfig::default()
-        };
+        let drain_timeout = self.config.tx_manager.resubmission_timeout * 2;
         let tx_manager = SimpleTxManager::new(
             l1_provider,
             signer_config,
-            tx_manager_config,
+            self.config.tx_manager,
             l1_chain_id,
             Arc::new(BaseTxMetrics::new("batcher")),
         )
@@ -723,7 +719,7 @@ impl BatcherService {
             base_batcher_core::BatchDriverConfig {
                 inbox: effective_batch_inbox,
                 max_pending_transactions: self.config.max_pending_transactions,
-                drain_timeout: self.config.resubmission_timeout * 2,
+                drain_timeout,
                 force_blobs_when_throttling: self.config.force_blobs_when_throttling,
             },
             DaThrottle::new(throttle, throttle_client),

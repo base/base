@@ -10,7 +10,7 @@ use base_batcher_core::ThrottleConfig;
 use base_batcher_service::{BatcherConfig, BatcherService};
 use base_cli_utils::{LogConfig, RuntimeManager};
 use base_runtime::TokioRuntime;
-use base_tx_manager::SignerConfig;
+use base_tx_manager::{SignerConfig, TxManagerConfig};
 use clap::{Args, Parser};
 use tracing::info;
 use url::Url;
@@ -155,7 +155,7 @@ pub(crate) struct BatcherArgs {
 
     /// Number of L1 confirmations before a tx is considered finalized.
     #[arg(long = "num-confirmations", default_value = "1", env = "BATCHER_NUM_CONFIRMATIONS")]
-    pub num_confirmations: usize,
+    pub num_confirmations: u64,
 
     /// Timeout before resubmitting a transaction (seconds).
     #[arg(
@@ -164,6 +164,19 @@ pub(crate) struct BatcherArgs {
         env = "BATCHER_RESUBMISSION_TIMEOUT"
     )]
     pub resubmission_timeout_secs: u64,
+
+    /// Maximum retries when an RPC temporarily rejects an ordered nonce.
+    #[arg(long = "publish-max-retries", default_value = "10", env = "BATCHER_PUBLISH_MAX_RETRIES")]
+    pub publish_max_retries: usize,
+
+    /// Delay between nonce-too-high publication retries.
+    #[arg(
+        long = "publish-retry-delay",
+        default_value = "1s",
+        env = "BATCHER_PUBLISH_RETRY_DELAY",
+        value_parser = humantime::parse_duration
+    )]
+    pub publish_retry_delay: Duration,
 
     /// DA backlog threshold in bytes at which throttling activates.
     ///
@@ -291,6 +304,14 @@ impl BatcherArgs {
             max_l1_tx_size_bytes: self.max_l1_tx_size_bytes,
         };
         encoder_config.validate()?;
+        let tx_manager = TxManagerConfig {
+            num_confirmations: self.num_confirmations,
+            resubmission_timeout: Duration::from_secs(self.resubmission_timeout_secs),
+            publish_max_retries: self.publish_max_retries,
+            publish_retry_delay: self.publish_retry_delay,
+            ..TxManagerConfig::default()
+        };
+        tx_manager.validate()?;
         Ok(BatcherConfig {
             l1_rpc_url: self.l1_rpc_url,
             l1_ws_url: self.l1_ws_url,
@@ -303,8 +324,7 @@ impl BatcherArgs {
             poll_interval: Duration::from_secs(self.poll_interval_secs),
             encoder_config,
             max_pending_transactions: self.max_pending_transactions,
-            num_confirmations: self.num_confirmations,
-            resubmission_timeout: Duration::from_secs(self.resubmission_timeout_secs),
+            tx_manager,
             throttle: if self.no_throttle {
                 None
             } else {
@@ -504,6 +524,15 @@ mod tests {
         let config = cli.args.into_config().expect("config should build");
 
         assert!(config.stopped);
+    }
+
+    #[test]
+    fn into_config_sets_publish_retry_policy() {
+        let cli = parse_cli(&["--publish-max-retries", "12", "--publish-retry-delay", "250ms"]);
+        let config = cli.args.into_config().expect("config should build");
+
+        assert_eq!(config.tx_manager.publish_max_retries, 12);
+        assert_eq!(config.tx_manager.publish_retry_delay, Duration::from_millis(250));
     }
 
     #[test]
