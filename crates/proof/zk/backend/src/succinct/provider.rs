@@ -72,32 +72,28 @@ impl L1HeadSource<'_> {
 #[derive(Debug, Error)]
 pub enum WitnessError {
     /// Fetching host arguments with a caller-pinned L1 head failed.
-    #[error("failed to fetch Succinct host args with caller-provided l1_head")]
+    #[error("failed to fetch Succinct host args with caller-provided l1_head: {cause}")]
     PinnedHostFetch {
         /// Underlying Succinct host error.
-        #[source]
-        source: Box<dyn StdError + Send + Sync>,
+        cause: Box<dyn StdError + Send + Sync>,
     },
     /// Sequence-window L1-head calculation failed.
-    #[error("failed to calculate sequence-window l1_head")]
+    #[error("failed to calculate sequence-window l1_head: {cause}")]
     SequenceWindowL1Head {
         /// Sequence-window L1-head calculation error.
-        #[source]
-        source: L1HeadError,
+        cause: L1HeadError,
     },
     /// Fetching host arguments with a sequence-window L1 head failed.
-    #[error("failed to fetch Succinct host args with sequence-window l1_head")]
+    #[error("failed to fetch Succinct host args with sequence-window l1_head: {cause}")]
     SequenceWindowHostFetch {
         /// Underlying Succinct host error.
-        #[source]
-        source: Box<dyn StdError + Send + Sync>,
+        cause: Box<dyn StdError + Send + Sync>,
     },
     /// Running the Succinct host failed.
-    #[error("failed to run Succinct host")]
+    #[error("failed to run Succinct host: {cause}")]
     HostRun {
         /// Underlying Succinct host error.
-        #[source]
-        source: Box<dyn StdError + Send + Sync>,
+        cause: Box<dyn StdError + Send + Sync>,
     },
     /// Converting the generated witness into SP1 stdin failed.
     #[error("failed to build SP1 stdin from Succinct witness")]
@@ -240,8 +236,8 @@ impl OpSuccinctWitnessProvider {
                         schedule_l2_block_number,
                     )
                     .await
-                    .map_err(|source| WitnessError::PinnedHostFetch {
-                        source: source.into_boxed_dyn_error(),
+                    .map_err(|cause| WitnessError::PinnedHostFetch {
+                        cause: cause.into_boxed_dyn_error(),
                     })?
             }
             L1HeadSource::SequenceWindow { sequence_window, l1_node_url, base_consensus_url } => {
@@ -253,7 +249,7 @@ impl OpSuccinctWitnessProvider {
                         sequence_window,
                     )
                     .await
-                    .map_err(|source| WitnessError::SequenceWindowL1Head { source })?;
+                    .map_err(|cause| WitnessError::SequenceWindowL1Head { cause })?;
                 info!(
                     l1_head_block = l1_head_block_num,
                     l1_head_hash = %l1_head_hash,
@@ -269,8 +265,8 @@ impl OpSuccinctWitnessProvider {
                         schedule_l2_block_number,
                     )
                     .await
-                    .map_err(|source| WitnessError::SequenceWindowHostFetch {
-                        source: source.into_boxed_dyn_error(),
+                    .map_err(|cause| WitnessError::SequenceWindowHostFetch {
+                        cause: cause.into_boxed_dyn_error(),
                     })?
             }
         };
@@ -278,8 +274,8 @@ impl OpSuccinctWitnessProvider {
         debug!(start_block = start_block, end_block = end_block, "host args fetched");
 
         let witness =
-            self.host.run(&host_args).await.map_err(|source| WitnessError::HostRun {
-                source: source.into_boxed_dyn_error(),
+            self.host.run(&host_args).await.map_err(|cause| WitnessError::HostRun {
+                cause: cause.into_boxed_dyn_error(),
             })?;
         get_sp1_stdin(witness)
             .map_err(|source| WitnessError::Stdin { source: source.into_boxed_dyn_error() })

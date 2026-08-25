@@ -6273,6 +6273,7 @@ dependencies = [
  "base-optimism-rpc",
  "base-proof-zk-backend",
  "base-proof-zk-host",
+ "base-proofs-extension",
  "base-protocol",
  "base-prover-service",
  "base-prover-service-client",

@@ -17,6 +17,7 @@ use base_execution_txpool::{
 };
 use base_node_core::{args::RollupArgs, node::BasePoolBuilder};
 use base_node_runner::{BaseNode, BaseNodeExtension, NodeHooks};
+use base_proofs_extension::ProofsHistoryExtension;
 use eyre::{Result, WrapErr, eyre};
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db,
@@ -60,6 +61,8 @@ pub struct InProcessBuilderConfig {
     pub enable_experimental_validity_transactions: bool,
     /// Whether to run both payload builders and cut over to basic at Denim.
     pub payload_builder_cutover: bool,
+    /// When set, installs proofs-history so `eth_getProof` works at historical L2 blocks.
+    pub enable_proofs_history: bool,
     /// Additional node extensions installed after the builder's built-in RPC wiring.
     ///
     /// Lets downstream consumers layer their own [`BaseNodeExtension`] onto the standard
@@ -157,7 +160,11 @@ impl InProcessBuilder {
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
 
-        let rollup_args = RollupArgs::default();
+        let mut rollup_args = RollupArgs::default();
+        if config.enable_proofs_history {
+            rollup_args.proofs_history = true;
+            rollup_args.proofs_history_storage_path = Some(data_path.join("proofs-history"));
+        }
 
         let base_node = BaseNode::new(rollup_args.clone());
 
@@ -189,8 +196,12 @@ impl InProcessBuilder {
             .with_launch_context(runtime.clone())
             .with_types::<BaseNode>();
 
-        let launched = config
-            .extra_extensions
+        let mut extensions: Vec<Box<dyn BaseNodeExtension>> = Vec::new();
+        if config.enable_proofs_history {
+            extensions.push(Box::new(ProofsHistoryExtension::new(rollup_args)));
+        }
+        extensions.extend(config.extra_extensions);
+        let launched = extensions
             .into_iter()
             .fold(NodeHooks::new(), |hooks, ext| ext.apply(hooks))
             .apply_to(

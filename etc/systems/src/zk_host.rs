@@ -1,6 +1,6 @@
 //! In-process ZK host that claims jobs from [`crate::InProcessProverService`].
 
-use std::{fs, time::Duration};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use base_proof_zk_backend::SuccinctZkProversConfig;
@@ -13,7 +13,7 @@ use base_prover_service_protocol::{
     HeartbeatRequest, HeartbeatResponse, RecordProofSessionRequest, RecordProofSessionResponse,
     WorkerSubmitProofRequest, WorkerSubmitProofResponse, ZkBackend,
 };
-use eyre::{OptionExt, Result, WrapErr, bail, ensure};
+use eyre::{Result, WrapErr, bail, ensure};
 use nanoid::nanoid;
 use tempfile::TempDir;
 use tokio::{sync::watch, task::JoinHandle, time::timeout};
@@ -56,7 +56,7 @@ impl InProcessZkHost {
     /// worker namespace and host wiring are exercised. Cluster and network
     /// backends are not supported here.
     pub async fn start(stack: &SystemTestStack, prover_service_url: &Url) -> Result<Self> {
-        let config_dir = Self::install_succinct_chain_configs(stack)?;
+        let config_dir = Self::install_succinct_chain_configs()?;
         let cancel = CancellationToken::new();
         let l2_rpc = stack.l2_rpc_url().wrap_err("failed to read L2 builder RPC URL")?;
         let urls = stack.urls().await.wrap_err("failed to read system test RPC URLs")?;
@@ -137,33 +137,12 @@ impl InProcessZkHost {
         Ok(Self { cancel, join: Some(join), _config_dir: config_dir })
     }
 
-    /// Writes the stack's L1 chain config into a temp dir for the OP Succinct fetcher.
+    /// Temp dir for Succinct L1/L2 configs so the fetcher does not write into the process cwd.
     ///
-    /// System-test L1 is chain 1337, which is not in the built-in `L1_CONFIGS` map. The
-    /// fetcher reads `<l1_config_dir>/<chain_id>.json` before that map. L2 configs are
-    /// written to a sibling directory so rollup config is not written into the process cwd.
-    fn install_succinct_chain_configs(stack: &SystemTestStack) -> Result<TempDir> {
-        let genesis: serde_json::Value = serde_json::from_str(
-            &stack.l1_genesis().read_el_genesis().wrap_err("failed to read L1 genesis")?,
-        )
-        .wrap_err("failed to parse L1 genesis")?;
-        let config = genesis.get("config").ok_or_eyre("L1 genesis is missing config")?;
-        let chain_id = config
-            .get("chainId")
-            .and_then(serde_json::Value::as_u64)
-            .ok_or_eyre("L1 genesis config is missing chainId")?;
-
-        let dir = tempfile::tempdir().wrap_err("failed to create succinct config directory")?;
-        let l1_dir = dir.path().join("L1");
-        fs::create_dir_all(&l1_dir).wrap_err("failed to create succinct L1 config directory")?;
-        fs::write(
-            l1_dir.join(format!("{chain_id}.json")),
-            serde_json::to_vec_pretty(config).wrap_err("failed to encode L1 chain config")?,
-        )
-        .wrap_err("failed to write L1 chain config for succinct fetcher")?;
-
-        info!(chain_id, "installed succinct L1/L2 config directories");
-        Ok(dir)
+    /// System-test L1 is chain 1337 (`Devnet` in `L1_CONFIGS`). The fetcher writes that
+    /// built-in config when `<dir>/L1/1337.json` is missing.
+    fn install_succinct_chain_configs() -> Result<TempDir> {
+        tempfile::tempdir().wrap_err("failed to create succinct config directory")
     }
 }
 
