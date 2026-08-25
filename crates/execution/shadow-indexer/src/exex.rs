@@ -136,12 +136,6 @@ impl ShadowIndexerExEx {
         })
     }
 
-    /// Records the blocks a reorg discarded, resolving each against its replacement height.
-    ///
-    /// reth guarantees no correspondence between the two chains' height ranges: the shadow builder
-    /// replaces its chain one Engine API round trip at a time, so `new` routinely holds a single
-    /// block against a whole cycle in `old`. Heights it does not cover do not exist yet and are
-    /// left for a later `ChainCommitted` to resolve.
     async fn handle_chain_reorged(
         &self,
         old: &Chain<BasePrimitives>,
@@ -178,11 +172,6 @@ impl ShadowIndexerExEx {
         Ok(true)
     }
 
-    /// Records every block in a reverted chain.
-    ///
-    /// reth emits `ChainReverted` exclusively from the execution stage on a pipeline unwind (deep
-    /// reorg requiring backfill, or a manual/consistency unwind); the live-sync engine path only
-    /// ever produces `ChainCommitted`/`ChainReorged`.
     async fn handle_chain_reverted(&self, old: &Chain<BasePrimitives>) -> Result<bool> {
         for (block, receipts) in old.blocks_and_receipts() {
             let row = self.build_row(block, receipts, None)?;
@@ -195,11 +184,6 @@ impl ShadowIndexerExEx {
         Ok(true)
     }
 
-    /// Forwards each committed block as the canonical block at its height.
-    ///
-    /// A reorg names the replacement only for heights its `new` chain covers; the rest arrive here
-    /// as later commits. A commit that is itself reorged out afterwards does not leave a stale hash
-    /// behind: that reorg stores a new candidate at the height, which replaces the row outright.
     async fn resolve_canonical_heights(&self, new: &Chain<BasePrimitives>) -> Result<bool> {
         for block in new.blocks().values() {
             let number = i64::try_from(block.header().number()).map_err(|error| {

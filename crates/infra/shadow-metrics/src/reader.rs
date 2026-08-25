@@ -99,8 +99,6 @@ impl ShadowMetricsReader {
     /// # Errors
     /// Returns an error when fetch or cursor persistence fails.
     pub async fn poll_once(&mut self) -> Result<Vec<ShadowBlockStats>> {
-        // Before the cursor moves, so a failure here retries cleanly instead of leaving the batch
-        // emitted and the watermark advanced.
         self.emit_unresolved_backlog().await?;
 
         let rows = self
@@ -112,9 +110,6 @@ impl ShadowMetricsReader {
 
         for row in rows {
             let cursor = row.cursor();
-            // A row without a canonical hash is unresolved, not empty: its replacement has not
-            // been produced yet. Resolving it bumps `updated_at`, bringing it back past this
-            // cursor to be classified then.
             if row.canonical_hash.is_some() {
                 let stats = ShadowBlockStats::from_row(&row);
                 ShadowMetrics::gas_used(stats.builder_version.clone())
