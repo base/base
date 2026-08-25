@@ -24,7 +24,7 @@
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -87,6 +87,10 @@ impl PrewarmHandle {
 /// Drives a warming worker off canonical head notifications; the worker executes the pool's best
 /// transactions against the head state and publishes [`TxPoolPrewarmCacheSnapshot`]s that the
 /// builder consumes through a [`PrewarmHandle`].
+///
+/// Cloning is cheap — every field is an [`Arc`] or an `Arc`-backed handle — and each warming pass
+/// runs on a clone so it can be moved onto a blocking thread.
+#[derive(Clone)]
 pub struct TxPoolPrewarmer<Pool, Client> {
     /// The transaction pool speculative transactions are drawn from.
     pool: Pool,
@@ -98,6 +102,10 @@ pub struct TxPoolPrewarmer<Pool, Client> {
     runtime: Runtime,
     /// The slot the worker publishes snapshots into and [`PrewarmHandle`]s read from.
     latest: Arc<RwLock<Option<TxPoolPrewarmCacheSnapshot>>>,
+    /// Monotonic head counter. Each new canonical head bumps it; a warming pass runs and publishes
+    /// only while it still holds the current epoch, so a superseded pass can neither keep working
+    /// nor overwrite a fresher snapshot.
+    epoch: Arc<AtomicU64>,
 }
 
 impl<Pool, Client> std::fmt::Debug for TxPoolPrewarmer<Pool, Client> {
@@ -113,7 +121,14 @@ where
 {
     /// Creates a new prewarmer. Call [`Self::spawn`] to start warming.
     pub fn new(pool: Pool, client: Client, evm_config: BaseEvmConfig, runtime: Runtime) -> Self {
-        Self { pool, client, evm_config, runtime, latest: Arc::new(RwLock::new(None)) }
+        Self {
+            pool,
+            client,
+            evm_config,
+            runtime,
+            latest: Arc::new(RwLock::new(None)),
+            epoch: Arc::new(AtomicU64::new(0)),
+        }
     }
 
     /// Returns a handle onto the snapshots this prewarmer publishes.
@@ -131,9 +146,11 @@ where
 
     /// Consumes canonical head notifications, restarting the warming pass for each new head.
     async fn drive(self, mut stream: CanonStateNotificationStream<BasePrimitives>) {
-        // Cancels the in-flight warming pass when a new head arrives or the stream ends.
-        let mut previous: Option<Arc<AtomicBool>> = None;
         while let Some(notification) = stream.next().await {
+            // `committed()` yields the new canonical chain for both commits and reorgs, so its tip
+            // is always the head the builder will build on next, including immediately after a
+            // reorg. We read only the tip's absolute state (never the execution-outcome diff), so
+            // unlike `state_diff_maintain` reorgs need no special-casing here.
             let committed = notification.committed();
             let tip = committed.tip();
             let parent_hash = tip.hash();
@@ -150,40 +167,24 @@ where
                 }
             };
 
-            if let Some(cancel) = previous.take() {
-                cancel.store(true, Ordering::Relaxed);
-            }
-            let cancel = Arc::new(AtomicBool::new(false));
-            previous = Some(Arc::clone(&cancel));
+            // Claim the next epoch. This supersedes any in-flight pass: it observes the bump and
+            // stops, and can no longer publish over the snapshot this new pass produces.
+            let epoch = self.epoch.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
 
-            let pool = self.pool.clone();
-            let client = self.client.clone();
-            let evm_config = self.evm_config.clone();
-            let latest = Arc::clone(&self.latest);
-            self.runtime.spawn_blocking(move || {
-                Self::warm(parent_hash, evm_env, pool, client, evm_config, latest, cancel);
-            });
+            let worker = self.clone();
+            self.runtime.spawn_blocking(move || worker.warm(parent_hash, evm_env, epoch));
         }
 
-        if let Some(cancel) = previous.take() {
-            cancel.store(true, Ordering::Relaxed);
-        }
+        // Supersede the final pass so it stops once the stream ends.
+        self.epoch.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Speculatively executes the pool's best transactions against `parent_hash`'s state,
     /// publishing a fresh snapshot each time the recorded reads grow.
     ///
-    /// Runs until `cancel` is set (a new head arrived), the pass exceeds [`MAX_WARM_LIFETIME`], or
+    /// Runs until a newer head supersedes this `epoch`, the pass exceeds [`MAX_WARM_LIFETIME`], or
     /// the parent state becomes unavailable.
-    fn warm(
-        parent_hash: B256,
-        evm_env: EvmEnv<BaseSpecId>,
-        pool: Pool,
-        client: Client,
-        evm_config: BaseEvmConfig,
-        latest: Arc<RwLock<Option<TxPoolPrewarmCacheSnapshot>>>,
-        cancel: Arc<AtomicBool>,
-    ) {
+    fn warm(&self, parent_hash: B256, evm_env: EvmEnv<BaseSpecId>, epoch: u64) {
         let attributes = BestTransactionsAttributes::new(
             evm_env.block_env.basefee,
             evm_env.block_env.blob_gasprice().map(|price| price as u64),
@@ -194,10 +195,14 @@ where
         // Cache entry counts as of the last publication; the cache only grows, so a change means it
         // holds unpublished reads worth republishing.
         let mut published = (0usize, 0usize, 0usize);
-        let mut best = pool.best_transactions_with_attributes(attributes);
+        let mut best = self.pool.best_transactions_with_attributes(attributes);
 
-        while !cancel.load(Ordering::Relaxed) && Instant::now() < lifetime_deadline {
-            let state_provider = match client.state_by_block_hash(parent_hash) {
+        while self.epoch.load(Ordering::Relaxed) == epoch && Instant::now() < lifetime_deadline {
+            // Reopen the state provider each batch rather than holding one for the whole pass: a
+            // pass can span up to `MAX_WARM_LIFETIME`, and keeping a single MDBX read transaction
+            // open that long would pin the freelist. `CachedReads` already serves prior reads, so
+            // only genuine misses reach the freshly opened provider.
+            let state_provider = match self.client.state_by_block_hash(parent_hash) {
                 Ok(state_provider) => state_provider,
                 Err(error) => {
                     trace!(
@@ -221,11 +226,11 @@ where
             env.cfg_env.disable_nonce_check = true;
             env.cfg_env.disable_balance_check = true;
             env.cfg_env.disable_base_fee = true;
-            let mut evm = evm_config.evm_with_env(&mut state, env);
+            let mut evm = self.evm_config.evm_with_env(&mut state, env);
 
             let batch_deadline = Instant::now() + REFRESH_INTERVAL;
             let mut exhausted = false;
-            while !cancel.load(Ordering::Relaxed) && Instant::now() < batch_deadline {
+            while self.epoch.load(Ordering::Relaxed) == epoch && Instant::now() < batch_deadline {
                 let Some(transaction) = best.next() else {
                     exhausted = true;
                     break;
@@ -250,26 +255,31 @@ where
                 cache.accounts.values().map(|account| account.storage.len()).sum::<usize>(),
                 cache.contracts.len(),
             );
-            if counts != published {
-                *latest.write() =
-                    Some(TxPoolPrewarmCacheSnapshot::new(parent_hash, Arc::new(cache.clone())));
-                published = counts;
-                let (accounts, storage, bytecodes) = counts;
-                debug!(
-                    target: "payload_builder",
-                    parent_hash = %parent_hash,
-                    accounts,
-                    storage,
-                    bytecodes,
-                    "published txpool prewarm snapshot",
-                );
+            if counts != published && self.epoch.load(Ordering::Relaxed) == epoch {
+                let mut latest = self.latest.write();
+                // Re-check under the write lock so a superseded pass can never overwrite the
+                // snapshot the current pass published for the new head.
+                if self.epoch.load(Ordering::Relaxed) == epoch {
+                    *latest =
+                        Some(TxPoolPrewarmCacheSnapshot::new(parent_hash, Arc::new(cache.clone())));
+                    published = counts;
+                    let (accounts, storage, bytecodes) = counts;
+                    debug!(
+                        target: "payload_builder",
+                        parent_hash = %parent_hash,
+                        accounts,
+                        storage,
+                        bytecodes,
+                        "published txpool prewarm snapshot",
+                    );
+                }
             }
 
             if exhausted {
                 // Pool is drained for now; wait for maintenance to surface more pending
                 // transactions, then reopen a fresh iterator against the same parent.
                 std::thread::sleep(REFRESH_INTERVAL);
-                best = pool.best_transactions_with_attributes(attributes);
+                best = self.pool.best_transactions_with_attributes(attributes);
             }
         }
     }
