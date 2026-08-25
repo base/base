@@ -1,7 +1,6 @@
 //! Trait abstraction for resource metering providers.
 
-use core::fmt::Debug;
-use std::sync::Arc;
+use std::{fmt::Debug, sync::Arc};
 
 use alloy_primitives::TxHash;
 use base_bundles::MeterBundleResponse;
@@ -32,8 +31,8 @@ pub trait MeteringProvider: Debug + Send + Sync + 'static {
     /// Removes metering data for the given transaction hashes.
     ///
     /// Used to eagerly evict entries for transactions that have been included in
-    /// a flashblock so they don't occupy LRU slots that should go to pending
-    /// transactions.
+    /// a payload or permanently rejected so they don't occupy LRU slots that
+    /// should go to pending transactions.
     fn remove(&self, _tx_hashes: &[TxHash]) {}
 
     /// Clears all stored metering data.
@@ -44,7 +43,7 @@ pub trait MeteringProvider: Debug + Send + Sync + 'static {
 }
 
 /// A no-op provider that always returns no metering data.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct NoopMeteringProvider;
 
 impl MeteringProvider for NoopMeteringProvider {

@@ -143,7 +143,7 @@ impl Default for BuilderConfig {
             metering_wait_duration: None,
             predicate_eval_hard_cutoff: Duration::from_millis(10),
             metering_provider: Arc::new(NoopMeteringProvider),
-            rejection_cache: RejectionCache::new(100_000, Duration::from_secs(1800)),
+            rejection_cache: RejectionCache::default(),
             audit_archiver_url: None,
             rejected_tx_channel_size: 500,
             max_rejected_txs_per_block: 500,

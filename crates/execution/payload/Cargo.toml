@@ -31,6 +31,8 @@ reth-revm = { workspace = true, features = ["witness"] }
 reth-trie-common.workspace = true
 
 # op-reth
+base-bundles.workspace = true
+base-metrics.workspace = true
 base-common-evm.workspace = true
 base-execution-evm.workspace = true
 base-execution-txpool.workspace = true
@@ -55,7 +57,8 @@ serde.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 derive_more.workspace = true
-base-metrics.workspace = true
+serde_json.workspace = true
+moka = { workspace = true, features = ["sync"] }
 metrics = { workspace = true, optional = true }
 
 [dev-dependencies]
@@ -67,6 +70,7 @@ reth-revm = { workspace = true, features = ["test-utils"] }
 base-observability-events = { workspace = true, features = ["test-utils"] }
 
 [features]
+default = [ "metrics" ]
 metrics = [
 	"base-common-evm/metrics",
 	"base-metrics/metrics",
