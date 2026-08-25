@@ -26,7 +26,7 @@ use base_prover_service_protocol::{
 };
 use base_system_tests::{
     ANVIL_ACCOUNT_1, InProcessProverService, InProcessZkHost, SystemTestProviderExt,
-    SystemTestStack, SystemTestStackBuilder,
+    SystemTestStackBuilder,
 };
 use eyre::{Result, WrapErr, ensure};
 use nanoid::nanoid;
@@ -75,7 +75,10 @@ async fn eip8130_block_dry_run_proves() -> Result<()> {
          -E 'test(eip8130_block_dry_run)'"
     );
 
-    let (system, provider) = start_cobalt_stack_with_proofs().await?;
+    let (system, provider) = cobalt::start_cobalt_stack(
+        SystemTestStackBuilder::new().with_force_batch_submission().with_proofs_history(),
+    )
+    .await?;
     let (_tx_hash, receipt) = send_minimal_eip8130(&provider).await?;
     let block_number =
         receipt.block_number().expect("mined EIP-8130 transaction must have a block");
@@ -98,22 +101,6 @@ async fn eip8130_block_dry_run_proves() -> Result<()> {
     );
 
     Ok(())
-}
-
-async fn start_cobalt_stack_with_proofs() -> Result<(SystemTestStack, RootProvider<Base>)> {
-    let system = SystemTestStackBuilder::new()
-        .with_force_batch_submission()
-        .with_proofs_history()
-        .with_l1_chain_id(common::L1_CHAIN_ID)
-        .with_l2_chain_id(common::L2_CHAIN_ID)
-        .with_base_azul_activation_block(common::BASE_AZUL_ACTIVATION_BLOCK)
-        .with_base_beryl_activation_block(common::BASE_BERYL_ACTIVATION_BLOCK)
-        .with_base_cobalt_activation_block(cobalt::BASE_COBALT_ACTIVATION_BLOCK)
-        .build()
-        .await?;
-    let provider = system.l2_builder_provider()?;
-    common::wait_for_block(&provider, cobalt::BASE_COBALT_ACTIVATION_BLOCK + 1).await?;
-    Ok((system, provider))
 }
 
 async fn send_minimal_eip8130(

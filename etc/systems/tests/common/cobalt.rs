@@ -17,7 +17,14 @@ pub(crate) const BASE_COBALT_ACTIVATION_BLOCK: u64 = 5;
 /// The returned [`SystemTestStack`] must be kept alive for the duration of the test;
 /// dropping it shuts down the underlying containers.
 pub(crate) async fn start_cobalt_system() -> Result<(SystemTestStack, RootProvider<Base>)> {
-    let system = SystemTestStackBuilder::new()
+    start_cobalt_stack(SystemTestStackBuilder::new()).await
+}
+
+/// Same as [`start_cobalt_system`], with extra [`SystemTestStackBuilder`] options applied first.
+pub(crate) async fn start_cobalt_stack(
+    builder: SystemTestStackBuilder,
+) -> Result<(SystemTestStack, RootProvider<Base>)> {
+    let system = builder
         .with_l1_chain_id(L1_CHAIN_ID)
         .with_l2_chain_id(L2_CHAIN_ID)
         .with_base_azul_activation_block(BASE_AZUL_ACTIVATION_BLOCK)
