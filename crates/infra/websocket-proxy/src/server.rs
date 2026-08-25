@@ -1,4 +1,4 @@
-use std::{fmt, net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, sync::Arc};
 
 use axum::{
     Error, Router,
@@ -34,26 +34,15 @@ struct ServerState {
 
 /// WebSocket proxy server that accepts client connections and forwards messages
 /// from a shared registry of upstream sources.
-#[derive(Clone)]
+#[derive(Clone, derive_more::Debug)]
 pub struct Server {
     listen_addr: SocketAddr,
     registry: Registry,
+    #[debug(skip)]
     rate_limiter: Arc<dyn RateLimit>,
     trusted_proxy_config: TrustedProxyConfig,
     authentication: Option<Authentication>,
     public_access_enabled: bool,
-}
-
-impl fmt::Debug for Server {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Server")
-            .field("listen_addr", &self.listen_addr)
-            .field("registry", &self.registry)
-            .field("trusted_proxy_config", &self.trusted_proxy_config)
-            .field("authentication", &self.authentication)
-            .field("public_access_enabled", &self.public_access_enabled)
-            .finish_non_exhaustive()
-    }
 }
 
 #[derive(Deserialize)]

@@ -52,7 +52,7 @@ eyre.workspace = true
 tokio.workspace = true
 thiserror.workspace = true
 parking_lot.workspace = true
-derive_more.workspace = true
+derive_more = { workspace = true, features = ["debug"] }
 serde = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 

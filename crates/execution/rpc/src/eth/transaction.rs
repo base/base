@@ -1,10 +1,6 @@
 //! Loads and formats Base transaction RPC response.
 
-use std::{
-    fmt::{Debug, Formatter},
-    future::Future,
-    time::Duration,
-};
+use std::{future::Future, time::Duration};
 
 use alloy_consensus::{BlockHeader, Typed2718};
 use alloy_primitives::{B256, Bytes};
@@ -253,20 +249,17 @@ where
 ///
 /// For deposits, receipt is fetched to extract `deposit_nonce` and `deposit_receipt_version`.
 /// Otherwise, it works like regular Ethereum implementation, i.e. uses [`TransactionInfo`].
+#[derive(derive_more::Debug)]
 pub struct BaseTxInfoMapper<Provider> {
+    #[debug(skip)]
     provider: Provider,
+    #[debug(skip)]
     base_time: BaseTimeCache,
 }
 
 impl<Provider: Clone> Clone for BaseTxInfoMapper<Provider> {
     fn clone(&self) -> Self {
         Self { provider: self.provider.clone(), base_time: self.base_time.clone() }
-    }
-}
-
-impl<Provider> Debug for BaseTxInfoMapper<Provider> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BaseTxInfoMapper").finish()
     }
 }
 

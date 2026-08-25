@@ -1,6 +1,6 @@
 //! Local node setup with Base Sepolia chainspec
 
-use std::{any::Any, fmt, net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{any::Any, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
@@ -28,16 +28,22 @@ use crate::{
 pub type LocalNodeProvider = BaseProvider;
 
 /// Handle to a launched local node along with the resources required to keep it alive.
+#[derive(derive_more::Debug)]
 pub struct LocalNode {
     /// HTTP API address of the local node.
     pub http_api_addr: SocketAddr,
     engine_ipc_path: String,
     /// WebSocket API address of the local node.
     pub ws_api_addr: SocketAddr,
+    #[debug(skip)]
     provider: LocalNodeProvider,
+    #[debug(skip)]
     _node_exit_future: NodeExitFuture,
+    #[debug(skip)]
     _node: Box<dyn Any + Sync + Send>,
+    #[debug(skip)]
     _runtime: Runtime,
+    #[debug(skip)]
     _db_path: PathBuf,
 }
 
@@ -45,16 +51,6 @@ impl Drop for LocalNode {
     fn drop(&mut self) {
         // Clean up the temporary database directory
         let _ = std::fs::remove_dir_all(&self._db_path);
-    }
-}
-
-impl fmt::Debug for LocalNode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("LocalNode")
-            .field("http_api_addr", &self.http_api_addr)
-            .field("ws_api_addr", &self.ws_api_addr)
-            .field("engine_ipc_path", &self.engine_ipc_path)
-            .finish_non_exhaustive()
     }
 }
 

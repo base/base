@@ -82,7 +82,7 @@ lru.workspace = true
 eyre.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
-derive_more = { workspace = true, features = ["constructor"] }
+derive_more = { workspace = true, features = ["constructor", "debug"] }
 
 # metrics
 base-metrics.workspace = true

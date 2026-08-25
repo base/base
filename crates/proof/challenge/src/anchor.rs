@@ -16,26 +16,20 @@ use tracing::{debug, info, warn};
 use crate::{ChallengeSubmitter, ChallengerMetrics, OutputValidator};
 
 /// Best-effort updater for the `AnchorStateRegistry`.
+#[derive(derive_more::Debug)]
 pub struct AnchorUpdater {
+    #[debug(skip)]
     factory_client: Arc<dyn DisputeGameFactoryClient>,
+    #[debug(skip)]
     anchor_registry_client: Arc<dyn AnchorStateRegistryClient>,
+    #[debug(skip)]
     output_validator: OutputValidator<dyn L2Provider>,
+    #[debug(skip)]
     cached_next_game: Option<(AnchorSnapshot, Address)>,
     anchor_state_registry_address: Address,
     game_type: u32,
     block_interval: u64,
     intermediate_block_interval: u64,
-}
-
-impl std::fmt::Debug for AnchorUpdater {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AnchorUpdater")
-            .field("anchor_state_registry_address", &self.anchor_state_registry_address)
-            .field("game_type", &self.game_type)
-            .field("block_interval", &self.block_interval)
-            .field("intermediate_block_interval", &self.intermediate_block_interval)
-            .finish_non_exhaustive()
-    }
 }
 
 impl AnchorUpdater {

@@ -11,7 +11,7 @@ use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
 use crate::{ExecutionMeteringMode, NoopMeteringProvider, RejectionCache, SharedMeteringProvider};
 
 /// Configuration values for the flashblocks builder.
-#[derive(Clone)]
+#[derive(Clone, derive_more::Debug)]
 pub struct BuilderConfig {
     /// The interval at which blocks are added to the chain.
     /// This is also the frequency at which the builder will be receiving FCU requests from the
@@ -69,6 +69,7 @@ pub struct BuilderConfig {
 
     /// Cache of permanently rejected transaction hashes, shared across blocks.
     /// Transactions in this cache are skipped by the iterator without re-evaluation.
+    #[debug("{:?}", rejection_cache.entry_count())]
     pub rejection_cache: RejectionCache,
 
     /// URL of the audit-archiver RPC endpoint for rejected transaction forwarding.
@@ -95,33 +96,6 @@ impl BuilderConfig {
             return 0;
         }
         (self.block_time.as_millis() / self.flashblocks_interval.as_millis()) as u64
-    }
-}
-
-impl core::fmt::Debug for BuilderConfig {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("Config")
-            .field("block_time", &self.block_time)
-            .field("block_time_leeway", &self.block_time_leeway)
-            .field("da_config", &self.da_config)
-            .field("gas_limit_config", &self.gas_limit_config)
-            .field("sampling_ratio", &self.sampling_ratio)
-            .field("flashblocks_ws_addr", &self.flashblocks_ws_addr)
-            .field("flashblocks_interval", &self.flashblocks_interval)
-            .field("flashblocks_leeway_time", &self.flashblocks_leeway_time)
-            .field("max_gas_per_txn", &self.max_gas_per_txn)
-            .field("max_execution_time_per_tx_us", &self.max_execution_time_per_tx_us)
-            .field("execution_metering_mode", &self.execution_metering_mode)
-            .field("max_uncompressed_block_size", &self.max_uncompressed_block_size)
-            .field("metering_wait_duration", &self.metering_wait_duration)
-            .field("predicate_eval_hard_cutoff", &self.predicate_eval_hard_cutoff)
-            .field("metering_provider", &self.metering_provider)
-            .field("rejection_cache_size", &self.rejection_cache.entry_count())
-            .field("audit_archiver_url", &self.audit_archiver_url)
-            .field("rejected_tx_channel_size", &self.rejected_tx_channel_size)
-            .field("max_rejected_txs_per_block", &self.max_rejected_txs_per_block)
-            .field("manifest_precheck_enabled", &self.manifest_precheck_enabled)
-            .finish()
     }
 }
 

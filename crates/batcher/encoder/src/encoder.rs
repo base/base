@@ -2,7 +2,6 @@
 
 use std::{
     collections::{HashMap, VecDeque},
-    fmt,
     sync::Arc,
 };
 
@@ -25,14 +24,18 @@ use crate::{
 ///
 /// Transforms L2 blocks into L1 submission frames. No async, no I/O. The caller
 /// drives the encoder synchronously via the [`BatchPipeline`] trait.
+#[derive(derive_more::Debug)]
 pub struct BatchEncoder {
     /// The rollup configuration.
+    #[debug(skip)]
     rollup_config: Arc<RollupConfig>,
     /// Encoder-specific configuration.
+    #[debug(skip)]
     config: EncoderConfig,
     /// Current L1 head block number (for channel duration tracking).
     l1_head: u64,
     /// Buffered L2 blocks above the latest observed safe head.
+    #[debug("{:?}", blocks.len())]
     blocks: VecDeque<BaseBlock>,
     /// Index into `blocks`: next block not yet fed into the current channel.
     block_cursor: usize,
@@ -41,35 +44,25 @@ pub struct BatchEncoder {
     /// The channel currently being built. `None` between channels.
     current_channel: Option<OpenChannel>,
     /// Closed channels awaiting submission, safe-head pruning, or timeout replay.
+    #[debug("{:?}", ready_channels.len())]
     ready_channels: VecDeque<ReadyChannel>,
     /// In-flight submissions: id -> reference into `ready_channels`.
+    #[debug("{:?}", pending.len())]
     pending: HashMap<SubmissionId, PendingRef>,
     /// Next submission id counter.
     next_id: u64,
     /// Per-instance RNG for generating unique channel IDs.
+    #[debug(skip)]
     rng: SmallRng,
     /// Driver-controlled override that forces [`DaType::Blob`] on every emitted
     /// submission, regardless of the configured `da_type`. Toggled by the driver
     /// when DA-backlog throttling activates and `force_blobs_when_throttling` is
     /// set. No-op when the configured `da_type` is already [`DaType::Blob`].
+    #[debug(skip)]
     blob_override: bool,
     /// Fatal error observed from trait methods that cannot return [`StepError`].
+    #[debug(skip)]
     deferred_step_error: Option<StepError>,
-}
-
-impl fmt::Debug for BatchEncoder {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("BatchEncoder")
-            .field("l1_head", &self.l1_head)
-            .field("blocks_len", &self.blocks.len())
-            .field("block_cursor", &self.block_cursor)
-            .field("tip", &self.tip)
-            .field("current_channel", &self.current_channel)
-            .field("ready_channels", &self.ready_channels.len())
-            .field("pending", &self.pending.len())
-            .field("next_id", &self.next_id)
-            .finish_non_exhaustive()
-    }
 }
 
 impl BatchEncoder {

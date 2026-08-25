@@ -32,9 +32,12 @@ impl SelectedPayload {
 }
 
 /// Generates transaction workloads from configured payloads.
+#[derive(derive_more::Debug)]
 pub struct WorkloadGenerator {
     config: WorkloadConfig,
+    #[debug(skip)]
     rng: SeededRng,
+    #[debug("{:?}", payloads.len())]
     payloads: Vec<(Arc<dyn Payload>, f64)>,
 }
 
@@ -233,15 +236,6 @@ impl WorkloadGenerator {
     pub fn reset(&mut self) {
         let seed = self.config.seed.unwrap_or(0);
         self.rng = SeededRng::new(seed);
-    }
-}
-
-impl std::fmt::Debug for WorkloadGenerator {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("WorkloadGenerator")
-            .field("config", &self.config)
-            .field("payloads_count", &self.payloads.len())
-            .finish()
     }
 }
 

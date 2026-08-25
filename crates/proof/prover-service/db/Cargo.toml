@@ -28,6 +28,9 @@ thiserror.workspace = true
 # tracing
 tracing.workspace = true
 
+# misc
+derive_more = { workspace = true, features = ["debug"] }
+
 [dev-dependencies]
 alloy-primitives.workspace = true
 base-proof-primitives.workspace = true

@@ -2,7 +2,6 @@
 
 use std::{
     collections::HashMap,
-    fmt,
     sync::{Mutex, PoisonError},
 };
 
@@ -104,22 +103,19 @@ pub struct GameDetails {
 }
 
 /// Read-only L1 client for listing and inspecting dispute games.
+#[derive(derive_more::Debug)]
 pub struct GamesClient {
+    #[debug("{:?}", endpoint.origin().ascii_serialization())]
     endpoint: Url,
+    #[debug(skip)]
     provider: RootProvider,
     factory_address: Address,
+    #[debug(skip)]
     factory: DisputeGameFactoryContractClient,
+    #[debug(skip)]
     verifier: AggregateVerifierContractClient,
+    #[debug(skip)]
     aggregate_game_types: Mutex<HashMap<u32, bool>>,
-}
-
-impl fmt::Debug for GamesClient {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("GamesClient")
-            .field("endpoint", &self.endpoint.origin().ascii_serialization())
-            .field("factory_address", &self.factory_address)
-            .finish_non_exhaustive()
-    }
 }
 
 impl GamesClient {

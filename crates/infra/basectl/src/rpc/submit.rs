@@ -1,6 +1,6 @@
 //! On-chain proposal-proof submission client for `basectl proofs submit`.
 
-use std::{env, fmt, fs, path::Path, sync::Arc, time::Duration};
+use std::{env, fs, path::Path, sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_provider::{Provider, RootProvider};
@@ -28,15 +28,10 @@ const TX_SEND_TIMEOUT: Duration = Duration::from_secs(600);
 /// The wallet behind this key must be the exact `--prover-address` the proof
 /// was proposed with, because the proof journal commits to that address as
 /// the proposer.
-#[derive(Clone)]
+#[derive(Clone, derive_more::Debug)]
 pub struct SubmitterKey {
+    #[debug("{:?}", signer.address())]
     signer: PrivateKeySigner,
-}
-
-impl fmt::Debug for SubmitterKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SubmitterKey").field("address", &self.signer.address()).finish()
-    }
 }
 
 impl SubmitterKey {
@@ -146,14 +141,10 @@ pub struct SubmittedProof {
 
 /// Sends `AggregateVerifier.verifyProposalProof` transactions to L1 dispute
 /// games, signed by a [`SubmitterKey`].
+#[derive(derive_more::Debug)]
 pub struct ProposalProofSubmitter {
+    #[debug(skip)]
     tx_manager: SimpleTxManager<RootProvider>,
-}
-
-impl fmt::Debug for ProposalProofSubmitter {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ProposalProofSubmitter").finish_non_exhaustive()
-    }
 }
 
 impl ProposalProofSubmitter {

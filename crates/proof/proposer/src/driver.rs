@@ -108,25 +108,19 @@ struct Session {
 
 /// Manages the lifecycle of a [`ProvingPipeline`], allowing it to be started
 /// and stopped at runtime (e.g. via the admin RPC).
+#[derive(derive_more::Debug)]
 pub struct PipelineHandle<R>
 where
     R: RollupProvider + 'static,
 {
+    #[debug(skip)]
     pipeline: Arc<ProvingPipeline<R>>,
+    #[debug(skip)]
     session: TokioMutex<Session>,
+    #[debug(skip)]
     global_cancel: CancellationToken,
+    #[debug("{:?}", running.load(Ordering::Relaxed))]
     running: Arc<AtomicBool>,
-}
-
-impl<R> std::fmt::Debug for PipelineHandle<R>
-where
-    R: RollupProvider + 'static,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PipelineHandle")
-            .field("running", &self.running.load(Ordering::Relaxed))
-            .finish_non_exhaustive()
-    }
 }
 
 impl<R> PipelineHandle<R>

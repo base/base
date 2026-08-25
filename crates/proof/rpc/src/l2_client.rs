@@ -101,27 +101,23 @@ impl L2ClientConfig {
 }
 
 /// L2 RPC client implementation using Alloy.
+#[derive(derive_more::Debug)]
 pub struct L2Client {
     /// The underlying HTTP provider (Base network for deposit tx support).
+    #[debug(skip)]
     provider: L2HttpProvider,
     /// Cache for blocks by hash.
+    #[debug("{:?}", blocks_cache.entry_count())]
     blocks_cache: MeteredCache<B256, BaseBlock>,
     /// Cache for headers by hash.
+    #[debug("{:?}", headers_cache.entry_count())]
     headers_cache: MeteredCache<B256, BaseHeader>,
     /// Cache for account proofs.
+    #[debug("{:?}", proofs_cache.entry_count())]
     proofs_cache: MeteredCache<ProofCacheKey, EIP1186AccountProofResponse>,
     /// Retry configuration.
+    #[debug(skip)]
     retry_config: RetryConfig,
-}
-
-impl std::fmt::Debug for L2Client {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("L2Client")
-            .field("blocks_cache_entries", &self.blocks_cache.entry_count())
-            .field("headers_cache_entries", &self.headers_cache.entry_count())
-            .field("proofs_cache_entries", &self.proofs_cache.entry_count())
-            .finish_non_exhaustive()
-    }
 }
 
 impl L2Client {

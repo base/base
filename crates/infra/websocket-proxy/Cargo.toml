@@ -27,6 +27,7 @@ tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
+derive_more = { workspace = true, features = ["debug"] }
 serde = { workspace = true, features = ["derive", "std"] }
 base-metrics = { workspace = true, features = ["metrics"] }
 axum = { workspace = true, features = ["ws", "query", "tokio", "http1"] }

@@ -1,7 +1,5 @@
 //! Provider for external proofs storage
 
-use std::fmt::Debug;
-
 use alloy_primitives::keccak256;
 use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 use reth_primitives_traits::{Account, Bytecode};
@@ -34,8 +32,10 @@ use crate::{
 };
 
 /// State provider for external proofs storage.
+#[derive(derive_more::Debug)]
 pub struct BaseProofsStateProviderRef<'a, Storage: BaseProofsStore> {
     /// Historical state provider for non-state related tasks.
+    #[debug(skip)]
     latest: Box<dyn StateProvider + Send + 'a>,
 
     /// Storage provider for state lookups.
@@ -50,6 +50,7 @@ pub struct BaseProofsStateProviderRef<'a, Storage: BaseProofsStore> {
     /// [`storage`](StateProvider::storage) call and reused for the lifetime of this provider,
     /// so that all EVM state reads within a single execution context share one database snapshot
     /// and avoid per-call transaction-acquisition contention.
+    #[debug(skip)]
     lazy_tx: Mutex<Option<Storage::Tx<'a>>>,
 }
 
@@ -70,18 +71,6 @@ impl<'a, Storage: BaseProofsStore> BaseProofsStateProviderRef<'a, Storage> {
         }
 
         Ok(MutexGuard::map(guard, |tx| tx.as_mut().expect("read-only transaction initialized")))
-    }
-}
-
-impl<'a, Storage> Debug for BaseProofsStateProviderRef<'a, Storage>
-where
-    Storage: BaseProofsStore + 'a + Debug,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BaseProofsStateProviderRef")
-            .field("storage", &self.storage)
-            .field("block_number", &self.block_number)
-            .finish()
     }
 }
 
@@ -279,7 +268,7 @@ mod tests {
 
         assert_eq!(
             format!("{:?}", provider),
-            "BaseProofsStateProviderRef { storage: InMemoryProofsStorage { inner: RwLock { data: InMemoryStorageInner { account_branches: {}, storage_branches: {}, hashed_accounts: {}, hashed_storages: {}, trie_updates: {}, post_states: {}, earliest_block: None, anchor_block: None } } }, block_number: 42 }"
+            "BaseProofsStateProviderRef { storage: InMemoryProofsStorage { inner: RwLock { data: InMemoryStorageInner { account_branches: {}, storage_branches: {}, hashed_accounts: {}, hashed_storages: {}, trie_updates: {}, post_states: {}, earliest_block: None, anchor_block: None } } }, block_number: 42, .. }"
         );
     }
 }

@@ -1,7 +1,6 @@
 //! High-level load-test execution orchestration.
 
 use std::{
-    fmt,
     panic::AssertUnwindSafe,
     sync::{Arc, atomic::AtomicBool},
     time::Duration,
@@ -33,20 +32,13 @@ pub struct LoadTestRunOptions {
 }
 
 /// Caller-supplied hooks for a prepared load-test run.
+#[derive(derive_more::Debug)]
 pub struct LoadTestRunHooks<F> {
     /// Optional live progress bars.
     pub display: Option<LoadTestDisplayConfig>,
     /// Invoked after the run completes and before cleanup.
+    #[debug("{:?}", "FnOnce")]
     pub before_cleanup: F,
-}
-
-impl<F> fmt::Debug for LoadTestRunHooks<F> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("LoadTestRunHooks")
-            .field("display", &self.display)
-            .field("before_cleanup", &"FnOnce")
-            .finish()
-    }
 }
 
 /// Funding and token amounts prepared before a load-test run.

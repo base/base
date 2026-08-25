@@ -53,6 +53,7 @@ thiserror.workspace = true
 url.workspace = true
 backon.workspace = true
 moka = { workspace = true, features = ["future"] }
+derive_more = { workspace = true, features = ["debug"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }

@@ -68,17 +68,21 @@ pub struct SuccinctClusterBackendConfig {
 }
 
 /// Configuration for [`ClusterZkProver`].
-#[derive(Clone)]
+#[derive(Clone, derive_more::Debug)]
 pub struct ClusterZkProverConfig {
     /// Base consensus node RPC URL.
+    #[debug(skip)]
     pub base_consensus_url: String,
     /// L1 execution node RPC URL.
+    #[debug(skip)]
     pub l1_node_url: String,
     /// Default sequence window for L1 head calculations.
     pub default_sequence_window: u64,
     /// Cluster proof submission and artifact configuration.
+    #[debug(skip)]
     pub cluster: Arc<ClusterProofConfig>,
     /// Range program verification key used by the aggregation program.
+    #[debug("{:?}", range_vk.bytes32())]
     pub range_vk: Arc<SP1VerifyingKey>,
     /// Proof timeout.
     pub timeout: Duration,
@@ -90,20 +94,6 @@ pub struct ClusterZkProverConfig {
     pub aggregation_cycle_limit: u64,
     /// Gas limit for aggregation proof requests.
     pub aggregation_gas_limit: u64,
-}
-
-impl std::fmt::Debug for ClusterZkProverConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ClusterZkProverConfig")
-            .field("default_sequence_window", &self.default_sequence_window)
-            .field("range_vk", &self.range_vk.bytes32())
-            .field("timeout", &self.timeout)
-            .field("range_cycle_limit", &self.range_cycle_limit)
-            .field("range_gas_limit", &self.range_gas_limit)
-            .field("aggregation_cycle_limit", &self.aggregation_cycle_limit)
-            .field("aggregation_gas_limit", &self.aggregation_gas_limit)
-            .finish_non_exhaustive()
-    }
 }
 
 /// Backend session id persisted by the prover-service worker API.
@@ -129,16 +119,11 @@ impl ClusterSessionId {
 }
 
 /// [`ZkProver`] backed by an SP1 prover cluster.
-#[derive(Clone)]
+#[derive(Clone, derive_more::Debug)]
 pub struct ClusterZkProver {
+    #[debug(skip)]
     provider: OpSuccinctWitnessProvider,
     config: ClusterZkProverConfig,
-}
-
-impl std::fmt::Debug for ClusterZkProver {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ClusterZkProver").field("config", &self.config).finish_non_exhaustive()
-    }
 }
 
 impl ClusterZkProver {

@@ -1,6 +1,6 @@
 //! Channel state machine types.
 
-use std::{fmt, ops::Range, sync::Arc};
+use std::{ops::Range, sync::Arc};
 
 use base_common_genesis::RollupConfig;
 use base_comp::{ChannelOut, ChannelOutError, CompressorError, ShadowCompressor};
@@ -40,8 +40,10 @@ pub enum OpenChannelError {
 ///
 /// The encoder owns at most one `OpenChannel`. This type keeps the compressed
 /// channel output together with its lifecycle metadata.
+#[derive(derive_more::Debug)]
 pub struct OpenChannel {
     /// Incrementally compressed Single-batch channel output.
+    #[debug("{:?}", out.id())]
     pub out: ChannelOut<ShadowCompressor>,
     /// Index of the first block encoded into this channel.
     pub block_start: usize,
@@ -51,18 +53,6 @@ pub struct OpenChannel {
     pub blocks_added: usize,
     /// Estimated DA bytes for blocks fed into this channel.
     pub da_backlog_bytes: u64,
-}
-
-impl fmt::Debug for OpenChannel {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("OpenChannel")
-            .field("channel_id", &self.id())
-            .field("block_start", &self.block_start)
-            .field("opened_at_l1", &self.opened_at_l1)
-            .field("blocks_added", &self.blocks_added)
-            .field("da_backlog_bytes", &self.da_backlog_bytes)
-            .finish()
-    }
 }
 
 impl OpenChannel {

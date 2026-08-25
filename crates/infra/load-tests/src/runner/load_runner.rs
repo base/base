@@ -44,27 +44,46 @@ const FRESH_RECIPIENT_RNG_SALT: u64 = 0x6672_6573_685f_7263; // "fresh_rc"
 const START_FILE_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Executes load tests by generating and submitting transactions at a target rate.
+#[derive(derive_more::Debug)]
 pub struct LoadRunner {
     pub(super) config: LoadConfig,
+    #[debug(skip)]
     pub(super) config_summary: Option<ConfigSummary>,
+    #[debug(skip)]
     pub(super) client: QueryProvider,
+    #[debug("{:?}", accounts.len())]
     pub(super) accounts: AccountPool,
+    #[debug(skip)]
     pub(super) generator: WorkloadGenerator,
+    #[debug(skip)]
     pub(super) collector: MetricsCollector,
+    #[debug(skip)]
     pub(super) stop_flag: Arc<AtomicBool>,
+    #[debug(skip)]
     pub(super) cancel_token: CancellationToken,
+    #[debug(skip)]
     pub(super) nonce_managers: Arc<HashMap<Address, NonceManager<RootProvider<Ethereum>>>>,
+    #[debug("{:?}", signers.len())]
     pub(super) signers: Arc<HashMap<Address, PrivateKeySigner>>,
+    #[debug(skip)]
     pub(super) submission_batch_rpcs: Arc<Vec<BatchRpcClient>>,
+    #[debug(skip)]
     pub(super) validity_router: ValidityRouter,
+    #[debug(skip)]
     pub(super) base_fee: u128,
+    #[debug(skip)]
     pub(super) display: Option<LoadTestDisplay>,
+    #[debug(skip)]
     pub(super) snapshot_tx: Option<watch::Sender<DisplaySnapshot>>,
     /// Per-run salt for deriving each sender's own B-20 token, set during B-20 setup.
+    #[debug(skip)]
     pub(super) b20_run_salt: Option<B256>,
+    #[debug(skip)]
     pub(super) recipient_keys: Option<KeyStream>,
+    #[debug(skip)]
     pub(super) recipient_rng: SeededRng,
     /// Summary stashed when a measured run fails after submitting some work.
+    #[debug(skip)]
     pub(super) partial_summary: Option<MetricsSummary>,
 }
 
@@ -500,16 +519,6 @@ impl LoadRunner {
     /// the corresponding [`watch::Receiver`] on each tick.
     pub fn set_snapshot_tx(&mut self, tx: watch::Sender<DisplaySnapshot>) {
         self.snapshot_tx = Some(tx);
-    }
-}
-
-impl std::fmt::Debug for LoadRunner {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("LoadRunner")
-            .field("config", &self.config)
-            .field("accounts", &self.accounts.len())
-            .field("signers_cached", &self.signers.len())
-            .finish_non_exhaustive()
     }
 }
 

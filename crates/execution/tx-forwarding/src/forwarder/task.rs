@@ -82,15 +82,22 @@ impl RateLimiter {
 /// Requests are relayed in the order the queue yields them, and a batch
 /// preserves that order, so a producer may rely on submission order between
 /// requests to the same destination.
+#[derive(derive_more::Debug)]
 pub(crate) struct DestinationForwarder<R> {
     builder_url: url::Url,
     /// Pre-computed URL label shared cheaply across metric emissions.
+    #[debug(skip)]
     url_label: Arc<str>,
+    #[debug(skip)]
     client: HttpClient,
+    #[debug(skip)]
     receiver: mpsc::Receiver<R>,
     config: Arc<ForwarderConfig>,
+    #[debug(skip)]
     limiter: RateLimiter,
+    #[debug(skip)]
     buffer: Vec<R>,
+    #[debug(skip)]
     buffer_limit: usize,
 }
 
@@ -407,15 +414,6 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
             },
             data: data,
         );
-    }
-}
-
-impl<R> std::fmt::Debug for DestinationForwarder<R> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DestinationForwarder")
-            .field("builder_url", &self.builder_url)
-            .field("config", &self.config)
-            .finish_non_exhaustive()
     }
 }
 

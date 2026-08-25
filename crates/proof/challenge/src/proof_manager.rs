@@ -28,29 +28,29 @@ use crate::{
 };
 
 /// Manages the lifecycle of proofs used to dispute invalid games.
+#[derive(derive_more::Debug)]
 pub struct DisputeProofManager<L2: L2Provider, P: ProofRequesterProvider> {
     /// Validates output roots and constructs TEE proof commitments.
+    #[debug(skip)]
     validator: OutputValidator<L2>,
     /// Prover-service requester used to generate and poll fault proofs.
+    #[debug(skip)]
     proof_requester: Arc<P>,
     /// L1 provider used to construct TEE proof requests.
+    #[debug(skip)]
     l1_provider: Arc<dyn L1Provider>,
+    #[debug(skip)]
     verifier_client: Arc<dyn AggregateVerifierClient>,
     /// In-flight proof sessions keyed by game address.
+    #[debug("{:?}", pending_proofs.len())]
     pending_proofs: PendingProofs,
+    #[debug(skip)]
     ignored_games: HashSet<Address>,
+    #[debug(skip)]
     ignored_game_order: VecDeque<Address>,
+    #[debug(skip)]
     max_proof_duration: Duration,
     tee_submit_retry_limit: u32,
-}
-
-impl<L2: L2Provider, P: ProofRequesterProvider> std::fmt::Debug for DisputeProofManager<L2, P> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DisputeProofManager")
-            .field("pending_proofs", &self.pending_proofs.len())
-            .field("tee_submit_retry_limit", &self.tee_submit_retry_limit)
-            .finish_non_exhaustive()
-    }
 }
 
 impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {

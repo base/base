@@ -74,21 +74,17 @@ impl RollupClientConfig {
 }
 
 /// Rollup RPC client implementation using Alloy.
+#[derive(derive_more::Debug)]
 pub struct RollupClient {
     /// The underlying HTTP provider.
+    #[debug(skip)]
     provider: HttpProvider,
     /// Cache for `optimism_outputAtBlock` responses keyed by L2 block number.
+    #[debug("{:?}", output_cache.entry_count())]
     output_cache: MeteredCache<u64, OutputAtBlock>,
     /// Retry configuration.
+    #[debug(skip)]
     retry_config: RetryConfig,
-}
-
-impl std::fmt::Debug for RollupClient {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RollupClient")
-            .field("output_cache_entries", &self.output_cache.entry_count())
-            .finish_non_exhaustive()
-    }
 }
 
 impl RollupClient {

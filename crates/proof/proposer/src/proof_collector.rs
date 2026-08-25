@@ -26,27 +26,19 @@ enum SubmitOutcome {
 }
 
 /// Polls the next expected proof and submits it when ready.
+#[derive(derive_more::Debug)]
 pub struct ProofCollector<R>
 where
     R: RollupProvider,
 {
+    #[debug(skip)]
     proof_requester: Arc<dyn ProofRequesterProvider>,
+    #[debug(skip)]
     rollup_client: Arc<R>,
+    #[debug(skip)]
     submitter: ProofSubmitter,
     block_interval: u64,
     submit_timeout: Option<Duration>,
-}
-
-impl<R> std::fmt::Debug for ProofCollector<R>
-where
-    R: RollupProvider,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ProofCollector")
-            .field("block_interval", &self.block_interval)
-            .field("submit_timeout", &self.submit_timeout)
-            .finish_non_exhaustive()
-    }
 }
 
 impl<R> ProofCollector<R>

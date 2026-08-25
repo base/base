@@ -2,7 +2,6 @@
 
 use std::{
     collections::HashMap,
-    fmt,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -326,19 +325,14 @@ pub enum BatchTxError {
 }
 
 /// A bounded queue with pending batch accounting.
+#[derive(derive_more::Debug)]
 pub struct PipelineQueue<T> {
     /// Queue receiver shared by workers.
+    #[debug(skip)]
     pub receiver: Mutex<mpsc::Receiver<T>>,
     /// Number of queued or in-progress batches.
+    #[debug("{:?}", pending_batches.load(Ordering::SeqCst))]
     pub pending_batches: AtomicU64,
-}
-
-impl<T> fmt::Debug for PipelineQueue<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("PipelineQueue")
-            .field("pending_batches", &self.pending_batches())
-            .finish_non_exhaustive()
-    }
 }
 
 impl<T> PipelineQueue<T> {
@@ -354,45 +348,43 @@ impl<T> PipelineQueue<T> {
 }
 
 /// Shared signer stage context.
-#[derive(Clone)]
+#[derive(Clone, derive_more::Debug)]
 pub struct SignerContext {
     /// Cached private key signers by address.
+    #[debug("{:?}", signers.len())]
     pub signers: Arc<HashMap<Address, PrivateKeySigner>>,
     /// Nonce managers by sender address.
+    #[debug("{:?}", nonce_managers.len())]
     pub nonce_managers: Arc<HashMap<Address, NonceManager<RootProvider<Ethereum>>>>,
     /// Events emitted to the runner.
+    #[debug(skip)]
     pub submit_event_tx: mpsc::Sender<SubmitEvent>,
     /// Chain ID used for signing.
     pub chain_id: u64,
     /// Maximum allowed gas price.
     pub max_gas_price: u128,
     /// Sender for signed batches.
+    #[debug(skip)]
     pub signed_batch_tx: mpsc::Sender<SignedBatch>,
     /// Signed queue accounting.
+    #[debug(skip)]
     pub signed_queue: Arc<PipelineQueue<SignedBatch>>,
 }
 
-impl fmt::Debug for SignerContext {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SignerContext")
-            .field("signers", &self.signers.len())
-            .field("nonce_managers", &self.nonce_managers.len())
-            .field("chain_id", &self.chain_id)
-            .field("max_gas_price", &self.max_gas_price)
-            .finish_non_exhaustive()
-    }
-}
-
 /// Shared sender stage context.
-#[derive(Clone)]
+#[derive(Clone, derive_more::Debug)]
 pub struct SenderContext {
     /// Transaction submission RPC clients.
+    #[debug("{:?}", submission_batch_rpcs.len())]
     pub submission_batch_rpcs: Arc<Vec<BatchRpcClient>>,
     /// Nonce managers by sender address.
+    #[debug("{:?}", nonce_managers.len())]
     pub nonce_managers: Arc<HashMap<Address, NonceManager<RootProvider<Ethereum>>>>,
     /// Results tracker updated after RPC acceptance.
+    #[debug(skip)]
     pub results_tracker: ResultsTracker,
     /// Events emitted to the runner.
+    #[debug(skip)]
     pub submit_event_tx: mpsc::Sender<SubmitEvent>,
     /// Whether nonce return is enabled for rejected signed transactions.
     pub return_reserved_nonces: bool,
@@ -401,27 +393,24 @@ pub struct SenderContext {
     /// how many transactions are in flight (unconfirmed) or how many sender
     /// workers exist. `None` leaves concurrency bounded only by the sender worker
     /// count, as before.
+    #[debug(skip)]
     pub submit_request_limiter: Option<Arc<Semaphore>>,
 }
 
-impl fmt::Debug for SenderContext {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SenderContext")
-            .field("submission_batch_rpcs", &self.submission_batch_rpcs.len())
-            .field("nonce_managers", &self.nonce_managers.len())
-            .field("return_reserved_nonces", &self.return_reserved_nonces)
-            .finish_non_exhaustive()
-    }
-}
-
 /// Running submission pipeline.
+#[derive(derive_more::Debug)]
 pub struct SubmissionPipeline {
+    #[debug(skip)]
     prepared_batch_tx: Option<mpsc::Sender<PreparedBatch>>,
+    #[debug(skip)]
     signed_batch_tx: Option<mpsc::Sender<SignedBatch>>,
     prepared_queue: Arc<PipelineQueue<PreparedBatch>>,
     signed_queue: Arc<PipelineQueue<SignedBatch>>,
+    #[debug(skip)]
     shutdown: CancellationToken,
+    #[debug("{:?}", signer_workers.len())]
     signer_workers: Vec<JoinHandle<()>>,
+    #[debug("{:?}", sender_workers.len())]
     sender_workers: Vec<JoinHandle<()>>,
 }
 
@@ -436,17 +425,6 @@ pub struct PipelineStartConfig {
     /// sender workers and per-batch RPC chunks. `None` leaves those requests
     /// unconstrained by a shared semaphore.
     pub max_concurrent_submit_requests: Option<usize>,
-}
-
-impl fmt::Debug for SubmissionPipeline {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SubmissionPipeline")
-            .field("prepared_queue", &self.prepared_queue)
-            .field("signed_queue", &self.signed_queue)
-            .field("signer_workers", &self.signer_workers.len())
-            .field("sender_workers", &self.sender_workers.len())
-            .finish_non_exhaustive()
-    }
 }
 
 impl SubmissionPipeline {

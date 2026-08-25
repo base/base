@@ -92,35 +92,29 @@ where
 /// The inner iterator remains responsible for nonce contiguity and source ordering. This adapter
 /// only buffers descendants that the inner iterator unlocks while an earlier member of their lane
 /// is parked or waiting for an execution outcome.
+#[derive(derive_more::Debug)]
 pub struct ParkedBestTransactions<T, I, O>
 where
     T: BasePooledTx,
     I: BestTransactions<Item = Arc<ValidPoolTransaction<T>>>,
     O: TransactionOrdering<Transaction = T>,
 {
+    #[debug(skip)]
     inner: I,
+    #[debug(skip)]
     ordering: O,
+    #[debug(skip)]
     base_fee: u64,
+    #[debug(skip)]
     source_head: Option<Arc<ValidPoolTransaction<T>>>,
+    #[debug("{:?}", lanes.len())]
     lanes: HashMap<BestTransactionLane, BestTransactionLaneState<T>>,
+    #[debug("{:?}", parked.len())]
     parked: HashMap<TxHash, Arc<ValidPoolTransaction<T>>>,
+    #[debug("{:?}", ready.len())]
     ready: HashMap<TxHash, Arc<ValidPoolTransaction<T>>>,
+    #[debug(skip)]
     ready_heap: BinaryHeap<(BestTransactionPriority<O::PriorityValue>, TxHash)>,
-}
-
-impl<T, I, O> std::fmt::Debug for ParkedBestTransactions<T, I, O>
-where
-    T: BasePooledTx,
-    I: BestTransactions<Item = Arc<ValidPoolTransaction<T>>>,
-    O: TransactionOrdering<Transaction = T>,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ParkedBestTransactions")
-            .field("lanes", &self.lanes.len())
-            .field("parked", &self.parked.len())
-            .field("ready", &self.ready.len())
-            .finish_non_exhaustive()
-    }
 }
 
 impl<T, I, O> ParkedBestTransactions<T, I, O>

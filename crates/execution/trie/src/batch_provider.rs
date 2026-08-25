@@ -1,8 +1,6 @@
 //! State provider for an active [`BaseProofsBatchSession`] enabling reads to observe
 //! uncommitted writes performed earlier in the same session.
 
-use std::fmt::Debug;
-
 use alloy_primitives::{
     keccak256,
     map::{B256Map, HashMap},
@@ -37,23 +35,12 @@ use crate::{
 };
 
 /// State provider that reads through an active [`BaseProofsBatchSession`]'s transaction.
-#[derive(Constructor)]
+#[derive(Constructor, derive_more::Debug)]
 pub struct BaseProofsBatchStateProviderRef<'a, S: BaseProofsBatchSession> {
+    #[debug(skip)]
     latest: Box<dyn StateProvider + Send + 'a>,
     session: &'a S,
     block_number: BlockNumber,
-}
-
-impl<S> Debug for BaseProofsBatchStateProviderRef<'_, S>
-where
-    S: BaseProofsBatchSession,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BaseProofsBatchStateProviderRef")
-            .field("session", &self.session)
-            .field("block_number", &self.block_number)
-            .finish()
-    }
 }
 
 impl<'a, S: BaseProofsBatchSession> BaseProofsBatchStateProviderRef<'a, S> {

@@ -1,4 +1,3 @@
-use core::fmt::{Debug, Formatter};
 use std::{net::SocketAddr, num::NonZeroUsize, sync::Arc};
 
 use base_ring_buffer::RingBuffer;
@@ -40,10 +39,15 @@ const DEFAULT_RING_BUFFER_CAPACITY: NonZeroUsize = NonZeroUsize::new(16).unwrap(
 ///
 /// Dropping the publisher cancels the listener, gracefully closing all
 /// connections.
+#[derive(derive_more::Debug)]
 pub struct WebSocketPublisher {
+    #[debug(skip)]
     cancel: CancellationToken,
+    #[debug("{:?}", pipe.receiver_count())]
     pipe: broadcast::Sender<PositionedPayload>,
+    #[debug(skip)]
     metrics: Arc<dyn PublisherMetrics>,
+    #[debug(skip)]
     ring_buffer: Arc<RwLock<RingBuffer<FlashblockPosition, Utf8Bytes>>>,
 }
 
@@ -138,14 +142,6 @@ impl Drop for WebSocketPublisher {
     fn drop(&mut self) {
         self.cancel.cancel();
         info!("WebSocketPublisher dropped, terminating listener loop");
-    }
-}
-
-impl Debug for WebSocketPublisher {
-    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("WebSocketPublisher")
-            .field("subscribers", &self.pipe.receiver_count())
-            .finish()
     }
 }
 

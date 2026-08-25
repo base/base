@@ -44,7 +44,7 @@ tracing = { workspace = true, features = ["std"] }
 eyre = { workspace = true, optional = true }
 base-test-utils = { workspace = true, optional = true }
 base-common-flashblocks = { workspace = true, optional = true }
-derive_more = { workspace = true, features = ["deref"], optional = true }
+derive_more = { workspace = true, features = ["deref", "debug"], optional = true }
 
 [dev-dependencies]
 # workspace

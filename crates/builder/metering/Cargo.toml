@@ -19,5 +19,6 @@ alloy-primitives.workspace = true
 base-node-runner.workspace = true
 base-builder-core.workspace = true
 moka = { workspace = true, features = ["sync"] }
+derive_more = { workspace = true, features = ["debug"] }
 
 [dev-dependencies]

@@ -1,7 +1,5 @@
 //! Contains the [`BaseNodeRunner`], which is responsible for configuring and launching a Base node.
 
-use std::fmt;
-
 use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
 use base_node_core::args::RollupArgs;
 use eyre::Result;
@@ -25,12 +23,15 @@ pub struct LaunchedBaseNode {
 }
 
 /// Wraps the Base node configuration and orchestrates builder wiring.
+#[derive(derive_more::Debug)]
 pub struct BaseNodeRunner<SB: PayloadServiceBuilder = DefaultPayloadServiceBuilder> {
     /// Rollup-specific arguments forwarded to the Base node implementation.
     rollup_args: RollupArgs,
     /// Registered builder extensions.
+    #[debug("{:?}", extensions.len())]
     extensions: Vec<Box<dyn BaseNodeExtension>>,
     /// Payload service builder.
+    #[debug(skip)]
     service_builder: SB,
     /// Shared DA configuration for the node and payload builder.
     da_config: Option<BaseDAConfig>,
@@ -40,6 +41,7 @@ pub struct BaseNodeRunner<SB: PayloadServiceBuilder = DefaultPayloadServiceBuild
     /// captured authorization manifest before execution.
     manifest_precheck_enabled: bool,
     /// Binary-owned callbacks to run after the node has started.
+    #[debug("{:?}", started_callbacks.len())]
     started_callbacks: Vec<StartedCallback>,
 }
 
@@ -55,19 +57,6 @@ impl BaseNodeRunner<DefaultPayloadServiceBuilder> {
             manifest_precheck_enabled: true,
             started_callbacks: Vec::new(),
         }
-    }
-}
-
-impl<SB: PayloadServiceBuilder> fmt::Debug for BaseNodeRunner<SB> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("BaseNodeRunner")
-            .field("rollup_args", &self.rollup_args)
-            .field("extensions", &self.extensions.len())
-            .field("da_config", &self.da_config)
-            .field("gas_limit_config", &self.gas_limit_config)
-            .field("manifest_precheck_enabled", &self.manifest_precheck_enabled)
-            .field("started_callbacks", &self.started_callbacks.len())
-            .finish()
     }
 }
 

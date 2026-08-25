@@ -1,6 +1,6 @@
 //! Witness generation for Succinct ZK proving backends.
 
-use std::{error::Error as StdError, fmt, sync::Arc};
+use std::{error::Error as StdError, sync::Arc};
 
 use alloy_primitives::{Address, B256};
 use base_l1_head::{L1HeadCalculator, L1HeadError};
@@ -29,7 +29,7 @@ pub struct WitnessParams<'a> {
 }
 
 /// Source used to select the L1 head hash for witness generation.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, derive_more::Debug)]
 pub enum L1HeadSource<'a> {
     /// Use this exact L1 head hash.
     Pinned(B256),
@@ -38,24 +38,12 @@ pub enum L1HeadSource<'a> {
         /// Sequence-window size used for L1-head calculation.
         sequence_window: u64,
         /// L1 execution-layer RPC URL, used for sequence-window calculation.
+        #[debug("{:?}", "<redacted>")]
         l1_node_url: &'a str,
         /// Base consensus-layer RPC URL, used for sequence-window calculation.
+        #[debug("{:?}", "<redacted>")]
         base_consensus_url: &'a str,
     },
-}
-
-impl fmt::Debug for L1HeadSource<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Pinned(hash) => f.debug_tuple("Pinned").field(hash).finish(),
-            Self::SequenceWindow { sequence_window, .. } => f
-                .debug_struct("SequenceWindow")
-                .field("sequence_window", sequence_window)
-                .field("l1_node_url", &"<redacted>")
-                .field("base_consensus_url", &"<redacted>")
-                .finish(),
-        }
-    }
 }
 
 impl L1HeadSource<'_> {
@@ -130,15 +118,10 @@ pub enum WitnessError {
 }
 
 /// Provider wrapping the Succinct host for witness generation.
-#[derive(Clone)]
+#[derive(Clone, derive_more::Debug)]
 pub struct OpSuccinctWitnessProvider {
+    #[debug(skip)]
     host: Arc<SuccinctHost>,
-}
-
-impl fmt::Debug for OpSuccinctWitnessProvider {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("OpSuccinctWitnessProvider").finish_non_exhaustive()
-    }
 }
 
 impl OpSuccinctWitnessProvider {

@@ -1,6 +1,6 @@
 //! Reusable Nitro enclave proof pool.
 
-use std::{fmt, sync::Arc};
+use std::sync::Arc;
 
 use base_proof_host::{ProverConfig, ProverError, ProverService};
 use base_proof_primitives::{ProofRequest, ProofResult};
@@ -33,18 +33,12 @@ struct EnclaveService {
 /// The pool owns enclave transports, per-enclave proving services, per-enclave
 /// concurrency permits, optional registration checks, and multi-enclave signer
 /// selection.
+#[derive(derive_more::Debug)]
 pub struct NitroEnclavePool {
+    #[debug("{:?}", enclaves.len())]
     enclaves: Vec<EnclaveService>,
+    #[debug("{:?}", checker.is_some())]
     checker: Option<Arc<RegistrationChecker>>,
-}
-
-impl fmt::Debug for NitroEnclavePool {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("NitroEnclavePool")
-            .field("enclave_count", &self.enclaves.len())
-            .field("has_registration_checker", &self.checker.is_some())
-            .finish()
-    }
 }
 
 impl NitroEnclavePool {

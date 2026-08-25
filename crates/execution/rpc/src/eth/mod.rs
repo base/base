@@ -12,11 +12,7 @@ mod call;
 mod pending_block;
 mod pubsub;
 
-use std::{
-    fmt::{self, Formatter},
-    marker::PhantomData,
-    sync::Arc,
-};
+use std::{marker::PhantomData, sync::Arc};
 
 use alloy_primitives::U256;
 use base_common_rpc_types::BaseRpcTypes;
@@ -60,8 +56,10 @@ pub type EthApiNodeBackend<N, Rpc> = EthApiInner<N, Rpc>;
 ///
 /// This type implements the [`FullEthApi`](reth_rpc_eth_api::helpers::FullEthApi) by implemented
 /// all the `Eth` helper traits and prerequisite traits.
+#[derive(derive_more::Debug)]
 pub struct BaseEthApi<N: RpcNodeCore, Rpc: RpcConvert> {
     /// Gateway to node's core components.
+    #[debug(skip)]
     inner: Arc<BaseEthApiInner<N, Rpc>>,
 }
 
@@ -272,31 +270,24 @@ where
 {
 }
 
-impl<N: RpcNodeCore, Rpc: RpcConvert> fmt::Debug for BaseEthApi<N, Rpc> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("BaseEthApi").finish_non_exhaustive()
-    }
-}
-
 /// Container type `BaseEthApi`
+#[derive(derive_more::Debug)]
 pub struct BaseEthApiInner<N: RpcNodeCore, Rpc: RpcConvert> {
     /// Gateway to node's core components.
+    #[debug(skip)]
     eth_api: EthApiNodeBackend<N, Rpc>,
     /// Sequencer client, configured to forward submitted transactions to sequencer of the given
     /// Base network.
+    #[debug(skip)]
     sequencer_client: Option<SequencerClient>,
     /// Minimum priority fee enforced by rollup-specific logic.
     ///
     /// See also <https://github.com/ethereum-optimism/op-geth/blob/d4e0fe9bb0c2075a9bff269fb975464dd8498f75/eth/gasprice/optimism-gasprice.go#L38-L38>
+    #[debug(skip)]
     min_suggested_priority_fee: U256,
     /// Shared cache of validated `BaseTime` timestamps.
+    #[debug(skip)]
     base_time: BaseTimeCache,
-}
-
-impl<N: RpcNodeCore, Rpc: RpcConvert> fmt::Debug for BaseEthApiInner<N, Rpc> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("BaseEthApiInner").finish()
-    }
 }
 
 impl<N: RpcNodeCore, Rpc: RpcConvert> BaseEthApiInner<N, Rpc> {

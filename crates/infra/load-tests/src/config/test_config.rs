@@ -1,4 +1,4 @@
-use std::{fmt, path::Path, time::Duration};
+use std::{path::Path, time::Duration};
 
 use alloy_primitives::{Address, U256};
 use alloy_signer_local::PrivateKeySigner;
@@ -20,7 +20,7 @@ use crate::{
 };
 
 /// Configuration for a load test, loadable from YAML.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, derive_more::Debug)]
 #[serde(default)]
 pub struct TestConfig {
     /// HTTP JSON-RPC endpoints used for transaction submission.
@@ -44,6 +44,7 @@ pub struct TestConfig {
     /// Mnemonic phrase for deriving sender accounts.
     /// If not provided, accounts are generated from seed.
     #[serde(skip_serializing)]
+    #[debug("{:?}", mnemonic.as_ref().map(|_| "[REDACTED]"))]
     pub mnemonic: Option<String>,
 
     /// Amount to fund each sender account (in wei, as string).
@@ -185,39 +186,6 @@ impl Default for TestConfig {
             skip_drain: false,
             validity: ValidityConfig::default(),
         }
-    }
-}
-
-impl fmt::Debug for TestConfig {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("TestConfig")
-            .field("transaction_submission_rpcs", &self.transaction_submission_rpcs)
-            .field("query_rpc", &self.query_rpc)
-            .field("txpool_nodes", &self.txpool_nodes)
-            .field("flashblocks_ws", &self.flashblocks_ws)
-            .field("mnemonic", &self.mnemonic.as_ref().map(|_| "[REDACTED]"))
-            .field("funding_amount", &self.funding_amount)
-            .field("sender_count", &self.sender_count)
-            .field("sender_offset", &self.sender_offset)
-            .field("in_flight_per_sender", &self.in_flight_per_sender)
-            .field("max_total_in_flight", &self.max_total_in_flight)
-            .field("max_concurrent_submit_requests", &self.max_concurrent_submit_requests)
-            .field("batch_size", &self.batch_size)
-            .field("duration", &self.duration)
-            .field("measurement_blocks", &self.measurement_blocks)
-            .field("target_gps", &self.target_gps)
-            .field("block_time", &self.block_time)
-            .field("seed", &self.seed)
-            .field("chain_id", &self.chain_id)
-            .field("transactions", &self.transactions)
-            .field("fresh_recipient_ratio", &self.fresh_recipient_ratio)
-            .field("looper_contract", &self.looper_contract)
-            .field("swap_token_amount", &self.swap_token_amount)
-            .field("b20_mint_amount", &self.b20_mint_amount)
-            .field("real_token_setup", &self.real_token_setup)
-            .field("skip_drain", &self.skip_drain)
-            .field("validity", &self.validity)
-            .finish()
     }
 }
 

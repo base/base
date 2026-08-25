@@ -81,14 +81,9 @@ pub struct LocalInstance {
     db_dir: PathBuf,
 }
 
+#[derive(derive_more::Debug)]
 struct PoolHandle<P> {
     pool: P,
-}
-
-impl<P: core::fmt::Debug> core::fmt::Debug for PoolHandle<P> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("PoolHandle").field("pool", &self.pool).finish()
-    }
 }
 
 /// Trait for submitting transactions to the pool from outside the node.

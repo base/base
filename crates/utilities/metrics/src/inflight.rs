@@ -4,27 +4,16 @@
 ///
 /// Prefer the [`inflight!`] macro to construct this type.
 #[cfg(feature = "metrics")]
+#[derive(derive_more::Debug)]
 pub struct InflightCounter {
+    #[debug(skip)]
     gauge: metrics::Gauge,
 }
 
 /// No-op guard used when the `metrics` feature is disabled.
 #[cfg(not(feature = "metrics"))]
+#[derive(derive_more::Debug)]
 pub struct InflightCounter;
-
-#[cfg(feature = "metrics")]
-impl core::fmt::Debug for InflightCounter {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("InflightCounter").finish_non_exhaustive()
-    }
-}
-
-#[cfg(not(feature = "metrics"))]
-impl core::fmt::Debug for InflightCounter {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("InflightCounter").finish()
-    }
-}
 
 #[cfg(feature = "metrics")]
 impl InflightCounter {

@@ -1,26 +1,20 @@
-use std::{fmt, net::IpAddr};
+use std::net::IpAddr;
 
 use axum::extract::ws::WebSocket;
 
 use crate::{filter::FilterType, rate_limit::Ticket};
 
 /// A connected WebSocket client with its associated metadata.
+#[derive(derive_more::Debug)]
 pub struct ClientConnection {
     client_addr: IpAddr,
+    #[debug(skip)]
     _ticket: Ticket,
     /// The WebSocket connection for this client.
+    #[debug(skip)]
     pub websocket: WebSocket,
     /// The event filter this client is subscribed to.
     pub filter: FilterType,
-}
-
-impl fmt::Debug for ClientConnection {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ClientConnection")
-            .field("client_addr", &self.client_addr)
-            .field("filter", &self.filter)
-            .finish_non_exhaustive()
-    }
 }
 
 impl ClientConnection {

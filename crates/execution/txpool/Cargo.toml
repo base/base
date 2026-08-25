@@ -53,7 +53,7 @@ futures.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 async-trait.workspace = true
-derive_more.workspace = true
+derive_more = { workspace = true, features = ["debug"] }
 parking_lot.workspace = true
 tokio-stream.workspace = true
 tokio = { workspace = true, features = ["sync", "rt", "time"] }

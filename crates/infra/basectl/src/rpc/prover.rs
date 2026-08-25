@@ -1,6 +1,6 @@
 //! Prover-service requester client helpers for the `basectl proofs` command group.
 
-use std::{fmt, time::Duration};
+use std::time::Duration;
 
 use alloy_primitives::{Address, B256};
 use base_prover_service_client::{
@@ -258,22 +258,13 @@ impl ProofProposeRequest {
 }
 
 /// Prover-service requester client used by the `basectl proofs` commands.
-#[derive(Clone)]
+#[derive(Clone, derive_more::Debug)]
 pub struct ProofsClient {
     endpoint: String,
+    #[debug(skip)]
     requester: ProofRequesterClient,
     poll_interval: Duration,
     max_wait: Duration,
-}
-
-impl fmt::Debug for ProofsClient {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ProofsClient")
-            .field("endpoint", &self.endpoint)
-            .field("poll_interval", &self.poll_interval)
-            .field("max_wait", &self.max_wait)
-            .finish_non_exhaustive()
-    }
 }
 
 impl ProofsClient {

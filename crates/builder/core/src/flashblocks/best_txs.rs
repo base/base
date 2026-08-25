@@ -10,33 +10,25 @@ use reth_transaction_pool::PoolTransaction;
 use crate::{BuilderMetrics, RejectionCache};
 
 /// An adapter that skips transactions already committed or permanently rejected by flashblocks.
+#[derive(derive_more::Debug)]
 pub struct BestFlashblocksTxs<T, I>
 where
     T: PoolTransaction,
     I: ParkablePayloadTransactions<Transaction = T>,
 {
+    #[debug(skip)]
     inner: I,
     // Transactions that were already committed to the state. Using them again would cause NonceTooLow
     // so we skip them
     committed_transactions: HashSet<TxHash>,
     // Shared cross-block rejection cache (survives across blocks, TTL-bounded)
+    #[debug("{:?}", rejection_cache.entry_count())]
     rejection_cache: RejectionCache,
     // Identity of the transaction most recently returned to the build loop.
+    #[debug(skip)]
     current_transaction: Option<(TxHash, Address, u64)>,
+    #[debug(skip)]
     transaction: PhantomData<T>,
-}
-
-impl<T, I> std::fmt::Debug for BestFlashblocksTxs<T, I>
-where
-    T: PoolTransaction,
-    I: ParkablePayloadTransactions<Transaction = T>,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BestFlashblocksTxs")
-            .field("committed_transactions", &self.committed_transactions)
-            .field("rejection_cache_size", &self.rejection_cache.entry_count())
-            .finish_non_exhaustive()
-    }
 }
 
 impl<T, I> BestFlashblocksTxs<T, I>

@@ -35,6 +35,7 @@ thiserror.workspace = true
 serde_json.workspace = true
 tokio-util.workspace = true
 metrics = { workspace = true, optional = true }
+derive_more = { workspace = true, features = ["debug"] }
 tokio = { workspace = true, features = ["sync", "rt", "time"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }
 

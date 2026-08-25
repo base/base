@@ -15,6 +15,7 @@ workspace = true
 [dependencies]
 ctor = { workspace = true, optional = true }
 metrics = { workspace = true, optional = true }
+derive_more = { workspace = true, features = ["debug"] }
 
 [dev-dependencies]
 metrics = { workspace = true }

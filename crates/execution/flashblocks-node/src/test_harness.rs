@@ -9,7 +9,6 @@
 //! - [`FlashblocksBuilderTestHarness`] - Test harness builder for building flashblocks
 
 use std::{
-    fmt,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -55,16 +54,12 @@ use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 const SLEEP_TIME: u64 = 10;
 
 /// Components that allow tests to interact with the Flashblocks worker tasks.
-#[derive(Clone)]
+#[derive(Clone, derive_more::Debug)]
 pub struct FlashblocksParts {
+    #[debug(skip)]
     sender: mpsc::Sender<(Flashblock, oneshot::Sender<()>)>,
+    #[debug(skip)]
     state: Arc<FlashblocksState>,
-}
-
-impl fmt::Debug for FlashblocksParts {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("FlashblocksParts").finish_non_exhaustive()
-    }
 }
 
 impl FlashblocksParts {
@@ -91,20 +86,16 @@ pub struct FlashblocksTestExtension {
     inner: Arc<FlashblocksTestExtensionInner>,
 }
 
+#[derive(derive_more::Debug)]
 struct FlashblocksTestExtensionInner {
+    #[debug(skip)]
     sender: mpsc::Sender<(Flashblock, oneshot::Sender<()>)>,
     #[allow(clippy::type_complexity)]
+    #[debug(skip)]
     receiver: Arc<Mutex<Option<mpsc::Receiver<(Flashblock, oneshot::Sender<()>)>>>>,
+    #[debug(skip)]
     state: Arc<FlashblocksState>,
     process_canonical: bool,
-}
-
-impl fmt::Debug for FlashblocksTestExtensionInner {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("FlashblocksTestExtensionInner")
-            .field("process_canonical", &self.process_canonical)
-            .finish_non_exhaustive()
-    }
 }
 
 impl FlashblocksTestExtension {
@@ -217,18 +208,10 @@ impl BaseNodeExtension for FlashblocksTestExtension {
 }
 
 /// Local node wrapper that exposes helpers specific to Flashblocks tests.
+#[derive(derive_more::Debug)]
 pub struct FlashblocksLocalNode {
     node: LocalNode,
     parts: FlashblocksParts,
-}
-
-impl fmt::Debug for FlashblocksLocalNode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("FlashblocksLocalNode")
-            .field("node", &self.node)
-            .field("parts", &self.parts)
-            .finish()
-    }
 }
 
 impl FlashblocksLocalNode {

@@ -24,6 +24,7 @@ base-ring-buffer.workspace = true
 tokio-tungstenite.workspace = true
 metrics = { workspace = true, optional = true }
 serde_json = { workspace = true, features = ["std"] }
+derive_more = { workspace = true, features = ["debug"] }
 tokio = { workspace = true, features = ["net", "sync", "macros", "rt", "time"] }
 
 [dev-dependencies]

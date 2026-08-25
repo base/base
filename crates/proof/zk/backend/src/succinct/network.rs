@@ -42,11 +42,12 @@ macro_rules! backend_error {
 }
 
 /// SP1 Network backend settings.
-#[derive(Clone)]
+#[derive(Clone, derive_more::Debug)]
 pub struct SuccinctNetworkBackendConfig {
     /// Shared RPC settings.
     pub rpc: SuccinctRpcConfig,
     /// SP1 network requester private key, or KMS key ARN when `use_kms_requester` is true.
+    #[debug("{:?}", "<redacted>")]
     pub network_private_key: String,
     /// Use the requester key as an AWS KMS ARN instead of a local private key.
     pub use_kms_requester: bool,
@@ -60,21 +61,6 @@ pub struct SuccinctNetworkBackendConfig {
     pub aggregation_cycle_limit: u64,
     /// Gas limit for aggregation proof requests.
     pub aggregation_gas_limit: u64,
-}
-
-impl fmt::Debug for SuccinctNetworkBackendConfig {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SuccinctNetworkBackendConfig")
-            .field("rpc", &self.rpc)
-            .field("network_private_key", &"<redacted>")
-            .field("use_kms_requester", &self.use_kms_requester)
-            .field("timeout", &self.timeout)
-            .field("range_cycle_limit", &self.range_cycle_limit)
-            .field("range_gas_limit", &self.range_gas_limit)
-            .field("aggregation_cycle_limit", &self.aggregation_cycle_limit)
-            .field("aggregation_gas_limit", &self.aggregation_gas_limit)
-            .finish()
-    }
 }
 
 /// Configuration for [`NetworkZkProver`].
@@ -125,16 +111,12 @@ impl fmt::Debug for NetworkZkProverConfig {
 }
 
 /// [`ZkProver`] backed by the SP1 prover network.
-#[derive(Clone)]
+#[derive(Clone, derive_more::Debug)]
 pub struct NetworkZkProver {
+    #[debug(skip)]
     provider: OpSuccinctWitnessProvider,
+    #[debug(skip)]
     config: NetworkZkProverConfig,
-}
-
-impl std::fmt::Debug for NetworkZkProver {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("NetworkZkProver").finish_non_exhaustive()
-    }
 }
 
 impl NetworkZkProver {

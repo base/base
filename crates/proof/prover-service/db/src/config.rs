@@ -1,28 +1,19 @@
-use std::{fmt, time::Duration};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use tracing::info;
 
 /// Database configuration.
-#[derive(Clone)]
+#[derive(Clone, derive_more::Debug)]
 pub struct DatabaseConfig {
     /// Connection URL.
+    #[debug("{:?}", mask_password(url))]
     pub url: String,
     /// Maximum number of connections in the pool.
     pub max_connections: u32,
     /// Timeout for acquiring a connection.
     pub connection_timeout: Duration,
-}
-
-impl fmt::Debug for DatabaseConfig {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("DatabaseConfig")
-            .field("url", &mask_password(&self.url))
-            .field("max_connections", &self.max_connections)
-            .field("connection_timeout", &self.connection_timeout)
-            .finish()
-    }
 }
 
 impl DatabaseConfig {

@@ -27,7 +27,7 @@ base-precompile-macros.workspace = true
 # misc
 thiserror.workspace = true
 tracing.workspace = true
-derive_more = { workspace = true, features = ["from", "try_into"] }
+derive_more = { workspace = true, features = ["from", "try_into", "debug"] }
 
 [dev-dependencies]
 proptest.workspace = true

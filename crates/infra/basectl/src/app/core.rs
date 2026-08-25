@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt, io::Stdout};
+use std::{collections::HashMap, io::Stdout};
 
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
@@ -40,34 +40,25 @@ impl NetworkPicker {
 // ---------------------------------------------------------------------------
 
 /// Main TUI application that manages views, routing, and the event loop.
+#[derive(derive_more::Debug)]
 pub struct App {
     router: Router,
     resources: Resources,
     show_help: bool,
+    #[debug("({} views)", view_cache.len())]
     view_cache: HashMap<ViewId, Box<dyn View>>,
     /// Network picker overlay; `None` when closed.
+    #[debug("{:?}", network_picker.as_ref().map(|_| ".."))]
     network_picker: Option<NetworkPicker>,
     /// Pending async network-load result. `Some` while a switch is in flight.
+    #[debug("{:?}", pending_network.is_some())]
     pending_network: Option<oneshot::Receiver<anyhow::Result<MonitoringConfig>>>,
     /// Bootstrap conductor RPC URL from `--conductor-rpc`. Forwarded to background
     /// services on every network switch so discovery survives the rebuild.
+    #[debug(skip)]
     conductor_rpc: Option<Url>,
     /// Whether the active EL endpoint is the configured public RPC.
     using_public_rpc: bool,
-}
-
-impl fmt::Debug for App {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("App")
-            .field("router", &self.router)
-            .field("resources", &self.resources)
-            .field("show_help", &self.show_help)
-            .field("view_cache", &format_args!("({} views)", self.view_cache.len()))
-            .field("network_picker", &self.network_picker.as_ref().map(|_| ".."))
-            .field("pending_network", &self.pending_network.is_some())
-            .field("using_public_rpc", &self.using_public_rpc)
-            .finish()
-    }
 }
 
 impl App {

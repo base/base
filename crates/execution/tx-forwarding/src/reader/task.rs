@@ -1,4 +1,4 @@
-use std::{fmt, sync::Arc};
+use std::sync::Arc;
 
 use alloy_eips::Encodable2718;
 use alloy_primitives::{Bytes, TxHash};
@@ -26,13 +26,18 @@ use crate::forwarder::InsertValidatedTransaction;
 /// forwarder: this is the component that holds a [`ValidPoolTransaction`], and
 /// it runs on a blocking thread, which keeps the EIP-2718 encoding off the
 /// async runtime.
+#[derive(derive_more::Debug)]
 pub(crate) struct DestinationReader<P: TransactionPool, E = NoExtensions> {
+    #[debug(skip)]
     pool: P,
     config: ReaderConfig,
     recently_sent: RecentlySent,
+    #[debug(skip)]
     sender: mpsc::Sender<InsertValidatedTransaction<E>>,
+    #[debug(skip)]
     cancel: CancellationToken,
     builder_url: Url,
+    #[debug(skip)]
     url_label: Arc<str>,
 }
 
@@ -179,16 +184,6 @@ where
                 "resend_after_ms" => self.config.resend_after.as_millis() as u64,
             },
         );
-    }
-}
-
-impl<P: TransactionPool, E> fmt::Debug for DestinationReader<P, E> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("DestinationReader")
-            .field("builder_url", &self.builder_url)
-            .field("config", &self.config)
-            .field("recently_sent", &self.recently_sent)
-            .finish_non_exhaustive()
     }
 }
 

@@ -1,6 +1,6 @@
 //! Metering collector that reads timing data from `PendingBlocks` broadcasts.
 
-use std::{collections::HashMap, fmt, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use alloy_consensus::BlockHeader;
 use alloy_primitives::{Bytes, U256, keccak256};
@@ -26,20 +26,14 @@ impl FlashblockPosition {
 
 /// Subscribes to `PendingBlocks` broadcasts and populates [`MeteringCache`]
 /// with per-transaction resource usage data derived from flashblock execution.
+#[derive(derive_more::Debug)]
 pub struct MeteringCollector {
+    #[debug(skip)]
     cache: Arc<RwLock<MeteringCache>>,
+    #[debug(skip)]
     flashblock_rx: broadcast::Receiver<Arc<PendingBlocks>>,
     last_earliest_block: Option<u64>,
     last_processed: Option<FlashblockPosition>,
-}
-
-impl fmt::Debug for MeteringCollector {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("MeteringCollector")
-            .field("last_earliest_block", &self.last_earliest_block)
-            .field("last_processed", &self.last_processed)
-            .finish_non_exhaustive()
-    }
 }
 
 impl MeteringCollector {

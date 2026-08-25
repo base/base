@@ -18,6 +18,7 @@ tracing = { workspace = true, features = ["std"] }
 base-comp = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 alloy-eips = { workspace = true, features = ["std"] }
+derive_more = { workspace = true, features = ["debug"] }
 base-protocol = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
 rand = { workspace = true, features = ["std", "small_rng"] }

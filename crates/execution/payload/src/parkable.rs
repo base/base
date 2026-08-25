@@ -141,23 +141,15 @@ where
 }
 
 /// Converts a parkable best iterator into the payload-transaction interface used by the builder.
+#[derive(derive_more::Debug)]
 pub struct ParkableBestPayloadTransactions<T>
 where
     T: BasePooledTx,
 {
+    #[debug(skip)]
     inner: Box<dyn ParkableBestTransactions<T>>,
+    #[debug("{:?}", current.is_some())]
     current: Option<Arc<ValidPoolTransaction<T>>>,
-}
-
-impl<T> std::fmt::Debug for ParkableBestPayloadTransactions<T>
-where
-    T: BasePooledTx,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ParkableBestPayloadTransactions")
-            .field("has_current", &self.current.is_some())
-            .finish_non_exhaustive()
-    }
 }
 
 impl<T> ParkableBestPayloadTransactions<T>

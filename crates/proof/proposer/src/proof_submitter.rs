@@ -41,27 +41,20 @@ pub enum SubmitAction {
 }
 
 /// Validates a TEE proof against the canonical chain and submits it to L1.
-#[derive(Clone)]
+#[derive(Clone, derive_more::Debug)]
 pub struct ProofSubmitter {
+    #[debug(skip)]
     output_proposer: Arc<dyn OutputProposer>,
+    #[debug(skip)]
     rollup_client: Arc<dyn RollupProvider>,
+    #[debug(skip)]
     factory_client: Arc<dyn DisputeGameFactoryClient>,
+    #[debug(skip)]
     verifier_client: Arc<dyn AggregateVerifierClient>,
     game_type: u32,
     block_interval: u64,
     intermediate_block_interval: u64,
     output_fetch_concurrency: usize,
-}
-
-impl std::fmt::Debug for ProofSubmitter {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ProofSubmitter")
-            .field("game_type", &self.game_type)
-            .field("block_interval", &self.block_interval)
-            .field("intermediate_block_interval", &self.intermediate_block_interval)
-            .field("output_fetch_concurrency", &self.output_fetch_concurrency)
-            .finish_non_exhaustive()
-    }
 }
 
 impl ProofSubmitter {

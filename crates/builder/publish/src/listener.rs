@@ -1,4 +1,3 @@
-use core::fmt::{Debug, Formatter};
 use std::sync::Arc;
 
 use base_ring_buffer::RingBuffer;
@@ -17,20 +16,18 @@ const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10
 ///
 /// Accepts incoming TCP connections, upgrades them to WebSocket, and spawns
 /// a [`BroadcastLoop`] for each connected client.
+#[derive(derive_more::Debug)]
 pub struct Listener {
+    #[debug("{:?}", listener.local_addr())]
     listener: TcpListener,
+    #[debug(skip)]
     metrics: Arc<dyn PublisherMetrics>,
+    #[debug(skip)]
     receiver: Receiver<PositionedPayload>,
+    #[debug(skip)]
     ring_buffer: Arc<RwLock<RingBuffer<FlashblockPosition, Utf8Bytes>>>,
+    #[debug(skip)]
     cancel: CancellationToken,
-}
-
-impl Debug for Listener {
-    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("Listener")
-            .field("addr", &self.listener.local_addr())
-            .finish_non_exhaustive()
-    }
 }
 
 impl Listener {

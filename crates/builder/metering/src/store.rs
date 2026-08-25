@@ -15,27 +15,21 @@ use base_bundles::MeterBundleResponse;
 use moka::{notification::RemovalCause, policy::EvictionPolicy, sync::Cache};
 
 /// Concurrent metering store with LRU eviction.
+#[derive(derive_more::Debug)]
 pub struct MeteringStore {
     /// LRU cache mapping transaction hash to metering data.
+    #[debug("{:?}", cache.entry_count())]
     cache: Cache<TxHash, MeterBundleResponse>,
     /// Records when a transaction was committed without metering data.
     ///
     /// Late-arriving data is only terminal for transactions that were already
     /// included without it. A plain lookup miss is not enough because the
     /// transaction may be skipped for a transient reason and retried later.
+    #[debug("{:?}", needed_at.entry_count())]
     needed_at: Cache<TxHash, Instant>,
     /// Whether resource metering is enabled.
+    #[debug("{:?}", metering_enabled.load(Ordering::Relaxed))]
     metering_enabled: AtomicBool,
-}
-
-impl core::fmt::Debug for MeteringStore {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("MeteringStore")
-            .field("entries", &self.cache.entry_count())
-            .field("needed_at", &self.needed_at.entry_count())
-            .field("metering_enabled", &self.metering_enabled.load(Ordering::Relaxed))
-            .finish()
-    }
 }
 
 impl MeteringStore {

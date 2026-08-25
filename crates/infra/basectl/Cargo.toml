@@ -33,6 +33,7 @@ base-common-precompiles = { workspace = true }
 base-common-flashblocks = { workspace = true }
 base-prover-service-client = { workspace = true }
 base-prover-service-protocol = { workspace = true }
+derive_more = { workspace = true, features = ["debug"] }
 clap = { workspace = true, features = ["derive", "env"] }
 toml = { workspace = true, features = ["parse", "serde"] }
 url = { workspace = true, features = ["serde"] }

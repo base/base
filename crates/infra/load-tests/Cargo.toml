@@ -53,6 +53,7 @@ serde_yaml.workspace = true
 parking_lot.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 tokio = { workspace = true, features = ["signal"] }
+derive_more = { workspace = true, features = ["debug"] }
 tokio-tungstenite = { workspace = true, features = ["native-tls"] }
 
 [dev-dependencies]

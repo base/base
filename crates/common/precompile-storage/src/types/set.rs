@@ -10,7 +10,7 @@ use alloc::{
     collections::BTreeSet,
     vec::{IntoIter, Vec},
 };
-use core::{fmt, ops::Deref, slice};
+use core::{ops::Deref, slice};
 
 use alloy_primitives::{Address, U256};
 
@@ -85,14 +85,19 @@ impl<'a, T> IntoIterator for &'a Set<T> {
 }
 
 /// Type-safe handler for accessing `Set<T>` in storage.
+#[derive(derive_more::Debug)]
 pub struct SetHandler<'a, T>
 where
     T: Storable + StorageKey + Eq + Clone + Ord,
 {
+    #[debug(skip)]
     values: VecHandler<'a, T>,
+    #[debug(skip)]
     positions: MappingHandler<'a, T, u32>,
     base_slot: U256,
+    #[debug(skip)]
     address: Address,
+    #[debug(skip)]
     storage: crate::StorageCtx<'a>,
 }
 
@@ -322,15 +327,6 @@ where
     }
     fn t_delete(&mut self) -> Result<()> {
         Err(BasePrecompileError::Fatal("Set does not support transient storage".into()))
-    }
-}
-
-impl<T> fmt::Debug for SetHandler<'_, T>
-where
-    T: Storable + StorageKey + Eq + Clone + Ord + fmt::Debug,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SetHandler").field("base_slot", &self.base_slot).finish()
     }
 }
 

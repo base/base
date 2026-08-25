@@ -81,29 +81,20 @@ impl Default for SubscriberOptions {
 /// Tracks the position of the last received flashblock message. On reconnect,
 /// appends `block_number` and `flashblock_index` query parameters to the URI
 /// so the upstream publisher can replay missed entries.
+#[derive(derive_more::Debug)]
 pub struct WebsocketSubscriber<F>
 where
     F: Fn(String) + Send + Sync + 'static,
 {
     uri: Uri,
+    #[debug(skip)]
     uri_label: String,
+    #[debug(skip)]
     handler: F,
+    #[debug(skip)]
     backoff: ExponentialBackoff,
     options: SubscriberOptions,
     last_position: Option<(u64, u64)>,
-}
-
-impl<F> std::fmt::Debug for WebsocketSubscriber<F>
-where
-    F: Fn(String) + Send + Sync + 'static,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("WebsocketSubscriber")
-            .field("uri", &self.uri)
-            .field("options", &self.options)
-            .field("last_position", &self.last_position)
-            .finish_non_exhaustive()
-    }
 }
 
 impl<F> WebsocketSubscriber<F>

@@ -85,24 +85,20 @@ impl L1ClientConfig {
 }
 
 /// L1 RPC client implementation using Alloy.
+#[derive(derive_more::Debug)]
 pub struct L1Client {
     /// The underlying HTTP provider.
+    #[debug(skip)]
     provider: HttpProvider,
     /// Cache for headers by hash.
+    #[debug("{:?}", headers_cache.entry_count())]
     headers_cache: MeteredCache<B256, Header>,
     /// Cache for receipts by block hash.
+    #[debug("{:?}", receipts_cache.entry_count())]
     receipts_cache: MeteredCache<B256, Vec<TransactionReceipt>>,
     /// Retry configuration.
+    #[debug(skip)]
     retry_config: RetryConfig,
-}
-
-impl std::fmt::Debug for L1Client {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("L1Client")
-            .field("headers_cache_entries", &self.headers_cache.entry_count())
-            .field("receipts_cache_entries", &self.receipts_cache.entry_count())
-            .finish_non_exhaustive()
-    }
 }
 
 impl L1Client {

@@ -72,6 +72,7 @@ base-health = { workspace = true, features = ["axum-server"] }
 # Misc
 url.workspace = true
 humantime.workspace = true
+derive_more = { workspace = true, features = ["debug"] }
 
 [dev-dependencies]
 serde_json.workspace = true

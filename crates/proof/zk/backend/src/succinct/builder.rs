@@ -1,6 +1,6 @@
 //! Backend construction for Succinct ZK provers.
 
-use std::{collections::HashMap, error::Error, fmt, future::Future, sync::Arc, time::Duration};
+use std::{collections::HashMap, error::Error, future::Future, sync::Arc, time::Duration};
 
 use base_proof_zk_host::{ZkBackend, ZkProver};
 use base_proof_zk_witness::fetcher::{OPSuccinctDataFetcher, RPCConfig};
@@ -100,50 +100,55 @@ pub struct SuccinctRpcConfig {
 }
 
 /// Configuration for all Succinct proving backends available to one worker.
-#[derive(Clone)]
+#[derive(Clone, derive_more::Debug)]
 pub struct SuccinctZkProversConfig {
     /// Base consensus node RPC URL.
+    #[debug(skip)]
     pub base_consensus_rpc: Option<Url>,
     /// L1 execution node RPC URL.
+    #[debug(skip)]
     pub l1_rpc: Option<Url>,
     /// L1 beacon node RPC URL.
+    #[debug(skip)]
     pub l1_beacon_rpc: Option<Url>,
     /// L2 execution node RPC URL.
+    #[debug(skip)]
     pub l2_rpc: Option<Url>,
     /// Default sequence window for L1 head calculations.
+    #[debug(skip)]
     pub default_sequence_window: u64,
     /// SP1 cluster gRPC endpoint.
+    #[debug("{:?}", cluster_rpc.is_some())]
     pub cluster_rpc: Option<String>,
     /// SP1 cluster proof timeout in hours.
+    #[debug(skip)]
     pub cluster_timeout_hours: u64,
     /// S3 artifact store bucket.
+    #[debug(skip)]
     pub s3_bucket: Option<String>,
     /// S3 artifact store region.
+    #[debug(skip)]
     pub s3_region: Option<String>,
     /// SP1 network requester private key or KMS key ARN.
+    #[debug("{:?}", network_private_key.is_some())]
     pub network_private_key: Option<String>,
     /// Whether the network requester key is an AWS KMS ARN.
     pub use_kms_requester: bool,
     /// SP1 network proof timeout in hours.
+    #[debug(skip)]
     pub network_timeout_hours: u64,
     /// Cycle limit for range proof requests.
+    #[debug(skip)]
     pub range_cycle_limit: u64,
     /// Gas limit for range proof requests.
+    #[debug(skip)]
     pub range_gas_limit: u64,
     /// Cycle limit for aggregation proof requests.
+    #[debug(skip)]
     pub aggregation_cycle_limit: u64,
     /// Gas limit for aggregation proof requests.
+    #[debug(skip)]
     pub aggregation_gas_limit: u64,
-}
-
-impl fmt::Debug for SuccinctZkProversConfig {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SuccinctZkProversConfig")
-            .field("cluster_configured", &self.cluster_rpc.is_some())
-            .field("network_configured", &self.network_private_key.is_some())
-            .field("use_kms_requester", &self.use_kms_requester)
-            .finish_non_exhaustive()
-    }
 }
 
 impl SuccinctZkProversConfig {

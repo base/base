@@ -1,7 +1,6 @@
 //! Service lifecycle for the prover registrar.
 
 use std::{
-    fmt,
     net::SocketAddr,
     sync::{
         Arc,
@@ -30,8 +29,10 @@ use crate::{
 };
 
 /// Configuration needed to run the registrar service.
+#[derive(derive_more::Debug)]
 pub struct RegistrarConfig {
     /// L1 Ethereum RPC endpoint.
+    #[debug("{:?}", l1_rpc_url.origin().unicode_serialization())]
     pub l1_rpc_url: Url,
     /// `TEEProverRegistry` contract address on L1.
     pub tee_prover_registry_address: Address,
@@ -67,31 +68,6 @@ pub struct RegistrarConfig {
     pub log_config: base_cli_utils::LogConfig,
     /// Metrics configuration.
     pub metrics_config: base_cli_utils::MetricsConfig,
-}
-
-impl fmt::Debug for RegistrarConfig {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("RegistrarConfig")
-            .field("l1_rpc_url", &self.l1_rpc_url.origin().unicode_serialization())
-            .field("tee_prover_registry_address", &self.tee_prover_registry_address)
-            .field("target_group_arn", &self.target_group_arn)
-            .field("aws_region", &self.aws_region)
-            .field("prover_port", &self.prover_port)
-            .field("signing", &self.signing)
-            .field("tx_manager_config", &self.tx_manager_config)
-            .field("max_attestation_age", &self.max_attestation_age)
-            .field("poll_interval", &self.poll_interval)
-            .field("prover_timeout", &self.prover_timeout)
-            .field("max_concurrency", &self.max_concurrency)
-            .field("instance_cache_ttl_cycles", &self.instance_cache_ttl_cycles)
-            .field("max_tx_retries", &self.max_tx_retries)
-            .field("tx_retry_delay", &self.tx_retry_delay)
-            .field("crl_nitro_verifier_address", &self.crl_nitro_verifier_address)
-            .field("health_addr", &self.health_addr)
-            .field("log_config", &self.log_config)
-            .field("metrics_config", &self.metrics_config)
-            .finish()
-    }
 }
 
 impl RegistrarConfig {
