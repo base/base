@@ -154,6 +154,16 @@ where
                         tracing::warn!(error = %msg, "sequential catchup poll error, retrying");
                         self.clock.sleep(CATCHUP_RETRY_DELAY).await;
                     }
+                    Err(SourceError::NotReady { requested, latest }) => {
+                        // The target block has not been produced yet (e.g. the chain only has
+                        // the genesis block so far). Wait and retry without leaving catchup.
+                        tracing::debug!(
+                            block = %requested,
+                            latest = %latest,
+                            "awaiting L2 block for catchup"
+                        );
+                        self.clock.sleep(CATCHUP_RETRY_DELAY).await;
+                    }
                     Err(e) => return Err(e),
                 }
                 continue;

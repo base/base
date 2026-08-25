@@ -759,22 +759,25 @@ impl BatcherService {
             .map_err(|e| eyre::eyre!("failed to fetch L2 latest block number: {e}"))?;
 
         // Advance the cursor past any L2 blocks that are already on L1 but not yet safe.
-        // Use the higher of the safe head and the scan result as the backfill start.
-        let cursor_start = safe_l2_number.max(scanned_highest.unwrap_or(0));
+        // Use the higher of the safe head and the scan result as the backfill start, and
+        // never below the rollup genesis block: genesis is the derivation anchor and is
+        // never batched (it carries no L1-info deposit), so the first batchable block is
+        // always genesis + 1.
+        let genesis_l2 = rollup_config.genesis.l2.number;
+        let cursor_start = safe_l2_number.max(scanned_highest.unwrap_or(0)).max(genesis_l2);
 
-        // Build the L2 polling source. If blocks between cursor_start+1 and latest
-        // were not yet submitted, use sequential catchup mode to avoid skipping them.
-        let poller = if cursor_start < latest_l2 {
-            info!(
-                safe_l2 = %safe_l2_number,
-                cursor_start = %cursor_start,
-                latest_l2 = %latest_l2,
-                "starting sequential backfill from cursor"
-            );
-            RpcPollingSource::new_from(Arc::clone(&l2_provider), cursor_start + 1)
-        } else {
-            RpcPollingSource::new(Arc::clone(&l2_provider))
-        };
+        // Always drive the L2 source in sequential catchup mode from cursor_start + 1.
+        // This waits for the first unbatched block to be produced rather than polling
+        // `Latest`, which on a fresh chain (only the genesis block present) would return
+        // the empty genesis block and fatally halt the batch composer.
+        info!(
+            safe_l2 = %safe_l2_number,
+            genesis_l2 = %genesis_l2,
+            cursor_start = %cursor_start,
+            latest_l2 = %latest_l2,
+            "starting sequential backfill from cursor"
+        );
+        let poller = RpcPollingSource::new_from(Arc::clone(&l2_provider), cursor_start + 1);
 
         // Assemble the hybrid L2 block source.
         let source = HybridBlockSource::new(

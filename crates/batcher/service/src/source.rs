@@ -21,23 +21,33 @@ pub struct RpcPollingSource {
     #[debug(skip)]
     provider: Arc<dyn Provider<Base> + Send + Sync>,
     /// When `Some(n)`, the next `unsafe_head` call fetches block `n`
-    /// sequentially (for startup catchup). Cleared when `n` is strictly
-    /// greater than the current latest (i.e. block `n` hasn't been produced yet).
+    /// sequentially (for startup catchup). Cleared when the chain has caught up
+    /// to the head, switching the source to `Latest` polling.
     #[debug(skip)]
     next_sequential: Mutex<Option<u64>>,
+    /// The lowest L2 block number this source will ever batch (the first target of
+    /// sequential catchup). While the chain head is below this floor — e.g. only the
+    /// un-batchable genesis block exists — the source waits rather than falling back to
+    /// `Latest` polling, which would return a block that must never reach the composer.
+    #[debug(skip)]
+    catchup_floor: Mutex<u64>,
 }
 
 impl RpcPollingSource {
     /// Create a new [`RpcPollingSource`] that polls `Latest` on every call.
     pub fn new(provider: Arc<dyn Provider<Base> + Send + Sync>) -> Self {
-        Self { provider, next_sequential: Mutex::new(None) }
+        Self { provider, next_sequential: Mutex::new(None), catchup_floor: Mutex::new(0) }
     }
 
     /// Create a new [`RpcPollingSource`] that begins sequential catchup from
     /// `start_from`, fetching blocks `start_from, start_from+1, …` in order
     /// before switching to `Latest` polling once it has caught up.
     pub fn new_from(provider: Arc<dyn Provider<Base> + Send + Sync>, start_from: u64) -> Self {
-        Self { provider, next_sequential: Mutex::new(Some(start_from)) }
+        Self {
+            provider,
+            next_sequential: Mutex::new(Some(start_from)),
+            catchup_floor: Mutex::new(start_from),
+        }
     }
 }
 
@@ -54,8 +64,19 @@ impl PollingSource for RpcPollingSource {
                 .map_err(|e| SourceError::Provider(e.to_string()))?;
 
             if n > latest_number {
-                // Block n hasn't been produced yet; switch to normal polling.
-                *self.next_sequential.lock().unwrap() = None;
+                let floor = *self.catchup_floor.lock().unwrap();
+                if latest_number >= floor {
+                    // The chain has produced at least the first batchable block and we have
+                    // delivered up to its head: catchup is complete, switch to `Latest` polling
+                    // to follow new blocks live.
+                    *self.next_sequential.lock().unwrap() = None;
+                } else {
+                    // The chain head is still below the first batchable block (only blocks below
+                    // the floor, e.g. genesis, exist). Stay in catchup and signal the caller to
+                    // wait, rather than falling back to `Latest` — which would return the
+                    // un-batchable genesis block and fatally halt the batch composer.
+                    return Err(SourceError::NotReady { requested: n, latest: latest_number });
+                }
             } else {
                 let block = self
                     .provider
@@ -87,6 +108,7 @@ impl PollingSource for RpcPollingSource {
 
     fn reset_catchup(&self, start_from: u64) {
         *self.next_sequential.lock().unwrap() = Some(start_from);
+        *self.catchup_floor.lock().unwrap() = start_from;
     }
 
     fn is_catching_up(&self) -> bool {
