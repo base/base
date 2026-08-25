@@ -55,7 +55,7 @@ use tracing::{debug, error, info, metadata::Level, span, warn};
 use crate::{
     BuilderConfig, BuilderMetrics, ExecutionInfo, PayloadBuilder, ResourceLimits,
     flashblocks::{
-        FlashblocksExtraCtx,
+        FlashblocksExtraCtx, PrewarmHandle,
         best_txs::{BestFlashblocksTxs, ParkableBestPayloadTransactions},
         context::BasePayloadBuilderCtx,
         generator::BuildArguments,
@@ -124,6 +124,8 @@ pub(super) struct BasePayloadBuilder<Pool, Client> {
     /// The outbound channels the builder emits built payloads, flashblocks, and rejected
     /// transactions to.
     pub outputs: BuilderOutputs,
+    /// Handle onto the txpool prewarmer's latest snapshot, used to seed the build cache.
+    pub prewarm: PrewarmHandle,
     /// Last flashblock emitted by this builder instance.
     last_emitted_flashblock_id: Arc<LastEmittedFlashblockId>,
 }
@@ -136,6 +138,7 @@ impl<Pool, Client> BasePayloadBuilder<Pool, Client> {
         client: Client,
         config: BuilderConfig,
         outputs: BuilderOutputs,
+        prewarm: PrewarmHandle,
     ) -> Self {
         Self {
             evm_config,
@@ -143,6 +146,7 @@ impl<Pool, Client> BasePayloadBuilder<Pool, Client> {
             client,
             config,
             outputs,
+            prewarm,
             last_emitted_flashblock_id: Arc::default(),
         }
     }
@@ -289,11 +293,20 @@ where
 
         let mut state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
         if let Some(execution_cache) = execution_cache {
-            state_provider = Box::new(CachedStateProvider::new(
-                state_provider,
-                execution_cache.cache().clone(),
-                Some(CachedStateMetrics::zeroed(CachedStateMetricsSource::Builder)),
-            ));
+            // Seed the cache with the txpool prewarm snapshot when building from the pool. Sequencer
+            // (`no_tx_pool`) blocks never touch the mempool, so a pool-derived snapshot is useless
+            // there and is skipped.
+            let txpool_snapshot = (!ctx.attributes().no_tx_pool)
+                .then(|| self.prewarm.snapshot_for(ctx.parent().hash()))
+                .flatten();
+            state_provider = Box::new(
+                CachedStateProvider::new(
+                    state_provider,
+                    execution_cache.cache().clone(),
+                    Some(CachedStateMetrics::zeroed(CachedStateMetricsSource::Builder)),
+                )
+                .with_txpool_snapshot(txpool_snapshot),
+            );
         }
         let db = StateProviderDatabase::new(state_provider);
 

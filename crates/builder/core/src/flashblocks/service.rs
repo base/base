@@ -19,7 +19,7 @@ use reth_provider::CanonStateSubscriptions;
 use tracing::info;
 
 use super::{
-    PayloadHandler,
+    PayloadHandler, PrewarmHandle, TxPoolPrewarmer,
     generator::BlockPayloadJobGenerator,
     payload::{BasePayloadBuilder, BuilderOutputs},
 };
@@ -67,12 +67,33 @@ impl FlashblocksServiceBuilder {
 
         let ws_pub: Arc<WebSocketPublisher> =
             WebSocketPublisher::new(self.config.flashblocks_ws_addr)?.into();
+
+        let evm_config = BaseEvmConfig::base(ctx.chain_spec());
+
+        // Start the best-effort txpool prewarmer, which warms the canonical head state so the build
+        // loop reads it from an in-memory snapshot instead of stalling on disk IO.
+        let prewarm = if self.config.txpool_prewarm_enabled {
+            let prewarmer = TxPoolPrewarmer::new(
+                pool.clone(),
+                ctx.provider().clone(),
+                evm_config.clone(),
+                ctx.task_executor().clone(),
+            );
+            let handle = prewarmer.handle();
+            prewarmer.spawn(ctx.provider().canonical_state_stream());
+            info!("Txpool prewarmer started");
+            handle
+        } else {
+            PrewarmHandle::noop()
+        };
+
         let payload_builder = BasePayloadBuilder::new(
-            BaseEvmConfig::base(ctx.chain_spec()),
+            evm_config,
             pool,
             ctx.provider().clone(),
             self.config.clone(),
             BuilderOutputs { payload_tx: built_payload_tx, ws_pub, rejected_tx_sender },
+            prewarm,
         );
         let payload_generator = BlockPayloadJobGenerator::with_builder(
             ctx.provider().clone(),

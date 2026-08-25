@@ -31,5 +31,8 @@ pub use context::{
 
 mod payload;
 
+mod prewarm;
+pub use prewarm::{PrewarmHandle, TxPoolPrewarmer};
+
 mod service;
 pub use service::FlashblocksServiceBuilder;

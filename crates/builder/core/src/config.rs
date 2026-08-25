@@ -86,6 +86,10 @@ pub struct BuilderConfig {
     /// Whether to drop EIP-8130 transactions whose captured authorization
     /// predicates are positively stale before executing them.
     pub manifest_precheck_enabled: bool,
+
+    /// Whether to run the best-effort txpool prewarmer that speculatively executes the pool's
+    /// best transactions against the canonical head, seeding the build cache to flatten IO wait.
+    pub txpool_prewarm_enabled: bool,
 }
 
 impl BuilderConfig {
@@ -121,6 +125,7 @@ impl core::fmt::Debug for BuilderConfig {
             .field("rejected_tx_channel_size", &self.rejected_tx_channel_size)
             .field("max_rejected_txs_per_block", &self.max_rejected_txs_per_block)
             .field("manifest_precheck_enabled", &self.manifest_precheck_enabled)
+            .field("txpool_prewarm_enabled", &self.txpool_prewarm_enabled)
             .finish()
     }
 }
@@ -148,6 +153,7 @@ impl Default for BuilderConfig {
             rejected_tx_channel_size: 500,
             max_rejected_txs_per_block: 500,
             manifest_precheck_enabled: true,
+            txpool_prewarm_enabled: true,
         }
     }
 }

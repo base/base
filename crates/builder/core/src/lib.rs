@@ -45,8 +45,8 @@ pub use flashblocks::{
     BuildArguments, FlashblockDiagnostics, FlashblockSelectionOutcome, FlashblocksExtraCtx,
     FlashblocksServiceBuilder, ParkableBestPayloadTransactions, ParkablePayloadTransactions,
     ParkedPredicateIndex, PayloadBuilder, PayloadHandler, PayloadJobDeadline,
-    PayloadTransactionInvalidated, PredicateLoadTracker, PredicateReadRecorder, ResolvePayload,
-    StateChangeEffects, ValidityPredicateKey,
+    PayloadTransactionInvalidated, PredicateLoadTracker, PredicateReadRecorder, PrewarmHandle,
+    ResolvePayload, StateChangeEffects, TxPoolPrewarmer, ValidityPredicateKey,
 };
 
 mod extension;

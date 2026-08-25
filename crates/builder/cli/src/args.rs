@@ -271,6 +271,16 @@ pub struct Args {
     )]
     pub manifest_precheck_enabled: bool,
 
+    /// Whether to run the best-effort txpool prewarmer that speculatively executes the pool's
+    /// best transactions against the canonical head to seed the build cache. Disable with
+    /// `--builder.txpool-prewarm=false`.
+    #[arg(
+        long = "builder.txpool-prewarm",
+        default_value_t = true,
+        action = clap::ArgAction::Set
+    )]
+    pub txpool_prewarm_enabled: bool,
+
     /// Flashblocks configuration
     #[command(flatten)]
     pub flashblocks: FlashblocksArgs,
@@ -347,6 +357,7 @@ impl Default for Args {
             rejection_cache_ttl_secs: 1800,
             sampling_ratio: 100,
             manifest_precheck_enabled: true,
+            txpool_prewarm_enabled: true,
             flashblocks: FlashblocksArgs::default(),
             payload_builder_cutover: false,
             basic_payload_builder: false,
@@ -421,6 +432,7 @@ impl Args {
             rejected_tx_channel_size: self.rejected_tx_channel_size,
             max_rejected_txs_per_block: self.max_rejected_txs_per_block,
             manifest_precheck_enabled: self.manifest_precheck_enabled,
+            txpool_prewarm_enabled: self.txpool_prewarm_enabled,
         })
     }
 }
