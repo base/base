@@ -1,8 +1,11 @@
 //! Startup repair for the `ExEx` write-ahead log directory.
 
-use std::{fs, path::PathBuf};
+use std::{
+    fs::{self, File},
+    path::PathBuf,
+};
 
-use eyre::{Context, Result};
+use eyre::{Context, Result, eyre};
 use tracing::{info, warn};
 
 /// Extension reth gives to `ExEx` WAL notification files.
@@ -12,14 +15,24 @@ const WAL_FILE_EXTENSION: &str = "wal";
 ///
 /// reth derives the notifications to load from the dense range `min_id..=max_id` over the
 /// `<id>.wal` filenames and treats any absent id inside that range as fatal, so one missing file
-/// wedges the node into a boot loop that nothing but wiping the WAL clears. Holes arise in normal
-/// operation: WAL finalization selects files by block height rather than by id, deletes them in an
-/// unordered batch, ignores individual unlink failures, and drops its in-memory index before the
-/// unlink happens.
+/// wedges the node into a boot loop that nothing but wiping the WAL clears.
+///
+/// Two mechanisms open those holes, and both recur in normal operation:
+///
+/// - Finalization selects files by the highest block each notification touches, which is not
+///   monotonic in the file id. A reorg notification carries the reverted tip as its height, so a
+///   later commit at a lower height finalizes ahead of it and leaves the earlier file behind.
+/// - A failed unlink is swallowed and only logged, and the in-memory index entry is dropped before
+///   the unlink is attempted. The file is orphaned for good, and later finalizations delete around
+///   it.
 ///
 /// Renaming the survivors down into a contiguous run preserves every notification. reth rebuilds
 /// its block index from file contents and re-derives the next id from the highest filename, so the
 /// ids carry no state of their own and are safe to renumber as long as their order is kept.
+///
+/// Verified against reth `v2.5.1`. A reth bump should re-check three things this relies on: the
+/// `<id>.wal` naming, the `u32` id width, and the WAL being opened after the
+/// `on_component_initialized` hook has run.
 #[derive(Debug, Clone)]
 pub struct ExExWalRepair {
     directory: PathBuf,
@@ -31,40 +44,50 @@ impl ExExWalRepair {
         Self { directory: directory.into() }
     }
 
-    /// Renumbers the WAL notification files into a gap-free sequence.
+    /// Renumbers the WAL notification files into a gap-free sequence of canonically named files.
     ///
-    /// Does nothing when the directory is absent or the sequence is already contiguous.
+    /// Does nothing when the directory is absent or reth can already load it as-is.
     pub fn run(&self) -> Result<()> {
-        let Some(mut ids) = self.notification_ids()? else {
+        let notifications = self.notifications()?;
+        let (Some(lowest), Some(highest)) =
+            (notifications.first().map(|(id, _)| *id), notifications.last().map(|(id, _)| *id))
+        else {
             return Ok(());
         };
-        ids.sort_unstable();
 
-        if ids.windows(2).all(|pair| pair[1] == pair[0] + 1) {
+        // A file whose name parses to an in-range id but is not spelled `<id>.wal` is as fatal as a
+        // hole, because reth resolves the id it just listed back into that exact filename.
+        let loadable = (lowest..)
+            .zip(&notifications)
+            .all(|(target, (id, path))| target == *id && *path == self.file_path(*id));
+        if loadable {
             return Ok(());
         }
 
-        let lowest = ids[0];
         warn!(
             target: "base-runner",
             directory = %self.directory.display(),
-            notifications = ids.len(),
+            notifications = notifications.len(),
             lowest,
-            highest = ids[ids.len() - 1],
-            "ExEx WAL notification ids are not contiguous; renumbering so reth can load the WAL"
+            highest,
+            "ExEx WAL notification ids are not a contiguous run; renumbering so reth can load them"
         );
 
         // Targets only ever move downwards, so an ascending pass never overwrites a file that has
         // yet to be renamed.
         let mut renumbered = 0usize;
-        for (target, id) in (lowest..).zip(ids) {
-            if target == id {
+        for (target, (id, path)) in (lowest..).zip(&notifications) {
+            if target == *id && *path == self.file_path(*id) {
                 continue;
             }
 
-            fs::rename(self.file_path(id), self.file_path(target)).wrap_err_with(|| {
+            fs::rename(path, self.file_path(target)).wrap_err_with(|| {
                 format!("failed to renumber ExEx WAL notification {id} to {target}")
             })?;
+            // Each rename is atomic, so a crash mid-pass leaves a shorter but still-valid run that
+            // the next startup finishes. Flushing per rename is what keeps the directory entries
+            // from landing out of order, which is the one way a crash could drop a notification.
+            self.sync_directory()?;
             renumbered += 1;
         }
 
@@ -78,20 +101,21 @@ impl ExExWalRepair {
         Ok(())
     }
 
-    /// Reads the ids of every `<id>.wal` file in the directory.
+    /// Reads every `<id>.wal` file in the directory, ordered by id.
     ///
-    /// Returns `None` when the directory does not exist yet. Files whose name reth cannot parse
-    /// are left alone so that reth reports them itself.
-    fn notification_ids(&self) -> Result<Option<Vec<u32>>> {
+    /// Returns an empty list when the directory does not exist yet. Paths are carried through as
+    /// read rather than rebuilt from the id, so two spellings of one id cannot rename over each
+    /// other.
+    fn notifications(&self) -> Result<Vec<(u32, PathBuf)>> {
         if !self.directory.exists() {
-            return Ok(None);
+            return Ok(Vec::new());
         }
 
         let entries = fs::read_dir(&self.directory).wrap_err_with(|| {
             format!("failed to read ExEx WAL directory {}", self.directory.display())
         })?;
 
-        let mut ids = Vec::new();
+        let mut notifications = Vec::new();
         for entry in entries {
             let path = entry
                 .wrap_err_with(|| {
@@ -99,14 +123,41 @@ impl ExExWalRepair {
                 })?
                 .path();
 
-            if path.extension().is_some_and(|extension| extension == WAL_FILE_EXTENSION)
-                && let Some(id) = path.file_stem().and_then(|stem| stem.to_str()?.parse().ok())
-            {
-                ids.push(id);
+            if path.extension().is_none_or(|extension| extension != WAL_FILE_EXTENSION) {
+                continue;
+            }
+
+            match path.file_stem().and_then(|stem| stem.to_str()?.parse().ok()) {
+                Some(id) => notifications.push((id, path)),
+                // reth rejects the whole directory over one of these, so name the file here rather
+                // than leave the operator with a boot loop that points at nothing.
+                None => warn!(
+                    target: "base-runner",
+                    path = %path.display(),
+                    "ExEx WAL file name is not a notification id; reth will refuse to load the WAL"
+                ),
             }
         }
 
-        Ok(Some(ids))
+        notifications.sort_unstable_by_key(|(id, _)| *id);
+
+        if let Some(pair) = notifications.windows(2).find(|pair| pair[0].0 == pair[1].0) {
+            return Err(eyre!(
+                "ExEx WAL notification id {} is claimed by both {} and {}",
+                pair[0].0,
+                pair[0].1.display(),
+                pair[1].1.display()
+            ));
+        }
+
+        Ok(notifications)
+    }
+
+    /// Flushes the directory entries so that a crash cannot reorder the renames.
+    fn sync_directory(&self) -> Result<()> {
+        File::open(&self.directory).and_then(|directory| directory.sync_all()).wrap_err_with(|| {
+            format!("failed to flush ExEx WAL directory {}", self.directory.display())
+        })
     }
 
     fn file_path(&self, id: u32) -> PathBuf {
@@ -198,6 +249,33 @@ mod tests {
         assert_eq!(contents(&dir), vec![(3, 3), (4, 5), (5, 8)]);
     }
 
+    /// reth parses `007.wal` as id 7 and then tries to open `7.wal`, so a non-canonical name is as
+    /// fatal as a hole even when the ids themselves are contiguous.
+    #[test]
+    fn non_canonical_name_is_renamed_to_its_id() {
+        let dir = wal_dir(&[1]);
+        fs::write(dir.path().join("002.wal"), "2").expect("write");
+
+        ExExWalRepair::new(dir.path()).run().expect("run");
+
+        assert_eq!(contents(&dir), vec![(1, 1), (2, 2)]);
+    }
+
+    /// Two names for one id would otherwise rename over each other and destroy a notification.
+    #[test]
+    fn duplicate_notification_id_is_rejected() {
+        let dir = wal_dir(&[1, 7]);
+        fs::write(dir.path().join("007.wal"), "7").expect("write");
+
+        let error = ExExWalRepair::new(dir.path()).run().expect_err("duplicate id");
+
+        assert!(error.to_string().contains("claimed by both"), "{error}");
+        assert!(dir.path().join("7.wal").exists());
+        assert!(dir.path().join("007.wal").exists());
+    }
+
+    /// Non-notification files are left in place; an unparsable `.wal` name is only warned about,
+    /// since renaming a file whose contents reth may not understand is worse than reporting it.
     #[test]
     fn unrelated_files_are_ignored() {
         let dir = wal_dir(&[1, 3]);
