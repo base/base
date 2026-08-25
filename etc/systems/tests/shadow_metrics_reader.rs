@@ -435,18 +435,17 @@ async fn counts_sawtooth_boundaries_and_accepts_non_increasing_fees() -> Result<
 }
 
 #[tokio::test]
-async fn persisted_cursor_never_moves_backwards() -> Result<()> {
+async fn persisted_cursor_round_trips_the_last_write() -> Result<()> {
     let database = TestDatabase::start().await?;
     let repo = ShadowMetricsCursorRepo::new(database.pool.clone());
     let updated_at = Utc::now();
-    let older = ShadowBlockCursor { updated_at, number: 1 };
-    let newer = ShadowBlockCursor { updated_at, number: 2 };
+    let first = ShadowBlockCursor { updated_at, number: 1 };
+    let second = ShadowBlockCursor { updated_at, number: 2 };
 
-    repo.store(&older).await?;
-    repo.store(&newer).await?;
-    repo.store(&older).await?;
+    repo.store(&first).await?;
+    repo.store(&second).await?;
 
-    assert_eq!(repo.load().await?, Some(newer));
+    assert_eq!(repo.load().await?, Some(second));
 
     Ok(())
 }

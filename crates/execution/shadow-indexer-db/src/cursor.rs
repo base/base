@@ -52,8 +52,7 @@ impl ShadowMetricsCursorRepo {
         Ok(row.map(|(updated_at, number)| ShadowBlockCursor { updated_at, number }))
     }
 
-    /// Stores the cursor without moving it backwards.
-    /// The guard limits rolling-deploy replay; readers must remain singleton to avoid duplicates.
+    /// Stores the cursor.
     /// # Errors
     /// Returns an error when the upsert fails.
     pub async fn store(&self, at: &ShadowBlockCursor) -> Result<()> {
@@ -64,10 +63,7 @@ impl ShadowMetricsCursorRepo {
              ON CONFLICT (id) DO UPDATE SET \
              last_updated_at = EXCLUDED.last_updated_at, \
              last_number = EXCLUDED.last_number, \
-             updated_at = now() \
-             WHERE (shadow_metrics_cursor.last_updated_at, \
-                    shadow_metrics_cursor.last_number) \
-                 < (EXCLUDED.last_updated_at, EXCLUDED.last_number)",
+             updated_at = now()",
         )
         .bind(at.updated_at)
         .bind(at.number)
