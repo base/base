@@ -62,9 +62,6 @@ async fn eip8130_transaction_is_mined() -> Result<()> {
 }
 
 /// Dry-run SP1-executes the block that contains a type `0x79` transaction.
-///
-/// Ignored: local SP1 execute is too slow for merge-queue. Requires `--release`:
-/// `cargo nextest run --release -p base-system-tests --run-ignored all -E 'test(eip8130_block_dry_run)'`
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "SP1 dry-run execute is too slow for merge-queue; run with --release"]
 async fn eip8130_block_dry_run_proves() -> Result<()> {
@@ -90,8 +87,7 @@ async fn eip8130_block_dry_run_proves() -> Result<()> {
     let service = InProcessProverService::start().await?;
     let _host = InProcessZkHost::start(&system, service.url()).await?;
 
-    // Pin the rollup node's L1 head, not origin+window capped at finalized. Local L1
-    // finality lags the batches that already made this L2 block safe.
+    // Pin rollup `head_l1`; local L1 finality lags the batches that made this block safe.
     let l1_head = rollup_provider.optimism_sync_status().await?.head_l1.hash;
     let stats =
         prove_block_range_with_dry_run_stats(service.url().clone(), block_number, l1_head).await?;

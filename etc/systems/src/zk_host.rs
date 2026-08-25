@@ -138,9 +138,6 @@ impl InProcessZkHost {
     }
 
     /// Temp dir for Succinct L1/L2 configs so the fetcher does not write into the process cwd.
-    ///
-    /// System-test L1 is chain 1337 (`Devnet` in `L1_CONFIGS`). The fetcher writes that
-    /// built-in config when `<dir>/L1/1337.json` is missing.
     fn install_succinct_chain_configs() -> Result<TempDir> {
         tempfile::tempdir().wrap_err("failed to create succinct config directory")
     }

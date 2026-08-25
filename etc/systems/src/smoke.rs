@@ -423,9 +423,6 @@ impl SystemTestStackBuilder {
     }
 
     /// Posts L2 batches as short-lived calldata so the derived safe head can catch up.
-    ///
-    /// Required for tests that wait on safe L2: the default blob batcher does not make
-    /// that progress on this stack.
     pub const fn with_force_batch_submission(mut self) -> Self {
         self.force_batch_submission = true;
         self

@@ -86,8 +86,7 @@ pub struct L2StackConfig {
     /// Number of L1 blocks to keep distance from the L1 head for the client (validator)
     /// consensus node's derivation pipeline.
     pub verifier_l1_confs: u64,
-    /// When set, the in-process batcher posts short-lived calldata channels instead of blobs
-    /// so the derived safe head can catch up in tests that wait on safe L2.
+    /// When set, the in-process batcher posts short-lived calldata channels instead of blobs.
     pub force_batch_submission: bool,
     /// Consensus mode for the L2 client node.
     pub client_consensus_mode: L2ClientConsensusMode,

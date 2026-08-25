@@ -379,8 +379,7 @@ fn create_node_config(
     rpc.http_addr = Ipv4Addr::LOCALHOST.into();
     rpc.ws_addr = Ipv4Addr::LOCALHOST.into();
     rpc.auth_jwtsecret = Some(jwt_path.to_path_buf());
-    // Reth default is 0 (latest only). Devnet `base rpc` and docker-compose set
-    // `--rpc.eth-proof-window=1209600` so vanilla `eth_getProof` works behind tip.
+    // Match docker-compose `--rpc.eth-proof-window=1209600` (reth default is 0).
     rpc.rpc_eth_proof_window = 1_209_600;
 
     if let Some(port) = config.http_port {
