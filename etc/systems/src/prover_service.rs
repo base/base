@@ -1,10 +1,6 @@
 //! In-process prover-service JSON-RPC server backed by a Postgres testcontainer.
 
-use std::{
-    net::SocketAddr,
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::{net::SocketAddr, time::Duration};
 
 use base_prover_service::{ProverServiceServer, ServerConfig, WorkerApiConfig, WorkerQueueConfig};
 use base_prover_service_db::{DatabaseConfig, ProofRequestRepo};
@@ -58,7 +54,10 @@ impl InProcessProverService {
         let pool = db_config.init_pool().await.map_err(|error| {
             eyre::eyre!("failed to connect to prover-service Postgres: {error}")
         })?;
-        apply_prover_migrations(&pool).await?;
+        sqlx::migrate!("../../crates/proof/prover-service/db/migrations")
+            .run(&pool)
+            .await
+            .wrap_err("failed to apply prover-service migrations")?;
         let repo = ProofRequestRepo::new(pool);
 
         let server_config = ServerConfig {
@@ -102,25 +101,4 @@ impl Drop for InProcessProverService {
             let _ = handle.stop();
         }
     }
-}
-
-async fn apply_prover_migrations(pool: &sqlx::PgPool) -> Result<()> {
-    let migrations_dir = prover_migrations_dir()?;
-    sqlx::migrate::Migrator::new(migrations_dir.as_path())
-        .await
-        .wrap_err_with(|| {
-            format!("failed to load prover-service migrations from {}", migrations_dir.display())
-        })?
-        .run(pool)
-        .await
-        .wrap_err("failed to apply prover-service migrations")?;
-    Ok(())
-}
-
-fn prover_migrations_dir() -> Result<PathBuf> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let dir = manifest_dir.join("../../crates/proof/prover-service/db/migrations");
-    dir.canonicalize().wrap_err_with(|| {
-        format!("prover-service migrations directory not found at {}", dir.display())
-    })
 }

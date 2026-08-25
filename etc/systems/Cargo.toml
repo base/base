@@ -105,9 +105,9 @@ async-trait.workspace = true
 tracing = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive", "std"] }
-sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "migrate", "tls-native-tls"] }
-testcontainers = { workspace = true, features = ["blocking", "host-port-exposure"] }
 testcontainers-modules = { workspace = true, features = ["postgres"] }
+testcontainers = { workspace = true, features = ["blocking", "host-port-exposure"] }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "migrate", "macros", "tls-native-tls"] }
 
 [features]
 default = [ "upgrade-signal" ]

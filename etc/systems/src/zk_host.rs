@@ -123,8 +123,13 @@ impl InProcessZkHost {
         let join = tokio::spawn(async move {
             host.run_until_cancelled(run_cancel).await;
         });
-        timeout(FIRST_WORKER_POLL_TIMEOUT, first_poll_rx.wait_for(|ready| *ready))
-            .await
+        let first_poll =
+            timeout(FIRST_WORKER_POLL_TIMEOUT, first_poll_rx.wait_for(|ready| *ready)).await;
+        if !matches!(first_poll, Ok(Ok(_))) {
+            cancel.cancel();
+            join.abort();
+        }
+        first_poll
             .wrap_err("in-process ZK host did not complete a worker poll")?
             .wrap_err("in-process ZK host stopped before the first worker poll")?;
         info!(worker_id = %worker_id, "started in-process ZK host");
