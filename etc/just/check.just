@@ -57,6 +57,10 @@ no-std-proof:
 crate-deps:
     {{justfile_directory()}}/etc/scripts/ci/check-crate-deps.sh
 
+# Verifies git-based reth-* workspace deps match etc/upstream-pins/reth.toml
+reth-pin:
+    python3 {{justfile_directory()}}/etc/scripts/local/pin-reth.py check
+
 [private]
 _build-contracts:
     cd {{justfile_directory()}}/crates/utilities/test-utils/contracts && forge soldeer install && forge build

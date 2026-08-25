@@ -146,6 +146,27 @@ test-affected-ci base="main": install-nextest build::contracts
 hack:
     cargo hack check --feature-powerset --no-dev-deps
 
+# Apply etc/upstream-pins/reth.toml to every git-based reth-* workspace dep.
+# Workflow and limitations: etc/upstream-pins/README.md
+pin-reth:
+    python3 etc/scripts/local/pin-reth.py apply
+
+# Verify Cargo.toml and Cargo.lock match etc/upstream-pins/reth.toml
+check-reth-pin:
+    python3 etc/scripts/local/pin-reth.py check
+
+# Run unit tests for the Reth pin and release helpers
+pin-reth-test:
+    python3 etc/scripts/local/pin-reth.py test
+
+# Squash GitHub PRs (upstream or base/reth) onto an official tag, publish the fork tag, and pin it
+reth-prepare-release *args:
+    python3 etc/scripts/local/pin-reth.py prepare {{ args }}
+
+# Retarget the pin at an official Reth release that contains the carried *upstream* PRs
+reth-drop-pin *args:
+    python3 etc/scripts/local/pin-reth.py drop {{ args }}
+
 # Fixes any formatting issues
 format-fix:
     BASE_SUCCINCT_ELF_STUB=1 cargo fix --allow-dirty --allow-staged --workspace

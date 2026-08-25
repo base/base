@@ -1,0 +1,36 @@
+# Authoritative Reth git pin for [workspace.dependencies].
+#
+# Workflow and limitations: etc/upstream-pins/README.md
+#
+# `just pin-reth` rewrites every git-based `reth-*` crate to this repository
+# and reference, then refreshes Cargo.lock.
+# `just check-reth-pin` verifies Cargo.toml and Cargo.lock match this file.
+# `just reth-prepare-release` builds the fork tag and writes this file.
+#
+# `reference` is the human-facing git ref (release tag, fork tag, or SHA).
+# `rev` is the immutable commit that `reference` currently resolves to.
+# Cargo.toml uses `tag =` when `reference` is not a SHA, and `rev =` otherwise.
+#
+# Each [[patches]] entry is a whole GitHub PR squashed to one fork commit.
+# Identity is the PR URL, including the repository: paradigmxyz/reth for
+# upstream backports, or the Base fork (`base/reth`) for patches that
+# must not be opened upstream. `head` is the PR tip (or merge commit).
+#
+# `[[resolved]]` is only for upstream PRs that landed in an official
+# Reth release. Do not record a base/reth PR against an upstream tag.
+
+repository = "https://github.com/base/reth"
+reference = "v2.5.1-base.1"
+rev = "d80b19e5b597f047268c6593300cbbe1f235631b"
+
+[upstream_base]
+tag = "v2.5.1"
+rev = "6dec1b96b625584956883c34ad0eafbe550480ac"
+
+[[patches]]
+pr = "https://github.com/paradigmxyz/reth/pull/26708"
+head = "f213ff930925e0912a2f6907cec0c62d473bc330"
+
+[[patches]]
+pr = "https://github.com/paradigmxyz/reth/pull/26766"
+head = "f47fd63a3762d8add2e07f1d4afa9363e60d0853"
