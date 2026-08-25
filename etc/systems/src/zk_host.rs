@@ -2,14 +2,21 @@
 
 use std::{fs, time::Duration};
 
+use async_trait::async_trait;
 use base_proof_zk_backend::SuccinctZkProversConfig;
 use base_proof_zk_host::{ProofGeneratorHeartbeatConfig, ZkHost, ZkHostConfig};
-use base_prover_service_client::{ProverServiceClientConfig, ProverWorkerClient};
-use base_prover_service_protocol::ZkBackend;
+use base_prover_service_client::{
+    ProverServiceClientConfig, ProverServiceClientError, ProverWorkerClient, ProverWorkerProvider,
+};
+use base_prover_service_protocol::{
+    GetNextProofRequest, GetNextProofResponse, GetProofSessionRequest, GetProofSessionResponse,
+    HeartbeatRequest, HeartbeatResponse, RecordProofSessionRequest, RecordProofSessionResponse,
+    WorkerSubmitProofRequest, WorkerSubmitProofResponse, ZkBackend,
+};
 use eyre::{OptionExt, Result, WrapErr, bail, ensure};
 use nanoid::nanoid;
 use tempfile::TempDir;
-use tokio::task::JoinHandle;
+use tokio::{sync::watch, task::JoinHandle, time::timeout};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 use url::Url;
@@ -25,6 +32,8 @@ const MAX_CONSECUTIVE_HEARTBEAT_FAILURES: u32 = 5;
 const DEFAULT_SEQUENCE_WINDOW: u64 = 50;
 const RANGE_CYCLE_LIMIT: u64 = 1_000_000_000_000;
 const RANGE_GAS_LIMIT: u64 = 1_000_000_000_000;
+/// Bound for the first worker `get_next_proof` after spawn.
+const FIRST_WORKER_POLL_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// In-process SP1 ZK host bound to a live [`SystemTestStack`].
 pub struct InProcessZkHost {
@@ -41,18 +50,12 @@ impl std::fmt::Debug for InProcessZkHost {
 }
 
 impl InProcessZkHost {
-    /// Starts a ZK host that claims from `prover_service_url` using `backend`.
+    /// Starts a dry-run ZK host that claims from `prover_service_url`.
     ///
-    /// Only [`ZkBackend::DryRun`] is supported: cluster and network need remote credentials.
-    pub async fn start(
-        stack: &SystemTestStack,
-        prover_service_url: &Url,
-        backend: ZkBackend,
-    ) -> Result<Self> {
-        if backend != ZkBackend::DryRun {
-            bail!("InProcessZkHost only supports ZkBackend::DryRun, got {backend}");
-        }
-
+    /// Returns after the host has completed one successful worker poll so the
+    /// worker namespace and host wiring are exercised. Cluster and network
+    /// backends are not supported here.
+    pub async fn start(stack: &SystemTestStack, prover_service_url: &Url) -> Result<Self> {
         let config_dir = Self::install_succinct_chain_configs(stack)?;
         let cancel = CancellationToken::new();
         let l2_rpc = stack.l2_rpc_url().wrap_err("failed to read L2 builder RPC URL")?;
@@ -99,8 +102,10 @@ impl InProcessZkHost {
 
         let client_config = ProverServiceClientConfig::new(prover_service_url.as_str())
             .with_request_timeout(Duration::from_secs(30));
-        let client = ProverWorkerClient::connect(&client_config)
+        let inner = ProverWorkerClient::connect(&client_config)
             .wrap_err("failed to connect ZK host to in-process prover-service")?;
+        let (first_poll, mut first_poll_rx) = watch::channel(false);
+        let client = FirstPollWorker { inner, first_poll };
 
         let worker_id = format!("system-test-zk-host-{}", nanoid!());
         let host_config = ZkHostConfig::sp1(worker_id.clone())
@@ -118,6 +123,10 @@ impl InProcessZkHost {
         let join = tokio::spawn(async move {
             host.run_until_cancelled(run_cancel).await;
         });
+        timeout(FIRST_WORKER_POLL_TIMEOUT, first_poll_rx.wait_for(|ready| *ready))
+            .await
+            .wrap_err("in-process ZK host did not complete a worker poll")?
+            .wrap_err("in-process ZK host stopped before the first worker poll")?;
         info!(worker_id = %worker_id, "started in-process ZK host");
 
         Ok(Self { cancel, join: Some(join), _config_dir: config_dir })
@@ -141,9 +150,7 @@ impl InProcessZkHost {
 
         let dir = tempfile::tempdir().wrap_err("failed to create succinct config directory")?;
         let l1_dir = dir.path().join("L1");
-        let l2_dir = dir.path().join("L2");
         fs::create_dir_all(&l1_dir).wrap_err("failed to create succinct L1 config directory")?;
-        fs::create_dir_all(&l2_dir).wrap_err("failed to create succinct L2 config directory")?;
         fs::write(
             l1_dir.join(format!("{chain_id}.json")),
             serde_json::to_vec_pretty(config).wrap_err("failed to encode L1 chain config")?,
@@ -161,5 +168,58 @@ impl Drop for InProcessZkHost {
         if let Some(join) = self.join.take() {
             join.abort();
         }
+    }
+}
+
+/// Forwards worker RPCs and records the first successful [`get_next_proof`](ProverWorkerProvider::get_next_proof).
+#[derive(Clone, Debug)]
+struct FirstPollWorker {
+    inner: ProverWorkerClient,
+    first_poll: watch::Sender<bool>,
+}
+
+impl FirstPollWorker {
+    fn mark_polled(&self) {
+        let _ = self.first_poll.send(true);
+    }
+}
+
+#[async_trait]
+impl ProverWorkerProvider for FirstPollWorker {
+    async fn get_next_proof(
+        &self,
+        request: GetNextProofRequest,
+    ) -> Result<GetNextProofResponse, ProverServiceClientError> {
+        let response = self.inner.get_next_proof(request).await?;
+        self.mark_polled();
+        Ok(response)
+    }
+
+    async fn heartbeat(
+        &self,
+        request: HeartbeatRequest,
+    ) -> Result<HeartbeatResponse, ProverServiceClientError> {
+        self.inner.heartbeat(request).await
+    }
+
+    async fn submit_proof(
+        &self,
+        request: WorkerSubmitProofRequest,
+    ) -> Result<WorkerSubmitProofResponse, ProverServiceClientError> {
+        self.inner.submit_proof(request).await
+    }
+
+    async fn get_proof_session(
+        &self,
+        request: GetProofSessionRequest,
+    ) -> Result<GetProofSessionResponse, ProverServiceClientError> {
+        self.inner.get_proof_session(request).await
+    }
+
+    async fn record_proof_session(
+        &self,
+        request: RecordProofSessionRequest,
+    ) -> Result<RecordProofSessionResponse, ProverServiceClientError> {
+        self.inner.record_proof_session(request).await
     }
 }

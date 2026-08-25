@@ -72,10 +72,10 @@ base-common-rpc-types.workspace = true
 base-common-precompiles.workspace = true
 
 # proof
-base-prover-service.workspace = true
 base-proof-zk-host.workspace = true
-base-prover-service-db.workspace = true
+base-prover-service.workspace = true
 base-proof-zk-backend.workspace = true
+base-prover-service-db.workspace = true
 base-prover-service-client.workspace = true
 base-prover-service-protocol = { workspace = true, features = ["rpc-server"] }
 
@@ -105,7 +105,7 @@ async-trait.workspace = true
 tracing = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive", "std"] }
-sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "tls-native-tls"] }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "migrate", "tls-native-tls"] }
 testcontainers = { workspace = true, features = ["blocking", "host-port-exposure"] }
 testcontainers-modules = { workspace = true, features = ["postgres"] }
 
