@@ -380,6 +380,12 @@ impl ConsensusNodeArgs {
         if sequencer.shadow_funding_amount.is_some() && sequencer.shadow_funding_address.is_none() {
             eyre::bail!("shadow funding amount requires a shadow funding address");
         }
+        if sequencer
+            .shadow_funding_amount
+            .is_some_and(|amount| amount > alloy_primitives::U256::from(u128::MAX))
+        {
+            eyre::bail!("shadow funding amount exceeds u128::MAX (TxDeposit::mint limit)");
+        }
         if sequencer.shadow_funding_address.is_some()
             && (!self.config.node_mode.is_sequencer()
                 || sequencer.shadow_blocks_per_cycle.is_none())
@@ -984,6 +990,27 @@ mod tests {
         );
 
         assert!(args.validate_shadow_funding().is_ok());
+    }
+
+    #[test]
+    fn shadow_funding_above_deposit_mint_limit_is_rejected() {
+        let args = ConsensusNodeArgs::new(
+            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
+            ConsensusNodeConfigArgs {
+                node_mode: NodeMode::Sequencer,
+                sequencer_flags: SequencerArgs {
+                    shadow_blocks_per_cycle: std::num::NonZeroU64::new(10),
+                    shadow_funding_address: Some(address!(
+                        "2222222222222222222222222222222222222222"
+                    )),
+                    shadow_funding_amount: Some(U256::from(u128::MAX) + U256::from(1)),
+                    ..SequencerArgs::default()
+                },
+                ..default_node_config_args()
+            },
+        );
+
+        assert!(args.validate_shadow_funding().is_err());
     }
 
     #[test]
