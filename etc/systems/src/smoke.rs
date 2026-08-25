@@ -321,6 +321,26 @@ impl SystemTestStackBuilder {
         let l1_genesis_bytes =
             std::fs::read(l1_genesis.el_genesis_path()).wrap_err("Failed to read L1 genesis")?;
 
+        // Set the genesis `extraData` to the Jovian EIP-1559 parameters encoding.
+        //
+        // All L2 hardforks activate at genesis, so the sequencer stamps every block (including
+        // block 1) with Jovian-encoded `extraData`. A validator importing block 1 computes its base
+        // fee from the parent (genesis) header, decoding the parent `extraData` as Jovian params;
+        // the generated genesis carries no such `extraData`, so the decode fails with "base fee
+        // missing" and the import is rejected. The 17-byte value below is the Jovian form (version
+        // byte 0x01 followed by zeroed denominator, elasticity, and minimum base fee); zeroed
+        // denominator/elasticity make the base-fee computation fall back to the chain spec's
+        // configured parameters, so no devnet-specific values are hardcoded here. The genesis hash
+        // is recomputed from `genesis.json` at builder startup, so the rollup config's placeholder
+        // hash is patched to match (see `L2Stack::start`).
+        let l2_genesis_bytes = {
+            let mut l2_genesis: serde_json::Value =
+                serde_json::from_slice(&l2_genesis_bytes).wrap_err("Failed to parse L2 genesis")?;
+            l2_genesis["extraData"] =
+                serde_json::Value::String("0x0100000000000000000000000000000000".to_string());
+            serde_json::to_vec(&l2_genesis).wrap_err("Failed to re-encode L2 genesis")?
+        };
+
         let l2_config = L2StackConfig {
             l2_genesis: l2_genesis_bytes,
             rollup_config: rollup_config_bytes,
