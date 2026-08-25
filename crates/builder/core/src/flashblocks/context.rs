@@ -870,8 +870,9 @@ impl BasePayloadBuilderCtx {
 
             let tx_hash = *tx.hash();
             let has_validity_predicates = !tx.validity_predicates().is_empty();
-            let has_coinbase_tip =
-                tx.as_eip8130().is_some_and(|signed| signed.tx().coinbase_tip().is_some());
+            let has_coinbase_tip = tx
+                .as_eip8130()
+                .is_some_and(|signed| signed.tx().coinbase_tip(tx.sender()).is_some());
 
             // Defer without evaluating once this flashblock's predicate-eval time budget is
             // exhausted, rather than spending more IO on the naive per-transaction loop. The
