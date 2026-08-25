@@ -694,10 +694,10 @@ For non-sequencer nodes, transactions received in the mempool need to be forward
 for inclusion. This is handled by the consumer/forwarder pipeline in the txpool crate.
 
 The
-[`SpawnedConsumer`](https://github.com/base/base/blob/main/crates/execution/txpool/src/consumer/mod.rs)
+[`SpawnedConsumer`](../../crates/execution/txpool/src/consumer/mod.rs)
 polls the transaction pool for new pending transactions and broadcasts them through a
 `tokio::broadcast` channel. The
-[`SpawnedForwarder`](https://github.com/base/base/blob/main/crates/execution/txpool/src/forwarder/mod.rs)
+[`SpawnedForwarder`](../../crates/execution/txpool/src/forwarder/mod.rs)
 subscribes to this broadcast channel and forwards each transaction via a custom JSON-RPC method
 (`base_insertValidatedTransactions`) to configured builder endpoints. One forwarder task is spawned
 per builder URL, so multiple downstream builders can receive transactions simultaneously. This
@@ -819,10 +819,10 @@ networks are completely separate and serve different purposes.
   [`crates/execution/txpool/src/ordering.rs`](https://github.com/base/base/blob/main/crates/execution/txpool/src/ordering.rs)
   — BaseOrdering (fee-based vs FIFO)
 -
-  [`crates/execution/txpool/src/consumer/`](https://github.com/base/base/tree/main/crates/execution/txpool/src/consumer)
+  [`crates/execution/txpool/src/consumer/`](../../crates/execution/txpool/src/consumer)
   — Transaction pool consumer
 -
-  [`crates/execution/txpool/src/forwarder/`](https://github.com/base/base/tree/main/crates/execution/txpool/src/forwarder)
+  [`crates/execution/txpool/src/forwarder/`](../../crates/execution/txpool/src/forwarder)
   — Transaction forwarder to sequencer
 
 
