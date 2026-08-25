@@ -26,6 +26,14 @@ pub enum FaultProofProgramError {
         /// The claimed output root.
         claimed: alloy_primitives::B256,
     },
+    /// Derivation ended at a different L2 block than the claim.
+    #[error("invalid claim block: derived {derived}, claimed {claimed}")]
+    InvalidClaimBlock {
+        /// The final derived L2 block number.
+        derived: u64,
+        /// The claimed L2 block number.
+        claimed: u64,
+    },
     /// Trace extension detected — agreed and claimed output roots match.
     #[error("trace extension detected")]
     TraceExtension,
