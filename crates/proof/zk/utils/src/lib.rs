@@ -18,3 +18,6 @@ pub mod client;
 
 /// Witness data, preimage storage, and block execution.
 pub mod witness;
+
+#[cfg(feature = "test-utils")]
+pub mod test_utils;

@@ -60,6 +60,7 @@ rocksdb = { workspace = true, features = ["snappy"], optional = true }
 alloy-provider = { workspace = true, features = ["reqwest"], optional = true }
 
 [features]
+fixture-utils = []
 std = [
 	"alloy-consensus/std",
 	"alloy-eips/std",
@@ -98,5 +99,6 @@ test-utils = [
 	"dep:serde_json",
 	"dep:tempfile",
 	"dep:tokio",
+	"fixture-utils",
 	"std",
 ]

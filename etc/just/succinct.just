@@ -20,8 +20,18 @@ build-range-elf:
         --elf-name range-elf-embedded \
         --tag {{ _sp1_tag }} \
         --docker \
+        --ignore-rust-version \
         --workspace-directory {{ _repo_root }} \
         --output-directory {{ _succinct_dir }}/elf
+
+# Execute the deterministic Denim fixture in the real local SP1 range ELF.
+test-denim-range: build-range-elf
+    cargo test --locked -p base-proof-zk-backend --test denim_sp1 executes_denim_fixture_and_commits_native_vectors -- --ignored
+    cargo test --locked -p base-proof-zk-backend --test denim_sp1 rejects_or_fails_to_commit_wrong_claim_and_schedule -- --ignored
+
+# Generate and verify a compressed proof for the deterministic Denim fixture.
+prove-denim-range: build-range-elf
+    cargo test --locked -p base-proof-zk-backend --test denim_sp1 proves_and_verifies_compressed_denim_fixture -- --ignored --nocapture
 
 # Build the aggregation program ELF (reproducible docker build)
 build-agg-elf:
@@ -33,6 +43,7 @@ build-agg-elf:
         --elf-name aggregation-elf \
         --tag {{ _sp1_tag }} \
         --docker \
+        --ignore-rust-version \
         --workspace-directory {{ _repo_root }} \
         --output-directory {{ _succinct_dir }}/elf
 

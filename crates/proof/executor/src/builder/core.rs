@@ -87,6 +87,12 @@ where
         Self { config, trie_db, factory }
     }
 
+    /// Returns the trie database for fixture inspection.
+    #[cfg(any(test, feature = "fixture-utils"))]
+    pub const fn trie_db(&self) -> &TrieDB<P, H> {
+        &self.trie_db
+    }
+
     /// Builds and executes a new L2 block using the provided payload attributes.
     ///
     /// This method performs the complete block building and execution process in a stateless

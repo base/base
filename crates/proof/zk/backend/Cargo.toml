@@ -59,6 +59,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
+base-proof-zk-utils = { workspace = true, features = ["test-utils"] }
 
 [features]
 default = [ "metrics" ]

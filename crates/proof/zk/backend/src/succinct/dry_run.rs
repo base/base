@@ -13,7 +13,7 @@ use base_prover_service_protocol::{
     ZkProofRequest, ZkProofResult, ZkVm,
 };
 use sp1_sdk::{
-    Elf, SP1Stdin,
+    Elf, SP1PublicValues, SP1Stdin,
     blocking::{LightProver, Prover},
 };
 use tokio_util::sync::CancellationToken;
@@ -100,14 +100,15 @@ impl DryRunZkProver {
         ))))
     }
 
-    /// Execute the range program with SP1's light prover and return execution statistics.
+    /// Execute the range program with SP1's light prover and return its public values and
+    /// execution statistics.
     ///
     /// Cancellation note: SP1's blocking execution is not interruptible once dispatched. Dropping
     /// this future does not stop an already-running local execution task.
     pub async fn execute_range_program(
         stdin: SP1Stdin,
         range_cycle_limit: u64,
-    ) -> Result<ExecutionStats, ZkProverError> {
+    ) -> Result<(SP1PublicValues, ExecutionStats), ZkProverError> {
         let (execution_result, execution_ms) = tokio::task::spawn_blocking(move || {
             info!(range_cycle_limit = range_cycle_limit, "starting local SP1 zkVM execution");
 
@@ -126,19 +127,22 @@ impl DryRunZkProver {
         })
         .await
         .map_err(|e| backend_error!("SP1 execution task failed to join: {e}"))?;
-        let (_, report) =
+        let (public_values, report) =
             execution_result.map_err(|e| backend_error!("SP1 execution failed: {e}"))?;
 
-        Ok(ExecutionStats {
-            total_instruction_cycles: report.total_instruction_count(),
-            total_sp1_gas: report.gas().unwrap_or_else(|| {
-                warn!("gas calculation returned None despite calculate_gas(true)");
-                0
-            }),
-            cycle_tracker: report.cycle_tracker.into_iter().collect(),
-            witness_generation_ms: 0,
-            execution_ms,
-        })
+        Ok((
+            public_values,
+            ExecutionStats {
+                total_instruction_cycles: report.total_instruction_count(),
+                total_sp1_gas: report.gas().unwrap_or_else(|| {
+                    warn!("gas calculation returned None despite calculate_gas(true)");
+                    0
+                }),
+                cycle_tracker: report.cycle_tracker.into_iter().collect(),
+                witness_generation_ms: 0,
+                execution_ms,
+            },
+        ))
     }
 
     /// Generate the witness, execute it locally, and return an empty-proof dry-run result.
@@ -204,7 +208,7 @@ impl DryRunZkProver {
         let witness_generation_ms =
             u64::try_from(witness_start.elapsed().as_millis()).unwrap_or(u64::MAX);
 
-        let mut execution_stats =
+        let (_, mut execution_stats) =
             Self::execute_range_program(stdin, self.range_cycle_limit).await?;
         // Histogram latency is recorded in the provider; this field keeps the dry-run API contract.
         execution_stats.witness_generation_ms = witness_generation_ms;
