@@ -196,6 +196,11 @@ impl UpgradeSignalMonitor {
     /// either baseline; a schedule that reads cleanly but cannot be applied is handled by
     /// [`Self::apply_and_evaluate`], which may return [`UpgradeSignalPollOutcome::HaltNode`]. The
     /// caller MUST fail the node closed on `HaltNode`.
+    ///
+    /// Both change detection and the apply decision range only over the signals present in the
+    /// freshly read schedule, so an upgrade that disappears from a later, shorter schedule (e.g. an
+    /// L1 reorg on a non-finalized tag) is not reconciled here; see `schedule_needs_apply` for why
+    /// this is safe on the production finalized read.
     pub async fn poll_and_apply(
         &mut self,
         reader: &AlloyUpgradeSignalReader,
@@ -348,6 +353,34 @@ impl UpgradeSignalMonitor {
     }
 
     /// Returns true when any signal in `schedule` has not yet been successfully applied.
+    ///
+    /// # Schedule shrinkage is not reconciled
+    ///
+    /// The apply decision ranges only over the signals *present* in the freshly read schedule (as
+    /// does change detection in [`Self::update_schedule`]). An upgrade that was applied from an
+    /// earlier read but is absent from a later, shorter schedule is therefore never re-evaluated:
+    /// its previously committed activation stays in the runtime registry. This is a deliberate
+    /// simplification — the monitor diffs per present upgrade rather than tracking removals — and it
+    /// is bounded to a narrow, non-production case:
+    ///
+    /// * **A governance clear does not shrink the schedule.** `getSchedule` returns id-ordered
+    ///   timestamps that [`AlloyUpgradeSignalReader::map_schedule`] zips positionally onto the
+    ///   ladder, and a cleared upgrade keeps its slot with a `0` timestamp. That `0` reads as a
+    ///   [`UpgradeSignalStateUpdate::Changed`] and is re-applied normally. Only an L1 reorg that
+    ///   unwinds the registration of a trailing upgrade id shortens the array so an entry vanishes.
+    /// * **Production reads the finalized tag, which cannot reorg.** The default
+    ///   [`crate::UpgradeSignalBlockTag::Finalized`] read is reorg-safe, so a finalized-observed
+    ///   entry can never disappear from a later read; the scenario is unreachable on the recommended
+    ///   configuration.
+    /// * **On a reorg-prone tag the window is far shorter than the activation lead.** `safe` and
+    ///   `latest` can reorg, but every non-zero activation timestamp is set at least `MIN_NOTICE`
+    ///   (1 hour) in the future on L1, far longer than the shallow reorg depth and the poll cadence
+    ///   (12s at `latest`). Once the schedule change re-mines onto the canonical chain it is re-read
+    ///   and re-applied — and a restart or a manual [`UpgradeSignalRefresher`] refresh always
+    ///   reconciles from the full L1 schedule — well before the stale activation could take effect.
+    ///
+    /// Tracking removed entries would require a full reorg-aware schedule diff for no benefit on the
+    /// production (finalized) path, so it is intentionally left as possible future hardening.
     fn schedule_needs_apply(&self, schedule: &UpgradeSignalSchedule) -> bool {
         schedule.signals.iter().any(|signal| {
             self.states.get(&signal.upgrade_id).is_none_or(|state| state.needs_apply(signal))
