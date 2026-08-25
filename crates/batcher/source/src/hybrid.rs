@@ -194,6 +194,17 @@ where
                             tracing::warn!(error = %msg, "polling source error, retrying on next tick");
                             // Transient provider error — continue to next tick.
                         }
+                        Err(SourceError::NotReady { requested, latest }) => {
+                            // The requested block has not been produced yet. Today this only
+                            // arises during sequential catchup (handled above), but a polling
+                            // source could emit it here too; treat it as transient and retry on
+                            // the next tick rather than killing the batcher.
+                            tracing::debug!(
+                                block = %requested,
+                                latest = %latest,
+                                "awaiting L2 block, retrying on next tick"
+                            );
+                        }
                         Err(e) => return Err(e),
                     }
                 }
