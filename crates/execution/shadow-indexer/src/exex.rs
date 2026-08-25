@@ -1,5 +1,5 @@
 use base_common_consensus::{BaseBlock, BasePrimitives, BaseReceipt};
-use base_shadow_indexer_db::{ShadowBlockPayload, ShadowBlockRow, ShadowCanonicalRef};
+use base_shadow_indexer_db::{ShadowBlockPayload, ShadowBlockRow, ShadowCanonicalRef, ShadowWrite};
 use chrono::Utc;
 use eyre::Result;
 use futures::TryStreamExt;
@@ -10,8 +10,6 @@ use reth_node_api::{FullNodeComponents, NodeTypes};
 use reth_primitives_traits::{AlloyBlockHeader, RecoveredBlock};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
-
-use crate::ShadowWrite;
 
 /// Shadow indexer `ExEx` handler.
 #[derive(Debug)]
@@ -77,8 +75,10 @@ impl ShadowIndexerExEx {
                 break;
             }
 
-            // Historical commits are canonical, but live commits are speculative shadow blocks.
-            // In live mode only the replacement chain is safe to expose as the WAL watermark.
+            // `FinishedHeight` lets the manager prune the ExEx WAL, so acknowledging a height the
+            // node may still reorg discards the notification that would have recorded the block it
+            // discards. While syncing, commits are settled history. Live, any commit can still be
+            // reorged, so only a reorg's own replacement chain is safe to expose.
             if Self::should_emit_finished_height(&notification, is_syncing)
                 && let Some(committed_chain) = notification.committed_chain()
             {
@@ -195,6 +195,11 @@ impl ShadowIndexerExEx {
         Ok(true)
     }
 
+    /// Forwards each committed block as the canonical block at its height.
+    ///
+    /// A reorg names the replacement only for heights its `new` chain covers; the rest arrive here
+    /// as later commits. A commit that is itself reorged out afterwards does not leave a stale hash
+    /// behind: that reorg stores a new candidate at the height, which replaces the row outright.
     async fn resolve_canonical_heights(&self, new: &Chain<BasePrimitives>) -> Result<bool> {
         for block in new.blocks().values() {
             let number = i64::try_from(block.header().number()).map_err(|error| {

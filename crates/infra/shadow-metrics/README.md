@@ -17,7 +17,10 @@ displaced blocks before the chain has produced every replacement, so rows
 arrive unresolved; the reader advances past them and picks them up when the
 indexer fills the hash in, which bumps `updated_at`. A row that never gains a
 canonical hash is never emitted: nothing distinguishes it from one still
-awaiting its replacement.
+awaiting its replacement. `unresolved_blocks` and
+`unresolved_oldest_age_seconds` report that backlog every poll, so rows the
+indexer will not revisit show up as a count that stops draining rather than as
+silence.
 
 `shadow_blocks` is keyed by `number`, so a second reorg at a height overwrites
 the candidate stored there. A candidate replaced before this reader polled it is

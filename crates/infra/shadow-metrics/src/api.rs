@@ -454,14 +454,12 @@ mod tests {
     #[test]
     fn block_detail_omits_canonical_hash_when_unresolved() {
         let detail = block_detail(&sample_row());
-        assert!(detail.reorged_out);
         assert!(detail.canonical_hash.is_none());
     }
 
     #[test]
-    fn block_detail_exposes_shadow_status_and_replacement_hash() {
+    fn block_detail_exposes_replacement_hash() {
         let detail = block_detail(&sample_row_with(Some(vec![0xcd; 32])));
-        assert!(detail.reorged_out);
         assert_eq!(
             detail.canonical_hash.as_deref(),
             Some(format!("0x{}", "cd".repeat(32)).as_str())

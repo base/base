@@ -7,7 +7,7 @@ mod cursor;
 pub use cursor::{ShadowBlockCursor, ShadowMetricsCursorRepo};
 
 mod repo;
-pub use repo::{ShadowBlockRepo, ShadowFlushOutcome, ShadowSummaryRow};
+pub use repo::{ShadowBlockRepo, ShadowFlushOutcome, ShadowSummaryRow, ShadowUnresolvedBacklog};
 
 mod models;
-pub use models::{ShadowBlockPayload, ShadowBlockRow, ShadowCanonicalRef};
+pub use models::{ShadowBlockPayload, ShadowBlockRow, ShadowCanonicalRef, ShadowWrite};

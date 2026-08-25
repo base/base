@@ -7,24 +7,41 @@
 -- row at its height through `ON CONFLICT (number)` instead of a second
 -- statement keyed on the old composite.
 --
--- Rows are truncated rather than migrated. They only feed Prometheus metrics
--- the reader re-derives from live traffic within one reorg, and the pre-#4624
--- canonical rows would collide on `number` with their shadow siblings anyway.
--- TRUNCATE rather than DROP TABLE: the table object keeps its grants, so the
--- separately-deployed shadow-metrics role does not lose SELECT, and the
--- explorer indexes from 0004-0006 survive untouched.
+-- Rows are migrated, not truncated: `shadow_blocks` also backs the explorer
+-- endpoints added in #4571 (`/blocks/{id}`, `/shadow-blocks/{id}`,
+-- `/shadow-candidates`), and nothing prunes it, so the table is the whole
+-- history rather than a metrics scratch buffer. Collapsing to the new key
+-- discards two classes of row that cannot survive it:
+--   * pre-#4624 canonical rows, which are not discarded blocks and collide on
+--     `number` with the shadow sibling that supersedes them;
+--   * older candidates at a height, matching the going-forward semantics where
+--     a second reorg at one height replaces the row rather than storing a
+--     sibling.
 --
--- The lock guards match 0004: fail fast and let the container retry rather than
--- block startup indefinitely behind a shadow-metrics poll holding AccessShare.
+-- `lock_timeout` stays short so a shadow-metrics poll holding AccessShare fails
+-- the migration fast and lets the container retry instead of blocking startup.
+-- `statement_timeout` is raised because `ADD PRIMARY KEY` and the rebuilt
+-- `updated_at` index each scan the full table, and neither can run CONCURRENTLY
+-- inside the transaction sqlx wraps this migration in.
 --
 -- Deploy shadow-indexer before shadow-metrics: the indexer applies this at
 -- startup via `ShadowDbConfig::init_pool`, and a reader that still projects
 -- `reorged_out` or writes `last_hash` errors on every poll until it is rolled.
+-- The indexer's own rollout has the same shape in reverse: an old writer pod
+-- still naming `reorged_out` fails every flush until it is replaced.
 
 SET LOCAL lock_timeout = '5s';
-SET LOCAL statement_timeout = '30s';
+SET LOCAL statement_timeout = '300s';
 
-TRUNCATE shadow_blocks;
+-- Not discarded blocks; `reorged_out` is about to stop distinguishing them.
+DELETE FROM shadow_blocks WHERE reorged_out = false;
+
+-- One candidate per height, newest first. `hash` breaks `updated_at` ties so the
+-- choice is deterministic rather than dependent on physical row order.
+DELETE FROM shadow_blocks AS older
+  USING shadow_blocks AS newer
+  WHERE older.number = newer.number
+    AND (older.updated_at, older.hash) < (newer.updated_at, newer.hash);
 
 ALTER TABLE shadow_blocks DROP CONSTRAINT shadow_blocks_pkey;
 ALTER TABLE shadow_blocks DROP COLUMN reorged_out;
@@ -39,10 +56,20 @@ DROP INDEX IF EXISTS idx_shadow_blocks_number;
 DROP INDEX IF EXISTS idx_shadow_blocks_updated_at;
 CREATE INDEX idx_shadow_blocks_updated_at ON shadow_blocks(updated_at, number);
 
--- `number` is unique, so `updated_at` ties break on it alone.
-ALTER TABLE shadow_metrics_cursor DROP COLUMN last_hash;
+-- Backs the unresolved-backlog gauges. Rows awaiting a canonical block are a small
+-- fraction of the table, so a partial index keeps the reader's per-poll COUNT/MIN
+-- off a full scan. Complements 0006, which indexes the resolved side.
+CREATE INDEX idx_shadow_blocks_unresolved
+  ON shadow_blocks(created_at) WHERE canonical_hash IS NULL;
 
--- The cursor outlived every row it pointed at. Clearing it sends the reader
--- back through `max_cursor`, which reports the empty table and starts at
--- genesis rather than skipping rows written below a stale watermark.
-DELETE FROM shadow_metrics_cursor;
+-- `number` is unique, so `updated_at` ties break on it alone.
+--
+-- The cursor row itself is kept. Its `(last_updated_at, last_number)` prefix
+-- still orders against surviving rows, and every row written after this
+-- migration carries a later `updated_at`, so nothing is skipped. Clearing it
+-- would send the reader through `max_cursor`, which by then reports the live
+-- table tip and drops everything written before shadow-metrics is rolled.
+-- Cost of keeping it: a row tied on `(updated_at, number)` with the watermark
+-- but previously distinguished by `last_hash` is not re-read. At most one row,
+-- once.
+ALTER TABLE shadow_metrics_cursor DROP COLUMN last_hash;

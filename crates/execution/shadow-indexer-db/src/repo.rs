@@ -5,7 +5,7 @@ use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, QueryBuilder, query, query_as, types::Json};
 
-use crate::{ShadowBlockCursor, ShadowBlockRow, ShadowCanonicalRef};
+use crate::{ShadowBlockCursor, ShadowBlockRow, ShadowCanonicalRef, ShadowWrite};
 
 /// Rows written and rows resolved by a single flush.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -14,6 +14,15 @@ pub struct ShadowFlushOutcome {
     pub rows_written: usize,
     /// Rows that gained a canonical hash.
     pub rows_reconciled: usize,
+}
+
+/// Stored rows still waiting for the canonical block at their height.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ShadowUnresolvedBacklog {
+    /// Rows with no `canonical_hash`.
+    pub count: i64,
+    /// Age of the oldest such row, zero when there are none.
+    pub oldest_age_seconds: f64,
 }
 
 /// Shadow block repository.
@@ -56,28 +65,81 @@ impl ShadowBlockRepo {
         Self { pool }
     }
 
-    /// Persists reorged rows and resolves stored rows from canonical blocks.
+    /// Applies writes in order, in one transaction.
     ///
-    /// Both run in one transaction, so a reader cannot observe a row written unresolved in the
-    /// same flush that resolves it.
+    /// Consecutive writes of the same kind collapse into a single statement, but the runs
+    /// themselves execute in the order the `ExEx` produced them. Partitioning the stream by kind
+    /// instead would let a canonical ref resolve a candidate that had not yet been stored when the
+    /// ref was emitted, pinning one block's replacement hash onto a different block.
+    ///
+    /// One transaction also keeps a reader from observing a row written unresolved in the same
+    /// flush that resolves it.
     ///
     /// # Errors
     /// Returns an error when the transaction fails.
-    pub async fn flush(
-        &self,
-        rows: &[ShadowBlockRow],
-        canonical: &[ShadowCanonicalRef],
-    ) -> Result<ShadowFlushOutcome> {
-        // Five binds per row; 4,000 stays below Postgres's 65,535-parameter limit.
-        const CHUNK_SIZE: usize = 4_000;
-
-        if rows.is_empty() && canonical.is_empty() {
+    pub async fn flush(&self, writes: &[ShadowWrite]) -> Result<ShadowFlushOutcome> {
+        if writes.is_empty() {
             return Ok(ShadowFlushOutcome::default());
         }
 
-        let deduped = Self::dedupe_last_write_wins(rows);
-
         let mut tx = self.pool.begin().await.context("failed to begin shadow block transaction")?;
+        let mut outcome = ShadowFlushOutcome::default();
+
+        for run in Self::variant_runs(writes) {
+            let rows: Vec<&ShadowBlockRow> = run
+                .iter()
+                .filter_map(|write| match write {
+                    ShadowWrite::Reorged(row) => Some(row.as_ref()),
+                    ShadowWrite::Canonical(_) => None,
+                })
+                .collect();
+
+            if rows.is_empty() {
+                let canonical: Vec<&ShadowCanonicalRef> = run
+                    .iter()
+                    .filter_map(|write| match write {
+                        ShadowWrite::Canonical(entry) => Some(entry),
+                        ShadowWrite::Reorged(_) => None,
+                    })
+                    .collect();
+                let reconciled = Self::resolve_canonical_hashes(&mut tx, &canonical).await?;
+                outcome.rows_reconciled = outcome.rows_reconciled.saturating_add(reconciled);
+            } else {
+                let written = Self::insert_rows(&mut tx, &rows).await?;
+                outcome.rows_written = outcome.rows_written.saturating_add(written);
+            }
+        }
+
+        tx.commit().await.context("failed to commit shadow block transaction")?;
+
+        Ok(outcome)
+    }
+
+    /// Splits writes into maximal runs of one kind, preserving their relative order.
+    fn variant_runs(writes: &[ShadowWrite]) -> impl Iterator<Item = &[ShadowWrite]> {
+        let mut remaining = writes;
+
+        std::iter::from_fn(move || {
+            let reorged = matches!(remaining.first()?, ShadowWrite::Reorged(_));
+            let run_len = remaining
+                .iter()
+                .take_while(|write| matches!(write, ShadowWrite::Reorged(_)) == reorged)
+                .count();
+
+            let (run, tail) = remaining.split_at(run_len);
+            remaining = tail;
+            Some(run)
+        })
+    }
+
+    async fn insert_rows(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        rows: &[&ShadowBlockRow],
+    ) -> Result<usize> {
+        // Five binds per row; 4,000 stays below Postgres's 65,535-parameter limit.
+        const CHUNK_SIZE: usize = 4_000;
+
+        let deduped = Self::dedupe_last_write_wins(rows);
         let mut rows_written = 0usize;
 
         for chunk in deduped.chunks(CHUNK_SIZE) {
@@ -94,10 +156,11 @@ impl ShadowBlockRepo {
                     .push_bind(Json(&entry.payload));
             });
 
-            // `COALESCE` holds `canonical_hash` for a redelivered notification, which carries
-            // `NULL` and must not erase a hash the backfill already established. It does not
-            // apply across heights: a second reorg at one height replaces the first candidate
-            // outright, hash and payload included, so the stale hash must not survive.
+            // Same hash means a redelivered notification: it carries `NULL` and must not erase a
+            // hash the backfill already established, and it describes the block already stored, so
+            // `created_at` stays put. A different hash is a second reorg at that height replacing
+            // the candidate outright, so neither the stale replacement hash nor the displaced
+            // block's creation time may survive.
             query_builder.push(
                 " ON CONFLICT (number) DO UPDATE SET \
                  hash = EXCLUDED.hash, \
@@ -105,29 +168,29 @@ impl ShadowBlockRepo {
                    WHEN shadow_blocks.hash = EXCLUDED.hash \
                    THEN COALESCE(EXCLUDED.canonical_hash, shadow_blocks.canonical_hash) \
                    ELSE EXCLUDED.canonical_hash END, \
+                 created_at = CASE \
+                   WHEN shadow_blocks.hash = EXCLUDED.hash \
+                   THEN shadow_blocks.created_at \
+                   ELSE EXCLUDED.created_at END, \
                  payload = EXCLUDED.payload, \
                  updated_at = now()",
             );
 
             let result = query_builder
                 .build()
-                .execute(&mut *tx)
+                .execute(&mut **tx)
                 .await
                 .context("failed to insert shadow block batch")?;
 
             rows_written = rows_written.saturating_add(result.rows_affected() as usize);
         }
 
-        let rows_reconciled = Self::resolve_canonical_hashes(&mut tx, canonical).await?;
-
-        tx.commit().await.context("failed to commit shadow block transaction")?;
-
-        Ok(ShadowFlushOutcome { rows_written, rows_reconciled })
+        Ok(rows_written)
     }
 
     async fn resolve_canonical_hashes(
         tx: &mut sqlx::Transaction<'_, Postgres>,
-        canonical: &[ShadowCanonicalRef],
+        canonical: &[&ShadowCanonicalRef],
     ) -> Result<usize> {
         if canonical.is_empty() {
             return Ok(0);
@@ -155,7 +218,7 @@ impl ShadowBlockRepo {
     /// Postgres picks an arbitrary source row when several `UNNEST` entries match one target, so
     /// a height appearing twice in a flush must collapse to the last hash before binding.
     fn dedupe_canonical_last_write_wins(
-        canonical: &[ShadowCanonicalRef],
+        canonical: &[&ShadowCanonicalRef],
     ) -> (Vec<i64>, Vec<Vec<u8>>) {
         let mut by_number: HashMap<i64, &[u8]> = HashMap::with_capacity(canonical.len());
         for entry in canonical {
@@ -165,13 +228,34 @@ impl ShadowBlockRepo {
         by_number.into_iter().map(|(number, hash)| (number, hash.to_vec())).unzip()
     }
 
-    /// Postgres cannot upsert one key twice; retain its final state within each flush.
-    fn dedupe_last_write_wins(rows: &[ShadowBlockRow]) -> Vec<&ShadowBlockRow> {
+    /// Postgres cannot upsert one key twice; retain its final state within each run.
+    fn dedupe_last_write_wins<'a>(rows: &[&'a ShadowBlockRow]) -> Vec<&'a ShadowBlockRow> {
         let mut by_number: HashMap<i64, &ShadowBlockRow> = HashMap::with_capacity(rows.len());
         for row in rows {
             by_number.insert(row.number, row);
         }
         by_number.into_values().collect()
+    }
+
+    /// Counts rows the indexer has not yet resolved, and dates the oldest.
+    ///
+    /// A row is never emitted until it gains a canonical hash, so a backlog that stops draining is
+    /// the only outward sign of rows nothing will revisit.
+    ///
+    /// # Errors
+    /// Returns an error when the query fails.
+    pub async fn unresolved_backlog(&self) -> Result<ShadowUnresolvedBacklog> {
+        // Aged against the database clock that stamped `created_at`, not the reader's.
+        let (count, oldest_age_seconds) = query_as::<_, (i64, f64)>(
+            "SELECT COUNT(*), \
+             COALESCE(EXTRACT(EPOCH FROM (now() - MIN(created_at))), 0)::DOUBLE PRECISION \
+             FROM shadow_blocks WHERE canonical_hash IS NULL",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .context("failed to count unresolved shadow blocks")?;
+
+        Ok(ShadowUnresolvedBacklog { count, oldest_age_seconds })
     }
 
     /// Lists rows in an inclusive block-number range.
@@ -367,13 +451,14 @@ mod tests {
 
     #[test]
     fn dedupe_collapses_duplicate_number_to_last_write() {
-        let rows = vec![
+        let rows = [
             sample_row(1, &[0xaa], None),
             sample_row(2, &[0xbb], None),
             sample_row(1, &[0xaa], Some(vec![0xcc])),
         ];
+        let borrowed: Vec<&ShadowBlockRow> = rows.iter().collect();
 
-        let deduped = ShadowBlockRepo::dedupe_last_write_wins(&rows);
+        let deduped = ShadowBlockRepo::dedupe_last_write_wins(&borrowed);
 
         assert_eq!(deduped.len(), 2);
         let kept = deduped.iter().find(|row| row.number == 1).expect("duplicated key survives");
@@ -382,21 +467,42 @@ mod tests {
 
     #[test]
     fn dedupe_collapses_same_number_with_distinct_hash() {
-        let rows = vec![sample_row(1, &[0xaa], None), sample_row(1, &[0xbb], None)];
+        let rows = [sample_row(1, &[0xaa], None), sample_row(1, &[0xbb], None)];
+        let borrowed: Vec<&ShadowBlockRow> = rows.iter().collect();
 
-        let deduped = ShadowBlockRepo::dedupe_last_write_wins(&rows);
+        let deduped = ShadowBlockRepo::dedupe_last_write_wins(&borrowed);
 
         assert_eq!(deduped.len(), 1, "a height keys one row regardless of hash");
         assert_eq!(deduped[0].hash, [0xbb], "the later candidate at a height wins");
     }
 
     #[test]
+    fn variant_runs_keep_canonical_refs_between_the_rows_they_follow() {
+        let writes = vec![
+            ShadowWrite::Reorged(Box::new(sample_row(1, &[0xaa], None))),
+            ShadowWrite::Canonical(ShadowCanonicalRef { number: 1, hash: vec![0xbb] }),
+            ShadowWrite::Reorged(Box::new(sample_row(1, &[0xcc], None))),
+        ];
+
+        let kinds: Vec<bool> = ShadowBlockRepo::variant_runs(&writes)
+            .map(|run| matches!(run[0], ShadowWrite::Reorged(_)))
+            .collect();
+
+        assert_eq!(
+            kinds,
+            vec![true, false, true],
+            "a canonical ref must not be hoisted past a candidate stored after it"
+        );
+    }
+
+    #[test]
     fn dedupe_canonical_collapses_repeated_height_to_last_hash() {
-        let canonical = vec![
+        let entries = [
             ShadowCanonicalRef { number: 5, hash: vec![0x01] },
             ShadowCanonicalRef { number: 6, hash: vec![0x02] },
             ShadowCanonicalRef { number: 5, hash: vec![0x03] },
         ];
+        let canonical: Vec<&ShadowCanonicalRef> = entries.iter().collect();
 
         let (numbers, hashes) = ShadowBlockRepo::dedupe_canonical_last_write_wins(&canonical);
 

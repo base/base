@@ -99,6 +99,10 @@ impl ShadowMetricsReader {
     /// # Errors
     /// Returns an error when fetch or cursor persistence fails.
     pub async fn poll_once(&mut self) -> Result<Vec<ShadowBlockStats>> {
+        // Before the cursor moves, so a failure here retries cleanly instead of leaving the batch
+        // emitted and the watermark advanced.
+        self.emit_unresolved_backlog().await?;
+
         let rows = self
             .block_repo
             .list_reorged_since(&self.cursor, i64::from(self.config.max_rows_per_poll))
@@ -141,6 +145,15 @@ impl ShadowMetricsReader {
         }
 
         Ok(emitted)
+    }
+
+    async fn emit_unresolved_backlog(&self) -> Result<()> {
+        let backlog = self.block_repo.unresolved_backlog().await?;
+
+        ShadowMetrics::unresolved_blocks().set(backlog.count as f64);
+        ShadowMetrics::unresolved_oldest_age_seconds().set(backlog.oldest_age_seconds);
+
+        Ok(())
     }
 
     /// Runs until cancelled, counting and retrying poll failures.

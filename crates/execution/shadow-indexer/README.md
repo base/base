@@ -14,3 +14,13 @@ fill in `canonical_hash` on the rows already stored at those heights.
 height holds at most one discarded candidate, and a second reorg at that height replaces the
 row outright rather than accumulating a sibling. The replacement clears `canonical_hash`: the
 hash belonged to the block that was displaced, not to the one now stored.
+
+Rows and canonical refs travel as one ordered `ShadowWrite` stream and reach the database in
+that order. A ref resolves whichever candidate is stored at its height when it is applied, so
+applying it out of order would pin one block's replacement hash onto a different block.
+Consecutive writes of the same kind still collapse into one statement, which keeps a backfill
+notification to a single round trip.
+
+A flush that exhausts its retries drops its rows but keeps its canonical refs. A dropped row
+costs that block's metrics; a dropped ref would strand a row persisted by an earlier flush at
+`NULL` forever, since the reader skips unresolved rows and nothing else revisits them.

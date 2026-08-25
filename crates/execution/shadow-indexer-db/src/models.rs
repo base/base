@@ -42,6 +42,19 @@ pub struct ShadowCanonicalRef {
     pub hash: Vec<u8>,
 }
 
+/// A unit of work applied to `shadow_blocks`, carried in the order the `ExEx` produced it.
+///
+/// Ordering is load-bearing: a canonical ref resolves whichever candidate is stored at its height
+/// when it is applied, so reordering it past a later candidate pins the wrong replacement hash.
+#[derive(Clone, Debug)]
+pub enum ShadowWrite {
+    /// A reorged-out or reverted block to persist. Boxed to keep the enum, and the channel slot it
+    /// travels in, small: a row carries a full block and its receipts.
+    Reorged(Box<ShadowBlockRow>),
+    /// A canonical block that resolves rows stored at its height.
+    Canonical(ShadowCanonicalRef),
+}
+
 /// Shadow block JSONB payload.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ShadowBlockPayload {
