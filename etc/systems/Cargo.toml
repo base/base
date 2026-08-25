@@ -158,7 +158,6 @@ futures.workspace = true
 indicatif.workspace = true
 tokio-tungstenite.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
-testcontainers-modules = { workspace = true, features = ["postgres"] }
 
 [[bench]]
 name = "b20_zk_proving"

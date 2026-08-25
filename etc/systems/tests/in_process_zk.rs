@@ -2,6 +2,7 @@
 
 #[path = "common/cobalt.rs"]
 mod cobalt;
+mod common;
 
 use std::time::Duration;
 

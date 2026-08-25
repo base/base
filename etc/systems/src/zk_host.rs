@@ -178,12 +178,6 @@ struct FirstPollWorker {
     first_poll: watch::Sender<bool>,
 }
 
-impl FirstPollWorker {
-    fn mark_polled(&self) {
-        let _ = self.first_poll.send(true);
-    }
-}
-
 #[async_trait]
 impl ProverWorkerProvider for FirstPollWorker {
     async fn get_next_proof(
@@ -191,7 +185,7 @@ impl ProverWorkerProvider for FirstPollWorker {
         request: GetNextProofRequest,
     ) -> Result<GetNextProofResponse, ProverServiceClientError> {
         let response = self.inner.get_next_proof(request).await?;
-        self.mark_polled();
+        let _ = self.first_poll.send(true);
         Ok(response)
     }
 
