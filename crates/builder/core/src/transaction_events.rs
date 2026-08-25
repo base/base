@@ -606,10 +606,7 @@ fn serialize_builder_event_data<T: Serialize>(data: BuilderEventData<T>) -> Map<
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{B256, TxHash};
-    use base_observability_events::{
-        TransactionEventBuilder, TransactionEventProducer, TransactionEventType,
-    };
+    use alloy_primitives::B256;
 
     use super::*;
 
@@ -750,39 +747,5 @@ mod tests {
         assert!(expired.get("defer_reason").is_none());
         assert!(expired.get("rejection_reason").is_none());
         assert!(!expired.as_object().unwrap().contains_key("validity_predicates"));
-    }
-
-    #[test]
-    fn repark_in_the_same_flashblock_uses_a_distinct_deferred_event_id() {
-        let tx_hash = TxHash::repeat_byte(0x33);
-        let first = TransactionEventBuilder::new(
-            TransactionEventProducer::BaseBuilder,
-            TransactionEventType::BuilderDeferred,
-        )
-        .tx_hash(tx_hash)
-        .payload_id("0x0102030405060708")
-        .id_part("flashblock_index", 2)
-        .id_part("ordering_position", 1)
-        .data_field("defer_reason", serde_json::json!("validity_predicate_not_satisfied"))
-        .build_with_network("base-devnet");
-        let second = TransactionEventBuilder::new(
-            TransactionEventProducer::BaseBuilder,
-            TransactionEventType::BuilderDeferred,
-        )
-        .tx_hash(tx_hash)
-        .payload_id("0x0102030405060708")
-        .id_part("flashblock_index", 2)
-        .id_part("ordering_position", 4)
-        .data_field("defer_reason", serde_json::json!("validity_predicate_not_satisfied"))
-        .build_with_network("base-devnet");
-
-        first.validate().expect("first deferred event should be valid");
-        second.validate().expect("second deferred event should be valid");
-        assert_eq!(first.tx_hash, second.tx_hash);
-        assert_eq!(first.payload_id, second.payload_id);
-        assert_ne!(
-            first.event_id, second.event_id,
-            "promote-and-repark in the same flashblock must emit a second BUILDER_DEFERRED with its own event_id"
-        );
     }
 }

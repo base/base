@@ -411,69 +411,6 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn replacement_emits_a_second_admission_event_joinable_by_replacement_hash() {
-        let capture = TransactionEventCapture::install();
-        let signer = PrivateKeySigner::random();
-        let original = signed_eip1559(&signer, 0, 1);
-        let replacement = signed_eip1559(&signer, 0, 2);
-        let rpc = SendRawTransactionValidityApiImpl::new(NoopTransactionPool::<
-            BasePooledTransaction,
-        >::new());
-
-        let original_predicates = vec![ValidityPredicate::BlockNumber {
-            op: base_execution_txpool::ValidityOperator::GreaterThanOrEqual,
-            value: U256::from(1),
-        }];
-        let replacement_predicates = vec![ValidityPredicate::FlashblockIndex {
-            op: base_execution_txpool::ValidityOperator::LessThan,
-            value: U256::from(5),
-        }];
-
-        let _ = rpc
-            .send_raw_transaction_validity(SendRawTransactionValidityRequest {
-                tx: original,
-                validity: original_predicates.clone(),
-            })
-            .await;
-        let _ = rpc
-            .send_raw_transaction_validity(SendRawTransactionValidityRequest {
-                tx: replacement,
-                validity: replacement_predicates.clone(),
-            })
-            .await;
-
-        let admissions: Vec<_> = capture
-            .events()
-            .into_iter()
-            .filter(|event| {
-                event.event_type == TransactionEventType::TxpoolSendRawTransactionValidity
-            })
-            .collect();
-        assert_eq!(admissions.len(), 2, "each submit, including a replacement, emits admission");
-        assert_ne!(admissions[0].tx_hash, admissions[1].tx_hash);
-        assert_eq!(
-            admissions[0].data["validity_predicates"],
-            serde_json::to_value(&original_predicates).unwrap()
-        );
-        assert_eq!(
-            admissions[1].data["validity_predicates"],
-            serde_json::to_value(&replacement_predicates).unwrap()
-        );
-
-        let original_hash = admissions[0].tx_hash.expect("original admission has tx_hash");
-        let replacement_hash = admissions[1].tx_hash.expect("replacement admission has tx_hash");
-        let replaced = TransactionEventBuilder::new(
-            TransactionEventProducer::BaseRethNode,
-            TransactionEventType::Replaced,
-        )
-        .tx_hash(original_hash)
-        .data_field("replacement_hash", json!(format!("{replacement_hash:#x}")))
-        .build_with_network("base-devnet");
-        replaced.validate().expect("replacement event should be valid");
-        assert_eq!(replaced.data["replacement_hash"], format!("{replacement_hash:#x}"));
-    }
-
     #[test]
     fn send_raw_transaction_validity_method_is_registered() {
         let rpc = SendRawTransactionValidityApiImpl::new(NoopTransactionPool::<

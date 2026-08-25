@@ -175,6 +175,10 @@ async fn expired_position_predicate_emits_builder_expired() -> eyre::Result<()> 
         !expired_types.contains(&TransactionEventType::BuilderDeferred),
         "expired transactions must not be parked, got {expired_types:?}"
     );
+    assert!(
+        !expired_types.contains(&TransactionEventType::BuilderRejected),
+        "expired transactions must not be labeled BUILDER_REJECTED, got {expired_types:?}"
+    );
 
     Ok(())
 }
