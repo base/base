@@ -17,7 +17,7 @@
 use std::time::Duration;
 
 use alloy_provider::Provider;
-use base_system_tests::{BATCHER, SystemTestStackBuilder};
+use base_system_tests::{BATCHER, SystemTestRpcClient, SystemTestStackBuilder};
 use eyre::{Result, WrapErr};
 use tokio::time::{sleep, timeout};
 
@@ -25,8 +25,10 @@ const L1_CHAIN_ID: u64 = 1337;
 const L2_CHAIN_ID: u64 = 84538453;
 const BLOCK_PRODUCTION_TIMEOUT: Duration = Duration::from_secs(30);
 const BLOCK_POLL_INTERVAL: Duration = Duration::from_millis(500);
-/// The client must derive the chain purely from L1 within this window.
-const CLIENT_SYNC_TIMEOUT: Duration = Duration::from_secs(90);
+/// The client's safe head must advance purely from L1 derivation within this window. This is
+/// longer than block production because it requires the full loop: the batcher accumulates L2
+/// blocks into a channel, submits the batch to L1, and only then can the client derive it.
+const CLIENT_SYNC_TIMEOUT: Duration = Duration::from_secs(180);
 /// The batcher must post at least one batch within this window. Submission lags block production:
 /// the batcher accumulates L2 blocks into a channel and only submits once the channel closes.
 const BATCH_SUBMISSION_TIMEOUT: Duration = Duration::from_secs(120);
@@ -46,7 +48,14 @@ async fn l3_smoke_calldata_da_derivation() -> Result<()> {
 
     let l1_provider = system.l1_provider().await?;
     let builder_provider = system.l2_builder_provider()?;
-    let client_provider = system.l2_client_provider()?;
+    let urls = system.urls().await?;
+    let rpc = SystemTestRpcClient::new(
+        &urls.l1_rpc,
+        &urls.l2_builder_rpc,
+        &urls.l2_client_rpc,
+        &urls.l2_builder_consensus_rpc,
+        &urls.l2_client_consensus_rpc,
+    )?;
 
     // 1. The sequencer produces L2 blocks under the L3 config (Base tx-format + calldata DA).
     timeout(BLOCK_PRODUCTION_TIMEOUT, async {
@@ -60,25 +69,32 @@ async fn l3_smoke_calldata_da_derivation() -> Result<()> {
     .await
     .wrap_err("L2 sequencer did not produce blocks under the L3 profile")??;
 
-    // 2. The validator derives the chain from L1. This is the core L3 signal: the client's L1
-    //    provider is configured for Base-format decoding, and derivation only advances if the
-    //    batches it reads back from L1 decode cleanly. A Base-format provider cannot decode an
-    //    EIP-4844 blob transaction, so a healthy sync also proves the batcher posted calldata,
-    //    not blobs.
-    let client_block = timeout(CLIENT_SYNC_TIMEOUT, async {
+    // 2. The validator DERIVES the chain from L1 — the core L3 signal. Check the client's SAFE
+    //    head, not its unsafe head: the unsafe head advances via P2P gossip from the builder
+    //    consensus and would pass even if L1 derivation were completely broken. The safe head
+    //    only advances when the derivation pipeline successfully decodes the Base-format calldata
+    //    batches read back from L1. A Base-format provider cannot decode an EIP-4844 blob
+    //    transaction, so a healthy safe head also proves the batcher posted calldata, not blobs.
+    let client_safe_head = timeout(CLIENT_SYNC_TIMEOUT, async {
         loop {
-            let block = client_provider.get_block_number().await?;
-            if block > 0 {
-                return Ok::<_, eyre::Error>(block);
+            // The consensus RPC may be briefly unavailable at startup; treat any error as
+            // "not derived yet" and keep polling until the safe head advances or we time out.
+            let safe_head = rpc
+                .l2_client_sync_status()
+                .await
+                .map(|status| status.safe_l2.block_info.number)
+                .unwrap_or(0);
+            if safe_head > 0 {
+                return Ok::<_, eyre::Error>(safe_head);
             }
             sleep(Duration::from_secs(2)).await;
         }
     })
     .await
     .wrap_err(
-        "client did not sync from L1 under the L3 profile (Base-format derivation stalled)",
+        "client safe head did not advance from L1 under the L3 profile (Base-format derivation stalled)",
     )??;
-    assert!(client_block > 0, "client should derive at least one L2 block from L1");
+    assert!(client_safe_head > 0, "client should derive at least one safe L2 block from L1");
 
     // 3. The batcher actually submitted its batches to L1. Combined with the successful
     //    Base-format client sync above, a positive nonce confirms the calldata-DA path: had the
