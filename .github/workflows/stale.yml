@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   stale:
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     permissions:
       actions: write
       issues: write

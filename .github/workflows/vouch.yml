@@ -16,7 +16,7 @@ permissions:
 jobs:
   check-pr:
     if: github.event_name == 'pull_request_target'
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
@@ -39,7 +39,7 @@ jobs:
         contains(github.event.comment.body, 'denounce') ||
         contains(github.event.comment.body, 'unvouch')
       )
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     permissions:
       contents: write
       pull-requests: write

@@ -2,6 +2,7 @@ name: no_std
 
 on:
   pull_request:
+  merge_group:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -16,11 +17,9 @@ permissions:
   contents: read
 
 jobs:
-  # Depot CI does not currently run pull_request workflows for forks.
   check-no-std:
-    if: github.event.pull_request.head.repo.fork == true
     name: no_std
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -35,7 +34,7 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           rust-cache-shared-key: "no-std"
-          rust-cache-save: "false"
+          rust-cache-save: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Add riscv target
         shell: bash
@@ -45,9 +44,8 @@ jobs:
         run: ./etc/scripts/ci/check-no-std.sh
 
   check-no-std-proof:
-    if: github.event.pull_request.head.repo.fork == true
     name: no_std (proof)
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -64,7 +62,7 @@ jobs:
           toolchain: "nightly"
           components: "rust-src"
           rust-cache-shared-key: "no-std-proof"
-          rust-cache-save: "false"
+          rust-cache-save: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Add riscv target
         shell: bash
