@@ -8,16 +8,18 @@
 set -euo pipefail
 
 marker='<!-- iai-bench-results -->'
-body="$(cat "$1")"
 
 existing_id=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
   --jq ".[] | select(.body | startswith(\"${marker}\")) | .id" \
   | head -1)
 
+# Read the body straight from the file via gh's `@<path>` syntax so the markdown
+# (which contains backtick-wrapped benchmark names) never passes through a shell
+# variable at all.
 if [ -n "$existing_id" ]; then
   gh api "repos/${REPO}/issues/comments/${existing_id}" \
-    -X PATCH --field body="$body" > /dev/null
+    -X PATCH -F body=@"$1" > /dev/null
 else
   gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
-    --field body="$body" > /dev/null
+    -F body=@"$1" > /dev/null
 fi
