@@ -9,8 +9,9 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use eyre::{Result as EyreResult, eyre};
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
+use reth_execution_cache::{CachedStateProvider, ExecutionCache};
 use reth_primitives_traits::Block as BlockT;
-use reth_provider::{HeaderProvider, StateProviderFactory};
+use reth_provider::{HeaderProvider, StateProvider, StateProviderFactory};
 use reth_revm::{database::StateProviderDatabase, db::State};
 
 use crate::{
@@ -59,6 +60,19 @@ pub fn meter_block<P>(
 where
     P: StateProviderFactory + HeaderProvider<Header = Header>,
 {
+    meter_block_with_optional_cache(provider, chain_spec, block, None)
+}
+
+/// Re-executes a block using an optional prepopulated parent-state execution cache.
+pub fn meter_block_with_optional_cache<P>(
+    provider: P,
+    chain_spec: Arc<BaseChainSpec>,
+    block: &BaseBlock,
+    cache: Option<ExecutionCache>,
+) -> EyreResult<MeterBlockResponse>
+where
+    P: StateProviderFactory + HeaderProvider<Header = Header>,
+{
     let block_hash = block.header().hash_slow();
     let block_number = block.header().number();
     let transactions = block.body().transactions();
@@ -71,9 +85,13 @@ where
 
     // Get state provider at parent block
     let state_provider = MeteredStateProvider::new(provider.state_by_block_hash(parent_hash)?);
+    let cached_state_provider =
+        cache.map(|cache| CachedStateProvider::new(&state_provider, cache, None));
+    let execution_state_provider: &dyn StateProvider =
+        cached_state_provider.as_ref().map_or(&state_provider, |provider| provider);
 
     // Create state database from parent state
-    let state_db = StateProviderDatabase::new(&state_provider);
+    let state_db = StateProviderDatabase::new(execution_state_provider);
     let mut db = State::builder().with_database(state_db).with_bundle_update().build();
 
     // Set up block attributes from the actual block header

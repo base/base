@@ -10,8 +10,8 @@ use parking_lot::RwLock;
 use tracing::{debug, info, warn};
 
 use crate::{
-    MeteredOpcodes, MeteringApiImpl, MeteringApiServer, MeteringCache, MeteringCollector,
-    PriorityFeeEstimator, ResourceLimits, estimator::assert_valid_percentile,
+    DowseBenchmarkConfig, MeteredOpcodes, MeteringApiImpl, MeteringApiServer, MeteringCache,
+    MeteringCollector, PriorityFeeEstimator, ResourceLimits, estimator::assert_valid_percentile,
 };
 
 const TARGET_FLASHBLOCKS_PER_BLOCK_NON_ZERO_MSG: &str =
@@ -67,6 +67,8 @@ pub struct MeteringExtension {
     pub target_flashblocks_per_block: Option<usize>,
     /// Opcodes and precompiles to track for gas metering.
     pub metered_opcodes: MeteredOpcodes,
+    /// Optional deterministic Dowse block replay benchmark.
+    pub dowse_benchmark: Option<DowseBenchmarkConfig>,
 }
 
 impl Default for MeteringExtension {
@@ -80,6 +82,7 @@ impl Default for MeteringExtension {
             cache_size: 12,
             target_flashblocks_per_block: None,
             metered_opcodes: MeteredOpcodes::default(),
+            dowse_benchmark: None,
         }
     }
 }
@@ -96,6 +99,7 @@ impl MeteringExtension {
             cache_size: 12,
             target_flashblocks_per_block: None,
             metered_opcodes: MeteredOpcodes::default(),
+            dowse_benchmark: None,
         }
     }
 
@@ -133,6 +137,12 @@ impl MeteringExtension {
     /// Sets the opcodes and precompiles to track for gas metering.
     pub fn with_metered_opcodes(mut self, opcodes: MeteredOpcodes) -> Self {
         self.metered_opcodes = opcodes;
+        self
+    }
+
+    /// Enables deterministic canonical-block Dowse replay benchmarks.
+    pub fn with_dowse_benchmark(mut self, config: DowseBenchmarkConfig) -> Self {
+        self.dowse_benchmark = Some(config);
         self
     }
 
@@ -180,6 +190,7 @@ impl BaseNodeExtension for MeteringExtension {
             .then(|| self.resolved_target_flashblocks_per_block(requires_target_flashblocks));
         let flashblocks_config = self.flashblocks_config;
         let metered_opcodes = Arc::new(self.metered_opcodes);
+        let dowse_benchmark = self.dowse_benchmark;
 
         hooks.add_rpc_module(move |ctx| {
             let fb_state: Arc<FlashblocksState> =
@@ -238,6 +249,7 @@ impl BaseNodeExtension for MeteringExtension {
                 MeteringApiImpl::new(ctx.provider().clone(), fb_state, Arc::clone(&metered_opcodes))
             };
 
+            let metering_api = metering_api.with_dowse_benchmark(dowse_benchmark);
             ctx.modules.merge_configured(metering_api.into_rpc())?;
 
             Ok(())
@@ -269,6 +281,8 @@ pub struct MeteringConfig {
     pub target_flashblocks_per_block: Option<usize>,
     /// Opcodes and precompiles to track for gas metering.
     pub metered_opcodes: MeteredOpcodes,
+    /// Optional deterministic Dowse block replay benchmark.
+    pub dowse_benchmark: Option<DowseBenchmarkConfig>,
 }
 
 impl MeteringConfig {
@@ -288,6 +302,7 @@ impl MeteringConfig {
             cache_size: 12,
             target_flashblocks_per_block: None,
             metered_opcodes: MeteredOpcodes::default(),
+            dowse_benchmark: None,
         }
     }
 
@@ -302,6 +317,7 @@ impl MeteringConfig {
             cache_size: 12,
             target_flashblocks_per_block: None,
             metered_opcodes: MeteredOpcodes::default(),
+            dowse_benchmark: None,
         }
     }
 
@@ -341,6 +357,12 @@ impl MeteringConfig {
         self.metered_opcodes = opcodes;
         self
     }
+
+    /// Enables deterministic canonical-block Dowse replay benchmarks.
+    pub fn with_dowse_benchmark(mut self, config: DowseBenchmarkConfig) -> Self {
+        self.dowse_benchmark = Some(config);
+        self
+    }
 }
 
 impl FromExtensionConfig for MeteringExtension {
@@ -357,6 +379,7 @@ impl FromExtensionConfig for MeteringExtension {
             cache_size: config.cache_size,
             target_flashblocks_per_block: config.target_flashblocks_per_block,
             metered_opcodes: config.metered_opcodes,
+            dowse_benchmark: config.dowse_benchmark,
         }
     }
 }

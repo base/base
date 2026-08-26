@@ -5,7 +5,7 @@ use alloy_primitives::B256;
 use base_bundles::{Bundle, MeterBundleResponse};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 
-use crate::{MeterBlockResponse, MeteredPriorityFeeResponse};
+use crate::{DowseBlockBenchmarkResponse, MeterBlockResponse, MeteredPriorityFeeResponse};
 
 /// RPC API for transaction metering.
 ///
@@ -42,6 +42,14 @@ pub trait MeteringApi {
         &self,
         number: BlockNumberOrTag,
     ) -> RpcResult<MeterBlockResponse>;
+
+    /// Replays one canonical block with raw parent state and a cache populated from Dowse plans.
+    #[method(name = "benchmarkDowseBlockByNumber")]
+    async fn benchmark_dowse_block_by_number(
+        &self,
+        number: BlockNumberOrTag,
+        cached_first: bool,
+    ) -> RpcResult<DowseBlockBenchmarkResponse>;
 
     /// Handler for: `base_meteredPriorityFeePerGas`
     ///

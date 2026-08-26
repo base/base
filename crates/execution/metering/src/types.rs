@@ -34,6 +34,40 @@ pub struct MeterBlockResponse {
     pub transactions: Vec<MeterBlockTransactions>,
 }
 
+/// Work performed before a cache-backed Dowse block replay.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DowsePrewarmStats {
+    /// Time spent resolving transaction hints into concrete targets.
+    pub planning_time_us: u128,
+    /// Time spent reading parent state with the configured worker pool.
+    pub prewarm_time_us: u128,
+    /// Transactions for which the hint table produced a plan.
+    pub planned_transactions: usize,
+    /// Unique account targets read into the execution cache.
+    pub account_targets: usize,
+    /// Unique storage targets read into the execution cache.
+    pub storage_targets: usize,
+    /// Bytecode values discovered while reading account targets.
+    pub bytecode_targets: usize,
+    /// Number of state-read workers used.
+    pub workers: usize,
+}
+
+/// Raw and Dowse-cache-backed executions of the same canonical block.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DowseBlockBenchmarkResponse {
+    /// Whether cache-backed execution ran before raw execution.
+    pub cached_first: bool,
+    /// Planning and parent-state prewarming measurements.
+    pub prewarm: DowsePrewarmStats,
+    /// Replay without an explicit Dowse execution cache.
+    pub raw: MeterBlockResponse,
+    /// Replay using the cache populated from Dowse plans.
+    pub cached: MeterBlockResponse,
+}
+
 /// Metering data for a single transaction
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
