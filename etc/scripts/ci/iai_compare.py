@@ -121,7 +121,7 @@ class IaiCompare:
     def table(self, rows: list[Delta]) -> list[str]:
         """Render a Markdown table for the given rows (header + body)."""
         lines = [
-            "| Benchmark | Base | Head | Δ instructions |",
+            "| Benchmark | Base (target) | Head (this PR) | Δ instructions |",
             "|---|--:|--:|--:|",
         ]
         lines += [self.render_row(row) for row in rows]
