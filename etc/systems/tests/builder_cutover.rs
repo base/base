@@ -9,17 +9,21 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
+use base_common_flashblocks::{FlashblocksPayloadV1, Metadata};
 use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_system_tests::{ANVIL_ACCOUNT_1, SystemTestStackBuilder};
 use eyre::{OptionExt, Result, WrapErr};
+use futures::StreamExt;
 use tokio::time::{sleep, timeout};
+use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 const L1_CHAIN_ID: u64 = 1337;
 const L2_CHAIN_ID: u64 = 84538453;
 const DENIM_ACTIVATION_BLOCK: u64 = 10;
 const LAST_VERIFIED_BLOCK: u64 = DENIM_ACTIVATION_BLOCK + 4;
 const BLOCK_TIMEOUT: Duration = Duration::from_secs(45);
+const REPLAY_QUIET_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[tokio::test]
 async fn cuts_over_builder_and_block_time_at_denim() -> Result<()> {
@@ -54,6 +58,7 @@ async fn cuts_over_builder_and_block_time_at_denim() -> Result<()> {
     wait_for_block(&builder, LAST_VERIFIED_BLOCK).await?;
     wait_for_block(&client, LAST_VERIFIED_BLOCK).await?;
     verify_chain_and_cadence(&builder, &client).await?;
+    verify_flashblocks_stop_at_denim(&system.l2_stack().builder().flashblocks_url()).await?;
 
     Ok(())
 }
@@ -135,6 +140,30 @@ async fn verify_chain_and_cadence(
         previous_hash = Some(builder_block.header.hash);
         previous_timestamp_ms = Some(timestamp_ms);
     }
+
+    Ok(())
+}
+
+async fn verify_flashblocks_stop_at_denim(url: &str) -> Result<()> {
+    let replay_url = format!("{url}?block_number=0&flashblock_index=0");
+    let (stream, _) = connect_async(replay_url).await?;
+    let (_, mut messages) = stream.split();
+    let mut positions = Vec::new();
+
+    while let Ok(Some(message)) = timeout(REPLAY_QUIET_TIMEOUT, messages.next()).await {
+        let Message::Text(message) = message? else {
+            continue;
+        };
+        let flashblock: FlashblocksPayloadV1 = serde_json::from_str(&message)?;
+        let metadata: Metadata = serde_json::from_value(flashblock.metadata)?;
+        positions.push((metadata.block_number, flashblock.index));
+    }
+
+    assert!(!positions.is_empty(), "no pre-Denim flashblocks were published");
+    assert!(
+        positions.iter().all(|(number, _)| *number < DENIM_ACTIVATION_BLOCK),
+        "post-Denim flashblock published at {positions:?}"
+    );
 
     Ok(())
 }
