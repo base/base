@@ -6,7 +6,7 @@ use url::Url;
 
 use super::{
     BlockCommand, CommandOutcome, ConductorCommand, DoctorCommand, P2pCommand, ProofsCommand,
-    SequencerCommand, SyncStatusCommand, TxpoolCommand,
+    SequencerCommand, SyncStatusCommand, TxpoolCommand, UpgradeReadinessCommand,
 };
 use crate::{MonitoringConfig, ViewId, run_app, run_flashblocks_json};
 
@@ -48,6 +48,8 @@ pub enum Commands {
     Block(BlockCommand),
     /// Report combined CL `optimism_syncStatus` + EL `eth_syncing`.
     SyncStatus(SyncStatusCommand),
+    /// Check whether this node is ready for the scheduled (or an announced) L1 upgrade.
+    UpgradeReadiness(UpgradeReadinessCommand),
     /// Inspect p2p peers and advertised endpoints.
     P2p(P2pCommand),
     /// Inspect and clear execution-layer txpool contents.
@@ -120,6 +122,7 @@ impl Cli {
             Commands::SyncStatus(command) => {
                 command.run(config).await.map(|()| CommandOutcome::Success)
             }
+            Commands::UpgradeReadiness(command) => command.run(config).await,
             Commands::P2p(command) => command.run(config).await,
             Commands::Txpool(command) => {
                 command.run(config).await.map(|()| CommandOutcome::Success)

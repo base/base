@@ -118,6 +118,11 @@ where
                 FaultProofProgramError::Driver(e)
             })?;
 
-        Ok(Epilogue { safe_head, output_root, claimed_output_root: self.claimed_l2_output_root })
+        Ok(Epilogue {
+            safe_head,
+            claimed_l2_block_number: self.claimed_l2_block_number,
+            output_root,
+            claimed_output_root: self.claimed_l2_output_root,
+        })
     }
 }

@@ -861,6 +861,8 @@ impl BasePayloadBuilderCtx {
 
             let tx_hash = *tx.hash();
             let has_validity_predicates = !tx.validity_predicates().is_empty();
+            let has_coinbase_tip =
+                tx.as_eip8130().is_some_and(|signed| signed.tx().coinbase_tip().is_some());
 
             // Defer without evaluating once this flashblock's predicate-eval time budget is
             // exhausted, rather than spending more IO on the naive per-transaction loop. The
@@ -1612,6 +1614,16 @@ impl BasePayloadBuilderCtx {
                 .effective_tip_per_gas(base_fee)
                 .expect("fee is always valid; execution succeeded");
             info.total_fees += U256::from(miner_fee) * U256::from(gas_used);
+            info.inclusion.record(has_validity_predicates, gas_used, miner_fee, base_fee);
+
+            // Per-tx tip-per-gas distribution (builder priority score), tagged
+            // by flow cohort and bid mechanism. `X` for top-X-percentile share is
+            // left to Datadog percentile aggregations — do not bake it in here.
+            BuilderMetrics::record_tip_per_gas(
+                has_validity_predicates,
+                has_coinbase_tip,
+                miner_fee as f64,
+            );
 
             // track minimum priority fee for diagnostics (saturate u128 -> u64)
             let fee_u64 = miner_fee.min(u64::MAX as u128) as u64;

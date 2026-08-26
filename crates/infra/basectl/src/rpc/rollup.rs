@@ -9,8 +9,9 @@ use alloy_transport_http::Http;
 use anyhow::{Context, Result};
 use base_common_genesis::UpgradeConfig;
 use base_common_network::Base;
-use base_consensus_rpc::{BaseP2PApiClient, RollupNodeApiClient};
+use base_consensus_rpc::{BaseApiClient, BaseP2PApiClient, RollupNodeApiClient};
 use base_protocol::SyncStatus;
+use base_upgrade_signal::UpgradeReadiness;
 use jsonrpsee::{core::client::ClientT, http_client::HttpClientBuilder, rpc_params};
 use tokio::sync::mpsc;
 use tracing::warn;
@@ -72,6 +73,24 @@ pub async fn fetch_sync_status(rpc: &Url, cl_rpc: &Url) -> Result<SyncStatusRepo
         },
     )?;
     Ok(SyncStatusReport { cl, el })
+}
+
+/// Fetches this node's upgrade readiness from the consensus-node RPC.
+///
+/// Calls the public `base_upgradeReadiness` method. `target_version`, when set, is an announced
+/// `major.minor.patch[-rc.N]` version to check support against before the upgrade is scheduled on L1;
+/// the node parses and validates it.
+pub async fn fetch_upgrade_readiness(
+    cl_rpc: &Url,
+    target_version: Option<String>,
+) -> Result<UpgradeReadiness> {
+    let cl_client = HttpClientBuilder::default()
+        .request_timeout(Duration::from_secs(30))
+        .build(cl_rpc.as_str())
+        .with_context(|| format!("connecting to consensus node RPC at {cl_rpc}"))?;
+    BaseApiClient::upgrade_readiness(&cl_client, target_version)
+        .await
+        .with_context(|| format!("fetching base_upgradeReadiness from {cl_rpc}"))
 }
 
 /// Fetches the safe and latest L2 block numbers.

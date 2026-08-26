@@ -38,6 +38,11 @@ impl ShadowCycle {
         Ok(Self::Building { next_height, built: 0 })
     }
 
+    /// Returns whether no private block has yet been inserted in this cycle.
+    pub const fn is_at_start(self) -> bool {
+        matches!(self, Self::Building { built: 0, .. })
+    }
+
     /// Returns the reconciliation target when private building has reached its cycle limit.
     pub const fn reconciliation_target(self) -> Option<L2BlockInfo> {
         match self {
@@ -144,7 +149,9 @@ mod tests {
     #[test]
     fn reaches_reconciliation_after_configured_insertions() {
         let mut cycle = ShadowCycle::building(head(10)).unwrap();
+        assert!(cycle.is_at_start());
         assert!(!cycle.record_insertion(head(11), 2).unwrap());
+        assert!(!cycle.is_at_start());
         assert!(cycle.record_insertion(head(12), 2).unwrap());
         assert_eq!(cycle.reconciliation_target(), Some(head(12)));
     }
@@ -154,5 +161,6 @@ mod tests {
         let mut cycle = ShadowCycle::AwaitingReconciliation { shadow_head: head(12) };
         cycle.reconcile(head(12)).unwrap();
         assert_eq!(cycle, ShadowCycle::Building { next_height: 13, built: 0 });
+        assert!(cycle.is_at_start());
     }
 }

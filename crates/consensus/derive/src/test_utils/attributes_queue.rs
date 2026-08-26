@@ -19,10 +19,16 @@ use crate::{
 pub struct TestAttributesBuilder {
     /// The attributes to return.
     pub attributes: Vec<Result<BasePayloadAttributes, PipelineErrorKind>>,
+    /// Parent system configs seeded by callers.
+    pub parent_system_configs: Vec<(L2BlockInfo, SystemConfig)>,
 }
 
 #[async_trait]
 impl AttributesBuilder for TestAttributesBuilder {
+    fn seed_parent_system_config(&mut self, parent: L2BlockInfo, config: SystemConfig) {
+        self.parent_system_configs.push((parent, config));
+    }
+
     /// Prepares the [`BasePayloadAttributes`] for the next payload.
     async fn prepare_payload_attributes(
         &mut self,

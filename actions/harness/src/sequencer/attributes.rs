@@ -4,6 +4,7 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::Bytes;
 use async_trait::async_trait;
 use base_common_consensus::BaseTxEnvelope;
+use base_common_genesis::SystemConfig;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_consensus_derive::{
     AttributesBuilder, PipelineError, PipelineResult, StatefulAttributesBuilder,
@@ -37,6 +38,10 @@ impl ActionSequencerAttributesBuilder {
 
 #[async_trait]
 impl AttributesBuilder for ActionSequencerAttributesBuilder {
+    fn seed_parent_system_config(&mut self, parent: L2BlockInfo, config: SystemConfig) {
+        self.inner.seed_parent_system_config(parent, config);
+    }
+
     async fn prepare_payload_attributes(
         &mut self,
         l2_parent: L2BlockInfo,

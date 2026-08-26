@@ -934,6 +934,9 @@ where
         // Record validity-predicate state loads accumulated across the block's flashblocks.
         BuilderMetrics::record_predicate_loads(&info.predicate_loads);
 
+        // Record validity inclusion and EIP-1559 fee revenue for the block.
+        BuilderMetrics::record_inclusion(&info.inclusion);
+
         debug!(
             target: "payload_builder",
             message = message,

@@ -55,3 +55,6 @@ mod txpool;
 pub use txpool::{
     TxpoolClearArgs, TxpoolClearJson, TxpoolCommand, TxpoolCommands, TxpoolReadArgs, TxpoolReadJson,
 };
+
+mod upgrade_readiness;
+pub use upgrade_readiness::UpgradeReadinessCommand;

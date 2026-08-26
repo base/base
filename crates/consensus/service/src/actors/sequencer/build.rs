@@ -21,6 +21,7 @@ use crate::{
             error::SequencerActorError,
             l1_origin::{L1OriginSelectorError, OriginSelector},
             recovery::RecoveryModeGuard,
+            shadow_funding::ShadowFunding,
         },
     },
 };
@@ -78,9 +79,10 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
     /// Uses the engine's current unsafe head (from the watch channel) as the parent.
     pub async fn build(
         &mut self,
+        shadow_funding: Option<ShadowFunding>,
     ) -> Result<BuildOutcome<UnsealedPayloadHandle>, SequencerActorError> {
         let unsafe_head = self.engine_client.get_unsafe_head().await?;
-        self.build_on(unsafe_head).await
+        self.build_on(unsafe_head, shadow_funding).await
     }
 
     /// Starts building the next L2 block on top of an explicit `parent`, returning a handle to
@@ -92,6 +94,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
     pub async fn build_on(
         &mut self,
         parent: L2BlockInfo,
+        shadow_funding: Option<ShadowFunding>,
     ) -> Result<BuildOutcome<UnsealedPayloadHandle>, SequencerActorError> {
         let l1_origin = match self.get_next_payload_l1_origin(parent).await? {
             BuildOutcome::Ready(l1_origin) => l1_origin,
@@ -109,7 +112,9 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
 
         let attributes_build_start = Instant::now();
 
-        let Some(attributes_with_parent) = self.build_attributes(parent, l1_origin).await? else {
+        let Some(attributes_with_parent) =
+            self.build_attributes(parent, l1_origin, shadow_funding).await?
+        else {
             return Ok(BuildOutcome::Deferred);
         };
 
@@ -196,6 +201,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
         &mut self,
         unsafe_head: L2BlockInfo,
         l1_origin: BlockInfo,
+        shadow_funding: Option<ShadowFunding>,
     ) -> Result<Option<AttributesWithParent>, SequencerActorError> {
         let mut attributes = match self
             .attributes_builder
@@ -232,6 +238,13 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
                 return Err(err.into());
             }
         };
+
+        if let Some(funding) = shadow_funding {
+            attributes
+                .transactions
+                .get_or_insert_default()
+                .push(funding.transaction(unsafe_head.block_info.hash));
+        }
 
         self.rollup_config.log_upgrade_activation(
             unsafe_head.block_info.number.saturating_add(1),

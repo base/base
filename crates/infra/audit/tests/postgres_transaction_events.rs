@@ -307,6 +307,70 @@ async fn postgres_retention_uses_per_class_cutoffs() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn postgres_expires_at_lifecycle_events_with_peer_classes() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    let event_prefix = unique_event_id();
+
+    let events = [
+        event_with_type(&format!("{event_prefix}-admission"), "TXPOOL_SEND_RAW_TRANSACTION"),
+        event_with_type(
+            &format!("{event_prefix}-validity-admission"),
+            "TXPOOL_SEND_RAW_TRANSACTION_VALIDITY",
+        ),
+        event_with_type(&format!("{event_prefix}-rejected"), "BUILDER_REJECTED"),
+        event_with_type(&format!("{event_prefix}-deferred"), "BUILDER_DEFERRED"),
+        event_with_type(&format!("{event_prefix}-expired"), "BUILDER_EXPIRED"),
+        event_with_type(&format!("{event_prefix}-included"), "BUILDER_INCLUDED"),
+    ];
+    sink.insert_events(&events).await?;
+    sqlx::query(
+        "UPDATE transaction_events SET ingested_at = now() - interval '4 days' \
+         WHERE event_id IN ($1, $2, $3)",
+    )
+    .bind(format!("{event_prefix}-rejected"))
+    .bind(format!("{event_prefix}-deferred"))
+    .bind(format!("{event_prefix}-expired"))
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "UPDATE transaction_events SET ingested_at = now() - interval '8 days' \
+         WHERE event_id IN ($1, $2, $3)",
+    )
+    .bind(format!("{event_prefix}-admission"))
+    .bind(format!("{event_prefix}-validity-admission"))
+    .bind(format!("{event_prefix}-included"))
+    .execute(&pool)
+    .await?;
+
+    let outcome = sink
+        .expire_old_events(TransactionEventRetentionConfig {
+            hot_days: 3,
+            warm_days: 7,
+            cold_days: 30,
+            delete_batch_size: 10,
+            max_batches: 10,
+        })
+        .await?;
+    assert_eq!(outcome.hot_rows_deleted, 3);
+    assert_eq!(outcome.warm_rows_deleted, 2);
+    assert_eq!(outcome.cold_rows_deleted, 0);
+
+    let remaining: Vec<(String, String)> = sqlx::query_as(
+        "SELECT event_id, event_type FROM transaction_events \
+         WHERE event_id LIKE $1 ORDER BY event_id",
+    )
+    .bind(format!("{event_prefix}-%"))
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(remaining, vec![(format!("{event_prefix}-included"), "BUILDER_INCLUDED".into())]);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn postgres_retention_skips_when_another_replica_holds_lock() -> anyhow::Result<()> {
     let harness = PostgresHarness::new().await?;
     PgTransactionEventSink::migrate(&harness.database_url).await?;

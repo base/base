@@ -277,6 +277,7 @@ impl<E: SequencerEngineBackend> L2Sequencer<E> {
             engine_client,
             is_active: false,
             shadow_blocks_per_cycle: None,
+            shadow_funding: None,
             recovery_mode: RecoveryModeGuard::new(false),
             rollup_config: self.actor_rollup_config(),
             seal_offset: base_protocol::DEFAULT_SEAL_OFFSET,
