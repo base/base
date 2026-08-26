@@ -46,6 +46,29 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 1
 
+      # Post the in-progress state immediately so the PR shows the benchmarks are
+      # running (and any stale result from a prior push is replaced) rather than
+      # only appearing when the ~minutes-long run finishes. Skip forked PRs because
+      # their pull_request workflows cannot write comments with GITHUB_TOKEN.
+      - name: Post in-progress comment
+        if: >
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/running.md" <<EOF
+          <!-- iai-bench-results -->
+
+          ⏳ Running deterministic benchmarks under Valgrind… results will replace this comment when the run finishes. [View run]($RUN_URL)
+          EOF
+          bash etc/scripts/ci/post_pr_comment.sh "$RUNNER_TEMP/running.md"
+
       - uses: ./.github/actions/setup
         with:
           native-deps: "true"
@@ -125,8 +148,8 @@ jobs:
             --threshold-pct 2
           cat "$RUNNER_TEMP/comment.md" | tee -a "$GITHUB_STEP_SUMMARY"
 
-      # Keep one concise status comment current. Skip forked PRs because their
-      # pull_request workflows cannot write comments with GITHUB_TOKEN.
+      # Replace the in-progress comment with the results. Skip forked PRs because
+      # their pull_request workflows cannot write comments with GITHUB_TOKEN.
       - name: Post or update results on PR
         if: >
           github.event_name == 'pull_request' &&
@@ -136,18 +159,26 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
+        run: bash etc/scripts/ci/post_pr_comment.sh "$RUNNER_TEMP/comment.md"
+
+      # If any earlier step failed the in-progress comment would otherwise hang on
+      # "running" forever; replace it with a failure notice pointing at the logs.
+      - name: Report failure on PR
+        if: >
+          failure() &&
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          marker='<!-- iai-bench-results -->'
-          existing_id=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
-            --jq ".[] | select(.body | startswith(\"${marker}\")) | .id" \
-            | head -1)
+          cat > "$RUNNER_TEMP/failed.md" <<EOF
+          <!-- iai-bench-results -->
 
-          body=$(cat "$RUNNER_TEMP/comment.md")
-          if [ -n "$existing_id" ]; then
-            gh api "repos/${REPO}/issues/comments/${existing_id}" \
-              -X PATCH --field body="$body" > /dev/null
-          else
-            gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
-              --field body="$body" > /dev/null
-          fi
+          ⚠️ Benchmark run failed before producing results — see the [run log]($RUN_URL).
+          EOF
+          bash etc/scripts/ci/post_pr_comment.sh "$RUNNER_TEMP/failed.md"
