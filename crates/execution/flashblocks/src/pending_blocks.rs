@@ -428,6 +428,14 @@ impl PendingBlocks {
         BlockNumberOrTag::Number(self.earliest_header.number - 1)
     }
 
+    /// Returns `true` when this snapshot is built directly on canonical `number` and `hash`.
+    #[inline]
+    pub fn is_based_on_canonical(&self, number: BlockNumber, hash: B256) -> bool {
+        matches!(self.canonical_block_number(), BlockNumberOrTag::Number(n) if n == number)
+            && self.parent_hash() == hash
+            && self.latest_block_number() > number
+    }
+
     /// Returns the earliest block number in the pending state.
     #[inline]
     pub fn earliest_block_number(&self) -> BlockNumber {

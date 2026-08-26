@@ -7,12 +7,12 @@ use std::{
 };
 
 use alloy_consensus::{
-    Block, BlockBody, Header,
+    Block, BlockBody, BlockHeader, Header,
     transaction::{Recovered, SignerRecoverable},
 };
 use alloy_eips::{BlockNumberOrTag, Decodable2718};
 use alloy_network::TransactionResponse;
-use alloy_primitives::{Address, BlockNumber};
+use alloy_primitives::{Address, B256, BlockNumber};
 use alloy_rpc_types_eth::state::StateOverride;
 use arc_swap::ArcSwapOption;
 use base_common_chains::Upgrades;
@@ -22,7 +22,7 @@ use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use rayon::prelude::*;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_evm::ConfigureEvm;
-use reth_primitives_traits::RecoveredBlock;
+use reth_primitives_traits::{RecoveredBlock, SealedHeader};
 use reth_provider::{BlockReaderIdExt, StateProviderBox, StateProviderFactory};
 use reth_revm::{State, database::StateProviderDatabase};
 use revm_database::states::bundle_state::BundleRetention;
@@ -56,16 +56,115 @@ pub enum StateUpdate {
     Flashblock(Flashblock),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UpdatePreflight {
+    Process,
+    ResumeRecovery,
+    Skip,
+    EnterRecovery,
+}
+
+impl StateUpdate {
+    /// Returns the canonical block number on which this update is anchored.
+    pub fn pending_anchor_number(&self) -> u64 {
+        match self {
+            Self::Canonical(block) => block.number,
+            Self::Flashblock(flashblock) => flashblock.metadata.block_number.saturating_sub(1),
+        }
+    }
+
+    /// Returns `true` for an index-zero flashblock built on the exact current canonical tip.
+    pub fn is_recovery_resume(&self, best_number: u64, best_hash: B256) -> bool {
+        match self {
+            Self::Flashblock(flashblock) => {
+                flashblock.index == 0
+                    && flashblock.metadata.block_number == best_number.saturating_add(1)
+                    && flashblock.base.as_ref().is_some_and(|base| base.parent_hash == best_hash)
+            }
+            Self::Canonical(_) => false,
+        }
+    }
+
+    fn flashblock_has_wrong_parent_at_tip(
+        flashblock: &Flashblock,
+        best_number: u64,
+        best_hash: B256,
+    ) -> bool {
+        flashblock.metadata.block_number.saturating_sub(1) == best_number
+            && flashblock.index == 0
+            && flashblock.base.as_ref().is_none_or(|base| base.parent_hash != best_hash)
+    }
+
+    fn is_stale_against(&self, best_number: u64, best_hash: B256) -> bool {
+        if self.pending_anchor_number() < best_number {
+            return true;
+        }
+
+        match self {
+            Self::Canonical(block) => block.number == best_number && block.hash() != best_hash,
+            Self::Flashblock(flashblock) => {
+                Self::flashblock_has_wrong_parent_at_tip(flashblock, best_number, best_hash)
+            }
+        }
+    }
+
+    fn preflight(
+        &self,
+        best: Option<(u64, B256)>,
+        has_pending: bool,
+        pending_is_based_on_best: bool,
+        recovering: bool,
+    ) -> UpdatePreflight {
+        let Some((best_number, best_hash)) = best else {
+            return UpdatePreflight::Skip;
+        };
+
+        if recovering {
+            if self.is_recovery_resume(best_number, best_hash) {
+                return UpdatePreflight::ResumeRecovery;
+            }
+
+            return match self {
+                Self::Canonical(block)
+                    if block.number == best_number && block.hash() == best_hash =>
+                {
+                    UpdatePreflight::Process
+                }
+                Self::Flashblock(_) if self.pending_anchor_number() > best_number => {
+                    UpdatePreflight::Process
+                }
+                _ => UpdatePreflight::Skip,
+            };
+        }
+
+        // A canonical tip update can rebase pending. A flashblock cannot safely extend a snapshot
+        // that is anchored behind the provider.
+        if matches!(self, Self::Flashblock(_)) && has_pending && !pending_is_based_on_best {
+            return UpdatePreflight::EnterRecovery;
+        }
+
+        if self.is_stale_against(best_number, best_hash) {
+            return if pending_is_based_on_best {
+                UpdatePreflight::Skip
+            } else {
+                UpdatePreflight::EnterRecovery
+            };
+        }
+
+        UpdatePreflight::Process
+    }
+}
+
 /// Processes flashblocks and canonical blocks to keep pending state updated.
 #[derive(Debug)]
 pub struct StateProcessor<Client> {
     rx: Arc<Mutex<UnboundedReceiver<StateUpdate>>>,
     pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
-    max_depth: u64,
     client: Client,
     sender: Sender<Arc<PendingBlocks>>,
     cache: Arc<Mutex<FlashblockCache>>,
     live_state: StdMutex<Option<LivePendingState>>,
+    quarantined_flashblock_block: StdMutex<Option<BlockNumber>>,
 }
 
 impl<Client> StateProcessor<Client>
@@ -108,7 +207,6 @@ where
     pub fn new(
         client: Client,
         pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
-        max_depth: u64,
         rx: Arc<Mutex<UnboundedReceiver<StateUpdate>>>,
         sender: Sender<Arc<PendingBlocks>>,
     ) -> Self {
@@ -119,44 +217,184 @@ where
         Self {
             pending_blocks,
             client,
-            max_depth,
             rx,
             sender,
             cache: Arc::new(Mutex::new(cache)),
             live_state: StdMutex::new(None),
+            quarantined_flashblock_block: StdMutex::new(None),
+        }
+    }
+
+    fn best_canonical_header(&self) -> Option<SealedHeader> {
+        self.client.sealed_header_by_number_or_tag(BlockNumberOrTag::Latest).ok().flatten()
+    }
+
+    async fn enter_recovery(&self, best_number: u64) {
+        warn!(best = best_number, "flashblock processor entering recovery");
+        Metrics::pending_queue_recovery().increment(1);
+        self.pending_blocks.swap(None);
+        self.clear_live_state();
+        *self
+            .quarantined_flashblock_block
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+        *self.cache.lock().await = FlashblockCache::new(best_number);
+    }
+
+    fn is_quarantined_flashblock(&self, update: &StateUpdate, best: &SealedHeader) -> bool {
+        let StateUpdate::Flashblock(flashblock) = update else {
+            return false;
+        };
+        let mut quarantined = self
+            .quarantined_flashblock_block
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if *quarantined != Some(flashblock.metadata.block_number) {
+            return false;
+        }
+
+        if update.is_recovery_resume(best.number(), best.hash()) {
+            *quarantined = None;
+            false
+        } else {
+            true
+        }
+    }
+
+    async fn preflight_update(
+        &self,
+        update: &StateUpdate,
+        recovering: &mut bool,
+    ) -> Option<(SealedHeader, bool)> {
+        let Some(best) = self.best_canonical_header() else {
+            Metrics::pending_stale_events_skipped().increment(1);
+            return None;
+        };
+
+        if self.is_quarantined_flashblock(update, &best) {
+            Metrics::pending_stale_events_skipped().increment(1);
+            return None;
+        }
+
+        let pending_blocks = self.pending_blocks.load_full();
+        let preflight = update.preflight(
+            Some((best.number(), best.hash())),
+            pending_blocks.is_some(),
+            pending_blocks
+                .as_ref()
+                .is_some_and(|pending| pending.is_based_on_canonical(best.number(), best.hash())),
+            *recovering,
+        );
+
+        match preflight {
+            UpdatePreflight::Process => Some((best, false)),
+            UpdatePreflight::ResumeRecovery => Some((best, true)),
+            UpdatePreflight::Skip => {
+                if let StateUpdate::Flashblock(flashblock) = update
+                    && StateUpdate::flashblock_has_wrong_parent_at_tip(
+                        flashblock,
+                        best.number(),
+                        best.hash(),
+                    )
+                {
+                    *self
+                        .quarantined_flashblock_block
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+                        Some(flashblock.metadata.block_number);
+                }
+                Metrics::pending_stale_events_skipped().increment(1);
+                None
+            }
+            UpdatePreflight::EnterRecovery => {
+                self.enter_recovery(best.number()).await;
+                *recovering = true;
+                Metrics::pending_stale_events_skipped().increment(1);
+                None
+            }
         }
     }
 
     /// Processes updates from the queue until the channel closes.
     pub async fn start(&self) {
+        let mut recovering = false;
         while let Some(update) = self.rx.lock().await.recv().await {
+            let Some((best, resuming_recovery)) =
+                self.preflight_update(&update, &mut recovering).await
+            else {
+                continue;
+            };
+
             let prev_pending_blocks = self.pending_blocks.load_full();
             match update {
                 StateUpdate::Canonical(block) => {
                     debug!(message = "processing canonical block", block_number = block.number);
                     match self.process_canonical_block(prev_pending_blocks, &block) {
-                        Ok(new_pending_blocks) => {
+                        Ok((new_pending_blocks, requires_recovery)) => {
+                            if requires_recovery {
+                                self.enter_recovery(best.number()).await;
+                                recovering = true;
+                                continue;
+                            }
+
                             self.pending_blocks.swap(new_pending_blocks);
 
                             let mut cache = self.cache.lock().await;
-                            cache.update_canonical(block.number);
-                            let cached = cache.drain(block.number + 1);
-                            drop(cache);
+                            let should_advance = cache
+                                .latest_canonical_number()
+                                .is_none_or(|canonical| block.number >= canonical);
+                            if should_advance {
+                                cache.update_canonical(block.number);
+                                let cached = cache.drain(block.number + 1);
+                                // Recovery may replace the cache while replaying, so release this
+                                // lock before preflighting any cached payload.
+                                drop(cache);
 
-                            if !cached.is_empty() {
-                                debug!(
-                                    message = "replaying cached flashblocks after canonical block",
-                                    canonical_block = block.number,
-                                    cached_count = cached.len(),
-                                );
-                                for flashblock in cached {
-                                    let fb_prev = self.pending_blocks.load_full();
-                                    self.apply_flashblock(fb_prev, flashblock).await;
+                                if !cached.is_empty() {
+                                    debug!(
+                                        message =
+                                            "replaying cached flashblocks after canonical block",
+                                        canonical_block = block.number,
+                                        cached_count = cached.len(),
+                                    );
+                                    for flashblock in cached {
+                                        let cached_update = StateUpdate::Flashblock(flashblock);
+                                        let Some((_, cached_resuming_recovery)) = self
+                                            .preflight_update(&cached_update, &mut recovering)
+                                            .await
+                                        else {
+                                            if recovering {
+                                                break;
+                                            }
+                                            continue;
+                                        };
+                                        let StateUpdate::Flashblock(flashblock) = cached_update
+                                        else {
+                                            unreachable!("cached update is always a flashblock");
+                                        };
+
+                                        let fb_prev = self.pending_blocks.load_full();
+                                        let applied = self
+                                            .apply_flashblock(
+                                                fb_prev,
+                                                flashblock,
+                                                !cached_resuming_recovery,
+                                            )
+                                            .await;
+                                        if cached_resuming_recovery && applied {
+                                            recovering = false;
+                                        }
+                                        if recovering {
+                                            break;
+                                        }
+                                    }
                                 }
                             }
                         }
                         Err(e) => {
                             error!(message = "could not process canonical block", error = %e);
+                            self.enter_recovery(best.number()).await;
+                            recovering = true;
                         }
                     }
                 }
@@ -166,7 +404,12 @@ where
                         block_number = flashblock.metadata.block_number,
                         flashblock_index = flashblock.index
                     );
-                    self.apply_flashblock(prev_pending_blocks, flashblock).await;
+                    let applied = self
+                        .apply_flashblock(prev_pending_blocks, flashblock, !resuming_recovery)
+                        .await;
+                    if resuming_recovery && applied {
+                        recovering = false;
+                    }
                 }
             }
         }
@@ -176,25 +419,28 @@ where
         &self,
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
         flashblock: Flashblock,
-    ) {
+        cache_on_missing_canonical_header: bool,
+    ) -> bool {
         let start_time = Instant::now();
         match self.process_flashblock(prev_pending_blocks, &flashblock) {
             Ok(new_pending_blocks) => {
+                let applied = new_pending_blocks.is_some();
                 if let Some(ref pb) = new_pending_blocks {
                     _ = self.sender.send(Arc::clone(pb));
                 }
                 self.pending_blocks.swap(new_pending_blocks);
                 Metrics::block_processing_duration().record(start_time.elapsed());
+                applied
             }
             Err(e) => {
                 match e {
                     StateProcessorError::Provider(ProviderError::MissingCanonicalHeader {
                         ..
-                    }) => {
+                    }) if cache_on_missing_canonical_header => {
                         let inserted = self.cache.lock().await.insert(flashblock);
                         if inserted {
                             debug!(message = "cached flashblock pending canonical block", error = %e);
-                            return;
+                            return false;
                         }
                     }
                     StateProcessorError::MissingFirstFlashblock => {
@@ -207,10 +453,10 @@ where
                             )
                             && cache.insert(flashblock)
                         {
-                            return;
+                            return false;
                         }
                         // we should ignore this error since it doesn't necessarily indicate a problem
-                        return;
+                        return false;
                     }
                     _ => {}
                 }
@@ -223,6 +469,7 @@ where
                     error!(message = "could not process Flashblock", error = %e);
                     Metrics::block_processing_error().increment(1);
                 }
+                false
             }
         }
     }
@@ -232,13 +479,13 @@ where
         &self,
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
         block: &RecoveredBlock<BaseBlock>,
-    ) -> Result<Option<Arc<PendingBlocks>>> {
+    ) -> Result<(Option<Arc<PendingBlocks>>, bool)> {
         let pending_blocks = match &prev_pending_blocks {
             Some(pb) => pb,
             None => {
                 debug!(message = "no pending state to update with canonical block, skipping");
                 self.clear_live_state();
-                return Ok(None);
+                return Ok((None, false));
             }
         };
 
@@ -248,28 +495,61 @@ where
         Metrics::flashblocks_in_block().record(num_flashblocks_for_canon as f64);
         Metrics::pending_snapshot_height().set(pending_blocks.latest_block_number() as f64);
 
-        // Check for reorg by comparing transaction sets
-        let tracked_txns = pending_blocks.get_transactions_for_block(block.number);
-        let tracked_txn_hashes: Vec<_> = tracked_txns.map(|tx| tx.tx_hash()).collect();
-        let block_txn_hashes: Vec<_> = block.body().transactions().map(|tx| tx.tx_hash()).collect();
+        let earliest = pending_blocks.earliest_block_number();
+        let latest = pending_blocks.latest_block_number();
+        let anchor = earliest.saturating_sub(1);
+        let in_pending_interval = block.number >= earliest && block.number <= latest;
+        let is_pending_anchor = block.number == anchor;
 
-        let reorg_result = ReorgDetector::detect(&tracked_txn_hashes, &block_txn_hashes);
-        let reorg_detected = reorg_result.is_reorg();
+        // Only compare transaction sets for blocks represented in pending. An older queued
+        // canonical has no tracked transactions and must not look like a reorg.
+        let reorg_detected = if in_pending_interval {
+            let tracked_txn_hashes: Vec<_> = pending_blocks
+                .get_transactions_for_block(block.number)
+                .map(|tx| tx.tx_hash())
+                .collect();
+            let block_txn_hashes: Vec<_> =
+                block.body().transactions().map(|tx| tx.tx_hash()).collect();
+            let reorg_result = ReorgDetector::detect(&tracked_txn_hashes, &block_txn_hashes);
+            if reorg_result.is_reorg() {
+                warn!(
+                    tracked_txn_hashes = ?tracked_txn_hashes,
+                    block_txn_hashes = ?block_txn_hashes,
+                    "reorg detected, clearing pending flashblocks"
+                );
+            }
+            reorg_result.is_reorg()
+        } else if is_pending_anchor {
+            let pending_parent = pending_blocks.parent_hash();
+            let canonical_hash = block.hash();
+            if pending_parent != canonical_hash {
+                warn!(
+                    pending_parent_hash = %pending_parent,
+                    canonical_hash = %canonical_hash,
+                    canonical_block = block.number,
+                    "pending anchor hash mismatch, clearing pending flashblocks"
+                );
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
 
-        // Determine the reconciliation strategy
         let strategy = CanonicalBlockReconciler::reconcile(
-            Some(pending_blocks.earliest_block_number()),
-            Some(pending_blocks.latest_block_number()),
+            Some(earliest),
+            Some(latest),
             block.number,
-            self.max_depth,
             reorg_detected,
         );
 
-        match strategy {
+        let requires_recovery = matches!(strategy, ReconciliationStrategy::HandleReorg);
+        let pending_blocks = match strategy {
             ReconciliationStrategy::CatchUp => {
                 debug!(
                     message = "pending snapshot cleared because canonical caught up",
-                    latest_pending_block = pending_blocks.latest_block_number(),
+                    latest_pending_block = latest,
                     canonical_block = block.number,
                 );
                 Metrics::pending_clear_catchup().increment(1);
@@ -279,47 +559,58 @@ where
                 Ok(None)
             }
             ReconciliationStrategy::HandleReorg => {
-                warn!(
-                    message = "reorg detected, recomputing pending flashblocks going ahead of reorg",
-                    tracked_txn_hashes = ?tracked_txn_hashes,
-                    block_txn_hashes = ?block_txn_hashes,
-                );
                 Metrics::pending_clear_reorg().increment(1);
-
-                // If there is a reorg, we re-process all future flashblocks without reusing the existing pending state
-                flashblocks.retain(|flashblock| flashblock.metadata.block_number > block.number);
-                self.build_pending_state(None, &flashblocks)
+                self.clear_live_state();
+                Ok(None)
             }
-            ReconciliationStrategy::DepthLimitExceeded { depth, max_depth } => {
-                debug!(
-                    message = "pending blocks depth exceeds max depth, resetting pending blocks",
-                    pending_blocks_depth = depth,
-                    max_depth = max_depth,
-                );
-
+            ReconciliationStrategy::Rebase => {
                 flashblocks.retain(|flashblock| flashblock.metadata.block_number > block.number);
-                self.build_pending_state(None, &flashblocks)
+                if flashblocks.is_empty() {
+                    Metrics::pending_clear_catchup().increment(1);
+                    self.clear_live_state();
+                    Ok(None)
+                } else if flashblocks.first().is_none_or(|flashblock| {
+                    flashblock.index != 0
+                        || flashblock.metadata.block_number != block.number.saturating_add(1)
+                        || flashblock
+                            .base
+                            .as_ref()
+                            .is_none_or(|base| base.parent_hash != block.hash())
+                }) {
+                    warn!(
+                        canonical_block = block.number,
+                        "pending suffix does not start from canonical tip"
+                    );
+                    self.clear_live_state();
+                    return Ok((None, true));
+                } else {
+                    debug!(
+                        message = "rebasing pending flashblocks onto canonical block",
+                        canonical_block = block.number,
+                        remaining_flashblocks = flashblocks.len(),
+                    );
+                    self.clear_live_state();
+                    self.build_pending_state(None, &flashblocks)
+                }
             }
-            ReconciliationStrategy::Continue => {
+            ReconciliationStrategy::VerifyAnchor | ReconciliationStrategy::IgnoreUntracked => {
                 debug!(
-                    message = "canonical block behind latest pending block, continuing with existing pending state",
-                    latest_pending_block = pending_blocks.latest_block_number(),
-                    earliest_pending_block = pending_blocks.earliest_block_number(),
+                    message = "canonical block does not require pending rebuild",
+                    latest_pending_block = latest,
+                    earliest_pending_block = earliest,
                     canonical_block = block.number,
-                    pending_txns_for_block = ?tracked_txn_hashes.len(),
-                    canonical_txns_for_block = ?block_txn_hashes.len(),
+                    strategy = ?strategy,
                 );
-                // If no reorg, we can continue building on top of the existing pending state
-                // NOTE: We do not retain specific flashblocks here to avoid losing track of our "earliest" pending block number
-                self.build_pending_state(prev_pending_blocks, &flashblocks)
+                Ok(prev_pending_blocks)
             }
             ReconciliationStrategy::NoPendingState => {
-                // This case is already handled above, but included for completeness
                 debug!(message = "no pending state to update with canonical block, skipping");
                 self.clear_live_state();
                 Ok(None)
             }
-        }
+        }?;
+
+        Ok((pending_blocks, requires_recovery))
     }
 
     #[instrument(
@@ -843,5 +1134,134 @@ where
         }
 
         self.publish_pending_blocks(pending_blocks_builder, db, state_overrides)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::{Address, B256};
+    use alloy_rpc_types_engine::PayloadId;
+    use base_common_flashblocks::{
+        ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Metadata,
+    };
+    use reth_primitives_traits::SealedBlock;
+
+    use super::*;
+
+    fn flashblock(block_number: u64, index: u64, parent_hash: B256) -> Flashblock {
+        Flashblock {
+            payload_id: PayloadId::default(),
+            index,
+            base: (index == 0).then_some(ExecutionPayloadBaseV1 {
+                parent_beacon_block_root: B256::ZERO,
+                parent_hash,
+                fee_recipient: Address::ZERO,
+                prev_randao: B256::ZERO,
+                block_number,
+                gas_limit: 30_000_000,
+                timestamp: 1_700_000_000,
+                extra_data: Default::default(),
+                base_fee_per_gas: Default::default(),
+            }),
+            diff: ExecutionPayloadFlashblockDeltaV1::default(),
+            metadata: Metadata::new(block_number),
+        }
+    }
+
+    #[test]
+    fn flashblock_anchor_is_parent_block() {
+        let update = StateUpdate::Flashblock(flashblock(101, 0, B256::ZERO));
+        assert_eq!(update.pending_anchor_number(), 100);
+        assert_eq!(
+            StateUpdate::Flashblock(flashblock(0, 0, B256::ZERO)).pending_anchor_number(),
+            0
+        );
+    }
+
+    #[test]
+    fn recovery_resume_requires_current_index_zero_and_parent_hash() {
+        let best = 100;
+        let best_hash = B256::repeat_byte(0xAB);
+        let resume = StateUpdate::Flashblock(flashblock(101, 0, best_hash));
+
+        assert!(resume.is_recovery_resume(best, best_hash));
+        assert!(!resume.is_recovery_resume(best, B256::repeat_byte(0xCD)));
+        assert!(
+            !StateUpdate::Flashblock(flashblock(101, 1, best_hash))
+                .is_recovery_resume(best, best_hash)
+        );
+        assert!(
+            !StateUpdate::Flashblock(flashblock(102, 0, best_hash))
+                .is_recovery_resume(best, best_hash)
+        );
+    }
+
+    #[test]
+    fn preflight_enters_recovery_for_stale_pending() {
+        let best = 100;
+        let best_hash = B256::repeat_byte(0xAB);
+        let update = StateUpdate::Flashblock(flashblock(101, 0, best_hash));
+
+        assert_eq!(
+            update.preflight(Some((best, best_hash)), true, false, false),
+            UpdatePreflight::EnterRecovery
+        );
+    }
+
+    #[test]
+    fn recovery_only_resumes_from_matching_tip_child() {
+        let best = 100;
+        let best_hash = B256::repeat_byte(0xAB);
+        let wrong_parent = StateUpdate::Flashblock(flashblock(101, 0, B256::repeat_byte(0xCD)));
+        let resume = StateUpdate::Flashblock(flashblock(101, 0, best_hash));
+
+        assert_eq!(
+            wrong_parent.preflight(Some((best, best_hash)), false, false, true),
+            UpdatePreflight::Skip
+        );
+        assert_eq!(
+            resume.preflight(Some((best, best_hash)), false, false, true),
+            UpdatePreflight::ResumeRecovery
+        );
+    }
+
+    #[test]
+    fn recovery_admits_future_flashblocks_for_bounded_caching() {
+        let best = 100;
+        let best_hash = B256::repeat_byte(0xAB);
+        let future = StateUpdate::Flashblock(flashblock(102, 0, B256::repeat_byte(0xCD)));
+
+        assert_eq!(
+            future.preflight(Some((best, best_hash)), false, false, true),
+            UpdatePreflight::Process
+        );
+    }
+
+    #[test]
+    fn recovery_processes_current_canonical_for_cache_replay() {
+        let best = 100;
+        let block = BaseBlock {
+            header: Header { number: best, ..Default::default() },
+            body: Default::default(),
+        };
+        let block = RecoveredBlock::new_sealed(SealedBlock::seal_slow(block), Vec::new());
+        let best_hash = block.hash();
+
+        assert_eq!(
+            StateUpdate::Canonical(block).preflight(Some((best, best_hash)), false, false, true),
+            UpdatePreflight::Process
+        );
+    }
+
+    #[test]
+    fn preflight_drops_late_work_without_clearing_fresh_pending() {
+        let best = 100;
+        let best_hash = B256::repeat_byte(0xAB);
+        let stale = StateUpdate::Flashblock(flashblock(100, 0, B256::repeat_byte(0xCD)));
+
+        assert_eq!(
+            stale.preflight(Some((best, best_hash)), true, true, false),
+            UpdatePreflight::Skip
+        );
     }
 }

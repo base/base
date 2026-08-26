@@ -149,17 +149,15 @@ impl ReorgDetector {
 pub enum ReconciliationStrategy {
     /// Canonical caught up or passed pending (canonical >= latest pending). Clear pending state.
     CatchUp,
-    /// Reorg detected (tx mismatch). Rebuild pending from canonical.
+    /// Overlap transaction mismatch or pending-anchor hash mismatch. Clear all pending state.
     HandleReorg,
-    /// Pending too far ahead of canonical.
-    DepthLimitExceeded {
-        /// Current depth of pending blocks.
-        depth: u64,
-        /// Configured maximum depth.
-        max_depth: u64,
-    },
-    /// No issues - continue building on pending state.
-    Continue,
+    /// Canonical `N` is represented in pending and is still behind latest. Discard flashblocks at
+    /// or below `N` and rebuild the future suffix from canonical `N`.
+    Rebase,
+    /// Canonical `N` is the pending snapshot's anchor. Hash already verified; keep the snapshot.
+    VerifyAnchor,
+    /// Canonical `N` is older than the pending anchor. Do not treat an empty tx vector as a reorg.
+    IgnoreUntracked,
     /// No pending state exists (startup or after clear).
     NoPendingState,
 }
@@ -171,38 +169,42 @@ pub struct CanonicalBlockReconciler;
 impl CanonicalBlockReconciler {
     /// Returns the appropriate [`ReconciliationStrategy`] based on pending vs canonical state.
     ///
-    /// Priority: `NoPendingState` → `CatchUp` → `HandleReorg` → `DepthLimitExceeded` → `Continue`
+    /// Pending is rebased onto the current canonical block whenever that block is represented in
+    /// the snapshot. A reorg is honored only when canonical is the pending anchor or overlaps the
+    /// pending interval. Untracked older canonicals are ignored.
     pub const fn reconcile(
         pending_earliest_block: Option<u64>,
         pending_latest_block: Option<u64>,
         canonical_block_number: u64,
-        max_depth: u64,
         reorg_detected: bool,
     ) -> ReconciliationStrategy {
-        // Check if pending state exists
         let (earliest, latest) = match (pending_earliest_block, pending_latest_block) {
             (Some(e), Some(l)) => (e, l),
             _ => return ReconciliationStrategy::NoPendingState,
         };
 
-        // Check if canonical has caught up or passed pending
-        if latest <= canonical_block_number {
+        let anchor = earliest.saturating_sub(1);
+        if canonical_block_number < anchor {
+            return ReconciliationStrategy::IgnoreUntracked;
+        }
+
+        if canonical_block_number > latest {
             return ReconciliationStrategy::CatchUp;
         }
 
-        // Check for reorg
         if reorg_detected {
             return ReconciliationStrategy::HandleReorg;
         }
 
-        // Check depth limit
-        let depth = canonical_block_number.saturating_sub(earliest);
-        if depth > max_depth {
-            return ReconciliationStrategy::DepthLimitExceeded { depth, max_depth };
+        if canonical_block_number == latest {
+            return ReconciliationStrategy::CatchUp;
         }
 
-        // No issues, continue building
-        ReconciliationStrategy::Continue
+        if canonical_block_number == anchor {
+            return ReconciliationStrategy::VerifyAnchor;
+        }
+
+        ReconciliationStrategy::Rebase
     }
 }
 
@@ -320,37 +322,30 @@ mod tests {
     // ==================== CanonicalBlockReconciler Tests ====================
 
     #[rstest]
-    // NoPendingState
-    #[case(None, None, 100, 10, false, ReconciliationStrategy::NoPendingState)]
-    #[case(Some(100), None, 100, 10, false, ReconciliationStrategy::NoPendingState)]
-    #[case(None, Some(100), 100, 10, false, ReconciliationStrategy::NoPendingState)]
-    // CatchUp: canonical >= latest pending
-    #[case(Some(100), Some(105), 105, 10, false, ReconciliationStrategy::CatchUp)]
-    #[case(Some(100), Some(105), 110, 10, false, ReconciliationStrategy::CatchUp)]
-    #[case(Some(100), Some(100), 100, 10, false, ReconciliationStrategy::CatchUp)]
-    #[case(Some(100), Some(105), 105, 10, true, ReconciliationStrategy::CatchUp)] // catchup > reorg priority
-    // HandleReorg
-    #[case(Some(100), Some(110), 102, 10, true, ReconciliationStrategy::HandleReorg)]
-    #[case(Some(100), Some(130), 120, 10, true, ReconciliationStrategy::HandleReorg)] // reorg > depth priority
-    // DepthLimitExceeded
-    #[case(Some(100), Some(120), 115, 10, false, ReconciliationStrategy::DepthLimitExceeded { depth: 15, max_depth: 10 })]
-    #[case(Some(100), Some(105), 101, 0, false, ReconciliationStrategy::DepthLimitExceeded { depth: 1, max_depth: 0 })]
-    // Continue
-    #[case(Some(100), Some(110), 105, 10, false, ReconciliationStrategy::Continue)]
-    #[case(Some(100), Some(120), 110, 10, false, ReconciliationStrategy::Continue)] // depth exactly at limit
-    #[case(Some(100), Some(105), 100, 10, false, ReconciliationStrategy::Continue)]
-    #[case(Some(100), Some(105), 100, 0, false, ReconciliationStrategy::Continue)] // zero depth ok with max_depth=0
-    #[case(Some(100), Some(100), 99, 10, false, ReconciliationStrategy::Continue)] // single pending block
+    #[case(None, None, 100, false, ReconciliationStrategy::NoPendingState)]
+    #[case(Some(100), None, 100, false, ReconciliationStrategy::NoPendingState)]
+    #[case(None, Some(100), 100, false, ReconciliationStrategy::NoPendingState)]
+    #[case(Some(100), Some(105), 105, false, ReconciliationStrategy::CatchUp)]
+    #[case(Some(100), Some(105), 110, false, ReconciliationStrategy::CatchUp)]
+    #[case(Some(100), Some(100), 100, false, ReconciliationStrategy::CatchUp)]
+    #[case(Some(100), Some(105), 105, true, ReconciliationStrategy::HandleReorg)]
+    #[case(Some(100), Some(101), 100, false, ReconciliationStrategy::Rebase)]
+    #[case(Some(100), Some(110), 105, false, ReconciliationStrategy::Rebase)]
+    #[case(Some(100), Some(105), 50, false, ReconciliationStrategy::IgnoreUntracked)]
+    #[case(Some(100), Some(105), 50, true, ReconciliationStrategy::IgnoreUntracked)]
+    #[case(Some(100), Some(105), 99, false, ReconciliationStrategy::VerifyAnchor)]
+    #[case(Some(100), Some(100), 99, false, ReconciliationStrategy::VerifyAnchor)]
+    #[case(Some(100), Some(105), 99, true, ReconciliationStrategy::HandleReorg)]
+    #[case(Some(100), Some(110), 102, true, ReconciliationStrategy::HandleReorg)]
+    #[case(Some(100), Some(101), 100, true, ReconciliationStrategy::HandleReorg)]
     fn test_reconciler(
         #[case] earliest: Option<u64>,
         #[case] latest: Option<u64>,
         #[case] canonical: u64,
-        #[case] max_depth: u64,
         #[case] reorg: bool,
         #[case] expected: ReconciliationStrategy,
     ) {
-        let result =
-            CanonicalBlockReconciler::reconcile(earliest, latest, canonical, max_depth, reorg);
+        let result = CanonicalBlockReconciler::reconcile(earliest, latest, canonical, reorg);
         assert_eq!(result, expected);
     }
 }
