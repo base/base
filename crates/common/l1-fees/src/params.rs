@@ -96,8 +96,11 @@ impl L1FeeParams {
         }
     }
 
-    /// Pre-Ecotone (Bedrock) L1 cost.
+    /// Pre-Ecotone (Bedrock) L1 cost. Deposit and empty transactions are fee-exempt.
     pub fn calculate_tx_l1_cost_bedrock(&self, input: &[u8], upgrade: BaseUpgrade) -> U256 {
+        if Self::is_fee_exempt(input) {
+            return U256::ZERO;
+        }
         Self::data_gas(input, upgrade)
             .saturating_add(self.l1_fee_overhead.unwrap_or_default())
             .saturating_mul(self.l1_base_fee)
@@ -108,6 +111,9 @@ impl L1FeeParams {
     /// Post-Ecotone L1 cost:
     /// `calldataGas * (l1BaseFee*16*l1BaseFeeScalar + l1BlobBaseFee*l1BlobBaseFeeScalar) / 16e6`.
     pub fn calculate_tx_l1_cost_ecotone(&self, input: &[u8], upgrade: BaseUpgrade) -> U256 {
+        if Self::is_fee_exempt(input) {
+            return U256::ZERO;
+        }
         // The very first Ecotone block (unless activated at genesis) still prices
         // using the Bedrock function, detected via unset Ecotone scalars.
         if self.empty_ecotone_scalars {
@@ -122,6 +128,9 @@ impl L1FeeParams {
     /// Post-Fjord L1 cost:
     /// `estimatedSize * (baseFeeScalar*l1BaseFee*16 + blobFeeScalar*l1BlobBaseFee) / 1e12`.
     pub fn calculate_tx_l1_cost_fjord(&self, input: &[u8]) -> U256 {
+        if Self::is_fee_exempt(input) {
+            return U256::ZERO;
+        }
         let l1_fee_scaled = self.calculate_l1_fee_scaled_ecotone();
         if l1_fee_scaled.is_zero() {
             return U256::ZERO;
