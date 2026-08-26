@@ -219,6 +219,9 @@ mod tests {
     fn operator_fee_zero_before_isthmus_scalars() {
         // Without scalars the operator fee reduces to the (zero) constant.
         let p = params();
-        assert_eq!(p.operator_fee_charge_inner(U256::from(21_000), BaseUpgrade::Isthmus), U256::ZERO);
+        assert_eq!(
+            p.operator_fee_charge_inner(U256::from(21_000), BaseUpgrade::Isthmus),
+            U256::ZERO
+        );
     }
 }
