@@ -26,13 +26,13 @@ up-anvil-no-nitro: down-anvil _build-setup-image (_build-rust-images "devnet" "d
     export L1_CONTAINER_BEACON_URL="$l1_rpc_url"
     compose_cmd=(docker compose {{ _env }} {{ _anvil }})
 
+    mkdir -p .devnet/l2/configs
     "${compose_cmd[@]}" up -d --no-build --remove-orphans setup-l1 l1-el
     until cast block-number --rpc-url "$L1_RPC_URL" >/dev/null 2>&1; do
       sleep 0.25
     done
     cast rpc --rpc-url "$L1_RPC_URL" anvil_setBlockTimestampInterval 4 >/dev/null
     cast rpc --rpc-url "$L1_RPC_URL" anvil_setIntervalMining 4 >/dev/null
-    mkdir -p .devnet/l2/configs
     "${compose_cmd[@]}" up -d --no-build --remove-orphans setup-l2
     setup_l2_status="$(docker wait setup-l2)"
     if [ "$setup_l2_status" != "0" ]; then
@@ -55,7 +55,7 @@ up-anvil-no-nitro: down-anvil _build-setup-image (_build-rust-images "devnet" "d
 down-anvil:
     -./etc/scripts/devnet/anvil-no-nitro.sh down
     -docker compose {{ _env }} {{ _anvil }} --profile profiling down
-    -docker run --rm -v "$(pwd)/.devnet:/devnet" alpine sh -c 'rm -rf /devnet/*'
+    -[ ! -d .devnet ] || docker run --rm -v "$(pwd)/.devnet:/devnet" alpine sh -c 'rm -rf /devnet/*'
 
 # Builds the latest Base-Anvil default branch used by the no-Nitro devnet
 build-anvil-image source='https://github.com/base/base-anvil.git':
@@ -72,7 +72,7 @@ profiling: down _build-setup-image (_build-rust-images "devnet" "profiling")
 # Stops devnet and deletes all data
 down:
     -docker compose {{ _env }} {{ _ha }} --profile profiling down
-    -docker run --rm -v "$(pwd)/.devnet:/devnet" alpine sh -c 'rm -rf /devnet/*'
+    -[ ! -d .devnet ] || docker run --rm -v "$(pwd)/.devnet:/devnet" alpine sh -c 'rm -rf /devnet/*'
 
 # Shows devnet block numbers and sync status
 status:
@@ -136,12 +136,13 @@ conductor:
 
 # Stops devnet+ingress, deletes data, and starts fresh with full ingress stack
 ingress: ingress-down _build-setup-image (_build-rust-images "ingress" "dev")
+    mkdir -p .devnet
     docker compose {{ _env }} {{ _base }} -f etc/docker/docker-compose.ingress.yml up -d --no-build
 
 # Stops devnet+ingress and deletes all data
 ingress-down:
     -docker compose {{ _env }} {{ _base }} -f etc/docker/docker-compose.ingress.yml down
-    -docker run --rm -v "$(pwd)/.devnet:/devnet" alpine sh -c 'rm -rf /devnet/*'
+    -[ ! -d .devnet ] || docker run --rm -v "$(pwd)/.devnet:/devnet" alpine sh -c 'rm -rf /devnet/*'
 
 # Stream logs from devnet+ingress containers (optionally specify container names)
 ingress-logs *containers:
@@ -256,8 +257,8 @@ _up-devnet compose_profile mode:
       local setup_l2_status
       local compose_cmd=(docker compose {{ _env }} "${compose_files[@]}")
 
-      "${compose_cmd[@]}" up -d --no-build --remove-orphans setup-l1 l1-el l1-cl l1-vc
       mkdir -p .devnet/l2/configs
+      "${compose_cmd[@]}" up -d --no-build --remove-orphans setup-l1 l1-el l1-cl l1-vc
       "${compose_cmd[@]}" up -d --no-build --remove-orphans setup-l2
       setup_l2_status="$(docker wait setup-l2)"
       if [ "$setup_l2_status" != "0" ]; then
