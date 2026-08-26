@@ -1576,9 +1576,6 @@ where
             ApplyError::MultipleDelegations => "at most one delegation is allowed",
             ApplyError::CreateAndDelegation => "create and delegation may not coexist",
             ApplyError::NonDelegatableCode { .. } => "delegation sender has non-delegation code",
-            ApplyError::ContractEstablishedCodeless { .. } => {
-                "delegation target is an empty-code keystore-established account"
-            }
             ApplyError::SequenceOverflow => "config change sequence overflow",
             ApplyError::EmptyChangeSet => "signed account-change batch is empty",
         }

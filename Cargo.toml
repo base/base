@@ -1,7 +1,7 @@
 [workspace.package]
 version = "0.0.0"
 edition = "2024"
-rust-version = "1.95"
+rust-version = "1.96"
 license = "MIT"
 homepage = "https://github.com/base/base"
 repository = "https://github.com/base/base"
@@ -120,6 +120,16 @@ codegen-units = 16
 inherits = "release"
 lto = "fat"
 codegen-units = 1
+
+# `cargo bench` inherits `release`, which strips symbols. iai-callgrind drives Callgrind,
+# which needs the symbol table and debug info to locate the benchmark function it toggles
+# collection on — without them every counter reads zero. Keep optimizations, restore
+# symbols. Debug info is not loaded at runtime, so wall-clock (Criterion) benches are
+# unaffected.
+[profile.bench]
+inherits = "release"
+debug = true
+strip = false
 
 # TODO: add `rustflags = ["-Cforce-frame-pointers=yes"]` here once
 # `profile-rustflags` is stabilized (tracking: rust-lang/cargo#10271)
@@ -512,6 +522,7 @@ serial_test = "3"
 httpmock = "0.8.2"
 proptest = "1.10.0"
 similar-asserts = "1"
+iai-callgrind = "0.16.1"
 arbitrary = { version = "1", default-features = false }
 wiremock = { version = "0.6.2", default-features = false }
 testcontainers = { version = "0.25", default-features = false }
