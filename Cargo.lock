@@ -8837,7 +8837,7 @@ checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 [[package]]
 name = "dowse-plan"
 version = "0.1.0"
-source = "git+https://github.com/BrianBland/dowse?rev=260d5f9#260d5f9b08f72ab1fa72753998b0184fcb6ae8bf"
+source = "git+https://github.com/BrianBland/dowse?rev=74de19a#74de19a482059aa2a1c2b3e642111de889f544bb"
 dependencies = [
  "alloy-primitives",
  "dowse-types",
@@ -8846,7 +8846,7 @@ dependencies = [
 [[package]]
 name = "dowse-types"
 version = "0.1.0"
-source = "git+https://github.com/BrianBland/dowse?rev=260d5f9#260d5f9b08f72ab1fa72753998b0184fcb6ae8bf"
+source = "git+https://github.com/BrianBland/dowse?rev=74de19a#74de19a482059aa2a1c2b3e642111de889f544bb"
 dependencies = [
  "alloy-primitives",
  "serde",
