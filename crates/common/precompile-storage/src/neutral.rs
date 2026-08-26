@@ -102,9 +102,7 @@ impl From<Bytecode> for RevmBytecode {
 
 impl From<&RevmBytecode> for Bytecode {
     fn from(value: &RevmBytecode) -> Self {
-        value
-            .eip7702_address()
-            .map_or_else(|| Self::Legacy(value.original_bytes()), Self::Eip7702)
+        value.eip7702_address().map_or_else(|| Self::Legacy(value.original_bytes()), Self::Eip7702)
     }
 }
 
