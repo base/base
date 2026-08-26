@@ -68,9 +68,10 @@ impl L1BlockInfo {
     pub const DA_FOOTPRINT_GAS_SCALAR_OFFSET: usize = 18;
     /// Fixed point decimal scaling factor for the operator fee scalar (6 decimal points of
     /// precision).
-    pub const OPERATOR_FEE_SCALAR_DECIMAL: u64 = 1_000_000;
+    pub const OPERATOR_FEE_SCALAR_DECIMAL: u64 = base_common_l1_fees::OPERATOR_FEE_SCALAR_DECIMAL;
     /// Jovian multiplier applied to the operator fee scalar component.
-    pub const OPERATOR_FEE_JOVIAN_MULTIPLIER: u64 = 100;
+    pub const OPERATOR_FEE_JOVIAN_MULTIPLIER: u64 =
+        base_common_l1_fees::OPERATOR_FEE_JOVIAN_MULTIPLIER;
     /// The L1 base fee storage slot.
     pub const L1_BASE_FEE_SLOT: U256 = uint!(1_U256);
     /// The L1 overhead storage slot.
