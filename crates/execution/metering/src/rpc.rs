@@ -112,10 +112,8 @@ where
             )
         })?;
 
-        let state_provider = self
-            .provider
-            .state_by_block_number_or_tag(BlockNumberOrTag::Latest)
-            .map_err(|e| {
+        let state_provider =
+            self.provider.state_by_block_number_or_tag(BlockNumberOrTag::Latest).map_err(|e| {
                 error!(error = %e, "Failed to get state provider");
                 jsonrpsee::types::ErrorObjectOwned::owned(
                     jsonrpsee::types::ErrorCode::InternalError.code(),
