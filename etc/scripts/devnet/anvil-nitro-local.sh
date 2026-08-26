@@ -10,6 +10,7 @@ set -a
 source "$REPO_ROOT/etc/docker/devnet-env"
 set +a
 
+# Keep runtime identifiers stable so the renamed command can stop existing stacks.
 STATE_DIR="$REPO_ROOT/.devnet/anvil-no-nitro"
 LOG_DIR="$STATE_DIR/logs"
 PID_DIR="$STATE_DIR/pids"
@@ -55,13 +56,13 @@ FORK_NAMES=()
 
 usage() {
   cat <<'EOF'
-Usage: anvil-no-nitro.sh <bootstrap|up|down|status|logs>
+Usage: anvil-nitro-local.sh <bootstrap|up|down|status|logs>
 
-Runs the no-Nitro contract and proof stack against the Docker devnet whose
+Runs the local Nitro proof stack against the Docker devnet whose
 execution and Beacon L1 APIs are both served by one Base-Anvil process.
 
 The devnet startup calls bootstrap before starting L2 nodes, then calls up
-after the L2 is available. Use `just devnet up-anvil-no-nitro` to run both.
+after the L2 is available. Use `just devnet up-anvil-nitro-local` to run both.
 EOF
 }
 
@@ -157,7 +158,7 @@ preflight_l1() {
   slot=$(((block_timestamp - genesis_time) / seconds_per_slot))
   if [ "$slot" != "$block_number" ]; then
     echo "ERROR: L1 block $block_number maps to Beacon slot $slot; expected identical values" >&2
-    echo "       start the devnet with 'just devnet up-anvil-no-nitro'" >&2
+    echo "       start the devnet with 'just devnet up-anvil-nitro-local'" >&2
     exit 1
   fi
 
@@ -432,7 +433,7 @@ start_daemon() {
   mkdir -p "$LOG_DIR" "$PID_DIR"
   echo "Starting $name; log: $LOG_DIR/$name.log"
   python3 -c 'import os, sys; os.setsid(); os.execv(sys.argv[1], sys.argv[1:])' \
-    "$SCRIPT_DIR/anvil-no-nitro.sh" "$@" >"$LOG_DIR/$name.log" 2>&1 &
+    "$SCRIPT_DIR/anvil-nitro-local.sh" "$@" >"$LOG_DIR/$name.log" 2>&1 &
   echo $! >"$PID_DIR/$name.pid"
 }
 
@@ -494,7 +495,7 @@ cmd_bootstrap() {
   seed_protocol_versions
   write_upgrade_signal_env
 
-  echo "No-Nitro contracts are anchored at L2 genesis."
+  echo "Development proof contracts are anchored at L2 genesis."
   echo "  ProtocolVersions: $(address_value ProtocolVersions)"
   echo "  L2 output root:   $(address_value anchorRoot)"
 }
@@ -502,7 +503,7 @@ cmd_bootstrap() {
 cmd_up() {
   require_tools cast jq docker cargo curl python3
   if [ ! -f "$ADDRESSES_FILE" ] || [ ! -f "$ROLLUP_CONFIG" ] || [ ! -f "$UPGRADE_SIGNAL_ENV" ]; then
-    echo "ERROR: no bootstrapped no-Nitro devnet; run 'just devnet up-anvil-no-nitro'" >&2
+    echo "ERROR: no bootstrapped local Nitro devnet; run 'just devnet up-anvil-nitro-local'" >&2
     exit 1
   fi
 
@@ -531,7 +532,7 @@ cmd_up() {
   start_daemon proposer _proposer
 
   echo ""
-  echo "Single-L1 no-Nitro stack is running."
+  echo "Single-L1 local Nitro stack is running."
   echo "  L1 execution + Beacon: $L1_RPC / $L1_BEACON_RPC (chain $L1_CHAIN_ID_VALUE)"
   echo "  L2 execution + rollup: $L2_ETH_RPC / $L2_NODE_RPC (chain $L2_CHAIN_ID_VALUE)"
   echo "  TEE registry:           $(address_value TEEProverRegistry)"
@@ -542,7 +543,7 @@ cmd_up() {
 cmd_down() {
   stop_daemons
   docker rm -f "$POSTGRES_CONTAINER" >/dev/null 2>&1 || true
-  echo "No-Nitro proof stack stopped."
+  echo "Local Nitro proof stack stopped."
 }
 
 cmd_status() {
@@ -566,7 +567,7 @@ cmd_status() {
     jq '{unsafe_l2: .unsafe_l2.number, safe_l2: .safe_l2.number, finalized_l2: .finalized_l2.number}'
 
   if [ ! -f "$ADDRESSES_FILE" ]; then
-    echo "No no-Nitro deployment found."
+    echo "No local Nitro deployment found."
     return
   fi
 

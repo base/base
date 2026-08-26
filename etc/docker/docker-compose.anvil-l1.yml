@@ -27,7 +27,7 @@ services:
     profiles: ["lighthouse-l1"]
 
   # Compose starts completed dependencies again when the remaining services
-  # come up. Keep the genesis used by pre-L2 no-Nitro contract deployment.
+  # come up. Keep the genesis used by the pre-L2 development contract deployment.
   setup-l2:
     environment:
       - SETUP_L2_SKIP_IF_CONFIGURED=true
