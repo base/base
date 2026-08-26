@@ -19,6 +19,12 @@ pub use service::{
 mod follow;
 pub use follow::{FollowError, RemoteClient, RemoteL2Client, RemoteL2ClientError};
 
+mod standalone;
+pub use standalone::{
+    StandaloneAttributesBuilder, StandaloneDerivationClient, StandaloneOriginSelector,
+    StandalonePrefund, StandaloneSequencerNode, StandaloneUnsafePayloadGossipClient,
+};
+
 mod actors;
 pub use actors::{
     AlloyL1BlockFetcher, BlockStream, BuildOutcome, BuildPipelineState, BuildRequest,
