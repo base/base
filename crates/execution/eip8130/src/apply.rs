@@ -85,6 +85,16 @@ pub enum ApplyError {
     #[error("unsupported account-change op in the enshrined apply path")]
     UnsupportedChangeType,
 
+    /// The operation is not permitted while the account is locked. Mirrors
+    /// `Keystore.AccountIsLocked`.
+    #[error("account is locked")]
+    AccountIsLocked,
+
+    /// An `AuthorizeActor` while locked carried an expiry that does not outlive
+    /// the unlock floor. Mirrors `Keystore.ExpiryDoesNotOutliveUnlock`.
+    #[error("authorize expiry does not outlive the unlock floor")]
+    ExpiryDoesNotOutliveUnlock,
+
     /// A signed batch carried no changes. Mirrors `applySignedAccountChanges`'s
     /// `revert EmptyChangeSet()`: an empty batch would otherwise consume (advance)
     /// a channel's sequence without altering any configuration. Rejected before
@@ -423,6 +433,7 @@ impl AccountChangeApplier {
         // retains an expired grant inert. Computed once for the whole batch.
         let is_unsequenced = matches!(channel, AccountChangeChannel::Local)
             && sequence as u32 == Eip8130Constants::UNSEQUENCED;
+        let locked = state.is_locked(now);
 
         let mut revoke_discount_slots = 0u32;
         for change in changes {
@@ -437,6 +448,17 @@ impl AccountChangeApplier {
                     if is_unsequenced && config.expiry != 0 && config.expiry <= now {
                         continue;
                     }
+                    if locked {
+                        Self::enforce_locked_authorize_rules(
+                            storage,
+                            account,
+                            actor_id,
+                            &config,
+                            &policy_data,
+                            state,
+                            now,
+                        )?;
+                    }
                     Self::authorize_actor_with_account_state(
                         storage,
                         account,
@@ -447,6 +469,9 @@ impl AccountChangeApplier {
                     )?;
                 }
                 ChangeType::RevokeActor => {
+                    if locked {
+                        return Err(ApplyError::AccountIsLocked);
+                    }
                     let actor_id = Self::decode_revoke(&change.payload)?;
                     revoke_discount_slots = revoke_discount_slots.saturating_add(
                         Self::revoke_actor_with_account_state(storage, account, actor_id, state)?,
@@ -567,6 +592,36 @@ impl AccountChangeApplier {
             return Ok(());
         }
         Self::authorize_non_self_actor(storage, account, actor_id, config, policy_data)
+    }
+
+    /// Locked-account guard for `AuthorizeActor`. The grant must outlive the unlock
+    /// floor; a live actor may only have its expiry rewritten — authenticator,
+    /// scope, and policy stay frozen. An unknown or expired actor id is a new add.
+    fn enforce_locked_authorize_rules(
+        storage: &AccountConfigurationStorage<'_>,
+        account: Address,
+        actor_id: B256,
+        config: &ActorConfig,
+        policy_data: &[u8],
+        state: &AccountState,
+        now: u64,
+    ) -> Result<(), ApplyError> {
+        if config.expiry != 0 && config.expiry <= state.unlock_floor(now) {
+            return Err(ApplyError::ExpiryDoesNotOutliveUnlock);
+        }
+        let current = storage.resolve_live_actor_config(account, actor_id, now)?;
+        if current.is_empty() {
+            return Ok(());
+        }
+        let (manager, commitment) = Self::slice_policy(config.scope, policy_data)?;
+        if config.authenticator != current.authenticator
+            || config.scope != current.scope
+            || manager != storage.get_policy_manager(account, actor_id)?
+            || commitment != storage.get_policy_commitment(account, actor_id)?
+        {
+            return Err(ApplyError::AccountIsLocked);
+        }
+        Ok(())
     }
 
     /// Authorizes an actor while applying inline-self changes to `state` without
@@ -1073,6 +1128,188 @@ mod tests {
 
     fn expiring(expiry: u64) -> ActorConfig {
         ActorConfig { authenticator: AUTHENTICATOR, scope: 0, expiry }
+    }
+
+    fn set_hard_locked(acc: &mut AccountConfigurationStorage<'_>, delay: u64) {
+        let mut state = acc.get_account_state(ACCOUNT).unwrap();
+        state.flags = Eip8130Constants::FLAG_LOCKED;
+        state.lock_union = delay;
+        acc.set_account_state(ACCOUNT, state).unwrap();
+    }
+
+    #[test]
+    fn locked_authorize_succeeds_when_expiry_outlives_hard_lock_floor() {
+        let now = 1_000u64;
+        let delay = 3_600u64;
+        with_storage(|acc| {
+            set_hard_locked(acc, delay);
+            let config = expiring(now + delay + 1);
+            AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &[authorize_op(NON_SELF, &config, &[])],
+                AccountChangeChannel::Local,
+                0,
+                now,
+            )
+            .unwrap();
+            assert_eq!(acc.actor_config_slot(ACCOUNT, NON_SELF).unwrap(), config);
+        });
+    }
+
+    #[test]
+    fn locked_authorize_reverts_when_expiry_at_hard_lock_floor() {
+        let now = 1_000u64;
+        let delay = 3_600u64;
+        with_storage(|acc| {
+            set_hard_locked(acc, delay);
+            let config = expiring(now + delay);
+            let err = AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &[authorize_op(NON_SELF, &config, &[])],
+                AccountChangeChannel::Local,
+                0,
+                now,
+            )
+            .unwrap_err();
+            assert_eq!(err, ApplyError::ExpiryDoesNotOutliveUnlock);
+        });
+    }
+
+    #[test]
+    fn locked_authorize_allows_unbounded_expiry() {
+        let now = 1_000u64;
+        with_storage(|acc| {
+            set_hard_locked(acc, 3_600);
+            let config = ungated(AUTHENTICATOR, Eip8130Constants::SCOPE_SENDER);
+            AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &[authorize_op(NON_SELF, &config, &[])],
+                AccountChangeChannel::Local,
+                0,
+                now,
+            )
+            .unwrap();
+            assert_eq!(acc.actor_config_slot(ACCOUNT, NON_SELF).unwrap(), config);
+        });
+    }
+
+    #[test]
+    fn locked_revoke_is_rejected() {
+        let now = 1_000u64;
+        with_storage(|acc| {
+            AccountChangeApplier::authorize_actor(
+                acc,
+                ACCOUNT,
+                NON_SELF,
+                ungated(AUTHENTICATOR, Eip8130Constants::SCOPE_SENDER),
+                &[],
+            )
+            .unwrap();
+            set_hard_locked(acc, 3_600);
+            let err = AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &[revoke_op(NON_SELF)],
+                AccountChangeChannel::Local,
+                0,
+                now,
+            )
+            .unwrap_err();
+            assert_eq!(err, ApplyError::AccountIsLocked);
+        });
+    }
+
+    #[test]
+    fn locked_reauthorize_allows_expiry_only_re_lease() {
+        let now = 1_000u64;
+        let delay = 3_600u64;
+        with_storage(|acc| {
+            AccountChangeApplier::authorize_actor(
+                acc,
+                ACCOUNT,
+                NON_SELF,
+                expiring(now + 86_400),
+                &[],
+            )
+            .unwrap();
+            set_hard_locked(acc, delay);
+            let shorter = expiring(now + delay + 1);
+            AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &[authorize_op(NON_SELF, &shorter, &[])],
+                AccountChangeChannel::Local,
+                0,
+                now,
+            )
+            .unwrap();
+            assert_eq!(acc.actor_config_slot(ACCOUNT, NON_SELF).unwrap(), shorter);
+        });
+    }
+
+    #[test]
+    fn locked_reauthorize_rejects_scope_change() {
+        let now = 1_000u64;
+        with_storage(|acc| {
+            AccountChangeApplier::authorize_actor(
+                acc,
+                ACCOUNT,
+                NON_SELF,
+                expiring(now + 86_400),
+                &[],
+            )
+            .unwrap();
+            set_hard_locked(acc, 3_600);
+            let widened = ActorConfig {
+                authenticator: AUTHENTICATOR,
+                scope: Eip8130Constants::SCOPE_SENDER,
+                expiry: now + 86_400,
+            };
+            let err = AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &[authorize_op(NON_SELF, &widened, &[])],
+                AccountChangeChannel::Local,
+                0,
+                now,
+            )
+            .unwrap_err();
+            assert_eq!(err, ApplyError::AccountIsLocked);
+        });
+    }
+
+    #[test]
+    fn locked_expired_actor_is_treated_as_new_add() {
+        let now = 10_000u64;
+        with_storage(|acc| {
+            AccountChangeApplier::authorize_actor(
+                acc,
+                ACCOUNT,
+                NON_SELF,
+                expiring(now - 1),
+                &[],
+            )
+            .unwrap();
+            set_hard_locked(acc, 3_600);
+            let replacement = ActorConfig {
+                authenticator: K1,
+                scope: 0,
+                expiry: now + 3_601,
+            };
+            AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &[authorize_op(NON_SELF, &replacement, &[])],
+                AccountChangeChannel::Local,
+                0,
+                now,
+            )
+            .unwrap();
+            assert_eq!(acc.actor_config_slot(ACCOUNT, NON_SELF).unwrap(), replacement);
+        });
     }
 
     #[test]

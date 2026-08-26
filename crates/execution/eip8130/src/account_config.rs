@@ -92,6 +92,25 @@ impl AccountConfigurationStorage<'_> {
         Ok(ActorConfig::EMPTY)
     }
 
+    /// Resolves the *live* effective [`ActorConfig`] for `(account, actor_id)`,
+    /// mirroring `Keystore._resolveActorConfig`: expired actors read as
+    /// [`ActorConfig::EMPTY`], so an expired slot is treated as a new add.
+    pub fn resolve_live_actor_config(
+        &self,
+        account: Address,
+        actor_id: B256,
+        now: u64,
+    ) -> Result<ActorConfig> {
+        let config = self.resolve_actor_config(account, actor_id)?;
+        if config.is_empty() {
+            return Ok(ActorConfig::EMPTY);
+        }
+        if config.expiry != 0 && now > config.expiry {
+            return Ok(ActorConfig::EMPTY);
+        }
+        Ok(config)
+    }
+
     /// Mirrors `AccountConfiguration.isActor`: `true` for any live actor — an
     /// explicit `actor_config` entry, or the inline secp256k1 self while its
     /// `DEFAULT_EOA_REVOKED` flag is unset. Both cases collapse to "the resolved
@@ -430,10 +449,10 @@ impl AccountState {
         self.flags & Eip8130Constants::FLAG_CONTRACT_ESTABLISHED != 0
     }
 
-    /// Mirrors `AccountConfiguration._isLocked`: configuration is frozen while
-    /// `FLAG_LOCKED` is set, except once an unlock has been initiated
-    /// (`FLAG_UNLOCK_INITIATED`), when it stays frozen only until `now` reaches
-    /// the stored `unlocks_at` (`lock_union`).
+    /// Mirrors `AccountConfiguration._isLocked`: revoke and lock-delay changes are
+    /// frozen unless an initiated unlock's timestamp has elapsed; `AuthorizeActor`
+    /// may still add a new actor or re-lease a live one (expiry only) when the
+    /// granted expiry outlives the unlock floor.
     #[must_use]
     pub const fn is_locked(&self, now: u64) -> bool {
         if self.flags & Eip8130Constants::FLAG_LOCKED == 0 {
@@ -443,6 +462,19 @@ impl AccountState {
             return true; // hard-locked, no pending unlock
         }
         now < self.lock_union // pending unlock: frozen until the timestamp elapses
+    }
+
+    /// The soonest timestamp the account can be unlocked. Mirrors
+    /// `Keystore._unlockFloor`. Only meaningful while [`Self::is_locked`] is
+    /// `true`: hard-locked accounts use `now + delay`; pending unlock uses
+    /// `unlocks_at` (`lock_union`).
+    #[must_use]
+    pub const fn unlock_floor(&self, now: u64) -> u64 {
+        if self.flags & Eip8130Constants::FLAG_UNLOCK_INITIATED != 0 {
+            self.lock_union
+        } else {
+            now.saturating_add(self.lock_union & 0xFFFF)
+        }
     }
 
     /// Mirrors `AccountConfiguration.getLockStatus`, deriving the human-readable
