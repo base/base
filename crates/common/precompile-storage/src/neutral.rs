@@ -101,6 +101,13 @@ impl From<Bytecode> for RevmBytecode {
 }
 
 impl From<&RevmBytecode> for Bytecode {
+    /// Converts a loaded engine bytecode into the neutral representation.
+    ///
+    /// revm's `BytecodeKind` has exactly two variants — `LegacyAnalyzed` and
+    /// `Eip7702` — so the non-delegation arm is always legacy, and folding it to
+    /// `Legacy(original_bytes())` is exact (there is no EOF variant to lose). If a
+    /// future engine adds more kinds, this fallback preserves the observable
+    /// surface Base reads (`original_bytes`, `is_empty`, `eip7702_address`).
     fn from(value: &RevmBytecode) -> Self {
         value.eip7702_address().map_or_else(|| Self::Legacy(value.original_bytes()), Self::Eip7702)
     }
