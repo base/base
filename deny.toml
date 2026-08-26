@@ -248,6 +248,23 @@ skip = [
     "proptest-derive",
     "sha1",
     "sha3",
+
+    # RustCrypto elliptic-curve stack — evm2 pulls newer versions than base's
+    # pinned crypto deps; version alignment tracks the eventual alloy/evm2 bump.
+    "base16ct",
+    "crypto-bigint",
+    "der",
+    "ecdsa",
+    "elliptic-curve",
+    "ff",
+    "group",
+    "k256",
+    "p256",
+    "primeorder",
+    "rfc6979",
+    "sec1",
+    "signature",
+    "spki",
 ]
 
 [sources]
