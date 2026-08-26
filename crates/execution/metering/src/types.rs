@@ -1,6 +1,8 @@
 //! Types for block metering responses.
 
-use alloy_primitives::{B256, U256};
+use std::collections::BTreeSet;
+
+use alloy_primitives::{Address, B256, U256};
 use base_bundles::MeterBundleResponse;
 use serde::{Deserialize, Serialize};
 
@@ -45,6 +47,12 @@ pub struct MeterBlockTransactions {
     /// Parent-state provider reads first encountered while executing this transaction.
     #[serde(default)]
     pub state_provider: MeterStateProviderStats,
+    /// Parent-state account and storage fetches grouped by address.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub state_provider_accounts: Vec<MeterStateProviderAccountAccess>,
+    /// Parent-state bytecode fetches grouped by code hash.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub state_provider_code_hashes: Vec<MeterStateProviderCodeAccess>,
 }
 
 /// Parent-state provider reads and their cumulative latency.
@@ -65,6 +73,41 @@ pub struct MeterStateProviderStats {
     pub code_fetch_time_us: u128,
     /// Total bytecode bytes fetched.
     pub code_fetched_bytes: u64,
+}
+
+/// Parent-state account and storage reads for one address.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeterStateProviderAccountAccess {
+    /// Address fetched from parent state.
+    pub address: Address,
+    /// Bytecode hash returned with the account, when it is a contract.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytecode_hash: Option<B256>,
+    /// Number of account fetches.
+    pub account_fetches: u64,
+    /// Time spent fetching the account in microseconds.
+    pub account_fetch_time_us: u128,
+    /// Number of storage fetches.
+    pub storage_fetches: u64,
+    /// Time spent fetching storage in microseconds.
+    pub storage_fetch_time_us: u128,
+    /// Unique storage keys fetched for this address.
+    pub storage_keys: BTreeSet<B256>,
+}
+
+/// Parent-state bytecode reads for one code hash.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeterStateProviderCodeAccess {
+    /// Bytecode hash fetched from parent state.
+    pub code_hash: B256,
+    /// Number of fetches for this code hash.
+    pub fetches: u64,
+    /// Time spent fetching this bytecode in microseconds.
+    pub fetch_time_us: u128,
+    /// Total bytecode bytes returned.
+    pub fetched_bytes: u64,
 }
 
 // --- Metered priority fee types ---
@@ -104,12 +147,18 @@ pub struct MeteredPriorityFeeResponse {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::B256;
+    use std::collections::BTreeSet;
 
-    use super::{MeterBlockResponse, MeterBlockTransactions, MeterStateProviderStats};
+    use alloy_primitives::{Address, B256};
+
+    use super::{
+        MeterBlockResponse, MeterBlockTransactions, MeterStateProviderAccountAccess,
+        MeterStateProviderStats,
+    };
 
     #[test]
     fn meter_block_response_serializes_deprecated_state_root_time_as_zero() {
+        let storage_key = B256::repeat_byte(0x11);
         let response = MeterBlockResponse {
             block_hash: B256::ZERO,
             block_number: 1,
@@ -123,12 +172,22 @@ mod tests {
                 gas_used: 21_000,
                 execution_time_us: 3,
                 state_provider: MeterStateProviderStats::default(),
+                state_provider_accounts: vec![MeterStateProviderAccountAccess {
+                    address: Address::repeat_byte(0x22),
+                    storage_keys: BTreeSet::from([storage_key]),
+                    ..Default::default()
+                }],
+                state_provider_code_hashes: Vec::new(),
             }],
         };
 
-        let json = serde_json::to_string(&response).unwrap();
+        let json = serde_json::to_value(&response).unwrap();
 
-        assert!(json.contains("\"stateRootTimeUs\":0"));
-        assert!(json.contains("\"stateProvider\""));
+        assert_eq!(json["stateRootTimeUs"], 0);
+        assert!(json.get("stateProvider").is_some());
+        assert_eq!(
+            json["transactions"][0]["stateProviderAccounts"][0]["storageKeys"][0],
+            storage_key.to_string()
+        );
     }
 }

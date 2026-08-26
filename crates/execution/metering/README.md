@@ -9,6 +9,8 @@ Exposes JSON-RPC endpoints for profiling transaction and block execution on the 
 `base_meterBlockByHash` and `base_meterBlockByNumber` re-execute a historical block and return
 a breakdown of signer recovery, EVM execution, and parent-state provider reads. Account, storage,
 and bytecode fetch counts and cumulative latency are reported for the block and each transaction.
+Per-transaction results also identify fetched addresses, storage keys, and code hashes so costly
+state access patterns can be ranked and used to validate prefetch hints.
 `base_meteredPriorityFeePerGas` combines bundle metering with a priority fee recommendation
 based on recent block resource usage.
 

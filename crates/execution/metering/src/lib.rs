@@ -35,6 +35,9 @@ pub use meter::{
     MeterBundleInput, MeterBundleOutput, MeteredOpcodes, PendingState, PseudoOpcode, meter_bundle,
 };
 
+mod provider;
+pub use provider::MeteredStateProvider;
+
 mod rpc;
 pub use rpc::MeteringApiImpl;
 
@@ -43,8 +46,9 @@ pub use traits::MeteringApiServer;
 
 mod types;
 pub use types::{
-    MeterBlockResponse, MeterBlockTransactions, MeterStateProviderStats,
-    MeteredPriorityFeeResponse, ResourceFeeEstimateResponse,
+    MeterBlockResponse, MeterBlockTransactions, MeterStateProviderAccountAccess,
+    MeterStateProviderCodeAccess, MeterStateProviderStats, MeteredPriorityFeeResponse,
+    ResourceFeeEstimateResponse,
 };
 
 mod transaction;

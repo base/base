@@ -8,28 +8,18 @@ use base_common_consensus::BaseBlock;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use eyre::{Result as EyreResult, eyre};
-use reth_engine_tree::tree::instrumented_state::{InstrumentedStateProvider, StateProviderStats};
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_primitives_traits::Block as BlockT;
 use reth_provider::{HeaderProvider, StateProviderFactory};
 use reth_revm::{database::StateProviderDatabase, db::State};
 
-use crate::types::{MeterBlockResponse, MeterBlockTransactions, MeterStateProviderStats};
+use crate::{
+    MeterBlockResponse, MeterBlockTransactions, MeterStateProviderStats, MeteredStateProvider,
+};
 
 impl MeterStateProviderStats {
-    fn from_provider(stats: &StateProviderStats) -> Self {
-        Self {
-            account_fetches: u64::try_from(stats.total_account_fetches()).unwrap_or(u64::MAX),
-            account_fetch_time_us: stats.total_account_fetch_latency().as_micros(),
-            storage_fetches: u64::try_from(stats.total_storage_fetches()).unwrap_or(u64::MAX),
-            storage_fetch_time_us: stats.total_storage_fetch_latency().as_micros(),
-            code_fetches: u64::try_from(stats.total_code_fetches()).unwrap_or(u64::MAX),
-            code_fetch_time_us: stats.total_code_fetch_latency().as_micros(),
-            code_fetched_bytes: u64::try_from(stats.total_code_fetched_bytes()).unwrap_or(u64::MAX),
-        }
-    }
-
-    const fn saturating_sub(self, earlier: Self) -> Self {
+    /// Returns the saturating difference from an earlier cumulative snapshot.
+    pub const fn saturating_sub(self, earlier: Self) -> Self {
         Self {
             account_fetches: self.account_fetches.saturating_sub(earlier.account_fetches),
             account_fetch_time_us: self
@@ -80,9 +70,7 @@ where
         .ok_or_else(|| eyre!("Parent header not found: {}", parent_hash))?;
 
     // Get state provider at parent block
-    let state_provider =
-        InstrumentedStateProvider::new(provider.state_by_block_hash(parent_hash)?, "meter_block");
-    let state_provider_stats = state_provider.stats();
+    let state_provider = MeteredStateProvider::new(provider.state_by_block_hash(parent_hash)?);
 
     // Create state database from parent state
     let state_db = StateProviderDatabase::new(&state_provider);
@@ -121,11 +109,13 @@ where
         let mut builder = evm_config.builder_for_next_block(&mut db, &parent_header, attributes)?;
 
         builder.apply_pre_execution_changes()?;
+        // Keep pre-execution accesses in block totals, but do not attribute them to the first
+        // transaction.
+        state_provider.take_accesses();
 
         for recovered_tx in recovered_transactions {
             let tx_hash = recovered_tx.tx_hash();
-            let state_provider_before =
-                MeterStateProviderStats::from_provider(&state_provider_stats);
+            let state_provider_before = state_provider.stats();
             let tx_start = Instant::now();
 
             let gas_used = builder
@@ -134,13 +124,16 @@ where
                 .tx_gas_used();
 
             let execution_time = tx_start.elapsed().as_micros();
+            let (state_provider_accounts, state_provider_code_hashes) =
+                state_provider.take_accesses();
 
             transaction_times.push(MeterBlockTransactions {
                 tx_hash,
                 gas_used,
                 execution_time_us: execution_time,
-                state_provider: MeterStateProviderStats::from_provider(&state_provider_stats)
-                    .saturating_sub(state_provider_before),
+                state_provider: state_provider.stats().saturating_sub(state_provider_before),
+                state_provider_accounts,
+                state_provider_code_hashes,
             });
         }
     }
@@ -156,7 +149,7 @@ where
         // Retained as a zero-valued compatibility field for older profiling clients.
         state_root_time_us: 0,
         total_time_us: total_time,
-        state_provider: MeterStateProviderStats::from_provider(&state_provider_stats),
+        state_provider: state_provider.stats(),
         transactions: transaction_times,
     })
 }
@@ -164,10 +157,11 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_consensus::TxEip1559;
-    use alloy_primitives::{Address, Signature};
+    use alloy_primitives::{Address, Signature, U256};
+    use alloy_sol_types::SolCall;
     use base_common_consensus::{BaseBlockBody, BaseTransactionSigned};
     use base_node_runner::test_utils::TestHarness;
-    use base_test_utils::Account;
+    use base_test_utils::{Account, SimpleStorage};
     use reth_primitives_traits::Block as _;
     use reth_transaction_pool::test_utils::TransactionBuilder;
 
@@ -256,6 +250,62 @@ mod tests {
         assert!(
             metered_tx.state_provider.account_fetches > 0,
             "transaction should fetch accounts from the parent state"
+        );
+        assert!(
+            !metered_tx.state_provider_accounts.is_empty(),
+            "transaction should report fetched account addresses"
+        );
+        assert_eq!(
+            metered_tx
+                .state_provider_accounts
+                .iter()
+                .map(|access| access.account_fetches)
+                .sum::<u64>(),
+            metered_tx.state_provider.account_fetches
+        );
+        assert_eq!(
+            metered_tx
+                .state_provider_accounts
+                .iter()
+                .map(|access| access.account_fetch_time_us)
+                .sum::<u128>(),
+            metered_tx.state_provider.account_fetch_time_us
+        );
+        assert_eq!(
+            metered_tx
+                .state_provider_accounts
+                .iter()
+                .map(|access| access.storage_fetches)
+                .sum::<u64>(),
+            metered_tx.state_provider.storage_fetches
+        );
+        assert_eq!(
+            metered_tx
+                .state_provider_accounts
+                .iter()
+                .map(|access| access.storage_fetch_time_us)
+                .sum::<u128>(),
+            metered_tx.state_provider.storage_fetch_time_us
+        );
+        assert_eq!(
+            metered_tx.state_provider_code_hashes.iter().map(|access| access.fetches).sum::<u64>(),
+            metered_tx.state_provider.code_fetches
+        );
+        assert_eq!(
+            metered_tx
+                .state_provider_code_hashes
+                .iter()
+                .map(|access| access.fetch_time_us)
+                .sum::<u128>(),
+            metered_tx.state_provider.code_fetch_time_us
+        );
+        assert_eq!(
+            metered_tx
+                .state_provider_code_hashes
+                .iter()
+                .map(|access| access.fetched_bytes)
+                .sum::<u64>(),
+            metered_tx.state_provider.code_fetched_bytes
         );
         assert!(
             response.state_provider.account_fetches >= metered_tx.state_provider.account_fetches,
@@ -347,6 +397,50 @@ mod tests {
         assert!(
             individual_times <= response.execution_time_us,
             "sum of individual times should not exceed total (due to EVM overhead)"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn meter_block_reports_contract_storage_and_bytecode_identity() -> eyre::Result<()> {
+        let harness = TestHarness::new().await?;
+        let (deployment_tx, contract_address, _) =
+            Account::Deployer.create_deployment_tx(SimpleStorage::BYTECODE.clone(), 0)?;
+        harness.build_block_from_transactions(vec![deployment_tx]).await?;
+
+        let signed_tx = TransactionBuilder::default()
+            .signer(Account::Alice.signer_b256())
+            .chain_id(harness.chain_id())
+            .nonce(0)
+            .to(contract_address)
+            .gas_limit(100_000)
+            .max_fee_per_gas(1_000_000_000)
+            .max_priority_fee_per_gas(1)
+            .input(SimpleStorage::setValueCall { v: U256::from(42) }.abi_encode())
+            .into_eip1559();
+        let tx = BaseTransactionSigned::Eip1559(
+            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+        );
+        let block = create_block_with_transactions(&harness, vec![tx]);
+
+        let response = meter_block(harness.blockchain_provider(), harness.chain_spec(), &block)?;
+        let metered_tx = &response.transactions[0];
+        let contract_access = metered_tx
+            .state_provider_accounts
+            .iter()
+            .find(|access| access.address == contract_address)
+            .expect("contract access should be reported");
+        let bytecode_hash =
+            contract_access.bytecode_hash.expect("contract bytecode hash should be reported");
+
+        assert!(contract_access.storage_keys.contains(&B256::ZERO));
+        assert!(
+            metered_tx
+                .state_provider_code_hashes
+                .iter()
+                .any(|access| access.code_hash == bytecode_hash),
+            "fetched bytecode should be associated with the contract account"
         );
 
         Ok(())
