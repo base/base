@@ -32,16 +32,15 @@ jobs:
   bench:
     name: Benchmarks (advisory)
     # SECURITY: this job checks out the PR head and executes it (the ./.depot/actions/setup
-    # composite action and `cargo bench`, incl. build.rs/proc-macros) on a persistent
-    # self-hosted runner. Fork PRs are attacker-controlled, so restrict execution to PRs
+    # composite action and `cargo bench`, incl. build.rs/proc-macros) with repository
+    # secrets and caches. Fork PRs are attacker-controlled, so restrict execution to PRs
     # from the same repository (trusted, write-access authors) or a manual dispatch (also
-    # write-access gated). Never run untrusted fork code on BasePerfRunnerGroup. Benchmarks
+    # write-access gated). Never run untrusted fork code in this job. Benchmarks
     # are advisory, so skipping them for forks is an acceptable loss of coverage.
     if: >
       github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
 
-    runs-on:
-      group: BasePerfRunnerGroup
+    runs-on: depot-ubuntu-24.04-8
     timeout-minutes: 90
     env:
       HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}

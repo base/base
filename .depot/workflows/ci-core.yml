@@ -115,8 +115,7 @@ jobs:
       - run: just check::format
   build:
     name: Build
-    runs-on:
-      group: BasePerfRunnerGroup
+    runs-on: depot-ubuntu-24.04-8
     env:
       BASE_REF: ${{ inputs.base_ref }}
     steps:
@@ -142,8 +141,7 @@ jobs:
         run: ${{ inputs.build_command }}
   clippy:
     name: Clippy
-    runs-on:
-      group: BasePerfRunnerGroup
+    runs-on: depot-ubuntu-24.04-8
     env:
       BASE_REF: ${{ inputs.base_ref }}
     steps:
@@ -169,8 +167,7 @@ jobs:
         run: ${{ inputs.clippy_command }}
   test:
     name: Test
-    runs-on:
-      group: BasePerfRunnerGroup
+    runs-on: depot-ubuntu-24.04-8
     env:
       BASE_REF: ${{ inputs.base_ref }}
     steps:
@@ -237,7 +234,6 @@ jobs:
     if: needs.changes.outputs.docker == 'true'
     permissions:
       contents: read
-      packages: read
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -247,17 +243,20 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 1
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+      - name: Set up Depot CLI
+        uses: depot/setup-action@91bc8495a33ebfc504ffc89e5674379ccf23c29c # v1
       - name: Login to GHCR
         if: inputs.allow_registry_login
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ vars.GHCR_USERNAME }}
+          password: ${{ secrets.GHCR_TOKEN }}
       - name: Build Docker image
-        run: docker buildx bake -f etc/docker/docker-bake.hcl base --load
+        run: >-
+          depot bake --project "${{ vars.DEPOT_PROJECT_ID }}"
+          -f etc/docker/docker-bake.hcl base --load
+          --set base.cache-from=
   test-musl-sigsegv:
     name: Test SIGSEGV (musl)
     if: inputs.run_sigsegv
@@ -280,8 +279,7 @@ jobs:
   system-tests:
     name: System Tests
     if: inputs.run_system_tests
-    runs-on:
-      group: BasePerfRunnerGroup
+    runs-on: depot-ubuntu-24.04-8
     timeout-minutes: 60
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -301,8 +299,6 @@ jobs:
           rust-cache-shared-key: "stable"
       - name: Clear prior JUnit report
         run: rm -f target/nextest/ci/test-results.xml
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
       - name: Pre-pull docker images
         run: just devnet pull-images
       - name: Run system tests

@@ -27,8 +27,7 @@ permissions:
 jobs:
   fuzz-sync-parity:
     name: Fuzz sync parity
-    runs-on:
-      group: BasePerfRunnerGroup
+    runs-on: depot-ubuntu-24.04-8
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -53,8 +52,6 @@ jobs:
           foundry: "true"
           tools: cargo-nextest
           rust-cache-shared-key: "stable"
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
       - name: Pick fuzz seed
         # Replay a specific seed via the workflow_dispatch input; otherwise generate
         # a fresh random seed so each run fuzzes a different transaction stream. The

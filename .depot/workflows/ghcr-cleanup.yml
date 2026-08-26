@@ -1,0 +1,36 @@
+# Depot CI Migration
+# GHCR requires a classic PAT because it does not accept Depot CI's GitHub App token.
+
+name: GHCR Cleanup
+on:
+  schedule:
+    - cron: "30 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Report what would be deleted without deleting it
+        required: false
+        default: true
+        type: boolean
+concurrency:
+  group: ghcr-cleanup
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  cleanup:
+    name: Delete images older than 60 days
+    runs-on: depot-ubuntu-latest
+    steps:
+      - name: Clean up GHCR images
+        uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
+        with:
+          token: ${{ secrets.GHCR_CLEANUP_TOKEN }}
+          owner: ${{ github.repository_owner }}
+          packages: node,base-anvil
+          delete-tags: "*"
+          delete-untagged: true
+          exclude-tags: "v*"
+          older-than: 60 days
+          dry-run: ${{ inputs.dry_run }}
+          validate: true
