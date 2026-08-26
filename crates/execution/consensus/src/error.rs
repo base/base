@@ -17,6 +17,14 @@ pub enum BaseConsensusError {
         /// The child's full-millisecond timestamp.
         child_timestamp_ms: u128,
     },
+    /// The first Denim-active block claimed a non-zero millisecond component.
+    #[error(
+        "invalid BaseTime activation claim: first Denim block must have millisecond part 0, got {timestamp_millis_part}"
+    )]
+    BaseTimeActivationMillisNonZero {
+        /// The claimed sub-second millisecond component.
+        timestamp_millis_part: u16,
+    },
     /// Block body has non-empty withdrawals list (l1 withdrawals).
     #[error("non-empty block body withdrawals list")]
     WithdrawalsNonEmpty,
