@@ -58,6 +58,15 @@ base_metrics::define_metrics! {
     dowse_prefetch_work_duration: histogram,
     #[describe("Dowse cache resets after the transaction pool advances to a new parent")]
     dowse_parent_resets_total: counter,
+    #[describe("Payloads built with each Dowse A/B treatment")]
+    #[label(variant)]
+    dowse_payloads_total: counter,
+    #[describe("Transaction simulation duration by Dowse A/B treatment")]
+    #[label(variant)]
+    dowse_transaction_simulation_duration: histogram,
+    #[describe("Transactions included by Dowse A/B treatment")]
+    #[label(variant)]
+    dowse_transactions_included: histogram,
     #[describe("Histogram of state root calculation duration")]
     state_root_calculation_duration: histogram,
     #[describe("Latest state root calculation duration")]

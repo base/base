@@ -67,7 +67,7 @@ pub struct BuilderConfig {
     /// `base_builder_predicate_eval_duration_per_block` metric's P99 SLO.
     pub predicate_eval_hard_cutoff: Duration,
 
-    /// Optional hint-driven transaction-pool state prewarming.
+    /// Optional hint-driven transaction-pool state prefetching.
     pub dowse: Option<DowseConfig>,
 
     /// Resource metering provider

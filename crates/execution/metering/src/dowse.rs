@@ -1,4 +1,4 @@
-//! Deterministic Dowse prewarming benchmarks for canonical block replay.
+//! Deterministic Dowse state-prefetch benchmarks for canonical block replay.
 
 use std::{collections::HashSet, fs, path::Path, sync::Arc, thread, time::Instant};
 
@@ -13,7 +13,7 @@ use reth_primitives_traits::Block as BlockT;
 use reth_provider::{HeaderProvider, StateProvider, StateProviderFactory};
 
 use crate::{
-    DowseBlockBenchmarkResponse, DowsePrewarmStats, meter_block, meter_block_with_optional_cache,
+    DowseBlockBenchmarkResponse, DowsePrefetchStats, meter_block, meter_block_with_optional_cache,
 };
 
 /// Static hint table and worker settings for block replay benchmarks.
@@ -46,7 +46,7 @@ impl DowseBenchmarkConfig {
     }
 }
 
-/// Plans and prewarms canonical transactions, then replays the block with and without the cache.
+/// Plans and prefetches canonical transactions, then replays the block with and without the cache.
 pub fn benchmark_dowse_block<P>(
     provider: P,
     chain_spec: Arc<BaseChainSpec>,
@@ -91,7 +91,7 @@ where
         .then(|| meter_block(provider.clone(), Arc::clone(&chain_spec), block))
         .transpose()?;
 
-    let prewarm_start = Instant::now();
+    let prefetch_start = Instant::now();
     let total_targets = accounts.len() + storage.len();
     let workers = config.worker_count.min(total_targets);
     let bytecode_targets = if total_targets == 0 {
@@ -135,7 +135,7 @@ where
             })
         })?
     };
-    let prewarm_time_us = prewarm_start.elapsed().as_micros();
+    let prefetch_time_us = prefetch_start.elapsed().as_micros();
 
     let cached = meter_block_with_optional_cache(
         provider.clone(),
@@ -161,9 +161,9 @@ where
 
     Ok(DowseBlockBenchmarkResponse {
         cached_first,
-        prewarm: DowsePrewarmStats {
+        prefetch: DowsePrefetchStats {
             planning_time_us,
-            prewarm_time_us,
+            prefetch_time_us,
             planned_transactions,
             account_targets,
             storage_targets,
@@ -244,8 +244,8 @@ mod tests {
             )?;
 
             assert_eq!(response.cached_first, cached_first);
-            assert_eq!(response.prewarm.planned_transactions, 1);
-            assert_eq!(response.prewarm.storage_targets, 1);
+            assert_eq!(response.prefetch.planned_transactions, 1);
+            assert_eq!(response.prefetch.storage_targets, 1);
             assert_eq!(
                 response.raw.transactions[0].gas_used,
                 response.cached.transactions[0].gas_used

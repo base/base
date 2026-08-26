@@ -53,7 +53,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
 
 use crate::{
-    BuilderConfig, BuilderMetrics, DowsePrewarmCache, ExecutionInfo, PayloadBuilder,
+    BuilderConfig, BuilderMetrics, DowsePrefetchCache, ExecutionInfo, PayloadBuilder,
     ResourceLimits,
     flashblocks::{
         FlashblocksExtraCtx,
@@ -126,7 +126,7 @@ pub(super) struct BasePayloadBuilder<Pool, Client> {
     /// transactions to.
     pub outputs: BuilderOutputs,
     /// Parent-tagged state cache populated from Dowse transaction plans.
-    pub dowse_cache: Option<DowsePrewarmCache>,
+    pub dowse_cache: Option<DowsePrefetchCache>,
     /// Last flashblock emitted by this builder instance.
     last_emitted_flashblock_id: Arc<LastEmittedFlashblockId>,
 }
@@ -139,7 +139,7 @@ impl<Pool, Client> BasePayloadBuilder<Pool, Client> {
         client: Client,
         config: BuilderConfig,
         outputs: BuilderOutputs,
-        dowse_cache: Option<DowsePrewarmCache>,
+        dowse_cache: Option<DowsePrefetchCache>,
     ) -> Self {
         Self {
             evm_config,
@@ -295,14 +295,26 @@ where
 
         let parent_hash = ctx.parent().hash();
         let mut state_provider = self.client.state_by_block_hash(parent_hash)?;
-        if let Some(dowse_cache) =
-            self.dowse_cache.as_ref().and_then(|cache| cache.cache_for(parent_hash))
+        let dowse_cache = self.dowse_cache.as_ref().and_then(|cache| cache.cache_for(parent_hash));
+        let dowse_variant = match (&self.config.dowse, dowse_cache) {
+            (None, _) => None,
+            (Some(dowse_config), _) if !dowse_config.cache_enabled_for(parent_hash) => {
+                Some("control")
+            }
+            (Some(_), Some(dowse_cache)) => {
+                state_provider = Box::new(CachedStateProvider::new(
+                    state_provider,
+                    dowse_cache,
+                    Some(CachedStateMetrics::zeroed(CachedStateMetricsSource::Dowse)),
+                ));
+                Some("cached")
+            }
+            (Some(_), None) => Some("unavailable"),
+        };
+        if !ctx.attributes().no_tx_pool
+            && let Some(variant) = dowse_variant
         {
-            state_provider = Box::new(CachedStateProvider::new(
-                state_provider,
-                dowse_cache,
-                Some(CachedStateMetrics::zeroed(CachedStateMetricsSource::Dowse)),
-            ));
+            BuilderMetrics::dowse_payloads_total(variant).increment(1);
         }
         if let Some(execution_cache) = execution_cache {
             state_provider = Box::new(
@@ -528,6 +540,7 @@ where
                     &publish_guard,
                     &fb_span,
                     &mut executed_sender_nonces,
+                    dowse_variant,
                 )
                 .await
             {
@@ -586,6 +599,7 @@ where
         publish_guard: &parking_lot::Mutex<()>,
         span: &tracing::Span,
         executed_sender_nonces: &mut HashMap<Address, u64>,
+        dowse_variant: Option<&'static str>,
     ) -> eyre::Result<Option<FlashblocksExtraCtx>> {
         let flashblock_index = ctx.flashblock_index();
         let payload_id = ctx.payload_id().to_string();
@@ -654,6 +668,7 @@ where
         BuilderMetrics::transaction_pool_fetch_gauge().set(transaction_pool_fetch_time);
 
         let tx_execution_start_time = Instant::now();
+        let transaction_count_before = info.executed_transactions.len();
         let limits = ResourceLimits {
             block_gas_limit: target_gas_for_batch.min(ctx.block_gas_limit()),
             tx_data_limit: ctx.builder_config.da_config.max_da_tx_size(),
@@ -737,6 +752,12 @@ where
             .record(payload_transaction_simulation_time);
         BuilderMetrics::payload_transaction_simulation_gauge()
             .set(payload_transaction_simulation_time);
+        if let Some(variant) = dowse_variant {
+            BuilderMetrics::dowse_transaction_simulation_duration(variant)
+                .record(payload_transaction_simulation_time);
+            BuilderMetrics::dowse_transactions_included(variant)
+                .record((info.executed_transactions.len() - transaction_count_before) as f64);
+        }
 
         let total_block_built_duration = Instant::now();
         let prev_flashblock_id = self.previous_flashblock_id();

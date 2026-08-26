@@ -14,7 +14,7 @@ mod metrics;
 pub use metrics::BuilderMetrics;
 
 mod dowse;
-pub use dowse::{DowseConfig, DowsePrewarmCache, DowsePrewarmWork, DowsePrewarmer};
+pub use dowse::{DowseConfig, DowsePrefetchCache, DowsePrefetchWork, DowsePrefetcher};
 
 mod execution;
 pub use execution::{

@@ -37,11 +37,11 @@ pub struct MeterBlockResponse {
 /// Work performed before a cache-backed Dowse block replay.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DowsePrewarmStats {
+pub struct DowsePrefetchStats {
     /// Time spent resolving transaction hints into concrete targets.
     pub planning_time_us: u128,
     /// Time spent reading parent state with the configured worker pool.
-    pub prewarm_time_us: u128,
+    pub prefetch_time_us: u128,
     /// Transactions for which the hint table produced a plan.
     pub planned_transactions: usize,
     /// Unique account targets read into the execution cache.
@@ -60,8 +60,8 @@ pub struct DowsePrewarmStats {
 pub struct DowseBlockBenchmarkResponse {
     /// Whether cache-backed execution ran before raw execution.
     pub cached_first: bool,
-    /// Planning and parent-state prewarming measurements.
-    pub prewarm: DowsePrewarmStats,
+    /// Planning and parent-state prefetch measurements.
+    pub prefetch: DowsePrefetchStats,
     /// Replay without an explicit Dowse execution cache.
     pub raw: MeterBlockResponse,
     /// Replay using the cache populated from Dowse plans.

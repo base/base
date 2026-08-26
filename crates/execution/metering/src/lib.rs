@@ -49,7 +49,7 @@ pub use traits::MeteringApiServer;
 
 mod types;
 pub use types::{
-    DowseBlockBenchmarkResponse, DowsePrewarmStats, MeterBlockResponse, MeterBlockTransactions,
+    DowseBlockBenchmarkResponse, DowsePrefetchStats, MeterBlockResponse, MeterBlockTransactions,
     MeterStateProviderAccountAccess, MeterStateProviderCodeAccess, MeterStateProviderStats,
     MeteredPriorityFeeResponse, ResourceFeeEstimateResponse,
 };

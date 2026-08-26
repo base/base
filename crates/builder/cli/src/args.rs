@@ -133,12 +133,16 @@ impl TransactionEventsArgs {
     }
 }
 
-/// Hint-driven transaction-pool state prewarming configuration.
+/// Hint-driven transaction-pool state prefetching configuration.
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
 pub struct DowseArgs {
-    /// JSON hint table. Supplying this path enables Dowse prewarming.
+    /// JSON hint table. Supplying this path enables Dowse state prefetching.
     #[arg(long = "builder.dowse.hints", env = "BUILDER_DOWSE_HINTS")]
     pub dowse_hints: Option<PathBuf>,
+
+    /// Alternate Dowse cache use by parent hash while leaving prefetching enabled for A/B tests.
+    #[arg(long = "builder.dowse.ab-test", default_value = "false")]
+    pub dowse_ab_test: bool,
 
     /// Persistent state-read workers.
     #[arg(long = "builder.dowse.workers", default_value = "4")]
@@ -173,6 +177,7 @@ impl Default for DowseArgs {
     fn default() -> Self {
         Self {
             dowse_hints: None,
+            dowse_ab_test: false,
             dowse_workers: 4,
             dowse_queue_capacity: 64,
             dowse_poll_interval_ms: 25,
@@ -188,6 +193,10 @@ impl DowseArgs {
     /// Loads the configured hint table and converts enabled arguments into runtime config.
     pub fn load_config(&self) -> eyre::Result<Option<DowseConfig>> {
         let Some(hints_path) = &self.dowse_hints else {
+            eyre::ensure!(
+                !self.dowse_ab_test,
+                "builder.dowse.ab-test requires builder.dowse.hints"
+            );
             return Ok(None);
         };
 
@@ -215,6 +224,7 @@ impl DowseArgs {
 
         Ok(Some(DowseConfig {
             hints: DowseConfig::load_hints(hints_path)?,
+            ab_test: self.dowse_ab_test,
             worker_count: self.dowse_workers,
             queue_capacity: self.dowse_queue_capacity,
             poll_interval: Duration::from_millis(self.dowse_poll_interval_ms),
@@ -388,7 +398,7 @@ pub struct Args {
     #[command(flatten)]
     pub transaction_events: TransactionEventsArgs,
 
-    /// Hint-driven transaction-pool state prewarming configuration
+    /// Hint-driven transaction-pool state prefetching configuration
     #[command(flatten)]
     pub dowse: DowseArgs,
 
@@ -573,6 +583,7 @@ mod tests {
     fn dowse_runtime_limits_are_cli_configurable() {
         let args = CommandParser::parse_from([
             "builder",
+            "--builder.dowse.ab-test",
             "--builder.dowse.workers",
             "2",
             "--builder.dowse.queue-capacity",
@@ -591,6 +602,7 @@ mod tests {
         .args
         .dowse;
 
+        assert!(args.dowse_ab_test);
         assert_eq!(args.dowse_workers, 2);
         assert_eq!(args.dowse_queue_capacity, 16);
         assert_eq!(args.dowse_poll_interval_ms, 10);
@@ -598,6 +610,12 @@ mod tests {
         assert_eq!(args.dowse_max_accounts_per_transaction, 8);
         assert_eq!(args.dowse_max_storage_slots_per_transaction, 64);
         assert_eq!(args.dowse_cache_size_mb, 32);
+    }
+
+    #[test]
+    fn dowse_ab_test_requires_hints() {
+        let args = CommandParser::parse_from(["builder", "--builder.dowse.ab-test"]);
+        assert!(args.args.into_builder_config(Arc::new(NoopMeteringProvider)).is_err());
     }
 
     #[test]

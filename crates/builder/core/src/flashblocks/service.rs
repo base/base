@@ -24,7 +24,7 @@ use super::{
     payload::{BasePayloadBuilder, BuilderOutputs},
 };
 use crate::{
-    BuilderConfig, DowsePrewarmer, RejectedTxForwarder,
+    BuilderConfig, DowsePrefetcher, RejectedTxForwarder,
     traits::{NodeBounds, PoolBounds},
 };
 
@@ -68,7 +68,7 @@ impl FlashblocksServiceBuilder {
         let ws_pub: Arc<WebSocketPublisher> =
             WebSocketPublisher::new(self.config.flashblocks_ws_addr)?.into();
         let dowse_cache = self.config.dowse.clone().map(|config| {
-            DowsePrewarmer::new(ctx.provider().clone(), pool.clone(), config)
+            DowsePrefetcher::new(ctx.provider().clone(), pool.clone(), config)
                 .spawn(ctx.task_executor().clone())
         });
         let payload_builder = BasePayloadBuilder::new(

@@ -1,4 +1,4 @@
-//! Background state prewarming from bounded Dowse transaction plans.
+//! Background state prefetching from bounded Dowse transaction plans.
 
 use std::{
     collections::HashSet,
@@ -22,11 +22,13 @@ use tracing::{info, warn};
 
 use crate::{BuilderMetrics, PoolBounds};
 
-/// Configuration for hint-driven transaction-pool prewarming.
+/// Configuration for hint-driven transaction-pool state prefetching.
 #[derive(Clone)]
 pub struct DowseConfig {
     /// Validated hint table used to plan state reads.
     pub hints: Arc<HintTable>,
+    /// Alternate cache use by parent hash while keeping background prefetching enabled.
+    pub ab_test: bool,
     /// Number of persistent blocking workers performing state reads.
     pub worker_count: usize,
     /// Maximum queued transaction plans per worker.
@@ -56,6 +58,11 @@ impl DowseConfig {
         eyre::ensure!(hints.version == 1, "unsupported Dowse hint table version {}", hints.version);
         Ok(Arc::new(hints))
     }
+
+    /// Returns whether a payload on `parent_hash` should consult the Dowse cache.
+    pub fn cache_enabled_for(&self, parent_hash: B256) -> bool {
+        !self.ab_test || parent_hash.as_slice()[0].is_multiple_of(2)
+    }
 }
 
 impl fmt::Debug for DowseConfig {
@@ -63,6 +70,7 @@ impl fmt::Debug for DowseConfig {
         f.debug_struct("DowseConfig")
             .field("hint_selectors", &self.hints.selector_count())
             .field("hint_items", &self.hints.item_count())
+            .field("ab_test", &self.ab_test)
             .field("worker_count", &self.worker_count)
             .field("queue_capacity", &self.queue_capacity)
             .field("poll_interval", &self.poll_interval)
@@ -76,11 +84,11 @@ impl fmt::Debug for DowseConfig {
 
 /// Parent-hash-tagged cache shared by Dowse workers and the payload builder.
 #[derive(Clone, Debug, Default)]
-pub struct DowsePrewarmCache {
+pub struct DowsePrefetchCache {
     inner: Arc<RwLock<Option<(B256, ExecutionCache)>>>,
 }
 
-impl DowsePrewarmCache {
+impl DowsePrefetchCache {
     /// Replaces the active cache with an empty cache for `parent_hash`.
     pub fn activate(&self, parent_hash: B256, cache_size_bytes: usize) -> ExecutionCache {
         let cache = ExecutionCache::new(cache_size_bytes);
@@ -100,7 +108,7 @@ impl DowsePrewarmCache {
 
 /// One bounded prefetch plan sent to a background worker.
 #[derive(Debug)]
-pub struct DowsePrewarmWork {
+pub struct DowsePrefetchWork {
     /// State root context against which all reads must execute.
     pub parent_hash: B256,
     /// Cache receiving values read by this work item.
@@ -113,27 +121,27 @@ pub struct DowsePrewarmWork {
 
 /// Coordinates txpool planning and persistent background state-read workers.
 #[derive(Debug)]
-pub struct DowsePrewarmer<Client, Pool> {
+pub struct DowsePrefetcher<Client, Pool> {
     client: Client,
     pool: Pool,
     config: DowseConfig,
-    cache: DowsePrewarmCache,
+    cache: DowsePrefetchCache,
 }
 
-impl<Client, Pool> DowsePrewarmer<Client, Pool>
+impl<Client, Pool> DowsePrefetcher<Client, Pool>
 where
     Client: StateProviderFactory + Clone + Send + Sync + 'static,
     Pool: PoolBounds,
 {
-    /// Creates a prewarmer and its parent-tagged cache handle.
+    /// Creates a prefetcher and its parent-tagged cache handle.
     pub fn new(client: Client, pool: Pool, config: DowseConfig) -> Self {
-        Self { client, pool, config, cache: DowsePrewarmCache::default() }
+        Self { client, pool, config, cache: DowsePrefetchCache::default() }
     }
 
     /// Spawns persistent workers and the transaction-pool planning loop.
     ///
     /// Returns the cache handle that payload builders should consult for their exact parent hash.
-    pub fn spawn(self, executor: Runtime) -> DowsePrewarmCache {
+    pub fn spawn(self, executor: Runtime) -> DowsePrefetchCache {
         let shared_cache = self.cache.clone();
         let worker_count = self.config.worker_count;
         let poll_interval = self.config.poll_interval;
@@ -141,7 +149,7 @@ where
 
         for _ in 0..self.config.worker_count {
             let (sender, mut receiver) =
-                mpsc::channel::<DowsePrewarmWork>(self.config.queue_capacity);
+                mpsc::channel::<DowsePrefetchWork>(self.config.queue_capacity);
             worker_senders.push(sender);
             let client = self.client.clone();
 
@@ -168,7 +176,7 @@ where
                                 warn!(
                                     parent_hash = %work.parent_hash,
                                     error = %error,
-                                    "failed to open parent state for Dowse prewarming"
+                                    "failed to open parent state for Dowse prefetching"
                                 );
                                 continue;
                             }
@@ -266,6 +274,8 @@ where
             let mut active_parent = None;
             let mut parent_cancel = CancellationToken::new();
             let mut seen_transactions = HashSet::new();
+            let mut seen_accounts = HashSet::new();
+            let mut seen_storage = HashSet::new();
             let mut next_worker = 0;
 
             loop {
@@ -277,6 +287,8 @@ where
                     parent_cancel.cancel();
                     parent_cancel = CancellationToken::new();
                     seen_transactions.clear();
+                    seen_accounts.clear();
+                    seen_storage.clear();
                     active_parent = Some(parent_hash);
                     BuilderMetrics::dowse_parent_resets_total().increment(1);
                     cache.activate(parent_hash, config.cache_size_bytes)
@@ -293,12 +305,18 @@ where
                         BuilderMetrics::dowse_transactions_total("contract_creation").increment(1);
                         continue;
                     };
-                    let Some(plan) =
+                    let Some(mut plan) =
                         planner.plan(target, transaction.sender(), transaction.transaction.input())
                     else {
                         BuilderMetrics::dowse_transactions_total("no_hints").increment(1);
                         continue;
                     };
+
+                    let original_target_count = plan.target_count();
+                    plan.accounts.retain(|address| !seen_accounts.contains(address));
+                    plan.storage.retain(|target| !seen_storage.contains(target));
+                    BuilderMetrics::dowse_plan_items_omitted_total("parent_duplicate")
+                        .increment((original_target_count - plan.target_count()) as u64);
 
                     BuilderMetrics::dowse_plan_targets("account")
                         .record(plan.accounts.len() as f64);
@@ -315,7 +333,9 @@ where
                         continue;
                     }
 
-                    let work = DowsePrewarmWork {
+                    seen_accounts.extend(plan.accounts.iter().copied());
+                    seen_storage.extend(plan.storage.iter().copied());
+                    let work = DowsePrefetchWork {
                         parent_hash,
                         cache: active_cache.clone(),
                         plan,
@@ -341,7 +361,13 @@ where
                         }
                     }
 
-                    if pending_work.is_some() {
+                    if let Some(work) = pending_work {
+                        for address in &work.plan.accounts {
+                            seen_accounts.remove(address);
+                        }
+                        for target in &work.plan.storage {
+                            seen_storage.remove(target);
+                        }
                         seen_transactions.remove(&tx_hash);
                         BuilderMetrics::dowse_queue_drops_total().increment(1);
                         BuilderMetrics::dowse_transactions_total("queue_full").increment(1);
@@ -353,7 +379,7 @@ where
         info!(
             workers = worker_count,
             poll_interval_ms = poll_interval.as_millis(),
-            "Dowse transaction-pool prewarmer started"
+            "Dowse transaction-pool prefetcher started"
         );
         shared_cache
     }
@@ -370,7 +396,7 @@ mod tests {
     fn cache_is_only_returned_for_exact_parent() {
         let parent = B256::random();
         let other = B256::random();
-        let cache = DowsePrewarmCache::default();
+        let cache = DowsePrefetchCache::default();
 
         assert!(cache.cache_for(parent).is_none());
         let activated = cache.activate(parent, 1_000_000);
@@ -392,5 +418,29 @@ mod tests {
 
         cache.activate(other, 1_000_000);
         assert!(cache.cache_for(parent).is_none(), "superseded parent must become inaccessible");
+    }
+
+    #[test]
+    fn ab_test_alternates_cache_use_by_parent_hash() {
+        let mut config = DowseConfig {
+            hints: Arc::new(HintTable::default()),
+            ab_test: false,
+            worker_count: 1,
+            queue_capacity: 1,
+            poll_interval: Duration::from_millis(1),
+            max_transactions: 1,
+            max_accounts_per_transaction: 1,
+            max_storage_slots_per_transaction: 1,
+            cache_size_bytes: 1,
+        };
+        let even_parent = B256::repeat_byte(2);
+        let odd_parent = B256::repeat_byte(1);
+
+        assert!(config.cache_enabled_for(even_parent));
+        assert!(config.cache_enabled_for(odd_parent));
+
+        config.ab_test = true;
+        assert!(config.cache_enabled_for(even_parent));
+        assert!(!config.cache_enabled_for(odd_parent));
     }
 }
