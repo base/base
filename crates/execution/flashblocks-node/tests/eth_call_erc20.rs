@@ -76,7 +76,7 @@ impl Erc20TestSetup {
             index: 0,
             base: Some(ExecutionPayloadBaseV1 {
                 parent_beacon_block_root: B256::default(),
-                parent_hash: B256::default(),
+                parent_hash: self.harness.latest_block().hash(),
                 fee_recipient: Address::ZERO,
                 prev_randao: B256::default(),
                 block_number: 1,

@@ -137,6 +137,12 @@ impl StateUpdate {
             };
         }
 
+        // A canonical notification can race ahead of provider visibility. Processing it would
+        // rebase against state that cannot be read yet, so leave the tip-aligned snapshot intact.
+        if matches!(self, Self::Canonical(block) if block.number > best_number) {
+            return UpdatePreflight::Skip;
+        }
+
         // A canonical tip update can rebase pending. A flashblock cannot safely extend a snapshot
         // that is anchored behind the provider.
         if matches!(self, Self::Flashblock(_)) && has_pending && !pending_is_based_on_best {
@@ -1250,6 +1256,22 @@ mod tests {
         assert_eq!(
             StateUpdate::Canonical(block).preflight(Some((best, best_hash)), false, false, true),
             UpdatePreflight::Process
+        );
+    }
+
+    #[test]
+    fn preflight_skips_canonical_ahead_of_provider_visibility() {
+        let best = 100;
+        let best_hash = B256::repeat_byte(0xAB);
+        let block = BaseBlock {
+            header: Header { number: best + 1, ..Default::default() },
+            body: Default::default(),
+        };
+        let block = RecoveredBlock::new_sealed(SealedBlock::seal_slow(block), Vec::new());
+
+        assert_eq!(
+            StateUpdate::Canonical(block).preflight(Some((best, best_hash)), true, true, false),
+            UpdatePreflight::Skip
         );
     }
 
