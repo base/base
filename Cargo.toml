@@ -350,6 +350,7 @@ reth-network-p2p = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1"
 reth-storage-api = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
 reth-rpc-eth-api = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
 reth-chain-state = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
+reth-engine-tree = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
 reth-trie-common = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
 reth-payload-util = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
 reth-node-builder = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }

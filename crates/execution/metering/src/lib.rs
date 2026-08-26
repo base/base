@@ -43,8 +43,8 @@ pub use traits::MeteringApiServer;
 
 mod types;
 pub use types::{
-    MeterBlockResponse, MeterBlockTransactions, MeteredPriorityFeeResponse,
-    ResourceFeeEstimateResponse,
+    MeterBlockResponse, MeterBlockTransactions, MeterStateProviderStats,
+    MeteredPriorityFeeResponse, ResourceFeeEstimateResponse,
 };
 
 mod transaction;

@@ -8,12 +8,43 @@ use base_common_consensus::BaseBlock;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use eyre::{Result as EyreResult, eyre};
+use reth_engine_tree::tree::instrumented_state::{InstrumentedStateProvider, StateProviderStats};
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_primitives_traits::Block as BlockT;
 use reth_provider::{HeaderProvider, StateProviderFactory};
 use reth_revm::{database::StateProviderDatabase, db::State};
 
-use crate::types::{MeterBlockResponse, MeterBlockTransactions};
+use crate::types::{MeterBlockResponse, MeterBlockTransactions, MeterStateProviderStats};
+
+impl MeterStateProviderStats {
+    fn from_provider(stats: &StateProviderStats) -> Self {
+        Self {
+            account_fetches: u64::try_from(stats.total_account_fetches()).unwrap_or(u64::MAX),
+            account_fetch_time_us: stats.total_account_fetch_latency().as_micros(),
+            storage_fetches: u64::try_from(stats.total_storage_fetches()).unwrap_or(u64::MAX),
+            storage_fetch_time_us: stats.total_storage_fetch_latency().as_micros(),
+            code_fetches: u64::try_from(stats.total_code_fetches()).unwrap_or(u64::MAX),
+            code_fetch_time_us: stats.total_code_fetch_latency().as_micros(),
+            code_fetched_bytes: u64::try_from(stats.total_code_fetched_bytes()).unwrap_or(u64::MAX),
+        }
+    }
+
+    const fn saturating_sub(self, earlier: Self) -> Self {
+        Self {
+            account_fetches: self.account_fetches.saturating_sub(earlier.account_fetches),
+            account_fetch_time_us: self
+                .account_fetch_time_us
+                .saturating_sub(earlier.account_fetch_time_us),
+            storage_fetches: self.storage_fetches.saturating_sub(earlier.storage_fetches),
+            storage_fetch_time_us: self
+                .storage_fetch_time_us
+                .saturating_sub(earlier.storage_fetch_time_us),
+            code_fetches: self.code_fetches.saturating_sub(earlier.code_fetches),
+            code_fetch_time_us: self.code_fetch_time_us.saturating_sub(earlier.code_fetch_time_us),
+            code_fetched_bytes: self.code_fetched_bytes.saturating_sub(earlier.code_fetched_bytes),
+        }
+    }
+}
 
 /// Re-executes a block and meters execution and timing information.
 ///
@@ -49,7 +80,9 @@ where
         .ok_or_else(|| eyre!("Parent header not found: {}", parent_hash))?;
 
     // Get state provider at parent block
-    let state_provider = provider.state_by_block_hash(parent_hash)?;
+    let state_provider =
+        InstrumentedStateProvider::new(provider.state_by_block_hash(parent_hash)?, "meter_block");
+    let state_provider_stats = state_provider.stats();
 
     // Create state database from parent state
     let state_db = StateProviderDatabase::new(&state_provider);
@@ -90,8 +123,10 @@ where
         builder.apply_pre_execution_changes()?;
 
         for recovered_tx in recovered_transactions {
-            let tx_start = Instant::now();
             let tx_hash = recovered_tx.tx_hash();
+            let state_provider_before =
+                MeterStateProviderStats::from_provider(&state_provider_stats);
+            let tx_start = Instant::now();
 
             let gas_used = builder
                 .execute_transaction(recovered_tx)
@@ -104,6 +139,8 @@ where
                 tx_hash,
                 gas_used,
                 execution_time_us: execution_time,
+                state_provider: MeterStateProviderStats::from_provider(&state_provider_stats)
+                    .saturating_sub(state_provider_before),
             });
         }
     }
@@ -119,6 +156,7 @@ where
         // Retained as a zero-valued compatibility field for older profiling clients.
         state_root_time_us: 0,
         total_time_us: total_time,
+        state_provider: MeterStateProviderStats::from_provider(&state_provider_stats),
         transactions: transaction_times,
     })
 }
@@ -215,6 +253,14 @@ mod tests {
         assert_eq!(metered_tx.tx_hash, tx_hash);
         assert_eq!(metered_tx.gas_used, 21_000);
         assert!(metered_tx.execution_time_us > 0, "transaction execution time should be non-zero");
+        assert!(
+            metered_tx.state_provider.account_fetches > 0,
+            "transaction should fetch accounts from the parent state"
+        );
+        assert!(
+            response.state_provider.account_fetches >= metered_tx.state_provider.account_fetches,
+            "block fetches should include transaction fetches"
+        );
 
         assert!(response.signer_recovery_time_us > 0, "signer recovery should take time");
         assert!(response.execution_time_us > 0);

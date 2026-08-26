@@ -25,6 +25,9 @@ pub struct MeterBlockResponse {
     pub state_root_time_us: u128,
     /// Total duration (signer recovery + EVM execution) in microseconds
     pub total_time_us: u128,
+    /// Parent-state provider reads performed during block execution.
+    #[serde(default)]
+    pub state_provider: MeterStateProviderStats,
     /// Per-transaction metering data
     pub transactions: Vec<MeterBlockTransactions>,
 }
@@ -39,6 +42,29 @@ pub struct MeterBlockTransactions {
     pub gas_used: u64,
     /// Execution time in microseconds
     pub execution_time_us: u128,
+    /// Parent-state provider reads first encountered while executing this transaction.
+    #[serde(default)]
+    pub state_provider: MeterStateProviderStats,
+}
+
+/// Parent-state provider reads and their cumulative latency.
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeterStateProviderStats {
+    /// Number of account fetches.
+    pub account_fetches: u64,
+    /// Time spent fetching accounts in microseconds.
+    pub account_fetch_time_us: u128,
+    /// Number of storage fetches.
+    pub storage_fetches: u64,
+    /// Time spent fetching storage in microseconds.
+    pub storage_fetch_time_us: u128,
+    /// Number of bytecode fetches.
+    pub code_fetches: u64,
+    /// Time spent fetching bytecode in microseconds.
+    pub code_fetch_time_us: u128,
+    /// Total bytecode bytes fetched.
+    pub code_fetched_bytes: u64,
 }
 
 // --- Metered priority fee types ---
@@ -80,7 +106,7 @@ pub struct MeteredPriorityFeeResponse {
 mod tests {
     use alloy_primitives::B256;
 
-    use super::{MeterBlockResponse, MeterBlockTransactions};
+    use super::{MeterBlockResponse, MeterBlockTransactions, MeterStateProviderStats};
 
     #[test]
     fn meter_block_response_serializes_deprecated_state_root_time_as_zero() {
@@ -91,15 +117,18 @@ mod tests {
             execution_time_us: 3,
             state_root_time_us: 0,
             total_time_us: 5,
+            state_provider: MeterStateProviderStats::default(),
             transactions: vec![MeterBlockTransactions {
                 tx_hash: B256::ZERO,
                 gas_used: 21_000,
                 execution_time_us: 3,
+                state_provider: MeterStateProviderStats::default(),
             }],
         };
 
         let json = serde_json::to_string(&response).unwrap();
 
         assert!(json.contains("\"stateRootTimeUs\":0"));
+        assert!(json.contains("\"stateProvider\""));
     }
 }
