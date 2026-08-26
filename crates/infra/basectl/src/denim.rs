@@ -854,7 +854,7 @@ async fn append_wire_checks<P: Provider<Base>>(
     );
     let filter_id = raw_call(provider, "eth_newFilter", json!([filter])).await;
     match filter_id {
-        RawOutcome::Value(id) if id.as_str().and_then(parse_quantity).is_some() => {
+        RawOutcome::Value(id) if id.as_str().is_some_and(|id| !id.is_empty()) => {
             check_wire_logs(
                 report,
                 "rpc_eth_getFilterChanges_blockTimestampMs",
@@ -1553,7 +1553,7 @@ mod tests {
                 if params[0]["fromBlock"] == "0x0" { json!([log]) } else { json!([]) }
             }
             "eth_getLogs" => json!([]),
-            "eth_newFilter" => json!("0x1"),
+            "eth_newFilter" => json!("0xf56a19202c3fde509c9b1f806c0b12af"),
             "eth_getFilterChanges" | "eth_getFilterLogs" => json!([log]),
             "eth_uninstallFilter" => json!(true),
             "eth_getTransactionReceipt" => json!({
