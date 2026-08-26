@@ -10,7 +10,7 @@
 //! transaction when an enforced dimension exceeds a budget. A dimension with
 //! [`ResourceMeteringDimension::dry_run`] set is observed without excluding.
 //! Block-scope excludes skip only the current payload scan. Transaction-scope
-//! excludes (predicted or executed) are permanent pool evictions: the
+//! excludes (simulated or executed) are permanent pool evictions: the
 //! transaction cannot fit any block. Neither changes protocol gas, fees, or
 //! validity.
 
@@ -209,7 +209,7 @@ impl ResourceSample {
         Self::STATE_CHANGED_ACCOUNT,
     ];
 
-    /// Builds a predicted sample from the matching `meterBundle` transaction.
+    /// Builds a simulated sample from the matching `meterBundle` transaction.
     ///
     /// Returns `None` when the response has no result for `tx_hash` so callers
     /// can fail open instead of attributing bundle totals to the wrong tx.
@@ -774,9 +774,9 @@ impl ResourceThrottlingDecision {
 }
 
 impl ResourceMeteringSchedule {
-    /// Predicted admission check from `meterBundle` data.
+    /// Simulated admission check from `meterBundle` data.
     ///
-    /// Missing metering data fails open with zero predicted usage so the
+    /// Missing metering data fails open with zero simulated usage so the
     /// transaction can still execute and be accounted from actual results.
     pub fn evaluate_transaction(
         &self,
