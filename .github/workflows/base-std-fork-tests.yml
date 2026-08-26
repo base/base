@@ -32,11 +32,11 @@ jobs:
           # recorded in the result artifact and PR comment.
           - fork: Beryl
             key: beryl
-            base_anvil_ref: 8d0f5b8ae60edd30caa52609bc8677e0b631e2d7
+            base_anvil_ref: cecddfa558e5ed99db6fd836ab1c8cd0213dce26
             base_std_ref: v1.0.0
           - fork: Cobalt
             key: cobalt
-            base_anvil_ref: 9df661bc39c6fb96ef28bfd5ff5d345931f133d3
+            base_anvil_ref: fb00db40ee7e12ba271b5b0b546af7a669b7075e
             base_std_ref: e30b34212689186b27acd3d340ba0d75d31495e9
     env:
       FORK_NAME: ${{ matrix.fork }}

@@ -101,12 +101,12 @@ jobs:
             A Critical finding must explain the triggering input/state/config, affected code path, propagated error or panic, why block production or validator progression can halt/stall, and the missing mitigation or test.
 
             COMMENT MANAGEMENT:
-            Before posting your review summary, clean up previous summary comments from earlier runs:
-            1. Delete your previous summary comments by running: gh pr comment ${{ github.event.pull_request.number }} --delete-last --yes
-            2. Repeat step 1 until it returns an error (no more comments to delete)
+            Before posting your review summary, delete ONLY your own previous summary comments from earlier runs, identified by the leading marker `<!-- CLAUDE_REVIEW_SUMMARY -->`.
+            Do NOT use `gh pr comment --delete-last`: it deletes the most recent github-actions[bot] top-level comment regardless of which workflow created it, so it wipes unrelated bot comments (e.g. the benchmark results comment) that also post as github-actions[bot].
+            1. List your prior summary comment ids: gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments --jq '.[] | select(.body | startswith("<!-- CLAUDE_REVIEW_SUMMARY -->")) | .id'
+            2. Delete each id individually: gh api -X DELETE repos/${{ github.repository }}/issues/comments/<id>
             3. Then post your new summary using: gh pr comment ${{ github.event.pull_request.number }} --body "<!-- CLAUDE_REVIEW_SUMMARY -->\n\n<your summary>"
-            Note: --delete-last only deletes your own top-level comments, not inline review comments or other users' comments.
 
           claude_args: |
             --model claude-opus-4-6-default
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(git ls-files docs),Bash(git show HEAD:docs/:*),Bash(cat /home/runner/.claude/projects/:*),Bash(gh pr comment ${{ github.event.pull_request.number }} --body:*),Bash(gh pr comment ${{ github.event.pull_request.number }} --edit-last --body:*),Bash(gh pr comment ${{ github.event.pull_request.number }} --delete-last:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments:*)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(git ls-files docs),Bash(git show HEAD:docs/:*),Bash(cat /home/runner/.claude/projects/:*),Bash(gh pr comment ${{ github.event.pull_request.number }} --body:*),Bash(gh pr comment ${{ github.event.pull_request.number }} --edit-last --body:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments:*),Bash(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments:*),Bash(gh api -X DELETE repos/${{ github.repository }}/issues/comments/:*)"

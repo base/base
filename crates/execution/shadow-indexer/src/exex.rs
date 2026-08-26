@@ -1,5 +1,5 @@
 use base_common_consensus::{BaseBlock, BasePrimitives, BaseReceipt};
-use base_shadow_indexer_db::{ShadowBlockPayload, ShadowBlockRow};
+use base_shadow_indexer_db::{ShadowBlockPayload, ShadowBlockRow, ShadowCanonicalRef, ShadowWrite};
 use chrono::Utc;
 use eyre::Result;
 use futures::TryStreamExt;
@@ -14,12 +14,12 @@ use tracing::{debug, info, warn};
 /// Shadow indexer `ExEx` handler.
 #[derive(Debug)]
 pub struct ShadowIndexerExEx {
-    tx: mpsc::Sender<ShadowBlockRow>,
+    tx: mpsc::Sender<ShadowWrite>,
 }
 
 impl ShadowIndexerExEx {
     /// Create a new shadow indexer `ExEx` handler.
-    pub const fn new(tx: mpsc::Sender<ShadowBlockRow>) -> Self {
+    pub const fn new(tx: mpsc::Sender<ShadowWrite>) -> Self {
         Self { tx }
     }
 
@@ -37,9 +37,9 @@ impl ShadowIndexerExEx {
                         target: "base::shadow-indexer",
                         block_number = new.tip().header().number(),
                         block_hash = ?new.tip().hash(),
-                        "Committed chain notification received; canonical rows are not persisted"
+                        "Committed chain notification received"
                     );
-                    true
+                    self.resolve_canonical_heights(new).await?
                 }
                 ExExNotification::ChainReorged { old, new } => {
                     info!(
@@ -75,8 +75,10 @@ impl ShadowIndexerExEx {
                 break;
             }
 
-            // Historical commits are canonical, but live commits are speculative shadow blocks.
-            // In live mode only the replacement chain is safe to expose as the WAL watermark.
+            // `FinishedHeight` lets the manager prune the ExEx WAL, so acknowledging a height the
+            // node may still reorg discards the notification that would have recorded the block it
+            // discards. While syncing, commits are settled history. Live, any commit can still be
+            // reorged, so only a reorg's own replacement chain is safe to expose.
             if Self::should_emit_finished_height(&notification, is_syncing)
                 && let Some(committed_chain) = notification.committed_chain()
             {
@@ -127,9 +129,6 @@ impl ShadowIndexerExEx {
         Ok(ShadowBlockRow {
             number,
             hash: block.hash().as_slice().to_vec(),
-            // Always set: only reorged-out and reverted blocks are persisted now. The column
-            // stays so the reader keeps filtering out canonical rows written by earlier builds.
-            reorged_out: true,
             canonical_hash,
             created_at: now,
             updated_at: now,
@@ -142,46 +141,42 @@ impl ShadowIndexerExEx {
         old: &Chain<BasePrimitives>,
         new: &Chain<BasePrimitives>,
     ) -> Result<bool> {
+        let mut unresolved = 0usize;
+
         for (block, receipts) in old.blocks_and_receipts() {
-            let header = block.header();
             let canonical_hash = new
                 .blocks()
-                .get(&header.number())
+                .get(&block.header().number())
                 .map(|canonical_block| canonical_block.hash().as_slice().to_vec());
 
             if canonical_hash.is_none() {
-                warn!(
-                    target: "base::shadow-indexer",
-                    block_number = header.number(),
-                    old_block_hash = ?block.hash(),
-                    new_tip_number = new.tip().header().number(),
-                    new_tip_hash = ?new.tip().hash(),
-                    "Missing canonical block for reorged shadow row"
-                );
+                unresolved = unresolved.saturating_add(1);
             }
 
             let row = self.build_row(block, receipts, canonical_hash)?;
 
-            if !self.send_row(row).await? {
+            if !self.send_write(ShadowWrite::Reorged(Box::new(row))).await? {
                 return Ok(false);
             }
+        }
+
+        if unresolved > 0 {
+            debug!(
+                target: "base::shadow-indexer",
+                unresolved,
+                new_tip_number = new.tip().header().number(),
+                "Reorged rows await a later canonical block"
+            );
         }
 
         Ok(true)
     }
 
-    /// Marks every block in a reverted chain as reorged out.
-    ///
-    /// `ChainReverted` carries only the unwound blocks with no replacement chain, so there is no
-    /// canonical hash at these heights (they may be re-synced later, arriving as `ChainCommitted`).
-    /// reth emits it exclusively from the execution stage on a pipeline unwind (deep reorg
-    /// requiring backfill, or a manual/consistency unwind); the live-sync engine path only ever
-    /// produces `ChainCommitted`/`ChainReorged`.
     async fn handle_chain_reverted(&self, old: &Chain<BasePrimitives>) -> Result<bool> {
         for (block, receipts) in old.blocks_and_receipts() {
             let row = self.build_row(block, receipts, None)?;
 
-            if !self.send_row(row).await? {
+            if !self.send_write(ShadowWrite::Reorged(Box::new(row))).await? {
                 return Ok(false);
             }
         }
@@ -189,8 +184,23 @@ impl ShadowIndexerExEx {
         Ok(true)
     }
 
-    async fn send_row(&self, row: ShadowBlockRow) -> Result<bool> {
-        match self.tx.send(row).await {
+    async fn resolve_canonical_heights(&self, new: &Chain<BasePrimitives>) -> Result<bool> {
+        for block in new.blocks().values() {
+            let number = i64::try_from(block.header().number()).map_err(|error| {
+                eyre::eyre!("block number overflow for shadow indexer canonical ref: {error}")
+            })?;
+            let canonical = ShadowCanonicalRef { number, hash: block.hash().as_slice().to_vec() };
+
+            if !self.send_write(ShadowWrite::Canonical(canonical)).await? {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
+    }
+
+    async fn send_write(&self, write: ShadowWrite) -> Result<bool> {
+        match self.tx.send(write).await {
             Ok(()) => Ok(true),
             Err(error) => {
                 info!(
@@ -248,12 +258,32 @@ mod tests {
         Chain::new(blocks, execution_outcome, Default::default())
     }
 
-    fn drain(mut rx: mpsc::Receiver<ShadowBlockRow>) -> Vec<ShadowBlockRow> {
-        let mut rows = Vec::new();
-        while let Ok(row) = rx.try_recv() {
-            rows.push(row);
+    fn drain(mut rx: mpsc::Receiver<ShadowWrite>) -> Vec<ShadowWrite> {
+        let mut writes = Vec::new();
+        while let Ok(write) = rx.try_recv() {
+            writes.push(write);
         }
-        rows
+        writes
+    }
+
+    fn drain_rows(rx: mpsc::Receiver<ShadowWrite>) -> Vec<ShadowBlockRow> {
+        drain(rx)
+            .into_iter()
+            .filter_map(|write| match write {
+                ShadowWrite::Reorged(row) => Some(*row),
+                ShadowWrite::Canonical(_) => None,
+            })
+            .collect()
+    }
+
+    fn drain_canonical(rx: mpsc::Receiver<ShadowWrite>) -> Vec<ShadowCanonicalRef> {
+        drain(rx)
+            .into_iter()
+            .filter_map(|write| match write {
+                ShadowWrite::Canonical(canonical) => Some(canonical),
+                ShadowWrite::Reorged(_) => None,
+            })
+            .collect()
     }
 
     #[tokio::test]
@@ -267,11 +297,10 @@ mod tests {
         let processed = exex.handle_chain_reorged(&old, &new).await.expect("handle reorged");
         assert!(processed);
 
-        let rows = drain(rx);
+        let rows = drain_rows(rx);
         assert_eq!(rows.len(), old.blocks().len(), "only old-chain blocks are emitted");
 
         for row in &rows {
-            assert!(row.reorged_out, "every persisted row is reorged out");
             assert_eq!(row.hash.as_slice(), block_hash(row.number as u64, 0).as_slice());
             assert_eq!(
                 row.canonical_hash,
@@ -291,7 +320,7 @@ mod tests {
         let new = mk_chain(6, 8, NEW_CHAIN_VARIANT);
         exex.handle_chain_reorged(&old, &new).await.expect("handle reorged");
 
-        let rows = drain(rx);
+        let rows = drain_rows(rx);
         let missing = rows.iter().find(|row| row.number == 9).expect("old block 9 reorged out");
         assert_eq!(missing.canonical_hash, None, "no new block at height 9 => canonical hash None");
 
@@ -311,15 +340,74 @@ mod tests {
             exex.handle_chain_reverted(&mk_chain(4, 6, 0)).await.expect("handle reverted");
         assert!(processed);
 
-        let rows = drain(rx);
+        let rows = drain_rows(rx);
         assert_eq!(rows.iter().map(|row| row.number).collect::<Vec<_>>(), vec![4, 5, 6]);
         for row in &rows {
-            assert!(row.reorged_out, "reverted rows are marked reorged out");
             assert_eq!(
                 row.canonical_hash, None,
                 "reverted rows have no replacement canonical hash"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn chain_committed_emits_canonical_refs_for_every_height() {
+        let (tx, rx) = mpsc::channel(32);
+        let exex = ShadowIndexerExEx::new(tx);
+
+        let processed = exex
+            .resolve_canonical_heights(&mk_chain(6, 9, NEW_CHAIN_VARIANT))
+            .await
+            .expect("handle committed");
+        assert!(processed);
+
+        let canonical = drain_canonical(rx);
+        assert_eq!(
+            canonical.iter().map(|entry| entry.number).collect::<Vec<_>>(),
+            vec![6, 7, 8, 9],
+            "every committed height can resolve a row discarded at that height"
+        );
+        for entry in &canonical {
+            assert_eq!(
+                entry.hash.as_slice(),
+                block_hash(entry.number as u64, NEW_CHAIN_VARIANT).as_slice()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn commits_after_a_short_reorg_resolve_the_heights_it_left_unresolved() {
+        let (tx, rx) = mpsc::channel(64);
+        let exex = ShadowIndexerExEx::new(tx);
+
+        // Production shape: five shadow blocks displaced by a single canonical block.
+        exex.handle_chain_reorged(&mk_chain(6, 10, 0), &mk_chain(6, 6, NEW_CHAIN_VARIANT))
+            .await
+            .expect("handle reorged");
+        for number in 7..=10 {
+            exex.resolve_canonical_heights(&mk_chain(number, number, NEW_CHAIN_VARIANT))
+                .await
+                .expect("handle committed");
+        }
+
+        let writes = drain(rx);
+        let unresolved: Vec<i64> = writes
+            .iter()
+            .filter_map(|write| match write {
+                ShadowWrite::Reorged(row) if row.canonical_hash.is_none() => Some(row.number),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(unresolved, vec![7, 8, 9, 10], "four heights are unresolved at reorg time");
+
+        let resolved: Vec<i64> = writes
+            .iter()
+            .filter_map(|write| match write {
+                ShadowWrite::Canonical(canonical) => Some(canonical.number),
+                ShadowWrite::Reorged(_) => None,
+            })
+            .collect();
+        assert_eq!(resolved, vec![7, 8, 9, 10], "later commits cover exactly those heights");
     }
 
     #[test]

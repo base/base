@@ -17,7 +17,9 @@ use base_observability_events::{
 };
 use base_proofs_extension::ProofsHistoryExtension;
 use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension};
-use base_shadow_indexer_db::ShadowDbConfig;
+use base_shadow_indexer_db::{
+    DEFAULT_DATABASE, DEFAULT_PORT, DEFAULT_USERNAME, PgConnectionParams, ShadowDbConfig,
+};
 use base_tx_forwarding::{
     DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS, DEFAULT_RESEND_AFTER_MS, TxForwardingConfig,
     TxForwardingExtension,
@@ -105,14 +107,50 @@ pub struct ShadowIndexerArgs {
     #[arg(long = "enable-shadow-indexer", env = "ENABLE_SHADOW_INDEXER")]
     pub enable_shadow_indexer: bool,
 
-    /// `PostgreSQL` connection URL for the shadow indexer database.
+    /// Host of the shadow indexer database.
     #[arg(
-        long = "shadow-indexer.database-url",
-        env = "SHADOW_INDEXER_DATABASE_URL",
-        value_name = "SHADOW_INDEXER_DATABASE_URL",
+        long = "shadow-indexer.db-host",
+        env = "SHADOW_INDEXER_DB_HOST",
+        value_name = "SHADOW_INDEXER_DB_HOST",
         requires = "enable_shadow_indexer"
     )]
-    pub shadow_indexer_database_url: Option<String>,
+    pub shadow_indexer_db_host: Option<String>,
+
+    /// Password for the shadow indexer database role.
+    #[arg(
+        long = "shadow-indexer.db-password",
+        env = "SHADOW_INDEXER_DB_PASSWORD",
+        value_name = "SHADOW_INDEXER_DB_PASSWORD",
+        requires = "enable_shadow_indexer"
+    )]
+    pub shadow_indexer_db_password: Option<String>,
+
+    /// Port of the shadow indexer database.
+    #[arg(
+        long = "shadow-indexer.db-port",
+        env = "SHADOW_INDEXER_DB_PORT",
+        default_value_t = DEFAULT_PORT,
+        requires = "enable_shadow_indexer"
+    )]
+    pub shadow_indexer_db_port: u16,
+
+    /// Name of the shadow indexer database.
+    #[arg(
+        long = "shadow-indexer.db-name",
+        env = "SHADOW_INDEXER_DB_NAME",
+        default_value = DEFAULT_DATABASE,
+        requires = "enable_shadow_indexer"
+    )]
+    pub shadow_indexer_db_name: String,
+
+    /// Role to authenticate to the shadow indexer database as.
+    #[arg(
+        long = "shadow-indexer.db-user",
+        env = "SHADOW_INDEXER_DB_USER",
+        default_value = DEFAULT_USERNAME,
+        requires = "enable_shadow_indexer"
+    )]
+    pub shadow_indexer_db_user: String,
 
     /// Maximum number of open shadow indexer database connections.
     #[arg(
@@ -138,7 +176,11 @@ impl Default for ShadowIndexerArgs {
     fn default() -> Self {
         Self {
             enable_shadow_indexer: false,
-            shadow_indexer_database_url: None,
+            shadow_indexer_db_host: None,
+            shadow_indexer_db_password: None,
+            shadow_indexer_db_port: DEFAULT_PORT,
+            shadow_indexer_db_name: DEFAULT_DATABASE.to_string(),
+            shadow_indexer_db_user: DEFAULT_USERNAME.to_string(),
             shadow_indexer_max_connections: DEFAULT_SHADOW_INDEXER_MAX_CONNECTIONS,
             shadow_indexer_connection_timeout: humantime::parse_duration(
                 DEFAULT_SHADOW_INDEXER_CONNECTION_TIMEOUT,
@@ -326,21 +368,39 @@ impl TryFrom<&ShadowIndexerArgs> for ShadowIndexerConfig {
     type Error = eyre::Error;
 
     fn try_from(args: &ShadowIndexerArgs) -> eyre::Result<Self> {
-        let url = if args.enable_shadow_indexer {
-            args.shadow_indexer_database_url.clone().ok_or_else(|| {
-                eyre::eyre!(
-                    "--enable-shadow-indexer (env ENABLE_SHADOW_INDEXER) requires \
-                     --shadow-indexer.database-url (env SHADOW_INDEXER_DATABASE_URL)"
-                )
-            })?
+        let connection = if args.enable_shadow_indexer {
+            let require = |value: &Option<String>, flag: &str, env: &str| {
+                value.clone().ok_or_else(|| {
+                    eyre::eyre!(
+                        "--enable-shadow-indexer (env ENABLE_SHADOW_INDEXER) requires {flag} (env \
+                         {env})"
+                    )
+                })
+            };
+
+            PgConnectionParams {
+                host: require(
+                    &args.shadow_indexer_db_host,
+                    "--shadow-indexer.db-host",
+                    "SHADOW_INDEXER_DB_HOST",
+                )?,
+                port: args.shadow_indexer_db_port,
+                database: args.shadow_indexer_db_name.clone(),
+                username: args.shadow_indexer_db_user.clone(),
+                password: require(
+                    &args.shadow_indexer_db_password,
+                    "--shadow-indexer.db-password",
+                    "SHADOW_INDEXER_DB_PASSWORD",
+                )?,
+            }
         } else {
-            String::new()
+            PgConnectionParams::default()
         };
 
         Ok(Self {
             enabled: args.enable_shadow_indexer,
             db: ShadowDbConfig {
-                url,
+                connection,
                 max_connections: args.shadow_indexer_max_connections,
                 connection_timeout: args.shadow_indexer_connection_timeout,
             },
@@ -962,8 +1022,16 @@ mod tests {
         let args = CommandParser::<StandardNodeArgs>::parse_from([
             "reth",
             "--enable-shadow-indexer",
-            "--shadow-indexer.database-url",
-            "postgres://localhost/shadow",
+            "--shadow-indexer.db-host",
+            "shadow.example.internal",
+            "--shadow-indexer.db-password",
+            "hunter2",
+            "--shadow-indexer.db-port",
+            "6543",
+            "--shadow-indexer.db-name",
+            "shadow",
+            "--shadow-indexer.db-user",
+            "writer",
             "--shadow-indexer.max-connections",
             "9",
             "--shadow-indexer.connection-timeout",
@@ -973,39 +1041,76 @@ mod tests {
 
         assert!(args.shadow_indexer.enable_shadow_indexer);
         assert_eq!(
-            args.shadow_indexer.shadow_indexer_database_url.as_deref(),
-            Some("postgres://localhost/shadow")
+            args.shadow_indexer.shadow_indexer_db_host.as_deref(),
+            Some("shadow.example.internal")
         );
+        assert_eq!(args.shadow_indexer.shadow_indexer_db_password.as_deref(), Some("hunter2"));
+        assert_eq!(args.shadow_indexer.shadow_indexer_db_port, 6543);
+        assert_eq!(args.shadow_indexer.shadow_indexer_db_name, "shadow");
+        assert_eq!(args.shadow_indexer.shadow_indexer_db_user, "writer");
         assert_eq!(args.shadow_indexer.shadow_indexer_max_connections, 9);
         assert_eq!(args.shadow_indexer.shadow_indexer_connection_timeout, Duration::from_secs(45));
     }
 
     #[test]
-    fn test_shadow_indexer_database_url_requires_enable_flag() {
+    fn test_standard_node_args_defaults_shadow_indexer_connection_fields() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
+            "reth",
+            "--enable-shadow-indexer",
+            "--shadow-indexer.db-host",
+            "shadow.example.internal",
+            "--shadow-indexer.db-password",
+            "hunter2",
+        ])
+        .args;
+
+        let config = ShadowIndexerConfig::try_from(&args.shadow_indexer)
+            .expect("host and password are enough to build the config");
+
+        assert_eq!(config.db.connection.port, DEFAULT_PORT);
+        assert_eq!(config.db.connection.database, DEFAULT_DATABASE);
+        assert_eq!(config.db.connection.username, DEFAULT_USERNAME);
+    }
+
+    #[test]
+    fn test_shadow_indexer_db_host_requires_enable_flag() {
         let error = CommandParser::<StandardNodeArgs>::try_parse_from([
             "reth",
-            "--shadow-indexer.database-url",
-            "postgres://localhost/shadow",
+            "--shadow-indexer.db-host",
+            "shadow.example.internal",
         ])
-        .expect_err("shadow indexer database url should require the enable flag");
+        .expect_err("shadow indexer db host should require the enable flag");
 
         assert!(error.to_string().contains("--enable-shadow-indexer"));
     }
 
     #[test]
-    fn test_shadow_indexer_config_requires_database_url_when_enabled() {
+    fn test_shadow_indexer_config_requires_db_host_when_enabled() {
         let args =
             ShadowIndexerArgs { enable_shadow_indexer: true, ..ShadowIndexerArgs::default() };
         let error = ShadowIndexerConfig::try_from(&args)
-            .expect_err("enabled shadow indexer should require a database url");
+            .expect_err("enabled shadow indexer should require a db host");
 
-        assert!(error.to_string().contains("--shadow-indexer.database-url"));
+        assert!(error.to_string().contains("--shadow-indexer.db-host"));
+    }
+
+    #[test]
+    fn test_shadow_indexer_config_requires_db_password_when_enabled() {
+        let args = ShadowIndexerArgs {
+            enable_shadow_indexer: true,
+            shadow_indexer_db_host: Some("shadow.example.internal".to_string()),
+            ..ShadowIndexerArgs::default()
+        };
+        let error = ShadowIndexerConfig::try_from(&args)
+            .expect_err("enabled shadow indexer should require a db password");
+
+        assert!(error.to_string().contains("--shadow-indexer.db-password"));
     }
 
     #[test]
     fn test_shadow_indexer_config_disabled_by_default() {
         let config = ShadowIndexerConfig::try_from(&ShadowIndexerArgs::default())
-            .expect("disabled shadow indexer config should build without a url");
+            .expect("disabled shadow indexer config should build without connection details");
 
         assert!(!config.enabled);
         assert_eq!(config.builder_version, env!("CARGO_PKG_VERSION"));

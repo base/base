@@ -67,9 +67,9 @@ alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 
 # base-alloy
-base-common-precompiles.workspace = true
-base-common-rpc-types.workspace = true
 base-common-network.workspace = true
+base-common-rpc-types.workspace = true
+base-common-precompiles.workspace = true
 
 # tokio
 tokio-util.workspace = true
@@ -124,6 +124,7 @@ alloy-json-rpc.workspace = true
 
 # base-alloy
 base-common-consensus.workspace = true
+base-common-flashblocks.workspace = true
 base-common-rpc-types-engine.workspace = true
 
 # proof
@@ -145,7 +146,9 @@ sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "j
 # misc
 chrono.workspace = true
 anyhow.workspace = true
+futures.workspace = true
 indicatif.workspace = true
+tokio-tungstenite.workspace = true
 testcontainers-modules = { workspace = true, features = ["postgres"] }
 
 [[bench]]
