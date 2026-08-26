@@ -15,7 +15,7 @@ use crate::{
 };
 
 // Returns a test SequencerActor with mocks that can be used or overridden.
-pub(super) fn test_actor() -> SequencerActor<
+pub(in crate::actors::sequencer) fn test_actor() -> SequencerActor<
     TestAttributesBuilder,
     MockConductor,
     MockOriginSelector,
@@ -31,7 +31,7 @@ pub(super) fn test_actor() -> SequencerActor<
     SequencerActor {
         admin_api_rx,
         builder: PayloadBuilder {
-            attributes_builder: TestAttributesBuilder { attributes: vec![] },
+            attributes_builder: TestAttributesBuilder::default(),
             engine_client: Arc::clone(&engine_client),
             origin_selector: MockOriginSelector::new(),
             recovery_mode: recovery_mode.clone(),

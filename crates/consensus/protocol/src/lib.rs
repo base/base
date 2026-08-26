@@ -43,7 +43,7 @@ pub use frame::{
 };
 
 mod utils;
-pub use utils::{read_tx_data, to_system_config};
+pub use utils::{read_tx_data, to_system_config, to_system_config_from_payload};
 
 mod channel;
 pub use channel::{Channel, ChannelError, ChannelId};
