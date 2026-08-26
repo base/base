@@ -126,7 +126,7 @@ jobs:
             --output "$RUNNER_TEMP/comment.md" \
             --run-url "$WORKFLOW_RUN_URL" \
             --threshold-pct 2
-          cat "$RUNNER_TEMP/comment.md" >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/comment.md" | tee -a "$GITHUB_STEP_SUMMARY"
 
       # Keep one concise status comment current. Skip forked PRs because their
       # pull_request workflows cannot write comments with GITHUB_TOKEN.
