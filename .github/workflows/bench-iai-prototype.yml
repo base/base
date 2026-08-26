@@ -1,0 +1,112 @@
+name: Bench iai-callgrind (prototype)
+
+# Prototype: proves that deterministic, instruction-count benchmarks run on the perf
+# runner group. Unlike the wall-clock advisory job this runs a single revision under
+# Valgrind's Cachegrind simulator, so the numbers are byte-identical across runs — the
+# whole point of the exercise. It gates nothing. `workflow_dispatch` only works once
+# this file lands on the default branch, so a branch-scoped `push` trigger lets the
+# prototype run from the feature branch in the meantime.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - rf/chore/iai-callgrind-benchmarks
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  bench-iai:
+    name: Bench iai-callgrind (prototype)
+    runs-on:
+      group: BasePerfRunnerGroup
+    timeout-minutes: 60
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+
+      - uses: ./.github/actions/setup
+        with:
+          native-deps: "true"
+          rust-cache-shared-key: "benchmark"
+          just: "false"
+
+      # Cachegrind is a Valgrind tool. This step is the actual answer to "does Valgrind
+      # run on BasePerfRunnerGroup?" — if the runner blocks ptrace or lacks the package,
+      # it fails here, loudly, before any benchmark work.
+      - name: Install Valgrind
+        shell: bash
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends valgrind
+          valgrind --version
+
+      # The runner binary version must match the iai-callgrind library version pinned in
+      # Cargo.toml (0.16.1). taiki-e/install-action ships a prebuilt binary.
+      - uses: taiki-e/install-action@3575e532701a5fc614b0c842e4119af4cc5fd16d # v2.62.60
+        with:
+          tool: iai-callgrind-runner@0.16.1
+
+      - name: Run flz iai benchmark
+        shell: bash
+        run: |
+          cargo bench -p base-common-flz --bench flz_iai \
+            | tee "$RUNNER_TEMP/flz_iai.txt"
+
+      - name: Run frame_parse iai benchmark
+        shell: bash
+        run: |
+          cargo bench -p base-protocol --bench frame_parse_iai \
+            | tee "$RUNNER_TEMP/frame_parse_iai.txt"
+
+      - name: Run batch_transaction iai benchmark
+        shell: bash
+        run: |
+          cargo bench -p base-protocol --bench batch_transaction_iai \
+            | tee "$RUNNER_TEMP/batch_transaction_iai.txt"
+
+      - name: Run batch_queue iai benchmark
+        shell: bash
+        run: |
+          cargo bench -p base-consensus-derive --bench batch_queue_iai \
+            --features test-utils | tee "$RUNNER_TEMP/batch_queue_iai.txt"
+
+      - name: Run flashblock_decode iai benchmark
+        shell: bash
+        run: |
+          cargo bench -p base-common-flashblocks --bench flashblock_decode_iai \
+            | tee "$RUNNER_TEMP/flashblock_decode_iai.txt"
+
+      - name: Summarize
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## iai-callgrind prototype results'
+            echo
+            echo 'Instruction counts are deterministic: re-running this job on the same'
+            echo 'commit must reproduce these numbers exactly.'
+            for bench in flz_iai frame_parse_iai \
+              batch_transaction_iai batch_queue_iai flashblock_decode_iai; do
+              echo
+              echo "### ${bench}"
+              echo '```'
+              cat "$RUNNER_TEMP/${bench}.txt" 2>/dev/null || echo '(no output)'
+              echo '```'
+            done
+          } >> "$GITHUB_STEP_SUMMARY"

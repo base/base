@@ -3592,6 +3592,7 @@ dependencies = [
  "brotli",
  "bytes",
  "criterion",
+ "iai-callgrind",
  "rstest",
  "serde",
  "serde_json",
@@ -3604,6 +3605,7 @@ version = "0.0.0"
 dependencies = [
  "criterion",
  "hex-literal 1.1.0",
+ "iai-callgrind",
  "rstest",
 ]
 
@@ -3833,6 +3835,7 @@ dependencies = [
  "base-metrics",
  "base-protocol",
  "criterion",
+ "iai-callgrind",
  "metrics",
  "proptest",
  "serde",
@@ -5776,6 +5779,7 @@ dependencies = [
  "brotli",
  "criterion",
  "derive_more 2.1.1",
+ "iai-callgrind",
  "miniz_oxide 0.9.1",
  "proptest",
  "rand 0.9.5",
@@ -10728,6 +10732,42 @@ dependencies = [
  "pin-project-lite",
  "tokio",
  "tower-service",
+]
+
+[[package]]
+name = "iai-callgrind"
+version = "0.16.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b1e4910d3a9137442723dfb772c32dc10674c4181ca078d2fd227cd5dce9db0"
+dependencies = [
+ "bincode 1.3.3",
+ "derive_more 2.1.1",
+ "iai-callgrind-macros",
+ "iai-callgrind-runner",
+]
+
+[[package]]
+name = "iai-callgrind-macros"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d03775318d3f9f01b39ac6612b01464006dc397a654a89dd57df2fd34fb68c3"
+dependencies = [
+ "derive_more 2.1.1",
+ "proc-macro-error2",
+ "proc-macro2",
+ "quote",
+ "serde",
+ "serde_json",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "iai-callgrind-runner"
+version = "0.16.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b74c9743c00c3bca4aaffc69c87cae56837796cd362438daf354a3f785788c68"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

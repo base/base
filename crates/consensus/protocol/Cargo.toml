@@ -53,6 +53,7 @@ rstest.workspace = true
 proptest.workspace = true
 criterion.workspace = true
 serde_json.workspace = true
+iai-callgrind.workspace = true
 base-common-chains.workspace = true
 base-common-rpc-types.workspace = true
 brotli = { workspace = true, features = ["std"] }
@@ -68,6 +69,14 @@ harness = false
 
 [[bench]]
 name = "frame_parse"
+harness = false
+
+[[bench]]
+name = "batch_transaction_iai"
+harness = false
+
+[[bench]]
+name = "frame_parse_iai"
 harness = false
 
 [features]

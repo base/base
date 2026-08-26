@@ -29,7 +29,12 @@ serde_json = { workspace = true, features = ["std"] }
 [dev-dependencies]
 rstest.workspace = true
 criterion.workspace = true
+iai-callgrind.workspace = true
 
 [[bench]]
 name = "flashblock_decode"
+harness = false
+
+[[bench]]
+name = "flashblock_decode_iai"
 harness = false
