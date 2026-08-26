@@ -95,20 +95,36 @@ impl AccountConfigurationStorage<'_> {
     /// Resolves the *live* effective [`ActorConfig`] for `(account, actor_id)`,
     /// mirroring `Keystore._resolveActorConfig`: expired actors read as
     /// [`ActorConfig::EMPTY`], so an expired slot is treated as a new add.
-    pub fn resolve_live_actor_config(
+    ///
+    /// The inline self is resolved against the supplied in-memory `state` rather
+    /// than persisted storage. A batch applier threads an evolving [`AccountState`]
+    /// whose inline self fields (`default_eoa_scope`/`default_eoa_expiry`/
+    /// `DEFAULT_EOA_REVOKED`) are flushed only at the end of the batch, so an
+    /// earlier op's inline-self rewrite is not yet in storage; resolving self from
+    /// storage would miss it and let a second self identity/scope rewrite slip past
+    /// a live-entry guard. The explicit `actor_config` slot (including a non-k1
+    /// self) is written eagerly, so it is still read from storage. Mirrors
+    /// `Keystore._resolveActorConfig`, whose reads see prior in-batch writes.
+    pub fn resolve_live_actor_config_with_state(
         &self,
         account: Address,
         actor_id: B256,
+        state: &AccountState,
         now: u64,
     ) -> Result<ActorConfig> {
-        let config = self.resolve_actor_config(account, actor_id)?;
-        if config.is_empty() {
-            return Ok(ActorConfig::EMPTY);
-        }
-        if config.expiry != 0 && now > config.expiry {
-            return Ok(ActorConfig::EMPTY);
-        }
-        Ok(config)
+        let stored = self.actor_config_slot(account, actor_id)?;
+        let config = if !stored.is_empty() {
+            stored
+        } else if actor_id == Self::self_actor_id(account) && !state.default_eoa_revoked() {
+            ActorConfig {
+                authenticator: Eip8130Constants::K1_AUTHENTICATOR,
+                scope: state.default_eoa_scope,
+                expiry: state.default_eoa_expiry,
+            }
+        } else {
+            ActorConfig::EMPTY
+        };
+        Ok(if config.is_expired(now) { ActorConfig::EMPTY } else { config })
     }
 
     /// Mirrors `AccountConfiguration.isActor`: `true` for any live actor — an
@@ -315,6 +331,15 @@ impl ActorConfig {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.authenticator == Address::ZERO
+    }
+
+    /// `true` when this config carries a bounded expiry (`expiry != 0`) that has
+    /// already lapsed at `now`. Mirrors `Keystore._isExpired`: the boundary is
+    /// strict (`now > expiry`), so a grant with `expiry == now` is still live for
+    /// that second. A zero expiry (no expiry) is never expired.
+    #[must_use]
+    pub const fn is_expired(&self, now: u64) -> bool {
+        self.expiry != 0 && now > self.expiry
     }
 
     /// Packs this config into its raw storage word — the exact inverse of
