@@ -236,6 +236,8 @@ pub struct LoadConfig {
     pub separate_setup: Option<PathBuf>,
     /// Duration of the load test. `None` means run indefinitely until stopped.
     pub duration: Option<Duration>,
+    /// Optional measured canonical block window size.
+    pub measurement_blocks: Option<u64>,
     /// Maximum in-flight (unconfirmed) transactions per sender.
     pub max_in_flight_per_sender: usize,
     /// Optional ceiling on total in-flight (unconfirmed) transactions across all senders.
@@ -291,6 +293,7 @@ impl LoadConfig {
             block_time: Duration::from_secs(2),
             separate_setup: None,
             duration: Some(Duration::from_secs(30)),
+            measurement_blocks: None,
             max_in_flight_per_sender: DEFAULT_MAX_IN_FLIGHT_PER_SENDER,
             max_total_in_flight: None,
             max_concurrent_submit_requests: None,
@@ -342,6 +345,9 @@ impl LoadConfig {
             return Err(BaselineError::Config(
                 "duration must be > 0 (or omit for continuous)".into(),
             ));
+        }
+        if self.measurement_blocks == Some(0) {
+            return Err(BaselineError::Config("measurement_blocks must be > 0 when set".into()));
         }
         if !(0.0..=1.0).contains(&self.fresh_recipient_ratio) {
             return Err(BaselineError::Config(
@@ -451,6 +457,7 @@ impl LoadConfig {
     /// Sets the test to run indefinitely until stopped via the stop flag or Ctrl-C.
     pub const fn with_continuous(mut self) -> Self {
         self.duration = None;
+        self.measurement_blocks = None;
         self
     }
 
@@ -517,5 +524,23 @@ mod tests {
     fn validate_accepts_max_concurrent_submit_requests() {
         let config = LoadConfig::devnet().with_max_concurrent_submit_requests(Some(4));
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_zero_measurement_blocks() {
+        let mut config = LoadConfig::devnet();
+        config.measurement_blocks = Some(0);
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn with_continuous_clears_duration_and_measurement_blocks() {
+        let mut config = LoadConfig::devnet();
+        config.measurement_blocks = Some(250);
+
+        let continuous = config.with_continuous();
+
+        assert_eq!(continuous.duration, None);
+        assert_eq!(continuous.measurement_blocks, None);
     }
 }

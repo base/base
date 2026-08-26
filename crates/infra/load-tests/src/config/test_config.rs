@@ -86,6 +86,9 @@ pub struct TestConfig {
     /// Test duration (e.g., "30s", "5m", "1h").
     pub duration: Option<String>,
 
+    /// Optional measured canonical block window size.
+    pub measurement_blocks: Option<u64>,
+
     /// Optional gas/s target used to size each block's mempool floor.
     #[serde(default)]
     pub target_gps: Option<u64>,
@@ -168,6 +171,7 @@ impl Default for TestConfig {
             max_concurrent_submit_requests: None,
             batch_size: default_batch_size(),
             duration: Some("60s".to_string()),
+            measurement_blocks: None,
             target_gps: Some(20_000_000),
             block_time: default_block_time(),
             seed: 12345,
@@ -200,6 +204,7 @@ impl fmt::Debug for TestConfig {
             .field("max_concurrent_submit_requests", &self.max_concurrent_submit_requests)
             .field("batch_size", &self.batch_size)
             .field("duration", &self.duration)
+            .field("measurement_blocks", &self.measurement_blocks)
             .field("target_gps", &self.target_gps)
             .field("block_time", &self.block_time)
             .field("seed", &self.seed)
@@ -423,6 +428,14 @@ impl TestConfig {
         if self.batch_size == 0 {
             return Err(BaselineError::Config("batch_size must be > 0".into()));
         }
+        if self.parse_duration()? == Some(Duration::ZERO) {
+            return Err(BaselineError::Config(
+                "duration must be > 0 (or omit for continuous)".into(),
+            ));
+        }
+        if self.measurement_blocks == Some(0) {
+            return Err(BaselineError::Config("measurement_blocks must be > 0 when set".into()));
+        }
 
         if self.transaction_submission_rpcs.is_empty() {
             return Err(BaselineError::Config(
@@ -583,6 +596,7 @@ impl TestConfig {
             max_concurrent_submit_requests: self.max_concurrent_submit_requests,
             batch_size: self.batch_size,
             duration: self.duration.clone(),
+            measurement_blocks: self.measurement_blocks,
             target_gps: self.target_gps,
             block_time: self.block_time.clone(),
             seed: self.seed,
@@ -655,6 +669,7 @@ impl TestConfig {
             block_time,
             separate_setup: None,
             duration,
+            measurement_blocks: self.measurement_blocks,
             max_in_flight_per_sender: self.in_flight_per_sender as usize,
             max_total_in_flight: self.max_total_in_flight.map(|max| max as usize),
             max_concurrent_submit_requests: self
@@ -956,6 +971,28 @@ duration: "1h 30m"
 "#;
         let config2 = TestConfig::from_yaml(yaml2).unwrap();
         assert_eq!(config2.parse_duration().unwrap().unwrap(), Duration::from_secs(5400));
+    }
+
+    #[test]
+    fn parse_measurement_blocks_round_trips() {
+        let yaml = r#"
+transaction_submission_rpcs: http://localhost:8545
+measurement_blocks: 500
+"#;
+        let config = TestConfig::from_yaml(yaml).unwrap();
+        assert_eq!(config.measurement_blocks, Some(500));
+        assert_eq!(config.to_load_config(Some(1337)).unwrap().measurement_blocks, Some(500));
+        assert_eq!(config.to_summary().measurement_blocks, Some(500));
+    }
+
+    #[test]
+    fn rejects_zero_measurement_blocks() {
+        let yaml = r#"
+transaction_submission_rpcs: http://localhost:8545
+measurement_blocks: 0
+"#;
+        let error = TestConfig::from_yaml(yaml).unwrap_err();
+        assert!(error.to_string().contains("measurement_blocks must be > 0 when set"));
     }
 
     #[test]

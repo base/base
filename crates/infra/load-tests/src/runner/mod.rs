@@ -20,8 +20,8 @@ pub use inclusion::{InclusionPulse, InclusionSource};
 
 mod results_tracker;
 pub use results_tracker::{
-    BlockMatch, BlockObservation, BlockReceipt, FlashblockInclusion, ResultsTracker,
-    SentTransaction,
+    BlockMatch, BlockObservation, BlockReceipt, FlashblockInclusion, MeasurementWindow,
+    ResultsTracker, SentTransaction,
 };
 
 mod submission;
