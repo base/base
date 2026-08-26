@@ -298,7 +298,7 @@ load_fork_names() {
 rollup_timestamp() {
   local name="$1" path
   case "$name" in
-    azul | beryl | cobalt) path=".base.${name}" ;;
+    azul | beryl | cobalt | denim) path=".base.${name}" ;;
     *) path=".${name}_time" ;;
   esac
   jq -r --arg path "$path" '

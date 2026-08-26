@@ -76,7 +76,7 @@ Denim is disabled in the default mode. To activate it at block 23 and switch the
 its 200ms cadence, set `L2_BASE_DENIM_BLOCK` explicitly:
 
 ```bash
-L2_BASE_DENIM_BLOCK=23 just devnet up
+L2_BASE_DENIM_BLOCK=23 just devnet up-anvil-no-nitro
 ```
 
 Zenith is the permanently unscheduled, genesis-only gate for future hardfork feature testing.
