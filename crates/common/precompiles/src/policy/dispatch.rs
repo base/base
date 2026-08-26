@@ -1,8 +1,7 @@
 use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::SolCall;
 use base_common_genesis::BaseUpgrade;
-use base_precompile_storage::{BasePrecompileError, StorageCtx};
-use base_precompile_storage::PrecompileResult;
+use base_precompile_storage::{BasePrecompileError, PrecompileResult, StorageCtx};
 
 use crate::{
     ActivationFeature, ActivationRegistryStorage, BerylAuxiliaryMetrics, BerylCallRecorder,

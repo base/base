@@ -262,13 +262,11 @@ mod tests {
 
     #[test]
     fn revert_and_halt_map_to_matching_status() {
-        let revert: RevmPrecompileOutput =
-            PrecompileOutput::revert(7, Bytes::new(), 3).into();
+        let revert: RevmPrecompileOutput = PrecompileOutput::revert(7, Bytes::new(), 3).into();
         assert!(revert.is_revert());
         assert_eq!(revert.gas_used, 7);
 
-        let halt: RevmPrecompileOutput =
-            PrecompileOutput::halt(PrecompileHalt::OutOfGas, 0).into();
+        let halt: RevmPrecompileOutput = PrecompileOutput::halt(PrecompileHalt::OutOfGas, 0).into();
         assert!(halt.is_halt());
     }
 

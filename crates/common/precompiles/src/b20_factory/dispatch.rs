@@ -8,8 +8,7 @@
 use alloy_primitives::{Address, Bytes, keccak256};
 use alloy_sol_types::{SolCall, SolValue};
 use base_common_genesis::BaseUpgrade;
-use base_precompile_storage::{BasePrecompileError, Result, StorageCtx};
-use base_precompile_storage::PrecompileResult;
+use base_precompile_storage::{BasePrecompileError, PrecompileResult, Result, StorageCtx};
 
 use crate::{
     B20FactoryStorage, B20Variant, BerylAuxiliaryMetrics, BerylCallRecorder, BerylMetricLabels,

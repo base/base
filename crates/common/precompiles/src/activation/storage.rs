@@ -249,9 +249,9 @@ mod tests {
     use alloy_primitives::{Address, B256, U256, address, keccak256, uint};
     use alloy_sol_types::{SolCall, SolEvent};
     use base_precompile_storage::{
-        BasePrecompileError, HashMapStorageProvider, Result, StorageCtx, StorageKey,
+        BasePrecompileError, HashMapStorageProvider, PrecompileOutput, Result, StorageCtx,
+        StorageKey,
     };
-    use base_precompile_storage::PrecompileOutput;
     use rstest::rstest;
 
     use crate::{

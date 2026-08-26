@@ -2,8 +2,9 @@
 
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolCall;
-use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
-use base_precompile_storage::PrecompileResult;
+use base_precompile_storage::{
+    BasePrecompileError, IntoPrecompileResult, PrecompileResult, StorageCtx,
+};
 
 use crate::{
     INonceManager::{self, INonceManagerCalls as C},
