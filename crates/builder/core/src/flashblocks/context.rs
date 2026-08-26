@@ -45,8 +45,8 @@ use tracing::{Level, debug, span, trace, warn};
 
 use crate::{
     BuilderConfig, BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded,
-    ParkedPredicateIndex, PayloadTxsBounds, ResourceLimits, StateChangeEffects, TxResources,
-    TxnExecutionError, TxnOutcome, ValidityPredicateKey,
+    ParkedPredicateIndex, PayloadTxsBounds, PredicateReadRecorder, ResourceLimits,
+    StateChangeEffects, TxResources, TxnExecutionError, TxnOutcome, ValidityPredicateKey,
     transaction_events::{
         BuilderAcceptedEventData, BuilderConsideredEventData, BuilderDeferredEventData,
         BuilderExpiredEventData, BuilderRejectedEventData, BuilderTransactionEventContext,
@@ -861,6 +861,8 @@ impl BasePayloadBuilderCtx {
 
             let tx_hash = *tx.hash();
             let has_validity_predicates = !tx.validity_predicates().is_empty();
+            let has_coinbase_tip =
+                tx.as_eip8130().is_some_and(|signed| signed.tx().coinbase_tip().is_some());
 
             // Defer without evaluating once this flashblock's predicate-eval time budget is
             // exhausted, rather than spending more IO on the naive per-transaction loop. The
@@ -905,9 +907,11 @@ impl BasePayloadBuilderCtx {
             let mut predicate_read_failed = false;
             let blocking_predicate = if has_validity_predicates {
                 match Self::accumulate_elapsed(&mut predicate_eval_total, || {
+                    let mut recorder =
+                        PredicateReadRecorder::new(&mut **evm.db_mut(), &mut info.predicate_loads);
                     ValidityPredicateKey::first_unsatisfied(
                         tx.validity_predicates(),
-                        evm.db_mut(),
+                        &mut recorder,
                         &predicate_context,
                     )
                 }) {
@@ -1023,6 +1027,9 @@ impl BasePayloadBuilderCtx {
                     );
                     diag.txs_rejected_other += 1;
                     diag.permanently_rejected_txs.push(tx_hash);
+                    // Same series as the pool-side block eviction: the builder
+                    // drops the tx before the pool sweep sees it.
+                    GuardMetrics::record_block_expiry_invalidations(1);
                     best_txs.mark_invalid(tx.sender(), tx.nonce());
                 } else {
                     // Recoverable state mismatch: park under the current blocker to retry at a
@@ -1557,9 +1564,13 @@ impl BasePayloadBuilderCtx {
                 };
                 let blocking_predicate =
                     match Self::accumulate_elapsed(&mut predicate_eval_total, || {
+                        let mut recorder = PredicateReadRecorder::new(
+                            &mut **evm.db_mut(),
+                            &mut info.predicate_loads,
+                        );
                         ValidityPredicateKey::first_unsatisfied(
                             parked_transaction.validity_predicates(),
-                            evm.db_mut(),
+                            &mut recorder,
                             &predicate_context,
                         )
                     }) {
@@ -1603,6 +1614,16 @@ impl BasePayloadBuilderCtx {
                 .effective_tip_per_gas(base_fee)
                 .expect("fee is always valid; execution succeeded");
             info.total_fees += U256::from(miner_fee) * U256::from(gas_used);
+            info.inclusion.record(has_validity_predicates, gas_used, miner_fee, base_fee);
+
+            // Per-tx tip-per-gas distribution (builder priority score), tagged
+            // by flow cohort and bid mechanism. `X` for top-X-percentile share is
+            // left to Datadog percentile aggregations — do not bake it in here.
+            BuilderMetrics::record_tip_per_gas(
+                has_validity_predicates,
+                has_coinbase_tip,
+                miner_fee as f64,
+            );
 
             // track minimum priority fee for diagnostics (saturate u128 -> u64)
             let fee_u64 = miner_fee.min(u64::MAX as u128) as u64;

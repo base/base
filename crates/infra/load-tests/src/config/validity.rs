@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use super::parsing::{parse_address, parse_u256_hex_or_dec};
 use crate::{
-    runner::{PredicateAddress, SlotTemplate, ValidityPredicateTemplate},
+    runner::{BlockNumberBound, PredicateAddress, SlotTemplate, ValidityPredicateTemplate},
     utils::{BaselineError, Result},
 };
 
@@ -53,6 +53,30 @@ pub enum ValidityPredicateConfig {
         /// Optional bit mask (hex or decimal); defaults to all ones server-side.
         #[serde(default)]
         mask: Option<String>,
+        /// Comparison operator (`<`, `<=`, `=`, `!=`, `>`, `>=`).
+        op: String,
+        /// Right-hand comparison value (hex or decimal).
+        value: String,
+    },
+    /// Compares the number of the block being built with a bound.
+    ///
+    /// Exactly one of `value` (a fixed absolute block number) or `offset` (a
+    /// runtime offset resolved to `current_block + offset` at prepare time)
+    /// must be set; setting zero or both is a configuration error.
+    BlockNumber {
+        /// Comparison operator (`<`, `<=`, `=`, `!=`, `>`, `>=`).
+        op: String,
+        /// Fixed absolute block number (hex or decimal). Mutually exclusive
+        /// with `offset`.
+        #[serde(default)]
+        value: Option<String>,
+        /// Runtime offset (hex or decimal) resolved to `current_block + offset`
+        /// at prepare time. Mutually exclusive with `value`.
+        #[serde(default)]
+        offset: Option<String>,
+    },
+    /// Compares the index of the flashblock being built with a value.
+    FlashblockIndex {
         /// Comparison operator (`<`, `<=`, `=`, `!=`, `>`, `>=`).
         op: String,
         /// Right-hand comparison value (hex or decimal).
@@ -175,6 +199,29 @@ impl ValidityPredicateConfig {
                     value: parse_u256_hex_or_dec(value, "validity storage value")?,
                 })
             }
+            Self::BlockNumber { op, value, offset } => {
+                let bound = match (value, offset) {
+                    (Some(value), None) => BlockNumberBound::Absolute(parse_u256_hex_or_dec(
+                        value,
+                        "validity block_number value",
+                    )?),
+                    (None, Some(offset)) => BlockNumberBound::Offset(parse_u256_hex_or_dec(
+                        offset,
+                        "validity block_number offset",
+                    )?),
+                    _ => {
+                        return Err(BaselineError::Config(
+                            "block_number predicate requires exactly one of 'value' or 'offset'"
+                                .into(),
+                        ));
+                    }
+                };
+                Ok(ValidityPredicateTemplate::BlockNumber { op: parse_operator(op)?, bound })
+            }
+            Self::FlashblockIndex { op, value } => Ok(ValidityPredicateTemplate::FlashblockIndex {
+                op: parse_operator(op)?,
+                value: parse_u256_hex_or_dec(value, "validity flashblock_index value")?,
+            }),
         }
     }
 }
@@ -296,6 +343,103 @@ mod tests {
             }
             other => panic!("expected mapping template, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn block_number_predicate_to_template() {
+        let config = ValidityPredicateConfig::BlockNumber {
+            op: ">=".into(),
+            value: Some("0x100".into()),
+            offset: None,
+        };
+        match config.to_template().unwrap() {
+            ValidityPredicateTemplate::BlockNumber { op, bound } => {
+                assert_eq!(op, ValidityOperator::GreaterThanOrEqual);
+                assert_eq!(bound, BlockNumberBound::Absolute(U256::from(0x100)));
+            }
+            other => panic!("expected block_number template, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn block_number_predicate_offset_to_template() {
+        let config = ValidityPredicateConfig::BlockNumber {
+            op: ">=".into(),
+            value: None,
+            offset: Some("10".into()),
+        };
+        match config.to_template().unwrap() {
+            ValidityPredicateTemplate::BlockNumber { op, bound } => {
+                assert_eq!(op, ValidityOperator::GreaterThanOrEqual);
+                assert_eq!(bound, BlockNumberBound::Offset(U256::from(10)));
+            }
+            other => panic!("expected block_number template, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn block_number_predicate_rejects_both_value_and_offset() {
+        let config = ValidityPredicateConfig::BlockNumber {
+            op: ">=".into(),
+            value: Some("1".into()),
+            offset: Some("10".into()),
+        };
+        let err = config.to_template().unwrap_err();
+        assert!(err.to_string().contains("exactly one of 'value' or 'offset'"));
+    }
+
+    #[test]
+    fn block_number_predicate_rejects_neither_value_nor_offset() {
+        let config =
+            ValidityPredicateConfig::BlockNumber { op: ">=".into(), value: None, offset: None };
+        let err = config.to_template().unwrap_err();
+        assert!(err.to_string().contains("exactly one of 'value' or 'offset'"));
+    }
+
+    #[test]
+    fn block_number_predicate_parses_from_yaml_offset_form() {
+        let config: ValidityPredicateConfig =
+            serde_yaml::from_str("type: block_number\nop: \">=\"\noffset: \"10\"\n").unwrap();
+        match config.to_template().unwrap() {
+            ValidityPredicateTemplate::BlockNumber { bound, .. } => {
+                assert_eq!(bound, BlockNumberBound::Offset(U256::from(10)));
+            }
+            other => panic!("expected block_number template, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn block_number_predicate_parses_from_yaml_value_form() {
+        let config: ValidityPredicateConfig =
+            serde_yaml::from_str("type: block_number\nop: \">=\"\nvalue: \"12345\"\n").unwrap();
+        match config.to_template().unwrap() {
+            ValidityPredicateTemplate::BlockNumber { bound, .. } => {
+                assert_eq!(bound, BlockNumberBound::Absolute(U256::from(12345)));
+            }
+            other => panic!("expected block_number template, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn flashblock_index_predicate_to_template() {
+        let config = ValidityPredicateConfig::FlashblockIndex { op: "=".into(), value: "2".into() };
+        match config.to_template().unwrap() {
+            ValidityPredicateTemplate::FlashblockIndex { op, value } => {
+                assert_eq!(op, ValidityOperator::Equal);
+                assert_eq!(value, U256::from(2));
+            }
+            other => panic!("expected flashblock_index template, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn position_predicate_surfaces_bad_operator() {
+        let config = ValidityPredicateConfig::BlockNumber {
+            op: "==".into(),
+            value: Some("1".into()),
+            offset: None,
+        };
+        assert!(config.to_template().is_err());
     }
 
     #[test]

@@ -606,6 +606,8 @@ fn serialize_builder_event_data<T: Serialize>(data: BuilderEventData<T>) -> Map<
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::B256;
+
     use super::*;
 
     fn context() -> BuilderTransactionEventContext {
@@ -699,5 +701,51 @@ mod tests {
             )),
             "tx_execution_time_exceeded"
         );
+    }
+
+    #[test]
+    fn deferred_rejected_and_expired_event_payloads_are_distinguishable() {
+        let info = ExecutionInfo::default();
+        let limits = ResourceLimits::default();
+        let deferred = serde_json::to_value(BuilderDeferredEventData::new(
+            "validity_predicate_not_satisfied",
+            "a validity predicate is not satisfied by the current build state",
+            &info,
+            &limits,
+            None,
+        ))
+        .unwrap();
+        let rejected = serde_json::to_value(BuilderRejectedEventData::new(
+            "validity_predicate_not_satisfied",
+            "a validity predicate is not satisfied by the current build state",
+            false,
+            &info,
+            &limits,
+            None,
+        ))
+        .unwrap();
+        let expired = serde_json::to_value(BuilderExpiredEventData::new(
+            "validity_predicate_expired",
+            "a validity predicate can no longer be satisfied at or after the current build position",
+            &info,
+            &limits,
+            None,
+        ))
+        .unwrap();
+
+        assert_eq!(deferred["defer_reason"], "validity_predicate_not_satisfied");
+        assert!(deferred.get("rejection_reason").is_none());
+        assert!(deferred.get("expire_reason").is_none());
+        assert!(!deferred.as_object().unwrap().contains_key("validity_predicates"));
+
+        assert_eq!(rejected["rejection_reason"], "validity_predicate_not_satisfied");
+        assert!(rejected.get("defer_reason").is_none());
+        assert!(rejected.get("expire_reason").is_none());
+        assert!(!rejected.as_object().unwrap().contains_key("validity_predicates"));
+
+        assert_eq!(expired["expire_reason"], "validity_predicate_expired");
+        assert!(expired.get("defer_reason").is_none());
+        assert!(expired.get("rejection_reason").is_none());
+        assert!(!expired.as_object().unwrap().contains_key("validity_predicates"));
     }
 }

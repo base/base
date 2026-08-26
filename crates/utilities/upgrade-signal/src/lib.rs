@@ -37,6 +37,9 @@ pub use state::{
     UpgradeSignal, UpgradeSignalMonitor, UpgradeSignalPollOutcome, UpgradeSignalSchedule,
 };
 
+mod readiness;
+pub use readiness::{UpgradeReadiness, UpgradeReadinessEntry};
+
 mod version;
 pub use version::PackedProtocolVersion;
 

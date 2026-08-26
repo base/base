@@ -611,15 +611,18 @@ impl PgTransactionEventSink {
                 let cutoff = Utc::now() - Duration::days(i64::from(config.class_days(class)));
                 let event_types = class.event_type_labels();
                 while batches < u64::from(config.max_batches) {
+                    // Delete by ctid via Tid Scan so the batch is not a second
+                    // primary-key lookup. ANY(ARRAY(ctid)) keeps that plan as
+                    // catch-up shrinks the heap; USING ctid can seq-scan.
                     let deleted = sqlx::query(
                         "WITH doomed AS ( \
-                            SELECT event_id \
+                            SELECT ctid \
                             FROM transaction_events \
                             WHERE event_type = ANY($1) AND ingested_at < $2 \
                             LIMIT $3 \
                          ) \
                          DELETE FROM transaction_events \
-                         WHERE event_id IN (SELECT event_id FROM doomed)",
+                         WHERE ctid = ANY (ARRAY(SELECT ctid FROM doomed)::tid[])",
                     )
                     .bind(&event_types)
                     .bind(cutoff)
@@ -1336,6 +1339,12 @@ mod tests {
         );
         assert_eq!(
             TransactionEventRetentionClass::for_event_type(
+                TransactionEventType::TxpoolSendRawTransaction
+            ),
+            TransactionEventRetentionClass::Warm
+        );
+        assert_eq!(
+            TransactionEventRetentionClass::for_event_type(
                 TransactionEventType::TxpoolSendRawTransactionValidity
             ),
             TransactionEventRetentionClass::Warm
@@ -1418,6 +1427,52 @@ mod tests {
         assert_eq!(response.accepted, 2);
         assert_eq!(response.duplicate, 0);
         assert_eq!(response.rejected, 0);
+    }
+
+    #[tokio::test]
+    async fn accepts_at_lifecycle_event_types() {
+        let state = state(Arc::new(FakeSink::default()));
+        let mut admission = event("at-admission");
+        admission["producer"] = json!("base-reth-node");
+        admission["event_type"] = json!("TXPOOL_SEND_RAW_TRANSACTION_VALIDITY");
+        admission["data"] = json!({
+            "rpc_method": "base_sendRawTransactionValidity",
+            "validity_predicates": [{
+                "type": "block_number",
+                "params": { "op": ">=", "value": "0x64" }
+            }]
+        });
+        let mut deferred = event("at-deferred");
+        deferred["event_type"] = json!("BUILDER_DEFERRED");
+        deferred["data"] = json!({ "defer_reason": "validity_predicate_not_satisfied" });
+        let mut expired = event("at-expired");
+        expired["event_type"] = json!("BUILDER_EXPIRED");
+        expired["data"] = json!({ "expire_reason": "validity_predicate_expired" });
+
+        let (status, Json(response)) =
+            ingest_transaction_event_batch(&state, ndjson(vec![admission, deferred, expired]))
+                .await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(response.status, TransactionEventBatchStatus::Accepted);
+        assert_eq!(response.accepted, 3);
+        assert_eq!(response.rejected, 0);
+        assert_eq!(
+            TransactionEventRetentionClass::for_event_type(
+                TransactionEventType::TxpoolSendRawTransactionValidity
+            ),
+            TransactionEventRetentionClass::for_event_type(
+                TransactionEventType::TxpoolSendRawTransaction
+            )
+        );
+        assert_eq!(
+            TransactionEventRetentionClass::for_event_type(TransactionEventType::BuilderDeferred),
+            TransactionEventRetentionClass::Hot
+        );
+        assert_eq!(
+            TransactionEventRetentionClass::for_event_type(TransactionEventType::BuilderExpired),
+            TransactionEventRetentionClass::Hot
+        );
     }
 
     #[tokio::test]

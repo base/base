@@ -13,6 +13,9 @@ extern crate tracing;
 mod admin;
 pub use admin::{AdminRpc, NetworkAdminQuery};
 
+mod base;
+pub use base::BaseRpc;
+
 mod client;
 pub use client::{EngineRpcClient, SequencerAdminAPIClient, SequencerAdminAPIError};
 
@@ -27,11 +30,13 @@ pub use health::{HealthzResponse, HealthzRpc};
 
 mod jsonrpsee;
 #[cfg(feature = "client")]
-pub use jsonrpsee::{AdminApiClient, BaseP2PApiClient, ConductorApiClient, RollupNodeApiClient};
 pub use jsonrpsee::{
-    AdminApiServer, BaseP2PApiServer, ClusterMembership, ConductorApiServer, DevEngineApiServer,
-    HealthzApiServer, RollupNodeApiServer, ServerInfo, ServerSuffrage, UnknownServerSuffrage,
-    WsServer,
+    AdminApiClient, BaseApiClient, BaseP2PApiClient, ConductorApiClient, RollupNodeApiClient,
+};
+pub use jsonrpsee::{
+    AdminApiServer, BaseApiServer, BaseP2PApiServer, ClusterMembership, ConductorApiServer,
+    DevEngineApiServer, HealthzApiServer, RollupNodeApiServer, ServerInfo, ServerSuffrage,
+    UnknownServerSuffrage, WsServer,
 };
 
 mod l1_watcher;

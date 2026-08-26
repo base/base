@@ -1,15 +1,17 @@
 //! Golden tests pinning Policy Registry **V2** behavior of the B-20 precompile.
 //!
 //! V2 is activated at Cobalt as a behavior-preserving copy of V1 (a scaffold seam for future
-//! Cobalt-era changes). Because its logic and storage layout are identical to V1, every op
-//! produces the same registry state, events, gas footprint, and per-case storage hash — so this
-//! suite reuses V1's pinned roots verbatim. It exists so V2's behavior is locked independently:
-//! a future edit that alters V2 must re-bless these roots, and can never silently diverge under
-//! V1's frozen pins.
+//! Cobalt-era changes). Its logic and storage layout are identical to V1, so this suite pins its
+//! own roots to lock V2's behavior independently: a future edit that alters V2 must re-bless these
+//! roots. These goldens run production Cobalt storage features (see below) while the V1 suite runs
+//! Legacy, so a root matches V1's only when the op does not trigger Cobalt's dynamic tail cleanup;
+//! ops that write shrinking dynamic values (e.g. allow/block membership vecs) can legitimately
+//! diverge from V1's Legacy pin.
 //!
 //! Every op (policy creation, admin lifecycle, allow/block membership, and evaluation reads) is
 //! driven through the real `PolicyRegistryStorage` entry (version-resolver-gated `dispatch`,
-//! `BaseUpgrade::Cobalt` -> `PolicyVersion::V2`) over `HashMapStorageProvider`.
+//! `BaseUpgrade::Cobalt` -> `PolicyVersion::V2`) over `HashMapStorageProvider` configured with
+//! `StorageFeatures::Cobalt` (the production storage config at Cobalt).
 //! Each case asserts:
 //!   1. exact returned ABI bytes (or the typed revert),
 //!   2. resulting registry state,
@@ -32,7 +34,7 @@ use alloy_sol_types::{SolCall, SolError, SolEvent};
 use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
     ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, IPolicyRegistry,
-    PolicyRegistryStorage, PolicyVersion, PolicyVersions,
+    PolicyRegistryStorage, PolicyVersion, PolicyVersions, UpgradeGatedStorageFeatures,
 };
 use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
@@ -53,8 +55,10 @@ const ALLOWLIST_ID: u64 = (1u64 << 56) | 2;
 
 // --- pinned storage hashes (bless with BLESS_GOLDEN=1; see module docs) --------
 //
-// Identical to V1's roots: V2 is a behavior- and layout-preserving copy, and the state hash is
-// scoped to the registry address, so dispatching V2 at Cobalt yields the same snapshot as V1.
+// V2 is a behavior- and layout-preserving copy of V1, so these track V1's roots — but pinned
+// independently here: these goldens run `StorageFeatures::Cobalt` while the V1 suite runs Legacy,
+// so an op that triggers Cobalt dynamic tail cleanup can diverge from its V1 pin. Re-blessing
+// reflects the true Cobalt snapshot for each.
 
 const ROOT_CREATE_BLOCKLIST: B256 =
     b256!("5ff0dab60b6daec34cbc6135f09097ddbbe31c6f662d4cdd9c6c4c7b5a589556");
@@ -102,7 +106,10 @@ fn activate(storage: &mut HashMapStorageProvider) {
 
 /// A fresh provider with the policy registry activated.
 fn fresh() -> HashMapStorageProvider {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    let mut storage = HashMapStorageProvider::new_with_storage_features(
+        CHAIN_ID,
+        UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Cobalt),
+    );
     activate(&mut storage);
     storage
 }
@@ -526,7 +533,10 @@ fn golden_composite_policy_child_ids_empty_for_non_composites() {
 #[test]
 fn golden_composite_policy_child_ids_reads_before_activation() {
     // No activation, matching `golden_write_reverts_when_not_activated`.
-    let mut s = HashMapStorageProvider::new(CHAIN_ID);
+    let mut s = HashMapStorageProvider::new_with_storage_features(
+        CHAIN_ID,
+        UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Cobalt),
+    );
     let (rev, bytes) = call_policy(
         &mut s,
         OUTSIDER,
@@ -1040,7 +1050,10 @@ fn golden_reverts_nonzero_value() {
 #[test]
 fn golden_write_reverts_when_not_activated() {
     // No activation: a write op must revert; a read op still works.
-    let mut s = HashMapStorageProvider::new(CHAIN_ID);
+    let mut s = HashMapStorageProvider::new_with_storage_features(
+        CHAIN_ID,
+        UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Cobalt),
+    );
     let (rev, _) = call_policy(
         &mut s,
         ADMIN,

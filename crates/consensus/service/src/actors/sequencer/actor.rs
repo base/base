@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::AttributesBuilder;
 use base_consensus_rpc::SequencerAdminAPIError;
-use base_protocol::L2BlockInfo;
+use base_protocol::{L2BlockInfo, to_system_config_from_payload};
 use tokio::{
     select,
     sync::{mpsc, oneshot},
@@ -34,6 +34,7 @@ use crate::{
             l1_origin::OriginSelector,
             recovery::RecoveryModeGuard,
             seal::{PayloadSealer, SealStepError, SealStepOutcome},
+            shadow_funding::ShadowFunding,
         },
     },
 };
@@ -72,6 +73,8 @@ pub struct SequencerActor<
     pub is_active: bool,
     /// Number of private blocks to build per shadow sequencing cycle.
     pub shadow_blocks_per_cycle: Option<NonZeroU64>,
+    /// Optional account funding injected into the first private block of every shadow cycle.
+    pub shadow_funding: Option<ShadowFunding>,
     /// Shared recovery mode flag.
     pub recovery_mode: RecoveryModeGuard,
     /// The rollup configuration.
@@ -292,7 +295,7 @@ where
         let canonical_head = self.engine_client.get_unsafe_head().await?;
         *shadow = Some(ShadowSequencingState::new(canonical_head)?);
         if self.is_active {
-            let outcome = self.builder.build_on(canonical_head).await?;
+            let outcome = self.builder.build_on(canonical_head, self.shadow_funding).await?;
             Self::apply_eager_build_outcome(outcome, pipeline, build_ticker);
         } else {
             pipeline.next_payload_to_seal = None;
@@ -413,7 +416,7 @@ where
                     .cycle
                     .reconcile(head)?;
                 if self.is_active {
-                    let outcome = self.builder.build_on(head).await?;
+                    let outcome = self.builder.build_on(head, self.shadow_funding).await?;
                     Self::apply_eager_build_outcome(outcome, pipeline, build_ticker);
                 }
             }
@@ -445,6 +448,29 @@ where
                     Some(shadow_state) => self.on_shadow_insertion(shadow_state, inserted_head)?,
                     None => false,
                 };
+
+                if let Some(sealer) = self
+                    .sealer
+                    .as_ref()
+                    .filter(|sealer| sealer.matches_inserted_head(inserted_head))
+                {
+                    match to_system_config_from_payload(
+                        &sealer.envelope.execution_payload,
+                        &self.rollup_config,
+                    ) {
+                        Ok(config) => self
+                            .builder
+                            .attributes_builder
+                            .seed_parent_system_config(inserted_head, config),
+                        Err(error) => warn!(
+                            target: "sequencer",
+                            error = %error,
+                            block_number = inserted_head.block_info.number,
+                            block_hash = %inserted_head.block_info.hash,
+                            "Failed to cache acknowledged parent system config"
+                        ),
+                    }
+                }
 
                 if let Some(sealer) = self.sealer.take() {
                     Metrics::sequencer_seal_pipeline_duration().record(sealer.started_at.elapsed());
@@ -538,9 +564,10 @@ where
         &mut self,
         pipeline: &mut BuildPipelineState,
         build_ticker: &mut ScheduledTicker,
+        shadow_funding: Option<ShadowFunding>,
     ) -> Result<(), SequencerActorError> {
         let parent = pipeline.pending_build_parent.take().expect("caller checked Some");
-        let outcome = self.builder.build_on(parent).await?;
+        let outcome = self.builder.build_on(parent, shadow_funding).await?;
         self.schedule_build_outcome(outcome, pipeline, build_ticker);
         Ok(())
     }
@@ -551,6 +578,7 @@ where
         &mut self,
         pipeline: &mut BuildPipelineState,
         build_ticker: &mut ScheduledTicker,
+        shadow_funding: Option<ShadowFunding>,
     ) -> Result<(), SequencerActorError> {
         let handle = pipeline.next_payload_to_seal.take().expect("caller checked Some");
         let handle_block_number = handle.block_number();
@@ -567,7 +595,7 @@ where
             None => {
                 // Stale build or non-fatal seal error: rebuild immediately on the current unsafe
                 // head.
-                let outcome = self.builder.build().await?;
+                let outcome = self.builder.build(shadow_funding).await?;
                 self.schedule_build_outcome(outcome, pipeline, build_ticker);
             }
         }
@@ -579,8 +607,9 @@ where
         &mut self,
         pipeline: &mut BuildPipelineState,
         build_ticker: &mut ScheduledTicker,
+        shadow_funding: Option<ShadowFunding>,
     ) -> Result<(), SequencerActorError> {
-        let outcome = self.builder.build().await?;
+        let outcome = self.builder.build(shadow_funding).await?;
         self.schedule_build_outcome(outcome, pipeline, build_ticker);
         Ok(())
     }
@@ -592,13 +621,14 @@ where
         &mut self,
         pipeline: &mut BuildPipelineState,
         build_ticker: &mut ScheduledTicker,
+        shadow_funding: Option<ShadowFunding>,
     ) -> Result<(), SequencerActorError> {
         if pipeline.pending_build_parent.is_some() {
-            self.start_pending_child_build(pipeline, build_ticker).await
+            self.start_pending_child_build(pipeline, build_ticker, shadow_funding).await
         } else if pipeline.next_payload_to_seal.is_some() {
-            self.advance_seal_or_rebuild(pipeline, build_ticker).await
+            self.advance_seal_or_rebuild(pipeline, build_ticker, shadow_funding).await
         } else {
-            self.build_fresh(pipeline, build_ticker).await
+            self.build_fresh(pipeline, build_ticker, shadow_funding).await
         }
     }
 }
@@ -710,7 +740,11 @@ where
                 // sealer arm complete all three steps (commit → gossip → insert) before the
                 // next block starts, so the canonical head actually advances.
                 _ = build_ticker.tick(), if self.is_active && self.sealer.is_none() && shadow.as_ref().is_none_or(|s| !s.is_awaiting_reconciliation()) => {
-                    self.handle_build_tick(&mut pipeline, &mut build_ticker).await?;
+                    let shadow_funding = shadow
+                        .as_ref()
+                        .filter(|state| state.cycle.is_at_start())
+                        .and(self.shadow_funding);
+                    self.handle_build_tick(&mut pipeline, &mut build_ticker, shadow_funding).await?;
                 }
             }
         }
@@ -740,5 +774,98 @@ where
 {
     fn cancelled(&self) -> WaitForCancellationFuture<'_> {
         self.cancellation_token.cancelled()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::{B256, Sealed};
+    use base_common_consensus::{BaseBlock, BaseTxEnvelope, TxDeposit};
+    use base_common_genesis::{RollupConfig, SystemConfig};
+    use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
+    use base_protocol::{BlockInfo, L1BlockInfoBedrock};
+
+    use super::*;
+    use crate::actors::sequencer::tests::test_actor;
+
+    fn valid_sealer() -> (PayloadSealer, L2BlockInfo, SystemConfig) {
+        let block = BaseBlock {
+            header: alloy_consensus::Header { number: 1, ..Default::default() },
+            body: alloy_consensus::BlockBody {
+                transactions: vec![BaseTxEnvelope::Deposit(Sealed::new(TxDeposit {
+                    input: L1BlockInfoBedrock::default().encode_calldata(),
+                    ..Default::default()
+                }))],
+                ..Default::default()
+            },
+        };
+        let (payload, _) = BaseExecutionPayload::from_block_slow(&block);
+        let config = to_system_config_from_payload(&payload, &RollupConfig::default()).unwrap();
+        let head = L2BlockInfo {
+            block_info: BlockInfo {
+                hash: payload.block_hash(),
+                number: payload.block_number(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let envelope = BaseExecutionPayloadEnvelope {
+            execution_payload: payload,
+            parent_beacon_block_root: None,
+        };
+        (PayloadSealer::new(envelope), head, config)
+    }
+
+    #[tokio::test]
+    async fn acknowledged_payload_seeds_only_an_exact_decodable_parent() {
+        let (sealer, head, config) = valid_sealer();
+        let mut actor = test_actor();
+        actor.sealer = Some(sealer);
+        let mut pipeline = BuildPipelineState::default();
+        let mut shadow = None;
+        let mut reconciliation_ticker = tokio::time::interval(Duration::from_secs(1));
+        let mut build_ticker = ScheduledTicker::new(Duration::from_secs(2));
+
+        actor
+            .handle_seal_step_result(
+                &mut pipeline,
+                &mut shadow,
+                &mut reconciliation_ticker,
+                &mut build_ticker,
+                Ok(SealStepOutcome::Inserted(head)),
+            )
+            .await
+            .unwrap();
+        assert_eq!(actor.builder.attributes_builder.parent_system_configs, vec![(head, config)]);
+
+        let (sealer, mut mismatched_head, _) = valid_sealer();
+        mismatched_head.block_info.hash = B256::left_padding_from(&[1]);
+        actor.sealer = Some(sealer);
+        actor
+            .handle_seal_step_result(
+                &mut pipeline,
+                &mut shadow,
+                &mut reconciliation_ticker,
+                &mut build_ticker,
+                Ok(SealStepOutcome::Inserted(mismatched_head)),
+            )
+            .await
+            .unwrap();
+        assert_eq!(actor.builder.attributes_builder.parent_system_configs.len(), 1);
+
+        let (mut sealer, head, _) = valid_sealer();
+        sealer.envelope.execution_payload.transactions_mut().clear();
+        actor.sealer = Some(sealer);
+        actor
+            .handle_seal_step_result(
+                &mut pipeline,
+                &mut shadow,
+                &mut reconciliation_ticker,
+                &mut build_ticker,
+                Ok(SealStepOutcome::Inserted(head)),
+            )
+            .await
+            .unwrap();
+        assert_eq!(actor.builder.attributes_builder.parent_system_configs.len(), 1);
     }
 }

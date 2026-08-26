@@ -13,9 +13,10 @@ eif*.bin
 !.env.sepolia
 /reth-data/
 # SP1 ELF binaries are built on demand and not committed.
-crates/proof/succinct/elf/range-elf-embedded
-crates/proof/succinct/elf/aggregation-elf
-crates/proof/succinct/elf/*.bin
+crates/proof/zk/programs/succinct/elf/range-elf-embedded
+crates/proof/zk/programs/succinct/elf/aggregation-elf
+crates/proof/zk/programs/succinct/elf/*.bin
 /etc/scripts/local/__pycache__/
+/.tmp/
 
 crates/infra/load-tests/examples/*.yaml

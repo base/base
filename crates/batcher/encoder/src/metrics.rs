@@ -56,7 +56,7 @@ impl BatcherMetrics {
     /// Channel closed by an explicit force-flush signal.
     pub const REASON_FORCE: &'static str = "force";
 
-    /// Channel discarded without producing frames because the span batch exceeded limits.
+    /// Channel discarded because its first block exceeded channel limits.
     pub const REASON_DISCARD: &'static str = "discard";
 
     /// Channel input bytes after blocks have been added.

@@ -37,9 +37,9 @@ impl ShadowIndexerExEx {
                         target: "base::shadow-indexer",
                         block_number = new.tip().header().number(),
                         block_hash = ?new.tip().hash(),
-                        "Committed chain notification received"
+                        "Committed chain notification received; canonical rows are not persisted"
                     );
-                    self.emit_canonical_blocks(new).await?
+                    true
                 }
                 ExExNotification::ChainReorged { old, new } => {
                     info!(
@@ -109,7 +109,6 @@ impl ShadowIndexerExEx {
         &self,
         block: &RecoveredBlock<BaseBlock>,
         receipts: &[BaseReceipt],
-        reorged_out: bool,
         canonical_hash: Option<Vec<u8>>,
     ) -> Result<ShadowBlockRow> {
         let number = i64::try_from(block.header().number()).map_err(|error| {
@@ -128,24 +127,14 @@ impl ShadowIndexerExEx {
         Ok(ShadowBlockRow {
             number,
             hash: block.hash().as_slice().to_vec(),
-            reorged_out,
+            // Always set: only reorged-out and reverted blocks are persisted now. The column
+            // stays so the reader keeps filtering out canonical rows written by earlier builds.
+            reorged_out: true,
             canonical_hash,
             created_at: now,
             updated_at: now,
             payload,
         })
-    }
-
-    async fn emit_canonical_blocks(&self, chain: &Chain<BasePrimitives>) -> Result<bool> {
-        for (block, receipts) in chain.blocks_and_receipts() {
-            let row = self.build_row(block, receipts, false, None)?;
-
-            if !self.send_row(row).await? {
-                return Ok(false);
-            }
-        }
-
-        Ok(true)
     }
 
     async fn handle_chain_reorged(
@@ -171,14 +160,14 @@ impl ShadowIndexerExEx {
                 );
             }
 
-            let row = self.build_row(block, receipts, true, canonical_hash)?;
+            let row = self.build_row(block, receipts, canonical_hash)?;
 
             if !self.send_row(row).await? {
                 return Ok(false);
             }
         }
 
-        self.emit_canonical_blocks(new).await
+        Ok(true)
     }
 
     /// Marks every block in a reverted chain as reorged out.
@@ -190,7 +179,7 @@ impl ShadowIndexerExEx {
     /// produces `ChainCommitted`/`ChainReorged`.
     async fn handle_chain_reverted(&self, old: &Chain<BasePrimitives>) -> Result<bool> {
         for (block, receipts) in old.blocks_and_receipts() {
-            let row = self.build_row(block, receipts, true, None)?;
+            let row = self.build_row(block, receipts, None)?;
 
             if !self.send_row(row).await? {
                 return Ok(false);
@@ -268,30 +257,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn chain_committed_emits_one_canonical_row_per_block() {
-        let (tx, rx) = mpsc::channel(16);
-        let exex = ShadowIndexerExEx::new(tx);
-
-        let processed =
-            exex.emit_canonical_blocks(&mk_chain(1, 3, 0)).await.expect("handle committed");
-        assert!(processed);
-
-        let rows = drain(rx);
-        assert_eq!(rows.iter().map(|row| row.number).collect::<Vec<_>>(), vec![1, 2, 3]);
-        for row in &rows {
-            assert!(!row.reorged_out, "committed rows must not be reorged out");
-            assert_eq!(row.canonical_hash, None, "committed rows carry no canonical hash");
-            assert_eq!(
-                row.payload.block.header().number(),
-                row.number as u64,
-                "payload block number matches the row"
-            );
-            assert_eq!(row.payload.receipts.len(), 1, "one receipt per block in the fixture");
-            assert_eq!(row.hash.as_slice(), block_hash(row.number as u64, 0).as_slice());
-        }
-    }
-
-    #[tokio::test]
     async fn chain_reorged_marks_old_rows_and_sets_canonical_hash() {
         let (tx, rx) = mpsc::channel(32);
         let exex = ShadowIndexerExEx::new(tx);
@@ -303,22 +268,16 @@ mod tests {
         assert!(processed);
 
         let rows = drain(rx);
-        let reorged: Vec<_> = rows.iter().filter(|row| row.reorged_out).collect();
-        let canonical: Vec<_> = rows.iter().filter(|row| !row.reorged_out).collect();
+        assert_eq!(rows.len(), old.blocks().len(), "only old-chain blocks are emitted");
 
-        assert_eq!(reorged.len(), 3, "old blocks 6..=8 marked reorged out");
-        assert_eq!(canonical.len(), 4, "new blocks 6..=9 recorded as canonical");
-
-        for row in &reorged {
+        for row in &rows {
+            assert!(row.reorged_out, "every persisted row is reorged out");
             assert_eq!(row.hash.as_slice(), block_hash(row.number as u64, 0).as_slice());
             assert_eq!(
                 row.canonical_hash,
                 Some(block_hash(row.number as u64, NEW_CHAIN_VARIANT).as_slice().to_vec()),
                 "reorged-out row points at the new canonical hash at its height"
             );
-        }
-        for row in &canonical {
-            assert_eq!(row.canonical_hash, None, "new canonical rows carry no canonical hash");
         }
     }
 
@@ -333,16 +292,10 @@ mod tests {
         exex.handle_chain_reorged(&old, &new).await.expect("handle reorged");
 
         let rows = drain(rx);
-        let missing = rows
-            .iter()
-            .find(|row| row.number == 9 && row.reorged_out)
-            .expect("old block 9 reorged out");
+        let missing = rows.iter().find(|row| row.number == 9).expect("old block 9 reorged out");
         assert_eq!(missing.canonical_hash, None, "no new block at height 9 => canonical hash None");
 
-        let present = rows
-            .iter()
-            .find(|row| row.number == 6 && row.reorged_out)
-            .expect("old block 6 reorged out");
+        let present = rows.iter().find(|row| row.number == 6).expect("old block 6 reorged out");
         assert_eq!(
             present.canonical_hash,
             Some(block_hash(6, NEW_CHAIN_VARIANT).as_slice().to_vec())
@@ -350,7 +303,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn chain_reverted_marks_all_rows_reorged_out_without_canonical_hash() {
+    async fn chain_reverted_emits_rows_without_canonical_hash() {
         let (tx, rx) = mpsc::channel(16);
         let exex = ShadowIndexerExEx::new(tx);
 
@@ -370,7 +323,7 @@ mod tests {
     }
 
     #[test]
-    fn finished_height_policy_tracks_sync_and_authoritative_reorgs() {
+    fn should_emit_finished_height_tracks_sync_and_authoritative_reorgs() {
         let committed = ExExNotification::ChainCommitted { new: Arc::new(mk_chain(1, 1, 0)) };
         let reorged = ExExNotification::ChainReorged {
             old: Arc::new(mk_chain(1, 1, 0)),

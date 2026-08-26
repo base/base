@@ -9,7 +9,7 @@ use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_gossip::{PeerCount, PeerDump, PeerInfo, PeerStats};
 use base_consensus_safedb::SafeHeadResponse;
 use base_protocol::SyncStatus;
-use base_upgrade_signal::UpgradeSignalApplySummary;
+use base_upgrade_signal::{UpgradeReadiness, UpgradeSignalApplySummary};
 #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), allow(unused_imports))]
 use getrandom as _; // required for compiling wasm32-unknown-unknown
 use ipnet::IpNet;
@@ -120,6 +120,32 @@ pub trait RollupNodeApi {
     /// Get the software version.
     #[method(name = "version")]
     async fn version(&self) -> RpcResult<String>;
+}
+
+/// Base-specific node RPC interface (the `base` namespace).
+///
+/// Read-only, non-admin methods intended for node operators — including external operators — so they
+/// are exposed on the public RPC without requiring the (privileged) `admin` namespace to be enabled.
+#[cfg_attr(not(feature = "client"), rpc(server, namespace = "base"))]
+#[cfg_attr(feature = "client", rpc(server, client, namespace = "base"))]
+pub trait BaseApi {
+    /// Reports whether this node is ready for the contract-backed upgrades scheduled on L1.
+    ///
+    /// Reads the live L1 upgrade-signal schedule and compares this node's advertised protocol
+    /// version against each scheduled minimum, returning per-upgrade `supported`/`would_halt` flags
+    /// and an overall `ready`. This is a read-only pre-flight check node operators (internal and
+    /// external) run before an upgrade activates; it never mutates node state.
+    ///
+    /// `target_version`, when supplied, overrides the on-chain minimum for the overall `ready`
+    /// answer so an operator can confirm support for an *announced* upgrade before it is scheduled on
+    /// L1 (the gap between rolling out a release and publishing the schedule). It is plain
+    /// `major.minor.patch` semver, with an optional `-rc.N` pre-release (e.g. `1.2.3` or
+    /// `1.2.3-rc.4`).
+    #[method(name = "upgradeReadiness")]
+    async fn upgrade_readiness(
+        &self,
+        target_version: Option<String>,
+    ) -> RpcResult<UpgradeReadiness>;
 }
 
 /// The opp2p namespace handles peer interactions.
@@ -377,8 +403,9 @@ mod tests {
     use rstest::rstest;
 
     use super::{
-        AdminApiServer, BaseP2PApiServer, ClusterMembership, ConductorApiServer,
-        DevEngineApiServer, HealthzApiServer, RollupNodeApiServer, ServerSuffrage, WsServer,
+        AdminApiServer, BaseApiServer, BaseP2PApiServer, ClusterMembership, ConductorApiServer,
+        DevEngineApiServer, HealthzApiServer, RollupNodeApiServer, ServerSuffrage,
+        UpgradeReadiness, WsServer,
     };
     use crate::{OutputResponse, health::HealthzResponse};
 
@@ -417,6 +444,22 @@ mod tests {
         let module = StubRollupNodeApi.into_rpc();
         let names: Vec<&str> = module.method_names().collect();
         assert!(names.contains(&expected), "missing method {expected}, got: {names:?}");
+    }
+
+    struct StubBaseApi;
+
+    #[async_trait]
+    impl BaseApiServer for StubBaseApi {
+        async fn upgrade_readiness(&self, _: Option<String>) -> RpcResult<UpgradeReadiness> {
+            unimplemented!()
+        }
+    }
+
+    #[test]
+    fn base_api_wire_names() {
+        let module = StubBaseApi.into_rpc();
+        let names: Vec<&str> = module.method_names().collect();
+        assert!(names.contains(&"base_upgradeReadiness"), "missing method, got: {names:?}");
     }
 
     struct StubBaseP2PApi;

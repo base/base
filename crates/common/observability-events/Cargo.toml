@@ -32,3 +32,4 @@ tempfile.workspace = true
 [features]
 default = [ "metrics" ]
 metrics = [ "base-metrics/metrics", "dep:metrics" ]
+test-utils = []

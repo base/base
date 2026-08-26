@@ -36,7 +36,7 @@ use super::{
 use crate::{
     BaselineError, Result,
     metrics::{MetricsCollector, MetricsSummary, PacingCycleObservation, PacingCycleSource},
-    rpc::BaseFeeExt,
+    rpc::{BaseFeeExt, QueryProvider},
     workload::{KeyStream, SeededRng, WorkloadGenerator},
 };
 
@@ -97,6 +97,9 @@ struct PresignConfig {
     fresh_recipient_ratio: f64,
     signed_chunk_tx: mpsc::Sender<Vec<Vec<SignedTransaction>>>,
     validity_router: ValidityRouter,
+    /// Query provider used to read the current block height per prepare round
+    /// when resolving offset-based `block_number` validity predicates.
+    query_client: QueryProvider,
 }
 
 struct EnqueueProgress {
@@ -632,6 +635,7 @@ impl LoadRunner {
                 fresh_recipient_ratio: self.config.fresh_recipient_ratio,
                 signed_chunk_tx,
                 validity_router: self.validity_router.clone(),
+                query_client: self.client.clone(),
             },
         ));
 
@@ -1159,12 +1163,25 @@ impl LoadRunner {
         }
     }
 
+    /// Reads the latest canonical block number, used to resolve offset-based
+    /// `block_number` validity predicates at prepare time.
+    async fn current_block_height(client: &QueryProvider) -> Result<u64> {
+        let block = client
+            .get_block_by_number(BlockNumberOrTag::Latest)
+            .hashes()
+            .await
+            .map_err(|e| BaselineError::Rpc(format!("failed to read latest block number: {e}")))?
+            .ok_or_else(|| BaselineError::Rpc("latest block is unavailable".into()))?;
+        Ok(block.header.number)
+    }
+
     fn build_sender_jobs(
         generator: &mut WorkloadGenerator,
         recipient_keys: &mut Option<KeyStream>,
         recipient_rng: &mut SeededRng,
         config: &PresignConfig,
         txs_per_sender: usize,
+        current_block: u64,
     ) -> Result<Vec<SenderJob>> {
         if config.sender_addresses.len() != config.sender_next_nonces.len() {
             return Err(BaselineError::Transaction(format!(
@@ -1201,7 +1218,8 @@ impl LoadRunner {
                 let value = tx_request.value.unwrap_or(U256::ZERO);
                 let data = tx_request.input.input().cloned().unwrap_or_default();
                 let gas_limit = tx_request.gas.unwrap_or(21_000);
-                let validity = config.validity_router.predicates_for(cohort, from, to_addr);
+                let validity =
+                    config.validity_router.predicates_for(cohort, current_block, from, to_addr);
 
                 prepared_txs.push(PreparedTransaction {
                     from,
@@ -1300,12 +1318,16 @@ impl LoadRunner {
         // `signed_chunk_rx` (detected below via the `send(...).is_err()` check), which
         // happens once the enqueue loop returns (deadline reached or channel closed).
         loop {
+            // Resolve offset-based block_number predicates against the chain
+            // height once per prepare round (not per transaction).
+            let current_block = Self::current_block_height(&config.query_client).await?;
             let sender_jobs = Self::build_sender_jobs(
                 &mut producer_state.generator,
                 &mut producer_state.recipient_keys,
                 &mut producer_state.recipient_rng,
                 &config,
                 chunk_per_sender,
+                current_block,
             )?;
 
             let base_fee = *config.base_fee_rx.borrow_and_update();

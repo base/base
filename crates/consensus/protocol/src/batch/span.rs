@@ -244,9 +244,9 @@ impl SpanBatch {
 
     /// Encodes this span directly into its raw wire format.
     ///
-    /// [`crate::Batch::encode`] and the batcher's Span candidate builder call
-    /// this after writing the batch type byte. Encoding from the derived caches
-    /// avoids cloning them into an owned [`crate::RawSpanBatch`].
+    /// [`crate::Batch::encode`] and protocol-level fixture builders call this
+    /// after writing the batch type byte. Encoding from the derived caches avoids
+    /// cloning them into an owned [`crate::RawSpanBatch`].
     ///
     /// Returns [`SpanBatchError::EmptySpanBatch`] when no block has been appended.
     pub fn encode(&self, w: &mut dyn bytes::BufMut) -> Result<(), SpanBatchError> {
@@ -596,10 +596,14 @@ impl SpanBatch {
             warn!(target: "batch_span", "empty span batch, cannot proceed with batch checking");
             return (BatchValidity::Undecided, None);
         }
+        let next = l2_safe_head.block_info.number + 1;
+        if cfg.is_denim_active(cfg.l2_block_timestamp(next)) {
+            warn!(target: "batch_span", next_block_number = next, "Dropping span batch after Denim activation");
+            return (BatchValidity::Drop(BatchDropReason::SpanBatchPostDenim), None);
+        }
 
         let epoch = l1_origins[0];
-        let next_timestamp =
-            cfg.l2_block_timestamp(l2_safe_head.block_info.number.saturating_add(1));
+        let next_timestamp = cfg.l2_block_timestamp(next);
 
         let starting_epoch_num = self.starting_epoch_num();
         let mut batch_origin = epoch;
@@ -1047,6 +1051,65 @@ mod tests {
             block.timestamp
         );
         assert!(logs[0].contains(&str));
+    }
+
+    #[tokio::test]
+    async fn test_check_batch_prefix_rejects_first_denim_block_with_nonzero_genesis() {
+        let cfg = RollupConfig {
+            block_time: 2,
+            genesis: ChainGenesis {
+                l2: BlockNumHash { number: 40, ..Default::default() },
+                l2_time: 100,
+                ..Default::default()
+            },
+            upgrades: UpgradeConfig {
+                base: BaseUpgradeConfig { denim: Some(104), ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let batch = SpanBatch {
+            batches: vec![SpanBatchElement { timestamp: 1, ..Default::default() }],
+            ..Default::default()
+        };
+        let mut fetcher = TestBatchValidator::default();
+        let l1_origins = [BlockInfo::default()];
+
+        let pre_denim_parent = L2BlockInfo {
+            block_info: BlockInfo { number: 40, timestamp: 100, ..Default::default() },
+            ..Default::default()
+        };
+        assert_ne!(
+            batch
+                .check_batch_prefix(
+                    &cfg,
+                    &l1_origins,
+                    pre_denim_parent,
+                    &BlockInfo::default(),
+                    &mut fetcher,
+                )
+                .await
+                .0,
+            BatchValidity::Drop(BatchDropReason::SpanBatchPostDenim)
+        );
+
+        let denim_parent = L2BlockInfo {
+            block_info: BlockInfo { number: 41, timestamp: 102, ..Default::default() },
+            ..Default::default()
+        };
+        assert_eq!(
+            batch
+                .check_batch_prefix(
+                    &cfg,
+                    &l1_origins,
+                    denim_parent,
+                    &BlockInfo::default(),
+                    &mut fetcher,
+                )
+                .await
+                .0,
+            BatchValidity::Drop(BatchDropReason::SpanBatchPostDenim)
+        );
     }
 
     #[tokio::test]

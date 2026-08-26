@@ -87,6 +87,15 @@ impl HashMapStorageProvider {
             storage_features: StorageFeatures::Legacy,
         }
     }
+
+    /// Creates a new provider with the given chain ID and persistent-storage features, so a test
+    /// can exercise a specific fork's `SLOAD`/tail-cleanup behavior instead of the `Legacy`
+    /// default. Mirrors the EVM provider's `new_with_storage_features`.
+    pub fn new_with_storage_features(chain_id: u64, storage_features: StorageFeatures) -> Self {
+        let mut provider = Self::new(chain_id);
+        provider.storage_features = storage_features;
+        provider
+    }
 }
 
 impl PrecompileStorageProvider for HashMapStorageProvider {
@@ -685,5 +694,19 @@ mod tests {
         p.checkpoint();
 
         p.assert_latest_checkpoint(outer);
+    }
+
+    #[test]
+    fn new_with_storage_features_sets_the_requested_features() {
+        assert_eq!(
+            HashMapStorageProvider::new(1).storage_features(),
+            StorageFeatures::Legacy,
+            "plain constructor keeps the Legacy default",
+        );
+        assert_eq!(
+            HashMapStorageProvider::new_with_storage_features(1, StorageFeatures::Cobalt)
+                .storage_features(),
+            StorageFeatures::Cobalt,
+        );
     }
 }

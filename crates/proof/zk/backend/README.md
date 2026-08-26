@@ -13,4 +13,4 @@ interface.
 - `NetworkZkProver`: SP1 prover-network range-proof backend for compressed proofs.
 
 SP1 stdin, ELF/key setup, cluster clients, L2OO bindings, and stdin caches
-live under `succinct/utils`.
+live under `src/succinct`. Guest programs live in `crates/proof/zk/programs/succinct`.

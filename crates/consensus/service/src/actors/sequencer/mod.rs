@@ -24,6 +24,9 @@ pub use seal::{PayloadSealer, SealState, SealStepError, SealStepOutcome};
 mod shadow_cycle;
 pub use shadow_cycle::{ShadowCycle, ShadowReconciliationTask};
 
+mod shadow_funding;
+pub use shadow_funding::ShadowFunding;
+
 mod engine_request_coordinator;
 pub use engine_request_coordinator::SequencerEngineRequestCoordinator;
 

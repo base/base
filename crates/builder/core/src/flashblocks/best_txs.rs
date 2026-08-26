@@ -326,7 +326,10 @@ mod tests {
         test_utils::{MockTransaction, MockTransactionFactory},
     };
 
-    use crate::{RejectionCache, flashblocks::best_txs::BestFlashblocksTxs};
+    use crate::{
+        RejectionCache,
+        flashblocks::best_txs::{BestFlashblocksTxs, ParkablePayloadTransactions},
+    };
 
     fn test_rejection_cache() -> RejectionCache {
         RejectionCache::new(1000, Duration::from_secs(60))
@@ -377,6 +380,23 @@ mod tests {
         iterator.refresh_iterator(BestPayloadTransactions::new(pool.best()));
         // Check that it's empty
         assert!(iterator.next(()).is_none(), "Iterator should be empty");
+    }
+
+    #[test]
+    fn non_parkable_iterator_reports_parking_capacity_miss() {
+        let mut pool = PendingPool::new(CoinbaseTipOrdering::<MockTransaction>::default());
+        let mut f = MockTransactionFactory::default();
+        pool.add_transaction(Arc::new(f.create_eip1559()), 0);
+
+        let mut iterator = BestFlashblocksTxs::new(
+            BestPayloadTransactions::new(pool.best()),
+            test_rejection_cache(),
+        );
+        assert!(iterator.next(()).is_some());
+        assert!(
+            !iterator.park_current(),
+            "BestPayloadTransactions cannot park, so the builder must emit BUILDER_REJECTED"
+        );
     }
 
     /// This test simulates the nonce-chain gating fix across flashblock boundaries.

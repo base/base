@@ -179,6 +179,16 @@ where
                 .timestamp_millis_part();
 
         if !self.chain_spec().is_denim_active_at_timestamp(parent_header.timestamp()) {
+            // The legacy parent has no millisecond component to anchor the 200ms progression
+            // check, so the activation block must claim exactly 0 instead.
+            if child_millis != 0 {
+                return Err(ConsensusError::other(
+                    BaseConsensusError::BaseTimeActivationMillisNonZero {
+                        timestamp_millis_part: child_millis,
+                    },
+                )
+                .into());
+            }
             return Ok(());
         }
 
@@ -922,8 +932,8 @@ mod tests {
     }
 
     #[test]
-    fn post_execution_accepts_valid_claim_on_first_active_block() {
-        let block = base_time_block(DENIM_TIMESTAMP, 400, EMPTY_ROOT_HASH);
+    fn post_execution_accepts_zero_claim_on_first_active_block() {
+        let block = base_time_block(DENIM_TIMESTAMP, 0, EMPTY_ROOT_HASH);
         let parent = SealedHeader::seal_slow(Header {
             timestamp: DENIM_TIMESTAMP - 1,
             ..Default::default()
@@ -938,6 +948,34 @@ mod tests {
             || Ok(Box::new(parent_state(0))),
         )
         .unwrap();
+    }
+
+    #[test]
+    fn post_execution_rejects_nonzero_claim_on_first_active_block() {
+        for millis_part in [200, 400, 600, 800] {
+            let block = base_time_block(DENIM_TIMESTAMP, millis_part, EMPTY_ROOT_HASH);
+            let parent = SealedHeader::seal_slow(Header {
+                timestamp: DENIM_TIMESTAMP - 1,
+                ..Default::default()
+            });
+            let state_updates = HashedPostState::default();
+            let error = PayloadValidator::<BaseEngineTypes>::
+                validate_block_post_execution_with_hashed_state(
+                    &denim_validator(),
+                    || &state_updates,
+                    &block,
+                    &parent,
+                    || Ok(Box::new(parent_state(0))),
+                )
+                .unwrap_err();
+
+            assert!(matches!(
+                base_consensus_error(&error),
+                Some(BaseConsensusError::BaseTimeActivationMillisNonZero {
+                    timestamp_millis_part,
+                }) if *timestamp_millis_part == millis_part
+            ));
+        }
     }
 
     #[test]

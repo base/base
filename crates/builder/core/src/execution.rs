@@ -12,6 +12,8 @@ use base_common_evm::BaseTransactionError;
 use derive_more::Display;
 use thiserror::Error;
 
+use crate::{InclusionTracker, PredicateLoadTracker};
+
 /// Resource limits configuration for transaction and block constraints.
 ///
 /// This struct encapsulates all the resource limit parameters used to determine
@@ -225,6 +227,10 @@ pub struct ExecutionInfo {
     pub da_footprint_scalar: Option<u16>,
     /// Rejected transactions accumulated during block building, flushed after finalization.
     pub rejected_txs: Vec<RejectedTransaction>,
+    /// Validity-predicate state loads accumulated across the block's flashblock builds.
+    pub predicate_loads: PredicateLoadTracker,
+    /// Validity inclusion and EIP-1559 fee revenue accumulated across the block.
+    pub inclusion: InclusionTracker,
 }
 
 impl ExecutionInfo {
@@ -241,6 +247,8 @@ impl ExecutionInfo {
             extra: Default::default(),
             da_footprint_scalar: None,
             rejected_txs: Vec::new(),
+            predicate_loads: PredicateLoadTracker::default(),
+            inclusion: InclusionTracker::default(),
         }
     }
 
@@ -545,6 +553,7 @@ mod tests {
         assert_eq!(info.cumulative_da_bytes_used, 0);
         assert_eq!(info.cumulative_uncompressed_bytes, 0);
         assert_eq!(info.total_fees, U256::ZERO);
+        assert_eq!(info.inclusion, InclusionTracker::default());
         assert!(info.executed_transactions.is_empty());
         assert!(info.executed_senders.is_empty());
         assert!(info.receipts.is_empty());

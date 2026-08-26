@@ -16,7 +16,10 @@ not the long-term archive. A background worker deletes rows by event type:
 high-volume proxy and builder-decision events default to 3 days, ingress and
 forwarding events default to 7 days, and failures, drops, inclusion, and
 flashblock events default to 30 days. Autovacuum reclaims the resulting table
-bloat.
+bloat. `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY` uses the same warm window as
+`TXPOOL_SEND_RAW_TRANSACTION`. `BUILDER_DEFERRED` and `BUILDER_EXPIRED` use the
+same hot window as the other per-attempt builder decisions; deferral can fire
+once per flashblock for a parked validity transaction.
 
 ## Configuration Fields
 
@@ -196,11 +199,12 @@ one-time RPC-admission events, one per unique submit path. They fire after the
 transaction is decoded and before sequencer forwarding or pool insertion.
 `tx_hash` is the join key. They are distinct from `TXPOOL_PENDING` /
 `TXPOOL_QUEUED`, which record later subpool membership.
-`TXPOOL_SEND_RAW_TRANSACTION_VALIDITY` is the only event that records
+`TXPOOL_SEND_RAW_TRANSACTION_VALIDITY` is the **only** event that records
 `data.validity_predicates` (the serialized `balance`, `storage`,
-`block_number`, and `flashblock_index` list). Downstream lifecycle events do
-not repeat that list; join them back by `tx_hash`. A replacement is a fresh
-admission with its own `tx_hash` and/or predicate list;
+`block_number`, and `flashblock_index` list). Downstream lifecycle events —
+including `BUILDER_DEFERRED`, `BUILDER_EXPIRED`, `BUILDER_ACCEPTED`, and
+`BUILDER_INCLUDED` — must not repeat that list; join them back by `tx_hash`. A
+replacement is a fresh admission with its own `tx_hash` and/or predicate list;
 `TXPOOL_REPLACED.replacement_hash` links the outgoing transaction to the
 incoming one. `base_insertValidatedTransaction` uses
 `TXPOOL_VALIDATED_INSERT_ACCEPTED` / `TXPOOL_VALIDATED_INSERT_REJECTED`.
@@ -353,6 +357,94 @@ Routed to node:
   "data": {
     "backend": "reth-mainnet-0",
     "attempt_index": 0
+  }
+}
+```
+
+## Mempool / Builder Examples
+
+Validity admission. This is the only event that carries `data.validity_predicates`.
+Join later park, expiry, accept, and include events by `tx_hash`:
+
+```json
+{
+  "schema_version": "transaction-event/v1",
+  "event_id": "0x4c6d...",
+  "event_time": "2026-06-02T00:00:00.000000000Z",
+  "producer": "base-reth-node",
+  "event_type": "TXPOOL_SEND_RAW_TRANSACTION_VALIDITY",
+  "network": "base-mainnet",
+  "tx_hash": "0x3333333333333333333333333333333333333333333333333333333333333333",
+  "block_hash": null,
+  "block_number": null,
+  "payload_id": null,
+  "request_id": null,
+  "data": {
+    "rpc_method": "base_sendRawTransactionValidity",
+    "validity_predicates": [
+      {
+        "type": "storage",
+        "params": {
+          "address": "0xabababababababababababababababababababab",
+          "slot": "0x1",
+          "mask": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "op": "=",
+          "value": "0x1"
+        }
+      }
+    ]
+  }
+}
+```
+
+Parked (recoverable predicate, held for a later position or flashblock). Does
+not repeat the predicate list:
+
+```json
+{
+  "schema_version": "transaction-event/v1",
+  "event_id": "0x5d7e...",
+  "event_time": "2026-06-02T00:00:00.200000000Z",
+  "producer": "base-builder",
+  "event_type": "BUILDER_DEFERRED",
+  "network": "base-mainnet",
+  "tx_hash": "0x3333333333333333333333333333333333333333333333333333333333333333",
+  "block_hash": null,
+  "block_number": 123,
+  "payload_id": "0x0102030405060708",
+  "request_id": null,
+  "data": {
+    "builder_mode": "flashblocks",
+    "flashblock_index": 2,
+    "ordering_position": 4,
+    "defer_reason": "validity_predicate_not_satisfied",
+    "defer_detail": "a validity predicate is not satisfied by the current build state"
+  }
+}
+```
+
+Terminal builder-side expiry. A parking-capacity miss stays `BUILDER_REJECTED`
+with `validity_predicate_not_satisfied` instead:
+
+```json
+{
+  "schema_version": "transaction-event/v1",
+  "event_id": "0x6e8f...",
+  "event_time": "2026-06-02T00:00:00.400000000Z",
+  "producer": "base-builder",
+  "event_type": "BUILDER_EXPIRED",
+  "network": "base-mainnet",
+  "tx_hash": "0x4444444444444444444444444444444444444444444444444444444444444444",
+  "block_hash": null,
+  "block_number": 123,
+  "payload_id": "0x0102030405060708",
+  "request_id": null,
+  "data": {
+    "builder_mode": "flashblocks",
+    "flashblock_index": 0,
+    "ordering_position": 1,
+    "expire_reason": "validity_predicate_expired",
+    "expire_detail": "a validity predicate can no longer be satisfied at or after the current build position"
   }
 }
 ```

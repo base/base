@@ -16,6 +16,11 @@ pub use emit::{
     TransactionEventEmitOutcome,
 };
 
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
+#[cfg(any(test, feature = "test-utils"))]
+pub use test_utils::TransactionEventCapture;
+
 mod id;
 pub use id::EventIdBuilder;
 
@@ -23,6 +28,8 @@ mod metrics;
 pub use metrics::Metrics;
 
 mod writer;
+#[cfg(any(test, feature = "test-utils"))]
+pub use writer::TransactionEventRecorder;
 pub use writer::{TransactionEventWriter, TransactionEventWriterConfig, WriteEventError};
 
 #[doc(hidden)]

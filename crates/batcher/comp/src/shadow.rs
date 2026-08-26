@@ -14,9 +14,7 @@ const CLOSE_OVERHEAD_ZLIB: u64 = 9;
 ///
 /// This preserves the current Single behavior: the compressed target is checked
 /// only when an individual write is larger than the target. A sequence of
-/// smaller writes is not cumulatively bounded. The Span producer does not use
-/// this compressor, and the limitation remains until the Single producer is
-/// removed.
+/// smaller writes is not cumulatively bounded.
 ///
 /// An oversized first write is accepted and marks the compressor full so one
 /// large block can make progress; framing later splits it across multiple frames.

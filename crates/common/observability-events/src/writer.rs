@@ -1,3 +1,5 @@
+#[cfg(any(test, feature = "test-utils"))]
+use std::sync::Mutex;
 use std::{
     fmt,
     fs::{File, OpenOptions, create_dir_all, read_dir, remove_file, rename},
@@ -59,6 +61,35 @@ impl TransactionEventWriterConfig {
     }
 }
 
+/// Shared buffer for events written by an in-memory [`TransactionEventWriter`].
+#[cfg(any(test, feature = "test-utils"))]
+#[derive(Clone, Debug, Default)]
+pub struct TransactionEventRecorder {
+    events: Arc<Mutex<Vec<TransactionEvent>>>,
+}
+
+#[cfg(any(test, feature = "test-utils"))]
+impl TransactionEventRecorder {
+    /// Creates an empty recorder.
+    pub fn new() -> Self {
+        Self { events: Arc::new(Mutex::new(Vec::new())) }
+    }
+
+    /// Returns a snapshot of recorded events.
+    pub fn events(&self) -> Vec<TransactionEvent> {
+        self.events.lock().unwrap_or_else(|err| err.into_inner()).clone()
+    }
+
+    /// Removes all recorded events.
+    pub fn clear(&self) {
+        self.events.lock().unwrap_or_else(|err| err.into_inner()).clear();
+    }
+
+    fn push(&self, event: TransactionEvent) {
+        self.events.lock().unwrap_or_else(|err| err.into_inner()).push(event);
+    }
+}
+
 /// Non-blocking handle for appending transaction events to JSONL.
 #[derive(Clone)]
 pub struct TransactionEventWriter {
@@ -66,18 +97,35 @@ pub struct TransactionEventWriter {
 }
 
 struct WriterInner {
-    writer: Option<NonBlocking>,
-    dropped: Option<ErrorCounter>,
-    observed_drops: AtomicUsize,
-    _guard: Option<WorkerGuard>,
-    config: TransactionEventWriterConfig,
+    backend: WriterBackend,
+    network: String,
+}
+
+enum WriterBackend {
+    Disabled,
+    File {
+        writer: NonBlocking,
+        dropped: ErrorCounter,
+        observed_drops: AtomicUsize,
+        _guard: WorkerGuard,
+    },
+    #[cfg(any(test, feature = "test-utils"))]
+    Memory {
+        recorder: TransactionEventRecorder,
+    },
 }
 
 impl fmt::Debug for TransactionEventWriter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let backend = match &self.inner.backend {
+            WriterBackend::Disabled => "disabled",
+            WriterBackend::File { .. } => "file",
+            #[cfg(any(test, feature = "test-utils"))]
+            WriterBackend::Memory { .. } => "memory",
+        };
         f.debug_struct("TransactionEventWriter")
-            .field("enabled", &self.inner.writer.is_some())
-            .field("config", &self.inner.config)
+            .field("backend", &backend)
+            .field("network", &self.inner.network)
             .finish_non_exhaustive()
     }
 }
@@ -162,74 +210,86 @@ impl TransactionEventWriter {
             .finish(MetricWriter::new(file));
         let dropped = writer.error_counter();
 
-        Ok(Self {
-            inner: Arc::new(WriterInner {
-                writer: Some(writer),
-                dropped: Some(dropped),
+        Ok(Self::new(
+            WriterBackend::File {
+                writer,
+                dropped,
                 observed_drops: AtomicUsize::new(0),
-                _guard: Some(guard),
-                config,
-            }),
-        })
+                _guard: guard,
+            },
+            config.network,
+        ))
     }
 
     /// Creates a disabled writer handle.
     pub fn disabled(config: TransactionEventWriterConfig) -> Self {
-        Self {
-            inner: Arc::new(WriterInner {
-                writer: None,
-                dropped: None,
-                observed_drops: AtomicUsize::new(0),
-                _guard: None,
-                config,
-            }),
-        }
+        Self::new(WriterBackend::Disabled, config.network)
+    }
+
+    /// Creates an in-memory writer that appends events to `recorder`.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn in_memory(network: impl Into<String>, recorder: TransactionEventRecorder) -> Self {
+        Self::new(WriterBackend::Memory { recorder }, network)
+    }
+
+    fn new(backend: WriterBackend, network: impl Into<String>) -> Self {
+        Self { inner: Arc::new(WriterInner { backend, network: network.into() }) }
     }
 
     /// Attempts to enqueue one event without blocking the caller.
     pub fn try_write(&self, event: &TransactionEvent) -> Result<(), WriteEventError> {
-        let Some(writer) = &self.inner.writer else {
-            Metrics::dropped_events("disabled").increment(1);
-            return Err(WriteEventError::Disabled);
-        };
+        match &self.inner.backend {
+            WriterBackend::Disabled => {
+                Metrics::dropped_events("disabled").increment(1);
+                Err(WriteEventError::Disabled)
+            }
+            #[cfg(any(test, feature = "test-utils"))]
+            WriterBackend::Memory { recorder } => {
+                Self::validate_event(event)?;
+                recorder.push(event.clone());
+                Metrics::submitted_events().increment(1);
+                Ok(())
+            }
+            WriterBackend::File { writer, .. } => {
+                Self::validate_event(event)?;
+                let mut line = serde_json::to_vec(event).map_err(|err| {
+                    Metrics::dropped_events("serialization").increment(1);
+                    WriteEventError::Serialize(err)
+                })?;
+                line.push(b'\n');
+                let _ = writer.clone().write_all(&line);
+                self.observe_dropped_events();
+                Metrics::submitted_events().increment(1);
+                Ok(())
+            }
+        }
+    }
 
+    fn validate_event(event: &TransactionEvent) -> Result<(), WriteEventError> {
         event.validate().map_err(|err| {
             Metrics::dropped_events("validation").increment(1);
             WriteEventError::Invalid(err)
-        })?;
-
-        let mut line = serde_json::to_vec(event).map_err(|err| {
-            Metrics::dropped_events("serialization").increment(1);
-            WriteEventError::Serialize(err)
-        })?;
-        line.push(b'\n');
-
-        let _ = writer.clone().write_all(&line);
-        self.observe_dropped_events();
-        Metrics::submitted_events().increment(1);
-        Ok(())
+        })
     }
 
     /// Returns the configured network label for this writer.
     pub fn network(&self) -> &str {
-        &self.inner.config.network
+        &self.inner.network
     }
 
     fn observe_dropped_events(&self) -> usize {
-        let Some(dropped) = &self.inner.dropped else {
+        let WriterBackend::File { dropped, observed_drops, .. } = &self.inner.backend else {
             return 0;
         };
 
         loop {
             let current = dropped.dropped_lines();
-            let previous = self.inner.observed_drops.load(Ordering::Relaxed);
+            let previous = observed_drops.load(Ordering::Relaxed);
             if current <= previous {
                 return 0;
             }
 
-            if self
-                .inner
-                .observed_drops
+            if observed_drops
                 .compare_exchange_weak(previous, current, Ordering::Relaxed, Ordering::Relaxed)
                 .is_ok()
             {
@@ -483,15 +543,30 @@ mod tests {
             .finish(MetricWriter::new(sink));
         let dropped = writer.error_counter();
 
-        TransactionEventWriter {
-            inner: Arc::new(WriterInner {
-                writer: Some(writer),
-                dropped: Some(dropped),
+        TransactionEventWriter::new(
+            WriterBackend::File {
+                writer,
+                dropped,
                 observed_drops: AtomicUsize::new(0),
-                _guard: Some(guard),
-                config,
-            }),
-        }
+                _guard: guard,
+            },
+            config.network,
+        )
+    }
+
+    #[test]
+    fn in_memory_writer_records_and_clears_events() {
+        let recorder = TransactionEventRecorder::new();
+        let writer = TransactionEventWriter::in_memory("test", recorder.clone());
+        writer.try_write(&sample_event()).unwrap();
+        let events = recorder.events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, TransactionEventType::Pending);
+        assert_eq!(events[0].network.as_deref(), Some("base-mainnet"));
+        assert_eq!(writer.network(), "test");
+
+        recorder.clear();
+        assert!(recorder.events().is_empty());
     }
 
     #[test]
@@ -748,15 +823,18 @@ mod tests {
         }
 
         let writer = writer_with_sink(SlowWriter, 0);
+        let WriterBackend::File { observed_drops, .. } = &writer.inner.backend else {
+            panic!("backpressure test requires a file-backed writer");
+        };
 
         for _ in 0..10_000 {
             writer.try_write(&sample_event()).unwrap();
-            if writer.inner.observed_drops.load(Ordering::Relaxed) > 0 {
+            if observed_drops.load(Ordering::Relaxed) > 0 {
                 break;
             }
         }
 
-        let dropped = writer.inner.observed_drops.load(Ordering::Relaxed);
+        let dropped = observed_drops.load(Ordering::Relaxed);
         assert!(dropped > 0, "lossy writer should report aggregate drops under backpressure");
     }
 

@@ -66,8 +66,8 @@ pub use sequencer::{
     PreparedL1Origin, QueuedSequencerEngineClient, RecoveryModeGuard, ScheduledTicker, SealState,
     SealStepError, SealStepOutcome, SequencerActor, SequencerActorError, SequencerAdminQuery,
     SequencerConfig, SequencerEngineClient, SequencerEngineRequestCoordinator,
-    SequencerEngineState, ShadowCycle, ShadowReconciliationGate, ShadowReconciliationTask,
-    ShadowSequencingState, UnsealedPayloadHandle,
+    SequencerEngineState, ShadowCycle, ShadowFunding, ShadowReconciliationGate,
+    ShadowReconciliationTask, ShadowSequencingState, UnsealedPayloadHandle,
 };
 #[cfg(test)]
 pub use sequencer::{MockConductor, MockOriginSelector, MockSequencerEngineClient};

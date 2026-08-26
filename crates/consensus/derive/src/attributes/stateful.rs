@@ -10,7 +10,7 @@ use alloy_rlp::Encodable;
 use alloy_rpc_types_engine::PayloadAttributes;
 use async_trait::async_trait;
 use base_common_consensus::Predeploys;
-use base_common_genesis::RollupConfig;
+use base_common_genesis::{BaseUpgrade, RollupConfig, SystemConfig};
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_consensus_upgrades::{Upgrade, Upgrades};
 use base_protocol::{BaseTimeUpdateTx, Deposits, L1BlockInfoTx, L2BlockInfo};
@@ -36,6 +36,8 @@ where
     config_fetcher: L2P,
     /// The L1 receipts fetcher.
     receipts_fetcher: L1P,
+    /// Locally known system config for an exact L2 parent.
+    parent_system_config: Option<(L2BlockInfo, SystemConfig)>,
 }
 
 impl<L1P, L2P> StatefulAttributesBuilder<L1P, L2P>
@@ -55,6 +57,7 @@ where
             l1_cfg,
             config_fetcher: sys_cfg_fetcher,
             receipts_fetcher: receipts,
+            parent_system_config: None,
         }
     }
 }
@@ -65,6 +68,10 @@ where
     L1P: ChainProvider + Debug + Send,
     L2P: L2ChainProvider + Debug + Send,
 {
+    fn seed_parent_system_config(&mut self, parent: L2BlockInfo, config: SystemConfig) {
+        self.parent_system_config = Some((parent, config));
+    }
+
     async fn prepare_payload_attributes(
         &mut self,
         l2_parent: L2BlockInfo,
@@ -73,11 +80,33 @@ where
         let l1_header;
         let deposit_transactions: Vec<Bytes>;
 
-        let mut sys_config = self
-            .config_fetcher
-            .system_config_by_number(l2_parent.block_info.number, Arc::clone(&self.rollup_cfg))
-            .await
-            .map_err(Into::into)?;
+        let target_l2_number = l2_parent.block_info.number + 1;
+        let (target_l2_time, target_l2_millis) =
+            self.rollup_cfg.l2_block_timestamp_parts(target_l2_number);
+        let two_blocks_back_l2_time =
+            self.rollup_cfg.l2_block_timestamp(target_l2_number.saturating_sub(2));
+        // Payload-derived configs may be incomplete around an upgrade boundary:
+        // - When building the activation block, its parent payload may omit dormant config fields
+        //   that become active immediately.
+        // - When building the child, the activation block may still use the old L1-info format,
+        //   and its upgrade transactions execute only after payload attributes are constructed.
+        // Fetch the full config for both blocks; subsequent blocks can safely use the cache again.
+        let requires_system_config_refresh =
+            BaseUpgrade::CONTRACT_VARIANTS.into_iter().any(|upgrade| {
+                self.rollup_cfg.upgrade_activation_timestamp(upgrade).is_some_and(|activation| {
+                    two_blocks_back_l2_time < activation && activation <= target_l2_time
+                })
+            });
+        let mut sys_config = match self.parent_system_config {
+            Some((parent, config)) if parent == l2_parent && !requires_system_config_refresh => {
+                config
+            }
+            _ => self
+                .config_fetcher
+                .system_config_by_number(l2_parent.block_info.number, Arc::clone(&self.rollup_cfg))
+                .await
+                .map_err(Into::into)?,
+        };
 
         // If the L1 origin changed in this block, then we are in the first block of the epoch.
         // In this case we need to fetch all transaction receipts from the L1 origin block so
@@ -129,14 +158,11 @@ where
 
         // Sanity check the L1 origin was correctly selected to maintain the time invariant
         // between L1 and L2.
-        let next_l2_block_number = l2_parent.block_info.number + 1;
-        let (next_l2_time, next_l2_timestamp_millis_part) =
-            self.rollup_cfg.l2_block_timestamp_parts(next_l2_block_number);
-        if next_l2_time < l1_header.timestamp {
+        if target_l2_time < l1_header.timestamp {
             return Err(PipelineErrorKind::Reset(
                 BuilderError::BrokenTimeInvariant(
                     l2_parent.l1_origin,
-                    next_l2_time,
+                    target_l2_time,
                     BlockNumHash { hash: l1_header.hash_slow(), number: l1_header.number },
                     l1_header.timestamp,
                 )
@@ -144,7 +170,7 @@ where
             ));
         }
 
-        if self.rollup_cfg.is_first_denim_block(next_l2_time, l2_parent.block_info.timestamp) {
+        if self.rollup_cfg.is_first_denim_block(target_l2_time, l2_parent.block_info.timestamp) {
             // Preserve gas throughput and base-fee responsiveness per unit of wall-clock time
             // when Denim increases the number of blocks in each legacy block interval tenfold.
             sys_config.gas_limit /= u64::from(RollupConfig::DENIM_GAS_PARAMETER_SCALING_FACTOR);
@@ -154,22 +180,22 @@ where
         }
 
         let mut upgrade_transactions: Vec<Bytes> = vec![];
-        if self.rollup_cfg.is_ecotone_active(next_l2_time)
+        if self.rollup_cfg.is_ecotone_active(target_l2_time)
             && !self.rollup_cfg.is_ecotone_active(l2_parent.block_info.timestamp)
         {
             upgrade_transactions.extend(Upgrades::ECOTONE.txs());
         }
-        if self.rollup_cfg.is_fjord_active(next_l2_time)
+        if self.rollup_cfg.is_fjord_active(target_l2_time)
             && !self.rollup_cfg.is_fjord_active(l2_parent.block_info.timestamp)
         {
             upgrade_transactions.extend(Upgrades::FJORD.txs());
         }
-        if self.rollup_cfg.is_isthmus_active(next_l2_time)
+        if self.rollup_cfg.is_isthmus_active(target_l2_time)
             && !self.rollup_cfg.is_isthmus_active(l2_parent.block_info.timestamp)
         {
             upgrade_transactions.extend(Upgrades::ISTHMUS.txs());
         }
-        if self.rollup_cfg.is_jovian_active(next_l2_time)
+        if self.rollup_cfg.is_jovian_active(target_l2_time)
             && !self.rollup_cfg.is_jovian_active(l2_parent.block_info.timestamp)
         {
             upgrade_transactions.extend(Upgrades::JOVIAN.txs());
@@ -183,7 +209,7 @@ where
             sequence_number,
             &l1_header,
             l2_parent.block_info.timestamp,
-            next_l2_time,
+            target_l2_time,
         )
         .map_err(|e| {
             PipelineError::AttributesBuilder(BuilderError::Custom(e.to_string())).crit()
@@ -191,7 +217,7 @@ where
         let mut encoded_l1_info_tx = Vec::with_capacity(l1_info_tx_envelope.length());
         l1_info_tx_envelope.encode_2718(&mut encoded_l1_info_tx);
 
-        let base_time_active = self.rollup_cfg.is_denim_active(next_l2_time);
+        let base_time_active = self.rollup_cfg.is_denim_active(target_l2_time);
         let mut txs = Vec::with_capacity(
             1 + usize::from(base_time_active)
                 + deposit_transactions.len()
@@ -200,10 +226,10 @@ where
         txs.push(encoded_l1_info_tx.into());
 
         if base_time_active {
-            let base_time = BaseTimeUpdateTx::new(next_l2_timestamp_millis_part).map_err(|e| {
+            let base_time = BaseTimeUpdateTx::new(target_l2_millis).map_err(|e| {
                 PipelineError::AttributesBuilder(BuilderError::BaseTimeUpdate(e)).crit()
             })?;
-            let envelope = base_time.into_deposit_tx(next_l2_block_number);
+            let envelope = base_time.into_deposit_tx(target_l2_number);
             let mut encoded = Vec::with_capacity(envelope.length());
             envelope.encode_2718(&mut encoded);
             txs.push(encoded.into());
@@ -213,19 +239,19 @@ where
         txs.extend(upgrade_transactions);
 
         let mut withdrawals = None;
-        if self.rollup_cfg.is_canyon_active(next_l2_time) {
+        if self.rollup_cfg.is_canyon_active(target_l2_time) {
             withdrawals = Some(Vec::default());
         }
 
         let mut parent_beacon_root = None;
-        if self.rollup_cfg.is_ecotone_active(next_l2_time) {
+        if self.rollup_cfg.is_ecotone_active(target_l2_time) {
             // if the parent beacon root is not available, default to zero hash
             parent_beacon_root = Some(l1_header.parent_beacon_block_root.unwrap_or_default());
         }
 
         Ok(BasePayloadAttributes {
             payload_attributes: PayloadAttributes {
-                timestamp: next_l2_time,
+                timestamp: target_l2_time,
                 prev_randao: l1_header.mix_hash,
                 suggested_fee_recipient: Predeploys::SEQUENCER_FEE_VAULT,
                 parent_beacon_block_root: parent_beacon_root,
@@ -241,11 +267,11 @@ where
             eip_1559_params: sys_config.eip_1559_params(
                 &self.rollup_cfg,
                 l2_parent.block_info.timestamp,
-                next_l2_time,
+                target_l2_time,
             ),
             min_base_fee: self
                 .rollup_cfg
-                .is_jovian_active(next_l2_time)
+                .is_jovian_active(target_l2_time)
                 .then(|| sys_config.min_base_fee.unwrap_or_default()), /* Default to zero if not
                                                                         * set at Jovian */
         })
@@ -290,7 +316,7 @@ mod tests {
 
     use alloy_consensus::Header;
     use alloy_eips::eip2718::Decodable2718;
-    use alloy_primitives::{B256, Log, LogData, U64, U256, address};
+    use alloy_primitives::{B256, Log, LogData, U64, U256, address, hex};
     use base_common_chains::Sepolia;
     use base_common_consensus::{BaseTxEnvelope, SystemAddresses};
     use base_common_genesis::{
@@ -377,6 +403,40 @@ mod tests {
         }
     }
 
+    fn system_config_test_builder(
+        fetcher: TestSystemConfigL2Fetcher,
+    ) -> (
+        StatefulAttributesBuilder<TestChainProvider, TestSystemConfigL2Fetcher>,
+        L2BlockInfo,
+        BlockNumHash,
+    ) {
+        let block_time = 10;
+        let timestamp = 100;
+        let cfg = Arc::new(RollupConfig {
+            block_time,
+            genesis: ChainGenesis { l2_time: timestamp - block_time, ..Default::default() },
+            ..Default::default()
+        });
+        let mut provider = TestChainProvider::default();
+        let header = Header { timestamp, ..Default::default() };
+        let origin_hash = header.hash_slow();
+        provider.insert_header(origin_hash, header);
+        let parent = L2BlockInfo {
+            block_info: BlockInfo {
+                hash: B256::left_padding_from(&[1]),
+                number: 1,
+                timestamp,
+                ..Default::default()
+            },
+            l1_origin: BlockNumHash { hash: origin_hash, number: 1 },
+            seq_num: 0,
+        };
+        let epoch = parent.l1_origin;
+        let builder =
+            StatefulAttributesBuilder::new(cfg, Arc::new(Sepolia::l1_config()), fetcher, provider);
+        (builder, parent, epoch)
+    }
+
     #[tokio::test]
     async fn test_derive_deposits_empty() {
         let receipts = vec![];
@@ -423,6 +483,119 @@ mod tests {
         let receipts = vec![generate_valid_receipt(), generate_valid_receipt()];
         let result = derive_deposits(B256::default(), &receipts, deposit_contract).await;
         assert_eq!(result.unwrap().len(), 4);
+    }
+
+    #[tokio::test]
+    async fn test_prepare_payload_uses_only_exact_parent_system_config_seed() {
+        let (mut builder, parent, epoch) =
+            system_config_test_builder(TestSystemConfigL2Fetcher::default());
+        builder.seed_parent_system_config(
+            parent,
+            SystemConfig { gas_limit: 123, ..Default::default() },
+        );
+
+        let payload = builder.prepare_payload_attributes(parent, epoch).await.unwrap();
+        assert_eq!(payload.gas_limit, Some(123));
+
+        // The seed survives use, so a retried build on the same parent reuses it instead of
+        // falling back to the RPC (the default fetcher errors on any lookup, so a second
+        // success proves no fallback happened).
+        let payload = builder.prepare_payload_attributes(parent, epoch).await.unwrap();
+        assert_eq!(payload.gas_limit, Some(123));
+
+        let mut fetcher = TestSystemConfigL2Fetcher::default();
+        fetcher.insert(
+            parent.block_info.number,
+            SystemConfig { gas_limit: 456, ..Default::default() },
+        );
+        let (mut builder, parent, epoch) = system_config_test_builder(fetcher);
+        let activation = builder.rollup_cfg.l2_block_timestamp(parent.block_info.number + 1);
+        Arc::make_mut(&mut builder.rollup_cfg).upgrades.fjord_time = Some(activation);
+        builder.seed_parent_system_config(
+            parent,
+            SystemConfig { gas_limit: 123, ..Default::default() },
+        );
+
+        let payload = builder.prepare_payload_attributes(parent, epoch).await.unwrap();
+        assert_eq!(payload.gas_limit, Some(456));
+
+        let mut fetcher = TestSystemConfigL2Fetcher::default();
+        fetcher.insert(
+            parent.block_info.number,
+            SystemConfig { gas_limit: 456, ..Default::default() },
+        );
+        let (mut builder, parent, epoch) = system_config_test_builder(fetcher);
+        let mut mismatched_parent = parent;
+        mismatched_parent.block_info.hash = B256::left_padding_from(&[2]);
+        builder.seed_parent_system_config(
+            mismatched_parent,
+            SystemConfig { gas_limit: 123, ..Default::default() },
+        );
+
+        let payload = builder.prepare_payload_attributes(parent, epoch).await.unwrap();
+        assert_eq!(payload.gas_limit, Some(456));
+        assert_eq!(builder.parent_system_config.unwrap().0, mismatched_parent);
+    }
+
+    #[tokio::test]
+    async fn test_epoch_update_applies_to_parent_system_config_seed() {
+        let system_config_address = address!("1111111111111111111111111111111111111111");
+        let cfg = Arc::new(RollupConfig {
+            block_time: 10,
+            genesis: ChainGenesis { l2_time: 90, ..Default::default() },
+            l1_system_config_address: system_config_address,
+            ..Default::default()
+        });
+        let origin_hash = B256::left_padding_from(&[1]);
+        let header = Header { parent_hash: origin_hash, timestamp: 100, ..Default::default() };
+        let epoch_hash = header.hash_slow();
+        let update = Log {
+            address: system_config_address,
+            data: LogData::new_unchecked(
+                vec![
+                    SystemConfigUpdate::TOPIC,
+                    SystemConfigUpdate::EVENT_VERSION_0,
+                    B256::left_padding_from(&[2]),
+                ],
+                hex!("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000beef").into(),
+            ),
+        };
+        let mut provider = TestChainProvider::default();
+        provider.insert_header(epoch_hash, header);
+        provider.insert_receipts(
+            epoch_hash,
+            vec![Receipt {
+                status: Eip658Value::Eip658(true),
+                logs: vec![update],
+                ..Default::default()
+            }],
+        );
+        let mut builder = StatefulAttributesBuilder::new(
+            cfg,
+            Arc::new(Sepolia::l1_config()),
+            TestSystemConfigL2Fetcher::default(),
+            provider,
+        );
+        let parent = L2BlockInfo {
+            block_info: BlockInfo {
+                hash: B256::left_padding_from(&[3]),
+                number: 1,
+                timestamp: 100,
+                ..Default::default()
+            },
+            l1_origin: BlockNumHash { hash: origin_hash, number: 1 },
+            seq_num: 0,
+        };
+        builder.seed_parent_system_config(
+            parent,
+            SystemConfig { gas_limit: 123, ..Default::default() },
+        );
+
+        let payload = builder
+            .prepare_payload_attributes(parent, BlockNumHash { hash: epoch_hash, number: 2 })
+            .await
+            .unwrap();
+        assert_eq!(payload.gas_limit, Some(0xbeef));
     }
 
     #[tokio::test]
@@ -611,12 +784,13 @@ mod tests {
         };
 
         let next_l2_block_number = l2_parent.block_info.number + 1;
-        let (_, expected_millis_part) = cfg.l2_block_timestamp_parts(next_l2_block_number);
+        let (expected_timestamp, expected_millis_part) =
+            cfg.l2_block_timestamp_parts(next_l2_block_number);
+        assert_eq!(expected_timestamp, 102);
+        assert_eq!(expected_millis_part, 0);
+
         let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
-        assert_eq!(
-            payload.payload_attributes.timestamp,
-            cfg.l2_block_timestamp(next_l2_block_number)
-        );
+        assert_eq!(payload.payload_attributes.timestamp, expected_timestamp);
         let transactions = payload.transactions.unwrap();
         assert_eq!(transactions.len(), 8);
         let envelope = BaseTxEnvelope::decode_2718_exact(&transactions[1]).unwrap();
