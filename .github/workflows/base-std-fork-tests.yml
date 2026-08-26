@@ -32,7 +32,7 @@ jobs:
           # recorded in the result artifact and PR comment.
           - fork: Beryl
             key: beryl
-            base_anvil_ref: 8d0f5b8ae60edd30caa52609bc8677e0b631e2d7
+            base_anvil_ref: cecddfa558e5ed99db6fd836ab1c8cd0213dce26
             base_std_ref: v1.0.0
           - fork: Cobalt
             key: cobalt
