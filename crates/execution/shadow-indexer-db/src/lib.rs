@@ -1,7 +1,9 @@
 #![doc = include_str!("../README.md")]
 
 mod config;
-pub use config::ShadowDbConfig;
+pub use config::{
+    DEFAULT_DATABASE, DEFAULT_PORT, DEFAULT_USERNAME, PgConnectionParams, ShadowDbConfig,
+};
 
 mod cursor;
 pub use cursor::{ShadowBlockCursor, ShadowMetricsCursorRepo};

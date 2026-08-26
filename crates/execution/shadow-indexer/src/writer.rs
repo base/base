@@ -178,7 +178,8 @@ mod tests {
 
     use anyhow::anyhow;
     use base_shadow_indexer_db::{
-        ShadowBlockPayload, ShadowBlockRow, ShadowCanonicalRef, ShadowDbConfig, ShadowFlushOutcome,
+        PgConnectionParams, ShadowBlockPayload, ShadowBlockRow, ShadowCanonicalRef, ShadowDbConfig,
+        ShadowFlushOutcome,
     };
     use chrono::{DateTime, Utc};
     use reth_primitives_traits::RecoveredBlock;
@@ -191,7 +192,7 @@ mod tests {
         ShadowWriter {
             rx,
             db_config: ShadowDbConfig {
-                url: String::new(),
+                connection: PgConnectionParams::default(),
                 max_connections: 1,
                 connection_timeout: Duration::from_secs(1),
             },
