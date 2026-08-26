@@ -80,7 +80,13 @@ impl Bytecode {
     pub fn original_bytes(&self) -> Bytes {
         match self {
             Self::Legacy(raw) => raw.clone(),
-            Self::Eip7702(address) => RevmBytecode::new_eip7702(*address).original_bytes(),
+            Self::Eip7702(address) => {
+                // EIP-7702 delegation designator: 0xEF0100 || 20-byte address.
+                let mut raw = [0u8; 23];
+                raw[..3].copy_from_slice(&[0xEF, 0x01, 0x00]);
+                raw[3..].copy_from_slice(address.as_slice());
+                Bytes::copy_from_slice(&raw)
+            }
         }
     }
 }
