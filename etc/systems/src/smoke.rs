@@ -9,6 +9,7 @@ use alloy_network::Ethereum;
 use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_engine::JwtSecret;
+use base_common_genesis::L1TxFormat;
 use base_common_network::Base;
 use base_tx_forwarding::TxForwardingConfig;
 use eyre::{Result, WrapErr};
@@ -139,6 +140,7 @@ pub struct SystemTestStackBuilder {
     tx_forwarding_config: Option<TxForwardingConfig>,
     verifier_l1_confs: u64,
     client_consensus_mode: L2ClientConsensusMode,
+    l1_tx_format: L1TxFormat,
 }
 
 impl SystemTestStackBuilder {
@@ -213,6 +215,20 @@ impl SystemTestStackBuilder {
     /// client (validator) node's derivation pipeline.
     pub const fn with_verifier_l1_confs(mut self, confs: u64) -> Self {
         self.verifier_l1_confs = confs;
+        self
+    }
+
+    /// Sets the L1 parent-chain transaction format used by the L2 consensus nodes and batcher.
+    pub const fn with_l1_tx_format(mut self, l1_tx_format: L1TxFormat) -> Self {
+        self.l1_tx_format = l1_tx_format;
+        self
+    }
+
+    /// Configures the stack as an L3 — a Base chain settling to a Base L1. The consensus nodes
+    /// decode Base-format L1 blocks ([`L1TxFormat::Base`]) and the batcher submits batches via
+    /// calldata data-availability, since a Base parent chain has no blob DA endpoint.
+    pub const fn with_l3_profile(mut self) -> Self {
+        self.l1_tx_format = L1TxFormat::Base;
         self
     }
 
@@ -385,6 +401,7 @@ impl SystemTestStackBuilder {
             tx_forwarding_config: self.tx_forwarding_config,
             verifier_l1_confs: self.verifier_l1_confs,
             client_consensus_mode: self.client_consensus_mode,
+            l1_tx_format: self.l1_tx_format,
         };
 
         let l2_stack = L2Stack::start(l2_config).await.wrap_err("Failed to start L2 stack")?;

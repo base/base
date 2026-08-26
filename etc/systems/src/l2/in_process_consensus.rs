@@ -73,6 +73,9 @@ pub struct InProcessConsensusConfig {
     pub sequencer_stopped: bool,
     /// Number of L1 blocks to keep distance from the L1 head for the verifier.
     pub verifier_l1_confs: u64,
+    /// L1 parent-chain transaction format. [`L1TxFormat::Base`] makes the derivation pipeline
+    /// decode Base-format L1 blocks (the L3 profile); [`L1TxFormat::Ethereum`] is the default.
+    pub l1_tx_format: L1TxFormat,
 }
 
 /// A running in-process consensus node.
@@ -152,7 +155,7 @@ impl InProcessConsensus {
             trust_rpc: true,
             beacon: Some(config.l1_beacon_url),
             rpc_url: config.l1_rpc_url.clone(),
-            l1_tx_format: L1TxFormat::default(),
+            l1_tx_format: config.l1_tx_format,
             slot_duration_override: config.l1_slot_duration_override,
             verifier_l1_confs: config.verifier_l1_confs,
         };

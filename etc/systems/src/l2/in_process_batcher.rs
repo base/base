@@ -6,7 +6,9 @@
 
 use alloy_primitives::B256;
 use alloy_signer_local::PrivateKeySigner;
+use base_batcher_encoder::{DaType, EncoderConfig};
 use base_batcher_service::{BatcherConfig, BatcherService};
+use base_common_genesis::L1TxFormat;
 use base_runtime::TokioRuntime;
 use base_tx_manager::SignerConfig;
 use eyre::Result;
@@ -25,6 +27,10 @@ pub struct InProcessBatcherConfig {
     pub rollup_rpc_url: Url,
     /// Batcher private key for signing L1 transactions.
     pub batcher_key: B256,
+    /// L1 parent-chain transaction format. [`L1TxFormat::Base`] selects the L3 profile
+    /// (settling to a Base L1): batches are submitted via calldata rather than blobs, since a
+    /// Base parent chain exposes no blob DA endpoint.
+    pub l1_tx_format: L1TxFormat,
 }
 
 /// A running in-process batcher.
@@ -44,14 +50,23 @@ impl InProcessBatcher {
     pub async fn start(config: InProcessBatcherConfig) -> Result<Self> {
         let signer = PrivateKeySigner::from_bytes(&config.batcher_key)
             .map_err(|e| eyre::eyre!("invalid batcher key: {e}"))?;
+        let base_l1 = config.l1_tx_format == L1TxFormat::Base;
         let batcher_config = BatcherConfig {
             l1_rpc_url: vec![config.l1_rpc_url],
             l2_rpc_url: vec![config.l2_rpc_url],
             rollup_rpc_url: vec![config.rollup_rpc_url],
             signer: Some(SignerConfig::local(signer)),
-            // SystemTestStack defaults come from the shared batcher config:
-            // poll_interval: 1s, num_confirmations: 1, resubmission_timeout: 48s —
-            // all set by BatcherConfig::default().
+            l1_tx_format: config.l1_tx_format,
+            // A Base parent chain (L3) has no blob DA endpoint: submit via calldata and never fall
+            // back to blobs when throttling (both enforced by `BatcherConfig::validate`).
+            encoder_config: if base_l1 {
+                EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() }
+            } else {
+                EncoderConfig::default()
+            },
+            force_blobs_when_throttling: !base_l1,
+            // Remaining SystemTestStack defaults (poll_interval: 1s, num_confirmations: 1,
+            // resubmission_timeout: 48s) come from BatcherConfig::default().
             ..BatcherConfig::default()
         };
         let cancellation = CancellationToken::new();

@@ -20,6 +20,7 @@ base-flashblocks.workspace = true
 base-tx-forwarding.workspace = true
 base-txpool-tracing.workspace = true
 base-batcher-service.workspace = true
+base-batcher-encoder.workspace = true
 base-bundle-extension.workspace = true
 base-flashblocks-node.workspace = true
 base-consensus-rpc = { workspace = true, features = ["client"] }

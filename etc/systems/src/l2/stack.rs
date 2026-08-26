@@ -12,7 +12,7 @@ use alloy_genesis::ChainConfig;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::JwtSecret;
 use base_common_genesis::RollupConfig;
-use base_consensus_node::NodeMode;
+use base_consensus_node::{L1TxFormat, NodeMode};
 use base_tx_forwarding::TxForwardingConfig;
 use eyre::{Result, WrapErr};
 use url::Url;
@@ -65,6 +65,9 @@ pub struct L2StackConfig {
     pub verifier_l1_confs: u64,
     /// Consensus mode for the L2 client node.
     pub client_consensus_mode: L2ClientConsensusMode,
+    /// L1 parent-chain transaction format. [`L1TxFormat::Base`] selects the L3 profile: both
+    /// consensus nodes decode Base-format L1 blocks and the batcher submits via calldata.
+    pub l1_tx_format: L1TxFormat,
 }
 
 /// Running L2 client consensus node.
@@ -196,6 +199,7 @@ impl L2Stack {
             l1_slot_duration_override: Some(4),
             sequencer_stopped: true,
             verifier_l1_confs: 0,
+            l1_tx_format: config.l1_tx_format,
         };
         let builder_consensus = InProcessConsensus::start(builder_consensus_config)
             .await
@@ -208,6 +212,7 @@ impl L2Stack {
             l2_rpc_url: builder.rpc_url()?,
             rollup_rpc_url: builder_consensus.rpc_url(),
             batcher_key: config.batcher_key,
+            l1_tx_format: config.l1_tx_format,
         })
         .await
         .wrap_err("Failed to start in-process batcher")?;
@@ -261,6 +266,7 @@ impl L2Stack {
                     l1_slot_duration_override: Some(4),
                     sequencer_stopped: false,
                     verifier_l1_confs: config.verifier_l1_confs,
+                    l1_tx_format: config.l1_tx_format,
                 };
                 let client_consensus = InProcessConsensus::start(client_consensus_config)
                     .await
