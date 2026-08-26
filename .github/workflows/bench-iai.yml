@@ -82,9 +82,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # pull_request supplies the base tip directly. For push/workflow_dispatch
+          # there is no base event, so compare against the current tip of main.
           if [ -z "$BASE_SHA" ]; then
-            git fetch --no-tags --depth 50 origin main
-            BASE_SHA="$(git merge-base HEAD FETCH_HEAD)"
+            git fetch --no-tags --depth 1 origin main
+            BASE_SHA="$(git rev-parse FETCH_HEAD)"
           fi
           git fetch --no-tags --depth 1 origin "$BASE_SHA"
           cp etc/scripts/ci/run_iai_subset.sh "$RUNNER_TEMP/run_iai_subset.sh"
