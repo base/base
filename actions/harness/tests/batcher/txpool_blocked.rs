@@ -3,7 +3,7 @@
 //! These tests verify the end-to-end production recovery path:
 //!   sequencer → batcher (txpool blocked) → requeue + `cancel_tx` → derivation
 //!
-//! When [`TxManager::send_async`] rejects a submission with
+//! When [`TxManager::submit`] rejects a submission with
 //! [`TxManagerError::AlreadyReserved`], the [`BatchDriver`] classifies the
 //! outcome as [`TxOutcome::TxpoolBlocked`]: it requeues the frames, stops
 //! submitting new ones, and calls [`TxManager::cancel_tx`] on its next loop
@@ -12,7 +12,7 @@
 //! and it exercises the `cancel_tx` hook that the harness previously left as the
 //! trait's default no-op.
 //!
-//! [`TxManager::send_async`]: base_tx_manager::TxManager::send_async
+//! [`TxManager::submit`]: base_tx_manager::TxManager::submit
 //! [`TxManager::cancel_tx`]: base_tx_manager::TxManager::cancel_tx
 //! [`TxManagerError::AlreadyReserved`]: base_tx_manager::TxManagerError::AlreadyReserved
 //! [`BatchDriver`]: base_batcher_core::BatchDriver

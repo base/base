@@ -11,10 +11,10 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use base_batcher_source::L1HeadEvent;
 use base_tx_manager::{
-    BlobTxBuilder, SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError,
-    TxManagerResult,
+    BlobTxBuilder, SubmissionHandle, SubmissionId, SubmissionSnapshot, SubmissionStatus,
+    TxCandidate, TxManager, TxManagerError, TxManagerResult,
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, watch};
 use tracing::info;
 
 use crate::{L1Block, L1Miner};
@@ -25,8 +25,8 @@ pub struct Pending {
     envelope: TxEnvelope,
     /// Blob sidecars for EIP-4844 submissions.
     blobs: Vec<(B256, Box<Blob>)>,
-    /// Oneshot that resolves the driver's [`SendHandle`] with the mined block number.
-    responder: oneshot::Sender<SendResponse>,
+    /// Lifecycle channel resolved when the transaction is mined.
+    responder: watch::Sender<SubmissionSnapshot>,
 }
 
 /// A signed L1 submission plus any blob sidecars it references.
@@ -54,10 +54,10 @@ pub struct Inner {
     staged: Vec<Pending>,
     /// Next nonce to use for signed production-mode transactions.
     next_nonce: u64,
-    /// Number of upcoming `send_async` calls to immediately fail with
+    /// Number of upcoming `submit` calls to immediately fail with
     /// [`TxManagerError::Rpc`] before falling through to normal queuing.
     fail_remaining: usize,
-    /// Number of upcoming `send_async` calls to immediately reject with
+    /// Number of upcoming `submit` calls to immediately reject with
     /// [`TxManagerError::AlreadyReserved`], modelling a txpool nonce slot held
     /// by a stuck transaction. The [`BatchDriver`] classifies this as
     /// [`TxOutcome::TxpoolBlocked`] and must clear it via [`cancel_tx`].
@@ -76,7 +76,7 @@ pub struct Inner {
 
 /// Adapts [`L1Miner`] to the [`TxManager`] trait for action tests.
 ///
-/// [`send_async`] enqueues a [`TxCandidate`] and returns a [`SendHandle`] that
+/// [`submit`] enqueues a [`TxCandidate`] and returns a [`SubmissionHandle`] that
 /// resolves when [`mine_block`] is called. The spawned [`BatchDriver`] task
 /// suspends on these handles; calling [`mine_block`] after
 /// `tokio::task::yield_now().await` gives the driver time to populate its
@@ -89,7 +89,7 @@ pub struct Inner {
 /// sends an [`L1HeadEvent::NewHead`] to a paired [`ChannelL1HeadSource`] so
 /// that the [`BatchDriver`] observes live L1 head updates.
 ///
-/// [`send_async`]: L1MinerTxManager::send_async
+/// [`submit`]: L1MinerTxManager::submit
 /// [`mine_block`]: L1MinerTxManager::mine_block
 /// [`with_l1_head_tx`]: L1MinerTxManager::with_l1_head_tx
 /// [`BatchDriver`]: base_batcher_core::BatchDriver
@@ -146,21 +146,21 @@ impl L1MinerTxManager {
         self.inner.lock().unwrap().staged.len()
     }
 
-    /// Schedule the next `n` [`send_async`] calls to immediately resolve with
+    /// Schedule the next `n` [`submit`] calls to immediately resolve with
     /// [`TxManagerError::Rpc`], causing the [`BatchDriver`] to requeue the
     /// associated frames in the encoder pipeline.
     ///
     /// Failures are consumed one-per-call: setting `n = 3` means the next
-    /// three separate `send_async` calls each fail, regardless of whether they
+    /// three separate `submit` calls each fail, regardless of whether they
     /// carry the same or different frames.
     ///
-    /// [`send_async`]: L1MinerTxManager::send_async
+    /// [`submit`]: L1MinerTxManager::submit
     /// [`BatchDriver`]: base_batcher_core::BatchDriver
     pub fn fail_next_n(&self, n: usize) {
         self.inner.lock().unwrap().fail_remaining += n;
     }
 
-    /// Schedule the next `n` [`send_async`] calls to immediately reject with
+    /// Schedule the next `n` [`submit`] calls to immediately reject with
     /// [`TxManagerError::AlreadyReserved`], modelling a txpool nonce slot held
     /// by a stuck transaction.
     ///
@@ -168,9 +168,9 @@ impl L1MinerTxManager {
     /// [`TxOutcome::TxpoolBlocked`]: it requeues the frames, stops submitting
     /// new ones, and calls [`cancel_tx`] on the next loop iteration to clear the
     /// slot before resubmitting. Rejections are consumed one-per-call, so
-    /// `n = 2` blocks the next two separate `send_async` calls.
+    /// `n = 2` blocks the next two separate `submit` calls.
     ///
-    /// [`send_async`]: L1MinerTxManager::send_async
+    /// [`submit`]: L1MinerTxManager::submit
     /// [`BatchDriver`]: base_batcher_core::BatchDriver
     /// [`TxOutcome::TxpoolBlocked`]: base_batcher_core::TxOutcome::TxpoolBlocked
     /// [`cancel_tx`]: base_tx_manager::TxManager::cancel_tx
@@ -215,8 +215,8 @@ impl L1MinerTxManager {
         count
     }
 
-    /// Fire receipt oneshots for staged items included in `block` and (if configured)
-    /// publish an [`L1HeadEvent::NewHead`].
+    /// Resolve staged items included in `block` and publish an
+    /// [`L1HeadEvent::NewHead`] when configured.
     ///
     /// Staged items without receipts in `block` remain staged. This models the
     /// production transaction manager's receipt polling: RPC submission can succeed
@@ -246,7 +246,9 @@ impl L1MinerTxManager {
             responses
         };
         for (responder, response) in responses {
-            let _ = responder.send(response);
+            responder.send_modify(|snapshot| {
+                snapshot.status = SubmissionStatus::Resolved(Box::new(response));
+            });
         }
         if let Some(tx) = &self.l1_head_tx {
             let _ = tx.send(L1HeadEvent::NewHead(block.number()));
@@ -262,7 +264,7 @@ impl L1MinerTxManager {
     /// the reorg.
     ///
     /// Both `pending` (not yet staged) and `staged` (submitted to L1 but not
-    /// yet confirmed) items are drained. This ensures no [`SendHandle`] is
+    /// yet confirmed) items are drained. This ensures no [`SubmissionHandle`] is
     /// left dangling, which would block the driver's `in_flight.next()`.
     ///
     /// # Ordering
@@ -282,7 +284,7 @@ impl L1MinerTxManager {
     /// driver in an inconsistent state.
     ///
     /// [`BatchDriver`]: base_batcher_core::BatchDriver
-    /// [`SendHandle`]: base_tx_manager::SendHandle
+    /// [`SubmissionHandle`]: base_tx_manager::SubmissionHandle
     /// [`confirm_block`]: L1MinerTxManager::confirm_block
     pub fn reorg_to(&self, block_number: u64, l1: &mut L1Miner) {
         l1.reorg_to(block_number).expect("reorg_to should not fail");
@@ -294,7 +296,11 @@ impl L1MinerTxManager {
         };
         let drained = pending.len() + staged.len();
         for p in pending.into_iter().chain(staged) {
-            let _ = p.responder.send(Err(TxManagerError::Rpc("reorg".to_string())));
+            p.responder.send_modify(|snapshot| {
+                snapshot.status = SubmissionStatus::Resolved(Box::new(Err(TxManagerError::Rpc(
+                    "reorg".to_string(),
+                ))));
+            });
         }
         if let Some(tx) = &self.l1_head_tx {
             let _ = tx.send(L1HeadEvent::NewHead(block_number));
@@ -303,23 +309,24 @@ impl L1MinerTxManager {
     }
 
     /// Submit all pending transactions/blobs to `l1`, mine one block, resolve
-    /// all waiting [`SendHandle`]s with the real mined block number, and
+    /// all waiting [`SubmissionHandle`]s with the real mined block number, and
     /// (if configured) publish the block number to the L1 head channel.
     ///
     /// # Timing
     ///
     /// Call this after `tokio::task::yield_now().await` so the spawned
     /// [`BatchDriver`] task has had one scheduling turn to process blocks, call
-    /// [`send_async`] for each submission, and suspend waiting on the oneshot
-    /// receivers.
+    /// [`submit`] for each submission, and suspend waiting on their
+    /// lifecycle handles.
     ///
     /// On a `current_thread` tokio runtime (the default for `#[tokio::test]`) a
     /// single yield is sufficient: [`InMemoryBlockSource::next`] and
-    /// [`send_async`] both complete without suspending, so the driver runs the
+    /// [`submit`] calls both complete without suspending, so the driver runs the
     /// full encoding and submission loop in one turn before sticking on
     /// `in_flight.next().await`.
     ///
-    /// [`send_async`]: L1MinerTxManager::send_async
+    /// [`BatchDriver`]: base_batcher_core::BatchDriver
+    /// [`submit`]: L1MinerTxManager::submit
     /// [`InMemoryBlockSource::next`]: base_batcher_source::test_utils::InMemoryBlockSource
     pub fn mine_block(&self, l1: &mut L1Miner) -> u64 {
         self.stage_n_to_l1(l1, usize::MAX);
@@ -394,25 +401,18 @@ impl L1MinerTxManager {
 }
 
 impl TxManager for L1MinerTxManager {
-    async fn send(&self, candidate: TxCandidate) -> SendResponse {
-        self.send_async(candidate).await.await
-    }
-
-    async fn send_async(&self, candidate: TxCandidate) -> SendHandle {
+    fn submit(&self, candidate: TxCandidate) -> SubmissionHandle {
         {
             let mut inner = self.inner.lock().unwrap();
             if inner.fail_remaining > 0 {
                 inner.fail_remaining -= 1;
-                let (tx, rx) = oneshot::channel::<SendResponse>();
-                let _ =
-                    tx.send(Err(TxManagerError::Rpc("simulated submission failure".to_string())));
-                return SendHandle::new(rx);
+                return SubmissionHandle::resolved(Err(TxManagerError::Rpc(
+                    "simulated submission failure".to_string(),
+                )));
             }
             if inner.blocked_remaining > 0 {
                 inner.blocked_remaining -= 1;
-                let (tx, rx) = oneshot::channel::<SendResponse>();
-                let _ = tx.send(Err(TxManagerError::AlreadyReserved));
-                return SendHandle::new(rx);
+                return SubmissionHandle::resolved(Err(TxManagerError::AlreadyReserved));
             }
         }
 
@@ -424,17 +424,13 @@ impl TxManager for L1MinerTxManager {
         };
         let signed = match self.sign_candidate(&candidate, nonce) {
             Ok(signed) => signed,
-            Err(e) => {
-                let (tx, rx) = oneshot::channel::<SendResponse>();
-                let _ = tx.send(Err(e));
-                return SendHandle::new(rx);
-            }
+            Err(error) => return SubmissionHandle::resolved(Err(error)),
         };
 
-        let (responder, rx) = oneshot::channel::<SendResponse>();
+        let (responder, rx) = watch::channel(SubmissionSnapshot::staged(SubmissionId::new(nonce)));
         let pending = Pending { envelope: signed.envelope, blobs: signed.blobs, responder };
         self.inner.lock().unwrap().pending.push(pending);
-        SendHandle::new(rx)
+        SubmissionHandle::new(rx)
     }
 
     fn sender_address(&self) -> Address {
@@ -486,7 +482,7 @@ mod tests {
         let manager = L1MinerTxManager::new(TxManagerFixture::signer(), inbox, 1);
         let mut l1 = L1Miner::default();
 
-        let handle = manager.send_async(TxManagerFixture::candidate(inbox)).await;
+        let handle = manager.submit(TxManagerFixture::candidate(inbox));
         assert_eq!(manager.pending_count(), 1);
         assert_eq!(manager.stage_n_to_l1(&mut l1, 1), 1);
         assert_eq!(manager.pending_count(), 0);
@@ -500,7 +496,7 @@ mod tests {
         manager.confirm_block(&block);
         assert_eq!(manager.staged_count(), 0);
 
-        let receipt = handle.await.expect("staged transaction should confirm");
+        let receipt = handle.wait().await.expect("staged transaction should confirm");
         assert_eq!(receipt.block_number, Some(block.number()));
         assert_eq!(receipt.transaction_index, Some(0));
         assert_eq!(receipt.to, Some(inbox));
@@ -515,14 +511,14 @@ mod tests {
         // a stuck transaction; the third queues normally.
         manager.block_next_n(2);
 
-        let first = manager.send_async(TxManagerFixture::candidate(inbox)).await;
-        assert!(matches!(first.await, Err(TxManagerError::AlreadyReserved)));
+        let first = manager.submit(TxManagerFixture::candidate(inbox));
+        assert!(matches!(first.wait().await, Err(TxManagerError::AlreadyReserved)));
         assert_eq!(manager.pending_count(), 0, "rejected submission must not queue");
 
-        let second = manager.send_async(TxManagerFixture::candidate(inbox)).await;
-        assert!(matches!(second.await, Err(TxManagerError::AlreadyReserved)));
+        let second = manager.submit(TxManagerFixture::candidate(inbox));
+        assert!(matches!(second.wait().await, Err(TxManagerError::AlreadyReserved)));
 
-        let _third = manager.send_async(TxManagerFixture::candidate(inbox)).await;
+        let _third = manager.submit(TxManagerFixture::candidate(inbox));
         assert_eq!(manager.pending_count(), 1, "third submission must queue normally");
     }
 

@@ -12,6 +12,9 @@ use tracing::info;
 
 use crate::{checkpoint::Checkpoint, config::Config};
 
+/// Maximum time the command waits for the dispute transaction to resolve.
+const TX_SUBMISSION_TIMEOUT: Duration = Duration::from_secs(180);
+
 /// Runner for the ZK fork dispute workflow.
 #[derive(Debug)]
 pub struct ZkForkDispute;
@@ -71,15 +74,23 @@ impl ZkForkDispute {
         let proof_bytes =
             checkpoint.request_proof(&config, challenger, l1_head, game_l2_block_number).await?;
 
-        let tx_hash = submitter
-            .submit_dispute(
+        let tx_hash = tokio::time::timeout(
+            TX_SUBMISSION_TIMEOUT,
+            submitter.submit_dispute(
                 config.game_address,
                 proof_bytes,
                 checkpoint.index,
                 checkpoint.expected_root,
                 intent,
+            ),
+        )
+        .await
+        .map_err(|_| {
+            eyre!(
+                "dispute transaction did not resolve within {TX_SUBMISSION_TIMEOUT:?}; \
+                 it may still confirm"
             )
-            .await?;
+        })??;
         info!(
             intent = ?intent,
             game = %config.game_address,
@@ -188,9 +199,7 @@ impl ZkForkDispute {
             num_confirmations: 1,
             resubmission_timeout: Duration::from_secs(10),
             receipt_query_interval: Duration::from_secs(1),
-            tx_send_timeout: Duration::from_secs(180),
             tx_not_in_mempool_timeout: Duration::from_secs(30),
-            confirmation_timeout: Duration::from_secs(120),
             ..Default::default()
         }
     }

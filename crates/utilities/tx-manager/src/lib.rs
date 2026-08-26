@@ -8,16 +8,15 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod error;
-pub use error::{RevertDisplay, RpcErrorClassifier, TxManagerError, TxManagerResult};
+pub use error::{
+    REVERT_DATA_DISPLAY_LIMIT, RevertDisplay, RpcErrorClassifier, TxManagerError, TxManagerResult,
+};
 
 mod candidate;
 pub use candidate::TxCandidate;
 
 mod fees;
 pub use fees::{BumpedFees, FeeCalculator, FeeOverride, GasPriceCaps};
-
-mod send_state;
-pub use send_state::SendState;
 
 mod macros;
 
@@ -28,16 +27,26 @@ mod signer_config;
 pub use signer_config::SignerConfig;
 
 mod traits;
-pub use traits::{SendHandle, SendResponse, TxManager};
+pub use traits::{
+    SubmissionHandle, SubmissionId, SubmissionResult, SubmissionSnapshot, SubmissionStatus,
+    TxManager,
+};
 
 mod nonce;
 pub use nonce::{NonceGuard, NonceManager, NonceState};
 
 mod manager;
-pub use manager::{PreparedTx, SimpleTxManager};
-
-mod queue;
-pub use queue::{SendResult, TxQueue};
+pub use manager::{
+    AcceptedPosition, AdmissionBudget, AttemptedPosition, ChainSweeper, CoordinatorCommand,
+    CoordinatorHandle, CoordinatorWorkers, MAX_CONCURRENT_SWEEP_QUERIES, PendingAdmission,
+    PendingLedger, PendingPolicy, PendingSlot, PendingWork, PreparedTx, PublishOutcome,
+    PublishReject, PublishedAttempt, PublisherCursor, PublisherEvent, PublisherGroup, PublisherId,
+    PublisherSnapshot, PublisherTx, ReplacementReason, ReplacementRequest,
+    SUPERSESSION_OBSERVATIONS, SignedVersion, SimpleTxManager, SlotState, StagedSubmission,
+    SubmissionCompletion, SubmissionTracker, SupersessionEvidence, SweepOutcome, SweepResolution,
+    SweepTarget, TxBuilder, TxCoordinator, TxPublisher, VersionId, VersionKind, WEI_PER_GWEI,
+    WorkerEvent,
+};
 
 mod metrics;
 pub use metrics::{BaseTxMetrics, NoopTxMetrics, TxManagerMetrics, TxMetrics};

@@ -79,7 +79,7 @@ pub enum AdminCommand {
 /// Cloneable handle to the driver's admin command channel.
 ///
 /// Create with [`AdminHandle::channel`]; wire the returned
-/// [`mpsc::Receiver`] into the driver via [`BatchDriver::with_admin_rx`].
+/// [`mpsc::Receiver`] into the driver via [`crate::BatchDriver::with_admin_rx`].
 #[derive(Clone, Debug)]
 pub struct AdminHandle {
     tx: mpsc::Sender<AdminCommand>,

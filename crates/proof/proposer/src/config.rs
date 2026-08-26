@@ -53,6 +53,10 @@ pub struct ProposerConfig {
     /// Transaction manager configuration.
     /// `None` when running in dry-run mode.
     pub tx_manager: Option<base_tx_manager::TxManagerConfig>,
+    /// Maximum time to wait for a proof submission.
+    ///
+    /// `None` disables the proposer-level deadline.
+    pub submission_timeout: Option<Duration>,
     /// Maximum number of concurrent RPC calls during the recovery scan.
     pub recovery_scan_concurrency: usize,
 }
@@ -140,6 +144,8 @@ impl ProposerConfig {
             ),
             signing,
             tx_manager,
+            submission_timeout: (!proposer.submission_timeout.is_zero())
+                .then_some(proposer.submission_timeout),
             recovery_scan_concurrency: proposer.recovery_scan_concurrency.get(),
         })
     }
@@ -197,8 +203,19 @@ mod tests {
         assert_eq!(config.retry.max_attempts, Some(7));
         assert_eq!(config.recovery_scan_concurrency, 4);
         assert_eq!(config.admin_addr.unwrap().port(), 8545);
+        assert_eq!(config.submission_timeout, Some(Duration::from_secs(600)));
         assert!(matches!(config.signing, Some(base_tx_manager::SignerConfig::Local { .. })));
         assert!(config.tx_manager.is_some());
+    }
+
+    #[test]
+    fn zero_submission_timeout_disables_the_deadline() {
+        let mut cli = minimal_cli();
+        cli.proposer.submission_timeout = Duration::ZERO;
+
+        let config = ProposerConfig::from_cli(cli).unwrap();
+
+        assert_eq!(config.submission_timeout, None);
     }
 
     #[test]

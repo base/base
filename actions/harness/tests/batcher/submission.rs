@@ -54,7 +54,7 @@ async fn batcher_errors_when_no_l2_blocks_async() {
 ///    each oneshot responder.
 /// 3. The driver processes each `Receipt(id, Failed)` → `pipeline.requeue(id)`
 ///    rewinds the encoder channel cursor. On the next loop iteration, the driver
-///    calls `submit_pending()` → `send_async()` and the frames are back in the
+///    calls `submit_pending()` → `submit()` and the frames are back in the
 ///    `L1MinerTxManager` pending queue.
 /// 4. The same batcher stages the requeued frames and mines a new L1 block on
 ///    the new fork. The verifier re-derives L2 block 1 from this block.

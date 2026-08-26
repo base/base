@@ -338,6 +338,17 @@ pub enum ProofsCommandError {
         #[source]
         source: TxManagerError,
     },
+    /// The command stopped waiting for an unresolved L1 submission.
+    #[error(
+        "verifyProposalProof submission to game {game} did not resolve within {waited:?}; \
+         the transaction manager may still confirm it"
+    )]
+    SubmissionTimeout {
+        /// The dispute game proxy address.
+        game: String,
+        /// Maximum time spent waiting for terminal resolution.
+        waited: Duration,
+    },
     /// The `verifyProposalProof` submission failed.
     #[error("verifyProposalProof submission to game {game} failed")]
     Submission {

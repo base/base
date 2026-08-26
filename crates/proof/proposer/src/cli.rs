@@ -12,7 +12,7 @@ base_cli_utils::define_log_args!("BASE_PROPOSER");
 base_cli_utils::define_metrics_args!("BASE_PROPOSER", 7300);
 base_cli_utils::define_health_args!("BASE_PROPOSER", 8080);
 base_tx_manager::define_signer_cli!("BASE_PROPOSER");
-base_tx_manager::define_tx_manager_cli!("BASE_PROPOSER", tx_send_timeout_default = "10m");
+base_tx_manager::define_tx_manager_cli!("BASE_PROPOSER");
 
 const DEFAULT_RECOVERY_SCAN_CONCURRENCY: usize = 8;
 
@@ -101,6 +101,15 @@ pub struct ProposerArgs {
         value_parser = humantime::parse_duration
     )]
     pub rpc_timeout: Duration,
+
+    /// Maximum time to wait for a proof submission. Set to "0s" to disable.
+    #[arg(
+        long = "submission-timeout",
+        env = cli_env!("SUBMISSION_TIMEOUT"),
+        default_value = "10m",
+        value_parser = humantime::parse_duration
+    )]
+    pub submission_timeout: Duration,
 
     /// URL of the rollup RPC endpoint.
     #[arg(long = "rollup-rpc", env = cli_env!("ROLLUP_RPC"))]

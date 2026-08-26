@@ -27,15 +27,15 @@ base_tx_manager::define_signer_cli!("BATCHER");
     about = "Base Batcher — submits L2 batch data to L1",
     long_about = None
 )]
-pub(crate) struct Cli {
+pub struct Cli {
     /// Batcher arguments.
     #[command(flatten)]
-    pub(crate) args: BatcherArgs,
+    pub args: BatcherArgs,
 }
 
 impl Cli {
     /// Run the batcher CLI.
-    pub(crate) fn run(self) -> eyre::Result<()> {
+    pub fn run(self) -> eyre::Result<()> {
         LogConfig::from(self.args.logging.clone()).init_tracing_subscriber()?;
         base_cli_utils::MetricsConfig::from(self.args.metrics.clone()).init_with(|| {
             base_cli_utils::register_version_metrics!();
@@ -46,7 +46,7 @@ impl Cli {
 
 /// CLI arguments for the batcher.
 #[derive(Args, Clone, Debug)]
-pub(crate) struct BatcherArgs {
+pub struct BatcherArgs {
     /// L1 RPC endpoint(s).
     ///
     /// Accepts a comma-separated list. The service connects to each in order at
@@ -54,6 +54,19 @@ pub(crate) struct BatcherArgs {
     /// startup-time fallbacks only (no per-call rotation).
     #[arg(long = "l1-rpc-url", env = "BATCHER_L1_RPC_URL", value_delimiter = ',', num_args = 1..)]
     pub l1_rpc_url: Vec<Url>,
+
+    /// Additional symmetric L1 transaction publication backends.
+    ///
+    /// Each destination preserves nonce order independently. The selected
+    /// `--l1-rpc-url` endpoint is included as an equal publication backend and
+    /// remains the separate source for chain reads and confirmations.
+    #[arg(
+        long = "publish-rpc-url",
+        env = "BATCHER_PUBLISH_RPC_URL",
+        value_delimiter = ',',
+        num_args = 1..
+    )]
+    pub publish_rpc_urls: Vec<Url>,
 
     /// L2 HTTP RPC endpoint(s) (used for all JSON-RPC calls including throttle control).
     ///
@@ -143,7 +156,7 @@ pub(crate) struct BatcherArgs {
         default_value = "blobs",
         env = "BATCHER_DATA_AVAILABILITY_TYPE"
     )]
-    da_type: base_batcher_encoder::DaType,
+    pub da_type: base_batcher_encoder::DaType,
 
     /// Maximum number of in-flight (unconfirmed) transactions.
     #[arg(
@@ -165,11 +178,11 @@ pub(crate) struct BatcherArgs {
     )]
     pub resubmission_timeout_secs: u64,
 
-    /// Maximum retries when an RPC temporarily rejects an ordered nonce.
+    /// Maximum fast retries after the initial publication attempt.
     #[arg(long = "publish-max-retries", default_value = "10", env = "BATCHER_PUBLISH_MAX_RETRIES")]
     pub publish_max_retries: usize,
 
-    /// Delay between nonce-too-high publication retries.
+    /// Delay between fast publication attempts.
     #[arg(
         long = "publish-retry-delay",
         default_value = "1s",
@@ -279,7 +292,7 @@ pub(crate) struct BatcherArgs {
 
 impl BatcherArgs {
     /// Convert CLI arguments into a [`BatcherConfig`].
-    fn into_config(self) -> eyre::Result<BatcherConfig> {
+    pub fn into_config(self) -> eyre::Result<BatcherConfig> {
         if self.shadow_mode != self.dangerously_override_batch_inbox_address.is_some() {
             eyre::bail!(
                 "--shadow-mode and --dangerously-override-batch-inbox-address must be set together"
@@ -314,6 +327,7 @@ impl BatcherArgs {
         tx_manager.validate()?;
         Ok(BatcherConfig {
             l1_rpc_url: self.l1_rpc_url,
+            publish_rpc_urls: self.publish_rpc_urls,
             l1_ws_url: self.l1_ws_url,
             l2_rpc_url: self.l2_rpc_url,
             parity_validator_l2_rpc_url: self.parity_validator_l2_rpc_url,
@@ -344,7 +358,7 @@ impl BatcherArgs {
     }
 
     /// Execute the batcher.
-    async fn exec(self) -> eyre::Result<()> {
+    pub async fn exec(self) -> eyre::Result<()> {
         let config = self.into_config()?;
         info!(
             l1_rpc_count = config.l1_rpc_url.len(),
@@ -540,8 +554,20 @@ mod tests {
         let cli = parse_cli(&[]);
         let config = cli.args.into_config().expect("config should build");
         assert_eq!(config.l1_rpc_url.len(), 1);
+        assert!(config.publish_rpc_urls.is_empty());
         assert_eq!(config.l2_rpc_url.len(), 1);
         assert_eq!(config.rollup_rpc_url.len(), 1);
+    }
+
+    #[test]
+    fn publish_rpc_urls_accept_multiple_destinations() {
+        let cli =
+            parse_cli(&["--publish-rpc-url", "http://backend-a.example,http://backend-b.example"]);
+        let config = cli.args.into_config().expect("config should build");
+
+        assert_eq!(config.publish_rpc_urls.len(), 2);
+        assert_eq!(config.publish_rpc_urls[0].as_str(), "http://backend-a.example/");
+        assert_eq!(config.publish_rpc_urls[1].as_str(), "http://backend-b.example/");
     }
 
     #[test]

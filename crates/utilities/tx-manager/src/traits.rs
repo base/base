@@ -1,62 +1,119 @@
 //! Transaction manager trait definitions.
 
-use std::{
-    fmt::Debug,
-    future::Future,
-    pin::Pin,
-    task::{Context, Poll},
-};
+use std::{fmt::Debug, future::Future};
 
 use alloy_primitives::Address;
 use alloy_rpc_types_eth::TransactionReceipt;
-use tokio::sync::oneshot;
+use tokio::sync::watch;
 
 use crate::{TxCandidate, TxManagerError, TxManagerResult};
 
-/// Result type returned by async send operations.
-pub type SendResponse = TxManagerResult<TransactionReceipt>;
+/// Terminal result returned by [`SubmissionHandle::wait`].
+pub type SubmissionResult = TxManagerResult<TransactionReceipt>;
 
-/// Handle returned by [`TxManager::send_async`] that resolves to a [`SendResponse`].
-///
-/// Wraps a `oneshot::Receiver` and maps a closed channel (sender dropped
-/// before delivering a result) into [`TxManagerError::ChannelClosed`],
-/// eliminating the two-layer `Result<SendResponse, RecvError>` callers would
-/// otherwise need to handle.
-#[derive(Debug)]
-pub struct SendHandle {
-    rx: oneshot::Receiver<SendResponse>,
-}
+/// Stable identifier assigned to one transaction submission.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct SubmissionId(u64);
 
-impl SendHandle {
-    /// Creates a new `SendHandle` from a oneshot receiver.
-    pub const fn new(rx: oneshot::Receiver<SendResponse>) -> Self {
-        Self { rx }
+impl SubmissionId {
+    /// Creates an identifier from its numeric representation.
+    pub const fn new(value: u64) -> Self {
+        Self(value)
     }
 }
 
-impl Future for SendHandle {
-    type Output = SendResponse;
+/// Observable lifecycle state of a transaction submission.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SubmissionStatus {
+    /// Waiting for nonce assignment and construction.
+    Staged,
+    /// Signed and present in the pending ledger.
+    Pending {
+        /// Assigned transaction nonce.
+        nonce: u64,
+        /// Current signed version within the nonce slot.
+        version: u32,
+    },
+    /// The submission reached its terminal result.
+    Resolved(
+        /// Confirmed receipt or terminal transaction-manager error.
+        Box<SubmissionResult>,
+    ),
+}
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        Pin::new(&mut self.get_mut().rx)
-            .poll(cx)
-            .map(|res| res.unwrap_or(Err(TxManagerError::ChannelClosed)))
+/// Observable snapshot of one transaction submission.
+#[derive(Debug, Clone)]
+pub struct SubmissionSnapshot {
+    /// Stable submission identifier.
+    pub id: SubmissionId,
+    /// Current lifecycle status.
+    pub status: SubmissionStatus,
+}
+
+impl SubmissionSnapshot {
+    /// Creates the initial staged snapshot for a submission.
+    pub const fn staged(id: SubmissionId) -> Self {
+        Self { id, status: SubmissionStatus::Staged }
+    }
+}
+
+/// Cloneable handle for observing and awaiting a transaction submission.
+#[derive(Debug, Clone)]
+pub struct SubmissionHandle {
+    /// Receiver carrying the latest lifecycle snapshot.
+    rx: watch::Receiver<SubmissionSnapshot>,
+}
+
+impl SubmissionHandle {
+    /// Creates a handle over a submission lifecycle channel.
+    pub const fn new(rx: watch::Receiver<SubmissionSnapshot>) -> Self {
+        Self { rx }
+    }
+
+    /// Creates a handle that already contains a terminal outcome.
+    pub fn resolved(outcome: SubmissionResult) -> Self {
+        let (_tx, rx) = watch::channel(SubmissionSnapshot {
+            id: SubmissionId::new(0),
+            status: SubmissionStatus::Resolved(Box::new(outcome)),
+        });
+        Self::new(rx)
+    }
+
+    /// Returns the stable submission identifier.
+    pub fn id(&self) -> SubmissionId {
+        self.rx.borrow().id
+    }
+
+    /// Returns the latest lifecycle snapshot.
+    pub fn snapshot(&self) -> SubmissionSnapshot {
+        self.rx.borrow().clone()
+    }
+
+    /// Waits until the submission reaches a terminal outcome.
+    pub async fn wait(mut self) -> SubmissionResult {
+        loop {
+            if let SubmissionStatus::Resolved(outcome) = self.rx.borrow_and_update().status.clone()
+            {
+                return *outcome;
+            }
+            if self.rx.changed().await.is_err() {
+                return Err(TxManagerError::ChannelClosed);
+            }
+        }
     }
 }
 
 /// Lean public API for transaction management.
 ///
-/// Callers only need [`send`](TxManager::send),
-/// [`send_async`](TxManager::send_async), and
-/// [`sender_address`](TxManager::sender_address).
-/// Other accessors (chain ID, block number, etc.) are available
-/// directly on [`SimpleTxManager`](crate::SimpleTxManager).
+/// Callers submit a candidate, then observe or await the returned
+/// [`SubmissionHandle`].
 pub trait TxManager: Send + Sync + Debug {
-    /// Sends a transaction and waits for its receipt.
-    fn send(&self, candidate: TxCandidate) -> impl Future<Output = SendResponse> + Send;
-
-    /// Sends a transaction asynchronously, returning a [`SendHandle`] for the result.
-    fn send_async(&self, candidate: TxCandidate) -> impl Future<Output = SendHandle> + Send;
+    /// Enqueues a transaction and returns its lifecycle handle.
+    ///
+    /// Construction and publication are coordinated in the background. Each
+    /// backend publishes in nonce order while independent backends, canonical
+    /// confirmation, and fee replacement progress concurrently.
+    fn submit(&self, candidate: TxCandidate) -> SubmissionHandle;
 
     /// Returns the address transactions are sent from.
     fn sender_address(&self) -> Address;
@@ -64,8 +121,8 @@ pub trait TxManager: Send + Sync + Debug {
     /// Attempt to cancel a stuck txpool transaction by sending a self-transfer
     /// with a higher gas price at the same nonce, freeing the slot.
     ///
-    /// Called by the batch driver when it receives [`TxOutcome::TxpoolBlocked`]
-    /// to clear the blocked slot so submission can resume.
+    /// A successful result means the cancellation transaction may be live.
+    /// Canonical confirmation can still be pending.
     ///
     /// The default implementation is a no-op that immediately returns `Ok(())`,
     /// suitable for test managers and environments where txpool management is
@@ -77,42 +134,49 @@ pub trait TxManager: Send + Sync + Debug {
 
 #[cfg(test)]
 mod tests {
-    use tokio::sync::oneshot;
-
     use super::*;
     use crate::{TxManagerError, test_utils::StubReceipt};
 
     #[tokio::test]
-    async fn send_handle_yields_ok_on_success() {
-        let (tx, rx) = oneshot::channel();
-        let handle = SendHandle::new(rx);
+    async fn submission_handle_yields_ok_on_success() {
         let receipt = StubReceipt::success();
-        tx.send(Ok(receipt.clone())).unwrap();
-        let result = handle.await;
+        let result = SubmissionHandle::resolved(Ok(receipt.clone())).wait().await;
         assert_eq!(result.unwrap(), receipt);
     }
 
     #[tokio::test]
-    async fn send_handle_yields_inner_error() {
-        let (tx, rx) = oneshot::channel();
-        let handle = SendHandle::new(rx);
-        tx.send(Err(TxManagerError::NonceTooLow)).unwrap();
-        let result = handle.await;
+    async fn submission_handle_yields_inner_error() {
+        let result = SubmissionHandle::resolved(Err(TxManagerError::NonceTooLow)).wait().await;
         assert_eq!(result.unwrap_err(), TxManagerError::NonceTooLow);
     }
 
     #[tokio::test]
-    async fn send_handle_maps_channel_closed() {
-        let (tx, rx) = oneshot::channel::<SendResponse>();
-        let handle = SendHandle::new(rx);
+    async fn submission_handle_maps_channel_closed() {
+        let (tx, rx) = watch::channel(SubmissionSnapshot::staged(SubmissionId::new(1)));
+        let handle = SubmissionHandle::new(rx);
         drop(tx);
-        let result = handle.await;
+        let result = handle.wait().await;
         assert_eq!(result.unwrap_err(), TxManagerError::ChannelClosed);
     }
 
+    #[tokio::test]
+    async fn submission_handle_observes_later_resolution() {
+        let id = SubmissionId::new(1);
+        let (status_tx, status_rx) = watch::channel(SubmissionSnapshot::staged(id));
+        let handle = SubmissionHandle::new(status_rx);
+        let receipt = StubReceipt::success();
+
+        status_tx.send_replace(SubmissionSnapshot {
+            id,
+            status: SubmissionStatus::Resolved(Box::new(Ok(receipt.clone()))),
+        });
+
+        assert_eq!(handle.wait().await.unwrap(), receipt);
+    }
+
     #[test]
-    fn send_handle_is_send() {
+    fn submission_handle_is_send() {
         fn assert_send<T: Send>() {}
-        assert_send::<SendHandle>();
+        assert_send::<SubmissionHandle>();
     }
 }

@@ -99,8 +99,6 @@ impl GweiParser {
 pub struct TxManagerConfig {
     /// Number of block confirmations to wait.
     pub num_confirmations: u64,
-    /// Nonce-too-low abort threshold.
-    pub safe_abort_nonce_too_low_count: u64,
     /// Maximum fee multiplier applied to the suggested gas price.
     pub fee_limit_multiplier: u64,
     /// Minimum suggested fee (in wei) at which the fee-limit check activates.
@@ -113,18 +111,14 @@ pub struct TxManagerConfig {
     pub network_timeout: Duration,
     /// Fee-bump resubmission timeout.
     pub resubmission_timeout: Duration,
-    /// Maximum attempts to publish when an RPC reports a transient nonce gap.
+    /// Maximum fast retries after the initial publication attempt.
     pub publish_max_retries: usize,
-    /// Delay between transient nonce-gap publication attempts.
+    /// Delay between fast publication attempts.
     pub publish_retry_delay: Duration,
     /// Receipt polling interval.
     pub receipt_query_interval: Duration,
-    /// Overall send timeout (zero = disabled).
-    pub tx_send_timeout: Duration,
-    /// Mempool appearance timeout (zero = disabled).
+    /// Maximum clean-rejection admission window (zero = disabled).
     pub tx_not_in_mempool_timeout: Duration,
-    /// Maximum time to poll for confirmation before giving up.
-    pub confirmation_timeout: Duration,
     /// Minimum blob base fee (in wei) to use for blob transactions.
     pub min_blob_fee: u128,
 }
@@ -133,7 +127,6 @@ impl Default for TxManagerConfig {
     fn default() -> Self {
         Self {
             num_confirmations: 10,
-            safe_abort_nonce_too_low_count: 3,
             fee_limit_multiplier: 5,
             fee_limit_threshold: 100_000_000_000, // 100 gwei
             min_tip_cap: 0,
@@ -143,9 +136,7 @@ impl Default for TxManagerConfig {
             publish_max_retries: 10,
             publish_retry_delay: Duration::from_secs(1),
             receipt_query_interval: Duration::from_secs(12),
-            tx_send_timeout: Duration::ZERO,
             tx_not_in_mempool_timeout: Duration::from_secs(120),
-            confirmation_timeout: Duration::from_secs(300),
             min_blob_fee: 1_000_000_000, // 1 gwei
         }
     }
@@ -158,7 +149,6 @@ impl TxManagerConfig {
     ///
     /// Returns [`ConfigError::OutOfRange`] if any required field is zero:
     /// - `num_confirmations` must be >= 1
-    /// - `safe_abort_nonce_too_low_count` must be >= 1
     /// - `fee_limit_multiplier` must be >= 1
     /// - `min_blob_fee` must be >= 1
     /// - `network_timeout` must be > 0
@@ -166,7 +156,6 @@ impl TxManagerConfig {
     /// - `publish_max_retries` must be >= 1
     /// - `publish_retry_delay` must be > 0
     /// - `receipt_query_interval` must be > 0
-    /// - `confirmation_timeout` must be > 0
     pub fn validate(&self) -> Result<(), ConfigError> {
         macro_rules! reject_zero {
             ($($field:ident),+ $(,)?) => {$(
@@ -192,18 +181,12 @@ impl TxManagerConfig {
             )+};
         }
 
-        reject_zero!(
-            num_confirmations,
-            safe_abort_nonce_too_low_count,
-            fee_limit_multiplier,
-            publish_max_retries,
-        );
+        reject_zero!(num_confirmations, fee_limit_multiplier, publish_max_retries,);
         reject_zero_duration!(
             network_timeout,
             resubmission_timeout,
             publish_retry_delay,
             receipt_query_interval,
-            confirmation_timeout,
         );
         reject_zero!(min_blob_fee);
         Ok(())
@@ -297,17 +280,6 @@ mod tests {
     #[test]
     fn default_min_blob_fee_is_one_gwei() {
         assert_eq!(TxManagerConfig::default().min_blob_fee, 1_000_000_000);
-    }
-
-    #[test]
-    fn validation_rejects_zero_confirmation_timeout() {
-        let config =
-            TxManagerConfig { confirmation_timeout: Duration::ZERO, ..TxManagerConfig::default() };
-        let err = config.validate().unwrap_err();
-        assert!(
-            matches!(err, ConfigError::OutOfRange { field: "confirmation_timeout", .. }),
-            "expected OutOfRange for confirmation_timeout, got: {err}"
-        );
     }
 
     #[test]

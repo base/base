@@ -160,16 +160,13 @@ impl FeeCalculator {
     }
 }
 
-/// Caller-supplied fee floor for transaction construction.
+/// Internal fee floor preserved across transaction versions.
 ///
-/// Used by [`crate::SimpleTxManager::prepare`] and
-/// [`crate::SimpleTxManager::craft_tx`] to enforce minimum fees during
-/// fee-bump iterations. The manager takes `max(network_fee, override)`
-/// for each component so the resulting transaction is guaranteed to meet
-/// the override thresholds even if network fees have dropped.
+/// The builder takes `max(network_fee, override)` for each component, so a
+/// newly signed version cannot fall below its predecessor when network fees
+/// decrease.
 ///
 /// Field names mirror [`GasPriceCaps`] for consistency.
-#[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FeeOverride {
     /// Minimum acceptable maximum priority fee per gas (tip).
@@ -183,34 +180,7 @@ pub struct FeeOverride {
     pub gas_limit_floor: u64,
 }
 
-impl FeeOverride {
-    /// Creates a new [`FeeOverride`] with the given tip and fee cap floors.
-    #[must_use]
-    pub const fn new(gas_tip_cap: u128, gas_fee_cap: u128) -> Self {
-        Self { gas_tip_cap, gas_fee_cap, blob_fee_cap: None, gas_limit_floor: 0 }
-    }
-
-    /// Returns a copy with the blob fee cap floor set.
-    #[must_use]
-    pub const fn with_blob_fee_cap(mut self, blob_fee_cap: u128) -> Self {
-        self.blob_fee_cap = Some(blob_fee_cap);
-        self
-    }
-
-    /// Returns a copy with the gas limit floor set.
-    #[must_use]
-    pub const fn with_gas_limit_floor(mut self, gas_limit_floor: u64) -> Self {
-        self.gas_limit_floor = gas_limit_floor;
-        self
-    }
-}
-
-/// Result of [`crate::SimpleTxManager::increase_gas_price`].
-///
-/// Contains bumped fee values that satisfy geth's tx-replacement rules
-/// and the fresh [`GasPriceCaps`] used during computation so that callers
-/// can forward them to avoid a redundant provider round-trip.
-#[non_exhaustive]
+/// Bumped fees and the network caps used to derive them.
 #[derive(Debug, Clone)]
 pub struct BumpedFees {
     /// Bumped maximum priority fee per gas (tip).
@@ -225,16 +195,18 @@ pub struct BumpedFees {
 }
 
 impl BumpedFees {
-    /// Converts the bumped fees into a [`FeeOverride`] suitable for
-    /// [`SimpleTxManager::prepare`](crate::SimpleTxManager::prepare).
+    /// Converts bumped values into floors for replacement construction.
     ///
     /// `gas_limit_floor` prevents the gas limit from decreasing across
     /// replacement attempts.
     #[must_use]
-    pub fn to_fee_override(&self, gas_limit_floor: u64) -> FeeOverride {
-        let fo = FeeOverride::new(self.gas_tip_cap, self.gas_fee_cap)
-            .with_gas_limit_floor(gas_limit_floor);
-        self.blob_fee_cap.map_or(fo, |blob_cap| fo.with_blob_fee_cap(blob_cap))
+    pub const fn to_fee_override(&self, gas_limit_floor: u64) -> FeeOverride {
+        FeeOverride {
+            gas_tip_cap: self.gas_tip_cap,
+            gas_fee_cap: self.gas_fee_cap,
+            blob_fee_cap: self.blob_fee_cap,
+            gas_limit_floor,
+        }
     }
 }
 
@@ -242,7 +214,6 @@ impl BumpedFees {
 ///
 /// Used between fee calculation and transaction construction to carry
 /// the tip cap, base fee cap, and optional blob fee cap.
-#[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GasPriceCaps {
     /// Maximum priority fee per gas (tip).

@@ -4,12 +4,13 @@
 //! Delegates all transaction lifecycle management (nonce, fees, signing, resubmission)
 //! to the shared [`TxManager`].
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, U256, keccak256};
 use async_trait::async_trait;
 use base_proof_contracts::{encode_create_calldata, encode_extra_data};
 use base_proof_primitives::{ProofEncoder, Proposal};
-use base_proof_submission::{AggregateProofSubmitter, ProofSubmissionError};
-use base_tx_manager::{TxCandidate, TxManager};
+use base_proof_submission::ProofSubmissionError;
+use base_tx_manager::{SubmissionHandle, SubmissionResult, TxCandidate, TxManager};
+use tokio::sync::Mutex;
 use tracing::info;
 
 use crate::error::ProposerError;
@@ -73,21 +74,95 @@ impl OutputProposer for DryRunProposer {
 /// Submits output proposals to L1 via the [`TxManager`].
 #[derive(Debug)]
 pub struct ProposalSubmitter<T> {
+    /// Transaction lifecycle service used for L1 publication.
     tx_manager: T,
+    /// Dispute-game factory receiving proposal transactions.
     factory_address: Address,
+    /// On-chain game type encoded into proposal calldata.
     game_type: u32,
+    /// ETH bond attached to each new game transaction.
     init_bond: U256,
+    /// Detached submission reconciled before another proposal may be sent.
+    pending: Mutex<Option<PendingSubmission>>,
+}
+
+/// Status retained when a proposal caller detaches before nonce resolution.
+#[derive(Debug, Clone)]
+struct PendingSubmission {
+    /// Stable identity of every field shaping the submitted transaction.
+    fingerprint: B256,
+    /// Persistent handle used to recover the eventual terminal outcome.
+    handle: SubmissionHandle,
 }
 
 impl<T> ProposalSubmitter<T> {
     /// Creates a new [`ProposalSubmitter`] backed by the given transaction manager.
-    pub const fn new(
-        tx_manager: T,
-        factory_address: Address,
-        game_type: u32,
-        init_bond: U256,
-    ) -> Self {
-        Self { tx_manager, factory_address, game_type, init_bond }
+    pub fn new(tx_manager: T, factory_address: Address, game_type: u32, init_bond: U256) -> Self {
+        Self { tx_manager, factory_address, game_type, init_bond, pending: Mutex::new(None) }
+    }
+}
+
+impl<T: TxManager> ProposalSubmitter<T> {
+    /// Submits one candidate without duplicating a detached matching operation.
+    ///
+    /// The retained handle survives the proposer's outer timeout. A later
+    /// pipeline retry first reconciles that submission before it may allocate
+    /// another nonce.
+    async fn submit_candidate(&self, candidate: TxCandidate) -> SubmissionResult {
+        let fingerprint = Self::candidate_fingerprint(&candidate);
+        let (handle, submission_id) = {
+            // Phase 1: serialize lifecycle hand-off. The guard may wait for an
+            // older detached nonce, but no RPC or signing work runs under it.
+            let mut pending = self.pending.lock().await;
+            if let Some(existing) = pending.clone() {
+                let outcome = existing.handle.wait().await;
+                *pending = None;
+
+                // An outer timeout retries the same proposal. Reuse the prior
+                // terminal outcome rather than submitting identical calldata
+                // at the next nonce.
+                if existing.fingerprint == fingerprint {
+                    return outcome;
+                }
+            }
+
+            // Phase 2: retain a clone before awaiting. If this future is
+            // dropped, the next invocation can still reconcile the submission.
+            let handle = self.tx_manager.submit(candidate);
+            let submission_id = handle.id();
+            *pending = Some(PendingSubmission { fingerprint, handle: handle.clone() });
+            (handle, submission_id)
+        };
+
+        // Phase 3: wait until the manager resolves nonce ownership.
+        let outcome = handle.wait().await;
+        // Clear only our own generation; another invocation may already have
+        // installed a later submission after reconciling this one.
+        let mut pending = self.pending.lock().await;
+        if pending.as_ref().is_some_and(|current| current.handle.id() == submission_id) {
+            *pending = None;
+        }
+        outcome
+    }
+
+    /// Computes a stable identity for every transaction-shaping candidate field.
+    fn candidate_fingerprint(candidate: &TxCandidate) -> B256 {
+        let mut encoded =
+            Vec::with_capacity(1 + Address::len_bytes() + 8 + 32 + candidate.tx_data.len());
+        match candidate.to {
+            Some(to) => {
+                encoded.push(1);
+                encoded.extend_from_slice(to.as_slice());
+            }
+            None => encoded.push(0),
+        }
+        encoded.extend_from_slice(&candidate.gas_limit.to_be_bytes());
+        encoded.extend_from_slice(&candidate.value.to_be_bytes::<32>());
+        encoded.extend_from_slice(&candidate.tx_data);
+        for blob in candidate.blobs.iter() {
+            encoded.extend_from_slice(keccak256(blob.as_slice()).as_slice());
+        }
+        keccak256(encoded)
     }
 }
 
@@ -105,7 +180,6 @@ impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
         let extra_data = encode_extra_data(l2_block_number, parent_address, intermediate_roots);
         let calldata =
             encode_create_calldata(self.game_type, proposal.output_root, extra_data, proof_data);
-
         let candidate = TxCandidate {
             tx_data: calldata,
             to: Some(self.factory_address),
@@ -122,7 +196,7 @@ impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
             "Creating dispute game"
         );
 
-        let receipt = self.tx_manager.send(candidate).await.map_err(ProofSubmissionError::from)?;
+        let receipt = self.submit_candidate(candidate).await.map_err(ProofSubmissionError::from)?;
 
         if !receipt.inner.status() {
             return Err(ProofSubmissionError::TxReverted(receipt.transaction_hash).into());
@@ -153,9 +227,16 @@ impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
             "Attaching proof to existing dispute game"
         );
 
-        let receipt = AggregateProofSubmitter::new(&self.tx_manager)
-            .verify_proposal_proof(game_address, proof_bytes)
-            .await?;
+        let candidate = TxCandidate {
+            tx_data: base_proof_contracts::encode_verify_proposal_proof_calldata(proof_bytes),
+            to: Some(game_address),
+            value: U256::ZERO,
+            ..Default::default()
+        };
+        let receipt = self.submit_candidate(candidate).await.map_err(ProofSubmissionError::from)?;
+        if !receipt.inner.status() {
+            return Err(ProofSubmissionError::TxReverted(receipt.transaction_hash).into());
+        }
 
         info!(
             tx_hash = %receipt.transaction_hash,
@@ -170,10 +251,20 @@ impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        Arc, Mutex as StdMutex,
+        atomic::{AtomicUsize, Ordering},
+    };
+    use std::time::Duration;
+
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
     use alloy_primitives::{Address, Bloom};
     use alloy_rpc_types_eth::TransactionReceipt;
-    use base_tx_manager::{SendHandle, SendResponse, TxManagerError};
+    use base_tx_manager::{
+        SubmissionHandle, SubmissionId, SubmissionResult, SubmissionSnapshot, SubmissionStatus,
+        TxManagerError,
+    };
+    use tokio::sync::watch;
 
     use super::*;
     use crate::test_utils::test_proposal;
@@ -203,7 +294,7 @@ mod tests {
         }
     }
 
-    fn test_submitter(response: SendResponse) -> ProposalSubmitter<MockTxManager> {
+    fn test_submitter(response: SubmissionResult) -> ProposalSubmitter<MockTxManager> {
         ProposalSubmitter::new(
             MockTxManager { response },
             Address::repeat_byte(0x01),
@@ -214,16 +305,12 @@ mod tests {
 
     #[derive(Debug)]
     struct MockTxManager {
-        response: SendResponse,
+        response: SubmissionResult,
     }
 
     impl TxManager for MockTxManager {
-        async fn send(&self, _candidate: TxCandidate) -> SendResponse {
-            self.response.clone()
-        }
-
-        async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
-            unimplemented!("not needed for these tests")
+        fn submit(&self, _candidate: TxCandidate) -> SubmissionHandle {
+            SubmissionHandle::resolved(self.response.clone())
         }
 
         fn sender_address(&self) -> Address {
@@ -253,5 +340,72 @@ mod tests {
             ),
             "expected TxManager(NonceTooLow), got {err:?}",
         );
+    }
+
+    #[derive(Debug, Clone, Default)]
+    struct TrackingTxManager {
+        inner: Arc<TrackingTxManagerInner>,
+    }
+
+    #[derive(Debug, Default)]
+    struct TrackingTxManagerInner {
+        sends: AtomicUsize,
+        pending: StdMutex<Option<watch::Sender<SubmissionSnapshot>>>,
+    }
+
+    impl TrackingTxManager {
+        fn send_count(&self) -> usize {
+            self.inner.sends.load(Ordering::SeqCst)
+        }
+
+        fn resolve(&self, outcome: SubmissionResult) {
+            let status_tx = self.inner.pending.lock().unwrap().take().unwrap();
+            status_tx.send_replace(SubmissionSnapshot {
+                id: SubmissionId::new(1),
+                status: SubmissionStatus::Resolved(Box::new(outcome)),
+            });
+        }
+    }
+
+    impl TxManager for TrackingTxManager {
+        fn submit(&self, _candidate: TxCandidate) -> SubmissionHandle {
+            self.inner.sends.fetch_add(1, Ordering::SeqCst);
+            let (status_tx, status_rx) =
+                watch::channel(SubmissionSnapshot::staged(SubmissionId::new(1)));
+            *self.inner.pending.lock().unwrap() = Some(status_tx);
+            SubmissionHandle::new(status_rx)
+        }
+
+        fn sender_address(&self) -> Address {
+            Address::ZERO
+        }
+    }
+
+    #[tokio::test]
+    async fn retry_waits_for_detached_matching_submission() {
+        let manager = TrackingTxManager::default();
+        let submitter =
+            ProposalSubmitter::new(manager.clone(), Address::repeat_byte(1), 1, U256::from(100));
+        let proposal = test_proposal(200);
+
+        let first = tokio::time::timeout(
+            Duration::from_millis(1),
+            submitter.propose_output(&proposal, Address::ZERO, &[]),
+        )
+        .await;
+        assert!(first.is_err());
+        assert_eq!(manager.send_count(), 1);
+
+        let retry = submitter.propose_output(&proposal, Address::ZERO, &[]);
+        tokio::pin!(retry);
+        tokio::select! {
+            result = &mut retry => panic!("retry resolved before detached submission: {result:?}"),
+            () = tokio::time::sleep(Duration::from_millis(1)) => {}
+        }
+        assert_eq!(manager.send_count(), 1);
+
+        manager.resolve(Ok(receipt_with_status(true)));
+        retry.await.unwrap();
+        assert_eq!(manager.send_count(), 1);
     }
 }

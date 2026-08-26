@@ -64,7 +64,8 @@ impl<'a, T: TxManager> AggregateProofSubmitter<'a, T> {
             ..Default::default()
         };
 
-        let receipt = self.tx_manager.send(candidate).await.map_err(ProofSubmissionError::from)?;
+        let receipt =
+            self.tx_manager.submit(candidate).wait().await.map_err(ProofSubmissionError::from)?;
         let tx_hash = receipt.transaction_hash;
 
         if !receipt.inner.status() {
@@ -82,7 +83,9 @@ mod tests {
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
     use alloy_primitives::{Address, B256, Bloom, Bytes, U256};
     use alloy_rpc_types_eth::TransactionReceipt;
-    use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError};
+    use base_tx_manager::{
+        SubmissionHandle, SubmissionResult, TxCandidate, TxManager, TxManagerError,
+    };
 
     use super::AggregateProofSubmitter;
     use crate::{ChallengeProofSubmission, NullifyProofSubmission, ProofSubmissionError};
@@ -114,12 +117,12 @@ mod tests {
 
     #[derive(Debug)]
     struct MockTxManager {
-        response: Mutex<Option<SendResponse>>,
+        response: Mutex<Option<SubmissionResult>>,
         candidate: Mutex<Option<TxCandidate>>,
     }
 
     impl MockTxManager {
-        fn new(response: SendResponse) -> Self {
+        fn new(response: SubmissionResult) -> Self {
             Self { response: Mutex::new(Some(response)), candidate: Mutex::new(None) }
         }
 
@@ -129,13 +132,15 @@ mod tests {
     }
 
     impl TxManager for MockTxManager {
-        async fn send(&self, candidate: TxCandidate) -> SendResponse {
+        fn submit(&self, candidate: TxCandidate) -> SubmissionHandle {
             *self.candidate.lock().unwrap() = Some(candidate);
-            self.response.lock().unwrap().take().expect("MockTxManager response already consumed")
-        }
-
-        async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
-            unimplemented!("not needed for these tests")
+            SubmissionHandle::resolved(
+                self.response
+                    .lock()
+                    .unwrap()
+                    .take()
+                    .expect("MockTxManager response already consumed"),
+            )
         }
 
         fn sender_address(&self) -> Address {

@@ -21,7 +21,7 @@ const CHAIN_ID_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Upper bound for the full `verifyProposalProof` send loop, fee bumps
 /// included, so a post-publication RPC outage cannot hang the command.
-const TX_SEND_TIMEOUT: Duration = Duration::from_secs(600);
+const TX_SUBMISSION_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Parsed L1 submitter private key for `basectl proofs submit`.
 ///
@@ -147,7 +147,7 @@ pub struct SubmittedProof {
 /// Sends `AggregateVerifier.verifyProposalProof` transactions to L1 dispute
 /// games, signed by a [`SubmitterKey`].
 pub struct ProposalProofSubmitter {
-    tx_manager: SimpleTxManager<RootProvider>,
+    tx_manager: SimpleTxManager,
 }
 
 impl fmt::Debug for ProposalProofSubmitter {
@@ -179,11 +179,7 @@ impl ProposalProofSubmitter {
                 endpoint: l1_rpc.origin().ascii_serialization(),
                 source: TxManagerError::Rpc("fetching L1 chain ID failed".to_string()),
             })?;
-        let config = TxManagerConfig {
-            num_confirmations: 1,
-            tx_send_timeout: TX_SEND_TIMEOUT,
-            ..TxManagerConfig::default()
-        };
+        let config = TxManagerConfig { num_confirmations: 1, ..TxManagerConfig::default() };
         let tx_manager = SimpleTxManager::new(
             provider,
             SignerConfig::local(key.signer),
@@ -207,15 +203,21 @@ impl ProposalProofSubmitter {
         proof: Bytes,
     ) -> Result<SubmittedProof, ProofsCommandError> {
         let submitter = AggregateProofSubmitter::new(&self.tx_manager);
-        let receipt = submitter.verify_proposal_proof(game, proof).await.map_err(|source| {
-            let source = match source {
-                ProofSubmissionError::TxManager(error) => {
-                    ProofSubmissionError::TxManager(Self::sanitize_tx_manager_error(error))
-                }
-                other => other,
-            };
-            ProofsCommandError::Submission { game: game.to_string(), source }
-        })?;
+        let receipt = timeout(TX_SUBMISSION_TIMEOUT, submitter.verify_proposal_proof(game, proof))
+            .await
+            .map_err(|_| ProofsCommandError::SubmissionTimeout {
+                game: game.to_string(),
+                waited: TX_SUBMISSION_TIMEOUT,
+            })?
+            .map_err(|source| {
+                let source = match source {
+                    ProofSubmissionError::TxManager(error) => {
+                        ProofSubmissionError::TxManager(Self::sanitize_tx_manager_error(error))
+                    }
+                    other => other,
+                };
+                ProofsCommandError::Submission { game: game.to_string(), source }
+            })?;
         Ok(SubmittedProof {
             tx_hash: receipt.transaction_hash,
             block_number: receipt.block_number,

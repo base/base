@@ -6,17 +6,22 @@ use thiserror::Error;
 
 /// Maximum number of revert-data bytes rendered in [`RevertDisplay`].
 /// Keeps log lines bounded without hiding the selector and first few args.
-const REVERT_DATA_DISPLAY_LIMIT: usize = 128;
+pub const REVERT_DATA_DISPLAY_LIMIT: usize = 128;
 
 /// Display helper for the [`TxManagerError::ExecutionReverted`] variant.
 ///
 /// Formats the optional reason and data into a human-readable suffix:
 /// - `: <reason>` when a decoded reason is available.
 /// - `: 0x<hex>` when only raw data is present (truncated to
-///   [`REVERT_DATA_DISPLAY_LIMIT`] bytes).
+///   128 bytes).
 /// - Empty string when neither is available.
 #[derive(Debug)]
-pub struct RevertDisplay<'a>(Option<&'a str>, Option<&'a Bytes>);
+pub struct RevertDisplay<'a>(
+    /// Decoded revert reason, when available.
+    pub Option<&'a str>,
+    /// Raw revert data, when available.
+    pub Option<&'a Bytes>,
+);
 
 impl std::fmt::Display for RevertDisplay<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -72,15 +77,6 @@ pub enum TxManagerError {
         data: Option<Bytes>,
     },
 
-    /// Mempool inclusion deadline expired.
-    #[error("mempool deadline expired")]
-    MempoolDeadlineExpired,
-
-    /// A runtime-backed mempool deadline was checked without a runtime
-    /// timestamp.
-    #[error("runtime mempool deadline requires critical_error_at")]
-    RuntimeMempoolDeadlineMissingTimestamp,
-
     /// Nonce slot was already reserved.
     #[error("nonce already reserved")]
     AlreadyReserved,
@@ -102,9 +98,9 @@ pub enum TxManagerError {
 
     /// Calculated fee exceeds the configured fee-limit ceiling.
     ///
-    /// Returned by [`crate::FeeCalculator::check_limits`] when the proposed fee
-    /// surpasses `fee_limit_multiplier × suggested_fee` and the suggested
-    /// fee is at or above `fee_limit_threshold`. Non-retryable.
+    /// Returned when a proposed fee surpasses
+    /// `fee_limit_multiplier × suggested_fee` and the suggested fee is at or
+    /// above `fee_limit_threshold`. Non-retryable.
     #[error("fee limit exceeded: fee {fee} exceeds ceiling {ceiling}")]
     FeeLimitExceeded {
         /// The proposed fee that was rejected.
@@ -112,14 +108,6 @@ pub enum TxManagerError {
         /// The ceiling that was exceeded (`fee_limit_multiplier × suggested`).
         ceiling: u128,
     },
-
-    /// The `safe_abort_nonce_too_low_count` threshold was set to zero.
-    ///
-    /// A zero threshold would cause the send loop to abort on the very first
-    /// nonce-too-low error after a successful publish, making fee bumps
-    /// impossible.
-    #[error("invalid safe_abort_nonce_too_low_count: must be greater than 0")]
-    InvalidSafeAbortNonceTooLowCount,
 
     /// Feature or transaction type is not supported.
     ///
@@ -136,11 +124,21 @@ pub enum TxManagerError {
     #[error("signing failed: {0}")]
     Sign(String),
 
-    /// The outer send timeout elapsed before the transaction was confirmed.
-    ///
-    /// Non-retryable because the caller's deadline has already been exceeded.
-    #[error("send timed out")]
-    SendTimeout,
+    /// The nonce was consumed by a transaction not published by this manager instance.
+    #[error("transaction was superseded")]
+    Superseded,
+
+    /// A cancellation transaction consumed the nonce.
+    #[error("transaction was cancelled")]
+    Cancelled,
+
+    /// Another cancellation request already owns the target slot.
+    #[error("transaction cancellation already in progress")]
+    CancellationInProgress,
+
+    /// The process exhausted the submission identifier space.
+    #[error("submission identifier overflow")]
+    SubmissionIdOverflow,
 
     /// Configuration is invalid.
     ///
@@ -181,19 +179,59 @@ pub enum TxManagerError {
     #[error("transaction already known")]
     AlreadyKnown,
 
-    /// Unclassified RPC error preserving the original error string.
+    /// The RPC request failed before a server response was received.
+    ///
+    /// For transaction publication this outcome is ambiguous: the request may
+    /// have reached the node even though the response was lost. Callers must
+    /// not assume that the transaction was rejected or reuse its nonce.
+    #[error("transport error: {0}")]
+    Transport(String),
+
+    /// Unclassified server error preserving the original error string.
     ///
     /// This variant is treated as retryable by [`TxManagerError::is_retryable`]
-    /// because unknown errors may be transient. Callers **must** enforce bounded
-    /// retry counts and exponential backoff to prevent retry storms from
-    /// persistent, non-transient errors that happen to be unclassified.
+    /// because unknown responses may be transient. During publication an
+    /// unclassified response is handled conservatively because middleware may
+    /// have forwarded the transaction before returning an error.
     #[error("rpc error: {0}")]
     Rpc(String),
 }
 
 impl TxManagerError {
+    /// Returns a stable, non-sensitive category for structured logging.
+    #[must_use]
+    pub const fn kind(&self) -> &'static str {
+        match self {
+            Self::NonceTooLow => "nonce_too_low",
+            Self::NonceTooHigh => "nonce_too_high",
+            Self::InsufficientFunds => "insufficient_funds",
+            Self::IntrinsicGasTooLow => "intrinsic_gas_too_low",
+            Self::ExecutionReverted { .. } => "execution_reverted",
+            Self::AlreadyReserved => "already_reserved",
+            Self::Underpriced => "underpriced",
+            Self::ReplacementUnderpriced => "replacement_underpriced",
+            Self::FeeTooLow => "fee_too_low",
+            Self::MaxFeePerGasTooLow => "max_fee_per_gas_too_low",
+            Self::AlreadyKnown => "already_known",
+            Self::Transport(_) => "transport",
+            Self::Rpc(_) => "rpc",
+            Self::ChannelClosed => "channel_closed",
+            Self::FeeLimitExceeded { .. } => "fee_limit_exceeded",
+            Self::NonceOverflow => "nonce_overflow",
+            Self::NonceAcquisitionFailed => "nonce_acquisition_failed",
+            Self::Unsupported(_) => "unsupported",
+            Self::Sign(_) => "sign",
+            Self::InvalidConfig(_) => "invalid_config",
+            Self::WalletConstruction(_) => "wallet_construction",
+            Self::Superseded => "superseded",
+            Self::Cancelled => "cancelled",
+            Self::CancellationInProgress => "cancellation_in_progress",
+            Self::SubmissionIdOverflow => "submission_id_overflow",
+        }
+    }
+
     /// Returns `true` if this error is transient or can be resolved by
-    /// bumping fees, meaning the send loop should retry.
+    /// bumping fees, meaning the publication loop should retry.
     ///
     /// Fee/replacement errors and infrastructure errors are retryable.
     /// Critical errors (nonce conflicts, insufficient funds, reverts,
@@ -204,38 +242,38 @@ impl TxManagerError {
     /// The [`Rpc`](Self::Rpc) fallback is conservatively treated as retryable.
     /// Callers **must** enforce a maximum retry count with exponential backoff
     /// to avoid unbounded retries on persistent, non-transient errors that are
-    /// unrecognized by [`RpcErrorClassifier::classify_rpc_error`].
+    /// unrecognized by the internal RPC classifier.
     #[must_use]
     pub const fn is_retryable(&self) -> bool {
         matches!(
             self,
-            Self::NonceTooHigh
-                | Self::Underpriced
+            Self::Underpriced
                 | Self::ReplacementUnderpriced
                 | Self::FeeTooLow
                 | Self::MaxFeePerGasTooLow
                 | Self::AlreadyKnown
+                | Self::Transport(_)
                 | Self::Rpc(_)
         )
     }
 
     /// Returns `true` only for [`TxManagerError::AlreadyKnown`].
     ///
-    /// The send loop uses this to distinguish "already in mempool" (a
+    /// The publication loop uses this to distinguish "already in mempool" (a
     /// success on resubmission) from actual errors.
     #[must_use]
     pub const fn is_already_known(&self) -> bool {
         matches!(self, Self::AlreadyKnown)
     }
 
-    /// Returns `true` only for [`TxManagerError::Rpc`].
+    /// Returns `true` for RPC transport and server errors.
     ///
     /// Used to gate RPC error metric recording so that recognised state
     /// errors (e.g. `NonceTooLow`, `ExecutionReverted`) do not inflate the
     /// RPC error counter.
     #[must_use]
     pub const fn is_rpc_error(&self) -> bool {
-        matches!(self, Self::Rpc(_))
+        matches!(self, Self::Transport(_) | Self::Rpc(_))
     }
 }
 
@@ -246,15 +284,16 @@ pub type TxManagerResult<T> = Result<T, TxManagerError>;
 /// variants.
 ///
 /// This mirrors the Go `txmgr` `errStringMatch` approach, enabling
-/// the send loop to make retry/abort decisions based on error type.
+/// the publication loop to make retry/abort decisions based on error type.
 ///
-/// For server-returned errors ([`RpcError::ErrorResp`]), classification uses
-/// the structured [`ErrorPayload`] directly — matching on `payload.message`
+/// For server-returned `RpcError::ErrorResp` values, classification uses
+/// the structured `ErrorPayload` directly — matching on `payload.message`
 /// for known geth substrings and extracting revert data via
-/// [`ErrorPayload::as_revert_data`] + [`alloy_sol_types::decode_revert_reason`].
+/// `ErrorPayload::as_revert_data` and
+/// [`alloy_sol_types::decode_revert_reason`].
 ///
 /// Other `RpcError` variants (transport failures, serialisation errors, etc.)
-/// fall through to [`TxManagerError::Rpc`].
+/// fall through to [`TxManagerError::Transport`].
 ///
 /// # Limitations
 ///
@@ -262,10 +301,6 @@ pub type TxManagerResult<T> = Result<T, TxManagerError>;
 /// clients (Erigon, Besu, Nethermind) may use different wording for
 /// equivalent errors, causing them to fall through to the
 /// [`TxManagerError::Rpc`] fallback.
-///
-/// [`RpcError::ErrorResp`]: alloy_json_rpc::RpcError::ErrorResp
-/// [`ErrorPayload`]: alloy_json_rpc::ErrorPayload
-/// [`ErrorPayload::as_revert_data`]: alloy_json_rpc::ErrorPayload::as_revert_data
 #[derive(Debug)]
 pub struct RpcErrorClassifier;
 
@@ -281,8 +316,7 @@ impl RpcErrorClassifier {
     /// substring of the former.
     ///
     /// For `"execution reverted"` errors, structured revert data is
-    /// extracted from the [`ErrorPayload`] via
-    /// [`as_revert_data`](alloy_json_rpc::ErrorPayload::as_revert_data)
+    /// extracted from the `ErrorPayload` via `ErrorPayload::as_revert_data`
     /// and decoded with [`alloy_sol_types::decode_revert_reason`].
     ///
     /// Unrecognised server messages preserve their original text. Non-server
@@ -291,10 +325,18 @@ impl RpcErrorClassifier {
     #[must_use]
     pub fn classify_rpc_error(error: &TransportError) -> TxManagerError {
         let Some(payload) = error.as_error_resp() else {
-            return TxManagerError::Rpc("transport request failed".to_string());
+            return TxManagerError::Transport(
+                "request failed before a server response".to_string(),
+            );
         };
 
         let lowered = payload.message.to_ascii_lowercase();
+        if matches!(payload.code, -32700 | -32600 | -32601 | -32602) {
+            return TxManagerError::Unsupported(format!(
+                "RPC rejected transaction request with code {}",
+                payload.code
+            ));
+        }
 
         if lowered.contains("replacement transaction underpriced") {
             return TxManagerError::ReplacementUnderpriced;
@@ -335,19 +377,13 @@ impl RpcErrorClassifier {
         if lowered.contains("already known") || lowered.contains("transaction already in pool") {
             return TxManagerError::AlreadyKnown;
         }
+        if lowered.contains("nonce already reserved")
+            || lowered.contains("address already reserved")
+        {
+            return TxManagerError::AlreadyReserved;
+        }
 
         TxManagerError::Rpc(payload.message.to_string())
-    }
-
-    /// Returns `true` if `error_msg` contains any of the given substrings
-    /// (compared case-insensitively).
-    ///
-    /// This enables callers to define custom error matching sets beyond the
-    /// built-in [`RpcErrorClassifier::classify_rpc_error`] classification.
-    #[must_use]
-    pub fn err_string_contains_any(error_msg: &str, substrings: &[&str]) -> bool {
-        let lowered = error_msg.to_lowercase();
-        substrings.iter().any(|s| lowered.contains(&s.to_lowercase()))
     }
 }
 
@@ -368,6 +404,10 @@ mod tests {
             message: Cow::Owned(msg.to_string()),
             data: None,
         })
+    }
+
+    fn error_resp_with_code(code: i64, msg: &str) -> TransportError {
+        RpcError::ErrorResp(ErrorPayload { code, message: Cow::Owned(msg.to_string()), data: None })
     }
 
     /// Helper: build a [`TransportError`] with message and raw JSON data.
@@ -411,17 +451,28 @@ mod tests {
     #[case::preserves_casing("Some Unknown ERROR", TxManagerError::Rpc("Some Unknown ERROR".to_string()))]
     #[case::empty_string("", TxManagerError::Rpc(String::new()))]
     #[case::mempool_deadline_not_classified("mempool deadline expired", TxManagerError::Rpc("mempool deadline expired".to_string()))]
-    #[case::already_reserved_not_classified("nonce already reserved", TxManagerError::Rpc("nonce already reserved".to_string()))]
+    #[case::nonce_already_reserved("nonce already reserved", TxManagerError::AlreadyReserved)]
+    #[case::address_already_reserved("address already reserved", TxManagerError::AlreadyReserved)]
     fn classify_rpc_error(#[case] input: &str, #[case] expected: TxManagerError) {
         let transport_err = error_resp(input);
         assert_eq!(RpcErrorClassifier::classify_rpc_error(&transport_err), expected);
     }
 
     #[test]
-    fn classify_non_error_resp_falls_through_to_rpc() {
+    fn classify_non_error_resp_as_transport() {
         let err: TransportError = RpcError::Transport(TransportErrorKind::BackendGone);
         let classified = RpcErrorClassifier::classify_rpc_error(&err);
-        assert!(matches!(classified, TxManagerError::Rpc(_)));
+        assert!(matches!(classified, TxManagerError::Transport(_)));
+    }
+
+    #[test]
+    fn classify_standard_request_errors_as_deterministic() {
+        for code in [-32700, -32600, -32601, -32602] {
+            assert!(matches!(
+                RpcErrorClassifier::classify_rpc_error(&error_resp_with_code(code, "rejected")),
+                TxManagerError::Unsupported(_)
+            ));
+        }
     }
 
     #[test]
@@ -431,38 +482,39 @@ mod tests {
             "error sending request for url (https://user:password@l1.example/v3/api-key?token=secret)",
         );
         let classified = RpcErrorClassifier::classify_rpc_error(&err);
-        assert_eq!(classified, TxManagerError::Rpc("transport request failed".to_string()));
+        assert_eq!(
+            classified,
+            TxManagerError::Transport("request failed before a server response".to_string())
+        );
     }
 
     // ── is_retryable ────────────────────────────────────────────────────
 
     #[rstest]
     #[case::nonce_too_low(TxManagerError::NonceTooLow, false)]
-    #[case::nonce_too_high(TxManagerError::NonceTooHigh, true)]
+    #[case::nonce_too_high(TxManagerError::NonceTooHigh, false)]
     #[case::insufficient_funds(TxManagerError::InsufficientFunds, false)]
     #[case::intrinsic_gas_too_low(TxManagerError::IntrinsicGasTooLow, false)]
     #[case::execution_reverted(TxManagerError::ExecutionReverted { reason: None, data: None }, false)]
-    #[case::mempool_deadline(TxManagerError::MempoolDeadlineExpired, false)]
-    #[case::runtime_mempool_deadline_missing_timestamp(
-        TxManagerError::RuntimeMempoolDeadlineMissingTimestamp,
-        false
-    )]
     #[case::already_reserved(TxManagerError::AlreadyReserved, false)]
     #[case::channel_closed(TxManagerError::ChannelClosed, false)]
     #[case::fee_limit_exceeded(TxManagerError::FeeLimitExceeded { fee: 0, ceiling: 0 }, false)]
-    #[case::invalid_safe_abort(TxManagerError::InvalidSafeAbortNonceTooLowCount, false)]
     #[case::nonce_overflow(TxManagerError::NonceOverflow, false)]
     #[case::nonce_acquisition_failed(TxManagerError::NonceAcquisitionFailed, false)]
     #[case::unsupported(TxManagerError::Unsupported("test".to_string()), false)]
     #[case::sign(TxManagerError::Sign("test".to_string()), false)]
     #[case::invalid_config(TxManagerError::InvalidConfig("test".to_string()), false)]
     #[case::wallet_construction(TxManagerError::WalletConstruction("test".to_string()), false)]
-    #[case::send_timeout(TxManagerError::SendTimeout, false)]
+    #[case::superseded(TxManagerError::Superseded, false)]
+    #[case::cancelled(TxManagerError::Cancelled, false)]
+    #[case::cancellation_in_progress(TxManagerError::CancellationInProgress, false)]
+    #[case::submission_id_overflow(TxManagerError::SubmissionIdOverflow, false)]
     #[case::underpriced(TxManagerError::Underpriced, true)]
     #[case::replacement_underpriced(TxManagerError::ReplacementUnderpriced, true)]
     #[case::fee_too_low(TxManagerError::FeeTooLow, true)]
     #[case::max_fee_too_low(TxManagerError::MaxFeePerGasTooLow, true)]
     #[case::already_known(TxManagerError::AlreadyKnown, true)]
+    #[case::transport(TxManagerError::Transport("request failed".to_string()), true)]
     #[case::rpc(TxManagerError::Rpc("any error".to_string()), true)]
     fn is_retryable(#[case] error: TxManagerError, #[case] expected: bool) {
         assert_eq!(error.is_retryable(), expected);
@@ -476,7 +528,6 @@ mod tests {
     #[case::underpriced(TxManagerError::Underpriced, false)]
     #[case::rpc_with_already_known_text(TxManagerError::Rpc("already known".to_string()), false)]
     #[case::channel_closed(TxManagerError::ChannelClosed, false)]
-    #[case::invalid_safe_abort(TxManagerError::InvalidSafeAbortNonceTooLowCount, false)]
     fn is_already_known(#[case] error: TxManagerError, #[case] expected: bool) {
         assert_eq!(error.is_already_known(), expected);
     }
@@ -484,6 +535,7 @@ mod tests {
     // ── is_rpc_error ─────────────────────────────────────────────────────
 
     #[rstest]
+    #[case::transport(TxManagerError::Transport("request failed".to_string()), true)]
     #[case::rpc(TxManagerError::Rpc("any error".to_string()), true)]
     #[case::nonce_too_low(TxManagerError::NonceTooLow, false)]
     #[case::underpriced(TxManagerError::Underpriced, false)]
@@ -501,11 +553,6 @@ mod tests {
     #[case::insufficient_funds(TxManagerError::InsufficientFunds, "insufficient funds")]
     #[case::intrinsic_gas_too_low(TxManagerError::IntrinsicGasTooLow, "intrinsic gas too low")]
     #[case::execution_reverted(TxManagerError::ExecutionReverted { reason: None, data: None }, "execution reverted")]
-    #[case::mempool_deadline(TxManagerError::MempoolDeadlineExpired, "mempool deadline expired")]
-    #[case::runtime_mempool_deadline_missing_timestamp(
-        TxManagerError::RuntimeMempoolDeadlineMissingTimestamp,
-        "runtime mempool deadline requires critical_error_at"
-    )]
     #[case::already_reserved(TxManagerError::AlreadyReserved, "nonce already reserved")]
     #[case::underpriced(TxManagerError::Underpriced, "transaction underpriced")]
     #[case::replacement_underpriced(
@@ -518,18 +565,27 @@ mod tests {
         "max fee per gas less than block base fee"
     )]
     #[case::already_known(TxManagerError::AlreadyKnown, "transaction already known")]
+    #[case::transport(
+        TxManagerError::Transport("request failed".to_string()),
+        "transport error: request failed"
+    )]
     #[case::channel_closed(TxManagerError::ChannelClosed, "send response channel closed")]
     #[case::fee_limit_exceeded(TxManagerError::FeeLimitExceeded { fee: 501, ceiling: 500 }, "fee limit exceeded: fee 501 exceeds ceiling 500")]
-    #[case::invalid_safe_abort(
-        TxManagerError::InvalidSafeAbortNonceTooLowCount,
-        "invalid safe_abort_nonce_too_low_count: must be greater than 0"
-    )]
     #[case::nonce_overflow(TxManagerError::NonceOverflow, "nonce overflow")]
     #[case::nonce_acquisition_failed(
         TxManagerError::NonceAcquisitionFailed,
         "nonce acquisition failed"
     )]
-    #[case::send_timeout(TxManagerError::SendTimeout, "send timed out")]
+    #[case::superseded(TxManagerError::Superseded, "transaction was superseded")]
+    #[case::cancelled(TxManagerError::Cancelled, "transaction was cancelled")]
+    #[case::cancellation_in_progress(
+        TxManagerError::CancellationInProgress,
+        "transaction cancellation already in progress"
+    )]
+    #[case::submission_id_overflow(
+        TxManagerError::SubmissionIdOverflow,
+        "submission identifier overflow"
+    )]
     #[case::rpc(TxManagerError::Rpc("test".to_string()), "rpc error: test")]
     #[case::unsupported(TxManagerError::Unsupported("blob tx".to_string()), "unsupported: blob tx")]
     #[case::sign(TxManagerError::Sign("key error".to_string()), "signing failed: key error")]
@@ -543,22 +599,6 @@ mod tests {
     )]
     fn display_output(#[case] error: TxManagerError, #[case] expected: &str) {
         assert_eq!(error.to_string(), expected);
-    }
-
-    // ── err_string_contains_any ─────────────────────────────────────────
-
-    #[rstest]
-    #[case::positive_match("nonce too low", &["nonce too low", "insufficient funds"], true)]
-    #[case::no_match("something else", &["nonce too low", "insufficient funds"], false)]
-    #[case::empty_slice("nonce too low", &[], false)]
-    #[case::partial_substring("error: nonce too low for account 0x123", &["nonce too low"], true)]
-    #[case::case_insensitive("NONCE TOO LOW", &["nonce too low"], true)]
-    fn err_string_contains_any(
-        #[case] input: &str,
-        #[case] substrings: &[&str],
-        #[case] expected: bool,
-    ) {
-        assert_eq!(RpcErrorClassifier::err_string_contains_any(input, substrings), expected);
     }
 
     // ── revert data extraction via ErrorPayload ─────────────────────────

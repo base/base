@@ -86,7 +86,7 @@ type ServiceDriver = BatchDriver<
     TokioRuntime,
     BatchEncoder,
     PollingBlockSource<RpcPollingSource, TokioRuntime>,
-    SimpleTxManager<RootProvider>,
+    SimpleTxManager,
     ServiceThrottle,
     HybridL1HeadSource<L1Subscription, RpcL1HeadPollingSource, TokioRuntime>,
 >;
@@ -422,6 +422,7 @@ impl BatcherService {
 
         info!(
             l1_rpc_count = self.config.l1_rpc_url.len(),
+            publish_rpc_count = self.config.publish_rpc_urls.len(),
             l2_rpc_count = self.config.l2_rpc_url.len(),
             rollup_rpc_count = self.config.rollup_rpc_url.len(),
             l1_ws = self.config.l1_ws_url.as_ref().map(|u| u.as_str()),
@@ -517,6 +518,12 @@ impl BatcherService {
             })
         })
         .await?;
+        let mut publish_providers = Vec::with_capacity(self.config.publish_rpc_urls.len());
+        for url in &self.config.publish_rpc_urls {
+            let provider =
+                ProviderBuilder::new().disable_recommended_fillers().connect(url.as_str()).await?;
+            publish_providers.push(provider);
+        }
 
         // Recent transactions only select an L1 synchronization target.
         // They never advance the L2 backfill cursor.
@@ -672,8 +679,10 @@ impl BatcherService {
             Self::rpc_retry("l1-chain-id", retry, rpc_timeout, || l1_provider.get_chain_id())
                 .await?;
         let drain_timeout = self.config.tx_manager.resubmission_timeout * 2;
-        let tx_manager = SimpleTxManager::new(
+        let tx_manager = SimpleTxManager::new_with_runtime_and_publishers(
+            runtime.clone(),
             l1_provider,
+            publish_providers,
             signer_config,
             self.config.tx_manager,
             l1_chain_id,

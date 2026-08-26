@@ -6419,7 +6419,6 @@ dependencies = [
  "alloy-sol-types",
  "alloy-transport",
  "async-trait",
- "backon",
  "base-common-signer",
  "base-metrics",
  "base-runtime",

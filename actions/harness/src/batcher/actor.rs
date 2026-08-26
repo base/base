@@ -245,7 +245,7 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// Schedule the next `n` frame submissions to fail immediately.
     ///
     /// Each of the next `n` calls the background [`BatchDriver`] makes to
-    /// [`TxManager::send_async`] will resolve with
+    /// [`TxManager::submit`] returns a handle that resolves with
     /// [`TxManagerError::Rpc`] instead of queuing to the L1 miner. The driver
     /// requeues the frame and retries, so calling this before [`encode_only`]
     /// simulates transient L1 submission failures without losing data.
@@ -253,7 +253,7 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// Use [`wait_until_requeued`] after [`encode_only`] to wait for the driver
     /// to process the failures and return frames to the pending queue.
     ///
-    /// [`TxManager::send_async`]: base_tx_manager::TxManager::send_async
+    /// [`TxManager::submit`]: base_tx_manager::TxManager::submit
     /// [`TxManagerError::Rpc`]: base_tx_manager::TxManagerError::Rpc
     /// [`encode_only`]: Batcher::encode_only
     /// [`wait_until_requeued`]: Batcher::wait_until_requeued
@@ -265,7 +265,8 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// nonce slot is held by a stuck transaction.
     ///
     /// Each of the next `n` calls the background [`BatchDriver`] makes to
-    /// [`TxManager::send_async`] resolves with [`TxManagerError::AlreadyReserved`].
+    /// [`TxManager::submit`] returns a handle that resolves with
+    /// [`TxManagerError::AlreadyReserved`].
     /// The driver classifies this as [`TxOutcome::TxpoolBlocked`]: it requeues
     /// the frames, stops submitting, and calls [`TxManager::cancel_tx`] on its
     /// next loop iteration to clear the slot before resubmitting. Use
@@ -273,7 +274,7 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// [`wait_until_requeued`] to wait for the frames to return to pending.
     ///
     /// [`BatchDriver`]: base_batcher_core::BatchDriver
-    /// [`TxManager::send_async`]: base_tx_manager::TxManager::send_async
+    /// [`TxManager::submit`]: base_tx_manager::TxManager::submit
     /// [`TxManager::cancel_tx`]: base_tx_manager::TxManager::cancel_tx
     /// [`TxManagerError::AlreadyReserved`]: base_tx_manager::TxManagerError::AlreadyReserved
     /// [`TxOutcome::TxpoolBlocked`]: base_batcher_core::TxOutcome::TxpoolBlocked
@@ -350,7 +351,7 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// Wait until at least `min_frames` frames are in the pending queue.
     ///
     /// Yields to the tokio scheduler on each iteration to give the background
-    /// [`BatchDriver`] task time to encode blocks and call [`send_async`].
+    /// [`BatchDriver`] task time to encode blocks and call [`submit`].
     /// Intended to be called after [`encode_only`] when a test needs to inspect
     /// or act on pending frames before mining.
     ///
@@ -360,7 +361,7 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// polling iteration limit (20 yields).
     ///
     /// [`BatchDriver`]: base_batcher_core::BatchDriver
-    /// [`send_async`]: crate::L1MinerTxManager::send_async
+    /// [`submit`]: crate::L1MinerTxManager::submit
     /// [`encode_only`]: Batcher::encode_only
     pub async fn wait_until_pending(&self, min_frames: usize) {
         for _ in 0..20 {
@@ -381,7 +382,7 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// A reorg requires two driver loop iterations to complete: the first
     /// processes each `Receipt(id, Failed)` event and requeues the frames in
     /// the encoder pipeline; the second calls `submit_pending()` →
-    /// [`send_async`] to return them to the pending queue. This method polls
+    /// [`submit`] to return them to the pending queue. This method polls
     /// [`pending_count`] until the condition is satisfied.
     ///
     /// # Panics
@@ -389,7 +390,7 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// Panics if `pending_count()` does not reach `expected` within the
     /// polling iteration limit (20 yields).
     ///
-    /// [`send_async`]: crate::L1MinerTxManager::send_async
+    /// [`submit`]: crate::L1MinerTxManager::submit
     /// [`pending_count`]: Batcher::pending_count
     pub async fn wait_until_requeued(&self, expected: usize) {
         for _ in 0..20 {

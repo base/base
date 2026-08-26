@@ -22,6 +22,12 @@ pub struct BatcherConfig {
     /// startup and uses the first one that responds; later endpoints serve as
     /// startup-time fallbacks only (no per-call rotation). Must be non-empty.
     pub l1_rpc_url: Vec<Url>,
+    /// Additional L1 transaction publication backends.
+    ///
+    /// The selected [`l1_rpc_url`](Self::l1_rpc_url) provider is included as
+    /// the first symmetric publisher. These additional backends receive the
+    /// same signed ledger concurrently, with independent FIFO cursors.
+    pub publish_rpc_urls: Vec<Url>,
     /// L2 HTTP RPC endpoint(s). Used for all JSON-RPC calls including throttle
     /// control (`miner_setMaxDASize`). Must be HTTP/HTTPS URLs.
     ///
@@ -116,6 +122,7 @@ impl Default for BatcherConfig {
     fn default() -> Self {
         Self {
             l1_rpc_url: vec!["http://localhost:8545".parse().expect("valid default URL")],
+            publish_rpc_urls: Vec::new(),
             l1_ws_url: None,
             l2_rpc_url: vec!["http://localhost:9545".parse().expect("valid default URL")],
             parity_validator_l2_rpc_url: None,

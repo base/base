@@ -127,7 +127,7 @@ where
             );
             match self
                 .tx_manager
-                .send(TxCandidate {
+                .submit(TxCandidate {
                     tx_data: Bytes::from(
                         INitroEnclaveVerifier::revokeCertCall { certHash: revoked.path_digest }
                             .abi_encode(),
@@ -135,6 +135,7 @@ where
                     to: Some(self.nitro_verifier.address()),
                     ..Default::default()
                 })
+                .wait()
                 .await
             {
                 Ok(receipt) if !receipt.inner.status() => {
