@@ -104,12 +104,14 @@ class IaiCompare:
 
     def render_row(self, row: Delta) -> str:
         """Render one Markdown table row for a benchmark."""
-        base = self._cell(row.base, missing="— (new)")
+        base = self._cell(row.base, missing="—")
         head = self._cell(row.head, missing="— (missing)")
-        delta = row.delta_pct
-        if delta is None:
+        if row.base is None:
+            change = "🆕 new"
+        elif row.head is None:
             change = "—"
         else:
+            delta = row.delta_pct or 0.0
             flag = ""
             if abs(delta) >= self.threshold_pct:
                 flag = " ⚠️" if delta > 0 else " ✅"
@@ -149,17 +151,26 @@ class IaiCompare:
         if not rows:
             return f"{MARKER}\n\n⚠️ No iai-callgrind results were produced. {lead}\n"
 
-        # Happy path: nothing crossed the threshold. One green line, table collapsed.
+        # Happy path: nothing crossed the threshold. One line, table collapsed.
         if not notable:
-            note = ""
-            if new:
-                note = f" · {len(new)} new (no base to compare)"
+            compared = len(rows) - len(new)
+            if new and compared == 0:
+                # Introducing PR: nothing on the base branch to compare against yet.
+                summary = (
+                    f"📊 {len(new)} benchmark(s) added — baselines recorded (deterministic "
+                    "instruction counts under Valgrind). Per-change deltas will appear on "
+                    "future PRs, once these land on the base branch."
+                )
+            else:
+                note = f" · {len(new)} new" if new else ""
+                summary = (
+                    f"✅ All benchmarks green — {compared} within "
+                    f"±{self.threshold_pct:.0f}% (deterministic instruction counts){note}."
+                )
             body = [
                 MARKER,
                 "",
-                f"✅ All benchmarks green — {len(rows)} within "
-                f"±{self.threshold_pct:.0f}% (deterministic instruction counts)"
-                f"{note}. {lead}",
+                f"{summary} {lead}",
                 "",
                 *self.details(f"Benchmark details ({len(rows)})", rows),
                 "",
