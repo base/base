@@ -439,16 +439,31 @@ impl AccountChangeApplier {
         for change in changes {
             match change.change_type {
                 ChangeType::AuthorizeActor => {
+                    // Applies one `AuthorizeActor` op: JIT expiry skip, locked-account
+                    // policy, then `_authorizeActor`. Mirrors `Keystore._applyAuthorize`.
                     let (actor_id, config, policy_data) = Self::decode_authorize(&change.payload)?;
-                    Self::apply_authorize_op(
+                    // Replayable JIT path: drop an already-lapsed grant without reverting.
+                    if is_unsequenced && config.expiry != 0 && config.expiry <= now {
+                        continue;
+                    }
+                    if locked {
+                        Self::enforce_locked_authorize_rules(
+                            storage,
+                            account,
+                            actor_id,
+                            &config,
+                            &policy_data,
+                            state,
+                            now,
+                        )?;
+                    }
+                    Self::authorize_actor_with_account_state(
                         storage,
                         account,
                         actor_id,
                         config,
                         &policy_data,
                         state,
-                        now,
-                        is_unsequenced,
                     )?;
                 }
                 ChangeType::RevokeActor => {
@@ -575,43 +590,6 @@ impl AccountChangeApplier {
             return Ok(());
         }
         Self::authorize_non_self_actor(storage, account, actor_id, config, policy_data)
-    }
-
-    /// Applies one `AuthorizeActor` op: JIT expiry skip, locked-account policy,
-    /// then `_authorizeActor`. Mirrors `Keystore._applyAuthorize`.
-    fn apply_authorize_op(
-        storage: &mut AccountConfigurationStorage<'_>,
-        account: Address,
-        actor_id: B256,
-        config: ActorConfig,
-        policy_data: &[u8],
-        state: &mut AccountState,
-        now: u64,
-        is_unsequenced: bool,
-    ) -> Result<(), ApplyError> {
-        // Replayable JIT path: drop an already-lapsed grant without reverting.
-        if is_unsequenced && config.expiry != 0 && config.expiry <= now {
-            return Ok(());
-        }
-        if state.is_locked(now) {
-            Self::enforce_locked_authorize_rules(
-                storage,
-                account,
-                actor_id,
-                &config,
-                policy_data,
-                state,
-                now,
-            )?;
-        }
-        Self::authorize_actor_with_account_state(
-            storage,
-            account,
-            actor_id,
-            config,
-            policy_data,
-            state,
-        )
     }
 
     /// Locked-account guard for `AuthorizeActor`. Mirrors `Keystore._applyAuthorize`'s
@@ -1314,20 +1292,10 @@ mod tests {
     fn locked_expired_actor_is_treated_as_new_add() {
         let now = 10_000u64;
         with_storage(|acc| {
-            AccountChangeApplier::authorize_actor(
-                acc,
-                ACCOUNT,
-                NON_SELF,
-                expiring(now - 1),
-                &[],
-            )
-            .unwrap();
+            AccountChangeApplier::authorize_actor(acc, ACCOUNT, NON_SELF, expiring(now - 1), &[])
+                .unwrap();
             set_hard_locked(acc, 3_600);
-            let replacement = ActorConfig {
-                authenticator: K1,
-                scope: 0,
-                expiry: now + 3_601,
-            };
+            let replacement = ActorConfig { authenticator: K1, scope: 0, expiry: now + 3_601 };
             AccountChangeApplier::apply_config_change(
                 acc,
                 ACCOUNT,
