@@ -3,7 +3,7 @@
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolCall;
 use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
-use revm::precompile::PrecompileResult;
+use base_precompile_storage::PrecompileResult;
 
 use crate::{
     INonceManager::{self, INonceManagerCalls as C},
@@ -66,7 +66,7 @@ mod tests {
     fn dispatch(
         storage: &mut HashMapStorageProvider,
         calldata: &[u8],
-    ) -> revm::precompile::PrecompileOutput {
+    ) -> base_precompile_storage::PrecompileOutput {
         StorageCtx::enter(storage, |ctx| NonceManagerStorage::new(ctx).dispatch(ctx, calldata))
             .expect("dispatch should not fail fatally")
     }

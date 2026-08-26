@@ -2,7 +2,7 @@ use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::SolCall;
 use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, StorageCtx};
-use revm::precompile::PrecompileResult;
+use base_precompile_storage::PrecompileResult;
 
 use crate::{
     ActivationFeature, ActivationRegistryStorage, BerylAuxiliaryMetrics, BerylCallRecorder,
@@ -207,8 +207,7 @@ mod tests {
     use alloy_primitives::{Address, Bytes, address};
     use alloy_sol_types::{SolCall, SolError, SolValue};
     use base_common_genesis::BaseUpgrade;
-    use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
-    use revm::precompile::PrecompileOutput;
+    use base_precompile_storage::{HashMapStorageProvider, PrecompileOutput, StorageCtx};
 
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, BerylErrorKind,

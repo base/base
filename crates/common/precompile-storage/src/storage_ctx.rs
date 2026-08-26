@@ -11,14 +11,11 @@ use core::{cell::RefCell, fmt};
 
 use alloy_primitives::{Address, B256, Bytes, LogData, U256};
 use alloy_sol_types::SolInterface;
-use revm::{
-    context::journaled_state::JournalCheckpoint,
-    precompile::{PrecompileOutput, PrecompileResult},
-    state::{AccountInfo, Bytecode},
-};
+use revm::{context::journaled_state::JournalCheckpoint, state::Bytecode};
 
 use crate::{
     error::{BasePrecompileError, IntoPrecompileResult, Result},
+    neutral::{AccountInfo, PrecompileOutput, PrecompileResult},
     provider::{PrecompileStorageProvider, StorageFeatures},
 };
 
@@ -81,7 +78,8 @@ impl<'a> StorageCtx<'a> {
         let mut result: Option<Result<T>> = None;
         self.try_with_storage(|s| {
             s.with_account_info(address, &mut |info| {
-                result = Some(f(info));
+                let info = AccountInfo::from(info);
+                result = Some(f(&info));
             })
         })?;
         result.unwrap_or_else(|| {
@@ -379,7 +377,10 @@ impl StorageCtx<'_> {
         address: Address,
         f: impl FnOnce(Option<&AccountInfo>) -> T,
     ) -> T {
-        self.with_hashmap(|storage| f(storage.get_account_info(address)))
+        self.with_hashmap(|storage| {
+            let info = storage.get_account_info(address).map(AccountInfo::from);
+            f(info.as_ref())
+        })
     }
 
     /// Executes a closure with emitted events from the test storage provider.

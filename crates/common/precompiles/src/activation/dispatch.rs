@@ -3,7 +3,7 @@
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolCall;
 use base_precompile_storage::{BasePrecompileError, StorageCtx};
-use revm::precompile::PrecompileResult;
+use base_precompile_storage::PrecompileResult;
 
 use crate::{
     ActivationAdminConfig, ActivationRegistryStorage, BerylCallRecorder, BerylMetricLabels,
