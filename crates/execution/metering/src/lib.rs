@@ -19,7 +19,7 @@ pub use cache::{
 };
 
 mod dowse;
-pub use dowse::{DowseBenchmarkConfig, benchmark_dowse_block};
+pub use dowse::{DowseBenchmarkConfig, benchmark_dowse_block, replay_dowse_block};
 
 mod estimator;
 pub use estimator::{
@@ -49,9 +49,9 @@ pub use traits::MeteringApiServer;
 
 mod types;
 pub use types::{
-    DowseBlockBenchmarkResponse, DowsePrefetchStats, MeterBlockResponse, MeterBlockTransactions,
-    MeterStateProviderAccountAccess, MeterStateProviderCodeAccess, MeterStateProviderStats,
-    MeteredPriorityFeeResponse, ResourceFeeEstimateResponse,
+    DowseBlockBenchmarkResponse, DowseBlockReplayResponse, DowsePrefetchStats, MeterBlockResponse,
+    MeterBlockTransactions, MeterStateProviderAccountAccess, MeterStateProviderCodeAccess,
+    MeterStateProviderStats, MeteredPriorityFeeResponse, ResourceFeeEstimateResponse,
 };
 
 mod transaction;

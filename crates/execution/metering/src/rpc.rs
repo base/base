@@ -20,11 +20,12 @@ use reth_provider::{
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    DowseBenchmarkConfig, DowseBlockBenchmarkResponse, MeterBlockResponse,
-    MeteredPriorityFeeResponse, PendingState, PriorityFeeEstimator, ResourceDemand,
-    ResourceFeeEstimateResponse, benchmark_dowse_block,
+    DowseBenchmarkConfig, DowseBlockBenchmarkResponse, DowseBlockReplayResponse,
+    MeterBlockResponse, MeteredPriorityFeeResponse, PendingState, PriorityFeeEstimator,
+    ResourceDemand, ResourceFeeEstimateResponse, benchmark_dowse_block,
     block::meter_block,
     meter::{MeterBundleInput, meter_bundle},
+    replay_dowse_block,
     traits::MeteringApiServer,
 };
 
@@ -382,6 +383,53 @@ where
             jsonrpsee::types::ErrorObjectOwned::owned(
                 jsonrpsee::types::ErrorCode::InternalError.code(),
                 format!("Dowse block benchmark failed: {error}"),
+                None::<()>,
+            )
+        })
+    }
+
+    async fn replay_dowse_block_by_number(
+        &self,
+        number: BlockNumberOrTag,
+        dowse_cache_enabled: bool,
+    ) -> RpcResult<DowseBlockReplayResponse> {
+        let config = self.dowse_benchmark.as_ref().ok_or_else(|| {
+            jsonrpsee::types::ErrorObjectOwned::owned(
+                jsonrpsee::types::ErrorCode::InvalidRequest.code(),
+                "Dowse block benchmark is not configured",
+                None::<()>,
+            )
+        })?;
+        let block = self
+            .provider
+            .block_by_number_or_tag(number)
+            .map_err(|error| {
+                jsonrpsee::types::ErrorObjectOwned::owned(
+                    jsonrpsee::types::ErrorCode::InternalError.code(),
+                    format!("Failed to get block: {error}"),
+                    None::<()>,
+                )
+            })?
+            .ok_or_else(|| {
+                jsonrpsee::types::ErrorObjectOwned::owned(
+                    jsonrpsee::types::ErrorCode::InvalidParams.code(),
+                    format!("Block not found: {number:?}"),
+                    None::<()>,
+                )
+            })?;
+
+        replay_dowse_block(
+            self.provider.clone(),
+            self.provider.chain_spec(),
+            &block,
+            config,
+            dowse_cache_enabled,
+        )
+        .map_err(|error| {
+            error!(error = %error, "Dowse block replay failed");
+            jsonrpsee::types::ErrorObjectOwned::owned(
+                jsonrpsee::types::ErrorCode::InternalError.code(),
+                format!("Dowse block replay failed: {error}"),
                 None::<()>,
             )
         })

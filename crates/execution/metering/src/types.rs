@@ -68,6 +68,19 @@ pub struct DowseBlockBenchmarkResponse {
     pub cached: MeterBlockResponse,
 }
 
+/// One independent canonical-block replay, with or without a Dowse-prefetched cache.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DowseBlockReplayResponse {
+    /// Whether execution used a cache populated from Dowse plans.
+    pub dowse_cache_enabled: bool,
+    /// Planning and parent-state prefetch measurements, present only for a Dowse replay.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefetch: Option<DowsePrefetchStats>,
+    /// The single measured block execution.
+    pub replay: MeterBlockResponse,
+}
+
 /// Metering data for a single transaction
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

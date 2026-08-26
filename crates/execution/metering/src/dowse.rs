@@ -13,7 +13,8 @@ use reth_primitives_traits::Block as BlockT;
 use reth_provider::{HeaderProvider, StateProvider, StateProviderFactory};
 
 use crate::{
-    DowseBlockBenchmarkResponse, DowsePrefetchStats, meter_block, meter_block_with_optional_cache,
+    DowseBlockBenchmarkResponse, DowseBlockReplayResponse, DowsePrefetchStats, meter_block,
+    meter_block_with_optional_cache,
 };
 
 /// Static hint table and worker settings for block replay benchmarks.
@@ -57,6 +58,65 @@ pub fn benchmark_dowse_block<P>(
 where
     P: StateProviderFactory + HeaderProvider<Header = alloy_consensus::Header> + Clone + Sync,
 {
+    let raw = (!cached_first)
+        .then(|| meter_block(provider.clone(), Arc::clone(&chain_spec), block))
+        .transpose()?;
+    let (cache, prefetch) = prefetch_dowse_block(provider.clone(), block, config)?;
+    let cached = meter_block_with_optional_cache(
+        provider.clone(),
+        Arc::clone(&chain_spec),
+        block,
+        Some(cache),
+    )?;
+    let raw = match raw {
+        Some(raw) => raw,
+        None => meter_block(provider, chain_spec, block)?,
+    };
+
+    eyre::ensure!(
+        raw.transactions.len() == cached.transactions.len()
+            && raw
+                .transactions
+                .iter()
+                .zip(&cached.transactions)
+                .all(|(raw, cached)| raw.tx_hash == cached.tx_hash
+                    && raw.gas_used == cached.gas_used),
+        "raw and cache-backed Dowse replays produced different transaction results"
+    );
+
+    Ok(DowseBlockBenchmarkResponse { cached_first, prefetch, raw, cached })
+}
+
+/// Replays one canonical block exactly once, optionally using a cache populated from Dowse plans.
+pub fn replay_dowse_block<P>(
+    provider: P,
+    chain_spec: Arc<BaseChainSpec>,
+    block: &BaseBlock,
+    config: &DowseBenchmarkConfig,
+    dowse_cache_enabled: bool,
+) -> EyreResult<DowseBlockReplayResponse>
+where
+    P: StateProviderFactory + HeaderProvider<Header = alloy_consensus::Header> + Clone + Sync,
+{
+    let (cache, prefetch) = if dowse_cache_enabled {
+        let (cache, prefetch) = prefetch_dowse_block(provider.clone(), block, config)?;
+        (Some(cache), Some(prefetch))
+    } else {
+        (None, None)
+    };
+    let replay = meter_block_with_optional_cache(provider, chain_spec, block, cache)?;
+
+    Ok(DowseBlockReplayResponse { dowse_cache_enabled, prefetch, replay })
+}
+
+fn prefetch_dowse_block<P>(
+    provider: P,
+    block: &BaseBlock,
+    config: &DowseBenchmarkConfig,
+) -> EyreResult<(ExecutionCache, DowsePrefetchStats)>
+where
+    P: StateProviderFactory + Clone + Sync,
+{
     let planning_start = Instant::now();
     let planner = PrefetchPlanner::new(&config.hints, PlanLimits::new(32, 256));
     let mut accounts = HashSet::new();
@@ -86,10 +146,6 @@ where
     let mut storage: Vec<_> = storage.into_iter().collect();
     storage.sort_unstable_by_key(|target| (target.address, target.slot));
     let cache = ExecutionCache::new(config.cache_size_bytes);
-
-    let raw = (!cached_first)
-        .then(|| meter_block(provider.clone(), Arc::clone(&chain_spec), block))
-        .transpose()?;
 
     let prefetch_start = Instant::now();
     let total_targets = accounts.len() + storage.len();
@@ -137,31 +193,9 @@ where
     };
     let prefetch_time_us = prefetch_start.elapsed().as_micros();
 
-    let cached = meter_block_with_optional_cache(
-        provider.clone(),
-        Arc::clone(&chain_spec),
-        block,
-        Some(cache),
-    )?;
-    let raw = match raw {
-        Some(raw) => raw,
-        None => meter_block(provider, chain_spec, block)?,
-    };
-
-    eyre::ensure!(
-        raw.transactions.len() == cached.transactions.len()
-            && raw
-                .transactions
-                .iter()
-                .zip(&cached.transactions)
-                .all(|(raw, cached)| raw.tx_hash == cached.tx_hash
-                    && raw.gas_used == cached.gas_used),
-        "raw and cache-backed Dowse replays produced different transaction results"
-    );
-
-    Ok(DowseBlockBenchmarkResponse {
-        cached_first,
-        prefetch: DowsePrefetchStats {
+    Ok((
+        cache,
+        DowsePrefetchStats {
             planning_time_us,
             prefetch_time_us,
             planned_transactions,
@@ -170,9 +204,7 @@ where
             bytecode_targets,
             workers,
         },
-        raw,
-        cached,
-    })
+    ))
 }
 
 #[cfg(test)]
@@ -253,6 +285,28 @@ mod tests {
             assert!(response.raw.state_provider.storage_fetches > 0);
             assert_eq!(response.cached.state_provider.storage_fetches, 0);
         }
+
+        let raw = replay_dowse_block(
+            harness.blockchain_provider(),
+            harness.chain_spec(),
+            &block,
+            &config,
+            false,
+        )?;
+        let cached = replay_dowse_block(
+            harness.blockchain_provider(),
+            harness.chain_spec(),
+            &block,
+            &config,
+            true,
+        )?;
+        assert!(!raw.dowse_cache_enabled);
+        assert!(raw.prefetch.is_none());
+        assert!(cached.dowse_cache_enabled);
+        assert_eq!(cached.prefetch.as_ref().unwrap().planned_transactions, 1);
+        assert_eq!(raw.replay.transactions[0].gas_used, cached.replay.transactions[0].gas_used);
+        assert!(raw.replay.state_provider.storage_fetches > 0);
+        assert_eq!(cached.replay.state_provider.storage_fetches, 0);
         Ok(())
     }
 }
