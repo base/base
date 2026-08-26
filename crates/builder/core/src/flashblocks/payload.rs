@@ -260,6 +260,7 @@ where
         let BuildArguments {
             mut cached_reads,
             execution_cache,
+            txpool_snapshot,
             config,
             cancel: block_cancel,
             publish_guard,
@@ -289,11 +290,14 @@ where
 
         let mut state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
         if let Some(execution_cache) = execution_cache {
-            state_provider = Box::new(CachedStateProvider::new(
-                state_provider,
-                execution_cache.cache().clone(),
-                Some(CachedStateMetrics::zeroed(CachedStateMetricsSource::Builder)),
-            ));
+            state_provider = Box::new(
+                CachedStateProvider::new(
+                    state_provider,
+                    execution_cache.cache().clone(),
+                    Some(CachedStateMetrics::zeroed(CachedStateMetricsSource::Builder)),
+                )
+                .with_txpool_snapshot(txpool_snapshot),
+            );
         }
         let db = StateProviderDatabase::new(state_provider);
 

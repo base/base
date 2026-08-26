@@ -4,7 +4,7 @@ use alloy_primitives::B256;
 use futures::{Future, FutureExt};
 use parking_lot::Mutex;
 use reth_basic_payload_builder::{HeaderForPayload, PayloadConfig, PrecachedState};
-use reth_execution_cache::SavedCache;
+use reth_execution_cache::{SavedCache, TxPoolPrewarmCacheSnapshot};
 use reth_node_api::{NodePrimitives, PayloadKind};
 use reth_payload_builder::{
     BuildNewPayload, KeepPayloadJobAlive, PayloadBuilderError, PayloadId, PayloadJob,
@@ -147,6 +147,7 @@ where
             deadline,
             cached_reads: self.maybe_pre_cached(parent_hash),
             execution_cache: resources.execution_cache().cloned(),
+            txpool_snapshot: resources.txpool_snapshot().cloned(),
         };
 
         job.spawn_build_job();
@@ -219,6 +220,8 @@ where
     pub(crate) cached_reads: Option<CachedReads>,
     /// Optional execution cache shared with the engine.
     pub(crate) execution_cache: Option<SavedCache>,
+    /// Immutable state reads prewarmed from the transaction pool against the payload parent.
+    pub(crate) txpool_snapshot: Option<TxPoolPrewarmCacheSnapshot>,
 }
 
 impl<Builder> std::fmt::Debug for BlockPayloadJob<Builder>
@@ -274,6 +277,8 @@ pub struct BuildArguments<Attributes, Payload: BuiltPayload> {
     pub cached_reads: CachedReads,
     /// Optional execution cache shared with the engine.
     pub execution_cache: Option<SavedCache>,
+    /// Immutable state reads prewarmed from the transaction pool against the payload parent.
+    pub txpool_snapshot: Option<TxPoolPrewarmCacheSnapshot>,
     /// How to configure the payload.
     pub config: PayloadConfig<Attributes, HeaderTy<Payload::Primitives>>,
     /// A marker that can be used to cancel the job.
@@ -301,10 +306,12 @@ where
         self.payload_rx = Some(watch_rx);
         let cached_reads = self.cached_reads.take().unwrap_or_default();
         let execution_cache = self.execution_cache.take();
+        let txpool_snapshot = self.txpool_snapshot.take();
         self.executor.spawn_blocking_task(Box::pin(async move {
             let args = BuildArguments {
                 cached_reads,
                 execution_cache,
+                txpool_snapshot,
                 config: payload_config,
                 cancel,
                 publish_guard,
@@ -405,7 +412,7 @@ mod tests {
     use base_common_consensus::BasePrimitives;
     use base_execution_payload_builder::{BasePayloadBuilderAttributes, PayloadPrimitives};
     use rand::rng;
-    use reth_execution_cache::{ExecutionCache, SavedCache};
+    use reth_execution_cache::{ExecutionCache, SavedCache, TxPoolPrewarmCacheSnapshot};
     use reth_node_api::{BuiltPayloadExecutedBlock, NodePrimitives};
     use reth_payload_builder::PayloadBuilderResources;
     use reth_primitives_traits::SealedBlock;
@@ -470,7 +477,7 @@ mod tests {
 
     #[derive(Debug, PartialEq, Clone)]
     enum BlockEvent {
-        Started(Option<B256>),
+        Started { execution_cache: Option<B256>, txpool_snapshot: Option<B256> },
         Cancelled,
     }
 
@@ -487,9 +494,13 @@ mod tests {
             args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
             _payload_tx: &watch::Sender<Option<Self::BuiltPayload>>,
         ) -> Result<(), PayloadBuilderError> {
-            self.new_event(BlockEvent::Started(
-                args.execution_cache.as_ref().map(SavedCache::executed_block_hash),
-            ));
+            self.new_event(BlockEvent::Started {
+                execution_cache: args.execution_cache.as_ref().map(SavedCache::executed_block_hash),
+                txpool_snapshot: args
+                    .txpool_snapshot
+                    .as_ref()
+                    .map(TxPoolPrewarmCacheSnapshot::parent_hash),
+            });
 
             loop {
                 if args.cancel.is_cancelled() {
@@ -546,14 +557,23 @@ mod tests {
             tokio::time::sleep(Duration::from_secs(1)).await;
 
             let events = builder.get_events();
-            assert_eq!(events, vec![BlockEvent::Started(None), BlockEvent::Cancelled]);
+            assert_eq!(
+                events,
+                vec![
+                    BlockEvent::Started { execution_cache: None, txpool_snapshot: None },
+                    BlockEvent::Cancelled,
+                ]
+            );
         }
 
         {
             // job resolve triggers cancellations from the build task
             let parent_hash = attr.payload_attributes.parent;
             let cache = SavedCache::new(parent_hash, ExecutionCache::new(1_000));
-            let payload_builder_resources = PayloadBuilderResources::new(Some(cache.clone()), None);
+            let snapshot =
+                TxPoolPrewarmCacheSnapshot::new(parent_hash, Arc::new(CachedReads::default()));
+            let payload_builder_resources = PayloadBuilderResources::new(Some(cache.clone()), None)
+                .with_txpool_snapshot(Some(snapshot));
             let input = BuildNewPayload {
                 attributes: attr.clone(),
                 parent_hash,
@@ -566,7 +586,16 @@ mod tests {
             tokio::time::sleep(Duration::from_secs(1)).await;
 
             let events = builder.get_events();
-            assert_eq!(events, vec![BlockEvent::Started(Some(parent_hash)), BlockEvent::Cancelled]);
+            assert_eq!(
+                events,
+                vec![
+                    BlockEvent::Started {
+                        execution_cache: Some(parent_hash),
+                        txpool_snapshot: Some(parent_hash),
+                    },
+                    BlockEvent::Cancelled,
+                ]
+            );
             assert!(cache.is_available(), "builder must release the execution cache after exit");
         }
 
