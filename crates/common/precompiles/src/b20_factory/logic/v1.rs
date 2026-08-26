@@ -6,7 +6,7 @@ use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
 use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, ContractStorage, Result};
-use revm::state::Bytecode;
+use base_precompile_storage::Bytecode;
 
 use crate::{
     ActivationRegistryStorage, AssetVersions, B20AssetInit, B20AssetStorage, B20AssetToken,

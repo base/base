@@ -56,7 +56,7 @@ use base_execution_eip8130::{
     DelegationEffect, FeeCheck, IntrinsicGas, IntrinsicGasInput, NonceMode, NonceValidator,
     TransactionAuthorizer,
 };
-use base_precompile_storage::{JournalStorageProvider, StorageCtx};
+use base_precompile_storage::{Bytecode as NeutralBytecode, JournalStorageProvider, StorageCtx};
 use revm::{
     Inspector,
     context::{BlockEnv, LocalContextTr, TxEnv, journaled_state::account::JournaledAccountTr},
@@ -1740,7 +1740,8 @@ impl Eip8130Executor {
         }
         let bytecode =
             Bytecode::new_raw_checked(code.clone()).map_err(BaseTransactionError::eip8130)?;
-        sctx.set_code(address, bytecode).map_err(BaseTransactionError::eip8130)
+        sctx.set_code(address, NeutralBytecode::from(&bytecode))
+            .map_err(BaseTransactionError::eip8130)
     }
 
     /// Auto-delegates a code-less sender to [`Eip8130Contracts::DEFAULT_ACCOUNT`]
@@ -1758,7 +1759,7 @@ impl Eip8130Executor {
             .map_err(BaseTransactionError::eip8130)?;
         if is_codeless {
             let target = Eip8130Contracts::DEFAULT_ACCOUNT;
-            sctx.set_code(sender, Bytecode::new_eip7702(target))
+            sctx.set_code(sender, NeutralBytecode::new_eip7702(target))
                 .map_err(BaseTransactionError::eip8130)?;
             // Same protocol-injected receipt log as an explicit delegation entry.
             AccountConfigurationEvents::emit_delegation_applied(sctx, sender, target)

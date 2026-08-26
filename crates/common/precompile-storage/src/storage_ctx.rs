@@ -11,11 +11,11 @@ use core::{cell::RefCell, fmt};
 
 use alloy_primitives::{Address, B256, Bytes, LogData, U256};
 use alloy_sol_types::SolInterface;
-use revm::{context::journaled_state::JournalCheckpoint, state::Bytecode};
+use revm::context::journaled_state::JournalCheckpoint;
 
 use crate::{
     error::{BasePrecompileError, IntoPrecompileResult, Result},
-    neutral::{AccountInfo, PrecompileOutput, PrecompileResult},
+    neutral::{AccountInfo, Bytecode, PrecompileOutput, PrecompileResult},
     provider::{PrecompileStorageProvider, StorageFeatures},
 };
 
@@ -98,7 +98,8 @@ impl<'a> StorageCtx<'a> {
         let mut result: Option<Result<T>> = None;
         self.try_with_storage(|s| {
             s.with_account_code(address, &mut |code| {
-                result = Some(f(code));
+                let code = Bytecode::from(code);
+                result = Some(f(&code));
             })
         })?;
         result.unwrap_or_else(|| {
@@ -131,7 +132,7 @@ impl<'a> StorageCtx<'a> {
 
     /// Sets the bytecode at the given address.
     pub fn set_code(&self, address: Address, code: Bytecode) -> Result<()> {
-        self.try_with_storage(|s| s.set_code(address, code))
+        self.try_with_storage(|s| s.set_code(address, code.into()))
     }
 
     /// Performs an SLOAD (persistent storage read).

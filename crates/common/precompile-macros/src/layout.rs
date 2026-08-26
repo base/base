@@ -185,7 +185,7 @@ pub(crate) fn gen_constructor(
 
             #[inline(always)]
             fn __initialize(&mut self) -> ::base_precompile_storage::Result<()> {
-                let bytecode = ::revm::state::Bytecode::new_legacy(::alloy_primitives::Bytes::from_static(&[0xef]));
+                let bytecode = ::base_precompile_storage::Bytecode::new_legacy(::alloy_primitives::Bytes::from_static(&[0xef]));
                 self.storage.set_code(self.address, bytecode)?;
                 Ok(())
             }

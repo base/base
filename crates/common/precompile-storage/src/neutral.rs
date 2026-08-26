@@ -18,15 +18,89 @@
 use alloc::string::String;
 use core::result;
 
-use alloy_primitives::{B256, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, U256};
 use revm::{
     precompile::{
         PrecompileError as RevmPrecompileError, PrecompileHalt as RevmPrecompileHalt,
         PrecompileOutput as RevmPrecompileOutput, PrecompileStatus as RevmPrecompileStatus,
     },
     primitives::KECCAK_EMPTY,
-    state::AccountInfo as RevmAccountInfo,
+    state::{AccountInfo as RevmAccountInfo, Bytecode as RevmBytecode},
 };
+
+/// Engine-neutral account bytecode.
+///
+/// Base-owned equivalent of the execution engine's bytecode type, covering the
+/// two representations Base writes and reads through `set_code` /
+/// `with_account_code`: legacy (analyzed) bytecode and EIP-7702 delegation
+/// designators. Conversions map one-to-one onto the corresponding `revm`
+/// constructors so neutralizing the callers is behavior preserving.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Bytecode {
+    /// Legacy bytecode, analyzed into a jump table on conversion to the engine type.
+    Legacy(Bytes),
+    /// EIP-7702 delegation designator pointing at the delegated address.
+    Eip7702(Address),
+}
+
+impl Default for Bytecode {
+    fn default() -> Self {
+        Self::Legacy(Bytes::new())
+    }
+}
+
+impl Bytecode {
+    /// Creates legacy bytecode from raw bytes.
+    pub const fn new_legacy(raw: Bytes) -> Self {
+        Self::Legacy(raw)
+    }
+
+    /// Creates an EIP-7702 delegation designator for `address`.
+    pub const fn new_eip7702(address: Address) -> Self {
+        Self::Eip7702(address)
+    }
+
+    /// Returns the EIP-7702 delegated address, if this is a delegation designator.
+    pub const fn eip7702_address(&self) -> Option<Address> {
+        match self {
+            Self::Eip7702(address) => Some(*address),
+            Self::Legacy(_) => None,
+        }
+    }
+
+    /// Returns whether the bytecode is empty.
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Self::Legacy(raw) => raw.is_empty(),
+            Self::Eip7702(_) => false,
+        }
+    }
+
+    /// Returns the original (unpadded) bytecode bytes.
+    pub fn original_bytes(&self) -> Bytes {
+        match self {
+            Self::Legacy(raw) => raw.clone(),
+            Self::Eip7702(address) => RevmBytecode::new_eip7702(*address).original_bytes(),
+        }
+    }
+}
+
+impl From<Bytecode> for RevmBytecode {
+    fn from(value: Bytecode) -> Self {
+        match value {
+            Bytecode::Legacy(raw) => Self::new_legacy(raw),
+            Bytecode::Eip7702(address) => Self::new_eip7702(address),
+        }
+    }
+}
+
+impl From<&RevmBytecode> for Bytecode {
+    fn from(value: &RevmBytecode) -> Self {
+        value
+            .eip7702_address()
+            .map_or_else(|| Self::Legacy(value.original_bytes()), Self::Eip7702)
+    }
+}
 
 /// Engine-neutral account information.
 ///
@@ -268,6 +342,23 @@ mod tests {
 
         let halt: RevmPrecompileOutput = PrecompileOutput::halt(PrecompileHalt::OutOfGas, 0).into();
         assert!(halt.is_halt());
+    }
+
+    #[test]
+    fn bytecode_conversions_are_faithful() {
+        let raw = Bytes::from_static(&[0x60, 0x00]);
+        let legacy: RevmBytecode = Bytecode::new_legacy(raw.clone()).into();
+        assert_eq!(legacy.original_bytes(), RevmBytecode::new_legacy(raw.clone()).original_bytes());
+        assert_eq!(Bytecode::from(&legacy), Bytecode::Legacy(raw));
+
+        let addr = Address::repeat_byte(0x11);
+        let delegation: RevmBytecode = Bytecode::new_eip7702(addr).into();
+        assert_eq!(delegation.eip7702_address(), Some(addr));
+        assert_eq!(Bytecode::from(&delegation), Bytecode::Eip7702(addr));
+        assert_eq!(Bytecode::new_eip7702(addr).eip7702_address(), Some(addr));
+
+        assert!(Bytecode::default().is_empty());
+        assert!(!Bytecode::new_eip7702(addr).is_empty());
     }
 
     #[test]

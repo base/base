@@ -10,8 +10,8 @@ pub use error::{BasePrecompileError, DelegateCallNotAllowed, IntoPrecompileResul
 
 mod neutral;
 pub use neutral::{
-    AccountInfo, IntoEnginePrecompileResult, PrecompileError, PrecompileHalt, PrecompileOutput,
-    PrecompileResult, PrecompileStatus,
+    AccountInfo, Bytecode, IntoEnginePrecompileResult, PrecompileError, PrecompileHalt,
+    PrecompileOutput, PrecompileResult, PrecompileStatus,
 };
 
 mod packing;

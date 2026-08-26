@@ -31,8 +31,7 @@ use base_common_consensus::{
     AccountChangeChannel, ChangeType, CreateEntry, Eip8130Constants, Eip8130Contracts,
     InitialActor, SignedChange,
 };
-use base_precompile_storage::{BasePrecompileError, StorageCtx};
-use revm::state::Bytecode;
+use base_precompile_storage::{BasePrecompileError, Bytecode, StorageCtx};
 
 use crate::{AccountConfigurationEvents, AccountConfigurationStorage, AccountState, ActorConfig};
 
