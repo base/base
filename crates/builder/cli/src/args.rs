@@ -4,7 +4,7 @@ use core::{net::SocketAddr, time::Duration};
 use std::path::PathBuf;
 
 use base_builder_core::{
-    BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
+    BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES, DowseConfig,
     ExecutionMeteringMode, RejectionCache, ShadowValidityConfig, SharedMeteringProvider,
 };
 use base_builder_metering::MeteringStore;
@@ -130,6 +130,99 @@ impl TransactionEventsArgs {
             producer: TransactionEventProducer::BaseBuilder,
             network: self.network.clone(),
         }
+    }
+}
+
+/// Hint-driven transaction-pool state prewarming configuration.
+#[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
+pub struct DowseArgs {
+    /// JSON hint table. Supplying this path enables Dowse prewarming.
+    #[arg(long = "builder.dowse.hints", env = "BUILDER_DOWSE_HINTS")]
+    pub dowse_hints: Option<PathBuf>,
+
+    /// Persistent state-read workers.
+    #[arg(long = "builder.dowse.workers", default_value = "4")]
+    pub dowse_workers: usize,
+
+    /// Maximum queued transaction plans per worker.
+    #[arg(long = "builder.dowse.queue-capacity", default_value = "64")]
+    pub dowse_queue_capacity: usize,
+
+    /// Interval between scans of the txpool's best transactions.
+    #[arg(long = "builder.dowse.poll-interval-ms", default_value = "25")]
+    pub dowse_poll_interval_ms: u64,
+
+    /// Maximum best transactions examined during each scan.
+    #[arg(long = "builder.dowse.max-transactions", default_value = "2048")]
+    pub dowse_max_transactions: usize,
+
+    /// Maximum account targets planned for one transaction.
+    #[arg(long = "builder.dowse.max-accounts-per-transaction", default_value = "32")]
+    pub dowse_max_accounts_per_transaction: usize,
+
+    /// Maximum storage targets planned for one transaction.
+    #[arg(long = "builder.dowse.max-storage-slots-per-transaction", default_value = "256")]
+    pub dowse_max_storage_slots_per_transaction: usize,
+
+    /// Parent-state cache budget in `MiB`.
+    #[arg(long = "builder.dowse.cache-size-mb", default_value = "256")]
+    pub dowse_cache_size_mb: usize,
+}
+
+impl Default for DowseArgs {
+    fn default() -> Self {
+        Self {
+            dowse_hints: None,
+            dowse_workers: 4,
+            dowse_queue_capacity: 64,
+            dowse_poll_interval_ms: 25,
+            dowse_max_transactions: 2048,
+            dowse_max_accounts_per_transaction: 32,
+            dowse_max_storage_slots_per_transaction: 256,
+            dowse_cache_size_mb: 256,
+        }
+    }
+}
+
+impl DowseArgs {
+    /// Loads the configured hint table and converts enabled arguments into runtime config.
+    pub fn load_config(&self) -> eyre::Result<Option<DowseConfig>> {
+        let Some(hints_path) = &self.dowse_hints else {
+            return Ok(None);
+        };
+
+        eyre::ensure!(self.dowse_workers > 0, "builder.dowse.workers must be greater than zero");
+        eyre::ensure!(
+            self.dowse_queue_capacity > 0,
+            "builder.dowse.queue-capacity must be greater than zero"
+        );
+        eyre::ensure!(
+            self.dowse_poll_interval_ms > 0,
+            "builder.dowse.poll-interval-ms must be greater than zero"
+        );
+        eyre::ensure!(
+            self.dowse_max_transactions > 0,
+            "builder.dowse.max-transactions must be greater than zero"
+        );
+        eyre::ensure!(
+            self.dowse_cache_size_mb > 0,
+            "builder.dowse.cache-size-mb must be greater than zero"
+        );
+        let cache_size_bytes = self
+            .dowse_cache_size_mb
+            .checked_mul(1024 * 1024)
+            .ok_or_else(|| eyre::eyre!("builder.dowse.cache-size-mb is too large"))?;
+
+        Ok(Some(DowseConfig {
+            hints: DowseConfig::load_hints(hints_path)?,
+            worker_count: self.dowse_workers,
+            queue_capacity: self.dowse_queue_capacity,
+            poll_interval: Duration::from_millis(self.dowse_poll_interval_ms),
+            max_transactions: self.dowse_max_transactions,
+            max_accounts_per_transaction: self.dowse_max_accounts_per_transaction,
+            max_storage_slots_per_transaction: self.dowse_max_storage_slots_per_transaction,
+            cache_size_bytes,
+        }))
     }
 }
 
@@ -295,6 +388,10 @@ pub struct Args {
     #[command(flatten)]
     pub transaction_events: TransactionEventsArgs,
 
+    /// Hint-driven transaction-pool state prewarming configuration
+    #[command(flatten)]
+    pub dowse: DowseArgs,
+
     /// Shadow indexer `ExEx` configuration
     #[command(flatten)]
     pub shadow_indexer: ShadowIndexerArgs,
@@ -351,6 +448,7 @@ impl Default for Args {
             payload_builder_cutover: false,
             basic_payload_builder: false,
             transaction_events: TransactionEventsArgs::default(),
+            dowse: DowseArgs::default(),
             shadow_indexer: ShadowIndexerArgs::default(),
         }
     }
@@ -394,6 +492,7 @@ impl Args {
             self.flashblocks.flashblocks_addr.parse()?,
             self.flashblocks.flashblocks_port,
         );
+        let dowse = self.dowse.load_config()?;
 
         Ok(BuilderConfig {
             block_time: Duration::from_millis(self.chain_block_time),
@@ -412,6 +511,7 @@ impl Args {
             max_uncompressed_block_size: self.max_uncompressed_block_size,
             metering_wait_duration: self.metering_wait_duration_ms.map(Duration::from_millis),
             predicate_eval_hard_cutoff: Duration::from_millis(self.predicate_eval_hard_cutoff_ms),
+            dowse,
             metering_provider,
             rejection_cache: RejectionCache::new(
                 self.rejection_cache_max_capacity,
@@ -465,7 +565,39 @@ mod tests {
         let config = convert(args);
         assert_eq!(config.block_time, Duration::from_millis(1000));
         assert!(config.max_gas_per_txn.is_none());
+        assert!(config.dowse.is_none());
         assert!(config.manifest_precheck_enabled);
+    }
+
+    #[test]
+    fn dowse_runtime_limits_are_cli_configurable() {
+        let args = CommandParser::parse_from([
+            "builder",
+            "--builder.dowse.workers",
+            "2",
+            "--builder.dowse.queue-capacity",
+            "16",
+            "--builder.dowse.poll-interval-ms",
+            "10",
+            "--builder.dowse.max-transactions",
+            "512",
+            "--builder.dowse.max-accounts-per-transaction",
+            "8",
+            "--builder.dowse.max-storage-slots-per-transaction",
+            "64",
+            "--builder.dowse.cache-size-mb",
+            "32",
+        ])
+        .args
+        .dowse;
+
+        assert_eq!(args.dowse_workers, 2);
+        assert_eq!(args.dowse_queue_capacity, 16);
+        assert_eq!(args.dowse_poll_interval_ms, 10);
+        assert_eq!(args.dowse_max_transactions, 512);
+        assert_eq!(args.dowse_max_accounts_per_transaction, 8);
+        assert_eq!(args.dowse_max_storage_slots_per_transaction, 64);
+        assert_eq!(args.dowse_cache_size_mb, 32);
     }
 
     #[test]

@@ -53,7 +53,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
 
 use crate::{
-    BuilderConfig, BuilderMetrics, ExecutionInfo, PayloadBuilder, ResourceLimits,
+    BuilderConfig, BuilderMetrics, DowsePrewarmCache, ExecutionInfo, PayloadBuilder,
+    ResourceLimits,
     flashblocks::{
         FlashblocksExtraCtx,
         best_txs::{BestFlashblocksTxs, ParkableBestPayloadTransactions},
@@ -124,6 +125,8 @@ pub(super) struct BasePayloadBuilder<Pool, Client> {
     /// The outbound channels the builder emits built payloads, flashblocks, and rejected
     /// transactions to.
     pub outputs: BuilderOutputs,
+    /// Parent-tagged state cache populated from Dowse transaction plans.
+    pub dowse_cache: Option<DowsePrewarmCache>,
     /// Last flashblock emitted by this builder instance.
     last_emitted_flashblock_id: Arc<LastEmittedFlashblockId>,
 }
@@ -136,6 +139,7 @@ impl<Pool, Client> BasePayloadBuilder<Pool, Client> {
         client: Client,
         config: BuilderConfig,
         outputs: BuilderOutputs,
+        dowse_cache: Option<DowsePrewarmCache>,
     ) -> Self {
         Self {
             evm_config,
@@ -143,6 +147,7 @@ impl<Pool, Client> BasePayloadBuilder<Pool, Client> {
             client,
             config,
             outputs,
+            dowse_cache,
             last_emitted_flashblock_id: Arc::default(),
         }
     }
@@ -288,7 +293,17 @@ where
             )
             .map_err(|e| PayloadBuilderError::Other(e.into()))?;
 
-        let mut state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
+        let parent_hash = ctx.parent().hash();
+        let mut state_provider = self.client.state_by_block_hash(parent_hash)?;
+        if let Some(dowse_cache) =
+            self.dowse_cache.as_ref().and_then(|cache| cache.cache_for(parent_hash))
+        {
+            state_provider = Box::new(CachedStateProvider::new(
+                state_provider,
+                dowse_cache,
+                Some(CachedStateMetrics::zeroed(CachedStateMetricsSource::Dowse)),
+            ));
+        }
         if let Some(execution_cache) = execution_cache {
             state_provider = Box::new(
                 CachedStateProvider::new(

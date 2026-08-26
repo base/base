@@ -13,6 +13,9 @@ pub use config::BuilderConfig;
 mod metrics;
 pub use metrics::BuilderMetrics;
 
+mod dowse;
+pub use dowse::{DowseConfig, DowsePrewarmCache, DowsePrewarmWork, DowsePrewarmer};
+
 mod execution;
 pub use execution::{
     ExecutionInfo, ExecutionMeteringLimitExceeded, FlashblocksExecutionInfo, ResourceLimits,

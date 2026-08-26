@@ -160,6 +160,10 @@ base-builder-multiplex = { path = "crates/builder/multiplex" }
 base-builder-publish = { path = "crates/builder/publish" }
 base-builder-metering = { path = "crates/builder/metering" }
 
+# Dowse
+dowse-plan = { git = "https://github.com/BrianBland/dowse", rev = "260d5f9" }
+dowse-types = { git = "https://github.com/BrianBland/dowse", rev = "260d5f9" }
+
 # Consensus
 base-consensus-cli = { path = "crates/consensus/cli" }
 base-consensus-rpc = { path = "crates/consensus/rpc" }

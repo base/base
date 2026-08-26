@@ -39,6 +39,25 @@ base_metrics::define_metrics! {
     transaction_pool_fetch_duration: histogram,
     #[describe("Latest time taken to fetch tx from the pool")]
     transaction_pool_fetch_gauge: gauge,
+    #[describe("Transactions examined by the Dowse prefetch planner")]
+    #[label(outcome)]
+    dowse_transactions_total: counter,
+    #[describe("Concrete targets emitted by Dowse prefetch plans")]
+    #[label(kind)]
+    dowse_plan_targets: histogram,
+    #[describe("Dowse hint items omitted while creating prefetch plans")]
+    #[label(reason)]
+    dowse_plan_items_omitted_total: counter,
+    #[describe("Dowse prefetch plans dropped because all worker queues were full")]
+    dowse_queue_drops_total: counter,
+    #[describe("Dowse state reads performed by background workers")]
+    #[label(kind)]
+    #[label(outcome)]
+    dowse_prefetch_reads_total: counter,
+    #[describe("Duration of background Dowse prefetch work per transaction")]
+    dowse_prefetch_work_duration: histogram,
+    #[describe("Dowse cache resets after the transaction pool advances to a new parent")]
+    dowse_parent_resets_total: counter,
     #[describe("Histogram of state root calculation duration")]
     state_root_calculation_duration: histogram,
     #[describe("Latest state root calculation duration")]
