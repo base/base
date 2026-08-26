@@ -61,29 +61,27 @@ impl ShadowMetricsReader {
                 info!(
                     updated_at = %cursor.updated_at,
                     number = cursor.number,
-                    hash = ?cursor.hash,
                     "resuming shadow metrics reader from persisted cursor"
                 );
                 cursor
             }
             None => {
-                let cursor = match block_repo.max_cursor().await? {
-                    Some(cursor) => {
-                        info!(
-                            updated_at = %cursor.updated_at,
-                            number = cursor.number,
-                            hash = ?cursor.hash,
-                            "no persisted shadow metrics cursor; starting at current table tip"
-                        );
-                        cursor
-                    }
-                    None => {
+                let cursor = block_repo.max_cursor().await?.map_or_else(
+                    || {
                         info!(
                             "no persisted shadow metrics cursor and shadow block table is empty; starting at genesis"
                         );
                         ShadowBlockCursor::genesis()
-                    }
-                };
+                    },
+                    |cursor| {
+                        info!(
+                            updated_at = %cursor.updated_at,
+                            number = cursor.number,
+                            "no persisted shadow metrics cursor; starting at current table tip"
+                        );
+                        cursor
+                    },
+                );
 
                 // Persist now so restart before first batch cannot skip intervening rows.
                 cursor_repo.store(&cursor).await?;
@@ -101,38 +99,37 @@ impl ShadowMetricsReader {
     /// # Errors
     /// Returns an error when fetch or cursor persistence fails.
     pub async fn poll_once(&mut self) -> Result<Vec<ShadowBlockStats>> {
+        self.emit_unresolved_backlog().await?;
+
         let rows = self
             .block_repo
             .list_reorged_since(&self.cursor, i64::from(self.config.max_rows_per_poll))
             .await?;
         let mut emitted = Vec::with_capacity(rows.len());
-        let mut next_cursor = self.cursor.clone();
+        let mut next_cursor = self.cursor;
 
         for row in rows {
             let cursor = row.cursor();
-            match row.canonical_hash.as_ref() {
-                None => ShadowMetrics::reverted_blocks_total().increment(1),
-                Some(_) => {
-                    let stats = ShadowBlockStats::from_row(&row);
-                    ShadowMetrics::gas_used(stats.builder_version.clone())
-                        .record(stats.gas_used as f64);
-                    ShadowMetrics::transaction_count(stats.builder_version.clone())
-                        .record(stats.transaction_count as f64);
-                    ShadowMetrics::priority_fee_inversions(stats.builder_version.clone())
-                        .record(stats.priority_fee_inversions as f64);
-                    ShadowMetrics::blocks_inspected_total().increment(1);
-                    if stats.non_deposit_tx_count == 0 {
-                        ShadowMetrics::empty_blocks_total().increment(1);
-                    }
-
-                    if self.latest_block_number.is_none_or(|latest| stats.number > latest) {
-                        self.latest_block_number = Some(stats.number);
-                        ShadowMetrics::latest_block_number().set(stats.number as f64);
-                    }
-                    emitted.push(stats);
+            if row.canonical_hash.is_some() {
+                let stats = ShadowBlockStats::from_row(&row);
+                ShadowMetrics::gas_used(stats.builder_version.clone())
+                    .record(stats.gas_used as f64);
+                ShadowMetrics::transaction_count(stats.builder_version.clone())
+                    .record(stats.transaction_count as f64);
+                ShadowMetrics::priority_fee_inversions(stats.builder_version.clone())
+                    .record(stats.priority_fee_inversions as f64);
+                ShadowMetrics::blocks_inspected_total().increment(1);
+                if stats.non_deposit_tx_count == 0 {
+                    ShadowMetrics::empty_blocks_total().increment(1);
                 }
+
+                if self.latest_block_number.is_none_or(|latest| stats.number > latest) {
+                    self.latest_block_number = Some(stats.number);
+                    ShadowMetrics::latest_block_number().set(stats.number as f64);
+                }
+                emitted.push(stats);
             }
-            // Every fetched row advances the cursor, including unwinds.
+            // Every fetched row advances the cursor, including unresolved ones.
             next_cursor = cursor;
         }
 
@@ -143,6 +140,15 @@ impl ShadowMetricsReader {
         }
 
         Ok(emitted)
+    }
+
+    async fn emit_unresolved_backlog(&self) -> Result<()> {
+        let backlog = self.block_repo.unresolved_backlog().await?;
+
+        ShadowMetrics::unresolved_blocks().set(backlog.count as f64);
+        ShadowMetrics::unresolved_oldest_age_seconds().set(backlog.oldest_age_seconds);
+
+        Ok(())
     }
 
     /// Runs until cancelled, counting and retrying poll failures.
