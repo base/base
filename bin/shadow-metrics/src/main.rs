@@ -111,13 +111,22 @@ async fn main() -> Result<()> {
 async fn run_server(args: Args) -> Result<()> {
     let http_addr = SocketAddr::from(([0, 0, 0, 0], args.http_port));
 
-    let connection = args.postgres_host.as_ref().map(|host| PgConnectionParams {
-        host: host.clone(),
-        port: args.postgres_port,
-        database: args.postgres_database.clone(),
-        username: args.postgres_user.clone(),
-        password: args.postgres_password.clone().unwrap_or_default(),
-    });
+    let connection = match (&args.postgres_host, &args.postgres_password) {
+        (Some(host), Some(password)) => Some(PgConnectionParams {
+            host: host.clone(),
+            port: args.postgres_port,
+            database: args.postgres_database.clone(),
+            username: args.postgres_user.clone(),
+            password: password.clone(),
+        }),
+        // Connecting with an empty password would surface as an opaque Postgres auth
+        // failure rather than a configuration error.
+        (Some(_), None) => anyhow::bail!(
+            "--postgres-host (env SHADOW_METRICS_POSTGRES_HOST) requires --postgres-password (env \
+             SHADOW_METRICS_POSTGRES_PASSWORD)"
+        ),
+        (None, _) => None,
+    };
 
     let store = match &connection {
         Some(connection) => {

@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{fmt, time::Duration};
 
 use anyhow::{Context, Result};
 use sqlx::{
@@ -18,7 +18,7 @@ pub const DEFAULT_USERNAME: &str = "app";
 /// Discrete fields rather than a URL: the driver receives the password as a protocol
 /// value, so a generated RDS password containing `@` or `/` needs no escaping and cannot
 /// silently truncate a DSN.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct PgConnectionParams {
     /// Database host.
     pub host: String,
@@ -41,6 +41,19 @@ impl Default for PgConnectionParams {
             username: DEFAULT_USERNAME.to_string(),
             password: String::new(),
         }
+    }
+}
+
+/// Redacts the password so tracing a [`ShadowDbConfig`] cannot leak it into logs.
+impl fmt::Debug for PgConnectionParams {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PgConnectionParams")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("database", &self.database)
+            .field("username", &self.username)
+            .field("password", &"[REDACTED]")
+            .finish()
     }
 }
 
