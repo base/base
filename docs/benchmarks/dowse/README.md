@@ -94,9 +94,10 @@ coverage and storage-read savings varied over time:
 | Third 625 blocks | 46.1% | 16.1% fewer | 11.2% faster |
 | Final 625 blocks | 55.6% | 18.9% fewer | 12.5% faster |
 
-The next production-shaped measurement should run the shadow sequencer with the existing builder
-cache outermost, background Dowse prefetch active for both variants, and only deterministic
-parent-hash-selected payloads allowed to consult the Dowse cache.
+Once shadow reconciliation has a reliable canonical fallback, the next production-shaped
+measurement should keep the existing builder cache outermost, run background Dowse prefetch for
+both variants, and allow only deterministic parent-hash-selected payloads to consult the Dowse
+cache.
 
 ## Earlier 40-block pilot
 
@@ -132,3 +133,28 @@ benchmark host at
 `/home/brian/work/base-dowse-runtime/artifacts/dowse-benchmark-20260826/dowse-benchmark-2500-thick.jsonl`.
 The static hint table has SHA-256
 `888c58bb18035e9797610efb9d92dee17b9959c11a661926043a48c32efa01ec`.
+
+## Shadow-sequencer smoke test
+
+A controlled mainnet-follower smoke test ran the production builder with four background prefetch
+workers, a 256 MiB cache, and deterministic parent-hash A/B selection. It confirmed that the
+builder starts, hint planning and parent-state reads run off the transaction execution path, and
+the private payloads are neither committed to the conductor nor gossiped.
+
+The test did **not** produce a useful latency comparison. The follower's public-gossip transaction
+pool was too sparse: across the first 10 private payloads, only 15 non-system transactions were
+included in measured simulation calls, none in a cache-enabled call. The run performed 2,382
+successful background reads for 271 planned pool transactions without worker-queue drops.
+
+After its first 10-block cycle (canonical anchor 50,497,426; private head 50,497,436), the shadow
+sequencer waited indefinitely for a complete canonical replacement range. The reconciliation gate
+requires every authenticated unsafe-gossip payload in the range, but gossip is not a reliable
+contiguous transport. The configured Flashblocks websocket cannot fill such a gap: that extension
+maintains pending-state and RPC views but does not forward completed payloads to the shadow gate.
+The node was restored to its original follower binary and configuration and resumed canonical
+ingestion.
+
+Therefore the historical replay remains the performance result. A subsequent production-shaped
+A/B needs either real sequencer orderflow or a shadow reconciliation path with a reliable canonical
+fallback (for example, rebuilding missing blocks from safe-derived payload attributes). It should
+not rely exclusively on contiguous unsafe gossip.
