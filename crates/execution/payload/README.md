@@ -14,7 +14,7 @@ built payloads against consensus rules. Also provides data availability configur
 Resource metering is an optional payload-builder admission guardrail. A
 file-backed schedule prices named observations into independent resource-unit
 dimensions. Simulated `meterBundle` data is used only to skip candidates that
-are predicted to exceed a remaining budget. Committed usage is accounted from
+would exceed a remaining budget. Committed usage is accounted from
 executed results when they exist: actual gas used and net post-state effects
 (`STATE_NEW_STORAGE_SLOT`, `STATE_CHANGED_STORAGE_SLOT`,
 `STATE_CLEARED_STORAGE_SLOT`, `STATE_TOUCHED_ACCOUNT`, and
@@ -27,7 +27,7 @@ metering then excludes transactions whose accounted usage exceeds an enforced
 budget. A dimension may set
 `dryRun` to observe that budget without excluding. Block-scope skips apply
 only to the current payload scan; the transaction stays in the pool for a
-later block. Transaction-scope skips (predicted or executed) are permanent
+later block. Transaction-scope skips (simulated or executed) are permanent
 pool evictions and are recorded in a shared TTL rejection cache (30
 minutes), matching Flashblocks: later payload jobs skip that hash even if
 the transaction is re-gossiped into the pool. Nonce-lane descendants are
