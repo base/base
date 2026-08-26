@@ -1,0 +1,160 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1400" viewBox="0 0 1440 1400">
+<rect x="0" y="0" width="1440" height="1400" fill="#f5f7fb"/>
+<text x="50" y="56" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="30" font-weight="700" fill="#102044" text-anchor="start">Dowse state-prefetch replay benchmark</text>
+<text x="50" y="84" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="15" font-weight="400" fill="#66738f" text-anchor="start">40 Base mainnet blocks · 8,493 transactions · blocks 50,494,659–50,494,698</text>
+<rect x="50" y="108" width="265" height="72" rx="12" fill="#ffffff" stroke="#dde3ef"/>
+<text x="68" y="132" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="500" fill="#66738f" text-anchor="start">Order-balanced execution</text>
+<text x="68" y="163" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="25" font-weight="700" fill="#0052ff" text-anchor="start">-10.0%</text>
+<text x="170" y="162" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="500" fill="#66738f" text-anchor="start">lower</text>
+<rect x="340" y="108" width="265" height="72" rx="12" fill="#ffffff" stroke="#dde3ef"/>
+<text x="358" y="132" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="500" fill="#66738f" text-anchor="start">Storage-provider reads</text>
+<text x="358" y="163" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="25" font-weight="700" fill="#00a37a" text-anchor="start">-15.1%</text>
+<text x="460" y="162" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="500" fill="#66738f" text-anchor="start">lower</text>
+<rect x="630" y="108" width="265" height="72" rx="12" fill="#ffffff" stroke="#dde3ef"/>
+<text x="648" y="132" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="500" fill="#66738f" text-anchor="start">Synchronous end-to-end</text>
+<text x="648" y="163" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="25" font-weight="700" fill="#d97706" text-anchor="start">+4.2%</text>
+<text x="750" y="162" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="500" fill="#66738f" text-anchor="start">slower</text>
+<rect x="50" y="210" width="870" height="470" rx="14" fill="#ffffff" stroke="#dde3ef"/>
+<text x="74" y="246" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="19" font-weight="650" fill="#102044" text-anchor="start">Effect by baseline block execution time</text>
+<text x="74" y="270" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="400" fill="#66738f" text-anchor="start">Dowse cache vs no Dowse for each block; lower is better</text>
+<line x1="114" y1="592.0" x2="890" y2="592.0" stroke="#e7ebf3" stroke-width="1"/>
+<text x="102" y="597.0" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="400" fill="#7c879e" text-anchor="end">-35%</text>
+<line x1="114" y1="559.7777777777778" x2="890" y2="559.7777777777778" stroke="#e7ebf3" stroke-width="1"/>
+<line x1="114" y1="527.5555555555555" x2="890" y2="527.5555555555555" stroke="#e7ebf3" stroke-width="1"/>
+<text x="102" y="532.5555555555555" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="400" fill="#7c879e" text-anchor="end">-25%</text>
+<line x1="114" y1="495.33333333333337" x2="890" y2="495.33333333333337" stroke="#e7ebf3" stroke-width="1"/>
+<line x1="114" y1="463.1111111111111" x2="890" y2="463.1111111111111" stroke="#e7ebf3" stroke-width="1"/>
+<text x="102" y="468.1111111111111" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="400" fill="#7c879e" text-anchor="end">-15%</text>
+<line x1="114" y1="430.8888888888889" x2="890" y2="430.8888888888889" stroke="#e7ebf3" stroke-width="1"/>
+<line x1="114" y1="398.6666666666667" x2="890" y2="398.6666666666667" stroke="#e7ebf3" stroke-width="1"/>
+<text x="102" y="403.6666666666667" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="400" fill="#7c879e" text-anchor="end">-5%</text>
+<line x1="114" y1="366.44444444444446" x2="890" y2="366.44444444444446" stroke="#e7ebf3" stroke-width="1"/>
+<line x1="114" y1="334.22222222222223" x2="890" y2="334.22222222222223" stroke="#e7ebf3" stroke-width="1"/>
+<text x="102" y="339.22222222222223" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="400" fill="#7c879e" text-anchor="end">5%</text>
+<line x1="114" y1="302.0" x2="890" y2="302.0" stroke="#e7ebf3" stroke-width="1"/>
+<line x1="114.0" y1="302" x2="114.0" y2="592" stroke="#f0f2f7" stroke-width="1"/>
+<text x="114.0" y="617" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#7c879e" text-anchor="middle">50 ms</text>
+<line x1="308.0" y1="302" x2="308.0" y2="592" stroke="#f0f2f7" stroke-width="1"/>
+<text x="308.0" y="617" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#7c879e" text-anchor="middle">100 ms</text>
+<line x1="502.0" y1="302" x2="502.0" y2="592" stroke="#f0f2f7" stroke-width="1"/>
+<text x="502.0" y="617" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#7c879e" text-anchor="middle">150 ms</text>
+<line x1="696.0" y1="302" x2="696.0" y2="592" stroke="#f0f2f7" stroke-width="1"/>
+<text x="696.0" y="617" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#7c879e" text-anchor="middle">200 ms</text>
+<line x1="890.0" y1="302" x2="890.0" y2="592" stroke="#f0f2f7" stroke-width="1"/>
+<text x="890.0" y="617" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#7c879e" text-anchor="middle">250 ms</text>
+<line x1="114" y1="366.44444444444446" x2="890" y2="366.44444444444446" stroke="#95a0b5" stroke-width="1.5"/>
+<line x1="114" y1="431.02928309538026" x2="890" y2="431.02928309538026" stroke="#0052ff" stroke-width="2" stroke-dasharray="7 6"/>
+<circle cx="526.9134799999999" cy="331.82462570740364" r="5" fill="#7556f3" opacity="1"/>
+<circle cx="580.6747599999999" cy="484.7952623600891" r="5" fill="#00a37a" opacity="1"/>
+<circle cx="466.30400000000003" cy="372.2847222222222" r="5" fill="#7556f3" opacity="1"/>
+<circle cx="448.80132" cy="494.31292001229417" r="5" fill="#00a37a" opacity="1"/>
+<circle cx="294.71876" cy="343.47647300426956" r="5" fill="#7556f3" opacity="1"/>
+<circle cx="341.73659999999995" cy="473.4259574446335" r="5" fill="#00a37a" opacity="1"/>
+<circle cx="348.28992" cy="388.0983475866068" r="5" fill="#7556f3" opacity="1"/>
+<circle cx="552.42448" cy="523.90624991479" r="5" fill="#00a37a" opacity="1"/>
+<circle cx="519.4988" cy="392.9296054192825" r="5" fill="#7556f3" opacity="1"/>
+<circle cx="303.42159999999996" cy="515.367064696755" r="5" fill="#00a37a" opacity="1"/>
+<circle cx="329.98796000000004" cy="376.17816768191057" r="5" fill="#7556f3" opacity="1"/>
+<circle cx="371.71348" cy="515.9407647913845" r="5" fill="#00a37a" opacity="1"/>
+<circle cx="472.34516" cy="357.8703822081106" r="5" fill="#7556f3" opacity="1"/>
+<circle cx="341.63572" cy="485.0275832523024" r="5" fill="#00a37a" opacity="1"/>
+<circle cx="362.67696" cy="410.9882239284476" r="5" fill="#7556f3" opacity="1"/>
+<circle cx="682.42" cy="480.6308170766186" r="5" fill="#00a37a" opacity="1"/>
+<circle cx="227.878" cy="374.1599103829727" r="5" fill="#7556f3" opacity="1"/>
+<circle cx="204.78424" cy="575.420468617068" r="5" fill="#00a37a" opacity="1"/>
+<circle cx="255.34452000000002" cy="350.0926797975474" r="5" fill="#7556f3" opacity="1"/>
+<circle cx="742.90532" cy="433.25318982963654" r="5" fill="#00a37a" opacity="1"/>
+<circle cx="398.06643999999994" cy="366.4862870710793" r="5" fill="#7556f3" opacity="1"/>
+<circle cx="371.47292" cy="473.28601044086736" r="5" fill="#00a37a" opacity="1"/>
+<circle cx="449.48808" cy="367.4786458816767" r="5" fill="#7556f3" opacity="1"/>
+<circle cx="448.34348" cy="485.8245702503143" r="5" fill="#00a37a" opacity="1"/>
+<circle cx="206.98420000000002" cy="372.43887123789784" r="5" fill="#7556f3" opacity="1"/>
+<circle cx="363.13092" cy="464.50851995513096" r="5" fill="#00a37a" opacity="1"/>
+<circle cx="459.1842" cy="334.5851033633569" r="5" fill="#7556f3" opacity="1"/>
+<circle cx="369.80452" cy="462.6700077921256" r="5" fill="#00a37a" opacity="1"/>
+<circle cx="170.66740000000001" cy="377.12782808348163" r="5" fill="#7556f3" opacity="1"/>
+<circle cx="365.9284" cy="470.3248740779411" r="5" fill="#00a37a" opacity="1"/>
+<circle cx="704.0083199999999" cy="412.8967235903257" r="5" fill="#7556f3" opacity="1"/>
+<circle cx="422.2272" cy="403.18235819255597" r="5" fill="#00a37a" opacity="1"/>
+<circle cx="550.694" cy="376.2409515021019" r="5" fill="#7556f3" opacity="1"/>
+<circle cx="469.48172" cy="423.4946990006834" r="5" fill="#00a37a" opacity="1"/>
+<circle cx="306.72736" cy="355.55628684306754" r="5" fill="#7556f3" opacity="1"/>
+<circle cx="316.0122" cy="471.6114132061812" r="5" fill="#00a37a" opacity="1"/>
+<circle cx="636.44976" cy="462.99663751874397" r="5" fill="#7556f3" opacity="1"/>
+<circle cx="656.2726799999999" cy="428.46034866080083" r="5" fill="#00a37a" opacity="1"/>
+<circle cx="389.18899999999996" cy="428.3494820021592" r="5" fill="#7556f3" opacity="1"/>
+<circle cx="399.48652" cy="492.53922322293164" r="5" fill="#00a37a" opacity="1"/>
+<circle cx="75" cy="658" r="5" fill="#7556f3"/>
+<text x="87" y="663" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="400" fill="#66738f" text-anchor="start">Dowse replay first</text>
+<circle cx="222" cy="658" r="5" fill="#00a37a"/>
+<text x="234" y="663" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="400" fill="#66738f" text-anchor="start">No-Dowse replay first</text>
+<line x1="390" y1="658" x2="418" y2="658" stroke="#0052ff" stroke-width="2" stroke-dasharray="7 6"/>
+<text x="428" y="663" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="500" fill="#66738f" text-anchor="start">Order-balanced -10.0%</text>
+<rect x="950" y="210" width="440" height="470" rx="14" fill="#ffffff" stroke="#dde3ef"/>
+<text x="974" y="246" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="19" font-weight="650" fill="#102044" text-anchor="start">Parent-state reads</text>
+<text x="974" y="270" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="400" fill="#66738f" text-anchor="start">Normalized to no Dowse = 100%</text>
+<rect x="998" y="315" width="27" height="285" rx="4" fill="#cbd3e1"/>
+<rect x="1035" y="340.2915587568792" width="27" height="259.7084412431208" rx="4" fill="#0052ff"/>
+<text x="1030" y="627" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="600" fill="#4d5b78" text-anchor="middle">Accounts</text>
+<text x="1048" y="330.2915587568792" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="650" fill="#0052ff" text-anchor="middle">-8.9%</text>
+<rect x="1133" y="315" width="27" height="285" rx="4" fill="#cbd3e1"/>
+<rect x="1170" y="357.999523323626" width="27" height="242.00047667637398" rx="4" fill="#0052ff"/>
+<text x="1165" y="627" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="600" fill="#4d5b78" text-anchor="middle">Storage</text>
+<text x="1183" y="347.999523323626" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="650" fill="#0052ff" text-anchor="middle">-15.1%</text>
+<rect x="1268" y="315" width="27" height="285" rx="4" fill="#cbd3e1"/>
+<rect x="1305" y="354.7416666666667" width="27" height="245.25833333333333" rx="4" fill="#0052ff"/>
+<text x="1300" y="627" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="600" fill="#4d5b78" text-anchor="middle">Bytecode</text>
+<text x="1318" y="344.7416666666667" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="650" fill="#0052ff" text-anchor="middle">-13.9%</text>
+<text x="974" y="656" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="15" font-weight="600" fill="#cbd3e1" text-anchor="start">■</text>
+<text x="992" y="656" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="400" fill="#66738f" text-anchor="start">No Dowse</text>
+<text x="1078" y="656" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="15" font-weight="600" fill="#0052ff" text-anchor="start">■</text>
+<text x="1096" y="656" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="400" fill="#66738f" text-anchor="start">Dowse</text>
+<rect x="50" y="710" width="1340" height="320" rx="14" fill="#ffffff" stroke="#dde3ef"/>
+<text x="74" y="748" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="19" font-weight="650" fill="#102044" text-anchor="start">Mean per-block critical-path time</text>
+<text x="74" y="772" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="400" fill="#66738f" text-anchor="start">Background prefetch must finish before execution to realize the cache benefit</text>
+<line x1="365.0" y1="800" x2="365.0" y2="977" stroke="#edf0f6" stroke-width="1"/>
+<text x="365.0" y="1000" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#7c879e" text-anchor="middle">0 ms</text>
+<line x1="688.3333333333333" y1="800" x2="688.3333333333333" y2="977" stroke="#edf0f6" stroke-width="1"/>
+<text x="688.3333333333333" y="1000" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#7c879e" text-anchor="middle">50 ms</text>
+<line x1="1011.6666666666666" y1="800" x2="1011.6666666666666" y2="977" stroke="#edf0f6" stroke-width="1"/>
+<text x="1011.6666666666666" y="1000" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#7c879e" text-anchor="middle">100 ms</text>
+<line x1="1335.0" y1="800" x2="1335.0" y2="977" stroke="#edf0f6" stroke-width="1"/>
+<text x="1335.0" y="1000" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#7c879e" text-anchor="middle">150 ms</text>
+<text x="347" y="835" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="550" fill="#4d5b78" text-anchor="end">No Dowse</text>
+<rect x="365" y="813" width="834.5039333333333" height="32" rx="5" fill="#94a0b5"/>
+<text x="1209.5039333333334" y="835" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="650" fill="#94a0b5" text-anchor="start">129.0 ms</text>
+<text x="347" y="892" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="550" fill="#4d5b78" text-anchor="end">Dowse · prefetch hidden</text>
+<rect x="365" y="870" width="753.8395416666667" height="32" rx="5" fill="#00a37a"/>
+<text x="1128.8395416666667" y="892" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="650" fill="#00a37a" text-anchor="start">116.6 ms</text>
+<text x="347" y="949" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="550" fill="#4d5b78" text-anchor="end">Dowse · planning + prefetch serial</text>
+<rect x="365" y="927" width="871.3217383333333" height="32" rx="5" fill="#d97706"/>
+<text x="1246.3217383333333" y="949" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="650" fill="#d97706" text-anchor="start">134.7 ms</text>
+<rect x="50" y="1060" width="1340" height="275" rx="14" fill="#ffffff" stroke="#dde3ef"/>
+<text x="74" y="1098" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="19" font-weight="650" fill="#102044" text-anchor="start">Per-block execution latency distribution</text>
+<text x="74" y="1122" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="400" fill="#66738f" text-anchor="start">Descriptive percentiles from 40 historical blocks; not a production sequencer-tail estimate</text>
+<rect x="246.75" y="1213.037038011495" width="32" height="71.96296198850487" rx="4" fill="#cbd3e1"/>
+<rect x="298.75" y="1221.3540838440474" width="32" height="63.64591615595258" rx="4" fill="#0052ff"/>
+<text x="262.75" y="1205.037038011495" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#66738f" text-anchor="middle">122.1</text>
+<text x="314.75" y="1213.3540838440474" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="650" fill="#0052ff" text-anchor="middle">108.0</text>
+<text x="288.75" y="1309" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="650" fill="#4d5b78" text-anchor="middle">p50</text>
+<rect x="544.25" y="1175.8414852715978" width="32" height="109.15851472840222" rx="4" fill="#cbd3e1"/>
+<rect x="596.25" y="1189.498348069141" width="32" height="95.50165193085898" rx="4" fill="#0052ff"/>
+<text x="560.25" y="1167.8414852715978" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#66738f" text-anchor="middle">185.2</text>
+<text x="612.25" y="1181.498348069141" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="650" fill="#0052ff" text-anchor="middle">162.0</text>
+<text x="586.25" y="1309" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="650" fill="#4d5b78" text-anchor="middle">p90</text>
+<rect x="841.75" y="1168.9939532005144" width="32" height="116.0060467994856" rx="4" fill="#cbd3e1"/>
+<rect x="893.75" y="1183.4245406084158" width="32" height="101.57545939158418" rx="4" fill="#0052ff"/>
+<text x="857.75" y="1160.9939532005144" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#66738f" text-anchor="middle">196.8</text>
+<text x="909.75" y="1175.4245406084158" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="650" fill="#0052ff" text-anchor="middle">172.3</text>
+<text x="883.75" y="1309" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="650" fill="#4d5b78" text-anchor="middle">p95</text>
+<rect x="1139.25" y="1162.2727272727273" width="32" height="122.72727272727272" rx="4" fill="#cbd3e1"/>
+<rect x="1191.25" y="1173.5282228918327" width="32" height="111.47177710816737" rx="4" fill="#0052ff"/>
+<text x="1155.25" y="1154.2727272727273" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#66738f" text-anchor="middle">208.2</text>
+<text x="1207.25" y="1165.5282228918327" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="650" fill="#0052ff" text-anchor="middle">189.1</text>
+<text x="1181.25" y="1309" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="650" fill="#4d5b78" text-anchor="middle">p99</text>
+<text x="1175" y="1096" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="15" font-weight="600" fill="#cbd3e1" text-anchor="start">■</text>
+<text x="1193" y="1096" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="400" fill="#66738f" text-anchor="start">No Dowse</text>
+<text x="1278" y="1096" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="15" font-weight="600" fill="#0052ff" text-anchor="start">■</text>
+<text x="1296" y="1096" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="400" fill="#66738f" text-anchor="start">Dowse</text>
+<text x="50" y="1371" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="500" fill="#66738f" text-anchor="start">Historical replay, not a production sequencer A/B. Order alternated by block; the first execution measured 1.09× the second.</text>
+</svg>
