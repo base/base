@@ -727,7 +727,7 @@ mod tests {
         let config = convert(args);
         assert!(!config.resource_metering.enabled);
         assert!(config.resource_metering.schedule.is_empty());
-        let (_, decision) = config.resource_metering.predict(&TxHash::random(), &[]);
+        let (_, decision) = config.resource_metering.simulated_admission(&TxHash::random(), &[]);
         assert!(!decision.should_exclude(), "missing meter data must fail open rather than skip");
     }
 
@@ -755,7 +755,7 @@ mod tests {
         let config = convert(parsed.args);
         assert!(config.resource_metering.enabled);
         assert!(!config.resource_metering.schedule.is_empty());
-        let (_, decision) = config.resource_metering.predict(&TxHash::random(), &[]);
+        let (_, decision) = config.resource_metering.simulated_admission(&TxHash::random(), &[]);
         assert!(
             !decision.should_exclude(),
             "hidden wait flag must not skip txs missing meterBundle data"
@@ -837,7 +837,7 @@ mod tests {
         assert!(config.max_gas_per_txn.is_none());
         assert!(!config.resource_metering.enabled);
         assert!(config.resource_metering.schedule.is_empty());
-        let (_, decision) = config.resource_metering.predict(&TxHash::random(), &[]);
+        let (_, decision) = config.resource_metering.simulated_admission(&TxHash::random(), &[]);
         assert!(
             !decision.should_exclude(),
             "deprecated flags must not skip txs or enable resource metering"
