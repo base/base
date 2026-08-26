@@ -23,7 +23,7 @@ jobs:
   # Build base-reth-node, base-builder, and base-load-test together, cached by source hash
   build-binaries:
     name: Build binaries
-    runs-on: depot-ubuntu-latest # was: ubuntu-latest. Mapped standard GitHub runner to Depot equivalent.
+    runs-on: depot-ubuntu-24.04-8
     permissions:
       contents: read
       actions: write
@@ -65,8 +65,8 @@ jobs:
       - name: Build base-load-test
         if: steps.cache-binaries.outputs.cache-hit != 'true'
         run: |
-          cargo build --locked -p base-load-tests --bin base-load-test --profile maxperf
-          cp target/maxperf/base-load-test ~/bin/base-load-test
+          cargo build --locked -p base-load-tester-bin --bin base-load-tester --profile maxperf
+          cp target/maxperf/base-load-tester ~/bin/base-load-test
       - name: Verify binaries exist
         run: |
           echo "Binaries in ~/bin:"
@@ -80,7 +80,7 @@ jobs:
   # Run the benchmark
   benchmark:
     name: Run Benchmark
-    runs-on: depot-ubuntu-latest # was: ubuntu-latest. Mapped standard GitHub runner to Depot equivalent.
+    runs-on: depot-ubuntu-24.04-8
     needs: [build-binaries]
     permissions:
       contents: read

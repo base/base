@@ -23,7 +23,7 @@ concurrency:
 jobs:
   generate:
     name: Generate Succinct VKeys
-    runs-on: depot-ubuntu-24.04 # was: ubuntu-24.04. Mapped standard GitHub runner to Depot equivalent.
+    runs-on: depot-ubuntu-24.04-8
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4

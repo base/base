@@ -40,10 +40,10 @@ jobs:
       matrix:
         settings:
           - platform: linux/amd64
-            runs-on: depot-ubuntu-24.04
+            runs-on: depot-ubuntu-24.04-8
             smoke_test: true
           - platform: linux/arm64
-            runs-on: depot-ubuntu-24.04-arm
+            runs-on: depot-ubuntu-24.04-arm-8
             smoke_test: false
     runs-on: ${{ matrix.settings.runs-on }}
     timeout-minutes: 120

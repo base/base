@@ -65,9 +65,6 @@ jobs:
             --set "${TARGET}.labels.org.opencontainers.image.revision=${{ steps.image-labels.outputs.revision }}" \
             --set "${TARGET}.labels.org.opencontainers.image.created=${{ steps.image-labels.outputs.created }}"
   warm-devnet-cache:
-    strategy:
-      matrix:
-        target: [base, execution, consensus, builder, batcher]
     runs-on: depot-ubuntu-24.04
     env:
       PROFILE: dev
@@ -83,7 +80,13 @@ jobs:
         uses: depot/setup-action@91bc8495a33ebfc504ffc89e5674379ccf23c29c # v1
       - name: Warm devnet image cache
         run: |
-          depot bake --project "${{ vars.DEPOT_PROJECT_ID }}" -f etc/docker/docker-bake.hcl ${{ matrix.target }} \
-            --set ${{ matrix.target }}.platform=linux/amd64 \
-            --set ${{ matrix.target }}.output=type=cacheonly \
-            --set ${{ matrix.target }}.cache-from=
+          targets=(base execution consensus builder batcher)
+          set_args=()
+          for target in "${targets[@]}"; do
+            set_args+=(--set "$target.platform=linux/amd64")
+            set_args+=(--set "$target.output=type=cacheonly")
+            set_args+=(--set "$target.cache-from=")
+          done
+
+          depot bake --project "${{ vars.DEPOT_PROJECT_ID }}" -f etc/docker/docker-bake.hcl \
+            "${targets[@]}" "${set_args[@]}"
