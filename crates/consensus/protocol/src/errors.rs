@@ -1,11 +1,13 @@
 //! Error types for protocol conversions.
 
+use alloc::string::String;
+
 use alloy_primitives::B256;
 use base_common_consensus::EIP1559ParamError;
 
 use crate::DecodeError;
 
-/// An error encountered during Base [`Block`](alloy_consensus::Block) conversion.
+/// An error encountered during Base [`Block`](alloy_consensus::Block) or payload conversion.
 #[derive(Debug, Eq, PartialEq, thiserror::Error)]
 pub enum BaseBlockConversionError {
     /// Invalid genesis hash.
@@ -14,6 +16,9 @@ pub enum BaseBlockConversionError {
     /// Invalid transaction type.
     #[error("First payload transaction has unexpected type: {0}")]
     InvalidTxType(u8),
+    /// Invalid transaction encoding.
+    #[error("Failed to decode first payload transaction: {0}")]
+    InvalidTransactionEncoding(String),
     /// L1 Info error
     #[error("Failed to decode L1 info: {0}")]
     L1InfoError(#[from] DecodeError),
