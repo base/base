@@ -7,8 +7,8 @@ use alloy_primitives::{Address, Signature};
 use anyhow::Result;
 use base_common_consensus::{BaseTxEnvelope, TxDeposit};
 use base_shadow_indexer_db::{
-    ShadowBlockCursor, ShadowBlockPayload, ShadowBlockRepo, ShadowBlockRow, ShadowCanonicalRef,
-    ShadowDbConfig, ShadowMetricsCursorRepo, ShadowWrite,
+    PgConnectionParams, ShadowBlockCursor, ShadowBlockPayload, ShadowBlockRepo, ShadowBlockRow,
+    ShadowCanonicalRef, ShadowDbConfig, ShadowMetricsCursorRepo, ShadowWrite,
 };
 use base_shadow_metrics::{ShadowMetricsReader, ShadowMetricsReaderConfig, ShadowMetricsStore};
 use chrono::Utc;
@@ -35,11 +35,19 @@ impl TestDatabase {
     async fn start() -> Result<Self> {
         let container = Postgres::default().with_tag(POSTGRES_TAG).start().await?;
         let port = container.get_host_port_ipv4(5432).await?;
-        let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
-        let pool =
-            ShadowDbConfig { url, max_connections: 5, connection_timeout: Duration::from_secs(5) }
-                .init_pool()
-                .await?;
+        let pool = ShadowDbConfig {
+            connection: PgConnectionParams {
+                host: "127.0.0.1".to_string(),
+                port,
+                database: "postgres".to_string(),
+                username: "postgres".to_string(),
+                password: "postgres".to_string(),
+            },
+            max_connections: 5,
+            connection_timeout: Duration::from_secs(5),
+        }
+        .init_pool()
+        .await?;
 
         Ok(Self { _container: container, pool })
     }
