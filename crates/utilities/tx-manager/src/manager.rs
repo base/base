@@ -1,4 +1,4 @@
-//! Transaction-manager façade backed by one ordered lifecycle coordinator.
+//! Public façade: construct [`SimpleTxManager`] and submit transactions.
 
 mod build;
 pub use build::{PreparedTx, TxBuilder, WEI_PER_GWEI};
@@ -10,10 +10,9 @@ pub use coordinator::{
 
 mod pending;
 pub use pending::{
-    AdmissionBudget, PendingAdmission, PendingLedger, PendingPolicy, PendingSlot, PendingWork,
-    PublishedAttempt, ReplacementReason, ReplacementRequest, SignedVersion, SlotState,
-    StagedSubmission, SubmissionCompletion, SubmissionTracker, SweepOutcome, SweepResolution,
-    SweepTarget, VersionId, VersionKind,
+    AdmissionBudget, NonceSlot, PendingLedger, PendingPolicy, PendingWork, PublishedAttempt,
+    ReplacementReason, ReplacementRequest, SignedVersion, SlotState, StagedSubmission, VersionId,
+    VersionKind,
 };
 
 mod publisher;
@@ -25,9 +24,10 @@ pub use publisher::{
 mod sweep;
 pub use sweep::{
     ChainSweeper, MAX_CONCURRENT_SWEEP_QUERIES, SUPERSESSION_OBSERVATIONS, SupersessionEvidence,
+    SweepOutcome, SweepResolution, SweepTarget,
 };
 
-use std::{fmt::Debug, sync::Arc};
+use std::{fmt::Debug, future::Future, sync::Arc};
 
 use alloy_network::{Ethereum, EthereumWallet, NetworkWallet};
 use alloy_primitives::Address;
@@ -35,23 +35,45 @@ use alloy_provider::Provider;
 use base_runtime::{Runtime, RuntimeTimeout, TokioRuntime};
 
 use crate::{
-    SignerConfig, SubmissionHandle, TxCandidate, TxManager, TxManagerConfig, TxManagerError,
-    TxManagerResult, TxMetrics, error::RpcErrorClassifier,
+    SignerConfig, SubmissionHandle, TxCandidate, TxManagerConfig, TxManagerError, TxManagerResult,
+    TxMetrics, error::RpcErrorClassifier,
 };
+
+/// Interface for submitting and managing transactions.
+///
+/// [`Self::submit`] returns immediately. Callers observe or await the returned
+/// [`SubmissionHandle`] while the manager prepares, publishes, and confirms the
+/// transaction in the background.
+pub trait TxManager: Send + Sync + Debug {
+    /// Enqueues a transaction and returns its lifecycle handle.
+    fn submit(&self, candidate: TxCandidate) -> SubmissionHandle;
+
+    /// Returns the address transactions are sent from.
+    fn sender_address(&self) -> Address;
+
+    /// Attempts to clear the oldest stuck nonce with a higher-fee self-transfer.
+    ///
+    /// Success means the cancellation transaction may be live. Confirmation
+    /// can still be pending.
+    fn cancel_tx(&self) -> impl Future<Output = TxManagerResult<()>> + Send {
+        std::future::ready(Ok(()))
+    }
+}
 
 /// Default transaction-manager implementation.
 ///
-/// Clones share one coordinator and therefore one ordered nonce space.
+/// Cheap to clone: every clone talks to the same background coordinator
+/// and therefore shares one nonce space.
 #[derive(Debug, Clone)]
 pub struct SimpleTxManager {
-    /// Address used to sign every managed transaction.
+    /// Address this manager signs with.
     sender: Address,
-    /// Cloneable command boundary for the background lifecycle coordinator.
+    /// Handle used to submit work to the background coordinator.
     coordinator: CoordinatorHandle,
 }
 
 impl SimpleTxManager {
-    /// Creates a manager whose chain provider is also its sole publisher.
+    /// Creates a manager that publishes only through `provider`.
     pub async fn new<P>(
         provider: P,
         signer_config: SignerConfig,
@@ -74,7 +96,11 @@ impl SimpleTxManager {
         .await
     }
 
-    /// Creates a manager with an injected runtime and additional publication backends.
+    /// Creates a manager with a custom runtime and extra publish backends.
+    ///
+    /// `chain_provider` is used to read chain state (nonce, receipts) and is
+    /// also the first publish backend. `additional_publishers` are extra
+    /// backends that receive the same signed transactions.
     pub async fn new_with_runtime_and_publishers<P, R>(
         runtime: R,
         chain_provider: P,
@@ -101,11 +127,10 @@ impl SimpleTxManager {
         .await
     }
 
-    /// Creates a fully configured manager and starts its coordinator task.
+    /// Validates setup, then starts the background coordinator.
     ///
-    /// Construction validates configuration and every provider's chain ID,
-    /// reads the initial canonical account nonce, wires stateless workers,
-    /// and finally transfers lifecycle ownership to one coordinator task.
+    /// Call this only with a ready wallet. Prefer [`Self::new`] or
+    /// [`Self::new_with_runtime_and_publishers`] from application code.
     pub async fn start<P, R>(
         runtime: R,
         chain_provider: P,
@@ -119,11 +144,11 @@ impl SimpleTxManager {
         P: Provider + Clone + Debug + Send + Sync + 'static,
         R: Runtime,
     {
-        // Phase 1: reject invalid local policy before issuing startup RPCs.
+        // Phase 1: validate config locally. Fail before any RPC.
         config.validate().map_err(|error| TxManagerError::InvalidConfig(error.to_string()))?;
 
-        // Phase 2: all destinations must identify the same chain. No publisher
-        // is authoritative, so every backend must pass the same startup check.
+        // Phase 2: check that every RPC backend is on the expected chain.
+        // `chain_provider` and each extra publisher must all return `chain_id`.
         let chain_provider_chain_id =
             RuntimeTimeout::run(&runtime, config.network_timeout, chain_provider.get_chain_id())
                 .await
@@ -152,8 +177,8 @@ impl SimpleTxManager {
             }
         }
 
-        // Phase 3: seed the sole nonce authority from the chain reader.
-        // PendingLedger advances this value monotonically after construction.
+        // Phase 3: read the account's next nonce from the chain.
+        // This is the starting value for `PendingLedger`; it only increases after this.
         let sender = <EthereumWallet as NetworkWallet<Ethereum>>::default_signer_address(&wallet);
         let next_nonce = RuntimeTimeout::run(
             &runtime,
@@ -164,8 +189,11 @@ impl SimpleTxManager {
         .map_err(|_| TxManagerError::Rpc("initial nonce query timed out".to_string()))?
         .map_err(|error| RpcErrorClassifier::classify_rpc_error(&error))?;
 
-        // Phase 4: workers own network operations; only PendingLedger, inside the
-        // coordinator, owns mutable transaction lifecycle state.
+        // Phase 4: construct workers and the ledger. Nothing is spawned yet.
+        // - TxBuilder: estimates gas, signs the tx, rebuilds it on fee bump / cancel
+        // - ChainSweeper: reads the chain and reports which pending nonces are confirmed
+        // - PublisherGroup: sends each signed tx to every RPC backend, in nonce order
+        // - PendingLedger: in-memory queue of staged and pending txs
         let builder = TxBuilder::new(
             chain_provider.clone(),
             runtime.clone(),
@@ -174,6 +202,7 @@ impl SimpleTxManager {
             chain_id,
             Arc::clone(&metrics),
         );
+
         let sweeper = ChainSweeper::new(
             chain_provider.clone(),
             runtime.clone(),
@@ -182,10 +211,12 @@ impl SimpleTxManager {
             config.network_timeout,
             Arc::clone(&metrics),
         );
+
         let mut publication_backends =
             Vec::with_capacity(additional_publishers.len().saturating_add(1));
         publication_backends.push(chain_provider);
         publication_backends.extend(additional_publishers);
+
         let (publishers, publisher_events) = PublisherGroup::new(
             publication_backends,
             runtime.clone(),
@@ -193,6 +224,7 @@ impl SimpleTxManager {
             config.publish_retry_delay,
             Arc::clone(&metrics),
         );
+
         let ledger = PendingLedger::new(
             next_nonce,
             publishers.len(),
@@ -204,7 +236,8 @@ impl SimpleTxManager {
             },
         );
 
-        // Phase 5: spawn only after every fallible startup check succeeds.
+        // Phase 5: start the coordinator task.
+        // Config, chain-id, and nonce checks already succeeded above.
         let (coordinator, coordinator_handle) = TxCoordinator::new(
             ledger,
             CoordinatorWorkers { builder, sweeper, publishers },
@@ -214,6 +247,7 @@ impl SimpleTxManager {
             config,
             metrics,
         );
+
         runtime.spawn(coordinator.run());
 
         Ok(Self { sender, coordinator: coordinator_handle })

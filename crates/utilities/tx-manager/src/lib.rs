@@ -26,10 +26,10 @@ pub use config::{ConfigError, GweiParser, TxManagerConfig};
 mod signer_config;
 pub use signer_config::SignerConfig;
 
-mod traits;
-pub use traits::{
-    SubmissionHandle, SubmissionId, SubmissionResult, SubmissionSnapshot, SubmissionStatus,
-    TxManager,
+mod submission;
+pub use submission::{
+    SubmissionCompletion, SubmissionHandle, SubmissionId, SubmissionResult, SubmissionSnapshot,
+    SubmissionStatus, SubmissionTracker,
 };
 
 mod nonce;
@@ -38,14 +38,13 @@ pub use nonce::{NonceGuard, NonceManager, NonceState};
 mod manager;
 pub use manager::{
     AcceptedPosition, AdmissionBudget, AttemptedPosition, ChainSweeper, CoordinatorCommand,
-    CoordinatorHandle, CoordinatorWorkers, MAX_CONCURRENT_SWEEP_QUERIES, PendingAdmission,
-    PendingLedger, PendingPolicy, PendingSlot, PendingWork, PreparedTx, PublishOutcome,
-    PublishReject, PublishedAttempt, PublisherCursor, PublisherEvent, PublisherGroup, PublisherId,
-    PublisherSnapshot, PublisherTx, ReplacementReason, ReplacementRequest,
-    SUPERSESSION_OBSERVATIONS, SignedVersion, SimpleTxManager, SlotState, StagedSubmission,
-    SubmissionCompletion, SubmissionTracker, SupersessionEvidence, SweepOutcome, SweepResolution,
-    SweepTarget, TxBuilder, TxCoordinator, TxPublisher, VersionId, VersionKind, WEI_PER_GWEI,
-    WorkerEvent,
+    CoordinatorHandle, CoordinatorWorkers, MAX_CONCURRENT_SWEEP_QUERIES, NonceSlot, PendingLedger,
+    PendingPolicy, PendingWork, PreparedTx, PublishOutcome, PublishReject, PublishedAttempt,
+    PublisherCursor, PublisherEvent, PublisherGroup, PublisherId, PublisherSnapshot, PublisherTx,
+    ReplacementReason, ReplacementRequest, SUPERSESSION_OBSERVATIONS, SignedVersion,
+    SimpleTxManager, SlotState, StagedSubmission, SupersessionEvidence, SweepOutcome,
+    SweepResolution, SweepTarget, TxBuilder, TxCoordinator, TxManager, TxPublisher, VersionId,
+    VersionKind, WEI_PER_GWEI, WorkerEvent,
 };
 
 mod metrics;

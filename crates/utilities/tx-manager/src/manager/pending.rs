@@ -5,22 +5,163 @@ use std::{collections::VecDeque, sync::Arc, time::Duration};
 use alloy_primitives::{Address, B256, Bytes, U256};
 use tokio::sync::oneshot;
 
-mod submission;
-pub use submission::{PendingAdmission, StagedSubmission, SubmissionCompletion, SubmissionTracker};
-
-mod types;
-pub use types::{
-    PendingPolicy, PendingWork, PublishedAttempt, ReplacementReason, SweepOutcome, SweepResolution,
-    SweepTarget, VersionId, VersionKind,
-};
-
 use super::{
     build::PreparedTx,
     publisher::{
         PublishOutcome, PublishReject, PublisherEvent, PublisherId, PublisherSnapshot, PublisherTx,
     },
+    sweep::{SweepOutcome, SweepResolution, SweepTarget},
 };
-use crate::{SubmissionId, SubmissionStatus, TxCandidate, TxManagerError, TxManagerResult};
+use crate::{
+    SubmissionCompletion, SubmissionHandle, SubmissionId, SubmissionStatus, SubmissionTracker,
+    TxCandidate, TxManagerError, TxManagerResult,
+};
+
+/// Work selected by the pending ledger for execution outside the state machine.
+#[derive(Debug, Clone)]
+pub enum PendingWork {
+    /// Prepare the oldest staged submission's first transaction.
+    PrepareTx {
+        /// Submission identifier.
+        submission_id: SubmissionId,
+        /// Nonce assigned provisionally to the submission.
+        nonce: u64,
+        /// Candidate to prepare.
+        candidate: TxCandidate,
+    },
+    /// Prepare a replacement transaction for an existing nonce.
+    PrepareReplacementTx {
+        /// Submission identifier.
+        submission_id: SubmissionId,
+        /// Version used as the replacement baseline.
+        base_version: VersionId,
+        /// Nonce to sign.
+        nonce: u64,
+        /// Candidate to prepare.
+        candidate: TxCandidate,
+        /// Existing transaction used as the fee and sidecar baseline.
+        base: PreparedTx,
+        /// Why the replacement is needed.
+        reason: ReplacementReason,
+    },
+    /// Fetch the account nonce after a provisional transaction was rejected.
+    FetchAccountNonce {
+        /// Submission identifier.
+        submission_id: SubmissionId,
+        /// Version that received `NonceTooLow`.
+        version: VersionId,
+    },
+}
+
+/// Reason for preparing another transaction for an existing submission.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplacementReason {
+    /// Increase fees for ordinary resubmission.
+    FeeBump,
+    /// Prepare a self-transfer cancellation.
+    Cancel,
+    /// Re-sign a cleanly rejected transaction with a newer nonce.
+    Resign,
+}
+
+impl ReplacementReason {
+    /// Returns the purpose assigned to the replacement transaction.
+    pub const fn version_kind(self, base: VersionKind) -> VersionKind {
+        match self {
+            Self::FeeBump if matches!(base, VersionKind::Cancel) => VersionKind::Cancel,
+            Self::FeeBump => VersionKind::FeeBump,
+            Self::Cancel => VersionKind::Cancel,
+            Self::Resign => base,
+        }
+    }
+}
+
+/// Monotonic identifier for signed transactions within one nonce slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct VersionId(pub u32);
+
+impl VersionId {
+    /// Identifier of the first signed transaction in a slot.
+    pub const INITIAL: Self = Self(0);
+
+    /// Returns the numeric version.
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+
+    /// Returns the following version.
+    pub const fn next(self) -> Self {
+        Self(self.0.saturating_add(1))
+    }
+}
+
+/// Purpose of a signed transaction version.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VersionKind {
+    /// Initial transaction for the logical submission.
+    Original,
+    /// Fee replacement of an earlier version.
+    FeeBump,
+    /// Self-transfer intended to clear the nonce slot.
+    Cancel,
+}
+
+/// Minimal history retained for every transaction that may be live.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PublishedAttempt {
+    /// Signed version that produced the hash.
+    pub version: VersionId,
+    /// Purpose of the signed version.
+    pub kind: VersionKind,
+    /// Canonical transaction hash.
+    pub hash: B256,
+}
+
+/// Retry and timing settings used by the pending ledger.
+#[derive(Debug, Clone, Copy)]
+pub struct PendingPolicy {
+    /// Number of fast retries after the first publication attempt.
+    pub publish_max_retries: usize,
+    /// Delay between fast publication attempts.
+    pub publish_retry_delay: Duration,
+    /// Delay before normal resubmission or fee replacement.
+    pub resubmission_timeout: Duration,
+    /// Clean-rejection deadline for initial publication. Zero disables it.
+    pub tx_not_in_mempool_timeout: Duration,
+}
+
+/// A caller submission waiting for nonce assignment and transaction preparation.
+#[derive(Debug)]
+pub struct StagedSubmission {
+    /// Stable identity allocated before coordinator enqueue.
+    pub id: SubmissionId,
+    /// Unsigned transaction intent awaiting nonce assignment.
+    pub candidate: TxCandidate,
+    /// Destination for the submission's terminal result.
+    pub completion: SubmissionCompletion,
+    /// Purpose assigned to the first signed version.
+    pub kind: VersionKind,
+}
+
+impl StagedSubmission {
+    /// Creates a staged submission and its caller-facing lifecycle handle.
+    pub fn new(id: SubmissionId, candidate: TxCandidate) -> (Self, SubmissionHandle) {
+        let (tracker, handle) = SubmissionTracker::channel(id);
+        let staged = Self {
+            id,
+            candidate,
+            completion: SubmissionCompletion::Transaction(tracker),
+            kind: VersionKind::Original,
+        };
+
+        (staged, handle)
+    }
+
+    /// Resolves a submission that could not be handed to the coordinator.
+    pub fn reject(self, error: TxManagerError) {
+        self.completion.finish(Err(error), false);
+    }
+}
 
 /// Bounded clean-rejection budget for one provisionally assigned nonce.
 #[derive(Debug, Clone)]
@@ -224,7 +365,7 @@ pub struct ReplacementRequest {
 
 /// Complete local state for one nonce and one logical caller submission.
 #[derive(Debug)]
-pub struct PendingSlot {
+pub struct NonceSlot {
     /// Stable identity of the logical caller submission.
     submission_id: SubmissionId,
     /// Account nonce exclusively represented by this slot.
@@ -251,17 +392,17 @@ pub struct PendingSlot {
     cancel_requested: bool,
     /// Requested successor not yet owned by a builder.
     replacement_request: Option<ReplacementRequest>,
-    /// Baseline version currently owned by a replacement worker.
-    replacement_build: Option<VersionId>,
+    /// Baseline version currently being replaced by a worker.
+    preparing_replacement_from: Option<VersionId>,
     /// Earliest time at which another replacement build may start.
     replacement_ready_at: Duration,
-    /// Whether canonical nonce recovery is required.
-    needs_nonce_sync: bool,
-    /// Whether a nonce-refresh worker currently owns this slot.
-    nonce_sync_in_progress: bool,
+    /// Whether the account nonce must be fetched before retrying.
+    nonce_fetch_required: bool,
+    /// Whether a worker is currently fetching the account nonce.
+    nonce_fetch_in_progress: bool,
 }
 
-impl PendingSlot {
+impl NonceSlot {
     /// Returns whether no publication can yet have made this nonce live.
     pub const fn is_provisional(&self) -> bool {
         matches!(self.state, SlotState::Provisional(_))
@@ -323,9 +464,9 @@ pub struct PendingLedger {
     /// Caller submissions awaiting construction in FIFO order.
     staged: VecDeque<StagedSubmission>,
     /// Signed nonce ledger ordered from oldest to newest.
-    slots: VecDeque<PendingSlot>,
-    /// Staged submission currently owned by the sole initial-build worker.
-    tail_build: Option<SubmissionId>,
+    slots: VecDeque<NonceSlot>,
+    /// Staged submission currently being prepared.
+    preparing_submission: Option<SubmissionId>,
     /// Whether publication handling requested prompt canonical resolution.
     sweep_requested: bool,
     /// Timing and retry policy applied uniformly to nonce slots.
@@ -348,7 +489,7 @@ impl PendingLedger {
             next_nonce,
             staged: VecDeque::new(),
             slots: VecDeque::new(),
-            tail_build: None,
+            preparing_submission: None,
             sweep_requested: false,
             policy,
             publisher_count,
@@ -356,9 +497,9 @@ impl PendingLedger {
         }
     }
 
-    /// Appends a tracked admission in caller order.
-    pub fn submit(&mut self, admission: PendingAdmission) {
-        self.staged.push_back(admission.staged);
+    /// Appends a staged submission in caller order.
+    pub fn submit(&mut self, staged: StagedSubmission) {
+        self.staged.push_back(staged);
     }
 
     /// Requests cancellation of the oldest committed slot.
@@ -385,7 +526,8 @@ impl PendingLedger {
             return;
         }
 
-        if !self.slots.is_empty() || !self.staged.is_empty() || self.tail_build.is_some() {
+        if !self.slots.is_empty() || !self.staged.is_empty() || self.preparing_submission.is_some()
+        {
             let _ = result.send(Err(TxManagerError::CancellationInProgress));
             return;
         }
@@ -410,7 +552,7 @@ impl PendingLedger {
 
         // Phase 1: materialize at most one provisional tail. A successor is
         // never assigned until every earlier slot is irrevocably committed.
-        if self.tail_build.is_none()
+        if self.preparing_submission.is_none()
             && self.slots.iter().all(|slot| !slot.is_provisional())
             && let Some(staged) = self.staged.front()
         {
@@ -418,8 +560,8 @@ impl PendingLedger {
                 let staged = self.staged.pop_front().expect("front exists");
                 staged.completion.finish(Err(TxManagerError::NonceOverflow), false);
             } else {
-                self.tail_build = Some(staged.id);
-                work.push(PendingWork::BuildInitial {
+                self.preparing_submission = Some(staged.id);
+                work.push(PendingWork::PrepareTx {
                     submission_id: staged.id,
                     nonce: self.next_nonce,
                     candidate: staged.candidate.clone(),
@@ -429,22 +571,22 @@ impl PendingLedger {
 
         // Phase 2: select at most one external action per signed slot.
         for slot in &mut self.slots {
-            if slot.needs_nonce_sync && !slot.nonce_sync_in_progress {
-                slot.nonce_sync_in_progress = true;
-                work.push(PendingWork::SyncNonce {
+            if slot.nonce_fetch_required && !slot.nonce_fetch_in_progress {
+                slot.nonce_fetch_in_progress = true;
+                work.push(PendingWork::FetchAccountNonce {
                     submission_id: slot.submission_id,
                     version: slot.active.id,
                 });
                 continue;
             }
-            if slot.nonce_sync_in_progress {
+            if slot.nonce_fetch_in_progress {
                 continue;
             }
 
             // Explicit cancellation always wins over an ordinary fee bump.
             if slot.cancel_requested
                 && slot.replacement_request.is_none()
-                && slot.replacement_build.is_none()
+                && slot.preparing_replacement_from.is_none()
                 && slot.active.all_responded()
             {
                 let candidate =
@@ -455,7 +597,7 @@ impl PendingLedger {
 
             // A backend underpricing response requests a new shared version.
             if slot.replacement_request.is_none()
-                && slot.replacement_build.is_none()
+                && slot.preparing_replacement_from.is_none()
                 && slot.active.fee_rejected()
                 && slot.active.all_responded()
                 && now >= slot.replacement_ready_at
@@ -467,7 +609,7 @@ impl PendingLedger {
             // normal resubmission interval, regardless of which backend first
             // made them live.
             if slot.replacement_request.is_none()
-                && slot.replacement_build.is_none()
+                && slot.preparing_replacement_from.is_none()
                 && matches!(slot.state, SlotState::Committed)
                 && slot.active.all_responded()
                 && now >= slot.replacement_ready_at
@@ -479,10 +621,10 @@ impl PendingLedger {
             }
 
             if let Some(request) = slot.replacement_request.clone()
-                && slot.replacement_build.is_none()
+                && slot.preparing_replacement_from.is_none()
             {
-                slot.replacement_build = Some(request.base_version);
-                work.push(PendingWork::BuildReplacement {
+                slot.preparing_replacement_from = Some(request.base_version);
+                work.push(PendingWork::PrepareReplacementTx {
                     submission_id: slot.submission_id,
                     base_version: request.base_version,
                     nonce: request.nonce,
@@ -492,7 +634,7 @@ impl PendingLedger {
                 });
                 continue;
             }
-            if slot.replacement_build.is_some() {
+            if slot.preparing_replacement_from.is_some() {
                 continue;
             }
 
@@ -505,17 +647,17 @@ impl PendingLedger {
         work
     }
 
-    /// Applies completion of an initial build.
-    pub fn initial_built(
+    /// Records a freshly prepared first transaction, creating its nonce slot.
+    pub fn tx_prepared(
         &mut self,
         submission_id: SubmissionId,
         result: TxManagerResult<PreparedTx>,
         now: Duration,
     ) {
-        if self.tail_build != Some(submission_id) {
+        if self.preparing_submission != Some(submission_id) {
             return;
         }
-        self.tail_build = None;
+        self.preparing_submission = None;
 
         let Some(index) = self.staged.iter().position(|staged| staged.id == submission_id) else {
             return;
@@ -523,7 +665,7 @@ impl PendingLedger {
         let staged = self.staged.remove(index).expect("position exists");
         match result {
             Ok(prepared) => {
-                let slot = PendingSlot {
+                let slot = NonceSlot {
                     submission_id,
                     nonce: prepared.nonce,
                     candidate: staged.candidate,
@@ -542,10 +684,10 @@ impl PendingLedger {
                     cancel_candidate: None,
                     cancel_requested: false,
                     replacement_request: None,
-                    replacement_build: None,
+                    preparing_replacement_from: None,
                     replacement_ready_at: now,
-                    needs_nonce_sync: false,
-                    nonce_sync_in_progress: false,
+                    nonce_fetch_required: false,
+                    nonce_fetch_in_progress: false,
                 };
                 slot.notify_status();
                 self.slots.push_back(slot);
@@ -555,8 +697,8 @@ impl PendingLedger {
         }
     }
 
-    /// Applies completion of a replacement build if its baseline remains current.
-    pub fn replacement_built(
+    /// Records a freshly prepared replacement, if its baseline is still current.
+    pub fn replacement_tx_prepared(
         &mut self,
         submission_id: SubmissionId,
         base_version: VersionId,
@@ -569,10 +711,10 @@ impl PendingLedger {
             return;
         };
         let slot = &mut self.slots[index];
-        if slot.replacement_build != Some(base_version) || slot.active.id != base_version {
+        if slot.preparing_replacement_from != Some(base_version) || slot.active.id != base_version {
             return;
         }
-        slot.replacement_build = None;
+        slot.preparing_replacement_from = None;
 
         match result {
             Ok(prepared) => {
@@ -681,8 +823,8 @@ impl PendingLedger {
         }
     }
 
-    /// Applies a latest-nonce refresh requested after collective `NonceTooLow`.
-    pub fn nonce_synced(
+    /// Applies the account nonce fetched after all publishers returned `NonceTooLow`.
+    pub fn account_nonce_fetched(
         &mut self,
         submission_id: SubmissionId,
         version: VersionId,
@@ -696,8 +838,8 @@ impl PendingLedger {
         else {
             return;
         };
-        slot.needs_nonce_sync = false;
-        slot.nonce_sync_in_progress = false;
+        slot.nonce_fetch_required = false;
+        slot.nonce_fetch_in_progress = false;
 
         let Ok(latest) = result else {
             slot.active.schedule_retry(now, self.policy);
@@ -775,7 +917,7 @@ impl PendingLedger {
         while let Some(staged) = self.staged.pop_front() {
             staged.completion.finish(Err(TxManagerError::ChannelClosed), false);
         }
-        self.tail_build = None;
+        self.preparing_submission = None;
     }
 
     /// Resolves every waiter when the owning runtime is shutting down.
@@ -783,7 +925,7 @@ impl PendingLedger {
         while let Some(staged) = self.staged.pop_front() {
             staged.completion.finish(Err(TxManagerError::ChannelClosed), false);
         }
-        self.tail_build = None;
+        self.preparing_submission = None;
         while let Some(mut slot) = self.slots.pop_front() {
             if let Some(completion) = slot.completion.take() {
                 completion.finish(Err(TxManagerError::ChannelClosed), false);
@@ -796,7 +938,7 @@ impl PendingLedger {
 
     /// Returns whether all accepted work reached a terminal state.
     pub fn is_empty(&self) -> bool {
-        self.staged.is_empty() && self.slots.is_empty() && self.tail_build.is_none()
+        self.staged.is_empty() && self.slots.is_empty() && self.preparing_submission.is_none()
     }
 
     /// Applies a fully rejected provisional publication epoch.
@@ -826,7 +968,7 @@ impl PendingLedger {
         }
 
         if rejections.iter().any(|reject| matches!(reject, PublishReject::NonceTooLow)) {
-            self.slots[index].needs_nonce_sync = true;
+            self.slots[index].nonce_fetch_required = true;
         } else if rejections.iter().any(|reject| matches!(reject, PublishReject::FeeTooLow(_))) {
             let candidate = self.slots[index].replacement_candidate();
             self.slots[index].request_replacement(ReplacementReason::FeeBump, candidate);
@@ -890,7 +1032,7 @@ impl PendingLedger {
         fallback.restart(now);
         slot.active = fallback;
         slot.replacement_request = None;
-        slot.replacement_build = None;
+        slot.preparing_replacement_from = None;
         slot.replacement_ready_at = now;
         if matches!(rejected_kind, VersionKind::Cancel) {
             if let Some(result) = slot.cancel_result.take() {
@@ -921,7 +1063,7 @@ impl PendingLedger {
     }
 
     /// Resolves a consumed front slot from canonical sweep evidence.
-    pub fn resolve_slot(&self, mut slot: PendingSlot, outcome: SweepOutcome) {
+    pub fn resolve_slot(&self, mut slot: NonceSlot, outcome: SweepOutcome) {
         let send_outcome = match outcome {
             SweepOutcome::Confirmed { kind: VersionKind::Cancel, .. } => {
                 Err(TxManagerError::Cancelled)
@@ -995,18 +1137,18 @@ mod tests {
     }
 
     fn submit(queue: &mut PendingLedger, id: u64) -> SubmissionHandle {
-        let (admission, handle) = PendingAdmission::new(SubmissionId::new(id), candidate(id));
-        queue.submit(admission);
+        let (staged, handle) = StagedSubmission::new(SubmissionId::new(id), candidate(id));
+        queue.submit(staged);
         handle
     }
 
-    fn build_initial(queue: &mut PendingLedger, id: u64, nonce: u64, marker: u8, now: Duration) {
+    fn prepare_tx(queue: &mut PendingLedger, id: u64, nonce: u64, marker: u8, now: Duration) {
         assert!(matches!(
             queue.plan(now).as_slice(),
-            [PendingWork::BuildInitial { submission_id, nonce: assigned, .. }]
+            [PendingWork::PrepareTx { submission_id, nonce: assigned, .. }]
                 if *submission_id == SubmissionId::new(id) && *assigned == nonce
         ));
-        queue.initial_built(SubmissionId::new(id), Ok(prepared(nonce, marker)), now);
+        queue.tx_prepared(SubmissionId::new(id), Ok(prepared(nonce, marker)), now);
     }
 
     fn publish(
@@ -1034,7 +1176,7 @@ mod tests {
     fn one_ambiguous_backend_commits_nonce_and_unblocks_successor() {
         let mut queue = PendingLedger::new(0, 2, policy());
         let first = submit(&mut queue, 1);
-        build_initial(&mut queue, 1, 0, 1, Duration::ZERO);
+        prepare_tx(&mut queue, 1, 0, 1, Duration::ZERO);
 
         publish(&mut queue, 0, PublishOutcome::Ambiguous, Duration::ZERO);
         assert!(matches!(
@@ -1045,7 +1187,7 @@ mod tests {
         submit(&mut queue, 2);
         assert!(matches!(
             queue.plan(Duration::ZERO).as_slice(),
-            [PendingWork::BuildInitial { nonce: 1, .. }]
+            [PendingWork::PrepareTx { nonce: 1, .. }]
         ));
     }
 
@@ -1053,7 +1195,7 @@ mod tests {
     fn retry_epoch_preserves_backends_that_already_accepted_the_version() {
         let mut queue = PendingLedger::new(0, 2, policy());
         submit(&mut queue, 1);
-        build_initial(&mut queue, 1, 0, 1, Duration::ZERO);
+        prepare_tx(&mut queue, 1, 0, 1, Duration::ZERO);
         publish(&mut queue, 0, PublishOutcome::Accepted, Duration::ZERO);
         publish(&mut queue, 1, PublishOutcome::Ambiguous, Duration::ZERO);
 
@@ -1069,7 +1211,7 @@ mod tests {
     async fn collective_deterministic_rejection_recycles_tail_nonce() {
         let mut queue = PendingLedger::new(0, 2, policy());
         let first = submit(&mut queue, 1);
-        build_initial(&mut queue, 1, 0, 1, Duration::ZERO);
+        prepare_tx(&mut queue, 1, 0, 1, Duration::ZERO);
         let rejection = PublishOutcome::Rejected(PublishReject::Deterministic(
             TxManagerError::InsufficientFunds,
         ));
@@ -1082,7 +1224,7 @@ mod tests {
         submit(&mut queue, 2);
         assert!(matches!(
             queue.plan(Duration::ZERO).as_slice(),
-            [PendingWork::BuildInitial { nonce: 0, .. }]
+            [PendingWork::PrepareTx { nonce: 0, .. }]
         ));
     }
 
@@ -1090,13 +1232,13 @@ mod tests {
     fn fee_bump_replaces_shared_version_atomically() {
         let mut queue = PendingLedger::new(0, 2, policy());
         submit(&mut queue, 1);
-        build_initial(&mut queue, 1, 0, 1, Duration::ZERO);
+        prepare_tx(&mut queue, 1, 0, 1, Duration::ZERO);
         publish(&mut queue, 0, PublishOutcome::Accepted, Duration::ZERO);
         publish(&mut queue, 1, PublishOutcome::Accepted, Duration::ZERO);
 
         let work = queue.plan(Duration::from_secs(10));
         let [
-            PendingWork::BuildReplacement {
+            PendingWork::PrepareReplacementTx {
                 submission_id,
                 base_version,
                 reason: ReplacementReason::FeeBump,
@@ -1106,7 +1248,7 @@ mod tests {
         else {
             panic!("live transaction should request a fee replacement")
         };
-        queue.replacement_built(
+        queue.replacement_tx_prepared(
             *submission_id,
             *base_version,
             ReplacementReason::FeeBump,
@@ -1121,15 +1263,15 @@ mod tests {
     }
 
     #[test]
-    fn failed_replacement_build_is_deferred_before_retrying() {
+    fn failed_replacement_preparation_is_deferred_before_retrying() {
         let mut queue = PendingLedger::new(0, 1, policy());
         submit(&mut queue, 1);
-        build_initial(&mut queue, 1, 0, 1, Duration::ZERO);
+        prepare_tx(&mut queue, 1, 0, 1, Duration::ZERO);
         publish(&mut queue, 0, PublishOutcome::Accepted, Duration::ZERO);
 
         let work = queue.plan(Duration::from_secs(10));
         let [
-            PendingWork::BuildReplacement {
+            PendingWork::PrepareReplacementTx {
                 submission_id,
                 base_version,
                 reason: ReplacementReason::FeeBump,
@@ -1139,7 +1281,7 @@ mod tests {
         else {
             panic!("live transaction should request a fee replacement")
         };
-        queue.replacement_built(
+        queue.replacement_tx_prepared(
             *submission_id,
             *base_version,
             ReplacementReason::FeeBump,
@@ -1150,15 +1292,15 @@ mod tests {
         assert!(queue.plan(Duration::from_secs(10)).is_empty());
         assert!(matches!(
             queue.plan(Duration::from_secs(20)).as_slice(),
-            [PendingWork::BuildReplacement { reason: ReplacementReason::FeeBump, .. }]
+            [PendingWork::PrepareReplacementTx { reason: ReplacementReason::FeeBump, .. }]
         ));
     }
 
     #[test]
-    fn clean_nonce_too_low_round_requests_chain_nonce_sync() {
+    fn clean_nonce_too_low_round_requests_account_nonce_fetch() {
         let mut queue = PendingLedger::new(0, 2, policy());
         submit(&mut queue, 1);
-        build_initial(&mut queue, 1, 0, 1, Duration::ZERO);
+        prepare_tx(&mut queue, 1, 0, 1, Duration::ZERO);
         publish(
             &mut queue,
             0,
@@ -1174,31 +1316,39 @@ mod tests {
 
         assert!(matches!(
             queue.plan(Duration::ZERO).as_slice(),
-            [PendingWork::SyncNonce { version: VersionId::INITIAL, .. }]
+            [PendingWork::FetchAccountNonce { version: VersionId::INITIAL, .. }]
         ));
     }
 
     #[test]
-    fn nonce_sync_keeps_old_signed_bytes_hidden_until_resigning_finishes() {
+    fn account_nonce_fetch_keeps_old_signed_bytes_hidden_until_resigning_finishes() {
         let mut queue = PendingLedger::new(0, 1, policy());
         submit(&mut queue, 1);
-        build_initial(&mut queue, 1, 0, 1, Duration::ZERO);
+        prepare_tx(&mut queue, 1, 0, 1, Duration::ZERO);
         publish(
             &mut queue,
             0,
             PublishOutcome::Rejected(PublishReject::NonceTooLow),
             Duration::ZERO,
         );
-        assert!(matches!(queue.plan(Duration::ZERO).as_slice(), [PendingWork::SyncNonce { .. }]));
+        assert!(matches!(
+            queue.plan(Duration::ZERO).as_slice(),
+            [PendingWork::FetchAccountNonce { .. }]
+        ));
 
-        queue.nonce_synced(SubmissionId::new(1), VersionId::INITIAL, Ok(5), Duration::ZERO);
+        queue.account_nonce_fetched(
+            SubmissionId::new(1),
+            VersionId::INITIAL,
+            Ok(5),
+            Duration::ZERO,
+        );
         let before = queue.publisher_snapshot();
         assert_eq!(before.transactions[0].nonce, 0);
         assert_eq!(before.transactions[0].prepared.nonce, 0);
 
         let work = queue.plan(Duration::ZERO);
         let [
-            PendingWork::BuildReplacement {
+            PendingWork::PrepareReplacementTx {
                 submission_id,
                 base_version,
                 nonce: 5,
@@ -1209,7 +1359,7 @@ mod tests {
         else {
             panic!("nonce synchronization should request re-signing")
         };
-        queue.replacement_built(
+        queue.replacement_tx_prepared(
             *submission_id,
             *base_version,
             ReplacementReason::Resign,
@@ -1226,7 +1376,7 @@ mod tests {
     fn fee_replacement_waits_for_every_backend_outcome() {
         let mut queue = PendingLedger::new(0, 3, policy());
         submit(&mut queue, 1);
-        build_initial(&mut queue, 1, 0, 1, Duration::ZERO);
+        prepare_tx(&mut queue, 1, 0, 1, Duration::ZERO);
         publish(&mut queue, 0, PublishOutcome::Accepted, Duration::ZERO);
         publish(
             &mut queue,
@@ -1240,7 +1390,7 @@ mod tests {
         publish(&mut queue, 2, PublishOutcome::Accepted, Duration::ZERO);
         assert!(matches!(
             queue.plan(Duration::ZERO).as_slice(),
-            [PendingWork::BuildReplacement { reason: ReplacementReason::FeeBump, .. }]
+            [PendingWork::PrepareReplacementTx { reason: ReplacementReason::FeeBump, .. }]
         ));
     }
 
@@ -1248,7 +1398,7 @@ mod tests {
     async fn cancellation_returns_when_any_backend_may_have_live_cancel_bytes() {
         let mut queue = PendingLedger::new(0, 2, policy());
         submit(&mut queue, 1);
-        build_initial(&mut queue, 1, 0, 1, Duration::ZERO);
+        prepare_tx(&mut queue, 1, 0, 1, Duration::ZERO);
         publish(&mut queue, 0, PublishOutcome::Accepted, Duration::ZERO);
         publish(&mut queue, 1, PublishOutcome::Accepted, Duration::ZERO);
 
@@ -1256,7 +1406,7 @@ mod tests {
         queue.cancel(Address::with_last_byte(9), result_tx);
         let work = queue.plan(Duration::ZERO);
         let [
-            PendingWork::BuildReplacement {
+            PendingWork::PrepareReplacementTx {
                 submission_id,
                 base_version,
                 reason: ReplacementReason::Cancel,
@@ -1266,7 +1416,7 @@ mod tests {
         else {
             panic!("cancellation should build a replacement")
         };
-        queue.replacement_built(
+        queue.replacement_tx_prepared(
             *submission_id,
             *base_version,
             ReplacementReason::Cancel,
@@ -1283,7 +1433,7 @@ mod tests {
     fn stale_sweep_snapshot_cannot_remove_a_slot() {
         let mut queue = PendingLedger::new(0, 1, policy());
         submit(&mut queue, 1);
-        build_initial(&mut queue, 1, 0, 1, Duration::ZERO);
+        prepare_tx(&mut queue, 1, 0, 1, Duration::ZERO);
         publish(&mut queue, 0, PublishOutcome::Accepted, Duration::ZERO);
 
         queue.apply_sweep(vec![SweepResolution {
@@ -1298,11 +1448,11 @@ mod tests {
     async fn sweep_removes_and_resolves_only_the_confirmed_front_prefix() {
         let mut queue = PendingLedger::new(0, 1, policy());
         let first = submit(&mut queue, 1);
-        build_initial(&mut queue, 1, 0, 1, Duration::ZERO);
+        prepare_tx(&mut queue, 1, 0, 1, Duration::ZERO);
         publish(&mut queue, 0, PublishOutcome::Accepted, Duration::ZERO);
 
         let second = submit(&mut queue, 2);
-        build_initial(&mut queue, 2, 1, 2, Duration::ZERO);
+        prepare_tx(&mut queue, 2, 1, 2, Duration::ZERO);
         publish(&mut queue, 0, PublishOutcome::Accepted, Duration::ZERO);
 
         let receipt = StubReceipt::success();
@@ -1329,7 +1479,7 @@ mod tests {
     async fn close_rejects_staged_work_but_keeps_signed_nonce_work() {
         let mut queue = PendingLedger::new(0, 1, policy());
         let signed = submit(&mut queue, 1);
-        build_initial(&mut queue, 1, 0, 1, Duration::ZERO);
+        prepare_tx(&mut queue, 1, 0, 1, Duration::ZERO);
         let staged = submit(&mut queue, 2);
 
         queue.close();

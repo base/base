@@ -9,16 +9,53 @@ use std::{
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_provider::Provider;
+use alloy_rpc_types_eth::TransactionReceipt;
 use base_runtime::{Runtime, RuntimeTimeout};
 use futures::{StreamExt, stream};
 
-use super::pending::{PublishedAttempt, SweepOutcome, SweepResolution, SweepTarget};
+use super::pending::{PublishedAttempt, VersionKind};
 use crate::{SubmissionId, TxManagerError, TxManagerResult, TxMetrics, error::RpcErrorClassifier};
 
 /// Maximum receipt and canonical-block queries in flight per sweep stage.
 pub const MAX_CONCURRENT_SWEEP_QUERIES: usize = 8;
 /// Stable missing-receipt snapshots required before declaring supersession.
 pub const SUPERSESSION_OBSERVATIONS: u8 = 2;
+
+/// Pending nonce and transaction attempts checked by a chain sweep.
+#[derive(Debug, Clone)]
+pub struct SweepTarget {
+    /// Submission identifier.
+    pub submission_id: SubmissionId,
+    /// Nonce represented by the slot.
+    pub nonce: u64,
+    /// Attempts known when the sweep started.
+    pub attempts: Vec<PublishedAttempt>,
+}
+
+/// Chain-proven outcome for one pending nonce.
+#[derive(Debug, Clone)]
+pub enum SweepOutcome {
+    /// One transaction published by this manager was confirmed.
+    Confirmed {
+        /// Purpose of the confirmed transaction.
+        kind: VersionKind,
+        /// Confirmed transaction receipt.
+        receipt: Box<TransactionReceipt>,
+    },
+    /// The nonce was consumed by an unknown transaction.
+    Superseded,
+}
+
+/// Sweep result applied only if its attempt snapshot is still current.
+#[derive(Debug, Clone)]
+pub struct SweepResolution {
+    /// Submission identifier.
+    pub submission_id: SubmissionId,
+    /// Number of attempts present when the sweep started.
+    pub attempt_count: usize,
+    /// Chain-proven outcome.
+    pub outcome: SweepOutcome,
+}
 
 /// Evidence accumulated before treating a consumed nonce as externally superseded.
 #[derive(Debug, Clone, Copy)]

@@ -108,8 +108,8 @@ where
         Self { provider, runtime, wallet, config, chain_id, metrics }
     }
 
-    /// Constructs an initial signed transaction at an explicitly assigned nonce.
-    pub async fn prepare_initial(
+    /// Prepares a submission's first signed transaction at the assigned nonce.
+    pub async fn prepare_tx(
         &self,
         candidate: &TxCandidate,
         nonce: u64,
@@ -117,8 +117,8 @@ where
         self.prepare_with(candidate, nonce, None, None, None).await
     }
 
-    /// Constructs a replacement or re-signed version from an existing one.
-    pub async fn prepare_replacement(
+    /// Prepares a replacement transaction from an existing signed transaction.
+    pub async fn prepare_replacement_tx(
         &self,
         candidate: &TxCandidate,
         base: &PreparedTx,
@@ -553,7 +553,7 @@ mod tests {
         push_gas_estimate(&asserter);
         let builder = test_builder(asserter);
         let prepared = builder
-            .prepare_initial(&value_transfer(1_000_000_000), 7)
+            .prepare_tx(&value_transfer(1_000_000_000), 7)
             .await
             .expect("transaction should be constructed");
         let tx = decode_eip1559(&prepared);
@@ -583,14 +583,14 @@ mod tests {
             gas_limit: 100_000,
             ..Default::default()
         };
-        let prepared = builder.prepare_initial(&transfer, 3).await.unwrap();
+        let prepared = builder.prepare_tx(&transfer, 3).await.unwrap();
         let tx = decode_eip1559(&prepared);
         assert_eq!(tx.input, calldata);
         assert_eq!(tx.gas_limit, 100_000);
 
         let creation =
             TxCandidate { to: None, tx_data: Bytes::from_static(&[0x00]), ..Default::default() };
-        let created = builder.prepare_initial(&creation, 4).await.unwrap();
+        let created = builder.prepare_tx(&creation, 4).await.unwrap();
         assert_eq!(decode_eip1559(&created).to, TxKind::Create);
     }
 
@@ -601,7 +601,7 @@ mod tests {
         push_gas_estimate(&asserter);
         let builder = test_builder(asserter);
         let prepared = builder
-            .prepare_initial(&single_blob_candidate(), 0)
+            .prepare_tx(&single_blob_candidate(), 0)
             .await
             .expect("blob transaction should be constructed");
         let envelope = prepared.to_envelope().expect("valid envelope");
@@ -633,7 +633,7 @@ mod tests {
             ..Default::default()
         };
         assert!(matches!(
-            builder.prepare_initial(&too_many, 0).await,
+            builder.prepare_tx(&too_many, 0).await,
             Err(TxManagerError::Unsupported(message)) if message.contains("exceeds maximum")
         ));
 
@@ -643,7 +643,7 @@ mod tests {
             ..Default::default()
         };
         assert!(matches!(
-            builder.prepare_initial(&no_recipient, 0).await,
+            builder.prepare_tx(&no_recipient, 0).await,
             Err(TxManagerError::Unsupported(message)) if message.contains("recipient address")
         ));
     }
@@ -680,7 +680,7 @@ mod tests {
         push_fee_inputs(&asserter, false);
         let builder = test_builder(asserter);
         let candidate = value_transfer(1_000);
-        let initial = builder.prepare_initial(&candidate, 0).await.unwrap();
+        let initial = builder.prepare_tx(&candidate, 0).await.unwrap();
         let bumped = builder
             .increase_gas_price(
                 &candidate,
@@ -733,7 +733,7 @@ mod tests {
         );
 
         assert!(matches!(
-            builder.prepare_initial(&value_transfer(1), 0).await,
+            builder.prepare_tx(&value_transfer(1), 0).await,
             Err(TxManagerError::Sign(_))
         ));
     }
