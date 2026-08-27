@@ -40,6 +40,11 @@ two controls.
 The bootstrap interval captures block-sampling variation only. The 2.3% control drift is the more
 important bound on arm-wide host variation.
 
+Do not interpret the 20.9% ratio as concurrent execution beating the earlier 19.6% completed-cache
+result. Concurrent execution was slower in absolute terms (77.2 ms versus 75.6 ms), while this
+run's no-Dowse baseline was also slower (97.6 ms versus 94.0 ms). The separately bracketed runs had
+different host conditions and their relative percentages are not directly rankable.
+
 ### Latency distribution and slow blocks
 
 | Percentile | Bracketed no Dowse | Concurrent Dowse | Observed change |
