@@ -397,7 +397,7 @@ mod tests {
             assert_eq!(stale.current(), 0);
             mgr.nonces.at_mut(&ACCOUNT_A).at_mut(&nonce_key).write(5).unwrap();
 
-            drop(stale);
+            let _ = stale;
             let fresh = mgr.read_sequence_nonce(ACCOUNT_A, nonce_key).unwrap();
             assert_eq!(fresh.current(), 5);
             assert_eq!(mgr.increment_from_read(fresh).unwrap(), 6);
