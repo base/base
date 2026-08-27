@@ -1,4 +1,5 @@
 name: GHCR Cleanup
+
 on:
   schedule:
     - cron: "30 6 * * 1"
@@ -9,17 +10,25 @@ on:
         required: false
         default: true
         type: boolean
+
 concurrency:
   group: ghcr-cleanup
   cancel-in-progress: false
+
 permissions:
   contents: read
   packages: write
+
 jobs:
   cleanup:
     name: Delete images older than 60 days
-    runs-on: depot-ubuntu-latest
+    runs-on: ubuntu-latest
     steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
       - name: Clean up GHCR images
         uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
         with:

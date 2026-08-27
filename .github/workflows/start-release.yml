@@ -20,7 +20,7 @@ permissions:
 
 jobs:
   start:
-    runs-on: depot-ubuntu-latest
+    runs-on: ubuntu-latest
 
     steps:
       - name: Harden the runner (Audit all outbound calls)

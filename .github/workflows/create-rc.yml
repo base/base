@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   create-tag:
-    runs-on: depot-ubuntu-latest
+    runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.read-tag.outputs.tag }}
       skip: ${{ steps.version-check.outputs.skip }}

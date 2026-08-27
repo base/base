@@ -1,3 +1,10 @@
+# Depot CI Migration
+# Source: .github/workflows/generate-succinct-vkeys.yml
+#
+# Changes made:
+# - Rewrote .github/ path references to .depot/
+# - Changed GitHub runs-on labels to their Depot equivalents
+
 name: Generate Succinct VKeys
 on:
   workflow_dispatch:
@@ -61,13 +68,10 @@ jobs:
         with:
           ref: ${{ steps.resolve-ref.outputs.ref }}
           fetch-depth: 1
-      - uses: ./.github/actions/setup
+      - uses: ./.depot/actions/setup
         with:
-          free-disk: "true"
           native-deps: "true"
           sp1: "true"
-          rust-cache-shared-key: "manual-succinct-vkeys"
-          rust-cache-save: "false"
       - name: Build fresh ELFs and generate vkeys
         env:
           REF: ${{ inputs.ref }}

@@ -1,3 +1,9 @@
+# Depot CI Migration
+# Source: .github/workflows/bench-pr.yml
+#
+# Changes made:
+# - Rewrote .github/ path references to .depot/
+
 name: Benchmarks (advisory)
 on:
   pull_request:
@@ -25,7 +31,7 @@ jobs:
   # (Per-benchmark interleaving would tighten the timing further and is a follow-up.)
   bench:
     name: Benchmarks (advisory)
-    # SECURITY: this job checks out the PR head and executes it (the ./.github/actions/setup
+    # SECURITY: this job checks out the PR head and executes it (the ./.depot/actions/setup
     # composite action and `cargo bench`, incl. build.rs/proc-macros) with repository
     # secrets and caches. Fork PRs are attacker-controlled, so restrict execution to PRs
     # from the same repository (trusted, write-access authors) or a manual dispatch (also
@@ -45,18 +51,17 @@ jobs:
         with:
           egress-policy: audit
       # Single checkout at HEAD_SHA. The tree is switched to the base commit for the
-      # first pass and back to head for the second; ./.github/actions/setup and the
+      # first pass and back to head for the second; ./.depot/actions/setup and the
       # compare script resolve at the workspace root either way.
       - name: Checkout head
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 1
-      - uses: ./.github/actions/setup
+      - uses: ./.depot/actions/setup
         with:
           foundry: "true"
           native-deps: "true"
-          rust-cache-shared-key: "benchmark"
           just: "false"
       # Fetch the base commit so the single tree can be switched to it, and hoist the
       # head checkout's authoritative bench list out of the tree so both passes run

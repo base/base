@@ -1,3 +1,9 @@
+# Depot CI Migration
+# Source: .github/workflows/fuzz-nightly.yml
+#
+# Changes made:
+# - Rewrote .github/ path references to .depot/
+
 # Nightly fuzz: runs the build/validate sync-parity fuzz test with a fresh random
 # seed each run (several shards in parallel) so every run explores a different
 # transaction stream. The chosen seed is logged; a failing run can be replayed by
@@ -39,15 +45,11 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 1
-      - uses: ./.github/actions/setup
+      - uses: ./.depot/actions/setup
         with:
-          free-disk: "true"
           native-deps: "true"
           foundry: "true"
           tools: cargo-nextest
-          rust-cache-shared-key: "stable"
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
       - name: Pick fuzz seed
         # Replay a specific seed via the workflow_dispatch input; otherwise generate
         # a fresh random seed so each run fuzzes a different transaction stream. The

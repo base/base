@@ -1,3 +1,10 @@
+# Depot CI Migration
+# Source: .github/workflows/base-std-fork-tests.yml
+#
+# Changes made:
+# - Rewrote .github/ path references to .depot/
+# - Changed GitHub runs-on labels to their Depot equivalents
+
 name: Base Std Interface Tests
 on:
   pull_request:
@@ -46,12 +53,10 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 1
-      - uses: ./.github/actions/setup
+      - uses: ./.depot/actions/setup
         with:
-          free-disk: "true"
           foundry: "true"
           native-deps: "true"
-          rust-cache-shared-key: "base-std-fork-tests"
           just: "false"
       - name: Checkout pinned fork-test pair
         shell: bash
