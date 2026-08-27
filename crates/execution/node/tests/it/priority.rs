@@ -7,7 +7,9 @@ use alloy_genesis::Genesis;
 use alloy_network::TxSignerSync;
 use alloy_primitives::{Address, ChainId, TxKind};
 use base_execution_chainspec::BaseChainSpecBuilder;
-use base_execution_payload_builder::builder::BasePayloadTransactions;
+use base_execution_payload_builder::{
+    NonParkablePayloadTransactions, ParkablePayloadTransactions, builder::BasePayloadTransactions,
+};
 use base_execution_txpool::BasePooledTransaction;
 use base_node_core::{
     BaseNode,
@@ -29,8 +31,7 @@ use reth_node_builder::{
 };
 use reth_node_core::args::DatadirArgs;
 use reth_payload_util::{
-    BestPayloadTransactions, PayloadTransactions, PayloadTransactionsChain,
-    PayloadTransactionsFixed,
+    BestPayloadTransactions, PayloadTransactionsChain, PayloadTransactionsFixed,
 };
 use reth_provider::providers::BlockchainProvider;
 use reth_tasks::Runtime;
@@ -47,9 +48,9 @@ impl BasePayloadTransactions<BasePooledTransaction> for CustomTxPriority {
         &self,
         pool: Pool,
         attr: reth_transaction_pool::BestTransactionsAttributes,
-    ) -> impl PayloadTransactions<Transaction = BasePooledTransaction>
+    ) -> impl ParkablePayloadTransactions<Transaction = BasePooledTransaction>
     where
-        Pool: reth_transaction_pool::TransactionPool<Transaction = BasePooledTransaction>,
+        Pool: base_execution_txpool::ParkableTransactionPool<Transaction = BasePooledTransaction>,
     {
         // Block composition:
         // 1. Best transactions from the pool (up to 250k gas)
@@ -74,14 +75,14 @@ impl BasePayloadTransactions<BasePooledTransaction> for CustomTxPriority {
             sender.address(),
         ));
 
-        PayloadTransactionsChain::new(
+        NonParkablePayloadTransactions::new(PayloadTransactionsChain::new(
             BestPayloadTransactions::new(pool.best_transactions_with_attributes(attr)),
             // Allow 250k gas for the transactions from the pool
             Some(250_000),
             PayloadTransactionsFixed::single(end_of_block_tx),
             // Allow 100k gas for the end-of-block transaction
             Some(100_000),
-        )
+        ))
     }
 }
 

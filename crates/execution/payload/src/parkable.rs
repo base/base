@@ -69,6 +69,76 @@ where
     }
 }
 
+impl<T> ParkablePayloadTransactions for reth_payload_util::NoopPayloadTransactions<T>
+where
+    T: PoolTransaction,
+{
+    fn park_current(&mut self) -> bool {
+        false
+    }
+
+    fn mark_current_committed(&mut self) {}
+
+    fn promote(&mut self, _transaction_hash: TxHash) -> bool {
+        false
+    }
+
+    fn discard_parked(&mut self, _transaction_hash: TxHash) -> bool {
+        false
+    }
+}
+
+/// Adds no-op parking lifecycle methods to a payload iterator that cannot park transactions.
+///
+/// The payload builder skips transactions with unsatisfied predicates when this adapter reports
+/// that parking is unavailable.
+#[derive(Debug, Clone)]
+pub struct NonParkablePayloadTransactions<I> {
+    inner: I,
+}
+
+impl<I> NonParkablePayloadTransactions<I> {
+    /// Wraps a payload iterator without adding parking support.
+    pub const fn new(inner: I) -> Self {
+        Self { inner }
+    }
+}
+
+impl<I> PayloadTransactions for NonParkablePayloadTransactions<I>
+where
+    I: PayloadTransactions,
+{
+    type Transaction = I::Transaction;
+
+    fn next(&mut self, ctx: ()) -> Option<Self::Transaction> {
+        self.inner.next(ctx)
+    }
+
+    fn mark_invalid(&mut self, sender: Address, nonce: u64) {
+        self.inner.mark_invalid(sender, nonce);
+    }
+}
+
+impl<I> ParkablePayloadTransactions for NonParkablePayloadTransactions<I>
+where
+    I: PayloadTransactions,
+    I::Transaction: PoolTransaction,
+{
+    fn park_current(&mut self) -> bool {
+        false
+    }
+
+    fn mark_current_committed(&mut self) {}
+
+    fn promote(&mut self, _transaction_hash: TxHash) -> bool {
+        false
+    }
+
+    fn discard_parked(&mut self, _transaction_hash: TxHash) -> bool {
+        false
+    }
+}
+
 /// Converts a parkable best iterator into the payload-transaction interface used by the builder.
 pub struct ParkableBestPayloadTransactions<T>
 where
