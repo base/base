@@ -192,6 +192,7 @@ http-body-util.workspace = true
 default = [ "jemalloc", "metrics" ]
 metrics = [
 	"base-common-evm/metrics",
+	"base-execution-payload-builder/metrics",
 	"base-metrics/metrics",
 	"base-observability-events/metrics",
 	"dep:metrics",

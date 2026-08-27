@@ -22,6 +22,9 @@ pub use parkable::{
     ParkablePayloadTransactions, PayloadTransactionInvalidated,
 };
 
+mod metrics;
+pub use metrics::ValidityMetrics;
+
 mod predicate_loads;
 pub use predicate_loads::{PredicateLoadTracker, PredicateReadRecorder};
 

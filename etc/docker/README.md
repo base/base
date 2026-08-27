@@ -84,6 +84,20 @@ just devnet up-anvil-nitro-local
 Set `L2_BASE_DENIM_BLOCK` to another block to move activation, or set it to an
 empty value to run a pre-Denim devnet.
 
+To exercise Cobalt validity transactions on the native payload builder, the
+deployment must schedule Cobalt no later than Denim and configure both sides of
+the forwarding path:
+
+- builder: `--builder.enable-experimental-validity-transactions` and
+  `--builder.payload-builder-cutover`
+- ingress/client: `--enable-experimental-validity-transactions` and a
+  `--builder-rpc-urls` endpoint targeting the builder
+
+The default devnet compose files include these flags and schedule Cobalt at
+block 22 followed by Denim at block 23. Native payload building supports balance,
+storage, and block-number predicates; `flashblock_index` predicates remain
+specific to the Flashblocks builder and are rejected after the Denim cutover.
+
 Zenith is the permanently unscheduled, genesis-only gate for future hardfork feature testing.
 Zenith mode additionally activates Zenith at block 50:
 

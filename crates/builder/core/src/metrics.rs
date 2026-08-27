@@ -1,10 +1,8 @@
 //! Builder metrics collected during block and flashblock construction.
 
-use std::time::Duration;
-
 use crate::{
     ExecutionInfo, FLOW_STANDARD, FLOW_VALIDITY, FlashblockDiagnostics, InclusionTracker,
-    ParkedPredicateIndex, PredicateLoadTracker, ResourceLimits,
+    ResourceLimits,
 };
 
 const PRIORITY_FEE_THRESHOLDS_WEI: [(&str, u64); 3] =
@@ -115,36 +113,6 @@ base_metrics::define_metrics! {
     rejection_cache_hits: counter,
     #[describe("Number of entries in the rejection cache")]
     rejection_cache_size: gauge,
-    #[describe("Duration of rescanning parked transaction validity predicates in seconds")]
-    validity_predicate_rescan_duration: histogram,
-    #[describe(
-        "Total validity predicate evaluation time per flashblock build, inclusive of state loads, in seconds"
-    )]
-    validity_predicate_eval_duration_per_block: histogram,
-    #[describe(
-        "Number of validity-predicate index buckets woken (watched balance or storage slot changed), per flashblock build"
-    )]
-    predicate_bucket_wakeups: histogram,
-    #[describe(
-        "Depth (parked transaction count) of validity-predicate index buckets, sampled once per flashblock build"
-    )]
-    predicate_bucket_depth: histogram,
-    #[describe(
-        "Accounts read while evaluating validity predicates per block, counting every read"
-    )]
-    predicate_accounts_loaded_total: histogram,
-    #[describe(
-        "Distinct accounts read while evaluating validity predicates per block"
-    )]
-    predicate_accounts_loaded_unique: histogram,
-    #[describe(
-        "Storage slots read while evaluating validity predicates per block, counting every read including re-reads"
-    )]
-    predicate_slots_loaded_total: histogram,
-    #[describe(
-        "Distinct storage slots read while evaluating validity predicates per block (predicate state footprint)"
-    )]
-    predicate_slots_loaded_unique: histogram,
     #[describe("Transactions included per block, segmented by flow")]
     #[label(flow)]
     txs_included_per_block: histogram,
@@ -160,9 +128,6 @@ base_metrics::define_metrics! {
     #[describe("Per-block EIP-8130 coinbase-tip revenue in wei, segmented by flow")]
     #[label(flow)]
     coinbase_tip_revenue_wei: histogram,
-    #[describe("Validity predicate evaluation attempts")]
-    #[label(outcome)]
-    validity_predicate_evaluations_total: counter,
     #[describe("Shadow validity injection decisions")]
     #[label(outcome)]
     shadow_validity_injection_total: counter,
@@ -266,12 +231,6 @@ base_metrics::define_metrics! {
 }
 
 impl BuilderMetrics {
-    /// Records the total validity predicate evaluation time accumulated across a
-    /// single build iteration, inclusive of the state loads each evaluation performs.
-    pub fn record_predicate_eval_duration(duration: Duration) {
-        Self::validity_predicate_eval_duration_per_block().record(duration.as_secs_f64());
-    }
-
     /// Records per-flashblock selection diagnostics as labeled metrics.
     pub fn record_flashblock_diagnostics(
         flashblock_index: u64,
@@ -329,22 +288,6 @@ impl BuilderMetrics {
         }
     }
 
-    /// Records the block's accumulated validity-predicate state loads as
-    /// per-block histogram observations (total and distinct accounts/slots).
-    ///
-    /// Emits nothing when the block carried no validity transactions, so the
-    /// histograms are not diluted with zero observations from ordinary blocks.
-    pub fn record_predicate_loads(tracker: &PredicateLoadTracker) {
-        if !tracker.has_activity() {
-            return;
-        }
-
-        Self::predicate_accounts_loaded_total().record(tracker.account_reads() as f64);
-        Self::predicate_accounts_loaded_unique().record(tracker.unique_accounts() as f64);
-        Self::predicate_slots_loaded_total().record(tracker.slot_reads() as f64);
-        Self::predicate_slots_loaded_unique().record(tracker.unique_slots() as f64);
-    }
-
     /// Records per-block inclusion and EIP-1559 fee revenue.
     ///
     /// Always emits one observation per built block, including zeros, so the
@@ -386,14 +329,6 @@ impl BuilderMetrics {
         Self::payload_reverted_tx_gas_used().set(reverted_gas_used);
     }
 
-    /// Records validity-predicate index bucket wakeups and depth distribution for one flashblock build.
-    pub fn record_predicate_index_diagnostics<T>(wakeups: u64, index: &ParkedPredicateIndex<T>) {
-        Self::predicate_bucket_wakeups().record(wakeups as f64);
-        for depth in index.bucket_depths() {
-            Self::predicate_bucket_depth().record(depth as f64);
-        }
-    }
-
     /// Records one included transaction's tip per gas.
     ///
     /// The value is the builder's existing inclusion priority score
@@ -417,11 +352,9 @@ impl BuilderMetrics {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, B256, U256};
     use metrics_exporter_prometheus::PrometheusBuilder;
 
     use super::*;
-    use crate::ValidityPredicateKey;
 
     #[test]
     fn record_flashblock_diagnostics_emits_labeled_metrics() {
@@ -482,96 +415,6 @@ mod tests {
         assert!(rendered.contains(
             "base_builder_flashblock_min_priority_fee_above_threshold_total{flashblock_index=\"7\",threshold=\"100wei\"} 1"
         ));
-    }
-
-    #[test]
-    fn record_predicate_eval_duration_emits_histogram_in_seconds() {
-        let recorder = PrometheusBuilder::new().build_recorder();
-        let handle = recorder.handle();
-
-        metrics::with_local_recorder(&recorder, || {
-            // 500ms accumulated across a build iteration -> 0.5 seconds.
-            BuilderMetrics::record_predicate_eval_duration(Duration::from_millis(500));
-        });
-
-        let rendered = handle.render();
-        assert!(
-            rendered.contains("base_builder_validity_predicate_eval_duration_per_block_count 1"),
-            "expected a single observation, got: {rendered}"
-        );
-        assert!(
-            rendered.contains("base_builder_validity_predicate_eval_duration_per_block_sum 0.5"),
-            "expected 0.5s recorded, got: {rendered}"
-        );
-    }
-
-    #[test]
-    fn record_predicate_index_diagnostics_emits_wakeups_and_bucket_depths() {
-        let recorder = PrometheusBuilder::new().build_recorder();
-        let handle = recorder.handle();
-        let mut index = ParkedPredicateIndex::default();
-        index.park(
-            B256::with_last_byte(1),
-            (),
-            ValidityPredicateKey::Balance(Address::with_last_byte(1)),
-        );
-        index.park(
-            B256::with_last_byte(2),
-            (),
-            ValidityPredicateKey::Balance(Address::with_last_byte(1)),
-        );
-        index.park(
-            B256::with_last_byte(3),
-            (),
-            ValidityPredicateKey::Balance(Address::with_last_byte(2)),
-        );
-
-        metrics::with_local_recorder(&recorder, || {
-            BuilderMetrics::record_predicate_index_diagnostics(3, &index);
-        });
-
-        let rendered = handle.render();
-        assert!(rendered.contains("base_builder_predicate_bucket_wakeups_sum 3"));
-        assert!(rendered.contains("base_builder_predicate_bucket_depth_count 2"));
-        assert!(rendered.contains("base_builder_predicate_bucket_depth_sum 3"));
-    }
-
-    #[test]
-    fn record_predicate_loads_emits_total_and_unique_histograms() {
-        let recorder = PrometheusBuilder::new().build_recorder();
-        let handle = recorder.handle();
-
-        let account = Address::with_last_byte(1);
-        let slot = U256::from(7);
-        let mut tracker = PredicateLoadTracker::default();
-        // Account read twice; slot read three times — one distinct location each.
-        tracker.record_account(account);
-        tracker.record_account(account);
-        tracker.record_slot(account, slot);
-        tracker.record_slot(account, slot);
-        tracker.record_slot(account, slot);
-
-        metrics::with_local_recorder(&recorder, || {
-            BuilderMetrics::record_predicate_loads(&tracker);
-        });
-
-        let rendered = handle.render();
-        assert!(rendered.contains("base_builder_predicate_accounts_loaded_total_sum 2"));
-        assert!(rendered.contains("base_builder_predicate_accounts_loaded_unique_sum 1"));
-        assert!(rendered.contains("base_builder_predicate_slots_loaded_total_sum 3"));
-        assert!(rendered.contains("base_builder_predicate_slots_loaded_unique_sum 1"));
-    }
-
-    #[test]
-    fn record_predicate_loads_emits_nothing_without_activity() {
-        let recorder = PrometheusBuilder::new().build_recorder();
-        let handle = recorder.handle();
-
-        metrics::with_local_recorder(&recorder, || {
-            BuilderMetrics::record_predicate_loads(&PredicateLoadTracker::default());
-        });
-
-        assert!(!handle.render().contains("predicate_accounts_loaded_total"));
     }
 
     #[test]
