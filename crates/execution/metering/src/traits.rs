@@ -6,8 +6,8 @@ use base_bundles::{Bundle, MeterBundleResponse};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 
 use crate::{
-    DowseBlockBenchmarkResponse, DowseBlockReplayResponse, MeterBlockResponse,
-    MeteredPriorityFeeResponse,
+    DowseBlockBenchmarkResponse, DowseBlockReplayResponse, DowseConcurrentBlockReplayResponse,
+    DowseConcurrentReplayConfig, MeterBlockResponse, MeteredPriorityFeeResponse,
 };
 
 /// RPC API for transaction metering.
@@ -61,6 +61,14 @@ pub trait MeteringApi {
         number: BlockNumberOrTag,
         dowse_cache_enabled: bool,
     ) -> RpcResult<DowseBlockReplayResponse>;
+
+    /// Replays one block while finite-head-start Dowse workers race EVM execution.
+    #[method(name = "replayConcurrentDowseBlockByNumber")]
+    async fn replay_concurrent_dowse_block_by_number(
+        &self,
+        number: BlockNumberOrTag,
+        config: DowseConcurrentReplayConfig,
+    ) -> RpcResult<DowseConcurrentBlockReplayResponse>;
 
     /// Handler for: `base_meteredPriorityFeePerGas`
     ///

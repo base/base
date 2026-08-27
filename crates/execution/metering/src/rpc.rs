@@ -21,8 +21,9 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     DowseBenchmarkConfig, DowseBlockBenchmarkResponse, DowseBlockReplayResponse,
-    MeterBlockResponse, MeteredPriorityFeeResponse, PendingState, PriorityFeeEstimator,
-    ResourceDemand, ResourceFeeEstimateResponse, benchmark_dowse_block,
+    DowseConcurrentBlockReplayResponse, DowseConcurrentReplayConfig, MeterBlockResponse,
+    MeteredPriorityFeeResponse, PendingState, PriorityFeeEstimator, ResourceDemand,
+    ResourceFeeEstimateResponse, benchmark_dowse_block,
     block::meter_block,
     meter::{MeterBundleInput, meter_bundle},
     replay_dowse_block,
@@ -433,6 +434,53 @@ where
                 None::<()>,
             )
         })
+    }
+
+    async fn replay_concurrent_dowse_block_by_number(
+        &self,
+        number: BlockNumberOrTag,
+        replay_config: DowseConcurrentReplayConfig,
+    ) -> RpcResult<DowseConcurrentBlockReplayResponse> {
+        let config = self.dowse_benchmark.as_ref().ok_or_else(|| {
+            jsonrpsee::types::ErrorObjectOwned::owned(
+                jsonrpsee::types::ErrorCode::InvalidRequest.code(),
+                "Dowse block benchmark is not configured",
+                None::<()>,
+            )
+        })?;
+        let block = self
+            .provider
+            .block_by_number_or_tag(number)
+            .map_err(|error| {
+                jsonrpsee::types::ErrorObjectOwned::owned(
+                    jsonrpsee::types::ErrorCode::InternalError.code(),
+                    format!("Failed to get block: {error}"),
+                    None::<()>,
+                )
+            })?
+            .ok_or_else(|| {
+                jsonrpsee::types::ErrorObjectOwned::owned(
+                    jsonrpsee::types::ErrorCode::InvalidParams.code(),
+                    format!("Block not found: {number:?}"),
+                    None::<()>,
+                )
+            })?;
+
+        config
+            .replay_concurrent_block(
+                self.provider.clone(),
+                self.provider.chain_spec(),
+                &block,
+                replay_config,
+            )
+            .map_err(|error| {
+                error!(error = %error, "concurrent Dowse block replay failed");
+                jsonrpsee::types::ErrorObjectOwned::owned(
+                    jsonrpsee::types::ErrorCode::InternalError.code(),
+                    format!("Concurrent Dowse block replay failed: {error}"),
+                    None::<()>,
+                )
+            })
     }
 
     async fn metered_priority_fee_per_gas(

@@ -49,9 +49,11 @@ pub use traits::MeteringApiServer;
 
 mod types;
 pub use types::{
-    DowseBlockBenchmarkResponse, DowseBlockReplayResponse, DowsePrefetchStats, MeterBlockResponse,
-    MeterBlockTransactions, MeterStateProviderAccountAccess, MeterStateProviderCodeAccess,
-    MeterStateProviderStats, MeteredPriorityFeeResponse, ResourceFeeEstimateResponse,
+    DowseBlockBenchmarkResponse, DowseBlockReplayResponse, DowseConcurrentBlockReplayResponse,
+    DowseConcurrentPrefetchStats, DowseConcurrentReplayConfig, DowsePrefetchReadCounts,
+    DowsePrefetchStats, MeterBlockResponse, MeterBlockTransactions,
+    MeterStateProviderAccountAccess, MeterStateProviderCodeAccess, MeterStateProviderStats,
+    MeteredPriorityFeeResponse, ResourceFeeEstimateResponse,
 };
 
 mod transaction;

@@ -60,18 +60,20 @@ pub fn meter_block<P>(
 where
     P: StateProviderFactory + HeaderProvider<Header = Header>,
 {
-    meter_block_with_optional_cache(provider, chain_spec, block, None)
+    meter_block_with_optional_cache(provider, chain_spec, block, None, || {})
 }
 
 /// Re-executes a block using an optional prepopulated parent-state execution cache.
-pub fn meter_block_with_optional_cache<P>(
+pub fn meter_block_with_optional_cache<P, F>(
     provider: P,
     chain_spec: Arc<BaseChainSpec>,
     block: &BaseBlock,
     cache: Option<ExecutionCache>,
+    before_execution: F,
 ) -> EyreResult<MeterBlockResponse>
 where
     P: StateProviderFactory + HeaderProvider<Header = Header>,
+    F: FnOnce(),
 {
     let block_hash = block.header().hash_slow();
     let block_number = block.header().number();
@@ -121,6 +123,7 @@ where
     // Execute transactions and measure time
     let mut transaction_times = Vec::with_capacity(tx_count);
 
+    before_execution();
     let evm_start = Instant::now();
     {
         let evm_config = BaseEvmConfig::base(chain_spec);

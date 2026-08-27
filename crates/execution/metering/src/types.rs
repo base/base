@@ -54,6 +54,72 @@ pub struct DowsePrefetchStats {
     pub workers: usize,
 }
 
+/// Per-request controls for a Dowse replay that races prefetch workers against EVM execution.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DowseConcurrentReplayConfig {
+    /// Number of parent-state read workers.
+    pub workers: usize,
+    /// Requested state-read head start before EVM execution, in microseconds.
+    pub head_start_us: u64,
+    /// Maximum account targets emitted for one transaction.
+    pub max_accounts_per_transaction: usize,
+    /// Maximum storage targets emitted for one transaction.
+    pub max_storage_slots_per_transaction: usize,
+}
+
+/// Successful or failed Dowse parent-state reads grouped by target kind.
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DowsePrefetchReadCounts {
+    /// Account reads.
+    pub accounts: usize,
+    /// Storage reads.
+    pub storage: usize,
+    /// Bytecode reads discovered from account results.
+    pub bytecode: usize,
+}
+
+/// Work performed by finite-head-start Dowse workers while replaying a block.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DowseConcurrentPrefetchStats {
+    /// Time spent resolving transaction hints into ordered concrete targets.
+    pub planning_time_us: u128,
+    /// Time from releasing workers through stopping them after execution.
+    pub prefetch_time_us: u128,
+    /// Actual time from releasing workers until EVM execution began.
+    pub actual_head_start_us: u128,
+    /// Transactions for which the hint table produced a non-empty unique plan.
+    pub planned_transactions: usize,
+    /// Unique account targets offered to workers.
+    pub account_targets: usize,
+    /// Unique storage targets offered to workers.
+    pub storage_targets: usize,
+    /// Number of workers that received at least one plan.
+    pub workers: usize,
+    /// Reads completed and cached before EVM execution began.
+    pub completed_before_execution: DowsePrefetchReadCounts,
+    /// Reads completed and cached while EVM execution was running.
+    pub completed_during_execution: DowsePrefetchReadCounts,
+    /// In-flight reads that completed after EVM execution and were not cached.
+    pub completed_after_execution: DowsePrefetchReadCounts,
+    /// Parent-state read failures.
+    pub errors: DowsePrefetchReadCounts,
+}
+
+/// One canonical-block replay while finite-head-start Dowse workers run concurrently.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DowseConcurrentBlockReplayResponse {
+    /// Runtime settings selected for this replay.
+    pub config: DowseConcurrentReplayConfig,
+    /// Planning and concurrent parent-state read measurements.
+    pub prefetch: DowseConcurrentPrefetchStats,
+    /// The measured cache-backed block execution.
+    pub replay: MeterBlockResponse,
+}
+
 /// Raw and Dowse-cache-backed executions of the same canonical block.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

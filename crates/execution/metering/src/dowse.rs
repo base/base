@@ -1,11 +1,21 @@
 //! Deterministic Dowse state-prefetch benchmarks for canonical block replay.
 
-use std::{collections::HashSet, fs, path::Path, sync::Arc, thread, time::Instant};
+use std::{
+    collections::HashSet,
+    fs,
+    path::Path,
+    sync::{
+        Arc, Barrier,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
+    thread,
+    time::{Duration, Instant},
+};
 
 use alloy_consensus::{Transaction, transaction::SignerRecoverable};
 use base_common_consensus::BaseBlock;
 use base_execution_chainspec::BaseChainSpec;
-use dowse_plan::{PlanLimits, PrefetchPlanner};
+use dowse_plan::{PlanLimits, PrefetchPlan, PrefetchPlanner};
 use dowse_types::HintTable;
 use eyre::{Result as EyreResult, eyre};
 use reth_execution_cache::ExecutionCache;
@@ -13,8 +23,9 @@ use reth_primitives_traits::Block as BlockT;
 use reth_provider::{HeaderProvider, StateProvider, StateProviderFactory};
 
 use crate::{
-    DowseBlockBenchmarkResponse, DowseBlockReplayResponse, DowsePrefetchStats, meter_block,
-    meter_block_with_optional_cache,
+    DowseBlockBenchmarkResponse, DowseBlockReplayResponse, DowseConcurrentBlockReplayResponse,
+    DowseConcurrentPrefetchStats, DowseConcurrentReplayConfig, DowsePrefetchReadCounts,
+    DowsePrefetchStats, meter_block, meter_block_with_optional_cache,
 };
 
 /// Static hint table and worker settings for block replay benchmarks.
@@ -45,6 +56,250 @@ impl DowseBenchmarkConfig {
 
         Ok(Self { hints: Arc::new(hints), worker_count, cache_size_bytes })
     }
+
+    /// Replays a block while ordered prefetch workers race EVM execution after a finite head start.
+    pub fn replay_concurrent_block<P>(
+        &self,
+        provider: P,
+        chain_spec: Arc<BaseChainSpec>,
+        block: &BaseBlock,
+        replay_config: DowseConcurrentReplayConfig,
+    ) -> EyreResult<DowseConcurrentBlockReplayResponse>
+    where
+        P: StateProviderFactory + HeaderProvider<Header = alloy_consensus::Header> + Clone + Sync,
+    {
+        eyre::ensure!(replay_config.workers > 0, "Dowse replay workers must be greater than zero");
+        eyre::ensure!(replay_config.workers <= 256, "Dowse replay workers must not exceed 256");
+
+        let planning_start = Instant::now();
+        let planner = PrefetchPlanner::new(
+            &self.hints,
+            PlanLimits::new(
+                replay_config.max_accounts_per_transaction,
+                replay_config.max_storage_slots_per_transaction,
+            ),
+        );
+        let mut seen_accounts = HashSet::new();
+        let mut seen_storage = HashSet::new();
+        let mut worker_plans: Vec<Vec<PrefetchPlan>> =
+            (0..replay_config.workers).map(|_| Vec::new()).collect();
+        let mut planned_transactions = 0;
+        let mut account_targets = 0;
+        let mut storage_targets = 0;
+        let mut next_worker = 0;
+
+        for transaction in block.body().transactions() {
+            let Some(target) = transaction.to() else {
+                continue;
+            };
+            let sender = transaction
+                .recover_signer()
+                .map_err(|error| eyre!("failed to recover transaction signer: {error}"))?;
+            let Some(mut plan) = planner.plan(target, sender, transaction.input()) else {
+                continue;
+            };
+            plan.accounts.retain(|address| seen_accounts.insert(*address));
+            plan.storage.retain(|target| seen_storage.insert(*target));
+            if plan.target_count() == 0 {
+                continue;
+            }
+
+            planned_transactions += 1;
+            account_targets += plan.accounts.len();
+            storage_targets += plan.storage.len();
+            worker_plans[next_worker].push(plan);
+            next_worker = (next_worker + 1) % replay_config.workers;
+        }
+
+        let planning_time_us = planning_start.elapsed().as_micros();
+        worker_plans.retain(|plans| !plans.is_empty());
+        let workers = worker_plans.len();
+        let cache = ExecutionCache::new(self.cache_size_bytes);
+
+        if workers == 0 {
+            let replay =
+                meter_block_with_optional_cache(provider, chain_spec, block, Some(cache), || {})?;
+            return Ok(DowseConcurrentBlockReplayResponse {
+                config: replay_config,
+                prefetch: DowseConcurrentPrefetchStats {
+                    planning_time_us,
+                    prefetch_time_us: 0,
+                    actual_head_start_us: 0,
+                    planned_transactions,
+                    account_targets,
+                    storage_targets,
+                    workers,
+                    completed_before_execution: DowsePrefetchReadCounts::default(),
+                    completed_during_execution: DowsePrefetchReadCounts::default(),
+                    completed_after_execution: DowsePrefetchReadCounts::default(),
+                    errors: DowsePrefetchReadCounts::default(),
+                },
+                replay,
+            });
+        }
+
+        let execution_started = Arc::new(AtomicBool::new(false));
+        let execution_finished = Arc::new(AtomicBool::new(false));
+        let actual_head_start_us = Arc::new(AtomicU64::new(0));
+        let barrier = Arc::new(Barrier::new(workers + 1));
+        let parent_hash = block.header().parent_hash;
+
+        let (replay, prefetch) = thread::scope(|scope| -> EyreResult<_> {
+            let mut handles = Vec::with_capacity(workers);
+            for plans in worker_plans {
+                let provider = provider.clone();
+                let cache = cache.clone();
+                let execution_started = Arc::clone(&execution_started);
+                let execution_finished = Arc::clone(&execution_finished);
+                let barrier = Arc::clone(&barrier);
+                handles.push(scope.spawn(move || -> EyreResult<_> {
+                    barrier.wait();
+                    let state_provider = provider.state_by_block_hash(parent_hash)?;
+                    let mut before = DowsePrefetchReadCounts::default();
+                    let mut during = DowsePrefetchReadCounts::default();
+                    let mut after = DowsePrefetchReadCounts::default();
+                    let mut errors = DowsePrefetchReadCounts::default();
+
+                    for plan in plans {
+                        if execution_finished.load(Ordering::Acquire) {
+                            break;
+                        }
+
+                        for address in plan.accounts {
+                            if execution_finished.load(Ordering::Acquire) {
+                                break;
+                            }
+                            let account = match state_provider.basic_account(&address) {
+                                Ok(account) => account,
+                                Err(_) => {
+                                    errors.accounts += 1;
+                                    continue;
+                                }
+                            };
+                            let completed = if execution_finished.load(Ordering::Acquire) {
+                                &mut after
+                            } else if execution_started.load(Ordering::Acquire) {
+                                &mut during
+                            } else {
+                                &mut before
+                            };
+                            completed.accounts += 1;
+                            if execution_finished.load(Ordering::Acquire) {
+                                continue;
+                            }
+                            cache.insert_account(address, account);
+
+                            let Some(code_hash) = account.and_then(|info| info.bytecode_hash)
+                            else {
+                                continue;
+                            };
+                            if execution_finished.load(Ordering::Acquire) {
+                                break;
+                            }
+                            let code = match state_provider.bytecode_by_hash(&code_hash) {
+                                Ok(code) => code,
+                                Err(_) => {
+                                    errors.bytecode += 1;
+                                    continue;
+                                }
+                            };
+                            let completed = if execution_finished.load(Ordering::Acquire) {
+                                &mut after
+                            } else if execution_started.load(Ordering::Acquire) {
+                                &mut during
+                            } else {
+                                &mut before
+                            };
+                            completed.bytecode += 1;
+                            if !execution_finished.load(Ordering::Acquire) {
+                                cache.insert_code(code_hash, code);
+                            }
+                        }
+
+                        for target in plan.storage {
+                            if execution_finished.load(Ordering::Acquire) {
+                                break;
+                            }
+                            let value = match state_provider.storage(target.address, target.slot) {
+                                Ok(value) => value,
+                                Err(_) => {
+                                    errors.storage += 1;
+                                    continue;
+                                }
+                            };
+                            let completed = if execution_finished.load(Ordering::Acquire) {
+                                &mut after
+                            } else if execution_started.load(Ordering::Acquire) {
+                                &mut during
+                            } else {
+                                &mut before
+                            };
+                            completed.storage += 1;
+                            if !execution_finished.load(Ordering::Acquire) {
+                                cache.insert_storage(target.address, target.slot, value);
+                            }
+                        }
+                    }
+
+                    Ok((before, during, after, errors))
+                }));
+            }
+
+            barrier.wait();
+            let prefetch_start = Instant::now();
+            thread::sleep(Duration::from_micros(replay_config.head_start_us));
+            let actual_head_start = Arc::clone(&actual_head_start_us);
+            let started = Arc::clone(&execution_started);
+            let replay =
+                meter_block_with_optional_cache(provider, chain_spec, block, Some(cache), || {
+                    let elapsed =
+                        u64::try_from(prefetch_start.elapsed().as_micros()).unwrap_or(u64::MAX);
+                    actual_head_start.store(elapsed, Ordering::Release);
+                    started.store(true, Ordering::Release);
+                });
+            execution_finished.store(true, Ordering::Release);
+
+            let mut completed_before_execution = DowsePrefetchReadCounts::default();
+            let mut completed_during_execution = DowsePrefetchReadCounts::default();
+            let mut completed_after_execution = DowsePrefetchReadCounts::default();
+            let mut read_errors = DowsePrefetchReadCounts::default();
+            for handle in handles {
+                let (before, during, after, errors) =
+                    handle.join().map_err(|_| eyre!("Dowse replay worker panicked"))??;
+                completed_before_execution.accounts += before.accounts;
+                completed_before_execution.storage += before.storage;
+                completed_before_execution.bytecode += before.bytecode;
+                completed_during_execution.accounts += during.accounts;
+                completed_during_execution.storage += during.storage;
+                completed_during_execution.bytecode += during.bytecode;
+                completed_after_execution.accounts += after.accounts;
+                completed_after_execution.storage += after.storage;
+                completed_after_execution.bytecode += after.bytecode;
+                read_errors.accounts += errors.accounts;
+                read_errors.storage += errors.storage;
+                read_errors.bytecode += errors.bytecode;
+            }
+
+            Ok((
+                replay?,
+                DowseConcurrentPrefetchStats {
+                    planning_time_us,
+                    prefetch_time_us: prefetch_start.elapsed().as_micros(),
+                    actual_head_start_us: u128::from(actual_head_start_us.load(Ordering::Acquire)),
+                    planned_transactions,
+                    account_targets,
+                    storage_targets,
+                    workers,
+                    completed_before_execution,
+                    completed_during_execution,
+                    completed_after_execution,
+                    errors: read_errors,
+                },
+            ))
+        })?;
+
+        Ok(DowseConcurrentBlockReplayResponse { config: replay_config, prefetch, replay })
+    }
 }
 
 /// Plans and prefetches canonical transactions, then replays the block with and without the cache.
@@ -67,6 +322,7 @@ where
         Arc::clone(&chain_spec),
         block,
         Some(cache),
+        || {},
     )?;
     let raw = match raw {
         Some(raw) => raw,
@@ -104,7 +360,7 @@ where
     } else {
         (None, None)
     };
-    let replay = meter_block_with_optional_cache(provider, chain_spec, block, cache)?;
+    let replay = meter_block_with_optional_cache(provider, chain_spec, block, cache, || {})?;
 
     Ok(DowseBlockReplayResponse { dowse_cache_enabled, prefetch, replay })
 }
@@ -307,6 +563,24 @@ mod tests {
         assert_eq!(raw.replay.transactions[0].gas_used, cached.replay.transactions[0].gas_used);
         assert!(raw.replay.state_provider.storage_fetches > 0);
         assert_eq!(cached.replay.state_provider.storage_fetches, 0);
+
+        let concurrent = config.replay_concurrent_block(
+            harness.blockchain_provider(),
+            harness.chain_spec(),
+            &block,
+            DowseConcurrentReplayConfig {
+                workers: 1,
+                head_start_us: 50_000,
+                max_accounts_per_transaction: 32,
+                max_storage_slots_per_transaction: 256,
+            },
+        )?;
+        assert_eq!(raw.replay.transactions[0].gas_used, concurrent.replay.transactions[0].gas_used);
+        assert_eq!(concurrent.prefetch.planned_transactions, 1);
+        assert_eq!(concurrent.prefetch.storage_targets, 1);
+        assert_eq!(concurrent.prefetch.completed_before_execution.storage, 1);
+        assert!(concurrent.prefetch.actual_head_start_us >= 50_000);
+        assert_eq!(concurrent.replay.state_provider.storage_fetches, 0);
         Ok(())
     }
 }
