@@ -148,15 +148,27 @@ pub struct DowseArgs {
     #[arg(long = "builder.dowse.workers", default_value = "4")]
     pub dowse_workers: usize,
 
-    /// Maximum queued transaction plans per worker.
-    #[arg(long = "builder.dowse.queue-capacity", default_value = "64")]
+    /// Maximum unique state targets waiting in the central priority queue.
+    #[arg(long = "builder.dowse.queue-capacity", default_value = "65536")]
     pub dowse_queue_capacity: usize,
 
-    /// Interval between scans of the txpool's best transactions.
+    /// Maximum txpool positions workers may run ahead of the payload builder cursor.
+    #[arg(long = "builder.dowse.max-transaction-distance", default_value = "4")]
+    pub dowse_max_transaction_distance: usize,
+
+    /// Neighboring priority targets each worker may reorder by physical database key.
+    #[arg(long = "builder.dowse.locality-batch-size", default_value = "1")]
+    pub dowse_locality_batch_size: usize,
+
+    /// Minimum hint confidence admitted to the state-read queue, in basis points.
+    #[arg(long = "builder.dowse.min-confidence-bps", default_value = "2000")]
+    pub dowse_min_confidence_bps: u16,
+
+    /// Maximum interval between txpool priority refreshes.
     #[arg(long = "builder.dowse.poll-interval-ms", default_value = "25")]
     pub dowse_poll_interval_ms: u64,
 
-    /// Maximum best transactions examined during each scan.
+    /// Maximum best transactions examined during each event-driven or periodic refresh.
     #[arg(long = "builder.dowse.max-transactions", default_value = "2048")]
     pub dowse_max_transactions: usize,
 
@@ -179,7 +191,10 @@ impl Default for DowseArgs {
             dowse_hints: None,
             dowse_ab_test: false,
             dowse_workers: 4,
-            dowse_queue_capacity: 64,
+            dowse_queue_capacity: 65_536,
+            dowse_max_transaction_distance: 4,
+            dowse_locality_batch_size: 1,
+            dowse_min_confidence_bps: 2_000,
             dowse_poll_interval_ms: 25,
             dowse_max_transactions: 2048,
             dowse_max_accounts_per_transaction: 32,
@@ -206,6 +221,14 @@ impl DowseArgs {
             "builder.dowse.queue-capacity must be greater than zero"
         );
         eyre::ensure!(
+            self.dowse_locality_batch_size > 0,
+            "builder.dowse.locality-batch-size must be greater than zero"
+        );
+        eyre::ensure!(
+            self.dowse_min_confidence_bps <= 10_000,
+            "builder.dowse.min-confidence-bps must not exceed 10000"
+        );
+        eyre::ensure!(
             self.dowse_poll_interval_ms > 0,
             "builder.dowse.poll-interval-ms must be greater than zero"
         );
@@ -227,6 +250,9 @@ impl DowseArgs {
             ab_test: self.dowse_ab_test,
             worker_count: self.dowse_workers,
             queue_capacity: self.dowse_queue_capacity,
+            max_transaction_distance: self.dowse_max_transaction_distance,
+            locality_batch_size: self.dowse_locality_batch_size,
+            min_confidence_bps: self.dowse_min_confidence_bps,
             poll_interval: Duration::from_millis(self.dowse_poll_interval_ms),
             max_transactions: self.dowse_max_transactions,
             max_accounts_per_transaction: self.dowse_max_accounts_per_transaction,
@@ -571,6 +597,12 @@ mod tests {
         assert_eq!(args.experimental_validity_max_predicates, DEFAULT_MAX_VALIDITY_PREDICATES);
         assert!(!args.shadow_validity_injection_enabled);
         assert_eq!(args.shadow_validity_injection_sample_rate_bps, 100);
+        assert_eq!(args.dowse.dowse_workers, 4);
+        assert_eq!(args.dowse.dowse_max_transaction_distance, 4);
+        assert_eq!(args.dowse.dowse_locality_batch_size, 1);
+        assert_eq!(args.dowse.dowse_min_confidence_bps, 2_000);
+        assert_eq!(args.dowse.dowse_max_accounts_per_transaction, 32);
+        assert_eq!(args.dowse.dowse_max_storage_slots_per_transaction, 256);
         assert!(!args.builder_api_config().unwrap().shadow_validity.is_enabled());
         let config = convert(args);
         assert_eq!(config.block_time, Duration::from_millis(1000));
@@ -588,6 +620,12 @@ mod tests {
             "2",
             "--builder.dowse.queue-capacity",
             "16",
+            "--builder.dowse.max-transaction-distance",
+            "32",
+            "--builder.dowse.locality-batch-size",
+            "8",
+            "--builder.dowse.min-confidence-bps",
+            "2500",
             "--builder.dowse.poll-interval-ms",
             "10",
             "--builder.dowse.max-transactions",
@@ -605,6 +643,9 @@ mod tests {
         assert!(args.dowse_ab_test);
         assert_eq!(args.dowse_workers, 2);
         assert_eq!(args.dowse_queue_capacity, 16);
+        assert_eq!(args.dowse_max_transaction_distance, 32);
+        assert_eq!(args.dowse_locality_batch_size, 8);
+        assert_eq!(args.dowse_min_confidence_bps, 2500);
         assert_eq!(args.dowse_poll_interval_ms, 10);
         assert_eq!(args.dowse_max_transactions, 512);
         assert_eq!(args.dowse_max_accounts_per_transaction, 8);

@@ -3,7 +3,7 @@
 use std::{sync::Arc, time::Instant};
 
 use alloy_consensus::{BlockHeader, Header, transaction::SignerRecoverable};
-use alloy_primitives::B256;
+use alloy_primitives::{B256, TxHash};
 use base_common_consensus::BaseBlock;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
@@ -75,6 +75,33 @@ where
     P: StateProviderFactory + HeaderProvider<Header = Header>,
     F: FnOnce(),
 {
+    meter_block_with_cache_callbacks(
+        provider,
+        chain_spec,
+        block,
+        cache,
+        before_execution,
+        |_| {},
+        |_| {},
+    )
+}
+
+/// Re-executes a block with callbacks surrounding each canonical transaction.
+pub fn meter_block_with_cache_callbacks<P, F, B, A>(
+    provider: P,
+    chain_spec: Arc<BaseChainSpec>,
+    block: &BaseBlock,
+    cache: Option<ExecutionCache>,
+    before_execution: F,
+    mut before_transaction: B,
+    mut after_transaction: A,
+) -> EyreResult<MeterBlockResponse>
+where
+    P: StateProviderFactory + HeaderProvider<Header = Header>,
+    F: FnOnce(),
+    B: FnMut(TxHash),
+    A: FnMut(TxHash),
+{
     let block_hash = block.header().hash_slow();
     let block_number = block.header().number();
     let transactions = block.body().transactions();
@@ -136,6 +163,7 @@ where
 
         for recovered_tx in recovered_transactions {
             let tx_hash = recovered_tx.tx_hash();
+            before_transaction(tx_hash);
             let state_provider_before = state_provider.stats();
             let tx_start = Instant::now();
 
@@ -156,6 +184,7 @@ where
                 state_provider_accounts,
                 state_provider_code_hashes,
             });
+            after_transaction(tx_hash);
         }
     }
     let execution_time = evm_start.elapsed().as_micros();

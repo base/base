@@ -171,6 +171,11 @@ text(
     f"{len(blocks):,} Base mainnet blocks · {sum(raw_by_block[block]['transactionCount'] for block in blocks):,} transactions · blocks {blocks[0]:,}–{blocks[-1]:,}"
     + (
         f" · {dowse_metadata['config']['workers']} workers, {dowse_metadata['config']['headStartUs'] / 1000:g} ms requested lead"
+        + (
+            f" · confidence ≥{dowse_metadata['config']['minConfidenceBps'] / 10000:g}"
+            if dowse_metadata["config"].get("minConfidenceBps", 0)
+            else ""
+        )
         if concurrent
         else ""
     ),

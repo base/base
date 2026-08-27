@@ -171,8 +171,8 @@ base-builder-publish = { path = "crates/builder/publish" }
 base-builder-metering = { path = "crates/builder/metering" }
 
 # Dowse
-dowse-plan = { git = "https://github.com/BrianBland/dowse", rev = "74de19a" }
-dowse-types = { git = "https://github.com/BrianBland/dowse", rev = "74de19a" }
+dowse-plan = { git = "https://github.com/BrianBland/dowse", rev = "e3ad0a5" }
+dowse-types = { git = "https://github.com/BrianBland/dowse", rev = "e3ad0a5" }
 
 # Consensus
 base-consensus-cli = { path = "crates/consensus/cli" }

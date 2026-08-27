@@ -4880,6 +4880,7 @@ dependencies = [
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth 2.4.1",
  "alloy-sol-types",
+ "base-builder-core",
  "base-bundles",
  "base-common-consensus",
  "base-common-evm",
@@ -8848,7 +8849,7 @@ checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 [[package]]
 name = "dowse-plan"
 version = "0.1.0"
-source = "git+https://github.com/BrianBland/dowse?rev=74de19a#74de19a482059aa2a1c2b3e642111de889f544bb"
+source = "git+https://github.com/BrianBland/dowse?rev=e3ad0a5#e3ad0a5f015909085731839ceb36e2ee89d67d35"
 dependencies = [
  "alloy-primitives",
  "dowse-types",
@@ -8857,7 +8858,7 @@ dependencies = [
 [[package]]
 name = "dowse-types"
 version = "0.1.0"
-source = "git+https://github.com/BrianBland/dowse?rev=74de19a#74de19a482059aa2a1c2b3e642111de889f544bb"
+source = "git+https://github.com/BrianBland/dowse?rev=e3ad0a5#e3ad0a5f015909085731839ceb36e2ee89d67d35"
 dependencies = [
  "alloy-primitives",
  "serde",

@@ -11,7 +11,7 @@ mod collector;
 pub use collector::MeteringCollector;
 
 mod block;
-pub use block::{meter_block, meter_block_with_optional_cache};
+pub use block::{meter_block, meter_block_with_cache_callbacks, meter_block_with_optional_cache};
 
 mod cache;
 pub use cache::{

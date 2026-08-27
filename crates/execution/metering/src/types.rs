@@ -66,6 +66,27 @@ pub struct DowseConcurrentReplayConfig {
     pub max_accounts_per_transaction: usize,
     /// Maximum storage targets emitted for one transaction.
     pub max_storage_slots_per_transaction: usize,
+    /// Maximum canonical transaction positions workers may run ahead of execution.
+    #[serde(default = "default_max_transaction_distance")]
+    pub max_transaction_distance: usize,
+    /// Neighboring priority targets each worker may reorder by physical database key.
+    #[serde(default = "default_locality_batch_size")]
+    pub locality_batch_size: usize,
+    /// Minimum hint confidence admitted to the state-read queue, in basis points.
+    #[serde(default = "default_min_confidence_bps")]
+    pub min_confidence_bps: u16,
+}
+
+const fn default_locality_batch_size() -> usize {
+    1
+}
+
+const fn default_max_transaction_distance() -> usize {
+    4
+}
+
+const fn default_min_confidence_bps() -> u16 {
+    2_000
 }
 
 /// Successful or failed Dowse parent-state reads grouped by target kind.
@@ -102,8 +123,14 @@ pub struct DowseConcurrentPrefetchStats {
     pub completed_before_execution: DowsePrefetchReadCounts,
     /// Reads completed and cached while EVM execution was running.
     pub completed_during_execution: DowsePrefetchReadCounts,
-    /// In-flight reads that completed after EVM execution and were not cached.
+    /// In-flight reads that completed after EVM execution.
     pub completed_after_execution: DowsePrefetchReadCounts,
+    /// Targets execution or another worker had already inserted into the shared cache.
+    #[serde(default)]
+    pub cache_hits: DowsePrefetchReadCounts,
+    /// Claimed targets skipped because execution had consumed their last transaction dependency.
+    #[serde(default)]
+    pub stale_before_read: DowsePrefetchReadCounts,
     /// Parent-state read failures.
     pub errors: DowsePrefetchReadCounts,
 }
@@ -265,9 +292,24 @@ mod tests {
     use alloy_primitives::{Address, B256};
 
     use super::{
-        MeterBlockResponse, MeterBlockTransactions, MeterStateProviderAccountAccess,
-        MeterStateProviderStats,
+        DowseConcurrentReplayConfig, MeterBlockResponse, MeterBlockTransactions,
+        MeterStateProviderAccountAccess, MeterStateProviderStats,
     };
+
+    #[test]
+    fn concurrent_replay_uses_tuned_scheduler_defaults() {
+        let config: DowseConcurrentReplayConfig = serde_json::from_value(serde_json::json!({
+            "workers": 4,
+            "headStartUs": 0,
+            "maxAccountsPerTransaction": 32,
+            "maxStorageSlotsPerTransaction": 256
+        }))
+        .unwrap();
+
+        assert_eq!(config.max_transaction_distance, 4);
+        assert_eq!(config.locality_batch_size, 1);
+        assert_eq!(config.min_confidence_bps, 2_000);
+    }
 
     #[test]
     fn meter_block_response_serializes_deprecated_state_root_time_as_zero() {

@@ -14,7 +14,10 @@ mod metrics;
 pub use metrics::BuilderMetrics;
 
 mod dowse;
-pub use dowse::{DowseConfig, DowsePrefetchCache, DowsePrefetchWork, DowsePrefetcher};
+pub use dowse::{
+    DowseConfig, DowsePrefetchCache, DowsePrefetchSchedulerState, DowsePrefetchTarget,
+    DowsePrefetchTargetRecord, DowsePrefetchTargetState, DowsePrefetchWork, DowsePrefetcher,
+};
 
 mod execution;
 pub use execution::{

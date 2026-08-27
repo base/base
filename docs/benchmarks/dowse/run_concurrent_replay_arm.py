@@ -65,6 +65,9 @@ parser.add_argument("--workers", type=int, default=4)
 parser.add_argument("--head-start-us", type=int, default=0)
 parser.add_argument("--max-accounts-per-transaction", type=int, default=32)
 parser.add_argument("--max-storage-slots-per-transaction", type=int, default=256)
+parser.add_argument("--max-transaction-distance", type=int, default=4)
+parser.add_argument("--locality-batch-size", type=int, default=1)
+parser.add_argument("--min-confidence-bps", type=int, default=2000)
 args = parser.parse_args()
 
 has_range = args.start_block is not None or args.end_block is not None
@@ -80,10 +83,15 @@ else:
     blocks = args.blocks
 if args.workers <= 0:
     parser.error("--workers must be positive")
+if args.locality_batch_size <= 0:
+    parser.error("--locality-batch-size must be positive")
+if not 0 <= args.min_confidence_bps <= 10000:
+    parser.error("--min-confidence-bps must be between 0 and 10000")
 for name in (
     "head_start_us",
     "max_accounts_per_transaction",
     "max_storage_slots_per_transaction",
+    "max_transaction_distance",
 ):
     if getattr(args, name) < 0:
         parser.error(f'--{name.replace("_", "-")} must not be negative')
@@ -97,6 +105,9 @@ config = {
     "headStartUs": args.head_start_us,
     "maxAccountsPerTransaction": args.max_accounts_per_transaction,
     "maxStorageSlotsPerTransaction": args.max_storage_slots_per_transaction,
+    "maxTransactionDistance": args.max_transaction_distance,
+    "localityBatchSize": args.locality_batch_size,
+    "minConfidenceBps": args.min_confidence_bps,
 }
 args.output.parent.mkdir(parents=True, exist_ok=True)
 with args.output.open("x", buffering=1) as output:

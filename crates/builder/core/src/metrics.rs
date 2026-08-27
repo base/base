@@ -48,13 +48,27 @@ base_metrics::define_metrics! {
     #[describe("Dowse hint items omitted while creating prefetch plans")]
     #[label(reason)]
     dowse_plan_items_omitted_total: counter,
-    #[describe("Dowse prefetch plans dropped because all worker queues were full")]
-    dowse_queue_drops_total: counter,
+    #[describe("Dowse targets by scheduler lifecycle outcome")]
+    #[label(kind)]
+    #[label(outcome)]
+    dowse_prefetch_targets_total: counter,
+    #[describe("Unique Dowse targets waiting in the central scheduler")]
+    dowse_queue_depth: gauge,
+    #[describe("Time Dowse targets spend waiting in the central scheduler")]
+    dowse_prefetch_queue_wait_duration: histogram,
+    #[describe("Dowse targets currently owned by state-read workers")]
+    dowse_prefetch_reads_in_flight: gauge,
+    #[describe("Planned transaction distance from the payload builder cursor")]
+    #[label(stage)]
+    dowse_prefetch_builder_distance: histogram,
+    #[describe("Payload builder transactions matched to Dowse plans")]
+    #[label(outcome)]
+    dowse_builder_cursor_total: counter,
     #[describe("Dowse state reads performed by background workers")]
     #[label(kind)]
     #[label(outcome)]
     dowse_prefetch_reads_total: counter,
-    #[describe("Duration of background Dowse prefetch work per transaction")]
+    #[describe("Duration of background Dowse prefetch work per state target")]
     dowse_prefetch_work_duration: histogram,
     #[describe("Dowse cache resets after the transaction pool advances to a new parent")]
     dowse_parent_resets_total: counter,

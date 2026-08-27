@@ -295,7 +295,15 @@ where
 
         let parent_hash = ctx.parent().hash();
         let mut state_provider = self.client.state_by_block_hash(parent_hash)?;
-        let dowse_cache = self.dowse_cache.as_ref().and_then(|cache| cache.cache_for(parent_hash));
+        let dowse_cache = self.dowse_cache.as_ref().map(|cache| {
+            let cache_size_bytes = self
+                .config
+                .dowse
+                .as_ref()
+                .expect("Dowse cache requires Dowse configuration")
+                .cache_size_bytes;
+            cache.cache_for_or_activate(parent_hash, cache_size_bytes)
+        });
         let dowse_variant = match (&self.config.dowse, dowse_cache) {
             (None, _) => None,
             (Some(dowse_config), _) if !dowse_config.cache_enabled_for(parent_hash) => {
@@ -462,6 +470,9 @@ where
             ),
             self.config.rejection_cache.clone(),
         );
+        if let Some(dowse_cache) = &self.dowse_cache {
+            best_txs = best_txs.with_dowse_cursor(dowse_cache.clone(), parent_hash);
+        }
         let interval = self.config.flashblocks_interval;
         let (tx, mut rx) = mpsc::channel((self.config.flashblocks_per_block() + 1) as usize);
 
