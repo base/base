@@ -4,30 +4,13 @@ Thanks for your interest in improving Base.
 
 This document will help you get started. **Do not let this document intimidate you**. It should be considered as a guide to help you navigate the process.
 
-## Contributor Trust System
-
-We use [vouch](https://github.com/mitchellh/vouch) to manage contributor trust. This helps us maintain code quality by gating pull requests behind an explicit trust list.
-
-**What this means for you:**
-
-- **Issues** are how we stay in sync with the Base community and understand what matters most. Please keep them focused on bugs and feature requests so they remain useful signal — typo fixes and minor refactoring suggestions will be closed without comment.
-- **Pull requests** require you to be vouched and assigned an issue. PRs from unvouched users are auto-closed.
-
-**How to get vouched:**
-
-1. Open an issue describing the bug or feature you'd like to work on.
-2. A maintainer will review and comment `vouch` to add you to the trust list.
-3. Once vouched and assigned an issue, you can open pull requests.
-
-The trust list lives in [`.github/VOUCHED.td`](.github/VOUCHED.td).
-
 ## Ways to Contribute
 
 There are three ways an individual can contribute:
 
 1. **By opening an issue:** If you believe you have uncovered a bug in Base or have a feature request, creating a new issue in the issue tracker is the way to begin the process.
 2. **By adding context:** Provide additional context to existing issues, such as screenshots, logs, and code snippets, to help resolve them.
-3. **By resolving issues:** Typically this is done by opening a pull request that fixes the underlying problem in a concrete and reviewable manner. Only do this once you have been vouched on the issue.
+3. **By resolving issues:** Typically this is done by opening a pull request that fixes the underlying problem in a concrete and reviewable manner. Only do this once you have been assigned the issue.
 
 ## Scope of Contributions
 
