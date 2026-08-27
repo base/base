@@ -18,8 +18,8 @@ pub use payload::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 
 mod parkable;
 pub use parkable::{
-    NonParkablePayloadTransactions, ParkableBestPayloadTransactions, ParkablePayloadTransactions,
-    PayloadTransactionInvalidated,
+    NonParkablePayloadTransactions, NoopPayloadTransactions, ParkableBestPayloadTransactions,
+    ParkablePayloadTransactions, PayloadTransactionInvalidated,
 };
 
 mod predicate_loads;

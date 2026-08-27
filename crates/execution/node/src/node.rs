@@ -28,7 +28,7 @@ use base_execution_rpc::{
 };
 use base_execution_txpool::{
     BaseOrdering, BasePooledTransaction, BasePooledTx, BaseTransactionPool,
-    BaseTransactionValidator, GuardLimits, ParkableTransactionPool, TimestampedTransaction,
+    BaseTransactionValidator, GuardLimits, TimestampedTransaction,
     maintain_state_diff_invalidation,
 };
 use reth_chain_state::CanonStateSubscriptions;
@@ -1119,10 +1119,9 @@ where
                 <Node::Types as NodeTypes>::ChainSpec,
             >,
         > + 'static,
-    Pool: ParkableTransactionPool<Transaction: BasePooledTx<Consensus = TxTy<Node::Types>>>
-        + Unpin
-        + 'static,
-    Txs: BasePayloadTransactions<Pool::Transaction>,
+    Pool:
+        TransactionPool<Transaction: BasePooledTx<Consensus = TxTy<Node::Types>>> + Unpin + 'static,
+    Txs: BasePayloadTransactions<Pool>,
     Attrs: Attributes<Transaction = TxTy<Node::Types>> + Unpin,
 {
     type PayloadBuilder =

@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, TxHash};
 use base_execution_txpool::{BasePooledTx, ParkableBestTransactions};
+pub use reth_payload_util::NoopPayloadTransactions;
 use reth_payload_util::PayloadTransactions;
 use reth_transaction_pool::{
     BestTransactions, PoolTransaction, ValidPoolTransaction,

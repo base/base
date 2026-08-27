@@ -246,12 +246,12 @@ impl<Pool, Client, Evm, N, Txs, Attrs> PayloadBuilder
 where
     N: PayloadPrimitives,
     Client: StateProviderFactory + ChainSpecProvider<ChainSpec: Upgrades> + BlockReader + Clone,
-    Pool: ParkableTransactionPool<Transaction: BasePooledTx<Consensus = N::SignedTx>>,
+    Pool: TransactionPool<Transaction: BasePooledTx<Consensus = N::SignedTx>>,
     Evm: ConfigureEvm<
             Primitives = N,
             NextBlockEnvCtx: BuildNextEnv<Attrs, N::BlockHeader, Client::ChainSpec>,
         >,
-    Txs: BasePayloadTransactions<Pool::Transaction>,
+    Txs: BasePayloadTransactions<Pool>,
     Attrs: Attributes<Transaction = N::SignedTx>,
 {
     type Attributes = Attrs;
@@ -499,30 +499,52 @@ impl<Txs> Builder<'_, Txs> {
     }
 }
 
-/// A type that returns the [`PayloadTransactions`] that should be included in the pool.
-pub trait BasePayloadTransactions<Transaction: BasePooledTx>:
-    Clone + Send + Sync + Unpin + 'static
+/// A type that returns the [`PayloadTransactions`] that should be included in the payload.
+pub trait BasePayloadTransactions<Pool>: Clone + Send + Sync + Unpin + 'static
+where
+    Pool: TransactionPool,
+    Pool::Transaction: BasePooledTx,
 {
     /// Returns an iterator that yields the transaction in the order they should get included in the
     /// new payload.
     ///
     /// Custom iterators without lane-aware parking can use [`NonParkablePayloadTransactions`].
-    fn best_transactions<Pool: ParkableTransactionPool<Transaction = Transaction>>(
+    fn best_transactions(
         &self,
         pool: Pool,
         attr: BestTransactionsAttributes,
-    ) -> impl ParkablePayloadTransactions<Transaction = Transaction>;
+    ) -> impl ParkablePayloadTransactions<Transaction = Pool::Transaction>;
 }
 
-impl<T: BasePooledTx> BasePayloadTransactions<T> for () {
-    fn best_transactions<Pool: ParkableTransactionPool<Transaction = T>>(
+impl<Pool> BasePayloadTransactions<Pool> for ()
+where
+    Pool: ParkableTransactionPool,
+    Pool::Transaction: BasePooledTx,
+{
+    fn best_transactions(
         &self,
         pool: Pool,
         attr: BestTransactionsAttributes,
-    ) -> impl ParkablePayloadTransactions<Transaction = T> {
+    ) -> impl ParkablePayloadTransactions<Transaction = Pool::Transaction> {
         ParkableBestPayloadTransactions::new(
             pool.best_transactions_with_attributes_and_parking(attr),
         )
+    }
+}
+
+impl<Pool, F, Transactions> BasePayloadTransactions<Pool> for F
+where
+    Pool: TransactionPool,
+    Pool::Transaction: BasePooledTx,
+    F: Fn(Pool, BestTransactionsAttributes) -> Transactions + Clone + Send + Sync + Unpin + 'static,
+    Transactions: ParkablePayloadTransactions<Transaction = Pool::Transaction>,
+{
+    fn best_transactions(
+        &self,
+        pool: Pool,
+        attr: BestTransactionsAttributes,
+    ) -> impl ParkablePayloadTransactions<Transaction = Pool::Transaction> {
+        self(pool, attr)
     }
 }
 
@@ -794,7 +816,11 @@ where
                     tx_hash = ?tx_hash,
                     "skipping transaction with unsupported flashblock-index predicate"
                 );
-                best_txs.mark_invalid(tx.sender(), tx.nonce());
+                if tx.eip8130_replay_id().is_none() {
+                    best_txs.mark_invalid(tx.sender(), tx.nonce());
+                } else {
+                    best_txs.mark_current_committed();
+                }
                 continue;
             }
 
@@ -811,7 +837,11 @@ where
                             tx_hash = ?tx_hash,
                             "skipping transaction with expired validity predicate"
                         );
-                        best_txs.mark_invalid(tx.sender(), tx.nonce());
+                        if tx.eip8130_replay_id().is_none() {
+                            best_txs.mark_invalid(tx.sender(), tx.nonce());
+                        } else {
+                            best_txs.mark_current_committed();
+                        }
                         continue;
                     }
                     Ok(ValidityPredicateEvaluation::Unsatisfied { blocker, expired: false }) => {
@@ -824,7 +854,11 @@ where
                         if best_txs.park_current() {
                             predicate_index.park(tx_hash, tx, blocker);
                         } else {
-                            best_txs.mark_invalid(tx.sender(), tx.nonce());
+                            if tx.eip8130_replay_id().is_none() {
+                                best_txs.mark_invalid(tx.sender(), tx.nonce());
+                            } else {
+                                best_txs.mark_current_committed();
+                            }
                         }
                         continue;
                     }
@@ -835,7 +869,11 @@ where
                             error = ?error,
                             "failed to read validity predicate state"
                         );
-                        best_txs.mark_invalid(tx.sender(), tx.nonce());
+                        if tx.eip8130_replay_id().is_none() {
+                            best_txs.mark_invalid(tx.sender(), tx.nonce());
+                        } else {
+                            best_txs.mark_current_committed();
+                        }
                         continue;
                     }
                 }

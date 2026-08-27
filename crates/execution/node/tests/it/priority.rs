@@ -43,15 +43,15 @@ struct CustomTxPriority {
     chain_id: ChainId,
 }
 
-impl BasePayloadTransactions<BasePooledTransaction> for CustomTxPriority {
-    fn best_transactions<Pool>(
+impl<Pool> BasePayloadTransactions<Pool> for CustomTxPriority
+where
+    Pool: base_execution_txpool::ParkableTransactionPool<Transaction = BasePooledTransaction>,
+{
+    fn best_transactions(
         &self,
         pool: Pool,
         attr: reth_transaction_pool::BestTransactionsAttributes,
-    ) -> impl ParkablePayloadTransactions<Transaction = BasePooledTransaction>
-    where
-        Pool: base_execution_txpool::ParkableTransactionPool<Transaction = BasePooledTransaction>,
-    {
+    ) -> impl ParkablePayloadTransactions<Transaction = BasePooledTransaction> {
         // Block composition:
         // 1. Best transactions from the pool (up to 250k gas)
         // 2. End-of-block transaction created by the node (up to 100k gas)

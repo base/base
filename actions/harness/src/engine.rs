@@ -36,7 +36,7 @@ use base_consensus_node::{
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{
-    BaseBuiltPayload, BasePayloadBuilder, BasePayloadBuilderAttributes,
+    BaseBuiltPayload, BasePayloadBuilder, BasePayloadBuilderAttributes, NoopPayloadTransactions,
 };
 use base_execution_txpool::BasePooledTransaction;
 use base_node_core::BaseNode;
@@ -415,7 +415,10 @@ impl ActionEngineClient {
             pool,
             inner.blockchain_provider.clone(),
             inner.evm_config.clone(),
-        );
+        )
+        .with_transactions(|_pool: TestPool, _attrs| {
+            NoopPayloadTransactions::<BasePooledTransaction>::default()
+        });
         let outcome = RethPayloadBuilder::try_build(&payload_builder, args).map_err(|e| {
             TransportError::from(TransportErrorKind::custom_str(&format!(
                 "payload builder failed: {e}"
