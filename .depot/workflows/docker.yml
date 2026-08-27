@@ -60,7 +60,6 @@ jobs:
             --set "${TARGET}.platform=linux/amd64" \
             --set "${TARGET}.platform=linux/arm64" \
             --set "${TARGET}.output=type=image,push=true" \
-            --set "${TARGET}.cache-from=" \
             --set "${TARGET}.labels.org.opencontainers.image.source=${{ steps.image-labels.outputs.source }}" \
             --set "${TARGET}.labels.org.opencontainers.image.revision=${{ steps.image-labels.outputs.revision }}" \
             --set "${TARGET}.labels.org.opencontainers.image.created=${{ steps.image-labels.outputs.created }}"
@@ -85,7 +84,6 @@ jobs:
           for target in "${targets[@]}"; do
             set_args+=(--set "$target.platform=linux/amd64")
             set_args+=(--set "$target.output=type=cacheonly")
-            set_args+=(--set "$target.cache-from=")
           done
 
           depot bake --project "${{ vars.DEPOT_PROJECT_ID }}" -f etc/docker/docker-bake.hcl \

@@ -237,7 +237,6 @@ jobs:
         run: >-
           depot bake --project "${{ vars.DEPOT_PROJECT_ID }}"
           -f etc/docker/docker-bake.hcl base --load
-          --set base.cache-from=
   test-musl-sigsegv:
     name: Test SIGSEGV (musl)
     if: inputs.run_sigsegv

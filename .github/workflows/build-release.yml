@@ -197,7 +197,6 @@ jobs:
             --set "${TARGET}.tags=${IMAGE}" \
             --set "${TARGET}.platform=${{ matrix.settings.arch }}" \
             --set "${TARGET}.output=type=image,push-by-digest=true,name-canonical=true,push=true" \
-            --set "${TARGET}.cache-from=" \
             --set "${TARGET}.labels.org.opencontainers.image.source=${{ steps.image-labels.outputs.source }}" \
             --set "${TARGET}.labels.org.opencontainers.image.revision=${{ steps.image-labels.outputs.revision }}" \
             --set "${TARGET}.labels.org.opencontainers.image.created=${{ steps.image-labels.outputs.created }}" \
