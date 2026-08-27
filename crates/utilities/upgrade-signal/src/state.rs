@@ -1,6 +1,6 @@
 //! Upgrade signal state values.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use alloy_primitives::U256;
 use base_common_genesis::BaseUpgrade;
@@ -138,6 +138,16 @@ impl UpgradeSignalState {
     /// Advances the applied baseline after a successful commit.
     fn mark_applied(&mut self, signal: &UpgradeSignal) {
         self.applied = Some(signal.clone());
+    }
+
+    /// Returns true when a signal has been committed to the runtime registry for this upgrade.
+    const fn is_applied(&self) -> bool {
+        self.applied.is_some()
+    }
+
+    /// Clears the applied baseline after this upgrade is reconciled out of the schedule.
+    const fn clear_applied(&mut self) {
+        self.applied = None;
     }
 }
 
@@ -347,15 +357,44 @@ impl UpgradeSignalMonitor {
         UpgradeSignalPollOutcome::Continue
     }
 
-    /// Returns true when any signal in `schedule` has not yet been successfully applied.
+    /// Returns true when the schedule diverges from what has been committed to the runtime
+    /// registry, either because a present signal has not yet been applied or because a
+    /// previously-applied upgrade has vanished from a later, shorter schedule and must be
+    /// reconciled out of the registry.
+    ///
+    /// The removal case covers a pure schedule shrink — for example an L1 reorg on a non-finalized
+    /// tag that unwinds a trailing upgrade's registration. Without it the shrink would never trip
+    /// the apply gate (the present entries are unchanged), so the stale activation would linger in
+    /// the registry until a restart or manual refresh. A governance clear keeps its slot with a
+    /// `0` timestamp, so it stays present and is not treated as a removal.
     fn schedule_needs_apply(&self, schedule: &UpgradeSignalSchedule) -> bool {
-        schedule.signals.iter().any(|signal| {
-            self.states.get(&signal.upgrade_id).is_none_or(|state| state.needs_apply(signal))
-        })
+        let present: BTreeSet<BaseUpgrade> =
+            schedule.signals.iter().map(|signal| signal.upgrade_id).collect();
+        let removed = self
+            .states
+            .iter()
+            .any(|(upgrade_id, state)| state.is_applied() && !present.contains(upgrade_id));
+
+        removed
+            || schedule.signals.iter().any(|signal| {
+                self.states.get(&signal.upgrade_id).is_none_or(|state| state.needs_apply(signal))
+            })
     }
 
-    /// Advances the applied baseline for every signal in a successfully committed schedule.
+    /// Reconciles the applied baseline with a successfully committed schedule.
+    ///
+    /// Advances the baseline for every present signal and clears the baseline of any upgrade absent
+    /// from the schedule, mirroring the runtime registry that `replace_overrides` has just trimmed
+    /// to exactly this schedule. Clearing the vanished entries keeps the apply gate from re-firing
+    /// on every subsequent poll.
     fn mark_schedule_applied(&mut self, schedule: &UpgradeSignalSchedule) {
+        let present: BTreeSet<BaseUpgrade> =
+            schedule.signals.iter().map(|signal| signal.upgrade_id).collect();
+        for (upgrade_id, state) in &mut self.states {
+            if !present.contains(upgrade_id) {
+                state.clear_applied();
+            }
+        }
         for signal in &schedule.signals {
             self.states.entry(signal.upgrade_id).or_default().mark_applied(signal);
         }
@@ -627,6 +666,64 @@ mod tests {
         assert_eq!(
             RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Azul),
             Some(UpgradeActivation::Timestamp(42))
+        );
+
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+    }
+
+    #[test]
+    fn schedule_shrink_reconciles_removed_upgrade_out_of_registry() {
+        let chain_id = 9_100_050;
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+
+        let refresher = refresher(chain_id, UpgradeSignalDefaults::node_protocol_version());
+        let version = UpgradeSignalDefaults::packed_protocol_version(1, 1, 0);
+        let upgrade = |upgrade_id, activation_timestamp| UpgradeSignal {
+            upgrade_id,
+            activation_timestamp,
+            protocol_version: version,
+        };
+
+        // Apply a two-upgrade schedule; both land in the runtime registry.
+        let full = UpgradeSignalSchedule::new(
+            1,
+            vec![upgrade(BaseUpgrade::Azul, 42), upgrade(BaseUpgrade::Beryl, 84)],
+        );
+        let mut monitor = monitor();
+        monitor.update_schedule(full.clone());
+        assert_eq!(
+            monitor.apply_and_evaluate(&refresher, &full, 0),
+            UpgradeSignalPollOutcome::Continue
+        );
+        assert_eq!(
+            RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Beryl),
+            Some(UpgradeActivation::Timestamp(84))
+        );
+
+        // A later, shorter schedule (read at a newer L1 block) drops Beryl entirely while the
+        // remaining Azul entry is unchanged — the pure-shrink case from an L1 reorg.
+        let shrunk = UpgradeSignalSchedule::new(2, vec![upgrade(BaseUpgrade::Azul, 42)]);
+        monitor.update_schedule(shrunk.clone());
+        assert!(
+            monitor.schedule_needs_apply(&shrunk),
+            "a vanished upgrade must trigger reconciliation even when present entries are unchanged"
+        );
+
+        // Applying the shrunk schedule trims the removed upgrade out of the registry.
+        assert_eq!(
+            monitor.apply_and_evaluate(&refresher, &shrunk, 0),
+            UpgradeSignalPollOutcome::Continue
+        );
+        assert_eq!(
+            RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Azul),
+            Some(UpgradeActivation::Timestamp(42))
+        );
+        assert_eq!(RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Beryl), None);
+
+        // The baseline is reconciled too, so the shrunk schedule is not re-offered next poll.
+        assert!(
+            !monitor.schedule_needs_apply(&shrunk),
+            "a reconciled shrink must not re-fire the apply gate"
         );
 
         RuntimeUpgradeRegistry::clear_chain(chain_id);
