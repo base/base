@@ -1,5 +1,11 @@
-name: Generate Succinct VKeys
+# Depot CI Migration
+# Source: .github/workflows/generate-succinct-vkeys.yml
+#
+# Changes made:
+# - Rewrote .github/ path references to .depot/
+# - Changed GitHub runs-on labels to their Depot equivalents
 
+name: Generate Succinct VKeys
 on:
   workflow_dispatch:
     inputs:
@@ -8,26 +14,21 @@ on:
         required: true
         default: main
         type: string
-
 permissions:
   actions: read
   contents: read
-
 concurrency:
   group: succinct-vkeys-${{ github.event.inputs.ref }}
   cancel-in-progress: false
-
 jobs:
   generate:
     name: Generate Succinct VKeys
-    runs-on: ubuntu-24.04
-
+    runs-on: depot-ubuntu-24.04-8
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
-
       - name: Resolve ref
         id: resolve-ref
         shell: bash
@@ -62,21 +63,15 @@ jobs:
 
           echo "::error::Ref '$INPUT_REF' was not found as a branch, tag, or full commit SHA."
           exit 1
-
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ steps.resolve-ref.outputs.ref }}
           fetch-depth: 1
-
-      - uses: ./.github/actions/setup
+      - uses: ./.depot/actions/setup
         with:
-          free-disk: "true"
           native-deps: "true"
           sp1: "true"
-          rust-cache-shared-key: "manual-succinct-vkeys"
-          rust-cache-save: "false"
-
       - name: Build fresh ELFs and generate vkeys
         env:
           REF: ${{ inputs.ref }}
@@ -95,7 +90,6 @@ jobs:
             echo ""
             cat "$output_dir/succinct-vkeys.md"
           } >> "$GITHUB_STEP_SUMMARY"
-
       - name: Upload vkeys
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

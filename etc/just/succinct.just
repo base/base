@@ -20,6 +20,7 @@ build-range-elf:
         --elf-name range-elf-embedded \
         --tag {{ _sp1_tag }} \
         --docker \
+        --ignore-rust-version \
         --workspace-directory {{ _repo_root }} \
         --output-directory {{ _succinct_dir }}/elf
 
@@ -33,6 +34,7 @@ build-agg-elf:
         --elf-name aggregation-elf \
         --tag {{ _sp1_tag }} \
         --docker \
+        --ignore-rust-version \
         --workspace-directory {{ _repo_root }} \
         --output-directory {{ _succinct_dir }}/elf
 
