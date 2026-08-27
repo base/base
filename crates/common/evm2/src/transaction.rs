@@ -60,8 +60,9 @@ impl From<TxEnvelope> for BaseTxEnvelope {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloy_primitives::{Address, TxKind};
+
+    use super::*;
 
     fn sample_deposit() -> TxDeposit {
         TxDeposit {
