@@ -131,7 +131,8 @@ macro_rules! define_tx_manager_cli {
             pub receipt_query_interval: ::std::time::Duration,
 
             /// Clean-rejection deadline for initial publication.
-            /// Set to "0s" to disable.
+            /// Set to "0s" to disable: a provisional nonce then never fails by
+            /// timeout and is retried until it commits or is rejected outright.
             #[arg(
                 long = "tx-manager.tx-not-in-mempool-timeout",
                 env = concat!($prefix, "_", "TX_NOT_IN_MEMPOOL_TIMEOUT"),

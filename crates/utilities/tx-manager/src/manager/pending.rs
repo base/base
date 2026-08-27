@@ -2,13 +2,12 @@
 
 use std::{collections::VecDeque, sync::Arc, time::Duration};
 
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::Address;
 use tokio::sync::oneshot;
 
 mod slot;
 pub use slot::{
-    CancelRequest, NonceFetch, NonceSlot, ReplacementState, SignedVersion, SlotEffects, SlotPlan,
-    SlotState,
+    CancelRequest, NonceFetch, NonceSlot, ReplacementState, SignedVersion, SlotEffects, SlotState,
 };
 
 mod work;
@@ -90,13 +89,7 @@ impl PendingLedger {
 
         self.staged.push_front(StagedSubmission {
             id: SubmissionId::new(u64::MAX),
-            candidate: TxCandidate {
-                tx_data: Bytes::new(),
-                blobs: Arc::from([]),
-                to: Some(sender),
-                gas_limit: 0,
-                value: U256::ZERO,
-            },
+            candidate: TxCandidate::cancel(sender, Arc::from([])),
             completion: SubmissionCompletion::Cancel(result),
             kind: VersionKind::Cancel,
         });
@@ -127,18 +120,15 @@ impl PendingLedger {
 
         let mut index = 0;
         while index < self.slots.len() {
-            let plan = self.slots[index].plan(now, self.policy);
-            if let Some(action) = plan.work {
+            let mut effects = self.slots[index].plan(now, self.policy);
+            if let Some(action) = effects.work.take() {
                 work.push(action);
             }
-            if let Some(error) = plan.failed {
-                self.remove_failed(index, error);
-                continue;
+            let removed = effects.failed.is_some();
+            self.apply_effects(index, effects);
+            if !removed {
+                index += 1;
             }
-            if plan.snapshot_changed {
-                self.revision = self.revision.saturating_add(1);
-            }
-            index += 1;
         }
 
         work
@@ -201,21 +191,16 @@ impl PendingLedger {
         self.apply_effects(index, effects);
     }
 
-    /// Applies an account nonce fetched for the active version of a slot.
+    /// Applies an account nonce fetched for a provisional slot.
     pub fn account_nonce_fetched(
         &mut self,
         submission_id: SubmissionId,
-        version: VersionId,
         result: TxManagerResult<u64>,
-        now: Duration,
     ) {
         let Some(index) = self.slot_index(submission_id) else {
             return;
         };
-        if self.slots[index].active_version() != version {
-            return;
-        }
-        let effects = self.slots[index].record_account_nonce(result, now);
+        let effects = self.slots[index].record_account_nonce(result);
         self.apply_effects(index, effects);
     }
 
@@ -324,7 +309,7 @@ impl PendingLedger {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{B256, U256};
+    use alloy_primitives::{B256, Bytes, U256};
 
     use super::*;
     use crate::{
@@ -432,6 +417,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn every_backend_reserved_fails_the_submission_immediately() {
+        let mut ledger = PendingLedger::new(0, 2, policy());
+        let handle = submit(&mut ledger, 1);
+        prepare_tx(&mut ledger, 1, 0, 1, Duration::ZERO);
+        let reserved = PublishOutcome::Rejected(PublishReject::AlreadyReserved);
+
+        publish(&mut ledger, 0, reserved.clone(), Duration::ZERO);
+        assert_eq!(ledger.publisher_snapshot().transactions.len(), 1);
+        // The batcher relies on this surfacing well before the admission timeout
+        // so it can cancel the reserved nonce; the slot fails at t = 0.
+        publish(&mut ledger, 1, reserved, Duration::ZERO);
+        assert_eq!(handle.wait().await.unwrap_err(), TxManagerError::AlreadyReserved);
+    }
+
+    #[tokio::test]
     async fn deterministic_rejection_recycles_provisional_nonce() {
         let mut ledger = PendingLedger::new(0, 2, policy());
         let first = submit(&mut ledger, 1);
@@ -468,12 +468,7 @@ mod tests {
             [PendingWork::FetchAccountNonce { .. }]
         ));
 
-        ledger.account_nonce_fetched(
-            SubmissionId::new(1),
-            VersionId::INITIAL,
-            Ok(5),
-            Duration::ZERO,
-        );
+        ledger.account_nonce_fetched(SubmissionId::new(1), Ok(5));
         assert_eq!(ledger.publisher_snapshot().transactions[0].nonce, 0);
 
         let work = ledger.plan(Duration::ZERO);

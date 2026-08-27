@@ -108,7 +108,13 @@ impl PublishReject {
             return RejectionVerdict::NonceTooLow;
         }
 
-        if rejections.iter().all(|rejection| matches!(rejection, Self::Deterministic(_))) {
+        // `AlreadyReserved` is a permanent txpool conflict: the batcher relies on
+        // it surfacing immediately so it can cancel the stuck nonce, so it fails
+        // the slot like any other deterministic rejection.
+        if rejections
+            .iter()
+            .all(|rejection| matches!(rejection, Self::Deterministic(_) | Self::AlreadyReserved))
+        {
             let error = rejections.first().map_or(TxManagerError::ChannelClosed, Self::as_error);
             return RejectionVerdict::Deterministic(error);
         }
@@ -719,6 +725,24 @@ mod tests {
                 PublishReject::Deterministic(TxManagerError::InsufficientFunds),
             ]),
             RejectionVerdict::NonceTooLow
+        ));
+    }
+
+    #[test]
+    fn already_reserved_is_a_deterministic_verdict() {
+        assert!(matches!(
+            PublishReject::verdict(&[
+                PublishReject::AlreadyReserved,
+                PublishReject::AlreadyReserved
+            ]),
+            RejectionVerdict::Deterministic(TxManagerError::AlreadyReserved)
+        ));
+        assert!(matches!(
+            PublishReject::verdict(&[
+                PublishReject::AlreadyReserved,
+                PublishReject::Deterministic(TxManagerError::InsufficientFunds),
+            ]),
+            RejectionVerdict::Deterministic(_)
         ));
     }
 

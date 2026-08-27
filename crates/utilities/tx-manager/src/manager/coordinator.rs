@@ -62,8 +62,6 @@ pub enum WorkerEvent {
     AccountNonceFetched {
         /// Provisional submission requesting recovery.
         submission_id: SubmissionId,
-        /// Version that observed the rejection.
-        version: VersionId,
         /// Latest canonical nonce or chain-read failure.
         result: TxManagerResult<u64>,
     },
@@ -328,8 +326,8 @@ where
                     now,
                 );
             }
-            WorkerEvent::AccountNonceFetched { submission_id, version, result } => {
-                self.ledger.account_nonce_fetched(submission_id, version, result, now);
+            WorkerEvent::AccountNonceFetched { submission_id, result } => {
+                self.ledger.account_nonce_fetched(submission_id, result);
             }
             WorkerEvent::SweepCompleted(result) => {
                 self.sweep_in_progress = false;
@@ -393,16 +391,12 @@ where
                         },
                     );
                 }
-                PendingWork::FetchAccountNonce { submission_id, version } => {
+                PendingWork::FetchAccountNonce { submission_id } => {
                     let sweeper = self.workers.sweeper.clone();
                     self.spawn_worker(
                         "fetch account nonce",
                         async move { sweeper.latest_nonce().await },
-                        move |result| WorkerEvent::AccountNonceFetched {
-                            submission_id,
-                            version,
-                            result,
-                        },
+                        move |result| WorkerEvent::AccountNonceFetched { submission_id, result },
                     );
                 }
             }

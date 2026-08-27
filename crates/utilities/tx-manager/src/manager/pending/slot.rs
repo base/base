@@ -2,7 +2,7 @@
 
 use std::{sync::Arc, time::Duration};
 
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, B256};
 use tokio::sync::oneshot;
 
 use super::super::{
@@ -138,15 +138,13 @@ pub enum SlotState {
     Provisional {
         /// Time after which no additional publication pass may start.
         deadline: Option<Duration>,
-        /// Most useful rejection from the latest completed pass.
-        last_rejection: Option<TxManagerError>,
     },
     /// At least one backend may have made this nonce live.
     Committed,
 }
 
 /// Preparation state for the next signed version.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum ReplacementState {
     /// No replacement is requested or being prepared.
     Idle,
@@ -154,8 +152,6 @@ pub enum ReplacementState {
     Requested {
         /// Why another signed version is needed.
         reason: ReplacementReason,
-        /// Candidate to encode into the replacement.
-        candidate: TxCandidate,
         /// Nonce to encode into the replacement.
         nonce: u64,
     },
@@ -163,8 +159,6 @@ pub enum ReplacementState {
     Preparing {
         /// Version that must still be active when preparation finishes.
         base_version: VersionId,
-        /// Reason attached to the in-flight worker.
-        reason: ReplacementReason,
     },
 }
 
@@ -188,20 +182,11 @@ pub struct CancelRequest {
     result: oneshot::Sender<TxManagerResult<()>>,
 }
 
-/// Work and ledger mutation selected by one slot planning pass.
-#[derive(Debug, Default)]
-pub struct SlotPlan {
-    /// Worker action selected for this slot.
-    pub work: Option<PendingWork>,
-    /// Whether publishers need a new ledger snapshot.
-    pub snapshot_changed: bool,
-    /// Terminal error for a safely recyclable provisional slot.
-    pub failed: Option<TxManagerError>,
-}
-
-/// Ledger-level effects produced by one slot transition.
+/// Ledger-level effects produced by one slot transition or planning pass.
 #[derive(Debug, Default)]
 pub struct SlotEffects {
+    /// Worker action selected for this slot, only ever set by planning.
+    pub work: Option<PendingWork>,
     /// Whether publishers need a new ledger snapshot.
     pub snapshot_changed: bool,
     /// Whether canonical state should be inspected promptly.
@@ -262,7 +247,7 @@ impl NonceSlot {
         let slot = Self {
             submission_id: staged.id,
             nonce: active.prepared.nonce,
-            state: SlotState::Provisional { deadline, last_rejection: None },
+            state: SlotState::Provisional { deadline },
             active,
             previous: None,
             next_version: VersionId::INITIAL.next(),
@@ -322,58 +307,57 @@ impl NonceSlot {
     }
 
     /// Selects at most one worker action or publication pass transition.
-    pub fn plan(&mut self, now: Duration, policy: PendingPolicy) -> SlotPlan {
+    ///
+    /// Every replacement originates here so a single place decides what the slot
+    /// needs next: cancel, fee bump, re-sign, retry, or safe failure.
+    pub fn plan(&mut self, now: Duration, policy: PendingPolicy) -> SlotEffects {
         // Phase 1: finish nonce recovery before changing or republishing this slot.
         if matches!(self.nonce_fetch, NonceFetch::Required) {
             self.nonce_fetch = NonceFetch::InFlight;
-            return SlotPlan {
-                work: Some(PendingWork::FetchAccountNonce {
-                    submission_id: self.submission_id,
-                    version: self.active.id,
-                }),
+            return SlotEffects {
+                work: Some(PendingWork::FetchAccountNonce { submission_id: self.submission_id }),
                 ..Default::default()
             };
         }
         if matches!(self.nonce_fetch, NonceFetch::InFlight) {
-            return SlotPlan::default();
+            return SlotEffects::default();
         }
 
         // Phase 2: choose the next replacement. An explicit cancellation takes
-        // priority over the normal timeout-based fee bump.
+        // priority over the fee bump that resolves fee rejections and stale
+        // unconfirmed transactions. A reached deadline fails instead of bumping.
         if matches!(self.replacement, ReplacementState::Idle)
             && !matches!(self.active.kind, VersionKind::Cancel)
             && self.active.all_responded()
-            && let Some(cancel) = self.cancel.as_ref()
+            && self.cancel.is_some()
         {
-            self.replacement = ReplacementState::Requested {
-                reason: ReplacementReason::Cancel,
-                candidate: cancel.candidate.clone(),
-                nonce: self.nonce,
-            };
+            self.request_replacement(ReplacementReason::Cancel, self.nonce);
         }
 
         if matches!(self.replacement, ReplacementState::Idle)
-            && matches!(self.state, SlotState::Committed)
             && self.active.all_responded()
             && now >= self.replacement_ready_at
-            && self
-                .active
-                .live_at
-                .is_some_and(|live_at| now >= live_at.saturating_add(policy.resubmission_timeout))
+            && !self.provisional_deadline_reached(now)
         {
-            self.request_replacement(
-                ReplacementReason::FeeBump,
-                self.active.candidate.clone(),
-                self.nonce,
-            );
+            let fee_rejected = self.active.rejections().is_some_and(|rejections| {
+                matches!(PublishReject::verdict(&rejections), RejectionVerdict::FeeTooLow(_))
+            });
+            let stale = self.is_committed()
+                && self.active.live_at.is_some_and(|live_at| {
+                    now >= live_at.saturating_add(policy.resubmission_timeout)
+                });
+            if fee_rejected || stale {
+                self.request_replacement(ReplacementReason::FeeBump, self.nonce);
+            }
         }
 
         // Phase 3: hand one requested replacement to the builder. The baseline
         // version lets us discard a stale worker result safely.
-        if let ReplacementState::Requested { reason, candidate, nonce } = self.replacement.clone() {
+        if let ReplacementState::Requested { reason, nonce } = self.replacement {
             let base_version = self.active.id;
-            self.replacement = ReplacementState::Preparing { base_version, reason };
-            return SlotPlan {
+            let candidate = self.replacement_candidate(reason);
+            self.replacement = ReplacementState::Preparing { base_version };
+            return SlotEffects {
                 work: Some(PendingWork::PrepareReplacementTx {
                     submission_id: self.submission_id,
                     base_version,
@@ -386,21 +370,27 @@ impl NonceSlot {
             };
         }
         if matches!(self.replacement, ReplacementState::Preparing { .. }) {
-            return SlotPlan::default();
+            return SlotEffects::default();
         }
 
-        // Phase 4: recycle a provisional nonce only after every publisher
-        // finished its pass. Otherwise, open the next due publication pass.
-        if self.provisional_deadline_reached(now) && self.active.all_responded() {
-            return SlotPlan { failed: Some(self.last_rejection()), ..Default::default() };
+        // Phase 4: recycle a provisional nonce once every publisher finished its
+        // pass; each response is a definitive rejection, so a verdict exists.
+        if self.provisional_deadline_reached(now)
+            && let Some(rejections) = self.active.rejections()
+        {
+            return SlotEffects {
+                failed: Some(PublishReject::verdict(&rejections).error()),
+                ..Default::default()
+            };
         }
 
+        // Phase 5: open the next due publication pass.
         if self.active.next_pass_due(now, policy.publish_retry_delay) {
             self.active.open_next_pass(now);
-            return SlotPlan { snapshot_changed: true, ..Default::default() };
+            return SlotEffects { snapshot_changed: true, ..Default::default() };
         }
 
-        SlotPlan::default()
+        SlotEffects::default()
     }
 
     /// Applies one publisher result and returns its ledger-level effects.
@@ -443,28 +433,27 @@ impl NonceSlot {
             return effects;
         }
 
-        // Phase 3: only a complete pass made entirely of definitive rejections
-        // may drive nonce recovery, replacement, retry, or safe failure.
+        // Phase 3: nothing is decided while a replacement is requested or being
+        // built. The next version arrives with fresh outcomes and is reassessed.
+        if !matches!(self.replacement, ReplacementState::Idle) {
+            return effects;
+        }
+
+        // Only a complete pass made entirely of definitive rejections may drive
+        // nonce recovery, restoration, or safe failure. Fee bumps and plain
+        // retries are left to `plan`, which owns every replacement decision.
         let Some(rejections) = self.active.rejections() else {
             return effects;
         };
         let verdict = PublishReject::verdict(&rejections);
 
-        if let SlotState::Provisional { last_rejection, .. } = &mut self.state {
-            *last_rejection = Some(verdict.error());
-            if self.provisional_deadline_reached(now) {
-                effects.failed = Some(verdict.error());
-                return effects;
-            }
+        if self.is_provisional() {
             match verdict {
+                _ if self.provisional_deadline_reached(now) => {
+                    effects.failed = Some(verdict.error())
+                }
                 RejectionVerdict::NonceTooLow => self.nonce_fetch = NonceFetch::Required,
                 RejectionVerdict::Deterministic(error) => effects.failed = Some(error),
-                RejectionVerdict::FeeTooLow(_) if self.cancel.is_none() => self
-                    .request_replacement(
-                        ReplacementReason::FeeBump,
-                        self.active.candidate.clone(),
-                        self.nonce,
-                    ),
                 RejectionVerdict::FeeTooLow(_) | RejectionVerdict::Retry(_) => {}
             }
             return effects;
@@ -475,11 +464,6 @@ impl NonceSlot {
             RejectionVerdict::Deterministic(error) => {
                 self.restore_previous(error, now, &mut effects)
             }
-            RejectionVerdict::FeeTooLow(_) if self.cancel.is_none() => self.request_replacement(
-                ReplacementReason::FeeBump,
-                self.active.candidate.clone(),
-                self.nonce,
-            ),
             RejectionVerdict::FeeTooLow(_) | RejectionVerdict::Retry(_) => {}
         }
         effects
@@ -494,14 +478,12 @@ impl NonceSlot {
         now: Duration,
         policy: PendingPolicy,
     ) -> SlotEffects {
-        // Ignore a worker result if its version or reason was superseded while
-        // transaction preparation was in flight.
+        // Ignore a worker result if its baseline version was superseded while
+        // transaction preparation was in flight. At most one build runs per slot,
+        // so the baseline uniquely identifies the in-flight request.
         if !matches!(
             self.replacement,
-            ReplacementState::Preparing {
-                base_version: current,
-                reason: current_reason,
-            } if current == base_version && current_reason == reason
+            ReplacementState::Preparing { base_version: current } if current == base_version
         ) || self.active.id != base_version
         {
             return SlotEffects::default();
@@ -526,14 +508,7 @@ impl NonceSlot {
 
         // Install the new signed bytes atomically. Keep the outgoing version
         // only when it may still be live and the replacement is not live yet.
-        let candidate = if matches!(reason, ReplacementReason::Cancel) {
-            self.cancel
-                .as_ref()
-                .map(|cancel| cancel.candidate.clone())
-                .unwrap_or_else(|| self.active.candidate.clone())
-        } else {
-            self.active.candidate.clone()
-        };
+        let candidate = self.replacement_candidate(reason);
         let kind = reason.version_kind(self.active.kind);
         if matches!(reason, ReplacementReason::Resign) {
             self.nonce = prepared.nonce;
@@ -563,11 +538,7 @@ impl NonceSlot {
     }
 
     /// Applies the account nonce returned by a nonce recovery worker.
-    pub fn record_account_nonce(
-        &mut self,
-        result: TxManagerResult<u64>,
-        _now: Duration,
-    ) -> SlotEffects {
+    pub fn record_account_nonce(&mut self, result: TxManagerResult<u64>) -> SlotEffects {
         // The read belongs to the pass that requested it. A duplicate or stale
         // worker result must not change replacement state.
         if !matches!(self.nonce_fetch, NonceFetch::InFlight) {
@@ -583,11 +554,11 @@ impl NonceSlot {
         if latest <= self.nonce {
             return SlotEffects::default();
         }
-        if matches!(self.state, SlotState::Committed) {
+        if self.is_committed() {
             return SlotEffects { sweep_requested: true, ..Default::default() };
         }
 
-        self.request_replacement(ReplacementReason::Resign, self.active.candidate.clone(), latest);
+        self.request_replacement(ReplacementReason::Resign, latest);
         SlotEffects { next_nonce_at_least: Some(latest), ..Default::default() }
     }
 
@@ -597,24 +568,22 @@ impl NonceSlot {
         sender: Address,
         result: oneshot::Sender<TxManagerResult<()>>,
     ) -> Result<(), oneshot::Sender<TxManagerResult<()>>> {
-        // A cancel version that is already active satisfies the API contract:
-        // cancellation bytes may already be live.
+        // A cancel already owns the slot. Report success only once its bytes may
+        // be live; otherwise the caller keeps waiting on the in-progress cancel.
         if matches!(self.active.kind, VersionKind::Cancel) {
-            let _ = result.send(Ok(()));
-            return Ok(());
+            return if self.active.live_at.is_some() {
+                let _ = result.send(Ok(()));
+                Ok(())
+            } else {
+                Err(result)
+            };
         }
         if self.cancel.is_some() {
             return Err(result);
         }
 
         self.cancel = Some(CancelRequest {
-            candidate: TxCandidate {
-                tx_data: Bytes::new(),
-                blobs: Arc::clone(&self.active.candidate.blobs),
-                to: Some(sender),
-                gas_limit: 0,
-                value: U256::ZERO,
-            },
+            candidate: TxCandidate::cancel(sender, Arc::clone(&self.active.candidate.blobs)),
             result,
         });
         Ok(())
@@ -650,29 +619,32 @@ impl NonceSlot {
     }
 
     /// Records a replacement request without starting external work.
-    fn request_replacement(
-        &mut self,
-        reason: ReplacementReason,
-        candidate: TxCandidate,
-        nonce: u64,
-    ) {
-        self.replacement = ReplacementState::Requested { reason, candidate, nonce };
+    const fn request_replacement(&mut self, reason: ReplacementReason, nonce: u64) {
+        self.replacement = ReplacementState::Requested { reason, nonce };
+    }
+
+    /// Returns the candidate encoded into the next replacement version.
+    ///
+    /// A cancellation carries the self-transfer candidate; every other reason
+    /// re-uses the active intent (a fee bump or re-sign of the same payload).
+    fn replacement_candidate(&self, reason: ReplacementReason) -> TxCandidate {
+        match reason {
+            ReplacementReason::Cancel => self
+                .cancel
+                .as_ref()
+                .expect("cancel request outlives its replacement")
+                .candidate
+                .clone(),
+            ReplacementReason::FeeBump | ReplacementReason::Resign => self.active.candidate.clone(),
+        }
     }
 
     /// Returns whether the provisional admission window has elapsed.
     fn provisional_deadline_reached(&self, now: Duration) -> bool {
         matches!(
             self.state,
-            SlotState::Provisional { deadline: Some(deadline), .. } if now >= deadline
+            SlotState::Provisional { deadline: Some(deadline) } if now >= deadline
         )
-    }
-
-    /// Returns the latest rejection used when the admission deadline expires.
-    fn last_rejection(&self) -> TxManagerError {
-        match &self.state {
-            SlotState::Provisional { last_rejection: Some(error), .. } => error.clone(),
-            _ => TxManagerError::ChannelClosed,
-        }
     }
 
     /// Retains one potentially-live hash for canonical resolution.
@@ -682,7 +654,11 @@ impl NonceSlot {
         }
     }
 
-    /// Restores the last potentially-live version after a clean replacement failure.
+    /// Restores the last potentially-live version after a deterministic rejection.
+    ///
+    /// When no earlier version survives, the rejected version stays active and
+    /// `plan` reopens its pass after `publish_retry_delay`; reopening here would
+    /// republish it at backend-response speed.
     fn restore_previous(
         &mut self,
         error: TxManagerError,
@@ -690,19 +666,16 @@ impl NonceSlot {
         effects: &mut SlotEffects,
     ) {
         let rejected_kind = self.active.kind;
-        if let Some(mut previous) = self.previous.take() {
-            previous.open_next_pass(now);
-            self.active = previous;
-        } else {
-            self.active.open_next_pass(now);
-        }
-        self.replacement = ReplacementState::Idle;
         self.replacement_ready_at = now;
         if matches!(rejected_kind, VersionKind::Cancel) {
             self.finish_cancel(Err(error));
         }
-        self.notify_status();
-        effects.snapshot_changed = true;
+        if let Some(mut previous) = self.previous.take() {
+            previous.open_next_pass(now);
+            self.active = previous;
+            self.notify_status();
+            effects.snapshot_changed = true;
+        }
     }
 
     /// Completes and clears an explicit cancellation request.
@@ -725,6 +698,8 @@ impl NonceSlot {
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::Bytes;
+
     use super::*;
     use crate::SubmissionHandle;
 
@@ -819,7 +794,7 @@ mod tests {
             Some(PendingWork::FetchAccountNonce { .. })
         ));
 
-        let effects = slot.record_account_nonce(Ok(5), Duration::ZERO);
+        let effects = slot.record_account_nonce(Ok(5));
         assert_eq!(effects.next_nonce_at_least, Some(5));
         assert_eq!(slot.publisher_tx().nonce, 0);
         assert!(matches!(
@@ -894,5 +869,161 @@ mod tests {
             slot.plan(Duration::from_secs(20), policy()).work,
             Some(PendingWork::PrepareReplacementTx { reason: ReplacementReason::FeeBump, .. })
         ));
+    }
+
+    #[test]
+    fn deterministic_rejection_without_previous_waits_for_retry_delay() {
+        let (mut slot, _) = slot(1);
+        // Commit the nonce while leaving it unconfirmed, so no earlier version
+        // is retained to fall back to.
+        slot.record_publish(&event(&slot, 0, PublishOutcome::Ambiguous), Duration::ZERO);
+        assert!(slot.is_committed());
+        assert!(slot.previous.is_none());
+
+        // The retry pass republishes the same version and is rejected everywhere.
+        assert!(slot.plan(Duration::from_secs(1), policy()).snapshot_changed);
+        let reject = PublishOutcome::Rejected(PublishReject::Deterministic(
+            TxManagerError::InsufficientFunds,
+        ));
+        let effects = slot.record_publish(&event(&slot, 0, reject), Duration::from_secs(1));
+
+        // Nothing reopens immediately: the next pass only starts after the delay.
+        assert!(!effects.snapshot_changed);
+        assert!(slot.plan(Duration::from_secs(1), policy()).work.is_none());
+        assert!(!slot.plan(Duration::from_secs(1), policy()).snapshot_changed);
+        assert!(slot.plan(Duration::from_secs(2), policy()).snapshot_changed);
+    }
+
+    #[test]
+    fn deterministic_rejection_restores_previous_version() {
+        let (mut slot, _) = slot(1);
+        slot.record_publish(&event(&slot, 0, PublishOutcome::Ambiguous), Duration::ZERO);
+        let live_version = slot.active_version();
+
+        let plan = slot.plan(Duration::from_secs(10), policy());
+        let Some(PendingWork::PrepareReplacementTx { base_version, reason, .. }) = plan.work else {
+            panic!("stale live transaction should request a fee bump")
+        };
+        slot.replacement_prepared(
+            base_version,
+            reason,
+            Ok(prepared(0, 2)),
+            Duration::from_secs(10),
+            policy(),
+        );
+        assert_ne!(slot.active_version(), live_version);
+        assert!(slot.previous.is_some());
+
+        let reject = PublishOutcome::Rejected(PublishReject::Deterministic(
+            TxManagerError::InsufficientFunds,
+        ));
+        let effects = slot.record_publish(&event(&slot, 0, reject), Duration::from_secs(10));
+        assert!(effects.snapshot_changed);
+        assert_eq!(slot.active_version(), live_version);
+        assert!(slot.previous.is_none());
+    }
+
+    #[test]
+    fn rejected_cancel_restores_previous_and_reports_error() {
+        let (mut slot, _) = slot(1);
+        slot.record_publish(&event(&slot, 0, PublishOutcome::Ambiguous), Duration::ZERO);
+        let live_version = slot.active_version();
+
+        let (result, mut result_rx) = oneshot::channel();
+        slot.request_cancel(Address::with_last_byte(9), result).unwrap();
+        let plan = slot.plan(Duration::ZERO, policy());
+        let Some(PendingWork::PrepareReplacementTx {
+            base_version,
+            reason: ReplacementReason::Cancel,
+            ..
+        }) = plan.work
+        else {
+            panic!("a pending cancel should prepare a cancel replacement")
+        };
+        slot.replacement_prepared(
+            base_version,
+            ReplacementReason::Cancel,
+            Ok(prepared(0, 2)),
+            Duration::ZERO,
+            policy(),
+        );
+
+        let reject = PublishOutcome::Rejected(PublishReject::Deterministic(
+            TxManagerError::InsufficientFunds,
+        ));
+        slot.record_publish(&event(&slot, 0, reject), Duration::ZERO);
+
+        assert_eq!(slot.active_version(), live_version);
+        assert_eq!(result_rx.try_recv().unwrap(), Err(TxManagerError::InsufficientFunds));
+    }
+
+    #[test]
+    fn nothing_is_decided_while_a_replacement_is_being_built() {
+        let (mut slot, _) = slot(2);
+        slot.record_publish(&event(&slot, 0, PublishOutcome::Accepted), Duration::ZERO);
+        slot.record_publish(&event(&slot, 1, PublishOutcome::Accepted), Duration::ZERO);
+
+        let plan = slot.plan(Duration::from_secs(10), policy());
+        assert!(matches!(
+            plan.work,
+            Some(PendingWork::PrepareReplacementTx { reason: ReplacementReason::FeeBump, .. })
+        ));
+        assert!(matches!(slot.replacement, ReplacementState::Preparing { .. }));
+
+        // A late rejection observed during the build must not re-plan anything.
+        slot.record_publish(
+            &event(
+                &slot,
+                0,
+                PublishOutcome::Rejected(PublishReject::FeeTooLow(TxManagerError::Underpriced)),
+            ),
+            Duration::from_secs(10),
+        );
+        assert!(matches!(slot.replacement, ReplacementState::Preparing { .. }));
+    }
+
+    #[test]
+    fn account_nonce_read_failure_leaves_the_slot_untouched() {
+        let (mut slot, _) = slot(1);
+        slot.record_publish(
+            &event(&slot, 0, PublishOutcome::Rejected(PublishReject::NonceTooLow)),
+            Duration::ZERO,
+        );
+        slot.plan(Duration::ZERO, policy());
+
+        let effects = slot.record_account_nonce(Err(TxManagerError::Transport("down".to_string())));
+        assert!(effects.next_nonce_at_least.is_none());
+        assert!(effects.failed.is_none());
+        assert!(matches!(slot.replacement, ReplacementState::Idle));
+    }
+
+    #[test]
+    fn cancel_is_rejected_until_its_bytes_may_be_live() {
+        let (mut slot, _) = slot(1);
+        slot.record_publish(&event(&slot, 0, PublishOutcome::Ambiguous), Duration::ZERO);
+
+        let (first, _first_rx) = oneshot::channel();
+        slot.request_cancel(Address::with_last_byte(9), first).unwrap();
+        let plan = slot.plan(Duration::ZERO, policy());
+        let Some(PendingWork::PrepareReplacementTx { base_version, .. }) = plan.work else {
+            panic!("a pending cancel should prepare a cancel replacement")
+        };
+        slot.replacement_prepared(
+            base_version,
+            ReplacementReason::Cancel,
+            Ok(prepared(0, 2)),
+            Duration::ZERO,
+            policy(),
+        );
+
+        // The cancel version is active but has not been accepted anywhere yet.
+        let (blocked, _blocked_rx) = oneshot::channel();
+        assert!(slot.request_cancel(Address::with_last_byte(9), blocked).is_err());
+
+        // Once its bytes may be live, another request reports success.
+        slot.record_publish(&event(&slot, 0, PublishOutcome::Ambiguous), Duration::ZERO);
+        let (live, mut live_rx) = oneshot::channel();
+        slot.request_cancel(Address::with_last_byte(9), live).unwrap();
+        assert_eq!(live_rx.try_recv().unwrap(), Ok(()));
     }
 }

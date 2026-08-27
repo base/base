@@ -12,7 +12,7 @@ mod pending;
 pub use pending::{
     CancelRequest, NonceFetch, NonceSlot, PendingLedger, PendingPolicy, PendingWork,
     PublishedAttempt, RejectionVerdict, ReplacementReason, ReplacementState, SignedVersion,
-    SlotEffects, SlotPlan, SlotState, StagedSubmission, VersionId, VersionKind,
+    SlotEffects, SlotState, StagedSubmission, VersionId, VersionKind,
 };
 
 mod publisher;

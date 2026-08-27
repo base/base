@@ -115,7 +115,9 @@ pub struct TxManagerConfig {
     pub publish_retry_delay: Duration,
     /// Receipt polling interval.
     pub receipt_query_interval: Duration,
-    /// Maximum clean-rejection admission window (zero = disabled).
+    /// Maximum clean-rejection admission window. Zero disables the deadline, so
+    /// a provisional nonce never fails by timeout and is retried until it
+    /// commits or is definitively rejected.
     pub tx_not_in_mempool_timeout: Duration,
     /// Minimum blob base fee (in wei) to use for blob transactions.
     pub min_blob_fee: u128,

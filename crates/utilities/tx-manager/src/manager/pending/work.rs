@@ -131,8 +131,6 @@ pub enum PendingWork {
     FetchAccountNonce {
         /// Submission identifier.
         submission_id: SubmissionId,
-        /// Version that received `NonceTooLow`.
-        version: VersionId,
     },
 }
 

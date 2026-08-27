@@ -42,7 +42,7 @@ pub use manager::{
     PendingLedger, PendingPolicy, PendingWork, PreparedTx, PublishOutcome, PublishReject,
     PublishedAttempt, PublisherCursor, PublisherEvent, PublisherGroup, PublisherId,
     PublisherSnapshot, PublisherTx, RejectionVerdict, ReplacementReason, ReplacementState,
-    SUPERSESSION_OBSERVATIONS, SignedVersion, SimpleTxManager, SlotEffects, SlotPlan, SlotState,
+    SUPERSESSION_OBSERVATIONS, SignedVersion, SimpleTxManager, SlotEffects, SlotState,
     StagedSubmission, SupersessionEvidence, SweepOutcome, SweepResolution, SweepTarget, TxBuilder,
     TxCoordinator, TxManager, TxPublisher, VersionId, VersionKind, WEI_PER_GWEI, WorkerEvent,
 };
