@@ -8,6 +8,9 @@ pub use accounting::AssetAccounting;
 
 mod dispatch;
 
+mod announce;
+pub(crate) use announce::{AnnounceCall, BorrowedAnnounce};
+
 mod versions;
 pub(crate) use versions::AssetCall;
 pub use versions::{AssetAbi, AssetAbiPair, AssetVersion, AssetVersions};

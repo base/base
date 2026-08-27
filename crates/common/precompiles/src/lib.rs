@@ -59,7 +59,7 @@ pub use metrics::{
 };
 
 mod b20_asset;
-pub(crate) use b20_asset::AssetCall;
+pub(crate) use b20_asset::{AnnounceCall, AssetCall, BorrowedAnnounce};
 pub use b20_asset::{
     Asset, AssetAbi, AssetAbiPair, AssetAccounting, AssetV1, AssetV2, AssetVersion, AssetVersions,
     B20AssetExtensionStorage, B20AssetInit, B20AssetPrecompile, B20AssetStorage, B20AssetToken,

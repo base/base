@@ -8,16 +8,15 @@
 //! internal-call loop stays here because re-dispatching arbitrary sub-calls is a
 //! routing responsibility; its version-defined business steps live on [`Asset`].
 
-use alloc::string::String;
-
 use alloy_primitives::{Bytes, U256};
-use alloy_sol_types::{SolCall, SolType, SolValue, abi};
+use alloy_sol_types::{SolCall, SolValue};
 use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, PrecompileResult, StorageCtx};
 
 use crate::{
-    AssetAccounting, AssetCall, AssetVersion, AssetVersions, B20AssetStorage, B20AssetToken,
-    B20PolicyType, B20TokenRole, BerylAuxiliaryMetrics, BerylCallRecorder, BerylMetricLabels,
+    AnnounceCall, AssetAccounting, AssetCall, AssetVersion, AssetVersions, B20AssetStorage,
+    B20AssetToken, B20PolicyType, B20TokenRole, BerylAuxiliaryMetrics, BerylCallRecorder,
+    BerylMetricLabels, BorrowedAnnounce,
     IB20::{self, IB20Calls as C},
     IB20Asset::{self, IB20AssetCalls as SC},
     NoopPrecompileCallObserver, PermitArgs, PolicyAccounting, PrecompileCallObserver,
@@ -121,10 +120,10 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
         if let Some(selector) = calldata.first_chunk::<4>().copied()
             && selector == IB20Asset::announceCall::SELECTOR
             && version.abi().asset.valid_selector(selector)
-            && let Ok(token) = Self::decode_announce_borrowed(&calldata[4..])
+            && let Ok(announce) = BorrowedAnnounce::decode(&calldata[4..])
         {
             return observer.observe("precompile-b20-asset-announce", || {
-                self.run_announce(ctx, version, privileged, &observer, BorrowedAnnounce(token))?;
+                self.run_announce(ctx, version, privileged, &observer, announce)?;
                 Ok(Bytes::new())
             });
         }
@@ -452,24 +451,6 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
         Ok(encoded)
     }
 
-    /// Decodes `announce`'s parameters **borrowed** — each `bytes` is a slice into `rest`, not an
-    /// owned copy. `rest` is the calldata with the 4-byte selector already stripped.
-    ///
-    /// This mirrors alloy's owned `abi_decode_validate` (`decode_sequence` then `type_check`) and
-    /// omits only the infallible `detokenize`, so it accepts and rejects exactly the same inputs.
-    /// Running `type_check` is mandatory, not optional: `string` validation rejects non-UTF-8, so
-    /// skipping it would accept an `id`/`description`/`uri` the owned path rejects — an accept-side
-    /// divergence the caller's fall-through to the owned decoder could not catch.
-    fn decode_announce_borrowed(
-        rest: &[u8],
-    ) -> core::result::Result<<IB20Asset::announceCall as SolCall>::Token<'_>, ()> {
-        let token = abi::decode_sequence::<<IB20Asset::announceCall as SolCall>::Token<'_>>(rest)
-            .map_err(|_| ())?;
-        <<IB20Asset::announceCall as SolCall>::Parameters<'_> as SolType>::type_check(&token)
-            .map_err(|_| ())?;
-        Ok(token)
-    }
-
     /// Posts an announcement and atomically executes its internal calls via self-dispatch.
     ///
     /// Depends only on the [`AnnounceCall`] shape, so it is identical for the borrowed fast path in
@@ -544,98 +525,6 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
     }
 }
 
-/// The version-agnostic view of a decoded `announce` that [`B20AssetToken::run_announce`] needs.
-///
-/// Abstracts over the two ways `announce` calldata is decoded — the borrowed fast-path token
-/// ([`BorrowedAnnounce`], which never copies the aliased `bytes[]`) and the owned
-/// [`IB20Asset::announceCall`] safety net — so the runner never has to know which produced it.
-/// Adding another representation later is a new impl, not a change to `run_announce`.
-pub(crate) trait AnnounceCall {
-    /// The announcement id, materialized as an owned `String`.
-    fn id(&self) -> String;
-    /// The announcement description, materialized as an owned `String`.
-    fn description(&self) -> String;
-    /// The announcement uri, materialized as an owned `String`.
-    fn uri(&self) -> String;
-    /// Number of internal calls, for metrics.
-    fn internal_call_count(&self) -> usize;
-    /// Summed byte length of the internal calls, for metrics.
-    fn internal_call_bytes(&self) -> usize;
-    /// Visits each internal call's raw bytes in order, short-circuiting on the first error.
-    fn try_for_each_internal_call(
-        &self,
-        f: impl FnMut(&[u8]) -> base_precompile_storage::Result<()>,
-    ) -> base_precompile_storage::Result<()>;
-}
-
-/// A borrowed `announce` decode: every `bytes[]` entry is a slice into the original calldata
-/// (`PackedSeqToken(&[u8])`), so an aliased payload cannot amplify into owned copies (Cantina #16).
-pub(crate) struct BorrowedAnnounce<'a>(pub <IB20Asset::announceCall as SolCall>::Token<'a>);
-
-impl AnnounceCall for BorrowedAnnounce<'_> {
-    fn id(&self) -> String {
-        String::from_utf8_lossy(self.0.1.as_slice()).into_owned()
-    }
-
-    fn description(&self) -> String {
-        String::from_utf8_lossy(self.0.2.as_slice()).into_owned()
-    }
-
-    fn uri(&self) -> String {
-        String::from_utf8_lossy(self.0.3.as_slice()).into_owned()
-    }
-
-    fn internal_call_count(&self) -> usize {
-        self.0.0.0.len()
-    }
-
-    fn internal_call_bytes(&self) -> usize {
-        self.0.0.0.iter().map(|call| call.as_slice().len()).sum()
-    }
-
-    fn try_for_each_internal_call(
-        &self,
-        mut f: impl FnMut(&[u8]) -> base_precompile_storage::Result<()>,
-    ) -> base_precompile_storage::Result<()> {
-        for call in &self.0.0.0 {
-            f(call.as_slice())?;
-        }
-        Ok(())
-    }
-}
-
-impl AnnounceCall for IB20Asset::announceCall {
-    fn id(&self) -> String {
-        self.id.clone()
-    }
-
-    fn description(&self) -> String {
-        self.description.clone()
-    }
-
-    fn uri(&self) -> String {
-        self.uri.clone()
-    }
-
-    fn internal_call_count(&self) -> usize {
-        self.internalCalls.len()
-    }
-
-    fn internal_call_bytes(&self) -> usize {
-        self.internalCalls.iter().map(|call| call.len()).sum()
-    }
-
-    fn try_for_each_internal_call(
-        &self,
-        mut f: impl FnMut(&[u8]) -> base_precompile_storage::Result<()>,
-    ) -> base_precompile_storage::Result<()> {
-        for call in &self.internalCalls {
-            f(call.as_ref())?;
-        }
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use alloc::{string::String, vec::Vec};
@@ -649,9 +538,9 @@ mod tests {
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
         AssetV1, AssetVersion, B20AssetStorage, B20AssetToken, B20TokenRole, BerylErrorKind,
-        FakePolicyAccounting, IB20, IB20Asset, InMemoryTokenAccounting, NoopPrecompileCallObserver,
-        PolicyVersion, PrecompileCallMetric, PrecompileCallObserver, PrecompileCallOutcome,
-        PrecompileCallStatus, Token, TokenAccounting,
+        BorrowedAnnounce, FakePolicyAccounting, IB20, IB20Asset, InMemoryTokenAccounting,
+        NoopPrecompileCallObserver, PolicyVersion, PrecompileCallMetric, PrecompileCallObserver,
+        PrecompileCallOutcome, PrecompileCallStatus, Token, TokenAccounting,
     };
 
     type TestAssetToken = B20AssetToken<InMemoryTokenAccounting, FakePolicyAccounting>;
@@ -1268,7 +1157,7 @@ mod tests {
         trailing.extend_from_slice(&[0u8; 16]);
 
         for calldata in [valid_empty, valid_aliased, bad_len, truncated_head, trailing] {
-            let borrowed = TestAssetToken::decode_announce_borrowed(&calldata[4..]).is_ok();
+            let borrowed = BorrowedAnnounce::decode(&calldata[4..]).is_ok();
             let owned = IB20Asset::announceCall::abi_decode_validate(&calldata).is_ok();
             assert_eq!(borrowed, owned, "accept-set divergence for {} bytes", calldata.len());
         }
