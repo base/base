@@ -130,6 +130,7 @@ impl Checkpoint {
         prover_address: Address,
         l1_head: B256,
         game_l2_block_number: u64,
+        zk_artifact_hash: B256,
     ) -> Result<Bytes> {
         let client = ProofRequesterClient::connect(&ProverServiceClientConfig::new(
             config.prover_service_url.as_str(),
@@ -153,7 +154,7 @@ impl Checkpoint {
                 l1_head: Some(l1_head),
                 intermediate_root_interval: Some(self.block_count),
                 schedule_l2_block_number: Some(game_l2_block_number),
-                zk_artifact_hash: None,
+                zk_artifact_hash: Some(zk_artifact_hash),
                 zk_vm: ZkVm::Sp1,
                 zk_backend: config.zk_backend,
             },
@@ -164,6 +165,7 @@ impl Checkpoint {
             self.index,
             prover_address,
             config.zk_backend.as_str(),
+            zk_artifact_hash,
         );
         let response = client
             .prove_block_range(ProveBlockRangeRequest {
@@ -266,6 +268,7 @@ impl Checkpoint {
         invalid_index: u64,
         prover_address: Address,
         zk_backend: &str,
+        zk_artifact_hash: B256,
     ) -> String {
         let invalid_index = invalid_index.to_be_bytes();
         ProofSessionId::derive_from_components(
@@ -276,6 +279,7 @@ impl Checkpoint {
                 &invalid_index,
                 prover_address.as_slice(),
                 zk_backend.as_bytes(),
+                zk_artifact_hash.as_slice(),
             ],
         )
     }

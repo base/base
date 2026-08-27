@@ -5,6 +5,7 @@
 
 mod common;
 
+use alloy_primitives::B256;
 use base_prover_service_protocol::{
     ProofRequest, ProofRequestKind, ProveBlockRangeRequest, ProverRequesterApiClient, ZkBackend,
     ZkProofRequest, ZkVm,
@@ -23,7 +24,7 @@ fn compressed_request(session_id: &str, start_block_number: u64) -> ProveBlockRa
                 l1_head: None,
                 intermediate_root_interval: None,
                 schedule_l2_block_number: None,
-                zk_artifact_hash: None,
+                zk_artifact_hash: Some(B256::repeat_byte(0x11)),
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             }),

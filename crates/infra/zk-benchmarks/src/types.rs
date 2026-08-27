@@ -32,6 +32,8 @@ mod duration_millis {
 pub struct ZkBenchConfig {
     /// Proof backend.
     pub zk_backend: ZkBackend,
+    /// Composite ZK artifact hash to request.
+    pub zk_artifact_hash: B256,
     /// Rollup node RPC URL.
     pub rollup_rpc_url: Url,
     /// ZK prover RPC URL.

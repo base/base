@@ -241,7 +241,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
             game_address,
             invalid_index,
             proof_request.clone(),
-        );
+        )?;
 
         let prove_response = self.proof_requester.prove_block_range(request).await?;
 
@@ -587,7 +587,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
             game_address,
             invalid_index,
             request,
-        );
+        )?;
 
         match self.proof_requester.prove_block_range(prove_request).await {
             Ok(response) => {
@@ -649,7 +649,7 @@ mod tests {
                 l1_head: Some(B256::repeat_byte(0xAA)),
                 intermediate_root_interval: Some(10),
                 schedule_l2_block_number: None,
-                zk_artifact_hash: None,
+                zk_artifact_hash: Some(B256::repeat_byte(0x42)),
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             },

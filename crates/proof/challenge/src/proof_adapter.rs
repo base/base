@@ -7,7 +7,7 @@ use base_prover_service_protocol::{
     ProofRequest, ProofRequestKind, ProofResult, ProofSessionId, ProveBlockRangeRequest,
     SnarkPlonkProofRequest, TeeKind, TeeProofRequest,
 };
-use eyre::{Result, WrapErr, bail};
+use eyre::{Result, WrapErr, bail, eyre};
 
 /// Conversion helpers for challenger proof requests and dispute proof bytes.
 #[derive(Debug)]
@@ -46,16 +46,16 @@ impl ChallengerProofAdapter {
         game_address: Address,
         invalid_index: u64,
         request: SnarkPlonkProofRequest,
-    ) -> ProveBlockRangeRequest {
-        let session_id = Self::snark_plonk_session_id(
-            request.proof.zk_artifact_hash.unwrap_or_default(),
-            game_address,
-            invalid_index,
-        );
-        ProveBlockRangeRequest {
+    ) -> Result<ProveBlockRangeRequest> {
+        let artifact_hash = request
+            .proof
+            .zk_artifact_hash
+            .ok_or_else(|| eyre!("challenger ZK request is missing its artifact hash"))?;
+        let session_id = Self::snark_plonk_session_id(artifact_hash, game_address, invalid_index);
+        Ok(ProveBlockRangeRequest {
             proof: ProofRequest { session_id, request: ProofRequestKind::SnarkPlonk(request) },
             retry_failed: true,
-        }
+        })
     }
 
     /// Builds a prover-service request for a challenger TEE proof.
@@ -233,10 +233,37 @@ mod tests {
             game_address,
             invalid_index,
             request.clone(),
-        );
+        )
+        .expect("artifact-aware request should wrap");
 
         assert_eq!(wrapped.proof.session_id, session_id);
         assert_eq!(wrapped.proof.request, ProofRequestKind::SnarkPlonk(request));
+    }
+
+    #[test]
+    fn snark_plonk_prove_block_range_request_rejects_missing_artifact_hash() {
+        let request = SnarkPlonkProofRequest {
+            proof: ZkProofRequest {
+                start_block_number: 100,
+                number_of_blocks_to_prove: 300,
+                sequence_window: None,
+                l1_head: None,
+                intermediate_root_interval: None,
+                schedule_l2_block_number: None,
+                zk_artifact_hash: None,
+                zk_vm: ZkVm::Sp1,
+                zk_backend: ZkBackend::Cluster,
+            },
+            prover_address: Address::repeat_byte(0x11),
+        };
+
+        let error = ChallengerProofAdapter::snark_plonk_prove_block_range_request(
+            Address::repeat_byte(0xaa),
+            1,
+            request,
+        )
+        .expect_err("missing artifact hash should fail");
+        assert!(error.to_string().contains("missing its artifact hash"));
     }
 
     #[test]
