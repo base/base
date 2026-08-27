@@ -5,7 +5,6 @@ use eyre::Result;
 use futures::TryStreamExt;
 use reth_execution_types::Chain;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification};
-use reth_network_api::NetworkInfo;
 use reth_node_api::{FullNodeComponents, NodeTypes};
 use reth_primitives_traits::{AlloyBlockHeader, RecoveredBlock};
 use tokio::sync::mpsc;
@@ -32,7 +31,6 @@ impl ShadowIndexerExEx {
         Node::Types: NodeTypes<Primitives = BasePrimitives>,
     {
         while let Some(notification) = ctx.notifications.try_next().await? {
-            let is_syncing = ctx.network().is_syncing();
             let kind = Self::notification_kind(&notification);
             let fully_processed = {
                 let _timer =
@@ -82,11 +80,11 @@ impl ShadowIndexerExEx {
                 break;
             }
 
-            // `FinishedHeight` lets the manager prune the ExEx WAL, so acknowledging a height the
-            // node may still reorg discards the notification that would have recorded the block it
-            // discards. While syncing, commits are settled history. Live, any commit can still be
-            // reorged, so only a reorg's own replacement chain is safe to expose.
-            if Self::should_emit_finished_height(&notification, is_syncing)
+            // reth's `finalize_wal` clamps WAL pruning to `min(finished_height, finalized_header)`,
+            // so acknowledging every committed tip never prunes an unfinalized (still-reorgable)
+            // height while keeping the WAL bounded to the finalized block. Withholding it (prior
+            // behavior) left `finished_height` stuck and the WAL growing unbounded.
+            if Self::should_emit_finished_height(&notification)
                 && let Some(committed_chain) = notification.committed_chain()
             {
                 let tip = committed_chain.tip().num_hash();
@@ -103,13 +101,9 @@ impl ShadowIndexerExEx {
         Ok(())
     }
 
-    const fn should_emit_finished_height(
-        notification: &ExExNotification<BasePrimitives>,
-        is_syncing: bool,
-    ) -> bool {
+    const fn should_emit_finished_height(notification: &ExExNotification<BasePrimitives>) -> bool {
         match notification {
-            ExExNotification::ChainCommitted { .. } => is_syncing,
-            ExExNotification::ChainReorged { .. } => !is_syncing,
+            ExExNotification::ChainCommitted { .. } | ExExNotification::ChainReorged { .. } => true,
             ExExNotification::ChainReverted { .. } => false,
         }
     }
@@ -430,7 +424,7 @@ mod tests {
     }
 
     #[test]
-    fn should_emit_finished_height_tracks_sync_and_authoritative_reorgs() {
+    fn should_emit_finished_height_for_every_committed_chain() {
         let committed = ExExNotification::ChainCommitted { new: Arc::new(mk_chain(1, 1, 0)) };
         let reorged = ExExNotification::ChainReorged {
             old: Arc::new(mk_chain(1, 1, 0)),
@@ -438,11 +432,8 @@ mod tests {
         };
         let reverted = ExExNotification::ChainReverted { old: Arc::new(mk_chain(1, 1, 0)) };
 
-        assert!(ShadowIndexerExEx::should_emit_finished_height(&committed, true));
-        assert!(!ShadowIndexerExEx::should_emit_finished_height(&committed, false));
-        assert!(!ShadowIndexerExEx::should_emit_finished_height(&reorged, true));
-        assert!(ShadowIndexerExEx::should_emit_finished_height(&reorged, false));
-        assert!(!ShadowIndexerExEx::should_emit_finished_height(&reverted, true));
-        assert!(!ShadowIndexerExEx::should_emit_finished_height(&reverted, false));
+        assert!(ShadowIndexerExEx::should_emit_finished_height(&committed));
+        assert!(ShadowIndexerExEx::should_emit_finished_height(&reorged));
+        assert!(!ShadowIndexerExEx::should_emit_finished_height(&reverted));
     }
 }
