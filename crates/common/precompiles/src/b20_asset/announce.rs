@@ -12,7 +12,7 @@ use alloc::string::String;
 
 use alloy_sol_types::{SolCall, SolType, abi};
 
-use crate::IB20Asset;
+use crate::{AssetVersion, IB20Asset};
 
 /// The version-agnostic view of a decoded `announce` that `run_announce` consumes.
 ///
@@ -41,6 +41,24 @@ pub(crate) trait AnnounceCall {
 pub(crate) struct BorrowedAnnounce<'a>(pub <IB20Asset::announceCall as SolCall>::Token<'a>);
 
 impl<'a> BorrowedAnnounce<'a> {
+    /// Tries to interpret `calldata` as an `announce` borrowed-decode dialable at `version`.
+    ///
+    /// Returns `Some` when the leading 4 bytes are the `announce` selector, the surface active at
+    /// `version` still declares it dialable, and the rest borrowed-decodes cleanly. Otherwise
+    /// returns `None` so the caller can fall through to the generic decode path. That fall-through
+    /// stays cheap because a rejected payload never reaches owned materialization.
+    /// `valid_selector` future-proofs a fork that drops `announce`.
+    pub(crate) fn try_from_calldata(calldata: &'a [u8], version: AssetVersion) -> Option<Self> {
+        let selector = calldata.first_chunk::<4>().copied()?;
+        if selector != IB20Asset::announceCall::SELECTOR {
+            return None;
+        }
+        if !version.abi().asset.valid_selector(selector) {
+            return None;
+        }
+        Self::decode(&calldata[4..]).ok()
+    }
+
     /// Decodes `announce`'s parameters as slices into `rest`, never as owned copies. `rest` is the
     /// calldata with the 4-byte selector stripped.
     ///
@@ -60,15 +78,19 @@ impl<'a> BorrowedAnnounce<'a> {
 
 impl AnnounceCall for BorrowedAnnounce<'_> {
     fn id(&self) -> String {
-        String::from_utf8_lossy(self.0.1.as_slice()).into_owned()
+        // `type_check` in `decode` already validated UTF-8 for every `string` token, so this
+        // conversion is total in practice. Panicking on the impossible case beats the silent
+        // U+FFFD substitution `from_utf8_lossy` would perform if that invariant ever broke; that
+        // silent divergence from the owned `detokenize` path would be a consensus fork.
+        core::str::from_utf8(self.0.1.as_slice()).expect("type_check validated UTF-8").to_owned()
     }
 
     fn description(&self) -> String {
-        String::from_utf8_lossy(self.0.2.as_slice()).into_owned()
+        core::str::from_utf8(self.0.2.as_slice()).expect("type_check validated UTF-8").to_owned()
     }
 
     fn uri(&self) -> String {
-        String::from_utf8_lossy(self.0.3.as_slice()).into_owned()
+        core::str::from_utf8(self.0.3.as_slice()).expect("type_check validated UTF-8").to_owned()
     }
 
     fn internal_call_count(&self) -> usize {

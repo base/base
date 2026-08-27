@@ -45,13 +45,6 @@ impl B20Abi {
     ///
     /// The frozen surface decides what is dialable and owns any error bytes; the canonical surface
     /// then produces the value the dispatcher matches on.
-    ///
-    /// Owned decode (twice at `V1`). Safe without a borrowed fast path like `announce`'s
-    /// (Cantina #16): no call on the shared `IB20` surface has a dynamically-sized-element array.
-    /// The arrays this surface carries (`batchMint`'s `address[]`/`uint256[]`,
-    /// `pause`/`unpause`'s `PausableFeature[]`) are all static-element, decoded from inline words
-    /// with no per-element offset. No element offset can alias a shared tail, and every decode
-    /// takes time linear in the calldata length.
     pub fn decode(self, calldata: &[u8]) -> Result<IB20::IB20Calls> {
         let Some(selector) = calldata.first_chunk::<4>().copied() else {
             return Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]));

@@ -105,17 +105,10 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
         O: PrecompileCallObserver,
     {
         // Fast-path `announce` before the generic decode. `announce` is the sole B-20 selector an
-        // aliased payload can amplify, and `BorrowedAnnounce::decode` validates it without
-        // materializing the `bytes[]` (see the `announce` module for the mechanism). The guard is
-        // total: a non-`announce` selector, an `announce` selector not dialable at `version`, or a
-        // decode rejection all fall through to the generic decode below, which reproduces the same
-        // error bytes. That fall-through stays cheap because a rejected payload never reaches owned
-        // materialization. `valid_selector` future-proofs a fork that drops `announce`.
-        if let Some(selector) = calldata.first_chunk::<4>().copied()
-            && selector == IB20Asset::announceCall::SELECTOR
-            && version.abi().asset.valid_selector(selector)
-            && let Ok(announce) = BorrowedAnnounce::decode(&calldata[4..])
-        {
+        // aliased payload can amplify, and the borrowed decode validates it without materializing
+        // the `bytes[]` (see the `announce` module for the mechanism). Anything else falls through
+        // to the generic decode below with the same error bytes.
+        if let Some(announce) = BorrowedAnnounce::try_from_calldata(calldata, version) {
             return observer.observe("precompile-b20-asset-announce", || {
                 self.run_announce(ctx, version, privileged, &observer, announce)?;
                 Ok(Bytes::new())
