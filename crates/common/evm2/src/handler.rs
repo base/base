@@ -14,14 +14,14 @@ use crate::{BaseEvmTypes, transaction::BaseTransaction};
 
 /// Base transaction handler hooks.
 ///
-/// Charges the OP-stack L1 data fee alongside the standard upfront gas cost for
+/// Charges the L1 data fee alongside the standard upfront gas cost for
 /// non-deposit transactions; deposits are funded on L1 and exempt. All other
 /// hooks keep the default Ethereum behavior.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct BaseTxHandlerHooks;
 
 impl BaseTxHandlerHooks {
-    /// Returns the OP-stack L1 data fee for `envelope` under the current block's
+    /// Returns the L1 data fee for `envelope` under the current block's
     /// L1 fee parameters. Deposits are funded on L1 and exempt.
     fn l1_fee(host: &mut Evm<'_, BaseEvmTypes>, envelope: &BaseTransaction) -> U256 {
         match envelope {

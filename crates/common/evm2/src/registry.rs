@@ -24,7 +24,7 @@ pub struct CreateDepositUnsupported;
 impl BaseEvmTypes {
     /// Builds the Base transaction registry.
     ///
-    /// Registers the OP-stack deposit handler (type `0x7e`). Standard Ethereum
+    /// Registers the deposit handler (type `0x7e`). Standard Ethereum
     /// transaction handlers — wired with
     /// [`BaseTxHandlerHooks`](crate::BaseTxHandlerHooks) for L1 fee settlement —
     /// are registered here in follow-up work.
@@ -36,7 +36,7 @@ impl BaseEvmTypes {
         )
     }
 
-    /// Executes an OP-stack deposit transaction.
+    /// Executes a deposit transaction.
     ///
     /// Deposits mint value on L2 and execute exempt from the L1 data fee and
     /// standard gas payment. This currently runs the deposit as a plain call and
@@ -76,7 +76,7 @@ impl BaseEvmTypes {
         let result = req.host.execute_message(&tx_env, &mut message);
         Ok(TxResult::<Self> {
             status: result.stop.is_success(),
-            // TODO: this gas accounting is incomplete per the OP-stack deposit
+            // TODO: this gas accounting is incomplete per the deposit
             // rules and will be finished alongside mint/system-transaction support:
             // system transactions (`is_system_transaction`) must report zero gas
             // spent, and failed (reverted) deposits are charged the full

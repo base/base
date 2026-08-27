@@ -2,14 +2,14 @@
 
 use alloy_eips::eip2718::Typed2718;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
-/// EIP-2718 transaction type byte for OP-stack deposit transactions.
+/// EIP-2718 transaction type byte for deposit transactions.
 ///
 /// Re-exported from [`base_common_consensus`] to keep a single source of truth
 /// shared with `base-common-evm`.
 pub use base_common_consensus::DEPOSIT_TX_TYPE_ID as DEPOSIT_TX_TYPE;
 use evm2::ethereum::TxEnvelope;
 
-/// An OP-stack deposit transaction (type `0x7e`).
+/// A deposit transaction (type `0x7e`).
 ///
 /// Deposits are L1-originated: they mint value on L2, are exempt from the L1
 /// data fee and standard gas payment, and carry an L1-derived `source_hash`
@@ -46,7 +46,7 @@ impl Typed2718 for DepositTx {
     }
 }
 
-/// The Base transaction envelope: an OP-stack deposit or a standard Ethereum
+/// The Base transaction envelope: a deposit or a standard Ethereum
 /// transaction.
 #[derive(Clone, Debug)]
 pub enum BaseTransaction {
