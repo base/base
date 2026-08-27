@@ -4,11 +4,11 @@
 # Changes made:
 # - Rewrote .github/ path references to .depot/
 
-name: CI Merge Queue
+name: CI
 on:
   merge_group:
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 permissions:
   checks: write
