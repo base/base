@@ -133,7 +133,7 @@ impl PrunedHistoryStartup {
                     finalized_block_by_hash,
                 )
                 .with_l2_block(BlockId::Number(BlockNumberOrTag::Latest), latest_block)
-                .with_l1_block(BlockId::from(B256::ZERO), RpcBlock::default())
+                .with_l1_block(BlockId::Number(0.into()), RpcBlock::default())
                 .with_new_payload_v2_response(PayloadStatus {
                     status: PayloadStatusEnum::Valid,
                     latest_valid_hash: Some(next_unsafe_hash),

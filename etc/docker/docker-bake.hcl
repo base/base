@@ -14,14 +14,6 @@ variable "ZK_HOST_PROFILE" {
   default = "release"
 }
 
-variable "REGISTRY_IMAGE" {
-  default = "ghcr.io/base/node"
-}
-
-variable "PLATFORM_PAIR" {
-  default = "linux-amd64"
-}
-
 variable "DEVNET_TARGETS" {
   default = ["base", "batcher"]
 }
@@ -68,7 +60,6 @@ target "_rust-service-common" {
     PROFILE = "${PROFILE}"
     RUST_VERSION = "${RUST_VERSION}"
   }
-  cache-from = ["type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}"]
 }
 
 target "base" {
@@ -81,30 +72,18 @@ target "execution" {
   inherits = ["_rust-service-common"]
   target = "execution"
   tags = ["base-execution:local"]
-  cache-from = [
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-execution-${PLATFORM_PAIR}",
-  ]
 }
 
 target "consensus" {
   inherits = ["_rust-service-common"]
   target = "consensus"
   tags = ["base-consensus:local"]
-  cache-from = [
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-consensus-${PLATFORM_PAIR}",
-  ]
 }
 
 target "builder" {
   inherits = ["_rust-service-common"]
   target = "builder"
   tags = ["base-builder:local"]
-  cache-from = [
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-builder-${PLATFORM_PAIR}",
-  ]
 }
 
 target "basectl" {
@@ -147,30 +126,18 @@ target "batcher" {
   inherits = ["_rust-service-common"]
   target = "batcher"
   tags = ["base-batcher:local"]
-  cache-from = [
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-batcher-${PLATFORM_PAIR}",
-  ]
 }
 
 target "sidecrush" {
   inherits = ["_rust-service-common"]
   target = "sidecrush"
   tags = ["sidecrush:local"]
-  cache-from = [
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-sidecrush-${PLATFORM_PAIR}",
-  ]
 }
 
 target "prover-service" {
   inherits = ["_rust-service-common"]
   target = "prover-service"
   tags = ["base-prover-service:local"]
-  cache-from = [
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-prover-service-${PLATFORM_PAIR}",
-  ]
 }
 
 target "zk-host" {
@@ -181,8 +148,4 @@ target "zk-host" {
     BASE_SUCCINCT_ELF_REQUIRE = "${BASE_SUCCINCT_ELF_REQUIRE}"
   }
   tags = ["base-prover-zk-host:local"]
-  cache-from = [
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-zk-host-${PLATFORM_PAIR}",
-  ]
 }

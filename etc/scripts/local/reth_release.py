@@ -170,7 +170,12 @@ def gh_json(args: list[str]) -> object:
 
 
 def fetch_pr(repo: str, number: int) -> PatchPr:
-    """Load PR metadata and the ordered non-merge commit list."""
+    """Load PR metadata and the ordered commit list.
+
+    The list is every commit GitHub attributes to the PR, in order. It may
+    include merge commits when the author merged the base branch in;
+    `squash_pr` drops those before cherry-picking.
+    """
     data = gh_json(
         [
             "pr",
@@ -249,8 +254,23 @@ def already_squashed(clone: Path, upstream_tag: str, pr: PatchPr) -> bool:
     return any(line.startswith(needle) for line in log.splitlines())
 
 
+def non_merge_commits(clone: Path, commits: tuple[str, ...]) -> list[str]:
+    """Return the given commits that are not merge commits, preserving order.
+
+    A merge commit (e.g. from merging the base branch into the PR) cannot be
+    cherry-picked without `-m`, and its diff is just the base changes we are
+    already building on, so it is dropped from the squash.
+    """
+    kept: list[str] = []
+    for commit in commits:
+        parents = git(clone, "show", "-s", "--format=%P", commit).split()
+        if len(parents) <= 1:
+            kept.append(commit)
+    return kept
+
+
 def squash_pr(clone: Path, pr: PatchPr, env: dict[str, str]) -> None:
-    """Cherry-pick every PR commit and squash them into one commit."""
+    """Cherry-pick every non-merge PR commit and squash them into one commit."""
     source = f"https://github.com/{pr.repo}"
     local_ref = f"refs/reths/{pr.repo.replace('/', '-')}-{pr.number}"
     git(
@@ -260,8 +280,13 @@ def squash_pr(clone: Path, pr: PatchPr, env: dict[str, str]) -> None:
         f"pull/{pr.number}/head:{local_ref}",
         "--force",
     )
+    picks = non_merge_commits(clone, pr.commits)
+    if not picks:
+        raise ReleaseError(
+            f"{pr.repo}#{pr.number} has no non-merge commits to squash"
+        )
     result = run(
-        ["git", "cherry-pick", "-n", *pr.commits],
+        ["git", "cherry-pick", "-n", *picks],
         cwd=clone,
         env=env,
         check=False,

@@ -47,7 +47,7 @@ pub use flashblocks::{
     InclusionTracker, ParkableBestPayloadTransactions, ParkablePayloadTransactions,
     ParkedPredicateIndex, PayloadBuilder, PayloadHandler, PayloadJobDeadline,
     PayloadTransactionInvalidated, PredicateLoadTracker, PredicateReadRecorder, ResolvePayload,
-    StateChangeEffects, ValidityPredicateKey,
+    StateChangeEffects, ValidityPredicateEvaluation, ValidityPredicateKey,
 };
 
 mod extension;

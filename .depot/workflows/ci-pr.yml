@@ -1,22 +1,16 @@
-name: CI PR
-
+name: CI
 on:
   pull_request:
-
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
-
 permissions:
   checks: write
   contents: read
-  issues: write
-  packages: read
   pull-requests: write
-
 jobs:
   ci:
-    uses: ./.github/workflows/ci-core.yml
+    uses: ./.depot/workflows/ci-core.yml
     with:
       allow_registry_login: ${{ github.event.pull_request.head.repo.fork != true }}
       base_ref: ${{ github.base_ref || 'main' }}
@@ -26,7 +20,6 @@ jobs:
         just check::clippy-affected-ci "origin/${{ github.base_ref || 'main' }}"
       run_system_tests: false
       run_sigsegv: false
-      save_rust_cache: false
       test_command: >-
         just test-affected-ci "origin/${{ github.base_ref || 'main' }}"
     secrets: inherit

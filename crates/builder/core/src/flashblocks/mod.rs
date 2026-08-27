@@ -1,16 +1,12 @@
 //! Flashblocks builder types.
 
 mod best_txs;
-pub use best_txs::{
-    BestFlashblocksTxs, ParkableBestPayloadTransactions, ParkablePayloadTransactions,
-    PayloadTransactionInvalidated,
+pub use base_execution_payload_builder::{
+    ParkableBestPayloadTransactions, ParkablePayloadTransactions, ParkedPredicateIndex,
+    PayloadTransactionInvalidated, PredicateLoadTracker, PredicateReadRecorder, StateChangeEffects,
+    ValidityPredicateEvaluation, ValidityPredicateKey,
 };
-
-mod predicate_index;
-pub use predicate_index::{ParkedPredicateIndex, StateChangeEffects, ValidityPredicateKey};
-
-mod predicate_loads;
-pub use predicate_loads::{PredicateLoadTracker, PredicateReadRecorder};
+pub use best_txs::BestFlashblocksTxs;
 
 mod inclusion;
 pub use inclusion::{FLOW_STANDARD, FLOW_VALIDITY, InclusionFlow, InclusionTracker};

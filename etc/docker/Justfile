@@ -152,11 +152,6 @@ ingress-logs *containers:
 build-image target='base' profile='dev':
     #!/usr/bin/env bash
     set -euo pipefail
-    case "$(uname -m)" in
-      x86_64)       platform_pair="linux-amd64" ;;
-      arm64|aarch64) platform_pair="linux-arm64" ;;
-      *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
-    esac
     elf_require=1
     case "{{ profile }}" in
       dev|profiling)
@@ -165,7 +160,7 @@ build-image target='base' profile='dev':
         esac
         ;;
     esac
-    PROFILE="{{ profile }}" ZK_HOST_PROFILE=release BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" PLATFORM_PAIR="${platform_pair}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ target }}" --load
+    PROFILE="{{ profile }}" ZK_HOST_PROFILE=release BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ target }}" --load
 
 # Prepares Docker images needed for system tests
 pull-images:
@@ -202,11 +197,6 @@ _build-setup-image:
 _build-rust-images group profile='dev':
     #!/usr/bin/env bash
     set -euo pipefail
-    case "$(uname -m)" in
-      x86_64)       platform_pair="linux-amd64" ;;
-      arm64|aarch64) platform_pair="linux-arm64" ;;
-      *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
-    esac
     elf_require=1
     case "{{ profile }}" in
       dev|profiling)
@@ -215,7 +205,7 @@ _build-rust-images group profile='dev':
         esac
         ;;
     esac
-    PROFILE="{{ profile }}" ZK_HOST_PROFILE=release BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" PLATFORM_PAIR="${platform_pair}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ group }}" --load
+    PROFILE="{{ profile }}" ZK_HOST_PROFILE=release BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ group }}" --load
 
 [private]
 _up-devnet compose_profile mode:

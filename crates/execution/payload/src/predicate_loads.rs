@@ -1,4 +1,4 @@
-//! Per-block accounting of validity-predicate state loads.
+//! Per-block accounting of payload validity-predicate state loads.
 //!
 //! Evaluating a transaction's validity predicates reads account balances and
 //! contract storage slots from the state the builder is building on. This module
@@ -30,9 +30,9 @@ use revm::{
 /// Per-block accumulator for validity-predicate state loads.
 ///
 /// Totals count every read: a slot re-read (e.g. after it is written, or when a
-/// parked transaction is re-evaluated on a later flashblock) counts again, so
-/// the total captures raw read volume. The unique sets count distinct locations
-/// touched across the block, i.e. the predicate state footprint.
+/// parked transaction is re-evaluated after a state change) counts again, so the
+/// total captures raw read volume. The unique sets count distinct locations touched
+/// across the block, i.e. the predicate state footprint.
 #[derive(Debug, Default)]
 pub struct PredicateLoadTracker {
     /// Total account (balance) reads.
