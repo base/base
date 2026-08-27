@@ -138,6 +138,136 @@ mod tests {
         fs::remove_dir_all(test_dir).expect("should remove test directory");
     }
 
+    #[test]
+    fn read_from_path_success() {
+        let test_dir = unique_temp_dir();
+        let file_path = test_dir.join("test_jwt.hex");
+        let expected_secret = JwtSecret::random();
+
+        JwtSecretReader::write_to_path(&file_path, expected_secret).expect("should write secret");
+        let loaded_secret =
+            JwtSecretReader::read_from_path(&file_path).expect("should read secret");
+
+        assert_eq!(loaded_secret, expected_secret);
+        fs::remove_dir_all(test_dir).expect("should remove test directory");
+    }
+
+    #[test]
+    fn read_from_path_nonexistent_fails() {
+        let test_dir = unique_temp_dir();
+        let file_path = test_dir.join("nonexistent_jwt.hex");
+
+        let result = JwtSecretReader::read_from_path(&file_path);
+        assert!(matches!(result, Err(JwtError::IoError(_))));
+
+        fs::remove_dir_all(test_dir).expect("should remove test directory");
+    }
+
+    #[test]
+    fn read_from_path_invalid_hex_fails() {
+        let test_dir = unique_temp_dir();
+        let file_path = test_dir.join("invalid_jwt.hex");
+        fs::write(&file_path, "not_valid_hex_content!").expect("should write invalid content");
+
+        let result = JwtSecretReader::read_from_path(&file_path);
+        assert!(matches!(result, Err(JwtError::ParseError(_))));
+
+        fs::remove_dir_all(test_dir).expect("should remove test directory");
+    }
+
+    #[test]
+    fn write_to_path_fails_if_file_already_exists() {
+        let test_dir = unique_temp_dir();
+        let file_path = test_dir.join("existing_jwt.hex");
+        let secret1 = JwtSecret::random();
+        let secret2 = JwtSecret::random();
+
+        JwtSecretReader::write_to_path(&file_path, secret1).expect("first write should succeed");
+        let second_write = JwtSecretReader::write_to_path(&file_path, secret2);
+
+        assert!(matches!(second_write, Err(JwtError::IoError(_))));
+        fs::remove_dir_all(test_dir).expect("should remove test directory");
+    }
+
+    #[test]
+    fn default_jwt_secret_reads_existing_file() {
+        let _guard = CWD_LOCK.lock().unwrap();
+        let original_dir = env::current_dir().expect("should read current directory");
+        let test_dir = unique_temp_dir();
+        let existing_secret = JwtSecret::random();
+        let secret_path = test_dir.join("jwt.hex");
+
+        JwtSecretReader::write_to_path(&secret_path, existing_secret)
+            .expect("should write initial secret");
+
+        env::set_current_dir(&test_dir).expect("should enter test directory");
+        let loaded_secret = JwtSecretReader::default_jwt_secret("jwt.hex");
+        env::set_current_dir(original_dir).expect("should restore original directory");
+
+        assert_eq!(loaded_secret.expect("should read existing secret"), existing_secret);
+        fs::remove_dir_all(test_dir).expect("should remove test directory");
+    }
+
+    #[test]
+    fn default_jwt_secret_fails_on_corrupt_existing_file() {
+        let _guard = CWD_LOCK.lock().unwrap();
+        let original_dir = env::current_dir().expect("should read current directory");
+        let test_dir = unique_temp_dir();
+        let secret_path = test_dir.join("jwt.hex");
+
+        fs::write(&secret_path, "corrupt_hex_data").expect("should write corrupt data");
+
+        env::set_current_dir(&test_dir).expect("should enter test directory");
+        let result = JwtSecretReader::default_jwt_secret("jwt.hex");
+        env::set_current_dir(original_dir).expect("should restore original directory");
+
+        assert!(matches!(result, Err(JwtError::ParseError(_))));
+        fs::remove_dir_all(test_dir).expect("should remove test directory");
+    }
+
+    #[test]
+    fn resolve_jwt_secret_priority() {
+        let _guard = CWD_LOCK.lock().unwrap();
+        let original_dir = env::current_dir().expect("should read current directory");
+        let test_dir = unique_temp_dir();
+
+        let file_secret = JwtSecret::random();
+        let encoded_secret = JwtSecret::random();
+        let default_secret = JwtSecret::random();
+
+        let file_path = test_dir.join("specified_jwt.hex");
+        let default_path = test_dir.join("default_jwt.hex");
+
+        JwtSecretReader::write_to_path(&file_path, file_secret).expect("should write file secret");
+        JwtSecretReader::write_to_path(&default_path, default_secret)
+            .expect("should write default secret");
+
+        env::set_current_dir(&test_dir).expect("should enter test directory");
+
+        // 1. file_path takes priority over encoded and default
+        let resolved = JwtSecretReader::resolve_jwt_secret(
+            Some(&file_path),
+            Some(encoded_secret),
+            "default_jwt.hex",
+        )
+        .expect("should resolve file path");
+        assert_eq!(resolved, file_secret);
+
+        // 2. encoded takes priority over default when file_path is None
+        let resolved =
+            JwtSecretReader::resolve_jwt_secret(None, Some(encoded_secret), "default_jwt.hex")
+                .expect("should resolve encoded");
+        assert_eq!(resolved, encoded_secret);
+
+        // 3. falls back to default file when both are None
+        let resolved = JwtSecretReader::resolve_jwt_secret(None, None, "default_jwt.hex")
+            .expect("should resolve default");
+        assert_eq!(resolved, default_secret);
+
+        env::set_current_dir(original_dir).expect("should restore original directory");
+        fs::remove_dir_all(test_dir).expect("should remove test directory");
+    }
+
     fn unique_temp_dir() -> std::path::PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
