@@ -178,11 +178,7 @@ pub struct BatcherArgs {
     )]
     pub resubmission_timeout_secs: u64,
 
-    /// Maximum fast retries after the initial publication attempt.
-    #[arg(long = "publish-max-retries", default_value = "10", env = "BATCHER_PUBLISH_MAX_RETRIES")]
-    pub publish_max_retries: usize,
-
-    /// Delay between fast publication attempts.
+    /// Delay between transaction publication passes.
     #[arg(
         long = "publish-retry-delay",
         default_value = "1s",
@@ -320,7 +316,6 @@ impl BatcherArgs {
         let tx_manager = TxManagerConfig {
             num_confirmations: self.num_confirmations,
             resubmission_timeout: Duration::from_secs(self.resubmission_timeout_secs),
-            publish_max_retries: self.publish_max_retries,
             publish_retry_delay: self.publish_retry_delay,
             ..TxManagerConfig::default()
         };
@@ -542,10 +537,9 @@ mod tests {
 
     #[test]
     fn into_config_sets_publish_retry_policy() {
-        let cli = parse_cli(&["--publish-max-retries", "12", "--publish-retry-delay", "250ms"]);
+        let cli = parse_cli(&["--publish-retry-delay", "250ms"]);
         let config = cli.args.into_config().expect("config should build");
 
-        assert_eq!(config.tx_manager.publish_max_retries, 12);
         assert_eq!(config.tx_manager.publish_retry_delay, Duration::from_millis(250));
     }
 

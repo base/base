@@ -112,15 +112,7 @@ macro_rules! define_tx_manager_cli {
             )]
             pub resubmission_timeout: ::std::time::Duration,
 
-            /// Maximum fast retries after the initial publication attempt.
-            #[arg(
-                long = "tx-manager.publish-max-retries",
-                env = concat!($prefix, "_", "PUBLISH_MAX_RETRIES"),
-                default_value = "10"
-            )]
-            pub publish_max_retries: usize,
-
-            /// Delay between fast publication retry rounds (e.g., "1s").
+            /// Delay between publication passes (e.g., "1s").
             #[arg(
                 long = "tx-manager.publish-retry-delay",
                 env = concat!($prefix, "_", "PUBLISH_RETRY_DELAY"),
@@ -178,7 +170,6 @@ macro_rules! define_tx_manager_cli {
                     min_basefee: cli.min_basefee,
                     network_timeout: cli.network_timeout,
                     resubmission_timeout: cli.resubmission_timeout,
-                    publish_max_retries: cli.publish_max_retries,
                     publish_retry_delay: cli.publish_retry_delay,
                     receipt_query_interval: cli.receipt_query_interval,
                     tx_not_in_mempool_timeout: cli.tx_not_in_mempool_timeout,

@@ -17,7 +17,7 @@ use tracing::{error, info, warn};
 
 use super::{
     build::PreparedTx,
-    pending::{VersionId, VersionKind},
+    pending::{RejectionVerdict, VersionId, VersionKind},
 };
 use crate::{SubmissionId, TxManagerError, TxMetrics, error::RpcErrorClassifier};
 
@@ -60,6 +60,7 @@ impl PublishOutcome {
             TxManagerError::NonceTooHigh => Self::Rejected(PublishReject::NonceTooHigh),
             TxManagerError::NonceTooLow => Self::Rejected(PublishReject::NonceTooLow),
             TxManagerError::AlreadyReserved => Self::Rejected(PublishReject::AlreadyReserved),
+            error @ TxManagerError::TxPoolFull => Self::Rejected(PublishReject::Transient(error)),
             error @ (TxManagerError::Underpriced
             | TxManagerError::ReplacementUnderpriced
             | TxManagerError::FeeTooLow
@@ -82,6 +83,8 @@ pub enum PublishReject {
     FeeTooLow(TxManagerError),
     /// The account is reserved by an incompatible txpool transaction.
     AlreadyReserved,
+    /// The backend definitively rejected the transaction for a temporary reason.
+    Transient(TxManagerError),
     /// A deterministic publication failure.
     Deterministic(TxManagerError),
 }
@@ -92,9 +95,36 @@ impl PublishReject {
         match self {
             Self::NonceTooHigh => TxManagerError::NonceTooHigh,
             Self::NonceTooLow => TxManagerError::NonceTooLow,
-            Self::FeeTooLow(error) | Self::Deterministic(error) => error.clone(),
+            Self::FeeTooLow(error) | Self::Transient(error) | Self::Deterministic(error) => {
+                error.clone()
+            }
             Self::AlreadyReserved => TxManagerError::AlreadyReserved,
         }
+    }
+
+    /// Reduces one fully rejected publication pass to a single state-machine decision.
+    pub fn verdict(rejections: &[Self]) -> RejectionVerdict {
+        if rejections.iter().any(|rejection| matches!(rejection, Self::NonceTooLow)) {
+            return RejectionVerdict::NonceTooLow;
+        }
+
+        if rejections.iter().all(|rejection| matches!(rejection, Self::Deterministic(_))) {
+            let error = rejections.first().map_or(TxManagerError::ChannelClosed, Self::as_error);
+            return RejectionVerdict::Deterministic(error);
+        }
+
+        let has_deterministic =
+            rejections.iter().any(|rejection| matches!(rejection, Self::Deterministic(_)));
+        if !has_deterministic
+            && let Some(rejection) =
+                rejections.iter().find(|rejection| matches!(rejection, Self::FeeTooLow(_)))
+        {
+            return RejectionVerdict::FeeTooLow(rejection.as_error());
+        }
+
+        RejectionVerdict::Retry(
+            rejections.first().map_or(TxManagerError::ChannelClosed, Self::as_error),
+        )
     }
 }
 
@@ -374,21 +404,16 @@ impl PublisherCursor {
         }
     }
 
-    /// Rewinds to the predecessor after a `NonceTooHigh` response.
-    ///
-    /// The rejected transaction remains marked as attempted for its current
-    /// epoch. After replaying the predecessor, the worker therefore waits for
-    /// coordinator authorization before retrying the rejected nonce.
-    pub fn rewind_predecessor(&mut self, snapshot: &PublisherSnapshot, nonce: u64) -> bool {
+    /// Forgets the accepted predecessor after a `NonceTooHigh` response.
+    pub fn rewind_predecessor(&mut self, snapshot: &PublisherSnapshot, nonce: u64) {
         let Some(predecessor) =
             snapshot.transactions.iter().rev().find(|transaction| transaction.nonce < nonce)
         else {
-            return false;
+            return;
         };
 
         self.accepted.split_off(&predecessor.nonce);
         self.attempted.remove(&predecessor.nonce);
-        true
     }
 
     /// Drops cursor state from an updated or replaced nonce onward.
@@ -422,7 +447,6 @@ impl PublisherGroup {
         providers: Vec<P>,
         runtime: R,
         network_timeout: Duration,
-        retry_delay: Duration,
         metrics: Arc<dyn TxMetrics>,
     ) -> (Self, mpsc::UnboundedReceiver<PublisherEvent>)
     where
@@ -448,7 +472,6 @@ impl PublisherGroup {
                     id,
                     publisher,
                     runtime.clone(),
-                    retry_delay,
                     snapshot_rx,
                     event_tx.clone(),
                 ));
@@ -487,7 +510,6 @@ impl PublisherGroup {
         id: PublisherId,
         publisher: TxPublisher<P, R>,
         runtime: R,
-        retry_delay: Duration,
         mut snapshots: watch::Receiver<Arc<PublisherSnapshot>>,
         events: mpsc::UnboundedSender<PublisherEvent>,
     ) where
@@ -495,22 +517,16 @@ impl PublisherGroup {
         R: Runtime,
     {
         let mut cursor = PublisherCursor::default();
-        let mut wait_for_snapshot = true;
 
         loop {
-            // Ordinary retries are authorized by a new snapshot epoch. The
-            // only local retry is predecessor replay after NonceTooHigh.
-            if wait_for_snapshot {
-                tokio::select! {
-                    _ = runtime.cancelled() => break,
-                    changed = snapshots.changed() => {
-                        if changed.is_err() {
-                            break;
-                        }
+            tokio::select! {
+                _ = runtime.cancelled() => break,
+                changed = snapshots.changed() => {
+                    if changed.is_err() {
+                        break;
                     }
                 }
             }
-            wait_for_snapshot = true;
             let snapshot = Arc::clone(&snapshots.borrow_and_update());
 
             while let Some(transaction) = cursor.next(&snapshot) {
@@ -519,7 +535,6 @@ impl PublisherGroup {
                 // its publication outcome ambiguous.
                 match snapshots.has_changed() {
                     Ok(true) => {
-                        wait_for_snapshot = false;
                         break;
                     }
                     Ok(false) => {}
@@ -557,19 +572,8 @@ impl PublisherGroup {
                 }
 
                 if !accepted {
-                    if nonce_too_high && cursor.rewind_predecessor(&snapshot, transaction.nonce) {
-                        tokio::select! {
-                            _ = runtime.cancelled() => return,
-                            _ = runtime.sleep(retry_delay) => {
-                                wait_for_snapshot = false;
-                            }
-                            changed = snapshots.changed() => {
-                                if changed.is_err() {
-                                    return;
-                                }
-                                wait_for_snapshot = false;
-                            }
-                        }
+                    if nonce_too_high {
+                        cursor.rewind_predecessor(&snapshot, transaction.nonce);
                     }
                     break;
                 }
@@ -604,7 +608,7 @@ mod tests {
         PublisherTx {
             submission_id: SubmissionId::new(nonce + 1),
             nonce,
-            version: VersionId(version),
+            version: VersionId::new(version),
             epoch,
             kind: VersionKind::Original,
             prepared: prepared(nonce, nonce as u8 + version as u8),
@@ -651,11 +655,11 @@ mod tests {
 
         Arc::make_mut(&mut snapshot.transactions)[1] = transaction(1, 1, 0);
         let next = cursor.next(&snapshot).unwrap();
-        assert_eq!((next.nonce, next.version), (1, VersionId(1)));
+        assert_eq!((next.nonce, next.version), (1, VersionId::new(1)));
     }
 
     #[test]
-    fn nonce_too_high_replays_predecessor_once_before_waiting() {
+    fn nonce_too_high_rewinds_to_predecessor() {
         let snapshot = snapshot(vec![transaction(0, 0, 0), transaction(1, 0, 0)]);
         let mut cursor = PublisherCursor::default();
         let predecessor = cursor.next(&snapshot).unwrap();
@@ -663,7 +667,7 @@ mod tests {
         let blocked = cursor.next(&snapshot).unwrap();
         cursor.record(&blocked, &PublishOutcome::Rejected(PublishReject::NonceTooHigh));
 
-        assert!(cursor.rewind_predecessor(&snapshot, blocked.nonce));
+        cursor.rewind_predecessor(&snapshot, blocked.nonce);
         let replay = cursor.next(&snapshot).unwrap();
         assert_eq!(replay.nonce, 0);
         cursor.record(&replay, &PublishOutcome::Accepted);
@@ -679,6 +683,42 @@ mod tests {
         assert!(matches!(
             PublishOutcome::classify_error(TxManagerError::NonceTooHigh),
             PublishOutcome::Rejected(PublishReject::NonceTooHigh)
+        ));
+        assert!(matches!(
+            PublishOutcome::classify_error(TxManagerError::TxPoolFull),
+            PublishOutcome::Rejected(PublishReject::Transient(TxManagerError::TxPoolFull))
+        ));
+    }
+
+    #[test]
+    fn rejection_verdict_has_one_priority_order() {
+        assert!(matches!(
+            PublishReject::verdict(&[
+                PublishReject::FeeTooLow(TxManagerError::Underpriced),
+                PublishReject::NonceTooHigh,
+            ]),
+            RejectionVerdict::FeeTooLow(TxManagerError::Underpriced)
+        ));
+        assert!(matches!(
+            PublishReject::verdict(&[
+                PublishReject::FeeTooLow(TxManagerError::Underpriced),
+                PublishReject::Deterministic(TxManagerError::InsufficientFunds),
+            ]),
+            RejectionVerdict::Retry(_)
+        ));
+        assert!(matches!(
+            PublishReject::verdict(&[
+                PublishReject::Deterministic(TxManagerError::InsufficientFunds),
+                PublishReject::Transient(TxManagerError::TxPoolFull),
+            ]),
+            RejectionVerdict::Retry(_)
+        ));
+        assert!(matches!(
+            PublishReject::verdict(&[
+                PublishReject::NonceTooLow,
+                PublishReject::Deterministic(TxManagerError::InsufficientFunds),
+            ]),
+            RejectionVerdict::NonceTooLow
         ));
     }
 
@@ -697,7 +737,6 @@ mod tests {
             ],
             runtime.clone(),
             Duration::from_secs(1),
-            Duration::from_millis(1),
             Arc::new(NoopTxMetrics),
         );
 

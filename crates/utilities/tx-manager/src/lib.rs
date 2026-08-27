@@ -37,14 +37,14 @@ pub use nonce::{NonceGuard, NonceManager, NonceState};
 
 mod manager;
 pub use manager::{
-    AcceptedPosition, AdmissionBudget, AttemptedPosition, ChainSweeper, CoordinatorCommand,
-    CoordinatorHandle, CoordinatorWorkers, MAX_CONCURRENT_SWEEP_QUERIES, NonceSlot, PendingLedger,
-    PendingPolicy, PendingWork, PreparedTx, PublishOutcome, PublishReject, PublishedAttempt,
-    PublisherCursor, PublisherEvent, PublisherGroup, PublisherId, PublisherSnapshot, PublisherTx,
-    ReplacementReason, ReplacementRequest, SUPERSESSION_OBSERVATIONS, SignedVersion,
-    SimpleTxManager, SlotState, StagedSubmission, SupersessionEvidence, SweepOutcome,
-    SweepResolution, SweepTarget, TxBuilder, TxCoordinator, TxManager, TxPublisher, VersionId,
-    VersionKind, WEI_PER_GWEI, WorkerEvent,
+    AcceptedPosition, AttemptedPosition, CancelRequest, ChainSweeper, CoordinatorCommand,
+    CoordinatorHandle, CoordinatorWorkers, MAX_CONCURRENT_SWEEP_QUERIES, NonceFetch, NonceSlot,
+    PendingLedger, PendingPolicy, PendingWork, PreparedTx, PublishOutcome, PublishReject,
+    PublishedAttempt, PublisherCursor, PublisherEvent, PublisherGroup, PublisherId,
+    PublisherSnapshot, PublisherTx, RejectionVerdict, ReplacementReason, ReplacementState,
+    SUPERSESSION_OBSERVATIONS, SignedVersion, SimpleTxManager, SlotEffects, SlotPlan, SlotState,
+    StagedSubmission, SupersessionEvidence, SweepOutcome, SweepResolution, SweepTarget, TxBuilder,
+    TxCoordinator, TxManager, TxPublisher, VersionId, VersionKind, WEI_PER_GWEI, WorkerEvent,
 };
 
 mod metrics;

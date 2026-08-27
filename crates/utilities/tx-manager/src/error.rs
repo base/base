@@ -82,6 +82,10 @@ pub enum TxManagerError {
     #[error("nonce already reserved")]
     AlreadyReserved,
 
+    /// The backend transaction pool is temporarily full.
+    #[error("transaction pool is full")]
+    TxPoolFull,
+
     /// Nonce arithmetic overflowed `u64::MAX`.
     #[error("nonce overflow")]
     NonceOverflow,
@@ -207,6 +211,7 @@ impl TxManagerError {
             Self::IntrinsicGasTooLow => "intrinsic_gas_too_low",
             Self::ExecutionReverted { .. } => "execution_reverted",
             Self::AlreadyReserved => "already_reserved",
+            Self::TxPoolFull => "tx_pool_full",
             Self::Underpriced => "underpriced",
             Self::ReplacementUnderpriced => "replacement_underpriced",
             Self::FeeTooLow => "fee_too_low",
@@ -253,6 +258,7 @@ impl TxManagerError {
                 | Self::FeeTooLow
                 | Self::MaxFeePerGasTooLow
                 | Self::AlreadyKnown
+                | Self::TxPoolFull
                 | Self::Transport(_)
                 | Self::Rpc(_)
         )
@@ -375,6 +381,9 @@ impl RpcErrorClassifier {
         {
             return TxManagerError::AlreadyReserved;
         }
+        if lowered.contains("txpool is full") || lowered.contains("transaction pool is full") {
+            return TxManagerError::TxPoolFull;
+        }
 
         TxManagerError::Rpc(payload.message.to_string())
     }
@@ -446,6 +455,8 @@ mod tests {
     #[case::mempool_deadline_not_classified("mempool deadline expired", TxManagerError::Rpc("mempool deadline expired".to_string()))]
     #[case::nonce_already_reserved("nonce already reserved", TxManagerError::AlreadyReserved)]
     #[case::address_already_reserved("address already reserved", TxManagerError::AlreadyReserved)]
+    #[case::txpool_full("txpool is full", TxManagerError::TxPoolFull)]
+    #[case::transaction_pool_full("transaction pool is full", TxManagerError::TxPoolFull)]
     fn classify_rpc_error(#[case] input: &str, #[case] expected: TxManagerError) {
         let transport_err = error_resp(input);
         assert_eq!(RpcErrorClassifier::classify_rpc_error(&transport_err), expected);
@@ -507,6 +518,7 @@ mod tests {
     #[case::fee_too_low(TxManagerError::FeeTooLow, true)]
     #[case::max_fee_too_low(TxManagerError::MaxFeePerGasTooLow, true)]
     #[case::already_known(TxManagerError::AlreadyKnown, true)]
+    #[case::tx_pool_full(TxManagerError::TxPoolFull, true)]
     #[case::transport(TxManagerError::Transport("request failed".to_string()), true)]
     #[case::rpc(TxManagerError::Rpc("any error".to_string()), true)]
     fn is_retryable(#[case] error: TxManagerError, #[case] expected: bool) {

@@ -10,9 +10,9 @@ pub use coordinator::{
 
 mod pending;
 pub use pending::{
-    AdmissionBudget, NonceSlot, PendingLedger, PendingPolicy, PendingWork, PublishedAttempt,
-    ReplacementReason, ReplacementRequest, SignedVersion, SlotState, StagedSubmission, VersionId,
-    VersionKind,
+    CancelRequest, NonceFetch, NonceSlot, PendingLedger, PendingPolicy, PendingWork,
+    PublishedAttempt, RejectionVerdict, ReplacementReason, ReplacementState, SignedVersion,
+    SlotEffects, SlotPlan, SlotState, StagedSubmission, VersionId, VersionKind,
 };
 
 mod publisher;
@@ -221,7 +221,6 @@ impl SimpleTxManager {
             publication_backends,
             runtime.clone(),
             config.network_timeout,
-            config.publish_retry_delay,
             Arc::clone(&metrics),
         );
 
@@ -229,10 +228,10 @@ impl SimpleTxManager {
             next_nonce,
             publishers.len(),
             PendingPolicy {
-                publish_max_retries: config.publish_max_retries,
                 publish_retry_delay: config.publish_retry_delay,
                 resubmission_timeout: config.resubmission_timeout,
-                tx_not_in_mempool_timeout: config.tx_not_in_mempool_timeout,
+                tx_not_in_mempool_timeout: (!config.tx_not_in_mempool_timeout.is_zero())
+                    .then_some(config.tx_not_in_mempool_timeout),
             },
         );
 
