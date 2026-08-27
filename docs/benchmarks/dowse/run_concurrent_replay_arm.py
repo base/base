@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Replay canonical blocks while Dowse prefetch workers race block execution."""
+"""Replay selected canonical blocks with raw state or concurrent Dowse prefetching."""
 
 import argparse
 import json
@@ -60,10 +60,11 @@ parser.add_argument("--start-block", type=int)
 parser.add_argument("--end-block", type=int)
 parser.add_argument("--blocks", type=block_list)
 parser.add_argument("--output", type=Path, required=True)
-parser.add_argument("--workers", type=int, required=True)
-parser.add_argument("--head-start-us", type=int, required=True)
-parser.add_argument("--max-accounts-per-transaction", type=int, required=True)
-parser.add_argument("--max-storage-slots-per-transaction", type=int, required=True)
+parser.add_argument("--variant", choices=("raw", "concurrent"), default="concurrent")
+parser.add_argument("--workers", type=int, default=4)
+parser.add_argument("--head-start-us", type=int, default=0)
+parser.add_argument("--max-accounts-per-transaction", type=int, default=32)
+parser.add_argument("--max-storage-slots-per-transaction", type=int, default=256)
 args = parser.parse_args()
 
 has_range = args.start_block is not None or args.end_block is not None
@@ -105,7 +106,8 @@ with args.output.open("x", buffering=1) as output:
         "latestAtStart": latest_at_start,
         "blocks": blocks,
         "blockCount": len(blocks),
-        "config": config,
+        "variant": args.variant,
+        "config": config if args.variant == "concurrent" else None,
     }
     output.write(json.dumps(metadata, separators=(",", ":")) + "\n")
 
@@ -114,15 +116,24 @@ with args.output.open("x", buffering=1) as output:
         if canonical is None:
             raise RuntimeError(f"canonical block {block_number} not found")
         started = time.monotonic_ns()
-        result = rpc(
-            args.rpc,
-            "base_replayConcurrentDowseBlockByNumber",
-            [hex(block_number), config],
-        )
+        if args.variant == "concurrent":
+            result = rpc(
+                args.rpc,
+                "base_replayConcurrentDowseBlockByNumber",
+                [hex(block_number), config],
+            )
+        else:
+            result = rpc(
+                args.rpc,
+                "base_replayDowseBlockByNumber",
+                [hex(block_number), False],
+            )
         wall_time_us = (time.monotonic_ns() - started) // 1_000
 
-        if result["config"] != config:
+        if args.variant == "concurrent" and result["config"] != config:
             raise RuntimeError(f"unexpected replay config at block {block_number}")
+        if args.variant == "raw" and result["dowseCacheEnabled"]:
+            raise RuntimeError(f"unexpected replay treatment at block {block_number}")
         replay = result["replay"]
         if replay["blockNumber"] != block_number:
             raise RuntimeError(f"unexpected replay block at {block_number}")
@@ -144,8 +155,8 @@ with args.output.open("x", buffering=1) as output:
             "gasUsed": canonical_gas_used,
             "transactionCount": len(transactions),
             "wallTimeUs": wall_time_us,
-            "config": result["config"],
-            "prefetch": result["prefetch"],
+            "config": result.get("config"),
+            "prefetch": result.get("prefetch"),
             "replay": compact_replay(replay),
         }
         output.write(json.dumps(record, separators=(",", ":")) + "\n")
