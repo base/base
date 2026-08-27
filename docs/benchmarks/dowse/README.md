@@ -1,8 +1,170 @@
 # Dowse state-prefetch benchmarks
 
-![Dowse independent-arm canonical replay](dowse-independent-2500-2026-08-27.svg)
+![Dowse concurrent canonical replay](dowse-concurrent-2500-2026-08-27.svg)
 
-## Restarted, independent 2,500-block replay
+## Concurrent worker race over 2,500 blocks
+
+The production-shaped historical experiment replays Base mainnet blocks 50,492,200–50,494,699
+with four direct-state-read workers and no artificial head start. Unlike the completed-cache
+benchmark below, workers do not finish before execution starts. They are released after historical
+signer recovery and parent-state setup, immediately before the EVM is constructed, and stop when
+block execution ends. Opening each worker's state provider and every hinted read therefore race the
+EVM cursor. Requested zero lead measured 3.25 µs on average and 15 µs at maximum.
+
+The fixed range contains 2,500 blocks, 423,591 transactions, 81.5 billion gas, and two blocks above
+200 Mgas. A neutral raw replay populated the host page cache. The measured arms then ran separately,
+with a Base process restart before each complete arm, in this order:
+
+1. no Dowse;
+2. concurrent Dowse with 4 workers, 0 ms requested lead, and 32-account/256-slot per-transaction
+   limits; and
+3. a bracketing no-Dowse control.
+
+Every replay verified the canonical block hash, complete transaction ordering, and summed gas. No
+treatment alternation occurred inside an arm. The no-Dowse baseline is each block's mean across the
+two controls.
+
+| Measurement | Result |
+| --- | ---: |
+| Bracketed aggregate execution effect | **20.9% faster** |
+| Paired-bootstrap 95% sampling interval | **20.7–21.2% faster** |
+| No-Dowse control drift | 2.3% |
+| Mean execution per block | 97.6 ms without Dowse; 77.2 ms with concurrent Dowse |
+| Cumulative measured execution | 243.9 s without Dowse; 192.9 s with concurrent Dowse |
+| Parent-state storage reads | 21.7% fewer |
+| Parent-state account reads | 10.2% fewer |
+| Parent-state bytecode reads | 15.2% fewer |
+| Blocks faster than their bracketing baseline | 2,495 / 2,500 (99.8%) |
+| Blocks regressing by more than 10 ms | 0 / 2,500 |
+
+The bootstrap interval captures block-sampling variation only. The 2.3% control drift is the more
+important bound on arm-wide host variation.
+
+### Latency distribution and slow blocks
+
+| Percentile | Bracketed no Dowse | Concurrent Dowse | Observed change |
+| --- | ---: | ---: | ---: |
+| p50 | 91.1 ms | 70.6 ms | 22.5% lower |
+| p90 | 135.9 ms | 111.2 ms | 18.2% lower |
+| p95 | 156.9 ms | 129.5 ms | 17.4% lower |
+| p99 | 219.1 ms | 182.4 ms | 16.8% lower |
+
+The benefit remains substantial as initial execution time increases:
+
+| No-Dowse execution quartile | Range | Aggregate effect |
+| --- | ---: | ---: |
+| Fastest 25% | 39.0–75.9 ms | 23.1% faster |
+| 25–50% | 75.9–91.1 ms | 22.4% faster |
+| 50–75% | 91.1–109.6 ms | 21.6% faster |
+| Slowest 25% | 109.7–487.7 ms | 18.6% faster |
+
+| Block gas used | Blocks | Aggregate effect |
+| --- | ---: | ---: |
+| <25 Mgas | 753 | 23.5% faster |
+| 25–50 Mgas | 1,542 | 21.2% faster |
+| 50–100 Mgas | 188 | 16.5% faster |
+| 100–200 Mgas | 15 | 13.4% faster |
+| >200 Mgas | 2 | 15.2% faster |
+
+| Block | Gas used | No Dowse | Concurrent Dowse | Observed effect |
+| --- | ---: | ---: | ---: | ---: |
+| 50,493,188 | 208.5 Mgas | 421.2 ms | 349.1 ms | 17.1% faster |
+| 50,494,654 | 259.3 Mgas | 487.7 ms | 421.4 ms | 13.6% faster |
+
+### Worker timing and contention
+
+The hint planner emitted unique work for 211,916 transactions: 161,618 account targets and
+2,138,551 storage targets. Workers completed all but 50 concrete targets before the EVM returned.
+One of those reads completed just after execution and was not inserted, leaving 49 unattempted.
+Zero reads were classified as completing before execution, so the observed result comes from
+workers staying ahead of the main EVM cursor rather than from a completed cache.
+
+Storage fetch time on the EVM thread fell 35.1%, more than the 21.7% reduction in fetch count.
+Account fetch time increased 10.1% despite 10.2% fewer account fetches, evidence that concurrent
+workers do create provider contention. This is why increasing worker count is not free.
+
+The planner took 4.9 ms per block on average, but historical replay plans the complete canonical
+block before releasing workers. That planning interval is not included in measured EVM execution.
+In production, planning must happen incrementally as private transactions arrive and must remain off
+the payload critical path.
+
+### Parameter search
+
+A deterministic 26-block screen covered four gas cohorts and both blocks above 200 Mgas. A
+stratified 122-block validation then compared the survivors against interleaved raw controls:
+
+| Workers | Requested lead | Reads complete before EVM | Storage-read change | Execution change | Change if lead is charged |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 2 | 0 ms | 0.0% | 21.1% fewer | 14.9% faster | 14.9% faster |
+| **4** | **0 ms** | **0.0%** | **21.3% fewer** | **16.2% faster** | **16.2% faster** |
+| 4 | 2 ms | 18.0% | 21.7% fewer | 15.2% faster | 13.3% faster |
+| 4 | 5 ms | 51.2% | 21.8% fewer | 16.4% faster | 11.7% faster |
+
+Eight and sixteen workers removed approximately the same number of EVM reads but performed worse
+because of I/O contention. A 10 ms lead let 84.7% of reads finish early in the short screen but did
+not improve execution beyond 5 ms. The selected configuration is therefore four workers with no
+intentional delay. Any real lead from private-orderflow arrival is upside; payload construction
+should not wait for Dowse.
+
+The limit screen found that 8 accounts/64 slots lost material coverage, 16/128 nearly matched the
+default, and increasing 32/256 to 64/512 removed only another 0.3% of storage reads. The selected
+configuration therefore retains the production defaults of four workers and 32/256 limits. It does
+not tune the 25 ms txpool polling interval or the 64-plan queue per worker: canonical replay knows
+the final transaction list and cannot reproduce private transaction arrival, replacement, or final
+sequencer ordering. Those scheduler settings need real sequencer telemetry. Event-driven planning
+would be preferable to intentionally delaying payload construction.
+
+### Interpretation
+
+This experiment removes the earlier infinite-prefetch assumption and demonstrates that bounded
+direct reads can race a single-threaded EVM successfully with zero artificial lead. It still knows
+the complete canonical transaction list and order before execution. It therefore establishes the
+I/O mechanism and worker count, not production hit rate from private orderflow. A sequencer trial
+must measure transaction arrival lead, queue age and drops, completion before first EVM access,
+exact-parent cache hits, provider contention, and Flashblock build latency.
+
+Reth's incoming-canonical-block pre-sim remains active on the follower, but its cache is not shared
+with the payload builder. Reth's separate txpool pre-sim (`--engine.txpool-prewarming`) remains
+disabled. A sequencer rollout should compare neither, Dowse only, Reth txpool pre-sim only, and both
+because the mechanisms are additive semantically but compete for CPU and I/O.
+
+The corrected artifacts are preserved on the benchmark host under
+`/home/brian/work/base-dowse-runtime/artifacts/dowse-concurrent-final-20260827`:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `raw.jsonl` | `ca96d87ac117a10c07c28194c76225c5d311497c38bd8b104b7d312e4b071234` |
+| `tuned-w4-h0-a32-s256.jsonl` | `32b9651e1950ee7f5c54b685aa8c0e0fd5407aeb49ae3f68edc4566f621dc74d` |
+| `raw-bracket.jsonl` | `fb48eaa5f67d074aa0e0c856c82d47158737e2ad10ca37e1c3dd81471445e956` |
+| `warmup-raw.jsonl` | `8bcc5ea307cf157178076c42ae2f17fa30595c528af4f9c4756f24885f4f8ea6` |
+
+The fixed hint table has SHA-256
+`888c58bb18035e9797610efb9d92dee17b9959c11a661926043a48c32efa01ec` and is loaded once at process
+startup; this benchmark performs no online learning.
+
+Run a neutral raw arm and restart the Base process before each measured command:
+
+```sh
+python3 docs/benchmarks/dowse/run_concurrent_replay_arm.py \
+  --start-block 50492200 --end-block 50494699 --variant raw --output warmup-raw.jsonl
+
+# Restart before raw, concurrent, and raw-bracket respectively.
+python3 docs/benchmarks/dowse/run_concurrent_replay_arm.py \
+  --start-block 50492200 --end-block 50494699 --variant raw --output raw.jsonl
+python3 docs/benchmarks/dowse/run_concurrent_replay_arm.py \
+  --start-block 50492200 --end-block 50494699 --variant concurrent --workers 4 \
+  --head-start-us 0 --max-accounts-per-transaction 32 \
+  --max-storage-slots-per-transaction 256 --output tuned.jsonl
+python3 docs/benchmarks/dowse/run_concurrent_replay_arm.py \
+  --start-block 50492200 --end-block 50494699 --variant raw --output raw-bracket.jsonl
+
+python3 docs/benchmarks/dowse/render_independent_replay_chart.py \
+  raw.jsonl tuned.jsonl chart.svg raw-bracket.jsonl
+```
+
+## Completed-cache upper-bound replay
+
+![Dowse independent-arm canonical replay](dowse-independent-2500-2026-08-27.svg)
 
 This benchmark replayed Base mainnet blocks 50,492,200–50,494,699: 2,500 fixed contiguous blocks,
 423,591 transactions, and 81.5 billion gas. The range includes two blocks above 200 Mgas. A fixed

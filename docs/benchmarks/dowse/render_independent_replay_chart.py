@@ -18,29 +18,38 @@ HEIGHT = 1400
 FONT = "Inter, ui-sans-serif, system-ui, -apple-system, sans-serif"
 
 
-def load_arm(path, expected_variant):
+def load_arm(path, expected_variants):
     with path.open() as source:
         lines = [json.loads(line) for line in source]
     metadata = lines[0]
-    if metadata.get("variant") != expected_variant:
-        raise ValueError(f"{path} is not the {expected_variant} arm")
+    if metadata.get("variant") not in expected_variants:
+        expected = " or ".join(expected_variants)
+        raise ValueError(f"{path} is not the {expected} arm")
     return metadata, {line["block"]: line for line in lines[1:] if line.get("kind") == "block"}
 
 
-raw_metadata, raw_by_block = load_arm(RAW_PATH, "raw")
-dowse_metadata, dowse_by_block = load_arm(DOWSE_PATH, "dowse")
+raw_metadata, raw_by_block = load_arm(RAW_PATH, ("raw",))
+dowse_metadata, dowse_by_block = load_arm(DOWSE_PATH, ("dowse", "concurrent"))
 raw_bracket_metadata, raw_bracket_by_block = (
-    load_arm(RAW_BRACKET_PATH, "raw") if RAW_BRACKET_PATH else (None, None)
+    load_arm(RAW_BRACKET_PATH, ("raw",)) if RAW_BRACKET_PATH else (None, None)
 )
-if raw_metadata["startBlock"] != dowse_metadata["startBlock"] or raw_metadata[
-    "endBlock"
-] != dowse_metadata["endBlock"]:
+concurrent = dowse_metadata["variant"] == "concurrent"
+treatment_label = "Concurrent Dowse" if concurrent else "Dowse"
+
+
+def declared_blocks(metadata):
+    if "blocks" in metadata:
+        return metadata["blocks"]
+    return list(range(metadata["startBlock"], metadata["endBlock"] + 1))
+
+
+raw_declared_blocks = declared_blocks(raw_metadata)
+if raw_declared_blocks != declared_blocks(dowse_metadata):
     raise ValueError("replay arms cover different block ranges")
 if raw_by_block.keys() != dowse_by_block.keys():
     raise ValueError("replay arms contain different blocks")
 if raw_bracket_metadata and (
-    raw_metadata["startBlock"] != raw_bracket_metadata["startBlock"]
-    or raw_metadata["endBlock"] != raw_bracket_metadata["endBlock"]
+    raw_declared_blocks != declared_blocks(raw_bracket_metadata)
     or raw_by_block.keys() != raw_bracket_by_block.keys()
 ):
     raise ValueError("bracketing no-Dowse arm covers a different block range")
@@ -115,7 +124,16 @@ p99_dowse = percentile(dowse_times, 0.99) / 1000
 provider = {}
 for kind in ("account", "storage", "code"):
     field = f"{kind}Fetches"
-    raw = sum(raw_by_block[block]["replay"]["stateProvider"][field] for block in blocks)
+    raw = sum(
+        (
+            raw_by_block[block]["replay"]["stateProvider"][field]
+            + raw_bracket_by_block[block]["replay"]["stateProvider"][field]
+        )
+        / 2
+        if raw_bracket_by_block
+        else raw_by_block[block]["replay"]["stateProvider"][field]
+        for block in blocks
+    )
     dowse = sum(dowse_by_block[block]["replay"]["stateProvider"][field] for block in blocks)
     provider[kind] = (raw, dowse, change(raw, dowse))
 
@@ -145,11 +163,17 @@ svg.append(
     f'viewBox="0 0 {WIDTH} {HEIGHT}">'
 )
 element("rect", x=0, y=0, width=WIDTH, height=HEIGHT, fill="#f5f7fb")
-text(50, 56, "Dowse independent-arm replay", 30, 700, "#102044")
+title = "Dowse concurrent state-prefetch replay" if concurrent else "Dowse independent-arm replay"
+text(50, 56, title, 30, 700, "#102044")
 text(
     50,
     84,
-    f"{len(blocks):,} Base mainnet blocks · {sum(raw_by_block[block]['transactionCount'] for block in blocks):,} transactions · blocks {blocks[0]:,}–{blocks[-1]:,}",
+    f"{len(blocks):,} Base mainnet blocks · {sum(raw_by_block[block]['transactionCount'] for block in blocks):,} transactions · blocks {blocks[0]:,}–{blocks[-1]:,}"
+    + (
+        f" · {dowse_metadata['config']['workers']} workers, {dowse_metadata['config']['headStartUs'] / 1000:g} ms requested lead"
+        if concurrent
+        else ""
+    ),
     15,
     400,
     "#66738f",
@@ -172,7 +196,7 @@ panel_x, panel_y, panel_w, panel_h = 50, 210, 870, 470
 element("rect", x=panel_x, y=panel_y, width=panel_w, height=panel_h, rx=14, fill="#ffffff", stroke="#dde3ef")
 text(panel_x + 24, panel_y + 36, "Block-for-block execution latency", 19, 650, "#102044")
 comparison_subtitle = (
-    "No-Dowse is the mean of two bracketing arms (0.7% drift); axes clipped at p99.5"
+    "No-Dowse is the mean of two bracketing arms; axes clipped at p99.5"
     if raw_bracket_by_block
     else "Each block executed once in each full-range arm; axes clipped at p99.5"
 )
@@ -209,7 +233,7 @@ for raw, dowse in zip(raw_times, dowse_times):
         opacity=0.34,
     )
 text(plot_left + plot_width / 2, panel_y + panel_h - 14, "No Dowse execution (ms)", 12, 500, "#66738f", "middle")
-text(plot_left, plot_top - 10, "Dowse execution (ms)", 12, 500, "#66738f")
+text(plot_left, plot_top - 10, "Concurrent execution (ms)" if concurrent else "Dowse execution (ms)", 12, 500, "#66738f")
 text(panel_x + panel_w - 204, panel_y + 36, "● faster", 12, 500, "#0052ff")
 text(panel_x + panel_w - 122, panel_y + 36, "● slower", 12, 500, "#d97706")
 
@@ -232,14 +256,16 @@ for index, (label, key) in enumerate((("Accounts", "account"), ("Storage", "stor
 text(panel_x + 24, panel_y + panel_h - 24, "■", 15, 600, "#cbd3e1")
 text(panel_x + 42, panel_y + panel_h - 24, "No Dowse", 12, 400, "#66738f")
 text(panel_x + 128, panel_y + panel_h - 24, "■", 15, 600, "#0052ff")
-text(panel_x + 146, panel_y + panel_h - 24, "Dowse", 12, 400, "#66738f")
+text(panel_x + 146, panel_y + panel_h - 24, treatment_label, 12, 400, "#66738f")
 
 # Panel C: execution percentiles.
 panel_x, panel_y, panel_w, panel_h = 50, 710, 650, 310
 element("rect", x=panel_x, y=panel_y, width=panel_w, height=panel_h, rx=14, fill="#ffffff", stroke="#dde3ef")
 text(panel_x + 24, panel_y + 38, "Execution latency distribution", 19, 650, "#102044")
+text(panel_x + panel_w - 192, panel_y + 38, "■ No Dowse", 11, 500, "#94a0b5")
+text(panel_x + panel_w - 100, panel_y + 38, "■ Concurrent", 11, 500, "#0052ff")
 distribution_subtitle = (
-    "Dowse arm vs mean of two bracketing no-Dowse arms"
+    f"{treatment_label} arm vs mean of two bracketing no-Dowse arms"
     if raw_bracket_by_block
     else "Independent full-range arms"
 )
@@ -306,6 +332,7 @@ plot_left, plot_top = panel_x + 70, panel_y + 84
 plot_width, plot_height = panel_w - 105, panel_h - 135
 rolling_max = max(percentile(raw_rolling, 0.995), percentile(dowse_rolling, 0.995))
 rolling_low, rolling_high, rolling_ticks = nice_axis(0, rolling_max, 4)
+text(plot_left, plot_top - 8, "Execution (ms)", 11, 500, "#66738f")
 for tick in rolling_ticks:
     y = plot_top + (rolling_high - tick) / (rolling_high - rolling_low) * plot_height
     element("line", x1=plot_left, y1=y, x2=plot_left + plot_width, y2=y, stroke="#edf0f6")
@@ -317,13 +344,35 @@ for values, color in ((raw_rolling, "#94a0b5"), (dowse_rolling, "#0052ff")):
         y = plot_top + (rolling_high - min(value, rolling_high)) / (rolling_high - rolling_low) * plot_height
         points.append(f"{x:.1f},{y:.1f}")
     element("polyline", points=" ".join(points), fill="none", stroke=color, stroke_width=2)
-text(panel_x + panel_w - 205, panel_y + 38, "— No Dowse", 12, 600, "#94a0b5")
-text(panel_x + panel_w - 108, panel_y + 38, "— Dowse", 12, 600, "#0052ff")
-footer = (
-    "Historical replay; Dowse is bracketed by two restarted no-Dowse arms. Prefetch planning and reads are outside measured execution."
-    if raw_bracket_by_block
-    else "Historical replay; each treatment ran as a separate full-range arm. Prefetch planning and reads are outside measured execution."
+text(plot_left, plot_top + plot_height + 20, f"{blocks[0]:,}", 10, 400, "#7c879e")
+text(
+    plot_left + plot_width,
+    plot_top + plot_height + 20,
+    f"{blocks[-1]:,}",
+    10,
+    400,
+    "#7c879e",
+    "end",
 )
+text(
+    plot_left + plot_width / 2,
+    plot_top + plot_height + 20,
+    "Block number",
+    10,
+    500,
+    "#7c879e",
+    "middle",
+)
+text(panel_x + panel_w - 205, panel_y + 38, "— No Dowse", 12, 600, "#94a0b5")
+text(panel_x + panel_w - 108, panel_y + 38, f"— {treatment_label}", 12, 600, "#0052ff")
+if concurrent:
+    footer = "Historical replay; workers start after replay setup and race the EVM. Dowse is bracketed by restarted no-Dowse arms."
+else:
+    footer = (
+        "Historical replay; Dowse is bracketed by two restarted no-Dowse arms. Prefetch planning and reads are outside measured execution."
+        if raw_bracket_by_block
+        else "Historical replay; each treatment ran as a separate full-range arm. Prefetch planning and reads are outside measured execution."
+    )
 text(50, 1373, footer, 13, 500, "#66738f")
 svg.append("</svg>")
 
