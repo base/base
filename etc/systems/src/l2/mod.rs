@@ -10,7 +10,7 @@ mod in_process_builder;
 pub use in_process_builder::{InProcessBuilder, InProcessBuilderConfig};
 
 mod in_process_client;
-pub use in_process_client::{InProcessClient, InProcessClientConfig};
+pub use in_process_client::{ChainSpecSource, InProcessClient, InProcessClientConfig};
 
 mod in_process_consensus;
 pub use in_process_consensus::{InProcessConsensus, InProcessConsensusConfig};
