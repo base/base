@@ -1060,9 +1060,7 @@ impl Eip8130Executor {
                     let current_nonce = read.current();
                     NonceValidator::validate_sequence(tx, current_nonce, NonceMode::Inclusion)
                         .map_err(BaseTransactionError::eip8130)?;
-                    nonce_mgr
-                        .increment_from_read(read)
-                        .map_err(BaseTransactionError::eip8130)?;
+                    nonce_mgr.increment_from_read(read).map_err(BaseTransactionError::eip8130)?;
                     (current_nonce == 0, false)
                 };
 
