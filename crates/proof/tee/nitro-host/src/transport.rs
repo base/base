@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use alloy_signer::utils::public_key_to_address;
 #[cfg(feature = "metrics")]
 use base_proof_host::Metrics;
@@ -59,6 +59,15 @@ impl NitroTransport {
             #[cfg(target_os = "linux")]
             Self::Vsock(t) => t.signer_public_key().await,
             Self::Local(s) => Ok(s.signer_public_key()),
+        }
+    }
+
+    /// Return the enclave image hash derived from PCR0.
+    pub async fn tee_image_hash(&self) -> Result<B256, NitroHostError> {
+        match self {
+            #[cfg(target_os = "linux")]
+            Self::Vsock(t) => t.tee_image_hash().await,
+            Self::Local(s) => Ok(s.tee_image_hash()),
         }
     }
 

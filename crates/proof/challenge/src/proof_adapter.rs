@@ -18,22 +18,26 @@ impl ChallengerProofAdapter {
     const SESSION_NAMESPACE: &'static [u8] = b"base/challenger/proof-session/v2";
 
     /// Derives an idempotent challenger SNARK proof session ID.
-    pub fn snark_plonk_session_id(game_address: Address, invalid_index: u64) -> String {
+    pub fn snark_plonk_session_id(
+        artifact_hash: B256,
+        game_address: Address,
+        invalid_index: u64,
+    ) -> String {
         let invalid_index = invalid_index.to_be_bytes();
         ProofSessionId::derive_from_components(
             Self::SESSION_NAMESPACE,
             "zk/sp1/snark_plonk",
-            &[game_address.as_slice(), &invalid_index],
+            &[artifact_hash.as_slice(), game_address.as_slice(), &invalid_index],
         )
     }
 
     /// Derives an idempotent challenger TEE proof session ID.
-    pub fn tee_session_id(game_address: Address, invalid_index: u64) -> String {
+    pub fn tee_session_id(image_hash: B256, game_address: Address, invalid_index: u64) -> String {
         let invalid_index = invalid_index.to_be_bytes();
         ProofSessionId::derive_from_components(
             Self::SESSION_NAMESPACE,
             "tee/aws_nitro",
-            &[game_address.as_slice(), &invalid_index],
+            &[image_hash.as_slice(), game_address.as_slice(), &invalid_index],
         )
     }
 
@@ -43,7 +47,11 @@ impl ChallengerProofAdapter {
         invalid_index: u64,
         request: SnarkPlonkProofRequest,
     ) -> ProveBlockRangeRequest {
-        let session_id = Self::snark_plonk_session_id(game_address, invalid_index);
+        let session_id = Self::snark_plonk_session_id(
+            request.proof.zk_artifact_hash.unwrap_or_default(),
+            game_address,
+            invalid_index,
+        );
         ProveBlockRangeRequest {
             proof: ProofRequest { session_id, request: ProofRequestKind::SnarkPlonk(request) },
             retry_failed: true,
@@ -56,7 +64,7 @@ impl ChallengerProofAdapter {
         invalid_index: u64,
         request: PrimitiveProofRequest,
     ) -> ProveBlockRangeRequest {
-        let session_id = Self::tee_session_id(game_address, invalid_index);
+        let session_id = Self::tee_session_id(request.image_hash, game_address, invalid_index);
         ProveBlockRangeRequest {
             proof: ProofRequest {
                 session_id,
@@ -140,28 +148,59 @@ mod tests {
     fn challenger_session_ids_are_stable_and_type_separated() {
         let game_address = Address::repeat_byte(0xaa);
         let invalid_index = 1;
+        let artifact_hash = B256::repeat_byte(0x42);
 
         assert_eq!(
-            ChallengerProofAdapter::snark_plonk_session_id(game_address, invalid_index),
-            ChallengerProofAdapter::snark_plonk_session_id(game_address, invalid_index)
+            ChallengerProofAdapter::snark_plonk_session_id(
+                artifact_hash,
+                game_address,
+                invalid_index
+            ),
+            ChallengerProofAdapter::snark_plonk_session_id(
+                artifact_hash,
+                game_address,
+                invalid_index
+            )
         );
         assert_ne!(
-            ChallengerProofAdapter::snark_plonk_session_id(game_address, invalid_index),
-            ChallengerProofAdapter::tee_session_id(game_address, invalid_index)
+            ChallengerProofAdapter::snark_plonk_session_id(
+                artifact_hash,
+                game_address,
+                invalid_index
+            ),
+            ChallengerProofAdapter::tee_session_id(artifact_hash, game_address, invalid_index)
         );
     }
 
     #[test]
     fn challenger_session_ids_separate_game_address_and_invalid_index() {
         let game_address = Address::repeat_byte(0xaa);
+        let artifact_hash = B256::repeat_byte(0x42);
 
         assert_ne!(
-            ChallengerProofAdapter::snark_plonk_session_id(game_address, 1),
-            ChallengerProofAdapter::snark_plonk_session_id(game_address, 2)
+            ChallengerProofAdapter::snark_plonk_session_id(artifact_hash, game_address, 1),
+            ChallengerProofAdapter::snark_plonk_session_id(artifact_hash, game_address, 2)
         );
         assert_ne!(
-            ChallengerProofAdapter::snark_plonk_session_id(game_address, 1),
-            ChallengerProofAdapter::snark_plonk_session_id(Address::repeat_byte(0xbb), 1)
+            ChallengerProofAdapter::snark_plonk_session_id(artifact_hash, game_address, 1),
+            ChallengerProofAdapter::snark_plonk_session_id(
+                artifact_hash,
+                Address::repeat_byte(0xbb),
+                1
+            )
+        );
+    }
+
+    #[test]
+    fn challenger_session_ids_separate_artifact_hashes() {
+        let game_address = Address::repeat_byte(0xaa);
+        assert_ne!(
+            ChallengerProofAdapter::snark_plonk_session_id(B256::repeat_byte(1), game_address, 1),
+            ChallengerProofAdapter::snark_plonk_session_id(B256::repeat_byte(2), game_address, 1),
+        );
+        assert_ne!(
+            ChallengerProofAdapter::tee_session_id(B256::repeat_byte(1), game_address, 1),
+            ChallengerProofAdapter::tee_session_id(B256::repeat_byte(2), game_address, 1),
         );
     }
 
@@ -169,8 +208,12 @@ mod tests {
     fn snark_plonk_prove_block_range_request_converts_zk_request() {
         let game_address = Address::repeat_byte(0xaa);
         let invalid_index = 1;
-        let session_id =
-            ChallengerProofAdapter::snark_plonk_session_id(game_address, invalid_index);
+        let artifact_hash = B256::repeat_byte(0x42);
+        let session_id = ChallengerProofAdapter::snark_plonk_session_id(
+            artifact_hash,
+            game_address,
+            invalid_index,
+        );
         let prover_address = Address::repeat_byte(0x11);
         let l1_head = B256::repeat_byte(0x22);
         let proof = ZkProofRequest {
@@ -180,6 +223,7 @@ mod tests {
             l1_head: Some(l1_head),
             intermediate_root_interval: Some(150),
             schedule_l2_block_number: None,
+            zk_artifact_hash: Some(artifact_hash),
             zk_vm: ZkVm::Sp1,
             zk_backend: ZkBackend::Cluster,
         };
@@ -209,9 +253,11 @@ mod tests {
             proposer: Address::repeat_byte(0x04),
             intermediate_block_interval: 300,
             l1_head_number: 1200,
+            image_hash: B256::repeat_byte(0x42),
             schedule_l2_block_number: None,
         };
-        let session_id = ChallengerProofAdapter::tee_session_id(game_address, invalid_index);
+        let session_id =
+            ChallengerProofAdapter::tee_session_id(request.image_hash, game_address, invalid_index);
 
         let wrapped = ChallengerProofAdapter::tee_prove_block_range_request(
             game_address,

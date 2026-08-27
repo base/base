@@ -223,6 +223,7 @@ impl ProposerService {
             block_interval,
             intermediate_block_interval,
             game_type: config.game_type,
+            tee_image_hash: config.tee_image_hash,
             proposer_address: proposer_address.unwrap_or_default(),
             anchor_state_registry_address: config.anchor_state_registry_addr,
         };
@@ -257,6 +258,7 @@ impl ProposerService {
             Arc::clone(&rollup_client),
             proof_submitter,
             driver_config.block_interval,
+            driver_config.tee_image_hash,
             driver_config.submit_timeout,
         );
         let pipeline =

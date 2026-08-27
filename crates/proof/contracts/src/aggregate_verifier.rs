@@ -7,7 +7,7 @@
 //! [`encode_nullify_calldata`] or `challenge` via
 //! [`encode_challenge_calldata`].
 
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_provider::RootProvider;
 use alloy_sol_types::{SolCall, SolError, sol};
 use async_trait::async_trait;
@@ -59,6 +59,15 @@ sol! {
 
         /// Returns the intermediate block interval for intermediate output root checkpoints.
         function INTERMEDIATE_BLOCK_INTERVAL() external view returns (uint256);
+
+        /// Returns the Nitro enclave image hash committed by this game.
+        function TEE_IMAGE_HASH() external view returns (bytes32);
+
+        /// Returns the SP1 range verification-key commitment.
+        function ZK_RANGE_HASH() external view returns (bytes32);
+
+        /// Returns the SP1 aggregation verification-key commitment.
+        function ZK_AGGREGATE_HASH() external view returns (bytes32);
 
         /// Returns the game type.
         function gameType() external view returns (uint32);
@@ -183,6 +192,28 @@ pub enum GameStatus {
     DefenderWins = 2,
 }
 
+/// Proving artifacts committed by one historical game proxy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProofArtifacts {
+    /// Nitro enclave image hash accepted by this game.
+    pub tee_image_hash: B256,
+    /// SP1 range verification-key commitment.
+    pub zk_range_hash: B256,
+    /// SP1 aggregation verification-key commitment.
+    pub zk_aggregate_hash: B256,
+}
+
+impl ProofArtifacts {
+    /// Returns the composite ZK routing hash for this artifact generation.
+    #[must_use]
+    pub fn zk_artifact_hash(&self) -> B256 {
+        let mut artifacts = [0_u8; 64];
+        artifacts[..32].copy_from_slice(self.zk_range_hash.as_slice());
+        artifacts[32..].copy_from_slice(self.zk_aggregate_hash.as_slice());
+        keccak256(artifacts)
+    }
+}
+
 impl std::fmt::Display for GameStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -217,6 +248,10 @@ pub trait AggregateVerifierClient: Send + Sync {
 
     /// Returns the current game status.
     async fn status(&self, game_address: Address) -> Result<GameStatus, ContractError>;
+
+    /// Returns the proving artifacts committed by a historical game proxy.
+    async fn proof_artifacts(&self, game_address: Address)
+    -> Result<ProofArtifacts, ContractError>;
 
     /// Returns the address that provided a ZK proof for the given game.
     async fn zk_prover(&self, game_address: Address) -> Result<Address, ContractError>;
@@ -384,6 +419,23 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
                 "game {game_address} returned unrecognized status {unknown}"
             ))
         })
+    }
+
+    async fn proof_artifacts(
+        &self,
+        game_address: Address,
+    ) -> Result<ProofArtifacts, ContractError> {
+        let contract =
+            IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
+        let (tee_image_hash, zk_range_hash, zk_aggregate_hash) = futures::try_join!(
+            async { contract_call!(contract.TEE_IMAGE_HASH().call(), "TEE_IMAGE_HASH failed") },
+            async { contract_call!(contract.ZK_RANGE_HASH().call(), "ZK_RANGE_HASH failed") },
+            async {
+                contract_call!(contract.ZK_AGGREGATE_HASH().call(), "ZK_AGGREGATE_HASH failed")
+            },
+        )?;
+
+        Ok(ProofArtifacts { tee_image_hash, zk_range_hash, zk_aggregate_hash })
     }
 
     async fn zk_prover(&self, game_address: Address) -> Result<Address, ContractError> {
@@ -819,6 +871,25 @@ mod tests {
             &resolve[..4],
             &claim[..4],
             "resolve and claimCredit must have different selectors"
+        );
+    }
+
+    #[test]
+    fn zk_artifact_hash_commits_to_both_verification_keys() {
+        let artifacts = ProofArtifacts {
+            tee_image_hash: B256::repeat_byte(1),
+            zk_range_hash: B256::repeat_byte(2),
+            zk_aggregate_hash: B256::repeat_byte(3),
+        };
+
+        assert_ne!(
+            artifacts.zk_artifact_hash(),
+            ProofArtifacts { zk_range_hash: B256::repeat_byte(4), ..artifacts }.zk_artifact_hash()
+        );
+        assert_ne!(
+            artifacts.zk_artifact_hash(),
+            ProofArtifacts { zk_aggregate_hash: B256::repeat_byte(5), ..artifacts }
+                .zk_artifact_hash()
         );
     }
 }

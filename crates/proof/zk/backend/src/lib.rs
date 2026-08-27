@@ -16,4 +16,5 @@ pub use succinct::{
     cluster_setup_vkeys, cluster_submit_agg_proof, cluster_submit_range_proof, get_agg_proof_stdin,
     get_cache_dir, get_range_elf_embedded, get_sp1_stdin, get_stdin_cache_path, initialize_host,
     is_cluster_mode, load_stdin_from_cache, reconstruct_proof_request, save_stdin_to_cache,
+    zk_artifact_hash,
 };

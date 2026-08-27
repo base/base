@@ -43,6 +43,8 @@ pub struct DriverConfig {
     pub intermediate_block_interval: u64,
     /// Game type ID for `AggregateVerifier` dispute games.
     pub game_type: u32,
+    /// Nitro enclave image hash required for proposal proofs.
+    pub tee_image_hash: B256,
     /// Address of the proposer that submits proof transactions onchain.
     /// Included in the proof journal so the enclave signs over the correct `msg.sender`.
     pub proposer_address: Address,
@@ -60,6 +62,7 @@ impl Default for DriverConfig {
             block_interval: 512,
             intermediate_block_interval: 512,
             game_type: 0,
+            tee_image_hash: B256::ZERO,
             proposer_address: Address::ZERO,
             anchor_state_registry_address: Address::ZERO,
         }
@@ -290,6 +293,7 @@ mod tests {
             Arc::clone(&rollup),
             proof_submitter,
             config.block_interval,
+            config.tee_image_hash,
             config.submit_timeout,
         );
         let pipeline =

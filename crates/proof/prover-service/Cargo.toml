@@ -30,6 +30,7 @@ metrics.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+alloy-primitives.workspace = true
 rstest.workspace = true
 chrono.workspace = true
 jsonrpsee = { workspace = true, features = ["http-client"] }

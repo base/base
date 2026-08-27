@@ -202,6 +202,9 @@ pub struct ZkProofRequest {
     /// L2 block used to pin the upgrade schedule; defaults to the claimed block.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schedule_l2_block_number: Option<u64>,
+    /// Composite hash of the range and aggregation verification-key commitments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zk_artifact_hash: Option<B256>,
     /// ZK virtual machine implementation to use.
     pub zk_vm: ZkVm,
     /// Proving backend that should execute this request.
@@ -405,6 +408,9 @@ pub struct GetNextProofRequest {
     /// ZK proving backends this worker can execute for ZK proofs.
     #[serde(default)]
     pub zk_backends: Vec<ZkBackend>,
+    /// Exact TEE or ZK artifact hash supported by this worker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supported_artifact_hash: Option<B256>,
     /// Requested lock duration in seconds. Zero uses the server default.
     pub lock_duration_seconds: u32,
 }
@@ -556,6 +562,7 @@ mod tests {
                     l1_head: Some(B256::repeat_byte(0xab)),
                     intermediate_root_interval: Some(128),
                     schedule_l2_block_number: None,
+                    zk_artifact_hash: None,
                     zk_vm: ZkVm::Sp1,
                     zk_backend: ZkBackend::Cluster,
                 }),
@@ -678,6 +685,7 @@ mod tests {
                 proposer: address!("0000000000000000000000000000000000000006"),
                 intermediate_block_interval: 7,
                 l1_head_number: 8,
+                image_hash: B256::repeat_byte(9),
                 schedule_l2_block_number: None,
             },
             tee_kind: TeeKind::AwsNitro,
@@ -697,6 +705,7 @@ mod tests {
                     "proposer": "0x0000000000000000000000000000000000000006",
                     "intermediate_block_interval": 7,
                     "l1_head_number": 8,
+                    "image_hash": format!("{:#x}", B256::repeat_byte(9)),
                 },
                 "tee_kind": "aws_nitro",
             })
@@ -839,6 +848,7 @@ mod tests {
             proposer: address!("0000000000000000000000000000000000000006"),
             intermediate_block_interval: 7,
             l1_head_number: 8,
+            image_hash: B256::repeat_byte(9),
             schedule_l2_block_number: None,
         };
 
@@ -855,6 +865,7 @@ mod tests {
                 "proposer": "0x0000000000000000000000000000000000000006",
                 "intermediate_block_interval": 7,
                 "l1_head_number": 8,
+                "image_hash": format!("{:#x}", B256::repeat_byte(9)),
             })
         );
     }
@@ -918,6 +929,7 @@ mod tests {
                 l1_head: None,
                 intermediate_root_interval: None,
                 schedule_l2_block_number: None,
+                zk_artifact_hash: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             }
@@ -933,6 +945,7 @@ mod tests {
             l1_head: None,
             intermediate_root_interval: None,
             schedule_l2_block_number: Some(42),
+            zk_artifact_hash: None,
             zk_vm: ZkVm::Sp1,
             zk_backend: ZkBackend::Cluster,
         };
@@ -965,6 +978,7 @@ mod tests {
             tee_kinds: Vec::new(),
             zk_vms: vec![ZkVm::Sp1],
             zk_backends: vec![ZkBackend::Cluster, ZkBackend::DryRun],
+            supported_artifact_hash: Some(B256::repeat_byte(0x42)),
             lock_duration_seconds: 30,
         };
 
@@ -978,6 +992,7 @@ mod tests {
                 "tee_kinds": [],
                 "zk_vms": ["sp1"],
                 "zk_backends": ["cluster", "dry_run"],
+                "supported_artifact_hash": format!("{:#x}", B256::repeat_byte(0x42)),
                 "lock_duration_seconds": 30
             })
         );
@@ -995,6 +1010,7 @@ mod tests {
         assert_eq!(request.tee_kinds, Vec::new());
         assert_eq!(request.zk_vms, Vec::new());
         assert_eq!(request.zk_backends, Vec::new());
+        assert_eq!(request.supported_artifact_hash, None);
     }
 
     #[test]

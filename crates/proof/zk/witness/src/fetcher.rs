@@ -810,6 +810,7 @@ impl OPSuccinctDataFetcher {
             claimed_l2_block_number: l2_end_block,
             intermediate_block_interval,
             l1_head_number,
+            image_hash: B256::ZERO,
             // We don't need to set the proposer for the range proof zk program
             proposer: Address::ZERO,
             schedule_l2_block_number,

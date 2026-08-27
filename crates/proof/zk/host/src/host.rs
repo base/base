@@ -2,6 +2,7 @@
 
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
+use alloy_primitives::B256;
 use base_proof_worker::{
     DEFAULT_JOB_DISCOVERY_LOCK_DURATION_SECONDS, DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS,
     DEFAULT_JOB_DISCOVERY_POLL_INTERVAL, JobDiscovery, JobDiscoveryConfig, ProofSubmitter,
@@ -16,6 +17,7 @@ use crate::{ProofGenerator, ProofGeneratorHeartbeatConfig, ZkBackend, ZkProver, 
 pub struct ZkHostConfig {
     worker_id: String,
     zk_vms: Vec<ZkVm>,
+    supported_artifact_hash: Option<B256>,
     job_discovery_poll_interval: Duration,
     job_discovery_lock_duration_seconds: u32,
     job_discovery_max_concurrent_jobs: usize,
@@ -28,6 +30,7 @@ impl ZkHostConfig {
         Self {
             worker_id: worker_id.into(),
             zk_vms: zk_vms.into(),
+            supported_artifact_hash: None,
             job_discovery_poll_interval: DEFAULT_JOB_DISCOVERY_POLL_INTERVAL,
             job_discovery_lock_duration_seconds: DEFAULT_JOB_DISCOVERY_LOCK_DURATION_SECONDS,
             job_discovery_max_concurrent_jobs: DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS,
@@ -109,6 +112,13 @@ impl ZkHostConfig {
         self.proof_generator_heartbeat = proof_generator_heartbeat;
         self
     }
+
+    /// Sets the composite hash of the embedded range and aggregation programs.
+    #[must_use]
+    pub const fn with_supported_artifact_hash(mut self, artifact_hash: B256) -> Self {
+        self.supported_artifact_hash = Some(artifact_hash);
+        self
+    }
 }
 
 /// Runs ZK proof generation jobs claimed from the prover service.
@@ -149,6 +159,10 @@ where
             .with_poll_interval(config.job_discovery_poll_interval)
             .with_lock_duration_seconds(config.job_discovery_lock_duration_seconds)
             .with_max_concurrent_jobs(config.job_discovery_max_concurrent_jobs);
+        let discovery_config = match config.supported_artifact_hash {
+            Some(hash) => discovery_config.with_supported_artifact_hash(hash),
+            None => discovery_config,
+        };
         let submitter = ProofSubmitter::new(client.clone());
         let proof_generator = Arc::new(
             ProofGenerator::new(provers, submitter, config.proof_generator_heartbeat)

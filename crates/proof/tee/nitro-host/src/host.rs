@@ -6,6 +6,7 @@ use base_proof_worker::{JobDiscovery, JobDiscoveryConfig, ProofSubmitter};
 use base_prover_service_client::ProverWorkerProvider;
 use base_prover_service_protocol::TeeKind;
 use tokio_util::sync::CancellationToken;
+use tracing::error;
 
 use crate::{NitroEnclavePool, ProofGenerator, ProofGeneratorHeartbeatConfig};
 
@@ -62,12 +63,20 @@ where
 {
     /// Runs the host until cancellation is requested.
     pub async fn run_until_cancelled(self, cancel: CancellationToken) {
+        let artifact_hash = match self.pool.tee_image_hash().await {
+            Ok(hash) => hash,
+            Err(error) => {
+                error!(error = %error, "failed to read local Nitro artifact hash");
+                return;
+            }
+        };
+        let discovery_config = self.discovery.with_supported_artifact_hash(artifact_hash);
         let submitter = ProofSubmitter::new(self.client.clone());
         let proof_generator = Arc::new(
             ProofGenerator::new(self.pool, submitter, self.heartbeat)
-                .with_max_pending_submissions(self.discovery.normalized_max_concurrent_jobs()),
+                .with_max_pending_submissions(discovery_config.normalized_max_concurrent_jobs()),
         );
-        let discovery = JobDiscovery::new(self.client, proof_generator, self.discovery);
+        let discovery = JobDiscovery::new(self.client, proof_generator, discovery_config);
 
         discovery.run_until_cancelled(cancel).await;
     }

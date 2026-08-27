@@ -1,5 +1,6 @@
 //! Typed request/response protocol for host ↔ enclave communication over vsock.
 
+use alloy_primitives::B256;
 use base_proof_preimage::PreimageKey;
 use base_proof_primitives::ProofResult;
 use serde::{Deserialize, Serialize};
@@ -11,6 +12,8 @@ pub enum EnclaveRequest {
     Prove(Vec<(PreimageKey, Vec<u8>)>),
     /// Return the enclave's 65-byte uncompressed ECDSA public key.
     SignerPublicKey,
+    /// Return the enclave image hash derived from PCR0.
+    TeeImageHash,
     /// Return the raw Nitro attestation document (`COSE_Sign1` bytes).
     SignerAttestation {
         /// Optional application-specific data to bind into the attestation.
@@ -27,6 +30,8 @@ pub enum EnclaveResponse {
     Prove(Box<ProofResult>),
     /// 65-byte uncompressed ECDSA public key for [`EnclaveRequest::SignerPublicKey`].
     SignerPublicKey(Vec<u8>),
+    /// Enclave image hash for [`EnclaveRequest::TeeImageHash`].
+    TeeImageHash(B256),
     /// Raw Nitro attestation document (`COSE_Sign1` bytes) for [`EnclaveRequest::SignerAttestation`].
     SignerAttestation(Vec<u8>),
     /// An error occurred while handling the request.

@@ -153,6 +153,7 @@ impl Checkpoint {
                 l1_head: Some(l1_head),
                 intermediate_root_interval: Some(self.block_count),
                 schedule_l2_block_number: Some(game_l2_block_number),
+                zk_artifact_hash: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: config.zk_backend,
             },

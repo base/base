@@ -2,6 +2,7 @@
 
 use std::{fmt, sync::Arc};
 
+use alloy_primitives::B256;
 use base_proof_host::{ProverConfig, ProverError, ProverService};
 use base_proof_primitives::{ProofRequest, ProofResult};
 use thiserror::Error;
@@ -9,7 +10,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tracing::warn;
 
 use super::{
-    NitroBackend,
+    NitroBackend, NitroHostError,
     registration::{RegistrationChecker, RegistrationError},
     transport::NitroTransport,
 };
@@ -95,6 +96,18 @@ impl NitroEnclavePool {
     /// Returns the configured enclave transports.
     pub fn transports(&self) -> Vec<Arc<NitroTransport>> {
         self.enclaves.iter().map(|enclave| Arc::clone(&enclave.transport)).collect()
+    }
+
+    /// Returns the single image hash supported by every enclave in this pool.
+    pub async fn tee_image_hash(&self) -> Result<B256, NitroHostError> {
+        let expected = self.enclaves[0].transport.tee_image_hash().await?;
+        for enclave in &self.enclaves[1..] {
+            let actual = enclave.transport.tee_image_hash().await?;
+            if actual != expected {
+                return Err(NitroHostError::ImageHashMismatch { expected, actual });
+            }
+        }
+        Ok(expected)
     }
 
     /// Returns the registration checker if one is configured.

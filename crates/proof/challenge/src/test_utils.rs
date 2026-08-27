@@ -20,7 +20,7 @@ use base_common_consensus::Predeploys;
 use base_proof_contracts::{
     AggregateVerifierClient, AnchorPreflight, AnchorRoot, AnchorSnapshot,
     AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameInfo,
-    GameStatus,
+    GameStatus, ProofArtifacts,
 };
 use base_proof_rpc::{BaseHeader, L1Provider, L2Provider, RpcError, RpcResult};
 use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
@@ -49,6 +49,8 @@ pub struct MockGameState {
     pub starting_block_number: u64,
     /// L1 head block hash stored at game creation time.
     pub l1_head: B256,
+    /// Proving artifacts committed by this game.
+    pub proof_artifacts: ProofArtifacts,
     /// Intermediate output roots for this game.
     pub intermediate_output_roots: Vec<B256>,
     /// 1-based index of the challenged intermediate root (`0` = unchallenged).
@@ -86,6 +88,11 @@ impl Default for MockGameState {
             },
             starting_block_number: 0,
             l1_head: B256::ZERO,
+            proof_artifacts: ProofArtifacts {
+                tee_image_hash: B256::repeat_byte(0x11),
+                zk_range_hash: B256::repeat_byte(0x22),
+                zk_aggregate_hash: B256::repeat_byte(0x33),
+            },
             intermediate_output_roots: vec![],
             countered_index: 0,
             game_over: false,
@@ -311,6 +318,13 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     async fn status(&self, game_address: Address) -> Result<GameStatus, ContractError> {
         self.status_reads.lock().unwrap().push(game_address);
         self.get(game_address, |s| s.status)
+    }
+
+    async fn proof_artifacts(
+        &self,
+        game_address: Address,
+    ) -> Result<ProofArtifacts, ContractError> {
+        self.get(game_address, |s| s.proof_artifacts)
     }
 
     async fn zk_prover(&self, game_address: Address) -> Result<Address, ContractError> {

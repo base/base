@@ -554,6 +554,7 @@ mod tests {
                     l1_head: None,
                     intermediate_root_interval: None,
                     schedule_l2_block_number: None,
+                    zk_artifact_hash: None,
                     zk_vm: base_prover_service_protocol::ZkVm::Sp1,
                     zk_backend: base_prover_service_protocol::ZkBackend::Cluster,
                 })

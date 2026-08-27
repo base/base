@@ -246,6 +246,7 @@ impl ProofProposeRequest {
                         l1_head: Some(self.l1_head),
                         intermediate_root_interval: Some(self.intermediate_root_interval),
                         schedule_l2_block_number: None,
+                        zk_artifact_hash: None,
                         zk_vm: ZkVm::Sp1,
                         zk_backend: self.zk_backend,
                     },
