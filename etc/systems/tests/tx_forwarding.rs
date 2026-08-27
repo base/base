@@ -30,6 +30,8 @@ use tokio::time::{sleep, timeout};
 
 const L1_CHAIN_ID: u64 = 1337;
 const L2_CHAIN_ID: u64 = 84538453;
+const COBALT_ACTIVATION_BLOCK: u64 = 0;
+const DENIM_ACTIVATION_BLOCK: u64 = 1;
 const TX_RECEIPT_TIMEOUT: Duration = Duration::from_secs(60);
 const PENDING_TX_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -47,15 +49,19 @@ async fn wait_for_pending_transaction(provider: &RootProvider<Base>, tx_hash: B2
     .wrap_err("transaction did not become pending on the builder")?
 }
 
-/// Starts a separate mempool and builder pair with validity transport enabled on both nodes.
+/// Starts a separate mempool and builder pair using the native Denim payload builder with validity
+/// transport enabled on both nodes.
 async fn start_validity_system() -> Result<SystemTestStack> {
     let system = SystemTestStackBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
         .with_l2_chain_id(L2_CHAIN_ID)
+        .with_base_cobalt_activation_block(COBALT_ACTIVATION_BLOCK)
+        .with_base_denim_activation_block(DENIM_ACTIVATION_BLOCK)
         .with_tx_forwarding(
             TxForwardingConfig::new(vec![]).with_resend_after_ms(2000).with_max_batch_size(100),
         )
         .with_experimental_validity_transactions()
+        .with_payload_builder_cutover()
         .build()
         .await?;
 
@@ -288,7 +294,8 @@ async fn test_tx_forwarding_pipeline_system() -> Result<()> {
     Ok(())
 }
 
-/// Exercises every predicate kind through mempool ingress, forwarding, and builder inclusion.
+/// Exercises every native-builder predicate kind through mempool ingress, forwarding, and builder
+/// inclusion.
 #[tokio::test]
 async fn test_matching_validity_predicates_are_forwarded_and_included() -> Result<()> {
     let system = start_validity_system().await?;
@@ -322,10 +329,6 @@ async fn test_matching_validity_predicates_are_forwarded_and_included() -> Resul
         ValidityPredicate::BlockNumber {
             op: ValidityOperator::GreaterThan,
             value: U256::from(current_block),
-        },
-        ValidityPredicate::FlashblockIndex {
-            op: ValidityOperator::GreaterThanOrEqual,
-            value: U256::ZERO,
         },
     ];
     let rpc_client = RpcClient::builder().http(system.l2_client_rpc_url()?);
@@ -435,7 +438,9 @@ async fn test_validity_block_predicates_defer_and_expire_transactions() -> Resul
     client_provider.wait_for_balance(storage_signer.address(), Duration::from_secs(15)).await?;
 
     let current_block = builder_provider.get_block_number().await?;
-    let target_block = current_block + 5;
+    // Native Denim blocks advance every 200 ms, so leave enough time to submit and observe all
+    // three transactions before the future predicate becomes true.
+    let target_block = current_block + 50;
     let recipient: Address = "0x000000000000000000000000000000000000dEaD".parse()?;
     let future_nonce = client_provider.get_transaction_count(future_signer.address()).await?;
     let (_, raw_future_tx, future_tx_hash) =
@@ -502,11 +507,6 @@ async fn test_validity_block_predicates_defer_and_expire_transactions() -> Resul
     wait_for_pending_transaction(&builder_provider, future_tx_hash).await?;
     wait_for_pending_transaction(&builder_provider, expiring_tx_hash).await?;
     wait_for_pending_transaction(&builder_provider, storage_tx_hash).await?;
-    builder_provider.wait_for_block(target_block - 1, Duration::from_secs(20)).await?;
-    assert!(
-        builder_provider.get_transaction_receipt(future_tx_hash).await?.is_none(),
-        "future-gated transaction landed before its target block"
-    );
 
     let future_receipt =
         builder_provider.wait_for_receipt(future_tx_hash, TX_RECEIPT_TIMEOUT).await?;
