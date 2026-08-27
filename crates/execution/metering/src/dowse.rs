@@ -5,7 +5,7 @@ use std::{
     fs,
     path::Path,
     sync::{
-        Arc, Barrier,
+        Arc, Barrier, OnceLock,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
     thread,
@@ -141,7 +141,9 @@ impl DowseBenchmarkConfig {
         let execution_started = Arc::new(AtomicBool::new(false));
         let execution_finished = Arc::new(AtomicBool::new(false));
         let actual_head_start_us = Arc::new(AtomicU64::new(0));
-        let barrier = Arc::new(Barrier::new(workers + 1));
+        let ready_barrier = Arc::new(Barrier::new(workers + 1));
+        let start_barrier = Arc::new(Barrier::new(workers + 1));
+        let prefetch_start = Arc::new(OnceLock::new());
         let parent_hash = block.header().parent_hash;
 
         let (replay, prefetch) = thread::scope(|scope| -> EyreResult<_> {
@@ -151,14 +153,19 @@ impl DowseBenchmarkConfig {
                 let cache = cache.clone();
                 let execution_started = Arc::clone(&execution_started);
                 let execution_finished = Arc::clone(&execution_finished);
-                let barrier = Arc::clone(&barrier);
+                let ready_barrier = Arc::clone(&ready_barrier);
+                let start_barrier = Arc::clone(&start_barrier);
                 handles.push(scope.spawn(move || -> EyreResult<_> {
-                    barrier.wait();
-                    let state_provider = provider.state_by_block_hash(parent_hash)?;
                     let mut before = DowsePrefetchReadCounts::default();
                     let mut during = DowsePrefetchReadCounts::default();
                     let mut after = DowsePrefetchReadCounts::default();
                     let mut errors = DowsePrefetchReadCounts::default();
+                    ready_barrier.wait();
+                    start_barrier.wait();
+                    if execution_finished.load(Ordering::Acquire) {
+                        return Ok((before, during, after, errors));
+                    }
+                    let state_provider = provider.state_by_block_hash(parent_hash)?;
 
                     for plan in plans {
                         if execution_finished.load(Ordering::Acquire) {
@@ -245,19 +252,25 @@ impl DowseBenchmarkConfig {
                 }));
             }
 
-            barrier.wait();
-            let prefetch_start = Instant::now();
-            thread::sleep(Duration::from_micros(replay_config.head_start_us));
+            ready_barrier.wait();
             let actual_head_start = Arc::clone(&actual_head_start_us);
             let started = Arc::clone(&execution_started);
+            let worker_start = Arc::clone(&prefetch_start);
+            let worker_start_barrier = Arc::clone(&start_barrier);
             let replay =
                 meter_block_with_optional_cache(provider, chain_spec, block, Some(cache), || {
-                    let elapsed =
-                        u64::try_from(prefetch_start.elapsed().as_micros()).unwrap_or(u64::MAX);
+                    let start = *worker_start.get_or_init(Instant::now);
+                    worker_start_barrier.wait();
+                    thread::sleep(Duration::from_micros(replay_config.head_start_us));
+                    let elapsed = u64::try_from(start.elapsed().as_micros()).unwrap_or(u64::MAX);
                     actual_head_start.store(elapsed, Ordering::Release);
                     started.store(true, Ordering::Release);
                 });
             execution_finished.store(true, Ordering::Release);
+            if prefetch_start.get().is_none() {
+                prefetch_start.get_or_init(Instant::now);
+                start_barrier.wait();
+            }
 
             let mut completed_before_execution = DowsePrefetchReadCounts::default();
             let mut completed_during_execution = DowsePrefetchReadCounts::default();
@@ -284,7 +297,11 @@ impl DowseBenchmarkConfig {
                 replay?,
                 DowseConcurrentPrefetchStats {
                     planning_time_us,
-                    prefetch_time_us: prefetch_start.elapsed().as_micros(),
+                    prefetch_time_us: prefetch_start
+                        .get()
+                        .expect("Dowse workers must have a start time")
+                        .elapsed()
+                        .as_micros(),
                     actual_head_start_us: u128::from(actual_head_start_us.load(Ordering::Acquire)),
                     planned_transactions,
                     account_targets,
