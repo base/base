@@ -41,18 +41,24 @@ impl TxHandlerHooks<BaseEvmTypes> for BaseTxHandlerHooks {
         caller: Address,
         upfront_fee: U256,
     ) -> HandlerResult<()> {
+        // Compute the L1 fee once and stash it on the EVM extension so
+        // `settle_transaction` records the exact value charged here, without a
+        // second pass over the calldata or any risk of divergence if the block's
+        // L1 fee parameters were mutated mid-transaction.
         let l1_fee = Self::l1_fee(host, envelope);
+        host.ext_mut().l1_fee = l1_fee;
         charge_upfront(host, caller, upfront_fee.saturating_add(l1_fee))
     }
 
     fn settle_transaction(
         host: &mut Evm<'_, BaseEvmTypes>,
-        envelope: &BaseTransaction,
+        _envelope: &BaseTransaction,
         gas: GasSettlement<BaseEvmTypes>,
     ) -> HandlerResult<TxResult<BaseEvmTypes>> {
-        // Record the charged L1 data fee so downstream receipt construction can
-        // surface it. The default gas settlement is otherwise unchanged.
-        let l1_fee = Self::l1_fee(host, envelope);
+        // Surface the L1 data fee charged in `before_execution` so downstream
+        // receipt construction can report it. The default gas settlement is
+        // otherwise unchanged.
+        let l1_fee = host.ext().l1_fee;
         let mut result = default_settle_gas(host, gas)?;
         result.ext.l1_fee = l1_fee;
         Ok(result)

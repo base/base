@@ -3592,6 +3592,7 @@ dependencies = [
  "alloy-primitives",
  "base-common-consensus",
  "evm2",
+ "thiserror 2.0.19",
 ]
 
 [[package]]

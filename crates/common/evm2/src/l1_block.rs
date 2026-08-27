@@ -50,6 +50,13 @@ impl L1BlockInfo {
     ///
     /// `fee = data_gas * (16 * base_fee_scalar * l1_base_fee
     ///        + blob_base_fee_scalar * l1_blob_base_fee) / (16 * 10^6)`.
+    ///
+    /// TODO: `data_gas` currently counts only the `input` bytes. op-geth prices
+    /// the full L1-posted (RLP-encoded) transaction, which adds a fixed overhead
+    /// (68 bytes' worth of gas for the signature/nonce/metadata not in `input`).
+    /// Until that overhead is included the returned fee is systematically lower
+    /// than op-geth's, so this must be corrected before the handler is wired into
+    /// the node to avoid consensus divergence.
     pub fn calculate_tx_l1_cost(&self, input: &[u8]) -> U256 {
         let data_gas = U256::from(Self::data_gas(input));
         let weighted_base_fee = U256::from(L1_GAS_PER_NON_ZERO_BYTE)

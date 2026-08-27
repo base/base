@@ -14,8 +14,13 @@ use evm2::ethereum::TxEnvelope;
 /// Deposits are L1-originated: they mint value on L2, are exempt from the L1
 /// data fee and standard gas payment, and carry an L1-derived `source_hash`
 /// rather than a signature.
+///
+/// Named `DepositTx` (rather than `DepositTransaction`) to avoid colliding with
+/// the [`DepositTransaction`](base_common_consensus::DepositTransaction) trait
+/// exported by `base-common-consensus`, and to match the existing `TxDeposit`
+/// naming convention.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DepositTransaction {
+pub struct DepositTx {
     /// Hash uniquely identifying the L1 source of this deposit.
     pub source_hash: B256,
     /// Address the deposit is sent from (the aliased L1 sender).
@@ -35,7 +40,7 @@ pub struct DepositTransaction {
     pub input: Bytes,
 }
 
-impl Typed2718 for DepositTransaction {
+impl Typed2718 for DepositTx {
     fn ty(&self) -> u8 {
         DEPOSIT_TX_TYPE
     }
@@ -46,14 +51,14 @@ impl Typed2718 for DepositTransaction {
 #[derive(Clone, Debug)]
 pub enum BaseTransaction {
     /// An L1-originated deposit transaction.
-    Deposit(DepositTransaction),
+    Deposit(DepositTx),
     /// A standard, signed Ethereum transaction.
     Standard(TxEnvelope),
 }
 
 impl BaseTransaction {
     /// Returns the deposit transaction, if this envelope is a deposit.
-    pub const fn as_deposit(&self) -> Option<&DepositTransaction> {
+    pub const fn as_deposit(&self) -> Option<&DepositTx> {
         match self {
             Self::Deposit(tx) => Some(tx),
             Self::Standard(_) => None,
@@ -75,8 +80,8 @@ impl Typed2718 for BaseTransaction {
     }
 }
 
-impl From<DepositTransaction> for BaseTransaction {
-    fn from(tx: DepositTransaction) -> Self {
+impl From<DepositTx> for BaseTransaction {
+    fn from(tx: DepositTx) -> Self {
         Self::Deposit(tx)
     }
 }
@@ -91,8 +96,8 @@ impl From<TxEnvelope> for BaseTransaction {
 mod tests {
     use super::*;
 
-    fn sample_deposit() -> DepositTransaction {
-        DepositTransaction {
+    fn sample_deposit() -> DepositTx {
+        DepositTx {
             source_hash: B256::ZERO,
             from: Address::repeat_byte(0x11),
             to: TxKind::Call(Address::repeat_byte(0x22)),

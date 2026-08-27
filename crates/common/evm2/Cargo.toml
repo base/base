@@ -23,3 +23,6 @@ evm2 = { workspace = true, features = ["std"] }
 alloy-eips.workspace = true
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
+
+# misc
+thiserror.workspace = true

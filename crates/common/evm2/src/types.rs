@@ -12,6 +12,20 @@ pub struct BaseTxResultExt {
     pub l1_fee: U256,
 }
 
+/// EVM instance-wide extension state for Base transactions.
+///
+/// Carries the L1 data fee computed and charged in
+/// [`BaseTxHandlerHooks::before_execution`](crate::BaseTxHandlerHooks) so
+/// [`settle_transaction`](evm2::handler::TxHandlerHooks::settle_transaction) can
+/// record the exact same value on [`BaseTxResultExt::l1_fee`] without recomputing
+/// it — this keeps the charged and recorded fees in lockstep and avoids a second
+/// pass over the transaction calldata.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BaseEvmExt {
+    /// L1 data fee charged for the transaction currently executing.
+    pub l1_fee: U256,
+}
+
 /// Base's EVM2 execution type family.
 ///
 /// Wires Base's transaction envelope ([`BaseTransaction`], including deposits),
@@ -26,7 +40,7 @@ impl EvmTypesHost for BaseEvmTypes {
     type ConfigSelector = BaseEvmConfigSelector;
     type SpecId = SpecId;
     type Tx = BaseTransaction;
-    type EvmExt = ();
+    type EvmExt = BaseEvmExt;
     type MessageExt = ();
     type MessageResultExt = ();
     type TxEnvExt = ();
