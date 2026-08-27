@@ -119,6 +119,96 @@ the final transaction list and cannot reproduce private transaction arrival, rep
 sequencer ordering. Those scheduler settings need real sequencer telemetry. Event-driven planning
 would be preferable to intentionally delaying payload construction.
 
+### Hint coverage and provider contention
+
+![Dowse hint coverage and provider contention](hint-coverage-2026-08-27.svg)
+
+The current zero-lead winner uses a static table built from 120 historical blocks: 928 top-level
+destinations, 2,320 selectors, and 48,522 hinted targets in a 13 MiB file. The table is loaded once
+at process startup and is not updated online. Every target is trace-inferred storage; the current
+generator supplies neither bytecode-derived account/call-chain hints nor implementation sharing by
+actual bytecode hash. Most targets are historical concrete slots; only about 950 expression nodes
+depend on the caller or calldata.
+
+Coverage is useful but not sufficient. On seven deliberately storage-heavy blocks, only 0.5% of
+the residual storage-fetch latency was work that a worker planned but did not finish before the EVM.
+The other 99.5% was never planned:
+
+| Residual class | Share of residual storage-fetch latency |
+| --- | ---: |
+| Matched top-level hint, but child/external slot missing | 49.5% |
+| Top-level destination absent | 26.0% |
+| Top-level selector absent | 20.2% |
+| Matched hint, but top-level slot missing | 3.9% |
+| Planned, but EVM arrived first | 0.5% |
+
+The seven blocks were 50,493,188; 50,493,795; 50,494,399; 50,494,532; 50,494,575;
+50,494,654; and 50,494,656. Their largest residual storage-latency contracts included USDC
+(`0x833589…2913`, 59.8 ms), Uniswap v4 PoolManager (`0x498581…2b2b`, 39.7 ms), WETH
+(`0x420000…0006`, 37.0 ms), Aerodrome Slipstream position NFT (`0xe1f8cd…8b53`, 31.8 ms),
+Aerodrome CL position manager (`0x827922…5b72`, 29.3 ms), cbBTC (`0xcbb7c0…33bf`, 28.2 ms),
+and Aerodrome Voter (`0x166135…80a5`, 20.6 ms). These are cumulative times across the selected
+blocks, not single-fetch latencies.
+
+Across the full 2,500-block current-table run, the worst remaining EVM-thread storage-fetch totals
+were block 50,494,654 at 190.8 ms, 50,494,532 at 167.9 ms, 50,493,188 at 162.2 ms,
+50,494,655 at 161.5 ms, and 50,494,574 at 159.9 ms. I/O therefore still materially affects the
+tail even with the winning configuration.
+
+To test broader dowsing rather than infer its effect, a second table was trained on the strictly
+earlier 500-block range 50,492,200–50,492,699. A 40% fixed-slot frequency threshold produced a
+25 MiB table with 1,874 destinations, 5,567 selectors, and 94,267 targets. On the later seven-block
+holdout, storage-target recall rose from 13.9% to 17.8%, precision rose from 66.9% to 74.2%, and
+predictions rose from 11,206 to 12,910.
+
+That planner improvement did not translate into builder performance. A strict forward replay of
+blocks 50,492,700–50,494,699 ran whole-range A-B-B-A arms in the order current table, recent table,
+recent table, current table, with a process restart before every arm. Against the current table,
+the recent table produced:
+
+| Measurement | Recent table versus current table |
+| --- | ---: |
+| EVM storage fetches | 5.86% fewer |
+| EVM storage fetch time | 18.36% higher |
+| EVM account fetches | 1.79% fewer |
+| EVM account fetch time | 25.47% higher |
+| EVM execution | **14.67% slower** |
+| Paired-bootstrap 95% sampling interval | 14.15–15.20% slower |
+| Blocks faster | 123 / 2,000 |
+| p50 / p99 execution | 17.2% / 6.75% slower |
+
+The broad table issued 7.8% more storage targets and occupied the state provider for longer while
+the EVM was running. Reducing its worker count from four to one recovered 4.6% on the short screen
+while allowing only 1.2% more EVM storage fetches, but still did not make the broad table competitive
+with the current four-worker table. More accurate predictions can therefore regress zero-lead
+execution when their reads increase provider contention.
+
+The residual gaps are partly methodological and partly fundamental. Of the unplanned storage
+accesses, 4.5% use expression forms Dowse already supports but lacked enough observations; another
+5.9% need more calldata words/base slots, mapping-struct offsets, or nested mappings. Those are
+direct generator improvements. A further 89.6% did not match the common top-level-payload formulas
+tested. That category is not all permanently unknowable: 48.7% of missed accesses targeted an exact
+address/slot pair seen in at least two selected blocks and could feed a bounded, decaying hot-target
+learner.
+However, a first-seen slot derived from internal calldata, an internal caller, or an earlier state
+read is fundamentally unavailable to a strict top-level-payload planner. Covering it requires
+protocol-aware router decoding, recursive hints with known internal context, or bounded pre-sim.
+
+The next experiment should not race every newly inferred target. Keep the current high-return table
+as the zero-lead tier, preserve confidence/frequency and measured latency in generated hints, and
+rank work by expected saved latency and distance ahead of the builder cursor. Admit broader or
+online-learned targets only while private orderflow provides real lead, or under an explicit I/O
+budget; throttle them when execution catches up. Online targets must also be bounded and decayed to
+prevent adversarial cache pollution.
+
+The coverage artifacts are under
+`/home/brian/work/base-dowse-runtime/artifacts/dowse-coverage-selected-20260827`, and the full
+A-B-B-A artifacts are under
+`/home/brian/work/base-dowse-runtime/artifacts/dowse-hint-full-abba-20260827`. The current and recent
+table SHA-256 values are respectively
+`888c58bb18035e9797610efb9d92dee17b9959c11a661926043a48c32efa01ec` and
+`0f1453b27f117627bec2b6103018ef75635b4c94ea3f6d6a310528cba00dc175`.
+
 ### Interpretation
 
 This experiment removes the earlier infinite-prefetch assumption and demonstrates that bounded
