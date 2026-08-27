@@ -1554,6 +1554,10 @@ where
             ApplyError::InvalidChangePayload => "account-change op payload must be empty",
             ApplyError::EpochSaturated => "local epoch is saturated",
             ApplyError::UnsupportedChangeType => "unsupported account-change op",
+            ApplyError::AccountIsLocked => "account is locked",
+            ApplyError::ExpiryDoesNotOutliveUnlock => {
+                "authorize expiry does not outlive the unlock floor"
+            }
             ApplyError::InvalidActorId => "actor id bytes32(0) is reserved",
             ApplyError::InvalidAuthenticator => "actor authenticator is not canonical",
             ApplyError::MalformedPolicyData => "actor policy data is malformed",

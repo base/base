@@ -85,6 +85,16 @@ pub enum ApplyError {
     #[error("unsupported account-change op in the enshrined apply path")]
     UnsupportedChangeType,
 
+    /// The operation is not permitted while the account is locked. Mirrors
+    /// `Keystore.AccountIsLocked`.
+    #[error("account is locked")]
+    AccountIsLocked,
+
+    /// An `AuthorizeActor` while locked carried an expiry that does not outlive
+    /// the unlock floor. Mirrors `Keystore.ExpiryDoesNotOutliveUnlock`.
+    #[error("authorize expiry does not outlive the unlock floor")]
+    ExpiryDoesNotOutliveUnlock,
+
     /// A signed batch carried no changes. Mirrors `applySignedAccountChanges`'s
     /// `revert EmptyChangeSet()`: an empty batch would otherwise consume (advance)
     /// a channel's sequence without altering any configuration. Rejected before
@@ -399,19 +409,32 @@ impl AccountChangeApplier {
         // retains an expired grant inert. Computed once for the whole batch.
         let is_unsequenced = matches!(channel, AccountChangeChannel::Local)
             && sequence as u32 == Eip8130Constants::UNSEQUENCED;
+        let locked = state.is_locked(now);
 
         let mut revoke_discount_slots = 0u32;
         for change in changes {
             match change.change_type {
                 ChangeType::AuthorizeActor => {
+                    // Applies one `AuthorizeActor` op: JIT expiry skip, locked-account
+                    // policy, then `_authorizeActor`. Mirrors `Keystore._applyAuthorize`.
                     let (actor_id, config, policy_data) = Self::decode_authorize(&change.payload)?;
-                    // Skip an already-lapsed grant on the replayable JIT path
-                    // (per-change; live siblings still apply). A `0` clock disables
-                    // the skip via the `expiry != 0 && expiry <= 0` guard; both the
-                    // verifying and estimation pipelines pass the real block
-                    // timestamp so the skip is applied identically.
-                    if is_unsequenced && config.expiry != 0 && config.expiry <= now {
+                    // Replayable JIT path: drop an already-lapsed grant without
+                    // reverting. Uses the canonical `_isExpired` boundary (`now >
+                    // expiry`), so a grant with `expiry == now` is still live for
+                    // that second and installs rather than being dropped here.
+                    if is_unsequenced && config.is_expired(now) {
                         continue;
+                    }
+                    if locked {
+                        Self::enforce_locked_authorize_rules(
+                            storage,
+                            account,
+                            actor_id,
+                            &config,
+                            &policy_data,
+                            state,
+                            now,
+                        )?;
                     }
                     Self::authorize_actor_with_account_state(
                         storage,
@@ -423,6 +446,9 @@ impl AccountChangeApplier {
                     )?;
                 }
                 ChangeType::RevokeActor => {
+                    if locked {
+                        return Err(ApplyError::AccountIsLocked);
+                    }
                     let actor_id = Self::decode_revoke(&change.payload)?;
                     revoke_discount_slots = revoke_discount_slots.saturating_add(
                         Self::revoke_actor_with_account_state(storage, account, actor_id, state)?,
@@ -543,6 +569,50 @@ impl AccountChangeApplier {
             return Ok(());
         }
         Self::authorize_non_self_actor(storage, account, actor_id, config, policy_data)
+    }
+
+    /// Locked-account guard for `AuthorizeActor`. Mirrors `Keystore._applyAuthorize`'s
+    /// `locked` block:
+    ///
+    /// - **No live entry** ([`AccountConfigurationStorage::resolve_live_actor_config_with_state`]
+    ///   empty — unknown, revoked, disabled, or expired): a new add is allowed once
+    ///   the grant's expiry outlives the unlock floor (`expiry == 0` always passes).
+    /// - **Live entry** (slot populated and not expired): only an expiry rewrite is
+    ///   allowed; authenticator, scope, and policy (manager + commitment) must match
+    ///   the stored values. The new expiry must still outlive the unlock floor.
+    fn enforce_locked_authorize_rules(
+        storage: &AccountConfigurationStorage<'_>,
+        account: Address,
+        actor_id: B256,
+        config: &ActorConfig,
+        policy_data: &[u8],
+        state: &AccountState,
+        now: u64,
+    ) -> Result<(), ApplyError> {
+        let unlock_floor = state.unlock_floor(now);
+        if config.expiry != 0 && config.expiry <= unlock_floor {
+            return Err(ApplyError::ExpiryDoesNotOutliveUnlock);
+        }
+
+        // Resolve the current live config against the evolving in-batch `state`, not
+        // persisted storage: an earlier op's inline-self rewrite lands in `state`
+        // and is flushed only at batch end, so a storage read would miss it and let
+        // a second self identity/scope rewrite slip past the live-entry guard.
+        let current =
+            storage.resolve_live_actor_config_with_state(account, actor_id, state, now)?;
+        if current.is_empty() {
+            return Ok(());
+        }
+
+        let (manager, commitment) = Self::slice_policy(config.scope, policy_data)?;
+        if config.authenticator != current.authenticator
+            || config.scope != current.scope
+            || manager != storage.get_policy_manager(account, actor_id)?
+            || commitment != storage.get_policy_commitment(account, actor_id)?
+        {
+            return Err(ApplyError::AccountIsLocked);
+        }
+        Ok(())
     }
 
     /// Authorizes an actor while applying inline-self changes to `state` without
@@ -1047,6 +1117,260 @@ mod tests {
         ActorConfig { authenticator: AUTHENTICATOR, scope: 0, expiry }
     }
 
+    fn set_hard_locked(acc: &mut AccountConfigurationStorage<'_>, delay: u64) {
+        let mut state = acc.get_account_state(ACCOUNT).unwrap();
+        state.flags = Eip8130Constants::FLAG_LOCKED;
+        state.lock_union = delay;
+        acc.set_account_state(ACCOUNT, state).unwrap();
+    }
+
+    #[test]
+    fn locked_authorize_succeeds_when_expiry_outlives_hard_lock_floor() {
+        let now = 1_000u64;
+        let delay = 3_600u64;
+        with_storage(|acc| {
+            set_hard_locked(acc, delay);
+            let config = expiring(now + delay + 1);
+            AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &[authorize_op(NON_SELF, &config, &[])],
+                AccountChangeChannel::Local,
+                0,
+                now,
+            )
+            .unwrap();
+            assert_eq!(acc.actor_config_slot(ACCOUNT, NON_SELF).unwrap(), config);
+        });
+    }
+
+    #[test]
+    fn locked_authorize_reverts_when_expiry_at_hard_lock_floor() {
+        let now = 1_000u64;
+        let delay = 3_600u64;
+        with_storage(|acc| {
+            set_hard_locked(acc, delay);
+            let config = expiring(now + delay);
+            let err = AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &[authorize_op(NON_SELF, &config, &[])],
+                AccountChangeChannel::Local,
+                0,
+                now,
+            )
+            .unwrap_err();
+            assert_eq!(err, ApplyError::ExpiryDoesNotOutliveUnlock);
+        });
+    }
+
+    #[test]
+    fn locked_authorize_allows_unbounded_expiry() {
+        let now = 1_000u64;
+        with_storage(|acc| {
+            set_hard_locked(acc, 3_600);
+            let config = ungated(AUTHENTICATOR, Eip8130Constants::SCOPE_SENDER);
+            AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &[authorize_op(NON_SELF, &config, &[])],
+                AccountChangeChannel::Local,
+                0,
+                now,
+            )
+            .unwrap();
+            assert_eq!(acc.actor_config_slot(ACCOUNT, NON_SELF).unwrap(), config);
+        });
+    }
+
+    #[test]
+    fn locked_revoke_is_rejected() {
+        let now = 1_000u64;
+        with_storage(|acc| {
+            AccountChangeApplier::authorize_actor(
+                acc,
+                ACCOUNT,
+                NON_SELF,
+                ungated(AUTHENTICATOR, Eip8130Constants::SCOPE_SENDER),
+                &[],
+            )
+            .unwrap();
+            set_hard_locked(acc, 3_600);
+            let err = AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &[revoke_op(NON_SELF)],
+                AccountChangeChannel::Local,
+                0,
+                now,
+            )
+            .unwrap_err();
+            assert_eq!(err, ApplyError::AccountIsLocked);
+        });
+    }
+
+    #[test]
+    fn locked_reauthorize_allows_expiry_only_re_lease() {
+        let now = 1_000u64;
+        let delay = 3_600u64;
+        with_storage(|acc| {
+            AccountChangeApplier::authorize_actor(
+                acc,
+                ACCOUNT,
+                NON_SELF,
+                expiring(now + 86_400),
+                &[],
+            )
+            .unwrap();
+            set_hard_locked(acc, delay);
+            let shorter = expiring(now + delay + 1);
+            AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &[authorize_op(NON_SELF, &shorter, &[])],
+                AccountChangeChannel::Local,
+                0,
+                now,
+            )
+            .unwrap();
+            assert_eq!(acc.actor_config_slot(ACCOUNT, NON_SELF).unwrap(), shorter);
+        });
+    }
+
+    #[test]
+    fn locked_reauthorize_rejects_scope_change() {
+        let now = 1_000u64;
+        with_storage(|acc| {
+            AccountChangeApplier::authorize_actor(
+                acc,
+                ACCOUNT,
+                NON_SELF,
+                expiring(now + 86_400),
+                &[],
+            )
+            .unwrap();
+            set_hard_locked(acc, 3_600);
+            let widened = ActorConfig {
+                authenticator: AUTHENTICATOR,
+                scope: Eip8130Constants::SCOPE_SENDER,
+                expiry: now + 86_400,
+            };
+            let err = AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &[authorize_op(NON_SELF, &widened, &[])],
+                AccountChangeChannel::Local,
+                0,
+                now,
+            )
+            .unwrap_err();
+            assert_eq!(err, ApplyError::AccountIsLocked);
+        });
+    }
+
+    #[test]
+    fn locked_self_release_uses_evolving_state_within_batch() {
+        // Two AuthorizeActor ops on the inline self in one locked batch: the first
+        // is a fresh add (self starts revoked), the second rewrites the scope. The
+        // second must be rejected as a live-entry identity change — the applier
+        // resolves the self against the evolving in-batch `AccountState`, not the
+        // stale persisted slot, so an add-then-mutate cannot slip past the lock.
+        let now = 1_000u64;
+        let delay = 3_600u64;
+        let expiry = now + delay + 100; // outlives the hard-lock floor (now + delay)
+        let self_id = AccountConfigurationStorage::self_actor_id(ACCOUNT);
+        with_storage(|acc| {
+            // Locked with the inline self revoked, so the first op is a new add.
+            let mut state = acc.get_account_state(ACCOUNT).unwrap();
+            state.flags = Eip8130Constants::FLAG_LOCKED | Eip8130Constants::DEFAULT_EOA_REVOKED;
+            state.lock_union = delay;
+            acc.set_account_state(ACCOUNT, state).unwrap();
+
+            let add =
+                ActorConfig { authenticator: K1, scope: Eip8130Constants::SCOPE_SENDER, expiry };
+            let rescope = ActorConfig { authenticator: K1, scope: 0, expiry };
+            let err = AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &[authorize_op(self_id, &add, &[]), authorize_op(self_id, &rescope, &[])],
+                AccountChangeChannel::Local,
+                0,
+                now,
+            )
+            .unwrap_err();
+            assert_eq!(err, ApplyError::AccountIsLocked);
+        });
+    }
+
+    #[test]
+    fn locked_expired_actor_is_treated_as_new_add() {
+        let now = 10_000u64;
+        with_storage(|acc| {
+            AccountChangeApplier::authorize_actor(acc, ACCOUNT, NON_SELF, expiring(now - 1), &[])
+                .unwrap();
+            set_hard_locked(acc, 3_600);
+            let replacement = ActorConfig { authenticator: K1, scope: 0, expiry: now + 3_601 };
+            AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &[authorize_op(NON_SELF, &replacement, &[])],
+                AccountChangeChannel::Local,
+                0,
+                now,
+            )
+            .unwrap();
+            assert_eq!(acc.actor_config_slot(ACCOUNT, NON_SELF).unwrap(), replacement);
+        });
+    }
+
+    #[test]
+    fn locked_authorize_reverts_when_expiry_at_pending_unlock_floor() {
+        let now = 1_000u64;
+        let delay = 3_600u64;
+        with_storage(|acc| {
+            let mut state = acc.get_account_state(ACCOUNT).unwrap();
+            state.flags = Eip8130Constants::FLAG_LOCKED | Eip8130Constants::FLAG_UNLOCK_INITIATED;
+            state.lock_union = now + delay;
+            acc.set_account_state(ACCOUNT, state).unwrap();
+
+            let config = expiring(now + delay);
+            let err = AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &[authorize_op(NON_SELF, &config, &[])],
+                AccountChangeChannel::Local,
+                0,
+                now,
+            )
+            .unwrap_err();
+            assert_eq!(err, ApplyError::ExpiryDoesNotOutliveUnlock);
+        });
+    }
+
+    #[test]
+    fn locked_authorize_succeeds_when_expiry_above_pending_unlock_floor() {
+        let now = 1_000u64;
+        let delay = 3_600u64;
+        with_storage(|acc| {
+            let mut state = acc.get_account_state(ACCOUNT).unwrap();
+            state.flags = Eip8130Constants::FLAG_LOCKED | Eip8130Constants::FLAG_UNLOCK_INITIATED;
+            state.lock_union = now + delay;
+            acc.set_account_state(ACCOUNT, state).unwrap();
+
+            let config = expiring(now + delay + 1);
+            AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &[authorize_op(NON_SELF, &config, &[])],
+                AccountChangeChannel::Local,
+                0,
+                now,
+            )
+            .unwrap();
+            assert_eq!(acc.actor_config_slot(ACCOUNT, NON_SELF).unwrap(), config);
+        });
+    }
+
     #[test]
     fn apply_skips_lapsed_jit_grant() {
         let now = 1_000u64;
@@ -1067,19 +1391,22 @@ mod tests {
             .unwrap();
             assert_eq!(acc.actor_config_slot(ACCOUNT, NON_SELF).unwrap(), unauthorized);
         });
-        // `expiry == now` is not strictly in the future, so it is skipped too.
+        // `expiry == now` is still live for that second (canonical `_isExpired`
+        // is strict, `now > expiry`), so the JIT grant installs rather than being
+        // dropped.
         with_storage(|acc| {
-            let at_now = [authorize_op(NON_SELF, &expiring(now), &[])];
+            let at_now = expiring(now);
+            let ops = [authorize_op(NON_SELF, &at_now, &[])];
             AccountChangeApplier::apply_config_change(
                 acc,
                 ACCOUNT,
-                &at_now,
+                &ops,
                 AccountChangeChannel::Local,
                 jit,
                 now,
             )
             .unwrap();
-            assert_eq!(acc.actor_config_slot(ACCOUNT, NON_SELF).unwrap(), unauthorized);
+            assert_eq!(acc.actor_config_slot(ACCOUNT, NON_SELF).unwrap(), at_now);
         });
     }
 
