@@ -237,8 +237,7 @@ impl WorkerArgs {
 
         let worker_id =
             args.worker_id.clone().unwrap_or_else(|| format!("zk-host-{}", Uuid::new_v4()));
-        let host_config = ZkHostConfig::sp1(worker_id.clone())
-            .with_supported_artifact_hash(artifact_hash)
+        let host_config = ZkHostConfig::sp1(worker_id.clone(), artifact_hash)
             .with_job_discovery_poll_interval(Duration::from_millis(
                 args.job_discovery_poll_interval_ms,
             ))

@@ -17,7 +17,7 @@ use crate::{ProofGenerator, ProofGeneratorHeartbeatConfig, ZkBackend, ZkProver, 
 pub struct ZkHostConfig {
     worker_id: String,
     zk_vms: Vec<ZkVm>,
-    supported_artifact_hash: Option<B256>,
+    supported_artifact_hash: B256,
     job_discovery_poll_interval: Duration,
     job_discovery_lock_duration_seconds: u32,
     job_discovery_max_concurrent_jobs: usize,
@@ -26,11 +26,15 @@ pub struct ZkHostConfig {
 
 impl ZkHostConfig {
     /// Creates a ZK host config with default timing settings.
-    pub fn new(worker_id: impl Into<String>, zk_vms: impl Into<Vec<ZkVm>>) -> Self {
+    pub fn new(
+        worker_id: impl Into<String>,
+        zk_vms: impl Into<Vec<ZkVm>>,
+        supported_artifact_hash: B256,
+    ) -> Self {
         Self {
             worker_id: worker_id.into(),
             zk_vms: zk_vms.into(),
-            supported_artifact_hash: None,
+            supported_artifact_hash,
             job_discovery_poll_interval: DEFAULT_JOB_DISCOVERY_POLL_INTERVAL,
             job_discovery_lock_duration_seconds: DEFAULT_JOB_DISCOVERY_LOCK_DURATION_SECONDS,
             job_discovery_max_concurrent_jobs: DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS,
@@ -39,8 +43,8 @@ impl ZkHostConfig {
     }
 
     /// Creates an SP1 ZK host config with default timing settings.
-    pub fn sp1(worker_id: impl Into<String>) -> Self {
-        Self::new(worker_id, vec![ZkVm::Sp1])
+    pub fn sp1(worker_id: impl Into<String>, supported_artifact_hash: B256) -> Self {
+        Self::new(worker_id, vec![ZkVm::Sp1], supported_artifact_hash)
     }
 
     /// Returns the worker identifier used for prover-service claims.
@@ -112,13 +116,6 @@ impl ZkHostConfig {
         self.proof_generator_heartbeat = proof_generator_heartbeat;
         self
     }
-
-    /// Sets the composite hash of the embedded range and aggregation programs.
-    #[must_use]
-    pub const fn with_supported_artifact_hash(mut self, artifact_hash: B256) -> Self {
-        self.supported_artifact_hash = Some(artifact_hash);
-        self
-    }
 }
 
 /// Runs ZK proof generation jobs claimed from the prover service.
@@ -158,11 +155,8 @@ where
         let discovery_config = JobDiscoveryConfig::zk(config.worker_id, config.zk_vms, zk_backends)
             .with_poll_interval(config.job_discovery_poll_interval)
             .with_lock_duration_seconds(config.job_discovery_lock_duration_seconds)
-            .with_max_concurrent_jobs(config.job_discovery_max_concurrent_jobs);
-        let discovery_config = match config.supported_artifact_hash {
-            Some(hash) => discovery_config.with_supported_artifact_hash(hash),
-            None => discovery_config,
-        };
+            .with_max_concurrent_jobs(config.job_discovery_max_concurrent_jobs)
+            .with_supported_artifact_hash(config.supported_artifact_hash);
         let submitter = ProofSubmitter::new(client.clone());
         let proof_generator = Arc::new(
             ProofGenerator::new(provers, submitter, config.proof_generator_heartbeat)
