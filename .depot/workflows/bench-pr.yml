@@ -5,8 +5,13 @@
 # - Rewrote .github/ path references to .depot/
 
 name: Benchmarks (advisory)
+
+# Temporarily disabled on PRs. Shared-runner wall-clock is too noisy to trust per
+# PR (it produced confident false positives on memory-bound benches), so the
+# deterministic iai-callgrind job (bench-iai.yml) is now the per-PR signal. These
+# wall-clock benches are slated to move to a nightly trend job in a follow-up;
+# retained on manual dispatch until then.
 on:
-  pull_request:
   workflow_dispatch:
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}

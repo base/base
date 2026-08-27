@@ -68,6 +68,11 @@ runs:
     - name: Setup sccache
       uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
 
+    - name: Cache Cargo dependencies
+      uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+      with:
+        cache-targets: "false"
+
     - name: Install just
       if: inputs.just == 'true'
       uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4

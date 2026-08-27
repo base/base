@@ -14,10 +14,12 @@ macro_rules! base_precompile {
             ::revm::precompile::PrecompileId::Custom($id.into()),
             move |input| {
                 if !input.is_direct_call() {
-                    return ::base_precompile_storage::BasePrecompileError::revert(
-                        ::base_precompile_storage::DelegateCallNotAllowed {},
-                    )
-                    .into_precompile_result(0, 0);
+                    return ::base_precompile_storage::IntoEnginePrecompileResult::into_revm(
+                        ::base_precompile_storage::BasePrecompileError::revert(
+                            ::base_precompile_storage::DelegateCallNotAllowed {},
+                        )
+                        .into_precompile_result(0, 0),
+                    );
                 }
 
                 let $calldata: ::alloy_primitives::Bytes = input.data.to_vec().into();
@@ -27,7 +29,9 @@ macro_rules! base_precompile {
                     $storage_features,
                 );
 
-                ::base_precompile_storage::StorageCtx::enter(&mut provider, |$ctx| $impl)
+                ::base_precompile_storage::IntoEnginePrecompileResult::into_revm(
+                    ::base_precompile_storage::StorageCtx::enter(&mut provider, |$ctx| $impl),
+                )
             },
         )
     }};

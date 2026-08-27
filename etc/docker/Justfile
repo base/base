@@ -18,8 +18,8 @@ up mode='default':
 up-single mode='default':
     just --justfile {{ source_file() }} _up-devnet "base" {{ quote(mode) }}
 
-# Starts the single-Anvil L1 devnet and its two-worker local no-Nitro proof stack
-up-anvil-no-nitro: down-anvil _build-setup-image (_build-rust-images "devnet" "dev")
+# Starts the single-Anvil L1 devnet and its two-worker local Nitro proof stack
+up-anvil-nitro-local: down-anvil _build-setup-image (_build-rust-images "devnet" "dev")
     #!/usr/bin/env bash
     set -euo pipefail
     l1_rpc_url="http://l1-el:${L1_HTTP_PORT}"
@@ -41,7 +41,7 @@ up-anvil-no-nitro: down-anvil _build-setup-image (_build-rust-images "devnet" "d
     fi
 
     UPGRADE_SIGNAL_CONTAINER_L1_RPC="$l1_rpc_url" \
-      ./etc/scripts/devnet/anvil-no-nitro.sh bootstrap
+      ./etc/scripts/devnet/anvil-nitro-local.sh bootstrap
     "${compose_cmd[@]}" up -d --no-build --remove-orphans
     # base-client/base-rpc/base-builder read upgrade-signal.env once at container
     # start. If any of them were already running (e.g. left over from a prior
@@ -49,15 +49,15 @@ up-anvil-no-nitro: down-anvil _build-setup-image (_build-rust-images "devnet" "d
     # they booted with, which can predate the file bootstrap just wrote.
     # Force-recreate them so they always boot off the final file.
     "${compose_cmd[@]}" up -d --no-build --force-recreate base-client base-rpc base-builder
-    ./etc/scripts/devnet/anvil-no-nitro.sh up
+    ./etc/scripts/devnet/anvil-nitro-local.sh up
 
 # Stops the single-Anvil L1 devnet, proof workers, and all of their data
 down-anvil:
-    -./etc/scripts/devnet/anvil-no-nitro.sh down
+    -./etc/scripts/devnet/anvil-nitro-local.sh down
     -docker compose {{ _env }} {{ _anvil }} --profile profiling down
     -[ ! -d .devnet ] || docker run --rm -v "$(pwd)/.devnet:/devnet" alpine sh -c 'rm -rf /devnet/*'
 
-# Builds the latest Base-Anvil default branch used by the no-Nitro devnet
+# Builds the latest Base-Anvil default branch used by the local Nitro devnet
 build-anvil-image source='https://github.com/base/base-anvil.git':
     docker buildx build --load \
       --tag base-anvil:prover-single-l1 \
@@ -224,8 +224,8 @@ _up-devnet compose_profile mode:
     compose_profile={{ quote(compose_profile) }}
     devnet_mode={{ quote(mode) }}
 
-    # Default mode leaves Denim opt-in through L2_BASE_DENIM_BLOCK. The zenith mode schedules
-    # Denim and the genesis-only Zenith gate used for future hardfork feature testing.
+    # Denim is scheduled through devnet-env. Zenith mode additionally schedules the
+    # genesis-only Zenith gate used for future hardfork feature testing.
     case "$devnet_mode" in
       default) ;;
       zenith)
