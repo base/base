@@ -1,17 +1,12 @@
-use alloc::string::String;
-
 use alloy_evm::precompiles::PrecompilesMap;
 use alloy_primitives::Address;
 use base_common_chains::BaseUpgradeExt;
 use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::StorageFeatures;
 use revm::{
-    context::Cfg,
-    context_interface::ContextTr,
-    handler::{EthPrecompiles, PrecompileProvider},
-    interpreter::{CallInputs, InterpreterResult},
+    handler::EthPrecompiles,
     precompile::{self, Precompiles, bn254, modexp, secp256r1},
-    primitives::{AddressSet, OnceLock, hardfork::SpecId},
+    primitives::{OnceLock, hardfork::SpecId},
 };
 
 use crate::{
@@ -20,7 +15,14 @@ use crate::{
     TxContext, UpgradeGatedStorageFeatures, bls12_381, bn254_pair,
 };
 
-/// Base precompile provider.
+/// Builder for the complete Base precompile set for a given [`BasePrecompileSpec`].
+///
+/// Call [`Self::install`] or [`Self::install_with_observer`] to obtain a
+/// [`PrecompilesMap`] that includes the dynamic fork-installed precompiles
+/// (`B20Factory`, `BerylLookup`, `PolicyRegistryPrecompile`, `ActivationRegistry`
+/// at Beryl+, plus `TxContext` and `NonceManager` at Cobalt+). Only the resulting
+/// [`PrecompilesMap`] implements [`revm::handler::PrecompileProvider`]; using
+/// this builder directly as a provider would silently omit the dynamic entries.
 #[derive(Debug, Clone)]
 pub struct BasePrecompiles<S = BaseUpgrade> {
     /// Inner precompile provider is the same as Ethereum's.
@@ -239,43 +241,6 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
     }
 }
 
-impl<CTX, S> PrecompileProvider<CTX> for BasePrecompiles<S>
-where
-    S: BasePrecompileSpec,
-    CTX: ContextTr<Cfg: Cfg<Spec = S>>,
-{
-    type Output = InterpreterResult;
-
-    #[inline]
-    fn set_spec(&mut self, spec: <CTX::Cfg as Cfg>::Spec) -> bool {
-        if spec == self.spec {
-            return false;
-        }
-        *self =
-            Self::new_with_spec(spec).with_activation_admin_address(self.activation_admin_address);
-        true
-    }
-
-    #[inline]
-    fn run(
-        &mut self,
-        context: &mut CTX,
-        inputs: &CallInputs,
-    ) -> Result<Option<Self::Output>, String> {
-        self.inner.run(context, inputs)
-    }
-
-    #[inline]
-    fn warm_addresses(&self) -> &AddressSet {
-        self.inner.warm_addresses()
-    }
-
-    #[inline]
-    fn contains(&self, address: &Address) -> bool {
-        self.inner.contains(address)
-    }
-}
-
 impl<S: BasePrecompileSpec> Default for BasePrecompiles<S> {
     fn default() -> Self {
         Self::new_with_spec(S::default_precompile_spec())
@@ -297,7 +262,7 @@ mod tests {
 
     use crate::{
         ActivationRegistryStorage, B20FactoryStorage, B20Variant, BasePrecompiles,
-        NonceManagerStorage, TxContextStorage, bls12_381, bn254_pair,
+        NonceManagerStorage, PolicyRegistryStorage, TxContextStorage, bls12_381, bn254_pair,
     };
 
     type TestPrecompiles = BasePrecompiles<BaseUpgrade>;
@@ -627,5 +592,24 @@ mod tests {
         let precompiles = BasePrecompiles::new_with_spec(spec).install();
 
         assert_eq!(precompiles.get(&NonceManagerStorage::ADDRESS).is_some(), expected);
+    }
+
+    /// Cantina #19 (BOP-606) trait-boundary regression: every fork-installed precompile
+    /// must be reachable through `.install()` on the `BasePrecompiles` builder. If a
+    /// future refactor reintroduces a partial provider that skips these entries, this
+    /// test fails.
+    #[test]
+    fn cobalt_install_exposes_every_fork_installed_precompile() {
+        let precompiles = BasePrecompiles::new_with_spec(BaseUpgrade::Cobalt).install();
+
+        assert!(precompiles.get(&B20FactoryStorage::ADDRESS).is_some());
+        assert!(precompiles.get(&PolicyRegistryStorage::ADDRESS).is_some());
+        assert!(precompiles.get(&ActivationRegistryStorage::ADDRESS).is_some());
+        assert!(precompiles.get(&TxContextStorage::ADDRESS).is_some());
+        assert!(precompiles.get(&NonceManagerStorage::ADDRESS).is_some());
+
+        let (token, _) =
+            B20Variant::Asset.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22));
+        assert!(precompiles.get(&token).is_some());
     }
 }
