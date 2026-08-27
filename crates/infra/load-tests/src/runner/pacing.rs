@@ -68,6 +68,7 @@ const PROGRESS_REPORT_INTERVAL: Duration = Duration::from_secs(5);
 #[derive(Debug)]
 struct SenderJob {
     sender_index: usize,
+    generation: u64,
     from: Address,
     start_nonce: u64,
     prepared_txs: Vec<PreparedTransaction>,
@@ -76,6 +77,7 @@ struct SenderJob {
 #[derive(Debug)]
 struct SignedSender {
     sender_index: usize,
+    generation: u64,
     signed_txs: Vec<SignedTransaction>,
 }
 
@@ -89,17 +91,37 @@ struct PresignProducerState {
 struct PresignConfig {
     sender_addresses: Vec<Address>,
     sender_next_nonces: Vec<u64>,
+    /// Generation paired with `sender_next_nonces`; bumped when submission reports a terminal
+    /// rejection so stale signed chunks cannot be enqueued after a nonce resync.
+    sender_generations: Vec<u64>,
     signers: Arc<HashMap<Address, PrivateKeySigner>>,
+    nonce_managers: Arc<HashMap<Address, NonceManager<RootProvider<Ethereum>>>>,
     chain_id: u64,
     base_fee_rx: watch::Receiver<u128>,
     max_gas_price: u128,
     estimated_gas: u64,
     fresh_recipient_ratio: f64,
-    signed_chunk_tx: mpsc::Sender<Vec<Vec<SignedTransaction>>>,
+    signed_chunk_tx: mpsc::Sender<Vec<PresignedSenderBatch>>,
+    nonce_reset_rx: mpsc::Receiver<SenderNonceReset>,
     validity_router: ValidityRouter,
     /// Query provider used to read the current block height per prepare round
     /// when resolving offset-based `block_number` validity predicates.
     query_client: QueryProvider,
+}
+
+#[derive(Debug)]
+struct PresignedSenderBatch {
+    sender_index: usize,
+    generation: u64,
+    txs: Vec<SignedTransaction>,
+}
+
+#[derive(Debug)]
+struct SenderNonceReset {
+    sender_index: usize,
+    address: Address,
+    /// New generation that the producer must adopt after refetching the sender's pending nonce.
+    generation: u64,
 }
 
 struct EnqueueProgress {
@@ -199,7 +221,9 @@ struct EnqueueDrainState<'a> {
 struct PresignEnqueueState<'a> {
     submission_pipeline: &'a SubmissionPipeline,
     next_submit_batch_id: &'a AtomicU64,
-    signed_chunk_rx: &'a mut mpsc::Receiver<Vec<Vec<SignedTransaction>>>,
+    signed_chunk_rx: &'a mut mpsc::Receiver<Vec<PresignedSenderBatch>>,
+    nonce_reset_tx: &'a mpsc::Sender<SenderNonceReset>,
+    sender_indices: &'a HashMap<Address, usize>,
     buffer: &'a mut PresignBuffer,
     progress: &'a mut EnqueueProgress,
     base_fee_tx: &'a watch::Sender<u128>,
@@ -538,6 +562,12 @@ impl LoadRunner {
         let pre_sign_started = Instant::now();
         let sender_addresses: Vec<Address> =
             self.accounts.accounts().iter().map(|account| account.address).collect();
+        let sender_indices: HashMap<Address, usize> = sender_addresses
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(index, address)| (address, index))
+            .collect();
         let nonce_initialization_started = Instant::now();
         let sender_start_nonces = self.sender_start_nonces(&sender_addresses).await?;
         let sender_count = sender_addresses.len();
@@ -602,6 +632,7 @@ impl LoadRunner {
         let producer_recipient_rng = std::mem::take(&mut self.recipient_rng);
 
         let (signed_chunk_tx, mut signed_chunk_rx) = mpsc::channel(PRESIGN_CHANNEL_BUFFER);
+        let (nonce_reset_tx, nonce_reset_rx) = mpsc::channel(sender_count.max(1));
         let (base_fee_tx, base_fee_rx) = watch::channel(self.base_fee);
         let pacing_base_fee_tx = base_fee_tx.clone();
         let base_fee_client = self.client.clone();
@@ -627,13 +658,16 @@ impl LoadRunner {
             PresignConfig {
                 sender_addresses,
                 sender_next_nonces: sender_start_nonces,
+                sender_generations: vec![0; sender_count],
                 signers: Arc::clone(&self.signers),
+                nonce_managers: Arc::clone(&self.nonce_managers),
                 chain_id: self.config.chain_id,
                 base_fee_rx,
                 max_gas_price: self.config.max_gas_price,
                 estimated_gas: initial_avg_gas,
                 fresh_recipient_ratio: self.config.fresh_recipient_ratio,
                 signed_chunk_tx,
+                nonce_reset_rx,
                 validity_router: self.validity_router.clone(),
                 query_client: self.client.clone(),
             },
@@ -651,6 +685,8 @@ impl LoadRunner {
                 submission_pipeline: &submission_pipeline,
                 next_submit_batch_id: &next_submit_batch_id,
                 signed_chunk_rx: &mut signed_chunk_rx,
+                nonce_reset_tx: &nonce_reset_tx,
+                sender_indices: &sender_indices,
                 buffer: &mut presign_buffer,
                 progress: &mut progress,
                 base_fee_tx: &pacing_base_fee_tx,
@@ -769,6 +805,8 @@ impl LoadRunner {
                     submission_pipeline: &submission_pipeline,
                     next_submit_batch_id: &next_submit_batch_id,
                     signed_chunk_rx: &mut signed_chunk_rx,
+                    nonce_reset_tx: &nonce_reset_tx,
+                    sender_indices: &sender_indices,
                     buffer: &mut presign_buffer,
                     progress: &mut progress,
                     base_fee_tx: &pacing_base_fee_tx,
@@ -1201,6 +1239,13 @@ impl LoadRunner {
                 config.sender_next_nonces.len(),
             )));
         }
+        if config.sender_addresses.len() != config.sender_generations.len() {
+            return Err(BaselineError::Transaction(format!(
+                "open-loop sender generation set mismatch: {} addresses vs {} generations",
+                config.sender_addresses.len(),
+                config.sender_generations.len(),
+            )));
+        }
 
         let sender_count = config.sender_addresses.len();
         if sender_count == 0 {
@@ -1248,6 +1293,7 @@ impl LoadRunner {
                 sender_index,
                 from,
                 start_nonce: config.sender_next_nonces[sender_index],
+                generation: config.sender_generations[sender_index],
                 prepared_txs,
             });
         }
@@ -1261,7 +1307,7 @@ impl LoadRunner {
         chain_id: u64,
         base_fee: u128,
         max_gas_price: u128,
-    ) -> Result<Vec<Vec<SignedTransaction>>> {
+    ) -> Result<Vec<PresignedSenderBatch>> {
         let sender_count = sender_jobs.len();
         if sender_count == 0 {
             return Ok(Vec::new());
@@ -1284,7 +1330,7 @@ impl LoadRunner {
             }));
         }
 
-        let mut signed_by_sender: Vec<Option<Vec<SignedTransaction>>> =
+        let mut signed_by_sender: Vec<Option<SignedSender>> =
             std::iter::repeat_with(|| None).take(sender_count).collect();
 
         for signing_task in signing_tasks {
@@ -1298,17 +1344,21 @@ impl LoadRunner {
                     "duplicate signed sender result for index {sender_index}"
                 )));
             }
-            signed_by_sender[sender_index] = Some(signed_sender.signed_txs);
+            signed_by_sender[sender_index] = Some(signed_sender);
         }
 
         let mut ordered_signed_txs = Vec::with_capacity(sender_count);
-        for (sender_index, sender_txs) in signed_by_sender.into_iter().enumerate() {
-            let sender_txs = sender_txs.ok_or_else(|| {
+        for (sender_index, signed_sender) in signed_by_sender.into_iter().enumerate() {
+            let signed_sender = signed_sender.ok_or_else(|| {
                 BaselineError::Transaction(format!(
                     "missing signed transaction set for sender index {sender_index}"
                 ))
             })?;
-            ordered_signed_txs.push(sender_txs);
+            ordered_signed_txs.push(PresignedSenderBatch {
+                sender_index,
+                generation: signed_sender.generation,
+                txs: signed_sender.signed_txs,
+            });
         }
 
         Ok(ordered_signed_txs)
@@ -1329,6 +1379,11 @@ impl LoadRunner {
         // `signed_chunk_rx` (detected below via the `send(...).is_err()` check), which
         // happens once the enqueue loop returns (deadline reached or channel closed).
         loop {
+            // Terminal rejections create a local nonce gap for already-presigned work. Drain reset
+            // requests before building the next chunk so affected senders resume from the node's
+            // pending nonce instead of being removed from the active sender set.
+            Self::drain_nonce_reset_requests(&mut config).await?;
+
             // Resolve offset-based block_number predicates against the chain
             // height once per prepare round (not per transaction). Skip the
             // extra read entirely unless an offset bound is actually configured,
@@ -1376,6 +1431,54 @@ impl LoadRunner {
         }
 
         Ok(producer_state)
+    }
+
+    async fn drain_nonce_reset_requests(config: &mut PresignConfig) -> Result<()> {
+        while let Ok(reset) = config.nonce_reset_rx.try_recv() {
+            let Some(address) = config.sender_addresses.get(reset.sender_index).copied() else {
+                continue;
+            };
+            if address != reset.address {
+                continue;
+            }
+            if config
+                .sender_generations
+                .get(reset.sender_index)
+                .is_some_and(|generation| *generation >= reset.generation)
+            {
+                continue;
+            }
+
+            let nonce_manager = config.nonce_managers.get(&reset.address).ok_or_else(|| {
+                BaselineError::Transaction(format!(
+                    "missing nonce manager for sender {} during nonce reset",
+                    reset.address
+                ))
+            })?;
+            // The nonce manager uses the pending tag for load-test senders, so this restarts after
+            // transactions the node already accepted while avoiding the rejected stale tail.
+            nonce_manager.reset().await;
+            let nonce_guard = nonce_manager.next_nonce().await.map_err(|e| {
+                BaselineError::Transaction(format!(
+                    "failed to reset nonce for sender {}: {e}",
+                    reset.address
+                ))
+            })?;
+            let next_nonce = nonce_guard.nonce();
+            nonce_guard.rollback();
+
+            config.sender_next_nonces[reset.sender_index] = next_nonce;
+            config.sender_generations[reset.sender_index] = reset.generation;
+            info!(
+                sender = %reset.address,
+                sender_index = reset.sender_index,
+                generation = reset.generation,
+                next_nonce,
+                "resynced open-loop sender after terminal rejection"
+            );
+        }
+
+        Ok(())
     }
 
     fn sign_sender_job(
@@ -1442,7 +1545,11 @@ impl LoadRunner {
             });
         }
 
-        Ok(SignedSender { sender_index: sender_job.sender_index, signed_txs })
+        Ok(SignedSender {
+            sender_index: sender_job.sender_index,
+            generation: sender_job.generation,
+            signed_txs,
+        })
     }
 
     async fn enqueue_signed_while_draining(
@@ -1556,12 +1663,16 @@ impl LoadRunner {
     fn buffer_presigned_chunk(
         buffer: &mut PresignBuffer,
         progress: &mut EnqueueProgress,
-        chunk: Vec<Vec<SignedTransaction>>,
+        chunk: Vec<PresignedSenderBatch>,
     ) {
-        for (sender_index, sender_txs) in chunk.into_iter().enumerate() {
+        for sender_batch in chunk {
             progress.presigned_generated =
-                progress.presigned_generated.saturating_add(sender_txs.len() as u64);
-            buffer.push_sender_batch(sender_index, sender_txs);
+                progress.presigned_generated.saturating_add(sender_batch.txs.len() as u64);
+            buffer.push_sender_batch(
+                sender_batch.sender_index,
+                sender_batch.generation,
+                sender_batch.txs,
+            );
         }
     }
 
@@ -1580,14 +1691,35 @@ impl LoadRunner {
             Self::buffer_presigned_chunk(enqueue_state.buffer, enqueue_state.progress, chunk);
         }
         drain_state.drain_run_events();
-        let mut disabled_sender_count = 0usize;
+        let mut reset_sender_count = 0usize;
         for sender in drain_state.rejected_senders.drain() {
-            if enqueue_state.buffer.disable_sender(sender) {
-                disabled_sender_count = disabled_sender_count.saturating_add(1);
+            let Some(&sender_index) = enqueue_state.sender_indices.get(&sender) else {
+                continue;
+            };
+            let Some(generation) = enqueue_state.buffer.reset_sender(sender_index, sender) else {
+                continue;
+            };
+            // Reset is split across the enqueue and producer tasks: the enqueue side owns the
+            // presign buffer and generation filter, while the producer owns future nonce
+            // assignment. The control message stitches those two local state machines together.
+            if enqueue_state
+                .nonce_reset_tx
+                .send(SenderNonceReset { sender_index, address: sender, generation })
+                .await
+                .is_err()
+            {
+                warn!(
+                    sender = %sender,
+                    sender_index,
+                    generation,
+                    "presign producer stopped before sender nonce reset"
+                );
+                continue;
             }
+            reset_sender_count = reset_sender_count.saturating_add(1);
         }
-        if disabled_sender_count > 0 {
-            warn!(disabled_sender_count, "disabled senders after terminal nonce rejection");
+        if reset_sender_count > 0 {
+            warn!(reset_sender_count, "reset senders after terminal nonce rejection");
         }
 
         let plan_started = Instant::now();
@@ -2211,11 +2343,15 @@ mod tests {
         let next_submit_batch_id = AtomicU64::new(0);
         let stop_flag = AtomicBool::new(false);
         let (pulse_tx, mut pulse_rx) = mpsc::channel(8);
+        let (nonce_reset_tx, _nonce_reset_rx) = mpsc::channel(1);
+        let sender_indices = HashMap::from([(sender, 0usize)]);
 
         let mut enqueue_state = PresignEnqueueState {
             submission_pipeline: &pipeline,
             next_submit_batch_id: &next_submit_batch_id,
             signed_chunk_rx: &mut signed_chunk_rx,
+            nonce_reset_tx: &nonce_reset_tx,
+            sender_indices: &sender_indices,
             buffer: &mut presign_buffer,
             progress: &mut progress,
             base_fee_tx: &base_fee_tx,
@@ -2337,6 +2473,8 @@ mod tests {
         let next_submit_batch_id = AtomicU64::new(0);
         let stop_flag = AtomicBool::new(false);
         let (_pulse_tx, mut pulse_rx) = mpsc::channel(1);
+        let (nonce_reset_tx, _nonce_reset_rx) = mpsc::channel(1);
+        let sender_indices = HashMap::from([(sender, 0usize)]);
 
         tokio::time::timeout(
             Duration::from_secs(2),
@@ -2345,6 +2483,8 @@ mod tests {
                     submission_pipeline: &pipeline,
                     next_submit_batch_id: &next_submit_batch_id,
                     signed_chunk_rx: &mut signed_chunk_rx,
+                    nonce_reset_tx: &nonce_reset_tx,
+                    sender_indices: &sender_indices,
                     buffer: &mut presign_buffer,
                     progress: &mut progress,
                     base_fee_tx: &base_fee_tx,

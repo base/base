@@ -1,18 +1,23 @@
 //! Nonce-safe buffering of transactions signed ahead of block boundaries.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 
 use alloy_primitives::Address;
 
 use super::SignedTransaction;
 
 /// Per-sender FIFO buffer drained in round-robin order.
+///
+/// Open-loop signing can run ahead of submission. If a terminal RPC rejection invalidates a
+/// sender's next nonce, every already-signed transaction after that nonce is stale. The enqueue
+/// side bumps the sender generation, drops the buffered tail, and lets the producer restart from
+/// the refreshed pending nonce instead of permanently removing the sender from the run.
 #[derive(Debug)]
 pub struct PresignBuffer {
     senders: Vec<VecDeque<SignedTransaction>>,
+    sender_generations: Vec<u64>,
     cursor: usize,
     buffered_gas: u128,
-    disabled_senders: HashSet<Address>,
 }
 
 impl PresignBuffer {
@@ -20,15 +25,23 @@ impl PresignBuffer {
     pub fn new(sender_count: usize) -> Self {
         Self {
             senders: std::iter::repeat_with(VecDeque::new).take(sender_count).collect(),
+            sender_generations: vec![0; sender_count],
             cursor: 0,
             buffered_gas: 0,
-            disabled_senders: HashSet::new(),
         }
     }
 
     /// Appends transactions to one sender's nonce-ordered FIFO.
-    pub fn push_sender_batch(&mut self, sender_index: usize, txs: Vec<SignedTransaction>) {
-        if txs.first().is_some_and(|tx| self.disabled_senders.contains(&tx.from)) {
+    ///
+    /// Stale chunks from a pre-reset signing round carry the old generation and are ignored when
+    /// they arrive after the reset has already advanced the buffer.
+    pub fn push_sender_batch(
+        &mut self,
+        sender_index: usize,
+        generation: u64,
+        txs: Vec<SignedTransaction>,
+    ) {
+        if self.sender_generations.get(sender_index).copied() != Some(generation) {
             return;
         }
         let Some(sender) = self.senders.get_mut(sender_index) else {
@@ -40,11 +53,15 @@ impl PresignBuffer {
         }
     }
 
-    /// Drops a sender's signed nonce tail and ignores future presigned transactions for it.
-    pub fn disable_sender(&mut self, address: Address) -> bool {
-        if !self.disabled_senders.insert(address) {
-            return false;
-        }
+    /// Drops a sender's signed nonce tail and advances its generation.
+    ///
+    /// This repairs only local presigned state: the producer receives the returned generation,
+    /// refetches that sender's pending nonce, and resumes signing new work in the new generation.
+    pub fn reset_sender(&mut self, sender_index: usize, address: Address) -> Option<u64> {
+        let generation = self.sender_generations.get_mut(sender_index)?;
+        *generation = generation.wrapping_add(1);
+        let generation = *generation;
+
         for sender in &mut self.senders {
             let mut removed_gas = 0u128;
             sender.retain(|tx| {
@@ -57,7 +74,8 @@ impl PresignBuffer {
             });
             self.buffered_gas = self.buffered_gas.saturating_sub(removed_gas);
         }
-        true
+
+        Some(generation)
     }
 
     /// Takes transactions round-robin until at least `budget_gas` is selected.
@@ -167,8 +185,8 @@ mod tests {
     #[test]
     fn preserves_nonce_order_across_partial_takes() {
         let mut buffer = PresignBuffer::new(2);
-        buffer.push_sender_batch(0, vec![tx(1, 0, 21_000), tx(1, 1, 21_000)]);
-        buffer.push_sender_batch(1, vec![tx(2, 0, 21_000), tx(2, 1, 21_000)]);
+        buffer.push_sender_batch(0, 0, vec![tx(1, 0, 21_000), tx(1, 1, 21_000)]);
+        buffer.push_sender_batch(1, 0, vec![tx(2, 0, 21_000), tx(2, 1, 21_000)]);
 
         let first = buffer.take_gas(42_000);
         let second = buffer.take_gas(42_000);
@@ -180,7 +198,7 @@ mod tests {
     #[test]
     fn returns_available_transactions_when_short() {
         let mut buffer = PresignBuffer::new(1);
-        buffer.push_sender_batch(0, vec![tx(1, 0, 21_000)]);
+        buffer.push_sender_batch(0, 0, vec![tx(1, 0, 21_000)]);
 
         let selected = buffer.take_gas(100_000);
 
@@ -192,6 +210,7 @@ mod tests {
     fn budgets_by_estimated_gas_instead_of_transaction_limit() {
         let mut buffer = PresignBuffer::new(1);
         buffer.push_sender_batch(
+            0,
             0,
             vec![
                 tx_with_estimated_gas(1, 0, 250_000, 100_000),
@@ -210,8 +229,8 @@ mod tests {
         let mut buffer = PresignBuffer::new(2);
         let blocked = Address::with_last_byte(1);
         let available = Address::with_last_byte(2);
-        buffer.push_sender_batch(0, vec![tx(1, 0, 21_000)]);
-        buffer.push_sender_batch(1, vec![tx(2, 0, 21_000)]);
+        buffer.push_sender_batch(0, 0, vec![tx(1, 0, 21_000)]);
+        buffer.push_sender_batch(1, 0, vec![tx(2, 0, 21_000)]);
         let mut slots = HashMap::from([(blocked, 0), (available, 1)]);
 
         let selected = buffer.take_gas_with_sender_slots(21_000, &mut slots);
@@ -224,8 +243,8 @@ mod tests {
     #[test]
     fn respects_global_transaction_limit() {
         let mut buffer = PresignBuffer::new(2);
-        buffer.push_sender_batch(0, vec![tx(1, 0, 21_000), tx(1, 1, 21_000)]);
-        buffer.push_sender_batch(1, vec![tx(2, 0, 21_000), tx(2, 1, 21_000)]);
+        buffer.push_sender_batch(0, 0, vec![tx(1, 0, 21_000), tx(1, 1, 21_000)]);
+        buffer.push_sender_batch(1, 0, vec![tx(2, 0, 21_000), tx(2, 1, 21_000)]);
         let mut slots = HashMap::new();
 
         let selected = buffer.take_gas_with_limits(84_000, &mut slots, 2);
@@ -235,15 +254,18 @@ mod tests {
     }
 
     #[test]
-    fn disabling_sender_drops_and_rejects_signed_tail() {
+    fn resetting_sender_drops_stale_tail_and_accepts_new_generation() {
         let mut buffer = PresignBuffer::new(1);
         let address = Address::with_last_byte(1);
-        buffer.push_sender_batch(0, vec![tx(1, 0, 21_000), tx(1, 1, 21_000)]);
+        buffer.push_sender_batch(0, 0, vec![tx(1, 0, 21_000), tx(1, 1, 21_000)]);
 
-        assert!(buffer.disable_sender(address));
-        buffer.push_sender_batch(0, vec![tx(1, 2, 21_000)]);
+        let generation = buffer.reset_sender(0, address).expect("sender exists");
+        buffer.push_sender_batch(0, 0, vec![tx(1, 2, 21_000)]);
+        buffer.push_sender_batch(0, generation, vec![tx(1, 0, 21_000)]);
 
-        assert_eq!(buffer.buffered_gas(), 0);
-        assert!(buffer.take_gas(21_000).is_empty());
+        assert_eq!(buffer.buffered_gas(), 21_000);
+        let selected = buffer.take_gas(21_000);
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].nonce, 0);
     }
 }
