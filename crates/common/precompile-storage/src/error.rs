@@ -8,10 +8,9 @@ sol! {
     /// Precompile cannot be executed via delegatecall or callcode.
     error DelegateCallNotAllowed();
 }
-use revm::{
-    context::journaled_state::JournalLoadError,
-    precompile::{PrecompileError, PrecompileHalt, PrecompileOutput, PrecompileResult},
-};
+use revm::context::journaled_state::JournalLoadError;
+
+use crate::neutral::{PrecompileError, PrecompileHalt, PrecompileOutput, PrecompileResult};
 
 /// Top-level error type for all Base native precompile operations.
 #[derive(

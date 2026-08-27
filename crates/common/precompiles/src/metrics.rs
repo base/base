@@ -6,8 +6,9 @@ use std::time::Instant;
 
 use alloy_primitives::Bytes;
 use alloy_sol_types::{SolCall, SolError};
-use base_precompile_storage::{BasePrecompileError, Result, StorageCtx};
-use revm::precompile::{PrecompileError, PrecompileOutput, PrecompileResult};
+use base_precompile_storage::{
+    BasePrecompileError, PrecompileError, PrecompileOutput, PrecompileResult, Result, StorageCtx,
+};
 
 use crate::{IActivationRegistry, IB20, IB20Asset, IB20Factory, IB20Stablecoin, IPolicyRegistry};
 
@@ -239,7 +240,7 @@ impl BerylErrorKind {
     /// Classifies a raw precompile error into a bounded metric label.
     pub const fn from_precompile_error(error: &PrecompileError) -> Self {
         match error {
-            PrecompileError::Fatal(_) | PrecompileError::FatalAny(_) => Self::Fatal,
+            PrecompileError::Fatal(_) => Self::Fatal,
         }
     }
 
@@ -657,7 +658,7 @@ impl BerylAuxiliaryMetrics {
 mod tests {
     use alloy_primitives::{Address, B256, U256};
     use alloy_sol_types::{SolCall, SolError};
-    use base_precompile_storage::BasePrecompileError;
+    use base_precompile_storage::{BasePrecompileError, PrecompileError, PrecompileOutput};
 
     use crate::{
         BerylCallOutcome, BerylCallRecorder, BerylErrorKind, BerylMetricLabels, BerylSelector,
@@ -730,9 +731,9 @@ mod tests {
 
     #[test]
     fn result_outcomes_are_classified() {
-        let success = Ok(revm::precompile::PrecompileOutput::new(1, Default::default(), 0));
-        let revert = Ok(revm::precompile::PrecompileOutput::revert(1, Default::default(), 0));
-        let fatal = Err(revm::precompile::PrecompileError::Fatal("boom".into()));
+        let success = Ok(PrecompileOutput::new(1, Default::default(), 0));
+        let revert = Ok(PrecompileOutput::revert(1, Default::default(), 0));
+        let fatal = Err(PrecompileError::Fatal("boom".into()));
 
         assert_eq!(BerylCallOutcome::from_result(&success), BerylCallOutcome::Success);
         assert_eq!(BerylCallOutcome::from_result(&revert), BerylCallOutcome::Revert);

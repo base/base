@@ -11,8 +11,7 @@
 use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::{SolCall, SolValue};
 use base_common_genesis::BaseUpgrade;
-use base_precompile_storage::{BasePrecompileError, StorageCtx};
-use revm::precompile::PrecompileResult;
+use base_precompile_storage::{BasePrecompileError, PrecompileResult, StorageCtx};
 
 use crate::{
     AssetAccounting, AssetCall, AssetVersion, AssetVersions, B20AssetStorage, B20AssetToken,
