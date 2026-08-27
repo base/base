@@ -5,7 +5,7 @@ pub use deposit::{DepositTransaction, TxDeposit};
 
 mod eip8130;
 pub use eip8130::{
-    AccountChange, AccountChangeChannel, Call, ChangeType, CreateEntry, Delegation,
+    AccountChange, AccountChangeChannel, Call, ChangeType, CoinbaseTip, CreateEntry, Delegation,
     Eip8130Constants, Eip8130Contracts, Eip8130Signed, Eip8130StaticError, Eip8130TimestampError,
     IDefaultAccount, InitialActor, Scope, SignedAccountChanges, SignedChange, TxEip8130,
 };
