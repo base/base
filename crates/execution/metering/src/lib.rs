@@ -11,12 +11,15 @@ mod collector;
 pub use collector::MeteringCollector;
 
 mod block;
-pub use block::meter_block;
+pub use block::{meter_block, meter_block_with_cache_callbacks, meter_block_with_optional_cache};
 
 mod cache;
 pub use cache::{
     BlockMetrics, FlashblockMetrics, MeteredTransaction, MeteringCache, ResourceTotals,
 };
+
+mod dowse;
+pub use dowse::{DowseBenchmarkConfig, benchmark_dowse_block, replay_dowse_block};
 
 mod estimator;
 pub use estimator::{
@@ -35,6 +38,9 @@ pub use meter::{
     MeterBundleInput, MeterBundleOutput, MeteredOpcodes, PendingState, PseudoOpcode, meter_bundle,
 };
 
+mod provider;
+pub use provider::MeteredStateProvider;
+
 mod rpc;
 pub use rpc::MeteringApiImpl;
 
@@ -43,8 +49,11 @@ pub use traits::MeteringApiServer;
 
 mod types;
 pub use types::{
-    MeterBlockResponse, MeterBlockTransactions, MeteredPriorityFeeResponse,
-    ResourceFeeEstimateResponse,
+    DowseBlockBenchmarkResponse, DowseBlockReplayResponse, DowseConcurrentBlockReplayResponse,
+    DowseConcurrentPrefetchStats, DowseConcurrentReplayConfig, DowsePrefetchReadCounts,
+    DowsePrefetchStats, MeterBlockResponse, MeterBlockTransactions,
+    MeterStateProviderAccountAccess, MeterStateProviderCodeAccess, MeterStateProviderStats,
+    MeteredPriorityFeeResponse, ResourceFeeEstimateResponse,
 };
 
 mod transaction;

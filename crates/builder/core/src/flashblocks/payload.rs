@@ -53,7 +53,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
 
 use crate::{
-    BuilderConfig, BuilderMetrics, ExecutionInfo, PayloadBuilder, ResourceLimits,
+    BuilderConfig, BuilderMetrics, DowsePrefetchCache, ExecutionInfo, PayloadBuilder,
+    ResourceLimits,
     flashblocks::{
         FlashblocksExtraCtx,
         best_txs::{BestFlashblocksTxs, ParkableBestPayloadTransactions},
@@ -124,6 +125,8 @@ pub(super) struct BasePayloadBuilder<Pool, Client> {
     /// The outbound channels the builder emits built payloads, flashblocks, and rejected
     /// transactions to.
     pub outputs: BuilderOutputs,
+    /// Parent-tagged state cache populated from Dowse transaction plans.
+    pub dowse_cache: Option<DowsePrefetchCache>,
     /// Last flashblock emitted by this builder instance.
     last_emitted_flashblock_id: Arc<LastEmittedFlashblockId>,
 }
@@ -136,6 +139,7 @@ impl<Pool, Client> BasePayloadBuilder<Pool, Client> {
         client: Client,
         config: BuilderConfig,
         outputs: BuilderOutputs,
+        dowse_cache: Option<DowsePrefetchCache>,
     ) -> Self {
         Self {
             evm_config,
@@ -143,6 +147,7 @@ impl<Pool, Client> BasePayloadBuilder<Pool, Client> {
             client,
             config,
             outputs,
+            dowse_cache,
             last_emitted_flashblock_id: Arc::default(),
         }
     }
@@ -260,6 +265,7 @@ where
         let BuildArguments {
             mut cached_reads,
             execution_cache,
+            txpool_snapshot,
             config,
             cancel: block_cancel,
             publish_guard,
@@ -287,13 +293,46 @@ where
             )
             .map_err(|e| PayloadBuilderError::Other(e.into()))?;
 
-        let mut state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
+        let parent_hash = ctx.parent().hash();
+        let mut state_provider = self.client.state_by_block_hash(parent_hash)?;
+        let dowse_cache = self.dowse_cache.as_ref().map(|cache| {
+            let cache_size_bytes = self
+                .config
+                .dowse
+                .as_ref()
+                .expect("Dowse cache requires Dowse configuration")
+                .cache_size_bytes;
+            cache.cache_for_or_activate(parent_hash, cache_size_bytes)
+        });
+        let dowse_variant = match (&self.config.dowse, dowse_cache) {
+            (None, _) => None,
+            (Some(dowse_config), _) if !dowse_config.cache_enabled_for(parent_hash) => {
+                Some("control")
+            }
+            (Some(_), Some(dowse_cache)) => {
+                state_provider = Box::new(CachedStateProvider::new(
+                    state_provider,
+                    dowse_cache,
+                    Some(CachedStateMetrics::zeroed(CachedStateMetricsSource::Dowse)),
+                ));
+                Some("cached")
+            }
+            (Some(_), None) => Some("unavailable"),
+        };
+        if !ctx.attributes().no_tx_pool
+            && let Some(variant) = dowse_variant
+        {
+            BuilderMetrics::dowse_payloads_total(variant).increment(1);
+        }
         if let Some(execution_cache) = execution_cache {
-            state_provider = Box::new(CachedStateProvider::new(
-                state_provider,
-                execution_cache.cache().clone(),
-                Some(CachedStateMetrics::zeroed(CachedStateMetricsSource::Builder)),
-            ));
+            state_provider = Box::new(
+                CachedStateProvider::new(
+                    state_provider,
+                    execution_cache.cache().clone(),
+                    Some(CachedStateMetrics::zeroed(CachedStateMetricsSource::Builder)),
+                )
+                .with_txpool_snapshot(txpool_snapshot),
+            );
         }
         let db = StateProviderDatabase::new(state_provider);
 
@@ -431,6 +470,9 @@ where
             ),
             self.config.rejection_cache.clone(),
         );
+        if let Some(dowse_cache) = &self.dowse_cache {
+            best_txs = best_txs.with_dowse_cursor(dowse_cache.clone(), parent_hash);
+        }
         let interval = self.config.flashblocks_interval;
         let (tx, mut rx) = mpsc::channel((self.config.flashblocks_per_block() + 1) as usize);
 
@@ -509,6 +551,7 @@ where
                     &publish_guard,
                     &fb_span,
                     &mut executed_sender_nonces,
+                    dowse_variant,
                 )
                 .await
             {
@@ -567,6 +610,7 @@ where
         publish_guard: &parking_lot::Mutex<()>,
         span: &tracing::Span,
         executed_sender_nonces: &mut HashMap<Address, u64>,
+        dowse_variant: Option<&'static str>,
     ) -> eyre::Result<Option<FlashblocksExtraCtx>> {
         let flashblock_index = ctx.flashblock_index();
         let payload_id = ctx.payload_id().to_string();
@@ -635,6 +679,7 @@ where
         BuilderMetrics::transaction_pool_fetch_gauge().set(transaction_pool_fetch_time);
 
         let tx_execution_start_time = Instant::now();
+        let transaction_count_before = info.executed_transactions.len();
         let limits = ResourceLimits {
             block_gas_limit: target_gas_for_batch.min(ctx.block_gas_limit()),
             tx_data_limit: ctx.builder_config.da_config.max_da_tx_size(),
@@ -718,6 +763,12 @@ where
             .record(payload_transaction_simulation_time);
         BuilderMetrics::payload_transaction_simulation_gauge()
             .set(payload_transaction_simulation_time);
+        if let Some(variant) = dowse_variant {
+            BuilderMetrics::dowse_transaction_simulation_duration(variant)
+                .record(payload_transaction_simulation_time);
+            BuilderMetrics::dowse_transactions_included(variant)
+                .record((info.executed_transactions.len() - transaction_count_before) as f64);
+        }
 
         let total_block_built_duration = Instant::now();
         let prev_flashblock_id = self.previous_flashblock_id();

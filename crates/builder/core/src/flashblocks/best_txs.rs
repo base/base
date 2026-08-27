@@ -2,7 +2,7 @@
 
 use std::{collections::HashSet, marker::PhantomData, sync::Arc};
 
-use alloy_primitives::{Address, TxHash};
+use alloy_primitives::{Address, BlockHash, TxHash};
 use base_execution_txpool::{BasePooledTx, ParkableBestTransactions};
 use reth_payload_util::PayloadTransactions;
 use reth_transaction_pool::{
@@ -10,7 +10,7 @@ use reth_transaction_pool::{
     error::{InvalidPoolTransactionError, PoolTransactionError},
 };
 
-use crate::{BuilderMetrics, RejectionCache};
+use crate::{BuilderMetrics, DowsePrefetchCache, RejectionCache};
 
 /// Indicates that the payload builder excluded a transaction from the current candidate iterator.
 #[derive(Debug, thiserror::Error)]
@@ -179,6 +179,8 @@ where
     rejection_cache: RejectionCache,
     // Identity of the transaction most recently returned to the build loop.
     current_transaction: Option<(TxHash, Address, u64)>,
+    // Exact-parent Dowse scheduler receiving actual builder cursor updates.
+    dowse_cursor: Option<(DowsePrefetchCache, BlockHash)>,
     transaction: PhantomData<T>,
 }
 
@@ -207,15 +209,22 @@ where
             committed_transactions: Default::default(),
             rejection_cache,
             current_transaction: None,
+            dowse_cursor: None,
             transaction: PhantomData,
         }
+    }
+
+    /// Connects this iterator's transaction lifecycle to the exact-parent Dowse scheduler.
+    pub fn with_dowse_cursor(mut self, cache: DowsePrefetchCache, parent_hash: BlockHash) -> Self {
+        self.dowse_cursor = Some((cache, parent_hash));
+        self
     }
 
     /// Replaces current iterator with new one. We use it on new flashblock building, to refresh
     /// priority boundaries
     pub fn refresh_iterator(&mut self, inner: I) {
+        self.finish_current_transaction();
         self.inner = inner;
-        self.current_transaction = None;
     }
 
     /// Remove transaction from next iteration since it is already in the state
@@ -233,6 +242,13 @@ where
         BuilderMetrics::rejection_cache_insertions().increment(tx_hashes.len() as u64);
         BuilderMetrics::rejection_cache_size().set(self.rejection_cache.entry_count() as f64);
     }
+
+    fn finish_current_transaction(&mut self) {
+        let Some((tx_hash, _, _)) = self.current_transaction.take() else { return };
+        if let Some((cache, parent_hash)) = &self.dowse_cursor {
+            cache.finish_transaction(*parent_hash, tx_hash);
+        }
+    }
 }
 
 impl<T, I> PayloadTransactions for BestFlashblocksTxs<T, I>
@@ -243,6 +259,7 @@ where
     type Transaction = T;
 
     fn next(&mut self, ctx: ()) -> Option<Self::Transaction> {
+        self.finish_current_transaction();
         loop {
             let tx = self.inner.next(ctx)?;
             let hash = *tx.hash();
@@ -250,7 +267,7 @@ where
 
             if self.committed_transactions.contains(&hash) {
                 self.inner.mark_current_committed();
-                self.current_transaction = None;
+                self.finish_current_transaction();
                 continue;
             }
 
@@ -260,10 +277,13 @@ where
                 // descendants cannot execute across the resulting gap, so exclude the lane for
                 // this iterator rather than treating the rejected head as committed.
                 self.inner.mark_invalid(tx.sender(), tx.nonce());
-                self.current_transaction = None;
+                self.finish_current_transaction();
                 continue;
             }
 
+            if let Some((cache, parent_hash)) = &self.dowse_cursor {
+                cache.start_transaction(*parent_hash, hash);
+            }
             return Some(tx);
         }
     }
@@ -279,7 +299,7 @@ where
             return;
         }
         self.inner.mark_invalid(sender, nonce);
-        self.current_transaction = None;
+        self.finish_current_transaction();
     }
 }
 
@@ -291,16 +311,17 @@ where
     fn park_current(&mut self) -> bool {
         let parked = self.inner.park_current();
         if parked {
-            self.current_transaction = None;
+            self.finish_current_transaction();
         }
         parked
     }
 
     fn mark_current_committed(&mut self) {
         self.inner.mark_current_committed();
-        if let Some((transaction_hash, _, _)) = self.current_transaction.take() {
+        if let Some((transaction_hash, _, _)) = self.current_transaction {
             self.committed_transactions.insert(transaction_hash);
         }
+        self.finish_current_transaction();
     }
 
     fn promote(&mut self, transaction_hash: TxHash) -> bool {

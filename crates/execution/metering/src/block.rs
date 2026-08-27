@@ -3,17 +3,39 @@
 use std::{sync::Arc, time::Instant};
 
 use alloy_consensus::{BlockHeader, Header, transaction::SignerRecoverable};
-use alloy_primitives::B256;
+use alloy_primitives::{B256, TxHash};
 use base_common_consensus::BaseBlock;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use eyre::{Result as EyreResult, eyre};
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
+use reth_execution_cache::{CachedStateProvider, ExecutionCache};
 use reth_primitives_traits::Block as BlockT;
-use reth_provider::{HeaderProvider, StateProviderFactory};
+use reth_provider::{HeaderProvider, StateProvider, StateProviderFactory};
 use reth_revm::{database::StateProviderDatabase, db::State};
 
-use crate::types::{MeterBlockResponse, MeterBlockTransactions};
+use crate::{
+    MeterBlockResponse, MeterBlockTransactions, MeterStateProviderStats, MeteredStateProvider,
+};
+
+impl MeterStateProviderStats {
+    /// Returns the saturating difference from an earlier cumulative snapshot.
+    pub const fn saturating_sub(self, earlier: Self) -> Self {
+        Self {
+            account_fetches: self.account_fetches.saturating_sub(earlier.account_fetches),
+            account_fetch_time_us: self
+                .account_fetch_time_us
+                .saturating_sub(earlier.account_fetch_time_us),
+            storage_fetches: self.storage_fetches.saturating_sub(earlier.storage_fetches),
+            storage_fetch_time_us: self
+                .storage_fetch_time_us
+                .saturating_sub(earlier.storage_fetch_time_us),
+            code_fetches: self.code_fetches.saturating_sub(earlier.code_fetches),
+            code_fetch_time_us: self.code_fetch_time_us.saturating_sub(earlier.code_fetch_time_us),
+            code_fetched_bytes: self.code_fetched_bytes.saturating_sub(earlier.code_fetched_bytes),
+        }
+    }
+}
 
 /// Re-executes a block and meters execution and timing information.
 ///
@@ -38,6 +60,48 @@ pub fn meter_block<P>(
 where
     P: StateProviderFactory + HeaderProvider<Header = Header>,
 {
+    meter_block_with_optional_cache(provider, chain_spec, block, None, || {})
+}
+
+/// Re-executes a block using an optional prepopulated parent-state execution cache.
+pub fn meter_block_with_optional_cache<P, F>(
+    provider: P,
+    chain_spec: Arc<BaseChainSpec>,
+    block: &BaseBlock,
+    cache: Option<ExecutionCache>,
+    before_execution: F,
+) -> EyreResult<MeterBlockResponse>
+where
+    P: StateProviderFactory + HeaderProvider<Header = Header>,
+    F: FnOnce(),
+{
+    meter_block_with_cache_callbacks(
+        provider,
+        chain_spec,
+        block,
+        cache,
+        before_execution,
+        |_| {},
+        |_| {},
+    )
+}
+
+/// Re-executes a block with callbacks surrounding each canonical transaction.
+pub fn meter_block_with_cache_callbacks<P, F, B, A>(
+    provider: P,
+    chain_spec: Arc<BaseChainSpec>,
+    block: &BaseBlock,
+    cache: Option<ExecutionCache>,
+    before_execution: F,
+    mut before_transaction: B,
+    mut after_transaction: A,
+) -> EyreResult<MeterBlockResponse>
+where
+    P: StateProviderFactory + HeaderProvider<Header = Header>,
+    F: FnOnce(),
+    B: FnMut(TxHash),
+    A: FnMut(TxHash),
+{
     let block_hash = block.header().hash_slow();
     let block_number = block.header().number();
     let transactions = block.body().transactions();
@@ -49,10 +113,14 @@ where
         .ok_or_else(|| eyre!("Parent header not found: {}", parent_hash))?;
 
     // Get state provider at parent block
-    let state_provider = provider.state_by_block_hash(parent_hash)?;
+    let state_provider = MeteredStateProvider::new(provider.state_by_block_hash(parent_hash)?);
+    let cached_state_provider =
+        cache.map(|cache| CachedStateProvider::new(&state_provider, cache, None));
+    let execution_state_provider: &dyn StateProvider =
+        cached_state_provider.as_ref().map_or(&state_provider, |provider| provider);
 
     // Create state database from parent state
-    let state_db = StateProviderDatabase::new(&state_provider);
+    let state_db = StateProviderDatabase::new(execution_state_provider);
     let mut db = State::builder().with_database(state_db).with_bundle_update().build();
 
     // Set up block attributes from the actual block header
@@ -82,16 +150,22 @@ where
     // Execute transactions and measure time
     let mut transaction_times = Vec::with_capacity(tx_count);
 
+    before_execution();
     let evm_start = Instant::now();
     {
         let evm_config = BaseEvmConfig::base(chain_spec);
         let mut builder = evm_config.builder_for_next_block(&mut db, &parent_header, attributes)?;
 
         builder.apply_pre_execution_changes()?;
+        // Keep pre-execution accesses in block totals, but do not attribute them to the first
+        // transaction.
+        state_provider.take_accesses();
 
         for recovered_tx in recovered_transactions {
-            let tx_start = Instant::now();
             let tx_hash = recovered_tx.tx_hash();
+            before_transaction(tx_hash);
+            let state_provider_before = state_provider.stats();
+            let tx_start = Instant::now();
 
             let gas_used = builder
                 .execute_transaction(recovered_tx)
@@ -99,12 +173,18 @@ where
                 .tx_gas_used();
 
             let execution_time = tx_start.elapsed().as_micros();
+            let (state_provider_accounts, state_provider_code_hashes) =
+                state_provider.take_accesses();
 
             transaction_times.push(MeterBlockTransactions {
                 tx_hash,
                 gas_used,
                 execution_time_us: execution_time,
+                state_provider: state_provider.stats().saturating_sub(state_provider_before),
+                state_provider_accounts,
+                state_provider_code_hashes,
             });
+            after_transaction(tx_hash);
         }
     }
     let execution_time = evm_start.elapsed().as_micros();
@@ -119,6 +199,7 @@ where
         // Retained as a zero-valued compatibility field for older profiling clients.
         state_root_time_us: 0,
         total_time_us: total_time,
+        state_provider: state_provider.stats(),
         transactions: transaction_times,
     })
 }
@@ -126,10 +207,11 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_consensus::TxEip1559;
-    use alloy_primitives::{Address, Signature};
+    use alloy_primitives::{Address, Signature, U256};
+    use alloy_sol_types::SolCall;
     use base_common_consensus::{BaseBlockBody, BaseTransactionSigned};
     use base_node_runner::test_utils::TestHarness;
-    use base_test_utils::Account;
+    use base_test_utils::{Account, SimpleStorage};
     use reth_primitives_traits::Block as _;
     use reth_transaction_pool::test_utils::TransactionBuilder;
 
@@ -215,6 +297,70 @@ mod tests {
         assert_eq!(metered_tx.tx_hash, tx_hash);
         assert_eq!(metered_tx.gas_used, 21_000);
         assert!(metered_tx.execution_time_us > 0, "transaction execution time should be non-zero");
+        assert!(
+            metered_tx.state_provider.account_fetches > 0,
+            "transaction should fetch accounts from the parent state"
+        );
+        assert!(
+            !metered_tx.state_provider_accounts.is_empty(),
+            "transaction should report fetched account addresses"
+        );
+        assert_eq!(
+            metered_tx
+                .state_provider_accounts
+                .iter()
+                .map(|access| access.account_fetches)
+                .sum::<u64>(),
+            metered_tx.state_provider.account_fetches
+        );
+        assert_eq!(
+            metered_tx
+                .state_provider_accounts
+                .iter()
+                .map(|access| access.account_fetch_time_us)
+                .sum::<u128>(),
+            metered_tx.state_provider.account_fetch_time_us
+        );
+        assert_eq!(
+            metered_tx
+                .state_provider_accounts
+                .iter()
+                .map(|access| access.storage_fetches)
+                .sum::<u64>(),
+            metered_tx.state_provider.storage_fetches
+        );
+        assert_eq!(
+            metered_tx
+                .state_provider_accounts
+                .iter()
+                .map(|access| access.storage_fetch_time_us)
+                .sum::<u128>(),
+            metered_tx.state_provider.storage_fetch_time_us
+        );
+        assert_eq!(
+            metered_tx.state_provider_code_hashes.iter().map(|access| access.fetches).sum::<u64>(),
+            metered_tx.state_provider.code_fetches
+        );
+        assert_eq!(
+            metered_tx
+                .state_provider_code_hashes
+                .iter()
+                .map(|access| access.fetch_time_us)
+                .sum::<u128>(),
+            metered_tx.state_provider.code_fetch_time_us
+        );
+        assert_eq!(
+            metered_tx
+                .state_provider_code_hashes
+                .iter()
+                .map(|access| access.fetched_bytes)
+                .sum::<u64>(),
+            metered_tx.state_provider.code_fetched_bytes
+        );
+        assert!(
+            response.state_provider.account_fetches >= metered_tx.state_provider.account_fetches,
+            "block fetches should include transaction fetches"
+        );
 
         assert!(response.signer_recovery_time_us > 0, "signer recovery should take time");
         assert!(response.execution_time_us > 0);
@@ -301,6 +447,50 @@ mod tests {
         assert!(
             individual_times <= response.execution_time_us,
             "sum of individual times should not exceed total (due to EVM overhead)"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn meter_block_reports_contract_storage_and_bytecode_identity() -> eyre::Result<()> {
+        let harness = TestHarness::new().await?;
+        let (deployment_tx, contract_address, _) =
+            Account::Deployer.create_deployment_tx(SimpleStorage::BYTECODE.clone(), 0)?;
+        harness.build_block_from_transactions(vec![deployment_tx]).await?;
+
+        let signed_tx = TransactionBuilder::default()
+            .signer(Account::Alice.signer_b256())
+            .chain_id(harness.chain_id())
+            .nonce(0)
+            .to(contract_address)
+            .gas_limit(100_000)
+            .max_fee_per_gas(1_000_000_000)
+            .max_priority_fee_per_gas(1)
+            .input(SimpleStorage::setValueCall { v: U256::from(42) }.abi_encode())
+            .into_eip1559();
+        let tx = BaseTransactionSigned::Eip1559(
+            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+        );
+        let block = create_block_with_transactions(&harness, vec![tx]);
+
+        let response = meter_block(harness.blockchain_provider(), harness.chain_spec(), &block)?;
+        let metered_tx = &response.transactions[0];
+        let contract_access = metered_tx
+            .state_provider_accounts
+            .iter()
+            .find(|access| access.address == contract_address)
+            .expect("contract access should be reported");
+        let bytecode_hash =
+            contract_access.bytecode_hash.expect("contract bytecode hash should be reported");
+
+        assert!(contract_access.storage_keys.contains(&B256::ZERO));
+        assert!(
+            metered_tx
+                .state_provider_code_hashes
+                .iter()
+                .any(|access| access.code_hash == bytecode_hash),
+            "fetched bytecode should be associated with the contract account"
         );
 
         Ok(())

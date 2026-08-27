@@ -5,7 +5,10 @@ use alloy_primitives::B256;
 use base_bundles::{Bundle, MeterBundleResponse};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 
-use crate::{MeterBlockResponse, MeteredPriorityFeeResponse};
+use crate::{
+    DowseBlockBenchmarkResponse, DowseBlockReplayResponse, DowseConcurrentBlockReplayResponse,
+    DowseConcurrentReplayConfig, MeterBlockResponse, MeteredPriorityFeeResponse,
+};
 
 /// RPC API for transaction metering.
 ///
@@ -42,6 +45,30 @@ pub trait MeteringApi {
         &self,
         number: BlockNumberOrTag,
     ) -> RpcResult<MeterBlockResponse>;
+
+    /// Replays one canonical block with raw parent state and a cache populated from Dowse plans.
+    #[method(name = "benchmarkDowseBlockByNumber")]
+    async fn benchmark_dowse_block_by_number(
+        &self,
+        number: BlockNumberOrTag,
+        cached_first: bool,
+    ) -> RpcResult<DowseBlockBenchmarkResponse>;
+
+    /// Replays one canonical block once, with or without a Dowse-prefetched cache.
+    #[method(name = "replayDowseBlockByNumber")]
+    async fn replay_dowse_block_by_number(
+        &self,
+        number: BlockNumberOrTag,
+        dowse_cache_enabled: bool,
+    ) -> RpcResult<DowseBlockReplayResponse>;
+
+    /// Replays one block while finite-head-start Dowse workers race EVM execution.
+    #[method(name = "replayConcurrentDowseBlockByNumber")]
+    async fn replay_concurrent_dowse_block_by_number(
+        &self,
+        number: BlockNumberOrTag,
+        config: DowseConcurrentReplayConfig,
+    ) -> RpcResult<DowseConcurrentBlockReplayResponse>;
 
     /// Handler for: `base_meteredPriorityFeePerGas`
     ///

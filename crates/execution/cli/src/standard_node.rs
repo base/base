@@ -6,7 +6,9 @@ use base_bundle_extension::BundleExtension;
 use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
-use base_metering::{MeteredOpcodes, MeteringConfig, MeteringExtension, MeteringResourceLimits};
+use base_metering::{
+    DowseBenchmarkConfig, MeteredOpcodes, MeteringConfig, MeteringExtension, MeteringResourceLimits,
+};
 use base_node_core::{HasRollupArgs, RollupArgs};
 use base_node_runner::{BaseNodeBuilder, BaseNodeRunner, LaunchedBaseNode, PayloadServiceBuilder};
 use base_observability_events::{
@@ -79,6 +81,18 @@ pub struct MeteringArgs {
     /// (e.g., "SSTORE,SLOAD,KECCAK256"). Precompile gas is always tracked.
     #[arg(long = "metering.metered-opcodes", requires = "enable_metering", value_delimiter = ',')]
     pub metering_metered_opcodes: Vec<String>,
+
+    /// JSON hint table used by the deterministic Dowse block replay benchmark.
+    #[arg(long = "metering.dowse-hints", requires = "enable_metering")]
+    pub metering_dowse_hints: Option<PathBuf>,
+
+    /// State-read workers used by the Dowse replay benchmark.
+    #[arg(long = "metering.dowse-workers", default_value = "4")]
+    pub metering_dowse_workers: usize,
+
+    /// Execution-cache budget for the Dowse replay benchmark, in `MiB`.
+    #[arg(long = "metering.dowse-cache-size-mb", default_value = "256")]
+    pub metering_dowse_cache_size_mb: usize,
 }
 
 /// Default maximum number of open shadow indexer database connections.
@@ -588,6 +602,18 @@ impl StandardBaseRethNode {
             {
                 config = config.with_target_flashblocks_per_block(target_flashblocks_per_block);
             }
+            if let Some(hints_path) = &args.metering.metering_dowse_hints {
+                let cache_size_bytes = args
+                    .metering
+                    .metering_dowse_cache_size_mb
+                    .checked_mul(1024 * 1024)
+                    .ok_or_else(|| eyre::eyre!("metering.dowse-cache-size-mb is too large"))?;
+                config = config.with_dowse_benchmark(DowseBenchmarkConfig::load(
+                    hints_path,
+                    args.metering.metering_dowse_workers,
+                    cache_size_bytes,
+                )?);
+            }
             config
         } else {
             MeteringConfig::disabled()
@@ -970,6 +996,25 @@ mod tests {
 
         assert!(args.metering.enable_metering);
         assert_eq!(args.metering.metering_gas_limit, Some(30_000_000));
+    }
+
+    #[test]
+    fn parses_dowse_metering_benchmark_args() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
+            "reth",
+            "--enable-metering",
+            "--metering.dowse-hints",
+            "/tmp/hints.json",
+            "--metering.dowse-workers",
+            "8",
+            "--metering.dowse-cache-size-mb",
+            "512",
+        ])
+        .args;
+
+        assert_eq!(args.metering.metering_dowse_hints, Some(PathBuf::from("/tmp/hints.json")));
+        assert_eq!(args.metering.metering_dowse_workers, 8);
+        assert_eq!(args.metering.metering_dowse_cache_size_mb, 512);
     }
 
     #[test]

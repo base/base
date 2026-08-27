@@ -16,14 +16,21 @@ workspace = true
 base-bundles.workspace = true
 base-flashblocks.workspace = true
 base-node-runner.workspace = true
+base-builder-core.workspace = true
 base-common-precompiles.workspace = true
+
+# dowse
+dowse-plan.workspace = true
+dowse-types.workspace = true
 
 # reth
 reth-evm.workspace = true
 reth-revm.workspace = true
+reth-trie.workspace = true
 reth-provider.workspace = true
 base-common-evm.workspace = true
 base-execution-evm.workspace = true
+reth-execution-cache.workspace = true
 reth-primitives-traits.workspace = true
 base-execution-chainspec.workspace = true
 
@@ -51,6 +58,7 @@ base-common-flz.workspace = true
 eyre.workspace = true
 tokio.workspace = true
 thiserror.workspace = true
+serde_json.workspace = true
 parking_lot.workspace = true
 derive_more.workspace = true
 serde = { workspace = true, features = ["std"] }
@@ -87,4 +95,3 @@ base-common-rpc-types.workspace = true
 # misc
 url.workspace = true
 rand.workspace = true
-serde_json.workspace = true

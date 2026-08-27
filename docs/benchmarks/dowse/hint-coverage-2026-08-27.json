@@ -1,0 +1,140 @@
+{
+  "currentTable": {
+    "trainingBlocks": 120,
+    "addresses": 928,
+    "selectors": 2320,
+    "items": 48522,
+    "sha256": "888c58bb18035e9797610efb9d92dee17b9959c11a661926043a48c32efa01ec"
+  },
+  "recentTable": {
+    "trainingStartBlock": 50492200,
+    "trainingEndBlock": 50492699,
+    "fixedSlotMinimumFrequency": 0.4,
+    "addresses": 1874,
+    "selectors": 5567,
+    "items": 94267,
+    "sha256": "0f1453b27f117627bec2b6103018ef75635b4c94ea3f6d6a310528cba00dc175"
+  },
+  "selectedResidualBlocks": {
+    "blocks": [50493188, 50493795, 50494399, 50494532, 50494575, 50494654, 50494656],
+    "storageFetches": 46429,
+    "storageFetchTimeUs": 1004093,
+    "categories": [
+      {
+        "name": "Matched hint; child or external slot missing",
+        "fetches": 23143,
+        "timeUs": 496573
+      },
+      {
+        "name": "Top-level address absent",
+        "fetches": 11888,
+        "timeUs": 261563
+      },
+      {
+        "name": "Top-level selector absent",
+        "fetches": 9615,
+        "timeUs": 202656
+      },
+      {
+        "name": "Matched hint; top-level slot missing",
+        "fetches": 1636,
+        "timeUs": 38717
+      },
+      {
+        "name": "Planned but EVM arrived first",
+        "fetches": 147,
+        "timeUs": 4584
+      }
+    ],
+    "payloadDerivability": [
+      {
+        "name": "Not derived by common top-level payload patterns",
+        "fetches": 41477
+      },
+      {
+        "name": "Already supported expression, insufficient observations",
+        "fetches": 2071
+      },
+      {
+        "name": "More calldata words or mapping base slots",
+        "fetches": 1800
+      },
+      {
+        "name": "Mapping struct offset",
+        "fetches": 713
+      },
+      {
+        "name": "Nested mapping",
+        "fetches": 221
+      }
+    ],
+    "exactTargetSeenInAtLeastTwoSelectedBlocksPct": 48.7
+  },
+  "forwardHoldoutPlanner": {
+    "blocks": 7,
+    "current": {
+      "storageRecallPct": 13.9,
+      "storagePrecisionPct": 66.9,
+      "predictedTargets": 11206
+    },
+    "recent": {
+      "storageRecallPct": 17.8,
+      "storagePrecisionPct": 74.2,
+      "predictedTargets": 12910
+    }
+  },
+  "fullAbbaReplay": {
+    "startBlock": 50492700,
+    "endBlock": 50494699,
+    "blocks": 2000,
+    "transactions": 344067,
+    "gas": 66658316892,
+    "workers": 4,
+    "headStartUs": 0,
+    "maxAccountsPerTransaction": 32,
+    "maxStorageSlotsPerTransaction": 256,
+    "currentArmDriftPct": 1.15,
+    "recentArmDriftPct": -2.05,
+    "recentVsCurrent": {
+      "executionPct": 14.67,
+      "bootstrap95Pct": [14.15, 15.2],
+      "storageFetchesPct": -5.86,
+      "storageFetchTimePct": 18.36,
+      "accountFetchesPct": -1.79,
+      "accountFetchTimePct": 25.47,
+      "storageTargetsPct": 7.8,
+      "blocksFaster": 123,
+      "p50Pct": 17.2,
+      "p99Pct": 6.75
+    },
+    "thickBlocks": [
+      {
+        "block": 50493188,
+        "gas": 208512296,
+        "currentMs": 354.51,
+        "recentMs": 391.3,
+        "executionPct": 10.38
+      },
+      {
+        "block": 50494654,
+        "gas": 259333290,
+        "currentMs": 413.28,
+        "recentMs": 444.23,
+        "executionPct": 7.49
+      }
+    ],
+    "artifactSha256": {
+      "currentBefore": "504252456ab4f4fdcfd0a857fa2e3ba7b61e18760cd7f24fefa1ec7a2adeb8f3",
+      "recentFirst": "10dd63d78fa254c45a0a4012f8261179760e509dc7068ba0b725d37a042f3f4c",
+      "recentSecond": "6e50d4ac9858a2c35a5c0c130056393a597031743094dcfd7e8a0974d4e1bc30",
+      "currentAfter": "3ee546439c8012e079694dd06919060adfc4b3ce29809145493c275e6e53a011"
+    }
+  },
+  "recentTableWorkerScreen": {
+    "blocks": 21,
+    "bestWorkers": 1,
+    "oneVsFourExecutionPct": -4.61,
+    "oneVsFourStorageFetchesPct": 1.19,
+    "recentOneVsCurrentFourExecutionPct": 22.15
+  }
+}

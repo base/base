@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1180" viewBox="0 0 1440 1180">
+<rect x="0" y="0" width="1440" height="1180" fill="#081426"/>
+<text x="60" y="66" fill="#f2f6fb" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="34" font-weight="760" text-anchor="start">More hints remove reads — and still make the builder slower</text>
+<text x="60" y="101" fill="#91a4bd" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="16" font-weight="500" text-anchor="start">Strict forward holdout · Base blocks 50,492,700–50,494,699 · whole-range A-B-B-A arms</text>
+<rect x="60" y="132" width="310" height="116" rx="18" fill="#101f34" stroke="#243956"/>
+<text x="82" y="166" fill="#8093ad" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="700" text-anchor="start">EVM STORAGE READS</text>
+<text x="82" y="218" fill="#41d6a3" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="32" font-weight="750" text-anchor="start">5.9% fewer</text>
+<rect x="390" y="132" width="310" height="116" rx="18" fill="#101f34" stroke="#243956"/>
+<text x="412" y="166" fill="#8093ad" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="700" text-anchor="start">EVM EXECUTION</text>
+<text x="412" y="218" fill="#ff7a90" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="32" font-weight="750" text-anchor="start">14.7% slower</text>
+<rect x="720" y="132" width="310" height="116" rx="18" fill="#101f34" stroke="#243956"/>
+<text x="742" y="166" fill="#8093ad" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="700" text-anchor="start">STORAGE FETCH TIME</text>
+<text x="742" y="218" fill="#ffb454" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="32" font-weight="750" text-anchor="start">18.4% higher</text>
+<rect x="1050" y="132" width="310" height="116" rx="18" fill="#101f34" stroke="#243956"/>
+<text x="1072" y="166" fill="#8093ad" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="700" text-anchor="start">WORKER-LATE RESIDUAL</text>
+<text x="1072" y="218" fill="#72a7ff" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="32" font-weight="750" text-anchor="start">0.5%</text>
+<rect x="60" y="278" width="630" height="330" rx="18" fill="#101f34" stroke="#243956"/>
+<text x="88" y="319" fill="#f2f6fb" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="22" font-weight="700" text-anchor="start">Static hint coverage</text>
+<text x="88" y="345" fill="#91a4bd" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="14" font-weight="500" text-anchor="start">Recent 500-block table versus current 120-block table</text>
+<text x="88" y="400" fill="#b7c5d8" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="14" font-weight="600" text-anchor="start">Destinations</text>
+<rect x="220" y="383" width="350" height="13" rx="6" fill="#1b304b"/>
+<rect x="220" y="383" width="173.31910352187833" height="13" rx="6" fill="#64748b"/>
+<rect x="220" y="405" width="350.0" height="13" rx="6" fill="#3b82f6"/>
+<text x="584" y="395" fill="#a8b5c7" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="650" text-anchor="start">928</text>
+<text x="584" y="418" fill="#72a7ff" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="650" text-anchor="start">1,874</text>
+<text x="88" y="468" fill="#b7c5d8" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="14" font-weight="600" text-anchor="start">Selectors</text>
+<rect x="220" y="451" width="350" height="13" rx="6" fill="#1b304b"/>
+<rect x="220" y="451" width="145.85952936949883" height="13" rx="6" fill="#64748b"/>
+<rect x="220" y="473" width="350.0" height="13" rx="6" fill="#3b82f6"/>
+<text x="584" y="463" fill="#a8b5c7" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="650" text-anchor="start">2,320</text>
+<text x="584" y="486" fill="#72a7ff" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="650" text-anchor="start">5,567</text>
+<text x="88" y="536" fill="#b7c5d8" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="14" font-weight="600" text-anchor="start">Hinted targets</text>
+<rect x="220" y="519" width="350" height="13" rx="6" fill="#1b304b"/>
+<rect x="220" y="519" width="180.15530355267484" height="13" rx="6" fill="#64748b"/>
+<rect x="220" y="541" width="350.0" height="13" rx="6" fill="#3b82f6"/>
+<text x="584" y="531" fill="#a8b5c7" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="650" text-anchor="start">48,522</text>
+<text x="584" y="554" fill="#72a7ff" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="650" text-anchor="start">94,267</text>
+<text x="88" y="574" fill="#a8b5c7" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="650" text-anchor="start">Current</text>
+<rect x="146" y="562" width="24" height="8" rx="4" fill="#64748b"/>
+<text x="202" y="574" fill="#72a7ff" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="650" text-anchor="start">Recent</text>
+<rect x="256" y="562" width="24" height="8" rx="4" fill="#3b82f6"/>
+<rect x="720" y="278" width="660" height="330" rx="18" fill="#101f34" stroke="#243956"/>
+<text x="748" y="319" fill="#f2f6fb" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="22" font-weight="700" text-anchor="start">Where residual storage latency comes from</text>
+<text x="748" y="345" fill="#91a4bd" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="14" font-weight="500" text-anchor="start">Seven deliberately storage-heavy blocks · 1.00 s cumulative</text>
+<rect x="748" y="377" width="250" height="16" rx="6" fill="#1b304b"/>
+<rect x="748" y="377" width="123.637202928414" height="16" rx="6" fill="#3b82f6"/>
+<text x="1012" y="391" fill="#3b82f6" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="700" text-anchor="start">49.5%</text>
+<text x="1068" y="391" fill="#c5d0df" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="550" text-anchor="start">Matched hint; child or external slot missing</text>
+<rect x="748" y="419" width="250" height="16" rx="6" fill="#1b304b"/>
+<rect x="748" y="419" width="65.1241966630581" height="16" rx="6" fill="#8b5cf6"/>
+<text x="1012" y="433" fill="#8b5cf6" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="700" text-anchor="start">26.0%</text>
+<text x="1068" y="433" fill="#c5d0df" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="550" text-anchor="start">Top-level address absent</text>
+<rect x="748" y="461" width="250" height="16" rx="6" fill="#1b304b"/>
+<rect x="748" y="461" width="50.45747754441073" height="16" rx="6" fill="#d97706"/>
+<text x="1012" y="475" fill="#d97706" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="700" text-anchor="start">20.2%</text>
+<text x="1068" y="475" fill="#c5d0df" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="550" text-anchor="start">Top-level selector absent</text>
+<rect x="748" y="503" width="250" height="16" rx="6" fill="#1b304b"/>
+<rect x="748" y="503" width="9.639794321840705" height="16" rx="6" fill="#64748b"/>
+<text x="1012" y="517" fill="#64748b" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="700" text-anchor="start">3.9%</text>
+<text x="1068" y="517" fill="#c5d0df" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="550" text-anchor="start">Matched hint; top-level slot missing</text>
+<rect x="748" y="545" width="250" height="16" rx="6" fill="#1b304b"/>
+<rect x="748" y="545" width="1.1413285422764625" height="16" rx="6" fill="#2dd4bf"/>
+<text x="1012" y="559" fill="#2dd4bf" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="700" text-anchor="start">0.5%</text>
+<text x="1068" y="559" fill="#c5d0df" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="550" text-anchor="start">Planned but EVM arrived first</text>
+<rect x="60" y="638" width="1320" height="250" rx="18" fill="#101f34" stroke="#243956"/>
+<text x="88" y="680" fill="#f2f6fb" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="22" font-weight="700" text-anchor="start">The extra reads create contention instead of speed</text>
+<text x="88" y="706" fill="#91a4bd" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="14" font-weight="500" text-anchor="start">Recent table relative to the current table; lower is better for every metric</text>
+<text x="215" y="746" fill="#c5d0df" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="14" font-weight="650" text-anchor="middle">Storage reads</text>
+<line x1="100" y1="840" x2="330" y2="840" stroke="#30445e" stroke-width="2"/>
+<rect x="142" y="772" width="54" height="68" rx="7" fill="#64748b"/>
+<rect x="234" y="775.9848" width="54" height="64.01520000000001" rx="7" fill="#41d6a3"/>
+<text x="169" y="866" fill="#a8b5c7" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="650" text-anchor="middle">100</text>
+<text x="261" y="866" fill="#41d6a3" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="700" text-anchor="middle">94.1</text>
+<text x="530" y="746" fill="#c5d0df" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="14" font-weight="650" text-anchor="middle">Storage fetch time</text>
+<line x1="415" y1="840" x2="645" y2="840" stroke="#30445e" stroke-width="2"/>
+<rect x="457" y="772" width="54" height="68" rx="7" fill="#64748b"/>
+<rect x="549" y="759.5152" width="54" height="80.48479999999999" rx="7" fill="#ffb454"/>
+<text x="484" y="866" fill="#a8b5c7" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="650" text-anchor="middle">100</text>
+<text x="576" y="866" fill="#ffb454" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="700" text-anchor="middle">118.4</text>
+<text x="845" y="746" fill="#c5d0df" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="14" font-weight="650" text-anchor="middle">Account fetch time</text>
+<line x1="730" y1="840" x2="960" y2="840" stroke="#30445e" stroke-width="2"/>
+<rect x="772" y="772" width="54" height="68" rx="7" fill="#64748b"/>
+<rect x="864" y="754.6804" width="54" height="85.3196" rx="7" fill="#ff7a90"/>
+<text x="799" y="866" fill="#a8b5c7" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="650" text-anchor="middle">100</text>
+<text x="891" y="866" fill="#ff7a90" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="700" text-anchor="middle">125.5</text>
+<text x="1160" y="746" fill="#c5d0df" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="14" font-weight="650" text-anchor="middle">EVM execution</text>
+<line x1="1045" y1="840" x2="1275" y2="840" stroke="#30445e" stroke-width="2"/>
+<rect x="1087" y="772" width="54" height="68" rx="7" fill="#64748b"/>
+<rect x="1179" y="762.0244" width="54" height="77.9756" rx="7" fill="#ef476f"/>
+<text x="1114" y="866" fill="#a8b5c7" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="650" text-anchor="middle">100</text>
+<text x="1206" y="866" fill="#ef476f" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="700" text-anchor="middle">114.7</text>
+<rect x="60" y="918" width="1320" height="188" rx="18" fill="#101f34" stroke="#243956"/>
+<text x="88" y="959" fill="#f2f6fb" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="22" font-weight="700" text-anchor="start">What remains payload-derivable?</text>
+<rect x="88" y="986" width="1111.2631260533253" height="28" fill="#334155"/>
+<rect x="1199.2631260533253" y="986" width="55.48679832332224" height="28" fill="#3b82f6"/>
+<rect x="1254.7499243766476" y="986" width="48.226092217276694" height="28" fill="#8b5cf6"/>
+<rect x="1302.9760165939244" y="986" width="19.10289097273238" height="28" fill="#d97706"/>
+<rect x="1322.0789075666569" y="986" width="5.921092433343416" height="28" fill="#2dd4bf"/>
+<rect x="90" y="1037" width="12" height="12" rx="3" fill="#334155"/>
+<text x="110" y="1048" fill="#b7c5d8" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="550" text-anchor="start">89.6% Not derived by common top-level payload patterns</text>
+<rect x="510" y="1037" width="12" height="12" rx="3" fill="#3b82f6"/>
+<text x="530" y="1048" fill="#b7c5d8" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="550" text-anchor="start">4.5% Already supported expression, insufficient observations</text>
+<rect x="930" y="1037" width="12" height="12" rx="3" fill="#8b5cf6"/>
+<text x="950" y="1048" fill="#b7c5d8" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="550" text-anchor="start">3.9% More calldata words or mapping base slots</text>
+<rect x="90" y="1064" width="12" height="12" rx="3" fill="#d97706"/>
+<text x="110" y="1075" fill="#b7c5d8" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="550" text-anchor="start">1.5% Mapping struct offset</text>
+<rect x="510" y="1064" width="12" height="12" rx="3" fill="#2dd4bf"/>
+<text x="530" y="1075" fill="#b7c5d8" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="550" text-anchor="start">0.5% Nested mapping</text>
+<text x="720" y="1145" fill="#d9e3f0" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="14" font-weight="650" text-anchor="middle">Decision: keep the current 4-worker table for zero-lead racing; admit broader hints only with real lead or I/O pacing.</text>
+</svg>

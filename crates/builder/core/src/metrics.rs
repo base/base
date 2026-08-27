@@ -39,6 +39,48 @@ base_metrics::define_metrics! {
     transaction_pool_fetch_duration: histogram,
     #[describe("Latest time taken to fetch tx from the pool")]
     transaction_pool_fetch_gauge: gauge,
+    #[describe("Transactions examined by the Dowse prefetch planner")]
+    #[label(outcome)]
+    dowse_transactions_total: counter,
+    #[describe("Concrete targets emitted by Dowse prefetch plans")]
+    #[label(kind)]
+    dowse_plan_targets: histogram,
+    #[describe("Dowse hint items omitted while creating prefetch plans")]
+    #[label(reason)]
+    dowse_plan_items_omitted_total: counter,
+    #[describe("Dowse targets by scheduler lifecycle outcome")]
+    #[label(kind)]
+    #[label(outcome)]
+    dowse_prefetch_targets_total: counter,
+    #[describe("Unique Dowse targets waiting in the central scheduler")]
+    dowse_queue_depth: gauge,
+    #[describe("Time Dowse targets spend waiting in the central scheduler")]
+    dowse_prefetch_queue_wait_duration: histogram,
+    #[describe("Dowse targets currently owned by state-read workers")]
+    dowse_prefetch_reads_in_flight: gauge,
+    #[describe("Planned transaction distance from the payload builder cursor")]
+    #[label(stage)]
+    dowse_prefetch_builder_distance: histogram,
+    #[describe("Payload builder transactions matched to Dowse plans")]
+    #[label(outcome)]
+    dowse_builder_cursor_total: counter,
+    #[describe("Dowse state reads performed by background workers")]
+    #[label(kind)]
+    #[label(outcome)]
+    dowse_prefetch_reads_total: counter,
+    #[describe("Duration of background Dowse prefetch work per state target")]
+    dowse_prefetch_work_duration: histogram,
+    #[describe("Dowse cache resets after the transaction pool advances to a new parent")]
+    dowse_parent_resets_total: counter,
+    #[describe("Payloads built with each Dowse A/B treatment")]
+    #[label(variant)]
+    dowse_payloads_total: counter,
+    #[describe("Transaction simulation duration by Dowse A/B treatment")]
+    #[label(variant)]
+    dowse_transaction_simulation_duration: histogram,
+    #[describe("Transactions included by Dowse A/B treatment")]
+    #[label(variant)]
+    dowse_transactions_included: histogram,
     #[describe("Histogram of state root calculation duration")]
     state_root_calculation_duration: histogram,
     #[describe("Latest state root calculation duration")]

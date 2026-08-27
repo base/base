@@ -8,7 +8,10 @@ use std::sync::Arc;
 
 use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
 
-use crate::{ExecutionMeteringMode, NoopMeteringProvider, RejectionCache, SharedMeteringProvider};
+use crate::{
+    DowseConfig, ExecutionMeteringMode, NoopMeteringProvider, RejectionCache,
+    SharedMeteringProvider,
+};
 
 /// Configuration values for the flashblocks builder.
 #[derive(Clone)]
@@ -64,6 +67,9 @@ pub struct BuilderConfig {
     /// `base_builder_predicate_eval_duration_per_block` metric's P99 SLO.
     pub predicate_eval_hard_cutoff: Duration,
 
+    /// Optional hint-driven transaction-pool state prefetching.
+    pub dowse: Option<DowseConfig>,
+
     /// Resource metering provider
     pub metering_provider: SharedMeteringProvider,
 
@@ -115,6 +121,7 @@ impl core::fmt::Debug for BuilderConfig {
             .field("max_uncompressed_block_size", &self.max_uncompressed_block_size)
             .field("metering_wait_duration", &self.metering_wait_duration)
             .field("predicate_eval_hard_cutoff", &self.predicate_eval_hard_cutoff)
+            .field("dowse", &self.dowse)
             .field("metering_provider", &self.metering_provider)
             .field("rejection_cache_size", &self.rejection_cache.entry_count())
             .field("audit_archiver_url", &self.audit_archiver_url)
@@ -142,6 +149,7 @@ impl Default for BuilderConfig {
             max_uncompressed_block_size: None,
             metering_wait_duration: None,
             predicate_eval_hard_cutoff: Duration::from_millis(10),
+            dowse: None,
             metering_provider: Arc::new(NoopMeteringProvider),
             rejection_cache: RejectionCache::new(100_000, Duration::from_secs(1800)),
             audit_archiver_url: None,

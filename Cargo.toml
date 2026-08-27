@@ -170,6 +170,10 @@ base-builder-multiplex = { path = "crates/builder/multiplex" }
 base-builder-publish = { path = "crates/builder/publish" }
 base-builder-metering = { path = "crates/builder/metering" }
 
+# Dowse
+dowse-plan = { git = "https://github.com/BrianBland/dowse", rev = "e3ad0a5" }
+dowse-types = { git = "https://github.com/BrianBland/dowse", rev = "e3ad0a5" }
+
 # Consensus
 base-consensus-cli = { path = "crates/consensus/cli" }
 base-consensus-rpc = { path = "crates/consensus/rpc" }
@@ -326,72 +330,72 @@ alloy-network-primitives = { version = "2.3.0", default-features = false }
 reth-zstd-compressors = { version = "0.6.0", default-features = false }
 reth-primitives-traits = { version = "0.6.0", default-features = false }
 reth-codecs = { version = "0.6.0", default-features = false, features = ["alloy"] }
-reth-db = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-cli = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-ipc = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-evm = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-rpc = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-revm = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-trie = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-exex = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-tasks = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-ecies = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-db-api = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-discv4 = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-discv5 = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-trie-db = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-rpc-api = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-network = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-net-nat = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-tracing = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-eth-wire = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-provider = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-cli-util = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-node-api = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-db-common = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-rpc-layer = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-node-core = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-consensus = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-chainspec = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-cli-runner = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-rpc-convert = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-network-api = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-network-p2p = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-storage-api = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-rpc-eth-api = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-chain-state = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-trie-common = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-payload-util = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-node-builder = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-node-metrics = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-cli-commands = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-evm-ethereum = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-tracing-otlp = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-testing-utils = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-rpc-eth-types = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-network-peers = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-node-ethereum = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-rpc-engine-api = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-e2e-test-utils = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-eth-wire-types = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-payload-builder = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-execution-types = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-execution-cache = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-exex-test-utils = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-rpc-server-types = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-transaction-pool = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-execution-errors = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-payload-validator = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-payload-primitives = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-ethereum-primitives = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-basic-payload-builder = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-payload-builder-primitives = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
-reth-prune-types = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1", default-features = false }
-reth-stages-types = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1", default-features = false }
-reth-storage-errors = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1", default-features = false }
-reth-ethereum-forks = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1", default-features = false }
-reth-consensus-common = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1", default-features = false }
-reth-trie-parallel = { git = "https://github.com/base/reth", tag = "base-v2.5.1.1" }
+reth-db = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-cli = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-ipc = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-evm = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-rpc = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-revm = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-trie = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-exex = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-tasks = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-ecies = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-db-api = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-discv4 = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-discv5 = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-trie-db = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-rpc-api = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-network = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-net-nat = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-tracing = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-eth-wire = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-provider = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-cli-util = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-node-api = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-db-common = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-rpc-layer = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-node-core = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-consensus = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-chainspec = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-cli-runner = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-rpc-convert = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-network-api = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-network-p2p = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-storage-api = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-rpc-eth-api = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-chain-state = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-trie-common = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-payload-util = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-node-builder = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-node-metrics = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-cli-commands = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-evm-ethereum = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-tracing-otlp = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-testing-utils = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-rpc-eth-types = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-network-peers = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-node-ethereum = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-rpc-engine-api = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-e2e-test-utils = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-eth-wire-types = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-payload-builder = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-execution-types = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-execution-cache = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-exex-test-utils = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-rpc-server-types = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-transaction-pool = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-execution-errors = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-payload-validator = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-payload-primitives = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-ethereum-primitives = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-basic-payload-builder = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-payload-builder-primitives = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
+reth-prune-types = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161", default-features = false }
+reth-stages-types = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161", default-features = false }
+reth-storage-errors = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161", default-features = false }
+reth-ethereum-forks = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161", default-features = false }
+reth-consensus-common = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161", default-features = false }
+reth-trie-parallel = { git = "https://github.com/BrianBland/reth", rev = "816a4f53a8c68877f063949ac91e41925b530161" }
 
 # tokio
 tokio = "1.53.1"

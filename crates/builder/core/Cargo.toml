@@ -19,6 +19,10 @@ base-builder-publish.workspace = true
 base-common-flashblocks.workspace = true
 base-observability-events.workspace = true
 
+# dowse
+dowse-plan.workspace = true
+dowse-types.workspace = true
+
 # reth
 reth-db.workspace = true
 reth-cli.workspace = true

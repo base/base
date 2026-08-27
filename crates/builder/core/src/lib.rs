@@ -13,6 +13,12 @@ pub use config::BuilderConfig;
 mod metrics;
 pub use metrics::BuilderMetrics;
 
+mod dowse;
+pub use dowse::{
+    DowseConfig, DowsePrefetchCache, DowsePrefetchSchedulerState, DowsePrefetchTarget,
+    DowsePrefetchTargetRecord, DowsePrefetchTargetState, DowsePrefetchWork, DowsePrefetcher,
+};
+
 mod execution;
 pub use execution::{
     ExecutionInfo, ExecutionMeteringLimitExceeded, FlashblocksExecutionInfo, ResourceLimits,
