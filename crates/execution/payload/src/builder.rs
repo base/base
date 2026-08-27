@@ -52,7 +52,7 @@ use revm::context::{Block, BlockEnv};
 use tracing::{debug, debug_span, instrument, trace, warn};
 
 use crate::{
-    Attributes, BasePayloadBuilderAttributes, ParkableBestPayloadTransactions,
+    Attributes, BasePayloadBuilderAttributes, InclusionTracker, ParkableBestPayloadTransactions,
     ParkablePayloadTransactions, ParkedPredicateIndex, PayloadPrimitives, PredicateLoadTracker,
     PredicateReadRecorder, StateChangeEffects, ValidityMetrics, ValidityPredicateEvaluation,
     config::BaseBuilderConfig, error::BasePayloadBuilderError, payload::BaseBuiltPayload,
@@ -481,6 +481,7 @@ impl<Txs> Builder<'_, Txs> {
             Some(executed),
             block_access_list.map(|bal| alloy_rlp::encode(bal).into()),
         );
+        ValidityMetrics::record_inclusion(&info.inclusion);
 
         if no_tx_pool || ctx.is_denim_active() {
             // if `no_tx_pool` is set only transactions from the payload attributes will be included
@@ -610,12 +611,19 @@ pub struct ExecutionInfo {
     pub cumulative_da_bytes_used: u64,
     /// Tracks fees from executed mempool transactions
     pub total_fees: U256,
+    /// Inclusion and fee revenue from executed mempool transactions.
+    pub inclusion: InclusionTracker,
 }
 
 impl ExecutionInfo {
     /// Create a new instance with allocated slots.
-    pub const fn new() -> Self {
-        Self { cumulative_gas_used: 0, cumulative_da_bytes_used: 0, total_fees: U256::ZERO }
+    pub fn new() -> Self {
+        Self {
+            cumulative_gas_used: 0,
+            cumulative_da_bytes_used: 0,
+            total_fees: U256::ZERO,
+            inclusion: InclusionTracker::default(),
+        }
     }
 
     /// Returns true if the transaction would exceed the block limits:
@@ -851,6 +859,8 @@ where
 
             let tx_hash = *tx.hash();
             let has_validity_predicates = !tx.validity_predicates().is_empty();
+            let has_coinbase_tip =
+                tx.as_eip8130().is_some_and(|signed| signed.tx().coinbase_tip().is_some());
             if has_validity_predicates {
                 validity_consideration_index += 1;
                 emit_native_validity_event!(
@@ -1182,7 +1192,14 @@ where
             let miner_fee = tx
                 .effective_tip_per_gas(base_fee)
                 .expect("fee is always valid; execution succeeded");
-            info.total_fees += U256::from(miner_fee) * U256::from(gas_output.tx_gas_used());
+            let gas_used = gas_output.tx_gas_used();
+            info.total_fees += U256::from(miner_fee) * U256::from(gas_used);
+            info.inclusion.record(has_validity_predicates, gas_used, miner_fee, base_fee);
+            ValidityMetrics::record_tip_per_gas(
+                has_validity_predicates,
+                has_coinbase_tip,
+                miner_fee as f64,
+            );
             if has_validity_predicates {
                 emit_native_validity_event!(
                     self,

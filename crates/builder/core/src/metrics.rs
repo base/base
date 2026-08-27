@@ -1,9 +1,6 @@
 //! Builder metrics collected during block and flashblock construction.
 
-use crate::{
-    ExecutionInfo, FLOW_STANDARD, FLOW_VALIDITY, FlashblockDiagnostics, InclusionTracker,
-    ResourceLimits,
-};
+use crate::{ExecutionInfo, FlashblockDiagnostics, ResourceLimits};
 
 const PRIORITY_FEE_THRESHOLDS_WEI: [(&str, u64); 3] =
     [("100wei", 100), ("100kwei", 100_000), ("1mwei", 1_000_000)];
@@ -113,21 +110,6 @@ base_metrics::define_metrics! {
     rejection_cache_hits: counter,
     #[describe("Number of entries in the rejection cache")]
     rejection_cache_size: gauge,
-    #[describe("Transactions included per block, segmented by flow")]
-    #[label(flow)]
-    txs_included_per_block: histogram,
-    #[describe("Gas consumed by included transactions per block, segmented by flow")]
-    #[label(flow)]
-    tx_gas_used_per_block: histogram,
-    #[describe("Per-block EIP-1559 priority-fee revenue in wei, segmented by flow")]
-    #[label(flow)]
-    priority_fee_revenue_wei: histogram,
-    #[describe("Per-block EIP-1559 base-fee revenue in wei, segmented by flow")]
-    #[label(flow)]
-    base_fee_revenue_wei: histogram,
-    #[describe("Per-block EIP-8130 coinbase-tip revenue in wei, segmented by flow")]
-    #[label(flow)]
-    coinbase_tip_revenue_wei: histogram,
     #[describe("Shadow validity injection decisions")]
     #[label(outcome)]
     shadow_validity_injection_total: counter,
@@ -222,12 +204,6 @@ base_metrics::define_metrics! {
     #[label(event_type)]
     #[label(reason)]
     builder_transaction_events_dropped: counter,
-    #[describe(
-        "Per-included-transaction tip per gas (the builder priority score), tagged by flow cohort and bid mechanism"
-    )]
-    #[label(name = "flow", default = ["standard", "validity"])]
-    #[label(name = "bid", default = ["coinbase_tip", "priority_fee"])]
-    tip_per_gas: histogram,
 }
 
 impl BuilderMetrics {
@@ -288,25 +264,6 @@ impl BuilderMetrics {
         }
     }
 
-    /// Records per-block inclusion and EIP-1559 fee revenue.
-    ///
-    /// Always emits one observation per built block, including zeros, so the
-    /// histograms describe the full per-block distribution. Each series is
-    /// labeled `flow=standard` then `flow=validity`. Coinbase-tip observations
-    /// are currently zero until the EIP-8130 phase-0 tip is decoded.
-    pub fn record_inclusion(tracker: &InclusionTracker) {
-        Self::txs_included_per_block(FLOW_STANDARD).record(tracker.standard.txs as f64);
-        Self::txs_included_per_block(FLOW_VALIDITY).record(tracker.validity.txs as f64);
-        Self::tx_gas_used_per_block(FLOW_STANDARD).record(tracker.standard.gas as f64);
-        Self::tx_gas_used_per_block(FLOW_VALIDITY).record(tracker.validity.gas as f64);
-        Self::priority_fee_revenue_wei(FLOW_STANDARD).record(tracker.standard.priority_fees_f64());
-        Self::priority_fee_revenue_wei(FLOW_VALIDITY).record(tracker.validity.priority_fees_f64());
-        Self::base_fee_revenue_wei(FLOW_STANDARD).record(tracker.standard.base_fees_f64());
-        Self::base_fee_revenue_wei(FLOW_VALIDITY).record(tracker.validity.base_fees_f64());
-        Self::coinbase_tip_revenue_wei(FLOW_STANDARD).record(tracker.standard.coinbase_tips_f64());
-        Self::coinbase_tip_revenue_wei(FLOW_VALIDITY).record(tracker.validity.coinbase_tips_f64());
-    }
-
     /// Records payload builder metrics.
     pub fn set_payload_builder_metrics(
         payload_transaction_simulation_time: f64,
@@ -328,30 +285,11 @@ impl BuilderMetrics {
         Self::payload_num_tx_simulated_fail_gauge().set(num_txs_simulated_fail);
         Self::payload_reverted_tx_gas_used().set(reverted_gas_used);
     }
-
-    /// Records one included transaction's tip per gas.
-    ///
-    /// The value is the builder's existing inclusion priority score
-    /// (`effective_tip_per_gas` / tip-per-gas-limit) — no execution result or
-    /// price feed is required. Observations are tagged `flow=validity` only when
-    /// the transaction carries validity predicates, otherwise `flow=standard`.
-    /// Bid mechanism is independent of flow: `bid=coinbase_tip` only when
-    /// `TxEip8130::coinbase_tip` returns `Some` (a statically-analyzable
-    /// phase-0 coinbase tip). EIP-8130 without that, and every non-8130
-    /// transaction, uses `bid=priority_fee`.
-    pub fn record_tip_per_gas(
-        has_validity_predicates: bool,
-        has_coinbase_tip: bool,
-        tip_per_gas: f64,
-    ) {
-        let flow = if has_validity_predicates { "validity" } else { "standard" };
-        let bid = if has_coinbase_tip { "coinbase_tip" } else { "priority_fee" };
-        Self::tip_per_gas(flow, bid).record(tip_per_gas);
-    }
 }
 
 #[cfg(test)]
 mod tests {
+    use base_execution_payload_builder::{InclusionTracker, ValidityMetrics};
     use metrics_exporter_prometheus::PrometheusBuilder;
 
     use super::*;
@@ -424,17 +362,17 @@ mod tests {
 
         metrics::with_local_recorder(&recorder, || {
             // Standard EIP-1559: flow=standard, bid=priority_fee.
-            BuilderMetrics::record_tip_per_gas(false, false, 10.0);
-            BuilderMetrics::record_tip_per_gas(false, false, 30.0);
+            ValidityMetrics::record_tip_per_gas(false, false, 10.0);
+            ValidityMetrics::record_tip_per_gas(false, false, 30.0);
             // Pre-8130 validity: flow=validity, bid=priority_fee.
-            BuilderMetrics::record_tip_per_gas(true, false, 50.0);
+            ValidityMetrics::record_tip_per_gas(true, false, 50.0);
             // EIP-8130 with predicates and a static phase-0 tip.
-            BuilderMetrics::record_tip_per_gas(true, true, 80.0);
+            ValidityMetrics::record_tip_per_gas(true, true, 80.0);
             // EIP-8130 without predicates, but with a static phase-0 tip.
-            BuilderMetrics::record_tip_per_gas(false, true, 20.0);
+            ValidityMetrics::record_tip_per_gas(false, true, 20.0);
             // EIP-8130 without a statically-analyzable tip: bid=priority_fee.
-            BuilderMetrics::record_tip_per_gas(false, false, 5.0);
-            BuilderMetrics::record_tip_per_gas(true, false, 15.0);
+            ValidityMetrics::record_tip_per_gas(false, false, 5.0);
+            ValidityMetrics::record_tip_per_gas(true, false, 15.0);
         });
 
         let rendered = handle.render();
@@ -499,7 +437,7 @@ mod tests {
         tracker.record(true, 8_000, 9, 10);
 
         metrics::with_local_recorder(&recorder, || {
-            BuilderMetrics::record_inclusion(&tracker);
+            ValidityMetrics::record_inclusion(&tracker);
         });
 
         let rendered = handle.render();
@@ -552,7 +490,7 @@ mod tests {
         let handle = recorder.handle();
 
         metrics::with_local_recorder(&recorder, || {
-            BuilderMetrics::record_inclusion(&InclusionTracker::default());
+            ValidityMetrics::record_inclusion(&InclusionTracker::default());
         });
 
         let rendered = handle.render();

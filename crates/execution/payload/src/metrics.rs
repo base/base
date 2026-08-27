@@ -2,7 +2,9 @@
 
 use std::time::Duration;
 
-use crate::{ParkedPredicateIndex, PredicateLoadTracker};
+use crate::{
+    FLOW_STANDARD, FLOW_VALIDITY, InclusionTracker, ParkedPredicateIndex, PredicateLoadTracker,
+};
 
 base_metrics::define_metrics! {
     base_builder,
@@ -40,6 +42,27 @@ base_metrics::define_metrics! {
     #[describe("Validity predicate evaluation attempts")]
     #[label(outcome)]
     validity_predicate_evaluations_total: counter,
+    #[describe("Transactions included per block, segmented by flow")]
+    #[label(flow)]
+    txs_included_per_block: histogram,
+    #[describe("Gas consumed by included transactions per block, segmented by flow")]
+    #[label(flow)]
+    tx_gas_used_per_block: histogram,
+    #[describe("Per-block EIP-1559 priority-fee revenue in wei, segmented by flow")]
+    #[label(flow)]
+    priority_fee_revenue_wei: histogram,
+    #[describe("Per-block EIP-1559 base-fee revenue in wei, segmented by flow")]
+    #[label(flow)]
+    base_fee_revenue_wei: histogram,
+    #[describe("Per-block EIP-8130 coinbase-tip revenue in wei, segmented by flow")]
+    #[label(flow)]
+    coinbase_tip_revenue_wei: histogram,
+    #[describe(
+        "Per-included-transaction tip per gas (the builder priority score), tagged by flow cohort and bid mechanism"
+    )]
+    #[label(name = "flow", default = ["standard", "validity"])]
+    #[label(name = "bid", default = ["coinbase_tip", "priority_fee"])]
+    tip_per_gas: histogram,
 }
 
 impl ValidityMetrics {
@@ -66,6 +89,34 @@ impl ValidityMetrics {
         for depth in index.bucket_depths() {
             Self::predicate_bucket_depth().record(depth as f64);
         }
+    }
+
+    /// Records per-block inclusion and EIP-1559 fee revenue.
+    ///
+    /// Always emits one observation per built block, including zeros, so the
+    /// histograms describe the full per-block distribution.
+    pub fn record_inclusion(tracker: &InclusionTracker) {
+        Self::txs_included_per_block(FLOW_STANDARD).record(tracker.standard.txs as f64);
+        Self::txs_included_per_block(FLOW_VALIDITY).record(tracker.validity.txs as f64);
+        Self::tx_gas_used_per_block(FLOW_STANDARD).record(tracker.standard.gas as f64);
+        Self::tx_gas_used_per_block(FLOW_VALIDITY).record(tracker.validity.gas as f64);
+        Self::priority_fee_revenue_wei(FLOW_STANDARD).record(tracker.standard.priority_fees_f64());
+        Self::priority_fee_revenue_wei(FLOW_VALIDITY).record(tracker.validity.priority_fees_f64());
+        Self::base_fee_revenue_wei(FLOW_STANDARD).record(tracker.standard.base_fees_f64());
+        Self::base_fee_revenue_wei(FLOW_VALIDITY).record(tracker.validity.base_fees_f64());
+        Self::coinbase_tip_revenue_wei(FLOW_STANDARD).record(tracker.standard.coinbase_tips_f64());
+        Self::coinbase_tip_revenue_wei(FLOW_VALIDITY).record(tracker.validity.coinbase_tips_f64());
+    }
+
+    /// Records one included transaction's tip per gas by flow and bid mechanism.
+    pub fn record_tip_per_gas(
+        has_validity_predicates: bool,
+        has_coinbase_tip: bool,
+        tip_per_gas: f64,
+    ) {
+        let flow = if has_validity_predicates { FLOW_VALIDITY } else { FLOW_STANDARD };
+        let bid = if has_coinbase_tip { "coinbase_tip" } else { "priority_fee" };
+        Self::tip_per_gas(flow, bid).record(tip_per_gas);
     }
 }
 

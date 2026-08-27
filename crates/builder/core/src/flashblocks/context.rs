@@ -1620,7 +1620,7 @@ impl BasePayloadBuilderCtx {
             // Per-tx tip-per-gas distribution (builder priority score), tagged
             // by flow cohort and bid mechanism. `X` for top-X-percentile share is
             // left to Datadog percentile aggregations — do not bake it in here.
-            BuilderMetrics::record_tip_per_gas(
+            ValidityMetrics::record_tip_per_gas(
                 has_validity_predicates,
                 has_coinbase_tip,
                 miner_fee as f64,
