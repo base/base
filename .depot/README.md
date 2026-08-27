@@ -14,6 +14,12 @@ cannot use its GitHub App token for GitHub Packages authentication.
 Container builds use Depot's persistent project cache automatically. The Depot
 workflows intentionally do not export Docker layer caches to GHCR.
 
+Rust compilation uses the `SCCACHE_WEBDAV_*` credentials injected by Depot CI.
+Do not set `SCCACHE_GHA_ENABLED`: that switches sccache to the GitHub-compatible
+cache backend and creates an entry for every compiler artifact. Cargo registry
+and Git dependencies use one shared cache key across jobs; build outputs remain
+in sccache rather than being archived from `target/`.
+
 Release publication remains in GitHub Actions because Depot CI does not provide
 macOS sandboxes or GitHub artifact attestations. Its Docker build still runs on
 Depot through `depot bake`.

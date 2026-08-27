@@ -29,7 +29,6 @@ env:
   CARGO_TERM_COLOR: always
   REGISTRY_IMAGE: ghcr.io/${{ github.repository_owner }}/base-anvil
   RUSTC_WRAPPER: "sccache"
-  SCCACHE_GHA_ENABLED: "true"
 permissions:
   contents: read
 jobs:
