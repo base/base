@@ -731,7 +731,14 @@ impl LoadRunner {
                 &results_tracker,
             );
             while inclusion_pulse_rx.try_recv().is_ok() {}
-            results_tracker.begin_measurement();
+            let measurement_start_block =
+                receipt_provider.get_block_number().await.map_err(|e| {
+                    BaselineError::Rpc(format!(
+                        "failed to read latest block number for measurement start: {e}"
+                    ))
+                })?;
+            results_tracker
+                .begin_measurement(measurement_start_block, self.config.measurement_blocks);
             self.collector.reset();
             self.collector.set_estimated_gas(initial_avg_gas);
             start = Instant::now();
@@ -1108,6 +1115,10 @@ impl LoadRunner {
             self.config_summary.clone(),
             self.fresh_recipient_count(),
         );
+        let measurement_window = results_tracker.measurement_window();
+        summary.measurement_start_block = measurement_window.start_block;
+        summary.measurement_end_block = measurement_window.end_block;
+        summary.measurement_block_count = measurement_window.block_count;
         if let Some(fresh_recipient_count) = summary.fresh_recipient_count {
             info!(fresh_recipient_count, "fresh recipient generation complete");
         }
@@ -1482,6 +1493,7 @@ impl LoadRunner {
             drain_state.drain_run_events();
             if stop_flag.load(Ordering::SeqCst)
                 || config.deadline.is_some_and(|deadline| Instant::now() >= deadline)
+                || drain_state.results_tracker.measurement_finished()
             {
                 return Ok(());
             }
@@ -1497,6 +1509,9 @@ impl LoadRunner {
                         enqueue_state.base_fee_tx.send_replace(canonical.base_fee);
                     }
                     last_pulse_at = pulse.observed_at;
+                    if drain_state.results_tracker.measurement_finished() {
+                        return Ok(());
+                    }
                     Self::run_refill_cycle(
                         enqueue_state,
                         &config.controller,
@@ -1946,19 +1961,26 @@ impl LoadRunner {
 mod tests {
     use std::{
         collections::{HashMap, HashSet},
-        sync::Arc,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, AtomicU64},
+        },
         time::{Duration, Instant},
     };
 
     use alloy_primitives::{Address, Bytes, TxHash};
     use tokio::sync::mpsc;
 
-    use super::{EnqueueDrainState, InjectLimit, LoadRunner, MempoolDepthController};
+    use super::{
+        BlockAlignedEnqueueConfig, EnqueueDrainState, EnqueueProgress, InclusionPulse, InjectLimit,
+        LoadRunner, MempoolDepthController, PresignBuffer, PresignEnqueueState,
+    };
     use crate::{
         metrics::MetricsCollector,
         runner::{
-            PipelineStartConfig, ResultsTracker, SUBMIT_BATCH_QUEUE_BUFFER, SignedBatch,
-            SignedTransaction, SubmissionPipeline, SubmitCohort, SubmitEvent,
+            BlockObservation, BlockPulse, PipelineStartConfig, ResultsTracker,
+            SUBMIT_BATCH_QUEUE_BUFFER, SignedBatch, SignedTransaction, SubmissionPipeline,
+            SubmitCohort, SubmitEvent,
         },
     };
     #[test]
@@ -2158,5 +2180,208 @@ mod tests {
         assert_eq!(plan.floor_gas, 30_000_000);
         assert_eq!(plan.desired_gas, 60_000_000);
         assert_eq!(plan.inject_gas, 60_000_000);
+    }
+
+    #[tokio::test]
+    async fn enqueue_block_aligned_stops_when_measurement_end_is_observed() {
+        let sender = Address::repeat_byte(0x21);
+        let results_tracker = ResultsTracker::new(&[sender]);
+        results_tracker.begin_measurement(10, Some(2));
+        let mut collector = MetricsCollector::new();
+        let mut queued_per_sender = HashMap::from([(sender, 0_u64)]);
+        let mut rejected_senders = HashSet::new();
+        let mut queued_gas = 0u128;
+        let (_submit_event_tx, mut submit_event_rx) = mpsc::channel(8);
+        let (_signed_chunk_tx, mut signed_chunk_rx) = mpsc::channel(1);
+        let (base_fee_tx, _base_fee_rx) = tokio::sync::watch::channel(1_u128);
+        let mut progress = EnqueueProgress { presigned_generated: 0, offered_gas: 0 };
+        let mut presign_buffer = PresignBuffer::new(1);
+        let pipeline = SubmissionPipeline::start(
+            Arc::new(HashMap::new()),
+            Arc::new(HashMap::new()),
+            Arc::new(Vec::new()),
+            results_tracker.clone(),
+            mpsc::channel(1).0,
+            PipelineStartConfig {
+                chain_id: 1,
+                max_gas_price: u128::MAX,
+                max_concurrent_submit_requests: None,
+            },
+        );
+        let next_submit_batch_id = AtomicU64::new(0);
+        let stop_flag = AtomicBool::new(false);
+        let (pulse_tx, mut pulse_rx) = mpsc::channel(8);
+
+        let mut enqueue_state = PresignEnqueueState {
+            submission_pipeline: &pipeline,
+            next_submit_batch_id: &next_submit_batch_id,
+            signed_chunk_rx: &mut signed_chunk_rx,
+            buffer: &mut presign_buffer,
+            progress: &mut progress,
+            base_fee_tx: &base_fee_tx,
+        };
+        let mut drain_state = EnqueueDrainState {
+            submit_event_rx: &mut submit_event_rx,
+            queued_per_sender: &mut queued_per_sender,
+            rejected_senders: &mut rejected_senders,
+            queued_gas: &mut queued_gas,
+            collector: &mut collector,
+            results_tracker: &results_tracker,
+            progress_display: None,
+        };
+
+        let (run_result, ()) = tokio::time::timeout(Duration::from_secs(2), async {
+            tokio::join!(
+                LoadRunner::enqueue_block_aligned_transactions(
+                    &mut enqueue_state,
+                    BlockAlignedEnqueueConfig {
+                        controller: MempoolDepthController::new(
+                            None,
+                            Duration::from_secs(2),
+                            1_000_000,
+                            Instant::now(),
+                        ),
+                        fallback_block_gas_limit: 30_000_000,
+                        block_time: Duration::from_secs(2),
+                        presign_target_gas: 0,
+                        max_in_flight_per_sender: 1,
+                        max_total_in_flight: 1,
+                        deadline: None,
+                    },
+                    &mut pulse_rx,
+                    &stop_flag,
+                    &mut drain_state,
+                ),
+                async {
+                    let first_observed_at = Instant::now();
+                    results_tracker.on_new_block_hashes(
+                        BlockObservation { number: 11, observed_at: first_observed_at },
+                        Vec::new(),
+                    );
+                    pulse_tx
+                        .send(InclusionPulse::canonical(
+                            BlockPulse {
+                                number: 11,
+                                gas_used: 1,
+                                gas_limit: 30_000_000,
+                                base_fee: 1,
+                                our_included_gas: 0,
+                                expected_boundary: first_observed_at,
+                                observed_at: first_observed_at,
+                            },
+                            0,
+                        ))
+                        .await
+                        .expect("first pulse should send");
+                    tokio::task::yield_now().await;
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+
+                    let second_observed_at = Instant::now();
+                    results_tracker.on_new_block_hashes(
+                        BlockObservation { number: 12, observed_at: second_observed_at },
+                        Vec::new(),
+                    );
+                    pulse_tx
+                        .send(InclusionPulse::canonical(
+                            BlockPulse {
+                                number: 12,
+                                gas_used: 1,
+                                gas_limit: 30_000_000,
+                                base_fee: 1,
+                                our_included_gas: 0,
+                                expected_boundary: second_observed_at,
+                                observed_at: second_observed_at,
+                            },
+                            0,
+                        ))
+                        .await
+                        .expect("second pulse should send");
+                }
+            )
+        })
+        .await
+        .expect("enqueue loop should stop at measurement end");
+        run_result.expect("enqueue loop should exit cleanly");
+
+        let summary = collector.summarize(Duration::from_secs(1), None);
+        assert_eq!(summary.pacing.canonical_cycles, 1);
+        assert!(results_tracker.measurement_finished());
+    }
+
+    #[tokio::test]
+    async fn enqueue_block_aligned_stops_when_duration_deadline_hits_first() {
+        let sender = Address::repeat_byte(0x22);
+        let results_tracker = ResultsTracker::new(&[sender]);
+        results_tracker.begin_measurement(10, Some(100));
+        let mut collector = MetricsCollector::new();
+        let mut queued_per_sender = HashMap::from([(sender, 0_u64)]);
+        let mut rejected_senders = HashSet::new();
+        let mut queued_gas = 0u128;
+        let (_submit_event_tx, mut submit_event_rx) = mpsc::channel(8);
+        let (_signed_chunk_tx, mut signed_chunk_rx) = mpsc::channel(1);
+        let (base_fee_tx, _base_fee_rx) = tokio::sync::watch::channel(1_u128);
+        let mut progress = EnqueueProgress { presigned_generated: 0, offered_gas: 0 };
+        let mut presign_buffer = PresignBuffer::new(1);
+        let pipeline = SubmissionPipeline::start(
+            Arc::new(HashMap::new()),
+            Arc::new(HashMap::new()),
+            Arc::new(Vec::new()),
+            results_tracker.clone(),
+            mpsc::channel(1).0,
+            PipelineStartConfig {
+                chain_id: 1,
+                max_gas_price: u128::MAX,
+                max_concurrent_submit_requests: None,
+            },
+        );
+        let next_submit_batch_id = AtomicU64::new(0);
+        let stop_flag = AtomicBool::new(false);
+        let (_pulse_tx, mut pulse_rx) = mpsc::channel(1);
+
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            LoadRunner::enqueue_block_aligned_transactions(
+                &mut PresignEnqueueState {
+                    submission_pipeline: &pipeline,
+                    next_submit_batch_id: &next_submit_batch_id,
+                    signed_chunk_rx: &mut signed_chunk_rx,
+                    buffer: &mut presign_buffer,
+                    progress: &mut progress,
+                    base_fee_tx: &base_fee_tx,
+                },
+                BlockAlignedEnqueueConfig {
+                    controller: MempoolDepthController::new(
+                        None,
+                        Duration::from_secs(2),
+                        1_000_000,
+                        Instant::now(),
+                    ),
+                    fallback_block_gas_limit: 30_000_000,
+                    block_time: Duration::from_secs(2),
+                    presign_target_gas: 0,
+                    max_in_flight_per_sender: 1,
+                    max_total_in_flight: 1,
+                    deadline: Some(Instant::now()),
+                },
+                &mut pulse_rx,
+                &stop_flag,
+                &mut EnqueueDrainState {
+                    submit_event_rx: &mut submit_event_rx,
+                    queued_per_sender: &mut queued_per_sender,
+                    rejected_senders: &mut rejected_senders,
+                    queued_gas: &mut queued_gas,
+                    collector: &mut collector,
+                    results_tracker: &results_tracker,
+                    progress_display: None,
+                },
+            ),
+        )
+        .await
+        .expect("enqueue loop should stop when deadline is reached")
+        .expect("enqueue loop should exit cleanly");
+
+        let summary = collector.summarize(Duration::from_secs(1), None);
+        assert_eq!(summary.pacing.canonical_cycles, 0);
+        assert!(!results_tracker.measurement_finished());
     }
 }

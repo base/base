@@ -53,6 +53,9 @@ impl<'a> MetricsAggregator<'a> {
         MetricsSummary {
             config,
             error: None,
+            measurement_start_block: None,
+            measurement_end_block: None,
+            measurement_block_count: 0,
             block_latency: Self::compute_block_latency(self.transactions),
             flashblocks_latency: Self::compute_flashblocks_latency(self.transactions),
             throughput: Self::compute_throughput(
@@ -291,6 +294,14 @@ pub struct MetricsSummary {
     /// Fatal error that stopped the test (e.g., funding failure).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Exclusive block number immediately before measured submission started.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub measurement_start_block: Option<u64>,
+    /// Inclusive canonical block where measurement ends.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub measurement_end_block: Option<u64>,
+    /// Number of canonical blocks in the measured window (`end - start`).
+    pub measurement_block_count: u64,
     /// Block landing latency (full run).
     pub block_latency: LatencyMetrics,
     /// Flashblocks sequencer latency (full run).
