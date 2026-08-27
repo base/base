@@ -14,7 +14,7 @@ use alloc::{
     vec::Vec,
 };
 
-use alloy_primitives::{Address, B256, FixedBytes, U256, b256, keccak256};
+use alloy_primitives::{Address, B256, FixedBytes, U256, U512, b256, keccak256};
 use alloy_sol_types::{SolEvent, SolValue};
 use base_precompile_storage::{BasePrecompileError, Result};
 
@@ -53,9 +53,11 @@ impl AssetV2 {
         b256!("97667070c54ef182b0f5858b034beac1b6f3089aa2d3188bb1e8929f4fa9b929");
 
     /// Upper bound the multiplier setters accept: `type(uint128).max`. With supply capped at
-    /// `type(uint128).max`, a `uint128` multiplier keeps `balance * multiplier` inside `uint256`,
-    /// so balance-derived reads never overflow. Single source of truth for the setter guards and
-    /// the `MAX_UI_MULTIPLIER()` getter.
+    /// `type(uint128).max`, a `uint128` multiplier keeps `balance * multiplier` inside `uint256`
+    /// for balance-derived reads (`balanceOfUI`, `totalSupplyUI`). Caller-supplied conversion
+    /// inputs to `toUIAmount` / `fromUIAmount` are not bounded by the supply cap, so those
+    /// helpers widen the intermediate product to `U512` and revert only when the final
+    /// quotient exceeds `U256`.
     pub const MAX_UI_MULTIPLIER: U256 = U256::from_limbs([u64::MAX, u64::MAX, 0, 0]);
 
     /// Balance-moving core of `transfer`/`transferFrom`, without the pause check.
@@ -895,17 +897,22 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
 
     fn to_scaled_balance(&self, token: &B20AssetToken<S, A>, balance: U256) -> Result<U256> {
         let multiplier = self.effective_multiplier(token)?;
-        let product =
-            balance.checked_mul(multiplier).ok_or_else(BasePrecompileError::under_overflow)?;
-        Ok(product / B20AssetStorage::WAD)
+        // ⌊balance · multiplier / WAD⌋. Widen to U512 so the intermediate product cannot
+        // overflow — only the final quotient needs to fit in U256.
+        let product = U512::from(balance) * U512::from(multiplier);
+        let quotient = product / U512::from(B20AssetStorage::WAD);
+        U256::checked_from_limbs_slice(quotient.as_limbs())
+            .ok_or_else(BasePrecompileError::under_overflow)
     }
 
     fn to_raw_balance(&self, token: &B20AssetToken<S, A>, balance: U256) -> Result<U256> {
         let multiplier = self.effective_multiplier(token)?;
-        let product = balance
-            .checked_mul(B20AssetStorage::WAD)
-            .ok_or_else(BasePrecompileError::under_overflow)?;
-        Ok(product / multiplier)
+        // ⌊balance · WAD / multiplier⌋. `multiplier` is nonzero: both setters reject zero and
+        // `effective_multiplier` inherits that invariant.
+        let product = U512::from(balance) * U512::from(B20AssetStorage::WAD);
+        let quotient = product / U512::from(multiplier);
+        U256::checked_from_limbs_slice(quotient.as_limbs())
+            .ok_or_else(BasePrecompileError::under_overflow)
     }
 
     fn scaled_balance_of(&self, token: &B20AssetToken<S, A>, account: Address) -> Result<U256> {
@@ -961,9 +968,11 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
     fn total_supply_ui(&self, token: &B20AssetToken<S, A>) -> Result<U256> {
         let multiplier = self.effective_multiplier(token)?;
         let supply = token.accounting().total_supply()?;
-        let product =
-            supply.checked_mul(multiplier).ok_or_else(BasePrecompileError::under_overflow)?;
-        Ok(product / B20AssetStorage::WAD)
+        // ⌊supply · multiplier / WAD⌋. Widen to U512 to match `to_scaled_balance`.
+        let product = U512::from(supply) * U512::from(multiplier);
+        let quotient = product / U512::from(B20AssetStorage::WAD);
+        U256::checked_from_limbs_slice(quotient.as_limbs())
+            .ok_or_else(BasePrecompileError::under_overflow)
     }
 
     fn update_ui_multiplier(
@@ -1978,13 +1987,66 @@ mod tests {
     }
 
     #[test]
-    fn to_scaled_balance_overflows_when_product_exceeds_u256_max() {
+    fn to_scaled_balance_succeeds_when_intermediate_product_overflows_u256() {
+        // BOP-598 / Cantina #11: previously `balance * multiplier` was materialized in U256 and
+        // reverted whenever the intermediate exceeded `2^256 - 1`, even when the true quotient
+        // fits. Choose `multiplier = 2 * WAD` (a legal setter value) so the operation reduces
+        // to `balance * 2`. `balance = 2^200` overflows the 256-bit intermediate
+        // (`2^200 * 2 * 10^18 ≈ 2^261`) but the quotient is `2^201`, well inside U256.
         let mut tok = token();
-        tok.accounting_mut().set_multiplier(U256::MAX / U256::from(2u64) + U256::ONE).unwrap();
+        tok.accounting_mut().set_multiplier(B20AssetStorage::WAD * U256::from(2u64)).unwrap();
+        let balance = U256::from(1u64) << 200;
+        let expected = U256::from(1u64) << 201;
+        assert_eq!(LOGIC.to_scaled_balance(&tok, balance).unwrap(), expected);
+    }
+
+    #[test]
+    fn to_scaled_balance_reverts_only_on_genuine_quotient_overflow() {
+        // With `multiplier = MAX_UI_MULTIPLIER` (`2^128 - 1`) and `balance = U256::MAX`, the
+        // mathematically correct quotient is `≈ 2^324`, which cannot fit in U256. The revert
+        // is expected — it reflects a real overflow, not a spurious intermediate one.
+        let mut tok = token();
+        tok.accounting_mut().set_multiplier(AssetV2::MAX_UI_MULTIPLIER).unwrap();
         assert_eq!(
-            LOGIC.to_scaled_balance(&tok, U256::from(2u64)).unwrap_err(),
+            LOGIC.to_scaled_balance(&tok, U256::MAX).unwrap_err(),
             BasePrecompileError::under_overflow()
         );
+    }
+
+    #[test]
+    fn to_raw_balance_succeeds_when_intermediate_product_overflows_u256() {
+        // Symmetric to the `to_scaled_balance` case. With `multiplier = 2 * WAD`, this reduces
+        // to `balance / 2`. `balance = 2^200` overflows the 256-bit `balance * WAD` product
+        // but the quotient is `2^199`, well inside U256.
+        let mut tok = token();
+        tok.accounting_mut().set_multiplier(B20AssetStorage::WAD * U256::from(2u64)).unwrap();
+        let balance = U256::from(1u64) << 200;
+        let expected = U256::from(1u64) << 199;
+        assert_eq!(LOGIC.to_raw_balance(&tok, balance).unwrap(), expected);
+    }
+
+    #[test]
+    fn to_raw_balance_reverts_only_on_genuine_quotient_overflow() {
+        // `multiplier = 1` (nonzero, so allowed by the storage setter) and `balance = U256::MAX`
+        // produce a quotient of `≈ U256::MAX * 10^18`, which overflows U256. The revert is real.
+        let mut tok = token();
+        tok.accounting_mut().set_multiplier(U256::ONE).unwrap();
+        assert_eq!(
+            LOGIC.to_raw_balance(&tok, U256::MAX).unwrap_err(),
+            BasePrecompileError::under_overflow()
+        );
+    }
+
+    #[test]
+    fn total_supply_ui_succeeds_when_intermediate_product_overflows_u256() {
+        // Storage-fed path: with the guarded setters, `supply * multiplier` fits by construction
+        // (both bounded by `type(uint128).max`). Exercise the U512 widening directly by writing
+        // a supply above the cap via the low-level setter — the mul-div must still succeed.
+        let mut tok = token();
+        tok.accounting_mut().set_multiplier(B20AssetStorage::WAD * U256::from(2u64)).unwrap();
+        tok.accounting_mut().set_total_supply(U256::from(1u64) << 200).unwrap();
+        let expected = U256::from(1u64) << 201;
+        assert_eq!(LOGIC.total_supply_ui(&tok).unwrap(), expected);
     }
 
     #[test]
