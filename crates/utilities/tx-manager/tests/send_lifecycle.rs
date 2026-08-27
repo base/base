@@ -47,7 +47,7 @@ async fn concurrent_submissions_receive_sequential_nonces() {
 async fn caller_can_stop_waiting_without_abandoning_a_committed_nonce() {
     let (manager, provider, _anvil) = setup_with_config(fast_config()).await;
     provider
-        .raw_request::<_, bool>("evm_setAutomine".into(), [false])
+        .raw_request::<_, Option<bool>>("evm_setAutomine".into(), [false])
         .await
         .expect("automine should be disabled");
 

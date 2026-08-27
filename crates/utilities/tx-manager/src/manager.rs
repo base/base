@@ -22,10 +22,6 @@ pub use publisher::{
 };
 
 mod sweep;
-pub use sweep::{
-    ChainSweeper, MAX_CONCURRENT_SWEEP_QUERIES, SUPERSESSION_OBSERVATIONS, SupersessionEvidence,
-    SweepOutcome, SweepResolution, SweepTarget,
-};
 
 use std::{fmt::Debug, future::Future, sync::Arc};
 
@@ -33,6 +29,10 @@ use alloy_network::{Ethereum, EthereumWallet, NetworkWallet};
 use alloy_primitives::Address;
 use alloy_provider::Provider;
 use base_runtime::{Runtime, RuntimeTimeout, TokioRuntime};
+pub use sweep::{
+    ChainSweeper, MAX_CONCURRENT_SWEEP_QUERIES, SUPERSESSION_OBSERVATIONS, SupersessionEvidence,
+    SweepOutcome, SweepResolution, SweepTarget,
+};
 
 use crate::{
     SignerConfig, SubmissionHandle, TxCandidate, TxManagerConfig, TxManagerError, TxManagerResult,

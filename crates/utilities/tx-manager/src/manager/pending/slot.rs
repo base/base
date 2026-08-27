@@ -5,14 +5,16 @@ use std::{sync::Arc, time::Duration};
 use alloy_primitives::{Address, B256};
 use tokio::sync::oneshot;
 
-use super::super::{
-    build::PreparedTx,
-    publisher::{PublishOutcome, PublishReject, PublisherEvent, PublisherId, PublisherTx},
-    sweep::{SweepOutcome, SweepTarget},
-};
-use super::work::{
-    PendingPolicy, PendingWork, PublishedAttempt, RejectionVerdict, ReplacementReason,
-    StagedSubmission, VersionId, VersionKind,
+use super::{
+    super::{
+        build::PreparedTx,
+        publisher::{PublishOutcome, PublishReject, PublisherEvent, PublisherId, PublisherTx},
+        sweep::{SweepOutcome, SweepTarget},
+    },
+    work::{
+        PendingPolicy, PendingWork, PublishedAttempt, RejectionVerdict, ReplacementReason,
+        StagedSubmission, VersionId, VersionKind,
+    },
 };
 use crate::{
     SubmissionCompletion, SubmissionId, SubmissionStatus, TxCandidate, TxManagerError,

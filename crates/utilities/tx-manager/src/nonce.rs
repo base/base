@@ -218,6 +218,12 @@ where
         // left-to-right so the chain can make forward progress.
         //
         if let Some(returned) = guard.returned_nonces.pop_first() {
+            // Recycle does not use the cached counter, so bump it past the
+            // hole we just filled. Otherwise the next fresh allocation can
+            // rewind below a nonce we already handed out.
+            if let Some(cached) = guard.nonce {
+                guard.nonce = Some(cached.max(returned.saturating_add(1)));
+            }
             debug!(nonce = returned, "reissuing returned nonce");
             return Ok(NonceGuard { guard: Some(guard), nonce: returned, recycled: true });
         }
@@ -355,6 +361,27 @@ mod tests {
         assert_eq!(state.nonce, None);
         assert_eq!(state.generation, 0);
         assert!(state.returned_nonces.is_empty());
+    }
+
+    #[tokio::test]
+    async fn reissuing_returned_nonce_does_not_rewind_cache() {
+        let provider =
+            RootProvider::new_http("http://127.0.0.1:1".parse().expect("valid test URL"));
+
+        let manager = NonceManager::new_with_nonce(provider, Address::ZERO, 2);
+        manager.return_reserved_nonce(3).await;
+        manager.return_reserved_nonce(4).await;
+
+        let guard = manager.next_nonce().await.expect("reissue 3");
+        assert_eq!(guard.nonce(), 3);
+        drop(guard);
+
+        let guard = manager.next_nonce().await.expect("reissue 4");
+        assert_eq!(guard.nonce(), 4);
+        drop(guard);
+
+        let guard = manager.next_nonce().await.expect("fresh after holes");
+        assert_eq!(guard.nonce(), 5);
     }
 
     #[tokio::test]

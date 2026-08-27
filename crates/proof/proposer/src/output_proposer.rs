@@ -251,11 +251,13 @@ impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{
-        Arc, Mutex as StdMutex,
-        atomic::{AtomicUsize, Ordering},
+    use std::{
+        sync::{
+            Arc, Mutex as StdMutex,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::Duration,
     };
-    use std::time::Duration;
 
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
     use alloy_primitives::{Address, Bloom};
