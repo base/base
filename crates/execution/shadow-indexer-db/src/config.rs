@@ -1,8 +1,9 @@
-use std::{fmt, time::Duration};
+use std::{borrow::Cow, fmt, time::Duration};
 
 use anyhow::{Context, Result};
 use sqlx::{
     PgPool,
+    migrate::Migrator,
     postgres::{PgConnectOptions, PgPoolOptions},
 };
 
@@ -95,10 +96,21 @@ impl ShadowDbConfig {
             .await
             .context("failed to connect to shadow indexer database")?;
 
-        sqlx::migrate!("./migrations")
-            .run(&pool)
-            .await
-            .context("failed to run shadow indexer database migrations")?;
+        // Migration 7 is already recorded with its original checksum in some environments, while
+        // larger databases still need longer than its embedded five-minute timeout. Keep the
+        // recorded checksum stable, but execute pending copies with a thirty-minute timeout.
+        let mut migrations = sqlx::migrate!("./migrations").iter().cloned().collect::<Vec<_>>();
+        for migration in &mut migrations {
+            if migration.version == 7 {
+                migration.sql = Cow::Owned(migration.sql.replace(
+                    "SET LOCAL statement_timeout = '300s';",
+                    "SET LOCAL statement_timeout = '1800s';",
+                ));
+            }
+        }
+        let migrator = Migrator { migrations: Cow::Owned(migrations), ..Migrator::DEFAULT };
+
+        migrator.run(&pool).await.context("failed to run shadow indexer database migrations")?;
 
         Ok(pool)
     }
