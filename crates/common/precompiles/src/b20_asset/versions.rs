@@ -86,24 +86,10 @@ impl AssetAbi {
         }
     }
 
-    /// Validates `calldata` against this version's asset surface, mapping failures to
-    /// `AbiDecodeFailed`.
-    fn abi_decode_validate(self, calldata: &[u8], selector: [u8; 4]) -> Result<()> {
-        match self {
-            Self::V1 => IB20AssetV1::IB20AssetCalls::abi_decode_validate(calldata).map(|_| ()),
-            Self::V2 => IB20AssetV2::IB20AssetCalls::abi_decode_validate(calldata).map(|_| ()),
-        }
-        .map_err(|error| BasePrecompileError::AbiDecodeFailed {
-            selector,
-            error: error.to_string(),
-        })
-    }
-
     /// Decodes `calldata` into a routable asset call, gated on this extension surface.
     ///
-    /// Where the frozen surface differs from canonical (`V1`), the calldata is validated against the
-    /// frozen surface first so a rejection carries that version's consensus error bytes, then
-    /// re-decoded into the canonical enum for routing.
+    /// On V1 the frozen surface is decoded once and lifted into the canonical enum (no second ABI
+    /// parse), so reject bytes stay V1's and successful calls avoid the double owned materialization
     fn decode(self, calldata: &[u8]) -> Result<IB20Asset::IB20AssetCalls> {
         let Some(selector) = calldata.first_chunk::<4>().copied() else {
             return Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]));
@@ -112,13 +98,16 @@ impl AssetAbi {
             return Err(BasePrecompileError::UnknownFunctionSelector(selector));
         }
         match self {
-            Self::V1 => self.abi_decode_validate(calldata, selector)?,
-            Self::V2 => {}
+            Self::V1 => IB20AssetV1::IB20AssetCalls::abi_decode_validate(calldata)
+                .map(Into::into)
+                .map_err(|error| BasePrecompileError::AbiDecodeFailed {
+                    selector,
+                    error: error.to_string(),
+                }),
+            Self::V2 => IB20Asset::IB20AssetCalls::abi_decode_validate(calldata).map_err(|error| {
+                BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() }
+            }),
         }
-
-        IB20Asset::IB20AssetCalls::abi_decode_validate(calldata).map_err(|error| {
-            BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() }
-        })
     }
 }
 
@@ -202,9 +191,10 @@ impl AssetVersions {
 
 #[cfg(test)]
 mod tests {
+    use alloc::string::ToString;
     use alloc::vec::Vec;
 
-    use alloy_primitives::{Address, U256};
+    use alloy_primitives::{Address, Bytes, U256};
     use alloy_sol_types::{SolCall, SolInterface};
     use base_common_genesis::BaseUpgrade;
     use base_precompile_storage::BasePrecompileError;
@@ -271,10 +261,10 @@ mod tests {
         );
     }
 
-    /// The dispatcher re-decodes against the canonical surface after a frozen surface accepts, so
-    /// every frozen selector must exist on canonical. The difference is the 8 ERC-8056
-    /// scheduled-multiplier selectors Cobalt introduced plus the `toUIAmount` / `fromUIAmount`
-    /// aliases and the `MAX_UI_MULTIPLIER` getter added by the interface review (11 total).
+    /// The dispatcher lifts a frozen V1 decode into the canonical enum, so every frozen selector
+    /// must exist on canonical. The difference is the 8 ERC-8056 scheduled-multiplier selectors
+    /// Cobalt introduced plus the `toUIAmount` / `fromUIAmount` aliases and the
+    /// `MAX_UI_MULTIPLIER` getter added by the interface review (11 total).
     #[test]
     fn v1_selectors_are_a_subset_of_v2() {
         let v1: Vec<[u8; 4]> = IB20AssetV1::IB20AssetCalls::selectors().collect();
@@ -412,6 +402,56 @@ mod tests {
             AssetVersion::V1.abi().decode(&[]),
             Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]))
         );
+    }
+
+    /// Frozen V1 decode + [`From`] lift must equal a direct canonical decode for every shared
+    /// selector. Proves Layer 1 of Cantina #16 does not change the accept set or payload.
+    #[test]
+    fn v1_decode_lift_matches_canonical_for_shared_calls() {
+        let samples: Vec<Vec<u8>> = alloc::vec![
+            IB20Asset::multiplierCall {}.abi_encode(),
+            IB20Asset::OPERATOR_ROLECall {}.abi_encode(),
+            IB20Asset::WAD_PRECISIONCall {}.abi_encode(),
+            IB20Asset::toScaledBalanceCall { rawBalance: U256::from(7u64) }.abi_encode(),
+            IB20Asset::batchMintCall {
+                recipients: alloc::vec![Address::repeat_byte(0x11)],
+                amounts: alloc::vec![U256::from(9u64)],
+            }
+            .abi_encode(),
+            IB20Asset::announceCall {
+                internalCalls: alloc::vec![Bytes::from_static(&[0xde, 0xad])],
+                id: alloc::string::String::from("id"),
+                description: alloc::string::String::from("desc"),
+                uri: alloc::string::String::from("uri"),
+            }
+            .abi_encode(),
+            IB20Asset::updateExtraMetadataCall {
+                key: alloc::string::String::from("k"),
+                value: alloc::string::String::from("v"),
+            }
+            .abi_encode(),
+        ];
+
+        for calldata in samples {
+            let lifted = AssetAbi::V1.decode(&calldata).expect("V1 must accept shared call");
+            let canonical =
+                IB20Asset::IB20AssetCalls::abi_decode_validate(&calldata).expect("canonical");
+            assert_eq!(lifted, canonical);
+        }
+    }
+
+    /// Truncated known asset selector: V1 error bytes come from the frozen surface, not canonical.
+    #[test]
+    fn v1_malformed_announce_keeps_frozen_error_bytes() {
+        let calldata = IB20Asset::announceCall::SELECTOR.to_vec();
+        let err = AssetAbi::V1.decode(&calldata).unwrap_err();
+        let BasePrecompileError::AbiDecodeFailed { selector, error } = err else {
+            panic!("expected AbiDecodeFailed, got {err:?}");
+        };
+        assert_eq!(selector, IB20Asset::announceCall::SELECTOR);
+        let frozen_err =
+            IB20AssetV1::IB20AssetCalls::abi_decode_validate(&calldata).unwrap_err().to_string();
+        assert_eq!(error, frozen_err);
     }
 
     #[test]

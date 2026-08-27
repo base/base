@@ -55,6 +55,7 @@ mod metrics;
 pub use metrics::{
     BerylAuxiliaryMetrics, BerylCallOutcome, BerylCallRecorder, BerylCallTimer,
     BerylErrorClassifier, BerylErrorKind, BerylMetricLabels, BerylSelector, CALLDATA_WORD_GAS,
+    EXPANDED_WORD_GAS,
     PrecompileCallMetric, PrecompileCallOutcome, PrecompileCallStatus,
 };
 

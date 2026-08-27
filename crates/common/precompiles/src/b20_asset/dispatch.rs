@@ -8,8 +8,10 @@
 //! internal-call loop stays here because re-dispatching arbitrary sub-calls is a
 //! routing responsibility; its version-defined business steps live on [`Asset`].
 
+use alloc::string::String;
+
 use alloy_primitives::{Bytes, U256};
-use alloy_sol_types::{SolCall, SolValue};
+use alloy_sol_types::{abi, SolCall, SolType, SolValue};
 use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
@@ -104,6 +106,21 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
     where
         O: PrecompileCallObserver,
     {
+        // `announce` is intercepted before the generic decode so its `bytes[] internalCalls` is
+        // decoded borrowed (never materialized into an owned `Vec<Bytes>`). Routing it through the
+        // canonical enum would force that owned expansion, which an aliased payload can amplify into
+        // a heap-exhaustion DoS. Gated on `valid_selector` so a future fork that drops `announce`
+        // from the asset surface falls through to the generic unknown-selector path.
+        if let Some(selector) = calldata.first_chunk::<4>().copied()
+            && selector == IB20Asset::announceCall::SELECTOR
+            && version.abi().asset.valid_selector(selector)
+        {
+            return observer.observe("precompile-b20-asset-announce", || {
+                self.announce(ctx, calldata, version, privileged, &observer)?;
+                Ok(Bytes::new())
+            });
+        }
+
         let call = version.abi().decode(calldata)?;
         let label = call.as_label();
         match call {
@@ -397,11 +414,8 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                 Bytes::new()
             }
 
-            // --- Announcement ---
-            SC::announce(c) => {
-                self.announce(ctx, c, version, privileged, &observer)?;
-                Bytes::new()
-            }
+            // `announce` is intercepted in `route` (borrowed decode) and never reaches this enum.
+            SC::announce(_) => return Err(BasePrecompileError::Revert(Bytes::new())),
 
             // --- Batched mint ---
             SC::batchMint(c) => {
@@ -424,14 +438,23 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
 
     /// Posts an announcement and atomically executes `internalCalls` via self-dispatch.
     ///
-    /// Re-dispatching arbitrary sub-calls is a routing responsibility, so it stays in the
-    /// dispatcher; the version's [`Asset::begin_announce`]/[`Asset::end_announce`] bracket the loop
-    /// with the version-defined business steps. Each internal call routes at the same `version`.
-    /// The selector check in the inner loop prevents recursive invocation.
+    /// `calldata` is the full `announce` calldata (selector included); `route` only enters here
+    /// after matching the 4-byte `announce` selector. The `bytes[] internalCalls` vector is decoded
+    /// **borrowed** — each entry is a slice into `calldata`, never an owned copy — so an aliased
+    /// payload (many element offsets pointing at one tail) cannot amplify a small calldata into a
+    /// large heap allocation. Only the three strings are materialized, and they do not fan out.
+    ///
+    /// The borrowed decode runs the same `decode_sequence` + `type_check` as the canonical
+    /// `abi_decode_validate`, skipping only the infallible `detokenize`, so it accepts and rejects
+    /// exactly the same inputs. On any rejection it defers to the existing version-aware decode
+    /// ([`AssetAbiPair::decode`](crate::AssetAbiPair)) so the revert carries byte-identical consensus
+    /// error bytes (frozen surface for V1, canonical for V2).
+    ///
+    /// Cobalt (V2) additionally meters the expanded dynamic byte length before the body runs.
     fn announce<O>(
         &mut self,
         ctx: StorageCtx<'_>,
-        call: IB20Asset::announceCall,
+        calldata: &[u8],
         version: AssetVersion,
         privileged: bool,
         observer: &O,
@@ -439,10 +462,113 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
     where
         O: PrecompileCallObserver,
     {
-        let caller = ctx.caller();
-        let internal_calls = call.internalCalls;
-        let internal_call_count = internal_calls.len();
-        let internal_call_bytes = internal_calls.iter().map(|call| call.len()).sum();
+        match Self::decode_announce_borrowed(&calldata[4..]) {
+            Ok((internal_calls, id, description, uri)) => {
+                let expanded_bytes: usize =
+                    internal_calls.0.iter().map(|call| call.as_slice().len()).sum();
+                Self::deduct_announce_expanded_gas(ctx, version, expanded_bytes)?;
+                self.run_announce(
+                    ctx,
+                    version,
+                    privileged,
+                    observer,
+                    String::from_utf8_lossy(id.as_slice()).into_owned(),
+                    String::from_utf8_lossy(description.as_slice()).into_owned(),
+                    String::from_utf8_lossy(uri.as_slice()).into_owned(),
+                    internal_calls.0.len(),
+                    expanded_bytes,
+                    internal_calls.0.iter().map(|call| call.as_slice()),
+                )
+            }
+            // Borrowed decode rejected. By the accept-set equality above, the existing decode also
+            // rejects, so `?` returns its exact error bytes. The `Ok` arm is unreachable by that
+            // equality; running the owned announce there is a total-function safety net (never a
+            // valid amplifying payload) that avoids a consensus-crashing panic if the equality were
+            // ever to not hold.
+            Err(()) => match version.abi().decode(calldata)? {
+                AssetCall::Asset(IB20Asset::IB20AssetCalls::announce(call)) => {
+                    let expanded_bytes: usize =
+                        call.internalCalls.iter().map(|call| call.len()).sum();
+                    Self::deduct_announce_expanded_gas(ctx, version, expanded_bytes)?;
+                    self.run_announce(
+                        ctx,
+                        version,
+                        privileged,
+                        observer,
+                        call.id,
+                        call.description,
+                        call.uri,
+                        call.internalCalls.len(),
+                        expanded_bytes,
+                        call.internalCalls.iter().map(|call| &call[..]),
+                    )
+                }
+                _ => Err(BasePrecompileError::Revert(Bytes::new())),
+            },
+        }
+    }
+
+    /// Decodes `announce`'s parameters **borrowed** — each `bytes` is a slice into `rest`, not an
+    /// owned copy. `rest` is the calldata with the 4-byte selector already stripped.
+    ///
+    /// This mirrors alloy's `abi_decode_validate` (`decode_sequence` then `type_check`) and omits
+    /// only the infallible `detokenize`, so it accepts and rejects exactly the same inputs. Running
+    /// `type_check` is mandatory, not optional: `string` validation rejects non-UTF-8 while
+    /// `detokenize` is lossy, so skipping it would accept an `id`/`description`/`uri` the canonical
+    /// path rejects — an accept-side divergence the caller's error fallback could not catch.
+    fn decode_announce_borrowed(
+        rest: &[u8],
+    ) -> core::result::Result<<IB20Asset::announceCall as SolCall>::Token<'_>, ()> {
+        let token = abi::decode_sequence::<<IB20Asset::announceCall as SolCall>::Token<'_>>(rest)
+            .map_err(|_| ())?;
+        <<IB20Asset::announceCall as SolCall>::Parameters<'_> as SolType>::type_check(&token)
+            .map_err(|_| ())?;
+        Ok(token)
+    }
+
+    /// Charges Cobalt expanded-dynamic gas for announce's `bytes[]` payload. Beryl is unchanged.
+    fn deduct_announce_expanded_gas(
+        ctx: StorageCtx<'_>,
+        version: AssetVersion,
+        expanded_bytes: usize,
+    ) -> base_precompile_storage::Result<()> {
+        if !matches!(version, AssetVersion::V2) || expanded_bytes == 0 {
+            return Ok(());
+        }
+        ctx.deduct_gas(BerylCallRecorder::<NoopPrecompileCallObserver>::expanded_gas_cost(
+            expanded_bytes,
+        ))
+    }
+
+    /// Runs the announcement body shared by the borrowed fast path and the owned safety net:
+    /// records metrics, brackets the internal-call loop with the version's
+    /// [`Asset::begin_announce`]/[`Asset::end_announce`], and self-dispatches each entry.
+    ///
+    /// Each internal call is dispatched via `route`, a direct Rust function call. Unlike the
+    /// base-std Solidity reference which routes each `internalCalls` entry through a DELEGATECALL
+    /// (~100 gas opcode overhead + memory expansion), the native precompile replaces the entire
+    /// EVM execution path so per-opcode call overhead does not apply. The cheaper batched cost is
+    /// intentional: the native precompile pays for the storage work of each sub-call (the same
+    /// SLOAD/SSTORE operations as the Solidity reference) but not for EVM call-frame overhead
+    /// that exists only in the interpreter.
+    #[allow(clippy::too_many_arguments)]
+    fn run_announce<'c, O, I>(
+        &mut self,
+        ctx: StorageCtx<'_>,
+        version: AssetVersion,
+        privileged: bool,
+        observer: &O,
+        id: String,
+        description: String,
+        uri: String,
+        internal_call_count: usize,
+        internal_call_bytes: usize,
+        internal_calls: I,
+    ) -> base_precompile_storage::Result<()>
+    where
+        O: PrecompileCallObserver,
+        I: Iterator<Item = &'c [u8]>,
+    {
         observer.record_internal_calls(
             &BerylAuxiliaryMetrics::b20("asset", "announce"),
             internal_call_count,
@@ -450,21 +576,13 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
         );
 
         let logic = version.implementation();
-        let id = call.id;
-        logic.begin_announce(self, caller, id.clone(), call.description, call.uri, privileged)?;
+        let caller = ctx.caller();
+        logic.begin_announce(self, caller, id.clone(), description, uri, privileged)?;
 
-        // Each internal call is dispatched via `route`, a direct Rust function call. Unlike the
-        // base-std Solidity reference which routes each `internalCalls` entry through a DELEGATECALL
-        // (~100 gas opcode overhead + memory expansion), the native precompile replaces the entire
-        // EVM execution path so per-opcode call overhead does not apply. The cheaper batched cost is
-        // intentional: the native precompile pays for the storage work of each sub-call (the same
-        // SLOAD/SSTORE operations as the Solidity reference) but not for EVM call-frame overhead
-        // that exists only in the interpreter.
-        for call in &internal_calls {
-            let call_bytes: &[u8] = call.as_ref();
+        for call_bytes in internal_calls {
             if call_bytes.len() < 4 {
                 return Err(BasePrecompileError::revert(IB20Asset::InternalCallMalformed {
-                    call: call.clone(),
+                    call: Bytes::copy_from_slice(call_bytes),
                 }));
             }
             if call_bytes[..4] == IB20Asset::announceCall::SELECTOR {
@@ -476,7 +594,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                         err
                     } else {
                         BasePrecompileError::revert(IB20Asset::InternalCallFailed {
-                            call: call.clone(),
+                            call: Bytes::copy_from_slice(call_bytes),
                         })
                     }
                 },
@@ -499,10 +617,10 @@ mod tests {
 
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
-        AssetV1, AssetVersion, B20AssetStorage, B20AssetToken, B20TokenRole, BerylErrorKind,
-        FakePolicyAccounting, IB20, IB20Asset, InMemoryTokenAccounting, NoopPrecompileCallObserver,
-        PolicyVersion, PrecompileCallMetric, PrecompileCallObserver, PrecompileCallOutcome,
-        PrecompileCallStatus, Token, TokenAccounting,
+        AssetV1, AssetVersion, B20AssetStorage, B20AssetToken, B20TokenRole, BerylCallRecorder,
+        BerylErrorKind, FakePolicyAccounting, IB20, IB20Asset, InMemoryTokenAccounting,
+        NoopPrecompileCallObserver, PolicyVersion, PrecompileCallMetric, PrecompileCallObserver,
+        PrecompileCallOutcome, PrecompileCallStatus, Token, TokenAccounting,
     };
 
     type TestAssetToken = B20AssetToken<InMemoryTokenAccounting, FakePolicyAccounting>;
@@ -839,5 +957,126 @@ mod tests {
 
         assert!(out.is_revert());
         assert_eq!(out.bytes, Bytes::from(IB20::NonPayable {}.abi_encode()));
+    }
+
+    /// Builds `announce` calldata where `n` `bytes[]` offsets all reference one shared `tail`.
+    ///
+    /// Starts from a valid one-element alloy encoding, then expands the array header so every
+    /// element offset points at the same tail blob and rewrites the trailing string offsets.
+    fn aliased_announce_calldata(n: usize, tail: &[u8]) -> Vec<u8> {
+        assert!(n >= 1, "need at least one aliased entry");
+        let base = IB20Asset::announceCall {
+            internalCalls: alloc::vec![Bytes::copy_from_slice(tail)],
+            id: String::from("aliased-id"),
+            description: String::from("desc"),
+            uri: String::new(),
+        }
+        .abi_encode();
+
+        // Args layout after selector:
+        //   [off_calls][off_id][off_desc][off_uri][len=1][off0=0x40][bytes blob][id][desc][uri]
+        let args = &base[4..];
+        let read_u256 = |at: usize| -> usize {
+            let mut buf = [0u8; 8];
+            buf.copy_from_slice(&args[at + 24..at + 32]);
+            u64::from_be_bytes(buf) as usize
+        };
+        let write_u256 = |out: &mut [u8], at: usize, v: usize| {
+            out[at..at + 32].fill(0);
+            out[at + 24..at + 32].copy_from_slice(&(v as u64).to_be_bytes());
+        };
+
+        let off_calls = read_u256(0);
+        let off_id = read_u256(32);
+        let off_desc = read_u256(64);
+        let off_uri = read_u256(96);
+        assert_eq!(read_u256(off_calls), 1, "base encode must be one-element");
+
+        let bytes_blob = &args[off_calls + 64..off_id]; // after len+off0
+        let strings = &args[off_id..];
+
+        // New array section: length + n offsets + shared blob.
+        let extra_offsets = (n - 1) * 32;
+        let new_off_id = off_id + extra_offsets;
+        let new_off_desc = off_desc + extra_offsets;
+        let new_off_uri = off_uri + extra_offsets;
+        let shared_elem_off = n * 32;
+
+        let mut out = base[..4].to_vec();
+        out.resize(4 + 128 + 32 + n * 32 + bytes_blob.len() + strings.len(), 0);
+        let args_out = &mut out[4..];
+        write_u256(args_out, 0, off_calls);
+        write_u256(args_out, 32, new_off_id);
+        write_u256(args_out, 64, new_off_desc);
+        write_u256(args_out, 96, new_off_uri);
+        write_u256(args_out, off_calls, n);
+        for i in 0..n {
+            write_u256(args_out, off_calls + 32 + i * 32, shared_elem_off);
+        }
+        let blob_at = off_calls + 32 + n * 32;
+        args_out[blob_at..blob_at + bytes_blob.len()].copy_from_slice(bytes_blob);
+        args_out[new_off_id..new_off_id + strings.len()].copy_from_slice(strings);
+        out
+    }
+
+
+
+    #[test]
+    fn aliased_announce_succeeds_on_beryl_without_expanded_gas() {
+        let mut token = make_token();
+        token.accounting_mut().roles.insert((AssetV1::OPERATOR_ROLE, ALICE), true);
+
+        let n = 1_024usize;
+        // Valid zero-arg view: each aliased entry re-dispatches successfully.
+        let tail = IB20Asset::multiplierCall {}.abi_encode();
+        let calldata = aliased_announce_calldata(n, &tail);
+        let owned_style = IB20Asset::announceCall {
+            internalCalls: alloc::vec![Bytes::copy_from_slice(&tail); n],
+            id: String::from("aliased-id"),
+            description: String::from("desc"),
+            uri: String::new(),
+        }
+        .abi_encode();
+        assert!(
+            calldata.len() < owned_style.len(),
+            "aliased wire {} must be smaller than owned-style {}",
+            calldata.len(),
+            owned_style.len()
+        );
+        let mut storage = storage_with_caller(ALICE);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            token.route(ctx, &calldata, AssetVersion::V1, false, NoopPrecompileCallObserver)
+        })
+        .expect("borrowed aliased announce must succeed on Beryl");
+
+        assert!(token.accounting().is_announcement_id_used("aliased-id").unwrap());
+    }
+
+    #[test]
+    fn aliased_announce_charges_expanded_gas_on_cobalt() {
+        let mut token = make_token();
+        token.accounting_mut().roles.insert((AssetV1::OPERATOR_ROLE, ALICE), true);
+
+        let n = 1_024usize;
+        let tail = IB20Asset::multiplierCall {}.abi_encode();
+        let calldata = aliased_announce_calldata(n, &tail);
+        let expanded = n * tail.len();
+        let expected =
+            BerylCallRecorder::<NoopPrecompileCallObserver>::expanded_gas_cost(expanded);
+
+        let mut storage = storage_with_caller(ALICE);
+        StorageCtx::enter(&mut storage, |ctx| {
+            token.route(ctx, &calldata, AssetVersion::V2, false, NoopPrecompileCallObserver)
+        })
+        .expect("borrowed aliased announce must succeed when gas is uncapped");
+
+        // Body work also deducts gas; Cobalt must at least charge the expanded schedule.
+        assert!(
+            storage.gas_deducted() >= expected,
+            "gas_deducted {} must cover expanded cost {}",
+            storage.gas_deducted(),
+            expected
+        );
     }
 }

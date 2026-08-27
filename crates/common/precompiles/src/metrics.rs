@@ -552,6 +552,13 @@ impl BerylCallTimer {
 /// Part of the receipts/gas-used commitment: must be identical across all Base execution clients.
 pub const CALLDATA_WORD_GAS: u64 = 6;
 
+/// Per-word cost for expanded dynamic ABI payload, charged from Cobalt onward.
+///
+/// Same `G_copy + G_memory` schedule as [`CALLDATA_WORD_GAS`], applied to the *expanded*
+/// length of dynamic data (for example `sum(bytes[i].len())` for an aliased `bytes[]`) rather
+/// than wire calldata length. Beryl does not charge this; changing Beryl gas would break replay.
+pub const EXPANDED_WORD_GAS: u64 = 6;
+
 /// Per-call recorder for Beryl precompile observations.
 #[derive(Debug)]
 pub struct BerylCallRecorder<O> {
@@ -592,9 +599,22 @@ where
         (calldata.len() as u64).div_ceil(32).saturating_mul(CALLDATA_WORD_GAS)
     }
 
+    /// Computes the Cobalt expanded-dynamic gas cost for `expanded_bytes`.
+    pub const fn expanded_gas_cost(expanded_bytes: usize) -> u64 {
+        (expanded_bytes as u64).div_ceil(32).saturating_mul(EXPANDED_WORD_GAS)
+    }
+
     /// Deducts the common calldata gas charged by Beryl precompile dispatch.
     pub fn deduct_calldata_gas(&self, ctx: StorageCtx<'_>, calldata: &[u8]) -> Result<()> {
         ctx.deduct_gas(Self::calldata_gas_cost(calldata))
+    }
+
+    /// Deducts Cobalt expanded-dynamic gas. No-op when `expanded_bytes` is zero.
+    pub fn deduct_expanded_gas(&self, ctx: StorageCtx<'_>, expanded_bytes: usize) -> Result<()> {
+        if expanded_bytes == 0 {
+            return Ok(());
+        }
+        ctx.deduct_gas(Self::expanded_gas_cost(expanded_bytes))
     }
 
     /// Records a Base precompile error before it is converted to a [`PrecompileResult`].
@@ -661,7 +681,7 @@ mod tests {
 
     use crate::{
         BerylCallOutcome, BerylCallRecorder, BerylErrorKind, BerylMetricLabels, BerylSelector,
-        CALLDATA_WORD_GAS, IActivationRegistry, IB20, IB20Factory, IPolicyRegistry,
+        CALLDATA_WORD_GAS, EXPANDED_WORD_GAS, IActivationRegistry, IB20, IB20Factory, IPolicyRegistry,
         NoopPrecompileCallObserver,
     };
 
@@ -748,5 +768,21 @@ mod tests {
 
         // 36 bytes (4-byte selector + 32-byte arg) = ceil(36/32) = 2 words => 2 * CALLDATA_WORD_GAS
         assert_eq!(Recorder::calldata_gas_cost(&[0u8; 36]), 2 * CALLDATA_WORD_GAS);
+    }
+
+    #[test]
+    fn expanded_dynamic_gas_formula() {
+        type Recorder = BerylCallRecorder<NoopPrecompileCallObserver>;
+
+        assert_eq!(Recorder::expanded_gas_cost(0), 0);
+        assert_eq!(Recorder::expanded_gas_cost(1), EXPANDED_WORD_GAS);
+        assert_eq!(Recorder::expanded_gas_cost(32), EXPANDED_WORD_GAS);
+        assert_eq!(Recorder::expanded_gas_cost(33), 2 * EXPANDED_WORD_GAS);
+        // Cantina-shaped alias: 1024 × 64 KiB expanded words.
+        let expanded = 1_024usize * 65_536;
+        assert_eq!(
+            Recorder::expanded_gas_cost(expanded),
+            (expanded as u64).div_ceil(32) * EXPANDED_WORD_GAS
+        );
     }
 }

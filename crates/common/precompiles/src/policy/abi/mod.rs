@@ -11,6 +11,80 @@ pub use v1::IPolicyRegistry as IPolicyRegistryV1;
 mod v2;
 pub use v2::{IPolicyRegistry, IPolicyRegistry as IPolicyRegistryV2};
 
+/// Lifts a Beryl-frozen policy call into the canonical (Cobalt) enum without re-parsing calldata.
+///
+/// V1 selectors are a subset of V2. Shared layouts move; `PolicyType` is remapped by name (V1
+/// never carried `UNION` / `INTERSECT`).
+impl From<IPolicyRegistryV1::IPolicyRegistryCalls> for IPolicyRegistry::IPolicyRegistryCalls {
+    fn from(call: IPolicyRegistryV1::IPolicyRegistryCalls) -> Self {
+        match call {
+            IPolicyRegistryV1::IPolicyRegistryCalls::createPolicy(c) => {
+                Self::createPolicy(IPolicyRegistry::createPolicyCall {
+                    admin: c.admin,
+                    policyType: lift_policy_type(c.policyType),
+                })
+            }
+            IPolicyRegistryV1::IPolicyRegistryCalls::createPolicyWithAccounts(c) => {
+                Self::createPolicyWithAccounts(IPolicyRegistry::createPolicyWithAccountsCall {
+                    admin: c.admin,
+                    policyType: lift_policy_type(c.policyType),
+                    accounts: c.accounts,
+                })
+            }
+            IPolicyRegistryV1::IPolicyRegistryCalls::stageUpdateAdmin(c) => {
+                Self::stageUpdateAdmin(IPolicyRegistry::stageUpdateAdminCall {
+                    policyId: c.policyId,
+                    newAdmin: c.newAdmin,
+                })
+            }
+            IPolicyRegistryV1::IPolicyRegistryCalls::finalizeUpdateAdmin(c) => {
+                Self::finalizeUpdateAdmin(IPolicyRegistry::finalizeUpdateAdminCall {
+                    policyId: c.policyId,
+                })
+            }
+            IPolicyRegistryV1::IPolicyRegistryCalls::renounceAdmin(c) => {
+                Self::renounceAdmin(IPolicyRegistry::renounceAdminCall { policyId: c.policyId })
+            }
+            IPolicyRegistryV1::IPolicyRegistryCalls::updateAllowlist(c) => {
+                Self::updateAllowlist(IPolicyRegistry::updateAllowlistCall {
+                    policyId: c.policyId,
+                    allowed: c.allowed,
+                    accounts: c.accounts,
+                })
+            }
+            IPolicyRegistryV1::IPolicyRegistryCalls::updateBlocklist(c) => {
+                Self::updateBlocklist(IPolicyRegistry::updateBlocklistCall {
+                    policyId: c.policyId,
+                    blocked: c.blocked,
+                    accounts: c.accounts,
+                })
+            }
+            IPolicyRegistryV1::IPolicyRegistryCalls::isAuthorized(c) => {
+                Self::isAuthorized(IPolicyRegistry::isAuthorizedCall {
+                    policyId: c.policyId,
+                    account: c.account,
+                })
+            }
+            IPolicyRegistryV1::IPolicyRegistryCalls::policyExists(c) => {
+                Self::policyExists(IPolicyRegistry::policyExistsCall { policyId: c.policyId })
+            }
+            IPolicyRegistryV1::IPolicyRegistryCalls::policyAdmin(c) => {
+                Self::policyAdmin(IPolicyRegistry::policyAdminCall { policyId: c.policyId })
+            }
+            IPolicyRegistryV1::IPolicyRegistryCalls::pendingPolicyAdmin(c) => {
+                Self::pendingPolicyAdmin(IPolicyRegistry::pendingPolicyAdminCall {
+                    policyId: c.policyId,
+                })
+            }
+        }
+    }
+}
+
+fn lift_policy_type(policy_type: IPolicyRegistryV1::PolicyType) -> IPolicyRegistry::PolicyType {
+    IPolicyRegistry::PolicyType::try_from(policy_type as u8)
+        .expect("V1 PolicyType discriminant must lift into V2")
+}
+
 impl IPolicyRegistry::IPolicyRegistryCalls {
     /// Returns the stable metric label for this decoded policy-registry call.
     pub const fn as_label(&self) -> &'static str {

@@ -70,7 +70,7 @@ impl PolicyAbi {
     }
 
     /// Validates `calldata` against this wire surface via alloy's `abi_decode_validate`, discarding
-    /// the decoded call.
+    /// the decoded call. Used by the activation gate so malformed args fail before activation.
     pub fn abi_decode_validate(self, calldata: &[u8], selector: [u8; 4]) -> Result<()> {
         match self {
             Self::V1 => {
@@ -88,9 +88,8 @@ impl PolicyAbi {
 
     /// Decodes `calldata` into a routable call via alloy's `abi_decode`, gated on this wire surface.
     ///
-    /// Where the frozen surface differs from canonical (`V1`), the calldata is validated against the
-    /// frozen surface first so a rejection carries that version's consensus error bytes, then
-    /// re-decoded into the canonical enum for routing.
+    /// On V1 the frozen surface is decoded once and lifted into the canonical enum (no second ABI
+    /// parse), so reject bytes stay V1's. V2 is already canonical and decodes once.
     pub fn decode(self, calldata: &[u8]) -> Result<IPolicyRegistry::IPolicyRegistryCalls> {
         let Some(selector) = calldata.first_chunk::<4>().copied() else {
             return Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]));
@@ -99,13 +98,18 @@ impl PolicyAbi {
             return Err(BasePrecompileError::UnknownFunctionSelector(selector));
         }
         match self {
-            Self::V1 => self.abi_decode_validate(calldata, selector)?,
-            Self::V2 => {}
+            Self::V1 => IPolicyRegistryV1::IPolicyRegistryCalls::abi_decode_validate(calldata)
+                .map(Into::into)
+                .map_err(|error| BasePrecompileError::AbiDecodeFailed {
+                    selector,
+                    error: error.to_string(),
+                }),
+            Self::V2 => IPolicyRegistry::IPolicyRegistryCalls::abi_decode_validate(calldata)
+                .map_err(|error| BasePrecompileError::AbiDecodeFailed {
+                    selector,
+                    error: error.to_string(),
+                }),
         }
-
-        IPolicyRegistry::IPolicyRegistryCalls::abi_decode_validate(calldata).map_err(|error| {
-            BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() }
-        })
     }
 }
 
