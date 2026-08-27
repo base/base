@@ -1,0 +1,143 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="1080" viewBox="0 0 1320 1080">
+<rect x="0" y="0" width="1320" height="1080" fill="#f5f7fb"/>
+<text x="50" y="56" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="29" font-weight="700" fill="#102044" text-anchor="start">Online hint learning: better predictions, worse zero-lead execution</text>
+<text x="50" y="84" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="15" font-weight="400" fill="#66738f" text-anchor="start">Strict chronological Base mainnet holdout · static 500-block table vs cumulative 1,000-block table</text>
+<rect x="50" y="108" width="285" height="72" rx="12" fill="#ffffff" stroke="#dde3ef"/>
+<text x="68" y="132" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="500" fill="#66738f" text-anchor="start">Storage-target recall</text>
+<text x="68" y="163" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="22" font-weight="700" fill="#00a37a" text-anchor="start">27.11% → 27.77%</text>
+<rect x="360" y="108" width="285" height="72" rx="12" fill="#ffffff" stroke="#dde3ef"/>
+<text x="378" y="132" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="500" fill="#66738f" text-anchor="start">Prediction precision</text>
+<text x="378" y="163" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="22" font-weight="700" fill="#00a37a" text-anchor="start">81.12% → 82.89%</text>
+<rect x="670" y="108" width="285" height="72" rx="12" fill="#ffffff" stroke="#dde3ef"/>
+<text x="688" y="132" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="500" fill="#66738f" text-anchor="start">Useful targets found</text>
+<text x="688" y="163" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="22" font-weight="700" fill="#00a37a" text-anchor="start">+7,838</text>
+<rect x="980" y="108" width="285" height="72" rx="12" fill="#ffffff" stroke="#dde3ef"/>
+<text x="998" y="132" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="500" fill="#66738f" text-anchor="start">Builder execution</text>
+<text x="998" y="163" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="22" font-weight="700" fill="#d97706" text-anchor="start">+5.45%</text>
+<rect x="50" y="210" width="590" height="350" rx="14" fill="#ffffff" stroke="#dde3ef"/>
+<text x="74" y="248" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="19" font-weight="650" fill="#102044" text-anchor="start">Strict next-500-block coverage</text>
+<text x="74" y="272" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="400" fill="#66738f" text-anchor="start">Predictions scored only after both training windows</text>
+<line x1="120" y1="505.0" x2="610" y2="505.0" stroke="#edf0f6"/>
+<text x="108" y="509.0" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#7c879e" text-anchor="end">0%</text>
+<line x1="120" y1="464.0" x2="610" y2="464.0" stroke="#edf0f6"/>
+<text x="108" y="468.0" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#7c879e" text-anchor="end">20%</text>
+<line x1="120" y1="423.0" x2="610" y2="423.0" stroke="#edf0f6"/>
+<text x="108" y="427.0" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#7c879e" text-anchor="end">40%</text>
+<line x1="120" y1="382.0" x2="610" y2="382.0" stroke="#edf0f6"/>
+<text x="108" y="386.0" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#7c879e" text-anchor="end">60%</text>
+<line x1="120" y1="341.0" x2="610" y2="341.0" stroke="#edf0f6"/>
+<text x="108" y="345.0" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#7c879e" text-anchor="end">80%</text>
+<line x1="120" y1="300.0" x2="610" y2="300.0" stroke="#edf0f6"/>
+<text x="108" y="304.0" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#7c879e" text-anchor="end">100%</text>
+<rect x="205" y="449.4246092411281" width="36" height="55.575390758871876" rx="4" fill="#94a0b5"/>
+<text x="223" y="441.4246092411281" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="650" fill="#94a0b5" text-anchor="middle">27.11%</text>
+<rect x="269" y="448.0749371694677" width="36" height="56.925062830532276" rx="4" fill="#7556f3"/>
+<text x="287" y="440.0749371694677" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="650" fill="#7556f3" text-anchor="middle">27.77%</text>
+<text x="255" y="532" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="650" fill="#4d5b78" text-anchor="middle">Recall</text>
+<rect x="435" y="338.70266527253443" width="36" height="166.29733472746557" rx="4" fill="#94a0b5"/>
+<text x="453" y="330.70266527253443" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="650" fill="#94a0b5" text-anchor="middle">81.12%</text>
+<rect x="499" y="335.0736553356552" width="36" height="169.92634466434478" rx="4" fill="#7556f3"/>
+<text x="517" y="327.0736553356552" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="650" fill="#7556f3" text-anchor="middle">82.89%</text>
+<text x="485" y="532" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="650" fill="#4d5b78" text-anchor="middle">Precision</text>
+<text x="368" y="542" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="500" fill="#94a0b5" text-anchor="end">■ Static 500 blocks</text>
+<text x="590" y="542" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="500" fill="#7556f3" text-anchor="end">■ Cumulative 1,000 blocks</text>
+<rect x="670" y="210" width="600" height="350" rx="14" fill="#ffffff" stroke="#dde3ef"/>
+<text x="694" y="248" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="19" font-weight="650" fill="#102044" text-anchor="start">Zero-lead execution by run position</text>
+<text x="694" y="272" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="400" fill="#66738f" text-anchor="start">A-B-B-A plus B-A-A-B; each bar is the complete 500-block arm</text>
+<line x1="735" y1="505.0" x2="1240" y2="505.0" stroke="#edf0f6"/>
+<text x="723" y="509.0" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#7c879e" text-anchor="end">0s</text>
+<line x1="735" y1="464.0" x2="1240" y2="464.0" stroke="#edf0f6"/>
+<text x="723" y="468.0" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#7c879e" text-anchor="end">10s</text>
+<line x1="735" y1="423.0" x2="1240" y2="423.0" stroke="#edf0f6"/>
+<text x="723" y="427.0" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#7c879e" text-anchor="end">20s</text>
+<line x1="735" y1="382.0" x2="1240" y2="382.0" stroke="#edf0f6"/>
+<text x="723" y="386.0" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#7c879e" text-anchor="end">30s</text>
+<line x1="735" y1="341.0" x2="1240" y2="341.0" stroke="#edf0f6"/>
+<text x="723" y="345.0" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#7c879e" text-anchor="end">40s</text>
+<line x1="735" y1="300.0" x2="1240" y2="300.0" stroke="#edf0f6"/>
+<text x="723" y="304.0" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#7c879e" text-anchor="end">50s</text>
+<rect x="787" y="356.1226778" width="26" height="148.8773222" rx="4" fill="#94a0b5"/>
+<rect x="819" y="366.6293788" width="26" height="138.37062120000002" rx="4" fill="#7556f3"/>
+<text x="815" y="529" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#4d5b78" text-anchor="middle">Position 1</text>
+<text x="815" y="548" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="650" fill="#00a37a" text-anchor="middle">-7.1%</text>
+<rect x="907" y="360.2800614" width="26" height="144.7199386" rx="4" fill="#94a0b5"/>
+<rect x="939" y="355.1551803" width="26" height="149.84481970000002" rx="4" fill="#7556f3"/>
+<text x="935" y="529" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#4d5b78" text-anchor="middle">Position 2</text>
+<text x="935" y="548" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="650" fill="#d97706" text-anchor="middle">+3.5%</text>
+<rect x="1027" y="349.9908654" width="26" height="155.00913459999998" rx="4" fill="#94a0b5"/>
+<rect x="1059" y="339.8957921" width="26" height="165.1042079" rx="4" fill="#7556f3"/>
+<text x="1055" y="529" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#4d5b78" text-anchor="middle">Position 3</text>
+<text x="1055" y="548" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="650" fill="#d97706" text-anchor="middle">+6.5%</text>
+<rect x="1147" y="375.4254081" width="26" height="129.5745919" rx="4" fill="#94a0b5"/>
+<rect x="1179" y="348.65593" width="26" height="156.34407" rx="4" fill="#7556f3"/>
+<text x="1175" y="529" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#4d5b78" text-anchor="middle">Position 4</text>
+<text x="1175" y="548" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="650" fill="#d97706" text-anchor="middle">+20.7%</text>
+<rect x="50" y="590" width="590" height="360" rx="14" fill="#ffffff" stroke="#dde3ef"/>
+<text x="74" y="628" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="19" font-weight="650" fill="#102044" text-anchor="start">Why the learned table regressed</text>
+<text x="74" y="652" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="400" fill="#66738f" text-anchor="start">Change from the static table; lower is better</text>
+<line x1="280.0" y1="690" x2="280.0" y2="895" stroke="#edf0f6"/>
+<text x="280.0" y="920" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#7c879e" text-anchor="middle">-2%</text>
+<line x1="324.2857142857143" y1="690" x2="324.2857142857143" y2="895" stroke="#edf0f6"/>
+<text x="324.2857142857143" y="920" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#7c879e" text-anchor="middle">0%</text>
+<line x1="368.57142857142856" y1="690" x2="368.57142857142856" y2="895" stroke="#edf0f6"/>
+<text x="368.57142857142856" y="920" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#7c879e" text-anchor="middle">2%</text>
+<line x1="412.8571428571429" y1="690" x2="412.8571428571429" y2="895" stroke="#edf0f6"/>
+<text x="412.8571428571429" y="920" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#7c879e" text-anchor="middle">4%</text>
+<line x1="457.1428571428571" y1="690" x2="457.1428571428571" y2="895" stroke="#edf0f6"/>
+<text x="457.1428571428571" y="920" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#7c879e" text-anchor="middle">6%</text>
+<line x1="501.42857142857144" y1="690" x2="501.42857142857144" y2="895" stroke="#edf0f6"/>
+<text x="501.42857142857144" y="920" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#7c879e" text-anchor="middle">8%</text>
+<line x1="545.7142857142858" y1="690" x2="545.7142857142858" y2="895" stroke="#edf0f6"/>
+<text x="545.7142857142858" y="920" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#7c879e" text-anchor="middle">10%</text>
+<line x1="590.0" y1="690" x2="590.0" y2="895" stroke="#edf0f6"/>
+<text x="590.0" y="920" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#7c879e" text-anchor="middle">12%</text>
+<line x1="324.2857142857143" y1="690" x2="324.2857142857143" y2="895" stroke="#95a0b5" stroke-width="1.5"/>
+<text x="266" y="723" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="550" fill="#4d5b78" text-anchor="end">EVM storage reads</text>
+<rect x="307.28923780025406" y="705" width="16.99647648546022" height="25" rx="4" fill="#00a37a"/>
+<text x="332.2857142857143" y="723" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="650" fill="#00a37a" text-anchor="start">-0.77%</text>
+<text x="266" y="772" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="550" fill="#4d5b78" text-anchor="end">EVM storage fetch time</text>
+<rect x="324.2857142857143" y="754" width="218.1019775021636" height="25" rx="4" fill="#d97706"/>
+<text x="550.3876917878779" y="772" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="650" fill="#d97706" text-anchor="start">+9.85%</text>
+<text x="266" y="821" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="550" fill="#4d5b78" text-anchor="end">Cumulative execution</text>
+<rect x="324.2857142857143" y="803" width="120.57083186474887" height="25" rx="4" fill="#d97706"/>
+<text x="452.85654615046315" y="821" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="650" fill="#d97706" text-anchor="start">+5.45%</text>
+<text x="266" y="870" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="550" fill="#4d5b78" text-anchor="end">p99 execution</text>
+<rect x="324.2857142857143" y="852" width="110.10621133523443" height="25" rx="4" fill="#d97706"/>
+<text x="442.3919256209487" y="870" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="650" fill="#d97706" text-anchor="start">+4.97%</text>
+<rect x="670" y="590" width="600" height="360" rx="14" fill="#ffffff" stroke="#dde3ef"/>
+<text x="694" y="628" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="19" font-weight="650" fill="#102044" text-anchor="start">Recall change through the holdout</text>
+<text x="694" y="652" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="400" fill="#66738f" text-anchor="start">Cumulative table minus static table, in 50-block windows</text>
+<line x1="730" y1="895.0" x2="1235" y2="895.0" stroke="#edf0f6"/>
+<text x="718" y="899.0" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#7c879e" text-anchor="end">-2pp</text>
+<line x1="730" y1="843.75" x2="1235" y2="843.75" stroke="#edf0f6"/>
+<text x="718" y="847.75" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#7c879e" text-anchor="end">-1pp</text>
+<line x1="730" y1="792.5" x2="1235" y2="792.5" stroke="#edf0f6"/>
+<text x="718" y="796.5" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#7c879e" text-anchor="end">+0pp</text>
+<line x1="730" y1="741.25" x2="1235" y2="741.25" stroke="#edf0f6"/>
+<text x="718" y="745.25" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#7c879e" text-anchor="end">+1pp</text>
+<line x1="730" y1="690.0" x2="1235" y2="690.0" stroke="#edf0f6"/>
+<text x="718" y="694.0" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#7c879e" text-anchor="end">+2pp</text>
+<rect x="740.25" y="709.4890410958905" width="30" height="83.01095890410954" rx="3" fill="#00a37a"/>
+<text x="755.25" y="918" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="9" font-weight="400" fill="#7c879e" text-anchor="middle">200</text>
+<rect x="790.75" y="747.1632397614759" width="30" height="45.33676023852411" rx="3" fill="#00a37a"/>
+<text x="805.75" y="918" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="9" font-weight="400" fill="#7c879e" text-anchor="middle">250</text>
+<rect x="841.25" y="751.8004612032784" width="30" height="40.69953879672164" rx="3" fill="#00a37a"/>
+<text x="856.25" y="918" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="9" font-weight="400" fill="#7c879e" text-anchor="middle">300</text>
+<rect x="891.75" y="759.3297961047471" width="30" height="33.17020389525294" rx="3" fill="#00a37a"/>
+<text x="906.75" y="918" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="9" font-weight="400" fill="#7c879e" text-anchor="middle">350</text>
+<rect x="942.25" y="736.9243362704585" width="30" height="55.575663729541475" rx="3" fill="#00a37a"/>
+<text x="957.25" y="918" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="9" font-weight="400" fill="#7c879e" text-anchor="middle">400</text>
+<rect x="992.75" y="766.1856468267123" width="30" height="26.314353173287714" rx="3" fill="#00a37a"/>
+<text x="1007.75" y="918" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="9" font-weight="400" fill="#7c879e" text-anchor="middle">450</text>
+<rect x="1043.25" y="792.5" width="30" height="64.43731590202947" rx="3" fill="#d97706"/>
+<text x="1058.25" y="918" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="9" font-weight="400" fill="#7c879e" text-anchor="middle">500</text>
+<rect x="1093.75" y="711.9661138807809" width="30" height="80.53388611921912" rx="3" fill="#00a37a"/>
+<text x="1108.75" y="918" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="9" font-weight="400" fill="#7c879e" text-anchor="middle">550</text>
+<rect x="1144.25" y="763.0815439001768" width="30" height="29.418456099823175" rx="3" fill="#00a37a"/>
+<text x="1159.25" y="918" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="9" font-weight="400" fill="#7c879e" text-anchor="middle">600</text>
+<rect x="1194.75" y="784.9601552921947" width="30" height="7.539844707805287" rx="3" fill="#00a37a"/>
+<text x="1209.75" y="918" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="9" font-weight="400" fill="#7c879e" text-anchor="middle">650</text>
+<text x="982.5" y="936" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="10" font-weight="500" fill="#7c879e" text-anchor="middle">Block-number suffix</text>
+<text x="50" y="1000" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="400" fill="#66738f" text-anchor="start">Coverage: frozen hints evaluated on blocks 50,493,200–50,493,699. Runtime: eight restarted whole-range arms, four per table, 4 workers, zero artificial lead.</text>
+<text x="50" y="1024" font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="600" fill="#102044" text-anchor="start">Conclusion: retain learning as an offline candidate generator; do not race the broader learned table when the builder has no lead-time budget.</text>
+</svg>

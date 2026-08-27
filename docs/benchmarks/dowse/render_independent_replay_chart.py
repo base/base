@@ -13,6 +13,7 @@ RAW_PATH = Path(sys.argv[1])
 DOWSE_PATH = Path(sys.argv[2])
 OUTPUT_PATH = Path(sys.argv[3])
 RAW_BRACKET_PATH = Path(sys.argv[4]) if len(sys.argv) > 4 else None
+DOWSE_BRACKET_PATH = Path(sys.argv[5]) if len(sys.argv) > 5 else None
 WIDTH = 1440
 HEIGHT = 1400
 FONT = "Inter, ui-sans-serif, system-ui, -apple-system, sans-serif"
@@ -32,6 +33,11 @@ raw_metadata, raw_by_block = load_arm(RAW_PATH, ("raw",))
 dowse_metadata, dowse_by_block = load_arm(DOWSE_PATH, ("dowse", "concurrent"))
 raw_bracket_metadata, raw_bracket_by_block = (
     load_arm(RAW_BRACKET_PATH, ("raw",)) if RAW_BRACKET_PATH else (None, None)
+)
+dowse_bracket_metadata, dowse_bracket_by_block = (
+    load_arm(DOWSE_BRACKET_PATH, ("dowse", "concurrent"))
+    if DOWSE_BRACKET_PATH
+    else (None, None)
 )
 concurrent = dowse_metadata["variant"] == "concurrent"
 treatment_label = "Concurrent Dowse" if concurrent else "Dowse"
@@ -53,6 +59,13 @@ if raw_bracket_metadata and (
     or raw_by_block.keys() != raw_bracket_by_block.keys()
 ):
     raise ValueError("bracketing no-Dowse arm covers a different block range")
+if dowse_bracket_metadata and (
+    raw_declared_blocks != declared_blocks(dowse_bracket_metadata)
+    or raw_by_block.keys() != dowse_bracket_by_block.keys()
+    or dowse_metadata["variant"] != dowse_bracket_metadata["variant"]
+    or dowse_metadata.get("config") != dowse_bracket_metadata.get("config")
+):
+    raise ValueError("second Dowse arm has a different range or configuration")
 
 blocks = sorted(raw_by_block)
 for block in blocks:
@@ -72,6 +85,14 @@ for block in blocks:
             or raw["transactionCount"] != raw_bracket["transactionCount"]
         ):
             raise ValueError(f"bracketing no-Dowse arm disagrees at block {block}")
+    if dowse_bracket_by_block:
+        dowse_bracket = dowse_bracket_by_block[block]
+        if (
+            raw["replay"]["blockHash"] != dowse_bracket["replay"]["blockHash"]
+            or raw["gasUsed"] != dowse_bracket["gasUsed"]
+            or raw["transactionCount"] != dowse_bracket["transactionCount"]
+        ):
+            raise ValueError(f"second Dowse arm disagrees at block {block}")
 
 raw_times = [
     (
@@ -83,7 +104,16 @@ raw_times = [
     else raw_by_block[block]["replay"]["executionTimeUs"]
     for block in blocks
 ]
-dowse_times = [dowse_by_block[block]["replay"]["executionTimeUs"] for block in blocks]
+dowse_times = [
+    (
+        dowse_by_block[block]["replay"]["executionTimeUs"]
+        + dowse_bracket_by_block[block]["replay"]["executionTimeUs"]
+    )
+    / 2
+    if dowse_bracket_by_block
+    else dowse_by_block[block]["replay"]["executionTimeUs"]
+    for block in blocks
+]
 
 
 def percentile(values, quantile):
@@ -134,7 +164,16 @@ for kind in ("account", "storage", "code"):
         else raw_by_block[block]["replay"]["stateProvider"][field]
         for block in blocks
     )
-    dowse = sum(dowse_by_block[block]["replay"]["stateProvider"][field] for block in blocks)
+    dowse = sum(
+        (
+            dowse_by_block[block]["replay"]["stateProvider"][field]
+            + dowse_bracket_by_block[block]["replay"]["stateProvider"][field]
+        )
+        / 2
+        if dowse_bracket_by_block
+        else dowse_by_block[block]["replay"]["stateProvider"][field]
+        for block in blocks
+    )
     provider[kind] = (raw, dowse, change(raw, dowse))
 
 svg = []
@@ -200,11 +239,12 @@ for index, (label, value, color) in enumerate(chips):
 panel_x, panel_y, panel_w, panel_h = 50, 210, 870, 470
 element("rect", x=panel_x, y=panel_y, width=panel_w, height=panel_h, rx=14, fill="#ffffff", stroke="#dde3ef")
 text(panel_x + 24, panel_y + 36, "Block-for-block execution latency", 19, 650, "#102044")
-comparison_subtitle = (
-    "No-Dowse is the mean of two bracketing arms; axes clipped at p99.5"
-    if raw_bracket_by_block
-    else "Each block executed once in each full-range arm; axes clipped at p99.5"
-)
+if raw_bracket_by_block and dowse_bracket_by_block:
+    comparison_subtitle = "Each point is the per-treatment mean of two complete arms; axes clipped at p99.5"
+elif raw_bracket_by_block:
+    comparison_subtitle = "No-Dowse is the mean of two bracketing arms; axes clipped at p99.5"
+else:
+    comparison_subtitle = "Each block executed once in each full-range arm; axes clipped at p99.5"
 text(panel_x + 24, panel_y + 60, comparison_subtitle, 13, 400, "#66738f")
 plot_left, plot_top = panel_x + 72, panel_y + 86
 plot_width, plot_height = panel_w - 104, panel_h - 145
@@ -269,11 +309,12 @@ element("rect", x=panel_x, y=panel_y, width=panel_w, height=panel_h, rx=14, fill
 text(panel_x + 24, panel_y + 38, "Execution latency distribution", 19, 650, "#102044")
 text(panel_x + panel_w - 192, panel_y + 38, "■ No Dowse", 11, 500, "#94a0b5")
 text(panel_x + panel_w - 100, panel_y + 38, "■ Concurrent", 11, 500, "#0052ff")
-distribution_subtitle = (
-    f"{treatment_label} arm vs mean of two bracketing no-Dowse arms"
-    if raw_bracket_by_block
-    else "Independent full-range arms"
-)
+if raw_bracket_by_block and dowse_bracket_by_block:
+    distribution_subtitle = "Per-treatment mean of two independent full-range arms"
+elif raw_bracket_by_block:
+    distribution_subtitle = f"{treatment_label} arm vs mean of two bracketing no-Dowse arms"
+else:
+    distribution_subtitle = "Independent full-range arms"
 text(panel_x + 24, panel_y + 62, distribution_subtitle, 13, 400, "#66738f")
 percentiles = (("p50", 0.50), ("p90", 0.90), ("p95", 0.95), ("p99", 0.99))
 all_percentiles = [percentile(times, quantile) / 1000 for _, quantile in percentiles for times in (raw_times, dowse_times)]
@@ -297,7 +338,7 @@ panel_x, panel_y, panel_w, panel_h = 730, 710, 660, 310
 element("rect", x=panel_x, y=panel_y, width=panel_w, height=panel_h, rx=14, fill="#ffffff", stroke="#dde3ef")
 text(panel_x + 24, panel_y + 38, "Effect by initial execution time", 19, 650, "#102044")
 quartile_subtitle = (
-    "Quartiles defined by the bracketing no-Dowse mean"
+    "Quartiles defined by the mean of two no-Dowse arms"
     if raw_bracket_by_block
     else "Quartiles defined by the independent no-Dowse arm"
 )
@@ -371,7 +412,11 @@ text(
 text(panel_x + panel_w - 205, panel_y + 38, "— No Dowse", 12, 600, "#94a0b5")
 text(panel_x + panel_w - 108, panel_y + 38, f"— {treatment_label}", 12, 600, "#0052ff")
 if concurrent:
-    footer = "Historical replay; workers start after replay setup and race the EVM. Dowse is bracketed by restarted no-Dowse arms."
+    footer = (
+        "Historical replay; workers race the EVM with no artificial lead. Values are means of two restarted arms per treatment."
+        if dowse_bracket_by_block
+        else "Historical replay; workers start after replay setup and race the EVM. Dowse is bracketed by restarted no-Dowse arms."
+    )
 else:
     footer = (
         "Historical replay; Dowse is bracketed by two restarted no-Dowse arms. Prefetch planning and reads are outside measured execution."

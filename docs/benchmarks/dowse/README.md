@@ -1,8 +1,181 @@
 # Dowse state-prefetch benchmarks
 
+![Dowse priority-scheduler canonical replay](dowse-priority-scheduler-2000-2026-08-27.svg)
+
+## Priority-scheduled concurrent replay over 2,000 blocks
+
+The final implementation replaces the earlier per-worker transaction FIFOs with one central queue
+of concrete account, storage, and bytecode targets. The Flashblocks builder and all four persistent
+workers share one exact-parent `ExecutionCache`; each worker owns its own state provider. The
+scheduler:
+
+- promotes the transaction currently selected by the builder, then orders work by transaction
+  rank and hint confidence;
+- restricts speculative work to four transactions beyond the builder cursor and rejects hints below
+  20% confidence;
+- deduplicates targets globally across transactions and checks the shared cache before every read;
+- limits each transaction to 32 accounts and 256 storage slots; and
+- invalidates stale targets as transactions are completed, parked, or rejected.
+
+The production listener plans incrementally when the transaction pool changes, with a 25 ms timer
+only as a fallback. The central target queue holds at most 65,536 entries. The selected defaults are
+four workers, transaction distance four, locality batch one, and 32-account/256-slot limits.
+
+### Final fixed-range comparison
+
+The strict forward holdout is Base mainnet blocks 50,492,700–50,494,699: 2,000 blocks, 344,067
+transactions, and 66.66 billion gas. It includes two blocks above 200 Mgas. The static hint table was
+trained only on the preceding blocks 50,492,200–50,492,699, loaded once at process startup, and not
+updated during replay.
+
+A neutral no-Dowse arm first populated the host page cache. The measured sequence was no Dowse,
+Dowse, no Dowse, Dowse, with a Base process restart before every complete arm. Each arm replayed the
+entire range without alternating treatments within a block. The result below is each block's mean
+across its two arms for each treatment.
+
+Workers had no artificial lead: they were released immediately before EVM construction and raced
+execution. The actual requested-zero lead was 3.20 µs on average and 61 µs at maximum. Every replay
+verified the canonical block hash, full transaction order, and gas used.
+
+| Measurement | Result |
+| --- | ---: |
+| Aggregate execution effect | **19.54% faster** |
+| Paired-block bootstrap 95% sampling interval | **19.19–19.89% faster** |
+| First raw/Dowse pair | 19.91% faster |
+| Second raw/Dowse pair | 19.20% faster |
+| Raw arm drift / Dowse arm drift | 10.93% / 11.90% |
+| Mean execution per block | 98.6 ms without Dowse; 79.3 ms with Dowse |
+| Cumulative measured execution | 197.2 s without Dowse; 158.7 s with Dowse |
+| Parent-state storage reads / fetch time | 24.54% fewer / 35.62% lower |
+| Parent-state account reads / fetch time | 9.78% fewer / 3.19% higher |
+| Parent-state bytecode reads / fetch time | 13.70% fewer / 9.59% lower |
+| Blocks faster by their two-arm treatment mean | 1,980 / 2,000 (99.0%) |
+
+Absolute execution time drifted materially as the host became slower, but the contemporaneous
+raw/Dowse effect changed by only 0.70 percentage points. Averaging two complete arms per treatment
+reduces that arm-order bias. The narrow bootstrap interval captures block-sampling variation only;
+the paired-arm spread is the more useful bound on host-wide drift.
+
+| Percentile | Mean of no-Dowse arms | Mean of Dowse arms | Observed change |
+| --- | ---: | ---: | ---: |
+| p50 | 89.6 ms | 71.8 ms | 19.92% lower |
+| p90 | 140.5 ms | 116.0 ms | 17.45% lower |
+| p95 | 165.8 ms | 134.5 ms | 18.87% lower |
+| p99 | 238.7 ms | 200.6 ms | 15.99% lower |
+
+The benefit persists across the initial execution-time distribution rather than improving only
+fast blocks:
+
+| No-Dowse execution quartile | Range | Aggregate effect |
+| --- | ---: | ---: |
+| Fastest 25% | 36.2–74.8 ms | 20.17% faster |
+| 25–50% | 74.9–89.6 ms | 20.46% faster |
+| 50–75% | 89.6–112.0 ms | 19.92% faster |
+| Slowest 25% | 112.0–490.8 ms | 18.49% faster |
+
+| Block gas used | Blocks | Aggregate effect |
+| --- | ---: | ---: |
+| <25 Mgas | 586 | 21.63% faster |
+| 25–50 Mgas | 1,225 | 19.92% faster |
+| 50–100 Mgas | 172 | 16.18% faster |
+| 100–200 Mgas | 15 | 13.11% faster |
+| >200 Mgas | 2 | 13.10% faster |
+
+| Block | Gas used | No Dowse | Dowse | Observed effect |
+| --- | ---: | ---: | ---: | ---: |
+| 50,493,188 | 208.5 Mgas | 454.8 ms | 366.7 ms | 19.38% faster |
+| 50,494,654 | 259.3 Mgas | 490.8 ms | 455.1 ms | 7.28% faster |
+
+### Scheduler behavior and remaining contention
+
+Each Dowse arm planned the same 218,736 transactions, 131,696 account targets, and 1,708,195 storage
+targets. No worker read completed before EVM execution began. On average, workers completed 131,675
+account reads, 1,706,658 storage reads, and 109,157 bytecode reads while execution was active. Only
+one storage read across both arms completed after execution, 33 became stale before reading, and no
+read failed. The rest of the queued tail was abandoned when its block finished.
+
+The EVM performed 24.54% fewer parent-state storage reads, while storage fetch time fell further,
+by 35.62%. Account fetch time instead rose 3.19% despite 9.78% fewer account reads. Four workers can
+therefore stay ahead of the single-threaded EVM, but they still contend with it and additional
+workers are not free.
+
+Historical replay knows the complete canonical transaction list before workers are released. Hint
+planning took 13.69 ms per block on average and is intentionally excluded from the measured EVM
+interval. Production avoids that serial cost by planning each private transaction on arrival. This
+experiment establishes that the workers can race effectively with zero lead once targets exist; it
+does not establish private-orderflow lead time, final ordering accuracy, or end-to-end sequencer
+latency.
+
+### MDBX read locality
+
+Latest hashed accounts are keyed by `keccak(address)`. Hashed storage is a dupsort table grouped by
+hashed address and then hashed slot; bytecode is keyed by code hash. However,
+`StateProvider::storage` performs an individual `seek_by_key_subkey`, and the provider API used here
+does not expose a reusable bulk cursor. Historical state replay can also traverse history and
+changeset indexes, so sorting only latest-state hashed keys is not a faithful physical-I/O model.
+
+A repeated 271-block screen compared locality batches of one and sixteen with otherwise identical
+settings. Batch sixteen was about 2.4% slower, so the production default remains one: transaction
+priority beats speculative key grouping. A future DB-specific bulk API with cursor reuse could
+justify retesting locality, but merely reordering independent provider calls does not.
+
+### Production interpretation
+
+The central scheduler addresses the original correctness and efficiency concerns: workers write to
+the exact cache consumed by the builder, duplicate reads are globally suppressed, and work follows
+the builder's actual cursor rather than scanning distant transactions first. Confidence is a
+secondary priority within transaction order, preventing a high-confidence distant target from
+starving an imminent transaction.
+
+The production sequencer trial still needs to measure private transaction arrival lead, target
+queue age and drops, transaction replacement, completion before first EVM access, shared-cache hit
+rate, provider contention, and end-to-end Flashblock build latency. It must also compare neither,
+Dowse only, Reth txpool pre-sim only, and both. The current node's Reth txpool pre-sim remains
+disabled; incoming-canonical-block pre-sim on the follower is not shared with this payload builder.
+
+The artifacts are preserved under
+`/home/brian/work/base-dowse-runtime/artifacts/dowse-scheduler-full-20260827`:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `raw-before.jsonl` | `ebc4b748627f7f0129b5f4024970e93ffd63539588fea31b6076fe6fbadff6d4` |
+| `tuned.jsonl` | `e5068e66e1c31c45f8bf6470f475b5a5529756f59dd1f2ddee8b1d88582a1b63` |
+| `raw-after.jsonl` | `316323b39ac2632a2784684b93972104eaf78a49b6ef44c02c90b4ef94651eb6` |
+| `tuned-after.jsonl` | `de7cf4c3260b1ebde59c3eaddfda992d18f9ed77196385ba5fe04b0a4c1c92b9` |
+| `warmup-raw.jsonl` | `05a115002f344f54a82bea2845423769d96431f5136f746f9d0894680e0244b6` |
+
+The fixed hint table has SHA-256
+`b573e98de710fc473adc3fa84253434df757eb163a75fa85c4c40d61b6049d7d`.
+
+Restart Base before each measured arm, then render the two-arm treatment means:
+
+```sh
+python3 docs/benchmarks/dowse/run_concurrent_replay_arm.py \
+  --start-block 50492700 --end-block 50494699 --variant raw --output raw-before.jsonl
+python3 docs/benchmarks/dowse/run_concurrent_replay_arm.py \
+  --start-block 50492700 --end-block 50494699 --variant concurrent --workers 4 \
+  --head-start-us 0 --max-accounts-per-transaction 32 \
+  --max-storage-slots-per-transaction 256 --max-transaction-distance 4 \
+  --locality-batch-size 1 --min-confidence-bps 2000 --output tuned.jsonl
+python3 docs/benchmarks/dowse/run_concurrent_replay_arm.py \
+  --start-block 50492700 --end-block 50494699 --variant raw --output raw-after.jsonl
+python3 docs/benchmarks/dowse/run_concurrent_replay_arm.py \
+  --start-block 50492700 --end-block 50494699 --variant concurrent --workers 4 \
+  --head-start-us 0 --max-accounts-per-transaction 32 \
+  --max-storage-slots-per-transaction 256 --max-transaction-distance 4 \
+  --locality-batch-size 1 --min-confidence-bps 2000 --output tuned-after.jsonl
+
+python3 docs/benchmarks/dowse/render_independent_replay_chart.py \
+  raw-before.jsonl tuned.jsonl chart.svg raw-after.jsonl tuned-after.jsonl
+```
+
 ![Dowse concurrent canonical replay](dowse-concurrent-2500-2026-08-27.svg)
 
-## Concurrent worker race over 2,500 blocks
+## Earlier per-worker-FIFO concurrent replay over 2,500 blocks
+
+This section records the superseded worker design. Each worker consumed its own transaction FIFO;
+it did not have the final scheduler's global target deduplication, builder-cursor priority, or
+confidence ordering. Use the 2,000-block result above for the current implementation.
 
 The production-shaped historical experiment replays Base mainnet blocks 50,492,200–50,494,699
 with four direct-state-read workers and no artificial head start. Unlike the completed-cache
@@ -123,7 +296,7 @@ would be preferable to intentionally delaying payload construction.
 
 ![Dowse hint coverage and provider contention](hint-coverage-2026-08-27.svg)
 
-The current zero-lead winner uses a static table built from 120 historical blocks: 928 top-level
+The initial zero-lead run above used a static table built from 120 historical blocks: 928 top-level
 destinations, 2,320 selectors, and 48,522 hinted targets in a 13 MiB file. The table is loaded once
 at process startup and is not updated online. Every target is trace-inferred storage; the current
 generator supplies neither bytecode-derived account/call-chain hints nor implementation sharing by
@@ -161,10 +334,10 @@ earlier 500-block range 50,492,200–50,492,699. A 40% fixed-slot frequency thre
 holdout, storage-target recall rose from 13.9% to 17.8%, precision rose from 66.9% to 74.2%, and
 predictions rose from 11,206 to 12,910.
 
-That planner improvement did not translate into builder performance. A strict forward replay of
-blocks 50,492,700–50,494,699 ran whole-range A-B-B-A arms in the order current table, recent table,
-recent table, current table, with a process restart before every arm. Against the current table,
-the recent table produced:
+That planner improvement did not translate into builder performance with the earlier per-worker
+FIFO. A strict forward replay of blocks 50,492,700–50,494,699 ran whole-range A-B-B-A arms in the
+order current table, recent table, recent table, current table, with a process restart before every
+arm. Against the current table, the recent table produced:
 
 | Measurement | Recent table versus current table |
 | --- | ---: |
@@ -194,12 +367,11 @@ However, a first-seen slot derived from internal calldata, an internal caller, o
 read is fundamentally unavailable to a strict top-level-payload planner. Covering it requires
 protocol-aware router decoding, recursive hints with known internal context, or bounded pre-sim.
 
-The next experiment should not race every newly inferred target. Keep the current high-return table
-as the zero-lead tier, preserve confidence/frequency and measured latency in generated hints, and
-rank work by expected saved latency and distance ahead of the builder cursor. Admit broader or
-online-learned targets only while private orderflow provides real lead, or under an explicit I/O
-budget; throttle them when execution catches up. Online targets must also be bounded and decayed to
-prevent adversarial cache pollution.
+These findings motivated the central priority scheduler in the final validation above: preserve
+confidence, rank work by transaction distance from the builder cursor, deduplicate globally, and
+stop low-return work before it creates provider contention. Broader or online-learned targets still
+need measurable private-orderflow lead or an explicit I/O budget. Online targets must also be
+bounded and decayed to prevent adversarial cache pollution.
 
 The coverage artifacts are under
 `/home/brian/work/base-dowse-runtime/artifacts/dowse-coverage-selected-20260827`, and the full
@@ -209,7 +381,67 @@ table SHA-256 values are respectively
 `888c58bb18035e9797610efb9d92dee17b9959c11a661926043a48c32efa01ec` and
 `0f1453b27f117627bec2b6103018ef75635b4c94ea3f6d6a310528cba00dc175`.
 
-### Interpretation
+## Chronological online learning
+
+![Online hint learning coverage and runtime](online-learning-2026-08-27.svg)
+
+Dowse now has an incremental trace learner that retains inference counters instead of full calldata
+and trace payloads. Feeding it 1,000 blocks required 2.10 seconds of CPU for 164,905 transaction
+observations, including a 65.9 ms final snapshot, and peaked at 187 MiB RSS. This implementation is
+cumulative and deliberately not connected to the builder: production use would first require decay
+and cardinality bounds.
+
+The first forward-only experiment trained on blocks 50,492,200–50,492,699 and updated only from
+transactions in the later 50,492,700–50,493,199 range. Refreshing a cumulative table every ten
+blocks raised recall from 27.38% to 28.38% on that first holdout. A stricter test then froze both
+tables and evaluated the unseen next 500 blocks, 50,493,200–50,493,699:
+
+| Strict holdout measurement | Static 500-block table | Cumulative 1,000-block table |
+| --- | ---: | ---: |
+| Storage-target recall | 27.11% | **27.77%** |
+| Prediction precision | 81.12% | **82.89%** |
+| Useful targets found | 322,745 | **330,583** |
+| Total predictions | 397,858 | 398,817 |
+| False predictions | 75,113 | **68,234** |
+
+The cleaner table nevertheless regressed zero-lead execution. Two restarted whole-range sequences,
+A-B-B-A and B-A-A-B, provided four 500-block arms for each table while balancing treatment position.
+Both variants used the production scheduler settings: four workers, transaction distance four,
+locality batch one, 2,000-basis-point minimum confidence, and 32-account/256-slot limits.
+
+| Runtime measurement | Cumulative table versus static table |
+| --- | ---: |
+| EVM storage fetches | 0.77% fewer |
+| EVM storage fetch time | **9.85% higher** |
+| Cumulative EVM execution | **5.45% slower** |
+| p50 / p90 / p99 execution | 5.10% / 4.74% / 4.97% slower |
+| p95 execution | 0.39% faster |
+| Blocks faster by their four-arm mean | 71 / 500 |
+
+The additional table issued 1,575 more unique storage targets and 1,301 more account targets over
+the range. It removed about 6,780 EVM storage reads per arm, but the extra concurrent provider work
+cost much more than those avoided reads saved. Online learning is therefore retained as a fast
+offline candidate generator, not a production builder feature. Broader learned hints should be
+admitted only when private orderflow supplies measurable lead time or under a stricter I/O budget.
+The coverage and runtime summaries are under
+`/home/brian/work/base-dowse-runtime/artifacts/dowse-online-learning-20260827`.
+
+## Follower txpool is not a sequencer-orderflow proxy
+
+A ten-minute live sample explained the surprising nonempty follower txpool. Its pending count moved
+between zero and 24, with 111 unique transactions from 30 senders. Of those hashes, 87 (78.4%)
+appeared in the 217 canonical blocks sequenced during the observation window; this is a lower bound
+because 15 transactions first appeared in the final sample. Traffic was highly concentrated: 83
+transactions targeted one contract and another 21 targeted a second contract. The median gas limit
+was 8 million and 110 of 111 transfers had zero value, consistent with automated contract traffic.
+
+The node has ordinary execution-layer P2P transaction gossip enabled and two peers. Base's private
+sequencer mempool does not prevent users from also gossiping transactions publicly, so these were
+mostly genuine public transactions that also reached the sequencer. This pool can test mechanics,
+but its sparse and concentrated orderflow cannot establish production hit rate, ordering, or lead
+time for the private block builder.
+
+## Earlier concurrent-replay interpretation
 
 This experiment removes the earlier infinite-prefetch assumption and demonstrates that bounded
 direct reads can race a single-threaded EVM successfully with zero artificial lead. It still knows
