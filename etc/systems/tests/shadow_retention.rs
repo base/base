@@ -4,11 +4,10 @@ use std::time::Duration;
 
 use anyhow::Result;
 use base_shadow_indexer_db::{
-    PgConnectionParams, SHADOW_RETENTION_LOCK_KEY, ShadowBlockCursor, ShadowBlockPayload,
-    ShadowBlockRepo, ShadowBlockRow, ShadowDbConfig, ShadowMetricsCursorRepo, ShadowRetentionRepo,
-    ShadowWrite,
+    PgConnectionParams, SHADOW_RETENTION_LOCK_KEY, ShadowBlockPayload, ShadowBlockRepo,
+    ShadowBlockRow, ShadowDbConfig, ShadowRetentionRepo, ShadowWrite,
 };
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use reth_primitives_traits::RecoveredBlock;
 use sqlx::{PgPool, query, query_scalar};
 use testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner};
@@ -189,42 +188,6 @@ async fn yields_when_another_builder_holds_the_retention_lock() -> Result<()> {
 
     assert!(retention.sweep(cutoff).await?.is_none());
     assert_eq!(database.remaining_numbers().await?, vec![1]);
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn reports_expired_rows_the_metrics_cursor_never_consumed() -> Result<()> {
-    let database = TestDatabase::start().await?;
-    database.insert(vec![shadow_row(1)]).await?;
-    database.age_all_rows(days(31)).await?;
-
-    let retention = database.retention();
-    let cutoff = retention.cutoff(RETENTION_PERIOD).await?;
-
-    assert!(
-        !retention.has_unread_expired(cutoff).await?,
-        "an absent cursor means the reader never ran, which is not an unread-row signal"
-    );
-
-    let cursor = ShadowMetricsCursorRepo::new(database.pool.clone());
-    cursor.store(&ShadowBlockCursor::genesis()).await?;
-
-    assert!(
-        retention.has_unread_expired(cutoff).await?,
-        "a cursor behind the expiring reorged row must be reported"
-    );
-
-    let updated_at =
-        query_scalar::<_, DateTime<Utc>>("SELECT updated_at FROM shadow_blocks WHERE number = 1")
-            .fetch_one(&database.pool)
-            .await?;
-    cursor.store(&ShadowBlockCursor { updated_at, number: 1 }).await?;
-
-    assert!(
-        !retention.has_unread_expired(cutoff).await?,
-        "a cursor level with the expiring row leaves nothing unread"
-    );
 
     Ok(())
 }

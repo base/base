@@ -3,8 +3,6 @@ use chrono::{DateTime, Utc};
 use reth_primitives_traits::RecoveredBlock;
 use serde::{Deserialize, Serialize};
 
-use crate::ShadowBlockCursor;
-
 /// Persisted shadow block row.
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct ShadowBlockRow {
@@ -23,14 +21,6 @@ pub struct ShadowBlockRow {
     /// Incompatible serde changes fail the whole fetch and stall the reader; this risk is accepted.
     #[sqlx(json)]
     pub payload: ShadowBlockPayload,
-}
-
-impl ShadowBlockRow {
-    /// Returns this row's stream position.
-    #[must_use]
-    pub const fn cursor(&self) -> ShadowBlockCursor {
-        ShadowBlockCursor { updated_at: self.updated_at, number: self.number }
-    }
 }
 
 /// Canonical block at a height, used to resolve rows the chain discarded there.

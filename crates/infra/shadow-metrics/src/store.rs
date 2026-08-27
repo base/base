@@ -16,25 +16,6 @@ pub enum ShadowMetricsSchemaReadinessError {
         #[source]
         source: sqlx::Error,
     },
-    /// Cursor table is missing.
-    #[error(
-        "shadow-metrics Postgres schema is not ready: public.shadow_metrics_cursor is missing; apply the shadow-indexer migrations via ShadowDbConfig::init_pool"
-    )]
-    MetricsCursorMissing,
-    /// Cursor table is not writable.
-    #[error(
-        "shadow-metrics Postgres schema is not ready: runtime role needs INSERT and UPDATE on public.shadow_metrics_cursor; grant both privileges to the runtime role"
-    )]
-    MetricsCursorNotWritable,
-    /// Readiness query failed.
-    #[error(
-        "shadow-metrics Postgres schema readiness query failed: {source}; verify database connectivity and that the runtime role can inspect public.shadow_metrics_cursor"
-    )]
-    QueryFailed {
-        /// Database error.
-        #[source]
-        source: sqlx::Error,
-    },
 }
 
 /// Shadow metrics Postgres store.
@@ -72,10 +53,10 @@ impl ShadowMetricsStore {
         &self.pool
     }
 
-    /// Checks schema and runtime privileges.
+    /// Checks that shadow blocks are readable by the runtime role.
     ///
     /// # Errors
-    /// Returns an error when schema, privileges, or readiness queries fail.
+    /// Returns an error when the shadow block table cannot be read.
     pub async fn check_schema_ready(&self) -> Result<(), ShadowMetricsSchemaReadinessError> {
         sqlx::query("SELECT updated_at FROM public.shadow_blocks LIMIT 0")
             .execute(&self.pool)
@@ -84,24 +65,6 @@ impl ShadowMetricsStore {
                 source,
             })?;
 
-        let metrics_cursor_writable: Option<bool> = sqlx::query_scalar(
-            "SELECT CASE \
-                 WHEN to_regclass('public.shadow_metrics_cursor') IS NULL THEN NULL \
-                 ELSE has_table_privilege( \
-                     current_user, 'public.shadow_metrics_cursor', 'INSERT' \
-                 ) AND has_table_privilege( \
-                     current_user, 'public.shadow_metrics_cursor', 'UPDATE' \
-                 ) \
-             END",
-        )
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|source| ShadowMetricsSchemaReadinessError::QueryFailed { source })?;
-
-        match metrics_cursor_writable {
-            None => Err(ShadowMetricsSchemaReadinessError::MetricsCursorMissing),
-            Some(false) => Err(ShadowMetricsSchemaReadinessError::MetricsCursorNotWritable),
-            Some(true) => Ok(()),
-        }
+        Ok(())
     }
 }

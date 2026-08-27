@@ -1,13 +1,6 @@
 //! Shadow-metrics service entry point.
 
-use std::{
-    net::SocketAddr,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::Duration,
-};
+use std::net::SocketAddr;
 
 use anyhow::Result;
 use axum::{
@@ -19,9 +12,8 @@ use axum::{
 };
 use base_cli_utils::LogConfig;
 use base_shadow_metrics::{
-    DEFAULT_DATABASE, DEFAULT_MAX_ROWS_PER_POLL, DEFAULT_POLL_INTERVAL_SECS, DEFAULT_PORT,
-    DEFAULT_USERNAME, PgConnectionParams, ShadowMetricsReader, ShadowMetricsReaderConfig,
-    ShadowMetricsStore, api_router,
+    DEFAULT_DATABASE, DEFAULT_PORT, DEFAULT_USERNAME, PgConnectionParams, ShadowMetricsStore,
+    api_router,
 };
 use clap::Parser;
 use tokio::net::TcpListener;
@@ -33,8 +25,6 @@ base_cli_utils::define_metrics_args!("SHADOW_METRICS", 9003);
 #[derive(Debug, Clone)]
 struct HealthState {
     store: Option<ShadowMetricsStore>,
-    /// Reader liveness, absent when Postgres is disabled.
-    reader_alive: Option<Arc<AtomicBool>>,
 }
 
 #[derive(Parser, Debug)]
@@ -73,22 +63,6 @@ struct Args {
     /// Health server port.
     #[arg(long, env = "SHADOW_METRICS_HTTP_PORT", default_value = "9101")]
     http_port: u16,
-
-    /// Seconds between shadow block polls.
-    #[arg(
-        long,
-        env = "SHADOW_METRICS_POLL_INTERVAL_SECS",
-        default_value_t = DEFAULT_POLL_INTERVAL_SECS
-    )]
-    poll_interval_secs: u64,
-
-    /// Maximum rows fetched per poll.
-    #[arg(
-        long,
-        env = "SHADOW_METRICS_MAX_ROWS_PER_POLL",
-        default_value_t = DEFAULT_MAX_ROWS_PER_POLL
-    )]
-    max_rows_per_poll: u32,
 }
 
 #[tokio::main]
@@ -140,29 +114,10 @@ async fn run_server(args: Args) -> Result<()> {
         metrics_addr = %args.metrics.addr,
         metrics_port = args.metrics.port,
         postgres_enabled = connection.is_some(),
-        poll_interval_secs = args.poll_interval_secs,
-        max_rows_per_poll = args.max_rows_per_poll,
         "Starting shadow-metrics service"
     );
 
-    // Initialize reader before health server so cursor failures abort startup.
-    let reader_alive = match &store {
-        Some(store) => {
-            let config = ShadowMetricsReaderConfig {
-                poll_interval: Duration::from_secs(args.poll_interval_secs),
-                max_rows_per_poll: args.max_rows_per_poll,
-            };
-            let reader = ShadowMetricsReader::new(store.clone(), config).await?;
-            info!("Shadow-metrics reader started");
-            Some(spawn_reader(reader))
-        }
-        None => {
-            info!("Postgres is not configured; shadow-metrics reader is disabled");
-            None
-        }
-    };
-
-    let app = health_router(store.clone(), reader_alive).merge(api_router(store));
+    let app = health_router(store.clone()).merge(api_router(store));
     let http_listener = TcpListener::bind(http_addr).await?;
     let http_server = axum::serve(http_listener, app);
     info!(http_addr = %http_addr, "Shadow-metrics HTTP server started (health + block API)");
@@ -176,28 +131,6 @@ async fn run_server(args: Args) -> Result<()> {
             Ok(())
         }
     }
-}
-
-/// Spawns reader and returns a liveness flag cleared on unexpected exit.
-fn spawn_reader(reader: ShadowMetricsReader) -> Arc<AtomicBool> {
-    let alive = Arc::new(AtomicBool::new(true));
-    let reader_alive = Arc::clone(&alive);
-    let handle = tokio::spawn(reader.run());
-
-    tokio::spawn(async move {
-        match handle.await {
-            Ok(Ok(())) => error!("shadow-metrics reader poll loop returned unexpectedly"),
-            Ok(Err(error)) => error!(error = %error, "shadow-metrics reader poll loop failed"),
-            Err(error) => error!(
-                error = %error,
-                panicked = error.is_panic(),
-                "shadow-metrics reader task did not complete"
-            ),
-        }
-        reader_alive.store(false, Ordering::Release);
-    });
-
-    alive
 }
 
 /// Waits for SIGINT or SIGTERM.
@@ -223,14 +156,11 @@ async fn shutdown_signal() {
     }
 }
 
-fn health_router(
-    store: Option<ShadowMetricsStore>,
-    reader_alive: Option<Arc<AtomicBool>>,
-) -> Router {
+fn health_router(store: Option<ShadowMetricsStore>) -> Router {
     Router::new()
         .route("/healthz", get(healthz_handler))
         .route("/readyz", get(readyz_handler))
-        .with_state(HealthState { store, reader_alive })
+        .with_state(HealthState { store })
 }
 
 async fn healthz_handler() -> &'static str {
@@ -238,11 +168,6 @@ async fn healthz_handler() -> &'static str {
 }
 
 async fn readyz_handler(State(state): State<HealthState>) -> Response {
-    // `spawn_reader` logs death once; probes must not flood logs.
-    if state.reader_alive.as_ref().is_some_and(|alive| !alive.load(Ordering::Acquire)) {
-        return (StatusCode::SERVICE_UNAVAILABLE, "not ready\n").into_response();
-    }
-
     let readiness = match &state.store {
         Some(store) => store.check_schema_ready().await,
         None => Ok(()),
@@ -262,20 +187,10 @@ mod tests {
 
     #[tokio::test]
     async fn readyz_is_ready_without_postgres() {
-        let state = HealthState { store: None, reader_alive: None };
+        let state = HealthState { store: None };
 
         let response = readyz_handler(State(state)).await;
 
         assert_eq!(response.status(), StatusCode::OK);
-    }
-
-    #[tokio::test]
-    async fn readyz_is_unavailable_when_the_reader_died() {
-        let state =
-            HealthState { store: None, reader_alive: Some(Arc::new(AtomicBool::new(false))) };
-
-        let response = readyz_handler(State(state)).await;
-
-        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 }

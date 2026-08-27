@@ -10,15 +10,6 @@
 mod api;
 pub use api::api_router;
 
-mod metrics;
-pub use metrics::ShadowMetrics;
-
-mod reader;
-pub use reader::{
-    DEFAULT_MAX_ROWS_PER_POLL, DEFAULT_POLL_INTERVAL_SECS, ShadowMetricsReader,
-    ShadowMetricsReaderConfig,
-};
-
 mod stats;
 pub use stats::ShadowBlockStats;
 
