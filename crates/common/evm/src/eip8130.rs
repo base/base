@@ -1050,19 +1050,13 @@ impl Eip8130Executor {
                     .map_err(BaseTransactionError::eip8130)?;
                     (protocol_nonce == 0, true)
                 } else {
-                    // Take a single-use read receipt so the current value we
-                    // validate against is provably the value the increment
-                    // writes over — no chance of handing the storage layer a
-                    // stale caller-supplied `current`.
                     let read = nonce_mgr
                         .read_sequence_nonce(sender, nonce_key)
                         .map_err(BaseTransactionError::eip8130)?;
                     let current_nonce = read.current();
                     NonceValidator::validate_sequence(tx, current_nonce, NonceMode::Inclusion)
                         .map_err(BaseTransactionError::eip8130)?;
-                    nonce_mgr
-                        .increment_from_read(read)
-                        .map_err(BaseTransactionError::eip8130)?;
+                    nonce_mgr.increment_from_read(read).map_err(BaseTransactionError::eip8130)?;
                     (current_nonce == 0, false)
                 };
 
