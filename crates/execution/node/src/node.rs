@@ -1121,7 +1121,7 @@ where
         > + 'static,
     Pool:
         TransactionPool<Transaction: BasePooledTx<Consensus = TxTy<Node::Types>>> + Unpin + 'static,
-    Txs: BasePayloadTransactions<Pool::Transaction>,
+    Txs: BasePayloadTransactions<Pool>,
     Attrs: Attributes<Transaction = TxTy<Node::Types>> + Unpin,
 {
     type PayloadBuilder =

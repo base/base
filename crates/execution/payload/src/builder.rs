@@ -2,7 +2,7 @@
 use std::{marker::PhantomData, sync::Arc};
 
 use alloy_consensus::{BlockHeader, Transaction, Typed2718};
-use alloy_evm::Evm as AlloyEvm;
+use alloy_evm::{Evm as AlloyEvm, block::TxResult};
 use alloy_primitives::{B256, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
@@ -10,7 +10,10 @@ use base_common_chains::Upgrades;
 use base_common_consensus::{BaseTransaction, Predeploys};
 use base_common_evm::L1BlockInfo;
 use base_execution_eip8130::IntrinsicGas;
-use base_execution_txpool::{BasePooledTx, GuardMetrics, estimated_da_size::DataAvailabilitySized};
+use base_execution_txpool::{
+    BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext, ValidityPredicate,
+    estimated_da_size::DataAvailabilitySized,
+};
 use reth_basic_payload_builder::{
     BuildArguments, BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour, PayloadBuilder,
     PayloadConfig, is_better_payload,
@@ -26,7 +29,7 @@ use reth_execution_cache::{CachedStateMetrics, CachedStateMetricsSource, CachedS
 use reth_execution_types::BlockExecutionOutput;
 use reth_payload_builder_primitives::PayloadBuilderError;
 use reth_payload_primitives::{BuildNextEnv, BuiltPayloadExecutedBlock};
-use reth_payload_util::{BestPayloadTransactions, NoopPayloadTransactions, PayloadTransactions};
+use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
 use reth_primitives_traits::{
     HeaderTy, NodePrimitives, SealedHeader, SealedHeaderFor, SignedTransaction, TxTy,
 };
@@ -42,8 +45,10 @@ use revm::context::{Block, BlockEnv};
 use tracing::{debug, debug_span, instrument, trace, warn};
 
 use crate::{
-    Attributes, BasePayloadBuilderAttributes, PayloadPrimitives, config::BaseBuilderConfig,
-    error::BasePayloadBuilderError, payload::BaseBuiltPayload,
+    Attributes, BasePayloadBuilderAttributes, ParkableBestPayloadTransactions,
+    ParkablePayloadTransactions, ParkedPredicateIndex, PayloadPrimitives, StateChangeEffects,
+    ValidityPredicateEvaluation, config::BaseBuilderConfig, error::BasePayloadBuilderError,
+    payload::BaseBuiltPayload,
 };
 
 /// Base payload builder
@@ -155,7 +160,7 @@ where
         best: impl FnOnce(BestTransactionsAttributes) -> Txs + Send + Sync + 'a,
     ) -> Result<BuildOutcome<BaseBuiltPayload<N>>, PayloadBuilderError>
     where
-        Txs: PayloadTransactions<
+        Txs: ParkablePayloadTransactions<
             Transaction: PoolTransaction<Consensus = N::SignedTx> + BasePooledTx,
         >,
     {
@@ -246,7 +251,7 @@ where
             Primitives = N,
             NextBlockEnvCtx: BuildNextEnv<Attrs, N::BlockHeader, Client::ChainSpec>,
         >,
-    Txs: BasePayloadTransactions<Pool::Transaction>,
+    Txs: BasePayloadTransactions<Pool>,
     Attrs: Attributes<Transaction = N::SignedTx>,
 {
     type Attributes = Attrs;
@@ -334,7 +339,7 @@ impl<Txs> Builder<'_, Txs> {
             >,
         ChainSpec: EthChainSpec + Upgrades,
         N: PayloadPrimitives,
-        Txs: PayloadTransactions<
+        Txs: ParkablePayloadTransactions<
             Transaction: PoolTransaction<Consensus = N::SignedTx> + BasePooledTx,
         >,
         Attrs: Attributes<Transaction = N::SignedTx>,
@@ -494,24 +499,52 @@ impl<Txs> Builder<'_, Txs> {
     }
 }
 
-/// A type that returns the [`PayloadTransactions`] that should be included in the pool.
-pub trait BasePayloadTransactions<Transaction>: Clone + Send + Sync + Unpin + 'static {
+/// A type that returns the [`PayloadTransactions`] that should be included in the payload.
+pub trait BasePayloadTransactions<Pool>: Clone + Send + Sync + Unpin + 'static
+where
+    Pool: TransactionPool,
+    Pool::Transaction: BasePooledTx,
+{
     /// Returns an iterator that yields the transaction in the order they should get included in the
     /// new payload.
-    fn best_transactions<Pool: TransactionPool<Transaction = Transaction>>(
+    ///
+    /// Custom iterators without lane-aware parking can use [`NonParkablePayloadTransactions`].
+    fn best_transactions(
         &self,
         pool: Pool,
         attr: BestTransactionsAttributes,
-    ) -> impl PayloadTransactions<Transaction = Transaction>;
+    ) -> impl ParkablePayloadTransactions<Transaction = Pool::Transaction>;
 }
 
-impl<T: PoolTransaction> BasePayloadTransactions<T> for () {
-    fn best_transactions<Pool: TransactionPool<Transaction = T>>(
+impl<Pool> BasePayloadTransactions<Pool> for ()
+where
+    Pool: ParkableTransactionPool,
+    Pool::Transaction: BasePooledTx,
+{
+    fn best_transactions(
         &self,
         pool: Pool,
         attr: BestTransactionsAttributes,
-    ) -> impl PayloadTransactions<Transaction = T> {
-        BestPayloadTransactions::new(pool.best_transactions_with_attributes(attr))
+    ) -> impl ParkablePayloadTransactions<Transaction = Pool::Transaction> {
+        ParkableBestPayloadTransactions::new(
+            pool.best_transactions_with_attributes_and_parking(attr),
+        )
+    }
+}
+
+impl<Pool, F, Transactions> BasePayloadTransactions<Pool> for F
+where
+    Pool: TransactionPool,
+    Pool::Transaction: BasePooledTx,
+    F: Fn(Pool, BestTransactionsAttributes) -> Transactions + Clone + Send + Sync + Unpin + 'static,
+    Transactions: ParkablePayloadTransactions<Transaction = Pool::Transaction>,
+{
+    fn best_transactions(
+        &self,
+        pool: Pool,
+        attr: BestTransactionsAttributes,
+    ) -> impl ParkablePayloadTransactions<Transaction = Pool::Transaction> {
+        self(pool, attr)
     }
 }
 
@@ -738,7 +771,7 @@ where
         &self,
         info: &mut ExecutionInfo,
         builder: &mut Builder,
-        mut best_txs: impl PayloadTransactions<
+        mut best_txs: impl ParkablePayloadTransactions<
             Transaction: PoolTransaction<Consensus = TxTy<Evm::Primitives>> + BasePooledTx,
         >,
     ) -> Result<Option<()>, PayloadBuilderError>
@@ -757,6 +790,10 @@ where
         let block_da_limit = self.builder_config.da_config.max_da_block_size();
         let tx_da_limit = self.builder_config.da_config.max_da_tx_size();
         let base_fee = builder.evm_mut().block().basefee();
+        let block_number =
+            builder.evm_mut().block().number().try_into().expect("block number must fit in u64");
+        let predicate_context = PredicateContext { block_number, flashblock_index: 0 };
+        let mut predicate_index = ParkedPredicateIndex::default();
 
         let block_timestamp = self.attributes().timestamp();
         let can_finalize_early = self.is_denim_active();
@@ -766,6 +803,80 @@ where
             }
             if can_finalize_early && self.cancel.is_finalization_requested() {
                 break;
+            }
+
+            let tx_hash = *tx.hash();
+            if tx
+                .validity_predicates()
+                .iter()
+                .any(|predicate| matches!(predicate, ValidityPredicate::FlashblockIndex { .. }))
+            {
+                trace!(
+                    target: "payload_builder",
+                    tx_hash = ?tx_hash,
+                    "skipping transaction with unsupported flashblock-index predicate"
+                );
+                if tx.eip8130_replay_id().is_none() {
+                    best_txs.mark_invalid(tx.sender(), tx.nonce());
+                } else {
+                    best_txs.mark_current_committed();
+                }
+                continue;
+            }
+
+            if !tx.validity_predicates().is_empty() {
+                match ValidityPredicateEvaluation::evaluate(
+                    tx.validity_predicates(),
+                    builder.evm_mut().db_mut(),
+                    &predicate_context,
+                ) {
+                    Ok(ValidityPredicateEvaluation::Matched) => {}
+                    Ok(ValidityPredicateEvaluation::Unsatisfied { expired: true, .. }) => {
+                        trace!(
+                            target: "payload_builder",
+                            tx_hash = ?tx_hash,
+                            "skipping transaction with expired validity predicate"
+                        );
+                        if tx.eip8130_replay_id().is_none() {
+                            best_txs.mark_invalid(tx.sender(), tx.nonce());
+                        } else {
+                            best_txs.mark_current_committed();
+                        }
+                        continue;
+                    }
+                    Ok(ValidityPredicateEvaluation::Unsatisfied { blocker, expired: false }) => {
+                        trace!(
+                            target: "payload_builder",
+                            tx_hash = ?tx_hash,
+                            ?blocker,
+                            "parking transaction with unsatisfied validity predicate"
+                        );
+                        if best_txs.park_current() {
+                            predicate_index.park(tx_hash, tx, blocker);
+                        } else {
+                            if tx.eip8130_replay_id().is_none() {
+                                best_txs.mark_invalid(tx.sender(), tx.nonce());
+                            } else {
+                                best_txs.mark_current_committed();
+                            }
+                        }
+                        continue;
+                    }
+                    Err(error) => {
+                        warn!(
+                            target: "payload_builder",
+                            tx_hash = ?tx_hash,
+                            error = ?error,
+                            "failed to read validity predicate state"
+                        );
+                        if tx.eip8130_replay_id().is_none() {
+                            best_txs.mark_invalid(tx.sender(), tx.nonce());
+                        } else {
+                            best_txs.mark_current_committed();
+                        }
+                        continue;
+                    }
+                }
             }
 
             if self.builder_config.manifest_precheck_enabled
@@ -785,6 +896,8 @@ where
                 // This transaction has already been consumed from the iterator.
                 if tx.eip8130_replay_id().is_none() {
                     best_txs.mark_invalid(tx.sender(), tx.nonce());
+                } else {
+                    best_txs.mark_current_committed();
                 }
                 continue;
             }
@@ -809,6 +922,8 @@ where
                         // independent, so invalidating by sender would suppress unrelated entries.
                         if tx.eip8130_replay_id().is_none() {
                             best_txs.mark_invalid(tx.sender(), tx.nonce());
+                        } else {
+                            best_txs.mark_current_committed();
                         }
                         continue;
                     }
@@ -848,7 +963,16 @@ where
                 continue;
             }
 
-            let gas_output = match builder.execute_transaction(tx.clone()) {
+            let mut state_change_effects = StateChangeEffects::default();
+            let gas_output = match builder.execute_transaction_with_result_closure(
+                tx.clone(),
+                |result| {
+                    if !predicate_index.is_empty() {
+                        state_change_effects =
+                            predicate_index.affected_by_state(&result.result().state);
+                    }
+                },
+            ) {
                 Ok(gas_output) => gas_output,
                 Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
                     error,
@@ -856,6 +980,7 @@ where
                 })) => {
                     if error.is_nonce_too_low() {
                         trace!(target: "payload_builder", %error, ?tx, "skipping nonce too low transaction");
+                        best_txs.mark_current_committed();
                     } else {
                         trace!(target: "payload_builder", %error, ?tx, "skipping invalid transaction and its descendants");
                         best_txs.mark_invalid(tx.signer(), tx.nonce());
@@ -869,6 +994,36 @@ where
 
             info.cumulative_gas_used += gas_output.tx_gas_used();
             info.cumulative_da_bytes_used += tx_da_size;
+
+            best_txs.mark_current_committed();
+            for parked_hash in state_change_effects.affected_transactions {
+                let Some(parked_transaction) = predicate_index.transaction(parked_hash) else {
+                    continue;
+                };
+                match ValidityPredicateEvaluation::evaluate(
+                    parked_transaction.validity_predicates(),
+                    builder.evm_mut().db_mut(),
+                    &predicate_context,
+                ) {
+                    Ok(ValidityPredicateEvaluation::Matched) => {
+                        predicate_index.remove(parked_hash);
+                        best_txs.promote(parked_hash);
+                    }
+                    Ok(ValidityPredicateEvaluation::Unsatisfied { blocker, .. }) => {
+                        predicate_index.reindex(parked_hash, blocker);
+                    }
+                    Err(error) => {
+                        warn!(
+                            target: "payload_builder",
+                            tx_hash = ?parked_hash,
+                            error = ?error,
+                            "failed to re-read validity predicate state"
+                        );
+                        predicate_index.remove(parked_hash);
+                        best_txs.discard_parked(parked_hash);
+                    }
+                }
+            }
 
             let miner_fee = tx
                 .effective_tip_per_gas(base_fee)
@@ -889,7 +1044,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, mem::ManuallyDrop, sync::Arc};
+    use std::{
+        collections::{HashMap, VecDeque},
+        mem::ManuallyDrop,
+        sync::Arc,
+    };
 
     use alloy_consensus::{Header, SignableTransaction, TxEip1559};
     use alloy_eips::eip2718::Encodable2718;
@@ -899,7 +1058,7 @@ mod tests {
     use base_common_evm::BaseTime;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_evm::BaseEvmConfig;
-    use base_execution_txpool::BasePooledTransaction;
+    use base_execution_txpool::{BasePooledTransaction, ValidityOperator, ValidityPredicate};
     use reth_basic_payload_builder::{BuildOutcomeKind, PayloadConfig};
     use reth_chainspec::ChainSpec;
     use reth_ethereum_forks::ForkCondition;
@@ -922,8 +1081,8 @@ mod tests {
 
     use super::{BasePayloadBuilderCtx, Builder, ExecutionInfo};
     use crate::{
-        BasePayloadBuilderAttributes, config::BaseBuilderConfig,
-        payload::EthPayloadBuilderAttributes,
+        BasePayloadBuilderAttributes, NonParkablePayloadTransactions, ParkablePayloadTransactions,
+        config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes,
     };
 
     #[derive(Debug)]
@@ -1052,6 +1211,22 @@ mod tests {
     where
         Txs: PayloadTransactions<Transaction = BasePooledTransaction> + Send + Sync,
     {
+        let funded_sender = pool_transaction(0).sender();
+        build_parkable_pool_payload(
+            ctx,
+            NonParkablePayloadTransactions::new(transactions),
+            &[funded_sender],
+        )
+    }
+
+    fn build_parkable_pool_payload<Txs>(
+        ctx: BasePayloadBuilderCtx<BaseEvmConfig, BaseChainSpec>,
+        transactions: Txs,
+        funded_senders: &[Address],
+    ) -> BuildOutcomeKind<crate::BaseBuiltPayload<BasePrimitives>>
+    where
+        Txs: ParkablePayloadTransactions<Transaction = BasePooledTransaction> + Send + Sync,
+    {
         let mut storage = HashMap::default();
         storage.insert(
             StorageKey::from(BaseTime::ADMIN_SLOT.to_be_bytes::<32>()),
@@ -1064,18 +1239,24 @@ mod tests {
             Some(BaseTime::proxy_bytecode()),
             storage,
         );
-        provider.insert_account(
-            pool_transaction(0).sender(),
-            Account { balance: U256::MAX, ..Default::default() },
-            None,
-            HashMap::default(),
-        );
+        for sender in funded_senders {
+            provider.insert_account(
+                *sender,
+                Account { balance: U256::MAX, ..Default::default() },
+                None,
+                HashMap::default(),
+            );
+        }
         Builder::new(|_| transactions)
             .build(StateProviderDatabase::new(&provider), &provider, Some(state_root_handle()), ctx)
             .expect("payload must build")
     }
 
     fn pool_transaction(nonce: u64) -> BasePooledTransaction {
+        pool_transaction_to(nonce, Address::repeat_byte(0x11), U256::ZERO)
+    }
+
+    fn pool_transaction_to(nonce: u64, to: Address, value: U256) -> BasePooledTransaction {
         let envelope = BaseTxEnvelope::Eip1559(
             TxEip1559 {
                 chain_id: 8_453,
@@ -1083,7 +1264,8 @@ mod tests {
                 gas_limit: 100_000,
                 max_fee_per_gas: 2_000_000_000,
                 max_priority_fee_per_gas: 1,
-                to: TxKind::Call(Address::repeat_byte(0x11)),
+                to: TxKind::Call(to),
+                value,
                 ..Default::default()
             }
             .into_signed(Signature::test_signature()),
@@ -1093,6 +1275,67 @@ mod tests {
             envelope.try_into_recovered().expect("test signature must recover"),
             encoded_len,
         )
+    }
+
+    /// Scripted iterator is required here because predicate promotion mutates which transaction
+    /// `next` returns while the build is in flight, which a static mock cannot express.
+    struct TestParkableTransactions {
+        queued: VecDeque<BasePooledTransaction>,
+        ready: VecDeque<BasePooledTransaction>,
+        parked: HashMap<B256, BasePooledTransaction>,
+        current: Option<BasePooledTransaction>,
+    }
+
+    impl TestParkableTransactions {
+        fn new(transactions: Vec<BasePooledTransaction>) -> Self {
+            Self {
+                queued: transactions.into(),
+                ready: VecDeque::new(),
+                parked: HashMap::default(),
+                current: None,
+            }
+        }
+    }
+
+    impl PayloadTransactions for TestParkableTransactions {
+        type Transaction = BasePooledTransaction;
+
+        fn next(&mut self, _ctx: ()) -> Option<Self::Transaction> {
+            assert!(self.current.is_none(), "current transaction was not lifecycle-managed");
+            let transaction = self.ready.pop_front().or_else(|| self.queued.pop_front())?;
+            self.current = Some(transaction.clone());
+            Some(transaction)
+        }
+
+        fn mark_invalid(&mut self, _sender: Address, _nonce: u64) {
+            self.current = None;
+        }
+    }
+
+    impl ParkablePayloadTransactions for TestParkableTransactions {
+        fn park_current(&mut self) -> bool {
+            let Some(transaction) = self.current.take() else {
+                return false;
+            };
+            self.parked.insert(*transaction.hash(), transaction);
+            true
+        }
+
+        fn mark_current_committed(&mut self) {
+            self.current = None;
+        }
+
+        fn promote(&mut self, transaction_hash: B256) -> bool {
+            let Some(transaction) = self.parked.remove(&transaction_hash) else {
+                return false;
+            };
+            self.ready.push_back(transaction);
+            true
+        }
+
+        fn discard_parked(&mut self, transaction_hash: B256) -> bool {
+            self.parked.remove(&transaction_hash).is_some()
+        }
     }
 
     struct FinalizeAfterFirstTransaction {
@@ -1145,6 +1388,98 @@ mod tests {
             panic!("Denim payload must freeze")
         };
         assert_eq!(payload.block().body().transactions.len(), 1);
+    }
+
+    #[test]
+    fn native_builder_includes_transaction_with_matching_block_predicate() {
+        let transaction =
+            pool_transaction(0).with_validity_predicates(vec![ValidityPredicate::BlockNumber {
+                op: ValidityOperator::Equal,
+                value: U256::ONE,
+            }]);
+        let sender = transaction.sender();
+        let transaction_hash = *transaction.hash();
+
+        let BuildOutcomeKind::Freeze(payload) = build_parkable_pool_payload(
+            pool_payload_context(DENIM_TIMESTAMP),
+            TestParkableTransactions::new(vec![transaction]),
+            &[sender],
+        ) else {
+            panic!("Denim payload must freeze")
+        };
+
+        assert_eq!(payload.block().body().transactions.len(), 1);
+        assert_eq!(*payload.block().body().transactions[0].tx_hash(), transaction_hash);
+    }
+
+    #[test]
+    fn native_builder_rejects_flashblock_index_predicates() {
+        let transaction = pool_transaction(0).with_validity_predicates(vec![
+            ValidityPredicate::FlashblockIndex { op: ValidityOperator::Equal, value: U256::ZERO },
+        ]);
+        let sender = transaction.sender();
+
+        let BuildOutcomeKind::Freeze(payload) = build_parkable_pool_payload(
+            pool_payload_context(DENIM_TIMESTAMP),
+            TestParkableTransactions::new(vec![transaction]),
+            &[sender],
+        ) else {
+            panic!("Denim payload must freeze")
+        };
+
+        assert!(payload.block().body().transactions.is_empty());
+    }
+
+    #[test]
+    fn native_builder_skips_expired_block_predicates() {
+        let transaction =
+            pool_transaction(0).with_validity_predicates(vec![ValidityPredicate::BlockNumber {
+                op: ValidityOperator::Equal,
+                value: U256::ZERO,
+            }]);
+        let sender = transaction.sender();
+
+        let BuildOutcomeKind::Freeze(payload) = build_parkable_pool_payload(
+            pool_payload_context(DENIM_TIMESTAMP),
+            TestParkableTransactions::new(vec![transaction]),
+            &[sender],
+        ) else {
+            panic!("Denim payload must freeze")
+        };
+
+        assert!(payload.block().body().transactions.is_empty());
+    }
+
+    #[test]
+    fn native_builder_promotes_transaction_after_predicate_state_changes() {
+        let watched_address = Address::repeat_byte(0x44);
+        let gated = pool_transaction_to(0, Address::repeat_byte(0x55), U256::ZERO)
+            .with_validity_predicates(vec![ValidityPredicate::Balance {
+                address: watched_address,
+                op: ValidityOperator::Equal,
+                value: U256::ONE,
+            }]);
+        let trigger = pool_transaction_to(0, watched_address, U256::ONE);
+        let funded_senders = [gated.sender(), trigger.sender()];
+        let gated_hash = *gated.hash();
+        let trigger_hash = *trigger.hash();
+
+        let BuildOutcomeKind::Freeze(payload) = build_parkable_pool_payload(
+            pool_payload_context(DENIM_TIMESTAMP),
+            TestParkableTransactions::new(vec![gated, trigger]),
+            &funded_senders,
+        ) else {
+            panic!("Denim payload must freeze")
+        };
+
+        let included_hashes = payload
+            .block()
+            .body()
+            .transactions
+            .iter()
+            .map(|transaction| *transaction.tx_hash())
+            .collect::<Vec<_>>();
+        assert_eq!(included_hashes, vec![trigger_hash, gated_hash]);
     }
 
     #[test]
