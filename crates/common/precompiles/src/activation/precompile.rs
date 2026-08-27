@@ -3,7 +3,6 @@
 use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
 use alloy_primitives::Address;
 use base_common_genesis::BaseUpgrade;
-use base_precompile_macros::precompile;
 
 use crate::{
     ActivationAdminConfig, ActivationRegistryStorage, NoopPrecompileCallObserver,
@@ -11,7 +10,10 @@ use crate::{
 };
 
 /// Entry point for the activation registry precompile.
-#[precompile(args(admin_config: ActivationAdminConfig))]
+///
+/// Installation and wrapper construction are hand-rolled because the wrapper needs an observer
+/// alongside its admin config. Storage features are pinned to the active [`BaseUpgrade`] at every
+/// entry point (Cantina finding #17).
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ActivationRegistry;
 

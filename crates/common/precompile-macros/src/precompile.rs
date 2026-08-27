@@ -36,6 +36,13 @@ fn expand_impl(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStrea
     });
     let macro_path =
         config.macro_path.unwrap_or_else(|| syn::parse_quote!(crate::macros::base_precompile));
+    let storage_features = config.storage_features.ok_or_else(|| {
+        syn::Error::new(
+            input.ident.span(),
+            "`#[precompile]` requires `storage_features = <expr>` so the wrapper is pinned to the \
+             active fork instead of falling back to a default (see Cantina finding #17).",
+        )
+    })?;
     let args = config.args;
     let arg_defs = args.iter().map(PrecompileArg::definition);
     let install_arg_defs = args.iter().map(PrecompileArg::definition);
@@ -67,9 +74,13 @@ fn expand_impl(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStrea
 
             #[doc = #precompile_doc]
             pub fn precompile(#(#arg_defs),*) -> ::alloy_evm::precompiles::DynPrecompile {
-                #macro_path!(#id, |ctx, calldata| {
-                    <#storage>::new(ctx).dispatch(ctx, &calldata #(, #arg_names)*)
-                })
+                #macro_path!(
+                    #id,
+                    storage_features: #storage_features,
+                    |ctx, calldata| {
+                        <#storage>::new(ctx).dispatch(ctx, &calldata #(, #arg_names)*)
+                    },
+                )
             }
         }
     })
@@ -79,6 +90,7 @@ struct PrecompileConfig {
     id: Option<Expr>,
     storage: Option<Type>,
     macro_path: Option<Path>,
+    storage_features: Option<Expr>,
     args: Vec<PrecompileArg>,
     install: bool,
 }
@@ -88,6 +100,7 @@ impl Parse for PrecompileConfig {
         let mut id = None;
         let mut storage = None;
         let mut macro_path = None;
+        let mut storage_features = None;
         let mut args = Vec::new();
         let mut args_seen = false;
         let mut install = false;
@@ -109,6 +122,11 @@ impl Parse for PrecompileConfig {
                     reject_duplicate(&macro_path, &key)?;
                     input.parse::<Token![=]>()?;
                     macro_path = Some(input.parse()?);
+                }
+                "storage_features" => {
+                    reject_duplicate(&storage_features, &key)?;
+                    input.parse::<Token![=]>()?;
+                    storage_features = Some(input.parse()?);
                 }
                 "args" => {
                     if args_seen {
@@ -137,7 +155,7 @@ impl Parse for PrecompileConfig {
                 _ => {
                     return Err(syn::Error::new_spanned(
                         key,
-                        "expected `id`, `storage`, `macro_path`, `args`, or `install`",
+                        "expected `id`, `storage`, `macro_path`, `storage_features`, `args`, or `install`",
                     ));
                 }
             }
@@ -147,7 +165,7 @@ impl Parse for PrecompileConfig {
             }
         }
 
-        Ok(Self { id, storage, macro_path, args, install })
+        Ok(Self { id, storage, macro_path, storage_features, args, install })
     }
 }
 
@@ -213,20 +231,18 @@ mod tests {
     fn config_rejects_unknown_options() {
         let err = parse_config(quote! { instal }).err().unwrap();
 
-        assert!(
-            err.to_string()
-                .contains("expected `id`, `storage`, `macro_path`, `args`, or `install`")
-        );
+        assert!(err.to_string().contains(
+            "expected `id`, `storage`, `macro_path`, `storage_features`, `args`, or `install`"
+        ));
     }
 
     #[test]
     fn config_rejects_positional_storage() {
         let err = parse_config(quote! { CustomStorage<'_> }).err().unwrap();
 
-        assert!(
-            err.to_string()
-                .contains("expected `id`, `storage`, `macro_path`, `args`, or `install`")
-        );
+        assert!(err.to_string().contains(
+            "expected `id`, `storage`, `macro_path`, `storage_features`, `args`, or `install`"
+        ));
     }
 
     #[test]
@@ -234,11 +250,13 @@ mod tests {
         let config = parse_config(quote! {
             storage = CustomStorage<'_>,
             macro_path = crate::macros::custom_precompile,
+            storage_features = StorageFeatures::Cobalt,
         })
         .unwrap();
 
         assert!(config.storage.is_some());
         assert!(config.macro_path.is_some());
+        assert!(config.storage_features.is_some());
         assert!(!config.install);
     }
 
@@ -247,6 +265,39 @@ mod tests {
         let config = parse_config(quote! { install }).unwrap();
 
         assert!(config.install);
+    }
+
+    #[test]
+    fn expand_requires_storage_features() {
+        let err = expand_impl(
+            quote! { install },
+            quote! {
+                pub struct Example;
+            },
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("`storage_features = <expr>`"), "got: {err}");
+    }
+
+    #[test]
+    fn expand_emits_pinned_storage_features() {
+        let tokens = expand_impl(
+            quote! {
+                install,
+                args(upgrade: BaseUpgrade),
+                storage_features = pin_from_upgrade(upgrade),
+            },
+            quote! {
+                pub struct Example;
+            },
+        )
+        .unwrap()
+        .to_string();
+
+        assert!(tokens.contains("storage_features :"), "got: {tokens}");
+        assert!(tokens.contains("pin_from_upgrade (upgrade)"), "got: {tokens}");
     }
 
     #[test]
@@ -293,7 +344,7 @@ mod tests {
     #[test]
     fn bare_install_expands_to_storage_address() {
         let tokens = expand_impl(
-            quote! { install },
+            quote! { install, storage_features = StorageFeatures::Cobalt },
             quote! {
                 pub struct Example;
             },
@@ -309,7 +360,11 @@ mod tests {
     #[test]
     fn install_with_explicit_storage_uses_that_address() {
         let tokens = expand_impl(
-            quote! { storage = CustomStorage<'_>, install },
+            quote! {
+                storage = CustomStorage<'_>,
+                install,
+                storage_features = StorageFeatures::Cobalt,
+            },
             quote! {
                 pub struct Example;
             },
