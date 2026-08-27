@@ -682,6 +682,14 @@ impl BasePayloadBuilderCtx {
             PredicateContext { block_number, flashblock_index: self.flashblock_index() };
 
         while let Some(tx) = best_txs.next(()) {
+            if self.cancel.is_cancelled() {
+                diag.cancelled = true;
+                diag.txs_considered = num_txs_considered;
+                diag.txs_included =
+                    (info.executed_transactions.len() as u64).saturating_sub(min_tx_index);
+                return Ok(diag);
+            }
+
             if tx.is_bundle_expired(block_number, block_timestamp) {
                 let tx_hash = *tx.hash();
                 let min_block_number = tx.min_block_number();
@@ -1160,15 +1168,6 @@ impl BasePayloadBuilderCtx {
                 continue;
             }
 
-            // check if the job was cancelled, if so we can exit early
-            if self.cancel.is_cancelled() {
-                diag.cancelled = true;
-                diag.txs_considered = num_txs_considered;
-                diag.txs_included =
-                    (info.executed_transactions.len() as u64).saturating_sub(min_tx_index);
-                return Ok(diag);
-            }
-
             let tx_span = span!(
                 Level::TRACE,
                 "execute_transaction",
@@ -1538,17 +1537,178 @@ impl BasePayloadBuilderCtx {
 mod tests {
     use alloy_consensus::{Header, TxEip1559};
     use alloy_eips::Encodable2718;
-    use alloy_primitives::{TxKind, U256};
+    use alloy_primitives::{Address, TxKind, U256};
     use alloy_signer_local::PrivateKeySigner;
-    use base_common_consensus::BaseTypedTransaction;
+    use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction, TxDeposit};
     use base_execution_chainspec::BaseChainSpec;
+    use base_execution_txpool::BasePooledTransaction;
     use reth_chainspec::ChainSpec;
-    use reth_primitives_traits::{SealedHeader, WithEncoded};
+    use reth_payload_util::PayloadTransactions;
+    use reth_primitives_traits::{Recovered, SealedHeader, WithEncoded};
     use reth_provider::noop::NoopProvider;
     use reth_revm::{State, database::StateProviderDatabase};
 
     use super::*;
-    use crate::test_utils::sign_base_tx;
+    use crate::{ParkablePayloadTransactions, test_utils::sign_base_tx};
+
+    fn test_builder_context() -> BasePayloadBuilderCtx {
+        let genesis: serde_json::Value = serde_json::json!({
+            "config": { "chainId": 901 },
+            "gasLimit": "0x1C9C380",
+            "timestamp": "0x0"
+        });
+        let genesis = serde_json::from_value(genesis).expect("valid genesis");
+        let inner =
+            ChainSpec::builder().chain(901.into()).genesis(genesis).cancun_activated().build();
+        let chain_spec = Arc::new(BaseChainSpec::from(inner));
+        let parent_header = Header { gas_limit: 30_000_000, timestamp: 0, ..Default::default() };
+        let parent = Arc::new(SealedHeader::seal_slow(parent_header));
+        BasePayloadBuilderCtx::for_test(chain_spec, parent)
+    }
+
+    fn pooled_test_transaction() -> BasePooledTransaction {
+        let signer = PrivateKeySigner::random();
+        let transaction = TxEip1559 {
+            chain_id: 901,
+            nonce: 0,
+            gas_limit: 21_000,
+            max_fee_per_gas: 1_000_000_000,
+            max_priority_fee_per_gas: 0,
+            to: TxKind::Call(signer.address()),
+            ..Default::default()
+        };
+        let recovered = sign_base_tx(&signer, BaseTypedTransaction::Eip1559(transaction))
+            .expect("sign test transaction");
+        let encoded_len = recovered.encode_2718_len();
+        BasePooledTransaction::new(recovered, encoded_len)
+    }
+
+    fn pooled_deposit_test_transaction() -> BasePooledTransaction {
+        let sender = Address::ZERO;
+        let transaction = TxDeposit {
+            source_hash: B256::ZERO,
+            from: sender,
+            to: TxKind::Create,
+            mint: 0,
+            value: U256::ZERO,
+            gas_limit: 0,
+            is_system_transaction: false,
+            input: Default::default(),
+        };
+        let signed: BaseTransactionSigned = transaction.into();
+        let recovered = Recovered::new_unchecked(signed, sender);
+        let encoded_len = recovered.encode_2718_len();
+        BasePooledTransaction::new(recovered, encoded_len)
+    }
+
+    #[derive(Debug)]
+    struct LimitRejectionTransactions {
+        within_limit_transaction: BasePooledTransaction,
+        over_limit_transaction: BasePooledTransaction,
+        within_limit_remaining: usize,
+        over_limit_remaining: usize,
+        current_is_over_limit: bool,
+        over_limit_rejections: usize,
+        cancel: CancellationToken,
+    }
+
+    impl LimitRejectionTransactions {
+        fn new(within_limit: usize, over_limit: usize, cancel: CancellationToken) -> Self {
+            Self {
+                within_limit_transaction: pooled_deposit_test_transaction(),
+                over_limit_transaction: pooled_test_transaction(),
+                within_limit_remaining: within_limit,
+                over_limit_remaining: over_limit,
+                current_is_over_limit: false,
+                over_limit_rejections: 0,
+                cancel,
+            }
+        }
+    }
+
+    impl PayloadTransactions for LimitRejectionTransactions {
+        type Transaction = BasePooledTransaction;
+
+        fn next(&mut self, _ctx: ()) -> Option<Self::Transaction> {
+            if self.within_limit_remaining > 0 {
+                self.within_limit_remaining -= 1;
+                self.current_is_over_limit = false;
+                return Some(self.within_limit_transaction.clone());
+            }
+            if self.over_limit_remaining > 0 {
+                self.over_limit_remaining -= 1;
+                self.current_is_over_limit = true;
+                return Some(self.over_limit_transaction.clone());
+            }
+            None
+        }
+
+        fn mark_invalid(&mut self, _sender: alloy_primitives::Address, _nonce: u64) {
+            if self.current_is_over_limit {
+                self.over_limit_rejections += 1;
+                self.cancel.cancel();
+            }
+        }
+    }
+
+    impl ParkablePayloadTransactions for LimitRejectionTransactions {
+        fn park_current(&mut self) -> bool {
+            false
+        }
+
+        fn mark_current_committed(&mut self) {}
+
+        fn promote(&mut self, _transaction_hash: TxHash) -> bool {
+            false
+        }
+
+        fn discard_parked(&mut self, _transaction_hash: TxHash) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn cancellation_is_checked_after_each_limit_rejection() {
+        let ctx = test_builder_context();
+        let mut best_txs = LimitRejectionTransactions::new(0, 2, ctx.cancel.clone());
+        let db = StateProviderDatabase::new(NoopProvider::default());
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
+        let mut info = ExecutionInfo::default();
+        let limits = ResourceLimits { block_gas_limit: 0, ..Default::default() };
+
+        let diagnostics = ctx
+            .execute_best_transactions(&mut info, &mut state, &mut best_txs, &limits)
+            .expect("cancelled selection should succeed");
+
+        assert!(diagnostics.cancelled);
+        assert_eq!(diagnostics.txs_considered, 1);
+        assert_eq!(diagnostics.txs_rejected_gas, 1);
+        assert_eq!(best_txs.over_limit_rejections, 1);
+    }
+
+    #[test]
+    fn cancellation_stops_twenty_thousand_transaction_limit_rejection_tail() {
+        const WITHIN_LIMIT: usize = 10_000;
+        const OVER_LIMIT: usize = 20_000;
+
+        let ctx = test_builder_context();
+        let mut best_txs =
+            LimitRejectionTransactions::new(WITHIN_LIMIT, OVER_LIMIT, ctx.cancel.clone());
+        let db = StateProviderDatabase::new(NoopProvider::default());
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
+        let mut info = ExecutionInfo::default();
+        let limits = ResourceLimits { block_gas_limit: 0, ..Default::default() };
+
+        let diagnostics = ctx
+            .execute_best_transactions(&mut info, &mut state, &mut best_txs, &limits)
+            .expect("cancelled selection should succeed");
+
+        assert!(diagnostics.cancelled);
+        assert_eq!(diagnostics.txs_considered, WITHIN_LIMIT as u64 + 1);
+        assert_eq!(diagnostics.txs_rejected_gas, 1);
+        assert_eq!(best_txs.over_limit_rejections, 1);
+        assert!(best_txs.over_limit_remaining > OVER_LIMIT - 10);
+    }
 
     #[test]
     fn diagnostics_report_selection_outcome() {
@@ -1665,21 +1825,6 @@ mod tests {
     /// safe-head whose state cannot be reproduced by an honest proof client.
     #[test]
     fn execute_sequencer_transactions_propagates_invalid_tx_when_no_tx_pool() {
-        // Minimal Base chainspec: chain id 901 with all L1 forks through Cancun active at
-        // genesis. No inherited rollup forks, so block construction stays on the simplest
-        // path. (Mirrors the helper used by the `build_block` tests in `payload.rs`.)
-        let genesis: serde_json::Value = serde_json::json!({
-            "config": { "chainId": 901 },
-            "gasLimit": "0x1C9C380",
-            "timestamp": "0x0"
-        });
-        let genesis = serde_json::from_value(genesis).expect("valid genesis");
-        let inner =
-            ChainSpec::builder().chain(901.into()).genesis(genesis).cancun_activated().build();
-        let chain_spec = Arc::new(BaseChainSpec::from(inner));
-        let parent_header = Header { gas_limit: 30_000_000, timestamp: 0, ..Default::default() };
-        let parent = Arc::new(SealedHeader::seal_slow(parent_header));
-
         // A randomly-generated signer with no balance in the (empty) NoopProvider state.
         // Any non-deposit transfer attempt will fail validation with
         // `InvalidTransaction::LackOfFundForMaxFee` — an `is_invalid_tx_err()` outcome.
@@ -1701,7 +1846,7 @@ mod tests {
         let with_encoded = WithEncoded::new(encoded, signed);
 
         // Strict mode: derived attributes (`no_tx_pool=true`) — the invalid tx must be fatal.
-        let mut ctx = BasePayloadBuilderCtx::for_test(chain_spec, parent);
+        let mut ctx = test_builder_context();
         ctx.config.attributes.no_tx_pool = true;
         ctx.config.attributes.transactions = vec![with_encoded];
 
