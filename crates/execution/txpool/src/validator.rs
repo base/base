@@ -1026,6 +1026,20 @@ where
         if resolved.expiry != 0 {
             watch_set.push(InvalidationKey::expiry_bucket(resolved.expiry));
         }
+        // 7702 authorities use the same k1 recovery. Drop any whose default
+        // EOA is gone so the pool does not treat them as live delegations.
+        // The transaction stays valid — inclusion skips those auths.
+        let authorities = authorities.map(|list| {
+            list.into_iter()
+                .filter(|authority| {
+                    StorageCtx::enter(&mut storage, |ctx| {
+                        let acc = AccountConfigurationStorage::new(ctx);
+                        ActorAuthorizer::authorize_classic_sender(&acc, *authority, now)
+                    })
+                    .is_ok()
+                })
+                .collect()
+        });
         tx.set_watch_set(watch_set);
         TransactionValidationOutcome::Valid {
             balance,

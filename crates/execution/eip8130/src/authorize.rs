@@ -191,9 +191,10 @@ impl ActorAuthorizer {
     }
 
     /// Authorizes a classic (legacy / EIP-2930 / EIP-1559 / EIP-7702) sender
-    /// whose address was already recovered by `SignerRecoverable`.
+    /// or EIP-7702 authorization authority whose address was already recovered
+    /// by `SignerRecoverable` / `authorization.authority()`.
     ///
-    /// The recovered `caller` *is* the account's secp256k1 self-actor. This
+    /// The recovered address *is* the account's secp256k1 self-actor. This
     /// loads [`AccountState`] and requires the inline default EOA to still be
     /// the unrestricted owner: revoked, expired, and scoped/policy-gated selves
     /// are rejected. Untouched EOAs (zero `account_state`) still pass.
