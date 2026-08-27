@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render two independent full-range Dowse replay arms as an SVG."""
+"""Render independent full-range Dowse replay arms, optionally with a bracketing control."""
 
 import json
 import math
@@ -12,6 +12,7 @@ from xml.sax.saxutils import escape
 RAW_PATH = Path(sys.argv[1])
 DOWSE_PATH = Path(sys.argv[2])
 OUTPUT_PATH = Path(sys.argv[3])
+RAW_BRACKET_PATH = Path(sys.argv[4]) if len(sys.argv) > 4 else None
 WIDTH = 1440
 HEIGHT = 1400
 FONT = "Inter, ui-sans-serif, system-ui, -apple-system, sans-serif"
@@ -28,12 +29,21 @@ def load_arm(path, expected_variant):
 
 raw_metadata, raw_by_block = load_arm(RAW_PATH, "raw")
 dowse_metadata, dowse_by_block = load_arm(DOWSE_PATH, "dowse")
+raw_bracket_metadata, raw_bracket_by_block = (
+    load_arm(RAW_BRACKET_PATH, "raw") if RAW_BRACKET_PATH else (None, None)
+)
 if raw_metadata["startBlock"] != dowse_metadata["startBlock"] or raw_metadata[
     "endBlock"
 ] != dowse_metadata["endBlock"]:
     raise ValueError("replay arms cover different block ranges")
 if raw_by_block.keys() != dowse_by_block.keys():
     raise ValueError("replay arms contain different blocks")
+if raw_bracket_metadata and (
+    raw_metadata["startBlock"] != raw_bracket_metadata["startBlock"]
+    or raw_metadata["endBlock"] != raw_bracket_metadata["endBlock"]
+    or raw_by_block.keys() != raw_bracket_by_block.keys()
+):
+    raise ValueError("bracketing no-Dowse arm covers a different block range")
 
 blocks = sorted(raw_by_block)
 for block in blocks:
@@ -45,8 +55,25 @@ for block in blocks:
         or raw["transactionCount"] != dowse["transactionCount"]
     ):
         raise ValueError(f"replay arms disagree at block {block}")
+    if raw_bracket_by_block:
+        raw_bracket = raw_bracket_by_block[block]
+        if (
+            raw["replay"]["blockHash"] != raw_bracket["replay"]["blockHash"]
+            or raw["gasUsed"] != raw_bracket["gasUsed"]
+            or raw["transactionCount"] != raw_bracket["transactionCount"]
+        ):
+            raise ValueError(f"bracketing no-Dowse arm disagrees at block {block}")
 
-raw_times = [raw_by_block[block]["replay"]["executionTimeUs"] for block in blocks]
+raw_times = [
+    (
+        raw_by_block[block]["replay"]["executionTimeUs"]
+        + raw_bracket_by_block[block]["replay"]["executionTimeUs"]
+    )
+    / 2
+    if raw_bracket_by_block
+    else raw_by_block[block]["replay"]["executionTimeUs"]
+    for block in blocks
+]
 dowse_times = [dowse_by_block[block]["replay"]["executionTimeUs"] for block in blocks]
 
 
@@ -144,7 +171,12 @@ for index, (label, value, color) in enumerate(chips):
 panel_x, panel_y, panel_w, panel_h = 50, 210, 870, 470
 element("rect", x=panel_x, y=panel_y, width=panel_w, height=panel_h, rx=14, fill="#ffffff", stroke="#dde3ef")
 text(panel_x + 24, panel_y + 36, "Block-for-block execution latency", 19, 650, "#102044")
-text(panel_x + 24, panel_y + 60, "Each block executed once in each full-range arm; axes clipped at p99.5", 13, 400, "#66738f")
+comparison_subtitle = (
+    "No-Dowse is the mean of two bracketing arms (0.7% drift); axes clipped at p99.5"
+    if raw_bracket_by_block
+    else "Each block executed once in each full-range arm; axes clipped at p99.5"
+)
+text(panel_x + 24, panel_y + 60, comparison_subtitle, 13, 400, "#66738f")
 plot_left, plot_top = panel_x + 72, panel_y + 86
 plot_width, plot_height = panel_w - 104, panel_h - 145
 limit = max(percentile(raw_times, 0.995), percentile(dowse_times, 0.995)) / 1000
@@ -177,7 +209,7 @@ for raw, dowse in zip(raw_times, dowse_times):
         opacity=0.34,
     )
 text(plot_left + plot_width / 2, panel_y + panel_h - 14, "No Dowse execution (ms)", 12, 500, "#66738f", "middle")
-text(panel_x + 22, plot_top + 2, "Dowse (ms)", 12, 500, "#66738f")
+text(plot_left, plot_top - 10, "Dowse execution (ms)", 12, 500, "#66738f")
 text(panel_x + panel_w - 204, panel_y + 36, "● faster", 12, 500, "#0052ff")
 text(panel_x + panel_w - 122, panel_y + 36, "● slower", 12, 500, "#d97706")
 
@@ -206,7 +238,12 @@ text(panel_x + 146, panel_y + panel_h - 24, "Dowse", 12, 400, "#66738f")
 panel_x, panel_y, panel_w, panel_h = 50, 710, 650, 310
 element("rect", x=panel_x, y=panel_y, width=panel_w, height=panel_h, rx=14, fill="#ffffff", stroke="#dde3ef")
 text(panel_x + 24, panel_y + 38, "Execution latency distribution", 19, 650, "#102044")
-text(panel_x + 24, panel_y + 62, "Independent full-range arms", 13, 400, "#66738f")
+distribution_subtitle = (
+    "Dowse arm vs mean of two bracketing no-Dowse arms"
+    if raw_bracket_by_block
+    else "Independent full-range arms"
+)
+text(panel_x + 24, panel_y + 62, distribution_subtitle, 13, 400, "#66738f")
 percentiles = (("p50", 0.50), ("p90", 0.90), ("p95", 0.95), ("p99", 0.99))
 all_percentiles = [percentile(times, quantile) / 1000 for _, quantile in percentiles for times in (raw_times, dowse_times)]
 bar_base = panel_y + 255
@@ -228,7 +265,12 @@ for index, (label, quantile) in enumerate(percentiles):
 panel_x, panel_y, panel_w, panel_h = 730, 710, 660, 310
 element("rect", x=panel_x, y=panel_y, width=panel_w, height=panel_h, rx=14, fill="#ffffff", stroke="#dde3ef")
 text(panel_x + 24, panel_y + 38, "Effect by initial execution time", 19, 650, "#102044")
-text(panel_x + 24, panel_y + 62, "Quartiles defined by the independent no-Dowse arm", 13, 400, "#66738f")
+quartile_subtitle = (
+    "Quartiles defined by the bracketing no-Dowse mean"
+    if raw_bracket_by_block
+    else "Quartiles defined by the independent no-Dowse arm"
+)
+text(panel_x + 24, panel_y + 62, quartile_subtitle, 13, 400, "#66738f")
 ordered = sorted(range(len(blocks)), key=raw_times.__getitem__)
 quartiles = [ordered[index * len(blocks) // 4 : (index + 1) * len(blocks) // 4] for index in range(4)]
 quartile_values = [
@@ -277,7 +319,12 @@ for values, color in ((raw_rolling, "#94a0b5"), (dowse_rolling, "#0052ff")):
     element("polyline", points=" ".join(points), fill="none", stroke=color, stroke_width=2)
 text(panel_x + panel_w - 205, panel_y + 38, "— No Dowse", 12, 600, "#94a0b5")
 text(panel_x + panel_w - 108, panel_y + 38, "— Dowse", 12, 600, "#0052ff")
-text(50, 1373, "Historical replay; each treatment ran as a separate full-range arm. Prefetch planning and reads are outside measured execution.", 13, 500, "#66738f")
+footer = (
+    "Historical replay; Dowse is bracketed by two restarted no-Dowse arms. Prefetch planning and reads are outside measured execution."
+    if raw_bracket_by_block
+    else "Historical replay; each treatment ran as a separate full-range arm. Prefetch planning and reads are outside measured execution."
+)
+text(50, 1373, footer, 13, 500, "#66738f")
 svg.append("</svg>")
 
 OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)

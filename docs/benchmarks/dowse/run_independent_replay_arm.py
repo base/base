@@ -72,6 +72,9 @@ with args.output.open("x", buffering=1) as output:
     output.write(json.dumps(metadata, separators=(",", ":")) + "\n")
 
     for index, block_number in enumerate(range(args.start_block, args.end_block + 1)):
+        canonical = rpc(args.rpc, "eth_getBlockByNumber", [hex(block_number), False])
+        if canonical is None:
+            raise RuntimeError(f"canonical block {block_number} not found")
         started = time.monotonic_ns()
         result = rpc(
             args.rpc,
@@ -85,11 +88,26 @@ with args.output.open("x", buffering=1) as output:
         replay = result["replay"]
         if replay["blockNumber"] != block_number:
             raise RuntimeError(f"unexpected replay block at {block_number}")
-        gas_used = sum(transaction["gasUsed"] for transaction in replay["transactions"])
+        if replay["blockHash"] != canonical["hash"]:
+            raise RuntimeError(f"canonical hash changed at block {block_number}")
+        replay_transaction_hashes = [
+            transaction["txHash"] for transaction in replay["transactions"]
+        ]
+        if replay_transaction_hashes != canonical["transactions"]:
+            raise RuntimeError(f"transaction sequence changed at block {block_number}")
+        replay_gas_used = sum(
+            transaction["gasUsed"] for transaction in replay["transactions"]
+        )
+        canonical_gas_used = int(canonical["gasUsed"], 16)
+        if replay_gas_used != canonical_gas_used:
+            raise RuntimeError(
+                f"replay gas mismatch at block {block_number}: "
+                f"canonical={canonical_gas_used}, replay={replay_gas_used}"
+            )
         record = {
             "kind": "block",
             "block": block_number,
-            "gasUsed": gas_used,
+            "gasUsed": canonical_gas_used,
             "transactionCount": len(replay["transactions"]),
             "wallTimeUs": wall_time_us,
             "prefetch": result.get("prefetch"),
@@ -100,6 +118,6 @@ with args.output.open("x", buffering=1) as output:
         if (index + 1) % 25 == 0 or block_number == args.end_block:
             print(
                 f'{index + 1}/{metadata["blockCount"]} blocks; '
-                f'{block_number=}; gas={gas_used / 1_000_000:.1f} Mgas',
+                f'{block_number=}; gas={canonical_gas_used / 1_000_000:.1f} Mgas',
                 flush=True,
             )
