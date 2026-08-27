@@ -134,18 +134,19 @@ impl ResourceMeteringConfig {
             .and_then(|meter| ResourceSample::from_meter(&meter, tx_hash))
     }
 
-    /// Admission from simulated `meterBundle` data.
+    /// Checks simulated `meterBundle` usage against the schedule.
     ///
     /// Payload builders call this before EVM execution and skip the transaction
     /// when [`ResourceThrottlingDecision::should_exclude`] is true. The returned
-    /// sample is passed to [`Self::executed_admission`] after execution.
+    /// sample is passed to [`Self::check_executed_usage`] after execution.
     /// Sequencer transactions use [`Self::unthrottled_usage`] /
     /// [`Self::account_unthrottled`] instead.
     ///
     /// [`ResourceThrottlingDecision::CalculationFailed`] is not recorded here:
-    /// the transaction still executes, and [`Self::executed_admission`] records
+    /// the transaction still executes, and [`Self::check_executed_usage`] records
     /// the final outcome, including a later calculation failure.
-    pub fn simulated_admission(
+    /// This method does not add usage to the block totals.
+    pub fn check_simulated_usage(
         &self,
         tx_hash: &TxHash,
         cumulative: &[u128],
@@ -168,12 +169,14 @@ impl ResourceMeteringConfig {
         (simulated, decision)
     }
 
-    /// Admission from executed gas and post-state.
+    /// Checks executed gas and post-state usage against the schedule.
     ///
     /// Overlays actual gas and post-state `STATE_*` counts on the simulated
-    /// sample from [`Self::simulated_admission`], then runs the schedule.
-    /// Records every outcome.
-    pub fn executed_admission(
+    /// sample from [`Self::check_simulated_usage`], then runs the schedule.
+    /// Records every outcome. Does not add usage to the block totals; callers
+    /// that include the transaction pass [`ResourceThrottlingDecision::committed_usage`]
+    /// to [`Self::apply_accounted_usage`].
+    pub fn check_executed_usage(
         &self,
         tx_hash: &TxHash,
         gas_used: u64,
@@ -450,13 +453,13 @@ mod tests {
     }
 
     #[test]
-    fn simulated_admission_fails_open_without_meter_data() {
+    fn check_simulated_usage_fails_open_without_meter_data() {
         let config = ResourceMeteringConfig {
             enabled: true,
             schedule: Arc::new(compiled_cpu_schedule()),
             provider: Arc::new(NoopMeteringProvider),
         };
-        let (simulated, decision) = config.simulated_admission(&TxHash::ZERO, &[]);
+        let (simulated, decision) = config.check_simulated_usage(&TxHash::ZERO, &[]);
         assert!(simulated.is_none());
         assert!(!decision.should_exclude());
     }
@@ -508,7 +511,7 @@ mod tests {
     }
 
     #[test]
-    fn simulated_admission_excludes_in_enforce_but_not_dry_run() {
+    fn check_simulated_usage_excludes_in_enforce_but_not_dry_run() {
         let tx_hash = TxHash::repeat_byte(0x42);
         let meter = MeterBundleResponse {
             results: vec![TransactionResult {
@@ -533,7 +536,7 @@ mod tests {
             schedule: Arc::new(compiled_cpu_schedule()),
             provider: Arc::clone(&provider),
         };
-        let (_, decision) = enforce.simulated_admission(&tx_hash, &[]);
+        let (_, decision) = enforce.check_simulated_usage(&tx_hash, &[]);
         assert!(decision.should_exclude());
 
         let dry_run = ResourceMeteringConfig {
@@ -552,7 +555,7 @@ mod tests {
             ),
             provider,
         };
-        let (_, decision) = dry_run.simulated_admission(&tx_hash, &[]);
+        let (_, decision) = dry_run.check_simulated_usage(&tx_hash, &[]);
         assert!(!decision.should_exclude());
     }
 
@@ -620,7 +623,7 @@ mod tests {
     }
 
     #[test]
-    fn simulated_admission_fails_open_on_calculation_failure() {
+    fn check_simulated_usage_fails_open_on_calculation_failure() {
         let tx_hash = TxHash::repeat_byte(0x42);
         let meter = MeterBundleResponse {
             results: vec![TransactionResult {
@@ -650,7 +653,7 @@ mod tests {
                 tx_hash, meter,
             )])))),
         };
-        let (_, decision) = config.simulated_admission(&tx_hash, &[]);
+        let (_, decision) = config.check_simulated_usage(&tx_hash, &[]);
         assert_eq!(decision, ResourceThrottlingDecision::CalculationFailed);
         assert!(!decision.should_exclude());
     }
