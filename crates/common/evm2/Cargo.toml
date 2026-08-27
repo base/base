@@ -14,6 +14,8 @@ workspace = true
 
 [dependencies]
 # base
+base-common-genesis.workspace = true
+base-common-l1-fees.workspace = true
 base-common-consensus.workspace = true
 
 # evm2

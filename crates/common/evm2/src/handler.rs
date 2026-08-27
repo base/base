@@ -2,6 +2,7 @@
 
 use alloy_consensus::Transaction;
 use alloy_primitives::{Address, U256};
+use base_common_genesis::BaseUpgrade;
 use evm2::{
     Evm, TxResult,
     ethereum::{charge_upfront, default_settle_gas},
@@ -10,7 +11,7 @@ use evm2::{
     registry::HandlerResult,
 };
 
-use crate::{BaseEvmTypes, transaction::BaseTransaction};
+use crate::{BaseEvmTypes, transaction::BaseTxEnvelope};
 
 /// Base transaction handler hooks.
 ///
@@ -23,13 +24,17 @@ pub struct BaseTxHandlerHooks;
 impl BaseTxHandlerHooks {
     /// Returns the L1 data fee for `envelope` under the current block's
     /// L1 fee parameters. Deposits are funded on L1 and exempt.
-    fn l1_fee(host: &mut Evm<'_, BaseEvmTypes>, envelope: &BaseTransaction) -> U256 {
+    fn l1_fee(host: &mut Evm<'_, BaseEvmTypes>, envelope: &BaseTxEnvelope) -> U256 {
         match envelope {
-            // TODO: price over the full L1-posted (RLP-encoded) transaction, not
-            // just the calldata, and switch to the Fjord FLZ estimate past that fork.
-            BaseTransaction::Standard(tx) => host.block_env().ext.calculate_tx_l1_cost(tx.input()),
+            // TODO: price over the full L1-posted (EIP-2718) transaction, not just
+            // the calldata, to match the revm integration. The evm2 spec schedule
+            // is also still Ecotone-only; the Base fork schedule is layered on in
+            // follow-up work.
+            BaseTxEnvelope::Standard(tx) => {
+                host.block_env().ext.calculate_tx_l1_cost(tx.input(), BaseUpgrade::Ecotone)
+            }
             // Deposits are funded on L1 and exempt from the L2 L1-data fee.
-            BaseTransaction::Deposit(_) => U256::ZERO,
+            BaseTxEnvelope::Deposit(_) => U256::ZERO,
         }
     }
 }
@@ -37,7 +42,7 @@ impl BaseTxHandlerHooks {
 impl TxHandlerHooks<BaseEvmTypes> for BaseTxHandlerHooks {
     fn before_execution(
         host: &mut Evm<'_, BaseEvmTypes>,
-        envelope: &BaseTransaction,
+        envelope: &BaseTxEnvelope,
         caller: Address,
         upfront_fee: U256,
     ) -> HandlerResult<()> {
@@ -52,7 +57,7 @@ impl TxHandlerHooks<BaseEvmTypes> for BaseTxHandlerHooks {
 
     fn settle_transaction(
         host: &mut Evm<'_, BaseEvmTypes>,
-        _envelope: &BaseTransaction,
+        _envelope: &BaseTxEnvelope,
         gas: GasSettlement<BaseEvmTypes>,
     ) -> HandlerResult<TxResult<BaseEvmTypes>> {
         // Surface the L1 data fee charged in `before_execution` so downstream

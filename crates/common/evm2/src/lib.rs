@@ -1,10 +1,7 @@
 #![doc = include_str!("../README.md")]
 
-mod l1_block;
-pub use l1_block::L1BlockInfo;
-
 mod transaction;
-pub use transaction::{BaseTransaction, DEPOSIT_TX_TYPE, DepositTx};
+pub use transaction::{BaseTxEnvelope, DEPOSIT_TX_TYPE, TxDeposit};
 
 mod handler;
 pub use handler::BaseTxHandlerHooks;

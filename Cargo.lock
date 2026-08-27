@@ -3591,6 +3591,8 @@ dependencies = [
  "alloy-eips 2.4.1",
  "alloy-primitives",
  "base-common-consensus",
+ "base-common-genesis",
+ "base-common-l1-fees",
  "evm2",
  "thiserror 2.0.19",
 ]

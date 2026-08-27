@@ -10,7 +10,7 @@ use evm2::{
 
 use crate::{
     BaseEvmTypes,
-    transaction::{BaseTransaction, DEPOSIT_TX_TYPE, DepositTx},
+    transaction::{BaseTxEnvelope, DEPOSIT_TX_TYPE, TxDeposit},
 };
 
 /// Error returned when a create-kind deposit transaction is encountered.
@@ -31,7 +31,7 @@ impl BaseEvmTypes {
     pub fn tx_registry() -> TxRegistry<Self, TxResult<Self>> {
         TxRegistry::new().with_handler(
             DEPOSIT_TX_TYPE,
-            BaseTransaction::as_deposit,
+            BaseTxEnvelope::as_deposit,
             Self::handle_deposit,
         )
     }
@@ -44,7 +44,7 @@ impl BaseEvmTypes {
     /// honoring `is_system_transaction`, resolving the destination's (possibly
     /// delegated) code, and handling create-kind deposits.
     pub fn handle_deposit(
-        req: TxRequest<'_, '_, Self, DepositTx>,
+        req: TxRequest<'_, '_, Self, TxDeposit>,
     ) -> HandlerResult<TxResult<Self>> {
         let destination = match req.tx.to {
             TxKind::Call(address) => address,
