@@ -49,9 +49,10 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
             BaseUpgrade::Jovian => Self::jovian(),
             BaseUpgrade::Azul => Self::azul(),
             BaseUpgrade::Beryl => Self::beryl(),
-            // Denim is unscheduled and Zenith is a placeholder that never activates; both track
-            // the latest precompile set so they evolve with the newest hardfork (keep them
-            // grouped with the latest arm).
+            // Denim and Zenith introduce no new precompiles, so they inherit the Cobalt mapping
+            // and evolve with the newest hardfork (keep them grouped with the latest arm).
+            // Activation is governed separately by the genesis upgrade schedule and
+            // execution-code gates — this arm only describes the precompile set.
             BaseUpgrade::Cobalt | BaseUpgrade::Denim | BaseUpgrade::Zenith => Self::cobalt(),
             upgrade => panic!("unsupported Base precompile upgrade: {upgrade}"),
         };
