@@ -155,6 +155,7 @@ base-common-rpc-types = { path = "crates/common/rpc-types" }
 base-common-flashblocks = { path = "crates/common/flashblocks" }
 base-precompile-macros = { path = "crates/common/precompile-macros" }
 base-common-evm = { path = "crates/common/evm", default-features = false }
+base-common-evm2 = { path = "crates/common/evm2", default-features = false }
 base-common-flz = { path = "crates/common/flz", default-features = false }
 base-common-genesis = { path = "crates/common/genesis", default-features = false }
 base-common-consensus = { path = "crates/common/consensus", default-features = false }
@@ -288,6 +289,9 @@ revm = { version = "42.0.1", default-features = false }
 revm-bytecode = { version = "42.0.0", default-features = false }
 revm-database = { version = "42.0.0", default-features = false }
 revm-precompile = { version = "42.0.1", default-features = false }
+
+# evm2
+evm2 = { git = "https://github.com/alloy-rs/evm2", rev = "9b037449c846515624ff6afde739f2b764851446", default-features = false }
 
 # alloy
 alloy-signer = "2.3.0"
