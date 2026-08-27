@@ -136,14 +136,19 @@ impl ShadowBlockRepo {
                     .push_bind(Json(&entry.payload));
             });
 
-            // The WHERE drops redeliveries that say nothing new, so the row keeps the replacement
-            // hash and creation time it already has. Anything else is news and lands wholesale.
+            // A new candidate hash lands wholesale. A same-hash conflict only reaches DO UPDATE to
+            // carry a `canonical_hash`, so `payload` and `created_at` are held at their stored
+            // values: reassigning `payload` to itself keeps the existing TOAST pointer, avoiding a
+            // rewrite (and full-page WAL) of the ~176KB JSONB just to stamp a hash. The WHERE drops
+            // redeliveries that change neither hash nor add a canonical hash.
             query_builder.push(
                 " ON CONFLICT (number) DO UPDATE SET \
                  hash = EXCLUDED.hash, \
                  canonical_hash = EXCLUDED.canonical_hash, \
-                 created_at = EXCLUDED.created_at, \
-                 payload = EXCLUDED.payload, \
+                 created_at = CASE WHEN shadow_blocks.hash <> EXCLUDED.hash \
+                     THEN EXCLUDED.created_at ELSE shadow_blocks.created_at END, \
+                 payload = CASE WHEN shadow_blocks.hash <> EXCLUDED.hash \
+                     THEN EXCLUDED.payload ELSE shadow_blocks.payload END, \
                  updated_at = now() \
                  WHERE shadow_blocks.hash <> EXCLUDED.hash \
                     OR EXCLUDED.canonical_hash IS NOT NULL",
