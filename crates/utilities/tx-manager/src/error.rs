@@ -45,16 +45,17 @@ impl std::fmt::Display for RevertDisplay<'_> {
 
 /// Transaction manager error types.
 ///
-/// Variants are grouped into critical (non-retryable), fee/replacement
-/// (retryable via fee bumps), and infrastructure (retryable/transient) errors.
+/// Publication errors are further classified by
+/// [`PublishOutcome::classify_error`](crate::PublishOutcome::classify_error),
+/// which accounts for nonce safety rather than relying on generic retryability.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum TxManagerError {
-    // ── Critical errors (non-retryable) ──────────────────────────────────
-    /// Nonce already consumed onchain.
+    // ── Transaction and lifecycle errors ─────────────────────────────────
+    /// The backend's next executable nonce is higher than this transaction's nonce.
     #[error("nonce too low")]
     NonceTooLow,
 
-    /// Nonce too far ahead of chain state.
+    /// The transaction nonce is above the backend's next executable nonce.
     #[error("nonce too high")]
     NonceTooHigh,
 
@@ -89,11 +90,11 @@ pub enum TxManagerError {
     #[error("nonce acquisition failed")]
     NonceAcquisitionFailed,
 
-    /// Send response channel closed before a result was delivered.
+    /// Submission lifecycle channel closed before a terminal result was delivered.
     ///
-    /// The background send task exited (panicked or was cancelled)
-    /// before completing. Non-retryable.
-    #[error("send response channel closed")]
+    /// The coordinator exited or dropped the submission tracker before
+    /// completing the submission.
+    #[error("submission lifecycle channel closed")]
     ChannelClosed,
 
     /// Calculated fee exceeds the configured fee-limit ceiling.
@@ -111,9 +112,7 @@ pub enum TxManagerError {
 
     /// Feature or transaction type is not supported.
     ///
-    /// Returned when the manager encounters a request it cannot handle,
-    /// such as blob (EIP-4844) transactions before they are implemented.
-    /// Non-retryable because the unsupported condition is deterministic.
+    /// Returned when construction or an RPC endpoint cannot handle the request.
     #[error("unsupported: {0}")]
     Unsupported(String),
 
@@ -157,7 +156,7 @@ pub enum TxManagerError {
     #[error("wallet construction failed: {0}")]
     WalletConstruction(String),
 
-    // ── Fee / replacement errors (retryable) ─────────────────────────────
+    // ── Fee and replacement errors ───────────────────────────────────────
     /// Fee too low to enter the mempool.
     #[error("transaction underpriced")]
     Underpriced,
@@ -174,7 +173,7 @@ pub enum TxManagerError {
     #[error("max fee per gas less than block base fee")]
     MaxFeePerGasTooLow,
 
-    // ── Infrastructure / transient errors (retryable) ────────────────────
+    // ── Publication acknowledgement and infrastructure errors ────────────
     /// Transaction already present in the mempool (benign on resubmission).
     #[error("transaction already known")]
     AlreadyKnown,
@@ -230,17 +229,19 @@ impl TxManagerError {
         }
     }
 
-    /// Returns `true` if this error is transient or can be resolved by
-    /// bumping fees, meaning the publication loop should retry.
+    /// Returns whether retrying an operation may succeed without changing its
+    /// logical transaction intent.
     ///
-    /// Fee/replacement errors and infrastructure errors are retryable.
-    /// Critical errors (nonce conflicts, insufficient funds, reverts,
-    /// deadline expiry, reservation conflicts) are not.
+    /// This generic classification is used by transaction construction and
+    /// external callers. Publication code must instead use
+    /// [`PublishOutcome::classify_error`](crate::PublishOutcome::classify_error)
+    /// because ambiguous delivery and clean rejection have different nonce
+    /// safety implications.
     ///
     /// # Caller requirements
     ///
     /// The [`Rpc`](Self::Rpc) fallback is conservatively treated as retryable.
-    /// Callers **must** enforce a maximum retry count with exponential backoff
+    /// Callers **must** enforce a bounded retry policy
     /// to avoid unbounded retries on persistent, non-transient errors that are
     /// unrecognized by the internal RPC classifier.
     #[must_use]
@@ -255,15 +256,6 @@ impl TxManagerError {
                 | Self::Transport(_)
                 | Self::Rpc(_)
         )
-    }
-
-    /// Returns `true` only for [`TxManagerError::AlreadyKnown`].
-    ///
-    /// The publication loop uses this to distinguish "already in mempool" (a
-    /// success on resubmission) from actual errors.
-    #[must_use]
-    pub const fn is_already_known(&self) -> bool {
-        matches!(self, Self::AlreadyKnown)
     }
 
     /// Returns `true` for RPC transport and server errors.
@@ -283,8 +275,9 @@ pub type TxManagerResult<T> = Result<T, TxManagerError>;
 /// Classifies alloy [`TransportError`]s into structured [`TxManagerError`]
 /// variants.
 ///
-/// This mirrors the Go `txmgr` `errStringMatch` approach, enabling
-/// the publication loop to make retry/abort decisions based on error type.
+/// This mirrors the Go `txmgr` `errStringMatch` approach. Callers apply
+/// operation-specific policy after converting transport details into these
+/// stable error variants.
 ///
 /// For server-returned `RpcError::ErrorResp` values, classification uses
 /// the structured `ErrorPayload` directly — matching on `payload.message`
@@ -520,18 +513,6 @@ mod tests {
         assert_eq!(error.is_retryable(), expected);
     }
 
-    // ── is_already_known ────────────────────────────────────────────────
-
-    #[rstest]
-    #[case::already_known(TxManagerError::AlreadyKnown, true)]
-    #[case::nonce_too_low(TxManagerError::NonceTooLow, false)]
-    #[case::underpriced(TxManagerError::Underpriced, false)]
-    #[case::rpc_with_already_known_text(TxManagerError::Rpc("already known".to_string()), false)]
-    #[case::channel_closed(TxManagerError::ChannelClosed, false)]
-    fn is_already_known(#[case] error: TxManagerError, #[case] expected: bool) {
-        assert_eq!(error.is_already_known(), expected);
-    }
-
     // ── is_rpc_error ─────────────────────────────────────────────────────
 
     #[rstest]
@@ -569,7 +550,7 @@ mod tests {
         TxManagerError::Transport("request failed".to_string()),
         "transport error: request failed"
     )]
-    #[case::channel_closed(TxManagerError::ChannelClosed, "send response channel closed")]
+    #[case::channel_closed(TxManagerError::ChannelClosed, "submission lifecycle channel closed")]
     #[case::fee_limit_exceeded(TxManagerError::FeeLimitExceeded { fee: 501, ceiling: 500 }, "fee limit exceeded: fee 501 exceeds ceiling 500")]
     #[case::nonce_overflow(TxManagerError::NonceOverflow, "nonce overflow")]
     #[case::nonce_acquisition_failed(
