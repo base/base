@@ -8,8 +8,7 @@
 //! internal-call loop stays here because re-dispatching arbitrary sub-calls is a
 //! routing responsibility; its version-defined business steps live on [`Asset`].
 
-use alloc::string::String;
-use alloc::vec::Vec;
+use alloc::{string::String, vec::Vec};
 
 use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::{SolCall, SolType, SolValue, abi};
