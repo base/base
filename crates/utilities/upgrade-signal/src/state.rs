@@ -372,12 +372,15 @@ impl UpgradeSignalMonitor {
     ///   [`crate::UpgradeSignalBlockTag::Finalized`] read is reorg-safe, so a finalized-observed
     ///   entry can never disappear from a later read; the scenario is unreachable on the recommended
     ///   configuration.
-    /// * **On a reorg-prone tag the window is far shorter than the activation lead.** `safe` and
-    ///   `latest` can reorg, but every non-zero activation timestamp is set at least `MIN_NOTICE`
-    ///   (1 hour) in the future on L1, far longer than the shallow reorg depth and the poll cadence
-    ///   (12s at `latest`). Once the schedule change re-mines onto the canonical chain it is re-read
-    ///   and re-applied — and a restart or a manual [`UpgradeSignalRefresher`] refresh always
-    ///   reconciles from the full L1 schedule — well before the stale activation could take effect.
+    /// * **On a reorg-prone tag the exposure is bounded, but not eliminated.** `safe` and `latest`
+    ///   can reorg. If the reorged registration re-mines onto the canonical chain — the common
+    ///   case — it is re-read and re-applied well before it matters, since every non-zero activation
+    ///   timestamp is set at least `MIN_NOTICE` (1 hour) in the future on L1, far longer than the
+    ///   shallow reorg depth and the poll cadence (12s at `latest`). A reorg can instead *drop* the
+    ///   registration for good, in which case nothing triggers a re-read and the stale activation
+    ///   persists until a restart or a manual [`UpgradeSignalRefresher`] refresh reconciles from the
+    ///   full L1 schedule. The `MIN_NOTICE` lead therefore only self-heals the re-mine case; the
+    ///   drop case is what makes the finalized default above the real guarantee.
     ///
     /// Tracking removed entries would require a full reorg-aware schedule diff for no benefit on the
     /// production (finalized) path, so it is intentionally left as possible future hardening.
