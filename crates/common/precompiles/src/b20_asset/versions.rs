@@ -105,12 +105,12 @@ impl AssetAbi {
     /// frozen surface first so a rejection carries that version's consensus error bytes, then
     /// re-decoded into the canonical enum for routing.
     ///
-    /// This performs an owned decode (twice at `V1`). That is safe here because `announce` — the only
-    /// asset selector whose array (`bytes[]`) has dynamically-sized elements, and thus the only one an
-    /// aliased payload could amplify (Cantina #16) — is intercepted and decoded *borrowed* upstream in
-    /// [`B20AssetToken::route`](crate::B20AssetToken) before reaching this path. Every other asset
-    /// selector carries only static-element arrays or single top-level `string`/`bytes`, so its owned
-    /// decode is bounded linearly by calldata length and cannot be amplified.
+    /// Owned decode (twice at `V1`). Safe because
+    /// [`B20AssetToken::route`](crate::B20AssetToken) intercepts `announce` upstream and decodes it
+    /// borrowed. `announce` is the sole asset selector with a dynamically-sized-element array
+    /// (`bytes[]`), so it is the sole call an aliased payload can amplify (Cantina #16). Every other
+    /// asset selector carries static-element arrays or a single top-level `string`/`bytes`, both of
+    /// which decode in time linear in the calldata length.
     fn decode(self, calldata: &[u8]) -> Result<IB20Asset::IB20AssetCalls> {
         let Some(selector) = calldata.first_chunk::<4>().copied() else {
             return Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]));
@@ -316,11 +316,12 @@ mod tests {
         }
     }
 
-    /// The borrowed `announce` fast path in `route` decodes against the canonical `Token`/`type_check`
-    /// but must accept exactly what each frozen surface accepts. That holds only while `announce`'s
-    /// signature is byte-identical across versions (same selector ⇒ same `Token` ⇒ same `type_check`).
-    /// A version that changed `announce`'s parameters would break the fast path's accept-set identity
-    /// and must re-derive it — this pin fails loudly if that ever happens.
+    /// The borrowed `announce` fast path in `route` decodes against the canonical `Token`/`type_check`,
+    /// but must accept the same payloads each frozen surface accepts. That invariant depends on
+    /// `announce`'s signature staying byte-identical across versions: same selector then same `Token`
+    /// then same `type_check`. A version that changed `announce`'s parameters would break the
+    /// fast-path accept-set identity, and the fix would need re-derivation. This pin fails loudly
+    /// when that happens.
     #[test]
     fn announce_signature_is_frozen_across_versions() {
         assert_eq!(IB20AssetV1::announceCall::SELECTOR, IB20AssetV2::announceCall::SELECTOR);

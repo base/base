@@ -104,13 +104,13 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
     where
         O: PrecompileCallObserver,
     {
-        // Fast-path `announce` before the generic decode: it is the only B-20 selector an aliased
-        // payload can amplify, and `BorrowedAnnounce::decode` validates it without materializing the
-        // `bytes[]` (mechanism in the `announce` module). The guard is total — a non-announce
-        // selector, an announce selector not dialable at `version`, or any decode rejection falls
-        // through to the generic decode below, which reproduces byte-identical error bytes (and
-        // cheaply, since a rejected payload never reaches owned materialization). `valid_selector`
-        // future-proofs a fork that drops `announce`.
+        // Fast-path `announce` before the generic decode. `announce` is the sole B-20 selector an
+        // aliased payload can amplify, and `BorrowedAnnounce::decode` validates it without
+        // materializing the `bytes[]` (see the `announce` module for the mechanism). The guard is
+        // total: a non-`announce` selector, an `announce` selector not dialable at `version`, or a
+        // decode rejection all fall through to the generic decode below, which reproduces the same
+        // error bytes. That fall-through stays cheap because a rejected payload never reaches owned
+        // materialization. `valid_selector` future-proofs a fork that drops `announce`.
         if let Some(selector) = calldata.first_chunk::<4>().copied()
             && selector == IB20Asset::announceCall::SELECTOR
             && version.abi().asset.valid_selector(selector)
@@ -416,11 +416,10 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
             }
 
             // --- Announcement ---
-            // Reached only as a bounded safety net: every accepted `announce` takes the borrowed
-            // fast path in `route` (its accept-set is identical to this owned decode). If that
-            // invariant ever failed, this arm still executes the announcement correctly — the owned
-            // `announceCall` satisfies the same [`AnnounceCall`] shape, just materializing the
-            // `Vec<Bytes>` the fast path avoids.
+            // Bounded safety net. Every accepted `announce` takes the borrowed fast path in `route`
+            // (identical accept-set to this owned decode). If that invariant broke, this arm still
+            // executes the announcement correctly: the owned `announceCall` satisfies the same
+            // [`AnnounceCall`] shape and pays for the `Vec<Bytes>` the fast path avoids.
             SC::announce(c) => {
                 self.run_announce(ctx, version, privileged, &observer, c)?;
                 Bytes::new()
@@ -447,12 +446,12 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
 
     /// Posts an announcement and atomically executes its internal calls via self-dispatch.
     ///
-    /// Depends only on the [`AnnounceCall`] shape, so the borrowed fast path in [`Self::route`] and
-    /// the owned `SC::announce` safety net share one body. The internal-call loop stays in the
-    /// dispatcher because re-dispatching sub-calls is a routing responsibility; the version's
-    /// [`Asset::begin_announce`]/[`Asset::end_announce`] bracket it with the version-defined business
-    /// steps, and the in-loop selector check blocks recursive `announce`. Callers own the
-    /// [`PrecompileCallObserver::observe`] span, so this method must not open one.
+    /// The body reads only through the [`AnnounceCall`] shape, so the borrowed fast path in
+    /// [`Self::route`] and the owned `SC::announce` safety net share one implementation. The
+    /// internal-call loop lives here because re-dispatching sub-calls is a routing responsibility.
+    /// The version's [`Asset::begin_announce`]/[`Asset::end_announce`] bracket the loop with the
+    /// version-defined business steps, and the in-loop selector check blocks recursive `announce`.
+    /// Callers own the [`PrecompileCallObserver::observe`] span, so this method must not open one.
     fn run_announce<O, C>(
         &mut self,
         ctx: StorageCtx<'_>,
@@ -875,10 +874,10 @@ mod tests {
 
     /// Builds `announce` calldata where `n` `bytes[]` element offsets all alias one shared `tail`.
     ///
-    /// Starts from a valid one-element alloy encoding, then widens the array offset table so every
-    /// element offset points at the same tail blob and shifts the trailing string offsets to match.
-    /// The resulting wire is strictly smaller than an owned-style `n`-copy encoding — that gap is the
-    /// heap amplification a naive owned decode would materialize and the borrowed decode avoids.
+    /// The helper starts from a valid one-element alloy encoding, widens the array offset table so
+    /// every element offset points at the same tail blob, and shifts the trailing string offsets to
+    /// match. The resulting wire is smaller than an `n`-copy owned-style encoding. That size gap is
+    /// the heap amplification a naive owned decode would materialize and the borrowed decode avoids.
     fn aliased_announce_calldata(n: usize, tail: &[u8]) -> Vec<u8> {
         assert!(n >= 1, "need at least one aliased entry");
         let base = IB20Asset::announceCall {
@@ -931,8 +930,8 @@ mod tests {
         out
     }
 
-    /// A 1,024-way aliased-offset payload is accepted and executed. Observable state: the id is
-    /// marked used. This is the front-door counterpart to the denial-of-service regression — behavior only.
+    /// A 1,024-way aliased-offset payload gets accepted, executes, and marks its id used. This is
+    /// the front-door behavioral counterpart to the denial-of-service regression.
     #[test]
     fn aliased_announce_valid_marks_id_used() {
         let mut token = make_token();
@@ -945,7 +944,7 @@ mod tests {
         assert!(token.accounting().is_announcement_id_used("aliased-id").unwrap());
     }
 
-    /// Borrowed slices route correctly: each aliased entry re-dispatches its real effect once.
+    /// Borrowed slices route to real state effects. `n` aliased entries produce `n × effect`.
     #[test]
     fn aliased_announce_redispatches_each_entry() {
         let mut token = make_token();
@@ -960,7 +959,7 @@ mod tests {
         assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::from(n as u64));
     }
 
-    /// An aliased entry that re-invokes `announce` still trips the in-progress guard.
+    /// An aliased entry whose bytes invoke `announce` trips the in-progress guard.
     #[test]
     fn aliased_announce_nested_announce_reverts() {
         let mut token = make_token();
@@ -978,17 +977,16 @@ mod tests {
         );
     }
 
-    /// One-shot behavioral parity check against the ABI oracle. For every crafted payload, at
-    /// **both** V1 and V2:
+    /// Behavioral parity check against the ABI oracle. For every payload row, at both V1 and V2:
     ///
-    /// * `route` must accept iff `announceCall::abi_decode_validate(payload).is_ok()`;
-    /// * on decode-time rejection, the error must equal `version.abi().decode(payload).unwrap_err()`
-    ///   — the byte-identical fall-through the fix guarantees.
+    /// * `route` accepts iff `announceCall::abi_decode_validate(payload).is_ok()`;
+    /// * on decode-time rejection, the returned error equals `version.abi().decode(payload)
+    ///   .unwrap_err()`, the same fall-through the fix guarantees.
     ///
     /// Any consensus-relevant drift (accept-set change, error-byte change, V1/V2 divergence) makes
-    /// the offending row fail loudly — including the aliased-offsets row, which is the denial-of-service
-    /// regression's front-door counterpart. Rows using an inner call keep it a zero-arg view
-    /// (`multiplier`) so ABI-accepted payloads also succeed end-to-end.
+    /// the offending row fail with its name in the assertion. The aliased-offsets row is the
+    /// front-door counterpart to the denial-of-service regression. Rows carrying an inner call use a
+    /// zero-arg view (`multiplier`) so ABI-accepted payloads succeed end-to-end.
     #[test]
     fn announce_dispatch_matches_owned_abi_oracle() {
         let inner = IB20Asset::multiplierCall {}.abi_encode(); // dispatches Ok on re-entry.
@@ -1013,12 +1011,12 @@ mod tests {
 
         let aliased = aliased_announce_calldata(1_024, &inner);
 
-        // Length word of the `bytes[]` sits right after the 4-word head. All-`ff` makes the implied
-        // offset table overrun the buffer.
+        // The `bytes[]` length word sits right after the 4-word head. Setting it to all-`ff` makes
+        // the implied offset table overrun the buffer.
         let mut past_end_length = aliased_announce_calldata(4, &inner);
         past_end_length[4 + 128..4 + 128 + 32].fill(0xff);
 
-        // Distinct string content in `one_element` lets us pinpoint each string's bytes.
+        // Distinct string content lets the closure pinpoint each string's byte range.
         let poison_at = |bytes: &[u8], needle: &[u8]| -> usize {
             bytes.windows(needle.len()).position(|w| w == needle).expect("needle present")
         };
@@ -1049,20 +1047,20 @@ mod tests {
             ("non-UTF-8 in id", non_utf8_id, false),
             ("non-UTF-8 in description", non_utf8_desc, false),
             ("non-UTF-8 in uri", non_utf8_uri, false),
-            // alloy follows absolute offsets, so trailing bytes past the last tail are ignored;
-            // the oracle accepts, and so must our fast path — a row that pins that parity.
+            // alloy follows absolute offsets, so bytes past the last tail get ignored. The oracle
+            // accepts, and the fast path must match. This row pins that parity.
             ("trailing garbage after valid payload", trailing_garbage, true),
             ("truncated head (only selector)", truncated_head, false),
             ("no calldata at all", no_calldata, false),
         ];
 
         for (name, calldata, must_accept) in rows {
-            // Oracle: alloy's owned validator is the ABI spec, independent of our fix. Note it
-            // needs the full calldata (selector included) — that's what `abi_decode_validate` peels.
+            // Oracle: alloy's owned validator is the ABI spec, independent of the fix. It reads
+            // full calldata (selector included) since `abi_decode_validate` peels the selector.
             let oracle_accepts = IB20Asset::announceCall::abi_decode_validate(&calldata).is_ok();
             assert_eq!(
                 oracle_accepts, must_accept,
-                "row `{name}`: oracle disagrees — refresh the test if the payload changed"
+                "row `{name}`: oracle disagrees; refresh the test if the payload changed"
             );
 
             for version in [AssetVersion::V1, AssetVersion::V2] {
@@ -1085,8 +1083,8 @@ mod tests {
                         err, control,
                         "row `{name}` at {version:?}: error bytes must match owned decode",
                     );
-                    // Any decode-time rejection targets the announce selector, unless the calldata
-                    // was too short to carry one (then the shared unknown-selector path fires).
+                    // Decode-time rejections target the announce selector. Payloads too short to
+                    // carry a selector hit the shared unknown-selector path instead.
                     match err {
                         base_precompile_storage::BasePrecompileError::AbiDecodeFailed {
                             selector,
@@ -1120,7 +1118,7 @@ mod tests {
         assert!(token.accounting().is_announcement_id_used("empty-calls").unwrap());
     }
 
-    /// A large but non-aliased array is accepted (peak allocation is O(calldata), not O(n×tail)).
+    /// A large non-aliased array succeeds. Peak allocation stays O(calldata), not O(n × tail).
     #[test]
     fn large_non_aliased_announce_succeeds() {
         let mut token = make_token();
@@ -1139,7 +1137,7 @@ mod tests {
         assert!(token.accounting().is_announcement_id_used("many-distinct").unwrap());
     }
 
-    /// An internal call shorter than a selector reverts with the offending bytes preserved.
+    /// An internal call shorter than a selector reverts and preserves the offending bytes.
     #[test]
     fn short_internal_call_reverts_as_malformed() {
         let mut token = make_token();
@@ -1162,7 +1160,7 @@ mod tests {
         );
     }
 
-    /// The intercept metric label must equal the canonical surface's label, or spans mislabel.
+    /// The intercept metric label matches the canonical surface's label. Any drift mislabels spans.
     #[test]
     fn announce_intercept_label_matches_surface() {
         let call = IB20Asset::IB20AssetCalls::announce(IB20Asset::announceCall {

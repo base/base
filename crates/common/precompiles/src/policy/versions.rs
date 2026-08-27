@@ -92,11 +92,12 @@ impl PolicyAbi {
     /// frozen surface first so a rejection carries that version's consensus error bytes, then
     /// re-decoded into the canonical enum for routing.
     ///
-    /// This owned decode (twice at `V1`) needs no borrowed fast path like `announce`'s (Cantina #16):
-    /// no call on the `IPolicyRegistry` surface has a dynamically-sized-element array. Its arrays
-    /// (`address[]` account lists, `uint64[]` composite child ids) are all static-element — decoded
-    /// from inline words with no per-element offset — so no element offset can alias a shared tail,
-    /// and every decode is bounded linearly by calldata length.
+    /// Owned decode (twice at `V1`). Safe without a borrowed fast path like `announce`'s
+    /// (Cantina #16): no call on the `IPolicyRegistry` surface has a dynamically-sized-element
+    /// array. The arrays this surface carries (`address[]` account lists, `uint64[]` composite
+    /// child ids) are all static-element, decoded from inline words with no per-element offset.
+    /// No element offset can alias a shared tail, and every decode takes time linear in the
+    /// calldata length.
     pub fn decode(self, calldata: &[u8]) -> Result<IPolicyRegistry::IPolicyRegistryCalls> {
         let Some(selector) = calldata.first_chunk::<4>().copied() else {
             return Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]));

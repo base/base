@@ -1,12 +1,12 @@
 //! The announcement entity for the asset B-20 precompile.
 //!
-//! `announce(bytes[] internalCalls,string,string,string)` can be decoded two ways: **borrowed** —
-//! the zero-copy fast path [`BorrowedAnnounce`], whose `bytes[]` entries are slices into the original
-//! calldata so an aliased payload can never amplify into owned copies (Cantina #16) — and **owned**,
-//! the [`IB20Asset::announceCall`] safety net. [`AnnounceCall`] is the version-agnostic view over
-//! both, so the dispatcher's `run_announce` never has to know which produced it. Adding another
-//! representation later is a new impl, not a change to the runner. The internal-call *loop* itself
-//! lives in the dispatcher, where re-dispatching sub-calls is a routing responsibility.
+//! `announce(bytes[] internalCalls,string,string,string)` has two decoded forms. [`BorrowedAnnounce`]
+//! is the zero-copy fast path: its `bytes[]` entries are slices into the calldata, so an aliased
+//! payload cannot amplify into owned copies (Cantina #16). [`IB20Asset::announceCall`] is the owned
+//! safety net. [`AnnounceCall`] is the version-agnostic view over both, so [`crate::B20AssetToken`]'s
+//! `run_announce` never has to know which decode produced the call. A new representation later is a
+//! new impl of the trait, not a change to the runner. The internal-call loop lives in the dispatcher,
+//! where re-dispatching sub-calls belongs.
 
 use alloc::string::String;
 
@@ -14,10 +14,10 @@ use alloy_sol_types::{SolCall, SolType, abi};
 
 use crate::IB20Asset;
 
-/// The version-agnostic view of a decoded `announce` that `B20AssetToken::run_announce` needs.
+/// The version-agnostic view of a decoded `announce` that `run_announce` consumes.
 ///
-/// Abstracts over the borrowed fast-path token ([`BorrowedAnnounce`]) and the owned
-/// [`IB20Asset::announceCall`] safety net so the runner never has to know which produced it.
+/// Covers both the borrowed fast-path token ([`BorrowedAnnounce`]) and the owned
+/// [`IB20Asset::announceCall`] safety net.
 pub(crate) trait AnnounceCall {
     /// The announcement id, materialized as an owned `String`.
     fn id(&self) -> String;
@@ -36,19 +36,19 @@ pub(crate) trait AnnounceCall {
     ) -> base_precompile_storage::Result<()>;
 }
 
-/// A borrowed `announce` decode: every `bytes[]` entry is a slice into the original calldata
+/// A borrowed `announce` decode. Every `bytes[]` entry is a slice into the original calldata
 /// (`PackedSeqToken(&[u8])`), so an aliased payload cannot amplify into owned copies (Cantina #16).
 pub(crate) struct BorrowedAnnounce<'a>(pub <IB20Asset::announceCall as SolCall>::Token<'a>);
 
 impl<'a> BorrowedAnnounce<'a> {
-    /// Decodes `announce`'s parameters **borrowed** — each `bytes` is a slice into `rest`, not an
-    /// owned copy. `rest` is the calldata with the 4-byte selector already stripped.
+    /// Decodes `announce`'s parameters as slices into `rest`, never as owned copies. `rest` is the
+    /// calldata with the 4-byte selector stripped.
     ///
     /// This mirrors alloy's owned `abi_decode_validate` (`decode_sequence` then `type_check`) and
-    /// omits only the infallible `detokenize`, so it accepts and rejects exactly the same inputs.
-    /// Running `type_check` is mandatory, not optional: `string` validation rejects non-UTF-8, so
-    /// skipping it would accept an `id`/`description`/`uri` the owned path rejects — an accept-side
-    /// divergence the caller's fall-through to the owned decoder could not catch.
+    /// omits only the infallible `detokenize`, so the accept-set matches the owned path.
+    /// `type_check` is required, not optional: `string` validation rejects non-UTF-8, and skipping
+    /// it would accept an `id`/`description`/`uri` the owned path rejects. The caller's fall-through
+    /// to the owned decoder cannot catch an accept-side divergence.
     pub(crate) fn decode(rest: &'a [u8]) -> core::result::Result<Self, ()> {
         let token = abi::decode_sequence::<<IB20Asset::announceCall as SolCall>::Token<'a>>(rest)
             .map_err(|_| ())?;
