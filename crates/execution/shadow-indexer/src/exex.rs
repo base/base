@@ -11,6 +11,8 @@ use reth_primitives_traits::{AlloyBlockHeader, RecoveredBlock};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
+use crate::ShadowExExMetrics;
+
 /// Shadow indexer `ExEx` handler.
 #[derive(Debug)]
 pub struct ShadowIndexerExEx {
@@ -31,35 +33,40 @@ impl ShadowIndexerExEx {
     {
         while let Some(notification) = ctx.notifications.try_next().await? {
             let is_syncing = ctx.network().is_syncing();
-            let fully_processed = match &notification {
-                ExExNotification::ChainCommitted { new } => {
-                    debug!(
-                        target: "base::shadow-indexer",
-                        block_number = new.tip().header().number(),
-                        block_hash = ?new.tip().hash(),
-                        "Committed chain notification received"
-                    );
-                    self.resolve_canonical_heights(new).await?
-                }
-                ExExNotification::ChainReorged { old, new } => {
-                    info!(
-                        target: "base::shadow-indexer",
-                        old_block_number = old.tip().header().number(),
-                        old_block_hash = ?old.tip().hash(),
-                        new_block_number = new.tip().header().number(),
-                        new_block_hash = ?new.tip().hash(),
-                        "ChainReorged notification received"
-                    );
-                    self.handle_chain_reorged(old, new).await?
-                }
-                ExExNotification::ChainReverted { old } => {
-                    info!(
-                        target: "base::shadow-indexer",
-                        old_block_number = old.tip().header().number(),
-                        old_block_hash = ?old.tip().hash(),
-                        "ChainReverted notification received"
-                    );
-                    self.handle_chain_reverted(old).await?
+            let kind = Self::notification_kind(&notification);
+            let fully_processed = {
+                let _timer =
+                    base_metrics::timed!(ShadowExExMetrics::notification_duration_seconds(kind));
+                match &notification {
+                    ExExNotification::ChainCommitted { new } => {
+                        debug!(
+                            target: "base::shadow-indexer",
+                            block_number = new.tip().header().number(),
+                            block_hash = ?new.tip().hash(),
+                            "Committed chain notification received"
+                        );
+                        self.resolve_canonical_heights(new).await?
+                    }
+                    ExExNotification::ChainReorged { old, new } => {
+                        info!(
+                            target: "base::shadow-indexer",
+                            old_block_number = old.tip().header().number(),
+                            old_block_hash = ?old.tip().hash(),
+                            new_block_number = new.tip().header().number(),
+                            new_block_hash = ?new.tip().hash(),
+                            "ChainReorged notification received"
+                        );
+                        self.handle_chain_reorged(old, new).await?
+                    }
+                    ExExNotification::ChainReverted { old } => {
+                        info!(
+                            target: "base::shadow-indexer",
+                            old_block_number = old.tip().header().number(),
+                            old_block_hash = ?old.tip().hash(),
+                            "ChainReverted notification received"
+                        );
+                        self.handle_chain_reverted(old).await?
+                    }
                 }
             };
 
@@ -107,12 +114,22 @@ impl ShadowIndexerExEx {
         }
     }
 
+    const fn notification_kind(notification: &ExExNotification<BasePrimitives>) -> &'static str {
+        match notification {
+            ExExNotification::ChainCommitted { .. } => "committed",
+            ExExNotification::ChainReorged { .. } => "reorged",
+            ExExNotification::ChainReverted { .. } => "reverted",
+        }
+    }
+
     fn build_row(
         &self,
         block: &RecoveredBlock<BaseBlock>,
         receipts: &[BaseReceipt],
         canonical_hash: Option<Vec<u8>>,
     ) -> Result<ShadowBlockRow> {
+        let _timer = base_metrics::timed!(ShadowExExMetrics::build_row_duration_seconds());
+
         let number = i64::try_from(block.header().number()).map_err(|error| {
             eyre::eyre!("block number overflow for shadow indexer row: {error}")
         })?;
@@ -200,6 +217,8 @@ impl ShadowIndexerExEx {
     }
 
     async fn send_write(&self, write: ShadowWrite) -> Result<bool> {
+        let _timer = base_metrics::timed!(ShadowExExMetrics::send_blocked_seconds());
+
         match self.tx.send(write).await {
             Ok(()) => Ok(true),
             Err(error) => {

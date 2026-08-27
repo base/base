@@ -1,4 +1,4 @@
-//! Backpressure and throughput metrics for the shadow indexer writer.
+//! Backpressure and throughput metrics for the shadow indexer writer and `ExEx`.
 
 base_metrics::define_metrics! {
     shadow_indexer.writer, struct = ShadowWriterMetrics,
@@ -17,4 +17,15 @@ base_metrics::define_metrics! {
     #[describe("Total flushes performed, labeled by trigger reason")]
     #[label(trigger)]
     flushes: counter,
+}
+
+base_metrics::define_metrics! {
+    shadow_indexer.exex, struct = ShadowExExMetrics,
+    #[describe("Duration in seconds to handle one ExEx notification, labeled by kind")]
+    #[label(kind)]
+    notification_duration_seconds: histogram,
+    #[describe("Duration in seconds to build one shadow block row (block clone + receipts copy)")]
+    build_row_duration_seconds: histogram,
+    #[describe("Duration in seconds spent awaiting the writer channel send (backpressure wait)")]
+    send_blocked_seconds: histogram,
 }
