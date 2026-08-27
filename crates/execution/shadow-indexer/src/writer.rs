@@ -15,6 +15,7 @@ const BATCH_SIZE: usize = 100;
 const FLUSH_INTERVAL: Duration = Duration::from_secs(1);
 const MAX_FLUSH_ATTEMPTS: usize = 3;
 const RETRY_BACKOFF: Duration = Duration::from_millis(200);
+const DB_INIT_RETRY_BACKOFF: Duration = Duration::from_secs(5);
 
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
@@ -46,10 +47,8 @@ impl ShadowWriter {
         builder_version: String,
     ) {
         let writer = Self { rx, db_config, builder_version };
-        // Spawned as a critical task on purpose: this runs only on shadow canary nodes, where an
-        // unrecoverable writer failure (pool init panic, or the task ending) should fail-fast and
-        // take the node down rather than let it run without shadow indexing. On normal nodes the
-        // extension is disabled and this is never spawned.
+        // Spawned as a critical task so an unexpected task exit still takes down shadow canaries.
+        // Database initialization failures are retried in-place below and do not exit the task.
         executor.spawn_critical_task("shadow-indexer-writer", async move {
             writer.run().await;
         });
@@ -58,9 +57,20 @@ impl ShadowWriter {
     async fn run(mut self) {
         info!(target: "base::shadow-indexer", "Starting shadow indexer writer");
 
-        let pool = self.db_config.init_pool().await.unwrap_or_else(|error| {
-            panic!("failed to initialize shadow indexer database pool: {error:?}")
-        });
+        let pool = loop {
+            match self.db_config.init_pool().await {
+                Ok(pool) => break pool,
+                Err(error) => {
+                    error!(
+                        target: "base::shadow-indexer",
+                        error = ?error,
+                        retry_backoff = ?DB_INIT_RETRY_BACKOFF,
+                        "Failed to initialize shadow indexer database pool; retrying"
+                    );
+                    sleep(DB_INIT_RETRY_BACKOFF).await;
+                }
+            }
+        };
         let repo = ShadowBlockRepo::new(pool);
         let mut interval = interval(FLUSH_INTERVAL);
         interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
