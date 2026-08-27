@@ -15,6 +15,13 @@ pub use utils::unique_name;
 mod b20;
 pub use b20::{B20CreateConfig, B20PrecompileClient};
 
+mod benchmark_cli;
+pub use benchmark_cli::{
+    BenchmarkCli, BenchmarkCommand, SnapshotBenchmarkArgs, SnapshotBenchmarkResult,
+    SnapshotBlockMetrics, VisualizerBlockMetrics, VisualizerMetadata, VisualizerRun,
+    VisualizerRunResult, VisualizerSequencerMetrics, VisualizerValidatorMetrics,
+};
+
 mod config;
 pub use config::{
     ANVIL_ACCOUNT_0, ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, ANVIL_ACCOUNT_3, ANVIL_ACCOUNT_4,
@@ -66,6 +73,9 @@ pub use network::{ensure_network_exists, ensure_network_exists_with_name, networ
 
 mod prover_service;
 pub use prover_service::InProcessProverService;
+
+mod prometheus_metrics;
+pub use prometheus_metrics::{PrometheusBlockCollector, PrometheusMetricKind, PrometheusSnapshot};
 
 mod rpc;
 pub use rpc::{SystemTestProviderExt, SystemTestRpcClient};

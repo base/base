@@ -124,10 +124,84 @@ To pin a run to a known snapshot boundary, pass all three of `--expected-head-nu
 `--expected-head-hash`, and `--expected-head-timestamp`. Startup fails before load generation if
 the captured boundary differs.
 
+## Run the account-creation benchmark
+
+`base-bench snapshot` owns the process lifecycle around one load test: it generates an ephemeral
+funder, deposits funds to it in the first local descendant, replaces placeholder endpoints in the
+YAML with dynamically allocated builder endpoints, runs the load generator, writes JSON, and shuts
+the stack down. It does not own the snapshot clones.
+
+Always use an optimized build for performance measurements. Debug payload execution becomes
+CPU-bound far below the 400M block gas limit.
+
+```bash
+mkdir -p results
+export BASE_BENCH_CLIENT_VERSION="base/v0.0.0-$(git rev-parse --short HEAD)"
+
+cargo run --release -p base-system-tests --bin base-bench -- snapshot \
+  --builder-datadir "$BUILDER_DATADIR" \
+  --client-datadir "$CLIENT_DATADIR" \
+  --load-test-config \
+    crates/infra/load-tests/examples/account-create-mainnet-snapshot.yaml \
+  --benchmark-run snapshot-throughput \
+  --output-dir results/account-create-2s
+```
+
+The account-create workload uses the adaptive open-loop load generator. Every successful transfer
+targets a runtime-random fresh address, forcing an account-trie insertion. Its 100 senders and
+1,024 in-flight transactions per sender can hold more than five 400M-gas blocks of 21K-gas
+transfers. The cross-cadence example keeps 1M gas outstanding. Larger 20M and 80M fresh-account
+queues overran payload deadlines on local ZFS: the 2s Flashblocks builder missed subsequent FCUs
+and the 200ms standard builder could remain inside state-root construction without advancing the
+measurement. It measures exactly 500 newly observed canonical blocks. Setup, prefill, and post-run
+confirmation draining are outside the measured block count. Use `duration` instead of (or in
+addition to) `measurement_blocks` in a custom YAML when a time-bounded smoke test is preferable;
+when both are set, the first limit reached stops submissions.
+
+The result includes cadence, boundary number/hash, builder/client endpoints, the generated funder
+address (never its private key), explicit measurement boundaries, every measured block's
+hash/timestamp/gas/transaction count, phase-specific Prometheus diagnostics, and the native
+`MetricsSummary`. The complete sequencer range is measured first; sequencing then stops and the
+validator replays that range. A run fails if either role lacks a sample for a measured block or if
+their canonical hashes differ. When metrics are available for another load-test failure, they are
+written before the command returns the error.
+
+`--output-dir` receives `benchmark-result.json` plus a `visualizer/` subdirectory that writes the
+`base/benchmark` report contract directly: `metadata.json`, `metrics-sequencer.json`,
+`metrics-validator.json`, and `load-test-result.json`. Set `BASE_BENCH_CLIENT_VERSION` to a stable
+build label when the report should compare commits or releases. The role metrics contain
+`gas/per_block`, `gas/per_second`, `transactions/per_block`, `transactions/per_second`, and selected
+Reth Prometheus diagnostics. `BlockNumber` is relative to the measurement (`1..N`); canonical block
+numbers remain in `load-test-result.json`. `benchmark/prometheus_blocks_per_scrape = 1` identifies
+an exact per-block scrape. Values above one mean a fast sequencer advanced multiple blocks during a
+scrape: counter deltas are evenly attributed across those blocks, gauges are repeated, and
+histogram averages describe the whole scrape interval. Collection is intentionally limited to one
+scrape per second because continuously rendering Reth's full endpoint measurably perturbs 200ms
+production. Each output directory is one self-contained report run. Give comparable invocations the
+same `--benchmark-run` cohort and a unique `--output-dir`; the run ID defaults to
+`<benchmark-run>-<timestamp>` unless `--run-id` is set. Upload the metrics and artifact files before
+`metadata.json` when publishing to the report service because metadata is its completion signal.
+
+## Compare 2s and 200ms fairly
+
+One clone pair is one run. A run mutates both clones and they are not restartable. For every
+repetition:
+
+1. Clone builder and client datadirs from the exact same immutable snapshot.
+2. Use the same optimized binary, machine, load-test YAML, block count, and funder generation method.
+3. Run one cadence and save its result plus host/build/storage metadata.
+4. Stop the stack and destroy only that run's disposable clones.
+5. Create another fresh pair before running the other cadence.
+6. Repeat in alternating order (`2s`, `200ms`, then `200ms`, `2s`) to reduce thermal and cache-order
+   bias.
+
+Keep fixed-offered-load comparisons separate from maximum-throughput tuning. Also choose and record
+a warm-cache or cold-cache policy; clone equivalence alone does not make page-cache state equal.
+
 ## Cleanup
 
-After Ctrl-C, verify that no process still has either mount open, then destroy only the disposable
-datasets:
+After Ctrl-C or benchmark completion, verify that no process still has either mount open, then
+destroy only the disposable datasets:
 
 ```bash
 sudo zfs destroy "$BUILDER_DATASET"
@@ -135,7 +209,7 @@ sudo zfs destroy "$CLIENT_DATASET"
 ```
 
 Never destroy the immutable source snapshot. If shutdown was interrupted, check for a lingering
-`base-devnet` process before unmounting or destroying storage.
+`base-devnet` or `base-bench` process before unmounting or destroying storage.
 
 ## Troubleshooting
 
@@ -148,6 +222,9 @@ Never destroy the immutable source snapshot. If shutdown was interrupted, check 
   `--prefund-address` instead of the standard Anvil development address, whose delegated-account
   state at the tested snapshot can trip Reth's delegated-account in-flight limit while funding
   senders.
+- **Low gas usage in a debug run:** rerun with `cargo run --release`; debug runs are functional
+  smoke tests, not performance evidence.
+- **Output write failure:** create the output's parent directory before starting the run.
 - **Port conflict:** omit `--stable-ports` and consume the allocated URLs from runtime JSON.
 - **Unexpected disk growth:** account creation changes state heavily. Monitor ZFS referenced space
   or EBS free space throughout long runs.
@@ -159,4 +236,5 @@ See the exact supported options at any revision with:
 
 ```bash
 cargo run -p base-system-tests --bin base-devnet -- snapshot --help
+cargo run -p base-system-tests --bin base-bench -- snapshot --help
 ```
