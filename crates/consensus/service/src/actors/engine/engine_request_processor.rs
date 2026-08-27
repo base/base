@@ -71,6 +71,9 @@ where
     checkpoint_reader: Arc<dyn ForkchoiceCheckpointReader>,
     /// Writes checkpointed forkchoice state after engine state changes.
     checkpoint_writer: Arc<dyn CheckpointWriter>,
+    /// When set, engine resets are skipped and the bootstrapped L2 unsafe head is retained
+    /// instead of consulting L1 (there is no L1-info deposit to reconstruct the safe head from).
+    skip_reset: bool,
 }
 
 impl<EngineClient_, DerivationClient> EngineProcessor<EngineClient_, DerivationClient>
@@ -120,6 +123,19 @@ where
         )
     }
 
+    /// Constructs a processor whose engine resets are skipped, retaining the bootstrapped
+    /// execution head. Used by the L1-free standalone sequencer.
+    pub fn new_skip_reset(
+        client: Arc<EngineClient_>,
+        config: Arc<RollupConfig>,
+        derivation_client: DerivationClient,
+        engine: Engine<EngineClient_>,
+    ) -> Self {
+        let mut processor = Self::new(client, config, derivation_client, engine);
+        processor.skip_reset = true;
+        processor
+    }
+
     /// Constructs a new [`EngineProcessor`] with checkpoint persistence.
     pub fn new_with_checkpoint(
         client: Arc<EngineClient_>,
@@ -136,6 +152,7 @@ where
             derivation_client,
             el_sync_complete: false,
             engine,
+            skip_reset: false,
             last_finalized_head_checkpointed: L2BlockInfo::default(),
             last_safe_head_checkpointed: L2BlockInfo::default(),
             last_safe_head_sent: L2BlockInfo::default(),
@@ -145,6 +162,13 @@ where
 
     /// Resets the inner [`Engine`] without notifying derivation.
     pub async fn reset_engine_state(&mut self) -> Result<L2BlockInfo, EngineError> {
+        if self.skip_reset {
+            let head = self.engine.state().sync_state.unsafe_head();
+            if head != L2BlockInfo::default() {
+                return Ok(head);
+            }
+        }
+
         // Reset the engine, consulting the checkpoint reader if reth has pruned the labeled
         // safe / finalized block bodies (so the L1 info deposit cannot be reconstructed).
         let l2_safe_head = self

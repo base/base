@@ -19,8 +19,9 @@ use axum::{
 };
 use base_cli_utils::LogConfig;
 use base_shadow_metrics::{
-    DEFAULT_MAX_ROWS_PER_POLL, DEFAULT_POLL_INTERVAL_SECS, ShadowMetricsReader,
-    ShadowMetricsReaderConfig, ShadowMetricsStore, api_router,
+    DEFAULT_DATABASE, DEFAULT_MAX_ROWS_PER_POLL, DEFAULT_POLL_INTERVAL_SECS, DEFAULT_PORT,
+    DEFAULT_USERNAME, PgConnectionParams, ShadowMetricsReader, ShadowMetricsReaderConfig,
+    ShadowMetricsStore, api_router,
 };
 use clap::Parser;
 use tokio::net::TcpListener;
@@ -45,9 +46,25 @@ struct Args {
     #[command(flatten)]
     metrics: MetricsArgs,
 
-    /// Postgres URL; unset disables reader and database readiness checks.
-    #[arg(long, env = "SHADOW_METRICS_POSTGRES_URL")]
-    postgres_url: Option<String>,
+    /// Postgres host; unset disables reader and database readiness checks.
+    #[arg(long, env = "SHADOW_METRICS_POSTGRES_HOST")]
+    postgres_host: Option<String>,
+
+    /// Password for the Postgres role.
+    #[arg(long, env = "SHADOW_METRICS_POSTGRES_PASSWORD")]
+    postgres_password: Option<String>,
+
+    /// Postgres port.
+    #[arg(long, env = "SHADOW_METRICS_POSTGRES_PORT", default_value_t = DEFAULT_PORT)]
+    postgres_port: u16,
+
+    /// Postgres database name.
+    #[arg(long, env = "SHADOW_METRICS_POSTGRES_DATABASE", default_value = DEFAULT_DATABASE)]
+    postgres_database: String,
+
+    /// Postgres role to authenticate as.
+    #[arg(long, env = "SHADOW_METRICS_POSTGRES_USER", default_value = DEFAULT_USERNAME)]
+    postgres_user: String,
 
     /// Maximum Postgres pool connections.
     #[arg(long, env = "SHADOW_METRICS_POSTGRES_MAX_CONNECTIONS", default_value = "10")]
@@ -94,17 +111,35 @@ async fn main() -> Result<()> {
 async fn run_server(args: Args) -> Result<()> {
     let http_addr = SocketAddr::from(([0, 0, 0, 0], args.http_port));
 
-    let store = if let Some(postgres_url) = &args.postgres_url {
-        Some(ShadowMetricsStore::connect(postgres_url, args.postgres_max_connections).await?)
-    } else {
-        None
+    let connection = match (&args.postgres_host, &args.postgres_password) {
+        (Some(host), Some(password)) => Some(PgConnectionParams {
+            host: host.clone(),
+            port: args.postgres_port,
+            database: args.postgres_database.clone(),
+            username: args.postgres_user.clone(),
+            password: password.clone(),
+        }),
+        // Connecting with an empty password would surface as an opaque Postgres auth
+        // failure rather than a configuration error.
+        (Some(_), None) => anyhow::bail!(
+            "--postgres-host (env SHADOW_METRICS_POSTGRES_HOST) requires --postgres-password (env \
+             SHADOW_METRICS_POSTGRES_PASSWORD)"
+        ),
+        (None, _) => None,
+    };
+
+    let store = match &connection {
+        Some(connection) => {
+            Some(ShadowMetricsStore::connect(connection, args.postgres_max_connections).await?)
+        }
+        None => None,
     };
 
     info!(
         http_addr = %http_addr,
         metrics_addr = %args.metrics.addr,
         metrics_port = args.metrics.port,
-        postgres_enabled = args.postgres_url.is_some(),
+        postgres_enabled = connection.is_some(),
         poll_interval_secs = args.poll_interval_secs,
         max_rows_per_poll = args.max_rows_per_poll,
         "Starting shadow-metrics service"

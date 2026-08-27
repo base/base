@@ -47,6 +47,7 @@ spin.workspace = true
 proptest.workspace = true
 criterion.workspace = true
 serde_json.workspace = true
+iai-callgrind.workspace = true
 base-common-chains.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["std"] }
@@ -57,6 +58,11 @@ alloy-primitives = { workspace = true, features = ["rlp", "k256", "map", "arbitr
 
 [[bench]]
 name = "batch_queue"
+harness = false
+required-features = ["test-utils"]
+
+[[bench]]
+name = "batch_queue_iai"
 harness = false
 required-features = ["test-utils"]
 

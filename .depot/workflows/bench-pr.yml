@@ -1,22 +1,27 @@
+# Depot CI Migration
+# Source: .github/workflows/bench-pr.yml
+#
+# Changes made:
+# - Rewrote .github/ path references to .depot/
+
 name: Benchmarks (advisory)
 
+# Temporarily disabled on PRs. Shared-runner wall-clock is too noisy to trust per
+# PR (it produced confident false positives on memory-bound benches), so the
+# deterministic iai-callgrind job (bench-iai.yml) is now the per-PR signal. These
+# wall-clock benches are slated to move to a nightly trend job in a follow-up;
+# retained on manual dispatch until then.
 on:
-  pull_request:
   workflow_dispatch:
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
-
 env:
   CARGO_TERM_COLOR: always
   RUSTC_WRAPPER: "sccache"
-  SCCACHE_GHA_ENABLED: "true"
-
 permissions:
   contents: read
   pull-requests: write
-
 jobs:
   # Base and head are benchmarked on the *same* physical runner, back to back, so a
   # reported delta reflects the code change rather than variance between two hosts.
@@ -30,17 +35,16 @@ jobs:
   # (Per-benchmark interleaving would tighten the timing further and is a follow-up.)
   bench:
     name: Benchmarks (advisory)
-    # SECURITY: this job checks out the PR head and executes it (the ./.github/actions/setup
-    # composite action and `cargo bench`, incl. build.rs/proc-macros) on a persistent
-    # self-hosted runner. Fork PRs are attacker-controlled, so restrict execution to PRs
+    # SECURITY: this job checks out the PR head and executes it (the ./.depot/actions/setup
+    # composite action and `cargo bench`, incl. build.rs/proc-macros) with repository
+    # secrets and caches. Fork PRs are attacker-controlled, so restrict execution to PRs
     # from the same repository (trusted, write-access authors) or a manual dispatch (also
-    # write-access gated). Never run untrusted fork code on BasePerfRunnerGroup. Benchmarks
+    # write-access gated). Never run untrusted fork code in this job. Benchmarks
     # are advisory, so skipping them for forks is an acceptable loss of coverage.
     if: >
-      github.event_name == 'workflow_dispatch' ||
-      github.event.pull_request.head.repo.full_name == github.repository
-    runs-on:
-      group: BasePerfRunnerGroup
+      github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+
+    runs-on: depot-ubuntu-24.04-8
     timeout-minutes: 90
     env:
       HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -50,23 +54,19 @@ jobs:
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
-
       # Single checkout at HEAD_SHA. The tree is switched to the base commit for the
-      # first pass and back to head for the second; ./.github/actions/setup and the
+      # first pass and back to head for the second; ./.depot/actions/setup and the
       # compare script resolve at the workspace root either way.
       - name: Checkout head
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 1
-
-      - uses: ./.github/actions/setup
+      - uses: ./.depot/actions/setup
         with:
           foundry: "true"
           native-deps: "true"
-          rust-cache-shared-key: "benchmark"
           just: "false"
-
       # Fetch the base commit so the single tree can be switched to it, and hoist the
       # head checkout's authoritative bench list out of the tree so both passes run
       # the *same* list even while the tree is switched to the base commit — the base
@@ -78,7 +78,6 @@ jobs:
           set -euo pipefail
           git fetch --no-tags --depth 1 origin "$BASE_SHA"
           cp etc/scripts/ci/run_bench_subset.sh "$RUNNER_TEMP/run_bench_subset.sh"
-
       # Advisory only: a bench that fails to compile or run must not fail the job. A
       # bench that runs on base but breaks on head simply produces no head result,
       # which the comparison step surfaces as lost coverage. The tree switches are NOT
@@ -89,26 +88,21 @@ jobs:
       - name: Switch tree to base commit
         shell: bash
         run: git checkout --force --detach "$BASE_SHA"
-
       - name: Run benchmark subset (base)
         continue-on-error: true
         shell: bash
         run: bash "$RUNNER_TEMP/run_bench_subset.sh" pr-base
-
       - name: Switch tree to head commit
         shell: bash
         run: git checkout --force --detach "$HEAD_SHA"
-
       - name: Run benchmark subset (head)
         continue-on-error: true
         shell: bash
         run: bash "$RUNNER_TEMP/run_bench_subset.sh" pr-head
-
       - name: Set up Python 3.13
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.13"
-
       - name: Render comparison
         id: render
         shell: bash
@@ -126,15 +120,13 @@ jobs:
             --improvement-pct 10 \
             --github-output "$GITHUB_OUTPUT"
           cat "$RUNNER_TEMP/bench-comment.md" >> "$GITHUB_STEP_SUMMARY"
-
       # Only comment on a notable regression, improvement, or lost coverage, to keep
       # PR noise low. If a prior run left a comment that a later push has since made
       # unremarkable, delete it. Skip forked PRs — we can't comment on them.
       - name: Comment or clear benchmark results on PR
         if: >
-          always() &&
-          github.event_name == 'pull_request' &&
-          github.event.pull_request.head.repo.full_name == github.repository
+          always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

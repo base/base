@@ -18,9 +18,14 @@ workspace = true
 rstest.workspace = true
 criterion.workspace = true
 hex-literal.workspace = true
+iai-callgrind.workspace = true
 
 [[bench]]
 name = "flz"
+harness = false
+
+[[bench]]
+name = "flz_iai"
 harness = false
 
 [features]

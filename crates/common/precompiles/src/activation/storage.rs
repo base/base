@@ -2,8 +2,7 @@
 
 use alloy_primitives::{Address, B256, Bytes, address, b256};
 use base_precompile_macros::contract;
-use base_precompile_storage::{BasePrecompileError, Handler, Mapping, Result};
-use revm::precompile::PrecompileResult;
+use base_precompile_storage::{BasePrecompileError, Handler, Mapping, PrecompileResult, Result};
 
 use crate::IActivationRegistry;
 
@@ -121,7 +120,7 @@ impl ActivationRegistryStorage<'_> {
     /// Reverts unless the feature is activated.
     ///
     /// Both the activated and deactivated paths return `Ok`; callers must inspect
-    /// [`revm::precompile::PrecompileOutput::reverted`] to distinguish an activated feature from an
+    /// [`base_precompile_storage::PrecompileOutput::is_revert`] to distinguish an activated feature from an
     /// ABI revert.
     pub fn assert_activated(&self, feature: B256) -> PrecompileResult {
         self.storage.result_output(self.ensure_activated(feature), |()| Bytes::new())
@@ -250,9 +249,9 @@ mod tests {
     use alloy_primitives::{Address, B256, U256, address, keccak256, uint};
     use alloy_sol_types::{SolCall, SolEvent};
     use base_precompile_storage::{
-        BasePrecompileError, HashMapStorageProvider, Result, StorageCtx, StorageKey,
+        BasePrecompileError, HashMapStorageProvider, PrecompileOutput, Result, StorageCtx,
+        StorageKey,
     };
-    use revm::precompile::PrecompileOutput;
     use rstest::rstest;
 
     use crate::{

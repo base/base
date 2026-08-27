@@ -22,8 +22,8 @@ mod build 'etc/just/build.just'
 mod succinct 'etc/just/succinct.just'
 # Standalone user-funded prover stack (user RPCs + Succinct Network key)
 mod prover 'etc/just/prover.just'
-# Local no-Nitro proof stack for the single-Anvil L1 devnet
-mod anvil-no-nitro 'etc/just/anvil-no-nitro.just'
+# Local Nitro proof stack for the single-Anvil L1 devnet
+mod anvil-nitro-local 'etc/just/anvil-nitro-local.just'
 # Prover-service JSON-RPC request helpers
 mod zk-prover 'etc/just/zk-prover.just'
 # Challenge / dispute helpers
