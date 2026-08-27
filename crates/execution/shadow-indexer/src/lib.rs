@@ -7,7 +7,7 @@ mod exex;
 pub use exex::ShadowIndexerExEx;
 
 mod metrics;
-pub use metrics::ShadowWriterMetrics;
+pub use metrics::{ShadowExExMetrics, ShadowWriterMetrics};
 
 mod writer;
 pub use writer::ShadowWriter;
