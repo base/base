@@ -133,6 +133,8 @@ jobs:
         run: |
           set -euo pipefail
 
+          RUSTUP_TOOLCHAIN="$(rustup show active-toolchain | cut -d' ' -f1)"
+          export RUSTUP_TOOLCHAIN
           cd "$BASE_ANVIL_DIR"
           rustup show active-toolchain
           cargo \
