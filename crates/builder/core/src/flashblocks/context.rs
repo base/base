@@ -19,7 +19,8 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
-    BasePayloadBuilderAttributes, ValidityMetrics, error::BasePayloadBuilderError,
+    BasePayloadBuilderAttributes, BuilderMetrics as SharedBuilderMetrics, ValidityMetrics,
+    error::BasePayloadBuilderError,
 };
 use base_execution_txpool::{
     BasePooledTx, BundleTransaction, GuardMetrics, PredicateContext, TimestampedTransaction,
@@ -1620,7 +1621,7 @@ impl BasePayloadBuilderCtx {
             // Per-tx tip-per-gas distribution (builder priority score), tagged
             // by flow cohort and bid mechanism. `X` for top-X-percentile share is
             // left to Datadog percentile aggregations — do not bake it in here.
-            ValidityMetrics::record_tip_per_gas(
+            SharedBuilderMetrics::record_tip_per_gas(
                 has_validity_predicates,
                 has_coinbase_tip,
                 miner_fee as f64,

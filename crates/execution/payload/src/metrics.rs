@@ -1,4 +1,4 @@
-//! Metrics shared by payload builders that evaluate validity predicates.
+//! Metrics shared by payload builders.
 
 use std::time::Duration;
 
@@ -42,6 +42,11 @@ base_metrics::define_metrics! {
     #[describe("Validity predicate evaluation attempts")]
     #[label(outcome)]
     validity_predicate_evaluations_total: counter,
+}
+
+base_metrics::define_metrics! {
+    base_builder,
+    struct = BuilderMetrics,
     #[describe("Transactions included per block, segmented by flow")]
     #[label(flow)]
     txs_included_per_block: histogram,
@@ -90,7 +95,9 @@ impl ValidityMetrics {
             Self::predicate_bucket_depth().record(depth as f64);
         }
     }
+}
 
+impl BuilderMetrics {
     /// Records per-block inclusion and EIP-1559 fee revenue.
     ///
     /// Always emits one observation per built block, including zeros, so the

@@ -289,7 +289,9 @@ impl BuilderMetrics {
 
 #[cfg(test)]
 mod tests {
-    use base_execution_payload_builder::{InclusionTracker, ValidityMetrics};
+    use base_execution_payload_builder::{
+        BuilderMetrics as SharedBuilderMetrics, InclusionTracker,
+    };
     use metrics_exporter_prometheus::PrometheusBuilder;
 
     use super::*;
@@ -362,17 +364,17 @@ mod tests {
 
         metrics::with_local_recorder(&recorder, || {
             // Standard EIP-1559: flow=standard, bid=priority_fee.
-            ValidityMetrics::record_tip_per_gas(false, false, 10.0);
-            ValidityMetrics::record_tip_per_gas(false, false, 30.0);
+            SharedBuilderMetrics::record_tip_per_gas(false, false, 10.0);
+            SharedBuilderMetrics::record_tip_per_gas(false, false, 30.0);
             // Pre-8130 validity: flow=validity, bid=priority_fee.
-            ValidityMetrics::record_tip_per_gas(true, false, 50.0);
+            SharedBuilderMetrics::record_tip_per_gas(true, false, 50.0);
             // EIP-8130 with predicates and a static phase-0 tip.
-            ValidityMetrics::record_tip_per_gas(true, true, 80.0);
+            SharedBuilderMetrics::record_tip_per_gas(true, true, 80.0);
             // EIP-8130 without predicates, but with a static phase-0 tip.
-            ValidityMetrics::record_tip_per_gas(false, true, 20.0);
+            SharedBuilderMetrics::record_tip_per_gas(false, true, 20.0);
             // EIP-8130 without a statically-analyzable tip: bid=priority_fee.
-            ValidityMetrics::record_tip_per_gas(false, false, 5.0);
-            ValidityMetrics::record_tip_per_gas(true, false, 15.0);
+            SharedBuilderMetrics::record_tip_per_gas(false, false, 5.0);
+            SharedBuilderMetrics::record_tip_per_gas(true, false, 15.0);
         });
 
         let rendered = handle.render();
@@ -437,7 +439,7 @@ mod tests {
         tracker.record(true, 8_000, 9, 10);
 
         metrics::with_local_recorder(&recorder, || {
-            ValidityMetrics::record_inclusion(&tracker);
+            SharedBuilderMetrics::record_inclusion(&tracker);
         });
 
         let rendered = handle.render();
@@ -490,7 +492,7 @@ mod tests {
         let handle = recorder.handle();
 
         metrics::with_local_recorder(&recorder, || {
-            ValidityMetrics::record_inclusion(&InclusionTracker::default());
+            SharedBuilderMetrics::record_inclusion(&InclusionTracker::default());
         });
 
         let rendered = handle.render();

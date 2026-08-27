@@ -26,7 +26,8 @@ use base_common_flashblocks::{
 use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
-    BaseBuiltPayload, BasePayloadBuilderAttributes, ValidityMetrics,
+    BaseBuiltPayload, BasePayloadBuilderAttributes, BuilderMetrics as SharedBuilderMetrics,
+    ValidityMetrics,
 };
 use base_execution_txpool::AccountStateDiff;
 use base_observability_events::{GlobalTransactionEventWriter, TransactionEventType};
@@ -935,7 +936,7 @@ where
         ValidityMetrics::record_predicate_loads(&info.predicate_loads);
 
         // Record validity inclusion and EIP-1559 fee revenue for the block.
-        ValidityMetrics::record_inclusion(&info.inclusion);
+        SharedBuilderMetrics::record_inclusion(&info.inclusion);
 
         debug!(
             target: "payload_builder",

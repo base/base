@@ -52,10 +52,11 @@ use revm::context::{Block, BlockEnv};
 use tracing::{debug, debug_span, instrument, trace, warn};
 
 use crate::{
-    Attributes, BasePayloadBuilderAttributes, InclusionTracker, ParkableBestPayloadTransactions,
-    ParkablePayloadTransactions, ParkedPredicateIndex, PayloadPrimitives, PredicateLoadTracker,
-    PredicateReadRecorder, StateChangeEffects, ValidityMetrics, ValidityPredicateEvaluation,
-    config::BaseBuilderConfig, error::BasePayloadBuilderError, payload::BaseBuiltPayload,
+    Attributes, BasePayloadBuilderAttributes, BuilderMetrics, InclusionTracker,
+    ParkableBestPayloadTransactions, ParkablePayloadTransactions, ParkedPredicateIndex,
+    PayloadPrimitives, PredicateLoadTracker, PredicateReadRecorder, StateChangeEffects,
+    ValidityMetrics, ValidityPredicateEvaluation, config::BaseBuilderConfig,
+    error::BasePayloadBuilderError, payload::BaseBuiltPayload,
 };
 
 macro_rules! emit_native_validity_event {
@@ -481,7 +482,7 @@ impl<Txs> Builder<'_, Txs> {
             Some(executed),
             block_access_list.map(|bal| alloy_rlp::encode(bal).into()),
         );
-        ValidityMetrics::record_inclusion(&info.inclusion);
+        BuilderMetrics::record_inclusion(&info.inclusion);
 
         if no_tx_pool || ctx.is_denim_active() {
             // if `no_tx_pool` is set only transactions from the payload attributes will be included
@@ -843,7 +844,7 @@ where
         let predicate_context = PredicateContext { block_number, flashblock_index: 0 };
         let mut predicate_index = ParkedPredicateIndex::default();
         let mut predicate_loads = PredicateLoadTracker::default();
-        let mut predicate_eval_duration = Duration::ZERO;
+        let mut predicate_eval_duration = None;
         let mut predicate_bucket_wakeups = 0;
         let mut validity_consideration_index = 0_u64;
 
@@ -904,6 +905,50 @@ where
                 continue;
             }
 
+            if has_validity_predicates
+                && predicate_eval_duration.is_some_and(|duration| {
+                    duration >= self.builder_config.predicate_eval_hard_cutoff
+                })
+            {
+                ValidityMetrics::validity_predicate_evaluations_total("budget_exhausted")
+                    .increment(1);
+                trace!(
+                    target: "payload_builder",
+                    tx_hash = ?tx_hash,
+                    "deferring validity-gated transaction: predicate evaluation budget exhausted"
+                );
+                if best_txs.park_current() {
+                    emit_native_validity_event!(
+                        self,
+                        TransactionEventType::BuilderDeferred,
+                        tx_hash,
+                        validity_consideration_index,
+                        {
+                            "defer_reason" => "predicate_eval_budget_exhausted",
+                            "defer_detail" => "validity-predicate evaluation time budget exhausted for this payload build",
+                        }
+                    );
+                } else {
+                    emit_native_validity_event!(
+                        self,
+                        TransactionEventType::BuilderRejected,
+                        tx_hash,
+                        validity_consideration_index,
+                        {
+                            "rejection_reason" => "predicate_eval_budget_exhausted",
+                            "rejection_detail" => "validity-predicate evaluation time budget exhausted and the configured transaction selector cannot park the transaction",
+                            "permanent" => false,
+                        }
+                    );
+                    if tx.eip8130_replay_id().is_none() {
+                        best_txs.mark_invalid(tx.sender(), tx.nonce());
+                    } else {
+                        best_txs.mark_current_committed();
+                    }
+                }
+                continue;
+            }
+
             if has_validity_predicates {
                 let evaluation_start = Instant::now();
                 let evaluation = {
@@ -917,7 +962,8 @@ where
                         &predicate_context,
                     )
                 };
-                predicate_eval_duration += evaluation_start.elapsed();
+                *predicate_eval_duration.get_or_insert(Duration::ZERO) +=
+                    evaluation_start.elapsed();
                 match evaluation {
                     Ok(ValidityPredicateEvaluation::Matched) => {
                         ValidityMetrics::validity_predicate_evaluations_total("matched")
@@ -1139,7 +1185,19 @@ where
             best_txs.mark_current_committed();
             let predicates_need_rescan = !state_change_effects.affected_transactions.is_empty();
             let predicate_rescan_start = Instant::now();
-            for parked_hash in state_change_effects.affected_transactions {
+            for (rescanned, parked_hash) in
+                state_change_effects.affected_transactions.iter().copied().enumerate()
+            {
+                if predicate_eval_duration.is_some_and(|duration| {
+                    duration >= self.builder_config.predicate_eval_hard_cutoff
+                }) {
+                    let remaining = state_change_effects.affected_transactions.len() - rescanned;
+                    ValidityMetrics::validity_predicate_evaluations_total(
+                        "rescan_budget_exhausted",
+                    )
+                    .increment(remaining as u64);
+                    break;
+                }
                 let Some(parked_transaction) = predicate_index.transaction(parked_hash) else {
                     continue;
                 };
@@ -1155,7 +1213,8 @@ where
                         &predicate_context,
                     )
                 };
-                predicate_eval_duration += evaluation_start.elapsed();
+                *predicate_eval_duration.get_or_insert(Duration::ZERO) +=
+                    evaluation_start.elapsed();
                 match evaluation {
                     Ok(ValidityPredicateEvaluation::Matched) => {
                         ValidityMetrics::validity_predicate_evaluations_total("rescan_matched")
@@ -1195,7 +1254,7 @@ where
             let gas_used = gas_output.tx_gas_used();
             info.total_fees += U256::from(miner_fee) * U256::from(gas_used);
             info.inclusion.record(has_validity_predicates, gas_used, miner_fee, base_fee);
-            ValidityMetrics::record_tip_per_gas(
+            BuilderMetrics::record_tip_per_gas(
                 has_validity_predicates,
                 has_coinbase_tip,
                 miner_fee as f64,
@@ -1213,7 +1272,7 @@ where
             }
         }
 
-        if predicate_loads.has_activity() {
+        if let Some(predicate_eval_duration) = predicate_eval_duration {
             ValidityMetrics::record_predicate_eval_duration(predicate_eval_duration);
         }
         ValidityMetrics::record_predicate_loads(&predicate_loads);
@@ -1239,6 +1298,7 @@ mod tests {
         collections::{HashMap, VecDeque},
         mem::ManuallyDrop,
         sync::Arc,
+        time::Duration,
     };
 
     use alloy_consensus::{Header, SignableTransaction, TxEip1559};
@@ -1688,6 +1748,44 @@ mod tests {
             .map(|transaction| *transaction.tx_hash())
             .collect::<Vec<_>>();
         assert_eq!(included_hashes, vec![trigger_hash, gated_hash]);
+    }
+
+    #[test]
+    fn native_builder_bounds_initial_and_rescan_predicate_evaluation() {
+        let watched_address = Address::repeat_byte(0x44);
+        let gated = pool_transaction_to(0, Address::repeat_byte(0x55), U256::ZERO)
+            .with_validity_predicates(vec![ValidityPredicate::Balance {
+                address: watched_address,
+                op: ValidityOperator::Equal,
+                value: U256::ONE,
+            }]);
+        let matching =
+            pool_transaction(1).with_validity_predicates(vec![ValidityPredicate::BlockNumber {
+                op: ValidityOperator::Equal,
+                value: U256::ONE,
+            }]);
+        let trigger = pool_transaction_to(0, watched_address, U256::ONE);
+        let funded_senders = [gated.sender(), matching.sender(), trigger.sender()];
+        let trigger_hash = *trigger.hash();
+        let mut ctx = pool_payload_context(DENIM_TIMESTAMP);
+        ctx.builder_config.predicate_eval_hard_cutoff = Duration::from_nanos(1);
+
+        let BuildOutcomeKind::Freeze(payload) = build_parkable_pool_payload(
+            ctx,
+            TestParkableTransactions::new(vec![gated, matching, trigger]),
+            &funded_senders,
+        ) else {
+            panic!("Denim payload must freeze")
+        };
+
+        let included_hashes = payload
+            .block()
+            .body()
+            .transactions
+            .iter()
+            .map(|transaction| *transaction.tx_hash())
+            .collect::<Vec<_>>();
+        assert_eq!(included_hashes, vec![trigger_hash]);
     }
 
     #[test]

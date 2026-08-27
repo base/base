@@ -4,6 +4,7 @@ use std::{
     marker::PhantomData,
     net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
     sync::Arc,
+    time::Duration,
 };
 
 use alloy_consensus::BlockHeader;
@@ -1043,6 +1044,8 @@ pub struct BasePayloadBuilder<Txs = ()> {
     /// Whether to drop positively stale EIP-8130 transactions using their
     /// captured authorization manifest before execution.
     pub manifest_precheck_enabled: bool,
+    /// Hard cutoff on cumulative validity-predicate evaluation time per payload build.
+    pub predicate_eval_hard_cutoff: Duration,
 }
 
 impl<Txs: Default> Default for BasePayloadBuilder<Txs> {
@@ -1052,6 +1055,7 @@ impl<Txs: Default> Default for BasePayloadBuilder<Txs> {
             da_config: BaseDAConfig::default(),
             gas_limit_config: GasLimitConfig::default(),
             manifest_precheck_enabled: true,
+            predicate_eval_hard_cutoff: Duration::from_millis(10),
         }
     }
 }
@@ -1064,6 +1068,7 @@ impl BasePayloadBuilder {
             da_config: BaseDAConfig::default(),
             gas_limit_config: GasLimitConfig::default(),
             manifest_precheck_enabled: true,
+            predicate_eval_hard_cutoff: Duration::from_millis(10),
         }
     }
 
@@ -1084,6 +1089,12 @@ impl BasePayloadBuilder {
         self.manifest_precheck_enabled = enabled;
         self
     }
+
+    /// Configure the cumulative validity-predicate evaluation time limit per payload build.
+    pub const fn with_predicate_eval_hard_cutoff(mut self, cutoff: Duration) -> Self {
+        self.predicate_eval_hard_cutoff = cutoff;
+        self
+    }
 }
 
 impl<Txs> BasePayloadBuilder<Txs> {
@@ -1095,6 +1106,7 @@ impl<Txs> BasePayloadBuilder<Txs> {
             da_config: self.da_config,
             gas_limit_config: self.gas_limit_config,
             manifest_precheck_enabled: self.manifest_precheck_enabled,
+            predicate_eval_hard_cutoff: self.predicate_eval_hard_cutoff,
         }
     }
 }
@@ -1142,6 +1154,7 @@ where
                     da_config: self.da_config,
                     gas_limit_config: self.gas_limit_config,
                     manifest_precheck_enabled: self.manifest_precheck_enabled,
+                    predicate_eval_hard_cutoff: self.predicate_eval_hard_cutoff,
                 },
             )
             .with_transactions(self.best_transactions);

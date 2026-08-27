@@ -23,7 +23,7 @@ pub use parkable::{
 };
 
 mod metrics;
-pub use metrics::ValidityMetrics;
+pub use metrics::{BuilderMetrics, ValidityMetrics};
 
 mod inclusion;
 pub use inclusion::{FLOW_STANDARD, FLOW_VALIDITY, InclusionFlow, InclusionTracker};

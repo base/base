@@ -58,9 +58,9 @@ pub struct BuilderConfig {
     /// Transactions younger than this without metering data will be skipped.
     pub metering_wait_duration: Option<Duration>,
 
-    /// Hard cutoff on cumulative validity-predicate evaluation time per flashblock build.
+    /// Hard cutoff on cumulative validity-predicate evaluation time per builder iteration.
     /// Once the cutoff is exceeded, further validity-gated transactions are deferred to a
-    /// later flashblock rather than evaluated. This is the guardrail backing the
+    /// later iteration rather than evaluated. This is the guardrail backing the
     /// `base_builder_predicate_eval_duration_per_block` metric's P99 SLO.
     pub predicate_eval_hard_cutoff: Duration,
 
