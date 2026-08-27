@@ -86,7 +86,7 @@ impl BaseNode {
         Node: FullNodeTypes<Types: BaseNodeTypes>,
     {
         let RollupArgs {
-            disable_txpool_gossip,
+            enable_txpool_gossip,
             discovery_v4,
             max_inflight_delegated_slots,
             mempool_sender_limit,
@@ -113,7 +113,7 @@ impl BaseNode {
                     .with_gas_limit_config(self.gas_limit_config.clone())
                     .with_manifest_precheck_enabled(self.manifest_precheck_enabled),
             ))
-            .network(BaseNetworkBuilder::new(disable_txpool_gossip, !discovery_v4))
+            .network(BaseNetworkBuilder::new(enable_txpool_gossip, !discovery_v4))
             .consensus(BaseConsensusBuilder::default())
     }
 

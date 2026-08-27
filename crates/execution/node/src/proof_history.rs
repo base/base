@@ -46,7 +46,7 @@ pub async fn launch_node_with_proof_history(
 ) -> eyre::Result<(), ErrReport> {
     let RollupArgs {
         sequencer,
-        disable_txpool_gossip,
+        enable_txpool_gossip,
         discovery_v4,
         sequencer_headers,
         min_suggested_priority_fee,
@@ -70,7 +70,7 @@ pub async fn launch_node_with_proof_history(
     // Start from a plain BaseNode builder
     let mut node_builder = builder.node(BaseNode::new(RollupArgs {
         sequencer,
-        disable_txpool_gossip,
+        enable_txpool_gossip,
         discovery_v4,
         sequencer_headers,
         min_suggested_priority_fee,
