@@ -67,4 +67,10 @@ reth-revm = { workspace = true, features = ["test-utils"] }
 base-observability-events = { workspace = true, features = ["test-utils"] }
 
 [features]
-metrics = ["base-metrics/metrics", "base-observability-events/metrics", "dep:metrics"]
+metrics = [
+	"base-common-evm/metrics",
+	"base-metrics/metrics",
+	"base-observability-events/metrics",
+	"dep:metrics",
+	"reth-evm/metrics",
+]
