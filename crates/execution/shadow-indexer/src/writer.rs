@@ -11,6 +11,8 @@ use tokio::{
 };
 use tracing::{error, info};
 
+use crate::ShadowWriterMetrics;
+
 const BATCH_SIZE: usize = 100;
 const FLUSH_INTERVAL: Duration = Duration::from_secs(1);
 const MAX_FLUSH_ATTEMPTS: usize = 3;
@@ -75,29 +77,39 @@ impl ShadowWriter {
                                 self.stamp_row(row);
                             }
                             batch.push(write);
+                            ShadowWriterMetrics::channel_depth().set(self.rx.len() as f64);
+                            ShadowWriterMetrics::buffer_size().set(batch.len() as f64);
                             if batch.len() >= BATCH_SIZE {
-                                self.flush(&repo, &mut batch).await;
+                                self.flush(&repo, &mut batch, "batch_full").await;
                             }
                         }
                         None => {
-                            self.flush(&repo, &mut batch).await;
+                            self.flush(&repo, &mut batch, "channel_closed").await;
                             break;
                         }
                     }
                 }
                 _ = interval.tick() => {
-                    self.flush(&repo, &mut batch).await;
+                    ShadowWriterMetrics::channel_depth().set(self.rx.len() as f64);
+                    self.flush(&repo, &mut batch, "interval").await;
                 }
             }
         }
     }
 
-    async fn flush(&self, repo: &dyn BlockInserter, batch: &mut Vec<ShadowWrite>) {
+    async fn flush(
+        &self,
+        repo: &dyn BlockInserter,
+        batch: &mut Vec<ShadowWrite>,
+        trigger: &'static str,
+    ) {
         if batch.is_empty() {
             return;
         }
 
         let batch_size = batch.len();
+        ShadowWriterMetrics::flushes(trigger).increment(1);
+        let _flush_timer = base_metrics::timed!(ShadowWriterMetrics::flush_duration_seconds());
 
         for attempt in 1..=MAX_FLUSH_ATTEMPTS {
             match repo.flush(batch).await {
@@ -109,7 +121,9 @@ impl ShadowWriter {
                         batch_size,
                         "Inserted shadow indexer rows"
                     );
+                    ShadowWriterMetrics::rows_inserted().increment(outcome.rows_written as u64);
                     batch.clear();
+                    ShadowWriterMetrics::buffer_size().set(0.0);
                     return;
                 }
                 Err(error) => {
@@ -119,6 +133,7 @@ impl ShadowWriter {
                         batch_size,
                         "Failed to insert shadow indexer rows"
                     );
+                    ShadowWriterMetrics::flush_failures().increment(1);
                     if attempt < MAX_FLUSH_ATTEMPTS {
                         sleep(RETRY_BACKOFF).await;
                     }
@@ -140,6 +155,8 @@ impl ShadowWriter {
             max_block_number = max_number,
             "Dropping shadow indexer rows after failed retries"
         );
+        ShadowWriterMetrics::rows_dropped().increment(dropped as u64);
+        ShadowWriterMetrics::buffer_size().set(batch.len() as f64);
     }
 
     /// Discards the block rows of a failed batch but keeps its canonical refs for the next flush.
@@ -231,7 +248,7 @@ mod tests {
         let mut repo = MockBlockInserter::new();
         repo.expect_flush().times(MAX_FLUSH_ATTEMPTS).returning(|_| Err(anyhow!("insert failed")));
 
-        writer.flush(&repo, &mut batch).await;
+        writer.flush(&repo, &mut batch, "batch_full").await;
         assert!(batch.is_empty());
     }
 
@@ -243,7 +260,7 @@ mod tests {
         let mut repo = MockBlockInserter::new();
         repo.expect_flush().times(MAX_FLUSH_ATTEMPTS).returning(|_| Err(anyhow!("insert failed")));
 
-        writer.flush(&repo, &mut batch).await;
+        writer.flush(&repo, &mut batch, "batch_full").await;
 
         let retained: Vec<i64> = batch
             .iter()
@@ -274,7 +291,7 @@ mod tests {
             Err(anyhow!("insert failed"))
         });
 
-        writer.flush(&repo, &mut batch).await;
+        writer.flush(&repo, &mut batch, "batch_full").await;
     }
 
     #[tokio::test]
@@ -285,7 +302,7 @@ mod tests {
         let mut repo = MockBlockInserter::new();
         repo.expect_flush().never();
 
-        writer.flush(&repo, &mut batch).await;
+        writer.flush(&repo, &mut batch, "interval").await;
     }
 
     #[tokio::test]
@@ -302,7 +319,7 @@ mod tests {
             Ok(ShadowFlushOutcome { rows_written: 2, rows_reconciled: 1 })
         });
 
-        writer.flush(&repo, &mut batch).await;
+        writer.flush(&repo, &mut batch, "batch_full").await;
         assert!(batch.is_empty());
     }
 }
