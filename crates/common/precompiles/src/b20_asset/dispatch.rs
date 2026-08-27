@@ -8,15 +8,17 @@
 //! internal-call loop stays here because re-dispatching arbitrary sub-calls is a
 //! routing responsibility; its version-defined business steps live on [`Asset`].
 
+use alloc::string::String;
+use alloc::vec::Vec;
+
 use alloy_primitives::{Bytes, U256};
-use alloy_sol_types::{SolCall, SolValue};
+use alloy_sol_types::{SolCall, SolType, SolValue, abi};
 use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, PrecompileResult, StorageCtx};
 
 use crate::{
-    AnnounceCall, AssetAccounting, AssetCall, AssetVersion, AssetVersions, B20AssetStorage,
-    B20AssetToken, B20PolicyType, B20TokenRole, BerylAuxiliaryMetrics, BerylCallRecorder,
-    BerylMetricLabels, BorrowedAnnounce,
+    AssetAccounting, AssetCall, AssetVersion, AssetVersions, B20AssetStorage, B20AssetToken,
+    B20PolicyType, B20TokenRole, BerylAuxiliaryMetrics, BerylCallRecorder, BerylMetricLabels,
     IB20::{self, IB20Calls as C},
     IB20Asset::{self, IB20AssetCalls as SC},
     NoopPrecompileCallObserver, PermitArgs, PolicyAccounting, PrecompileCallObserver,
@@ -105,10 +107,11 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
         O: PrecompileCallObserver,
     {
         // Fast-path `announce` before the generic decode. `announce` is the sole B-20 selector an
-        // aliased payload can amplify, and the borrowed decode validates it without materializing
-        // the `bytes[]` (see the `announce` module for the mechanism). Anything else falls through
-        // to the generic decode below with the same error bytes.
-        if let Some(announce) = BorrowedAnnounce::try_from_calldata(calldata, version) {
+        // aliased payload can amplify. `DecodedAnnounce::try_from_calldata` validates the payload
+        // via alloy's `decode_sequence + type_check` and holds the `bytes[]` entries as slices into
+        // `calldata` rather than owned copies. Anything else falls through to the generic decode
+        // below with the same error bytes.
+        if let Some(announce) = DecodedAnnounce::try_from_calldata(calldata, version) {
             return observer.observe("precompile-b20-asset-announce", || {
                 self.run_announce(ctx, version, privileged, &observer, announce)?;
                 Ok(Bytes::new())
@@ -411,10 +414,16 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
             // --- Announcement ---
             // Bounded safety net. Every accepted `announce` takes the borrowed fast path in `route`
             // (identical accept-set to this owned decode). If that invariant broke, this arm still
-            // executes the announcement correctly: the owned `announceCall` satisfies the same
-            // [`AnnounceCall`] shape and pays for the `Vec<Bytes>` the fast path avoids.
+            // executes correctly by feeding the owned call into the same runner via
+            // `DecodedAnnounce::from_owned`.
             SC::announce(c) => {
-                self.run_announce(ctx, version, privileged, &observer, c)?;
+                self.run_announce(
+                    ctx,
+                    version,
+                    privileged,
+                    &observer,
+                    DecodedAnnounce::from_owned(&c),
+                )?;
                 Bytes::new()
             }
 
@@ -439,41 +448,35 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
 
     /// Posts an announcement and atomically executes its internal calls via self-dispatch.
     ///
-    /// The body reads only through the [`AnnounceCall`] shape, so the borrowed fast path in
-    /// [`Self::route`] and the owned `SC::announce` safety net share one implementation. The
-    /// internal-call loop lives here because re-dispatching sub-calls is a routing responsibility.
-    /// The version's [`Asset::begin_announce`]/[`Asset::end_announce`] bracket the loop with the
-    /// version-defined business steps, and the in-loop selector check blocks recursive `announce`.
-    /// Callers own the [`PrecompileCallObserver::observe`] span, so this method must not open one.
-    fn run_announce<O, C>(
+    /// One body for both entry paths: the borrowed fast path in [`Self::route`] and the owned
+    /// `SC::announce` safety net both feed a [`DecodedAnnounce`] through here. The internal-call
+    /// loop lives here because re-dispatching sub-calls is a routing responsibility. The version's
+    /// [`Asset::begin_announce`]/[`Asset::end_announce`] bracket the loop with the version-defined
+    /// business steps, and the in-loop selector check blocks recursive `announce`. Callers own the
+    /// [`PrecompileCallObserver::observe`] span, so this method must not open one.
+    fn run_announce<O>(
         &mut self,
         ctx: StorageCtx<'_>,
         version: AssetVersion,
         privileged: bool,
         observer: &O,
-        announce: C,
+        announce: DecodedAnnounce<'_>,
     ) -> base_precompile_storage::Result<()>
     where
         O: PrecompileCallObserver,
-        C: AnnounceCall,
     {
+        let count = announce.internal_calls.len();
+        let bytes: usize = announce.internal_calls.iter().map(|call| call.len()).sum();
         observer.record_internal_calls(
             &BerylAuxiliaryMetrics::b20("asset", "announce"),
-            announce.internal_call_count(),
-            announce.internal_call_bytes(),
+            count,
+            bytes,
         );
 
         let logic = version.implementation();
         let caller = ctx.caller();
-        let id = announce.id();
-        logic.begin_announce(
-            self,
-            caller,
-            id.clone(),
-            announce.description(),
-            announce.uri(),
-            privileged,
-        )?;
+        let DecodedAnnounce { id, description, uri, internal_calls } = announce;
+        logic.begin_announce(self, caller, id.clone(), description, uri, privileged)?;
 
         // Each internal call is dispatched via `route`, a direct Rust function call. Unlike the
         // base-std Solidity reference which routes each `internalCalls` entry through a DELEGATECALL
@@ -482,7 +485,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
         // intentional: the native precompile pays for the storage work of each sub-call (the same
         // SLOAD/SSTORE operations as the Solidity reference) but not for EVM call-frame overhead
         // that exists only in the interpreter.
-        announce.try_for_each_internal_call(|call_bytes| {
+        for call_bytes in internal_calls {
             if call_bytes.len() < 4 {
                 return Err(BasePrecompileError::revert(IB20Asset::InternalCallMalformed {
                     call: Bytes::copy_from_slice(call_bytes),
@@ -502,10 +505,76 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                     }
                 },
             )?;
-            Ok(())
-        })?;
+        }
 
         logic.end_announce(self, id)
+    }
+}
+
+/// The announcement entity `run_announce` operates on. Both entry paths produce this shape:
+/// the borrowed fast path validates aliased calldata without materializing the `bytes[]` blobs
+/// (Cantina #16); the owned safety net feeds an already-decoded [`IB20Asset::announceCall`]
+/// through the same runner. `internal_calls` holds slices into the source calldata, never owned
+/// copies, so aliased offsets cost fat-pointers instead of blob copies.
+struct DecodedAnnounce<'a> {
+    id: String,
+    description: String,
+    uri: String,
+    internal_calls: Vec<&'a [u8]>,
+}
+
+impl<'a> DecodedAnnounce<'a> {
+    /// Tries to interpret `calldata` as an `announce` dialable at `version`.
+    ///
+    /// Returns `Some` when the leading 4 bytes are the `announce` selector, the surface active at
+    /// `version` still declares it dialable, and the rest borrowed-decodes cleanly against alloy's
+    /// `decode_sequence + type_check`. That combination is exactly what alloy's owned
+    /// `abi_decode_validate` runs, minus the infallible `detokenize` (the step that copies), so the
+    /// accept-set matches the owned path. `type_check` is required, not optional: `string`
+    /// validation rejects non-UTF-8, and skipping it would accept an `id`/`description`/`uri` the
+    /// owned path rejects — a divergence the caller's fall-through to the owned decoder could not
+    /// catch. `valid_selector` future-proofs a fork that drops `announce`.
+    fn try_from_calldata(calldata: &'a [u8], version: AssetVersion) -> Option<Self> {
+        let selector = calldata.first_chunk::<4>().copied()?;
+        if selector != IB20Asset::announceCall::SELECTOR {
+            return None;
+        }
+        if !version.abi().asset.valid_selector(selector) {
+            return None;
+        }
+        let rest = &calldata[4..];
+        let token =
+            abi::decode_sequence::<<IB20Asset::announceCall as SolCall>::Token<'a>>(rest).ok()?;
+        <<IB20Asset::announceCall as SolCall>::Parameters<'a> as SolType>::type_check(&token)
+            .ok()?;
+        // Field `.0` of `PackedSeqToken<'a>` is `&'a [u8]`, so each iter yields a slice with the
+        // full calldata lifetime. `as_slice()` would tie borrows to `token` (a local) instead.
+        Some(Self {
+            id: Self::string_from_utf8(token.1.0),
+            description: Self::string_from_utf8(token.2.0),
+            uri: Self::string_from_utf8(token.3.0),
+            internal_calls: token.0.0.iter().map(|call| call.0).collect(),
+        })
+    }
+
+    /// Builds a `DecodedAnnounce` from an already owned-decoded call. `internal_calls` borrow from
+    /// `c.internalCalls`; strings clone once. Only the safety-net arm reaches this: every accepted
+    /// `announce` takes the borrowed fast path first.
+    fn from_owned(c: &'a IB20Asset::announceCall) -> Self {
+        Self {
+            id: c.id.clone(),
+            description: c.description.clone(),
+            uri: c.uri.clone(),
+            internal_calls: c.internalCalls.iter().map(|call| call.as_ref()).collect(),
+        }
+    }
+
+    /// `type_check` in `try_from_calldata` already validated UTF-8 for every `string` token, so
+    /// this conversion is total in practice. Panicking on the impossible case beats the silent
+    /// U+FFFD substitution `from_utf8_lossy` would perform if that invariant ever broke; a silent
+    /// divergence from the owned `detokenize` path would be a consensus fork.
+    fn string_from_utf8(bytes: &[u8]) -> String {
+        core::str::from_utf8(bytes).expect("type_check validated UTF-8").to_owned()
     }
 }
 
