@@ -92,7 +92,7 @@ fn build_components<Node>(
 where
     Node: FullNodeTypes<Types: BaseNodeTypes>,
 {
-    let RollupArgs { disable_txpool_gossip, discovery_v4, .. } = RollupArgs::default();
+    let RollupArgs { discovery_v4, .. } = RollupArgs::default();
     ComponentsBuilder::default()
         .node_types::<Node>()
         .pool(BasePoolBuilder::default())
@@ -100,7 +100,7 @@ where
         .payload(BasePayloadServiceBuilder::new(
             BasePayloadBuilder::new().with_transactions(CustomTxPriority { chain_id }),
         ))
-        .network(BaseNetworkBuilder::new(disable_txpool_gossip, !discovery_v4))
+        .network(BaseNetworkBuilder::new(!discovery_v4))
         .consensus(BaseConsensusBuilder::default())
 }
 

@@ -250,7 +250,6 @@ impl BaseNode {
         Node: FullNodeTypes<Types: BaseNodeTypes>,
     {
         let RollupArgs {
-            disable_txpool_gossip,
             discovery_v4,
             txpool_ordering,
             max_inflight_delegated_slots,
@@ -282,7 +281,7 @@ impl BaseNode {
                     .with_da_config(self.da_config.clone())
                     .with_gas_limit_config(self.gas_limit_config.clone()),
             ))
-            .network(BaseNetworkBuilder::new(disable_txpool_gossip, !discovery_v4))
+            .network(BaseNetworkBuilder::new(!discovery_v4))
             .consensus(BaseConsensusBuilder::default())
     }
 
@@ -1153,16 +1152,14 @@ where
 /// A basic Base network builder.
 #[derive(Debug, Clone, Default)]
 pub struct BaseNetworkBuilder {
-    /// Disable transaction pool gossip
-    pub disable_txpool_gossip: bool,
     /// Disable discovery v4
     pub disable_discovery_v4: bool,
 }
 
 impl BaseNetworkBuilder {
     /// Creates a new `BaseNetworkBuilder`.
-    pub const fn new(disable_txpool_gossip: bool, disable_discovery_v4: bool) -> Self {
-        Self { disable_txpool_gossip, disable_discovery_v4 }
+    pub const fn new(disable_discovery_v4: bool) -> Self {
+        Self { disable_discovery_v4 }
     }
 
     /// Runs a future on the current runtime, or creates one when needed.
@@ -1322,7 +1319,6 @@ impl BaseNetworkBuilder {
         Node: FullNodeTypes<Types: NodeTypes<ChainSpec: Hardforks>>,
         NetworkP: NetworkPrimitives,
     {
-        let disable_txpool_gossip = self.disable_txpool_gossip;
         let discovery_config = BaseDiscoveryConfig::new(self.disable_discovery_v4);
         let args = &ctx.config().network;
         let network_builder = ctx
@@ -1348,10 +1344,7 @@ impl BaseNetworkBuilder {
 
         let mut network_config = ctx.build_network_config(network_builder);
 
-        // When `sequencer_endpoint` is configured, the node will forward all transactions to a
-        // Sequencer node for execution and inclusion on L1, and disable its own txpool
-        // gossip to prevent other parties in the network from learning about them.
-        network_config.tx_gossip_disabled = disable_txpool_gossip;
+        network_config.tx_gossip_disabled = true;
 
         Ok(network_config)
     }
