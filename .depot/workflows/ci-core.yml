@@ -1,10 +1,3 @@
-# Depot CI Migration
-# Source: .github/workflows/ci-core.yml
-#
-# Changes made:
-# - Rewrote .github/ path references to .depot/
-# - Changed GitHub runs-on labels to their Depot equivalents
-
 name: CI Core
 on:
   workflow_call:
@@ -260,7 +253,7 @@ jobs:
   system-tests:
     name: System Tests
     if: inputs.run_system_tests
-    runs-on: depot-ubuntu-24.04-8
+    runs-on: depot-ubuntu-24.04-16
     timeout-minutes: 60
     steps:
       - name: Harden the runner (Audit all outbound calls)

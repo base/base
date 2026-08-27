@@ -11,7 +11,7 @@ use base_shadow_indexer_db::{
     ShadowCanonicalRef, ShadowDbConfig, ShadowMetricsCursorRepo, ShadowWrite,
 };
 use base_shadow_metrics::{ShadowMetricsReader, ShadowMetricsReaderConfig, ShadowMetricsStore};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use reth_primitives_traits::RecoveredBlock;
 use serde_json::json;
 use sqlx::{PgPool, types::Json};
@@ -446,7 +446,8 @@ async fn counts_sawtooth_boundaries_and_accepts_non_increasing_fees() -> Result<
 async fn persisted_cursor_round_trips_the_last_write() -> Result<()> {
     let database = TestDatabase::start().await?;
     let repo = ShadowMetricsCursorRepo::new(database.pool.clone());
-    let updated_at = Utc::now();
+    let updated_at = DateTime::from_timestamp_micros(Utc::now().timestamp_micros())
+        .expect("current timestamp fits in DateTime");
     let first = ShadowBlockCursor { updated_at, number: 1 };
     let second = ShadowBlockCursor { updated_at, number: 2 };
 
