@@ -35,6 +35,14 @@ impl BaseTxEnvelope {
     pub const fn is_deposit(&self) -> bool {
         matches!(self, Self::Deposit(_))
     }
+
+    /// Returns the standard Ethereum transaction, if this envelope is not a deposit.
+    pub const fn as_standard(&self) -> Option<&TxEnvelope> {
+        match self {
+            Self::Standard(tx) => Some(tx),
+            Self::Deposit(_) => None,
+        }
+    }
 }
 
 impl Typed2718 for BaseTxEnvelope {

@@ -4,12 +4,13 @@ use alloy_primitives::TxKind;
 use evm2::{
     TxResult,
     env::TxEnvExt,
+    ethereum::{TxEnvelope, eip1559, eip2930, eip7702, legacy},
     interpreter::{Host, MessageExt},
     registry::{HandlerError, HandlerResult, TxRegistry, TxRequest},
 };
 
 use crate::{
-    BaseEvmTypes,
+    BaseEvmTypes, BaseTxHandlerHooks,
     transaction::{BaseTxEnvelope, DEPOSIT_TX_TYPE, TxDeposit},
 };
 
@@ -24,16 +25,40 @@ pub struct CreateDepositUnsupported;
 impl BaseEvmTypes {
     /// Builds the Base transaction registry.
     ///
-    /// Registers the deposit handler (type `0x7e`). Standard Ethereum
-    /// transaction handlers — wired with
-    /// [`BaseTxHandlerHooks`](crate::BaseTxHandlerHooks) for L1 fee settlement —
-    /// are registered here in follow-up work.
+    /// Registers the deposit handler (type `0x7e`) and the standard Ethereum
+    /// transaction handlers (legacy/2930/1559/7702; EIP-4844 blob transactions
+    /// are unsupported on Base and intentionally omitted), the latter wired with
+    /// [`BaseTxHandlerHooks`] so non-deposit transactions run the L1 fee
+    /// settlement path.
     pub fn tx_registry() -> TxRegistry<Self, TxResult<Self>> {
-        TxRegistry::new().with_handler(
+        let mut registry = TxRegistry::new().with_handler(
             DEPOSIT_TX_TYPE,
             BaseTxEnvelope::as_deposit,
             Self::handle_deposit,
-        )
+        );
+        registry.register(
+            0,
+            |tx: &BaseTxEnvelope| tx.as_standard().and_then(TxEnvelope::as_legacy),
+            legacy::handle_with_hooks::<Self, BaseTxHandlerHooks>,
+        );
+        registry.register(
+            1,
+            |tx: &BaseTxEnvelope| tx.as_standard().and_then(TxEnvelope::as_eip2930),
+            eip2930::handle_with_hooks::<Self, BaseTxHandlerHooks>,
+        );
+        registry.register(
+            2,
+            |tx: &BaseTxEnvelope| tx.as_standard().and_then(TxEnvelope::as_eip1559),
+            eip1559::handle_with_hooks::<Self, BaseTxHandlerHooks>,
+        );
+        // Type 3 (EIP-4844 blob transactions) is intentionally not registered:
+        // Base rejects blob transactions, so no handler exists for them.
+        registry.register(
+            4,
+            |tx: &BaseTxEnvelope| tx.as_standard().and_then(TxEnvelope::as_eip7702),
+            eip7702::handle_with_hooks::<Self, BaseTxHandlerHooks>,
+        );
+        registry
     }
 
     /// Executes a deposit transaction.
@@ -88,5 +113,22 @@ impl BaseEvmTypes {
             output: result.output,
             ..Default::default()
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn registry_registers_deposit_and_standard_handlers() {
+        let registry = BaseEvmTypes::tx_registry();
+        assert!(registry.contains(DEPOSIT_TX_TYPE), "deposit handler must be registered");
+        // Legacy (0), EIP-2930 (1), EIP-1559 (2), EIP-7702 (4). Type 3 (EIP-4844
+        // blob transactions) is intentionally unregistered — Base rejects them.
+        for ty in [0, 1, 2, 4] {
+            assert!(registry.contains(ty), "standard handler {ty} must be registered");
+        }
+        assert!(!registry.contains(3), "EIP-4844 blob handler must not be registered");
     }
 }
