@@ -3587,6 +3587,10 @@ dependencies = [
 name = "base-common-evm2"
 version = "0.0.0"
 dependencies = [
+ "alloy-consensus 2.4.1",
+ "alloy-eips 2.4.1",
+ "alloy-primitives",
+ "base-common-consensus",
  "evm2",
 ]
 

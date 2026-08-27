@@ -13,4 +13,13 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
+# base
+base-common-consensus.workspace = true
+
+# evm2
 evm2 = { workspace = true, features = ["std"] }
+
+# alloy
+alloy-eips.workspace = true
+alloy-consensus.workspace = true
+alloy-primitives.workspace = true
