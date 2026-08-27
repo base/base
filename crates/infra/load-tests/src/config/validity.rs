@@ -1,7 +1,8 @@
+use alloy_primitives::U256;
 use base_execution_txpool::{DEFAULT_MAX_VALIDITY_PREDICATES, ValidityOperator};
 use serde::{Deserialize, Serialize};
 
-use super::parsing::{parse_address, parse_u256_hex_or_dec};
+use super::parsing::parse_address;
 use crate::{
     runner::{BlockNumberBound, PredicateAddress, SlotTemplate, ValidityPredicateTemplate},
     utils::{BaselineError, Result},
@@ -28,8 +29,8 @@ pub struct ValidityConfig {
 
 /// A configured validity predicate template.
 ///
-/// Values and slots are strings (hex or decimal) parsed at conversion time,
-/// mirroring how amounts are handled elsewhere in the config.
+/// Numeric values, slots, and masks deserialize directly into [`U256`], which
+/// accepts hex (`0x`-prefixed), decimal, and other radix-prefixed forms.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ValidityPredicateConfig {
@@ -40,8 +41,8 @@ pub enum ValidityPredicateConfig {
         address: PredicateAddressConfig,
         /// Comparison operator (`<`, `<=`, `=`, `!=`, `>`, `>=`).
         op: String,
-        /// Right-hand comparison value (hex or decimal).
-        value: String,
+        /// Right-hand comparison value.
+        value: U256,
     },
     /// Compares a masked storage value with a value.
     Storage {
@@ -50,13 +51,13 @@ pub enum ValidityPredicateConfig {
         address: PredicateAddressConfig,
         /// Storage slot to read.
         slot: PredicateSlotConfig,
-        /// Optional bit mask (hex or decimal); defaults to all ones server-side.
+        /// Optional bit mask; defaults to all ones server-side.
         #[serde(default)]
-        mask: Option<String>,
+        mask: Option<U256>,
         /// Comparison operator (`<`, `<=`, `=`, `!=`, `>`, `>=`).
         op: String,
-        /// Right-hand comparison value (hex or decimal).
-        value: String,
+        /// Right-hand comparison value.
+        value: U256,
     },
     /// Compares the number of the block being built with a bound.
     ///
@@ -66,21 +67,20 @@ pub enum ValidityPredicateConfig {
     BlockNumber {
         /// Comparison operator (`<`, `<=`, `=`, `!=`, `>`, `>=`).
         op: String,
-        /// Fixed absolute block number (hex or decimal). Mutually exclusive
-        /// with `offset`.
+        /// Fixed absolute block number. Mutually exclusive with `offset`.
         #[serde(default)]
-        value: Option<String>,
-        /// Runtime offset (hex or decimal) resolved to `current_block + offset`
-        /// at prepare time. Mutually exclusive with `value`.
+        value: Option<U256>,
+        /// Runtime offset resolved to `current_block + offset` at prepare time.
+        /// Mutually exclusive with `value`.
         #[serde(default)]
-        offset: Option<String>,
+        offset: Option<U256>,
     },
     /// Compares the index of the flashblock being built with a value.
     FlashblockIndex {
         /// Comparison operator (`<`, `<=`, `=`, `!=`, `>`, `>=`).
         op: String,
-        /// Right-hand comparison value (hex or decimal).
-        value: String,
+        /// Right-hand comparison value.
+        value: U256,
     },
 }
 
@@ -132,14 +132,14 @@ impl<'de> Deserialize<'de> for PredicateAddressConfig {
 pub enum PredicateSlotConfig {
     /// A static storage slot.
     Fixed {
-        /// Slot index (hex or decimal).
-        value: String,
+        /// Slot index.
+        value: U256,
     },
     /// A Solidity mapping slot `keccak256(key ++ mapping_slot)`, e.g. the
     /// `balanceOf` slot for a given key address.
     Mapping {
-        /// Declared position of the mapping in contract storage (hex or decimal).
-        mapping_slot: String,
+        /// Declared position of the mapping in contract storage.
+        mapping_slot: U256,
         /// Mapping key address, resolved per transaction.
         #[serde(default)]
         key: PredicateAddressConfig,
@@ -184,31 +184,21 @@ impl ValidityPredicateConfig {
             Self::Balance { address, op, value } => Ok(ValidityPredicateTemplate::Balance {
                 address: address.to_template()?,
                 op: parse_operator(op)?,
-                value: parse_u256_hex_or_dec(value, "validity balance value")?,
+                value: *value,
             }),
             Self::Storage { address, slot, mask, op, value } => {
-                let mask = match mask {
-                    Some(mask) => Some(parse_u256_hex_or_dec(mask, "validity storage mask")?),
-                    None => None,
-                };
                 Ok(ValidityPredicateTemplate::Storage {
                     address: address.to_template()?,
                     slot: slot.to_template()?,
-                    mask,
+                    mask: *mask,
                     op: parse_operator(op)?,
-                    value: parse_u256_hex_or_dec(value, "validity storage value")?,
+                    value: *value,
                 })
             }
             Self::BlockNumber { op, value, offset } => {
                 let bound = match (value, offset) {
-                    (Some(value), None) => BlockNumberBound::Absolute(parse_u256_hex_or_dec(
-                        value,
-                        "validity block_number value",
-                    )?),
-                    (None, Some(offset)) => BlockNumberBound::Offset(parse_u256_hex_or_dec(
-                        offset,
-                        "validity block_number offset",
-                    )?),
+                    (Some(value), None) => BlockNumberBound::Absolute(*value),
+                    (None, Some(offset)) => BlockNumberBound::Offset(*offset),
                     _ => {
                         return Err(BaselineError::Config(
                             "block_number predicate requires exactly one of 'value' or 'offset'"
@@ -220,7 +210,7 @@ impl ValidityPredicateConfig {
             }
             Self::FlashblockIndex { op, value } => Ok(ValidityPredicateTemplate::FlashblockIndex {
                 op: parse_operator(op)?,
-                value: parse_u256_hex_or_dec(value, "validity flashblock_index value")?,
+                value: *value,
             }),
         }
     }
@@ -243,13 +233,10 @@ impl PredicateSlotConfig {
     /// Resolves this configured slot source into a runtime template.
     pub fn to_template(&self) -> Result<SlotTemplate> {
         match self {
-            Self::Fixed { value } => {
-                Ok(SlotTemplate::Fixed(parse_u256_hex_or_dec(value, "validity storage slot")?))
+            Self::Fixed { value } => Ok(SlotTemplate::Fixed(*value)),
+            Self::Mapping { mapping_slot, key } => {
+                Ok(SlotTemplate::Mapping { mapping_slot: *mapping_slot, key: key.to_template()? })
             }
-            Self::Mapping { mapping_slot, key } => Ok(SlotTemplate::Mapping {
-                mapping_slot: parse_u256_hex_or_dec(mapping_slot, "validity mapping_slot")?,
-                key: key.to_template()?,
-            }),
         }
     }
 }
@@ -271,8 +258,6 @@ pub(super) fn parse_operator(s: &str) -> Result<ValidityOperator> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::U256;
-
     use super::*;
 
     #[test]
@@ -295,7 +280,7 @@ mod tests {
         let config = ValidityPredicateConfig::Balance {
             address: PredicateAddressConfig::Sender,
             op: ">=".into(),
-            value: "0".into(),
+            value: U256::ZERO,
         };
         match config.to_template().unwrap() {
             ValidityPredicateTemplate::Balance { address, op, value } => {
@@ -313,10 +298,10 @@ mod tests {
             address: PredicateAddressConfig::Fixed(
                 "0x1234567890123456789012345678901234567890".into(),
             ),
-            slot: PredicateSlotConfig::Fixed { value: "0x1".into() },
-            mask: Some("0xff".into()),
+            slot: PredicateSlotConfig::Fixed { value: U256::from(1u64) },
+            mask: Some(U256::from(0xffu64)),
             op: "=".into(),
-            value: "0".into(),
+            value: U256::ZERO,
         };
         match config.to_template().unwrap() {
             ValidityPredicateTemplate::Storage { address, slot, mask, op, value } => {
@@ -333,7 +318,7 @@ mod tests {
     #[test]
     fn mapping_slot_to_template() {
         let config = PredicateSlotConfig::Mapping {
-            mapping_slot: "0".into(),
+            mapping_slot: U256::ZERO,
             key: PredicateAddressConfig::Sender,
         };
         match config.to_template().unwrap() {
@@ -349,7 +334,7 @@ mod tests {
     fn block_number_predicate_to_template() {
         let config = ValidityPredicateConfig::BlockNumber {
             op: ">=".into(),
-            value: Some("0x100".into()),
+            value: Some(U256::from(0x100)),
             offset: None,
         };
         match config.to_template().unwrap() {
@@ -366,7 +351,7 @@ mod tests {
         let config = ValidityPredicateConfig::BlockNumber {
             op: ">=".into(),
             value: None,
-            offset: Some("10".into()),
+            offset: Some(U256::from(10)),
         };
         match config.to_template().unwrap() {
             ValidityPredicateTemplate::BlockNumber { op, bound } => {
@@ -381,8 +366,8 @@ mod tests {
     fn block_number_predicate_rejects_both_value_and_offset() {
         let config = ValidityPredicateConfig::BlockNumber {
             op: ">=".into(),
-            value: Some("1".into()),
-            offset: Some("10".into()),
+            value: Some(U256::from(1)),
+            offset: Some(U256::from(10)),
         };
         let err = config.to_template().unwrap_err();
         assert!(err.to_string().contains("exactly one of 'value' or 'offset'"));
@@ -421,8 +406,26 @@ mod tests {
     }
 
     #[test]
+    fn storage_predicate_parses_from_yaml_hex_form() {
+        let config: ValidityPredicateConfig = serde_yaml::from_str(
+            "type: storage\naddress: \"0x1234567890123456789012345678901234567890\"\nslot:\n  kind: fixed\n  value: \"0x100\"\nmask: \"0xff\"\nop: \"=\"\nvalue: \"0x1\"\n",
+        )
+        .unwrap();
+        match config.to_template().unwrap() {
+            ValidityPredicateTemplate::Storage { slot, mask, op, value, .. } => {
+                assert!(matches!(slot, SlotTemplate::Fixed(s) if s == U256::from(0x100)));
+                assert_eq!(mask, Some(U256::from(0xffu64)));
+                assert_eq!(op, ValidityOperator::Equal);
+                assert_eq!(value, U256::from(1u64));
+            }
+            other => panic!("expected storage template, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn flashblock_index_predicate_to_template() {
-        let config = ValidityPredicateConfig::FlashblockIndex { op: "=".into(), value: "2".into() };
+        let config =
+            ValidityPredicateConfig::FlashblockIndex { op: "=".into(), value: U256::from(2) };
         match config.to_template().unwrap() {
             ValidityPredicateTemplate::FlashblockIndex { op, value } => {
                 assert_eq!(op, ValidityOperator::Equal);
@@ -436,7 +439,7 @@ mod tests {
     fn position_predicate_surfaces_bad_operator() {
         let config = ValidityPredicateConfig::BlockNumber {
             op: "==".into(),
-            value: Some("1".into()),
+            value: Some(U256::from(1)),
             offset: None,
         };
         assert!(config.to_template().is_err());
@@ -466,7 +469,7 @@ mod tests {
         let predicate = ValidityPredicateConfig::Balance {
             address: PredicateAddressConfig::Sender,
             op: ">=".into(),
-            value: "0".into(),
+            value: U256::ZERO,
         };
         let config = ValidityConfig {
             ratio: 1.0,
@@ -483,7 +486,7 @@ mod tests {
             predicates: vec![ValidityPredicateConfig::Balance {
                 address: PredicateAddressConfig::Sender,
                 op: "==".into(),
-                value: "0".into(),
+                value: U256::ZERO,
             }],
         };
         assert!(config.validate().is_err());

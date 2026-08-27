@@ -23,7 +23,7 @@ use base_execution_payload_builder::{
 };
 use base_execution_txpool::{
     BasePooledTx, BundleTransaction, GuardMetrics, PredicateContext, TimestampedTransaction,
-    ValidityPredicate, estimated_da_size::DataAvailabilitySized,
+    estimated_da_size::DataAvailabilitySized,
 };
 use base_observability_events::TransactionEventType;
 use reth_basic_payload_builder::PayloadConfig;
@@ -46,7 +46,7 @@ use tracing::{Level, debug, span, trace, warn};
 use crate::{
     BuilderConfig, BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded,
     ParkedPredicateIndex, PayloadTxsBounds, PredicateReadRecorder, ResourceLimits,
-    StateChangeEffects, TxResources, TxnExecutionError, TxnOutcome, ValidityPredicateKey,
+    StateChangeEffects, TxResources, TxnExecutionError, TxnOutcome, ValidityPredicateEvaluation,
     transaction_events::{
         BuilderAcceptedEventData, BuilderConsideredEventData, BuilderDeferredEventData,
         BuilderExpiredEventData, BuilderRejectedEventData, BuilderTransactionEventContext,
@@ -913,17 +913,22 @@ impl BasePayloadBuilderCtx {
             }
 
             let mut predicate_read_failed = false;
+            let mut predicate_expired = false;
             let blocking_predicate = if has_validity_predicates {
                 match Self::accumulate_elapsed(&mut predicate_eval_total, || {
                     let mut recorder =
                         PredicateReadRecorder::new(&mut **evm.db_mut(), &mut info.predicate_loads);
-                    ValidityPredicateKey::first_unsatisfied(
+                    ValidityPredicateEvaluation::evaluate(
                         tx.validity_predicates(),
                         &mut recorder,
                         &predicate_context,
                     )
                 }) {
-                    Ok(blocking_predicate) => blocking_predicate,
+                    Ok(ValidityPredicateEvaluation::Matched) => None,
+                    Ok(ValidityPredicateEvaluation::Unsatisfied { blocker, expired }) => {
+                        predicate_expired = expired;
+                        Some(blocker)
+                    }
                     Err(error) => {
                         warn!(
                             target: "payload_builder",
@@ -951,14 +956,6 @@ impl BasePayloadBuilderCtx {
             if predicate_read_failed || blocking_predicate.is_some() {
                 num_txs_considered += 1;
                 let ordering_position = num_txs_considered;
-                // A position predicate (block_number / flashblock_index) whose
-                // upper bound the build has passed can never be satisfied again,
-                // so the transaction is expired rather than merely unsatisfied.
-                let predicate_expired = !predicate_read_failed
-                    && ValidityPredicate::is_batch_expired(
-                        tx.validity_predicates(),
-                        &predicate_context,
-                    );
                 let (decision_reason, decision_detail) = if predicate_read_failed {
                     (
                         "validity_predicate_read_failed",
@@ -1567,13 +1564,16 @@ impl BasePayloadBuilderCtx {
                             &mut **evm.db_mut(),
                             &mut info.predicate_loads,
                         );
-                        ValidityPredicateKey::first_unsatisfied(
+                        ValidityPredicateEvaluation::evaluate(
                             parked_transaction.validity_predicates(),
                             &mut recorder,
                             &predicate_context,
                         )
                     }) {
-                        Ok(blocking_predicate) => blocking_predicate,
+                        Ok(ValidityPredicateEvaluation::Matched) => None,
+                        Ok(ValidityPredicateEvaluation::Unsatisfied { blocker, .. }) => {
+                            Some(blocker)
+                        }
                         Err(error) => {
                             warn!(
                                 target: "payload_builder",

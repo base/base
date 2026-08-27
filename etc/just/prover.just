@@ -47,12 +47,7 @@ up network:
       fi
     done
 
-    case "$(uname -m)" in
-      x86_64)        platform_pair="linux-amd64" ;;
-      arm64|aarch64) platform_pair="linux-arm64" ;;
-      *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
-    esac
-    PROFILE=dev ZK_HOST_PROFILE=release BASE_SUCCINCT_ELF_REQUIRE=1 PLATFORM_PAIR="${platform_pair}" \
+    PROFILE=dev ZK_HOST_PROFILE=release BASE_SUCCINCT_ELF_REQUIRE=1 \
       docker buildx bake -f etc/docker/docker-bake.hcl prover-service zk-host --load
 
     PROVER_NETWORK="$network" docker compose -p "base-prover-${network}" \

@@ -1,4 +1,4 @@
-//! State-key index for predicate-parked payload transactions.
+//! Validity-predicate evaluation and indexing for payload transactions.
 
 use alloy_primitives::{
     Address, TxHash, U256,
@@ -11,8 +11,8 @@ use revm::{Database, state::EvmState};
 ///
 /// State keys ([`Self::Balance`], [`Self::Storage`]) are woken by
 /// [`ParkedPredicateIndex::affected_by_state`]. Context keys
-/// ([`Self::BlockNumber`], [`Self::FlashblockIndex`]) do not change during a
-/// flashblock, so they stay parked until the next iterator refresh.
+/// ([`Self::BlockNumber`], [`Self::FlashblockIndex`]) stay parked until the
+/// iterator is rebuilt with an updated context.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ValidityPredicateKey {
     /// Account balance.
@@ -53,6 +53,40 @@ impl ValidityPredicateKey {
             }
         }
         Ok(None)
+    }
+}
+
+/// Result of evaluating a transaction's validity predicates at one build position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidityPredicateEvaluation {
+    /// Every predicate is satisfied.
+    Matched,
+    /// The transaction is blocked by its first unsatisfied predicate.
+    Unsatisfied {
+        /// State or position key that currently blocks the transaction.
+        blocker: ValidityPredicateKey,
+        /// Whether the predicate batch can never be satisfied at a later build position.
+        expired: bool,
+    },
+}
+
+impl ValidityPredicateEvaluation {
+    /// Evaluates predicates against the current state and build position.
+    ///
+    /// Returns a database error when a state-reading predicate cannot be verified.
+    pub fn evaluate<DB: Database>(
+        predicates: &[ValidityPredicate],
+        db: &mut DB,
+        context: &PredicateContext,
+    ) -> Result<Self, DB::Error> {
+        let Some(blocker) = ValidityPredicateKey::first_unsatisfied(predicates, db, context)?
+        else {
+            return Ok(Self::Matched);
+        };
+        Ok(Self::Unsatisfied {
+            blocker,
+            expired: ValidityPredicate::is_batch_expired(predicates, context),
+        })
     }
 }
 
@@ -365,6 +399,22 @@ mod tests {
         assert_eq!(
             ValidityPredicateKey::first_unsatisfied(&predicates, &mut db, &context).unwrap(),
             Some(ValidityPredicateKey::Balance(Address::with_last_byte(2)))
+        );
+    }
+
+    #[test]
+    fn evaluation_classifies_expired_position_predicates() {
+        let mut db = InMemoryDB::default();
+        let context = PredicateContext { block_number: 2, flashblock_index: 1 };
+        let predicates =
+            [ValidityPredicate::BlockNumber { op: ValidityOperator::Equal, value: U256::from(1) }];
+
+        assert_eq!(
+            super::ValidityPredicateEvaluation::evaluate(&predicates, &mut db, &context).unwrap(),
+            super::ValidityPredicateEvaluation::Unsatisfied {
+                blocker: ValidityPredicateKey::BlockNumber,
+                expired: true,
+            }
         );
     }
 

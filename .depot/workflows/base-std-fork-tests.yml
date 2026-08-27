@@ -1,28 +1,28 @@
-name: Base Std Interface Tests
+# Depot CI Migration
+# Source: .github/workflows/base-std-fork-tests.yml
+#
+# Changes made:
+# - Rewrote .github/ path references to .depot/
+# - Changed GitHub runs-on labels to their Depot equivalents
 
+name: Base Std Interface Tests
 on:
   pull_request:
   merge_group:
   workflow_dispatch:
-
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
-
 env:
   CARGO_TERM_COLOR: always
   RUSTC_WRAPPER: "sccache"
-  SCCACHE_GHA_ENABLED: "true"
-
 permissions:
   contents: read
   pull-requests: write
-
 jobs:
   fork-tests:
     name: Base Std Interface Tests (${{ matrix.fork }})
-    runs-on:
-      group: BasePerfRunnerGroup
+    runs-on: depot-ubuntu-24.04-8
     timeout-minutes: 120
     strategy:
       fail-fast: false
@@ -48,20 +48,15 @@ jobs:
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
-
       - name: Checkout Base
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 1
-
-      - uses: ./.github/actions/setup
+      - uses: ./.depot/actions/setup
         with:
-          free-disk: "true"
           foundry: "true"
           native-deps: "true"
-          rust-cache-shared-key: "base-std-fork-tests"
           just: "false"
-
       - name: Checkout pinned fork-test pair
         shell: bash
         env:
@@ -99,7 +94,6 @@ jobs:
           echo "BASE_ANVIL_SHA=$base_anvil_sha" >> "$GITHUB_ENV"
           echo "BASE_STD_DIR=$workdir/base-std" >> "$GITHUB_ENV"
           echo "BASE_ANVIL_DIR=$workdir/base-anvil" >> "$GITHUB_ENV"
-
       - name: Build patched base-anvil binaries
         shell: bash
         env:
@@ -116,19 +110,16 @@ jobs:
 
           "$BASE_ANVIL_DIR/target/release/anvil" --version
           "$BASE_ANVIL_DIR/target/release/forge" --version
-
       - name: Set up Python 3.13
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.13"
-
       - name: Set up base-std fork-test runner
         shell: bash
         run: |
           set -euo pipefail
           cd "$BASE_STD_DIR"
           make smoke-setup PYTHON=python3
-
       - name: Run base-std fork tests
         id: fork_tests
         continue-on-error: true
@@ -141,7 +132,6 @@ jobs:
             FORGE_BIN="$BASE_ANVIL_DIR/target/release/forge" \
             ANVIL_LOG="$RUNNER_TEMP/base-std-anvil.log" \
             make fork-tests 2>&1 | tee "$RUNNER_TEMP/fork-test-output.txt"
-
       - name: Record fork-test result
         if: always()
         shell: bash
@@ -176,7 +166,6 @@ jobs:
           if [ -f "$RUNNER_TEMP/base-std-anvil.log" ]; then
             cp "$RUNNER_TEMP/base-std-anvil.log" "$result_dir/logs/$FORK_KEY-anvil.log"
           fi
-
       - name: Upload fork-test result
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -184,7 +173,6 @@ jobs:
           name: base-std-fork-${{ matrix.key }}
           path: ${{ runner.temp }}/fork-test-results
           if-no-files-found: error
-
       - name: Enforce fork-test result
         if: always()
         shell: bash
@@ -194,18 +182,16 @@ jobs:
             echo "::error::$FORK_NAME fork-test snapshot failed or ran no tests"
             exit 1
           fi
-
   aggregate:
     name: Base Std Interface Tests
     if: always()
     needs: fork-tests
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest # was: ubuntu-latest. Mapped standard GitHub runner to Depot equivalent.
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
-
       - name: Download fork-test results
         id: download
         continue-on-error: true
@@ -214,7 +200,6 @@ jobs:
           pattern: base-std-fork-*
           path: ${{ runner.temp }}/fork-test-results
           merge-multiple: true
-
       - name: Aggregate fork-test results
         id: aggregate
         shell: bash
@@ -261,13 +246,11 @@ jobs:
 
           cat "$body" >> "$GITHUB_STEP_SUMMARY"
           echo "overall=$overall" >> "$GITHUB_OUTPUT"
-
       # Skip commenting on forked PRs — we don't have permission to comment on them.
       - name: Comment fork-test results on PR
         if: >
-          github.event_name == 'pull_request' &&
-          steps.aggregate.outcome == 'success' &&
-          github.event.pull_request.head.repo.full_name == github.repository
+          github.event_name == 'pull_request' && steps.aggregate.outcome == 'success' && github.event.pull_request.head.repo.full_name == github.repository
+
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -288,7 +271,6 @@ jobs:
             gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
               --field body="$body" > /dev/null
           fi
-
       - name: Enforce aggregate result
         if: always()
         shell: bash
