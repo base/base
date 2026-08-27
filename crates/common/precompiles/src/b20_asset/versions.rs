@@ -104,6 +104,13 @@ impl AssetAbi {
     /// Where the frozen surface differs from canonical (`V1`), the calldata is validated against the
     /// frozen surface first so a rejection carries that version's consensus error bytes, then
     /// re-decoded into the canonical enum for routing.
+    ///
+    /// This performs an owned decode (twice at `V1`). That is safe here because `announce` — the only
+    /// asset selector whose array (`bytes[]`) has dynamically-sized elements, and thus the only one an
+    /// aliased payload could amplify (Cantina #16) — is intercepted and decoded *borrowed* upstream in
+    /// [`B20AssetToken::route`](crate::B20AssetToken) before reaching this path. Every other asset
+    /// selector carries only static-element arrays or single top-level `string`/`bytes`, so its owned
+    /// decode is bounded linearly by calldata length and cannot be amplified.
     fn decode(self, calldata: &[u8]) -> Result<IB20Asset::IB20AssetCalls> {
         let Some(selector) = calldata.first_chunk::<4>().copied() else {
             return Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]));
@@ -307,6 +314,17 @@ mod tests {
                 "expected scheduled selector {selector:?} in the V2 delta"
             );
         }
+    }
+
+    /// The borrowed `announce` fast path in `route` decodes against the canonical `Token`/`type_check`
+    /// but must accept exactly what each frozen surface accepts. That holds only while `announce`'s
+    /// signature is byte-identical across versions (same selector ⇒ same `Token` ⇒ same `type_check`).
+    /// A version that changed `announce`'s parameters would break the fast path's accept-set identity
+    /// and must re-derive it — this pin fails loudly if that ever happens.
+    #[test]
+    fn announce_signature_is_frozen_across_versions() {
+        assert_eq!(IB20AssetV1::announceCall::SELECTOR, IB20AssetV2::announceCall::SELECTOR);
+        assert_eq!(IB20AssetV1::announceCall::SIGNATURE, IB20AssetV2::announceCall::SIGNATURE);
     }
 
     #[test]

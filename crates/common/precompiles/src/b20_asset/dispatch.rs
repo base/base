@@ -8,8 +8,10 @@
 //! internal-call loop stays here because re-dispatching arbitrary sub-calls is a
 //! routing responsibility; its version-defined business steps live on [`Asset`].
 
+use alloc::string::String;
+
 use alloy_primitives::{Bytes, U256};
-use alloy_sol_types::{SolCall, SolValue};
+use alloy_sol_types::{SolCall, SolType, SolValue, abi};
 use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, PrecompileResult, StorageCtx};
 
@@ -103,6 +105,30 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
     where
         O: PrecompileCallObserver,
     {
+        // `announce` is intercepted before the generic decode and decoded *borrowed*: its
+        // `bytes[] internalCalls` become slices into `calldata` (`PackedSeqToken(&[u8])`), never an
+        // owned `Vec<Bytes>`. An aliased payload — many element offsets pointing at one tail — would
+        // otherwise amplify a small calldata into ~64 MB of owned copies per call (Cantina #16). The
+        // borrowed decode runs the same `decode_sequence` + `type_check` as the owned
+        // `abi_decode_validate`, skipping only the infallible (and copying) `detokenize`, so it
+        // accepts and rejects exactly the same inputs. `announce` is the only B-20 selector whose
+        // array has dynamically-sized elements, so it is the only one that needs this path.
+        //
+        // On any borrowed rejection the `if let` guard fails and control falls through to the
+        // generic decode below, which reproduces byte-identical consensus error bytes — and cheaply,
+        // because a rejected payload fails in `decode_sequence`/`type_check` before `detokenize` ever
+        // materializes an owned value. `valid_selector` future-proofs a fork that drops `announce`.
+        if let Some(selector) = calldata.first_chunk::<4>().copied()
+            && selector == IB20Asset::announceCall::SELECTOR
+            && version.abi().asset.valid_selector(selector)
+            && let Ok(token) = Self::decode_announce_borrowed(&calldata[4..])
+        {
+            return observer.observe("precompile-b20-asset-announce", || {
+                self.run_announce(ctx, version, privileged, &observer, BorrowedAnnounce(token))?;
+                Ok(Bytes::new())
+            });
+        }
+
         let call = version.abi().decode(calldata)?;
         let label = call.as_label();
         match call {
@@ -397,8 +423,13 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
             }
 
             // --- Announcement ---
+            // Reached only as a bounded safety net: every accepted `announce` takes the borrowed
+            // fast path in `route` (its accept-set is identical to this owned decode). If that
+            // invariant ever failed, this arm still executes the announcement correctly — the owned
+            // `announceCall` satisfies the same [`AnnounceCall`] shape, just materializing the
+            // `Vec<Bytes>` the fast path avoids.
             SC::announce(c) => {
-                self.announce(ctx, c, version, privileged, &observer)?;
+                self.run_announce(ctx, version, privileged, &observer, c)?;
                 Bytes::new()
             }
 
@@ -421,36 +452,63 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
         Ok(encoded)
     }
 
-    /// Posts an announcement and atomically executes `internalCalls` via self-dispatch.
+    /// Decodes `announce`'s parameters **borrowed** — each `bytes` is a slice into `rest`, not an
+    /// owned copy. `rest` is the calldata with the 4-byte selector already stripped.
     ///
-    /// Re-dispatching arbitrary sub-calls is a routing responsibility, so it stays in the
-    /// dispatcher; the version's [`Asset::begin_announce`]/[`Asset::end_announce`] bracket the loop
-    /// with the version-defined business steps. Each internal call routes at the same `version`.
-    /// The selector check in the inner loop prevents recursive invocation.
-    fn announce<O>(
+    /// This mirrors alloy's owned `abi_decode_validate` (`decode_sequence` then `type_check`) and
+    /// omits only the infallible `detokenize`, so it accepts and rejects exactly the same inputs.
+    /// Running `type_check` is mandatory, not optional: `string` validation rejects non-UTF-8, so
+    /// skipping it would accept an `id`/`description`/`uri` the owned path rejects — an accept-side
+    /// divergence the caller's fall-through to the owned decoder could not catch.
+    fn decode_announce_borrowed(
+        rest: &[u8],
+    ) -> core::result::Result<<IB20Asset::announceCall as SolCall>::Token<'_>, ()> {
+        let token = abi::decode_sequence::<<IB20Asset::announceCall as SolCall>::Token<'_>>(rest)
+            .map_err(|_| ())?;
+        <<IB20Asset::announceCall as SolCall>::Parameters<'_> as SolType>::type_check(&token)
+            .map_err(|_| ())?;
+        Ok(token)
+    }
+
+    /// Posts an announcement and atomically executes its internal calls via self-dispatch.
+    ///
+    /// Depends only on the [`AnnounceCall`] shape, so it is identical for the borrowed fast path in
+    /// [`Self::route`] and the owned `SC::announce` safety net — neither the strings nor the internal
+    /// calls are known to be borrowed or owned here. Re-dispatching arbitrary sub-calls is a routing
+    /// responsibility, so it stays in the dispatcher; the version's
+    /// [`Asset::begin_announce`]/[`Asset::end_announce`] bracket the loop with the version-defined
+    /// business steps. Each internal call routes at the same `version`; the selector check in the
+    /// loop prevents recursive invocation. Callers own the [`PrecompileCallObserver::observe`] span,
+    /// so this method must not open one.
+    fn run_announce<O, C>(
         &mut self,
         ctx: StorageCtx<'_>,
-        call: IB20Asset::announceCall,
         version: AssetVersion,
         privileged: bool,
         observer: &O,
+        announce: C,
     ) -> base_precompile_storage::Result<()>
     where
         O: PrecompileCallObserver,
+        C: AnnounceCall,
     {
-        let caller = ctx.caller();
-        let internal_calls = call.internalCalls;
-        let internal_call_count = internal_calls.len();
-        let internal_call_bytes = internal_calls.iter().map(|call| call.len()).sum();
         observer.record_internal_calls(
             &BerylAuxiliaryMetrics::b20("asset", "announce"),
-            internal_call_count,
-            internal_call_bytes,
+            announce.internal_call_count(),
+            announce.internal_call_bytes(),
         );
 
         let logic = version.implementation();
-        let id = call.id;
-        logic.begin_announce(self, caller, id.clone(), call.description, call.uri, privileged)?;
+        let caller = ctx.caller();
+        let id = announce.id();
+        logic.begin_announce(
+            self,
+            caller,
+            id.clone(),
+            announce.description(),
+            announce.uri(),
+            privileged,
+        )?;
 
         // Each internal call is dispatched via `route`, a direct Rust function call. Unlike the
         // base-std Solidity reference which routes each `internalCalls` entry through a DELEGATECALL
@@ -459,11 +517,10 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
         // intentional: the native precompile pays for the storage work of each sub-call (the same
         // SLOAD/SSTORE operations as the Solidity reference) but not for EVM call-frame overhead
         // that exists only in the interpreter.
-        for call in &internal_calls {
-            let call_bytes: &[u8] = call.as_ref();
+        announce.try_for_each_internal_call(|call_bytes| {
             if call_bytes.len() < 4 {
                 return Err(BasePrecompileError::revert(IB20Asset::InternalCallMalformed {
-                    call: call.clone(),
+                    call: Bytes::copy_from_slice(call_bytes),
                 }));
             }
             if call_bytes[..4] == IB20Asset::announceCall::SELECTOR {
@@ -475,14 +532,107 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                         err
                     } else {
                         BasePrecompileError::revert(IB20Asset::InternalCallFailed {
-                            call: call.clone(),
+                            call: Bytes::copy_from_slice(call_bytes),
                         })
                     }
                 },
             )?;
-        }
+            Ok(())
+        })?;
 
         logic.end_announce(self, id)
+    }
+}
+
+/// The version-agnostic view of a decoded `announce` that [`B20AssetToken::run_announce`] needs.
+///
+/// Abstracts over the two ways `announce` calldata is decoded — the borrowed fast-path token
+/// ([`BorrowedAnnounce`], which never copies the aliased `bytes[]`) and the owned
+/// [`IB20Asset::announceCall`] safety net — so the runner never has to know which produced it.
+/// Adding another representation later is a new impl, not a change to `run_announce`.
+pub(crate) trait AnnounceCall {
+    /// The announcement id, materialized as an owned `String`.
+    fn id(&self) -> String;
+    /// The announcement description, materialized as an owned `String`.
+    fn description(&self) -> String;
+    /// The announcement uri, materialized as an owned `String`.
+    fn uri(&self) -> String;
+    /// Number of internal calls, for metrics.
+    fn internal_call_count(&self) -> usize;
+    /// Summed byte length of the internal calls, for metrics.
+    fn internal_call_bytes(&self) -> usize;
+    /// Visits each internal call's raw bytes in order, short-circuiting on the first error.
+    fn try_for_each_internal_call(
+        &self,
+        f: impl FnMut(&[u8]) -> base_precompile_storage::Result<()>,
+    ) -> base_precompile_storage::Result<()>;
+}
+
+/// A borrowed `announce` decode: every `bytes[]` entry is a slice into the original calldata
+/// (`PackedSeqToken(&[u8])`), so an aliased payload cannot amplify into owned copies (Cantina #16).
+pub(crate) struct BorrowedAnnounce<'a>(pub <IB20Asset::announceCall as SolCall>::Token<'a>);
+
+impl AnnounceCall for BorrowedAnnounce<'_> {
+    fn id(&self) -> String {
+        String::from_utf8_lossy(self.0.1.as_slice()).into_owned()
+    }
+
+    fn description(&self) -> String {
+        String::from_utf8_lossy(self.0.2.as_slice()).into_owned()
+    }
+
+    fn uri(&self) -> String {
+        String::from_utf8_lossy(self.0.3.as_slice()).into_owned()
+    }
+
+    fn internal_call_count(&self) -> usize {
+        self.0.0.0.len()
+    }
+
+    fn internal_call_bytes(&self) -> usize {
+        self.0.0.0.iter().map(|call| call.as_slice().len()).sum()
+    }
+
+    fn try_for_each_internal_call(
+        &self,
+        mut f: impl FnMut(&[u8]) -> base_precompile_storage::Result<()>,
+    ) -> base_precompile_storage::Result<()> {
+        for call in &self.0.0.0 {
+            f(call.as_slice())?;
+        }
+        Ok(())
+    }
+}
+
+impl AnnounceCall for IB20Asset::announceCall {
+    fn id(&self) -> String {
+        self.id.clone()
+    }
+
+    fn description(&self) -> String {
+        self.description.clone()
+    }
+
+    fn uri(&self) -> String {
+        self.uri.clone()
+    }
+
+    fn internal_call_count(&self) -> usize {
+        self.internalCalls.len()
+    }
+
+    fn internal_call_bytes(&self) -> usize {
+        self.internalCalls.iter().map(|call| call.len()).sum()
+    }
+
+    fn try_for_each_internal_call(
+        &self,
+        mut f: impl FnMut(&[u8]) -> base_precompile_storage::Result<()>,
+    ) -> base_precompile_storage::Result<()> {
+        for call in &self.internalCalls {
+            f(call.as_ref())?;
+        }
+        Ok(())
     }
 }
 
@@ -838,5 +988,289 @@ mod tests {
 
         assert!(out.is_revert());
         assert_eq!(out.bytes, Bytes::from(IB20::NonPayable {}.abi_encode()));
+    }
+
+    // --- Cantina #16: aliased-`bytes[]` announce borrowed decode -------------------------------
+
+    /// Builds `announce` calldata where `n` `bytes[]` element offsets all alias one shared `tail`.
+    ///
+    /// Starts from a valid one-element alloy encoding, then widens the array offset table so every
+    /// element offset points at the same tail blob and shifts the trailing string offsets to match.
+    /// The resulting wire is strictly smaller than an owned-style `n`-copy encoding — that gap is the
+    /// heap amplification a naive owned decode would materialize and the borrowed decode avoids.
+    fn aliased_announce_calldata(n: usize, tail: &[u8]) -> Vec<u8> {
+        assert!(n >= 1, "need at least one aliased entry");
+        let base = IB20Asset::announceCall {
+            internalCalls: alloc::vec![Bytes::copy_from_slice(tail)],
+            id: String::from("aliased-id"),
+            description: String::from("desc"),
+            uri: String::new(),
+        }
+        .abi_encode();
+
+        let args = &base[4..];
+        let read_off = |at: usize| -> usize {
+            let mut buf = [0u8; 8];
+            buf.copy_from_slice(&args[at + 24..at + 32]);
+            u64::from_be_bytes(buf) as usize
+        };
+        let write_off = |out: &mut [u8], at: usize, v: usize| {
+            out[at..at + 32].fill(0);
+            out[at + 24..at + 32].copy_from_slice(&(v as u64).to_be_bytes());
+        };
+
+        let off_calls = read_off(0);
+        let off_id = read_off(32);
+        let off_desc = read_off(64);
+        let off_uri = read_off(96);
+        assert_eq!(read_off(off_calls), 1, "base encoding must be one element");
+
+        // Base array section (n == 1): [len=1][off0][blob..]; the three strings begin at off_id.
+        let blob = &args[off_calls + 64..off_id];
+        let strings = &args[off_id..];
+
+        let extra = (n - 1) * 32; // widening the offset table shifts everything after it
+        let shared_elem_off = n * 32; // offset (from after the length word) of the shared blob
+
+        let mut out = base[..4].to_vec();
+        out.resize(4 + off_calls + 32 + n * 32 + blob.len() + strings.len(), 0);
+        let a = &mut out[4..];
+        write_off(a, 0, off_calls);
+        write_off(a, 32, off_id + extra);
+        write_off(a, 64, off_desc + extra);
+        write_off(a, 96, off_uri + extra);
+        write_off(a, off_calls, n); // array length
+        for i in 0..n {
+            write_off(a, off_calls + 32 + i * 32, shared_elem_off);
+        }
+        let blob_at = off_calls + 32 + n * 32;
+        a[blob_at..blob_at + blob.len()].copy_from_slice(blob);
+        let strings_at = off_id + extra;
+        a[strings_at..strings_at + strings.len()].copy_from_slice(strings);
+        out
+    }
+
+    /// The core regression: a 1,024-way aliased payload is accepted and executed, and its wire is
+    /// far smaller than the owned `n`-copy encoding the pre-fix decode would have materialized.
+    #[test]
+    fn aliased_announce_valid_succeeds_and_is_compact() {
+        let mut token = make_token();
+        token.accounting_mut().roles.insert((AssetV1::OPERATOR_ROLE, ALICE), true);
+
+        let n = 1_024usize;
+        let tail = IB20Asset::multiplierCall {}.abi_encode(); // zero-arg read: re-dispatches Ok
+        let calldata = aliased_announce_calldata(n, &tail);
+
+        let owned_style = IB20Asset::announceCall {
+            internalCalls: alloc::vec![Bytes::copy_from_slice(&tail); n],
+            id: String::from("aliased-id"),
+            description: String::from("desc"),
+            uri: String::new(),
+        }
+        .abi_encode();
+        assert!(
+            calldata.len() < owned_style.len(),
+            "aliased wire {} must be smaller than owned-style {}",
+            calldata.len(),
+            owned_style.len(),
+        );
+
+        call_asset(&mut token, ALICE, calldata).expect("borrowed aliased announce must succeed");
+        assert!(token.accounting().is_announcement_id_used("aliased-id").unwrap());
+    }
+
+    /// Borrowed slices route correctly: each aliased entry re-dispatches its real effect once.
+    #[test]
+    fn aliased_announce_redispatches_each_entry() {
+        let mut token = make_token();
+        token.accounting_mut().roles.insert((AssetV1::OPERATOR_ROLE, ALICE), true);
+        token.accounting_mut().roles.insert((B20TokenRole::Mint.id(), ALICE), true);
+
+        let n = 8usize;
+        let tail = IB20::mintCall { to: BOB, amount: U256::ONE }.abi_encode();
+        let calldata = aliased_announce_calldata(n, &tail);
+
+        call_asset(&mut token, ALICE, calldata).expect("aliased mints must succeed");
+        assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::from(n as u64));
+    }
+
+    /// An aliased entry that re-invokes `announce` still trips the in-progress guard.
+    #[test]
+    fn aliased_announce_nested_announce_reverts() {
+        let mut token = make_token();
+        token.accounting_mut().roles.insert((AssetV1::OPERATOR_ROLE, ALICE), true);
+
+        let tail = IB20Asset::announceCall::SELECTOR.to_vec(); // first 4 bytes == announce selector
+        let calldata = aliased_announce_calldata(2, &tail);
+
+        let err = call_asset(&mut token, ALICE, calldata).unwrap_err();
+        assert_eq!(
+            err,
+            base_precompile_storage::BasePrecompileError::revert(
+                IB20Asset::AnnouncementInProgress {}
+            )
+        );
+    }
+
+    /// A malformed layout is rejected by the borrowed decode, falls through to the owned decoder,
+    /// and produces byte-identical `AbiDecodeFailed` consensus bytes — at both V1 and V2.
+    #[test]
+    fn malformed_announce_offsets_match_owned_error_bytes() {
+        let tail = IB20Asset::multiplierCall {}.abi_encode();
+        let mut calldata = aliased_announce_calldata(4, &tail);
+        // Corrupt the `bytes[]` length word (at selector + 4-word head) to a value whose offset
+        // table runs past the buffer, so `decode_sequence` fails before any owned materialization.
+        let len_at = 4 + 128;
+        calldata[len_at..len_at + 32].fill(0xff);
+
+        for version in [AssetVersion::V1, AssetVersion::V2] {
+            let mut token = make_token();
+            token.accounting_mut().roles.insert((AssetV1::OPERATOR_ROLE, ALICE), true);
+            let mut storage = storage_with_caller(ALICE);
+            let err = StorageCtx::enter(&mut storage, |ctx| {
+                token.route(ctx, &calldata, version, false, NoopPrecompileCallObserver)
+            })
+            .unwrap_err();
+
+            let control = version.abi().decode(&calldata).unwrap_err();
+            assert_eq!(
+                err, control,
+                "fall-through error must equal the owned decode at {version:?}"
+            );
+            assert!(matches!(
+                err,
+                base_precompile_storage::BasePrecompileError::AbiDecodeFailed { selector, .. }
+                    if selector == IB20Asset::announceCall::SELECTOR
+            ));
+        }
+    }
+
+    /// A non-UTF-8 `id` fails `type_check` in the borrowed decode (never lossily accepted), falls
+    /// through, and matches the owned decoder's rejection exactly.
+    #[test]
+    fn non_utf8_announce_id_matches_owned_error_bytes() {
+        let mut calldata = IB20Asset::announceCall {
+            internalCalls: alloc::vec![Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef])],
+            id: String::from("ID12345678"),
+            description: String::from("desc"),
+            uri: String::new(),
+        }
+        .abi_encode();
+        // Overwrite the 10 id content bytes in place with invalid UTF-8.
+        let pos = calldata.windows(10).position(|w| w == b"ID12345678").expect("id bytes present");
+        calldata[pos..pos + 10].fill(0xff);
+
+        let mut token = make_token();
+        token.accounting_mut().roles.insert((AssetV1::OPERATOR_ROLE, ALICE), true);
+        let err = call_asset(&mut token, ALICE, calldata.clone()).unwrap_err();
+
+        assert_eq!(err, AssetVersion::V1.abi().decode(&calldata).unwrap_err());
+        assert!(matches!(
+            err,
+            base_precompile_storage::BasePrecompileError::AbiDecodeFailed { selector, .. }
+                if selector == IB20Asset::announceCall::SELECTOR
+        ));
+    }
+
+    /// Empty `internalCalls` runs begin/end with no loop iterations.
+    #[test]
+    fn empty_internal_calls_announce_succeeds() {
+        let mut token = make_token();
+        token.accounting_mut().roles.insert((AssetV1::OPERATOR_ROLE, ALICE), true);
+
+        let calldata = IB20Asset::announceCall {
+            internalCalls: Vec::new(),
+            id: String::from("empty-calls"),
+            description: String::from("desc"),
+            uri: String::new(),
+        }
+        .abi_encode();
+
+        call_asset(&mut token, ALICE, calldata).expect("empty announce must succeed");
+        assert!(token.accounting().is_announcement_id_used("empty-calls").unwrap());
+    }
+
+    /// A large but non-aliased array is accepted (peak allocation is O(calldata), not O(n×tail)).
+    #[test]
+    fn large_non_aliased_announce_succeeds() {
+        let mut token = make_token();
+        token.accounting_mut().roles.insert((AssetV1::OPERATOR_ROLE, ALICE), true);
+
+        let entry = Bytes::from(IB20Asset::multiplierCall {}.abi_encode());
+        let calldata = IB20Asset::announceCall {
+            internalCalls: alloc::vec![entry; 64],
+            id: String::from("many-distinct"),
+            description: String::from("desc"),
+            uri: String::new(),
+        }
+        .abi_encode();
+
+        call_asset(&mut token, ALICE, calldata).expect("large announce must succeed");
+        assert!(token.accounting().is_announcement_id_used("many-distinct").unwrap());
+    }
+
+    /// An internal call shorter than a selector reverts with the offending bytes preserved.
+    #[test]
+    fn short_internal_call_reverts_as_malformed() {
+        let mut token = make_token();
+        token.accounting_mut().roles.insert((AssetV1::OPERATOR_ROLE, ALICE), true);
+
+        let calldata = IB20Asset::announceCall {
+            internalCalls: alloc::vec![Bytes::from_static(&[0x01, 0x02])],
+            id: String::from("short-call"),
+            description: String::from("desc"),
+            uri: String::new(),
+        }
+        .abi_encode();
+
+        let err = call_asset(&mut token, ALICE, calldata).unwrap_err();
+        assert_eq!(
+            err,
+            base_precompile_storage::BasePrecompileError::revert(
+                IB20Asset::InternalCallMalformed { call: Bytes::copy_from_slice(&[0x01, 0x02]) }
+            )
+        );
+    }
+
+    /// The intercept metric label must equal the canonical surface's label, or spans mislabel.
+    #[test]
+    fn announce_intercept_label_matches_surface() {
+        let call = IB20Asset::IB20AssetCalls::announce(IB20Asset::announceCall {
+            internalCalls: Vec::new(),
+            id: String::new(),
+            description: String::new(),
+            uri: String::new(),
+        });
+        assert_eq!("precompile-b20-asset-announce", call.as_label());
+    }
+
+    /// The load-bearing invariant: the borrowed decode accepts exactly the payloads the owned
+    /// `abi_decode_validate` accepts. A future alloy change that broke this would surface here.
+    #[test]
+    fn borrowed_decode_accept_set_matches_owned() {
+        let tail = IB20Asset::multiplierCall {}.abi_encode();
+
+        let valid_empty = IB20Asset::announceCall {
+            internalCalls: Vec::new(),
+            id: String::from("x"),
+            description: String::new(),
+            uri: String::new(),
+        }
+        .abi_encode();
+        let valid_aliased = aliased_announce_calldata(4, &tail);
+
+        let mut bad_len = aliased_announce_calldata(4, &tail);
+        bad_len[4 + 128..4 + 160].fill(0xff);
+
+        let truncated_head = IB20Asset::announceCall::SELECTOR.to_vec();
+
+        let mut trailing = valid_aliased.clone();
+        trailing.extend_from_slice(&[0u8; 16]);
+
+        for calldata in [valid_empty, valid_aliased, bad_len, truncated_head, trailing] {
+            let borrowed = TestAssetToken::decode_announce_borrowed(&calldata[4..]).is_ok();
+            let owned = IB20Asset::announceCall::abi_decode_validate(&calldata).is_ok();
+            assert_eq!(borrowed, owned, "accept-set divergence for {} bytes", calldata.len());
+        }
     }
 }
