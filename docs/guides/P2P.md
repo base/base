@@ -648,7 +648,7 @@ let network_builder = ctx
     });
 
 let mut network_config = ctx.build_network_config(network_builder);
-network_config.tx_gossip_disabled = !enable_txpool_gossip;
+network_config.tx_gossip_disabled = true;
 ```
 
 Notice that discv4 is disabled by default for Base (`--rollup.discovery.v4` defaults to false) while
@@ -712,8 +712,7 @@ rollup flags defined in
 are:
 
 `--rollup.sequencer` sets the sequencer endpoint for transaction forwarding.
-Transaction gossip on the DevP2P network is disabled by default;
-`--rollup.enable-tx-pool-gossip` explicitly enables it. `--rollup.discovery.v4` enables the legacy
+Transaction gossip on the DevP2P network is disabled. `--rollup.discovery.v4` enables the legacy
 discv4 discovery protocol (disabled by default since Base uses discv5).
 `--rollup.txpool-ordering` selects between `coinbase-tip` and `timestamp` ordering strategies.
 

@@ -345,10 +345,6 @@ pub struct RollupArgs {
     #[arg(long = "rollup.sequencer", visible_aliases = ["rollup.sequencer-http", "rollup.sequencer-ws"])]
     pub sequencer: Option<String>,
 
-    /// Enable transaction pool gossip
-    #[arg(long = "rollup.enable-tx-pool-gossip")]
-    pub enable_txpool_gossip: bool,
-
     /// enables discovery v4 if provided
     #[arg(long = "rollup.discovery.v4", default_value = "false")]
     pub discovery_v4: bool,
@@ -505,7 +501,6 @@ impl Default for RollupArgs {
     fn default() -> Self {
         Self {
             sequencer: None,
-            enable_txpool_gossip: false,
             discovery_v4: false,
             sequencer_headers: Vec::new(),
             min_suggested_priority_fee: 1_000_000,
@@ -552,7 +547,6 @@ mod tests {
     fn test_parse_rollup_default_args() {
         let default_args = RollupArgs::default();
         let args = CommandParser::<RollupArgs>::parse_from(["reth"]).args;
-        assert!(!args.enable_txpool_gossip);
         assert_eq!(args, default_args);
     }
 
@@ -577,24 +571,11 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_rollup_enable_txpool_args() {
-        let expected_args = RollupArgs { enable_txpool_gossip: true, ..Default::default() };
-        let args =
-            CommandParser::<RollupArgs>::parse_from(["reth", "--rollup.enable-tx-pool-gossip"])
-                .args;
-        assert_eq!(args, expected_args);
-    }
-
-    #[test]
     fn test_parse_rollup_many_args() {
-        let expected_args = RollupArgs {
-            enable_txpool_gossip: true,
-            sequencer: Some("http://host:port".into()),
-            ..Default::default()
-        };
+        let expected_args =
+            RollupArgs { sequencer: Some("http://host:port".into()), ..Default::default() };
         let args = CommandParser::<RollupArgs>::parse_from([
             "reth",
-            "--rollup.enable-tx-pool-gossip",
             "--rollup.sequencer-http",
             "http://host:port",
         ])
