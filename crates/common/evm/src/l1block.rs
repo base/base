@@ -1,11 +1,10 @@
 //! Contains the `[L1BlockInfo]` type and its implementation.
 use base_common_consensus::Predeploys;
-use base_common_flz::{NON_ZERO_BYTE_COST, tx_estimated_size_fjord as estimate_tx_compressed_size};
 use base_common_genesis::BaseUpgrade;
+use base_common_l1_fees::L1FeeParams;
 use revm::{
-    context_interface::cfg::gas::{NON_ZERO_BYTE_MULTIPLIER_ISTANBUL, STANDARD_TOKEN_COST},
     database_interface::Database,
-    interpreter::{Gas, gas::get_tokens_in_calldata_istanbul},
+    interpreter::Gas,
     primitives::{U256, uint},
 };
 
@@ -69,9 +68,10 @@ impl L1BlockInfo {
     pub const DA_FOOTPRINT_GAS_SCALAR_OFFSET: usize = 18;
     /// Fixed point decimal scaling factor for the operator fee scalar (6 decimal points of
     /// precision).
-    pub const OPERATOR_FEE_SCALAR_DECIMAL: u64 = 1_000_000;
+    pub const OPERATOR_FEE_SCALAR_DECIMAL: u64 = base_common_l1_fees::OPERATOR_FEE_SCALAR_DECIMAL;
     /// Jovian multiplier applied to the operator fee scalar component.
-    pub const OPERATOR_FEE_JOVIAN_MULTIPLIER: u64 = 100;
+    pub const OPERATOR_FEE_JOVIAN_MULTIPLIER: u64 =
+        base_common_l1_fees::OPERATOR_FEE_JOVIAN_MULTIPLIER;
     /// The L1 base fee storage slot.
     pub const L1_BASE_FEE_SLOT: U256 = uint!(1_U256);
     /// The L1 overhead storage slot.
@@ -229,17 +229,7 @@ impl L1BlockInfo {
     /// evaluated before the first L1 attributes deposit seeds these fields) does not panic;
     /// this matches the execution path, where uninitialized `L1_BLOCK_INFO` slots read as zero.
     fn operator_fee_charge_inner(&self, gas: U256, spec_id: BaseSpecId) -> U256 {
-        let operator_fee_scalar = self.operator_fee_scalar.unwrap_or_default();
-        let operator_fee_constant = self.operator_fee_constant.unwrap_or_default();
-
-        let product = if spec_id.is_enabled_in(BaseUpgrade::Jovian) {
-            gas.saturating_mul(operator_fee_scalar)
-                .saturating_mul(U256::from(Self::OPERATOR_FEE_JOVIAN_MULTIPLIER))
-        } else {
-            gas.saturating_mul(operator_fee_scalar) / U256::from(Self::OPERATOR_FEE_SCALAR_DECIMAL)
-        };
-
-        product.saturating_add(operator_fee_constant)
+        self.params().operator_fee_charge_inner(gas, spec_id.upgrade())
     }
 
     /// Calculate the operator fee for executing this transaction.
@@ -268,30 +258,7 @@ impl L1BlockInfo {
     /// Prior to regolith, an extra 68 non-zero bytes were included in the rollup data costs to
     /// account for the empty signature.
     pub fn data_gas(&self, input: &[u8], spec_id: BaseSpecId) -> U256 {
-        if spec_id.is_enabled_in(BaseUpgrade::Fjord) {
-            let estimated_size = self.tx_estimated_size_fjord(input);
-
-            return estimated_size
-                .saturating_mul(U256::from(NON_ZERO_BYTE_COST))
-                .wrapping_div(U256::from(1_000_000));
-        };
-
-        // tokens in calldata where non-zero bytes are priced 4 times higher than zero bytes (Same as in Istanbul).
-        let mut tokens_in_transaction_data = get_tokens_in_calldata_istanbul(input);
-
-        // Prior to regolith, an extra 68 non zero bytes were included in the rollup data costs.
-        if !spec_id.is_enabled_in(BaseUpgrade::Regolith) {
-            tokens_in_transaction_data += 68 * NON_ZERO_BYTE_MULTIPLIER_ISTANBUL;
-        }
-
-        U256::from(tokens_in_transaction_data.saturating_mul(STANDARD_TOKEN_COST))
-    }
-
-    // Calculate the estimated compressed transaction size in bytes, scaled by 1e6.
-    // This value is computed based on the following formula:
-    // max(minTransactionSize, intercept + fastlzCoef*fastlzSize)
-    fn tx_estimated_size_fjord(&self, input: &[u8]) -> U256 {
-        U256::from(estimate_tx_compressed_size(input))
+        L1FeeParams::data_gas(input, spec_id.upgrade())
     }
 
     /// Clears the cached L1 cost of the transaction.
@@ -344,69 +311,33 @@ impl L1BlockInfo {
         tx_l1_cost
     }
 
+    /// Constructs the engine-neutral fee parameters from this block info.
+    const fn params(&self) -> L1FeeParams {
+        L1FeeParams {
+            l1_base_fee: self.l1_base_fee,
+            l1_fee_overhead: self.l1_fee_overhead,
+            l1_base_fee_scalar: self.l1_base_fee_scalar,
+            l1_blob_base_fee: self.l1_blob_base_fee,
+            l1_blob_base_fee_scalar: self.l1_blob_base_fee_scalar,
+            operator_fee_scalar: self.operator_fee_scalar,
+            operator_fee_constant: self.operator_fee_constant,
+            empty_ecotone_scalars: self.empty_ecotone_scalars,
+        }
+    }
+
     /// Calculate the gas cost of a transaction based on L1 block data posted on L2, pre-Ecotone.
     fn calculate_tx_l1_cost_bedrock(&self, input: &[u8], spec_id: BaseSpecId) -> U256 {
-        let rollup_data_gas_cost = self.data_gas(input, spec_id);
-        rollup_data_gas_cost
-            .saturating_add(self.l1_fee_overhead.unwrap_or_default())
-            .saturating_mul(self.l1_base_fee)
-            .saturating_mul(self.l1_base_fee_scalar)
-            .wrapping_div(U256::from(1_000_000))
+        self.params().calculate_tx_l1_cost_bedrock(input, spec_id.upgrade())
     }
 
     /// Calculate the gas cost of a transaction based on L1 block data posted on L2, post-Ecotone.
-    ///
-    /// Ecotone L1 cost function:
-    /// `(calldataGas/16)*(l1BaseFee*16*l1BaseFeeScalar + l1BlobBaseFee*l1BlobBaseFeeScalar)/1e6`
-    ///
-    /// We divide "calldataGas" by 16 to change from units of calldata gas to "estimated # of bytes when compressed".
-    /// Known as "compressedTxSize" in the spec.
-    ///
-    /// Function is actually computed as follows for better precision under integer arithmetic:
-    /// `calldataGas*(l1BaseFee*16*l1BaseFeeScalar + l1BlobBaseFee*l1BlobBaseFeeScalar)/16e6`
     fn calculate_tx_l1_cost_ecotone(&self, input: &[u8], spec_id: BaseSpecId) -> U256 {
-        // There is an edgecase where, for the very first Ecotone block (unless it is activated at Genesis), we must
-        // use the Bedrock cost function. To determine if this is the case, we can check if the Ecotone parameters are
-        // unset.
-        if self.empty_ecotone_scalars {
-            return self.calculate_tx_l1_cost_bedrock(input, spec_id);
-        }
-
-        let rollup_data_gas_cost = self.data_gas(input, spec_id);
-        let l1_fee_scaled = self.calculate_l1_fee_scaled_ecotone();
-
-        l1_fee_scaled
-            .saturating_mul(rollup_data_gas_cost)
-            .wrapping_div(U256::from(1_000_000 * NON_ZERO_BYTE_COST))
+        self.params().calculate_tx_l1_cost_ecotone(input, spec_id.upgrade())
     }
 
     /// Calculate the gas cost of a transaction based on L1 block data posted on L2, post-Fjord.
-    ///
-    /// Fjord L1 cost function:
-    /// `estimatedSize*(baseFeeScalar*l1BaseFee*16 + blobFeeScalar*l1BlobBaseFee)/1e12`
     fn calculate_tx_l1_cost_fjord(&self, input: &[u8]) -> U256 {
-        let l1_fee_scaled = self.calculate_l1_fee_scaled_ecotone();
-        if l1_fee_scaled.is_zero() {
-            return U256::ZERO;
-        }
-
-        let estimated_size = self.tx_estimated_size_fjord(input);
-
-        estimated_size.saturating_mul(l1_fee_scaled).wrapping_div(U256::from(1_000_000_000_000u64))
-    }
-
-    // l1BaseFee*16*l1BaseFeeScalar + l1BlobBaseFee*l1BlobBaseFeeScalar
-    fn calculate_l1_fee_scaled_ecotone(&self) -> U256 {
-        let calldata_cost_per_byte = self
-            .l1_base_fee
-            .saturating_mul(U256::from(NON_ZERO_BYTE_COST))
-            .saturating_mul(self.l1_base_fee_scalar);
-        let blob_cost_per_byte = self
-            .l1_blob_base_fee
-            .unwrap_or_default()
-            .saturating_mul(self.l1_blob_base_fee_scalar.unwrap_or_default());
-
-        calldata_cost_per_byte.saturating_add(blob_cost_per_byte)
+        self.params().calculate_tx_l1_cost_fjord(input)
     }
 }
 

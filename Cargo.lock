@@ -3567,6 +3567,7 @@ dependencies = [
  "base-common-consensus",
  "base-common-flz",
  "base-common-genesis",
+ "base-common-l1-fees",
  "base-common-precompiles",
  "base-execution-eip8130",
  "base-metrics",
@@ -3637,6 +3638,15 @@ dependencies = [
  "thiserror 2.0.19",
  "toml 1.1.3+spec-1.1.0",
  "tracing",
+]
+
+[[package]]
+name = "base-common-l1-fees"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "base-common-flz",
+ "base-common-genesis",
 ]
 
 [[package]]
