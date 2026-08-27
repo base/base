@@ -11,6 +11,7 @@ repository.workspace = true
 [dependencies]
 # local
 base-proof-zk-utils.workspace = true
+base-retry.workspace = true
 
 # op-alloy
 base-common-consensus.workspace = true
@@ -38,6 +39,7 @@ alloy-network.workspace = true
 
 # general
 anyhow.workspace = true
+backon.workspace = true
 async-trait.workspace = true
 c-kzg.workspace = true
 futures.workspace = true

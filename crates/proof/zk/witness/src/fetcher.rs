@@ -15,6 +15,7 @@ use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
 use anyhow::{Context, Result, anyhow, bail};
+use backon::Retryable;
 use base_common_consensus::BaseBlock;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
@@ -22,6 +23,7 @@ use base_optimism_rpc::DebugProviderExt;
 use base_proof_host::HostConfig;
 use base_proof_zk_utils::boot::BootInfoStruct;
 use base_protocol::L2BlockInfo;
+use base_retry::RetryConfig;
 use futures::{StreamExt, stream};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -35,7 +37,6 @@ use crate::{
 #[derive(Clone)]
 /// The `OPSuccinctDataFetcher` struct is used to fetch the L2 output data and L2 claim data for a
 /// given block number. It is used to generate the boot info for the native host program.
-/// FIXME: Add retries for all requests (3 retries).
 pub struct OPSuccinctDataFetcher {
     /// RPC endpoint configuration.
     pub rpc_config: RPCConfig,
@@ -43,6 +44,8 @@ pub struct OPSuccinctDataFetcher {
     pub l1_provider: Arc<RootProvider>,
     /// L2 RPC provider.
     pub l2_provider: Arc<RootProvider<Base>>,
+    /// Retry configuration for RPC requests.
+    pub retry_config: RetryConfig,
     /// Optional rollup config override.
     pub rollup_config: Option<RollupConfig>,
     /// Path to rollup config file.
@@ -162,6 +165,7 @@ impl OPSuccinctDataFetcher {
             rpc_config,
             l1_provider,
             l2_provider,
+            retry_config: RetryConfig::default(),
             rollup_config: None,
             rollup_config_path: None,
             l1_config_path: None,
@@ -202,6 +206,7 @@ impl OPSuccinctDataFetcher {
             rpc_config,
             l1_provider,
             l2_provider,
+            retry_config: RetryConfig::default(),
             rollup_config: Some(rollup_config),
             rollup_config_path: Some(rollup_config_path),
             l1_config_path: Some(l1_config_path),
@@ -361,7 +366,8 @@ impl OPSuccinctDataFetcher {
         rpc_config: &RPCConfig,
     ) -> Result<(RollupConfig, PathBuf)> {
         let rollup_config: RollupConfig =
-            Self::fetch_rpc_data(&rpc_config.l2_node_rpc, "optimism_rollupConfig", vec![]).await?;
+            Self::do_fetch_rpc_data(&rpc_config.l2_node_rpc, "optimism_rollupConfig", vec![])
+                .await?;
 
         // Create configs directory if it doesn't exist
         let default_dir = PathBuf::from("configs/L2");
@@ -446,7 +452,8 @@ impl OPSuccinctDataFetcher {
         Ok(l1_config_path)
     }
 
-    async fn fetch_rpc_data<T>(url: &Url, method: &str, params: Vec<Value>) -> Result<T>
+    /// Executes a single JSON-RPC request without retry logic.
+    async fn do_fetch_rpc_data<T>(url: &Url, method: &str, params: Vec<Value>) -> Result<T>
     where
         T: serde::de::DeserializeOwned,
     {
@@ -473,6 +480,27 @@ impl OPSuccinctDataFetcher {
         serde_json::from_value(response["result"].clone()).map_err(Into::into)
     }
 
+    /// Fetch arbitrary data from the given RPC URL with exponential backoff retry.
+    async fn fetch_rpc_data<T>(&self, url: &Url, method: &str, params: Vec<Value>) -> Result<T>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        let backoff = self.retry_config.to_backoff_builder();
+        let url = url.clone();
+        let method = method.to_string();
+        (|| {
+            let url = url.clone();
+            let method = method.clone();
+            let params = params.clone();
+            async move { Self::do_fetch_rpc_data(&url, &method, params).await }
+        })
+        .retry(backoff)
+        .notify(|err, dur| {
+            tracing::debug!(error = %err, delay = ?dur, rpc_method = %method, "Retrying RPC request");
+        })
+        .await
+    }
+
     /// Fetch arbitrary data from the RPC.
     pub async fn fetch_rpc_data_with_mode<T>(
         &self,
@@ -483,8 +511,8 @@ impl OPSuccinctDataFetcher {
     where
         T: serde::de::DeserializeOwned,
     {
-        let url = self.get_rpc_url(rpc_mode)?;
-        Self::fetch_rpc_data(url, method, params).await
+        let url = self.get_rpc_url(rpc_mode)?.clone();
+        self.fetch_rpc_data(&url, method, params).await
     }
 
     /// Get the earliest L1 header in a batch of boot infos.
