@@ -1,20 +1,4 @@
-//! Per-block accounting of validity-transaction inclusion and fee revenue.
-//!
-//! Accumulates, across every committed mempool transaction in a block:
-//!
-//! - how many transactions were included, and the gas they consumed
-//! - EIP-1559 fee revenue, segmented by **flow** (`validity` vs `standard`) and
-//!   **fee kind** (priority fee, base fee, and coinbase tip)
-//!
-//! Priority fees are `effective_tip * gas_used` for every included mempool
-//! transaction, including EIP-8130 transactions that also pay a priority fee.
-//! Base fees are `base_fee * gas_used` for the same transactions.
-//!
-//! Sequencer and deposit transactions are not recorded here: they are not
-//! selected from the mempool and do not bid via priority fee.
-//!
-//! [`InclusionFlow::coinbase_tips`] is reserved for the statically-decoded
-//! EIP-8130 phase-0 coinbase tip. It is left at zero until that decoder exists.
+//! Per-block accounting of transaction inclusion and fee revenue.
 
 use alloy_primitives::U256;
 
@@ -111,18 +95,6 @@ mod tests {
         assert_eq!(tracker.standard.gas, 30_000);
         assert_eq!(tracker.standard.priority_fees_f64(), 90_000.0);
         assert_eq!(tracker.standard.base_fees_f64(), 300_000.0);
-        assert_eq!(tracker.standard.coinbase_tips_f64(), 0.0);
-    }
-
-    #[test]
-    fn coinbase_tips_remain_zero_until_decoded() {
-        let mut tracker = InclusionTracker::default();
-        tracker.record(true, 50_000, 7, 10);
-        tracker.record(false, 21_000, 5, 10);
-
-        assert_eq!(tracker.validity.priority_fees_f64(), 350_000.0);
-        assert_eq!(tracker.standard.priority_fees_f64(), 105_000.0);
-        assert_eq!(tracker.validity.coinbase_tips_f64(), 0.0);
         assert_eq!(tracker.standard.coinbase_tips_f64(), 0.0);
     }
 

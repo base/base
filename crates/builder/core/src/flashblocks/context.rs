@@ -19,7 +19,8 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
-    BasePayloadBuilderAttributes, error::BasePayloadBuilderError,
+    BasePayloadBuilderAttributes, BuilderMetrics as SharedBuilderMetrics, ValidityMetrics,
+    error::BasePayloadBuilderError,
 };
 use base_execution_txpool::{
     BasePooledTx, BundleTransaction, GuardMetrics, PredicateContext, TimestampedTransaction,
@@ -894,7 +895,7 @@ impl BasePayloadBuilderCtx {
                     Some(ordering_position),
                     || BuilderConsideredEventData::new(info, limits, None),
                 );
-                BuilderMetrics::validity_predicate_evaluations_total("budget_exhausted")
+                ValidityMetrics::validity_predicate_evaluations_total("budget_exhausted")
                     .increment(1);
                 self.defer_or_reject_current(
                     best_txs,
@@ -951,7 +952,7 @@ impl BasePayloadBuilderCtx {
                 } else {
                     "matched"
                 };
-                BuilderMetrics::validity_predicate_evaluations_total(outcome).increment(1);
+                ValidityMetrics::validity_predicate_evaluations_total(outcome).increment(1);
             }
             if predicate_read_failed || blocking_predicate.is_some() {
                 num_txs_considered += 1;
@@ -1545,8 +1546,10 @@ impl BasePayloadBuilderCtx {
                 {
                     let remaining =
                         (state_change_effects.affected_transactions.len() - rescanned) as u64;
-                    BuilderMetrics::validity_predicate_evaluations_total("rescan_budget_exhausted")
-                        .increment(remaining);
+                    ValidityMetrics::validity_predicate_evaluations_total(
+                        "rescan_budget_exhausted",
+                    )
+                    .increment(remaining);
                     break;
                 }
                 let mut predicate_read_failed = false;
@@ -1592,7 +1595,7 @@ impl BasePayloadBuilderCtx {
                 } else {
                     "rescan_matched"
                 };
-                BuilderMetrics::validity_predicate_evaluations_total(outcome).increment(1);
+                ValidityMetrics::validity_predicate_evaluations_total(outcome).increment(1);
                 if predicate_read_failed {
                     predicate_index.remove(*parked_hash);
                     best_txs.discard_parked(*parked_hash);
@@ -1604,7 +1607,7 @@ impl BasePayloadBuilderCtx {
                 }
             }
             if !state_change_effects.affected_transactions.is_empty() {
-                BuilderMetrics::validity_predicate_rescan_duration()
+                ValidityMetrics::validity_predicate_rescan_duration()
                     .record(predicate_rescan_start.elapsed().as_secs_f64());
             }
 
@@ -1618,7 +1621,7 @@ impl BasePayloadBuilderCtx {
             // Per-tx tip-per-gas distribution (builder priority score), tagged
             // by flow cohort and bid mechanism. `X` for top-X-percentile share is
             // left to Datadog percentile aggregations — do not bake it in here.
-            BuilderMetrics::record_tip_per_gas(
+            SharedBuilderMetrics::record_tip_per_gas(
                 has_validity_predicates,
                 has_coinbase_tip,
                 miner_fee as f64,
@@ -1648,7 +1651,7 @@ impl BasePayloadBuilderCtx {
         // `None` means no validity transactions were evaluated, so nothing is emitted and
         // the histogram is not flooded with zero observations.
         if let Some(predicate_eval_total) = predicate_eval_total {
-            BuilderMetrics::record_predicate_eval_duration(predicate_eval_total);
+            ValidityMetrics::record_predicate_eval_duration(predicate_eval_total);
         }
 
         let payload_transaction_simulation_time = execute_txs_start_time.elapsed();
@@ -1660,7 +1663,7 @@ impl BasePayloadBuilderCtx {
             num_txs_simulated_fail as f64,
             reverted_gas_used as f64,
         );
-        BuilderMetrics::record_predicate_index_diagnostics(
+        ValidityMetrics::record_predicate_index_diagnostics(
             predicate_bucket_wakeups,
             &predicate_index,
         );

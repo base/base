@@ -14,14 +14,13 @@
 //! `sync.caching` metrics. The footprint counted here is the signal that a
 //! predicate-state prewarmer must cover and that an abusive submitter inflates.
 //!
-//! [`PredicateReadRecorder`] wraps the builder's [`State`] during a predicate
+//! [`PredicateReadRecorder`] wraps the builder's [`Database`] during a predicate
 //! evaluation and records each read into a [`PredicateLoadTracker`] that
 //! accumulates across the whole block build. Because reads flow through the
 //! wrapper as the evaluator issues them, short-circuit evaluation is respected:
 //! only the reads a predicate check actually performs are counted.
 
 use alloy_primitives::{Address, B256, U256, map::HashSet};
-use reth_revm::State;
 use revm::{
     Database,
     state::{AccountInfo, Bytecode},
@@ -89,7 +88,7 @@ impl PredicateLoadTracker {
 
 /// A [`Database`] wrapper that records validity-predicate state reads.
 ///
-/// Wraps the builder's [`State`] for the duration of a predicate evaluation and
+/// Wraps the builder's [`Database`] for the duration of a predicate evaluation and
 /// records each [`Database::basic`] (account) and [`Database::storage`] (slot)
 /// call into the shared [`PredicateLoadTracker`] before delegating. It does not
 /// inspect any cache — it only counts which locations predicate evaluation
@@ -97,36 +96,36 @@ impl PredicateLoadTracker {
 /// they are issued.
 #[derive(Debug)]
 pub struct PredicateReadRecorder<'a, DB> {
-    state: &'a mut State<DB>,
+    database: &'a mut DB,
     tracker: &'a mut PredicateLoadTracker,
 }
 
 impl<'a, DB> PredicateReadRecorder<'a, DB> {
-    /// Wraps `state`, recording reads into `tracker`.
-    pub const fn new(state: &'a mut State<DB>, tracker: &'a mut PredicateLoadTracker) -> Self {
-        Self { state, tracker }
+    /// Wraps `database`, recording reads into `tracker`.
+    pub const fn new(database: &'a mut DB, tracker: &'a mut PredicateLoadTracker) -> Self {
+        Self { database, tracker }
     }
 }
 
 impl<DB: Database> Database for PredicateReadRecorder<'_, DB> {
-    type Error = <State<DB> as Database>::Error;
+    type Error = DB::Error;
 
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         self.tracker.record_account(address);
-        self.state.basic(address)
+        self.database.basic(address)
     }
 
     fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
-        self.state.code_by_hash(code_hash)
+        self.database.code_by_hash(code_hash)
     }
 
     fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
         self.tracker.record_slot(address, index);
-        self.state.storage(address, index)
+        self.database.storage(address, index)
     }
 
     fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
-        self.state.block_hash(number)
+        self.database.block_hash(number)
     }
 }
 
