@@ -355,6 +355,15 @@ impl InProcessConsensus {
         Ok(())
     }
 
+    /// Stops the sequencer via the `admin_stopSequencer` RPC.
+    pub async fn stop_sequencer(&self) -> Result<()> {
+        let client = HttpClientBuilder::default()
+            .build(self.rpc_url().as_str())
+            .wrap_err("Failed to build RPC client")?;
+        client.admin_stop_sequencer().await.wrap_err("Failed to stop sequencer via RPC")?;
+        Ok(())
+    }
+
     /// Returns the RPC URL for this consensus node (localhost).
     pub fn rpc_url(&self) -> Url {
         Url::parse(&format!("http://{}:{}", self.rpc_addr.ip(), self.rpc_addr.port()))

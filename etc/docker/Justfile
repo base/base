@@ -164,7 +164,7 @@ build-image target='base' profile='dev':
 
 # Prepares Docker images needed for system tests
 pull-images:
-    docker build --load -t devnet-setup:local -f etc/docker/Dockerfile.devnet .
+    docker build --load -t system-test-setup:local -f etc/docker/Dockerfile.devnet .
     docker pull ghcr.io/paradigmxyz/reth:v1.11.4
     docker pull sigp/lighthouse:v8.0.1
 
@@ -191,7 +191,7 @@ _install-nextest:
 
 [private]
 _build-setup-image:
-    docker build --load -t devnet-setup:local -f etc/docker/Dockerfile.devnet .
+    docker build --load -t system-test-setup:local -f etc/docker/Dockerfile.devnet .
 
 [private]
 _build-rust-images group profile='dev':
