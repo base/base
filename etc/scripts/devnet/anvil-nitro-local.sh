@@ -200,7 +200,7 @@ genesis_output_root() {
   fi
   root=$(docker run --rm \
     -v "$L2_CONFIG_DIR:/config:ro" \
-    base:local reth genesis-output-root --chain /config/genesis.json)
+    base:local ./base reth genesis-output-root --chain /config/genesis.json)
   if ! [[ "$root" =~ ^0x[0-9a-fA-F]{64}$ ]]; then
     echo "ERROR: invalid L2 genesis output root: $root" >&2
     exit 1
@@ -223,11 +223,16 @@ write_deploy_config() {
   local anchor_block="$1" anchor_root="$2"
   local source="$CONTRACTS_DIR/deploy-config/local.json"
   local destination="$CONTRACTS_DIR/deploy-config/anvil-no-nitro.json"
-  local l2_block_time l2_genesis_block l2_genesis_time
+  local l2_block_time l2_genesis_block l2_genesis_time schedule='[]' name timestamp
 
   l2_block_time=$(jq -er '.block_time' "$ROLLUP_CONFIG")
   l2_genesis_block=$(jq -er '.genesis.l2.number' "$ROLLUP_CONFIG")
   l2_genesis_time=$(jq -er '.genesis.l2_time' "$ROLLUP_CONFIG")
+  load_fork_names
+  for name in "${FORK_NAMES[@]}"; do
+    timestamp=$(rollup_timestamp "$name")
+    schedule=$(jq -c --argjson timestamp "$timestamp" '. + [$timestamp]' <<<"$schedule")
+  done
 
   jq \
     --arg owner "$OWNER_ADDR" \
@@ -242,6 +247,8 @@ write_deploy_config() {
     --argjson l2BlockTime "$l2_block_time" \
     --argjson l2GenesisBlockNumber "$l2_genesis_block" \
     --argjson l2GenesisTimestamp "$l2_genesis_time" \
+    --argjson protocolVersionsInitialSchedule "$schedule" \
+    --argjson protocolVersionsInitialMinimumVersion "$MIN_PROTOCOL_VERSION" \
     '.finalSystemOwner = $owner
       | .teeProposer = $proposer
       | .teeChallenger = $challenger
@@ -253,15 +260,35 @@ write_deploy_config() {
       | .teeImageHash = $teeImageHash
       | .l2BlockTime = $l2BlockTime
       | .l2GenesisBlockNumber = $l2GenesisBlockNumber
-      | .l2GenesisTimestamp = $l2GenesisTimestamp' \
+      | .l2GenesisTimestamp = $l2GenesisTimestamp
+      | .protocolVersionsInitialSchedule = $protocolVersionsInitialSchedule
+      | .protocolVersionsInitialMinimumVersion = $protocolVersionsInitialMinimumVersion' \
     "$source" >"$destination"
 }
 
 deploy_contracts() {
   local anchor_block=0 anchor_root deployment verifier protocol_versions
+  local schedule_timestamp block_timestamp_hex block_timestamp deadline
   anchor_root=$(genesis_output_root)
   write_deploy_config "$anchor_block" "$anchor_root"
   mkdir -p "$CONTRACTS_DIR/deployments"
+
+  schedule_timestamp=$(jq -er \
+    '[.protocolVersionsInitialSchedule[] | select(. != 0)] | max // 0' \
+    "$CONTRACTS_DIR/deploy-config/anvil-no-nitro.json")
+  deadline=$((SECONDS + 120))
+  echo "Waiting for L1 to reach protocol schedule timestamp $schedule_timestamp ..."
+  while true; do
+    block_timestamp_hex=$(cast rpc --rpc-url "$L1_RPC" eth_getBlockByNumber latest false |
+      jq -er '.timestamp')
+    block_timestamp=$((block_timestamp_hex))
+    [ "$block_timestamp" -ge "$schedule_timestamp" ] && break
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      echo "ERROR: L1 timestamp did not reach $schedule_timestamp within 2 minutes" >&2
+      exit 1
+    fi
+    sleep 1
+  done
 
   echo "Deploying no-Nitro contracts at L2 anchor block $anchor_block ..."
   (
@@ -309,25 +336,17 @@ rollup_timestamp() {
       else $ts end' "$ROLLUP_CONFIG"
 }
 
-seed_protocol_versions() {
-  load_fork_names
-  local registry schedule id timestamp minimum actual_minimum
+validate_protocol_versions() {
+  local registry expected_schedule actual_schedule actual_minimum
   registry=$(address_value ProtocolVersions)
-  schedule=$(cast call --json "$registry" "getSchedule()(uint64[])" --rpc-url "$L1_RPC" |
-    jq -r '.[0] | length')
-  if [ "$schedule" != "0" ]; then
-    echo "ERROR: newly deployed ProtocolVersions schedule is not empty" >&2
+  expected_schedule=$(jq -c '.protocolVersionsInitialSchedule' \
+    "$CONTRACTS_DIR/deploy-config/anvil-no-nitro.json")
+  actual_schedule=$(cast call --json "$registry" "getSchedule()(uint64[])" --rpc-url "$L1_RPC" |
+    jq -c '.[0] | map(tonumber)')
+  if [ "$actual_schedule" != "$expected_schedule" ]; then
+    echo "ERROR: ProtocolVersions schedule $actual_schedule, expected $expected_schedule" >&2
     exit 1
   fi
-
-  echo "Registering ${#FORK_NAMES[@]} protocol upgrades ..."
-  for ((id = 0; id < ${#FORK_NAMES[@]}; id++)); do
-    timestamp=$(rollup_timestamp "${FORK_NAMES[$id]}")
-    minimum=0
-    [ "$id" -eq 0 ] && minimum="$MIN_PROTOCOL_VERSION"
-    owner_send "$registry" "registerUpgrade(uint64,uint256)" "$timestamp" "$minimum" >/dev/null
-    echo "  $id ${FORK_NAMES[$id]}=$timestamp"
-  done
 
   actual_minimum=$(call_first "$registry" "minimumProtocolVersion()(uint256)")
   if [ "$actual_minimum" != "$MIN_PROTOCOL_VERSION" ]; then
@@ -492,7 +511,7 @@ cmd_bootstrap() {
   load_rollup_config
   prepare_contracts
   deploy_contracts
-  seed_protocol_versions
+  validate_protocol_versions
   write_upgrade_signal_env
 
   echo "Development proof contracts are anchored at L2 genesis."
