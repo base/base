@@ -190,7 +190,7 @@ impl ActorAuthorizer {
         Self::resolve_bound(storage, account, recovered, Eip8130Constants::K1_AUTHENTICATOR, now)
     }
 
-    /// Authorizes a classic (legacy / EIP-2930 / EIP-1559 / EIP-7702) sender
+    /// Authorizes a standard (legacy / EIP-2930 / EIP-1559 / EIP-7702) sender
     /// or EIP-7702 authorization authority whose address was already recovered
     /// by `SignerRecoverable` / `authorization.authority()`.
     ///
@@ -202,29 +202,29 @@ impl ActorAuthorizer {
     /// This is the keystore gate that closes the standalone-ecrecover escape
     /// hatch. EIP-8130 empty-sender transactions keep using [`Self::authorize_k1`],
     /// which still accepts a scoped inline self.
-    pub fn authorize_classic_sender(
+    pub fn authorize_standard_sender(
         storage: &AccountConfigurationStorage<'_>,
         caller: Address,
         now: u64,
     ) -> Result<ResolvedActor, AuthorizeError> {
         let state = storage.get_account_state(caller)?;
-        Self::authorize_classic_sender_from_state(caller, &state, now)
+        Self::authorize_standard_sender_from_state(caller, &state, now)
     }
 
-    /// Like [`Self::authorize_classic_sender`], but against an already-loaded
+    /// Like [`Self::authorize_standard_sender`], but against an already-loaded
     /// [`AccountState`]. Used by the execution handler after a journal SLOAD so
     /// the slot is not read twice.
     ///
     /// Policy is not resolved: a policy-gated self fails the admin check, so the
     /// extra `policy_manager` read is unnecessary on this path.
-    pub fn authorize_classic_sender_from_state(
+    pub fn authorize_standard_sender_from_state(
         caller: Address,
         state: &AccountState,
         now: u64,
     ) -> Result<ResolvedActor, AuthorizeError> {
         let resolved = Self::authorize_inline_self(caller, state, now, Address::ZERO)?;
         if !resolved.is_admin() {
-            return Err(AuthorizeError::ClassicSenderNotAdmin { account: caller });
+            return Err(AuthorizeError::StandardSenderNotAdmin { account: caller });
         }
         Ok(resolved)
     }
@@ -232,7 +232,7 @@ impl ActorAuthorizer {
     /// Resolves a live inline secp256k1 self from `state`.
     ///
     /// Shared by [`Self::authorize_k1`] (which still accepts a scoped self) and
-    /// [`Self::authorize_classic_sender`] (which additionally requires admin).
+    /// [`Self::authorize_standard_sender`] (which additionally requires admin).
     /// `policy_target` is `address(0)` when the self is ungated; the caller
     /// supplies the manager when `SCOPE_POLICY` is set.
     pub fn authorize_inline_self(
@@ -465,28 +465,28 @@ mod tests {
     }
 
     #[test]
-    fn classic_sender_untouched_eoa_is_unrestricted_owner() {
+    fn standard_sender_untouched_eoa_is_unrestricted_owner() {
         let account = k1_address(&k1_key(0x11));
         with_storage(|acc| {
-            let resolved = ActorAuthorizer::authorize_classic_sender(acc, account, NOW).unwrap();
+            let resolved = ActorAuthorizer::authorize_standard_sender(acc, account, NOW).unwrap();
             assert_eq!(resolved, ResolvedActor::unrestricted(actor_id(account)));
         });
     }
 
     #[test]
-    fn classic_sender_revoked_default_eoa_is_rejected() {
+    fn standard_sender_revoked_default_eoa_is_rejected() {
         let account = k1_address(&k1_key(0x11));
         with_storage(|acc| {
             acc.account_state.at_mut(&account).write(pack_self(0, 0, true)).unwrap();
             assert_eq!(
-                ActorAuthorizer::authorize_classic_sender(acc, account, NOW),
+                ActorAuthorizer::authorize_standard_sender(acc, account, NOW),
                 Err(AuthorizeError::DefaultEoaRevoked { account }),
             );
         });
     }
 
     #[test]
-    fn classic_sender_scoped_self_is_rejected() {
+    fn standard_sender_scoped_self_is_rejected() {
         let account = k1_address(&k1_key(0x11));
         with_storage(|acc| {
             acc.account_state
@@ -494,19 +494,19 @@ mod tests {
                 .write(pack_self(Eip8130Constants::SCOPE_SENDER, 0, false))
                 .unwrap();
             assert_eq!(
-                ActorAuthorizer::authorize_classic_sender(acc, account, NOW),
-                Err(AuthorizeError::ClassicSenderNotAdmin { account }),
+                ActorAuthorizer::authorize_standard_sender(acc, account, NOW),
+                Err(AuthorizeError::StandardSenderNotAdmin { account }),
             );
         });
     }
 
     #[test]
-    fn classic_sender_expired_self_is_rejected() {
+    fn standard_sender_expired_self_is_rejected() {
         let account = k1_address(&k1_key(0x11));
         with_storage(|acc| {
             acc.account_state.at_mut(&account).write(pack_self(0, NOW - 1, false)).unwrap();
             assert_eq!(
-                ActorAuthorizer::authorize_classic_sender(acc, account, NOW),
+                ActorAuthorizer::authorize_standard_sender(acc, account, NOW),
                 Err(AuthorizeError::Expired { actor_id: actor_id(account), expiry: NOW - 1 }),
             );
         });

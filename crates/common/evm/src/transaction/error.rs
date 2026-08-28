@@ -78,11 +78,11 @@ pub enum BaseTransactionError {
     /// the transaction's journal writes are reverted and it is not added to the
     /// block.
     Eip8130(alloc::string::String),
-    /// A classic (legacy / EIP-2930 / EIP-1559 / EIP-7702) sender failed
+    /// A standard (legacy / EIP-2930 / EIP-1559 / EIP-7702) sender failed
     /// EIP-8130 keystore authorization after ecrecover. The default EOA is
     /// revoked, expired, or not an unrestricted owner. Consensus-critical from
     /// Cobalt onward; cause for non-inclusion.
-    ClassicSender(alloc::string::String),
+    StandardSender(alloc::string::String),
 }
 
 impl BaseTransactionError {
@@ -94,10 +94,10 @@ impl BaseTransactionError {
         Self::Eip8130(alloc::string::ToString::to_string(&reason))
     }
 
-    /// Wraps a classic-transaction keystore rejection as
-    /// [`BaseTransactionError::ClassicSender`].
-    pub fn classic_sender(reason: impl Display) -> Self {
-        Self::ClassicSender(alloc::string::ToString::to_string(&reason))
+    /// Wraps a standard-transaction keystore rejection as
+    /// [`BaseTransactionError::StandardSender`].
+    pub fn standard_sender(reason: impl Display) -> Self {
+        Self::StandardSender(alloc::string::ToString::to_string(&reason))
     }
 }
 
@@ -122,8 +122,8 @@ impl Display for BaseTransactionError {
             Self::Eip8130(reason) => {
                 write!(f, "EIP-8130 transaction rejected: {reason}")
             }
-            Self::ClassicSender(reason) => {
-                write!(f, "classic transaction keystore authorization failed: {reason}")
+            Self::StandardSender(reason) => {
+                write!(f, "standard transaction keystore authorization failed: {reason}")
             }
         }
     }
@@ -182,8 +182,8 @@ mod tests {
             "EIP-8130 transaction rejected: nonce too low"
         );
         assert_eq!(
-            BaseTransactionError::classic_sender("default EOA actor is revoked").to_string(),
-            "classic transaction keystore authorization failed: default EOA actor is revoked"
+            BaseTransactionError::standard_sender("default EOA actor is revoked").to_string(),
+            "standard transaction keystore authorization failed: default EOA actor is revoked"
         );
     }
 

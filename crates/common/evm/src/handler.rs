@@ -77,7 +77,7 @@ impl<DB, TX> IsTxError for EVMError<DB, TX> {
 /// Loads `account_state[account]` from the EIP-8130 AccountConfiguration
 /// predeploy. [`JournalTr::sload`] assumes the account is already present.
 #[cfg(feature = "std")]
-fn load_classic_account_state<JOURNAL: JournalTr>(
+fn load_standard_account_state<JOURNAL: JournalTr>(
     journal: &mut JOURNAL,
     account: Address,
 ) -> Result<
@@ -93,12 +93,12 @@ fn load_classic_account_state<JOURNAL: JournalTr>(
     Ok(base_execution_eip8130::AccountState::from_word(word))
 }
 
-/// EIP-7702 auth-list apply with the classic-keystore gate on each recovered
+/// EIP-7702 auth-list apply with the standard-keystore gate on each recovered
 /// authority. Invalid auths still `continue` (the transaction is included);
 /// a revoked / expired / non-admin default EOA is the same skip as a bad
 /// nonce or failed `ecrecover`.
 #[cfg(feature = "std")]
-fn apply_eip7702_auth_list_classic_keystore<CTX, ERROR>(
+fn apply_eip7702_auth_list_standard_keystore<CTX, ERROR>(
     context: &mut CTX,
     init_and_floor_gas: &mut InitialAndFloorGas,
 ) -> Result<u64, ERROR>
@@ -113,7 +113,7 @@ where
         .block()
         .timestamp()
         .try_into()
-        .map_err(|_| BaseTransactionError::classic_sender("block timestamp exceeds u64"))?;
+        .map_err(|_| BaseTransactionError::standard_sender("block timestamp exceeds u64"))?;
     let (tx, journal) = context.tx_journal_mut();
 
     if tx.tx_type() != TransactionType::Eip7702 {
@@ -121,7 +121,7 @@ where
     }
 
     let (number_of_refunded_accounts, number_of_refunded_bytecodes) =
-        apply_auth_list_classic_keystore::<_, ERROR>(
+        apply_auth_list_standard_keystore::<_, ERROR>(
             chain_id,
             now,
             tx.authorization_list(),
@@ -141,7 +141,7 @@ where
 /// check after authority recovery. The authority account is warmed first so a
 /// skipped auth still matches EIP-7702's "invalid after `ecrecover`" gas.
 #[cfg(feature = "std")]
-fn apply_auth_list_classic_keystore<JOURNAL, ERROR>(
+fn apply_auth_list_standard_keystore<JOURNAL, ERROR>(
     chain_id: u64,
     now: u64,
     auth_list: impl Iterator<Item = impl AuthorizationTr>,
@@ -182,8 +182,8 @@ where
 
         // Drop so we can SLOAD AccountConfiguration, then skip like a bad nonce.
         drop(authority_acc);
-        let state = load_classic_account_state(journal, authority)?;
-        if base_execution_eip8130::ActorAuthorizer::authorize_classic_sender_from_state(
+        let state = load_standard_account_state(journal, authority)?;
+        if base_execution_eip8130::ActorAuthorizer::authorize_standard_sender_from_state(
             authority, &state, now,
         )
         .is_err()
@@ -290,7 +290,7 @@ where
             *chain = L1BlockInfo::try_fetch(journal.db_mut(), block.number(), spec)?;
         }
 
-        // Cobalt+: classic txs (legacy / 2930 / 1559 / 7702) must still present
+        // Cobalt+: standard txs (legacy / 2930 / 1559 / 7702) must still present
         // a live unrestricted default EOA in the EIP-8130 keystore. Recovery
         // stays stateless ecrecover; this is the stateful gate. 8130 txs use
         // `ActorTxVerifier` instead and never reach this handler. `no_std`
@@ -305,12 +305,12 @@ where
             let now: u64 = block
                 .timestamp()
                 .try_into()
-                .map_err(|_| BaseTransactionError::classic_sender("block timestamp exceeds u64"))?;
-            let state = load_classic_account_state(journal, caller)?;
-            base_execution_eip8130::ActorAuthorizer::authorize_classic_sender_from_state(
+                .map_err(|_| BaseTransactionError::standard_sender("block timestamp exceeds u64"))?;
+            let state = load_standard_account_state(journal, caller)?;
+            base_execution_eip8130::ActorAuthorizer::authorize_standard_sender_from_state(
                 caller, &state, now,
             )
-            .map_err(BaseTransactionError::classic_sender)?;
+            .map_err(BaseTransactionError::standard_sender)?;
         }
 
         let mut caller_account = journal.load_account_with_code_mut(tx.caller())?.data;
@@ -359,7 +359,7 @@ where
         // transaction is still included, that delegation is not applied.
         #[cfg(feature = "std")]
         if evm.ctx().cfg().spec().is_enabled_in(BaseUpgrade::Cobalt) {
-            return apply_eip7702_auth_list_classic_keystore(evm.ctx_mut(), init_and_floor_gas);
+            return apply_eip7702_auth_list_standard_keystore(evm.ctx_mut(), init_and_floor_gas);
         }
         self.mainnet.apply_eip7702_auth_list(evm, init_and_floor_gas)
     }
@@ -1192,7 +1192,7 @@ mod tests {
         db.load_account(AccountConfigurationStorage::ADDRESS).unwrap().storage.insert(slot, word);
     }
 
-    fn classic_keystore_db(caller: Address, word: Option<U256>) -> InMemoryDB {
+    fn standard_keystore_db(caller: Address, word: Option<U256>) -> InMemoryDB {
         let mut db = InMemoryDB::default();
         db.insert_account_info(
             caller,
@@ -1204,14 +1204,14 @@ mod tests {
         db
     }
 
-    fn classic_keystore_tx(caller: Address) -> BaseTransaction<TxEnv> {
+    fn standard_keystore_tx(caller: Address) -> BaseTransaction<TxEnv> {
         BaseTransaction::builder()
             .base(TxEnv::builder().caller(caller).gas_limit(100_000))
             .enveloped_tx(Some(bytes!("FACADE")))
             .build_fill()
     }
 
-    fn classic_keystore_context(
+    fn standard_keystore_context(
         db: InMemoryDB,
         spec: BaseUpgrade,
     ) -> crate::BaseContext<InMemoryDB> {
@@ -1224,15 +1224,15 @@ mod tests {
                 ..Default::default()
             })
             .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(spec)))
-            .with_tx(classic_keystore_tx(Address::ZERO))
+            .with_tx(standard_keystore_tx(Address::ZERO))
     }
 
-    fn authorize_classic_sender(
+    fn authorize_standard_sender(
         db: InMemoryDB,
         spec: BaseUpgrade,
         caller: Address,
     ) -> Result<(), EVMError<core::convert::Infallible, BaseTransactionError>> {
-        let ctx = classic_keystore_context(db, spec).with_tx(classic_keystore_tx(caller));
+        let ctx = standard_keystore_context(db, spec).with_tx(standard_keystore_tx(caller));
         let mut evm = ctx.build_base();
         let handler =
             BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
@@ -1241,45 +1241,45 @@ mod tests {
     }
 
     #[test]
-    fn cobalt_classic_sender_untouched_eoa_is_accepted() {
+    fn cobalt_standard_sender_untouched_eoa_is_accepted() {
         let caller = Address::repeat_byte(0x11);
-        authorize_classic_sender(classic_keystore_db(caller, None), BaseUpgrade::Cobalt, caller)
-            .expect("untouched EOA must still send classic txs");
+        authorize_standard_sender(standard_keystore_db(caller, None), BaseUpgrade::Cobalt, caller)
+            .expect("untouched EOA must still send standard txs");
     }
 
     #[test]
-    fn cobalt_classic_sender_revoked_default_eoa_is_rejected() {
+    fn cobalt_standard_sender_revoked_default_eoa_is_rejected() {
         let caller = Address::repeat_byte(0x11);
-        let db = classic_keystore_db(caller, Some(pack_inline_self(0, 0, true)));
-        let err = authorize_classic_sender(db, BaseUpgrade::Cobalt, caller)
-            .expect_err("revoked default EOA must not send classic txs");
+        let db = standard_keystore_db(caller, Some(pack_inline_self(0, 0, true)));
+        let err = authorize_standard_sender(db, BaseUpgrade::Cobalt, caller)
+            .expect_err("revoked default EOA must not send standard txs");
         assert!(
-            matches!(err, EVMError::Transaction(BaseTransactionError::ClassicSender(_))),
-            "expected ClassicSender, got {err:?}"
+            matches!(err, EVMError::Transaction(BaseTransactionError::StandardSender(_))),
+            "expected StandardSender, got {err:?}"
         );
     }
 
     #[test]
-    fn cobalt_classic_sender_scoped_self_is_rejected() {
+    fn cobalt_standard_sender_scoped_self_is_rejected() {
         let caller = Address::repeat_byte(0x11);
-        let db = classic_keystore_db(
+        let db = standard_keystore_db(
             caller,
             Some(pack_inline_self(Eip8130Constants::SCOPE_SENDER, 0, false)),
         );
-        let err = authorize_classic_sender(db, BaseUpgrade::Cobalt, caller)
-            .expect_err("scoped inline k1 must not send unrestricted classic txs");
+        let err = authorize_standard_sender(db, BaseUpgrade::Cobalt, caller)
+            .expect_err("scoped inline k1 must not send unrestricted standard txs");
         assert!(
-            matches!(err, EVMError::Transaction(BaseTransactionError::ClassicSender(_))),
-            "expected ClassicSender, got {err:?}"
+            matches!(err, EVMError::Transaction(BaseTransactionError::StandardSender(_))),
+            "expected StandardSender, got {err:?}"
         );
     }
 
     #[test]
-    fn pre_cobalt_classic_sender_skips_keystore() {
+    fn pre_cobalt_standard_sender_skips_keystore() {
         let caller = Address::repeat_byte(0x11);
-        let db = classic_keystore_db(caller, Some(pack_inline_self(0, 0, true)));
-        authorize_classic_sender(db, BaseUpgrade::Isthmus, caller)
-            .expect("pre-Cobalt classic txs must not consult the keystore");
+        let db = standard_keystore_db(caller, Some(pack_inline_self(0, 0, true)));
+        authorize_standard_sender(db, BaseUpgrade::Isthmus, caller)
+            .expect("pre-Cobalt standard txs must not consult the keystore");
     }
 
     fn recovered_auth(authority: Address, delegate: Address) -> RecoveredAuthorization {
@@ -1289,7 +1289,7 @@ mod tests {
         )
     }
 
-    fn classic_7702_tx(
+    fn standard_7702_tx(
         caller: Address,
         auths: Vec<RecoveredAuthorization>,
     ) -> BaseTransaction<TxEnv> {
@@ -1311,7 +1311,7 @@ mod tests {
         caller: Address,
         auths: Vec<RecoveredAuthorization>,
     ) -> Result<u64, EVMError<core::convert::Infallible, BaseTransactionError>> {
-        let ctx = classic_keystore_context(db, spec).with_tx(classic_7702_tx(caller, auths));
+        let ctx = standard_keystore_context(db, spec).with_tx(standard_7702_tx(caller, auths));
         let mut evm = ctx.build_base();
         let handler =
             BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
@@ -1322,8 +1322,8 @@ mod tests {
     fn authority_has_delegation(db: InMemoryDB, spec: BaseUpgrade, authority: Address) -> bool {
         let caller = Address::repeat_byte(0x33);
         let delegate = Address::repeat_byte(0x44);
-        let ctx = classic_keystore_context(db, spec)
-            .with_tx(classic_7702_tx(caller, vec![recovered_auth(authority, delegate)]));
+        let ctx = standard_keystore_context(db, spec)
+            .with_tx(standard_7702_tx(caller, vec![recovered_auth(authority, delegate)]));
         let mut evm = ctx.build_base();
         let handler =
             BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
@@ -1344,7 +1344,7 @@ mod tests {
         let authority = Address::repeat_byte(0x11);
         assert!(
             authority_has_delegation(
-                classic_keystore_db(authority, None),
+                standard_keystore_db(authority, None),
                 BaseUpgrade::Cobalt,
                 authority
             ),
@@ -1355,9 +1355,9 @@ mod tests {
     #[test]
     fn cobalt_7702_auth_revoked_default_eoa_is_skipped() {
         let authority = Address::repeat_byte(0x11);
-        let db = classic_keystore_db(authority, Some(pack_inline_self(0, 0, true)));
+        let db = standard_keystore_db(authority, Some(pack_inline_self(0, 0, true)));
         apply_7702_auth_list(
-            classic_keystore_db(authority, Some(pack_inline_self(0, 0, true))),
+            standard_keystore_db(authority, Some(pack_inline_self(0, 0, true))),
             BaseUpgrade::Cobalt,
             Address::repeat_byte(0x33),
             vec![recovered_auth(authority, Address::repeat_byte(0x44))],
@@ -1372,7 +1372,7 @@ mod tests {
     #[test]
     fn cobalt_7702_auth_scoped_self_is_skipped() {
         let authority = Address::repeat_byte(0x11);
-        let db = classic_keystore_db(
+        let db = standard_keystore_db(
             authority,
             Some(pack_inline_self(Eip8130Constants::SCOPE_SENDER, 0, false)),
         );
@@ -1387,8 +1387,8 @@ mod tests {
         let live = Address::repeat_byte(0x11);
         let delegate = Address::repeat_byte(0x44);
         let caller = Address::repeat_byte(0x33);
-        let ctx = classic_keystore_context(classic_keystore_db(live, None), BaseUpgrade::Cobalt)
-            .with_tx(classic_7702_tx(
+        let ctx = standard_keystore_context(standard_keystore_db(live, None), BaseUpgrade::Cobalt)
+            .with_tx(standard_7702_tx(
                 caller,
                 vec![
                     RecoveredAuthorization::new_unchecked(
@@ -1424,14 +1424,14 @@ mod tests {
         let revoked = Address::repeat_byte(0x12);
         let delegate = Address::repeat_byte(0x44);
         let caller = Address::repeat_byte(0x33);
-        let mut db = classic_keystore_db(live, None);
+        let mut db = standard_keystore_db(live, None);
         db.insert_account_info(
             revoked,
             AccountInfo { balance: U256::from(1_000_000), ..Default::default() },
         );
         seed_account_state(&mut db, revoked, pack_inline_self(0, 0, true));
 
-        let ctx = classic_keystore_context(db, BaseUpgrade::Cobalt).with_tx(classic_7702_tx(
+        let ctx = standard_keystore_context(db, BaseUpgrade::Cobalt).with_tx(standard_7702_tx(
             caller,
             vec![recovered_auth(live, delegate), recovered_auth(revoked, delegate)],
         ));
@@ -1470,7 +1470,7 @@ mod tests {
         let authority = Address::repeat_byte(0x11);
         assert!(
             authority_has_delegation(
-                classic_keystore_db(authority, Some(pack_inline_self(0, 0, true))),
+                standard_keystore_db(authority, Some(pack_inline_self(0, 0, true))),
                 BaseUpgrade::Isthmus,
                 authority
             ),

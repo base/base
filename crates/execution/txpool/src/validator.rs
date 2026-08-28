@@ -950,15 +950,15 @@ where
             return self.apply_base_checks(outcome, state.payer_auth);
         }
         let outcome = self.inner.validate_one_with_state(origin, transaction, state);
-        let outcome = self.authorize_classic_sender(outcome);
+        let outcome = self.authorize_standard_sender(outcome);
         self.apply_base_checks(outcome, 0)
     }
 
     /// After ecrecover, require the recovered sender still present a live
     /// unrestricted default EOA in the EIP-8130 keystore (Cobalt+). Deposits and
     /// EIP-8130 transactions are not gated here. Watches `account_state[sender]`
-    /// so a later revoke/import evicts admitted classic txs.
-    fn authorize_classic_sender(
+    /// so a later revoke/import evicts admitted standard txs.
+    fn authorize_standard_sender(
         &self,
         outcome: TransactionValidationOutcome<Tx>,
     ) -> TransactionValidationOutcome<Tx> {
@@ -1009,7 +1009,7 @@ where
         let mut storage = StateProviderPrecompileStorage::new(&*state, local_chain_id, now);
         let resolved = match StorageCtx::enter(&mut storage, |ctx| {
             let acc = AccountConfigurationStorage::new(ctx);
-            ActorAuthorizer::authorize_classic_sender(&acc, sender, now)
+            ActorAuthorizer::authorize_standard_sender(&acc, sender, now)
         }) {
             Ok(resolved) => resolved,
             Err(error) => {
@@ -1034,7 +1034,7 @@ where
                 .filter(|authority| {
                     StorageCtx::enter(&mut storage, |ctx| {
                         let acc = AccountConfigurationStorage::new(ctx);
-                        ActorAuthorizer::authorize_classic_sender(&acc, *authority, now)
+                        ActorAuthorizer::authorize_standard_sender(&acc, *authority, now)
                     })
                     .is_ok()
                 })
@@ -1626,8 +1626,8 @@ where
             TxAuthError::Authorize(AuthorizeError::NestedSignatureScope { .. }) => {
                 "delegate nested actor lacks SIGNATURE scope"
             }
-            TxAuthError::Authorize(AuthorizeError::ClassicSenderNotAdmin { .. }) => {
-                "classic transaction requires the unrestricted default EOA"
+            TxAuthError::Authorize(AuthorizeError::StandardSenderNotAdmin { .. }) => {
+                "standard transaction requires the unrestricted default EOA"
             }
             TxAuthError::SenderRecovery => "EOA sender recovery failed",
             TxAuthError::Scope { .. } => "actor scope insufficient",
@@ -3852,7 +3852,7 @@ mod tests {
         (U256::from(flags) << 128) | (U256::from(expiry) << 184) | (U256::from(scope) << 232)
     }
 
-    fn sign_classic_1559(signer: &PrivateKeySigner) -> BasePooledTransaction {
+    fn sign_standard_1559(signer: &PrivateKeySigner) -> BasePooledTransaction {
         let tx = TxEip1559 {
             chain_id: test_chain_id(),
             nonce: 0,
@@ -3870,7 +3870,7 @@ mod tests {
         BasePooledTransaction::new(recovered, envelope.encode_2718_len())
     }
 
-    fn validator_with_classic_keystore(
+    fn validator_with_standard_keystore(
         sender: Address,
         account_state: Option<U256>,
         cobalt: bool,
@@ -3900,7 +3900,7 @@ mod tests {
         BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
     }
 
-    fn assert_classic_sender_rejected(
+    fn assert_standard_sender_rejected(
         outcome: TransactionValidationOutcome<BasePooledTransaction>,
         expected: &'static str,
     ) {
@@ -3913,16 +3913,16 @@ mod tests {
                     other => panic!("expected Eip8130Validation, got {other:?}"),
                 }
             }
-            other => panic!("expected classic-sender rejection, got {other:?}"),
+            other => panic!("expected standard-sender rejection, got {other:?}"),
         }
     }
 
     #[tokio::test]
-    async fn admits_classic_1559_from_untouched_eoa() {
+    async fn admits_standard_1559_from_untouched_eoa() {
         let signer = PrivateKeySigner::random();
         let sender = signer.address();
-        let validator = validator_with_classic_keystore(sender, None, true);
-        let pooled = sign_classic_1559(&signer);
+        let validator = validator_with_standard_keystore(sender, None, true);
+        let pooled = sign_standard_1559(&signer);
         let outcome = validator.validate_one(TransactionOrigin::External, pooled).await;
         match outcome {
             TransactionValidationOutcome::Valid { transaction, .. } => {
@@ -3932,7 +3932,7 @@ mod tests {
                 };
                 assert!(
                     transaction.transaction().watch_set().is_some_and(|set| set.contains(&watched)),
-                    "classic 1559 must watch account_state[sender]"
+                    "standard 1559 must watch account_state[sender]"
                 );
             }
             other => panic!("untouched EOA 1559 must be admitted, got {other:?}"),
@@ -3940,44 +3940,44 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_classic_1559_when_default_eoa_revoked() {
+    async fn rejects_standard_1559_when_default_eoa_revoked() {
         let signer = PrivateKeySigner::random();
         let sender = signer.address();
         let validator =
-            validator_with_classic_keystore(sender, Some(pack_inline_self(0, 0, true)), true);
+            validator_with_standard_keystore(sender, Some(pack_inline_self(0, 0, true)), true);
         let outcome =
-            validator.validate_one(TransactionOrigin::External, sign_classic_1559(&signer)).await;
-        assert_classic_sender_rejected(outcome, "default EOA actor is revoked");
+            validator.validate_one(TransactionOrigin::External, sign_standard_1559(&signer)).await;
+        assert_standard_sender_rejected(outcome, "default EOA actor is revoked");
     }
 
     #[tokio::test]
-    async fn rejects_classic_1559_from_scoped_inline_self() {
+    async fn rejects_standard_1559_from_scoped_inline_self() {
         let signer = PrivateKeySigner::random();
         let sender = signer.address();
-        let validator = validator_with_classic_keystore(
+        let validator = validator_with_standard_keystore(
             sender,
             Some(pack_inline_self(Eip8130Constants::SCOPE_SENDER, 0, false)),
             true,
         );
         let outcome =
-            validator.validate_one(TransactionOrigin::External, sign_classic_1559(&signer)).await;
-        assert_classic_sender_rejected(
+            validator.validate_one(TransactionOrigin::External, sign_standard_1559(&signer)).await;
+        assert_standard_sender_rejected(
             outcome,
-            "classic transaction requires the unrestricted default EOA",
+            "standard transaction requires the unrestricted default EOA",
         );
     }
 
     #[tokio::test]
-    async fn pre_cobalt_classic_1559_skips_keystore() {
+    async fn pre_cobalt_standard_1559_skips_keystore() {
         let signer = PrivateKeySigner::random();
         let sender = signer.address();
         let validator =
-            validator_with_classic_keystore(sender, Some(pack_inline_self(0, 0, true)), false);
+            validator_with_standard_keystore(sender, Some(pack_inline_self(0, 0, true)), false);
         let outcome =
-            validator.validate_one(TransactionOrigin::External, sign_classic_1559(&signer)).await;
+            validator.validate_one(TransactionOrigin::External, sign_standard_1559(&signer)).await;
         assert!(
             matches!(outcome, TransactionValidationOutcome::Valid { .. }),
-            "pre-Cobalt classic txs must not consult the keystore, got {outcome:?}"
+            "pre-Cobalt standard txs must not consult the keystore, got {outcome:?}"
         );
     }
 }
