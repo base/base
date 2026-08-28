@@ -304,7 +304,8 @@ where
         // available there — same gating as enshrined 8130 execution.
         // Deposits already returned above, so only the 8130 type needs excluding.
         #[cfg(feature = "std")]
-        if spec.is_enabled_in(BaseUpgrade::Cobalt) && tx.tx_type() != crate::EIP8130_TRANSACTION_TYPE
+        if spec.is_enabled_in(BaseUpgrade::Cobalt)
+            && tx.tx_type() != crate::EIP8130_TRANSACTION_TYPE
         {
             let caller = tx.caller();
             let now: u64 = block.timestamp().try_into().map_err(|_| {
