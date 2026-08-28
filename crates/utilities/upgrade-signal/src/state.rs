@@ -1,9 +1,11 @@
 //! Upgrade signal state values.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use alloy_primitives::U256;
-use base_common_genesis::{BaseUpgrade, RuntimeUpgradeRegistry};
+use base_common_genesis::{
+    BaseUpgrade, RuntimeUpgradeRegistry, UpgradeActivation, UpgradeActivationOverrides,
+};
 use tracing::{debug, error, info};
 
 use crate::{
@@ -96,24 +98,23 @@ impl UpgradeSignalStateUpdate {
     }
 }
 
-/// Stateful live tracker for one contract-backed upgrade.
+/// Live observer baseline for one contract-backed upgrade.
 ///
-/// Two independent baselines are tracked: `observed` advances on every read and drives metrics and
-/// change detection, while `applied` advances only when a schedule is successfully committed to the
-/// runtime registry. Keeping them separate means a failed apply does not poison the baseline: the
-/// signal keeps being offered for apply until a commit actually succeeds.
+/// Tracks the last signal read from L1, which drives change detection and metrics. Whether a
+/// schedule still needs applying is decided against the runtime registry itself (see
+/// [`UpgradeSignalMonitor::schedule_needs_apply`]), not this observer baseline, so a failed apply
+/// cannot poison the decision: the schedule keeps being offered until the registry actually
+/// reflects it.
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 struct UpgradeSignalState {
     /// Last signal read from L1 by the live observer.
     observed: Option<UpgradeSignal>,
-    /// Last signal a successful apply committed to the runtime registry.
-    applied: Option<UpgradeSignal>,
 }
 
 impl UpgradeSignalState {
     /// Creates an empty upgrade signal state tracker.
     const fn new() -> Self {
-        Self { observed: None, applied: None }
+        Self { observed: None }
     }
 
     /// Records a newly read live signal against the observed baseline.
@@ -128,21 +129,6 @@ impl UpgradeSignalState {
 
         self.observed = Some(signal);
         update
-    }
-
-    /// Returns true when `signal` has not yet been successfully applied.
-    fn needs_apply(&self, signal: &UpgradeSignal) -> bool {
-        self.applied.as_ref().is_none_or(|applied| !applied.has_same_contract_values(signal))
-    }
-
-    /// Advances the applied baseline after a successful commit.
-    fn mark_applied(&mut self, signal: &UpgradeSignal) {
-        self.applied = Some(signal.clone());
-    }
-
-    /// Clears the applied baseline after this upgrade is reconciled out of the schedule.
-    const fn clear_applied(&mut self) {
-        self.applied = None;
     }
 }
 
@@ -175,7 +161,7 @@ pub enum UpgradeSignalPollOutcome {
 pub struct UpgradeSignalMonitor {
     /// Metric layer recorded by this monitor.
     pub metrics_layer: UpgradeSignalMetricLayer,
-    /// Live metrics and apply state by contract-backed upgrade.
+    /// Live observer state by contract-backed upgrade.
     states: BTreeMap<BaseUpgrade, UpgradeSignalState>,
     /// Contract values of the last schedule that failed to apply, used to page only on the first
     /// occurrence of a persistent failure rather than on every poll.
@@ -198,7 +184,7 @@ impl UpgradeSignalMonitor {
     ///
     /// This is the single live-poll routine shared by the consensus actor and the execution
     /// metrics extension. Read failures are recorded but do not abort the poll and do not advance
-    /// either baseline; a schedule that reads cleanly but cannot be applied is handled by
+    /// the observed baseline; a schedule that reads cleanly but cannot be applied is handled by
     /// [`Self::apply_and_evaluate`], which may return [`UpgradeSignalPollOutcome::HaltNode`]. The
     /// caller MUST fail the node closed on `HaltNode`.
     pub async fn poll_and_apply(
@@ -243,11 +229,12 @@ impl UpgradeSignalMonitor {
     ///
     /// A stale schedule can also be *rejected* rather than failed: the registry refuses a schedule
     /// read from an older L1 block than the one it already committed, returning `Ok` with
-    /// `committed == false`. That is not an error, so it never halts; the applied baseline is left
-    /// untouched exactly as on failure, so a newer-block re-read of the same schedule still applies.
+    /// `committed == false`. That is not an error, so it never halts; the registry is left untouched
+    /// exactly as on failure, so a newer-block re-read of the same schedule still applies.
     ///
-    /// On failure the applied baseline is deliberately *not* advanced, so the schedule is re-offered
-    /// (and re-evaluated) on every subsequent poll. Handling depends on the cause:
+    /// On failure the registry is deliberately *not* mutated, so [`Self::schedule_needs_apply`] keeps
+    /// re-offering the schedule (and re-evaluating it) on every subsequent poll. Handling depends on
+    /// the cause:
     ///
     /// * **Outdated node** — the node cannot follow the upgrade and will fork off the network at its
     ///   activation, so this is fail-closed. While the activation is more than the halt lead time
@@ -273,13 +260,10 @@ impl UpgradeSignalMonitor {
             Ok(summary) => {
                 // The registry rejects a schedule read from an older L1 block than the one it has
                 // already committed (a lower-block reorg on a non-finalized tag), returning `Ok`
-                // with `committed == false` and leaving the registry untouched. Advance the applied
-                // baseline only when the registry actually committed the schedule; otherwise the
-                // monitor would desync from the registry — recording a spurious success and moving
-                // (or clearing) a baseline whose override is still live — and never retry the
-                // reconcile once a newer block re-offers the same schedule.
+                // with `committed == false` and leaving the registry untouched. Only record success
+                // when the registry actually committed the schedule; a non-committed apply changed
+                // nothing, so the schedule stays offered for a newer-block re-read.
                 if summary.committed {
-                    self.mark_schedule_applied(schedule);
                     self.last_apply_failure = None;
                     UpgradeSignalMetrics::record_apply_success(self.metrics_layer, schedule);
                 }
@@ -366,50 +350,37 @@ impl UpgradeSignalMonitor {
         UpgradeSignalPollOutcome::Continue
     }
 
-    /// Returns true when the schedule diverges from what is committed to the runtime registry,
-    /// either because a present signal has not yet been applied or because an upgrade the registry
-    /// still overrides has vanished from a later, shorter schedule and must be reconciled out.
+    /// Returns true when the runtime registry does not already match the schedule.
     ///
-    /// The removal case covers a pure schedule shrink — for example an L1 reorg on a non-finalized
-    /// tag that unwinds a trailing upgrade's registration. Without it the shrink would never trip
-    /// the apply gate (the present entries are unchanged), so the stale activation would linger in
-    /// the registry until a restart or manual refresh. A governance clear keeps its slot with a
-    /// `0` timestamp, so it stays present and is not treated as a removal.
+    /// Compares the *entire* override set a commit of this schedule would produce against what the
+    /// registry currently holds — present keys, absent keys, and activation values alike. It is true
+    /// exactly when applying the schedule would change the registry, and false once the two agree.
     ///
-    /// Removal is detected against the authoritative runtime registry (`chain_id`), not the
-    /// monitor's own applied baseline: the admin refresh path writes the registry without touching
-    /// `states`, so a registry override this poller never applied itself would otherwise be missed
-    /// and its stale activation left in place.
+    /// The registry is the authoritative source of truth, not the monitor's own view of what it has
+    /// applied. The admin refresh path (and any other writer) mutates the registry without touching
+    /// this monitor, so a baseline-only check would miss any drift it did not cause itself:
+    ///
+    /// * an upgrade the registry still overrides that has vanished from a later, shorter schedule —
+    ///   the pure schedule shrink of an L1 reorg on a non-finalized tag, which a present-entries
+    ///   check alone never trips because the surviving entries are unchanged;
+    /// * an activation value another writer transiently changed, or a key it dropped, that a later
+    ///   L1 read must reconcile back even though this monitor's own applied values never moved.
+    ///
+    /// A commit derives its override set from the schedule exactly as done here — Zenith is excluded
+    /// (it is not contract-backed) and a governance clear is kept as an explicit [`Never`] rather
+    /// than removed — so this comparison is true iff a commit would change the registry.
+    ///
+    /// [`Never`]: UpgradeActivation::Never
     fn schedule_needs_apply(&self, chain_id: u64, schedule: &UpgradeSignalSchedule) -> bool {
-        let present: BTreeSet<BaseUpgrade> =
-            schedule.signals.iter().map(|signal| signal.upgrade_id).collect();
-        let removed = RuntimeUpgradeRegistry::overrides(chain_id).is_some_and(|overrides| {
-            overrides.activations.keys().any(|upgrade_id| !present.contains(upgrade_id))
-        });
-
-        removed
-            || schedule.signals.iter().any(|signal| {
-                self.states.get(&signal.upgrade_id).is_none_or(|state| state.needs_apply(signal))
-            })
-    }
-
-    /// Reconciles the applied baseline with a successfully committed schedule.
-    ///
-    /// Advances the baseline for every present signal and clears the baseline of any upgrade absent
-    /// from the schedule, mirroring the runtime registry that `replace_overrides` has just trimmed
-    /// to exactly this schedule. Clearing the vanished entries keeps the apply gate from re-firing
-    /// on every subsequent poll.
-    fn mark_schedule_applied(&mut self, schedule: &UpgradeSignalSchedule) {
-        let present: BTreeSet<BaseUpgrade> =
-            schedule.signals.iter().map(|signal| signal.upgrade_id).collect();
-        for (upgrade_id, state) in &mut self.states {
-            if !present.contains(upgrade_id) {
-                state.clear_applied();
-            }
-        }
+        let mut expected = UpgradeActivationOverrides::new();
         for signal in &schedule.signals {
-            self.states.entry(signal.upgrade_id).or_default().mark_applied(signal);
+            expected.set_activation(
+                signal.upgrade_id,
+                UpgradeActivation::from_timestamp(signal.positive_activation_timestamp()),
+            );
         }
+
+        RuntimeUpgradeRegistry::overrides(chain_id).unwrap_or_default() != expected
     }
 
     /// Applies signals read from L1 and records corresponding live metrics.
@@ -563,50 +534,29 @@ mod tests {
     }
 
     #[test]
-    fn state_needs_apply_until_marked_applied() {
-        let mut state = UpgradeSignalState::new();
-        let signal = signal(10);
-
-        // Never applied: needs apply even before it has been observed.
-        assert!(state.needs_apply(&signal));
-
-        // Observing the signal advances the observed baseline but not the applied baseline.
-        state.update_signal(signal.clone());
-        assert!(state.needs_apply(&signal));
-
-        // Only a successful apply advances the applied baseline.
-        state.mark_applied(&signal);
-        assert!(!state.needs_apply(&signal));
-    }
-
-    #[test]
-    fn state_changed_signal_needs_apply_after_previous_applied() {
-        let mut state = UpgradeSignalState::new();
-
-        state.mark_applied(&signal(10));
-
-        assert!(!state.needs_apply(&signal(10)));
-        assert!(state.needs_apply(&signal(12)));
-    }
-
-    #[test]
     fn failed_apply_keeps_schedule_offered_for_retry() {
         let chain_id = 9_100_030;
         RuntimeUpgradeRegistry::clear_chain(chain_id);
         let mut monitor = monitor();
         let schedule = schedule(10);
 
-        // Mirror `poll_and_apply`: observe first (advances the observed baseline), then a failed
-        // apply must NOT advance the applied baseline, so the schedule is offered again next poll.
+        // Mirror `poll_and_apply`: observe first (advances the observed baseline), then — with the
+        // registry still empty because the apply failed — the schedule is offered again next poll.
         monitor.update_schedule(schedule.clone());
         assert!(
             monitor.schedule_needs_apply(chain_id, &schedule),
             "an unapplied schedule must remain offered for retry"
         );
 
-        // A subsequent successful apply advances the applied baseline and stops the retries.
-        monitor.mark_schedule_applied(&schedule);
+        // A subsequent successful apply lands the schedule in the registry and stops the retries.
+        let refresher = refresher(chain_id, UpgradeSignalDefaults::node_protocol_version());
+        assert_eq!(
+            monitor.apply_and_evaluate(&refresher, &schedule, 0),
+            UpgradeSignalPollOutcome::Continue
+        );
         assert!(!monitor.schedule_needs_apply(chain_id, &schedule));
+
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
     }
 
     #[test]
@@ -631,12 +581,18 @@ mod tests {
         let mut monitor = monitor();
         let schedule = schedule(10);
 
+        let refresher = refresher(chain_id, UpgradeSignalDefaults::node_protocol_version());
         monitor.update_schedule(schedule.clone());
-        monitor.mark_schedule_applied(&schedule);
+        assert_eq!(
+            monitor.apply_and_evaluate(&refresher, &schedule, 0),
+            UpgradeSignalPollOutcome::Continue
+        );
 
         // The same contract values, even at a new L1 block number, are not re-offered.
         let same_values_new_block = UpgradeSignalSchedule::new(2, vec![signal(10)]);
         assert!(!monitor.schedule_needs_apply(chain_id, &same_values_new_block));
+
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
     }
 
     #[test]
@@ -738,7 +694,7 @@ mod tests {
         );
         assert_eq!(RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Beryl), None);
 
-        // The baseline is reconciled too, so the shrunk schedule is not re-offered next poll.
+        // The registry now matches the shrunk schedule, so it is not re-offered next poll.
         assert!(
             !monitor.schedule_needs_apply(chain_id, &shrunk),
             "a reconciled shrink must not re-fire the apply gate"
@@ -748,7 +704,7 @@ mod tests {
     }
 
     #[test]
-    fn rejected_lower_block_schedule_does_not_advance_the_baseline() {
+    fn rejected_lower_block_schedule_leaves_registry_unchanged() {
         let chain_id = 9_100_060;
         RuntimeUpgradeRegistry::clear_chain(chain_id);
 
@@ -760,7 +716,7 @@ mod tests {
             protocol_version: version,
         };
 
-        // Commit Azul@42 at L1 block 100; it lands in the registry and advances the baseline.
+        // Commit Azul@42 at L1 block 100; it lands in the registry.
         let committed = UpgradeSignalSchedule::new(100, vec![azul(42)]);
         let mut monitor = monitor();
         monitor.update_schedule(committed.clone());
@@ -782,11 +738,11 @@ mod tests {
             Some(UpgradeActivation::Timestamp(42))
         );
 
-        // Because the rejected apply left the baseline untouched, Azul@50 is still offered so a
-        // newer-block re-read can commit it; the baseline was not desynced to the uncommitted value.
+        // Because the rejected apply left the registry untouched, Azul@50 is still offered so a
+        // newer-block re-read can commit it; the registry was not desynced to the uncommitted value.
         assert!(
             monitor.schedule_needs_apply(chain_id, &stale),
-            "a rejected stale schedule must not advance the applied baseline"
+            "a rejected stale schedule must keep being offered until a newer block commits it"
         );
 
         RuntimeUpgradeRegistry::clear_chain(chain_id);
@@ -813,14 +769,10 @@ mod tests {
         );
         assert!(refresher.apply(&admin).unwrap().committed);
 
-        // The monitor's own baseline knows only Azul (its present entry is already applied), so a
-        // baseline-only removal check would miss Beryl. The registry still overrides Beryl, so the
-        // shrink must trip the apply gate anyway.
+        // This monitor never applied anything itself, so it has no private record of Beryl. Because
+        // the apply gate reads the authoritative registry — which the admin refresh left overriding
+        // Beryl — the shrunk schedule that drops Beryl must still trip it.
         let mut monitor = monitor();
-        monitor.mark_schedule_applied(&UpgradeSignalSchedule::new(
-            1,
-            vec![upgrade(BaseUpgrade::Azul, 42)],
-        ));
         let shrunk = UpgradeSignalSchedule::new(2, vec![upgrade(BaseUpgrade::Azul, 42)]);
         monitor.update_schedule(shrunk.clone());
         assert!(
@@ -834,6 +786,68 @@ mod tests {
             UpgradeSignalPollOutcome::Continue
         );
         assert_eq!(RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Beryl), None);
+
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+    }
+
+    #[test]
+    fn transient_admin_drift_is_reconciled_by_value_and_missing_key() {
+        let chain_id = 9_100_080;
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+
+        let refresher = refresher(chain_id, UpgradeSignalDefaults::node_protocol_version());
+        let version = UpgradeSignalDefaults::packed_protocol_version(1, 1, 0);
+        let upgrade = |upgrade_id, activation_timestamp| UpgradeSignal {
+            upgrade_id,
+            activation_timestamp,
+            protocol_version: version,
+        };
+
+        // This monitor commits {Azul@42, Beryl@84} at L1 block 1.
+        let full = UpgradeSignalSchedule::new(
+            1,
+            vec![upgrade(BaseUpgrade::Azul, 42), upgrade(BaseUpgrade::Beryl, 84)],
+        );
+        let mut monitor = monitor();
+        monitor.update_schedule(full.clone());
+        assert_eq!(
+            monitor.apply_and_evaluate(&refresher, &full, 0),
+            UpgradeSignalPollOutcome::Continue
+        );
+
+        // An admin refresh transiently rewrites the registry to {Azul@50} at a newer L1 block,
+        // both dropping Beryl (a missing key) and moving Azul's activation (a value drift) — without
+        // touching this monitor's own view of what it applied.
+        assert!(refresher
+            .apply(&UpgradeSignalSchedule::new(2, vec![upgrade(BaseUpgrade::Azul, 50)]))
+            .unwrap()
+            .committed);
+
+        // L1 returns to the original schedule before the next poll. This monitor's own applied
+        // values never moved, so a baseline-only check would see both entries as satisfied and never
+        // notice the registry drifted. Comparing the full registry contents — Azul's drifted value
+        // and Beryl's missing key alike — the gate must fire to reconcile them back.
+        let returned = UpgradeSignalSchedule::new(3, full.signals.clone());
+        monitor.update_schedule(returned.clone());
+        assert!(
+            monitor.schedule_needs_apply(chain_id, &returned),
+            "a registry another writer drifted must re-trip the gate on both value and missing key"
+        );
+
+        // Applying restores the registry to exactly the schedule.
+        assert_eq!(
+            monitor.apply_and_evaluate(&refresher, &returned, 0),
+            UpgradeSignalPollOutcome::Continue
+        );
+        assert_eq!(
+            RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Azul),
+            Some(UpgradeActivation::Timestamp(42))
+        );
+        assert_eq!(
+            RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Beryl),
+            Some(UpgradeActivation::Timestamp(84))
+        );
+        assert!(!monitor.schedule_needs_apply(chain_id, &returned));
 
         RuntimeUpgradeRegistry::clear_chain(chain_id);
     }
@@ -854,7 +868,7 @@ mod tests {
         let outcome = monitor.apply_and_evaluate(&refresher, &schedule, 0);
 
         // Not yet fatal: the node keeps running, nothing is committed, and the schedule stays
-        // offered (baseline not advanced) so a later poll re-evaluates it.
+        // offered (registry unchanged) so a later poll re-evaluates it.
         assert_eq!(outcome, UpgradeSignalPollOutcome::Continue);
         assert!(monitor.schedule_needs_apply(chain_id, &schedule));
         assert_eq!(RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Azul), None);
