@@ -200,6 +200,7 @@ where
             payer_balance: class.payer_balance,
             max_cost: class.max_cost,
             priority: transaction.priority_fee_or_price(),
+            account_change: class.account_change,
             watch_set,
         })
     }
@@ -233,6 +234,9 @@ where
             LimitRejection::PayerLimit => "payer EIP-8130 signature limit reached",
             LimitRejection::PaymentLimit => "payer EIP-8130 payment limit reached",
             LimitRejection::PayerBalance => "payer cannot fund another EIP-8130 transaction",
+            LimitRejection::AccountChangeLimit => {
+                "account already has an inflight EIP-8130 config change"
+            }
         };
         debug!(reason = GuardMetrics::rejection_reason(rejection), "EIP-8130 admission rejected");
         reth_transaction_pool::error::PoolError::other(hash, reason)
@@ -1867,6 +1871,7 @@ mod tests {
             payer_trusted: false,
             payer_balance: U256::from(1_000_000),
             max_cost: U256::from(1_000),
+            account_change: None,
         });
 
         let admission = IntegrationPool::admission_for(&transaction).expect("EIP-8130 admission");
@@ -2415,6 +2420,7 @@ mod tests {
             payer_trusted: false,
             payer_balance: U256::from(1_000),
             max_cost: U256::from(1_000),
+            account_change: None,
         });
         let hash = *transaction.hash();
         let admission = IntegrationPool::admission_for(&transaction).unwrap();
