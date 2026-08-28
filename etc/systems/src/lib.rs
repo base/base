@@ -47,11 +47,11 @@ pub use l1::{
 
 mod l2;
 pub use l2::{
-    InProcessBatcher, InProcessBatcherConfig, InProcessBuilder, InProcessBuilderConfig,
-    InProcessClient, InProcessClientConfig, InProcessConsensus, InProcessConsensusConfig,
-    InProcessFollowConsensus, InProcessFollowConsensusConfig, L2ClientConsensus,
-    L2ClientConsensusMode, L2ContainerConfig, L2Stack, L2StackConfig, ShadowSequencer,
-    ShadowSequencerConfig, ShadowSequencersConfig,
+    ChainSpecSource, InProcessBatcher, InProcessBatcherConfig, InProcessBuilder,
+    InProcessBuilderConfig, InProcessClient, InProcessClientConfig, InProcessConsensus,
+    InProcessConsensusConfig, InProcessFollowConsensus, InProcessFollowConsensusConfig,
+    L2ClientConsensus, L2ClientConsensusMode, L2ContainerConfig, L2Stack, L2StackConfig,
+    ShadowSequencer, ShadowSequencerConfig, ShadowSequencersConfig,
 };
 
 mod network;

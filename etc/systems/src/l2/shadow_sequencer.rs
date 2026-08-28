@@ -15,7 +15,7 @@
 //! the next cycle. Accepting the canonical gossip requires the shadow's
 //! `unsafe_block_signer` to match the active sequencer's address.
 
-use std::num::NonZeroU64;
+use std::{num::NonZeroU64, time::Duration};
 
 use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, B256};
@@ -80,17 +80,26 @@ impl ShadowSequencer {
     /// address so it accepts the canonical payloads gossiped by the active
     /// sequencer. Those buffered canonical payloads drive reconciliation.
     pub async fn start(config: ShadowSequencerConfig) -> Result<Self> {
+        let chain_spec = InProcessBuilderConfig::chain_spec_from_genesis_json(&config.l2_genesis)
+            .wrap_err("Failed to parse shadow builder L2 chain spec")?;
         let builder = InProcessBuilder::start(InProcessBuilderConfig {
-            genesis_json: config.l2_genesis,
+            chain_spec,
+            datadir: None,
             jwt_secret: config.jwt_secret,
             http_port: None,
             ws_port: None,
             auth_port: None,
             p2p_port: None,
             flashblocks_port: None,
+            metrics_port: None,
             enable_experimental_validity_transactions: false,
             payload_builder_cutover: false,
             extra_extensions: Vec::new(),
+            block_time: Duration::from_secs(config.rollup_config.block_time),
+            persistence_threshold: None,
+            txpool_max_transactions: None,
+            txpool_max_size_mb: None,
+            txpool_max_account_slots: None,
         })
         .await
         .wrap_err("Failed to start shadow builder")?;
