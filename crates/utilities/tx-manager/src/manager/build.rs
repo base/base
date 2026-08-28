@@ -1,11 +1,7 @@
 //! Transaction estimation, construction, signing, and fee replacement.
 
-use std::{fmt::Debug, sync::Arc, time::Duration};
+use std::{fmt::Debug, future::IntoFuture, sync::Arc, time::Duration};
 
-#[cfg(test)]
-use alloy_consensus::TxEnvelope;
-#[cfg(test)]
-use alloy_eips::Decodable2718;
 use alloy_eips::{BlockNumberOrTag, Encodable2718, eip7594::BlobTransactionSidecarEip7594};
 use alloy_network::{
     Ethereum, EthereumWallet, Network, NetworkTransactionBuilder, NetworkWallet,
@@ -51,12 +47,6 @@ pub struct PreparedTx {
 }
 
 impl PreparedTx {
-    /// Decodes the signed bytes into an alloy transaction envelope.
-    #[cfg(test)]
-    fn to_envelope(&self) -> Result<TxEnvelope, alloy_eips::eip2718::Eip2718Error> {
-        TxEnvelope::decode_2718(&mut self.raw_tx.as_ref())
-    }
-
     /// Returns fee floors that preserve all on-wire values.
     pub const fn fee_floor(&self) -> FeeOverride {
         FeeOverride {
@@ -91,6 +81,11 @@ where
     R: Runtime,
 {
     /// Maximum retries after the first construction attempt.
+    ///
+    /// Together with [`Self::PREPARE_RETRY_DELAY`] this rides out roughly one
+    /// minute of transient RPC failure. Construction failure is terminal for a
+    /// first submission (there is no outer retry), so the window errs long.
+    /// Deliberately not configuration: no consumer has needed to tune it.
     pub const PREPARE_MAX_RETRIES: usize = 30;
 
     /// Delay between construction retries.
@@ -114,7 +109,7 @@ where
         candidate: &TxCandidate,
         nonce: u64,
     ) -> TxManagerResult<PreparedTx> {
-        self.prepare_with(candidate, nonce, None, None, None).await
+        self.prepare_with(candidate, nonce, None, None, None, true).await
     }
 
     /// Prepares a replacement transaction from an existing signed transaction.
@@ -125,22 +120,17 @@ where
         nonce: u64,
         reason: ReplacementReason,
     ) -> TxManagerResult<PreparedTx> {
-        match reason {
-            ReplacementReason::Resign => {
-                // Resigning after NonceTooLow changes only the nonce. Existing
-                // on-wire fees remain floors and the expensive sidecar is reused.
-                self.prepare_with(
-                    candidate,
-                    nonce,
-                    Some(base.fee_floor()),
-                    None,
-                    base.sidecar.clone(),
-                )
-                .await
-            }
+        let (fee_override, caps, estimate) = match reason {
+            // Resigning re-targets a never-live payload at a new nonce: chain
+            // state may have moved, so re-estimate to surface a revert cleanly
+            // before publishing. On-wire fees remain floors and the expensive
+            // sidecar is reused.
+            ReplacementReason::Resign => (base.fee_floor(), None, true),
+            // A fee or cancellation replacement re-signs bytes that may
+            // already be live: the floor covers the original estimate, and a
+            // state-dependent revert must not block replacing a live
+            // transaction, so no re-estimation happens.
             ReplacementReason::FeeBump | ReplacementReason::Cancel => {
-                // Fee and cancellation replacements must satisfy both network
-                // suggestions and the protocol replacement threshold.
                 let bumped = self
                     .increase_gas_price(
                         candidate,
@@ -149,16 +139,18 @@ where
                         base.blob_fee_cap,
                     )
                     .await?;
-                self.prepare_with(
-                    candidate,
-                    nonce,
-                    Some(bumped.to_fee_override(base.gas_limit)),
-                    Some(bumped.caps),
-                    base.sidecar.clone(),
-                )
-                .await
+                (bumped.to_fee_override(base.gas_limit), Some(bumped.caps), false)
             }
-        }
+        };
+        self.prepare_with(
+            candidate,
+            nonce,
+            Some(fee_override),
+            caps,
+            base.sidecar.clone(),
+            estimate,
+        )
+        .await
     }
 
     /// Computes fees for a valid mempool replacement.
@@ -192,18 +184,23 @@ where
     /// Retries bounded transaction construction on transient RPC failures.
     ///
     /// `initial_caps` is consumed by the first attempt so retries refresh
-    /// network fees instead of repeatedly using a stale suggestion.
+    /// network fees instead of repeatedly using a stale suggestion. `sidecar`
+    /// is a cache shared by every attempt: the expensive KZG proofs are
+    /// computed at most once even when a later phase fails transiently.
+    /// `estimate` selects between provider gas estimation and reusing the
+    /// caller's gas floors verbatim.
     pub async fn prepare_with(
         &self,
         candidate: &TxCandidate,
         nonce: u64,
         fee_override: Option<FeeOverride>,
         mut initial_caps: Option<GasPriceCaps>,
-        sidecar: Option<Arc<BlobTransactionSidecarEip7594>>,
+        mut sidecar: Option<Arc<BlobTransactionSidecarEip7594>>,
+        estimate: bool,
     ) -> TxManagerResult<PreparedTx> {
         for retry in 0..=Self::PREPARE_MAX_RETRIES {
             match self
-                .craft(candidate, nonce, fee_override, initial_caps.take(), sidecar.clone())
+                .craft(candidate, nonce, fee_override, initial_caps.take(), &mut sidecar, estimate)
                 .await
             {
                 Ok(prepared) => return Ok(prepared),
@@ -224,13 +221,17 @@ where
     }
 
     /// Validates, prices, estimates, signs, and encodes one transaction version.
+    ///
+    /// A sidecar built for a blob candidate is stored back into
+    /// `cached_sidecar` so retries and replacements never recompute it.
     pub async fn craft(
         &self,
         candidate: &TxCandidate,
         nonce: u64,
         fee_override: Option<FeeOverride>,
         caps: Option<GasPriceCaps>,
-        cached_sidecar: Option<Arc<BlobTransactionSidecarEip7594>>,
+        cached_sidecar: &mut Option<Arc<BlobTransactionSidecarEip7594>>,
+        estimate: bool,
     ) -> TxManagerResult<PreparedTx> {
         // Phase 1: reject transaction shapes that cannot be represented by the
         // selected EIP-1559 or EIP-4844 envelope.
@@ -240,7 +241,7 @@ where
                 "blob transactions must have a recipient address".to_string(),
             ));
         }
-        if is_blob && candidate.blobs.len() > MAX_BLOBS_PER_TX {
+        if candidate.blobs.len() > MAX_BLOBS_PER_TX {
             return Err(TxManagerError::Unsupported(format!(
                 "blob count {} exceeds maximum {} per transaction",
                 candidate.blobs.len(),
@@ -255,7 +256,7 @@ where
             None => self.suggest_gas_price_caps_for(is_blob).await?,
         };
         let (tip_cap, fee_cap) =
-            fee_override.as_ref().map_or((caps.gas_tip_cap, caps.gas_fee_cap), |floor| {
+            fee_override.map_or((caps.gas_tip_cap, caps.gas_fee_cap), |floor| {
                 (caps.gas_tip_cap.max(floor.gas_tip_cap), caps.gas_fee_cap.max(floor.gas_fee_cap))
             });
         let blob_fee_cap = if is_blob {
@@ -264,7 +265,7 @@ where
                     "blob fee cap missing while constructing a blob transaction".to_string(),
                 )
             })?;
-            Some(network.max(fee_override.as_ref().and_then(|f| f.blob_fee_cap).unwrap_or(0)))
+            Some(network.max(fee_override.and_then(|floor| floor.blob_fee_cap).unwrap_or(0)))
         } else {
             None
         };
@@ -290,8 +291,12 @@ where
 
         let built_sidecar = if is_blob {
             let sidecar = match cached_sidecar {
-                Some(sidecar) => sidecar,
-                None => Arc::new(BlobTxBuilder::build_sidecar(&candidate.blobs)?),
+                Some(sidecar) => Arc::clone(sidecar),
+                None => {
+                    let built = Arc::new(BlobTxBuilder::build_sidecar(&candidate.blobs)?);
+                    *cached_sidecar = Some(Arc::clone(&built));
+                    built
+                }
             };
             request.sidecar = Some((*sidecar).clone().into());
             request.populate_blob_hashes();
@@ -302,28 +307,24 @@ where
         };
 
         // Phase 4: estimate without serializing the large sidecar through RPC,
-        // then restore it for local signing. Explicit gas is a floor, never a
-        // replacement for the provider estimate.
-        let sidecar_stash = request.sidecar.take();
-        let estimated = RuntimeTimeout::run(
-            &self.runtime,
-            self.config.network_timeout,
-            self.provider.estimate_gas(request.clone()),
-        )
-        .await
-        .map_err(|_| self.rpc_error("estimate_gas timed out"))?
-        .map_err(|error| {
-            let error = self.classify_rpc(&error);
-            if matches!(error, TxManagerError::ExecutionReverted { .. }) {
-                error!(error_kind = error.kind(), "gas estimation reverted");
-            }
-            error
-        })?;
-        request.sidecar = sidecar_stash;
-        let gas_limit = candidate
-            .gas_limit
-            .max(fee_override.as_ref().map_or(0, |floor| floor.gas_limit_floor))
-            .max(estimated);
+        // then restore it for local signing. Explicit gas and replacement
+        // floors are minima, never a substitute for the estimate. When the
+        // caller disables estimation the floors are used verbatim.
+        let mut gas_limit =
+            candidate.gas_limit.max(fee_override.map_or(0, |floor| floor.gas_limit_floor));
+        if estimate {
+            let sidecar_stash = request.sidecar.take();
+            let estimated = self
+                .query("estimate_gas timed out", self.provider.estimate_gas(request.clone()))
+                .await
+                .inspect_err(|error| {
+                    if matches!(error, TxManagerError::ExecutionReverted { .. }) {
+                        error!(error_kind = error.kind(), "gas estimation reverted");
+                    }
+                })?;
+            request.sidecar = sidecar_stash;
+            gas_limit = gas_limit.max(estimated);
+        }
         request = request.with_gas_limit(gas_limit);
 
         // Phase 5: sign exactly once and retain the canonical envelope hash;
@@ -363,22 +364,17 @@ where
     pub async fn suggest_gas_price_caps_for(&self, is_blob: bool) -> TxManagerResult<GasPriceCaps> {
         // Tip and latest block are always required. Blob base fee is requested
         // only for type-3 construction.
-        let tip = RuntimeTimeout::run(
-            &self.runtime,
-            self.config.network_timeout,
+        let tip = self.query(
+            "get_max_priority_fee_per_gas timed out",
             self.provider.get_max_priority_fee_per_gas(),
         );
-        let block = RuntimeTimeout::run(
-            &self.runtime,
-            self.config.network_timeout,
+        let block = self.query(
+            "get_block_by_number timed out",
             self.provider.get_block_by_number(BlockNumberOrTag::Latest),
         );
         let (tip, block, blob_fee) = if is_blob {
-            let blob_fee = RuntimeTimeout::run(
-                &self.runtime,
-                self.config.network_timeout,
-                self.provider.get_blob_base_fee(),
-            );
+            let blob_fee =
+                self.query("get_blob_base_fee timed out", self.provider.get_blob_base_fee());
             let (tip, block, blob_fee) = tokio::join!(tip, block, blob_fee);
             (tip, block, Some(blob_fee))
         } else {
@@ -388,19 +384,13 @@ where
 
         // Preserve raw caps for fee-limit checks before applying operational
         // floors such as min tip, base fee, and blob fee.
-        let raw_tip = tip
-            .map_err(|_| self.rpc_error("get_max_priority_fee_per_gas timed out"))?
-            .map_err(|error| self.classify_rpc(&error))?;
-        let block = block
-            .map_err(|_| self.rpc_error("get_block_by_number timed out"))?
-            .map_err(|error| self.classify_rpc(&error))?
-            .ok_or_else(|| self.rpc_error("latest block not found"))?;
-        let raw_base_fee = u128::from(
-            block
-                .header
-                .base_fee_per_gas
-                .ok_or_else(|| self.rpc_error("base fee not available"))?,
-        );
+        let raw_tip = tip?;
+        let block = block?.ok_or_else(|| {
+            RpcErrorClassifier::rpc_error("latest block not found", self.metrics.as_ref())
+        })?;
+        let raw_base_fee = u128::from(block.header.base_fee_per_gas.ok_or_else(|| {
+            RpcErrorClassifier::rpc_error("base fee not available", self.metrics.as_ref())
+        })?);
         let raw_gas_fee_cap = FeeCalculator::calc_gas_fee_cap(raw_base_fee, raw_tip);
         let tip_cap = raw_tip.max(self.config.min_tip_cap);
         let base_fee = raw_base_fee.max(self.config.min_basefee);
@@ -410,9 +400,7 @@ where
 
         let (blob_fee_cap, raw_blob_fee_cap) = match blob_fee {
             Some(blob_fee) => {
-                let raw = blob_fee
-                    .map_err(|_| self.rpc_error("get_blob_base_fee timed out"))?
-                    .map_err(|error| self.classify_rpc(&error))?;
+                let raw = blob_fee?;
                 let raw_cap = FeeCalculator::calc_blob_fee_cap(raw);
                 let cap = FeeCalculator::calc_blob_fee_cap(raw.max(self.config.min_blob_fee));
                 self.metrics.record_blob_fee(cap as f64 / WEI_PER_GWEI);
@@ -458,19 +446,16 @@ where
         Ok(())
     }
 
-    /// Classifies a transport error and records infrastructure failures.
-    pub fn classify_rpc(&self, error: &TransportError) -> TxManagerError {
-        let classified = RpcErrorClassifier::classify_rpc_error(error);
-        if classified.is_rpc_error() {
-            self.metrics.record_rpc_error();
-        }
-        classified
-    }
-
-    /// Creates a sanitized local RPC error and records it.
-    pub fn rpc_error(&self, message: &str) -> TxManagerError {
-        self.metrics.record_rpc_error();
-        TxManagerError::Rpc(message.to_string())
+    /// Runs one bounded chain query, classifying timeout and transport failures.
+    pub async fn query<F, T>(&self, timeout_message: &str, request: F) -> TxManagerResult<T>
+    where
+        F: IntoFuture<Output = Result<T, TransportError>>,
+        F::IntoFuture: Send,
+    {
+        RuntimeTimeout::run(&self.runtime, self.config.network_timeout, request)
+            .await
+            .map_err(|_| RpcErrorClassifier::rpc_error(timeout_message, self.metrics.as_ref()))?
+            .map_err(|error| RpcErrorClassifier::classify_and_record(&error, self.metrics.as_ref()))
     }
 }
 
@@ -479,7 +464,7 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_consensus::{SignableTransaction, TxEip1559, TxEip4844Variant, TxEnvelope};
-    use alloy_eips::{eip4844::Blob, eip7594::CELLS_PER_EXT_BLOB};
+    use alloy_eips::{Decodable2718, eip4844::Blob, eip7594::CELLS_PER_EXT_BLOB};
     use alloy_network::{EthereumWallet, TxSigner};
     use alloy_primitives::{Address, Bytes, Signature, TxKind, U256};
     use alloy_provider::{RootProvider, builder as provider_builder, mock::Asserter};
@@ -539,8 +524,12 @@ mod tests {
         }
     }
 
+    fn to_envelope(prepared: &PreparedTx) -> TxEnvelope {
+        TxEnvelope::decode_2718(&mut prepared.raw_tx.as_ref()).expect("valid transaction envelope")
+    }
+
     fn decode_eip1559(prepared: &PreparedTx) -> TxEip1559 {
-        match prepared.to_envelope().expect("valid transaction envelope") {
+        match to_envelope(prepared) {
             TxEnvelope::Eip1559(signed) => signed.strip_signature(),
             other => panic!("expected EIP-1559, got {other:?}"),
         }
@@ -565,7 +554,7 @@ mod tests {
         assert_eq!(tx.gas_limit, 21_000);
         assert_eq!(prepared.gas_tip_cap, tx.max_priority_fee_per_gas);
         assert_eq!(prepared.gas_fee_cap, tx.max_fee_per_gas);
-        assert_eq!(prepared.tx_hash, *prepared.to_envelope().unwrap().tx_hash());
+        assert_eq!(prepared.tx_hash, *to_envelope(&prepared).tx_hash());
     }
 
     #[tokio::test]
@@ -604,7 +593,7 @@ mod tests {
             .prepare_tx(&single_blob_candidate(), 0)
             .await
             .expect("blob transaction should be constructed");
-        let envelope = prepared.to_envelope().expect("valid envelope");
+        let envelope = to_envelope(&prepared);
         let signed = envelope.as_eip4844().expect("EIP-4844 envelope");
         let inner = signed.tx().tx();
 
@@ -650,10 +639,11 @@ mod tests {
 
     #[tokio::test]
     async fn construction_applies_fee_floors() {
+        // No estimate response is pushed: a floored (replacement) construction
+        // must not call `estimate_gas`.
         let asserter = Asserter::new();
         push_fee_inputs(&asserter, false);
         push_fee_inputs(&asserter, false);
-        push_gas_estimate(&asserter);
         let builder = test_builder(asserter);
         let caps = builder.suggest_gas_price_caps_for(false).await.unwrap();
         let floor = FeeOverride {
@@ -663,13 +653,34 @@ mod tests {
             gas_limit_floor: 80_000,
         };
         let prepared = builder
-            .prepare_with(&value_transfer(1_000), 0, Some(floor), None, None)
+            .prepare_with(&value_transfer(1_000), 0, Some(floor), None, None, false)
             .await
             .expect("fee floor should be applied");
 
         assert_eq!(prepared.gas_tip_cap, floor.gas_tip_cap);
         assert_eq!(prepared.gas_fee_cap, floor.gas_fee_cap);
         assert!(prepared.gas_limit >= floor.gas_limit_floor);
+    }
+
+    #[tokio::test]
+    async fn replacement_construction_reuses_the_gas_limit_without_estimating() {
+        // Responses cover the initial build and the bump's fee refresh only;
+        // an estimate call from the replacement would hit an empty queue.
+        let asserter = Asserter::new();
+        push_fee_inputs(&asserter, false);
+        push_gas_estimate(&asserter);
+        push_fee_inputs(&asserter, false);
+        let builder = test_builder(asserter);
+        let candidate = value_transfer(1_000);
+
+        let initial = builder.prepare_tx(&candidate, 0).await.unwrap();
+        let bumped = builder
+            .prepare_replacement_tx(&candidate, &initial, 0, ReplacementReason::FeeBump)
+            .await
+            .expect("replacement should build without estimating gas");
+
+        assert_eq!(bumped.gas_limit, initial.gas_limit);
+        assert!(bumped.gas_fee_cap > initial.gas_fee_cap);
     }
 
     #[tokio::test]

@@ -7,20 +7,8 @@ use std::{sync::Arc, time::Duration};
 use alloy_primitives::U256;
 use alloy_provider::Provider;
 use base_runtime::TokioRuntime;
-use base_tx_manager::{
-    ChainSweeper, NoopTxMetrics, PublishedAttempt, TxManager, TxManagerConfig, VersionId,
-    VersionKind,
-};
-use common::{mine_block, setup_with_config, value_transfer};
-
-fn fast_config() -> TxManagerConfig {
-    TxManagerConfig {
-        num_confirmations: 1,
-        publish_retry_delay: Duration::from_millis(10),
-        receipt_query_interval: Duration::from_millis(10),
-        ..TxManagerConfig::default()
-    }
-}
+use base_tx_manager::{ChainSweeper, NoopTxMetrics, PublishedAttempt, TxManager, VersionKind};
+use common::{fast_config, mine_block, setup_with_config, value_transfer};
 
 #[tokio::test]
 async fn canonical_receipt_disappears_when_a_reorg_removes_its_block() {
@@ -30,11 +18,7 @@ async fn canonical_receipt_disappears_when_a_reorg_removes_its_block() {
     let receipt =
         manager.submit(value_transfer(1)).wait().await.expect("transaction should confirm");
     let confirmed_height = provider.get_block_number().await.expect("block number should load");
-    let attempt = PublishedAttempt {
-        version: VersionId::INITIAL,
-        kind: VersionKind::Original,
-        hash: receipt.transaction_hash,
-    };
+    let attempt = PublishedAttempt { kind: VersionKind::Original, hash: receipt.transaction_hash };
     let sweeper = ChainSweeper::new(
         provider.clone(),
         TokioRuntime::new(),

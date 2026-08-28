@@ -28,6 +28,13 @@ use crate::{
     TxMetrics,
 };
 
+/// Resubmission periods after which an unresolved committed slot is reported.
+///
+/// A committed slot leaves the ledger only through canonical resolution — it
+/// is the one state with no self-recovery exit — so prolonged non-resolution
+/// must be visible. Ten periods sit well above a healthy confirmation time.
+pub const STUCK_RESUBMISSION_MULTIPLIER: u32 = 10;
+
 /// Commands sent by [`crate::SimpleTxManager`] to the coordinator.
 #[derive(Debug)]
 pub enum CoordinatorCommand {
@@ -174,6 +181,8 @@ pub struct TxCoordinator<P, R> {
     sweep_in_progress: bool,
     /// Whether shutdown is waiting for pending work to finish.
     closing: bool,
+    /// Oldest committed slot already reported as unresolved.
+    stuck_warned: Option<SubmissionId>,
 }
 
 impl<P, R> TxCoordinator<P, R>
@@ -216,6 +225,7 @@ where
                 closed,
                 sweep_in_progress: false,
                 closing: false,
+                stuck_warned: None,
             },
             handle,
         )
@@ -227,6 +237,7 @@ where
         let mut publish_ticks = self.runtime.interval(self.config.publish_retry_delay);
         let mut sweep_ticks = self.runtime.interval(self.config.receipt_query_interval);
         let mut commands_open = true;
+        let mut pushed_revision = 0;
 
         loop {
             // Handle caller commands before worker results when both are ready.
@@ -263,6 +274,7 @@ where
                     // Wake the loop so `plan()` can start publication retries that are due.
                 }
                 _ = sweep_ticks.next() => {
+                    self.warn_stuck_front();
                     self.start_sweep();
                 }
                 _ = self.runtime.cancelled() => {
@@ -274,7 +286,10 @@ where
 
             // Apply the latest result, then schedule the next required work.
             self.start_planned_work();
-            self.workers.publishers.update(self.ledger.publisher_snapshot());
+            if self.ledger.revision() != pushed_revision {
+                pushed_revision = self.ledger.revision();
+                self.workers.publishers.update(self.ledger.publisher_snapshot());
+            }
 
             if self.ledger.sweep_requested() {
                 self.start_sweep();
@@ -343,7 +358,6 @@ where
                     }
                     Err(error) => {
                         warn!(error_kind = error.kind(), "pending transaction sweep failed");
-                        self.ledger.apply_sweep(Vec::new());
                     }
                 }
             }
@@ -361,7 +375,7 @@ where
     pub fn start_planned_work(&mut self) {
         for work in self.ledger.plan(self.runtime.now()) {
             match work {
-                PendingWork::PrepareTx { submission_id, nonce, candidate, .. } => {
+                PendingWork::PrepareTx { submission_id, nonce, candidate } => {
                     let builder = self.workers.builder.clone();
                     self.spawn_worker(
                         "prepare tx",
@@ -401,6 +415,29 @@ where
                 }
             }
         }
+    }
+
+    /// Reports the oldest committed slot once it stays unresolved too long.
+    pub fn warn_stuck_front(&mut self) {
+        let deadline = self.config.resubmission_timeout * STUCK_RESUBMISSION_MULTIPLIER;
+        let stuck = self.ledger.oldest_committed().filter(|(_, committed_at)| {
+            self.runtime.now() >= committed_at.saturating_add(deadline)
+        });
+
+        let Some((submission_id, committed_at)) = stuck else {
+            self.stuck_warned = None;
+            return;
+        };
+        if self.stuck_warned == Some(submission_id) {
+            return;
+        }
+        self.stuck_warned = Some(submission_id);
+        self.metrics.record_tx_stuck();
+        warn!(
+            submission_id = ?submission_id,
+            age = ?self.runtime.now().saturating_sub(committed_at),
+            "committed transaction unresolved for too long",
+        );
     }
 
     /// Starts a chain sweep unless one is already running.
@@ -455,5 +492,146 @@ where
         self.closing = true;
         self.closed.store(true, Ordering::Release);
         self.ledger.close();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use alloy_primitives::{B256, U256, address};
+    use alloy_provider::{RootProvider, builder as provider_builder, mock::Asserter};
+    use alloy_rpc_types_eth::Block;
+    use alloy_signer_local::PrivateKeySigner;
+    use base_runtime::{Cancellation, Spawner, TokioRuntime};
+
+    use super::{
+        super::pending::{PendingPolicy, StagedSubmission},
+        *,
+    };
+    use crate::{NoopTxMetrics, SubmissionStatus};
+
+    fn candidate() -> TxCandidate {
+        TxCandidate {
+            to: Some(address!("0x4242424242424242424242424242424242424242")),
+            value: U256::from(1_000),
+            ..Default::default()
+        }
+    }
+
+    fn coordinator_with(
+        runtime: TokioRuntime,
+        chain: Asserter,
+        publish: Asserter,
+    ) -> (TxCoordinator<RootProvider, TokioRuntime>, CoordinatorHandle) {
+        let config = TxManagerConfig {
+            publish_retry_delay: Duration::from_millis(10),
+            // Keep periodic sweeps out of these tests.
+            receipt_query_interval: Duration::from_secs(3_600),
+            ..TxManagerConfig::default()
+        };
+        let chain_provider = provider_builder().connect_mocked_client(chain);
+        let wallet = alloy_network::EthereumWallet::from(
+            PrivateKeySigner::from_slice(&[1_u8; 32]).expect("valid test key"),
+        );
+        let metrics = Arc::new(NoopTxMetrics);
+
+        let builder = TxBuilder::new(
+            chain_provider.clone(),
+            runtime.clone(),
+            wallet,
+            config.clone(),
+            1,
+            Arc::clone(&metrics) as _,
+        );
+        let sweeper = ChainSweeper::new(
+            chain_provider,
+            runtime.clone(),
+            Address::ZERO,
+            1,
+            config.network_timeout,
+            Arc::clone(&metrics) as _,
+        );
+        let (publishers, publisher_events) = PublisherGroup::new(
+            vec![provider_builder().connect_mocked_client(publish)],
+            runtime.clone(),
+            config.network_timeout,
+            Arc::clone(&metrics) as _,
+        );
+        let ledger = PendingLedger::new(
+            0,
+            publishers.len(),
+            PendingPolicy {
+                publish_retry_delay: config.publish_retry_delay,
+                resubmission_timeout: config.resubmission_timeout,
+                tx_not_in_mempool_timeout: None,
+            },
+        );
+
+        TxCoordinator::new(
+            ledger,
+            CoordinatorWorkers { builder, sweeper, publishers },
+            publisher_events,
+            Address::ZERO,
+            runtime,
+            config,
+            metrics,
+        )
+    }
+
+    #[tokio::test]
+    async fn coordinator_prepares_publishes_and_commits_a_submission() {
+        // Chain reader: fee inputs and gas estimate for the initial build.
+        let chain = Asserter::new();
+        chain.push_success(&"0x3b9aca00");
+        let mut block: Block<alloy_rpc_types_eth::Transaction> = Block::default();
+        block.header.inner.base_fee_per_gas = Some(1_000_000_000);
+        chain.push_success(&block);
+        chain.push_success(&"0x5208");
+        // Publication backend: the mismatched hash makes the outcome ambiguous,
+        // which still commits the nonce.
+        let publish = Asserter::new();
+        publish.push_success(&B256::ZERO);
+
+        let runtime = TokioRuntime::new();
+        let (coordinator, handle) = coordinator_with(runtime.clone(), chain, publish);
+        runtime.spawn(coordinator.run());
+
+        // submit → plan → build worker → publish worker → committed slot.
+        let submission = handle.submit(candidate());
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while !matches!(
+            submission.snapshot().status,
+            SubmissionStatus::Pending { nonce: 0, version: 0 }
+        ) {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "submission should reach the pending ledger, got {:?}",
+                submission.snapshot().status
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+
+        // Runtime shutdown stops the loop and rejects new work.
+        runtime.cancel();
+        let rejected = handle.submit(candidate());
+        assert_eq!(rejected.wait().await.unwrap_err(), TxManagerError::ChannelClosed);
+    }
+
+    #[tokio::test]
+    async fn worker_panic_drains_staged_work_and_closes_the_handle() {
+        let runtime = TokioRuntime::new();
+        let (mut coordinator, handle) =
+            coordinator_with(runtime.clone(), Asserter::new(), Asserter::new());
+
+        let (staged, submission) = StagedSubmission::new(SubmissionId::new(1), candidate());
+        coordinator.handle_command(CoordinatorCommand::Submit(staged));
+        coordinator.handle_event(WorkerEvent::WorkerPanicked("prepare tx"));
+
+        // Staged work is drained and the shared handle stops accepting more.
+        assert_eq!(submission.wait().await.unwrap_err(), TxManagerError::ChannelClosed);
+        let rejected = handle.submit(candidate());
+        assert_eq!(rejected.wait().await.unwrap_err(), TxManagerError::ChannelClosed);
+        runtime.cancel();
     }
 }

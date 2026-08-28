@@ -5,25 +5,27 @@ pub use build::{PreparedTx, TxBuilder, WEI_PER_GWEI};
 
 mod coordinator;
 pub use coordinator::{
-    CoordinatorCommand, CoordinatorHandle, CoordinatorWorkers, TxCoordinator, WorkerEvent,
+    CoordinatorCommand, CoordinatorHandle, CoordinatorWorkers, STUCK_RESUBMISSION_MULTIPLIER,
+    TxCoordinator, WorkerEvent,
 };
 
 mod pending;
 pub use pending::{
     CancelRequest, NonceFetch, NonceSlot, PendingLedger, PendingPolicy, PendingWork,
-    PublishedAttempt, RejectionVerdict, ReplacementReason, ReplacementState, SignedVersion,
-    SlotEffects, SlotState, StagedSubmission, VersionId, VersionKind,
+    PublishedAttempt, ReplacementReason, ReplacementState, SignedVersion, SlotEffects, SlotState,
+    StagedSubmission, VersionId, VersionKind,
 };
 
 mod publisher;
 pub use publisher::{
     AcceptedPosition, AttemptedPosition, PublishOutcome, PublishReject, PublisherCursor,
-    PublisherEvent, PublisherGroup, PublisherId, PublisherSnapshot, PublisherTx, TxPublisher,
+    PublisherEvent, PublisherGroup, PublisherId, PublisherSnapshot, PublisherTx, RejectionVerdict,
+    TxPublisher,
 };
 
 mod sweep;
 
-use std::{fmt::Debug, future::Future, sync::Arc};
+use std::{fmt::Debug, future::Future, iter, sync::Arc};
 
 use alloy_network::{Ethereum, EthereumWallet, NetworkWallet};
 use alloy_primitives::Address;
@@ -53,8 +55,10 @@ pub trait TxManager: Send + Sync + Debug {
 
     /// Attempts to clear the oldest stuck nonce with a higher-fee self-transfer.
     ///
-    /// Success means the cancellation transaction may be live. Confirmation
-    /// can still be pending.
+    /// Success means the nonce is being released: either the cancellation
+    /// bytes may be live, or the original transaction resolved first — both
+    /// free the slot. Canonical confirmation can still be pending when this
+    /// returns.
     fn cancel_tx(&self) -> impl Future<Output = TxManagerResult<()>> + Send {
         std::future::ready(Ok(()))
     }
@@ -114,65 +118,26 @@ impl SimpleTxManager {
         P: Provider + Clone + Debug + Send + Sync + 'static,
         R: Runtime,
     {
+        // Phase 1: build the wallet and validate config locally. Fail before
+        // any RPC.
         let wallet = signer_config.build_wallet()?;
-        Self::start(
-            runtime,
-            chain_provider,
-            additional_publishers,
-            wallet,
-            config,
-            chain_id,
-            metrics,
-        )
-        .await
-    }
-
-    /// Validates setup, then starts the background coordinator.
-    ///
-    /// Call this only with a ready wallet. Prefer [`Self::new`] or
-    /// [`Self::new_with_runtime_and_publishers`] from application code.
-    pub async fn start<P, R>(
-        runtime: R,
-        chain_provider: P,
-        additional_publishers: Vec<P>,
-        wallet: EthereumWallet,
-        config: TxManagerConfig,
-        chain_id: u64,
-        metrics: Arc<dyn TxMetrics>,
-    ) -> TxManagerResult<Self>
-    where
-        P: Provider + Clone + Debug + Send + Sync + 'static,
-        R: Runtime,
-    {
-        // Phase 1: validate config locally. Fail before any RPC.
         config.validate().map_err(|error| TxManagerError::InvalidConfig(error.to_string()))?;
 
         // Phase 2: check that every RPC backend is on the expected chain.
-        // `chain_provider` and each extra publisher must all return `chain_id`.
-        let chain_provider_chain_id =
-            RuntimeTimeout::run(&runtime, config.network_timeout, chain_provider.get_chain_id())
-                .await
-                .map_err(|_| TxManagerError::Rpc("get_chain_id timed out".to_string()))?
-                .map_err(|error| RpcErrorClassifier::classify_rpc_error(&error))?;
-        if chain_provider_chain_id != chain_id {
-            return Err(TxManagerError::InvalidConfig(format!(
-                "chain_id mismatch: supplied {chain_id}, provider returned {chain_provider_chain_id}"
-            )));
-        }
-        for (index, publisher) in additional_publishers.iter().enumerate() {
-            let backend = index.saturating_add(1);
-            let publisher_chain_id =
-                RuntimeTimeout::run(&runtime, config.network_timeout, publisher.get_chain_id())
+        // `chain_provider` is backend 0; each extra publisher follows it.
+        for (backend, provider) in
+            iter::once(&chain_provider).chain(additional_publishers.iter()).enumerate()
+        {
+            let label =
+                if backend == 0 { String::new() } else { format!("publisher backend {backend} ") };
+            let backend_chain_id =
+                RuntimeTimeout::run(&runtime, config.network_timeout, provider.get_chain_id())
                     .await
-                    .map_err(|_| {
-                        TxManagerError::Rpc(format!(
-                            "publisher backend {backend} chain ID query timed out"
-                        ))
-                    })?
+                    .map_err(|_| TxManagerError::Rpc(format!("{label}get_chain_id timed out")))?
                     .map_err(|error| RpcErrorClassifier::classify_rpc_error(&error))?;
-            if publisher_chain_id != chain_id {
+            if backend_chain_id != chain_id {
                 return Err(TxManagerError::InvalidConfig(format!(
-                    "publisher backend {backend} chain_id mismatch: supplied {chain_id}, provider returned {publisher_chain_id}"
+                    "{label}chain_id mismatch: supplied {chain_id}, provider returned {backend_chain_id}"
                 )));
             }
         }

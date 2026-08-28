@@ -9,13 +9,7 @@ use base_tx_manager::{SubmissionStatus, TxManager, TxManagerConfig};
 use common::{mine_block, setup_with_config, value_transfer};
 
 fn fast_config() -> TxManagerConfig {
-    TxManagerConfig {
-        num_confirmations: 1,
-        publish_retry_delay: Duration::from_millis(10),
-        receipt_query_interval: Duration::from_millis(10),
-        resubmission_timeout: Duration::from_secs(1),
-        ..TxManagerConfig::default()
-    }
+    TxManagerConfig { resubmission_timeout: Duration::from_secs(1), ..common::fast_config() }
 }
 
 #[tokio::test]

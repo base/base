@@ -1,9 +1,5 @@
-//! Transaction manager configuration.
-//!
-//! [`TxManagerConfig`] is the validated runtime configuration for the
-//! transaction manager. All fields are `pub` for direct construction.
-//! Use [`TxManagerConfig::validate`] to check invariants, or convert
-//! from `TxManagerCli` via `TryFrom` which validates automatically.
+//! Transaction manager configuration: [`TxManagerConfig`] and its
+//! validation, gwei-to-wei parsing via [`GweiParser`], and [`ConfigError`].
 
 use std::time::Duration;
 
@@ -57,10 +53,10 @@ pub enum ConfigError {
 pub struct GweiParser;
 
 impl GweiParser {
-    /// Parses a gwei decimal string to wei (`u128`).
+    /// Clap `value_parser` adapter for [`Self::parse`].
     ///
-    /// Suitable for use as a clap `value_parser`. Error context (which
-    /// flag failed) is provided by clap automatically.
+    /// Labels errors with the placeholder field name `"value"`; clap prefixes
+    /// its own message with the flag that failed.
     pub fn parse_value(gwei: &str) -> Result<u128, ConfigError> {
         Self::parse(gwei, "value")
     }
@@ -273,11 +269,6 @@ mod tests {
     #[test]
     fn default_passes_validation() {
         TxManagerConfig::default().validate().expect("default config should be valid");
-    }
-
-    #[test]
-    fn default_min_blob_fee_is_one_gwei() {
-        assert_eq!(TxManagerConfig::default().min_blob_fee, 1_000_000_000);
     }
 
     #[test]

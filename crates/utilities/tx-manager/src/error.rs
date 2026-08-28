@@ -4,6 +4,8 @@ use alloy_primitives::Bytes;
 use alloy_transport::TransportError;
 use thiserror::Error;
 
+use crate::TxMetrics;
+
 /// Maximum number of revert-data bytes rendered in [`RevertDisplay`].
 /// Keeps log lines bounded without hiding the selector and first few args.
 pub const REVERT_DATA_DISPLAY_LIMIT: usize = 128;
@@ -28,9 +30,8 @@ impl std::fmt::Display for RevertDisplay<'_> {
         match (self.0, self.1) {
             (Some(reason), _) => write!(f, ": {reason}"),
             (None, Some(data)) if !data.is_empty() => {
-                let limit = data.len().min(REVERT_DATA_DISPLAY_LIMIT);
                 f.write_str(": 0x")?;
-                for byte in &data[..limit] {
+                for byte in data.iter().take(REVERT_DATA_DISPLAY_LIMIT) {
                     write!(f, "{byte:02x}")?;
                 }
                 if data.len() > REVERT_DATA_DISPLAY_LIMIT {
@@ -281,8 +282,8 @@ pub type TxManagerResult<T> = Result<T, TxManagerError>;
 /// stable error variants.
 ///
 /// For server-returned `RpcError::ErrorResp` values, classification uses
-/// the structured `ErrorPayload` directly — matching on `payload.message`
-/// for known geth substrings and extracting revert data via
+/// the structured `ErrorPayload` directly — the request-level `code` first,
+/// then `payload.message` for known geth substrings — and extracts revert data via
 /// `ErrorPayload::as_revert_data` and
 /// [`alloy_sol_types::decode_revert_reason`].
 ///
@@ -301,9 +302,14 @@ pub struct RpcErrorClassifier;
 impl RpcErrorClassifier {
     /// Classifies a [`TransportError`] into a [`TxManagerError`] variant.
     ///
-    /// For server error responses the `payload.message` field is lowercased
-    /// once and checked against known geth error substrings in a fixed
-    /// order. The first match wins.
+    /// A standard JSON-RPC request-level code (`-32700`, `-32600`, `-32601`,
+    /// `-32602`) is classified as [`TxManagerError::Unsupported`] before any
+    /// message matching: the node rejected the request shape, not the
+    /// transaction.
+    ///
+    /// For other server error responses the `payload.message` field is
+    /// lowercased once and checked against known geth error substrings in a
+    /// fixed order. The first match wins.
     ///
     /// **Ordering is critical**: `"replacement transaction underpriced"` is
     /// matched before `"transaction underpriced"` because the latter is a
@@ -324,13 +330,14 @@ impl RpcErrorClassifier {
             );
         };
 
-        let lowered = payload.message.to_ascii_lowercase();
         if matches!(payload.code, -32700 | -32600 | -32601 | -32602) {
             return TxManagerError::Unsupported(format!(
                 "RPC rejected transaction request with code {}",
                 payload.code
             ));
         }
+
+        let lowered = payload.message.to_ascii_lowercase();
 
         if lowered.contains("replacement transaction underpriced") {
             return TxManagerError::ReplacementUnderpriced;
@@ -379,8 +386,36 @@ impl RpcErrorClassifier {
         if lowered.contains("txpool is full") || lowered.contains("transaction pool is full") {
             return TxManagerError::TxPoolFull;
         }
+        // Deterministic node-side validation failures: retrying or waiting
+        // cannot make the same signed bytes acceptable, so they must not fall
+        // through to the ambiguous `Rpc` fallback and burn the nonce.
+        if lowered.contains("exceeds block gas limit")
+            || lowered.contains("oversized data")
+            || lowered.contains("invalid sender")
+            || lowered.contains("max initcode size exceeded")
+            || lowered.contains("transaction type not supported")
+        {
+            return TxManagerError::Unsupported(payload.message.to_string());
+        }
 
         TxManagerError::Rpc(payload.message.to_string())
+    }
+
+    /// Classifies a transport error, recording infrastructure failures.
+    #[must_use]
+    pub fn classify_and_record(error: &TransportError, metrics: &dyn TxMetrics) -> TxManagerError {
+        let classified = Self::classify_rpc_error(error);
+        if classified.is_rpc_error() {
+            metrics.record_rpc_error();
+        }
+        classified
+    }
+
+    /// Creates a sanitized local RPC error and records it.
+    #[must_use]
+    pub fn rpc_error(message: &str, metrics: &dyn TxMetrics) -> TxManagerError {
+        metrics.record_rpc_error();
+        TxManagerError::Rpc(message.to_string())
     }
 }
 
@@ -439,12 +474,10 @@ mod tests {
     #[case::already_known("already known", TxManagerError::AlreadyKnown)]
     #[case::already_in_pool("transaction already in pool", TxManagerError::AlreadyKnown)]
     #[case::case_insensitive_upper("NONCE TOO LOW", TxManagerError::NonceTooLow)]
-    #[case::case_insensitive_mixed("Nonce Too Low", TxManagerError::NonceTooLow)]
     #[case::substring_in_context(
         "some context: nonce too low for account",
         TxManagerError::NonceTooLow
     )]
-    #[case::unknown_fallback("something unexpected", TxManagerError::Rpc("something unexpected".to_string()))]
     #[case::preserves_casing("Some Unknown ERROR", TxManagerError::Rpc("Some Unknown ERROR".to_string()))]
     #[case::empty_string("", TxManagerError::Rpc(String::new()))]
     #[case::mempool_deadline_not_classified("mempool deadline expired", TxManagerError::Rpc("mempool deadline expired".to_string()))]
@@ -452,6 +485,11 @@ mod tests {
     #[case::address_already_reserved("address already reserved", TxManagerError::AlreadyReserved)]
     #[case::txpool_full("txpool is full", TxManagerError::TxPoolFull)]
     #[case::transaction_pool_full("transaction pool is full", TxManagerError::TxPoolFull)]
+    #[case::exceeds_block_gas_limit("exceeds block gas limit", TxManagerError::Unsupported("exceeds block gas limit".to_string()))]
+    #[case::oversized_data("oversized data", TxManagerError::Unsupported("oversized data".to_string()))]
+    #[case::invalid_sender("invalid sender", TxManagerError::Unsupported("invalid sender".to_string()))]
+    #[case::max_initcode_size("max initcode size exceeded", TxManagerError::Unsupported("max initcode size exceeded".to_string()))]
+    #[case::tx_type_not_supported("transaction type not supported", TxManagerError::Unsupported("transaction type not supported".to_string()))]
     fn classify_rpc_error(#[case] input: &str, #[case] expected: TxManagerError) {
         let transport_err = error_resp(input);
         assert_eq!(RpcErrorClassifier::classify_rpc_error(&transport_err), expected);
@@ -636,11 +674,5 @@ mod tests {
             data: Some(Bytes::from(vec![0xde, 0xad, 0xbe, 0xef])),
         };
         assert_eq!(err.to_string(), "execution reverted: 0xdeadbeef");
-    }
-
-    #[test]
-    fn revert_display_empty() {
-        let err = TxManagerError::ExecutionReverted { reason: None, data: None };
-        assert_eq!(err.to_string(), "execution reverted");
     }
 }

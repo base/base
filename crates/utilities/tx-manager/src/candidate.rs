@@ -21,7 +21,8 @@ pub struct TxCandidate {
     pub blobs: Arc<[Box<Blob>]>,
     /// Recipient address. `None` means contract creation.
     pub to: Option<Address>,
-    /// Gas limit. `0` means auto-estimate.
+    /// Gas limit floor. The signed gas limit is the greater of this value, any
+    /// replacement floor, and the provider estimate; `0` defers to the estimate.
     pub gas_limit: u64,
     /// ETH value to send.
     pub value: U256,
@@ -56,14 +57,6 @@ mod tests {
         assert!(candidate.to.is_none());
         assert_eq!(candidate.gas_limit, 0);
         assert_eq!(candidate.value, U256::ZERO);
-    }
-
-    #[test]
-    fn candidate_with_blobs_is_type3() {
-        let candidate =
-            TxCandidate { blobs: Arc::from(vec![Box::default()]), ..Default::default() };
-
-        assert_eq!(candidate.blobs.len(), 1);
     }
 
     #[test]

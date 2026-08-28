@@ -8,12 +8,15 @@ use tokio::sync::oneshot;
 use super::{
     super::{
         build::PreparedTx,
-        publisher::{PublishOutcome, PublishReject, PublisherEvent, PublisherId, PublisherTx},
+        publisher::{
+            PublishOutcome, PublishReject, PublisherEvent, PublisherId, PublisherTx,
+            RejectionVerdict,
+        },
         sweep::{SweepOutcome, SweepTarget},
     },
     work::{
-        PendingPolicy, PendingWork, PublishedAttempt, RejectionVerdict, ReplacementReason,
-        StagedSubmission, VersionId, VersionKind,
+        PendingPolicy, PendingWork, PublishedAttempt, ReplacementReason, StagedSubmission,
+        VersionId, VersionKind,
     },
 };
 use crate::{
@@ -142,7 +145,10 @@ pub enum SlotState {
         deadline: Option<Duration>,
     },
     /// At least one backend may have made this nonce live.
-    Committed,
+    Committed {
+        /// Time of the first potentially-live publication.
+        at: Duration,
+    },
 }
 
 /// Preparation state for the next signed version.
@@ -165,7 +171,7 @@ pub enum ReplacementState {
 }
 
 /// Account nonce refresh state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub enum NonceFetch {
     /// No account nonce read is needed.
     Idle,
@@ -238,9 +244,13 @@ impl NonceSlot {
         now: Duration,
     ) -> Self {
         let deadline = policy.tx_not_in_mempool_timeout.map(|timeout| now.saturating_add(timeout));
+        let kind = match staged.completion {
+            SubmissionCompletion::Transaction(_) => VersionKind::Original,
+            SubmissionCompletion::Cancel(_) => VersionKind::Cancel,
+        };
         let active = SignedVersion::new(
             VersionId::INITIAL,
-            staged.kind,
+            kind,
             staged.candidate,
             prepared,
             publisher_count,
@@ -269,12 +279,8 @@ impl NonceSlot {
         self.submission_id
     }
 
-    /// Returns the nonce represented by this slot.
-    pub const fn nonce(&self) -> u64 {
-        self.nonce
-    }
-
     /// Returns the active signed version identifier.
+    #[cfg(test)]
     pub const fn active_version(&self) -> VersionId {
         self.active.id
     }
@@ -286,7 +292,15 @@ impl NonceSlot {
 
     /// Returns whether this nonce may already be live.
     pub const fn is_committed(&self) -> bool {
-        matches!(self.state, SlotState::Committed)
+        matches!(self.state, SlotState::Committed { .. })
+    }
+
+    /// Returns when the first potentially-live publication committed this slot.
+    pub const fn committed_at(&self) -> Option<Duration> {
+        match self.state {
+            SlotState::Committed { at } => Some(at),
+            SlotState::Provisional { .. } => None,
+        }
     }
 
     /// Returns the number of potentially-live hashes retained for sweeping.
@@ -375,8 +389,9 @@ impl NonceSlot {
             return SlotEffects::default();
         }
 
-        // Phase 4: recycle a provisional nonce once every publisher finished its
-        // pass; each response is a definitive rejection, so a verdict exists.
+        // Phase 4: once the admission window has elapsed, fail a provisional slot
+        // whose pass is complete; every response is a definitive rejection, so a
+        // verdict exists.
         if self.provisional_deadline_reached(now)
             && let Some(rejections) = self.active.rejections()
         {
@@ -411,19 +426,20 @@ impl NonceSlot {
         // Phase 2: Accepted and Ambiguous both mean the nonce may be live.
         // This remains true for a late result from an older signed version.
         if potentially_live {
-            self.record_attempt(event.version, event.kind, event.tx_hash);
+            self.record_attempt(event.kind, event.tx_hash);
             if current {
                 self.active.live_at.get_or_insert(now);
                 self.previous = None;
             }
             if self.is_provisional() {
-                self.state = SlotState::Committed;
+                self.state = SlotState::Committed { at: now };
                 effects.next_nonce_at_least = Some(self.nonce.saturating_add(1));
             }
             if matches!(event.kind, VersionKind::Cancel) {
                 self.finish_cancel(Ok(()));
-                if matches!(self.completion, Some(SubmissionCompletion::Cancel(_)))
-                    && let Some(SubmissionCompletion::Cancel(result)) = self.completion.take()
+                if let Some(SubmissionCompletion::Cancel(result)) = self
+                    .completion
+                    .take_if(|completion| matches!(completion, SubmissionCompletion::Cancel(_)))
                 {
                     let _ = result.send(Ok(()));
                 }
@@ -492,11 +508,19 @@ impl NonceSlot {
         }
         self.replacement = ReplacementState::Idle;
 
-        // A provisional slot with no potentially-live hash can still fail
-        // safely. Committed slots retain their active version and retry later.
+        // A provisional slot can still fail safely: it has no potentially-live
+        // hash (recording an attempt commits the slot) and nothing in flight (a
+        // replacement is requested only after a complete pass, and no pass
+        // opens while one is requested or being built). Committed slots retain
+        // their active version and retry later.
         let prepared = match result {
             Ok(prepared) => prepared,
-            Err(error) if self.is_provisional() && self.attempts.is_empty() => {
+            Err(error) if self.is_provisional() => {
+                debug_assert!(self.attempts.is_empty(), "provisional slot retained attempts");
+                debug_assert!(
+                    self.active.all_responded(),
+                    "replacement was built during an open publication pass"
+                );
                 return SlotEffects { failed: Some(error), ..Default::default() };
             }
             Err(error) => {
@@ -571,7 +595,8 @@ impl NonceSlot {
         result: oneshot::Sender<TxManagerResult<()>>,
     ) -> Result<(), oneshot::Sender<TxManagerResult<()>>> {
         // A cancel already owns the slot. Report success only once its bytes may
-        // be live; otherwise the caller keeps waiting on the in-progress cancel.
+        // be live; otherwise hand the sender back so the ledger fails it with
+        // `CancellationInProgress`.
         if matches!(self.active.kind, VersionKind::Cancel) {
             return if self.active.live_at.is_some() {
                 let _ = result.send(Ok(()));
@@ -601,8 +626,7 @@ impl NonceSlot {
             SweepOutcome::Superseded => Err(TxManagerError::Superseded),
         };
         if let Some(completion) = self.completion.take() {
-            let cancellation_confirmed = matches!(result, Err(TxManagerError::Cancelled));
-            completion.finish(result, cancellation_confirmed);
+            completion.finish(result);
         }
         self.finish_cancel(Ok(()));
     }
@@ -610,12 +634,13 @@ impl NonceSlot {
     /// Resolves this safely recyclable slot with a terminal error.
     pub fn fail(mut self, error: TxManagerError) {
         if let Some(completion) = self.completion.take() {
-            completion.finish(Err(error.clone()), false);
+            completion.finish(Err(error.clone()));
         }
         self.finish_cancel(Err(error));
     }
 
     /// Returns whether every backend accepted the active version.
+    #[cfg(test)]
     pub fn all_accepted(&self) -> bool {
         self.active.all_accepted()
     }
@@ -650,9 +675,9 @@ impl NonceSlot {
     }
 
     /// Retains one potentially-live hash for canonical resolution.
-    fn record_attempt(&mut self, version: VersionId, kind: VersionKind, hash: B256) {
+    fn record_attempt(&mut self, kind: VersionKind, hash: B256) {
         if self.attempts.iter().all(|attempt| attempt.hash != hash) {
-            self.attempts.push(PublishedAttempt { version, kind, hash });
+            self.attempts.push(PublishedAttempt { kind, hash });
         }
     }
 
@@ -668,6 +693,9 @@ impl NonceSlot {
         effects: &mut SlotEffects,
     ) {
         let rejected_kind = self.active.kind;
+        // The rejected version and any pending build backoff belong to a
+        // replacement that no longer exists; the restored version's next bump
+        // is timed from now, like a freshly installed version.
         self.replacement_ready_at = now;
         if matches!(rejected_kind, VersionKind::Cancel) {
             self.finish_cancel(Err(error));
@@ -700,10 +728,9 @@ impl NonceSlot {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::Bytes;
 
     use super::*;
-    use crate::SubmissionHandle;
+    use crate::{SubmissionHandle, test_utils::StubTx};
 
     fn policy() -> PendingPolicy {
         PendingPolicy {
@@ -717,22 +744,18 @@ mod tests {
         TxCandidate { to: Some(Address::with_last_byte(1)), ..Default::default() }
     }
 
-    fn prepared(nonce: u64, marker: u8) -> PreparedTx {
-        PreparedTx {
-            raw_tx: Bytes::from(vec![marker]),
-            tx_hash: B256::with_last_byte(marker),
-            gas_tip_cap: 1,
-            gas_fee_cap: 2,
-            blob_fee_cap: None,
-            gas_limit: 21_000,
-            nonce,
-            sidecar: None,
-        }
-    }
-
     fn slot(publisher_count: usize) -> (NonceSlot, SubmissionHandle) {
         let (staged, handle) = StagedSubmission::new(SubmissionId::new(1), candidate());
-        (NonceSlot::new(staged, prepared(0, 1), publisher_count, policy(), Duration::ZERO), handle)
+        (
+            NonceSlot::new(
+                staged,
+                StubTx::prepared(0, 1),
+                publisher_count,
+                policy(),
+                Duration::ZERO,
+            ),
+            handle,
+        )
     }
 
     fn event(slot: &NonceSlot, publisher: usize, outcome: PublishOutcome) -> PublisherEvent {
@@ -774,7 +797,7 @@ mod tests {
         slot.replacement_prepared(
             base_version,
             reason,
-            Ok(prepared(0, 2)),
+            Ok(StubTx::prepared(0, 2)),
             Duration::from_secs(10),
             policy(),
         );
@@ -804,6 +827,72 @@ mod tests {
             Some(PendingWork::PrepareReplacementTx {
                 nonce: 5,
                 reason: ReplacementReason::Resign,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn any_nonce_too_low_in_a_full_pass_requires_a_nonce_read() {
+        let (mut slot, _) = slot(2);
+        slot.record_publish(
+            &event(&slot, 0, PublishOutcome::Rejected(PublishReject::NonceTooLow)),
+            Duration::ZERO,
+        );
+        slot.record_publish(
+            &event(
+                &slot,
+                1,
+                PublishOutcome::Rejected(PublishReject::Deterministic(
+                    TxManagerError::InsufficientFunds,
+                )),
+            ),
+            Duration::ZERO,
+        );
+
+        assert!(matches!(
+            slot.plan(Duration::ZERO, policy()).work,
+            Some(PendingWork::FetchAccountNonce { .. })
+        ));
+    }
+
+    #[test]
+    fn newer_account_nonce_on_a_committed_slot_requests_a_sweep() {
+        let (mut slot, _) = slot(1);
+        slot.record_publish(
+            &event(&slot, 0, PublishOutcome::Rejected(PublishReject::NonceTooLow)),
+            Duration::ZERO,
+        );
+        assert!(matches!(
+            slot.plan(Duration::ZERO, policy()).work,
+            Some(PendingWork::FetchAccountNonce { .. })
+        ));
+
+        // A replayed publication response (e.g. after a predecessor rewind)
+        // commits the nonce while the account nonce read is still in flight.
+        slot.record_publish(&event(&slot, 0, PublishOutcome::Ambiguous), Duration::ZERO);
+        assert!(slot.is_committed());
+
+        // The consumed nonce must resolve canonically instead of re-signing.
+        let effects = slot.record_account_nonce(Ok(5));
+        assert!(effects.sweep_requested);
+        assert!(effects.next_nonce_at_least.is_none());
+        assert!(matches!(slot.replacement, ReplacementState::Idle));
+    }
+
+    #[test]
+    fn fee_rejection_requests_a_fee_bump() {
+        let (mut slot, _) = slot(2);
+        let underpriced =
+            PublishOutcome::Rejected(PublishReject::FeeTooLow(TxManagerError::Underpriced));
+        slot.record_publish(&event(&slot, 0, underpriced.clone()), Duration::ZERO);
+        slot.record_publish(&event(&slot, 1, underpriced), Duration::ZERO);
+
+        assert!(matches!(
+            slot.plan(Duration::ZERO, policy()).work,
+            Some(PendingWork::PrepareReplacementTx {
+                reason: ReplacementReason::FeeBump,
+                nonce: 0,
                 ..
             })
         ));
@@ -909,7 +998,7 @@ mod tests {
         slot.replacement_prepared(
             base_version,
             reason,
-            Ok(prepared(0, 2)),
+            Ok(StubTx::prepared(0, 2)),
             Duration::from_secs(10),
             policy(),
         );
@@ -945,7 +1034,7 @@ mod tests {
         slot.replacement_prepared(
             base_version,
             ReplacementReason::Cancel,
-            Ok(prepared(0, 2)),
+            Ok(StubTx::prepared(0, 2)),
             Duration::ZERO,
             policy(),
         );
@@ -1013,7 +1102,7 @@ mod tests {
         slot.replacement_prepared(
             base_version,
             ReplacementReason::Cancel,
-            Ok(prepared(0, 2)),
+            Ok(StubTx::prepared(0, 2)),
             Duration::ZERO,
             policy(),
         );

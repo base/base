@@ -13,6 +13,14 @@ pub type SubmissionResult = TxManagerResult<TransactionReceipt>;
 pub struct SubmissionId(u64);
 
 impl SubmissionId {
+    /// Identifier reserved for the standalone cancel staged without a caller
+    /// submission.
+    ///
+    /// It can never collide with an allocated identifier: the allocator
+    /// advances with `checked_add`, so the last id it hands out is
+    /// `u64::MAX - 1` before it fails with `SubmissionIdOverflow`.
+    pub const CANCEL: Self = Self(u64::MAX);
+
     /// Creates an identifier from its numeric representation.
     pub const fn new(value: u64) -> Self {
         Self(value)
@@ -68,6 +76,9 @@ impl SubmissionHandle {
     }
 
     /// Creates a handle that already contains a terminal outcome.
+    ///
+    /// Its [`SubmissionId`] is a placeholder zero — the coordinator never
+    /// routed this submission, so the id must not be used to correlate it.
     pub fn resolved(outcome: SubmissionResult) -> Self {
         let (_tx, rx) = watch::channel(SubmissionSnapshot {
             id: SubmissionId::new(0),
@@ -140,16 +151,17 @@ pub enum SubmissionCompletion {
 
 impl SubmissionCompletion {
     /// Sends the result using the semantics of the original request.
-    pub fn finish(self, outcome: SubmissionResult, cancellation_confirmed: bool) {
+    ///
+    /// A cancel waiter asked for the nonce to be freed, so a confirmed
+    /// cancellation ([`TxManagerError::Cancelled`]) is success for it.
+    pub fn finish(self, outcome: SubmissionResult) {
         match self {
             Self::Transaction(tracker) => tracker.finish(outcome),
             Self::Cancel(result) => {
-                let response = if cancellation_confirmed || outcome.is_ok() {
-                    Ok(())
-                } else {
-                    Err(outcome.expect_err("non-success outcome contains error"))
+                let response = match outcome {
+                    Err(TxManagerError::Cancelled) => Ok(()),
+                    outcome => outcome.map(|_| ()),
                 };
-
                 let _ = result.send(response);
             }
         }

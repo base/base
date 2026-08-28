@@ -17,8 +17,8 @@ owner of its signed pending ledger:
 4. Each backend owns one sequential worker and cursor. Workers publish in nonce
    order, while different backends run concurrently.
 5. An accepted or ambiguous response from any backend commits the nonce and
-   allows construction of `n + 1`. A clean nonce is recycled only after every
-   backend definitively rejects it.
+   allows construction of `n + 1`. A provisional nonce is recycled only after
+   every backend definitively rejects it.
 6. A fee bump atomically replaces the current version. Every backend rewinds to
    that nonce before publishing later entries again.
 7. The chain reader confirms known hashes and removes only the resolved front
@@ -36,13 +36,9 @@ after any publication attempt could have reached a provider.
   submission.
 
 Lower-level builder, coordinator, pending-ledger, publisher, sweeper, fee,
-nonce, and error-classification types are also publicly re-exported for
+and error-classification types are also publicly re-exported for
 workspace-wide reuse. Most consumers should use `SimpleTxManager` through the
 `TxManager` trait.
-
-`NonceManager` and `NonceGuard` remain independent low-level nonce-allocation
-utilities. `SimpleTxManager` does not use them; its pending ledger is its
-only nonce authority.
 
 ## Publication backends
 
@@ -77,7 +73,7 @@ This distinction is what makes provisional nonce reuse safe.
 ## Configuration
 
 `TxManagerConfig` controls confirmation depth, fee limits, network timeouts,
-resubmission cadence, fast publication retries, and receipt polling. Manager
+resubmission cadence, publication pass cadence, and receipt polling. Manager
 construction validates it before network startup.
 
 The `define_tx_manager_cli!` macro creates a clap argument group with environment

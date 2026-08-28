@@ -10,6 +10,16 @@ use base_tx_manager::{NoopTxMetrics, SignerConfig, SimpleTxManager, TxCandidate,
 
 const TEST_RECIPIENT: Address = Address::with_last_byte(0x42);
 
+/// Configuration with test-friendly confirmation and polling timings.
+pub fn fast_config() -> TxManagerConfig {
+    TxManagerConfig {
+        num_confirmations: 1,
+        publish_retry_delay: std::time::Duration::from_millis(10),
+        receipt_query_interval: std::time::Duration::from_millis(10),
+        ..TxManagerConfig::default()
+    }
+}
+
 /// Creates a manager backed by a fresh Anvil instance.
 pub async fn setup_with_config(
     config: TxManagerConfig,

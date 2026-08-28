@@ -12,8 +12,8 @@ pub use slot::{
 
 mod work;
 pub use work::{
-    PendingPolicy, PendingWork, PublishedAttempt, RejectionVerdict, ReplacementReason,
-    StagedSubmission, VersionId, VersionKind,
+    PendingPolicy, PendingWork, PublishedAttempt, ReplacementReason, StagedSubmission, VersionId,
+    VersionKind,
 };
 
 use super::{
@@ -34,7 +34,7 @@ pub struct PendingLedger {
     slots: VecDeque<NonceSlot>,
     /// Staged submission currently owned by a builder worker.
     preparing_submission: Option<SubmissionId>,
-    /// Whether publication handling requested prompt canonical resolution.
+    /// Whether a slot transition requested prompt canonical resolution.
     sweep_requested: bool,
     /// Monotonic revision of the publisher-visible ledger.
     revision: u64,
@@ -71,8 +71,9 @@ impl PendingLedger {
 
     /// Requests cancellation of the oldest committed slot.
     ///
-    /// If no local slot exists, a self-transfer is staged at the latest nonce
-    /// so a reservation left by a previous process can be replaced.
+    /// When the ledger holds no other work at all, a self-transfer is staged at
+    /// `next_nonce` so a reservation left by a previous process can be
+    /// replaced. Any other in-flight state fails with `CancellationInProgress`.
     pub fn cancel(&mut self, sender: Address, result: oneshot::Sender<TxManagerResult<()>>) {
         if let Some(slot) = self.slots.iter_mut().find(|slot| slot.is_committed()) {
             if let Err(result) = slot.request_cancel(sender, result) {
@@ -81,17 +82,15 @@ impl PendingLedger {
             return;
         }
 
-        if !self.slots.is_empty() || !self.staged.is_empty() || self.preparing_submission.is_some()
-        {
+        if !self.is_empty() {
             let _ = result.send(Err(TxManagerError::CancellationInProgress));
             return;
         }
 
-        self.staged.push_front(StagedSubmission {
-            id: SubmissionId::new(u64::MAX),
+        self.staged.push_back(StagedSubmission {
+            id: SubmissionId::CANCEL,
             candidate: TxCandidate::cancel(sender, Arc::from([])),
             completion: SubmissionCompletion::Cancel(result),
-            kind: VersionKind::Cancel,
         });
     }
 
@@ -107,7 +106,7 @@ impl PendingLedger {
         {
             if self.next_nonce == u64::MAX {
                 let staged = self.staged.pop_front().expect("front exists");
-                staged.completion.finish(Err(TxManagerError::NonceOverflow), false);
+                staged.completion.finish(Err(TxManagerError::NonceOverflow));
             } else {
                 self.preparing_submission = Some(staged.id);
                 work.push(PendingWork::PrepareTx {
@@ -161,7 +160,7 @@ impl PendingLedger {
                 ));
                 self.revision = self.revision.saturating_add(1);
             }
-            Err(error) => staged.completion.finish(Err(error), false),
+            Err(error) => staged.completion.finish(Err(error)),
         }
     }
 
@@ -236,9 +235,23 @@ impl PendingLedger {
         self.sweep_requested = false;
     }
 
-    /// Returns whether publication handling requested an immediate sweep.
+    /// Returns whether a slot transition requested prompt canonical resolution.
     pub const fn sweep_requested(&self) -> bool {
         self.sweep_requested
+    }
+
+    /// Returns the monotonic revision of the publisher-visible ledger.
+    pub const fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    /// Returns the oldest committed slot and when it committed.
+    ///
+    /// A committed slot leaves the ledger only through canonical resolution,
+    /// so callers use this to surface prolonged non-resolution.
+    pub fn oldest_committed(&self) -> Option<(SubmissionId, Duration)> {
+        let front = self.slots.front()?;
+        Some((front.submission_id(), front.committed_at()?))
     }
 
     /// Returns the latest publisher-facing ledger snapshot.
@@ -251,17 +264,14 @@ impl PendingLedger {
     /// Stops admission while retaining signed slots until canonical resolution.
     pub fn close(&mut self) {
         while let Some(staged) = self.staged.pop_front() {
-            staged.completion.finish(Err(TxManagerError::ChannelClosed), false);
+            staged.completion.finish(Err(TxManagerError::ChannelClosed));
         }
         self.preparing_submission = None;
     }
 
     /// Resolves every waiter when the owning runtime is shutting down.
     pub fn abort(&mut self) {
-        while let Some(staged) = self.staged.pop_front() {
-            staged.completion.finish(Err(TxManagerError::ChannelClosed), false);
-        }
-        self.preparing_submission = None;
+        self.close();
         while let Some(slot) = self.slots.pop_front() {
             slot.fail(TxManagerError::ChannelClosed);
         }
@@ -279,6 +289,7 @@ impl PendingLedger {
 
     /// Applies effects that require ownership of the ordered ledger.
     pub fn apply_effects(&mut self, index: usize, effects: SlotEffects) {
+        debug_assert!(effects.work.is_none(), "only plan() may produce worker actions");
         if let Some(next_nonce) = effects.next_nonce_at_least {
             self.next_nonce = self.next_nonce.max(next_nonce);
         }
@@ -309,13 +320,16 @@ impl PendingLedger {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{B256, Bytes, U256};
+    use alloy_primitives::{B256, U256};
 
     use super::*;
     use crate::{
         SubmissionHandle, SubmissionStatus,
-        manager::{PublishOutcome, PublishReject, PublisherEvent, PublisherId, SweepOutcome},
-        test_utils::StubReceipt,
+        manager::{
+            PublishOutcome, PublishReject, PublisherCursor, PublisherEvent, PublisherId,
+            SweepOutcome,
+        },
+        test_utils::{StubReceipt, StubTx},
     };
 
     fn policy() -> PendingPolicy {
@@ -334,19 +348,6 @@ mod tests {
         }
     }
 
-    fn prepared(nonce: u64, marker: u8) -> PreparedTx {
-        PreparedTx {
-            raw_tx: Bytes::from(vec![marker]),
-            tx_hash: B256::with_last_byte(marker),
-            gas_tip_cap: 1,
-            gas_fee_cap: 2,
-            blob_fee_cap: None,
-            gas_limit: 21_000,
-            nonce,
-            sidecar: None,
-        }
-    }
-
     fn submit(ledger: &mut PendingLedger, id: u64) -> SubmissionHandle {
         let (staged, handle) = StagedSubmission::new(SubmissionId::new(id), candidate(id));
         ledger.submit(staged);
@@ -359,7 +360,7 @@ mod tests {
             [PendingWork::PrepareTx { submission_id, nonce: assigned, .. }]
                 if *submission_id == SubmissionId::new(id) && *assigned == nonce
         ));
-        ledger.tx_prepared(SubmissionId::new(id), Ok(prepared(nonce, marker)), now);
+        ledger.tx_prepared(SubmissionId::new(id), Ok(StubTx::prepared(nonce, marker)), now);
     }
 
     fn publish(
@@ -453,6 +454,57 @@ mod tests {
     }
 
     #[test]
+    fn fee_bump_atomically_replaces_the_version_shared_by_every_backend() {
+        let mut ledger = PendingLedger::new(0, 2, policy());
+        submit(&mut ledger, 1);
+        prepare_tx(&mut ledger, 1, 0, 1, Duration::ZERO);
+        publish(&mut ledger, 0, PublishOutcome::Accepted, Duration::ZERO);
+        publish(&mut ledger, 1, PublishOutcome::Accepted, Duration::ZERO);
+        let before = ledger.publisher_snapshot();
+
+        // Both backends accepted this version and replay later entries only
+        // after re-accepting it.
+        let mut cursor = PublisherCursor::default();
+        let accepted = cursor.next(&before).unwrap();
+        cursor.record(&accepted, &PublishOutcome::Accepted);
+        assert!(cursor.next(&before).is_none());
+
+        // The transaction stays unconfirmed past the resubmission timeout.
+        let work = ledger.plan(Duration::from_secs(10));
+        let [
+            PendingWork::PrepareReplacementTx {
+                submission_id,
+                base_version,
+                reason: ReplacementReason::FeeBump,
+                nonce: 0,
+                ..
+            },
+        ] = work.as_slice()
+        else {
+            panic!("stale live transaction should request a fee bump")
+        };
+        ledger.replacement_tx_prepared(
+            *submission_id,
+            *base_version,
+            ReplacementReason::FeeBump,
+            Ok(StubTx::prepared(0, 9)),
+            Duration::from_secs(10),
+        );
+
+        // One snapshot exposes the new version at the same nonce to every
+        // backend, and an up-to-date cursor rewinds to republish it.
+        let after = ledger.publisher_snapshot();
+        assert!(after.revision > before.revision);
+        let [replacement] = after.transactions.as_ref() else {
+            panic!("replacement should not add a ledger entry")
+        };
+        assert_eq!(replacement.nonce, 0);
+        assert!(replacement.version > before.transactions[0].version);
+        assert_eq!(replacement.prepared.tx_hash, B256::with_last_byte(9));
+        assert_eq!(cursor.next(&after).unwrap().version, replacement.version);
+    }
+
+    #[test]
     fn account_nonce_is_hidden_until_resigning_finishes() {
         let mut ledger = PendingLedger::new(0, 1, policy());
         submit(&mut ledger, 1);
@@ -488,7 +540,7 @@ mod tests {
             *submission_id,
             *base_version,
             ReplacementReason::Resign,
-            Ok(prepared(5, 2)),
+            Ok(StubTx::prepared(5, 2)),
             Duration::ZERO,
         );
         assert_eq!(ledger.publisher_snapshot().transactions[0].nonce, 5);
@@ -548,13 +600,24 @@ mod tests {
             *submission_id,
             *base_version,
             ReplacementReason::Cancel,
-            Ok(prepared(0, 2)),
+            Ok(StubTx::prepared(0, 2)),
             Duration::ZERO,
         );
         publish(&mut ledger, 0, PublishOutcome::Ambiguous, Duration::ZERO);
 
         assert_eq!(result_rx.await.unwrap(), Ok(()));
         assert_eq!(ledger.sweep_targets().len(), 1);
+    }
+
+    #[test]
+    fn oldest_committed_reports_the_front_slot_commit_time() {
+        let mut ledger = PendingLedger::new(0, 1, policy());
+        submit(&mut ledger, 1);
+        prepare_tx(&mut ledger, 1, 0, 1, Duration::ZERO);
+        assert!(ledger.oldest_committed().is_none());
+
+        publish(&mut ledger, 0, PublishOutcome::Accepted, Duration::from_secs(3));
+        assert_eq!(ledger.oldest_committed(), Some((SubmissionId::new(1), Duration::from_secs(3))));
     }
 
     #[test]

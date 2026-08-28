@@ -17,7 +17,7 @@ use tracing::{error, info, warn};
 
 use super::{
     build::PreparedTx,
-    pending::{RejectionVerdict, VersionId, VersionKind},
+    pending::{VersionId, VersionKind},
 };
 use crate::{SubmissionId, TxManagerError, TxMetrics, error::RpcErrorClassifier};
 
@@ -131,6 +131,31 @@ impl PublishReject {
         RejectionVerdict::Retry(
             rejections.first().map_or(TxManagerError::ChannelClosed, Self::as_error),
         )
+    }
+}
+
+/// Aggregate decision for a complete pass of definitive backend rejections.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RejectionVerdict {
+    /// The account nonce must be refreshed before publishing again.
+    NonceTooLow,
+    /// Every backend reported a deterministic rejection (`AlreadyReserved` included).
+    Deterministic(TxManagerError),
+    /// At least one backend requires higher fees and no backend reported a deterministic rejection.
+    FeeTooLow(TxManagerError),
+    /// The same transaction may be attempted again in a later pass.
+    Retry(TxManagerError),
+}
+
+impl RejectionVerdict {
+    /// Returns the most useful public error represented by this verdict.
+    pub fn error(&self) -> TxManagerError {
+        match self {
+            Self::NonceTooLow => TxManagerError::NonceTooLow,
+            Self::Deterministic(error) | Self::FeeTooLow(error) | Self::Retry(error) => {
+                error.clone()
+            }
+        }
     }
 }
 
@@ -256,7 +281,8 @@ where
                     self.metrics.record_rpc_error();
                     self.metrics.record_publish_error();
                 }
-                let outcome = PublishOutcome::classify_error(classified.clone());
+                let error_kind = classified.kind();
+                let outcome = PublishOutcome::classify_error(classified);
                 match &outcome {
                     PublishOutcome::Accepted => {
                         info!(
@@ -269,7 +295,7 @@ where
                     PublishOutcome::Ambiguous => {
                         warn!(
                             backend = self.id.index(),
-                            error_kind = classified.kind(),
+                            error_kind,
                             tx_hash = %prepared.tx_hash,
                             nonce = prepared.nonce,
                             "transaction publication outcome is ambiguous",
@@ -278,7 +304,7 @@ where
                     PublishOutcome::Rejected(PublishReject::Deterministic(_)) => {
                         warn!(
                             backend = self.id.index(),
-                            error_kind = classified.kind(),
+                            error_kind,
                             tx_hash = %prepared.tx_hash,
                             nonce = prepared.nonce,
                             "transaction publication rejected",
@@ -287,7 +313,7 @@ where
                     PublishOutcome::Rejected(_) => {
                         info!(
                             backend = self.id.index(),
-                            error_kind = classified.kind(),
+                            error_kind,
                             tx_hash = %prepared.tx_hash,
                             nonce = prepared.nonce,
                             "transaction publication rejected",
@@ -347,21 +373,23 @@ pub struct AttemptedPosition {
 
 /// Per-backend progress through the shared signed ledger.
 ///
-/// Accepted entries form a logical prefix. Completed non-accepted attempts
-/// block that backend until the coordinator advances the entry's epoch.
+/// Accepted entries form a logical prefix. A completed non-accepted attempt
+/// blocks that backend at its nonce until the coordinator opens a new pass or
+/// replaces the version.
 #[derive(Debug, Default)]
 pub struct PublisherCursor {
     /// Current versions positively acknowledged by this backend.
     accepted: BTreeMap<u64, AcceptedPosition>,
-    /// Current epochs already attempted without acknowledgement.
+    /// Latest attempt recorded per nonce that this backend has not acknowledged.
     attempted: BTreeMap<u64, AttemptedPosition>,
 }
 
 impl PublisherCursor {
     /// Returns the next transaction this backend may publish.
+    ///
+    /// Callers must [`prune`](Self::prune) once per new snapshot first; within
+    /// one snapshot the cursor only records nonces that snapshot contains.
     pub fn next(&mut self, snapshot: &PublisherSnapshot) -> Option<PublisherTx> {
-        self.prune(snapshot);
-
         for transaction in snapshot.transactions.iter() {
             let accepted = AcceptedPosition {
                 submission_id: transaction.submission_id,
@@ -500,9 +528,6 @@ impl PublisherGroup {
 
     /// Replaces every worker's pending view with the latest ledger snapshot.
     pub fn update(&self, snapshot: PublisherSnapshot) {
-        if self.senders.is_empty() {
-            return;
-        }
         let snapshot = Arc::new(snapshot);
         for sender in self.senders.iter() {
             if sender.borrow().revision != snapshot.revision {
@@ -534,6 +559,7 @@ impl PublisherGroup {
                 }
             }
             let snapshot = Arc::clone(&snapshots.borrow_and_update());
+            cursor.prune(&snapshot);
 
             while let Some(transaction) = cursor.next(&snapshot) {
                 // Do not start work from an obsolete snapshot. An in-flight
@@ -590,25 +616,11 @@ impl PublisherGroup {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::Bytes;
     use alloy_provider::{builder as provider_builder, mock::Asserter};
     use base_runtime::{Cancellation, TokioRuntime};
 
     use super::*;
-    use crate::NoopTxMetrics;
-
-    fn prepared(nonce: u64, marker: u8) -> PreparedTx {
-        PreparedTx {
-            raw_tx: Bytes::from(vec![marker]),
-            tx_hash: B256::with_last_byte(marker),
-            gas_tip_cap: 1,
-            gas_fee_cap: 2,
-            blob_fee_cap: None,
-            gas_limit: 21_000,
-            nonce,
-            sidecar: None,
-        }
-    }
+    use crate::{NoopTxMetrics, test_utils::StubTx};
 
     fn transaction(nonce: u64, version: u32, epoch: u64) -> PublisherTx {
         PublisherTx {
@@ -617,7 +629,7 @@ mod tests {
             version: VersionId::new(version),
             epoch,
             kind: VersionKind::Original,
-            prepared: prepared(nonce, nonce as u8 + version as u8),
+            prepared: StubTx::prepared(nonce, nonce as u8 + version as u8),
         }
     }
 

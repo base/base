@@ -39,9 +39,10 @@ pub use manager::{
     PendingLedger, PendingPolicy, PendingWork, PreparedTx, PublishOutcome, PublishReject,
     PublishedAttempt, PublisherCursor, PublisherEvent, PublisherGroup, PublisherId,
     PublisherSnapshot, PublisherTx, RejectionVerdict, ReplacementReason, ReplacementState,
-    SUPERSESSION_OBSERVATIONS, SignedVersion, SimpleTxManager, SlotEffects, SlotState,
-    StagedSubmission, SupersessionEvidence, SweepOutcome, SweepResolution, SweepTarget, TxBuilder,
-    TxCoordinator, TxManager, TxPublisher, VersionId, VersionKind, WEI_PER_GWEI, WorkerEvent,
+    STUCK_RESUBMISSION_MULTIPLIER, SUPERSESSION_OBSERVATIONS, SignedVersion, SimpleTxManager,
+    SlotEffects, SlotState, StagedSubmission, SupersessionEvidence, SweepOutcome, SweepResolution,
+    SweepTarget, TxBuilder, TxCoordinator, TxManager, TxPublisher, VersionId, VersionKind,
+    WEI_PER_GWEI, WorkerEvent,
 };
 
 mod metrics;
@@ -52,5 +53,3 @@ pub use blob::{BlobTxBuilder, MAX_BLOBS_PER_TX};
 
 #[cfg(test)]
 pub mod test_utils;
-#[cfg(test)]
-pub use test_utils::StubReceipt;

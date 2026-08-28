@@ -3,6 +3,7 @@
 use std::{
     collections::HashMap,
     fmt::Debug,
+    future::IntoFuture,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -14,9 +15,10 @@ use base_runtime::{Runtime, RuntimeTimeout};
 use futures::{StreamExt, stream};
 
 use super::pending::{PublishedAttempt, VersionKind};
-use crate::{SubmissionId, TxManagerError, TxManagerResult, TxMetrics, error::RpcErrorClassifier};
+use crate::{SubmissionId, TxManagerResult, TxMetrics, error::RpcErrorClassifier};
 
-/// Maximum receipt and canonical-block queries in flight per sweep stage.
+/// Maximum futures buffered per sweep stage: targets in one sweep, receipt
+/// lookups within one target.
 pub const MAX_CONCURRENT_SWEEP_QUERIES: usize = 8;
 /// Stable missing-receipt snapshots required before declaring supersession.
 pub const SUPERSESSION_OBSERVATIONS: u8 = 2;
@@ -112,14 +114,23 @@ where
 
     /// Reads the account nonce at the latest canonical block.
     pub async fn latest_nonce(&self) -> TxManagerResult<u64> {
-        RuntimeTimeout::run(
-            &self.runtime,
-            self.network_timeout,
+        self.query(
+            "latest transaction count timed out",
             self.provider.get_transaction_count(self.address).latest(),
         )
         .await
-        .map_err(|_| self.rpc_error("latest transaction count timed out"))?
-        .map_err(|error| self.classify_rpc(&error))
+    }
+
+    /// Runs one bounded chain query, classifying timeout and transport failures.
+    pub async fn query<F, T>(&self, timeout_message: &str, request: F) -> TxManagerResult<T>
+    where
+        F: IntoFuture<Output = Result<T, alloy_transport::TransportError>>,
+        F::IntoFuture: Send,
+    {
+        RuntimeTimeout::run(&self.runtime, self.network_timeout, request)
+            .await
+            .map_err(|_| RpcErrorClassifier::rpc_error(timeout_message, self.metrics.as_ref()))?
+            .map_err(|error| RpcErrorClassifier::classify_and_record(&error, self.metrics.as_ref()))
     }
 
     /// Resolves the longest confirmed prefix represented by `targets`.
@@ -134,32 +145,24 @@ where
 
         // Phase 1: anchor both confirmation height and account nonce to one
         // canonical block hash. Latest-state reads are insufficient under reorg.
-        let tip = RuntimeTimeout::run(
-            &self.runtime,
-            self.network_timeout,
-            self.provider.get_block_number(),
-        )
-        .await
-        .map_err(|_| self.rpc_error("block number query timed out"))?
-        .map_err(|error| self.classify_rpc(&error))?;
+        let tip =
+            self.query("block number query timed out", self.provider.get_block_number()).await?;
         let confirmed_height = tip.saturating_add(1).saturating_sub(self.num_confirmations);
-        let block = RuntimeTimeout::run(
-            &self.runtime,
-            self.network_timeout,
-            self.provider.get_block_by_number(BlockNumberOrTag::Number(confirmed_height)),
-        )
-        .await
-        .map_err(|_| self.rpc_error("confirmed block query timed out"))?
-        .map_err(|error| self.classify_rpc(&error))?
-        .ok_or_else(|| self.rpc_error("confirmed block not found"))?;
-        let confirmed_nonce = RuntimeTimeout::run(
-            &self.runtime,
-            self.network_timeout,
-            self.provider.get_transaction_count(self.address).hash_canonical(block.header.hash),
-        )
-        .await
-        .map_err(|_| self.rpc_error("confirmed transaction count timed out"))?
-        .map_err(|error| self.classify_rpc(&error))?;
+        let block = self
+            .query(
+                "confirmed block query timed out",
+                self.provider.get_block_by_number(BlockNumberOrTag::Number(confirmed_height)),
+            )
+            .await?
+            .ok_or_else(|| {
+                RpcErrorClassifier::rpc_error("confirmed block not found", self.metrics.as_ref())
+            })?;
+        let confirmed_nonce = self
+            .query(
+                "confirmed transaction count timed out",
+                self.provider.get_transaction_count(self.address).hash_canonical(block.header.hash),
+            )
+            .await?;
 
         // Phase 2: only nonces below the anchored account nonce are proven
         // consumed. Resolve them concurrently but retain target order.
@@ -231,14 +234,12 @@ where
         attempt: PublishedAttempt,
         confirmed_height: u64,
     ) -> TxManagerResult<Option<SweepOutcome>> {
-        let receipt = RuntimeTimeout::run(
-            &self.runtime,
-            self.network_timeout,
-            self.provider.get_transaction_receipt(attempt.hash),
-        )
-        .await
-        .map_err(|_| self.rpc_error("transaction receipt query timed out"))?
-        .map_err(|error| self.classify_rpc(&error))?;
+        let receipt = self
+            .query(
+                "transaction receipt query timed out",
+                self.provider.get_transaction_receipt(attempt.hash),
+            )
+            .await?;
         let Some(receipt) = receipt else {
             return Ok(None);
         };
@@ -252,14 +253,12 @@ where
 
         // A receipt can survive briefly after its block is reorged out. Resolve
         // its block number again and compare the canonical hash explicitly.
-        let canonical_block = RuntimeTimeout::run(
-            &self.runtime,
-            self.network_timeout,
-            self.provider.get_block_by_number(BlockNumberOrTag::Number(block_number)),
-        )
-        .await
-        .map_err(|_| self.rpc_error("receipt block query timed out"))?
-        .map_err(|error| self.classify_rpc(&error))?;
+        let canonical_block = self
+            .query(
+                "receipt block query timed out",
+                self.provider.get_block_by_number(BlockNumberOrTag::Number(block_number)),
+            )
+            .await?;
         if canonical_block.as_ref().is_none_or(|block| block.header.hash != block_hash) {
             return Ok(None);
         }
@@ -283,21 +282,6 @@ where
         }
         evidence.remove(&target.submission_id);
         true
-    }
-
-    /// Classifies a transport error and records infrastructure failures.
-    pub fn classify_rpc(&self, error: &alloy_transport::TransportError) -> TxManagerError {
-        let classified = RpcErrorClassifier::classify_rpc_error(error);
-        if classified.is_rpc_error() {
-            self.metrics.record_rpc_error();
-        }
-        classified
-    }
-
-    /// Creates a sanitized local RPC error and records it.
-    pub fn rpc_error(&self, message: &str) -> TxManagerError {
-        self.metrics.record_rpc_error();
-        TxManagerError::Rpc(message.to_string())
     }
 }
 
@@ -327,8 +311,7 @@ mod tests {
             nonce: 0,
             attempts: (0..attempts)
                 .map(|index| PublishedAttempt {
-                    version: super::super::pending::VersionId::INITIAL,
-                    kind: super::super::pending::VersionKind::Original,
+                    kind: VersionKind::Original,
                     hash: B256::with_last_byte(index as u8),
                 })
                 .collect(),

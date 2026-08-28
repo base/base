@@ -19,27 +19,20 @@ pub struct StagedSubmission {
     pub candidate: TxCandidate,
     /// Destination for the submission's terminal result.
     pub completion: SubmissionCompletion,
-    /// Purpose assigned to the first signed version.
-    pub kind: VersionKind,
 }
 
 impl StagedSubmission {
     /// Creates a staged submission and its caller-facing lifecycle handle.
     pub fn new(id: SubmissionId, candidate: TxCandidate) -> (Self, SubmissionHandle) {
         let (tracker, handle) = SubmissionTracker::channel(id);
-        let staged = Self {
-            id,
-            candidate,
-            completion: SubmissionCompletion::Transaction(tracker),
-            kind: VersionKind::Original,
-        };
+        let staged = Self { id, candidate, completion: SubmissionCompletion::Transaction(tracker) };
 
         (staged, handle)
     }
 
     /// Resolves a submission that could not be handed to the coordinator.
     pub fn reject(self, error: TxManagerError) {
-        self.completion.finish(Err(error), false);
+        self.completion.finish(Err(error));
     }
 }
 
@@ -61,7 +54,7 @@ impl VersionId {
         self.0
     }
 
-    /// Returns the following version.
+    /// Returns the next identifier, saturating at `u32::MAX`.
     pub const fn next(self) -> Self {
         Self(self.0.saturating_add(1))
     }
@@ -81,8 +74,6 @@ pub enum VersionKind {
 /// Minimal history retained for every transaction that may be live.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PublishedAttempt {
-    /// Signed version that produced the hash.
-    pub version: VersionId,
     /// Purpose of the signed version.
     pub kind: VersionKind,
     /// Canonical transaction hash.
@@ -146,38 +137,13 @@ pub enum ReplacementReason {
 }
 
 impl ReplacementReason {
-    /// Returns the purpose assigned to the replacement transaction.
+    /// Returns the purpose of the replacement; replacing a cancel yields another cancel.
     pub const fn version_kind(self, base: VersionKind) -> VersionKind {
         match self {
             Self::FeeBump if matches!(base, VersionKind::Cancel) => VersionKind::Cancel,
             Self::FeeBump => VersionKind::FeeBump,
             Self::Cancel => VersionKind::Cancel,
             Self::Resign => base,
-        }
-    }
-}
-
-/// Aggregate decision for a complete pass of definitive backend rejections.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RejectionVerdict {
-    /// The account nonce must be refreshed before publishing again.
-    NonceTooLow,
-    /// Every backend reported a permanent error.
-    Deterministic(TxManagerError),
-    /// At least one backend requires higher fees and none reported a permanent error.
-    FeeTooLow(TxManagerError),
-    /// The same transaction may be attempted again in a later pass.
-    Retry(TxManagerError),
-}
-
-impl RejectionVerdict {
-    /// Returns the most useful public error represented by this verdict.
-    pub fn error(&self) -> TxManagerError {
-        match self {
-            Self::NonceTooLow => TxManagerError::NonceTooLow,
-            Self::Deterministic(error) | Self::FeeTooLow(error) | Self::Retry(error) => {
-                error.clone()
-            }
         }
     }
 }

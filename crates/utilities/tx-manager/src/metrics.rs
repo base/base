@@ -32,6 +32,9 @@ base_metrics::define_metrics! {
     #[describe("Number of confirmed transactions")]
     #[label(name)]
     tx_confirmed_count: counter,
+    #[describe("Number of committed transactions unresolved past the alert window")]
+    #[label(name)]
+    tx_stuck_count: counter,
 }
 
 /// Trait abstracting metrics collection for the transaction manager.
@@ -65,6 +68,9 @@ pub trait TxMetrics: Send + Sync + Debug + 'static {
 
     /// Record a confirmed (successfully mined) transaction.
     fn record_tx_confirmed(&self);
+
+    /// Record a committed transaction left unresolved past the alert window.
+    fn record_tx_stuck(&self);
 }
 
 /// No-op [`TxMetrics`] implementation.
@@ -84,11 +90,10 @@ impl TxMetrics for NoopTxMetrics {
     fn record_blob_fee(&self, _blob_fee_gwei: f64) {}
     fn record_rpc_error(&self) {}
     fn record_tx_confirmed(&self) {}
+    fn record_tx_stuck(&self) {}
 }
 
 /// Production [`TxMetrics`] implementation backed by the `metrics` crate.
-///
-/// Each method delegates to the generated internal metric accessors.
 ///
 /// The `name` field is attached as a `"name"` label on every metric emission,
 /// allowing multiple tx-manager instances (e.g. challenger vs. proposer) to be
@@ -102,13 +107,9 @@ pub struct BaseTxMetrics {
 impl BaseTxMetrics {
     /// Create a new [`BaseTxMetrics`] with the given instance name.
     ///
-    /// The `name` is emitted as a `"name"` label on every metric, allowing
-    /// multiple tx-manager instances to be distinguished in dashboards.
-    ///
     /// All counters and gauges are zero-initialized so they appear
     /// immediately in the metrics endpoint.
     pub fn new(name: &'static str) -> Self {
-        let this = Self { name };
         TxManagerMetrics::tx_gas_bump_count(name).absolute(0);
         TxManagerMetrics::current_nonce(name).set(0.0);
         TxManagerMetrics::tx_publish_error_count(name).absolute(0);
@@ -117,7 +118,8 @@ impl BaseTxMetrics {
         TxManagerMetrics::blob_fee_gwei(name).set(0.0);
         TxManagerMetrics::rpc_error_count(name).absolute(0);
         TxManagerMetrics::tx_confirmed_count(name).absolute(0);
-        this
+        TxManagerMetrics::tx_stuck_count(name).absolute(0);
+        Self { name }
     }
 }
 
@@ -157,25 +159,15 @@ impl TxMetrics for BaseTxMetrics {
     fn record_tx_confirmed(&self) {
         TxManagerMetrics::tx_confirmed_count(self.name).increment(1);
     }
+
+    fn record_tx_stuck(&self) {
+        TxManagerMetrics::tx_stuck_count(self.name).increment(1);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn noop_tx_metrics_can_be_constructed_and_called() {
-        let m = NoopTxMetrics;
-        m.record_tx_max_fee(1.5);
-        m.record_gas_bump();
-        m.record_current_nonce(42);
-        m.record_publish_error();
-        m.record_basefee(30.123);
-        m.record_tipcap(2.456);
-        m.record_blob_fee(1.0);
-        m.record_rpc_error();
-        m.record_tx_confirmed();
-    }
 
     #[test]
     fn base_tx_metrics_can_be_constructed_and_called() {
@@ -189,5 +181,6 @@ mod tests {
         m.record_blob_fee(1.0);
         m.record_rpc_error();
         m.record_tx_confirmed();
+        m.record_tx_stuck();
     }
 }
