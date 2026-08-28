@@ -15,7 +15,7 @@
 
 use std::time::Duration;
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use base_proof_primitives::Proposal;
 use base_prover_service_db::{
     ApiProofType, ClaimProofJob, CompleteClaimedProofJob, CreateProofRequest,
@@ -75,7 +75,7 @@ fn compressed_request_at_with_backend(
             l1_head: None,
             intermediate_root_interval: None,
             schedule_l2_block_number: None,
-            zk_artifact_hash: None,
+            zk_artifact_hash: Some(B256::repeat_byte(0x11)),
             zk_vm: ZkVm::Sp1,
             zk_backend,
         }),
@@ -93,7 +93,7 @@ fn compressed_request_with_l1_head(l1_head: &str) -> CreateProofRequest {
             l1_head: Some(l1_head.parse().expect("valid hash")),
             intermediate_root_interval: None,
             schedule_l2_block_number: None,
-            zk_artifact_hash: None,
+            zk_artifact_hash: Some(B256::repeat_byte(0x11)),
             zk_vm: ZkVm::Sp1,
             zk_backend: ZkBackend::Cluster,
         }),
@@ -116,7 +116,7 @@ fn snark_request() -> CreateProofRequest {
                 ),
                 intermediate_root_interval: None,
                 schedule_l2_block_number: None,
-                zk_artifact_hash: None,
+                zk_artifact_hash: Some(B256::repeat_byte(0x11)),
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             },
@@ -132,7 +132,10 @@ fn tee_request() -> CreateProofRequest {
     CreateProofRequest::new(ProtocolProofRequest {
         session_id: Uuid::new_v4().to_string(),
         request: ProtocolProofRequestKind::Tee(TeeProofRequest {
-            proof: Default::default(),
+            proof: base_proof_primitives::ProofRequest {
+                image_hash: B256::repeat_byte(0x22),
+                ..Default::default()
+            },
             tee_kind: ProtocolTeeKind::AwsNitro,
         }),
     })
@@ -1152,6 +1155,35 @@ async fn test_create_for_worker_queue_rejects_backend_collision() {
 
 #[tokio::test]
 #[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_create_for_worker_queue_rejects_artifact_hash_collision() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool);
+
+    let explicit_id = Uuid::new_v4();
+    let mut original = compressed_request();
+    set_request_session_id(&mut original, explicit_id.to_string());
+    repo.create_for_worker_queue(original, TEST_MAX_PROOF_RETRIES, true).await.unwrap();
+
+    let replacement_hash = B256::repeat_byte(0x33);
+    let mut conflicting = compressed_request();
+    set_request_session_id(&mut conflicting, explicit_id.to_string());
+    let ProtocolProofRequestKind::Compressed(proof) = &mut conflicting.request_payload.request
+    else {
+        unreachable!("helper always builds compressed requests");
+    };
+    proof.zk_artifact_hash = Some(replacement_hash);
+    conflicting.artifact_hash = replacement_hash;
+
+    assert!(matches!(
+        repo.create_for_worker_queue(conflicting, TEST_MAX_PROOF_RETRIES, true)
+            .await
+            .unwrap_err(),
+        CreateProofRequestError::IdCollision { id, field: "artifact_hash" } if id == explicit_id
+    ));
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
 async fn test_create_for_worker_queue_requeues_failed_row() {
     let pool = test_pool().await;
     let repo = test_repo(pool.clone());
@@ -1567,6 +1599,11 @@ fn claim_job(
         } else {
             vec![ZkBackend::Cluster]
         },
+        supported_artifact_hash: if api_proof_type == ApiProofType::Tee {
+            B256::repeat_byte(0x22)
+        } else {
+            B256::repeat_byte(0x11)
+        },
         lock_duration_seconds: 3600,
         max_attempts,
     }
@@ -1677,6 +1714,34 @@ async fn test_claim_next_proof_job_claim_and_capabilities() {
         .expect("a compressed job should be claimable by a ZK worker");
     assert_eq!(job.api_proof_type, ApiProofType::Compressed);
     assert_eq!(job.job_status, ProofJobStatus::Claimed);
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_claim_next_proof_job_requires_exact_artifact_hash() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool.clone());
+
+    drain_claimable_compressed_jobs(&repo).await;
+    let id = repo.create(compressed_request()).await.unwrap();
+    let stored_hash =
+        sqlx::query_scalar::<_, Vec<u8>>("SELECT artifact_hash FROM proof_requests WHERE id = $1")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(stored_hash, B256::repeat_byte(0x11).as_slice());
+
+    let mut wrong_hash = compressed_claim("wrong-artifact-worker", 3);
+    wrong_hash.supported_artifact_hash = B256::repeat_byte(0x33);
+    assert!(repo.claim_next_proof_job(wrong_hash).await.unwrap().is_none());
+
+    let claimed = repo
+        .claim_next_proof_job(compressed_claim("matching-artifact-worker", 3))
+        .await
+        .unwrap()
+        .expect("matching artifact hash should claim the job");
+    assert_eq!(claimed.id, id);
 }
 
 #[tokio::test]

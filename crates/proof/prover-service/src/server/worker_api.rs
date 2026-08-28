@@ -77,12 +77,22 @@ impl ProverServiceServer {
         &self,
         request: GetNextProofRequest,
     ) -> RpcResult<GetNextProofResponse> {
+        let Some(supported_artifact_hash) = request.supported_artifact_hash else {
+            // The main way an un-redeployed worker shows up during the upgrade window,
+            // and afterwards the only signal that one is misconfigured.
+            debug!(
+                worker_id = %request.worker_id,
+                "worker advertised no artifact hash, returning no job"
+            );
+            return Ok(GetNextProofResponse { job: None });
+        };
         let claim = ClaimProofJob {
             worker_id: request.worker_id,
             api_proof_type: request.proof_type.into(),
             tee_kinds: request.tee_kinds.into_iter().map(Into::into).collect(),
             zk_vms: request.zk_vms.into_iter().map(Into::into).collect(),
             zk_backends: request.zk_backends,
+            supported_artifact_hash,
             lock_duration_seconds: resolve_lock_duration(
                 self.config.worker,
                 request.lock_duration_seconds,
