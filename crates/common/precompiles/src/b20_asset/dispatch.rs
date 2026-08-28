@@ -573,7 +573,7 @@ impl<'a> DecodedAnnounce<'a> {
     /// U+FFFD substitution `from_utf8_lossy` would perform if that invariant ever broke; a silent
     /// divergence from the owned `detokenize` path would be a consensus fork.
     fn string_from_utf8(bytes: &[u8]) -> String {
-        core::str::from_utf8(bytes).expect("type_check validated UTF-8").to_owned()
+        String::from(core::str::from_utf8(bytes).expect("type_check validated UTF-8"))
     }
 }
 
