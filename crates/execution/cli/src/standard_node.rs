@@ -1,6 +1,6 @@
 //! Standard Base execution-node arguments and runner wiring.
 
-use std::{env, path::PathBuf, sync::Arc, time::Duration};
+use std::{env, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use base_bundle_extension::BundleExtension;
 use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
@@ -22,6 +22,7 @@ use base_tx_forwarding::{
     DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS, DEFAULT_RESEND_AFTER_MS, TxForwardingConfig,
     TxForwardingExtension,
 };
+use base_tx_ingress::{TransactionIngressConfig, TransactionIngressExtension};
 use base_txpool_rpc::{
     DEFAULT_MAX_VALIDITY_PREDICATES, SendRawTransactionValidityExtension, TxPoolRpcConfig,
     TxPoolRpcExtension,
@@ -259,6 +260,10 @@ pub struct RpcStandardNodeArgs {
         requires = "enable_transaction_event_journal"
     )]
     pub transaction_event_journal_path: Option<PathBuf>,
+
+    /// Address for the private bidirectional gRPC transaction ingress service.
+    #[arg(long = "tx-ingress.addr", value_name = "TX_INGRESS_ADDR")]
+    pub tx_ingress_addr: Option<SocketAddr>,
 
     /// Enable transaction forwarding for mempool nodes to builder RPC endpoints
     #[arg(
@@ -595,6 +600,11 @@ impl StandardBaseRethNode {
         runner.install_ext::<MeteringExtension>(metering_config);
         runner.install_ext::<ShadowIndexerExtension>((&args.shadow_indexer).try_into()?);
         runner.install_ext::<BundleExtension>(());
+        if let Some(listen_addr) = args.rpc.tx_ingress_addr {
+            runner.install_ext::<TransactionIngressExtension>(TransactionIngressConfig::new(
+                listen_addr,
+            ));
+        }
         let tx_forwarding_config: TxForwardingConfig = (&args).into();
         if args.rpc.enable_experimental_validity_transactions {
             runner.install_ext::<SendRawTransactionValidityExtension>(
@@ -769,6 +779,7 @@ mod tests {
             enable_transaction_tracing_logs: false,
             enable_transaction_event_journal: false,
             transaction_event_journal_path: None,
+            tx_ingress_addr: None,
             enable_tx_forwarding: false,
             enable_experimental_validity_transactions: false,
             experimental_validity_max_predicates: DEFAULT_MAX_VALIDITY_PREDICATES,
@@ -805,6 +816,19 @@ mod tests {
 
         assert_eq!(args.flashblocks_url, None);
         assert_eq!(args.flashblocks_ping_interval, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn transaction_ingress_address_is_optional() {
+        let disabled = CommandParser::<RpcStandardNodeArgs>::parse_from(["reth"]);
+        assert_eq!(disabled.args.tx_ingress_addr, None);
+
+        let enabled = CommandParser::<RpcStandardNodeArgs>::parse_from([
+            "reth",
+            "--tx-ingress.addr",
+            "127.0.0.1:9000",
+        ]);
+        assert_eq!(enabled.args.tx_ingress_addr, Some("127.0.0.1:9000".parse().unwrap()));
     }
 
     #[test]

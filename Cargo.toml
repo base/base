@@ -203,6 +203,7 @@ base-flashblocks = { path = "crates/execution/flashblocks" }
 base-execution-txpool = { path = "crates/execution/txpool" }
 base-bundle-extension = { path = "crates/execution/bundle" }
 base-proofs-extension = { path = "crates/execution/proofs" }
+base-tx-ingress = { path = "crates/execution/tx-ingress" }
 base-tx-forwarding = { path = "crates/execution/tx-forwarding" }
 base-execution-chainspec = { path = "crates/execution/chainspec" }
 base-execution-consensus = { path = "crates/execution/consensus" }
@@ -412,7 +413,12 @@ async-channel = "2.5"
 async-trait = "0.1.83"
 
 # grpc
+prost = "0.14"
 tonic = "0.14"
+tonic-prost = "0.14"
+prost-build = "0.14"
+tonic-prost-build = "0.14"
+protoc-bin-vendored = "3.2"
 
 # rpc
 jsonrpsee = "0.26.0"
