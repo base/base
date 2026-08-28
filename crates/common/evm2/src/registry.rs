@@ -7,6 +7,7 @@ use evm2::{
     ethereum::{
         TxEnvelope, eip1559, eip2930, eip7702, execute_initial_frame, finalize_gas,
         initial_gas_and_reservoir, intrinsic_gas, legacy, prepare_initial_frame,
+        warm_base_accounts,
     },
     handler::GasSettlement,
     interpreter::{GasTracker, InstrStop},
@@ -80,6 +81,10 @@ impl BaseEvmTypes {
         if tx.is_system_transaction {
             return Ok(Self::failed_deposit(tx));
         }
+
+        // Pre-warm the sender, destination, coinbase, and precompiles, matching the standard
+        // transaction handlers so warm/cold (EIP-2929) access gas agrees with the reference.
+        warm_base_accounts(host, tx.from, tx.to);
 
         // Meter the deposit like a standard transaction: charge intrinsic gas up front, then
         // run the call/create frame with the remaining gas. A deposit that cannot afford its

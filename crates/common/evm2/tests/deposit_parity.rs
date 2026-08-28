@@ -345,3 +345,28 @@ fn parity_halted_call_with_value_rolls_back_transfer() {
         compare: vec![(SENDER, vec![]), (target, vec![])],
     });
 }
+
+#[test]
+fn parity_warm_account_access() {
+    // The called contract runs `EXTCODESIZE(0x1)` — an account access whose EIP-2929 warm/cold
+    // gas only agrees with the reference if the deposit handler pre-warms the same base set
+    // (sender, coinbase, destination, precompiles) that the standard handlers do. This is the
+    // account-warmth gas path the value-transfer/SSTORE fixtures never exercise.
+    let target = Address::repeat_byte(0x55);
+    assert_parity(Fixture {
+        seed: vec![Seed {
+            address: target,
+            balance: U256::ZERO,
+            nonce: 0,
+            // PUSH1 0x01, EXTCODESIZE, POP, STOP
+            code: vec![0x60, 0x01, 0x3b, 0x50, 0x00],
+        }],
+        to: TxKind::Call(target),
+        mint: 1_000,
+        value: U256::ZERO,
+        gas_limit: 200_000,
+        input: vec![],
+        is_system: false,
+        compare: vec![(SENDER, vec![])],
+    });
+}
