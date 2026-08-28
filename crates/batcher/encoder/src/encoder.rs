@@ -161,8 +161,6 @@ impl BatchEncoder {
         BatcherMetrics::channel_closed_total(close_reason.metric_label()).increment(1);
         BatcherMetrics::channel_duration_blocks().record(duration_blocks as f64);
         BatcherMetrics::l2_blocks_per_channel().record(blocks_added as f64);
-        BatcherMetrics::input_bytes(BatcherMetrics::STAGE_CLOSED).set(input_bytes as f64);
-        BatcherMetrics::output_bytes().set(compressed_bytes as f64);
         BatcherMetrics::input_bytes_total().increment(input_bytes);
         BatcherMetrics::output_bytes_total().increment(compressed_bytes);
         if input_bytes > 0 {
@@ -494,8 +492,6 @@ impl BatchPipeline for BatchEncoder {
         match outcome {
             accepted @ (ChannelAddOutcome::Accepted | ChannelAddOutcome::TargetReached) => {
                 // Cursor advances only after accept, so a later reject retries this block.
-                BatcherMetrics::input_bytes(BatcherMetrics::STAGE_ADDED)
-                    .set(channel.input_bytes() as f64);
                 self.block_cursor += 1;
                 if accepted == ChannelAddOutcome::TargetReached {
                     self.close_current_channel(ChannelCloseReason::SoftTarget)?;
@@ -543,10 +539,6 @@ impl BatchPipeline for BatchEncoder {
         let frame_count = submission.frame_count();
         let blob_count = submission.blob_count();
         BatcherMetrics::pending_frames().set(self.egress.artifacts().ready_frame_count() as f64);
-        if let Some(channel) = self.channels.iter().rev().find(|channel| channel.framing_complete())
-        {
-            BatcherMetrics::channel_num_frames().set(channel.frame_count() as f64);
-        }
         debug!(
             id = %id.0,
             frame_count = %frame_count,
