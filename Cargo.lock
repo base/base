@@ -6023,6 +6023,7 @@ name = "base-shadow-indexer"
 version = "0.0.0"
 dependencies = [
  "alloy-consensus 2.4.1",
+ "alloy-eips 2.4.1",
  "alloy-primitives",
  "anyhow",
  "async-trait",
@@ -6035,12 +6036,18 @@ dependencies = [
  "futures",
  "metrics",
  "mockall",
+ "reth-chain-state",
+ "reth-db-common",
+ "reth-ethereum-primitives",
+ "reth-evm-ethereum",
  "reth-execution-types",
  "reth-exex",
  "reth-network-api",
  "reth-node-api",
  "reth-primitives-traits",
+ "reth-provider",
  "reth-tasks",
+ "tempfile",
  "tokio",
  "tracing",
 ]
