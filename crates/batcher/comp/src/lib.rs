@@ -20,7 +20,7 @@ mod traits;
 pub use traits::CompressorWriter;
 
 mod types;
-pub use types::{CompressionAlgo, CompressorError, CompressorResult};
+pub use types::{CompressionAlgo, CompressionError, CompressorError, CompressorResult};
 
 mod zlib;
 pub use zlib::ZlibCompressor;
@@ -29,6 +29,11 @@ pub use zlib::ZlibCompressor;
 mod brotli;
 #[cfg(feature = "std")]
 pub use brotli::{BrotliCompressionError, BrotliCompressor, BrotliLevel};
+
+#[cfg(feature = "std")]
+mod stream;
+#[cfg(feature = "std")]
+pub use stream::{CompressionBackend, CompressionStream};
 
 #[cfg(feature = "std")]
 mod variant;
