@@ -29,7 +29,34 @@
   - Conditional imports may live inside their `#[cfg(...)]`-gated block, such as a `#[cfg(test)] mod tests` or feature-gated function.
   - Imports inside `macro_rules!` bodies are allowed when the macro needs them in its expansion context.
 - Do not destructure a value merely to read its fields, such as `let Self { width, height } = self`. Access fields directly, such as `self.width` and `self.height`.
+
+```rust
+// Avoid
+fn area(&self) -> u32 {
+    let Self { width, height } = self;
+    width * height
+}
+
+// Prefer
+fn area(&self) -> u32 {
+    self.width * self.height
+}
+```
+
 - Prefer simple call chains over indirection. Inline methods that perform only one internal operation, and call an inner type directly instead of adding a forwarding method.
+
+```rust
+// Avoid: a wrapper that just forwards to the inner type
+impl Wallet {
+    fn balance(&self) -> u64 {
+        self.account.balance()
+    }
+}
+let bal = wallet.balance();
+
+// Prefer: call the inner type's method directly
+let bal = wallet.account.balance();
+```
 
 ## Tracing
 
