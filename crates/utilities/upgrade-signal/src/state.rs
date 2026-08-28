@@ -163,6 +163,14 @@ pub struct UpgradeSignalMonitor {
     pub metrics_layer: UpgradeSignalMetricLayer,
     /// Live observer state by contract-backed upgrade.
     states: BTreeMap<BaseUpgrade, UpgradeSignalState>,
+    /// Minimum protocol version of each active upgrade the last committed apply validated.
+    ///
+    /// The runtime registry stores only activation timestamps, not the minimum protocol version an
+    /// upgrade demands, so an activation-unchanged version bump leaves the registry matching. This
+    /// baseline lets [`Self::schedule_needs_apply`] still detect such a protocol-only change and
+    /// re-validate it (which may alarm or fail the node closed). Advanced only on a committed apply,
+    /// so a rejected or failed apply keeps the schedule offered for re-validation.
+    validated_protocol_versions: BTreeMap<BaseUpgrade, U256>,
     /// Contract values of the last schedule that failed to apply, used to page only on the first
     /// occurrence of a persistent failure rather than on every poll.
     last_apply_failure: Option<Vec<UpgradeSignal>>,
@@ -176,7 +184,12 @@ impl UpgradeSignalMonitor {
         for upgrade_id in BaseUpgrade::CONTRACT_VARIANTS {
             states.insert(upgrade_id, UpgradeSignalState::new());
         }
-        Self { metrics_layer, states, last_apply_failure: None }
+        Self {
+            metrics_layer,
+            states,
+            validated_protocol_versions: BTreeMap::new(),
+            last_apply_failure: None,
+        }
     }
 
     /// Tolerantly polls the reader, records live metrics, and — when `refresher` is supplied —
@@ -265,6 +278,7 @@ impl UpgradeSignalMonitor {
                 // nothing, so the schedule stays offered for a newer-block re-read.
                 if summary.committed {
                     self.last_apply_failure = None;
+                    self.validated_protocol_versions = Self::active_protocol_versions(schedule);
                     UpgradeSignalMetrics::record_apply_success(self.metrics_layer, schedule);
                 }
                 return UpgradeSignalPollOutcome::Continue;
@@ -370,6 +384,15 @@ impl UpgradeSignalMonitor {
     /// (it is not contract-backed) and a governance clear is kept as an explicit [`Never`] rather
     /// than removed — so this comparison is true iff a commit would change the registry.
     ///
+    /// The registry alone is not sufficient, however: it stores only activation timestamps, not the
+    /// minimum protocol version each upgrade demands. An upgrade that raises its minimum version
+    /// while leaving its activation timestamp unchanged would leave the registry matching, so the
+    /// gate also fires when an active signal's minimum version has drifted from the last one this
+    /// monitor validated (see [`Self::validated_protocol_versions`]). Without this a protocol-only
+    /// bump would slip past validation, and the node would never alarm or fail closed as the
+    /// unsupportable activation approached. Only signals with a positive activation carry a
+    /// meaningful minimum (a clear carries none), so cleared signals never trip this check.
+    ///
     /// [`Never`]: UpgradeActivation::Never
     fn schedule_needs_apply(&self, chain_id: u64, schedule: &UpgradeSignalSchedule) -> bool {
         let mut expected = UpgradeActivationOverrides::new();
@@ -379,8 +402,25 @@ impl UpgradeSignalMonitor {
                 UpgradeActivation::from_timestamp(signal.positive_activation_timestamp()),
             );
         }
+        if RuntimeUpgradeRegistry::overrides(chain_id).unwrap_or_default() != expected {
+            return true;
+        }
 
-        RuntimeUpgradeRegistry::overrides(chain_id).unwrap_or_default() != expected
+        Self::active_protocol_versions(schedule) != self.validated_protocol_versions
+    }
+
+    /// Returns the minimum protocol version of each active signal in the schedule.
+    ///
+    /// Only signals with a positive activation timestamp are included: a clear carries no meaningful
+    /// minimum version. This is both the baseline a committed apply records and the value
+    /// [`Self::schedule_needs_apply`] compares a fresh read against, so the two stay in lockstep.
+    fn active_protocol_versions(schedule: &UpgradeSignalSchedule) -> BTreeMap<BaseUpgrade, U256> {
+        schedule
+            .signals
+            .iter()
+            .filter(|signal| signal.activation_timestamp > 0)
+            .map(|signal| (signal.upgrade_id, signal.protocol_version))
+            .collect()
     }
 
     /// Applies signals read from L1 and records corresponding live metrics.
@@ -850,6 +890,107 @@ mod tests {
             Some(UpgradeActivation::Timestamp(84))
         );
         assert!(!monitor.schedule_needs_apply(chain_id, &returned));
+
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+    }
+
+    #[test]
+    fn protocol_version_bump_with_unchanged_activation_trips_apply_gate() {
+        let chain_id = 9_100_090;
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+
+        // A dev-build node version satisfies any minimum, so every apply here commits.
+        let refresher = refresher(chain_id, UpgradeSignalDefaults::node_protocol_version());
+        let v1 = UpgradeSignalDefaults::packed_protocol_version(1, 1, 0);
+        let v2 = UpgradeSignalDefaults::packed_protocol_version(1, 2, 0);
+
+        // Commit Azul@42 requiring v1; the registry activation and the validated-version baseline
+        // now both reflect it, so the schedule is not re-offered.
+        let first = versioned_schedule(42, v1);
+        let mut monitor = monitor();
+        monitor.update_schedule(first.clone());
+        assert_eq!(
+            monitor.apply_and_evaluate(&refresher, &first, 0),
+            UpgradeSignalPollOutcome::Continue
+        );
+        assert!(!monitor.schedule_needs_apply(chain_id, &first));
+
+        // L1 raises Azul's minimum version to v2 but leaves the activation timestamp at 42. The
+        // registry stores activations only, so it still matches; only the validated-version baseline
+        // exposes the drift and keeps the schedule offered for re-validation.
+        let bumped = UpgradeSignalSchedule::new(
+            2,
+            vec![UpgradeSignal {
+                upgrade_id: BaseUpgrade::Azul,
+                activation_timestamp: 42,
+                protocol_version: v2,
+            }],
+        );
+        assert_eq!(
+            RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Azul),
+            Some(UpgradeActivation::Timestamp(42))
+        );
+        monitor.update_schedule(bumped.clone());
+        assert!(
+            monitor.schedule_needs_apply(chain_id, &bumped),
+            "a protocol-only version bump must trip the apply gate even when the activation is unchanged"
+        );
+
+        // Re-applying validates and commits the new minimum, advancing the baseline so the gate
+        // settles once the registry and the validated version both reflect the bump.
+        assert_eq!(
+            monitor.apply_and_evaluate(&refresher, &bumped, 0),
+            UpgradeSignalPollOutcome::Continue
+        );
+        assert!(!monitor.schedule_needs_apply(chain_id, &bumped));
+
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+    }
+
+    #[test]
+    fn unsupportable_protocol_bump_with_unchanged_activation_fails_closed() {
+        let chain_id = 9_100_091;
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+
+        // Node supports 1.1.0.
+        let node_version = UpgradeSignalDefaults::packed_protocol_version(1, 1, 0);
+        let refresher = refresher(chain_id, node_version);
+        let activation = 1_000_000;
+
+        // Commit an imminent Azul@activation the node currently supports (requires 1.1.0). The
+        // registry records the activation and the baseline records the validated 1.1.0 minimum.
+        let supported = versioned_schedule(activation, node_version);
+        let mut monitor = monitor();
+        monitor.update_schedule(supported.clone());
+        let now = activation - refresher.config.halt_lead_time().as_secs() + 1;
+        assert_eq!(
+            monitor.apply_and_evaluate(&refresher, &supported, now),
+            UpgradeSignalPollOutcome::Continue
+        );
+
+        // L1 raises the minimum to 1.1.1 (unsupportable) without moving the activation. The registry
+        // still matches on activation alone, so only the version baseline exposes the drift and keeps
+        // the unsupportable schedule offered for re-validation.
+        let unsupportable = UpgradeSignalSchedule::new(
+            2,
+            vec![UpgradeSignal {
+                upgrade_id: BaseUpgrade::Azul,
+                activation_timestamp: activation,
+                protocol_version: UpgradeSignalDefaults::packed_protocol_version(1, 1, 1),
+            }],
+        );
+        monitor.update_schedule(unsupportable.clone());
+        assert!(
+            monitor.schedule_needs_apply(chain_id, &unsupportable),
+            "an unsupportable protocol-only bump must still be offered for re-validation"
+        );
+
+        // With the activation inside the halt lead time and this node too old, the re-validation the
+        // gate forces fails the node closed rather than letting it fork off at activation.
+        assert!(matches!(
+            monitor.apply_and_evaluate(&refresher, &unsupportable, now),
+            UpgradeSignalPollOutcome::HaltNode { upgrade_id: BaseUpgrade::Azul, .. }
+        ));
 
         RuntimeUpgradeRegistry::clear_chain(chain_id);
     }
