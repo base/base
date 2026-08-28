@@ -1,55 +1,53 @@
-lib.rs files must be minimal with no logic. Use `#![doc = include_str!("../README.md")]` for the crate doc string, never `//!` comments. Group each module declaration with its re-export (mod foo; pub use foo::Bar;) rather than listing all mods then all pub uses. Modules must not be `pub` or `pub(crate)` unless they are test utilities (e.g. `pub mod test_utils`). All structs, types, enums, and functions within modules should be `pub` and properly re-exported from lib.rs. No private or pub(crate) types. Prefer placing functions as methods on a type (even a unit struct) rather than as bare functions, so the public API exports types, not loose functions.
+# Agent Instructions
 
-Do not add `#![allow(missing_docs)]` or other allow-lints to suppress clippy warnings. Fix the underlying issue instead.
+## Crate Architecture and Public API
 
-Binary crates (bin/) should contain minimal glue code. All meaningful logic belongs in library crates.
+- All crate names must use the `base-` prefix, for example `base-enclave` or `base-builder-core`.
+- Keep `lib.rs` files minimal and free of logic.
+- Group each module declaration with its re-export (`mod foo; pub use foo::Bar;`) instead of listing all modules and then all re-exports.
+- Do not declare modules `pub` or `pub(crate)` unless they are test utilities, such as `pub mod test_utils`.
+- Make all structs, types, enums, and functions within modules `pub`, and re-export them from `lib.rs`. Do not introduce private or `pub(crate)` types.
+- Prefer methods on a type, including a unit struct when appropriate, over bare functions so the public API exports types rather than loose functions.
+- Keep binary crates under `bin/` as minimal glue code. Put meaningful logic in library crates.
 
-Cargo.toml dependencies should be sorted by line length (waterfall style) and logically grouped as done in the rest of the workspace. Features sections go at the bottom of the manifest. All crate and binary Cargo.toml files must inherit lints from the workspace with `[lints] workspace = true`.
+## Cargo Manifests and Features
 
-Do not add features to dependencies in the workspace root Cargo.toml. Features must be enabled only by the individual crates or binaries that need them, to prevent feature leakage into no_std crates.
+- Sort `Cargo.toml` dependencies by line length (waterfall style) and preserve the workspace's logical grouping.
+- Put features sections at the bottom of manifests.
+- Every crate and binary manifest must inherit workspace lints with `[lints] workspace = true`.
+- Do not enable dependency features in the workspace root `Cargo.toml`. Enable them only in the crates or binaries that need them to prevent feature leakage into `no_std` crates.
 
-All crates in the workspace should have a `base-` prefix in their crate name (e.g. `base-enclave`, `base-builder-core`).
+## Documentation and Lints
 
-Every `mod.rs` file must begin with a `//!` module doc comment describing what the module contains.
+- Use `#![doc = include_str!("../README.md")]` for crate documentation in `lib.rs`; never use `//!` comments there.
+- Begin every `mod.rs` file with a `//!` module doc comment describing its contents.
+- Do not suppress Clippy warnings with `#![allow(missing_docs)]` or other allow-lints. Fix the underlying issue.
 
-All `use` imports must be at the top of the file or the top of a `mod` block. Never place `use` statements inside function bodies or closures. Exception: conditional imports behind `#[cfg(...)]` may be scoped to the `cfg`-gated block (e.g., inside a `#[cfg(test)] mod tests`, `#[cfg(feature = "...")]` function, or similar) rather than hoisted to the top of the file. Another exception: `use` inside `macro_rules!` bodies is acceptable when the macro needs to import items in its expansion context.
+## Rust Structure and Style
 
-Use structured tracing instead of interpolated strings. Always use key=value fields for any dynamic data: `info!(block = %block_number, "processed block")` rather than `info!("processed block {block_number}")`. Use `%` for Display, `?` for Debug. The message string should be a static description; all variable data goes in fields. Correct: `error!(error = %e, peer = %peer_id, "connection failed")`. Incorrect: `error!("connection to {peer_id} failed: {e}")`.
+- Put all `use` imports at the top of the file or at the top of a `mod` block. Do not place imports inside functions or closures.
+  - Conditional imports may live inside their `#[cfg(...)]`-gated block, such as a `#[cfg(test)] mod tests` or feature-gated function.
+  - Imports inside `macro_rules!` bodies are allowed when the macro needs them in its expansion context.
+- Do not destructure a value merely to read its fields, such as `let Self { width, height } = self`. Access fields directly, such as `self.width` and `self.height`.
+- Prefer simple call chains over indirection. Inline methods that perform only one internal operation, and call an inner type directly instead of adding a forwarding method.
 
-Keep unit tests colocated with their implementation. Do not introduce standalone `tests.rs` modules for unit tests; define tests in the same `.rs` implementation file/module inside a `#[cfg(test)] mod tests { ... }` block.
+## Tracing
 
-Do not create tautological tests. Tests that merely restate the implementation without independently validating behavior are considered bad tests.
+- Use structured tracing with key-value fields for all dynamic data. Keep the message string static.
+- Use `%` for `Display` values and `?` for `Debug` values.
+- Write `info!(block = %block_number, "processed block")`, not `info!("processed block {block_number}")`.
+- Write `error!(error = %error, peer = %peer_id, "connection failed")`, not `error!("connection to {peer_id} failed: {error}")`.
 
-`#[cfg(test)] mod tests { ... }` must always be placed at the end of the file, after all non-test code.
+## Testing
 
-Do not destructure a type into its fields with `let Self { .. } = self` (or similar `let T { .. } = value`) just to read fields. Access fields directly via `self.field` for readability.
-
-```rust
-// Avoid
-fn area(&self) -> u32 {
-    let Self { width, height } = self;
-    width * height
-}
-
-// Prefer
-fn area(&self) -> u32 {
-    self.width * self.height
-}
-```
-
-Prefer simplifying call chains over adding indirection. If a method only performs a single internal operation, inline that logic at the call site rather than introducing the method. If a method merely forwards to another type, call that type's method directly instead of wrapping it in a new method.
-
-```rust
-// Avoid: a wrapper that just forwards to the inner type
-impl Wallet {
-    fn balance(&self) -> u64 {
-        self.account.balance()
-    }
-}
-let bal = wallet.balance();
-
-// Prefer: call the inner type's method directly
-let bal = wallet.account.balance();
-```
-
-For test doubles of internal traits, default to `#[cfg_attr(test, mockall::automock)]` (see `crates/consensus/service/src/actors/*/client.rs`, `crates/consensus/service/src/actors/network/gossip.rs`, `crates/consensus/service/src/follow/local.rs`, `crates/consensus/service/src/follow/source.rs` for examples) rather than hand-rolling a fake. Only hand-roll a fake (as in `crates/consensus/service/src/test_utils/fake_engine_client.rs`, `fake_l1.rs`, `fake_gossip.rs`) when `automock` cannot express the required behavior — e.g. the trait method returns a non-constructible builder type (such as alloy's `ProviderCall`/`EthGetBlock`), the double needs a single call log ordered across multiple trait methods, or scripted responses must be mutated by the test while calls are in flight. Document the specific reason a hand-rolled fake was chosen in the module doc comment.
+- Keep unit tests colocated with their implementation in a `#[cfg(test)] mod tests { ... }` block. Do not create standalone `tests.rs` modules for unit tests.
+- Place `#[cfg(test)] mod tests { ... }` at the end of the file, after all non-test code.
+- Test observable behavior through public APIs. Do not create tautological or change-detector tests that duplicate production logic or assert incidental implementation details.
+  - Tests should fail for behavior regressions and survive behavior-preserving refactors.
+  - Interaction assertions are appropriate only when the interaction itself is part of the contract.
+- For test doubles of internal traits, default to `#[cfg_attr(test, mockall::automock)]` rather than hand-rolling a fake. See `crates/consensus/service/src/actors/*/client.rs`, `crates/consensus/service/src/actors/network/gossip.rs`, `crates/consensus/service/src/follow/local.rs`, and `crates/consensus/service/src/follow/source.rs`.
+- Hand-roll a fake only when `automock` cannot express the required behavior, such as:
+  - A trait method returns a non-constructible builder type like Alloy's `ProviderCall` or `EthGetBlock`.
+  - The double needs one call log ordered across multiple trait methods.
+  - Tests must mutate scripted responses while calls are in flight.
+- Document the specific reason for a hand-rolled fake in its module doc comment. Examples live in `crates/consensus/service/src/test_utils/fake_engine_client.rs`, `fake_l1.rs`, and `fake_gossip.rs`.
