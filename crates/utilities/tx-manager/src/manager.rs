@@ -62,8 +62,8 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     BlobTxBuilder, BumpedFees, FeeCalculator, FeeOverride, GasPriceCaps, NonceManager,
-    RpcErrorClassifier, SendHandle, SendResponse, SendState, SignerConfig, TxCandidate, TxManager,
-    TxManagerConfig, TxManagerError, TxManagerResult, TxMetrics,
+    RpcErrorClassifier, SendHandle, SendOutcome, SendResponse, SendState, SignerConfig,
+    TxCandidate, TxManager, TxManagerConfig, TxManagerError, TxManagerResult, TxMetrics,
 };
 
 /// Number of wei in one gwei (10^9), as `f64` for fractional-precision
@@ -1012,11 +1012,12 @@ where
 
         let latency_ms =
             u64::try_from(self.runtime.now().saturating_sub(start).as_millis()).unwrap_or(u64::MAX);
-        self.metrics.record_send_latency(latency_ms);
 
         if result.is_ok() {
+            self.metrics.record_send_latency(latency_ms, SendOutcome::Confirmed);
             self.metrics.record_tx_confirmed();
         } else {
+            self.metrics.record_send_latency(latency_ms, SendOutcome::Failed);
             self.metrics.record_tx_failed();
         }
 

@@ -13,6 +13,7 @@ base_metrics::define_metrics! {
     tx_gas_bump_count: counter,
     #[describe("Send-loop latency in milliseconds")]
     #[label(name)]
+    #[label(name = "outcome")]
     tx_send_latency_ms: histogram,
     #[describe("Current nonce value")]
     #[label(name)]
@@ -40,6 +41,29 @@ base_metrics::define_metrics! {
     tx_failed_count: counter,
 }
 
+/// How a send loop ended.
+///
+/// A send that gives up waits out the full send timeout, so its latency is bounded by
+/// configuration rather than by the chain. Keeping the two apart stops that ceiling from
+/// dominating the quantiles of sends that actually confirmed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendOutcome {
+    /// The transaction reached the required confirmation depth.
+    Confirmed,
+    /// The send returned an error, including timeouts where the transaction may still confirm.
+    Failed,
+}
+
+impl SendOutcome {
+    /// Returns the metric label value.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Confirmed => "confirmed",
+            Self::Failed => "failed",
+        }
+    }
+}
+
 /// Trait abstracting metrics collection for the transaction manager.
 ///
 /// Implement this trait to plug in your own metrics backend. A [`BaseTxMetrics`]
@@ -51,8 +75,8 @@ pub trait TxMetrics: Send + Sync + Debug + 'static {
     /// Record a gas bump event.
     fn record_gas_bump(&self);
 
-    /// Record the send-loop latency in milliseconds (all exit paths).
-    fn record_send_latency(&self, latency_ms: u64);
+    /// Record the send-loop latency in milliseconds, split by how the send ended.
+    fn record_send_latency(&self, latency_ms: u64, outcome: SendOutcome);
 
     /// Record the current nonce.
     fn record_current_nonce(&self, nonce: u64);
@@ -96,7 +120,7 @@ pub struct NoopTxMetrics;
 impl TxMetrics for NoopTxMetrics {
     fn record_tx_max_fee(&self, _fee_gwei: f64) {}
     fn record_gas_bump(&self) {}
-    fn record_send_latency(&self, _latency_ms: u64) {}
+    fn record_send_latency(&self, _latency_ms: u64, _outcome: SendOutcome) {}
     fn record_current_nonce(&self, _nonce: u64) {}
     fn record_publish_error(&self) {}
     fn record_basefee(&self, _basefee_gwei: f64) {}
@@ -152,8 +176,8 @@ impl TxMetrics for BaseTxMetrics {
         TxManagerMetrics::tx_gas_bump_count(self.name).increment(1);
     }
 
-    fn record_send_latency(&self, latency_ms: u64) {
-        TxManagerMetrics::tx_send_latency_ms(self.name).record(latency_ms as f64);
+    fn record_send_latency(&self, latency_ms: u64, outcome: SendOutcome) {
+        TxManagerMetrics::tx_send_latency_ms(self.name, outcome.as_str()).record(latency_ms as f64);
     }
 
     fn record_current_nonce(&self, nonce: u64) {
@@ -198,7 +222,7 @@ mod tests {
         let m = NoopTxMetrics;
         m.record_tx_max_fee(1.5);
         m.record_gas_bump();
-        m.record_send_latency(120);
+        m.record_send_latency(120, SendOutcome::Confirmed);
         m.record_current_nonce(42);
         m.record_publish_error();
         m.record_basefee(30.123);
@@ -214,7 +238,7 @@ mod tests {
         let m = BaseTxMetrics::new("test");
         m.record_tx_max_fee(1.5);
         m.record_gas_bump();
-        m.record_send_latency(120);
+        m.record_send_latency(120, SendOutcome::Failed);
         m.record_current_nonce(42);
         m.record_publish_error();
         m.record_basefee(30.123);
