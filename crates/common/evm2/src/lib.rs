@@ -1,5 +1,8 @@
 #![doc = include_str!("../README.md")]
 
+mod spec;
+pub use spec::BaseSpecId;
+
 mod transaction;
 pub use transaction::{BaseTxEnvelope, DEPOSIT_TX_TYPE, TxDeposit};
 
