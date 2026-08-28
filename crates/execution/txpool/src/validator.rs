@@ -1024,9 +1024,17 @@ where
         // 7702 authorities use the same k1 recovery. Drop any whose default
         // EOA is gone so the pool does not treat them as live delegations.
         // The transaction stays valid — inclusion skips those auths.
+        //
+        // Watch every recovered authority's `account_state` slot (kept or
+        // dropped) so a later keystore change — e.g. a dropped authority getting
+        // un-revoked — re-runs this filter instead of leaving the list stale.
         let authorities = authorities.map(|list| {
             list.into_iter()
                 .filter(|authority| {
+                    watch_set.push(InvalidationKey::Slot {
+                        address: AccountConfigurationStorage::ADDRESS,
+                        slot: AccountConfigurationStorage::account_state_slot(*authority),
+                    });
                     StorageCtx::enter(&mut storage, |ctx| {
                         let acc = AccountConfigurationStorage::new(ctx);
                         ActorAuthorizer::authorize_standard_sender(&acc, *authority, now)

@@ -74,7 +74,7 @@ impl<DB, TX> IsTxError for EVMError<DB, TX> {
     }
 }
 
-/// Loads `account_state[account]` from the EIP-8130 AccountConfiguration
+/// Loads `account_state[account]` from the EIP-8130 `AccountConfiguration`
 /// predeploy. [`JournalTr::sload`] assumes the account is already present.
 #[cfg(feature = "std")]
 fn load_standard_account_state<JOURNAL: JournalTr>(
@@ -170,10 +170,11 @@ where
         let authority_acc = journal.load_account_with_code_mut(authority)?;
         let authority_acc_info = &authority_acc.account().info;
 
-        if let Some(bytecode) = &authority_acc_info.code {
-            if !bytecode.is_empty() && !bytecode.is_eip7702() {
-                continue;
-            }
+        if let Some(bytecode) = &authority_acc_info.code
+            && !bytecode.is_empty()
+            && !bytecode.is_eip7702()
+        {
+            continue;
         }
 
         if authorization.nonce() != authority_acc_info.nonce {
@@ -191,6 +192,11 @@ where
             continue;
         }
 
+        // INVARIANT: the authority was already warmed by the first
+        // `load_account_with_code_mut` above, so this re-load returns the same
+        // journaled account with its original load flags intact. The refund
+        // accounting below (and `is_loaded_as_not_existing_not_touched`) relies
+        // on revm returning the warmed entry here rather than a fresh load.
         let mut authority_acc = journal.load_account_with_code_mut(authority)?;
         let authority_acc_info = &authority_acc.account().info;
 
@@ -296,10 +302,9 @@ where
         // `ActorTxVerifier` instead and never reach this handler. `no_std`
         // (proof/zkVM) builds skip the check until the eip8130 crate is
         // available there — same gating as enshrined 8130 execution.
+        // Deposits already returned above, so only the 8130 type needs excluding.
         #[cfg(feature = "std")]
-        if spec.is_enabled_in(BaseUpgrade::Cobalt)
-            && tx.tx_type() != DEPOSIT_TRANSACTION_TYPE
-            && tx.tx_type() != crate::EIP8130_TRANSACTION_TYPE
+        if spec.is_enabled_in(BaseUpgrade::Cobalt) && tx.tx_type() != crate::EIP8130_TRANSACTION_TYPE
         {
             let caller = tx.caller();
             let now: u64 = block.timestamp().try_into().map_err(|_| {

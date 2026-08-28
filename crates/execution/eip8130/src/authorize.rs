@@ -237,8 +237,15 @@ impl ActorAuthorizer {
     ///
     /// Shared by [`Self::authorize_k1`] (which still accepts a scoped self) and
     /// [`Self::authorize_standard_sender`] (which additionally requires admin).
-    /// `policy_target` is `address(0)` when the self is ungated; the caller
-    /// supplies the manager when `SCOPE_POLICY` is set.
+    ///
+    /// This only validates the inline self (revoked / expired) and echoes the
+    /// supplied `policy_target` straight into the returned [`ResolvedActor`]; it
+    /// does *not* resolve policy itself. When `SCOPE_POLICY` is set the caller is
+    /// responsible for either resolving the manager (via
+    /// [`Self::inline_self_policy_target`], as [`Self::authorize_k1`] does) or
+    /// rejecting the scope outright (as [`Self::authorize_standard_sender`]
+    /// does). Passing `address(0)` for a policy-scoped self therefore yields a
+    /// deliberately partial actor that the caller must finish resolving.
     pub fn authorize_inline_self(
         account: Address,
         state: &AccountState,
