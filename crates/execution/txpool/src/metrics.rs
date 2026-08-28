@@ -8,7 +8,10 @@ base_metrics::define_metrics! {
     txpool.guard,
     struct = GuardMetrics,
     #[describe("EIP-8130 transactions rejected at admission by signature/payment limits")]
-    #[label(name = "reason", default = ["sender", "payer", "payment", "payer_balance"])]
+    #[label(
+        name = "reason",
+        default = ["sender", "payer", "payment", "payer_balance", "account_change"]
+    )]
     admission_rejected: counter,
     #[describe("EIP-8130 transactions invalidated and evicted ahead of the builder")]
     #[label(
@@ -41,6 +44,7 @@ impl GuardMetrics {
             crate::LimitRejection::PayerLimit => "payer",
             crate::LimitRejection::PaymentLimit => "payment",
             crate::LimitRejection::PayerBalance => "payer_balance",
+            crate::LimitRejection::AccountChangeLimit => "account_change",
         }
     }
 
