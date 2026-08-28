@@ -169,14 +169,17 @@ impl AccountConfigurationStorage<'_> {
     /// Unlike the contract's raw two-slot read, this gates on the actor's live
     /// `SCOPE_POLICY` grant (via [`Self::resolve_actor_config`]): an actor without
     /// the bit resolves to `(0, 0)` regardless of what its policy slots hold.
-    /// Because policy attachment is now length-based and decoupled from scope
-    /// (base/eip-8130 #95), an ungated actor *may* have non-zero policy slots
-    /// written — this resolver still reports `(0, 0)` for it, since only a
-    /// policy-gated sender is enforced against a policy. A gated actor returns the
-    /// raw slots, which may themselves be zero (a zero `manager` gates the key to
-    /// `address(0)`), so a `(0, 0)` result does not by itself distinguish "ungated"
-    /// from "gated with an empty policy". This is a resolver, not a 1:1 mirror; for
-    /// the raw reads use [`Self::get_policy_manager`] / [`Self::get_policy_commitment`].
+    ///
+    /// A `(0, 0)` result is therefore ambiguous across three cases: (a) the actor
+    /// is ungated with no policy attached; (b) the actor is gated but its attached
+    /// policy is all-zero (a zero `manager` gates the key to `address(0)`); and —
+    /// since attachment is now length-based and decoupled from scope
+    /// (base/eip-8130 #95) — (c) the actor is ungated yet a 52-byte policy *was*
+    /// attached and written to its raw slots, which this resolver deliberately
+    /// hides (only a policy-gated sender is enforced against a policy). A caller
+    /// that needs "is any policy metadata attached at all?" cannot answer from
+    /// this resolver alone; combine [`Self::get_policy_manager`] /
+    /// [`Self::get_policy_commitment`] (raw, scope-agnostic) with the actor's scope.
     pub fn get_policy(&self, account: Address, actor_id: B256) -> Result<(Address, B256)> {
         let scope = self.resolve_actor_config(account, actor_id)?.scope;
         if scope & Eip8130Constants::SCOPE_POLICY == 0 {

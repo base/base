@@ -921,7 +921,7 @@ impl AccountChangeApplier {
     /// rejected rather than silently truncated. Solidity's `abi.decode` reverts
     /// on non-zero padding, so the lenient decoder would otherwise let the native
     /// path accept a signed payload the contract rejects — a consensus divergence.
-    fn decode_authorize(payload: &[u8]) -> Result<(B256, ActorConfig, Bytes), ApplyError> {
+    pub fn decode_authorize(payload: &[u8]) -> Result<(B256, ActorConfig, Bytes), ApplyError> {
         let (actor_id, abi, policy_data) =
             <(B256, ActorConfigAbi, Bytes)>::abi_decode_params_validate(payload)
                 .map_err(|_| ApplyError::MalformedAuthorizeData)?;
@@ -1702,7 +1702,8 @@ mod tests {
             assert_eq!(acc.get_policy(ACCOUNT, NON_SELF).unwrap(), (MANAGER, COMMITMENT));
 
             // Upsert the same actor down to no policy: the stale manager/commitment
-            // must be cleared (policy slots are written only while SCOPE_POLICY is set).
+            // must be cleared. `set_policy` always writes both slots, so an empty
+            // `policy_data` upsert writes zeros (length-based; independent of scope).
             let ungated_cfg = ungated(AUTHENTICATOR, Eip8130Constants::SCOPE_OPERATOR);
             AccountChangeApplier::authorize_actor(acc, ACCOUNT, NON_SELF, ungated_cfg, &[])
                 .unwrap();
