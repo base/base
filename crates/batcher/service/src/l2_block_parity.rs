@@ -148,13 +148,6 @@ pub struct L2BlockParityStats {
     pub missing_blocks: usize,
 }
 
-impl L2BlockParityStats {
-    /// Returns true if this pass found no mismatch or missing block.
-    pub const fn is_aligned(self) -> bool {
-        self.mismatches == 0 && self.missing_blocks == 0
-    }
-}
-
 /// One derived L2 block parity comparison result.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum L2BlockParityResult {
@@ -227,9 +220,21 @@ where
         })
     }
 
+    /// Comparable L2 blocks the cursor has not reached yet.
+    ///
+    /// Measured against the common head because a pass never walks past
+    /// `min(sequencer, validator)`: a validator trailing the sequencer is already reported by
+    /// `lag_blocks`, so what is left here is the monitor's own progress. It grows only while the
+    /// cursor is parked on a block it cannot fetch, which is otherwise indistinguishable from a
+    /// healthy run that simply found no mismatch.
+    pub const fn verification_backlog(&self, common_latest: u64) -> u64 {
+        common_latest.saturating_add(1).saturating_sub(self.next_block)
+    }
+
     /// Runs the monitor loop until cancelled.
     pub async fn run(&mut self, cancellation: CancellationToken) {
         L2BlockParityMetrics::enabled().set(1.0);
+        L2BlockParityMetrics::start_l2_block().set(self.next_block as f64);
         info!(
             start_block = %self.next_block,
             poll_interval_ms = %self.config.poll_interval.as_millis(),
@@ -243,7 +248,8 @@ where
             }
 
             if let Err(error) = self.process_once().await {
-                L2BlockParityMetrics::fetch_errors_total().increment(1);
+                L2BlockParityMetrics::fetch_errors_total(L2BlockParityMetrics::SCOPE_PASS)
+                    .increment(1);
                 error!(error = %error, "derived L2 block parity pass failed");
             }
 
@@ -268,9 +274,10 @@ where
             .set(sequencer_latest.saturating_sub(validator_latest) as f64);
 
         let common_latest = sequencer_latest.min(validator_latest);
+        L2BlockParityMetrics::verification_backlog_blocks()
+            .set(self.verification_backlog(common_latest) as f64);
+
         if common_latest < self.next_block {
-            let aligned = if sequencer_latest == validator_latest { 1.0 } else { 0.0 };
-            L2BlockParityMetrics::aligned().set(aligned);
             debug!(
                 next_block = %self.next_block,
                 sequencer_latest = %sequencer_latest,
@@ -292,7 +299,8 @@ where
                     self.next_block = next_block;
                 }
                 Err(error) => {
-                    L2BlockParityMetrics::fetch_errors_total().increment(1);
+                    L2BlockParityMetrics::fetch_errors_total(L2BlockParityMetrics::SCOPE_BLOCK)
+                        .increment(1);
                     warn!(
                         error = %error,
                         l2_block = %number,
@@ -303,13 +311,8 @@ where
             }
         }
 
-        let caught_up = self.next_block > common_latest;
-        let aligned = if caught_up && stats.is_aligned() && sequencer_latest == validator_latest {
-            1.0
-        } else {
-            0.0
-        };
-        L2BlockParityMetrics::aligned().set(aligned);
+        L2BlockParityMetrics::verification_backlog_blocks()
+            .set(self.verification_backlog(common_latest) as f64);
 
         if stats.checked > 0 || stats.missing_blocks > 0 {
             debug!(
@@ -372,6 +375,9 @@ where
                 stats.mismatches += 1;
                 L2BlockParityMetrics::checked_total().increment(1);
                 L2BlockParityMetrics::mismatches_total().increment(1);
+                // Latched for the process lifetime: a divergence is a permanent fact about the
+                // chain, not a condition that clears once the next block happens to match.
+                L2BlockParityMetrics::divergence_detected().set(1.0);
                 L2BlockParityMetrics::last_checked_l2_block().set(sequencer.number as f64);
                 L2BlockParityMetrics::last_mismatch_l2_block().set(sequencer.number as f64);
                 let tx_mismatch = sequencer.first_tx_hash_mismatch(&validator);
@@ -548,6 +554,21 @@ mod tests {
 
         assert_eq!(stats, L2BlockParityStats::default());
         assert_eq!(monitor.next_block, 4);
+    }
+
+    #[tokio::test]
+    async fn verification_backlog_counts_blocks_left_below_the_common_head() {
+        let sequencer = Arc::new(Mutex::new(MockL2BlockProvider::new(9, [])));
+        let validator = Arc::new(Mutex::new(MockL2BlockProvider::new(9, [])));
+        let config = L2BlockParityMonitorConfig::new(7, Duration::from_secs(1));
+        let monitor = L2BlockParityMonitor::new(sequencer, validator, config);
+
+        // Blocks 7, 8 and 9 are comparable and none has been compared yet.
+        assert_eq!(monitor.verification_backlog(9), 3);
+        // Caught up: the cursor sits one past the common head.
+        assert_eq!(monitor.verification_backlog(6), 0);
+        // A common head below the cursor is a validator that has not caught up, not backlog.
+        assert_eq!(monitor.verification_backlog(2), 0);
     }
 
     #[tokio::test]
