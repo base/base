@@ -818,10 +818,12 @@ mod tests {
         // An admin refresh transiently rewrites the registry to {Azul@50} at a newer L1 block,
         // both dropping Beryl (a missing key) and moving Azul's activation (a value drift) — without
         // touching this monitor's own view of what it applied.
-        assert!(refresher
-            .apply(&UpgradeSignalSchedule::new(2, vec![upgrade(BaseUpgrade::Azul, 50)]))
-            .unwrap()
-            .committed);
+        assert!(
+            refresher
+                .apply(&UpgradeSignalSchedule::new(2, vec![upgrade(BaseUpgrade::Azul, 50)]))
+                .unwrap()
+                .committed
+        );
 
         // L1 returns to the original schedule before the next poll. This monitor's own applied
         // values never moved, so a baseline-only check would see both entries as satisfied and never
