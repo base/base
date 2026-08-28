@@ -124,16 +124,18 @@ impl ProofProposeRequest {
         }
         let intermediate_root_interval =
             Self::intermediate_root_interval(details, intermediate_root_interval)?;
-        Ok(Self::derive_session_id(
-            network,
-            details.address,
-            details.starting_block,
-            details.block_interval,
+        Ok(Self {
+            game: details.address,
+            pre_state_block: details.starting_block,
+            num_blocks: details.block_interval,
+            l1_head: details.l1_head,
             intermediate_root_interval,
             prover_address,
             zk_backend,
             zk_artifact_hash,
-        ))
+            session_id: None,
+        }
+        .derive_session_id(network))
     }
 
     fn intermediate_root_interval(
@@ -197,31 +199,11 @@ impl ProofProposeRequest {
     /// derivation so `submit` can find the session that `propose` created
     /// without the operator copying session IDs around.
     pub fn effective_session_id(&self, network: &str) -> String {
-        self.session_id.clone().unwrap_or_else(|| {
-            Self::derive_session_id(
-                network,
-                self.game,
-                self.pre_state_block,
-                self.num_blocks,
-                self.intermediate_root_interval,
-                self.prover_address,
-                self.zk_backend,
-                self.zk_artifact_hash,
-            )
-        })
+        self.session_id.clone().unwrap_or_else(|| self.derive_session_id(network))
     }
 
-    fn derive_session_id(
-        network: &str,
-        game: Address,
-        pre_state_block: u64,
-        num_blocks: u64,
-        intermediate_root_interval: u64,
-        prover_address: Address,
-        zk_backend: ZkBackend,
-        zk_artifact_hash: B256,
-    ) -> String {
-        let subtype = match zk_backend {
+    fn derive_session_id(&self, network: &str) -> String {
+        let subtype = match self.zk_backend {
             ZkBackend::DryRun => "zk/sp1/snark_plonk/dry_run",
             ZkBackend::Cluster => "zk/sp1/snark_plonk",
             ZkBackend::Network => "zk/sp1/snark_plonk/network",
@@ -231,12 +213,12 @@ impl ProofProposeRequest {
             subtype,
             &[
                 network.as_bytes(),
-                game.as_slice(),
-                &pre_state_block.to_be_bytes(),
-                &num_blocks.to_be_bytes(),
-                &intermediate_root_interval.to_be_bytes(),
-                prover_address.as_slice(),
-                zk_artifact_hash.as_slice(),
+                self.game.as_slice(),
+                &self.pre_state_block.to_be_bytes(),
+                &self.num_blocks.to_be_bytes(),
+                &self.intermediate_root_interval.to_be_bytes(),
+                self.prover_address.as_slice(),
+                self.zk_artifact_hash.as_slice(),
             ],
         )
     }
