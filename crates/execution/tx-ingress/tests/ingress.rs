@@ -11,7 +11,7 @@ use base_common_rpc_types::BaseTransactionRequest;
 use base_node_runner::test_utils::TestHarness;
 use base_test_utils::{Account, DEVNET_CHAIN_ID};
 use base_tx_ingress::{
-    SubmitRequest, TransactionIngressConfig, TransactionIngressExtension, submit_response,
+    SubmitRequest, TransactionIngressExtension, submit_response,
     transaction_ingress_service_client::TransactionIngressServiceClient,
 };
 use eyre::Result;
@@ -27,12 +27,9 @@ impl TestSetup {
     async fn new() -> Result<Self> {
         let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
         let address = listener.local_addr()?;
-        drop(listener);
+        let extension = TransactionIngressExtension::from_listener(listener)?;
 
-        let harness = TestHarness::builder()
-            .with_ext::<TransactionIngressExtension>(TransactionIngressConfig::new(address))
-            .build()
-            .await?;
+        let harness = TestHarness::builder().with_extension(extension).build().await?;
         let client = TransactionIngressServiceClient::connect(format!("http://{address}")).await?;
 
         let account = Account::Alice;

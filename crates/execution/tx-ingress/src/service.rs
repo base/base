@@ -46,6 +46,9 @@ where
 
         tokio::spawn(async move {
             loop {
+                if responses.is_closed() {
+                    break;
+                }
                 let submission = match submissions.message().await {
                     Ok(Some(submission)) => submission,
                     Ok(None) => break,
@@ -57,6 +60,8 @@ where
 
                 let eth_api = eth_api.clone();
                 let responses = responses.clone();
+                // Admission is intentionally unconstrained, matching concurrent JSON-RPC
+                // submissions from the trusted proxy ingress.
                 tokio::spawn(async move {
                     let request_id = submission.request_id;
                     let outcome = match EthTransactions::send_raw_transaction(

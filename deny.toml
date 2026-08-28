@@ -141,6 +141,9 @@ skip = [
     "ordered-float",
     "proc-macro-crate",
     "gloo-timers",
+    # Protobuf generators used by this workspace and upstream crates target different versions
+    "petgraph",
+    "prost-build",
     "miniz_oxide",
     "prost-derive",
     "prost",
@@ -152,6 +155,7 @@ skip = [
     "strum",
     "sync_wrapper",
     "sysinfo",
+    "tonic-build",
     "webpki-roots",
     "webpki-root-certs",
 

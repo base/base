@@ -12,25 +12,36 @@ use crate::{TransactionIngressConfig, TransactionIngressService};
 #[derive(Debug)]
 pub struct TransactionIngressExtension {
     config: TransactionIngressConfig,
+    listener: Option<std::net::TcpListener>,
 }
 
 impl TransactionIngressExtension {
     /// Creates a transaction ingress extension.
     pub const fn new(config: TransactionIngressConfig) -> Self {
-        Self { config }
+        Self { config, listener: None }
+    }
+
+    /// Creates a transaction ingress extension from an already-bound listener.
+    pub fn from_listener(listener: std::net::TcpListener) -> std::io::Result<Self> {
+        let config = TransactionIngressConfig::new(listener.local_addr()?);
+        Ok(Self { config, listener: Some(listener) })
     }
 }
 
 impl BaseNodeExtension for TransactionIngressExtension {
     fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks {
-        let Some(listen_addr) = self.config.listen_addr else {
-            return hooks;
-        };
+        let listen_addr = self.config.listen_addr;
+        let listener = self.listener;
 
         hooks.add_rpc_module(move |ctx| {
-            let listener = std::net::TcpListener::bind(listen_addr)
-                .wrap_err_with(|| format!("failed to bind transaction ingress to {listen_addr}"))?;
+            let listener = match listener {
+                Some(listener) => listener,
+                None => std::net::TcpListener::bind(listen_addr).wrap_err_with(|| {
+                    format!("failed to bind transaction ingress to {listen_addr}")
+                })?,
+            };
             listener.set_nonblocking(true)?;
+            let listen_addr = listener.local_addr()?;
             let listener = tokio::net::TcpListener::from_std(listener)?;
             let incoming = TcpListenerStream::new(listener);
             let service = TransactionIngressService::new(ctx.registry.eth_api().clone());
