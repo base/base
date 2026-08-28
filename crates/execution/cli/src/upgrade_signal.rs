@@ -1,5 +1,7 @@
 //! Execution-node upgrade signal schedule application.
 
+use std::sync::Arc;
+
 use alloy_consensus::BlockHeader;
 use base_execution_chainspec::BaseChainSpec;
 use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
@@ -16,7 +18,6 @@ use reth_network::{NetworkHandle, NetworkPrimitives};
 use reth_network_p2p::sync::NetworkSyncUpdater;
 use reth_provider::{BlockNumReader, HeaderProvider};
 use reth_rpc_server_types::RethRpcModule;
-use std::sync::Arc;
 use tokio::sync::Notify;
 use tracing::{info, warn};
 use url::Url;
