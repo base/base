@@ -10,7 +10,9 @@ mod handler;
 pub use handler::BaseTxHandlerHooks;
 
 mod executor;
-pub use executor::{BaseBlockExecutor, BlockExecutionResult, CumulativeGasOverflow};
+pub use executor::{
+    BaseBlockExecutionCtx, BaseBlockExecutor, BlockExecutionResult, CumulativeGasOverflow,
+};
 
 mod registry;
 

@@ -9,7 +9,9 @@
 use alloy_consensus::{TxEip1559, transaction::Recovered};
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use base_common_consensus::{BaseReceiptEnvelope, Predeploys};
-use base_common_evm2::{BaseBlockExecutor, BaseEvmTypes, BaseSpecId, BaseTxEnvelope, TxDeposit};
+use base_common_evm2::{
+    BaseBlockExecutionCtx, BaseBlockExecutor, BaseEvmTypes, BaseSpecId, BaseTxEnvelope, TxDeposit,
+};
 use base_common_genesis::BaseUpgrade;
 use base_common_l1_fees::L1FeeParams;
 use evm2::{Evm, Precompiles, env::BlockEnv, ethereum::TxEnvelope, evm::InMemoryDB};
@@ -57,7 +59,7 @@ fn executes_block_of_deposit_then_standard_tx() {
     };
     let evm =
         Evm::new(spec, block, BaseEvmTypes::tx_registry(), db, Precompiles::base(spec.into()));
-    let mut executor = BaseBlockExecutor::new(evm);
+    let mut executor = BaseBlockExecutor::new(evm, BaseBlockExecutionCtx::default());
 
     // A deposit that mints to the sender, then a standard EIP-1559 transfer from the same sender.
     let deposit = TxDeposit {
