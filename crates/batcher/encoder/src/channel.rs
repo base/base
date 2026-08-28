@@ -119,7 +119,7 @@ impl OpenChannel {
 
     /// Consumes the open channel and returns all frames ready for submission.
     ///
-    /// The encoder calls this exactly once when size, timeout, or a force-close
+    /// The encoder calls this exactly once when size, timeout, or a flush
     /// request closes the channel.
     pub fn into_frames(self, max_frame_size: usize) -> Result<Vec<Frame>, OpenChannelError> {
         Ok(self.out.into_frames(max_frame_size)?)

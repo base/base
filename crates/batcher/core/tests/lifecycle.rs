@@ -7,13 +7,14 @@ use std::{
 
 use alloy_primitives::Address;
 use base_batcher_core::{
-    BatchDriver, BatchDriverConfig, DaThrottle, NoopThrottleClient, ThrottleController,
+    BatchDriver, BatchDriverConfig, BatchDriverError, DaThrottle, NoopThrottleClient,
+    ThrottleController,
     test_utils::{
         DriverFixture, ImmediateConfirmTxManager, NeverConfirmTxManager, PendingL1HeadSource,
         Recorded, SubmissionStub, TrackingPipeline,
     },
 };
-use base_batcher_encoder::SubmissionId;
+use base_batcher_encoder::{ChannelFullReason, StepError, SubmissionId};
 use base_batcher_source::{ChannelBlockSource, L2BlockEvent, test_utils::InMemoryBlockSource};
 use base_runtime::{
     Cancellation, Clock, Spawner,
@@ -50,18 +51,18 @@ fn test_source_exhaustion_shuts_down_driver_gracefully() {
         let result = handle.await.unwrap();
         assert!(result.is_ok(), "driver must exit cleanly when source exhausts");
         assert_eq!(
-            recorded.lock().unwrap().force_close_count,
+            recorded.lock().unwrap().flush_count,
             1,
-            "force_close_channel must be called once on source exhaustion shutdown"
+            "flush must be called once on source exhaustion shutdown"
         );
     });
 }
 
 /// When the source delivers `L2BlockEvent::Flush`, the driver must call
-/// `force_close_channel` immediately. On subsequent shutdown it is called once
+/// `flush` immediately. On subsequent shutdown it is called once
 /// more, giving a total of two calls.
 #[test]
-fn test_flush_event_calls_force_close_channel() {
+fn test_flush_event_calls_pipeline_flush() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let recorded = Arc::new(Mutex::new(Recorded::default()));
         let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
@@ -90,9 +91,9 @@ fn test_flush_event_calls_force_close_channel() {
         assert!(handle.await.unwrap().is_ok());
         // Flush arm: +1; Shutdown arm: +1 → total 2
         assert_eq!(
-            recorded.lock().unwrap().force_close_count,
+            recorded.lock().unwrap().flush_count,
             2,
-            "force_close_channel must be called for Flush and again on shutdown"
+            "flush must be called for the event and again on shutdown"
         );
     });
 }
@@ -120,6 +121,41 @@ fn test_drain_timeout_exits_with_in_flight_submissions() {
         );
         let r = recorded.lock().unwrap();
         assert_eq!(r.dequeued, vec![SubmissionId(0)], "submission must have been dequeued");
-        assert_eq!(r.force_close_count, 1, "force_close_channel must be called on shutdown");
+        assert_eq!(r.flush_count, 1, "flush must be called on shutdown");
+    });
+}
+
+/// A flush error on shutdown must not skip the in-flight receipt drain.
+#[test]
+fn test_shutdown_drains_in_flight_before_returning_flush_error() {
+    Runner::start(Config::seeded(0), |ctx| async move {
+        let recorded = Arc::new(Mutex::new(Recorded::default()));
+        let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded)).with_flush_error(
+            StepError::BlockRejectedByEmptyChannel {
+                cursor: 0,
+                reason: ChannelFullReason::CompressedOutput,
+            },
+        );
+        pipeline.submissions.push_back(SubmissionStub::stub());
+
+        let driver = DriverFixture::build(ctx.clone(), pipeline, NeverConfirmTxManager);
+        let handle = ctx.spawn(driver.run());
+
+        ctx.sleep(Duration::from_millis(20)).await;
+        let cancelled_at = ctx.now();
+        ctx.cancel();
+
+        let result = handle.await.unwrap();
+        assert!(
+            matches!(result, Err(BatchDriverError::Step(_))),
+            "flush error must be returned after drain"
+        );
+        assert!(
+            ctx.now().saturating_sub(cancelled_at) >= Duration::from_millis(10),
+            "in-flight receipts must be drained before the flush error is returned"
+        );
+        let r = recorded.lock().unwrap();
+        assert_eq!(r.dequeued, vec![SubmissionId(0)]);
+        assert_eq!(r.flush_count, 1);
     });
 }
