@@ -57,6 +57,9 @@ pub use l2::{
 mod network;
 pub use network::{ensure_network_exists, ensure_network_exists_with_name, network_name};
 
+mod prover_service;
+pub use prover_service::InProcessProverService;
+
 mod rpc;
 pub use rpc::{SystemTestProviderExt, SystemTestRpcClient};
 
@@ -82,3 +85,6 @@ pub use upgrade_signal::{MockProtocolVersionsClient, UpgradeSignalStackOptions};
 
 mod urls;
 pub use urls::SystemTestUrls;
+
+mod zk_host;
+pub use zk_host::InProcessZkHost;
