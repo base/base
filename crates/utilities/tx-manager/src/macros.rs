@@ -6,10 +6,6 @@
 /// ```rust,ignore
 /// base_tx_manager::define_tx_manager_cli!("BASE_TX_MANAGER");
 /// base_tx_manager::define_tx_manager_cli!("BASE_CHALLENGER_TX_MANAGER");
-/// base_tx_manager::define_tx_manager_cli!(
-///     "BASE_PROPOSER",
-///     tx_send_timeout_default = "10m",
-/// );
 /// ```
 ///
 /// The generated struct exposes confirmations, fee limits, timeouts, polling
@@ -38,10 +34,7 @@
 #[rustfmt::skip]
 #[macro_export]
 macro_rules! define_tx_manager_cli {
-    ($prefix:literal) => {
-        $crate::define_tx_manager_cli!($prefix, tx_send_timeout_default = "0s");
-    };
-    ($prefix:literal, tx_send_timeout_default = $tx_send_timeout_default:literal $(,)?) => {
+    ($prefix:literal $(,)?) => {
         /// CLI arguments for the transaction manager.
         ///
         /// Designed to be `#[command(flatten)]`-ed into parent CLI structs
@@ -58,15 +51,6 @@ macro_rules! define_tx_manager_cli {
                 default_value = "10"
             )]
             pub num_confirmations: u64,
-
-            /// Number of consecutive nonce-too-low errors after a successful
-            /// publish before the send loop aborts.
-            #[arg(
-                long = "tx-manager.safe-abort-nonce-too-low-count",
-                env = concat!($prefix, "_", "SAFE_ABORT_NONCE_TOO_LOW_COUNT"),
-                default_value = "3"
-            )]
-            pub safe_abort_nonce_too_low_count: u64,
 
             /// Maximum fee multiplier applied to the suggested gas price.
             #[arg(
@@ -128,6 +112,15 @@ macro_rules! define_tx_manager_cli {
             )]
             pub resubmission_timeout: ::std::time::Duration,
 
+            /// Delay between publication passes (e.g., "1s").
+            #[arg(
+                long = "tx-manager.publish-retry-delay",
+                env = concat!($prefix, "_", "PUBLISH_RETRY_DELAY"),
+                default_value = "1s",
+                value_parser = ::humantime::parse_duration
+            )]
+            pub publish_retry_delay: ::std::time::Duration,
+
             /// Interval between receipt query attempts (e.g., "12s").
             #[arg(
                 long = "tx-manager.receipt-query-interval",
@@ -137,17 +130,9 @@ macro_rules! define_tx_manager_cli {
             )]
             pub receipt_query_interval: ::std::time::Duration,
 
-            /// Overall timeout for sending a transaction. Set to "0s" to disable.
-            #[arg(
-                long = "tx-manager.tx-send-timeout",
-                env = concat!($prefix, "_", "TX_SEND_TIMEOUT"),
-                default_value = $tx_send_timeout_default,
-                value_parser = ::humantime::parse_duration
-            )]
-            pub tx_send_timeout: ::std::time::Duration,
-
-            /// Maximum time to wait for a transaction to appear in the mempool.
-            /// Set to "0s" to disable.
+            /// Clean-rejection deadline for initial publication.
+            /// Set to "0s" to disable: a provisional nonce then never fails by
+            /// timeout and is retried until it commits or is rejected outright.
             #[arg(
                 long = "tx-manager.tx-not-in-mempool-timeout",
                 env = concat!($prefix, "_", "TX_NOT_IN_MEMPOOL_TIMEOUT"),
@@ -155,16 +140,6 @@ macro_rules! define_tx_manager_cli {
                 value_parser = ::humantime::parse_duration
             )]
             pub tx_not_in_mempool_timeout: ::std::time::Duration,
-
-            /// Maximum time to poll for transaction confirmation before giving
-            /// up (e.g., "5m", "300s").
-            #[arg(
-                long = "tx-manager.confirmation-timeout",
-                env = concat!($prefix, "_", "CONFIRMATION_TIMEOUT"),
-                default_value = "5m",
-                value_parser = ::humantime::parse_duration
-            )]
-            pub confirmation_timeout: ::std::time::Duration,
 
             /// Minimum blob base fee (in gwei) to use for blob transactions.
             /// Accepts decimal strings (e.g. `"1"`, `"0.5"`).
@@ -190,17 +165,15 @@ macro_rules! define_tx_manager_cli {
             fn try_from(cli: TxManagerCli) -> Result<Self, Self::Error> {
                 let config = $crate::TxManagerConfig {
                     num_confirmations: cli.num_confirmations,
-                    safe_abort_nonce_too_low_count: cli.safe_abort_nonce_too_low_count,
                     fee_limit_multiplier: cli.fee_limit_multiplier,
                     fee_limit_threshold: cli.fee_limit_threshold,
                     min_tip_cap: cli.min_tip_cap,
                     min_basefee: cli.min_basefee,
                     network_timeout: cli.network_timeout,
                     resubmission_timeout: cli.resubmission_timeout,
+                    publish_retry_delay: cli.publish_retry_delay,
                     receipt_query_interval: cli.receipt_query_interval,
-                    tx_send_timeout: cli.tx_send_timeout,
                     tx_not_in_mempool_timeout: cli.tx_not_in_mempool_timeout,
-                    confirmation_timeout: cli.confirmation_timeout,
                     min_blob_fee: cli.min_blob_fee,
                 };
                 config.validate()?;

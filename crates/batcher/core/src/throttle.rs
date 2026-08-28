@@ -192,7 +192,7 @@ pub struct ThrottleInfo {
     pub max_tx_size: u64,
 }
 
-/// Wraps a [`ThrottleController`] and a [`ThrottleClient`] with a dedup cache
+/// Wraps a [`ThrottleController`] and a [`crate::ThrottleClient`] with a dedup cache
 /// to avoid redundant RPC calls when DA limits have not changed.
 #[derive(Debug)]
 pub struct DaThrottle<TC: crate::ThrottleClient> {

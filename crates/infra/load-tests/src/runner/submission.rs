@@ -19,7 +19,6 @@ use alloy_rpc_types::TransactionRequest;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use base_execution_txpool::ValidityPredicate;
-use base_tx_manager::NonceManager;
 use tokio::{
     sync::{Mutex, Semaphore, mpsc},
     task::JoinHandle,
@@ -27,7 +26,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
-use super::{ResultsTracker, SentTransaction};
+use super::{ResultsTracker, SentTransaction, nonce::NonceManager};
 use crate::{
     BaselineError, Result,
     rpc::{BatchRpcClient, BatchSendResult, SubmitItem},

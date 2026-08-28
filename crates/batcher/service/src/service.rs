@@ -21,7 +21,7 @@ use base_consensus_rpc::RollupNodeApiClient;
 use base_protocol::BlockInfo;
 use base_retry::{DEFAULT_UNBOUNDED_MAX_DELAY, RetryConfig};
 use base_runtime::TokioRuntime;
-use base_tx_manager::{BaseTxMetrics, SimpleTxManager, TxManagerConfig};
+use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
 use futures::{
     StreamExt,
     future::BoxFuture,
@@ -86,7 +86,7 @@ type ServiceDriver = BatchDriver<
     TokioRuntime,
     BatchEncoder,
     PollingBlockSource<RpcPollingSource, TokioRuntime>,
-    SimpleTxManager<RootProvider>,
+    SimpleTxManager,
     ServiceThrottle,
     HybridL1HeadSource<L1Subscription, RpcL1HeadPollingSource, TokioRuntime>,
 >;
@@ -422,6 +422,7 @@ impl BatcherService {
 
         info!(
             l1_rpc_count = self.config.l1_rpc_url.len(),
+            publish_rpc_count = self.config.publish_rpc_urls.len(),
             l2_rpc_count = self.config.l2_rpc_url.len(),
             rollup_rpc_count = self.config.rollup_rpc_url.len(),
             l1_ws = self.config.l1_ws_url.as_ref().map(|u| u.as_str()),
@@ -517,6 +518,12 @@ impl BatcherService {
             })
         })
         .await?;
+        let mut publish_providers = Vec::with_capacity(self.config.publish_rpc_urls.len());
+        for url in &self.config.publish_rpc_urls {
+            let provider =
+                ProviderBuilder::new().disable_recommended_fillers().connect(url.as_str()).await?;
+            publish_providers.push(provider);
+        }
 
         // Recent transactions only select an L1 synchronization target.
         // They never advance the L2 backfill cursor.
@@ -671,15 +678,13 @@ impl BatcherService {
         let l1_chain_id =
             Self::rpc_retry("l1-chain-id", retry, rpc_timeout, || l1_provider.get_chain_id())
                 .await?;
-        let tx_manager_config = TxManagerConfig {
-            resubmission_timeout: self.config.resubmission_timeout,
-            num_confirmations: self.config.num_confirmations as u64,
-            ..TxManagerConfig::default()
-        };
-        let tx_manager = SimpleTxManager::new(
+        let drain_timeout = self.config.tx_manager.resubmission_timeout * 2;
+        let tx_manager = SimpleTxManager::new_with_runtime_and_publishers(
+            runtime.clone(),
             l1_provider,
+            publish_providers,
             signer_config,
-            tx_manager_config,
+            self.config.tx_manager,
             l1_chain_id,
             Arc::new(BaseTxMetrics::new("batcher")),
         )
@@ -723,7 +728,7 @@ impl BatcherService {
             base_batcher_core::BatchDriverConfig {
                 inbox: effective_batch_inbox,
                 max_pending_transactions: self.config.max_pending_transactions,
-                drain_timeout: self.config.resubmission_timeout * 2,
+                drain_timeout,
                 force_blobs_when_throttling: self.config.force_blobs_when_throttling,
             },
             DaThrottle::new(throttle, throttle_client),

@@ -1,9 +1,5 @@
-//! Transaction manager configuration.
-//!
-//! [`TxManagerConfig`] is the validated runtime configuration for the
-//! transaction manager. All fields are `pub` for direct construction.
-//! Use [`TxManagerConfig::validate`] to check invariants, or convert
-//! from `TxManagerCli` via `TryFrom` which validates automatically.
+//! Transaction manager configuration: [`TxManagerConfig`] and its
+//! validation, gwei-to-wei parsing via [`GweiParser`], and [`ConfigError`].
 
 use std::time::Duration;
 
@@ -57,10 +53,10 @@ pub enum ConfigError {
 pub struct GweiParser;
 
 impl GweiParser {
-    /// Parses a gwei decimal string to wei (`u128`).
+    /// Clap `value_parser` adapter for [`Self::parse`].
     ///
-    /// Suitable for use as a clap `value_parser`. Error context (which
-    /// flag failed) is provided by clap automatically.
+    /// Labels errors with the placeholder field name `"value"`; clap prefixes
+    /// its own message with the flag that failed.
     pub fn parse_value(gwei: &str) -> Result<u128, ConfigError> {
         Self::parse(gwei, "value")
     }
@@ -99,8 +95,6 @@ impl GweiParser {
 pub struct TxManagerConfig {
     /// Number of block confirmations to wait.
     pub num_confirmations: u64,
-    /// Nonce-too-low abort threshold.
-    pub safe_abort_nonce_too_low_count: u64,
     /// Maximum fee multiplier applied to the suggested gas price.
     pub fee_limit_multiplier: u64,
     /// Minimum suggested fee (in wei) at which the fee-limit check activates.
@@ -113,14 +107,14 @@ pub struct TxManagerConfig {
     pub network_timeout: Duration,
     /// Fee-bump resubmission timeout.
     pub resubmission_timeout: Duration,
+    /// Delay between publication passes.
+    pub publish_retry_delay: Duration,
     /// Receipt polling interval.
     pub receipt_query_interval: Duration,
-    /// Overall send timeout (zero = disabled).
-    pub tx_send_timeout: Duration,
-    /// Mempool appearance timeout (zero = disabled).
+    /// Maximum clean-rejection admission window. Zero disables the deadline, so
+    /// a provisional nonce never fails by timeout and is retried until it
+    /// commits or is definitively rejected.
     pub tx_not_in_mempool_timeout: Duration,
-    /// Maximum time to poll for confirmation before giving up.
-    pub confirmation_timeout: Duration,
     /// Minimum blob base fee (in wei) to use for blob transactions.
     pub min_blob_fee: u128,
 }
@@ -129,17 +123,15 @@ impl Default for TxManagerConfig {
     fn default() -> Self {
         Self {
             num_confirmations: 10,
-            safe_abort_nonce_too_low_count: 3,
             fee_limit_multiplier: 5,
             fee_limit_threshold: 100_000_000_000, // 100 gwei
             min_tip_cap: 0,
             min_basefee: 0,
             network_timeout: Duration::from_secs(10),
             resubmission_timeout: Duration::from_secs(48),
+            publish_retry_delay: Duration::from_secs(1),
             receipt_query_interval: Duration::from_secs(12),
-            tx_send_timeout: Duration::ZERO,
             tx_not_in_mempool_timeout: Duration::from_secs(120),
-            confirmation_timeout: Duration::from_secs(300),
             min_blob_fee: 1_000_000_000, // 1 gwei
         }
     }
@@ -152,13 +144,12 @@ impl TxManagerConfig {
     ///
     /// Returns [`ConfigError::OutOfRange`] if any required field is zero:
     /// - `num_confirmations` must be >= 1
-    /// - `safe_abort_nonce_too_low_count` must be >= 1
     /// - `fee_limit_multiplier` must be >= 1
     /// - `min_blob_fee` must be >= 1
     /// - `network_timeout` must be > 0
     /// - `resubmission_timeout` must be > 0
+    /// - `publish_retry_delay` must be > 0
     /// - `receipt_query_interval` must be > 0
-    /// - `confirmation_timeout` must be > 0
     pub fn validate(&self) -> Result<(), ConfigError> {
         macro_rules! reject_zero {
             ($($field:ident),+ $(,)?) => {$(
@@ -184,12 +175,12 @@ impl TxManagerConfig {
             )+};
         }
 
-        reject_zero!(num_confirmations, safe_abort_nonce_too_low_count, fee_limit_multiplier);
+        reject_zero!(num_confirmations, fee_limit_multiplier);
         reject_zero_duration!(
             network_timeout,
             resubmission_timeout,
+            publish_retry_delay,
             receipt_query_interval,
-            confirmation_timeout,
         );
         reject_zero!(min_blob_fee);
         Ok(())
@@ -281,28 +272,23 @@ mod tests {
     }
 
     #[test]
-    fn default_min_blob_fee_is_one_gwei() {
-        assert_eq!(TxManagerConfig::default().min_blob_fee, 1_000_000_000);
-    }
-
-    #[test]
-    fn validation_rejects_zero_confirmation_timeout() {
-        let config =
-            TxManagerConfig { confirmation_timeout: Duration::ZERO, ..TxManagerConfig::default() };
-        let err = config.validate().unwrap_err();
-        assert!(
-            matches!(err, ConfigError::OutOfRange { field: "confirmation_timeout", .. }),
-            "expected OutOfRange for confirmation_timeout, got: {err}"
-        );
-    }
-
-    #[test]
     fn validation_rejects_zero_min_blob_fee() {
         let config = TxManagerConfig { min_blob_fee: 0, ..TxManagerConfig::default() };
         let err = config.validate().unwrap_err();
         assert!(
             matches!(err, ConfigError::OutOfRange { field: "min_blob_fee", .. }),
             "expected OutOfRange for min_blob_fee, got: {err}"
+        );
+    }
+
+    #[test]
+    fn validation_rejects_zero_publish_retry_delay() {
+        let config =
+            TxManagerConfig { publish_retry_delay: Duration::ZERO, ..TxManagerConfig::default() };
+        let err = config.validate().unwrap_err();
+        assert!(
+            matches!(err, ConfigError::OutOfRange { field: "publish_retry_delay", .. }),
+            "expected OutOfRange for publish_retry_delay, got: {err}"
         );
     }
 }

@@ -3,7 +3,8 @@
 //! These tests verify the end-to-end path:
 //!   sequencer → batcher (submission fails) → batcher requeues → derivation
 //!
-//! The [`BatchDriver`] reacts to a failed [`SendHandle`] by calling
+//! The [`BatchDriver`] reacts to a failed
+//! [`SubmissionHandle`](base_tx_manager::SubmissionHandle) by calling
 //! `pipeline.requeue_frame()` and retrying on the next loop iteration.
 //! The [`L1MinerTxManager`]'s `fail_next_n` mechanism fires an immediate
 //! [`TxManagerError::Rpc`] receipt so this path is exercised without any
@@ -86,7 +87,7 @@ async fn consecutive_failures_then_success_derives_correctly() {
     let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg);
 
     // Fail the next three attempts. The driver retries on each failure until
-    // the fourth send_async call succeeds and the frame lands in pending.
+    // the fourth submit call succeeds and the frame lands in pending.
     batcher.fail_next_n_submissions(3);
     batcher.encode_only().await;
 

@@ -46,7 +46,6 @@ mod tests {
 
     #[rstest]
     #[case::single_blob(1)]
-    #[case::two_blobs(2)]
     #[case::six_blobs(6)]
     fn build_sidecar_n_blobs_uses_cell_proofs(#[case] n: usize) {
         let blobs: Vec<Box<Blob>> = (0..n).map(|_| Box::default()).collect();

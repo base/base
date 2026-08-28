@@ -21,13 +21,23 @@ pub struct TxCandidate {
     pub blobs: Arc<[Box<Blob>]>,
     /// Recipient address. `None` means contract creation.
     pub to: Option<Address>,
-    /// Gas limit. `0` means auto-estimate.
+    /// Gas limit floor. The signed gas limit is the greater of this value, any
+    /// replacement floor, and the provider estimate; `0` defers to the estimate.
     pub gas_limit: u64,
     /// ETH value to send.
     pub value: U256,
 }
 
 impl TxCandidate {
+    /// Builds a zero-value self-transfer used to cancel a stuck nonce.
+    ///
+    /// The blobs of the transaction being cancelled are preserved: a cancel for
+    /// a blob transaction must itself remain a blob transaction so the backend
+    /// accepts it as a replacement.
+    pub const fn cancel(sender: Address, blobs: Arc<[Box<Blob>]>) -> Self {
+        Self { tx_data: Bytes::new(), blobs, to: Some(sender), gas_limit: 0, value: U256::ZERO }
+    }
+
     /// Returns `true` when this candidate carries blobs (EIP-4844 type-3 tx).
     pub fn is_blob(&self) -> bool {
         !self.blobs.is_empty()
@@ -50,16 +60,19 @@ mod tests {
     }
 
     #[test]
-    fn candidate_with_blobs_is_type3() {
-        let candidate =
-            TxCandidate { blobs: Arc::from(vec![Box::default()]), ..Default::default() };
-
-        assert_eq!(candidate.blobs.len(), 1);
-    }
-
-    #[test]
     fn candidate_is_send_and_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<TxCandidate>();
+    }
+
+    #[test]
+    fn cancel_is_a_zero_value_self_transfer_that_keeps_blobs() {
+        let sender = Address::with_last_byte(7);
+        let candidate = TxCandidate::cancel(sender, Arc::from(vec![Box::default()]));
+
+        assert_eq!(candidate.to, Some(sender));
+        assert_eq!(candidate.value, U256::ZERO);
+        assert!(candidate.tx_data.is_empty());
+        assert!(candidate.is_blob());
     }
 }

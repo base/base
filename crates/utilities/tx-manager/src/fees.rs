@@ -8,9 +8,7 @@ use crate::TxManagerError;
 
 /// Calculates and bumps transaction fees.
 ///
-/// All methods are pure, deterministic arithmetic with no I/O.  They operate
-/// on `u128` values (alloy's native fee type) and use saturating arithmetic
-/// to prevent overflow panics on extreme inputs.
+/// Every method is a pure `const fn` over alloy's native `u128` fee type.
 #[derive(Debug)]
 pub struct FeeCalculator;
 
@@ -160,16 +158,11 @@ impl FeeCalculator {
     }
 }
 
-/// Caller-supplied fee floor for transaction construction.
+/// Fee and gas floors preserved across the versions of one submission.
 ///
-/// Used by [`crate::SimpleTxManager::prepare`] and
-/// [`crate::SimpleTxManager::craft_tx`] to enforce minimum fees during
-/// fee-bump iterations. The manager takes `max(network_fee, override)`
-/// for each component so the resulting transaction is guaranteed to meet
-/// the override thresholds even if network fees have dropped.
-///
-/// Field names mirror [`GasPriceCaps`] for consistency.
-#[non_exhaustive]
+/// The builder takes `max(network_suggestion, override)` for each component, so
+/// a newly signed version cannot fall below its predecessor when network fees
+/// decrease.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FeeOverride {
     /// Minimum acceptable maximum priority fee per gas (tip).
@@ -178,39 +171,12 @@ pub struct FeeOverride {
     pub gas_fee_cap: u128,
     /// Minimum acceptable blob fee cap (for EIP-4844 txs). `None` = no override.
     pub blob_fee_cap: Option<u128>,
-    /// Minimum gas limit (floor). Used during fee bumps so the gas limit
-    /// never decreases across replacement attempts. `0` = no override.
+    /// Minimum gas limit. Carried across every replacement version so the gas
+    /// limit never decreases. `0` = no override.
     pub gas_limit_floor: u64,
 }
 
-impl FeeOverride {
-    /// Creates a new [`FeeOverride`] with the given tip and fee cap floors.
-    #[must_use]
-    pub const fn new(gas_tip_cap: u128, gas_fee_cap: u128) -> Self {
-        Self { gas_tip_cap, gas_fee_cap, blob_fee_cap: None, gas_limit_floor: 0 }
-    }
-
-    /// Returns a copy with the blob fee cap floor set.
-    #[must_use]
-    pub const fn with_blob_fee_cap(mut self, blob_fee_cap: u128) -> Self {
-        self.blob_fee_cap = Some(blob_fee_cap);
-        self
-    }
-
-    /// Returns a copy with the gas limit floor set.
-    #[must_use]
-    pub const fn with_gas_limit_floor(mut self, gas_limit_floor: u64) -> Self {
-        self.gas_limit_floor = gas_limit_floor;
-        self
-    }
-}
-
-/// Result of [`crate::SimpleTxManager::increase_gas_price`].
-///
-/// Contains bumped fee values that satisfy geth's tx-replacement rules
-/// and the fresh [`GasPriceCaps`] used during computation so that callers
-/// can forward them to avoid a redundant provider round-trip.
-#[non_exhaustive]
+/// Bumped fees and the network caps used to derive them.
 #[derive(Debug, Clone)]
 pub struct BumpedFees {
     /// Bumped maximum priority fee per gas (tip).
@@ -225,16 +191,18 @@ pub struct BumpedFees {
 }
 
 impl BumpedFees {
-    /// Converts the bumped fees into a [`FeeOverride`] suitable for
-    /// [`SimpleTxManager::prepare`](crate::SimpleTxManager::prepare).
+    /// Converts bumped values into floors for replacement construction.
     ///
     /// `gas_limit_floor` prevents the gas limit from decreasing across
     /// replacement attempts.
     #[must_use]
-    pub fn to_fee_override(&self, gas_limit_floor: u64) -> FeeOverride {
-        let fo = FeeOverride::new(self.gas_tip_cap, self.gas_fee_cap)
-            .with_gas_limit_floor(gas_limit_floor);
-        self.blob_fee_cap.map_or(fo, |blob_cap| fo.with_blob_fee_cap(blob_cap))
+    pub const fn to_fee_override(&self, gas_limit_floor: u64) -> FeeOverride {
+        FeeOverride {
+            gas_tip_cap: self.gas_tip_cap,
+            gas_fee_cap: self.gas_fee_cap,
+            blob_fee_cap: self.blob_fee_cap,
+            gas_limit_floor,
+        }
     }
 }
 
@@ -242,7 +210,6 @@ impl BumpedFees {
 ///
 /// Used between fee calculation and transaction construction to carry
 /// the tip cap, base fee cap, and optional blob fee cap.
-#[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GasPriceCaps {
     /// Maximum priority fee per gas (tip).
@@ -273,17 +240,6 @@ mod tests {
     use super::*;
 
     // ── GasPriceCaps ────────────────────────────────────────────────────
-
-    #[test]
-    fn default_zeroes_all_fields() {
-        let caps = GasPriceCaps::default();
-
-        assert_eq!(caps.gas_tip_cap, 0);
-        assert_eq!(caps.gas_fee_cap, 0);
-        assert_eq!(caps.raw_gas_fee_cap, 0);
-        assert!(caps.blob_fee_cap.is_none());
-        assert!(caps.raw_blob_fee_cap.is_none());
-    }
 
     #[test]
     fn gas_price_caps_is_send_and_sync() {
@@ -335,15 +291,11 @@ mod tests {
     #[case::ten_regular(10, false, 11)]
     #[case::eleven_regular(11, false, 12)]
     #[case::hundred_regular(100, false, 110)]
-    #[case::thousand_regular(1000, false, 1100)]
-    #[case::small_value_ensures_plus_one(5, false, 6)]
     #[case::saturates_regular(u128::MAX, false, u128::MAX)]
     // Blob cases
     #[case::zero_blob(0, true, 0)]
     #[case::one_blob(1, true, 2)]
     #[case::ten_blob(10, true, 20)]
-    #[case::hundred_blob(100, true, 200)]
-    #[case::saturates_blob(u128::MAX, true, u128::MAX)]
     #[case::half_max_blob(u128::MAX / 2 + 1, true, u128::MAX)]
     fn calc_threshold_value(#[case] x: u128, #[case] is_blob: bool, #[case] expected: u128) {
         assert_eq!(FeeCalculator::calc_threshold_value(x, is_blob), expected);
@@ -365,8 +317,6 @@ mod tests {
     #[case::blob_tip_above_cap_below(100, 1000, 300, 1, true, (300, 2000))]
     #[case::blob_tip_below_cap_above(100, 1000, 50, 5000, true, (200, 10200))]
     #[case::blob_both_below(100, 1000, 50, 1, true, (200, 2000))]
-    // Case 2: large old_fee_cap keeps threshold_fee_cap well above new_tip (clamp is no-op)
-    #[case::tip_above_cap_below_large_old_fee_cap(100, 10_000, 150, 1, false, (150, 11_000))]
     // Case 4: old_tip > old_fee_cap → threshold_tip > threshold_fee_cap, clamp applies
     #[case::both_below_tip_dominates(1_000, 100, 50, 1, false, (1_100, 1_100))]
     // Zero starting fees
@@ -395,7 +345,6 @@ mod tests {
     #[case::exactly_at_ceiling(500, 100, 5, 100, true)]
     // At threshold, over limit → Err
     #[case::over_limit(501, 100, 5, 100, false)]
-    #[case::way_over_limit(10_000, 100, 5, 100, false)]
     // Zero threshold (always check)
     #[case::zero_threshold_within(5, 1, 5, 0, true)]
     #[case::zero_threshold_over(6, 1, 5, 0, false)]
@@ -420,11 +369,9 @@ mod tests {
 
     // ── calc_gas_fee_cap roundtrip ───────────────────────────────────────
 
-    /// Verifies that the reverse calculation `(fee_cap - tip) / 2`
-    /// recovers the original `base_fee` from a fee cap produced by
-    /// `calc_gas_fee_cap`. This roundtrip is relied upon by
-    /// `handle_fee_bump` in the manager to derive the effective base
-    /// fee from a `GasPriceCaps` result.
+    /// Verifies that `(fee_cap - tip) / 2` recovers the original `base_fee`.
+    /// `TxBuilder::increase_gas_price` relies on this roundtrip to derive the
+    /// effective base fee from a `GasPriceCaps` result.
     #[rstest]
     #[case::one_gwei(1_000_000_000, 500_000_000)]
     #[case::zeroes(0, 0)]

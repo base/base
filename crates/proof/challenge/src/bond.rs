@@ -569,7 +569,7 @@ mod tests {
     }
 
     fn bond_submitter(
-        responses: Vec<base_tx_manager::SendResponse>,
+        responses: Vec<base_tx_manager::SubmissionResult>,
     ) -> (ChallengeSubmitter<MockTxManager>, MockTxManager) {
         let tx_manager = MockTxManager::with_responses(responses);
         (ChallengeSubmitter::new(tx_manager.clone()), tx_manager)

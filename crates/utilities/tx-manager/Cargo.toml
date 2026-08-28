@@ -15,7 +15,6 @@ workspace = true
 # alloy
 alloy-network.workspace = true
 alloy-provider.workspace = true
-alloy-consensus.workspace = true
 alloy-transport.workspace = true
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
@@ -30,7 +29,6 @@ base-runtime = { workspace = true, features = ["tokio"] }
 
 # misc
 url.workspace = true
-backon.workspace = true
 futures.workspace = true
 thiserror.workspace = true
 metrics = { workspace = true, optional = true }
@@ -38,18 +36,18 @@ tracing = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["sync", "time"] }
 
 [dev-dependencies]
-rayon.workspace = true
 rstest.workspace = true
 proptest.workspace = true
 humantime.workspace = true
 serde_json.workspace = true
 async-trait.workspace = true
 alloy-signer.workspace = true
+alloy-consensus.workspace = true
 alloy-json-rpc.workspace = true
 alloy-node-bindings.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 base-runtime = { workspace = true, features = ["test-utils"] }
-tokio = { workspace = true, features = ["macros", "net", "rt", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
 
 [features]
 metrics = [ "base-metrics/metrics", "dep:metrics" ]

@@ -25,7 +25,6 @@ alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 
 # base
 base-cli-utils.workspace = true
-base-tx-manager.workspace = true
 base-common-network.workspace = true
 base-common-flashblocks.workspace = true
 base-execution-txpool.workspace = true
@@ -56,3 +55,5 @@ tokio = { workspace = true, features = ["signal"] }
 tokio-tungstenite = { workspace = true, features = ["native-tls"] }
 
 [dev-dependencies]
+alloy-node-bindings.workspace = true
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread"] }

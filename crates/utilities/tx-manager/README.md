@@ -1,122 +1,86 @@
 # `base-tx-manager`
 
-<a href="https://github.com/base/base/actions/workflows/ci.yml"><img src="https://github.com/base/base/actions/workflows/ci.yml/badge.svg?label=ci" alt="CI"></a>
-<a href="https://github.com/base/base/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-d1d1f6.svg?label=license&labelColor=2a2f35" alt="MIT License"></a>
-
 Transaction lifecycle management for Base onchain components.
 
 ## Overview
 
-Manages the full lifecycle of EIP-1559 and EIP-4844 blob transactions: fee
-estimation, construction, signing, submission, fee bumping, and receipt
-confirmation.
+The crate constructs, signs, publishes, replaces, and confirms EIP-1559 and
+EIP-4844 transactions. `SimpleTxManager` uses one coordinator task as the sole
+owner of its signed pending ledger:
 
-### Core types
+1. `submit` appends a candidate and returns a `SubmissionHandle` without doing
+   RPC or signing work.
+2. The coordinator assigns the next nonce, then a worker builds and signs that
+   candidate.
+3. The signed version is added to an ordered `VecDeque` ledger shared by every
+   publication backend.
+4. Each backend owns one sequential worker and cursor. Workers publish in nonce
+   order, while different backends run concurrently.
+5. An accepted or ambiguous response from any backend commits the nonce and
+   allows construction of `n + 1`. A provisional nonce is recycled only after
+   every backend definitively rejects it.
+6. A fee bump atomically replaces the current version. Every backend rewinds to
+   that nonce before publishing later entries again.
+7. The chain reader confirms known hashes and removes only the resolved front
+   prefix of the ledger.
 
-- **`TxManager`** — trait defining the public API (`send`, `send_async`, `cancel_tx`,
-  `sender_address`).
-- **`SimpleTxManager`** — default `TxManager` implementation. Handles gas estimation,
-  nonce management, signing, submission with fee bumps, and receipt polling.
-- **`TxCandidate`** — input to the send pipeline (calldata, recipient, gas limit, value,
-  optional blobs).
-- **`PreparedTx`** — signed transaction bytes and the fees, gas limit, nonce, and sidecar
-  that were applied.
-- **`TxQueue`** — bounded async send queue with semaphore-based backpressure.
-- **`SendResult`** — pairs a caller-supplied ID with a transaction send outcome.
+A clean rejection may recycle a provisional nonce. A nonce is never recycled
+after any publication attempt could have reached a provider.
 
-### Fee calculation
+## Public API
 
-- **`FeeCalculator`** — pure arithmetic for EIP-1559/EIP-4844 fee caps, replacement
-  thresholds, fee bumps, and fee limit enforcement.
-- **`GasPriceCaps`** — intermediate fee estimates passed between estimation and construction.
-- **`FeeOverride`** — optional per-field fee and gas-limit overrides applied as a floor.
-- **`BumpedFees`** — result of a fee bump calculation.
+- `TxManager` — `submit`, `cancel_tx`, and `sender_address`.
+- `SimpleTxManager` — default coordinator-backed implementation.
+- `TxCandidate` — calldata, recipient, value, gas floor, and optional blobs.
+- `SubmissionHandle` — cloneable lifecycle handle for observing or awaiting a
+  submission.
 
-### Error handling
+Lower-level builder, coordinator, pending-ledger, publisher, sweeper, fee,
+and error-classification types are also publicly re-exported for
+workspace-wide reuse. Most consumers should use `SimpleTxManager` through the
+`TxManager` trait.
 
-- **`TxManagerError`** — error variants categorized as critical (non-retryable),
-  fee/replacement (retryable via fee bumps), or infrastructure (transient/retryable).
-- **`RpcErrorClassifier`** — classifies alloy `TransportError`s into `TxManagerError` variants.
-- **`RevertDisplay`** — display wrapper for decoded revert reasons.
-- **`TxManagerResult<T>`** — result type alias.
+## Publication backends
 
-### Nonce management
+There is no primary publisher. The chain provider used for fee inputs, nonce
+reads, receipts, and canonical confirmation is also included as publication
+backend zero. Every additional publication provider is otherwise symmetric.
+Construction fails if any configured backend's chain ID cannot be validated.
+Backend progress is independent after startup.
 
-- **`NonceManager`** — lazy-initialized nonce cache with mutex-guarded allocation.
-- **`NonceGuard`** — RAII guard holding a reserved nonce; drop consumes it, or
-  call `rollback()` on failure to return it for reuse.
-- **`NonceState`** — snapshot of the current nonce state.
+The coordinator distributes the latest immutable ledger snapshot through a
+`watch` channel per backend. A slow backend receives the newest snapshot
+without accumulating obsolete versions. Workers report classified outcomes to
+the coordinator through `mpsc`.
 
-### Send state
+Within one backend, publication is FIFO: nonce `n + 1` is attempted only after
+that backend accepted the current version of `n`. Across backends, publication
+is parallel. One slow or unavailable backend does not stop another backend
+from advancing.
 
-- **`SendState`** — state machine tracking mined hashes, nonce errors, fee bumps, and
-  mempool deadlines to decide whether to retry, bump, or abort.
-- **`SendHandle`** — future returned by `send_async` that resolves to a `SendResponse`.
-- **`SendResponse`** — type alias for `TxManagerResult<TransactionReceipt>`.
+## Error classification
 
-### Blob support
+The manager maps recognized node responses to explicit `TxManagerError`
+variants. Publication uses a stricter internal classification:
 
-- **`BlobTxBuilder`** — builds EIP-7594 cell-proof sidecars from raw blobs.
-- **`MAX_BLOBS_PER_TX`** — maximum blobs per transaction (Fusaka limit).
+- `AlreadyKnown` is accepted.
+- Transport failures and unknown RPC responses are ambiguous.
+- Recognized nonce, fee, reservation, and deterministic errors are clean
+  rejections.
 
-### Config types
-
-- **`TxManagerConfig`** — validated runtime configuration with public fields.
-- **`ConfigError`** — validation error for out-of-range or invalid config values.
-- **`GweiParser`** — converts decimal gwei strings to `u128` wei.
-- **`define_tx_manager_cli!`** — macro that generates a `TxManagerCli` clap struct with
-  env var fallbacks and `TryFrom<TxManagerCli> for TxManagerConfig`.
-- **`define_signer_cli!`** — macro that generates a signer CLI struct.
-- **`SignerConfig`** — describes wallet construction (local `PrivateKeySigner` or remote
-  signer endpoint).
-
-### Metrics
-
-- **`TxMetrics`** — trait for transaction metrics collection.
-- **`BaseTxMetrics`** — production implementation backed by the `metrics` crate.
-- **`NoopTxMetrics`** — no-op implementation for tests.
-- **`TxManagerMetrics`** — raw metrics struct generated by `define_metrics!`.
-
-## Error Classification
-
-`TxManagerError` variants are classified to let the send loop decide whether to retry,
-bump fees, or abort. Use `is_retryable()` and `is_already_known()` to branch:
-
-```rust,ignore
-use base_tx_manager::{RpcErrorClassifier, TxManagerError};
-
-fn handle_rpc_error(transport_err: &alloy_transport::TransportError) {
-    let err = RpcErrorClassifier::classify_rpc_error(transport_err);
-    if err.is_already_known() {
-        // Transaction is already in the mempool — treat as success on resubmission.
-    } else if err.is_retryable() {
-        // Fee/replacement errors and transient infrastructure errors — retry with backoff.
-    } else {
-        // Critical errors (nonce conflicts, insufficient funds, reverts) — abort.
-    }
-}
-```
+This distinction is what makes provisional nonce reuse safe.
 
 ## Configuration
 
-`TxManagerConfig` can be constructed directly and validated via `validate()`, or
-converted from a macro-generated `TxManagerCli` via `TryFrom`.
+`TxManagerConfig` controls confirmation depth, fee limits, network timeouts,
+resubmission cadence, publication pass cadence, and receipt polling. Manager
+construction validates it before network startup.
 
-### CLI parsing
-
-```rust,ignore
-use base_tx_manager::TxManagerConfig;
-
-base_tx_manager::define_tx_manager_cli!("BASE_TX_MANAGER");
-
-let cli = TxManagerCli::try_parse().unwrap();
-let config = TxManagerConfig::try_from(cli)?;
-```
-
-### Custom env var prefix
+The `define_tx_manager_cli!` macro creates a clap argument group with environment
+fallbacks:
 
 ```rust,ignore
-base_tx_manager::define_tx_manager_cli!("BASE_CHALLENGER_TX_MANAGER");
+base_tx_manager::define_tx_manager_cli!("MY_SERVICE");
 
 #[derive(clap::Parser)]
 struct Cli {
@@ -127,33 +91,28 @@ struct Cli {
 let config = TxManagerConfig::try_from(cli.tx)?;
 ```
 
-> **Note:** Consumer crates must add `clap` (with `derive` + `env` features) and
-> `humantime` to their own `Cargo.toml`.
+Consumer crates using this macro must depend on `clap` with `derive` and `env`
+features and on `humantime`.
 
 ## Usage
-
-```toml
-[dependencies]
-base-tx-manager = { git = "https://github.com/base/base" }
-```
 
 ```rust,ignore
 use std::sync::Arc;
 
-use alloy_primitives::{bytes, Address, U256};
-use alloy_provider::RootProvider;
-use alloy_signer_local::PrivateKeySigner;
+use alloy_primitives::{Address, U256, bytes};
 use base_tx_manager::{
-    BaseTxMetrics, SignerConfig, SimpleTxManager, TxCandidate, TxManagerConfig,
+    BaseTxMetrics, SignerConfig, SimpleTxManager, TxCandidate, TxManager, TxManagerConfig,
 };
 
-let provider = RootProvider::new_http("http://localhost:8545".parse()?);
-let signer_config = SignerConfig::local("0x0101010101010101010101010101010101010101010101010101010101010101".parse::<PrivateKeySigner>()?);
-let config = TxManagerConfig::default();
-let metrics = Arc::new(BaseTxMetrics::new("my_service"));
-let manager = SimpleTxManager::new(provider, signer_config, config, 1, metrics).await?;
+let manager = SimpleTxManager::new(
+    provider,
+    SignerConfig::local(signer),
+    TxManagerConfig::default(),
+    chain_id,
+    Arc::new(BaseTxMetrics::new("my_service")),
+)
+.await?;
 
-// Build a regular (type-2) transaction candidate.
 let candidate = TxCandidate {
     tx_data: bytes!("deadbeef"),
     to: Some(Address::ZERO),
@@ -162,13 +121,12 @@ let candidate = TxCandidate {
     ..Default::default()
 };
 
-// Construct and sign with automatic retry on transient errors.
-let prepared = manager.prepare(&candidate, None).await?;
-let raw_tx = prepared.raw_tx;
-
-// Or use craft_tx() for a single attempt without retry.
-let prepared = manager.craft_tx(&candidate, None).await?;
+let handle = manager.submit(candidate);
+let receipt = handle.wait().await?;
 ```
+
+Applications that need a bounded wait can wrap `wait()` in their runtime's
+timeout primitive. Dropping that wait does not cancel manager-owned nonce work.
 
 ## License
 

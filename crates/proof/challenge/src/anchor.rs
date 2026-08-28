@@ -340,12 +340,12 @@ mod tests {
         factory.insert_uuid_game(GAME_TYPE, output_root, extra_data, game);
     }
 
-    fn tx_success(tx_hash: B256) -> base_tx_manager::SendResponse {
+    fn tx_success(tx_hash: B256) -> base_tx_manager::SubmissionResult {
         Ok(receipt_with_status(true, tx_hash))
     }
 
     fn submitter(
-        responses: Vec<base_tx_manager::SendResponse>,
+        responses: Vec<base_tx_manager::SubmissionResult>,
     ) -> (ChallengeSubmitter<MockTxManager>, MockTxManager) {
         let tx_manager = MockTxManager::with_responses(responses);
         (ChallengeSubmitter::new(tx_manager.clone()), tx_manager)

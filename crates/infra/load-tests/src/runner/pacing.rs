@@ -18,7 +18,6 @@ use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use base_common_network::Base;
-use base_tx_manager::NonceManager;
 use futures::{StreamExt, TryStreamExt, stream};
 use tokio::{
     sync::{mpsc, watch},
@@ -31,7 +30,7 @@ use super::{
     BlockWatcher, DisplaySnapshot, FlashblockWatcher, InclusionPulse, InclusionSource, LoadRunner,
     LoadTestDisplay, LoadTestStage, MIN_PRIORITY_FEE, PipelineStartConfig, PreparedTransaction,
     PresignBuffer, QueuedSubmitFailures, ResultsTracker, SignedBatch, SignedTransaction,
-    SubmissionPipeline, SubmitEvent, TxType, ValidityRouter,
+    SubmissionPipeline, SubmitEvent, TxType, ValidityRouter, nonce::NonceManager,
 };
 use crate::{
     BaselineError, Result,

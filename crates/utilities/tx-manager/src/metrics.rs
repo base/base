@@ -11,9 +11,6 @@ base_metrics::define_metrics! {
     #[describe("Number of gas bump events")]
     #[label(name)]
     tx_gas_bump_count: counter,
-    #[describe("Send-loop latency in milliseconds")]
-    #[label(name)]
-    tx_send_latency_ms: histogram,
     #[describe("Current nonce value")]
     #[label(name)]
     current_nonce: gauge,
@@ -35,15 +32,15 @@ base_metrics::define_metrics! {
     #[describe("Number of confirmed transactions")]
     #[label(name)]
     tx_confirmed_count: counter,
-    #[describe("Number of failed send attempts (includes timeouts where the tx may still confirm)")]
+    #[describe("Number of committed transactions unresolved past the alert window")]
     #[label(name)]
-    tx_failed_count: counter,
+    tx_stuck_count: counter,
 }
 
 /// Trait abstracting metrics collection for the transaction manager.
 ///
 /// Implement this trait to plug in your own metrics backend. A [`BaseTxMetrics`]
-/// implementation backed by the [`metrics`] crate is provided for production use.
+/// implementation backed by the `metrics` crate is provided for production use.
 pub trait TxMetrics: Send + Sync + Debug + 'static {
     /// Record the maximum possible transaction fee in gwei (`gas_limit` * `fee_cap`).
     fn record_tx_max_fee(&self, fee_gwei: f64);
@@ -51,13 +48,10 @@ pub trait TxMetrics: Send + Sync + Debug + 'static {
     /// Record a gas bump event.
     fn record_gas_bump(&self);
 
-    /// Record the send-loop latency in milliseconds (all exit paths).
-    fn record_send_latency(&self, latency_ms: u64);
-
     /// Record the current nonce.
     fn record_current_nonce(&self, nonce: u64);
 
-    /// Record a transaction publish error (transport/RPC failures only, not state errors).
+    /// Record an infrastructure failure or panic during transaction publication.
     fn record_publish_error(&self);
 
     /// Record the base fee in gwei (fractional precision preserved).
@@ -75,15 +69,8 @@ pub trait TxMetrics: Send + Sync + Debug + 'static {
     /// Record a confirmed (successfully mined) transaction.
     fn record_tx_confirmed(&self);
 
-    /// Record a failed send attempt.
-    ///
-    /// This fires on **any** `send_tx` error path, including `SendTimeout`.
-    /// A timeout does not guarantee the transaction will never confirm — the
-    /// background `wait_for_tx` task may still be running and the transaction
-    /// may already be in the mempool. This counter therefore tracks "send
-    /// attempts that did not return a confirmed receipt," not definitive
-    /// on-chain failures.
-    fn record_tx_failed(&self);
+    /// Record a committed transaction left unresolved past the alert window.
+    fn record_tx_stuck(&self);
 }
 
 /// No-op [`TxMetrics`] implementation.
@@ -96,7 +83,6 @@ pub struct NoopTxMetrics;
 impl TxMetrics for NoopTxMetrics {
     fn record_tx_max_fee(&self, _fee_gwei: f64) {}
     fn record_gas_bump(&self) {}
-    fn record_send_latency(&self, _latency_ms: u64) {}
     fn record_current_nonce(&self, _nonce: u64) {}
     fn record_publish_error(&self) {}
     fn record_basefee(&self, _basefee_gwei: f64) {}
@@ -104,12 +90,10 @@ impl TxMetrics for NoopTxMetrics {
     fn record_blob_fee(&self, _blob_fee_gwei: f64) {}
     fn record_rpc_error(&self) {}
     fn record_tx_confirmed(&self) {}
-    fn record_tx_failed(&self) {}
+    fn record_tx_stuck(&self) {}
 }
 
-/// Production [`TxMetrics`] implementation backed by the [`metrics`] crate.
-///
-/// Each method delegates to the generated [`TxManagerMetrics`] static accessors.
+/// Production [`TxMetrics`] implementation backed by the `metrics` crate.
 ///
 /// The `name` field is attached as a `"name"` label on every metric emission,
 /// allowing multiple tx-manager instances (e.g. challenger vs. proposer) to be
@@ -123,13 +107,9 @@ pub struct BaseTxMetrics {
 impl BaseTxMetrics {
     /// Create a new [`BaseTxMetrics`] with the given instance name.
     ///
-    /// The `name` is emitted as a `"name"` label on every metric, allowing
-    /// multiple tx-manager instances to be distinguished in dashboards.
-    ///
     /// All counters and gauges are zero-initialized so they appear
     /// immediately in the metrics endpoint.
     pub fn new(name: &'static str) -> Self {
-        let this = Self { name };
         TxManagerMetrics::tx_gas_bump_count(name).absolute(0);
         TxManagerMetrics::current_nonce(name).set(0.0);
         TxManagerMetrics::tx_publish_error_count(name).absolute(0);
@@ -138,8 +118,8 @@ impl BaseTxMetrics {
         TxManagerMetrics::blob_fee_gwei(name).set(0.0);
         TxManagerMetrics::rpc_error_count(name).absolute(0);
         TxManagerMetrics::tx_confirmed_count(name).absolute(0);
-        TxManagerMetrics::tx_failed_count(name).absolute(0);
-        this
+        TxManagerMetrics::tx_stuck_count(name).absolute(0);
+        Self { name }
     }
 }
 
@@ -150,10 +130,6 @@ impl TxMetrics for BaseTxMetrics {
 
     fn record_gas_bump(&self) {
         TxManagerMetrics::tx_gas_bump_count(self.name).increment(1);
-    }
-
-    fn record_send_latency(&self, latency_ms: u64) {
-        TxManagerMetrics::tx_send_latency_ms(self.name).record(latency_ms as f64);
     }
 
     fn record_current_nonce(&self, nonce: u64) {
@@ -184,8 +160,8 @@ impl TxMetrics for BaseTxMetrics {
         TxManagerMetrics::tx_confirmed_count(self.name).increment(1);
     }
 
-    fn record_tx_failed(&self) {
-        TxManagerMetrics::tx_failed_count(self.name).increment(1);
+    fn record_tx_stuck(&self) {
+        TxManagerMetrics::tx_stuck_count(self.name).increment(1);
     }
 }
 
@@ -194,27 +170,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn noop_tx_metrics_can_be_constructed_and_called() {
-        let m = NoopTxMetrics;
-        m.record_tx_max_fee(1.5);
-        m.record_gas_bump();
-        m.record_send_latency(120);
-        m.record_current_nonce(42);
-        m.record_publish_error();
-        m.record_basefee(30.123);
-        m.record_tipcap(2.456);
-        m.record_blob_fee(1.0);
-        m.record_rpc_error();
-        m.record_tx_confirmed();
-        m.record_tx_failed();
-    }
-
-    #[test]
     fn base_tx_metrics_can_be_constructed_and_called() {
         let m = BaseTxMetrics::new("test");
         m.record_tx_max_fee(1.5);
         m.record_gas_bump();
-        m.record_send_latency(120);
         m.record_current_nonce(42);
         m.record_publish_error();
         m.record_basefee(30.123);
@@ -222,6 +181,6 @@ mod tests {
         m.record_blob_fee(1.0);
         m.record_rpc_error();
         m.record_tx_confirmed();
-        m.record_tx_failed();
+        m.record_tx_stuck();
     }
 }

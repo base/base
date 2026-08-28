@@ -10,7 +10,7 @@ use base_batcher_core::ThrottleConfig;
 use base_batcher_service::{BatcherConfig, BatcherService};
 use base_cli_utils::{LogConfig, RuntimeManager};
 use base_runtime::TokioRuntime;
-use base_tx_manager::SignerConfig;
+use base_tx_manager::{SignerConfig, TxManagerConfig};
 use clap::{Args, Parser};
 use tracing::info;
 use url::Url;
@@ -27,15 +27,15 @@ base_tx_manager::define_signer_cli!("BATCHER");
     about = "Base Batcher — submits L2 batch data to L1",
     long_about = None
 )]
-pub(crate) struct Cli {
+pub struct Cli {
     /// Batcher arguments.
     #[command(flatten)]
-    pub(crate) args: BatcherArgs,
+    pub args: BatcherArgs,
 }
 
 impl Cli {
     /// Run the batcher CLI.
-    pub(crate) fn run(self) -> eyre::Result<()> {
+    pub fn run(self) -> eyre::Result<()> {
         LogConfig::from(self.args.logging.clone()).init_tracing_subscriber()?;
         base_cli_utils::MetricsConfig::from(self.args.metrics.clone()).init_with(|| {
             base_cli_utils::register_version_metrics!();
@@ -46,7 +46,7 @@ impl Cli {
 
 /// CLI arguments for the batcher.
 #[derive(Args, Clone, Debug)]
-pub(crate) struct BatcherArgs {
+pub struct BatcherArgs {
     /// L1 RPC endpoint(s).
     ///
     /// Accepts a comma-separated list. The service connects to each in order at
@@ -54,6 +54,19 @@ pub(crate) struct BatcherArgs {
     /// startup-time fallbacks only (no per-call rotation).
     #[arg(long = "l1-rpc-url", env = "BATCHER_L1_RPC_URL", value_delimiter = ',', num_args = 1..)]
     pub l1_rpc_url: Vec<Url>,
+
+    /// Additional symmetric L1 transaction publication backends.
+    ///
+    /// Each destination preserves nonce order independently. The selected
+    /// `--l1-rpc-url` endpoint is included as an equal publication backend and
+    /// remains the separate source for chain reads and confirmations.
+    #[arg(
+        long = "publish-rpc-url",
+        env = "BATCHER_PUBLISH_RPC_URL",
+        value_delimiter = ',',
+        num_args = 1..
+    )]
+    pub publish_rpc_urls: Vec<Url>,
 
     /// L2 HTTP RPC endpoint(s) (used for all JSON-RPC calls including throttle control).
     ///
@@ -143,7 +156,7 @@ pub(crate) struct BatcherArgs {
         default_value = "blobs",
         env = "BATCHER_DATA_AVAILABILITY_TYPE"
     )]
-    da_type: base_batcher_encoder::DaType,
+    pub da_type: base_batcher_encoder::DaType,
 
     /// Maximum number of in-flight (unconfirmed) transactions.
     #[arg(
@@ -155,7 +168,7 @@ pub(crate) struct BatcherArgs {
 
     /// Number of L1 confirmations before a tx is considered finalized.
     #[arg(long = "num-confirmations", default_value = "1", env = "BATCHER_NUM_CONFIRMATIONS")]
-    pub num_confirmations: usize,
+    pub num_confirmations: u64,
 
     /// Timeout before resubmitting a transaction (seconds).
     #[arg(
@@ -164,6 +177,15 @@ pub(crate) struct BatcherArgs {
         env = "BATCHER_RESUBMISSION_TIMEOUT"
     )]
     pub resubmission_timeout_secs: u64,
+
+    /// Delay between transaction publication passes.
+    #[arg(
+        long = "publish-retry-delay",
+        default_value = "1s",
+        env = "BATCHER_PUBLISH_RETRY_DELAY",
+        value_parser = humantime::parse_duration
+    )]
+    pub publish_retry_delay: Duration,
 
     /// DA backlog threshold in bytes at which throttling activates.
     ///
@@ -266,7 +288,7 @@ pub(crate) struct BatcherArgs {
 
 impl BatcherArgs {
     /// Convert CLI arguments into a [`BatcherConfig`].
-    fn into_config(self) -> eyre::Result<BatcherConfig> {
+    pub fn into_config(self) -> eyre::Result<BatcherConfig> {
         if self.shadow_mode != self.dangerously_override_batch_inbox_address.is_some() {
             eyre::bail!(
                 "--shadow-mode and --dangerously-override-batch-inbox-address must be set together"
@@ -291,8 +313,16 @@ impl BatcherArgs {
             max_l1_tx_size_bytes: self.max_l1_tx_size_bytes,
         };
         encoder_config.validate()?;
+        let tx_manager = TxManagerConfig {
+            num_confirmations: self.num_confirmations,
+            resubmission_timeout: Duration::from_secs(self.resubmission_timeout_secs),
+            publish_retry_delay: self.publish_retry_delay,
+            ..TxManagerConfig::default()
+        };
+        tx_manager.validate()?;
         Ok(BatcherConfig {
             l1_rpc_url: self.l1_rpc_url,
+            publish_rpc_urls: self.publish_rpc_urls,
             l1_ws_url: self.l1_ws_url,
             l2_rpc_url: self.l2_rpc_url,
             parity_validator_l2_rpc_url: self.parity_validator_l2_rpc_url,
@@ -303,8 +333,7 @@ impl BatcherArgs {
             poll_interval: Duration::from_secs(self.poll_interval_secs),
             encoder_config,
             max_pending_transactions: self.max_pending_transactions,
-            num_confirmations: self.num_confirmations,
-            resubmission_timeout: Duration::from_secs(self.resubmission_timeout_secs),
+            tx_manager,
             throttle: if self.no_throttle {
                 None
             } else {
@@ -324,7 +353,7 @@ impl BatcherArgs {
     }
 
     /// Execute the batcher.
-    async fn exec(self) -> eyre::Result<()> {
+    pub async fn exec(self) -> eyre::Result<()> {
         let config = self.into_config()?;
         info!(
             l1_rpc_count = config.l1_rpc_url.len(),
@@ -507,12 +536,32 @@ mod tests {
     }
 
     #[test]
+    fn into_config_sets_publish_retry_policy() {
+        let cli = parse_cli(&["--publish-retry-delay", "250ms"]);
+        let config = cli.args.into_config().expect("config should build");
+
+        assert_eq!(config.tx_manager.publish_retry_delay, Duration::from_millis(250));
+    }
+
+    #[test]
     fn rpc_urls_default_to_single_endpoint() {
         let cli = parse_cli(&[]);
         let config = cli.args.into_config().expect("config should build");
         assert_eq!(config.l1_rpc_url.len(), 1);
+        assert!(config.publish_rpc_urls.is_empty());
         assert_eq!(config.l2_rpc_url.len(), 1);
         assert_eq!(config.rollup_rpc_url.len(), 1);
+    }
+
+    #[test]
+    fn publish_rpc_urls_accept_multiple_destinations() {
+        let cli =
+            parse_cli(&["--publish-rpc-url", "http://backend-a.example,http://backend-b.example"]);
+        let config = cli.args.into_config().expect("config should build");
+
+        assert_eq!(config.publish_rpc_urls.len(), 2);
+        assert_eq!(config.publish_rpc_urls[0].as_str(), "http://backend-a.example/");
+        assert_eq!(config.publish_rpc_urls[1].as_str(), "http://backend-b.example/");
     }
 
     #[test]

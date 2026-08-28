@@ -147,7 +147,7 @@ like the production transaction manager:
 
 Current behavior:
 
-- `send_async` signs each candidate with the batcher L1 signer and assigns a
+- `submit` signs each candidate with the batcher L1 signer and assigns a
   monotonic nonce.
 - Submissions move from pending to staged when the harness submits them to
   `L1Miner`.

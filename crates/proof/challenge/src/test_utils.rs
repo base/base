@@ -29,7 +29,7 @@ use base_prover_service_protocol::{
     ProofStatus, ProveBlockRangeRequest, ProveBlockRangeResponse, SnarkPlonkProofResult,
     ZkProofResult, ZkVm,
 };
-use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager};
+use base_tx_manager::{SubmissionHandle, SubmissionResult, TxCandidate, TxManager};
 
 /// Discovery interval used in tests (5 minutes).
 pub const TEST_DISCOVERY_INTERVAL: Duration = Duration::from_secs(300);
@@ -768,19 +768,19 @@ impl L1Provider for MockL1 {
 #[derive(Debug, Clone)]
 pub struct MockTxManager {
     /// Queue of responses returned by [`send`](TxManager::send).
-    pub responses: Arc<Mutex<VecDeque<SendResponse>>>,
+    pub responses: Arc<Mutex<VecDeque<SubmissionResult>>>,
     /// Transaction candidates submitted through [`send`](TxManager::send).
     pub calls: Arc<Mutex<Vec<TxCandidate>>>,
 }
 
 impl MockTxManager {
     /// Creates a new mock with a single pre-configured response.
-    pub fn new(response: SendResponse) -> Self {
+    pub fn new(response: SubmissionResult) -> Self {
         Self::with_responses(vec![response])
     }
 
     /// Creates a new mock with multiple responses returned in order.
-    pub fn with_responses(responses: Vec<SendResponse>) -> Self {
+    pub fn with_responses(responses: Vec<SubmissionResult>) -> Self {
         Self {
             responses: Arc::new(Mutex::new(VecDeque::from(responses))),
             calls: Arc::new(Mutex::new(Vec::new())),
@@ -794,13 +794,15 @@ impl MockTxManager {
 }
 
 impl TxManager for MockTxManager {
-    async fn send(&self, candidate: TxCandidate) -> SendResponse {
+    fn submit(&self, candidate: TxCandidate) -> SubmissionHandle {
         self.calls.lock().unwrap().push(candidate);
-        self.responses.lock().unwrap().pop_front().expect("MockTxManager has no more responses")
-    }
-
-    async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
-        unimplemented!("not needed for these tests")
+        SubmissionHandle::resolved(
+            self.responses
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("MockTxManager has no more responses"),
+        )
     }
 
     fn sender_address(&self) -> Address {

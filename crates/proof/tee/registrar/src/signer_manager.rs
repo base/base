@@ -648,7 +648,7 @@ where
                 return Ok(());
             }
             self.ensure_attestation_fresh(signer, timestamp_ms)?;
-            let result = self.tx_manager.send(candidate.clone()).await;
+            let result = self.tx_manager.submit(candidate.clone()).wait().await;
             let observed_revoked = signer_cancel
                 .run_until_cancelled(self.cert_manager.is_revoked(cert_id))
                 .await
@@ -795,7 +795,7 @@ where
         retry: u32,
         signer_cancel: &CancellationToken,
     ) -> CacheTxAttempt {
-        let result = self.tx_manager.send(candidate.clone()).await;
+        let result = self.tx_manager.submit(candidate.clone()).wait().await;
         let state_error = match self.validate_cached_cert(cert, signer_cancel).await {
             Ok(Some(true)) => {
                 return if result.as_ref().is_ok_and(|receipt| receipt.inner.status()) {
@@ -975,7 +975,7 @@ where
             RegistrarMetrics::record_registration_stage(
                 RegistrarMetrics::REGISTRATION_STAGE_TX_SUBMITTED,
             );
-            let result = self.tx_manager.send(candidate.clone()).await;
+            let result = self.tx_manager.submit(candidate.clone()).wait().await;
             match result {
                 Ok(receipt) if receipt.inner.status() => {
                     info!(signer = %signer, tx_hash = %receipt.transaction_hash, "signer registered");
@@ -1105,7 +1105,7 @@ where
                 to: Some(self.registry_address),
                 ..Default::default()
             };
-            match self.tx_manager.send(candidate).await {
+            match self.tx_manager.submit(candidate).wait().await {
                 Ok(receipt) if receipt.inner.status() => {
                     info!(signer = %signer, tx_hash = %receipt.transaction_hash, "signer deregistered");
                     RegistrarMetrics::deregistrations_total().increment(1);
@@ -1201,7 +1201,7 @@ mod tests {
     use alloy_primitives::Address;
     use async_trait::async_trait;
     use base_proof_contracts::{ContractError, ICertManager, VerifiedCert};
-    use base_tx_manager::{SendHandle, TxManagerError};
+    use base_tx_manager::{SubmissionHandle, TxManagerError};
     #[cfg(feature = "metrics")]
     use metrics_util::{
         MetricKind,
@@ -1482,13 +1482,13 @@ mod tests {
     }
 
     impl TxManager for MockTxManager {
-        async fn send(&self, candidate: TxCandidate) -> base_tx_manager::SendResponse {
+        fn submit(&self, candidate: TxCandidate) -> SubmissionHandle {
             let outcome = {
                 let mut state = self.chain.0.lock().unwrap();
                 state.sent.push((candidate.to, candidate.tx_data.clone()));
                 state.outcomes.pop_front().unwrap_or(MockTxOutcome::Success)
             };
-            match outcome {
+            let result = match outcome {
                 MockTxOutcome::Success => {
                     self.chain.apply(&candidate);
                     Ok(stub_receipt_with_status(true))
@@ -1502,11 +1502,8 @@ mod tests {
                     self.chain.apply(&candidate);
                     Ok(stub_receipt_with_status(false))
                 }
-            }
-        }
-
-        async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
-            unreachable!("registrar tests use synchronous transaction submission")
+            };
+            SubmissionHandle::resolved(result)
         }
 
         fn sender_address(&self) -> Address {

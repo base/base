@@ -15,7 +15,9 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     AdminCommand, BatchDriverConfig, BatchDriverError, BatcherStatus, DaThrottle, DerivationStatus,
-    SubmissionQueue, ThrottleClient, ThrottleController, event::DriverEvent,
+    ThrottleClient, ThrottleController,
+    event::DriverEvent,
+    submissions::{SettledSubmission, SubmissionQueue},
 };
 
 /// Live L1 and derivation inputs consumed when constructing a [`BatchDriver`].
@@ -54,7 +56,7 @@ impl<L> BatchDriverHeads<L> {
 /// an [`L1HeadSource`] (L1 chain head tracking), ordered [`DerivationStatus`] updates,
 /// and a [`TxManager`] (L1 submission) into a single `tokio::select!` task.
 ///
-/// Uses [`SubmissionQueue`] for concurrent receipt tracking and semaphore backpressure,
+/// Uses an internal submission queue for concurrent receipt tracking and semaphore backpressure,
 /// and [`DaThrottle`] for DA backlog throttle management.
 #[derive(Debug)]
 pub struct BatchDriver<R, P, S, TM, TC, L>
@@ -559,8 +561,16 @@ where
                     Err(e) => return Err(e.into()),
                 },
 
-                Some((ids, outcome)) = self.submissions.next_settled() => {
-                    DriverEvent::Receipt(ids, outcome)
+                Some(settled) = self.submissions.next_settled() => {
+                    match settled {
+                        SettledSubmission::Attached { ids, outcome } => {
+                            DriverEvent::Receipt(ids, outcome)
+                        }
+                        SettledSubmission::Detached { ids, outcome } => {
+                            self.submissions.handle_detached_outcome(ids, outcome);
+                            continue;
+                        }
+                    }
                 }
 
                 l1_event = async {
@@ -621,7 +631,7 @@ mod tests {
         Cancellation, Clock, Spawner,
         deterministic::{Config, Runner},
     };
-    use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError};
+    use base_tx_manager::{SubmissionHandle, TxCandidate, TxManager, TxManagerError};
     use tokio::sync::{mpsc, oneshot};
 
     use crate::{
@@ -805,18 +815,9 @@ mod tests {
     }
 
     impl TxManager for TxpoolBlockedOnceTxManager {
-        async fn send(&self, _: TxCandidate) -> SendResponse {
-            Err(TxManagerError::AlreadyReserved)
-        }
-
-        fn send_async(
-            &self,
-            _: TxCandidate,
-        ) -> impl std::future::Future<Output = SendHandle> + Send {
+        fn submit(&self, _: TxCandidate) -> SubmissionHandle {
             self.state.sends.fetch_add(1, Ordering::SeqCst);
-            let (tx, rx) = oneshot::channel();
-            let _ = tx.send(Err(TxManagerError::AlreadyReserved));
-            std::future::ready(SendHandle::new(rx))
+            SubmissionHandle::resolved(Err(TxManagerError::AlreadyReserved))
         }
 
         fn cancel_tx(
@@ -848,14 +849,7 @@ mod tests {
     }
 
     impl TxManager for RecordingConfirmTxManager {
-        async fn send(&self, _: TxCandidate) -> SendResponse {
-            unreachable!()
-        }
-
-        fn send_async(
-            &self,
-            candidate: TxCandidate,
-        ) -> impl std::future::Future<Output = SendHandle> + Send {
+        fn submit(&self, candidate: TxCandidate) -> SubmissionHandle {
             let decoded_blob_payloads = candidate
                 .blobs
                 .iter()
@@ -866,9 +860,7 @@ mod tests {
                 .unwrap()
                 .push(RecordedCandidate { tx_data: candidate.tx_data, decoded_blob_payloads });
             let l1_block = self.l1_block;
-            let (tx, rx) = oneshot::channel();
-            let _ = tx.send(Ok(stub_receipt(l1_block)));
-            std::future::ready(SendHandle::new(rx))
+            SubmissionHandle::resolved(Ok(stub_receipt(l1_block)))
         }
 
         fn sender_address(&self) -> Address {

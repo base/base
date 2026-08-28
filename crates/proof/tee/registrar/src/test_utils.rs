@@ -3,7 +3,7 @@
 use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope};
 use alloy_primitives::{Address, B256};
 use alloy_rpc_types_eth::TransactionReceipt;
-use base_tx_manager::{SendHandle, TxCandidate, TxManager};
+use base_tx_manager::{SubmissionHandle, TxCandidate, TxManager};
 use hex_literal::hex;
 use k256::ecdsa::SigningKey;
 
@@ -38,12 +38,8 @@ pub const TEST_REGISTRY_ADDRESS: Address = Address::repeat_byte(0x01);
 pub struct NoopTxManager;
 
 impl TxManager for NoopTxManager {
-    async fn send(&self, _candidate: TxCandidate) -> base_tx_manager::SendResponse {
+    fn submit(&self, _candidate: TxCandidate) -> SubmissionHandle {
         unreachable!("NoopTxManager does not submit transactions")
-    }
-
-    async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
-        unreachable!("NoopTxManager does not submit async transactions")
     }
 
     fn sender_address(&self) -> Address {

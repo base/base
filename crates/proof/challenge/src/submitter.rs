@@ -92,7 +92,7 @@ impl<T: TxManager> ChallengeSubmitter<T> {
             }
         }
         let start = Instant::now();
-        let result = self.tx_manager.send(candidate).await;
+        let result = self.tx_manager.submit(candidate).wait().await;
         let latency = start.elapsed();
 
         let (status_label, succeeded) = match &result {
@@ -139,7 +139,7 @@ impl<T: TxManager> ChallengeSubmitter<T> {
         );
 
         let start = Instant::now();
-        let receipt = self.tx_manager.send(candidate).await?;
+        let receipt = self.tx_manager.submit(candidate).wait().await?;
         let latency = start.elapsed();
         ChallengerMetrics::bond_tx_latency_seconds().record(latency.as_secs_f64());
         let tx_hash = receipt.transaction_hash;

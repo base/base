@@ -28,3 +28,10 @@ just to support this rollout.
 Shadow deployments use an isolated parity validator to derive their submitted
 data. The batcher compares its derived L2 block hashes with the canonical
 sequencer through `--parity-validator-l2-rpc-url`.
+
+## Publication backends
+
+`--publish-rpc-url` (or `BATCHER_PUBLISH_RPC_URL`) adds comma-separated L1
+publication backends. The selected `--l1-rpc-url` provider is also a publisher;
+all configured publishers broadcast the same signed transactions independently
+and preserve nonce order per backend.
