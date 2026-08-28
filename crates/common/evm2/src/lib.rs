@@ -9,6 +9,9 @@ pub use transaction::{BaseTxEnvelope, DEPOSIT_TX_TYPE, TxDeposit};
 mod handler;
 pub use handler::BaseTxHandlerHooks;
 
+mod executor;
+pub use executor::{BaseBlockExecutor, BlockExecutionResult, CumulativeGasOverflow};
+
 mod registry;
 
 mod types;
