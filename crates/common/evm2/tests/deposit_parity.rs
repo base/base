@@ -5,22 +5,23 @@
 //! success, gas used, the created contract address, and the post-state (balance, nonce,
 //! code hash, and storage) of every account the fixture cares about.
 //!
-//! Both engines run at the same fork — evm2 [`SpecId::MERGE`] and revm
-//! [`BaseUpgrade::Regolith`] (which maps to `MERGE`) — so gas is comparable, and both take the
-//! same `base_common_consensus::TxDeposit` fields (shared thanks to the type dedup).
+//! Every fixture is swept across [`FORKS`] (Regolith/Ecotone/Isthmus → MERGE/CANCUN/PRAGUE) on
+//! both engines, exercising the Base fork schedule: evm2 selects the spec via
+//! [`BaseSpecId`] and revm via its own `BaseSpecId`, both from the same [`BaseUpgrade`]. Both
+//! take the same `base_common_consensus::TxDeposit` fields (shared thanks to the type dedup).
 
 use std::collections::BTreeMap;
 
 use alloy_consensus::transaction::Recovered;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, keccak256};
 // revm reference side.
-use base_common_evm::{BaseSpecId, BaseTransaction, Builder, DefaultBase, L1BlockInfo};
-// evm2 side.
-use base_common_evm2::{BaseEvmTypes, BaseTxEnvelope, TxDeposit};
-use base_common_genesis::BaseUpgrade;
-use evm2::{
-    Evm, Precompiles, SpecId, bytecode::Bytecode as Evm2Bytecode, env::BlockEnv, evm::InMemoryDB,
+use base_common_evm::{
+    BaseSpecId as RevmBaseSpecId, BaseTransaction, Builder, DefaultBase, L1BlockInfo,
 };
+// evm2 side.
+use base_common_evm2::{BaseEvmTypes, BaseSpecId, BaseTxEnvelope, TxDeposit};
+use base_common_genesis::BaseUpgrade;
+use evm2::{Evm, Precompiles, bytecode::Bytecode as Evm2Bytecode, env::BlockEnv, evm::InMemoryDB};
 use revm::{
     ExecuteEvm,
     bytecode::Bytecode as RevmBytecode,
@@ -33,6 +34,10 @@ use revm::{
 
 const SENDER: Address = Address::repeat_byte(0x11);
 const SOURCE_HASH: B256 = B256::repeat_byte(0xab);
+
+/// Base upgrades the parity fixtures are swept across, exercising the fork schedule end to end
+/// (MERGE, CANCUN, and PRAGUE gas schedules respectively).
+const FORKS: [BaseUpgrade; 3] = [BaseUpgrade::Regolith, BaseUpgrade::Ecotone, BaseUpgrade::Isthmus];
 
 /// An account to seed into both engines before execution.
 #[derive(Clone)]
@@ -80,8 +85,8 @@ fn norm_code_hash(hash: B256) -> B256 {
     if hash == B256::ZERO { keccak256([]) } else { hash }
 }
 
-/// Executes `fixture` through the evm2 deposit handler and captures its outcome.
-fn run_evm2(fixture: &Fixture) -> Outcome {
+/// Executes `fixture` through the evm2 deposit handler at `upgrade` and captures its outcome.
+fn run_evm2(fixture: &Fixture, upgrade: BaseUpgrade) -> Outcome {
     let mut db = InMemoryDB::default();
     for seed in &fixture.seed {
         let mut info =
@@ -91,12 +96,13 @@ fn run_evm2(fixture: &Fixture) -> Outcome {
         }
         db.insert_account_info(&seed.address, info);
     }
+    let spec = BaseSpecId::new(upgrade);
     let mut evm = Evm::new(
-        SpecId::MERGE,
+        spec,
         BlockEnv::<BaseEvmTypes>::default(),
         BaseEvmTypes::tx_registry(),
         db,
-        Precompiles::base(SpecId::MERGE),
+        Precompiles::base(spec.into()),
     );
 
     let tx = TxDeposit {
@@ -139,8 +145,8 @@ fn run_evm2(fixture: &Fixture) -> Outcome {
     }
 }
 
-/// Executes `fixture` through the revm-based `base-common-evm` reference and captures its outcome.
-fn run_revm(fixture: &Fixture) -> Outcome {
+/// Executes `fixture` through the revm-based `base-common-evm` reference at `upgrade`.
+fn run_revm(fixture: &Fixture, upgrade: BaseUpgrade) -> Outcome {
     let mut db = RevmDb::default();
     for seed in &fixture.seed {
         let mut info =
@@ -158,7 +164,7 @@ fn run_revm(fixture: &Fixture) -> Outcome {
             operator_fee_constant: Some(U256::ZERO),
             ..Default::default()
         })
-        .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Regolith)));
+        .with_cfg(CfgEnv::new_with_spec(RevmBaseSpecId::new(upgrade)));
     let mut evm = ctx.build_base();
 
     let kind = match fixture.to {
@@ -212,11 +218,13 @@ fn run_revm(fixture: &Fixture) -> Outcome {
     Outcome { success: result.is_success(), gas_used: result.tx_gas_used(), created, accounts }
 }
 
-/// Asserts the two engines produce identical outcomes for `fixture`.
+/// Asserts the two engines produce identical outcomes for `fixture` at every fork in [`FORKS`].
 fn assert_parity(fixture: Fixture) {
-    let evm2 = run_evm2(&fixture);
-    let revm = run_revm(&fixture);
-    assert_eq!(evm2, revm, "evm2 and revm deposit outcomes diverged");
+    for upgrade in FORKS {
+        let evm2 = run_evm2(&fixture, upgrade);
+        let revm = run_revm(&fixture, upgrade);
+        assert_eq!(evm2, revm, "evm2 and revm deposit outcomes diverged at {upgrade:?}");
+    }
 }
 
 #[test]
