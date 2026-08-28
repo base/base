@@ -9,10 +9,15 @@ use base_upgrade_signal::{
     UpgradeSignalRefresher, UpgradeSignalRuntimeApplier, UpgradeSignalSchedule,
 };
 use jsonrpsee::{RpcModule, core::RpcResult, types::ErrorObject};
-use reth_chainspec::{EthChainSpec, ForkId, Head};
+use reth_chainspec::{EthChainSpec, ForkFilter, ForkId, Head};
+use reth_discv5::NetworkStackId;
+use reth_ethereum_forks::EnrForkIdEntry;
+use reth_network::{NetworkHandle, NetworkPrimitives};
 use reth_network_p2p::sync::NetworkSyncUpdater;
 use reth_provider::{BlockNumReader, HeaderProvider};
 use reth_rpc_server_types::RethRpcModule;
+use std::sync::Arc;
+use tokio::sync::Notify;
 use tracing::{info, warn};
 use url::Url;
 
@@ -74,16 +79,17 @@ impl ExecutionUpgradeSignal {
     /// an L1-signalled fork schedule at runtime keeps advertising the fork id it cached before the
     /// schedule changed. It then looks stale to fresh peers once the fork activates and gets
     /// partitioned even though it enforces the new rules. Re-deriving the filter from the updated
-    /// chain spec and installing it through [`NetworkSyncUpdater::set_fork_filter`] keeps the node's
-    /// advertised fork identity aligned with the rules it now enforces.
-    pub fn install_runtime_fork_filter<Net: NetworkSyncUpdater>(
+    /// chain spec and installing it through [`RuntimeForkFilterNetwork::install_fork_filter`] keeps
+    /// the node's advertised fork identity — across both the devp2p session layer and the discovery
+    /// ENR — aligned with the rules it now enforces.
+    pub fn install_runtime_fork_filter<Net: RuntimeForkFilterNetwork>(
         chain_spec: &BaseChainSpec,
         head: Head,
         network: &Net,
     ) -> ForkId {
         let fork_filter = chain_spec.fork_filter(head);
         let fork_id = fork_filter.current();
-        network.set_fork_filter(fork_filter);
+        network.install_fork_filter(fork_filter);
         fork_id
     }
 
@@ -107,21 +113,66 @@ impl ExecutionUpgradeSignal {
     /// both mutate the same runtime registry that [`Self::schedule_fork_id`] reads, so a single
     /// check covers both. `schedule_id` tracks the last installed schedule and is advanced only when
     /// a new filter is installed, so the network message is sent once per change rather than every
-    /// block.
-    pub fn refresh_advertised_fork_filter<Net: NetworkSyncUpdater>(
+    /// block. A `None` `schedule_id` has no last-installed baseline yet and therefore always
+    /// installs, forcing the initial install after startup.
+    pub fn refresh_advertised_fork_filter<Net: RuntimeForkFilterNetwork>(
         chain_spec: &BaseChainSpec,
         head: Head,
         network: &Net,
-        schedule_id: &mut ForkId,
+        schedule_id: &mut Option<ForkId>,
     ) -> Option<ForkId> {
         let current = Self::schedule_fork_id(chain_spec);
-        if current == *schedule_id {
+        if *schedule_id == Some(current) {
             return None;
         }
 
         let fork_id = Self::install_runtime_fork_filter(chain_spec, head, network);
-        *schedule_id = current;
+        *schedule_id = Some(current);
         Some(fork_id)
+    }
+
+    /// Reconciles the advertised P2P fork filter with the current runtime schedule, reading the head
+    /// only when the schedule actually changed.
+    ///
+    /// Shared by the monitor's per-poll tick and the immediate wake-up an `admin_refreshUpgradeSignal`
+    /// call triggers, so a manual refresh reinstalls the filter right away instead of lagging by up
+    /// to the finalized poll interval. A `None` `schedule_id` forces an install, so the first call
+    /// after startup always advertises a filter derived from the live registry — even if a schedule
+    /// change landed (via the admin RPC, which comes up before this task) before the baseline was
+    /// taken.
+    pub fn reconcile_advertised_fork_filter<Provider, Net>(
+        chain_spec: &BaseChainSpec,
+        provider: &Provider,
+        network: &Net,
+        schedule_id: &mut Option<ForkId>,
+    ) where
+        Provider: BlockNumReader + HeaderProvider,
+        Net: RuntimeForkFilterNetwork,
+    {
+        // The cheap schedule-fork-id compare guards the provider read so an unchanged schedule never
+        // reads the head or logs a spurious head-read failure. `None` skips the guard and installs.
+        if *schedule_id == Some(Self::schedule_fork_id(chain_spec)) {
+            return;
+        }
+
+        match Self::current_head(provider) {
+            Ok(head) => {
+                if let Some(fork_id) =
+                    Self::refresh_advertised_fork_filter(chain_spec, head, network, schedule_id)
+                {
+                    info!(
+                        target: "upgrade_signal",
+                        fork_id = ?fork_id,
+                        "reinstalled P2P fork filter after runtime schedule change"
+                    );
+                }
+            }
+            Err(error) => warn!(
+                target: "upgrade_signal",
+                error = %error,
+                "failed to rebuild P2P fork filter after runtime schedule change; will retry on next poll"
+            ),
+        }
     }
 
     /// Reads the node's current canonical head, used as the reference point for rebuilding the P2P
@@ -176,9 +227,14 @@ impl ExecutionUpgradeSignal {
     }
 
     /// Registers the execution admin RPC method for runtime upgrade signal refreshes.
+    ///
+    /// A successful apply wakes `filter_refresh` so the monitor task reconciles the advertised P2P
+    /// fork filter immediately, instead of leaving it stale until the next L1 poll (up to the
+    /// finalized poll interval, ~15 minutes with the default `Finalized` block tag).
     pub fn register_runtime_refresh_rpc(
         ctx: &mut BaseRpcContext<'_>,
         config: ExecutionUpgradeSignalConfig,
+        filter_refresh: Arc<Notify>,
     ) -> eyre::Result<()> {
         if !config.signal_config.mode.allows_runtime_admin() {
             return Ok(());
@@ -194,13 +250,65 @@ impl ExecutionUpgradeSignal {
         );
         let mut module = RpcModule::new(refresher);
         module
-            .register_async_method("admin_refreshUpgradeSignal", |_, refresher, _| async move {
-                Self::refresh_runtime_upgrade_signal(&refresher).await
+            .register_async_method("admin_refreshUpgradeSignal", move |_, refresher, _| {
+                let filter_refresh = Arc::clone(&filter_refresh);
+                async move {
+                    let result = Self::refresh_runtime_upgrade_signal(&refresher).await;
+                    if result.is_ok() {
+                        // The registry is already mutated (apply returned Ok); wake the monitor to
+                        // reinstall the fork filter against the new schedule right away.
+                        filter_refresh.notify_one();
+                    }
+                    result
+                }
             })
             .map_err(|error| eyre::eyre!(error))?;
         ctx.modules.merge_if_module_configured(RethRpcModule::Admin, module)?;
 
         Ok(())
+    }
+}
+
+/// A live P2P network handle that can adopt a runtime fork-filter change across every layer that
+/// advertises the node's fork identity.
+///
+/// reth's [`NetworkSyncUpdater::set_fork_filter`] refreshes the devp2p (eth-handshake) fork id and,
+/// via its internal `update_fork_id`, only the `eth` discovery ENR entry. A Base node advertises its
+/// discovery fork id under the `opel` ENR key, which reth never refreshes at runtime, and discovery
+/// prefers the `opel` entry over the `eth` fallback. Updating only the session layer therefore
+/// leaves peers reading the fork id the node cached at startup, so implementors must also refresh
+/// the `opel` discovery entry.
+pub trait RuntimeForkFilterNetwork {
+    /// Installs `fork_filter` on the devp2p session layer and refreshes every advertised discovery
+    /// ENR fork-id entry, so the node's advertised fork identity matches the rules it now enforces.
+    fn install_fork_filter(&self, fork_filter: ForkFilter);
+}
+
+impl<N: NetworkPrimitives> RuntimeForkFilterNetwork for NetworkHandle<N> {
+    fn install_fork_filter(&self, fork_filter: ForkFilter) {
+        let fork_id = fork_filter.current();
+
+        // Updates the devp2p sessions and reth's built-in `eth` discovery ENR entry.
+        NetworkSyncUpdater::set_fork_filter(self, fork_filter);
+
+        // reth's `update_fork_id` only refreshes the `eth` ENR key, but Base advertises its
+        // discovery fork id under `opel` (and discovery reads it first), so refresh `opel` on both
+        // discovery backends. Any node this crate runs is an OP-stack chain, hence the fixed key.
+        let entry = EnrForkIdEntry::from(fork_id);
+        if let Some(discv5) = self.discv5() {
+            // NB: reth's `encode_and_set_eip868_in_local_enr` double-encodes — it rlp-encodes the
+            // value, then the inner `enr_insert` rlp-encodes those bytes again, producing an entry
+            // `get_fork_id` cannot decode. Insert the typed entry directly so it is encoded exactly
+            // once, matching how the startup ENR (`add_value_rlp`) and discv4 (below) store it.
+            let opel = core::str::from_utf8(NetworkStackId::OPEL)
+                .expect("opel network stack id is valid utf-8");
+            discv5.with_discv5(|discv5| {
+                let _ = discv5.enr_insert(opel, &entry);
+            });
+        }
+        if let Some(discv4) = self.discv4() {
+            discv4.set_eip868_rlp(NetworkStackId::OPEL.to_vec(), entry);
+        }
     }
 }
 
@@ -222,10 +330,20 @@ impl BaseNodeExtension for ExecutionUpgradeSignalRuntimeExtension {
     fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks {
         let config = self.config;
 
+        // Wakes the monitor task to reconcile the advertised P2P fork filter the moment an
+        // `admin_refreshUpgradeSignal` call commits a schedule change, rather than waiting for the
+        // next L1 poll. Created unconditionally; only signalled when runtime admin is enabled.
+        let filter_refresh = Arc::new(Notify::new());
+
         let hooks = if config.signal_config.mode.allows_runtime_admin() {
             let rpc_config = config.clone();
+            let filter_refresh = Arc::clone(&filter_refresh);
             hooks.add_rpc_module(move |ctx: &mut BaseRpcContext<'_>| {
-                ExecutionUpgradeSignal::register_runtime_refresh_rpc(ctx, rpc_config)
+                ExecutionUpgradeSignal::register_runtime_refresh_rpc(
+                    ctx,
+                    rpc_config,
+                    filter_refresh,
+                )
             })
         } else {
             hooks
@@ -266,13 +384,34 @@ impl BaseNodeExtension for ExecutionUpgradeSignalRuntimeExtension {
 
                         // Baseline for detecting runtime schedule changes. Advanced only when the
                         // fork filter is reinstalled, so a single check covers both the auto-apply
-                        // path and the manual admin RPC without re-installing on every block.
-                        let mut schedule_id =
-                            ExecutionUpgradeSignal::schedule_fork_id(chain_spec.as_ref());
+                        // path and the manual admin RPC without re-installing on every block. `None`
+                        // has no installed baseline yet, so the forced initial reconcile below always
+                        // installs — closing the race where an admin refresh mutates the schedule
+                        // (the RPC comes up before this task) before the baseline would be taken.
+                        let mut schedule_id: Option<ForkId> = None;
+
+                        // Force an initial install so the advertised filter reflects the live
+                        // registry at startup, independent of the first L1 poll.
+                        ExecutionUpgradeSignal::reconcile_advertised_fork_filter(
+                            chain_spec.as_ref(),
+                            &provider,
+                            &network,
+                            &mut schedule_id,
+                        );
 
                         loop {
                             tokio::select! {
                                 _ = &mut signal => break,
+                                // An admin refresh committed a schedule change; reconcile at once
+                                // rather than waiting for the next L1 poll.
+                                _ = filter_refresh.notified() => {
+                                    ExecutionUpgradeSignal::reconcile_advertised_fork_filter(
+                                        chain_spec.as_ref(),
+                                        &provider,
+                                        &network,
+                                        &mut schedule_id,
+                                    );
+                                }
                                 _ = interval.tick() => {
                                     let outcome = tokio::select! {
                                         _ = &mut signal => break,
@@ -301,36 +440,13 @@ impl BaseNodeExtension for ExecutionUpgradeSignalRuntimeExtension {
 
                                     // Adopt any runtime schedule change into the live P2P fork
                                     // filter so this node advertises the fork id it now enforces
-                                    // instead of the one cached at startup. The cheap schedule-fork-id
-                                    // compare guards the provider read so an unchanged schedule never
-                                    // reads the head or logs a spurious head-read failure.
-                                    if ExecutionUpgradeSignal::schedule_fork_id(chain_spec.as_ref())
-                                        != schedule_id
-                                    {
-                                        match ExecutionUpgradeSignal::current_head(&provider) {
-                                            Ok(head) => {
-                                                if let Some(fork_id) =
-                                                    ExecutionUpgradeSignal::refresh_advertised_fork_filter(
-                                                        chain_spec.as_ref(),
-                                                        head,
-                                                        &network,
-                                                        &mut schedule_id,
-                                                    )
-                                                {
-                                                    info!(
-                                                        target: "upgrade_signal",
-                                                        fork_id = ?fork_id,
-                                                        "reinstalled P2P fork filter after runtime schedule change"
-                                                    );
-                                                }
-                                            }
-                                            Err(error) => warn!(
-                                                target: "upgrade_signal",
-                                                error = %error,
-                                                "failed to rebuild P2P fork filter after runtime schedule change; will retry on next poll"
-                                            ),
-                                        }
-                                    }
+                                    // instead of the one cached at startup.
+                                    ExecutionUpgradeSignal::reconcile_advertised_fork_filter(
+                                        chain_spec.as_ref(),
+                                        &provider,
+                                        &network,
+                                        &mut schedule_id,
+                                    );
                                 }
                             }
                         }
@@ -488,65 +604,62 @@ mod tests {
         RuntimeUpgradeRegistry::clear_chain(chain_id);
     }
 
-    /// Records the last [`ForkFilter`] installed via [`NetworkSyncUpdater::set_fork_filter`].
+    /// Records the last [`ForkFilter`] installed via [`RuntimeForkFilterNetwork::install_fork_filter`].
     ///
-    /// Hand-rolled rather than `mockall::automock`: [`NetworkSyncUpdater`] is defined in reth, and
-    /// `automock` can only be applied at a trait's own definition, so it cannot mock a foreign trait.
+    /// Hand-rolled rather than `mockall::automock` because the double acts as a call log: it captures
+    /// the installed filter and hands it back to the test for read-back across multiple calls (both
+    /// "was anything installed" and "install the expected filter"). A recorder keeps that capture and
+    /// read-back in one place, which the per-call expectation scripting of a generated mock does not.
     #[derive(Debug, Default)]
     struct RecordingNetwork {
-        installed: std::sync::Mutex<Option<reth_chainspec::ForkFilter>>,
+        installed: std::sync::Mutex<Option<ForkFilter>>,
     }
 
     impl RecordingNetwork {
-        fn installed_opt(&self) -> Option<reth_chainspec::ForkFilter> {
+        fn installed_opt(&self) -> Option<ForkFilter> {
             self.installed.lock().unwrap().clone()
         }
 
-        fn installed(&self) -> reth_chainspec::ForkFilter {
-            self.installed_opt().expect("set_fork_filter was never called")
+        fn installed(&self) -> ForkFilter {
+            self.installed_opt().expect("install_fork_filter was never called")
         }
     }
 
-    impl NetworkSyncUpdater for RecordingNetwork {
-        fn update_sync_state(&self, _state: reth_network_p2p::sync::SyncState) {}
-
-        fn update_status(&self, _head: Head) {}
-
-        fn update_block_range(&self, _update: reth_eth_wire_types::BlockRangeUpdate) {}
-
-        fn set_fork_filter(&self, fork_filter: reth_chainspec::ForkFilter) {
+    impl RuntimeForkFilterNetwork for RecordingNetwork {
+        fn install_fork_filter(&self, fork_filter: ForkFilter) {
             *self.installed.lock().unwrap() = Some(fork_filter);
         }
     }
 
-    /// Regression test for the runtime fork-filter fix.
-    ///
-    /// Audit finding: a runtime schedule update left reth's P2P fork filter stale, so a running node
-    /// kept advertising the fork id it cached at startup and partitioned from freshly restarted
-    /// peers once the fork activated. The fix reinstalls the fork filter whenever the runtime
-    /// schedule changes. This exercises the exact per-poll routine the monitor loop runs and asserts
-    /// it (1) is a no-op while the schedule is unchanged, (2) installs a filter matching a freshly
-    /// restarted node the moment a fork is scheduled at runtime, and (3) is idempotent afterwards.
-    /// If the fix regresses, the node would keep the stale filter and these assertions fail.
+    /// Regression test for the runtime fork-filter fix: the fork filter is reinstalled whenever the
+    /// runtime schedule changes, is a no-op while it is unchanged, and is idempotent afterwards.
     #[test]
     fn refresh_advertised_fork_filter_tracks_runtime_schedule_changes() {
-        use alloy_genesis::Genesis;
         use base_execution_chainspec::BaseChainSpecBuilder;
         use reth_chainspec::Chain;
 
+        // A unique chain id keeps this test's runtime-registry mutation from racing the sibling
+        // chain-spec tests, which read fork conditions through the same process-global registry
+        // under the shared devnet chain id.
         let chain_id = 9_100_100;
         RuntimeUpgradeRegistry::clear_chain(chain_id);
 
+        // `Default::default()` for the genesis is inferred from the builder argument, so this test
+        // needs no `alloy-genesis` dependency of its own. A zero-timestamp genesis with only
+        // Osaka/Azul (both `Never`) gives a clean fork ladder where scheduling Azul is a detectable
+        // fork transition — unlike the devnet genesis, whose baked-in forks would absorb it.
         let spec = BaseChainSpecBuilder::default()
             .chain(Chain::from_id(chain_id))
-            .genesis(Genesis::default())
+            .genesis(Default::default())
             .with_fork(EthereumHardfork::Osaka, ForkCondition::Never)
             .with_fork(BaseUpgrade::Azul, ForkCondition::Never)
             .build();
 
         let head = Head { timestamp: 43, ..Default::default() };
         let network = RecordingNetwork::default();
-        let mut schedule_id = ExecutionUpgradeSignal::schedule_fork_id(&spec);
+        // Start from an installed baseline equal to the current (empty) schedule, so the change
+        // detection below is exercised in isolation from the forced-initial-install behaviour.
+        let mut schedule_id = Some(ExecutionUpgradeSignal::schedule_fork_id(&spec));
 
         // Nothing scheduled yet: the routine must not touch the network.
         assert_eq!(
@@ -579,7 +692,7 @@ mod tests {
         assert_eq!(running.current(), restarted.current());
         assert!(running.validate(restarted.current()).is_ok());
         assert!(restarted.validate(running.current()).is_ok());
-        assert_eq!(schedule_id, ExecutionUpgradeSignal::schedule_fork_id(&spec));
+        assert_eq!(schedule_id, Some(ExecutionUpgradeSignal::schedule_fork_id(&spec)));
 
         // Idempotent: with no further schedule change, the routine stays a no-op.
         assert_eq!(
@@ -593,5 +706,144 @@ mod tests {
         );
 
         RuntimeUpgradeRegistry::clear_chain(chain_id);
+    }
+
+    /// A `None` baseline (no filter installed yet) forces an install even when the schedule is
+    /// unchanged, so the monitor's startup reconcile always advertises a live filter. This closes
+    /// the race where an admin refresh mutates the schedule before the monitor takes its baseline.
+    #[test]
+    fn refresh_advertised_fork_filter_forces_initial_install_when_uninstalled() {
+        use base_execution_chainspec::BaseChainSpecBuilder;
+        use reth_chainspec::Chain;
+
+        let chain_id = 9_100_101;
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+
+        let spec = BaseChainSpecBuilder::default()
+            .chain(Chain::from_id(chain_id))
+            .genesis(Default::default())
+            .with_fork(EthereumHardfork::Osaka, ForkCondition::Never)
+            .with_fork(BaseUpgrade::Azul, ForkCondition::Never)
+            .build();
+
+        let head = Head { timestamp: 43, ..Default::default() };
+        let network = RecordingNetwork::default();
+        let mut schedule_id: Option<ForkId> = None;
+
+        // Even with nothing scheduled, an uninstalled baseline installs the current filter and
+        // advances the baseline to it.
+        let installed_id = ExecutionUpgradeSignal::refresh_advertised_fork_filter(
+            &spec,
+            head,
+            &network,
+            &mut schedule_id,
+        )
+        .expect("a None baseline must force an initial install");
+
+        assert_eq!(installed_id, spec.fork_filter(head).current());
+        assert_eq!(schedule_id, Some(ExecutionUpgradeSignal::schedule_fork_id(&spec)));
+        assert!(network.installed_opt().is_some());
+
+        // A second call with the baseline now set is a no-op.
+        assert_eq!(
+            ExecutionUpgradeSignal::refresh_advertised_fork_filter(
+                &spec,
+                head,
+                &network,
+                &mut schedule_id,
+            ),
+            None
+        );
+
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+    }
+
+    /// Production-path regression for the `opel` discovery ENR refresh.
+    ///
+    /// [`RecordingNetwork`] only proves the routing; it cannot show that the real
+    /// [`RuntimeForkFilterNetwork`] impl updates the discovery ENR fork-id entry Base advertises
+    /// under. reth's own runtime path refreshes only the `eth` entry, so this stands up a live
+    /// discv5-backed [`NetworkHandle`] whose startup ENR advertises an `opel` fork id, calls the
+    /// production [`RuntimeForkFilterNetwork::install_fork_filter`], and asserts the advertised
+    /// `opel` entry is refreshed to the new fork id. The read-back is synchronous: the discv5 handle
+    /// writes the local ENR under a lock that `local_enr()` reads directly.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn install_fork_filter_refreshes_opel_discovery_enr() {
+        use std::net::Ipv4Addr;
+
+        use reth_chainspec::ChainSpecBuilder;
+        use reth_discv5::discv5::{ConfigBuilder as Discv5ConfigBuilder, ListenConfig};
+        use reth_ethereum_forks::ForkHash;
+        use reth_network::{EthNetworkPrimitives, NetworkConfigBuilder, NetworkManager};
+        use reth_tasks::Runtime;
+
+        // An unnamed chain id makes `NetworkStackId::id` return `None`, so reth's own fork keying
+        // leaves the `opel` entry we seed below untouched. On a real Base node the chain is
+        // optimism, so reth keys `opel` itself; seeding it explicitly here reproduces that startup
+        // ENR shape without constructing a full optimism spec. The impl under test writes `opel`
+        // unconditionally, so this still exercises the real production path.
+        let chain_spec = std::sync::Arc::new(
+            ChainSpecBuilder::default()
+                .chain(reth_chainspec::Chain::from_id(9_100_200))
+                .genesis(Default::default())
+                .with_fork(EthereumHardfork::Shanghai, ForkCondition::Timestamp(0))
+                .build(),
+        );
+
+        // A distinct startup `opel` fork id, so the genesis-derived fork id installed below differs
+        // from it and the refresh is observable.
+        let startup_fork_id = ForkId { hash: ForkHash([0xff, 0xff, 0xff, 0xff]), next: u64::MAX };
+
+        // Only discv5 is enabled, on ephemeral 127.0.0.1 ports so parallel/repeated runs never
+        // collide. discv4/dns are disabled, so the discv4 branch of `install_fork_filter` is skipped.
+        let config =
+            NetworkConfigBuilder::<EthNetworkPrimitives>::with_rng_secret_key(Runtime::test())
+                .with_unused_ports()
+                .disable_discv4_discovery()
+                .disable_dns_discovery()
+                .discovery_v5(
+                    reth_discv5::Config::builder((Ipv4Addr::LOCALHOST, 0).into())
+                        .discv5_config(
+                            Discv5ConfigBuilder::new(ListenConfig::Ipv4 {
+                                ip: Ipv4Addr::LOCALHOST,
+                                port: 0,
+                            })
+                            .build(),
+                        )
+                        .fork(NetworkStackId::OPEL, startup_fork_id),
+                )
+                .build_with_noop_provider(std::sync::Arc::clone(&chain_spec));
+
+        // `NetworkManager::new` awaits `Discv5::start`, so `discv5()` is live once it returns. The
+        // manager future is never polled: the `opel` write goes straight to the discv5 handle's ENR
+        // lock, independent of the manager loop. `network` is held to keep discovery alive.
+        let network = NetworkManager::new(config).await.expect("network manager should start");
+        let handle = network.handle().clone();
+        let discv5 = handle.discv5().expect("discv5 must be enabled");
+
+        // The read path Base discovery actually uses: `get_fork_id` decodes the `opel` entry
+        // (falling back to `eth` only if absent). Sanity: startup advertises the seeded fork id.
+        let advertised_at_startup =
+            discv5.get_fork_id(&discv5.local_enr()).expect("opel fork id present at startup");
+        assert_eq!(advertised_at_startup, startup_fork_id);
+
+        // Install a different (genesis-derived) fork filter through the production trait impl.
+        let head = Head { timestamp: 1, ..Default::default() };
+        let new_filter = chain_spec.fork_filter(head);
+        let new_fork_id = new_filter.current();
+        assert_ne!(new_fork_id, startup_fork_id, "test requires an observable fork-id change");
+
+        handle.install_fork_filter(new_filter);
+
+        // The advertised `opel` entry now reflects the newly enforced fork id.
+        let discv5 = handle.discv5().expect("discv5 still enabled");
+        let advertised_after_install =
+            discv5.get_fork_id(&discv5.local_enr()).expect("opel fork id present after install");
+        assert_eq!(
+            advertised_after_install, new_fork_id,
+            "install_fork_filter must refresh the advertised opel discovery fork id"
+        );
+
+        drop(network);
     }
 }

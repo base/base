@@ -4222,7 +4222,6 @@ version = "0.0.0"
 dependencies = [
  "alloy-consensus 2.4.1",
  "alloy-eips 2.4.1",
- "alloy-genesis",
  "alloy-primitives",
  "axum 0.8.9",
  "backon",
@@ -4264,7 +4263,7 @@ dependencies = [
  "reth-db",
  "reth-discv4",
  "reth-discv5",
- "reth-eth-wire-types",
+ "reth-ethereum-forks",
  "reth-net-nat",
  "reth-network",
  "reth-network-p2p",

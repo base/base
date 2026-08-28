@@ -28,6 +28,7 @@ reth-network-p2p.workspace = true
 reth-cli-commands.workspace = true
 reth-node-metrics.workspace = true
 reth-network-peers.workspace = true
+reth-ethereum-forks.workspace = true
 reth-rpc-server-types.workspace = true
 reth-tasks.workspace = true
 reth-db = { workspace = true, features = ["mdbx"] }
@@ -72,16 +73,14 @@ alloy-eips.workspace = true
 secp256k1.workspace = true
 tokio-stream.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
-tokio = { workspace = true, features = ["macros", "time"] }
+tokio = { workspace = true, features = ["macros", "time", "sync"] }
 
 # reth test-vectors
 proptest = { workspace = true, optional = true }
 base-common-consensus = { workspace = true, features = ["reth"] }
 
 [dev-dependencies]
-alloy-genesis.workspace = true
 alloy-primitives.workspace = true
-reth-eth-wire-types.workspace = true
 base-common-genesis.workspace = true
 rstest.workspace = true
 tempfile.workspace = true
