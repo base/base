@@ -5,7 +5,8 @@ pub use stdin::{get_agg_proof_stdin, get_sp1_stdin};
 
 mod elf;
 pub use elf::{
-    cluster_setup_keys, cluster_setup_range_key, cluster_setup_vkeys, get_range_elf_embedded,
+    aggregate_vkey, cluster_setup_keys, cluster_setup_range_key, cluster_setup_vkeys,
+    get_range_elf_embedded, range_vkey_commitment, zk_artifact_hash,
 };
 
 mod cluster;

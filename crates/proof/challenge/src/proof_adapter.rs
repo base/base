@@ -180,6 +180,7 @@ mod tests {
             l1_head: Some(l1_head),
             intermediate_root_interval: Some(150),
             schedule_l2_block_number: None,
+            zk_artifact_hash: None,
             zk_vm: ZkVm::Sp1,
             zk_backend: ZkBackend::Cluster,
         };
@@ -209,6 +210,7 @@ mod tests {
             proposer: Address::repeat_byte(0x04),
             intermediate_block_interval: 300,
             l1_head_number: 1200,
+            image_hash: alloy_primitives::B256::ZERO,
             schedule_l2_block_number: None,
         };
         let session_id = ChallengerProofAdapter::tee_session_id(game_address, invalid_index);

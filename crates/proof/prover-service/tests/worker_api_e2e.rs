@@ -129,6 +129,7 @@ fn compressed_request(session_id: &str, start_block_number: u64) -> CreateProofR
             l1_head: None,
             intermediate_root_interval: None,
             schedule_l2_block_number: None,
+            zk_artifact_hash: None,
             zk_vm: ZkVm::Sp1,
             zk_backend: ZkBackend::Cluster,
         }),
@@ -144,6 +145,7 @@ fn worker_claim(worker_id: &str) -> GetNextProofRequest {
         zk_vms: vec![ZkVm::Sp1],
         // Omitted by legacy workers; the server defaults this capability to cluster.
         zk_backends: Vec::new(),
+        supported_artifact_hash: None,
         lock_duration_seconds: 60,
     }
 }

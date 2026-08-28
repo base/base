@@ -296,6 +296,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
             proposer,
             intermediate_block_interval: candidate.intermediate_block_interval,
             l1_head_number,
+            image_hash: alloy_primitives::B256::ZERO,
             schedule_l2_block_number: Some(candidate.info.l2_block_number),
         })
     }
@@ -316,6 +317,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
                 l1_head: Some(candidate.l1_head),
                 intermediate_root_interval: Some(candidate.intermediate_block_interval),
                 schedule_l2_block_number: Some(candidate.info.l2_block_number),
+                zk_artifact_hash: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             },
@@ -647,6 +649,7 @@ mod tests {
                 l1_head: Some(B256::repeat_byte(0xAA)),
                 intermediate_root_interval: Some(10),
                 schedule_l2_block_number: None,
+                zk_artifact_hash: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             },

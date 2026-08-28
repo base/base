@@ -68,8 +68,11 @@ impl ZkForkDispute {
         );
 
         let game_l2_block_number = verifier.game_info(config.game_address).await?.l2_block_number;
-        let proof_bytes =
-            checkpoint.request_proof(&config, challenger, l1_head, game_l2_block_number).await?;
+        let zk_artifact_hash =
+            verifier.proof_artifacts(config.game_address).await?.zk_artifact_hash();
+        let proof_bytes = checkpoint
+            .request_proof(&config, challenger, l1_head, game_l2_block_number, zk_artifact_hash)
+            .await?;
 
         let tx_hash = submitter
             .submit_dispute(

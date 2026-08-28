@@ -153,6 +153,7 @@ fn default_ready_proof(intent: DisputeIntent) -> PendingProof {
             l1_head: Some(DEFAULT_L1_HEAD),
             intermediate_root_interval: None,
             schedule_l2_block_number: None,
+            zk_artifact_hash: None,
             zk_vm: ZkVm::Sp1,
             zk_backend: ZkBackend::Cluster,
         },

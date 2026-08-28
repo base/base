@@ -47,6 +47,8 @@ pub struct ProofProposeRequest {
     pub prover_address: Address,
     /// ZK proving backend that executes the proof.
     pub zk_backend: ZkBackend,
+    /// Composite ZK artifact hash required by the target game.
+    pub zk_artifact_hash: B256,
     /// Explicit session ID override. When `None`, an idempotent session ID is
     /// derived from the network name, game, block range, checkpoint stride,
     /// and prover address.
@@ -71,6 +73,7 @@ impl ProofProposeRequest {
         details: &GameDetails,
         prover_address: Address,
         zk_backend: ZkBackend,
+        zk_artifact_hash: B256,
         session_id: Option<String>,
         intermediate_root_interval: Option<u64>,
     ) -> Result<Self, ProofsCommandError> {
@@ -97,6 +100,7 @@ impl ProofProposeRequest {
             intermediate_root_interval,
             prover_address,
             zk_backend,
+            zk_artifact_hash,
             session_id,
         })
     }
@@ -111,6 +115,7 @@ impl ProofProposeRequest {
         details: &GameDetails,
         prover_address: Address,
         zk_backend: ZkBackend,
+        zk_artifact_hash: B256,
         session_id: Option<String>,
         intermediate_root_interval: Option<u64>,
     ) -> Result<String, ProofsCommandError> {
@@ -127,6 +132,7 @@ impl ProofProposeRequest {
             intermediate_root_interval,
             prover_address,
             zk_backend,
+            zk_artifact_hash,
         ))
     }
 
@@ -200,6 +206,7 @@ impl ProofProposeRequest {
                 self.intermediate_root_interval,
                 self.prover_address,
                 self.zk_backend,
+                self.zk_artifact_hash,
             )
         })
     }
@@ -212,6 +219,7 @@ impl ProofProposeRequest {
         intermediate_root_interval: u64,
         prover_address: Address,
         zk_backend: ZkBackend,
+        zk_artifact_hash: B256,
     ) -> String {
         let subtype = match zk_backend {
             ZkBackend::DryRun => "zk/sp1/snark_plonk/dry_run",
@@ -228,6 +236,7 @@ impl ProofProposeRequest {
                 &num_blocks.to_be_bytes(),
                 &intermediate_root_interval.to_be_bytes(),
                 prover_address.as_slice(),
+                zk_artifact_hash.as_slice(),
             ],
         )
     }
@@ -246,6 +255,7 @@ impl ProofProposeRequest {
                         l1_head: Some(self.l1_head),
                         intermediate_root_interval: Some(self.intermediate_root_interval),
                         schedule_l2_block_number: None,
+                        zk_artifact_hash: Some(self.zk_artifact_hash),
                         zk_vm: ZkVm::Sp1,
                         zk_backend: self.zk_backend,
                     },
@@ -483,6 +493,7 @@ mod tests {
             &provable_game(),
             Address::repeat_byte(0xDD),
             ZkBackend::Network,
+            B256::repeat_byte(0x33),
             None,
             None,
         )
@@ -514,6 +525,7 @@ mod tests {
                 &details,
                 Address::repeat_byte(0xDD),
                 ZkBackend::Network,
+                B256::repeat_byte(0x33),
                 None,
                 None,
             )
@@ -528,6 +540,7 @@ mod tests {
             &provable_game(),
             Address::ZERO,
             ZkBackend::Network,
+            B256::repeat_byte(0x33),
             None,
             None,
         )
@@ -542,6 +555,7 @@ mod tests {
             &provable_game(),
             Address::repeat_byte(0xDD),
             ZkBackend::Network,
+            B256::repeat_byte(0x33),
             None,
             Some(250),
         )
@@ -557,6 +571,7 @@ mod tests {
                 &no_stride,
                 Address::repeat_byte(0xDD),
                 ZkBackend::Network,
+                B256::repeat_byte(0x33),
                 None,
                 Some(interval),
             )
@@ -576,6 +591,7 @@ mod tests {
             &no_stride,
             Address::repeat_byte(0xDD),
             ZkBackend::Network,
+            B256::repeat_byte(0x33),
             None,
             Some(250),
         )
@@ -593,6 +609,7 @@ mod tests {
             &extra_roots,
             Address::repeat_byte(0xDD),
             ZkBackend::Network,
+            B256::repeat_byte(0x33),
             None,
             None,
         )
@@ -610,6 +627,7 @@ mod tests {
             &no_stride,
             Address::repeat_byte(0xDD),
             ZkBackend::Network,
+            B256::repeat_byte(0x33),
             None,
             Some(500),
         )
@@ -634,12 +652,15 @@ mod tests {
             ProofProposeRequest { zk_backend: ZkBackend::Cluster, ..request.clone() };
         let other_stride =
             ProofProposeRequest { intermediate_root_interval: 200, ..request.clone() };
+        let other_artifact =
+            ProofProposeRequest { zk_artifact_hash: B256::repeat_byte(0x44), ..request.clone() };
 
         let base_id = request.effective_session_id("mainnet");
         assert_ne!(base_id, other_game.effective_session_id("mainnet"));
         assert_ne!(base_id, other_prover.effective_session_id("mainnet"));
         assert_ne!(base_id, other_backend.effective_session_id("mainnet"));
         assert_ne!(base_id, other_stride.effective_session_id("mainnet"));
+        assert_ne!(base_id, other_artifact.effective_session_id("mainnet"));
         assert_ne!(base_id, request.effective_session_id("sepolia"));
     }
 
@@ -667,6 +688,7 @@ mod tests {
             &unavailable,
             Address::repeat_byte(0xDD),
             ZkBackend::Network,
+            B256::repeat_byte(0x33),
             None,
             None,
         )
@@ -688,6 +710,7 @@ mod tests {
                 assert_eq!(snark.proof.sequence_window, None);
                 assert_eq!(snark.proof.l1_head, Some(B256::repeat_byte(0x22)));
                 assert_eq!(snark.proof.intermediate_root_interval, Some(100));
+                assert_eq!(snark.proof.zk_artifact_hash, Some(B256::repeat_byte(0x33)));
                 assert_eq!(snark.proof.zk_vm, ZkVm::Sp1);
                 assert_eq!(snark.proof.zk_backend, ZkBackend::Network);
             }

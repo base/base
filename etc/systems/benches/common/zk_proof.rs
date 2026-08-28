@@ -126,6 +126,7 @@ impl ZkProofBench {
                         l1_head: Some(l1_head),
                         intermediate_root_interval: None,
                         schedule_l2_block_number: None,
+                        zk_artifact_hash: None,
                         zk_vm: ZkVm::Sp1,
                         zk_backend: ZkBackend::DryRun,
                     }),

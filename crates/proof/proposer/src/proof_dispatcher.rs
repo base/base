@@ -108,6 +108,7 @@ impl ProofDispatcher {
             proposer: self.config.proposer_address,
             intermediate_block_interval: self.config.intermediate_block_interval,
             l1_head_number: l1_header.number,
+            image_hash: alloy_primitives::B256::ZERO,
             schedule_l2_block_number: None,
         })
     }

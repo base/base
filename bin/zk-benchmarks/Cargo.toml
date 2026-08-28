@@ -16,6 +16,9 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
+# alloy
+alloy-primitives.workspace = true
+
 # base
 base-cli-utils.workspace = true
 base-load-tests.workspace = true

@@ -278,6 +278,7 @@ mod tests {
                 l1_head: None,
                 intermediate_root_interval: None,
                 schedule_l2_block_number: None,
+                zk_artifact_hash: None,
                 zk_vm: ProtocolZkVm::Sp1,
                 zk_backend: ProtocolZkBackend::Cluster,
             }),

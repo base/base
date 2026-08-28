@@ -112,6 +112,7 @@ impl JobClaimFilter {
                     tee_kinds: tee_kinds.clone(),
                     zk_vms: Vec::new(),
                     zk_backends: Vec::new(),
+                    supported_artifact_hash: None,
                     lock_duration_seconds,
                 }),
                 None,
@@ -133,6 +134,7 @@ impl JobClaimFilter {
                         tee_kinds: Vec::new(),
                         zk_vms: zk_vms.clone(),
                         zk_backends: zk_backends.clone(),
+                        supported_artifact_hash: None,
                         lock_duration_seconds,
                     }),
                     Some(GetNextProofRequest {
@@ -141,6 +143,7 @@ impl JobClaimFilter {
                         tee_kinds: Vec::new(),
                         zk_vms,
                         zk_backends,
+                        supported_artifact_hash: None,
                         lock_duration_seconds,
                     }),
                 ]
@@ -628,6 +631,7 @@ mod tests {
             l1_head: None,
             intermediate_root_interval: None,
             schedule_l2_block_number: None,
+            zk_artifact_hash: None,
             zk_vm: ZkVm::Sp1,
             zk_backend: ZkBackend::Cluster,
         }

@@ -13,8 +13,8 @@ use alloy_transport::{TransportError, TransportErrorKind};
 pub use base_proof_contracts::GameStatus;
 use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, ContractError,
-    DisputeGameFactoryClient, DisputeGameFactoryContractClient, decode_create_calldata,
-    encode_extra_data,
+    DisputeGameFactoryClient, DisputeGameFactoryContractClient, ProofArtifacts,
+    decode_create_calldata, encode_extra_data,
 };
 use futures::{StreamExt, stream, try_join};
 use tracing::debug;
@@ -426,6 +426,14 @@ impl GamesClient {
             expected_resolution,
             countered_index: countered_plus_one.checked_sub(1),
         })
+    }
+
+    /// Reads the immutable proof artifacts accepted by a game proxy.
+    pub async fn proof_artifacts(
+        &self,
+        address: Address,
+    ) -> Result<ProofArtifacts, ProofsCommandError> {
+        self.verifier.proof_artifacts(address).await.map_err(|error| self.contract_error(error))
     }
 
     /// Fetches the list-row snapshot for one game.

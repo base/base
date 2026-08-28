@@ -14,7 +14,7 @@ use base_optimism_rpc::{L1BlockId, L1BlockRef, L2BlockRef, OutputAtBlock, SyncSt
 use base_proof_contracts::{
     AggregateVerifierClient, AnchorPreflight, AnchorRoot, AnchorSnapshot,
     AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameInfo,
-    GameStatus,
+    GameStatus, ProofArtifacts,
 };
 use base_proof_primitives::Proposal;
 use base_proof_rpc::{
@@ -255,6 +255,9 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     }
     async fn status(&self, _: Address) -> Result<GameStatus, ContractError> {
         unimplemented!("unused in proposer tests")
+    }
+    async fn proof_artifacts(&self, _: Address) -> Result<ProofArtifacts, ContractError> {
+        unimplemented!("artifact routing lands with the producer changes")
     }
     async fn zk_prover(&self, _: Address) -> Result<Address, ContractError> {
         unimplemented!("unused in proposer tests")

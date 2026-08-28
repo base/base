@@ -89,6 +89,14 @@ impl NitroEnclave {
                 let key = self.server.signer_public_key();
                 Frame::write(&mut stream, &EnclaveResponse::SignerPublicKey(key)).await?;
             }
+            EnclaveRequest::TeeImageHash => {
+                info!("received TEE image hash request");
+                Frame::write(
+                    &mut stream,
+                    &EnclaveResponse::TeeImageHash(self.server.tee_image_hash()),
+                )
+                .await?;
+            }
             EnclaveRequest::SignerAttestation { user_data, nonce } => {
                 info!(
                     has_nonce = nonce.is_some(),

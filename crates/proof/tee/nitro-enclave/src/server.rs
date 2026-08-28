@@ -112,6 +112,12 @@ impl Server {
         self.pcr0.is_empty()
     }
 
+    /// Returns the enclave image hash derived from PCR0.
+    #[must_use]
+    pub const fn tee_image_hash(&self) -> B256 {
+        self.tee_image_hash
+    }
+
     /// Get the signer's public key as a 65-byte uncompressed EC point.
     #[must_use]
     pub fn signer_public_key(&self) -> Vec<u8> {
