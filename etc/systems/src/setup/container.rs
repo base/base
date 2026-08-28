@@ -19,9 +19,9 @@ use crate::{
     network::{ensure_network_exists, network_name},
 };
 
-const SETUP_IMAGE_NAME: &str = "system-test-setup";
+const SETUP_IMAGE_NAME: &str = "devnet-setup";
 const SETUP_IMAGE_TAG: &str = "local";
-const SETUP_IMAGE_REFERENCE: &str = "system-test-setup:local";
+const SETUP_IMAGE_REFERENCE: &str = "devnet-setup:local";
 const SETUP_IMAGE_BUILD_LOCK_DIR: &str = "base-system-test-setup-image-build.lock";
 const SETUP_IMAGE_BUILD_LOCK_TIMEOUT: Duration = Duration::from_secs(600);
 const SETUP_IMAGE_BUILD_LOCK_POLL_INTERVAL: Duration = Duration::from_millis(500);
