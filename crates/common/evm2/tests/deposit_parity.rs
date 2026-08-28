@@ -326,3 +326,22 @@ fn parity_system_transaction_rejected() {
         compare: vec![(SENDER, vec![])],
     });
 }
+
+#[test]
+fn parity_halted_call_with_value_rolls_back_transfer() {
+    // Call a target whose code is `INVALID` (0xfe) with a nonzero value: both engines must
+    // transfer the value, halt, then roll the transfer back — leaving the value with the sender
+    // (mint kept) and nothing at the target. This is the authoritative cross-engine proof of the
+    // value-rollback path that the zero-value halt/revert fixtures don't exercise.
+    let target = Address::repeat_byte(0x44);
+    assert_parity(Fixture {
+        seed: vec![Seed { address: target, balance: U256::ZERO, nonce: 0, code: vec![0xfe] }],
+        to: TxKind::Call(target),
+        mint: 1_000,
+        value: U256::from(500),
+        gas_limit: 200_000,
+        input: vec![],
+        is_system: false,
+        compare: vec![(SENDER, vec![]), (target, vec![])],
+    });
+}

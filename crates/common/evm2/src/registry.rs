@@ -92,8 +92,24 @@ impl BaseEvmTypes {
             initial_gas_and_reservoir(host.version(), tx.gas_limit, intrinsic, 0);
         let mut tx_gas =
             GasTracker::new_with_execution_gas_and_reservoir(execution_gas_limit, reservoir);
-        let frame =
-            prepare_initial_frame(host, tx.from, nonce, tx.to, &tx.input, tx.value, &mut tx_gas)?;
+        // Deposits cannot fail fatally per the OP-stack spec (the revm reference catches every
+        // transaction-level error in `catch_error` and returns a failed deposit); only a database
+        // error is genuinely fatal. `prepare_initial_frame` only produces `Fatal` errors today,
+        // but matching on the variant future-proofs against evm2 introducing typed frame errors:
+        // a `Fatal` propagates, anything else settles as a failed deposit.
+        let frame = match prepare_initial_frame(
+            host,
+            tx.from,
+            nonce,
+            tx.to,
+            &tx.input,
+            tx.value,
+            &mut tx_gas,
+        ) {
+            Ok(frame) => frame,
+            Err(err @ HandlerError::Fatal(_)) => return Err(err),
+            Err(_) => return Ok(Self::failed_deposit(tx)),
+        };
         let tx_env = TxEnvExt {
             origin: tx.from,
             gas_price: U256::ZERO,
@@ -116,8 +132,11 @@ impl BaseEvmTypes {
         }
 
         // Success or revert: finalize gas like a standard transaction, but skip the fee charge
-        // and beneficiary reward (deposits are funded on L1).
-        finalize_gas(
+        // and beneficiary reward (deposits are funded on L1). As with prepare_initial_frame, a
+        // database error propagates as fatal while any other error settles as a failed deposit —
+        // deposits never fail fatally per the OP-stack spec. finalize_gas only surfaces `Fatal`
+        // errors today; the match makes the invariant explicit and future-proofs it.
+        match finalize_gas(
             host,
             GasSettlement {
                 caller: tx.from,
@@ -128,7 +147,11 @@ impl BaseEvmTypes {
                 state_refund: 0,
                 result,
             },
-        )
+        ) {
+            Ok(result) => Ok(result),
+            Err(err @ HandlerError::Fatal(_)) => Err(err),
+            Err(_) => Ok(Self::failed_deposit(tx)),
+        }
     }
 
     /// Credits a deposit's minted value to the sender and bumps its nonce, returning the
@@ -299,6 +322,38 @@ mod tests {
         let result = run(&mut evm, tx);
         assert!(!result.status);
         assert_eq!(result.total_gas_spent, gas_limit);
+        assert_eq!(balance(&mut evm, SENDER), U256::from(1_000));
+    }
+
+    #[test]
+    fn halted_call_deposit_rolls_back_value_transfer() {
+        // Deploy `INVALID` at the target so a call to it halts *after* the value transfer,
+        // exercising that the transfer is unwound (relied on for parity with the revm reference).
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(
+            &TARGET,
+            evm2::AccountInfo {
+                code: Some(evm2::bytecode::Bytecode::new_legacy(Bytes::from_static(&[0xfe]))),
+                ..Default::default()
+            },
+        );
+        let mut evm = Evm::new(
+            SPEC,
+            BlockEnv::<BaseEvmTypes>::default(),
+            BaseEvmTypes::tx_registry(),
+            db,
+            Precompiles::base(SPEC),
+        );
+
+        let tx = deposit(TxKind::Call(TARGET), 1_000, U256::from(500), Bytes::new(), false);
+        let gas_limit = tx.gas_limit;
+        let result = run(&mut evm, tx);
+
+        assert!(!result.status);
+        assert_eq!(result.total_gas_spent, gas_limit);
+        // The value transfer was rolled back with the halted execution: the target keeps nothing,
+        // and the sender retains the full mint (value returned).
+        assert_eq!(balance(&mut evm, TARGET), U256::ZERO);
         assert_eq!(balance(&mut evm, SENDER), U256::from(1_000));
     }
 }
