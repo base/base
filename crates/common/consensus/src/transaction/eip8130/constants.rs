@@ -45,8 +45,9 @@ impl Eip8130Constants {
 
     /// Actor scope bit: ungated `sender_auth` validation context (the "operator"
     /// grant); may originate transactions to any `call.to`. Renamed from `SENDER`
-    /// to reflect that it is the more permissive grant: `OPERATOR` and `POLICY`
-    /// do not combine.
+    /// to reflect that it is the more permissive grant: length decides what gets
+    /// stored; POLICY decides whether the sender is gated; OPERATOR overrides
+    /// POLICY.
     pub const SCOPE_OPERATOR: u16 = 0x0001;
 
     /// Actor scope bit: self-pay gas; authorizes paying the account's own gas
@@ -66,15 +67,26 @@ impl Eip8130Constants {
     /// to use sequenced `nonce_key`s (otherwise nonceless-only). Optional grant.
     pub const SCOPE_NONCE: u16 = 0x0010;
 
+    /// Whether `scope` gates the sender to its policy manager.
+    ///
+    /// Length decides what gets stored; POLICY decides whether the sender is
+    /// gated; OPERATOR overrides POLICY. The protocol gates on `SCOPE_POLICY`
+    /// (not on whether policy bytes were attached); `SCOPE_OPERATOR` is not
+    /// suppressed by `SCOPE_POLICY`.
+    #[must_use]
+    pub const fn sender_is_policy_gated(scope: u16) -> bool {
+        scope & Self::SCOPE_POLICY != 0 && scope & Self::SCOPE_OPERATOR == 0
+    }
+
     // Core grants occupy bits 0-2 so a chain may omit POLICY/NONCE without
     // renumbering anything else; the optional POLICY and NONCE grants trail them.
     // ERC-1271 signing rides on operational authority (admin `scope == 0x00`, or
     // an OPERATOR actor); it is not its own scope bit, so there is no
     // `SCOPE_SIGNATURE`. The remaining bits of the `uint16` scope are spare,
-    // reserved for future pure grants. The Keystore stores `scope` verbatim and
-    // never interprets these bits; policy attachment is a length check on the
-    // authorize payload (empty vs 52 bytes), not a scope-bit test. Consumers
-    // enforce all grant meaning at use time.
+    // reserved for future pure grants. Length decides what gets stored; POLICY
+    // decides whether the sender is gated; OPERATOR overrides POLICY. The
+    // Keystore attaches policy by payload length (empty vs 52 bytes) and stores
+    // `scope` verbatim. The protocol node gates `sender_auth` on `SCOPE_POLICY`.
 
     /// Domain-separation prefix for the `replay_id` preimage
     /// (`keccak256(REPLAY_ID_TYPE || rlp([...])`).
@@ -315,6 +327,12 @@ mod tests {
         assert_eq!(Eip8130Constants::SCOPE_SPONSOR_PAYER, 0x0004);
         assert_eq!(Eip8130Constants::SCOPE_POLICY, 0x0008);
         assert_eq!(Eip8130Constants::SCOPE_NONCE, 0x0010);
+        assert!(Eip8130Constants::sender_is_policy_gated(Eip8130Constants::SCOPE_POLICY));
+        assert!(!Eip8130Constants::sender_is_policy_gated(Eip8130Constants::SCOPE_OPERATOR));
+        assert!(!Eip8130Constants::sender_is_policy_gated(
+            Eip8130Constants::SCOPE_OPERATOR | Eip8130Constants::SCOPE_POLICY
+        ));
+        assert!(!Eip8130Constants::sender_is_policy_gated(0));
     }
 
     #[test]

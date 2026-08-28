@@ -199,11 +199,12 @@ impl ActorAuthorizer {
             }
             // `_resolvePolicyTarget`: address(0) when ungated, else the policy
             // manager (keyed by the self-actorId, shared keyspace). An ungated
-            // (full-owner) self costs no extra read.
-            let policy_target = if state.default_eoa_scope & Eip8130Constants::SCOPE_POLICY == 0 {
-                Address::ZERO
-            } else {
+            // (full-owner) self costs no extra read. OPERATOR overrides POLICY.
+            let policy_target = if Eip8130Constants::sender_is_policy_gated(state.default_eoa_scope)
+            {
                 storage.get_policy_manager(account, recovered)?
+            } else {
+                Address::ZERO
             };
             return Ok(ResolvedActor {
                 actor_id: recovered,
@@ -240,11 +241,11 @@ impl ActorAuthorizer {
         // `_resolvePolicyTarget`: address(0) when ungated, else the policy manager
         // (never the signed commitment). Resolved from the `config` already in
         // hand so an ungated actor costs no extra read and a gated one reads only
-        // the manager slot (no `actor_config` re-read).
-        let policy_target = if config.scope & Eip8130Constants::SCOPE_POLICY == 0 {
-            Address::ZERO
-        } else {
+        // the manager slot (no `actor_config` re-read). OPERATOR overrides POLICY.
+        let policy_target = if Eip8130Constants::sender_is_policy_gated(config.scope) {
             storage.get_policy_manager(account, actor_id)?
+        } else {
+            Address::ZERO
         };
         Ok(ResolvedActor { actor_id, scope: config.scope, policy_target, expiry: config.expiry })
     }

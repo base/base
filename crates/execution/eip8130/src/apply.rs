@@ -113,9 +113,9 @@ pub enum ApplyError {
     #[error("authenticator address(0) is not a valid selector")]
     InvalidAuthenticator,
 
-    /// `policyData` did not match the actor's `SCOPE_POLICY` bit (non-empty for
-    /// an ungated actor, or not exactly `manager(20) || commitment(32)` for a
-    /// gated actor). Mirrors `_slicePolicy`.
+    /// `policyData` was neither empty nor exactly `manager(20) || commitment(32)`.
+    /// Attachment is length-based (base/eip-8130 #95) and decoupled from
+    /// `SCOPE_POLICY`. Mirrors `_slicePolicy`.
     #[error("policy data does not match policy type")]
     InvalidPolicyData,
 
@@ -944,12 +944,12 @@ impl AccountChangeApplier {
 
     /// Validates and slices `policy_data` by **length**, returning `(manager,
     /// commitment)`. Mirrors the finalized `_slicePolicy` (base/eip-8130 #95):
-    /// policy attachment is decided by payload length and decoupled from the
-    /// scope bits. Empty data attaches no policy (both fields zero); exactly
-    /// `manager(20) || commitment(32)` attaches the two, written verbatim (either
-    /// may be zero — a zero `commitment` is a valid "no parameters" value and a
-    /// zero `manager` gates the key to `address(0)`); any other length is
-    /// rejected. The `SCOPE_POLICY` bit is a consumer-side grant signal and is
+    /// length decides what gets stored; POLICY decides whether the sender is
+    /// gated; OPERATOR overrides POLICY. Empty data attaches no policy (both
+    /// fields zero); exactly `manager(20) || commitment(32)` attaches the two,
+    /// written verbatim (either may be zero — a zero `commitment` is a valid "no
+    /// parameters" value and a zero `manager` is `address(0)`); any other length
+    /// is rejected. The `SCOPE_POLICY` bit is the protocol sender gate and is
     /// deliberately not consulted here — use [`Self::policy_attached`] to learn
     /// whether a payload carried policy bytes.
     pub fn slice_policy(policy_data: &[u8]) -> Result<(Address, B256), ApplyError> {
@@ -1646,9 +1646,10 @@ mod tests {
 
     #[test]
     fn policy_attachment_is_length_based_and_read_is_scope_gated() {
-        // base/eip-8130 #95: policy *attachment* is length-based (accepted for any
-        // 52-byte payload, decoupled from scope), while whether a sender is
-        // *policy-gated* remains a consumer-side read of the `SCOPE_POLICY` grant.
+        // base/eip-8130 #95: length decides what gets stored; POLICY decides
+        // whether the sender is gated; OPERATOR overrides POLICY. Attachment is
+        // accepted for any 52-byte payload (decoupled from scope). The protocol
+        // sender gate stays `SCOPE_POLICY`-based (not length-based).
         with_storage(|acc| {
             let mut data = Vec::new();
             data.extend_from_slice(MANAGER.as_slice());

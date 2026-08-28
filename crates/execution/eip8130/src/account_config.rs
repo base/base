@@ -166,9 +166,10 @@ impl AccountConfigurationStorage<'_> {
     /// An ungated actor resolves to `(address(0), bytes32(0))`; a gated one to
     /// `(manager, commitment)`.
     ///
-    /// Unlike the contract's raw two-slot read, this gates on the actor's live
-    /// `SCOPE_POLICY` grant (via [`Self::resolve_actor_config`]): an actor without
-    /// the bit resolves to `(0, 0)` regardless of what its policy slots hold.
+    /// Unlike the contract's raw two-slot read, this gates on whether the actor
+    /// is a policy-gated sender (via [`Eip8130Constants::sender_is_policy_gated`]):
+    /// an actor without the POLICY bit, or with OPERATOR overriding POLICY,
+    /// resolves to `(0, 0)` regardless of what its policy slots hold.
     ///
     /// A `(0, 0)` result is therefore ambiguous across three cases: (a) the actor
     /// is ungated with no policy attached; (b) the actor is gated but its attached
@@ -182,7 +183,7 @@ impl AccountConfigurationStorage<'_> {
     /// [`Self::get_policy_commitment`] (raw, scope-agnostic) with the actor's scope.
     pub fn get_policy(&self, account: Address, actor_id: B256) -> Result<(Address, B256)> {
         let scope = self.resolve_actor_config(account, actor_id)?.scope;
-        if scope & Eip8130Constants::SCOPE_POLICY == 0 {
+        if !Eip8130Constants::sender_is_policy_gated(scope) {
             return Ok((Address::ZERO, B256::ZERO));
         }
         Ok((self.get_policy_manager(account, actor_id)?, self.get_policy_commitment(account, actor_id)?))

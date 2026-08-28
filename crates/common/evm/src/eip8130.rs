@@ -837,7 +837,7 @@ impl Eip8130Executor {
                 .resolve_actor_config(sender, sender_actor_id)
                 .map_err(BaseTransactionError::eip8130)?
                 .scope;
-            let policy_gated = actor_scope & Eip8130Constants::SCOPE_POLICY != 0;
+            let policy_gated = Eip8130Constants::sender_is_policy_gated(actor_scope);
             let policy_target = if policy_gated {
                 acc.get_policy_manager(sender, sender_actor_id)
                     .map_err(BaseTransactionError::eip8130)?
@@ -2582,7 +2582,7 @@ mod tests {
                 payload: authorize_change_data(
                     session_actor,
                     Eip8130Constants::K1_AUTHENTICATOR,
-                    Eip8130Constants::SCOPE_OPERATOR | Eip8130Constants::SCOPE_POLICY,
+                    Eip8130Constants::SCOPE_POLICY,
                     0,
                     &policy_data,
                 ),
@@ -3039,8 +3039,9 @@ mod tests {
         Eip8130Signed::new(tx, Bytes::from(auth), Bytes::new())
     }
 
-    /// Seeds a policy-gated `SENDER | PAYER` k1 actor for `account`,
-    /// authorized to the `signer` key and gated to `target`, then commits it.
+    /// Seeds a policy-gated k1 actor for `account`, authorized to the `signer`
+    /// key and gated to `target`, then commits it. POLICY-only (plus payer/nonce
+    /// grants): OPERATOR would override POLICY and leave the sender ungated.
     fn seed_gated_sender(
         evm: &mut BaseEvm<InMemoryDB, NoOpInspector, PrecompilesMap>,
         account: Address,
@@ -3060,10 +3061,9 @@ mod tests {
                     .at_mut(&account)
                     .write(pack_actor(
                         Eip8130Constants::K1_AUTHENTICATOR,
-                        Eip8130Constants::SCOPE_OPERATOR
+                        Eip8130Constants::SCOPE_POLICY
                             | Eip8130Constants::SCOPE_SELF_PAYER
-                            | Eip8130Constants::SCOPE_NONCE
-                            | Eip8130Constants::SCOPE_POLICY,
+                            | Eip8130Constants::SCOPE_NONCE,
                         0,
                     ))
                     .unwrap();
