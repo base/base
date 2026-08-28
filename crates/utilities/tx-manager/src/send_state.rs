@@ -34,6 +34,7 @@ struct SendStateInner {
     bump_fees: bool,
     bump_count: u64,
     mempool_deadline: Option<MempoolDeadline>,
+    assigned_nonce: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -64,6 +65,7 @@ impl SendState {
                 bump_fees: false,
                 bump_count: 0,
                 mempool_deadline: None,
+                assigned_nonce: None,
             }),
             safe_abort_nonce_too_low_count,
         })
@@ -246,6 +248,19 @@ impl SendState {
     pub fn has_published(&self) -> bool {
         let inner = self.inner.lock().expect("SendState mutex poisoned");
         inner.has_published
+    }
+
+    /// Records the nonce assigned to this send after signing.
+    pub fn record_assigned_nonce(&self, nonce: u64) {
+        let mut inner = self.inner.lock().expect("SendState mutex poisoned");
+        inner.assigned_nonce = Some(nonce);
+    }
+
+    /// Returns the nonce assigned after signing, if preparation succeeded.
+    #[must_use]
+    pub fn assigned_nonce(&self) -> Option<u64> {
+        let inner = self.inner.lock().expect("SendState mutex poisoned");
+        inner.assigned_nonce
     }
 }
 
