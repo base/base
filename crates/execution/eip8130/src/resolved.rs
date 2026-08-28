@@ -76,10 +76,10 @@ mod tests {
     fn nonce_scope_allows_expected_keys() {
         assert!(actor(0).can_use_nonce_key(U256::ZERO));
         assert!(
-            actor(Eip8130Constants::SCOPE_SENDER)
+            actor(Eip8130Constants::SCOPE_OPERATOR)
                 .can_use_nonce_key(Eip8130Constants::NONCE_KEY_MAX)
         );
         assert!(actor(Eip8130Constants::SCOPE_NONCE).can_use_nonce_key(U256::from(1)));
-        assert!(!actor(Eip8130Constants::SCOPE_SENDER).can_use_nonce_key(U256::ZERO));
+        assert!(!actor(Eip8130Constants::SCOPE_OPERATOR).can_use_nonce_key(U256::ZERO));
     }
 }

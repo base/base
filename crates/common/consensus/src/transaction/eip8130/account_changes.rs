@@ -55,9 +55,9 @@ impl Scope {
         self.0
     }
 
-    /// Returns true if the scope grants the ungated `SCOPE_SENDER` context.
-    pub const fn has_sender(&self) -> bool {
-        self.0 & Eip8130Constants::SCOPE_SENDER != 0
+    /// Returns true if the scope grants the ungated `SCOPE_OPERATOR` context.
+    pub const fn has_operator(&self) -> bool {
+        self.0 & Eip8130Constants::SCOPE_OPERATOR != 0
     }
 
     /// Returns true if the scope enables policy gating.
@@ -502,18 +502,18 @@ mod tests {
     #[test]
     fn scope_bit_helpers() {
         let s = Scope(
-            Eip8130Constants::SCOPE_SENDER
+            Eip8130Constants::SCOPE_OPERATOR
                 | Eip8130Constants::SCOPE_POLICY
                 | Eip8130Constants::SCOPE_NONCE
                 | Eip8130Constants::SCOPE_SELF_PAYER
                 | Eip8130Constants::SCOPE_SPONSOR_PAYER,
         );
-        assert!(s.has_sender());
+        assert!(s.has_operator());
         assert!(s.has_policy());
         assert!(s.has_nonce());
         assert!(s.has_self_payer());
         assert!(s.has_sponsor_payer());
-        assert!(!Scope::UNRESTRICTED.has_sender());
+        assert!(!Scope::UNRESTRICTED.has_operator());
     }
 
     #[test]

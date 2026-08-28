@@ -4,18 +4,26 @@
 use alloy_primitives::{Address, B256, U256};
 use base_common_consensus::{Eip8130Constants, Eip8130Contracts};
 use base_precompile_macros::contract;
-use base_precompile_storage::{Handler, Mapping, Result, StorageKey};
+use base_precompile_storage::{ContractStorage, Handler, Mapping, Result, Slot, StorageKey};
 
 /// Read-only view over the EIP-8130 `AccountConfiguration` system contract's
 /// storage, mirroring its layout (plain sequential slots, no ERC-7201
 /// namespace):
 ///
 /// ```solidity
-/// mapping(bytes32 actorId => mapping(address account => ActorConfig)) _actorConfig;     // slot 0
-/// mapping(bytes32 actorId => mapping(address account => bytes32))     _policyCommitment; // slot 1
-/// mapping(bytes32 actorId => mapping(address account => address))     _policyManager;    // slot 2
-/// mapping(address account => AccountState)                            _accountState;     // slot 3
+/// mapping(bytes32 actorId => mapping(address account => ActorRecord)) _actors;       // slot 0
+/// mapping(address account => AccountState)                           _accountState;  // slot 1
 /// ```
+///
+/// where `ActorRecord` is `{ ActorConfig config; address policyManager; bytes32
+/// policyCommitment; }` — the packed `config` word followed by the optional
+/// policy (`manager`, `commitment`) on the two consecutive slots, so a Verkle
+/// witness can cover an actor's config and policy together (base/eip-8130 #95).
+/// The [`Self::actors`] mapping is keyed to the `config` slot (offset 0); the
+/// policy manager and commitment are read at offsets 1 and 2 of that same record
+/// base (see [`Self::get_policy_manager`] / [`Self::get_policy_commitment`]) —
+/// note this manager-before-commitment order is the *opposite* of the
+/// pre-co-location layout.
 ///
 /// `account` is the inner mapping key (matching the contract's ERC-7562
 /// storage-access requirement). The packed `ActorConfig` and `AccountState`
@@ -23,13 +31,10 @@ use base_precompile_storage::{Handler, Mapping, Result, StorageKey};
 /// / [`AccountState::from_word`].
 #[contract(addr = Self::ADDRESS)]
 pub struct AccountConfigurationStorage {
-    /// slot 0: per-actor configuration (packed `ActorConfig` word).
-    pub actor_config: Mapping<B256, Mapping<Address, U256>>,
-    /// slot 1: per-actor signed policy commitment (set for `SCOPE_POLICY` actors).
-    pub policy_commitment: Mapping<B256, Mapping<Address, B256>>,
-    /// slot 2: per-actor policy manager (set for `SCOPE_POLICY` actors).
-    pub policy_manager: Mapping<B256, Mapping<Address, Address>>,
-    /// slot 3: per-account state (packed `AccountState` word).
+    /// slot 0: per-actor record base, holding the packed `ActorConfig` word;
+    /// the co-located policy `manager`/`commitment` live at record offsets 1/2.
+    pub actors: Mapping<B256, Mapping<Address, U256>>,
+    /// slot 1: per-account state (packed `AccountState` word).
     pub account_state: Mapping<Address, U256>,
 }
 
@@ -43,9 +48,28 @@ impl AccountConfigurationStorage<'_> {
     /// Base storage slot of the per-account state mapping.
     pub const ACCOUNT_STATE_BASE_SLOT: U256 = slots::ACCOUNT_STATE;
 
+    /// Base storage slot of the per-actor record mapping (`_actors`).
+    pub const ACTORS_BASE_SLOT: U256 = slots::ACTORS;
+
+    /// Record-relative slot offset of the policy manager (`ActorRecord` field 1).
+    pub const POLICY_MANAGER_OFFSET: usize = 1;
+
+    /// Record-relative slot offset of the policy commitment (`ActorRecord` field 2).
+    pub const POLICY_COMMITMENT_OFFSET: usize = 2;
+
     /// Returns the storage slot that holds the state for `account`.
     pub fn account_state_slot(account: Address) -> B256 {
         B256::from(account.mapping_slot(Self::ACCOUNT_STATE_BASE_SLOT).to_be_bytes::<32>())
+    }
+
+    /// Base storage slot of the co-located `ActorRecord` for `(account,
+    /// actor_id)` — the `config` slot (offset 0). The policy manager and
+    /// commitment sit at offsets [`Self::POLICY_MANAGER_OFFSET`] /
+    /// [`Self::POLICY_COMMITMENT_OFFSET`] above it. Equals the slot the
+    /// [`Self::actors`] mapping resolves to, mirroring the contract's
+    /// `keccak256(account ‖ keccak256(actorId ‖ _actors.slot))`.
+    pub fn actor_record_base(account: Address, actor_id: B256) -> U256 {
+        account.mapping_slot(actor_id.mapping_slot(Self::ACTORS_BASE_SLOT))
     }
 
     /// Reads the raw `actor_config[actor_id][account]` storage slot verbatim,
@@ -58,7 +82,7 @@ impl AccountConfigurationStorage<'_> {
     /// blends the inline self (the `getActorConfig` mirror), use
     /// [`Self::resolve_actor_config`].
     pub fn actor_config_slot(&self, account: Address, actor_id: B256) -> Result<ActorConfig> {
-        Ok(ActorConfig::from_word(self.actor_config.at(&actor_id).at(&account).read()?))
+        Ok(ActorConfig::from_word(self.actors.at(&actor_id).at(&account).read()?))
     }
 
     /// Resolves the *effective* [`ActorConfig`] for `(account, actor_id)`,
@@ -142,24 +166,23 @@ impl AccountConfigurationStorage<'_> {
     /// An ungated actor resolves to `(address(0), bytes32(0))`; a gated one to
     /// `(manager, commitment)`.
     ///
-    /// Unlike the contract's `getPolicy` — a pure two-slot raw read — this gates
-    /// on the actor's live scope (via [`Self::resolve_actor_config`]): an ungated
-    /// actor never has its policy slots written, so it resolves to `(0, 0)`. A
-    /// gated actor returns the raw slots, which may *themselves* be zero — a gated
-    /// actor may carry a zero `manager` and/or `commitment` (`slice_policy` writes
-    /// policy data verbatim); a zero `manager` simply gates the key to
-    /// `address(0)` (no productive target). So a `(0, 0)` result does not by
-    /// itself distinguish "ungated" from "gated with empty policy data". This is a
-    /// resolver, not a 1:1 mirror; for the raw reads use
-    /// [`Self::get_policy_manager`] / [`Self::get_policy_commitment`].
+    /// Unlike the contract's raw two-slot read, this gates on the actor's live
+    /// `SCOPE_POLICY` grant (via [`Self::resolve_actor_config`]): an actor without
+    /// the bit resolves to `(0, 0)` regardless of what its policy slots hold.
+    /// Because policy attachment is now length-based and decoupled from scope
+    /// (base/eip-8130 #95), an ungated actor *may* have non-zero policy slots
+    /// written — this resolver still reports `(0, 0)` for it, since only a
+    /// policy-gated sender is enforced against a policy. A gated actor returns the
+    /// raw slots, which may themselves be zero (a zero `manager` gates the key to
+    /// `address(0)`), so a `(0, 0)` result does not by itself distinguish "ungated"
+    /// from "gated with an empty policy". This is a resolver, not a 1:1 mirror; for
+    /// the raw reads use [`Self::get_policy_manager`] / [`Self::get_policy_commitment`].
     pub fn get_policy(&self, account: Address, actor_id: B256) -> Result<(Address, B256)> {
         let scope = self.resolve_actor_config(account, actor_id)?.scope;
         if scope & Eip8130Constants::SCOPE_POLICY == 0 {
             return Ok((Address::ZERO, B256::ZERO));
         }
-        let manager = self.policy_manager.at(&actor_id).at(&account).read()?;
-        let commitment = self.policy_commitment.at(&actor_id).at(&account).read()?;
-        Ok((manager, commitment))
+        Ok((self.get_policy_manager(account, actor_id)?, self.get_policy_commitment(account, actor_id)?))
     }
 
     /// Reads only the stored policy *manager* slot for `(account, actor_id)`,
@@ -169,19 +192,34 @@ impl AccountConfigurationStorage<'_> {
     /// a single trie/DB hit on the validation hot path. Mirrors the manager read
     /// in `AccountConfiguration._resolvePolicyTarget`.
     pub fn get_policy_manager(&self, account: Address, actor_id: B256) -> Result<Address> {
-        self.policy_manager.at(&actor_id).at(&account).read()
+        let base = Self::actor_record_base(account, actor_id);
+        Slot::<Address>::new_at_offset(
+            base,
+            Self::POLICY_MANAGER_OFFSET,
+            self.address(),
+            self.storage(),
+        )?
+        .read()
     }
 
     /// Reads only the stored policy *commitment* slot for `(account, actor_id)`,
     /// the single-SLOAD read a policy manager performs to validate a dispatched
     /// 8130 transaction against the actor's signed commitment. This is a raw slot
-    /// read: it is written (verbatim) only while the actor has `SCOPE_POLICY`, but
-    /// a gated actor may legitimately store a zero commitment (`slice_policy`
-    /// treats it as a valid "no parameters" value), so a zero return does **not**
-    /// by itself imply "no policy / no actor" — pair it with the actor's scope for
-    /// that distinction. Mirrors `AccountConfiguration.getPolicyCommitment`.
+    /// read: it is written (verbatim) whenever the authorize payload attached a
+    /// 52-byte policy (length-based, decoupled from scope), but an attached policy
+    /// may legitimately carry a zero commitment (`slice_policy` treats it as a
+    /// valid "no parameters" value), so a zero return does **not** by itself imply
+    /// "no policy / no actor" — pair it with the actor's scope for that
+    /// distinction. Mirrors `AccountConfiguration.getPolicyCommitment`.
     pub fn get_policy_commitment(&self, account: Address, actor_id: B256) -> Result<B256> {
-        self.policy_commitment.at(&actor_id).at(&account).read()
+        let base = Self::actor_record_base(account, actor_id);
+        Slot::<B256>::new_at_offset(
+            base,
+            Self::POLICY_COMMITMENT_OFFSET,
+            self.address(),
+            self.storage(),
+        )?
+        .read()
     }
 
     /// Returns the per-account [`AccountState`] (sequences + lock fields).
@@ -241,7 +279,7 @@ impl AccountConfigurationStorage<'_> {
         actor_id: B256,
         config: ActorConfig,
     ) -> Result<()> {
-        self.actor_config.at_mut(&actor_id).at_mut(&account).write(config.to_word())
+        self.actors.at_mut(&actor_id).at_mut(&account).write(config.to_word())
     }
 
     /// Clears the `(account, actor_id)` `actor_config` slot (Solidity `delete`).
@@ -264,8 +302,12 @@ impl AccountConfigurationStorage<'_> {
         manager: Address,
         commitment: B256,
     ) -> Result<()> {
-        self.policy_manager.at_mut(&actor_id).at_mut(&account).write(manager)?;
-        self.policy_commitment.at_mut(&actor_id).at_mut(&account).write(commitment)
+        let base = Self::actor_record_base(account, actor_id);
+        let (address, storage) = (self.address(), self.storage());
+        Slot::<Address>::new_at_offset(base, Self::POLICY_MANAGER_OFFSET, address, storage)?
+            .write(manager)?;
+        Slot::<B256>::new_at_offset(base, Self::POLICY_COMMITMENT_OFFSET, address, storage)?
+            .write(commitment)
     }
 
     /// Clears both policy slots for `(account, actor_id)` (Solidity `delete`).
@@ -646,6 +688,56 @@ mod tests {
     }
 
     #[test]
+    fn base_slots_match_the_co_located_keystore_layout() {
+        // `_actors` leads (slot 0), `_accountState` trails (slot 1) — the packed
+        // AccountState is its own standalone single-slot mapping, so the
+        // full-owner sender check stays one SLOAD. Pinned to base/eip-8130 #95.
+        assert_eq!(AccountConfigurationStorage::ACTORS_BASE_SLOT, U256::ZERO);
+        assert_eq!(AccountConfigurationStorage::ACCOUNT_STATE_BASE_SLOT, U256::from(1));
+    }
+
+    #[test]
+    fn policy_slots_are_co_located_at_record_offsets_one_and_two() {
+        // The config word is the record base; the policy manager and commitment
+        // are the next two slots (manager before commitment — the opposite of the
+        // pre-co-location layout). Writing via `set_policy` must land exactly at
+        // base+1 / base+2, adjacent to the config at base+0.
+        let manager = address!("0x00000000000000000000000000000000000000d4");
+        let commitment =
+            b256!("0x4444444444444444444444444444444444444444444444444444444444444444");
+        let config_word = pack_actor_config(manager, Eip8130Constants::SCOPE_POLICY, 0);
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut acc = AccountConfigurationStorage::new(ctx);
+
+            // The record base equals the typed `actors` mapping slot (the config slot).
+            let base = acc.actors.at(&ACTOR).at(&ACCOUNT).slot();
+            assert_eq!(base, AccountConfigurationStorage::actor_record_base(ACCOUNT, ACTOR));
+
+            acc.actors.at_mut(&ACTOR).at_mut(&ACCOUNT).write(config_word).unwrap();
+            acc.set_policy(ACCOUNT, ACTOR, manager, commitment).unwrap();
+
+            // Read the raw slots back at the expected offsets.
+            let addr = acc.address();
+            let ctx = acc.storage();
+            let at = |offset: usize| {
+                Slot::<U256>::new_at_offset(base, offset, addr, ctx).unwrap().read().unwrap()
+            };
+            assert_eq!(at(0), config_word, "config at record base");
+            assert_eq!(
+                Address::from_word(B256::from(at(1).to_be_bytes::<32>())),
+                manager,
+                "manager at base+1"
+            );
+            assert_eq!(B256::from(at(2).to_be_bytes::<32>()), commitment, "commitment at base+2");
+
+            // And the typed accessors resolve those same offsets.
+            assert_eq!(acc.get_policy_manager(ACCOUNT, ACTOR).unwrap(), manager);
+            assert_eq!(acc.get_policy_commitment(ACCOUNT, ACTOR).unwrap(), commitment);
+        });
+    }
+
+    #[test]
     fn actor_config_unpacks_each_field_from_its_slot_position() {
         let authenticator = address!("0x1234567890abcDEF1234567890aBcdef12345678");
         let expiry = (1u64 << 48) - 1; // full uint48
@@ -654,7 +746,7 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         StorageCtx::enter(&mut storage, |ctx| {
             let mut acc = AccountConfigurationStorage::new(ctx);
-            acc.actor_config.at_mut(&ACTOR).at_mut(&ACCOUNT).write(word).unwrap();
+            acc.actors.at_mut(&ACTOR).at_mut(&ACCOUNT).write(word).unwrap();
             let config = acc.actor_config_slot(ACCOUNT, ACTOR).unwrap();
             assert_eq!(config.authenticator, authenticator);
             assert_eq!(config.scope, 0xAB);
@@ -684,7 +776,7 @@ mod tests {
             assert_eq!(acc.resolve_actor_config(ACCOUNT, ACTOR).unwrap(), ActorConfig::EMPTY);
 
             // Explicit entry wins verbatim.
-            acc.actor_config.at_mut(&ACTOR).at_mut(&ACCOUNT).write(pack(bound)).unwrap();
+            acc.actors.at_mut(&ACTOR).at_mut(&ACCOUNT).write(pack(bound)).unwrap();
             assert_eq!(
                 acc.resolve_actor_config(ACCOUNT, ACTOR).unwrap(),
                 ActorConfig { authenticator: bound, scope: 0, expiry: 0 }
@@ -693,13 +785,13 @@ mod tests {
             // Live inline self (no explicit entry) -> synthesized k1 config.
             acc.account_state
                 .at_mut(&ACCOUNT)
-                .write(pack_account_state(0, 1, 0, 0, Eip8130Constants::SCOPE_SENDER, 42))
+                .write(pack_account_state(0, 1, 0, 0, Eip8130Constants::SCOPE_OPERATOR, 42))
                 .unwrap();
             assert_eq!(
                 acc.resolve_actor_config(ACCOUNT, self_id).unwrap(),
                 ActorConfig {
                     authenticator: Eip8130Constants::K1_AUTHENTICATOR,
-                    scope: Eip8130Constants::SCOPE_SENDER,
+                    scope: Eip8130Constants::SCOPE_OPERATOR,
                     expiry: 42,
                 }
             );
@@ -712,7 +804,7 @@ mod tests {
             assert_eq!(acc.resolve_actor_config(ACCOUNT, self_id).unwrap(), ActorConfig::EMPTY);
 
             // Explicit (non-k1) self entry wins even while the revoked flag is set.
-            acc.actor_config.at_mut(&self_id).at_mut(&ACCOUNT).write(pack(bound)).unwrap();
+            acc.actors.at_mut(&self_id).at_mut(&ACCOUNT).write(pack(bound)).unwrap();
             assert_eq!(
                 acc.resolve_actor_config(ACCOUNT, self_id).unwrap(),
                 ActorConfig { authenticator: bound, scope: 0, expiry: 0 }
@@ -729,7 +821,7 @@ mod tests {
             let mut acc = AccountConfigurationStorage::new(ctx);
 
             // Bound to a real authenticator -> actor.
-            acc.actor_config.at_mut(&ACTOR).at_mut(&ACCOUNT).write(pack(bound)).unwrap();
+            acc.actors.at_mut(&ACTOR).at_mut(&ACCOUNT).write(pack(bound)).unwrap();
             assert!(acc.is_actor(ACCOUNT, ACTOR).unwrap());
 
             // Empty slot, non-self actor id -> not an actor.
@@ -748,7 +840,7 @@ mod tests {
 
             // Explicit self entry stays live even with the flag set (re-registered
             // scoped/owner k1 self key); the entry-exists => flag-set invariant.
-            acc.actor_config.at_mut(&self_id).at_mut(&ACCOUNT).write(pack(bound)).unwrap();
+            acc.actors.at_mut(&self_id).at_mut(&ACCOUNT).write(pack(bound)).unwrap();
             assert!(acc.is_actor(ACCOUNT, self_id).unwrap());
         });
     }
@@ -763,14 +855,14 @@ mod tests {
             let mut acc = AccountConfigurationStorage::new(ctx);
 
             // Ungated actor -> zeroed regardless of stored slots.
-            acc.actor_config.at_mut(&ACTOR).at_mut(&ACCOUNT).write(pack(manager)).unwrap();
-            acc.policy_manager.at_mut(&ACTOR).at_mut(&ACCOUNT).write(manager).unwrap();
+            acc.actors.at_mut(&ACTOR).at_mut(&ACCOUNT).write(pack(manager)).unwrap();
+            acc.set_policy(ACCOUNT, ACTOR, manager, B256::ZERO).unwrap();
             assert_eq!(acc.get_policy(ACCOUNT, ACTOR).unwrap(), (Address::ZERO, B256::ZERO));
 
             // Gated actor -> (manager, commitment).
             let gated = pack_actor_config(manager, Eip8130Constants::SCOPE_POLICY, 0);
-            acc.actor_config.at_mut(&ACTOR).at_mut(&ACCOUNT).write(gated).unwrap();
-            acc.policy_commitment.at_mut(&ACTOR).at_mut(&ACCOUNT).write(commitment).unwrap();
+            acc.actors.at_mut(&ACTOR).at_mut(&ACCOUNT).write(gated).unwrap();
+            acc.set_policy(ACCOUNT, ACTOR, manager, commitment).unwrap();
             assert_eq!(acc.get_policy(ACCOUNT, ACTOR).unwrap(), (manager, commitment));
         });
     }
@@ -784,8 +876,7 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         StorageCtx::enter(&mut storage, |ctx| {
             let mut acc = AccountConfigurationStorage::new(ctx);
-            acc.policy_manager.at_mut(&self_id).at_mut(&ACCOUNT).write(manager).unwrap();
-            acc.policy_commitment.at_mut(&self_id).at_mut(&ACCOUNT).write(commitment).unwrap();
+            acc.set_policy(ACCOUNT, self_id, manager, commitment).unwrap();
 
             // Live full-owner self -> ungated, slots ignored.
             assert_eq!(acc.get_policy(ACCOUNT, self_id).unwrap(), (Address::ZERO, B256::ZERO));
@@ -821,9 +912,8 @@ mod tests {
         StorageCtx::enter(&mut storage, |ctx| {
             let mut acc = AccountConfigurationStorage::new(ctx);
             let gated = pack_actor_config(authenticator, Eip8130Constants::SCOPE_POLICY, 0);
-            acc.actor_config.at_mut(&self_id).at_mut(&ACCOUNT).write(gated).unwrap();
-            acc.policy_manager.at_mut(&self_id).at_mut(&ACCOUNT).write(manager).unwrap();
-            acc.policy_commitment.at_mut(&self_id).at_mut(&ACCOUNT).write(commitment).unwrap();
+            acc.actors.at_mut(&self_id).at_mut(&ACCOUNT).write(gated).unwrap();
+            acc.set_policy(ACCOUNT, self_id, manager, commitment).unwrap();
             acc.account_state
                 .at_mut(&ACCOUNT)
                 .write(pack_account_state(0, 1, Eip8130Constants::DEFAULT_EOA_REVOKED, 0, 0, 0))
@@ -840,7 +930,7 @@ mod tests {
         StorageCtx::enter(&mut storage, |ctx| {
             let mut acc = AccountConfigurationStorage::new(ctx);
             // No actor_config written: the targeted read does not gate on it.
-            acc.policy_manager.at_mut(&ACTOR).at_mut(&ACCOUNT).write(manager).unwrap();
+            acc.set_policy(ACCOUNT, ACTOR, manager, B256::ZERO).unwrap();
             assert_eq!(acc.get_policy_manager(ACCOUNT, ACTOR).unwrap(), manager);
         });
     }

@@ -2582,7 +2582,7 @@ mod tests {
                 payload: authorize_change_data(
                     session_actor,
                     Eip8130Constants::K1_AUTHENTICATOR,
-                    Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_POLICY,
+                    Eip8130Constants::SCOPE_OPERATOR | Eip8130Constants::SCOPE_POLICY,
                     0,
                     &policy_data,
                 ),
@@ -3055,19 +3055,19 @@ mod tests {
             let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
             StorageCtx::enter(&mut provider, |sctx| {
                 let mut acc = AccountConfigurationStorage::new(sctx);
-                acc.actor_config
+                acc.actors
                     .at_mut(&actor_id)
                     .at_mut(&account)
                     .write(pack_actor(
                         Eip8130Constants::K1_AUTHENTICATOR,
-                        Eip8130Constants::SCOPE_SENDER
+                        Eip8130Constants::SCOPE_OPERATOR
                             | Eip8130Constants::SCOPE_SELF_PAYER
                             | Eip8130Constants::SCOPE_NONCE
                             | Eip8130Constants::SCOPE_POLICY,
                         0,
                     ))
                     .unwrap();
-                acc.policy_manager.at_mut(&actor_id).at_mut(&account).write(target).unwrap();
+                acc.set_policy(account, actor_id, target, B256::ZERO).unwrap();
             });
         }
         let state = evm.ctx_mut().journal_mut().finalize();

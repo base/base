@@ -263,7 +263,7 @@ mod tests {
         let abi = TestActorConfigAbi {
             authenticator: K1,
             expiry: alloy_primitives::aliases::U48::ZERO,
-            scope: Eip8130Constants::SCOPE_SENDER,
+            scope: Eip8130Constants::SCOPE_OPERATOR,
         };
         let payload = (B256::repeat_byte(0xEE), abi, Bytes::new()).abi_encode_params();
         SignedChange { change_type: ChangeType::AuthorizeActor, payload: Bytes::from(payload) }
@@ -549,12 +549,12 @@ mod tests {
         with_storage(|acc| {
             acc.account_state
                 .at_mut(&account)
-                .write(pack_default_eoa_scope(Eip8130Constants::SCOPE_SENDER))
+                .write(pack_default_eoa_scope(Eip8130Constants::SCOPE_OPERATOR))
                 .unwrap();
 
             let ordinary =
                 TransactionAuthorizer::authorize_and_apply(&ordinary, acc, LOCAL, NOW).unwrap();
-            assert_eq!(ordinary.actors.sender.resolved.scope, Eip8130Constants::SCOPE_SENDER);
+            assert_eq!(ordinary.actors.sender.resolved.scope, Eip8130Constants::SCOPE_OPERATOR);
             assert_eq!(
                 TransactionAuthorizer::authorize_and_apply(&delegation, acc, LOCAL, NOW),
                 Err(TxAuthError::DelegationUnauthorized),
@@ -578,7 +578,7 @@ mod tests {
         );
 
         with_storage(|acc| {
-            acc.actor_config
+            acc.actors
                 .at_mut(&signer_id)
                 .at_mut(&account)
                 .write(pack(K1, Eip8130Constants::SCOPE_UNRESTRICTED, 0))
@@ -622,12 +622,12 @@ mod tests {
         let signed = configured_signed(tx, &signer, Some(&payer));
 
         with_storage(|acc| {
-            acc.actor_config
+            acc.actors
                 .at_mut(&signer_id)
                 .at_mut(&account)
-                .write(pack(K1, Eip8130Constants::SCOPE_SENDER, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_OPERATOR, 0))
                 .unwrap();
-            acc.actor_config
+            acc.actors
                 .at_mut(&payer_id)
                 .at_mut(&payer_account)
                 .write(pack(K1, Eip8130Constants::SCOPE_SPONSOR_PAYER, 0))
@@ -726,7 +726,7 @@ mod tests {
             account,
             resolved: ResolvedActor {
                 actor_id: actor_id(account),
-                scope: Eip8130Constants::SCOPE_SENDER,
+                scope: Eip8130Constants::SCOPE_OPERATOR,
                 policy_target: Address::ZERO,
                 expiry: 0,
             },
@@ -864,7 +864,7 @@ mod tests {
         let hash = tx.sender_signature_hash();
         let signed = Eip8130Signed::new(tx, auth_blob(K1, &sig(&sk, hash)), Bytes::new());
         with_storage(|acc| {
-            acc.actor_config
+            acc.actors
                 .at_mut(&sid)
                 .at_mut(&account)
                 .write(pack(K1, Eip8130Constants::SCOPE_UNRESTRICTED, 0))
@@ -901,17 +901,17 @@ mod tests {
             auth_blob(K1, &sig(&pk, payer_hash)),
         );
         with_storage(|acc| {
-            acc.actor_config
+            acc.actors
                 .at_mut(&sid)
                 .at_mut(&sender_account)
-                .write(pack(K1, Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_NONCE, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_OPERATOR | Eip8130Constants::SCOPE_NONCE, 0))
                 .unwrap();
-            acc.actor_config
+            acc.actors
                 .at_mut(&pid)
                 .at_mut(&payer_account)
                 .write(pack(K1, Eip8130Constants::SCOPE_SPONSOR_PAYER, 0))
                 .unwrap();
-            acc.actor_config
+            acc.actors
                 .at_mut(&cid)
                 .at_mut(&sender_account)
                 .write(pack(K1, Eip8130Constants::SCOPE_UNRESTRICTED, 0))

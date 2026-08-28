@@ -328,7 +328,7 @@ mod tests {
         let change =
             signed_change(account, K1, &k, AccountChangeChannel::Multichain, 0, vec![revoke(0xcd)]);
         with_storage(|acc| {
-            acc.actor_config
+            acc.actors
                 .at_mut(&id)
                 .at_mut(&account)
                 .write(pack(K1, Eip8130Constants::SCOPE_UNRESTRICTED, 0))
@@ -348,16 +348,16 @@ mod tests {
             signed_change(account, K1, &k, AccountChangeChannel::Multichain, 0, vec![revoke(0x01)]);
         with_storage(|acc| {
             // Bound actor that lacks CONFIG (only SENDER).
-            acc.actor_config
+            acc.actors
                 .at_mut(&id)
                 .at_mut(&account)
-                .write(pack(K1, Eip8130Constants::SCOPE_SENDER, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_OPERATOR, 0))
                 .unwrap();
             assert_eq!(
                 ConfigChangeAuthorizer::authorize(acc, account, LOCAL, &change, NOW),
                 Err(TxAuthError::Scope {
                     operation: Operation::Config,
-                    scope: Eip8130Constants::SCOPE_SENDER,
+                    scope: Eip8130Constants::SCOPE_OPERATOR,
                 }),
             );
         });

@@ -43,32 +43,38 @@ impl Eip8130Constants {
     /// and replay protection relies on `valid_before` (which must be non-zero).
     pub const NONCE_KEY_MAX: U256 = U256::MAX;
 
-    /// Actor scope bit: ungated `sender_auth` validation context; may originate
-    /// transactions to any `call.to`.
-    pub const SCOPE_SENDER: u16 = 0x0001;
-
-    /// Actor scope bit: policy-gated sender context; may originate transactions
-    /// only to the actor's `policy_manager`.
-    pub const SCOPE_POLICY: u16 = 0x0002;
-
-    /// Actor scope bit: nonce authorization context; permits a restricted actor
-    /// to use sequenced `nonce_key`s (otherwise nonceless-only).
-    pub const SCOPE_NONCE: u16 = 0x0004;
+    /// Actor scope bit: ungated `sender_auth` validation context (the "operator"
+    /// grant); may originate transactions to any `call.to`. Renamed from `SENDER`
+    /// to reflect that it is the more permissive grant: `OPERATOR` and `POLICY`
+    /// do not combine.
+    pub const SCOPE_OPERATOR: u16 = 0x0001;
 
     /// Actor scope bit: self-pay gas; authorizes paying the account's own gas
     /// when `payer == sender`.
-    pub const SCOPE_SELF_PAYER: u16 = 0x0008;
+    pub const SCOPE_SELF_PAYER: u16 = 0x0002;
 
     /// Actor scope bit: sponsor gas; authorizes acting as `payer_auth` for a
     /// different sender (`payer != sender`).
-    pub const SCOPE_SPONSOR_PAYER: u16 = 0x0010;
+    pub const SCOPE_SPONSOR_PAYER: u16 = 0x0004;
 
+    /// Actor scope bit: policy-gated sender context; may originate transactions
+    /// only to the actor's `policy_manager`. Optional grant — a chain with no
+    /// policy system leaves this bit unused.
+    pub const SCOPE_POLICY: u16 = 0x0008;
+
+    /// Actor scope bit: nonce authorization context; permits a restricted actor
+    /// to use sequenced `nonce_key`s (otherwise nonceless-only). Optional grant.
+    pub const SCOPE_NONCE: u16 = 0x0010;
+
+    // Core grants occupy bits 0-2 so a chain may omit POLICY/NONCE without
+    // renumbering anything else; the optional POLICY and NONCE grants trail them.
     // ERC-1271 signing rides on operational authority (admin `scope == 0x00`, or
-    // a SENDER actor without POLICY); it is not its own scope bit, so there is no
+    // an OPERATOR actor); it is not its own scope bit, so there is no
     // `SCOPE_SIGNATURE`. The remaining bits of the `uint16` scope are spare,
-    // reserved for future pure grants. The Keystore itself is scope-agnostic
-    // except for `scope == 0` (admin) and the single interpreted `SCOPE_POLICY`
-    // bit; every other bit is stored verbatim and interpreted protocol-side.
+    // reserved for future pure grants. The Keystore stores `scope` verbatim and
+    // never interprets these bits; policy attachment is a length check on the
+    // authorize payload (empty vs 52 bytes), not a scope-bit test. Consumers
+    // enforce all grant meaning at use time.
 
     /// Domain-separation prefix for the `replay_id` preimage
     /// (`keccak256(REPLAY_ID_TYPE || rlp([...])`).
@@ -285,7 +291,7 @@ mod tests {
     #[test]
     fn scope_bits_are_orthogonal() {
         let bits = [
-            Eip8130Constants::SCOPE_SENDER,
+            Eip8130Constants::SCOPE_OPERATOR,
             Eip8130Constants::SCOPE_POLICY,
             Eip8130Constants::SCOPE_NONCE,
             Eip8130Constants::SCOPE_SELF_PAYER,
@@ -298,6 +304,17 @@ mod tests {
             acc |= b;
         }
         assert_eq!(Eip8130Constants::SCOPE_UNRESTRICTED, 0);
+    }
+
+    #[test]
+    fn scope_bit_values_match_the_keystore_ordering() {
+        // Core grants lead (bits 0-2); optional POLICY/NONCE trail (bits 3-4).
+        // Pinned to the EIP-8130 `Scopes` library ordering (base/eip-8130 #95).
+        assert_eq!(Eip8130Constants::SCOPE_OPERATOR, 0x0001);
+        assert_eq!(Eip8130Constants::SCOPE_SELF_PAYER, 0x0002);
+        assert_eq!(Eip8130Constants::SCOPE_SPONSOR_PAYER, 0x0004);
+        assert_eq!(Eip8130Constants::SCOPE_POLICY, 0x0008);
+        assert_eq!(Eip8130Constants::SCOPE_NONCE, 0x0010);
     }
 
     #[test]

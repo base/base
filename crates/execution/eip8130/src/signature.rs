@@ -262,12 +262,12 @@ mod tests {
     fn local_envelope_authenticates_bound_actor() {
         let k = key(0x22);
         let id = AccountConfigurationStorage::self_actor_id(addr(&k));
-        let scope = Eip8130Constants::SCOPE_SENDER;
+        let scope = Eip8130Constants::SCOPE_OPERATOR;
         let digest =
             SignatureVerifier::envelope_digest(SignatureType::Local, ACCOUNT, HASH, CHAIN_ID);
         let auth = envelope(SignatureType::Local as u8, K1, &sig(&k, digest));
         with_storage(|acc| {
-            acc.actor_config.at_mut(&id).at_mut(&ACCOUNT).write(pack(K1, scope, 0)).unwrap();
+            acc.actors.at_mut(&id).at_mut(&ACCOUNT).write(pack(K1, scope, 0)).unwrap();
             let resolved =
                 SignatureVerifier::validate_signature(acc, ACCOUNT, HASH, &auth, CHAIN_ID, NOW)
                     .unwrap();
@@ -286,7 +286,7 @@ mod tests {
             SignatureVerifier::envelope_digest(SignatureType::Multichain, ACCOUNT, HASH, CHAIN_ID);
         let auth = envelope(SignatureType::Multichain as u8, K1, &sig(&k, digest));
         with_storage(|acc| {
-            acc.actor_config.at_mut(&id).at_mut(&ACCOUNT).write(pack(K1, 0, 0)).unwrap();
+            acc.actors.at_mut(&id).at_mut(&ACCOUNT).write(pack(K1, 0, 0)).unwrap();
             let other_chain = CHAIN_ID + 1;
             let resolved =
                 SignatureVerifier::validate_signature(acc, ACCOUNT, HASH, &auth, other_chain, NOW)
@@ -306,7 +306,7 @@ mod tests {
             SignatureVerifier::envelope_digest(SignatureType::Local, ACCOUNT, HASH, CHAIN_ID);
         let auth = envelope(SignatureType::Local as u8, K1, &sig(&k, digest));
         with_storage(|acc| {
-            acc.actor_config.at_mut(&id).at_mut(&ACCOUNT).write(pack(K1, 0, 0)).unwrap();
+            acc.actors.at_mut(&id).at_mut(&ACCOUNT).write(pack(K1, 0, 0)).unwrap();
             // Recovers a different actor id than the one bound: AuthenticatorMismatch.
             assert!(matches!(
                 SignatureVerifier::validate_signature(acc, ACCOUNT, HASH, &auth, CHAIN_ID + 1, NOW,),

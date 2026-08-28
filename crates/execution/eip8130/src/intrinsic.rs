@@ -1,6 +1,6 @@
 //! EIP-8130 intrinsic gas: the total cost to include an AA transaction.
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, U256};
 use base_common_consensus::{
     AccountChange, ChangeType, Eip8130Constants, Eip8130Contracts, Eip8130Signed, SignedChange,
 };
@@ -295,14 +295,16 @@ impl IntrinsicGas {
                     account_state_touched = true;
                     // Each initial actor writes one fresh `actor_config` slot, plus
                     // the two policy slots (`policy_manager` + `policy_commitment`)
-                    // when it sets `SCOPE_POLICY` — a POLICY initial actor is 3
-                    // slot-sets versus 1 for a non-policy actor. These slot writes
-                    // are metered per actor, mirroring the `ConfigChange` per-slot
-                    // accounting below — creation must not register actors for free
-                    // relative to a later config change authorizing the same set.
+                    // when it attaches a 52-byte `policyData` — a policy initial
+                    // actor is 3 slot-sets versus 1 for a non-policy actor.
+                    // Attachment is length-based (base/eip-8130 #95), decoupled
+                    // from `SCOPE_POLICY`. These slot writes are metered per actor,
+                    // mirroring the `ConfigChange` per-slot accounting below —
+                    // creation must not register actors for free relative to a
+                    // later config change authorizing the same set.
                     for actor in &entry.initial_actors {
                         let mut cost = Eip8130GasSchedule::ACTOR_SLOT_SET_COST;
-                        if actor.scope & Eip8130Constants::SCOPE_POLICY != 0 {
+                        if !actor.policy_data.is_empty() {
                             cost = cost.saturating_add(
                                 Eip8130GasSchedule::ACTOR_SLOT_SET_COST.saturating_mul(2),
                             );
@@ -562,7 +564,7 @@ impl IntrinsicGas {
             ChangeType::RevokeActor => Eip8130GasSchedule::ACTOR_REVOKE_COST,
             ChangeType::AuthorizeActor => {
                 let mut cost = Eip8130GasSchedule::ACTOR_SLOT_SET_COST;
-                if Self::authorize_has_policy(op.payload.as_ref()) {
+                if Self::authorize_attaches_policy(op.payload.as_ref()) {
                     // policy_commitment + policy_manager.
                     cost = cost
                         .saturating_add(Eip8130GasSchedule::ACTOR_SLOT_SET_COST.saturating_mul(2));
@@ -582,14 +584,24 @@ impl IntrinsicGas {
     }
 
     /// Whether an authorize op's ABI-encoded
-    /// `(bytes32 actorId, ActorConfig, bytes)` `payload` carries `SCOPE_POLICY`.
-    /// The payload leads with the `actorId` word; `ActorConfig` is
-    /// `(address authenticator, uint48 expiry, uint16 scope)`, so scope is the
-    /// fourth 32-byte word, right-aligned in its low 2 bytes.
-    fn authorize_has_policy(payload: &[u8]) -> bool {
-        payload.len() >= 128
-            && u16::from_be_bytes([payload[126], payload[127]]) & Eip8130Constants::SCOPE_POLICY
-                != 0
+    /// `(bytes32 actorId, ActorConfig, bytes policyData)` `payload` attaches a
+    /// policy — i.e. carries a 52-byte `policyData`. Attachment is length-based
+    /// (base/eip-8130 #95) and decoupled from `SCOPE_POLICY`, matching the slots
+    /// execution actually writes.
+    ///
+    /// The params encoding is five head words (`actorId`, `authenticator`,
+    /// `expiry`, `scope`, then the `policyData` offset) followed by the
+    /// `policyData` `(length, data)` tail. A non-canonical offset only occurs on
+    /// a payload the validating decoder rejects, so meter that as no policy (the
+    /// transaction reverts regardless).
+    fn authorize_attaches_policy(payload: &[u8]) -> bool {
+        const OFFSET_WORD: usize = 4 * 32;
+        const LENGTH_WORD: usize = 5 * 32;
+        payload.len() >= LENGTH_WORD + 32
+            && U256::from_be_slice(&payload[OFFSET_WORD..OFFSET_WORD + 32])
+                == U256::from(LENGTH_WORD)
+            && U256::from_be_slice(&payload[LENGTH_WORD..LENGTH_WORD + 32])
+                == U256::from(Eip8130Constants::POLICY_DATA_LEN)
     }
 }
 
@@ -703,7 +715,7 @@ mod tests {
 
     alloy_sol_types::sol! {
         // Mirror of the contract's `ActorConfig` authorize payload, used only to
-        // pin the byte offset `authorize_has_policy` reads.
+        // pin the byte offsets `authorize_attaches_policy` reads.
         struct ActorConfigAbi {
             address authenticator;
             uint48 expiry;
@@ -712,36 +724,42 @@ mod tests {
     }
 
     #[test]
-    fn authorize_has_policy_reads_the_scope_word() {
-        // Drift tripwire: `authorize_has_policy` reads SCOPE_POLICY from the low
-        // 2 bytes of the fourth ABI word. The payload leads with the `actorId`
-        // word, then `ActorConfig` (`authenticator, expiry, scope`), so scope is
-        // the fourth word.
+    fn authorize_attaches_policy_reads_the_policy_length_not_the_scope_bit() {
+        // Drift tripwire: attachment is length-based (base/eip-8130 #95). A
+        // 52-byte `policyData` attaches regardless of scope; an empty one does
+        // not attach even with SCOPE_POLICY set.
         let actor_id = B256::repeat_byte(0x11);
-        let gated = (
+        let attached = (
             actor_id,
             ActorConfigAbi {
+                // Scope deliberately lacks POLICY: attachment is length-only.
                 authenticator: Address::ZERO,
-                scope: Eip8130Constants::SCOPE_POLICY,
+                scope: Eip8130Constants::SCOPE_OPERATOR,
                 expiry: alloy_primitives::Uint::ZERO,
             },
-            Bytes::new(),
+            Bytes::from(vec![0u8; Eip8130Constants::POLICY_DATA_LEN]),
         )
             .abi_encode_params();
-        let ungated = (
+        // SCOPE_POLICY set but no policy bytes -> not attached.
+        let scope_only = (
             actor_id,
             ActorConfigAbi {
                 authenticator: address!("0xffffffffffffffffffffffffffffffffffffffff"),
-                scope: Eip8130Constants::SCOPE_SENDER,
+                scope: Eip8130Constants::SCOPE_POLICY,
                 expiry: alloy_primitives::Uint::from(0xffff_ffff_ffffu64),
             },
             Bytes::new(),
         )
             .abi_encode_params();
 
-        assert!(IntrinsicGas::authorize_has_policy(&gated));
-        assert!(!IntrinsicGas::authorize_has_policy(&ungated));
-        assert_eq!(u16::from_be_bytes([gated[126], gated[127]]), Eip8130Constants::SCOPE_POLICY);
+        assert!(IntrinsicGas::authorize_attaches_policy(&attached));
+        assert!(!IntrinsicGas::authorize_attaches_policy(&scope_only));
+        // The policyData length word sits at offset 5*32; canonical offset is 0xA0.
+        assert_eq!(U256::from_be_slice(&attached[128..160]), U256::from(160));
+        assert_eq!(
+            U256::from_be_slice(&attached[160..192]),
+            U256::from(Eip8130Constants::POLICY_DATA_LEN)
+        );
     }
 
     #[test]
@@ -889,14 +907,14 @@ mod tests {
     #[test]
     fn config_change_charges_auth_plus_slot_writes() {
         // One authorize without policy + one revoke, authorized by a configured k1.
-        let mut authorize_data = vec![0u8; 128];
+        let authorize_data = vec![0u8; 128];
         let cc = SignedAccountChanges {
             channel: AccountChangeChannel::Multichain,
             sequence: 0,
             changes: vec![
                 SignedChange {
                     change_type: ChangeType::AuthorizeActor,
-                    payload: Bytes::from(authorize_data.clone()),
+                    payload: Bytes::from(authorize_data),
                 },
                 SignedChange { change_type: ChangeType::RevokeActor, payload: Bytes::new() },
             ],
@@ -918,16 +936,25 @@ mod tests {
             + Eip8130GasSchedule::ACTOR_REVOKE_COST;
         assert_eq!(gas.account_changes, expected);
 
-        // With SCOPE_POLICY, the authorize also writes the two policy slots. Scope
-        // is the fourth ABI word's low 2 bytes (bytes 126..128; the payload leads
-        // with the actorId word).
-        authorize_data[126..128].copy_from_slice(&Eip8130Constants::SCOPE_POLICY.to_be_bytes());
+        // Attaching a 52-byte `policyData` makes the authorize also write the two
+        // policy slots — attachment is length-based (base/eip-8130 #95), so the
+        // scope bits are irrelevant here.
+        let policy_payload = (
+            B256::repeat_byte(0x11),
+            ActorConfigAbi {
+                authenticator: Address::ZERO,
+                scope: Eip8130Constants::SCOPE_OPERATOR,
+                expiry: alloy_primitives::Uint::ZERO,
+            },
+            Bytes::from(vec![0u8; Eip8130Constants::POLICY_DATA_LEN]),
+        )
+            .abi_encode_params();
         let cc = SignedAccountChanges {
             channel: AccountChangeChannel::Multichain,
             sequence: 0,
             changes: vec![SignedChange {
                 change_type: ChangeType::AuthorizeActor,
-                payload: Bytes::from(authorize_data),
+                payload: Bytes::from(policy_payload),
             }],
             signature: Bytes::from(configured_auth(K1)),
         };
