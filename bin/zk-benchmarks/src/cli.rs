@@ -34,13 +34,7 @@ pub(crate) struct ZkBenchArgs {
     )]
     prover_service_url: url::Url,
 
-    /// Composite ZK artifact hash requested from prover workers.
-    ///
-    /// Required because the prover service routes ZK jobs by exact artifact hash;
-    /// a benchmark job with no match stays queued. Unlike `snark-e2e` this binary
-    /// does not link `base-proof-zk-backend`, so the value cannot be derived from
-    /// embedded verification keys here — print it with the `vkeys` script:
-    /// `cargo run -p base-proof-zk-backend --bin vkeys`.
+    /// Composite ZK artifact hash to request; print it with `vkeys`.
     #[arg(long, env = "ZK_ARTIFACT_HASH")]
     zk_artifact_hash: B256,
 

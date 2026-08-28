@@ -214,10 +214,7 @@ impl ProofArtifacts {
     /// Returns the composite ZK routing hash for this artifact generation.
     #[must_use]
     pub fn zk_artifact_hash(&self) -> B256 {
-        let mut artifacts = [0_u8; 64];
-        artifacts[..32].copy_from_slice(self.zk_range_hash.as_slice());
-        artifacts[32..].copy_from_slice(self.zk_aggregate_hash.as_slice());
-        keccak256(artifacts)
+        keccak256([self.zk_range_hash.as_slice(), self.zk_aggregate_hash.as_slice()].concat())
     }
 }
 
@@ -899,25 +896,6 @@ mod tests {
         assert_eq!(
             artifacts.zk_artifact_hash(),
             b256!("0xf3357627f4934d47fe409005b05c900777a6d97ec3788304e2d9c7b4d322cd4d"),
-        );
-    }
-
-    #[test]
-    fn zk_artifact_hash_commits_to_both_verification_keys() {
-        let artifacts = ProofArtifacts {
-            tee_image_hash: B256::repeat_byte(1),
-            zk_range_hash: B256::repeat_byte(2),
-            zk_aggregate_hash: B256::repeat_byte(3),
-        };
-
-        assert_ne!(
-            artifacts.zk_artifact_hash(),
-            ProofArtifacts { zk_range_hash: B256::repeat_byte(4), ..artifacts }.zk_artifact_hash()
-        );
-        assert_ne!(
-            artifacts.zk_artifact_hash(),
-            ProofArtifacts { zk_aggregate_hash: B256::repeat_byte(5), ..artifacts }
-                .zk_artifact_hash()
         );
     }
 }

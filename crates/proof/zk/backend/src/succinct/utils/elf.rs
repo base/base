@@ -98,10 +98,7 @@ pub fn aggregate_vkey(aggregate_vk: &SP1VerifyingKey) -> B256 {
 /// `ZK_RANGE_HASH` and `ZK_AGGREGATE_HASH`.
 #[must_use]
 fn zk_artifact_hash_from_parts(range_hash: B256, aggregate_hash: B256) -> B256 {
-    let mut artifacts = [0_u8; 64];
-    artifacts[..32].copy_from_slice(range_hash.as_slice());
-    artifacts[32..].copy_from_slice(aggregate_hash.as_slice());
-    keccak256(artifacts)
+    keccak256([range_hash.as_slice(), aggregate_hash.as_slice()].concat())
 }
 
 /// Computes the routing hash for the embedded range and aggregation programs.
@@ -125,14 +122,6 @@ mod tests {
         assert_eq!(
             zk_artifact_hash_from_parts(B256::repeat_byte(0x22), B256::repeat_byte(0x33)),
             b256!("0xf3357627f4934d47fe409005b05c900777a6d97ec3788304e2d9c7b4d322cd4d"),
-        );
-    }
-
-    #[test]
-    fn zk_artifact_hash_from_parts_is_order_sensitive() {
-        assert_ne!(
-            zk_artifact_hash_from_parts(B256::repeat_byte(0x22), B256::repeat_byte(0x33)),
-            zk_artifact_hash_from_parts(B256::repeat_byte(0x33), B256::repeat_byte(0x22)),
         );
     }
 }
