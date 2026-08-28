@@ -23,6 +23,7 @@ async-trait.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 
 # misc
+alloy-primitives.workspace = true
 backon.workspace = true
 chrono.workspace = true
 tracing.workspace = true

@@ -27,6 +27,8 @@ pub struct ProofDispatcherConfig {
     pub proposer_address: Address,
     /// Number of L2 blocks between intermediate output root checkpoints.
     pub intermediate_block_interval: u64,
+    /// Nitro enclave image hash required for proposal proofs.
+    pub tee_image_hash: B256,
 }
 
 impl From<&DriverConfig> for ProofDispatcherConfig {
@@ -35,6 +37,7 @@ impl From<&DriverConfig> for ProofDispatcherConfig {
             block_interval: config.block_interval,
             proposer_address: config.proposer_address,
             intermediate_block_interval: config.intermediate_block_interval,
+            tee_image_hash: config.tee_image_hash,
         }
     }
 }
@@ -108,10 +111,7 @@ impl ProofDispatcher {
             proposer: self.config.proposer_address,
             intermediate_block_interval: self.config.intermediate_block_interval,
             l1_head_number: l1_header.number,
-            // Placeholder: the proposer populates this from its configured TEE image
-            // hash when artifact routing lands. Zero is inert today because the prover
-            // service does not yet read image_hash.
-            image_hash: alloy_primitives::B256::ZERO,
+            image_hash: self.config.tee_image_hash,
             schedule_l2_block_number: None,
         })
     }
@@ -310,6 +310,7 @@ mod tests {
                 block_interval: 100,
                 proposer_address: Address::repeat_byte(0x04),
                 intermediate_block_interval: 300,
+                tee_image_hash: B256::repeat_byte(0x42),
             },
         );
         let recovered = RecoveredState {

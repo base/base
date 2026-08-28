@@ -18,14 +18,19 @@ impl ProposerProofAdapter {
 
     const TEE_SESSION_LABEL: &'static str = "tee/aws_nitro";
 
-    /// Derives an idempotent TEE proof session ID from proof subtype and claimed root.
-    pub fn tee_session_id_for_root(root: B256) -> String {
-        ProofSessionId::derive(Self::SESSION_NAMESPACE, Self::TEE_SESSION_LABEL, root)
+    /// Derives an idempotent TEE proof session ID from the image hash and claimed root.
+    pub fn tee_session_id_for_root(image_hash: B256, root: B256) -> String {
+        ProofSessionId::derive_from_components(
+            Self::SESSION_NAMESPACE,
+            Self::TEE_SESSION_LABEL,
+            &[image_hash.as_slice(), root.as_slice()],
+        )
     }
 
     /// Builds a prover-service request for a TEE proposal proof.
     pub fn tee_prove_block_range_request(request: PrimitiveProofRequest) -> ProveBlockRangeRequest {
-        let session_id = Self::tee_session_id_for_root(request.claimed_l2_output_root);
+        let session_id =
+            Self::tee_session_id_for_root(request.image_hash, request.claimed_l2_output_root);
         Self::tee_prove_block_range_request_with_session_id(request, session_id)
     }
 
@@ -93,7 +98,7 @@ mod tests {
             proposer: Address::repeat_byte(0x04),
             intermediate_block_interval: 300,
             l1_head_number: 1200,
-            image_hash: alloy_primitives::B256::ZERO,
+            image_hash: B256::repeat_byte(0x06),
             schedule_l2_block_number: None,
         }
     }
@@ -102,7 +107,8 @@ mod tests {
     fn tee_prove_block_range_request_wraps_primitive_request() {
         let root = B256::repeat_byte(0xaa);
         let request = test_request(root);
-        let expected_session_id = ProposerProofAdapter::tee_session_id_for_root(root);
+        let expected_session_id =
+            ProposerProofAdapter::tee_session_id_for_root(request.image_hash, root);
 
         let wrapped = ProposerProofAdapter::tee_prove_block_range_request(request.clone());
 
@@ -114,6 +120,15 @@ mod tests {
             }
             other => panic!("unexpected proof request kind: {other:?}"),
         }
+    }
+
+    #[test]
+    fn tee_session_id_changes_with_image_hash() {
+        let root = B256::repeat_byte(0xaa);
+        assert_ne!(
+            ProposerProofAdapter::tee_session_id_for_root(B256::repeat_byte(1), root),
+            ProposerProofAdapter::tee_session_id_for_root(B256::repeat_byte(2), root),
+        );
     }
 
     #[test]

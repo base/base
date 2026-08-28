@@ -40,7 +40,7 @@ use std::{
 use alloy_primitives::{Address, B256};
 use base_proof_contracts::{
     AggregateVerifierClient, AnchorStateRegistryClient, DisputeGameFactoryClient, GameAtIndex,
-    GameInfo, GameStatus,
+    GameInfo, GameStatus, ProofArtifacts,
 };
 use eyre::Result;
 use futures::stream::{self, StreamExt};
@@ -102,6 +102,8 @@ pub struct CandidateGame {
     pub intermediate_block_interval: u64,
     /// The L1 head block hash stored at game creation time.
     pub l1_head: B256,
+    /// Proving artifacts committed by this game's verifier.
+    pub proof_artifacts: ProofArtifacts,
     /// Address of the TEE prover for this game (`Address::ZERO` if none registered).
     pub tee_prover: Address,
     /// Classification of this candidate and the action the driver should take.
@@ -393,17 +395,19 @@ impl GameScanner {
         };
 
         // Fetch remaining fields only for actionable games.
-        let ((info, starting_block_number, l1_head), intermediate_block_interval) = tokio::try_join!(
-            async {
-                tokio::try_join!(
-                    self.verifier_client.game_info(factory.proxy),
-                    self.verifier_client.starting_block_number(factory.proxy),
-                    self.verifier_client.l1_head(factory.proxy),
-                )
-                .map_err(Into::into)
-            },
-            self.resolve_intermediate_block_interval(factory.game_type),
-        )?;
+        let ((info, starting_block_number, l1_head, proof_artifacts), intermediate_block_interval) =
+            tokio::try_join!(
+                async {
+                    tokio::try_join!(
+                        self.verifier_client.game_info(factory.proxy),
+                        self.verifier_client.starting_block_number(factory.proxy),
+                        self.verifier_client.l1_head(factory.proxy),
+                        self.verifier_client.proof_artifacts(factory.proxy),
+                    )
+                    .map_err(Into::into)
+                },
+                self.resolve_intermediate_block_interval(factory.game_type),
+            )?;
 
         Ok(Some(CandidateGame {
             index,
@@ -412,6 +416,7 @@ impl GameScanner {
             starting_block_number,
             intermediate_block_interval,
             l1_head,
+            proof_artifacts,
             tee_prover,
             category,
         }))

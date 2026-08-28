@@ -17,7 +17,9 @@ use base_challenger::{
         mock_state, mock_state_with_tee, receipt_with_status,
     },
 };
-use base_proof_contracts::{AggregateVerifierClient, DisputeGameFactoryClient, GameStatus};
+use base_proof_contracts::{
+    AggregateVerifierClient, DisputeGameFactoryClient, GameStatus, ProofArtifacts,
+};
 use base_proof_primitives::Proposal;
 use base_proof_rpc::L1Provider;
 use base_proof_submission::test_utils::SnarkReceiptFixture;
@@ -423,7 +425,16 @@ async fn test_step_proof_retry_reuses_deterministic_session_id() {
     let tx_manager = default_tx_manager();
     let mut driver = test_driver(factory, Arc::clone(&verifier), l2, Arc::clone(&zk), tx_manager);
 
-    let expected_session_id = ChallengerProofAdapter::snark_plonk_session_id(addr(0), 1);
+    let expected_session_id = ChallengerProofAdapter::snark_plonk_session_id(
+        ProofArtifacts {
+            tee_image_hash: B256::repeat_byte(0x11),
+            zk_range_hash: B256::repeat_byte(0x22),
+            zk_aggregate_hash: B256::repeat_byte(0x33),
+        }
+        .zk_artifact_hash(),
+        addr(0),
+        1,
+    );
 
     // Step 1: initial proveBlockRange call from initiate_zk_proof.
     driver.step().await.unwrap();

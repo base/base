@@ -241,7 +241,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
             game_address,
             invalid_index,
             proof_request.clone(),
-        );
+        )?;
 
         let prove_response = self.proof_requester.prove_block_range(request).await?;
 
@@ -296,10 +296,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
             proposer,
             intermediate_block_interval: candidate.intermediate_block_interval,
             l1_head_number,
-            // Placeholder: the challenger reads the game's TEE_IMAGE_HASH and populates
-            // this when artifact routing lands. Zero is inert today because the prover
-            // service does not yet read image_hash.
-            image_hash: alloy_primitives::B256::ZERO,
+            image_hash: candidate.proof_artifacts.tee_image_hash,
             schedule_l2_block_number: Some(candidate.info.l2_block_number),
         })
     }
@@ -320,10 +317,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
                 l1_head: Some(candidate.l1_head),
                 intermediate_root_interval: Some(candidate.intermediate_block_interval),
                 schedule_l2_block_number: Some(candidate.info.l2_block_number),
-                // Placeholder: the challenger derives this from the game's ZK_RANGE_HASH
-                // and ZK_AGGREGATE_HASH when artifact routing lands. None is inert today
-                // because the prover service does not yet read zk_artifact_hash.
-                zk_artifact_hash: None,
+                zk_artifact_hash: Some(candidate.proof_artifacts.zk_artifact_hash()),
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             },
@@ -593,7 +587,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
             game_address,
             invalid_index,
             request,
-        );
+        )?;
 
         match self.proof_requester.prove_block_range(prove_request).await {
             Ok(response) => {
@@ -655,7 +649,7 @@ mod tests {
                 l1_head: Some(B256::repeat_byte(0xAA)),
                 intermediate_root_interval: Some(10),
                 schedule_l2_block_number: None,
-                zk_artifact_hash: None,
+                zk_artifact_hash: Some(B256::repeat_byte(0x42)),
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             },
