@@ -57,6 +57,17 @@ FROM rust-builder-base AS planner
 COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
+FROM rust-builder-base AS client-planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json --bin base-reth-node
+
+FROM rust-builder-base AS client-deps
+ARG PROFILE=release
+COPY --from=client-planner /app/recipe.json recipe.json
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    cargo chef cook --profile $PROFILE --recipe-path recipe.json --package base-reth-node --bin base-reth-node
+
 FROM zk-builder-base AS deps
 ARG PROFILE=release
 COPY --from=planner /app/recipe.json recipe.json
@@ -64,10 +75,13 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     cargo chef cook --profile $PROFILE --recipe-path recipe.json
 
+FROM client-deps AS client-source
+COPY . .
+
 FROM deps AS source
 COPY . .
 
-FROM source AS client-builder
+FROM client-source AS client-builder
 ARG PROFILE=release
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
