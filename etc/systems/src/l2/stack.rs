@@ -409,6 +409,10 @@ impl L2Stack {
                 .await
                 .wrap_err("Timed out waiting for delayed-shadow catch-up receipt")??;
             }
+            builder_consensus
+                .stop_sequencer()
+                .await
+                .wrap_err("Failed to pause active sequencer for delayed shadow startup")?;
             batcher = Some(
                 InProcessBatcher::start(InProcessBatcherConfig {
                     l1_rpc_url: l1_rpc_url.clone(),
@@ -474,19 +478,25 @@ impl L2Stack {
                 })
                 .await
                 .wrap_err_with(|| format!("Failed to start shadow sequencer {index}"))?;
-                let shadow_start_height = if shadow_config.start_block.is_some() {
+                let shadow_start_safe_height = if shadow_config.start_block.is_some() {
                     Some(
                         RootProvider::<Base>::new_http(builder.rpc_url()?)
-                            .get_block_number()
-                            .await?,
+                            .get_block_by_number(BlockNumberOrTag::Safe)
+                            .await?
+                            .map_or(0, |block| block.header.number),
                     )
                 } else {
                     None
                 };
-                if let Some(shadow_start_height) = shadow_start_height {
+                if let Some(shadow_start_safe_height) = shadow_start_safe_height {
                     let shadow_provider = RootProvider::<Base>::new_http(shadow.rpc_url()?);
                     timeout(Duration::from_secs(30), async {
-                        while shadow_provider.get_block_number().await? < shadow_start_height {
+                        while shadow_provider
+                            .get_block_by_number(BlockNumberOrTag::Safe)
+                            .await?
+                            .map_or(0, |block| block.header.number)
+                            < shadow_start_safe_height
+                        {
                             sleep(Duration::from_millis(100)).await;
                         }
                         Ok::<_, eyre::Error>(())
@@ -494,6 +504,9 @@ impl L2Stack {
                     .await
                     .wrap_err("Timed out waiting for delayed shadow safe catch-up")??;
                     batcher.as_ref().expect("delayed batcher started").stop();
+                    builder_consensus.start_sequencer().await.wrap_err(
+                        "Failed to resume active sequencer after delayed shadow startup",
+                    )?;
                 }
                 shadow_sequencers.push(shadow);
             }
