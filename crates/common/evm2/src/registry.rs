@@ -1,6 +1,7 @@
 //! Base transaction registry.
 
 use alloy_primitives::U256;
+use base_common_consensus::DEPOSIT_TX_TYPE_ID;
 use evm2::{
     Evm, TxResult,
     env::TxEnvExt,
@@ -14,10 +15,7 @@ use evm2::{
     registry::{HandlerError, HandlerResult, TxRegistry, TxRequest},
 };
 
-use crate::{
-    BaseEvmTypes, BaseTxHandlerHooks,
-    transaction::{BaseTxEnvelope, DEPOSIT_TX_TYPE, TxDeposit},
-};
+use crate::{BaseEvmTypes, BaseTxEnvelope, BaseTxHandlerHooks, TxDeposit};
 
 impl BaseEvmTypes {
     /// Builds the Base transaction registry.
@@ -29,7 +27,7 @@ impl BaseEvmTypes {
     /// settlement path.
     pub fn tx_registry() -> TxRegistry<Self, TxResult<Self>> {
         let mut registry = TxRegistry::new().with_handler(
-            DEPOSIT_TX_TYPE,
+            DEPOSIT_TX_TYPE_ID,
             BaseTxEnvelope::as_deposit,
             Self::handle_deposit,
         );
@@ -250,7 +248,7 @@ mod tests {
     #[test]
     fn registry_registers_deposit_and_standard_handlers() {
         let registry = BaseEvmTypes::tx_registry();
-        assert!(registry.contains(DEPOSIT_TX_TYPE), "deposit handler must be registered");
+        assert!(registry.contains(DEPOSIT_TX_TYPE_ID), "deposit handler must be registered");
         // Legacy (0), EIP-2930 (1), EIP-1559 (2), EIP-7702 (4). Type 3 (EIP-4844
         // blob transactions) is intentionally unregistered — Base rejects them.
         for ty in [0, 1, 2, 4] {
