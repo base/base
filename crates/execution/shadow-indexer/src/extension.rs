@@ -2,7 +2,7 @@ use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use base_shadow_indexer_db::ShadowDbConfig;
 use tokio::sync::mpsc;
 
-use crate::{ShadowIndexerExEx, ShadowWriter};
+use crate::{ShadowIndexerExEx, ShadowRetention, ShadowRetentionConfig, ShadowWriter};
 
 /// Configuration for the shadow indexer extension.
 #[derive(Clone, Debug)]
@@ -13,6 +13,8 @@ pub struct ShadowIndexerConfig {
     pub db: ShadowDbConfig,
     /// Builder version string to attach to persisted rows.
     pub builder_version: String,
+    /// Retention policy that bounds shadow block table growth.
+    pub retention: ShadowRetentionConfig,
 }
 
 /// Wires the shadow indexer `ExEx` into the Base node.
@@ -37,11 +39,15 @@ impl BaseNodeExtension for ShadowIndexerExtension {
 
         let (tx, rx) = mpsc::channel(1024);
         let db = self.cfg.db.clone();
+        let retention_db = self.cfg.db.clone();
+        let retention = self.cfg.retention;
         let builder_version = self.cfg.builder_version.clone();
 
         hooks
             .add_node_started_hook(move |node| {
-                ShadowWriter::spawn(node.task_executor, rx, db, builder_version);
+                let executor = node.task_executor;
+                ShadowRetention::spawn(&executor, retention_db, retention);
+                ShadowWriter::spawn(executor, rx, db, builder_version);
                 Ok(())
             })
             .install_exex("shadow-indexer", move |ctx| async move {
