@@ -2,10 +2,7 @@
 
 use alloy_eips::eip2718::Typed2718;
 use alloy_primitives::Bytes;
-/// The canonical deposit transaction, re-exported from [`base_common_consensus`]
-/// rather than redeclared, so the evm2 envelope shares a single source of truth
-/// with the rest of the workspace.
-pub use base_common_consensus::TxDeposit;
+use base_common_consensus::TxDeposit;
 use evm2::ethereum::TxEnvelope;
 
 /// The Base transaction envelope: a deposit or a standard Ethereum

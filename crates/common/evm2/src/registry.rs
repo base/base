@@ -1,7 +1,7 @@
 //! Base transaction registry.
 
 use alloy_primitives::U256;
-use base_common_consensus::DEPOSIT_TX_TYPE_ID;
+use base_common_consensus::{DEPOSIT_TX_TYPE_ID, TxDeposit};
 use evm2::{
     Evm, TxResult,
     env::TxEnvExt,
@@ -15,7 +15,7 @@ use evm2::{
     registry::{HandlerError, HandlerResult, TxRegistry, TxRequest},
 };
 
-use crate::{BaseEvmTypes, BaseTxEnvelope, BaseTxHandlerHooks, TxDeposit};
+use crate::{BaseEvmTypes, BaseTxEnvelope, BaseTxHandlerHooks};
 
 impl BaseEvmTypes {
     /// Builds the Base transaction registry.
