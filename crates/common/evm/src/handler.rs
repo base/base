@@ -302,10 +302,9 @@ where
             && tx.tx_type() != crate::EIP8130_TRANSACTION_TYPE
         {
             let caller = tx.caller();
-            let now: u64 = block
-                .timestamp()
-                .try_into()
-                .map_err(|_| BaseTransactionError::standard_sender("block timestamp exceeds u64"))?;
+            let now: u64 = block.timestamp().try_into().map_err(|_| {
+                BaseTransactionError::standard_sender("block timestamp exceeds u64")
+            })?;
             let state = load_standard_account_state(journal, caller)?;
             base_execution_eip8130::ActorAuthorizer::authorize_standard_sender_from_state(
                 caller, &state, now,
@@ -1224,7 +1223,6 @@ mod tests {
                 ..Default::default()
             })
             .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(spec)))
-            .with_tx(standard_keystore_tx(Address::ZERO))
     }
 
     fn authorize_standard_sender(
@@ -1305,20 +1303,6 @@ mod tests {
             .build_fill()
     }
 
-    fn apply_7702_auth_list(
-        db: InMemoryDB,
-        spec: BaseUpgrade,
-        caller: Address,
-        auths: Vec<RecoveredAuthorization>,
-    ) -> Result<u64, EVMError<core::convert::Infallible, BaseTransactionError>> {
-        let ctx = standard_keystore_context(db, spec).with_tx(standard_7702_tx(caller, auths));
-        let mut evm = ctx.build_base();
-        let handler =
-            BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
-        let mut init_and_floor_gas = InitialAndFloorGas::new(0, 0);
-        handler.apply_eip7702_auth_list(&mut evm, &mut init_and_floor_gas)
-    }
-
     fn authority_has_delegation(db: InMemoryDB, spec: BaseUpgrade, authority: Address) -> bool {
         let caller = Address::repeat_byte(0x33);
         let delegate = Address::repeat_byte(0x44);
@@ -1355,17 +1339,12 @@ mod tests {
     #[test]
     fn cobalt_7702_auth_revoked_default_eoa_is_skipped() {
         let authority = Address::repeat_byte(0x11);
+        // `authority_has_delegation` applies the auth list and unwraps the
+        // result, so it also asserts the transaction is not rejected.
         let db = standard_keystore_db(authority, Some(pack_inline_self(0, 0, true)));
-        apply_7702_auth_list(
-            standard_keystore_db(authority, Some(pack_inline_self(0, 0, true))),
-            BaseUpgrade::Cobalt,
-            Address::repeat_byte(0x33),
-            vec![recovered_auth(authority, Address::repeat_byte(0x44))],
-        )
-        .expect("revoked 7702 authority must skip, not fail the transaction");
         assert!(
             !authority_has_delegation(db, BaseUpgrade::Cobalt, authority),
-            "revoked default EOA must not apply a 7702 delegation"
+            "revoked default EOA must skip its 7702 delegation without failing the transaction"
         );
     }
 

@@ -183,9 +183,13 @@ impl ActorAuthorizer {
                 loaded_state = storage.get_account_state(account)?;
                 &loaded_state
             };
+            // Validity (revoked / expired) is checked first so a rejected self
+            // never pays the policy-manager SLOAD that `inline_self_policy_target`
+            // would incur for a `SCOPE_POLICY` self.
+            let resolved = Self::authorize_inline_self(account, state, now, Address::ZERO)?;
             let policy_target =
                 Self::inline_self_policy_target(storage, account, recovered, state)?;
-            return Self::authorize_inline_self(account, state, now, policy_target);
+            return Ok(ResolvedActor { policy_target, ..resolved });
         }
         Self::resolve_bound(storage, account, recovered, Eip8130Constants::K1_AUTHENTICATOR, now)
     }

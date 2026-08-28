@@ -962,6 +962,22 @@ where
         &self,
         outcome: TransactionValidationOutcome<Tx>,
     ) -> TransactionValidationOutcome<Tx> {
+        let now = self.block_timestamp();
+        // Only standard (non-deposit, non-8130) txs are gated, and only from
+        // Cobalt. Check on a borrow so the skip paths return `outcome` untouched
+        // instead of destructuring and rebuilding it.
+        match &outcome {
+            TransactionValidationOutcome::Valid { transaction, .. } => {
+                let tx = transaction.transaction();
+                if tx.ty() == DEPOSIT_TRANSACTION_TYPE
+                    || tx.as_eip8130().is_some()
+                    || !self.chain_spec().is_cobalt_active_at_timestamp(now)
+                {
+                    return outcome;
+                }
+            }
+            _ => return outcome,
+        }
         let TransactionValidationOutcome::Valid {
             balance,
             state_nonce,
@@ -971,30 +987,9 @@ where
             authorities,
         } = outcome
         else {
-            return outcome;
+            unreachable!("outcome was confirmed Valid above")
         };
         let tx = valid_tx.transaction();
-        if tx.ty() == DEPOSIT_TRANSACTION_TYPE || tx.as_eip8130().is_some() {
-            return TransactionValidationOutcome::Valid {
-                balance,
-                state_nonce,
-                transaction: valid_tx,
-                propagate,
-                bytecode_hash,
-                authorities,
-            };
-        }
-        let now = self.block_timestamp();
-        if !self.chain_spec().is_cobalt_active_at_timestamp(now) {
-            return TransactionValidationOutcome::Valid {
-                balance,
-                state_nonce,
-                transaction: valid_tx,
-                propagate,
-                bytecode_hash,
-                authorities,
-            };
-        }
         let sender = tx.sender();
         let local_chain_id = self.inner.chain_spec().chain().id();
         let state = match self.client().latest() {
