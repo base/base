@@ -13,6 +13,19 @@ base_metrics::define_metrics! {
     channel_closed_total: counter,
     #[describe("Total number of channels for which every frame was confirmed on L1")]
     channel_fully_submitted_total: counter,
+    #[describe("Total number of times buffered pipeline state was dropped and rebuilt")]
+    #[label(
+        name = "reason",
+        default = [
+            "source_reorg",
+            "ingest_reorg",
+            "safe_head_reorg",
+            "safe_head_mismatch",
+            "stalled_channel",
+            "admin_pause",
+        ]
+    )]
+    pipeline_reset_total: counter,
     #[describe("Total number of L1 batch submissions")]
     #[label(name = "outcome", default = ["submitted", "confirmed", "failed", "requeued"])]
     submission_total: counter,
@@ -57,6 +70,24 @@ impl BatcherMetrics {
 
     /// Channel discarded because its first block exceeded channel limits.
     pub const REASON_DISCARD: &'static str = "discard";
+
+    /// The block source signalled an L2 reorg.
+    pub const RESET_SOURCE_REORG: &'static str = "source_reorg";
+
+    /// A parent-hash mismatch surfaced while adding a block to the pipeline.
+    pub const RESET_INGEST_REORG: &'static str = "ingest_reorg";
+
+    /// The derivation status reported a safe head that moved back or changed hash.
+    pub const RESET_SAFE_HEAD_REORG: &'static str = "safe_head_reorg";
+
+    /// The derived safe head does not match the buffered chain.
+    pub const RESET_SAFE_HEAD_MISMATCH: &'static str = "safe_head_mismatch";
+
+    /// The rollup node passed a fully confirmed channel without deriving it.
+    pub const RESET_STALLED_CHANNEL: &'static str = "stalled_channel";
+
+    /// The batcher was paused through the admin API.
+    pub const RESET_ADMIN_PAUSE: &'static str = "admin_pause";
 
     /// Submission accepted and handed to the tx manager.
     pub const OUTCOME_SUBMITTED: &'static str = "submitted";
