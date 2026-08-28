@@ -2,10 +2,12 @@
 
 use alloy_consensus::{Eip658Value, Receipt, transaction::Recovered};
 use alloy_eips::eip2718::Typed2718;
+use alloy_primitives::{B256, Bytes};
 use base_common_consensus::{BaseReceiptEnvelope, DepositReceipt};
 use base_common_genesis::BaseUpgrade;
 use evm2::{
-    BlockStateAccumulator, Evm,
+    BlockStateAccumulator, Evm, SpecId,
+    evm::{BEACON_ROOTS_ADDRESS, HISTORY_STORAGE_ADDRESS, SystemTx},
     registry::{HandlerError, HandlerResult},
 };
 
@@ -23,6 +25,16 @@ impl core::fmt::Display for CumulativeGasOverflow {
 
 impl core::error::Error for CumulativeGasOverflow {}
 
+/// Block-boundary context for pre-execution system calls.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BaseBlockExecutionCtx {
+    /// The parent block hash, stored by the EIP-2935 block-hashes contract (Prague onwards).
+    pub parent_hash: B256,
+    /// The parent beacon block root, stored by the EIP-4788 beacon-roots contract (Cancun
+    /// onwards). `None` when the block carries no beacon root.
+    pub parent_beacon_block_root: Option<B256>,
+}
+
 /// The outcome of executing a block's transactions: one receipt per transaction (in order) and
 /// the total gas used.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -36,23 +48,52 @@ pub struct BlockExecutionResult {
 /// Executes a Base block's transactions on an EVM2 [`Evm`], building receipts and accumulating
 /// the block's state delta.
 ///
-/// This is the transaction-execution core: it runs each transaction through the registry
-/// (deposit or standard handler), builds its receipt with running cumulative gas, and commits
-/// its state into a [`BlockStateAccumulator`]. Pre-execution block-boundary system calls
-/// (EIP-4788/EIP-2935, Canyon create2-deployer, Cobalt system accounts), the EIP-8130 path, and
-/// the Jovian DA-footprint checks are layered on in follow-up work.
+/// The flow is [`apply_pre_execution`](Self::apply_pre_execution) (block-boundary system calls),
+/// then [`execute_transaction`](Self::execute_transaction) per transaction (running it through
+/// the registry, building its receipt with running cumulative gas, and committing its state into
+/// a [`BlockStateAccumulator`]), then [`finish`](Self::finish). The Canyon create2-deployer and
+/// Cobalt system-account transition hooks, the EIP-8130 path, and the Jovian DA-footprint checks
+/// are layered on in follow-up work.
 #[derive(Debug)]
 pub struct BaseBlockExecutor<'a> {
     evm: Evm<'a, BaseEvmTypes>,
+    ctx: BaseBlockExecutionCtx,
     block_state: BlockStateAccumulator,
     receipts: Vec<BaseReceiptEnvelope>,
     gas_used: u64,
 }
 
 impl<'a> BaseBlockExecutor<'a> {
-    /// Creates a block executor over `evm`.
-    pub fn new(evm: Evm<'a, BaseEvmTypes>) -> Self {
-        Self { evm, block_state: BlockStateAccumulator::new(), receipts: Vec::new(), gas_used: 0 }
+    /// Creates a block executor over `evm` with the given block-boundary context.
+    pub fn new(evm: Evm<'a, BaseEvmTypes>, ctx: BaseBlockExecutionCtx) -> Self {
+        Self {
+            evm,
+            ctx,
+            block_state: BlockStateAccumulator::new(),
+            receipts: Vec::new(),
+            gas_used: 0,
+        }
+    }
+
+    /// Applies the block-boundary pre-execution system calls, in the reference order: the
+    /// EIP-2935 block-hashes call (Prague onwards) then the EIP-4788 beacon-roots call (Cancun
+    /// onwards). Each is a system call whose state changes are committed into the block state; if
+    /// the target system contract is not deployed, the call is a no-op.
+    pub fn apply_pre_execution(&mut self) -> HandlerResult<()> {
+        let spec = self.evm.spec_id();
+        if (spec as u8) >= (SpecId::PRAGUE as u8) {
+            let data = Bytes::copy_from_slice(self.ctx.parent_hash.as_slice());
+            let executed = self.evm.system_call(SystemTx::new(HISTORY_STORAGE_ADDRESS, data))?;
+            let _ = executed.commit_to(&mut self.block_state);
+        }
+        if (spec as u8) >= (SpecId::CANCUN as u8)
+            && let Some(root) = self.ctx.parent_beacon_block_root
+        {
+            let data = Bytes::copy_from_slice(root.as_slice());
+            let executed = self.evm.system_call(SystemTx::new(BEACON_ROOTS_ADDRESS, data))?;
+            let _ = executed.commit_to(&mut self.block_state);
+        }
+        Ok(())
     }
 
     /// Returns the EVM.
