@@ -3591,9 +3591,11 @@ dependencies = [
  "alloy-eips 2.4.1",
  "alloy-primitives",
  "base-common-consensus",
+ "base-common-evm",
  "base-common-genesis",
  "base-common-l1-fees",
  "evm2",
+ "revm",
 ]
 
 [[package]]
