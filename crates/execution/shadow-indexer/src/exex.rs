@@ -31,6 +31,8 @@ impl ShadowIndexerExEx {
         Node: FullNodeComponents,
         Node::Types: NodeTypes<Primitives = BasePrimitives>,
     {
+        let mut last_finished_height = None;
+
         while let Some(notification) = ctx.notifications.try_next().await? {
             let is_syncing = ctx.network().is_syncing();
             let kind = Self::notification_kind(&notification);
@@ -86,18 +88,39 @@ impl ShadowIndexerExEx {
             // node may still reorg discards the notification that would have recorded the block it
             // discards. While syncing, commits are settled history. Live, any commit can still be
             // reorged, so only a reorg's own replacement chain is safe to expose.
-            if Self::should_emit_finished_height(&notification, is_syncing)
-                && let Some(committed_chain) = notification.committed_chain()
-            {
-                let tip = committed_chain.tip().num_hash();
-                debug!(
-                    target: "base::shadow-indexer",
-                    block_number = tip.number,
-                    block_hash = ?tip.hash,
-                    "Sending FinishedHeight event"
-                );
-                ctx.events.send(ExExEvent::FinishedHeight(tip))?;
-            }
+            Self::emit_finished_height(
+                &ctx.events,
+                &notification,
+                is_syncing,
+                &mut last_finished_height,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    fn emit_finished_height(
+        events: &mpsc::UnboundedSender<ExExEvent>,
+        notification: &ExExNotification<BasePrimitives>,
+        is_syncing: bool,
+        last_finished_height: &mut Option<ExExEvent>,
+    ) -> Result<()> {
+        if Self::should_emit_finished_height(notification, is_syncing) {
+            *last_finished_height = notification
+                .committed_chain()
+                .map(|chain| ExExEvent::FinishedHeight(chain.tip().num_hash()));
+        }
+
+        // Re-emitting the last safe height wakes the manager so it continues draining its
+        // notification buffer without advancing the WAL watermark to a speculative block.
+        if let Some(event @ ExExEvent::FinishedHeight(tip)) = *last_finished_height {
+            debug!(
+                target: "base::shadow-indexer",
+                block_number = tip.number,
+                block_hash = ?tip.hash,
+                "Sending FinishedHeight event"
+            );
+            events.send(event)?;
         }
 
         Ok(())
@@ -444,5 +467,54 @@ mod tests {
         assert!(ShadowIndexerExEx::should_emit_finished_height(&reorged, false));
         assert!(!ShadowIndexerExEx::should_emit_finished_height(&reverted, true));
         assert!(!ShadowIndexerExEx::should_emit_finished_height(&reverted, false));
+    }
+
+    #[test]
+    fn repeats_last_safe_finished_height_for_speculative_commits() {
+        let (events, mut emitted) = mpsc::unbounded_channel();
+        let speculative = ExExNotification::ChainCommitted { new: Arc::new(mk_chain(2, 2, 0)) };
+        let reorged = ExExNotification::ChainReorged {
+            old: Arc::new(mk_chain(1, 1, 0)),
+            new: Arc::new(mk_chain(1, 1, NEW_CHAIN_VARIANT)),
+        };
+
+        let mut last_finished_height = None;
+        ShadowIndexerExEx::emit_finished_height(
+            &events,
+            &speculative,
+            false,
+            &mut last_finished_height,
+        )
+        .expect("handle speculative commit before reorg");
+        assert!(emitted.is_empty(), "no speculative height is advertised before a reorg");
+
+        ShadowIndexerExEx::emit_finished_height(
+            &events,
+            &reorged,
+            false,
+            &mut last_finished_height,
+        )
+        .expect("handle reorg");
+        let safe_height =
+            ExExEvent::FinishedHeight(reorged.committed_chain().unwrap().tip().num_hash());
+        assert_eq!(emitted.try_recv().expect("reorg height emitted"), safe_height);
+
+        for number in 2..=4 {
+            let speculative =
+                ExExNotification::ChainCommitted { new: Arc::new(mk_chain(number, number, 0)) };
+            ShadowIndexerExEx::emit_finished_height(
+                &events,
+                &speculative,
+                false,
+                &mut last_finished_height,
+            )
+            .expect("handle speculative commit after reorg");
+            assert_eq!(
+                emitted.try_recv().expect("safe height re-emitted"),
+                safe_height,
+                "each speculative commit re-emits the canonical reorg height"
+            );
+        }
+        assert!(emitted.is_empty());
     }
 }
