@@ -15,16 +15,19 @@ pub struct BaseTxResultExt {
 
 /// EVM instance-wide extension state for Base transactions.
 ///
-/// Carries the L1 data fee computed and charged in
+/// Carries the L1 data fee and operator fee computed and charged in
 /// [`BaseTxHandlerHooks::before_execution`](crate::BaseTxHandlerHooks) so
 /// [`settle_transaction`](evm2::handler::TxHandlerHooks::settle_transaction) can
-/// record the exact same value on [`BaseTxResultExt::l1_fee`] without recomputing
-/// it — this keeps the charged and recorded fees in lockstep and avoids a second
-/// pass over the transaction calldata.
+/// record/refund against the exact amounts charged without recomputing them —
+/// keeping the charged and settled fees in lockstep and avoiding a second pass
+/// over the transaction.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BaseEvmExt {
     /// L1 data fee charged for the transaction currently executing.
     pub l1_fee: U256,
+    /// Operator fee charged upfront (on the gas limit) for the transaction currently executing;
+    /// its unused portion is refunded at settlement.
+    pub operator_fee: U256,
 }
 
 /// Base's EVM2 execution type family.
