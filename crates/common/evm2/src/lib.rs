@@ -4,7 +4,7 @@ mod spec;
 pub use spec::BaseSpecId;
 
 mod transaction;
-pub use transaction::{BaseTxEnvelope, TxDeposit};
+pub use transaction::BaseTxEnvelope;
 
 mod handler;
 pub use handler::BaseTxHandlerHooks;

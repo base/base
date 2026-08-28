@@ -8,9 +8,9 @@
 
 use alloy_consensus::{TxEip1559, transaction::Recovered};
 use alloy_primitives::{Address, Bytes, TxKind, U256};
-use base_common_consensus::{BaseReceiptEnvelope, Predeploys};
+use base_common_consensus::{BaseReceiptEnvelope, Predeploys, TxDeposit};
 use base_common_evm2::{
-    BaseBlockExecutionCtx, BaseBlockExecutor, BaseEvmTypes, BaseSpecId, BaseTxEnvelope, TxDeposit,
+    BaseBlockExecutionCtx, BaseBlockExecutor, BaseEvmTypes, BaseSpecId, BaseTxEnvelope,
 };
 use base_common_genesis::BaseUpgrade;
 use base_common_l1_fees::L1FeeParams;
