@@ -32,9 +32,6 @@ pub use submission::{
     SubmissionStatus, SubmissionTracker,
 };
 
-mod nonce;
-pub use nonce::{NonceGuard, NonceManager, NonceState};
-
 mod manager;
 pub use manager::{
     AcceptedPosition, AttemptedPosition, CancelRequest, ChainSweeper, CoordinatorCommand,

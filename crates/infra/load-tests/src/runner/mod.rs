@@ -43,6 +43,9 @@ pub use status::{DisplaySnapshot, LoadTestDisplay, LoadTestStage};
 mod load_runner;
 pub use load_runner::LoadRunner;
 
+mod nonce;
+pub use nonce::{NonceError, NonceGuard, NonceManager, NonceState};
+
 mod funding;
 
 mod pacing;

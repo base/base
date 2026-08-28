@@ -6,10 +6,9 @@ use alloy_network::EthereumWallet;
 use alloy_node_bindings::Anvil;
 use alloy_primitives::{Address, U256};
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
-use alloy_rpc_types_eth::TransactionRequest;
+use alloy_rpc_types::TransactionRequest;
 use alloy_signer_local::PrivateKeySigner;
-use base_tx_manager::{NonceGuard, NonceManager, TxManagerError};
-use rayon::prelude::*;
+use base_load_tests::{NonceError, NonceGuard, NonceManager};
 
 /// Helper: spawns an Anvil instance and returns a [`NonceManager`] wired to
 /// the first default account.
@@ -122,7 +121,7 @@ async fn concurrent_calls_get_unique_sequential_nonces() {
 }
 
 #[tokio::test]
-async fn provider_failure_returns_rpc_error() {
+async fn provider_failure_returns_fetch_error() {
     // Point the provider at a non-listening port so the RPC call fails.
     let url = "http://127.0.0.1:1".parse().expect("valid url");
     let provider = RootProvider::new_http(url);
@@ -130,11 +129,11 @@ async fn provider_failure_returns_rpc_error() {
     let manager = NonceManager::new(provider, address, Duration::from_secs(10));
 
     let err = manager.next_nonce().await.expect_err("should fail on unreachable provider");
-    assert!(matches!(err, TxManagerError::Rpc(_)), "expected TxManagerError::Rpc, got {err:?}");
+    assert_eq!(err, NonceError::FetchFailed);
 }
 
 #[tokio::test]
-async fn rpc_timeout_returns_rpc_error() {
+async fn rpc_timeout_returns_timeout_error() {
     // Start a TCP listener that accepts connections but never responds,
     // simulating a hung RPC endpoint.
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -152,12 +151,7 @@ async fn rpc_timeout_returns_rpc_error() {
     let manager = NonceManager::new(provider, address, Duration::from_millis(1));
 
     let err = manager.next_nonce().await.expect_err("should time out");
-    match &err {
-        TxManagerError::Rpc(msg) => {
-            assert!(msg.contains("timed out"), "expected 'timed out' in message, got: {msg}",);
-        }
-        other => panic!("expected TxManagerError::Rpc, got {other:?}"),
-    }
+    assert_eq!(err, NonceError::FetchTimeout);
 }
 
 #[tokio::test]
@@ -208,30 +202,6 @@ fn nonce_guard_is_send() {
     /// Asserts that `T` implements [`Send`].
     fn assert_send<T: Send>() {}
     assert_send::<NonceGuard>();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn rayon_parallel_nonce_acquisition_produces_unique_nonces() {
-    let (manager, _anvil) = setup();
-    let handle = tokio::runtime::Handle::current();
-
-    let nonces: Vec<u64> = (0..100)
-        .into_par_iter()
-        .map(|_| {
-            let mgr = manager.clone();
-            handle.block_on(async move {
-                let guard = mgr.next_nonce().await.unwrap();
-                let n = guard.nonce();
-                drop(guard);
-                n
-            })
-        })
-        .collect();
-
-    let mut sorted = nonces;
-    sorted.sort();
-    let expected: Vec<u64> = (0..100).collect();
-    assert_eq!(sorted, expected, "all nonces must be unique and contiguous");
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -12,12 +12,11 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, sol};
-use base_tx_manager::NonceManager;
 use futures::{StreamExt, stream};
 use indicatif::{ProgressBar, ProgressStyle};
 use tracing::{debug, error, info, instrument, trace, warn};
 
-use super::{GasPricer, LoadRunner, TxType, load_runner::NONCE_RPC_TIMEOUT};
+use super::{GasPricer, LoadRunner, TxType, load_runner::NONCE_RPC_TIMEOUT, nonce::NonceManager};
 use crate::{
     BaselineError, Result,
     rpc::{BaseFeeExt, QueryProvider, RpcResultExt, TxpoolAdminClient, create_wallet_provider},

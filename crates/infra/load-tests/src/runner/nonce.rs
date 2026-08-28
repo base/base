@@ -1,26 +1,40 @@
-//! Nonce allocation and tracking.
+//! Nonce allocation and tracking for load-test senders.
 
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 use alloy_primitives::Address;
 use alloy_provider::Provider;
-use base_runtime::{Runtime, RuntimeTimeout, TokioRuntime};
+use thiserror::Error;
 use tokio::sync::{Mutex, OwnedMutexGuard};
 use tracing::{debug, trace, warn};
 
-use crate::TxManagerError;
+/// Errors returned by nonce reservation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum NonceError {
+    /// The chain nonce read did not complete within the RPC timeout.
+    #[error("nonce fetch timed out")]
+    FetchTimeout,
+
+    /// The chain nonce read failed.
+    #[error("nonce fetch failed")]
+    FetchFailed,
+
+    /// Nonce reservation failed due to repeated cache contention.
+    #[error("nonce acquisition failed")]
+    AcquisitionFailed,
+
+    /// Nonce arithmetic overflowed `u64::MAX`.
+    #[error("nonce overflow")]
+    Overflow,
+}
 
 /// Internal state tracked by [`NonceManager`].
-///
-/// Pairs the optional cached nonce with a generation counter that
-/// distinguishes "never initialized" (`generation == 0`) from
-/// "cleared by [`NonceManager::reset`]" (`generation > 0`).
 #[derive(Debug, Default)]
 pub struct NonceState {
     /// The cached nonce value, or `None` if uninitialized / reset.
     pub nonce: Option<u64>,
-    /// Monotonically increasing counter bumped on every
-    /// [`NonceManager::reset`].
+    /// Counter bumped on every [`NonceManager::reset`], letting an in-flight
+    /// chain fetch detect that a reset invalidated it.
     ///
     /// Uses [`u64::wrapping_add`] so the counter cannot panic. A
     /// generation collision (wrapping all the way around to the same
@@ -46,9 +60,8 @@ pub struct NonceState {
 /// returned [`NonceGuard`], ensuring sequential nonce assignment even
 /// under concurrent access.
 #[derive(Debug, Clone)]
-pub struct NonceManager<P, R = TokioRuntime> {
+pub struct NonceManager<P> {
     inner: Arc<Mutex<NonceState>>,
-    runtime: R,
     provider: P,
     address: Address,
     rpc_timeout: Duration,
@@ -58,7 +71,12 @@ pub struct NonceManager<P, R = TokioRuntime> {
     use_pending_tag: bool,
 }
 
-impl<P: Provider> NonceManager<P, TokioRuntime> {
+impl<P: Provider> NonceManager<P> {
+    /// Maximum number of retry attempts when `reset()` races with
+    /// `next_nonce()`, clearing the cache between the RPC fetch and
+    /// lock re-acquisition.
+    pub const MAX_RETRY_ATTEMPTS: u8 = 5;
+
     /// Creates a new [`NonceManager`] with no cached nonce.
     ///
     /// The `rpc_timeout` bounds the `get_transaction_count` RPC call
@@ -67,20 +85,8 @@ impl<P: Provider> NonceManager<P, TokioRuntime> {
     /// The first call to [`next_nonce`](Self::next_nonce) will fetch the
     /// current transaction count from the provider.
     pub fn new(provider: P, address: Address, rpc_timeout: Duration) -> Self {
-        Self::with_runtime(TokioRuntime::new(), provider, address, rpc_timeout)
-    }
-}
-
-impl<P, R> NonceManager<P, R>
-where
-    P: Provider,
-    R: Runtime,
-{
-    /// Creates a new [`NonceManager`] with an injected runtime.
-    pub fn with_runtime(runtime: R, provider: P, address: Address, rpc_timeout: Duration) -> Self {
         Self {
             inner: Arc::new(Mutex::new(NonceState::default())),
-            runtime,
             provider,
             address,
             rpc_timeout,
@@ -94,11 +100,6 @@ where
         self.use_pending_tag = true;
         self
     }
-
-    /// Maximum number of retry attempts when `reset()` races with
-    /// `next_nonce()`, clearing the cache between the RPC fetch and
-    /// lock re-acquisition.
-    pub const MAX_RETRY_ATTEMPTS: u8 = 5;
 
     /// Reserves the next nonce for transaction signing.
     ///
@@ -119,12 +120,12 @@ where
     ///
     /// # Errors
     ///
-    /// Returns [`TxManagerError::Rpc`] if the provider call fails,
-    /// [`TxManagerError::NonceAcquisitionFailed`] if the nonce cache is
-    /// repeatedly cleared by concurrent [`reset`](Self::reset) calls during
-    /// acquisition, or [`TxManagerError::NonceOverflow`] if the nonce
-    /// exceeds `u64::MAX`.
-    pub async fn next_nonce(&self) -> Result<NonceGuard, TxManagerError> {
+    /// Returns [`NonceError::FetchTimeout`] or [`NonceError::FetchFailed`]
+    /// if the provider call fails, [`NonceError::AcquisitionFailed`] if the
+    /// nonce cache is repeatedly cleared by concurrent
+    /// [`reset`](Self::reset) calls during acquisition, or
+    /// [`NonceError::Overflow`] if the nonce exceeds `u64::MAX`.
+    pub async fn next_nonce(&self) -> Result<NonceGuard, NonceError> {
         for attempt in 0..Self::MAX_RETRY_ATTEMPTS {
             // Acquire the owned lock once upfront.
             let guard = Arc::clone(&self.inner).lock_owned().await;
@@ -149,7 +150,7 @@ where
             } else {
                 self.provider.get_transaction_count(self.address)
             };
-            let fetched = RuntimeTimeout::run(&self.runtime, self.rpc_timeout, count_fut)
+            let fetched = tokio::time::timeout(self.rpc_timeout, count_fut)
                 .await
                 .map_err(|_| {
                     warn!(
@@ -157,13 +158,13 @@ where
                         timeout = ?self.rpc_timeout,
                         "nonce fetch timed out",
                     );
-                    TxManagerError::Rpc("nonce fetch timed out".into())
+                    NonceError::FetchTimeout
                 })?
                 .map_err(|_| {
                     // The raw transport error may embed credential-bearing
                     // RPC URLs, so neither log nor propagate it.
                     warn!(address = %self.address, "failed to fetch nonce from chain");
-                    TxManagerError::Rpc("nonce fetch failed".into())
+                    NonceError::FetchFailed
                 })?;
 
             // Phase 3: re-acquire the lock and populate only if still
@@ -200,7 +201,7 @@ where
         }
 
         warn!(attempts = Self::MAX_RETRY_ATTEMPTS, "nonce acquisition failed after max retries",);
-        Err(TxManagerError::NonceAcquisitionFailed)
+        Err(NonceError::AcquisitionFailed)
     }
 
     /// Advances the cached nonce by one and returns a [`NonceGuard`]
@@ -212,23 +213,20 @@ where
     pub fn advance_nonce(
         mut guard: OwnedMutexGuard<NonceState>,
         nonce: u64,
-    ) -> Result<NonceGuard, TxManagerError> {
+    ) -> Result<NonceGuard, NonceError> {
         // Priority: reissue a returned nonce before allocating a fresh one.
         // BTreeSet::pop_first gives the smallest gap, filling holes
         // left-to-right so the chain can make forward progress.
-        //
         if let Some(returned) = guard.returned_nonces.pop_first() {
             // Recycle does not use the cached counter, so bump it past the
             // hole we just filled. Otherwise the next fresh allocation can
             // rewind below a nonce we already handed out.
-            if let Some(cached) = guard.nonce {
-                guard.nonce = Some(cached.max(returned.saturating_add(1)));
-            }
+            guard.nonce = Some(nonce.max(returned.saturating_add(1)));
             debug!(nonce = returned, "reissuing returned nonce");
             return Ok(NonceGuard { guard: Some(guard), nonce: returned, recycled: true });
         }
 
-        let next = nonce.checked_add(1).ok_or(TxManagerError::NonceOverflow)?;
+        let next = nonce.checked_add(1).ok_or(NonceError::Overflow)?;
         guard.nonce = Some(next);
         debug!(nonce, "nonce reserved");
         Ok(NonceGuard { guard: Some(guard), nonce, recycled: false })
@@ -346,7 +344,6 @@ mod tests {
                     nonce: Some(nonce),
                     ..Default::default()
                 })),
-                runtime: TokioRuntime::new(),
                 provider,
                 address,
                 rpc_timeout: Duration::from_secs(10),
@@ -392,7 +389,7 @@ mod tests {
         let manager = NonceManager::new_with_nonce(provider, Address::ZERO, u64::MAX);
 
         let err = manager.next_nonce().await.expect_err("should overflow");
-        assert_eq!(err, TxManagerError::NonceOverflow);
+        assert_eq!(err, NonceError::Overflow);
     }
 
     #[tokio::test]

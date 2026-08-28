@@ -90,10 +90,6 @@ pub enum TxManagerError {
     #[error("nonce overflow")]
     NonceOverflow,
 
-    /// Nonce reservation failed due to repeated cache contention.
-    #[error("nonce acquisition failed")]
-    NonceAcquisitionFailed,
-
     /// Submission lifecycle channel closed before a terminal result was delivered.
     ///
     /// The coordinator exited or dropped the submission tracker before
@@ -222,7 +218,6 @@ impl TxManagerError {
             Self::ChannelClosed => "channel_closed",
             Self::FeeLimitExceeded { .. } => "fee_limit_exceeded",
             Self::NonceOverflow => "nonce_overflow",
-            Self::NonceAcquisitionFailed => "nonce_acquisition_failed",
             Self::Unsupported(_) => "unsupported",
             Self::Sign(_) => "sign",
             Self::InvalidConfig(_) => "invalid_config",
@@ -504,7 +499,6 @@ mod tests {
     #[case::channel_closed(TxManagerError::ChannelClosed, false)]
     #[case::fee_limit_exceeded(TxManagerError::FeeLimitExceeded { fee: 0, ceiling: 0 }, false)]
     #[case::nonce_overflow(TxManagerError::NonceOverflow, false)]
-    #[case::nonce_acquisition_failed(TxManagerError::NonceAcquisitionFailed, false)]
     #[case::unsupported(TxManagerError::Unsupported("test".to_string()), false)]
     #[case::sign(TxManagerError::Sign("test".to_string()), false)]
     #[case::invalid_config(TxManagerError::InvalidConfig("test".to_string()), false)]
@@ -565,10 +559,6 @@ mod tests {
     #[case::channel_closed(TxManagerError::ChannelClosed, "submission lifecycle channel closed")]
     #[case::fee_limit_exceeded(TxManagerError::FeeLimitExceeded { fee: 501, ceiling: 500 }, "fee limit exceeded: fee 501 exceeds ceiling 500")]
     #[case::nonce_overflow(TxManagerError::NonceOverflow, "nonce overflow")]
-    #[case::nonce_acquisition_failed(
-        TxManagerError::NonceAcquisitionFailed,
-        "nonce acquisition failed"
-    )]
     #[case::superseded(TxManagerError::Superseded, "transaction was superseded")]
     #[case::cancelled(TxManagerError::Cancelled, "transaction was cancelled")]
     #[case::cancellation_in_progress(

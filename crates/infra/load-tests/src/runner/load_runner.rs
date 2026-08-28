@@ -15,7 +15,6 @@ use alloy_network::{Ethereum, EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, B256, TxHash, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer_local::PrivateKeySigner;
-use base_tx_manager::NonceManager;
 use rand::Rng;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
@@ -23,7 +22,7 @@ use tracing::{debug, info, instrument};
 
 use super::{
     DisplaySnapshot, LoadConfig, LoadTestDisplay, LoadTestStage, SubmissionPipeline, TxType,
-    ValidityRouter,
+    ValidityRouter, nonce::NonceManager,
 };
 use crate::{
     BaselineError, Result,
