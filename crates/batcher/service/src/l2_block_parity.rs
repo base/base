@@ -21,8 +21,11 @@ pub const DEFAULT_MAX_BLOCKS_PER_TICK: usize = 25;
 /// Provider abstraction for derived L2 block parity checks.
 #[async_trait]
 pub trait L2BlockProvider: Send + Sync {
-    /// Fetch the latest L2 block number from this provider.
-    async fn latest_block_number(&self) -> eyre::Result<u64>;
+    /// Fetch the unsafe L2 head number from this provider.
+    async fn unsafe_block_number(&self) -> eyre::Result<u64>;
+
+    /// Fetch the safe L2 head number from this provider.
+    async fn safe_block_number(&self) -> eyre::Result<u64>;
 
     /// Fetch an L2 block snapshot by number.
     async fn block_by_number(&self, number: u64) -> eyre::Result<Option<L2BlockSnapshot>>;
@@ -45,11 +48,21 @@ impl RpcL2BlockProvider {
 
 #[async_trait]
 impl L2BlockProvider for RpcL2BlockProvider {
-    async fn latest_block_number(&self) -> eyre::Result<u64> {
+    async fn unsafe_block_number(&self) -> eyre::Result<u64> {
         self.provider
             .get_block_number()
             .await
-            .map_err(|e| eyre::eyre!("failed to fetch L2 latest block number: {e}"))
+            .map_err(|e| eyre::eyre!("failed to fetch unsafe L2 head number: {e}"))
+    }
+
+    async fn safe_block_number(&self) -> eyre::Result<u64> {
+        let block = self
+            .provider
+            .get_block_by_number(BlockNumberOrTag::Safe)
+            .await
+            .map_err(|e| eyre::eyre!("failed to fetch safe L2 head: {e}"))?
+            .ok_or_else(|| eyre::eyre!("safe L2 head unavailable"))?;
+        Ok(block.header.number)
     }
 
     async fn block_by_number(&self, number: u64) -> eyre::Result<Option<L2BlockSnapshot>> {
@@ -148,6 +161,13 @@ pub struct L2BlockParityStats {
     pub missing_blocks: usize,
 }
 
+impl L2BlockParityStats {
+    /// Returns true if this pass found no mismatch or missing block.
+    pub const fn is_aligned(self) -> bool {
+        self.mismatches == 0 && self.missing_blocks == 0
+    }
+}
+
 /// One derived L2 block parity comparison result.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum L2BlockParityResult {
@@ -222,13 +242,13 @@ where
 
     /// Comparable L2 blocks the cursor has not reached yet.
     ///
-    /// Measured against the common head because a pass never walks past
+    /// Measured against the common unsafe head because a pass never walks past
     /// `min(sequencer, validator)`: a validator trailing the sequencer is already reported by
-    /// `lag_blocks`, so what is left here is the monitor's own progress. It grows only while the
-    /// cursor is parked on a block it cannot fetch, which is otherwise indistinguishable from a
-    /// healthy run that simply found no mismatch.
-    pub const fn verification_backlog(&self, common_latest: u64) -> u64 {
-        common_latest.saturating_add(1).saturating_sub(self.next_block)
+    /// `lag_blocks`, so what is left here is the monitor's own progress. It grows only
+    /// while the cursor is parked on a block it cannot fetch, which is otherwise
+    /// indistinguishable from a healthy run that simply found no mismatch.
+    pub const fn verification_backlog(&self, common_unsafe: u64) -> u64 {
+        common_unsafe.saturating_add(1).saturating_sub(self.next_block)
     }
 
     /// Runs the monitor loop until cancelled.
@@ -248,7 +268,8 @@ where
             }
 
             if let Err(error) = self.process_once().await {
-                L2BlockParityMetrics::fetch_errors_total(L2BlockParityMetrics::SCOPE_PASS)
+                L2BlockParityMetrics::fetch_errors_total().increment(1);
+                L2BlockParityMetrics::scoped_fetch_errors_total(L2BlockParityMetrics::SCOPE_PASS)
                     .increment(1);
                 error!(error = %error, "derived L2 block parity pass failed");
             }
@@ -264,31 +285,41 @@ where
 
     /// Processes one parity pass.
     pub async fn process_once(&mut self) -> eyre::Result<L2BlockParityStats> {
-        let sequencer_latest = self.sequencer.latest_block_number().await?;
-        let validator_latest = self.validator.latest_block_number().await?;
+        let sequencer_unsafe = self.sequencer.unsafe_block_number().await?;
+        let validator_unsafe = self.validator.unsafe_block_number().await?;
         // Metrics gauges are f64-backed; integer block numbers remain exact
         // through 2^53, far above any realistic L2 height for this monitor.
-        L2BlockParityMetrics::sequencer_latest_l2_block().set(sequencer_latest as f64);
-        L2BlockParityMetrics::validator_latest_l2_block().set(validator_latest as f64);
+        L2BlockParityMetrics::sequencer_latest_l2_block().set(sequencer_unsafe as f64);
+        L2BlockParityMetrics::validator_latest_l2_block().set(validator_unsafe as f64);
         L2BlockParityMetrics::lag_blocks()
-            .set(sequencer_latest.saturating_sub(validator_latest) as f64);
+            .set(sequencer_unsafe.saturating_sub(validator_unsafe) as f64);
+        match self.sequencer.safe_block_number().await {
+            Ok(number) => L2BlockParityMetrics::sequencer_safe_l2_block().set(number as f64),
+            Err(error) => warn!(error = %error, "failed to fetch sequencer safe L2 head"),
+        }
+        match self.validator.safe_block_number().await {
+            Ok(number) => L2BlockParityMetrics::validator_safe_l2_block().set(number as f64),
+            Err(error) => warn!(error = %error, "failed to fetch validator safe L2 head"),
+        }
 
-        let common_latest = sequencer_latest.min(validator_latest);
+        let common_unsafe = sequencer_unsafe.min(validator_unsafe);
         L2BlockParityMetrics::verification_backlog_blocks()
-            .set(self.verification_backlog(common_latest) as f64);
+            .set(self.verification_backlog(common_unsafe) as f64);
 
-        if common_latest < self.next_block {
+        if common_unsafe < self.next_block {
+            let aligned = if sequencer_unsafe == validator_unsafe { 1.0 } else { 0.0 };
+            L2BlockParityMetrics::aligned().set(aligned);
             debug!(
                 next_block = %self.next_block,
-                sequencer_latest = %sequencer_latest,
-                validator_latest = %validator_latest,
+                sequencer_unsafe = %sequencer_unsafe,
+                validator_unsafe = %validator_unsafe,
                 "waiting for parity validator to reach next comparable L2 block"
             );
             return Ok(L2BlockParityStats::default());
         }
 
         let max_blocks = self.config.validated_max_blocks_per_tick()?;
-        let last_block = common_latest.min(self.next_block.saturating_add(max_blocks - 1));
+        let last_block = common_unsafe.min(self.next_block.saturating_add(max_blocks - 1));
         let mut stats = L2BlockParityStats::default();
 
         for number in self.next_block..=last_block {
@@ -299,8 +330,11 @@ where
                     self.next_block = next_block;
                 }
                 Err(error) => {
-                    L2BlockParityMetrics::fetch_errors_total(L2BlockParityMetrics::SCOPE_BLOCK)
-                        .increment(1);
+                    L2BlockParityMetrics::fetch_errors_total().increment(1);
+                    L2BlockParityMetrics::scoped_fetch_errors_total(
+                        L2BlockParityMetrics::SCOPE_BLOCK,
+                    )
+                    .increment(1);
                     warn!(
                         error = %error,
                         l2_block = %number,
@@ -312,7 +346,15 @@ where
         }
 
         L2BlockParityMetrics::verification_backlog_blocks()
-            .set(self.verification_backlog(common_latest) as f64);
+            .set(self.verification_backlog(common_unsafe) as f64);
+
+        let caught_up = self.next_block > common_unsafe;
+        let aligned = if caught_up && stats.is_aligned() && sequencer_unsafe == validator_unsafe {
+            1.0
+        } else {
+            0.0
+        };
+        L2BlockParityMetrics::aligned().set(aligned);
 
         if stats.checked > 0 || stats.missing_blocks > 0 {
             debug!(
@@ -321,8 +363,8 @@ where
                 mismatches = %stats.mismatches,
                 missing_blocks = %stats.missing_blocks,
                 next_block = %self.next_block,
-                sequencer_latest = %sequencer_latest,
-                validator_latest = %validator_latest,
+                sequencer_unsafe = %sequencer_unsafe,
+                validator_unsafe = %validator_unsafe,
                 "derived L2 block parity pass processed"
             );
         }
@@ -431,15 +473,17 @@ mod tests {
 
     #[derive(Debug, Default)]
     struct MockL2BlockProvider {
-        latest: u64,
+        unsafe_head: u64,
+        safe_head: u64,
         blocks: BTreeMap<u64, L2BlockSnapshot>,
         fail_blocks: BTreeSet<u64>,
     }
 
     impl MockL2BlockProvider {
-        fn new(latest: u64, blocks: impl IntoIterator<Item = L2BlockSnapshot>) -> Self {
+        fn new(unsafe_head: u64, blocks: impl IntoIterator<Item = L2BlockSnapshot>) -> Self {
             Self {
-                latest,
+                unsafe_head,
+                safe_head: unsafe_head,
                 blocks: blocks.into_iter().map(|block| (block.number, block)).collect(),
                 fail_blocks: BTreeSet::new(),
             }
@@ -453,8 +497,12 @@ mod tests {
 
     #[async_trait]
     impl L2BlockProvider for Arc<Mutex<MockL2BlockProvider>> {
-        async fn latest_block_number(&self) -> eyre::Result<u64> {
-            Ok(self.lock().await.latest)
+        async fn unsafe_block_number(&self) -> eyre::Result<u64> {
+            Ok(self.lock().await.unsafe_head)
+        }
+
+        async fn safe_block_number(&self) -> eyre::Result<u64> {
+            Ok(self.lock().await.safe_head)
         }
 
         async fn block_by_number(&self, number: u64) -> eyre::Result<Option<L2BlockSnapshot>> {
@@ -557,7 +605,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn verification_backlog_counts_blocks_left_below_the_common_head() {
+    async fn verification_backlog_counts_blocks_left_below_the_common_unsafe_head() {
         let sequencer = Arc::new(Mutex::new(MockL2BlockProvider::new(9, [])));
         let validator = Arc::new(Mutex::new(MockL2BlockProvider::new(9, [])));
         let config = L2BlockParityMonitorConfig::new(7, Duration::from_secs(1));
@@ -565,9 +613,10 @@ mod tests {
 
         // Blocks 7, 8 and 9 are comparable and none has been compared yet.
         assert_eq!(monitor.verification_backlog(9), 3);
-        // Caught up: the cursor sits one past the common head.
+        // Caught up: the cursor sits one past the common unsafe head.
         assert_eq!(monitor.verification_backlog(6), 0);
-        // A common head below the cursor is a validator that has not caught up, not backlog.
+        // A common unsafe head below the cursor is a validator that has not caught up,
+        // not backlog.
         assert_eq!(monitor.verification_backlog(2), 0);
     }
 

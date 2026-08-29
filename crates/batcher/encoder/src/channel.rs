@@ -66,13 +66,25 @@ pub enum ChannelCloseReason {
 }
 
 impl ChannelCloseReason {
-    /// Returns the bounded metric label for this reason.
-    pub const fn metric_label(self) -> &'static str {
+    /// Returns the label for `channel_closed_total`.
+    ///
+    /// Both size-driven closes collapse onto `size_full` because that series predates the
+    /// soft-target and protocol-limit split. Use [`Self::cause_label`] for the finer view.
+    pub const fn reason_label(self) -> &'static str {
         match self {
-            Self::SoftTarget => BatcherMetrics::REASON_SOFT_TARGET,
-            Self::ProtocolLimit => BatcherMetrics::REASON_PROTOCOL_LIMIT,
+            Self::SoftTarget | Self::ProtocolLimit => BatcherMetrics::REASON_SIZE_FULL,
             Self::Timeout => BatcherMetrics::REASON_TIMEOUT,
-            Self::Flush => BatcherMetrics::REASON_FLUSH,
+            Self::Flush => BatcherMetrics::REASON_FORCE,
+        }
+    }
+
+    /// Returns the label for `channel_close_cause_total`.
+    pub const fn cause_label(self) -> &'static str {
+        match self {
+            Self::SoftTarget => BatcherMetrics::CAUSE_SOFT_TARGET,
+            Self::ProtocolLimit => BatcherMetrics::CAUSE_PROTOCOL_LIMIT,
+            Self::Timeout => BatcherMetrics::CAUSE_TIMEOUT,
+            Self::Flush => BatcherMetrics::CAUSE_FLUSH,
         }
     }
 }

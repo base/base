@@ -13,7 +13,6 @@ base_metrics::define_metrics! {
     tx_gas_bump_count: counter,
     #[describe("Send-loop latency in milliseconds")]
     #[label(name)]
-    #[label(name = "outcome")]
     tx_send_latency_ms: histogram,
     #[describe("Current nonce value")]
     #[label(name)]
@@ -39,6 +38,19 @@ base_metrics::define_metrics! {
     #[describe("Number of failed send attempts (includes timeouts where the tx may still confirm)")]
     #[label(name)]
     tx_failed_count: counter,
+
+    // ======================================================================
+    // TEMPORARY — shadow base-batcher rollout
+    //
+    // Feeding the shadow batcher Datadog dashboard on Zeronet. Duplicates
+    // `tx_send_latency_ms` above rather than adding a label to it, because this
+    // crate also backs the proposer, challenger and TEE registrar. Revisit once
+    // the rollout ends, either folding it in with the owners or dropping it.
+    // ======================================================================
+    #[describe("Send-loop latency in milliseconds, split by how the send ended")]
+    #[label(name)]
+    #[label(name = "outcome")]
+    tx_send_latency_by_outcome_ms: histogram,
 }
 
 /// How a send loop ended.
@@ -177,7 +189,9 @@ impl TxMetrics for BaseTxMetrics {
     }
 
     fn record_send_latency(&self, latency_ms: u64, outcome: SendOutcome) {
-        TxManagerMetrics::tx_send_latency_ms(self.name, outcome.as_str()).record(latency_ms as f64);
+        TxManagerMetrics::tx_send_latency_ms(self.name).record(latency_ms as f64);
+        TxManagerMetrics::tx_send_latency_by_outcome_ms(self.name, outcome.as_str())
+            .record(latency_ms as f64);
     }
 
     fn record_current_nonce(&self, nonce: u64) {
