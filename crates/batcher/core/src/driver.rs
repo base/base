@@ -352,9 +352,6 @@ where
     }
 
     /// Drop buffered pipeline state, recording why it was dropped.
-    ///
-    /// Every reset re-encodes and re-submits blocks that were already paid for on L1, so a
-    /// pipeline looping here burns DA fees while every other signal stays healthy.
     fn reset_pipeline(&mut self, reason: &'static str) {
         BatcherMetrics::pipeline_reset_total(reason).increment(1);
         self.submissions.discard();

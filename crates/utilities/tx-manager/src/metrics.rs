@@ -54,10 +54,6 @@ base_metrics::define_metrics! {
 }
 
 /// How a send loop ended.
-///
-/// A send that gives up waits out the full send timeout, so its latency is bounded by
-/// configuration rather than by the chain. Keeping the two apart stops that ceiling from
-/// dominating the quantiles of sends that actually confirmed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SendOutcome {
     /// The transaction reached the required confirmation depth.

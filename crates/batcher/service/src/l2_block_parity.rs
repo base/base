@@ -244,9 +244,9 @@ where
     ///
     /// Measured against the common unsafe head because a pass never walks past
     /// `min(sequencer, validator)`: a validator trailing the sequencer is already reported by
-    /// `lag_blocks`, so what is left here is the monitor's own progress. It grows only
-    /// while the cursor is parked on a block it cannot fetch, which is otherwise
-    /// indistinguishable from a healthy run that simply found no mismatch.
+    /// `lag_blocks`, so what is left here is the monitor's own progress. A pass advances by
+    /// at most `max_blocks_per_tick`, so this grows both while the monitor is catching up
+    /// and while the cursor is parked on a block it cannot fetch.
     pub const fn verification_backlog(&self, common_unsafe: u64) -> u64 {
         common_unsafe.saturating_add(1).saturating_sub(self.next_block)
     }
