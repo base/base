@@ -512,9 +512,8 @@ fn skip_or_fail(address: Address, index: u64, error: ValidatorError) -> Result<(
             );
             Ok(())
         }
-        other => Err(other).wrap_err(format!(
-            "validation failed for game {address} at factory index {index}"
-        )),
+        other => Err(other)
+            .wrap_err(format!("validation failed for game {address} at factory index {index}")),
     }
 }
 
