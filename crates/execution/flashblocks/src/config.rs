@@ -9,8 +9,7 @@ use crate::FlashblocksState;
 pub struct FlashblocksConfig {
     /// The websocket endpoint that streams flashblock updates.
     pub websocket_url: Url,
-    /// Deprecated and ignored. Pending flashblocks are rebased onto the current canonical tip.
-    /// Kept so existing [`Self::new`] call sites remain source-compatible.
+    /// Maximum number of pending blocks retained ahead of the canonical tip.
     pub max_pending_blocks_depth: u64,
     /// Interval between upstream websocket ping frames.
     pub subscriber_ping_interval: Duration,

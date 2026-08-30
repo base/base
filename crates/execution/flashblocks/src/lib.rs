@@ -14,7 +14,7 @@ mod block_assembler;
 pub use block_assembler::{AssembledBlock, BlockAssembler};
 
 mod cache;
-pub use cache::FlashblockCache;
+pub use cache::{CachedPayload, CachedPayloadFlashblocks, CachedPayloads, FlashblockCache};
 
 mod error;
 pub use error::{

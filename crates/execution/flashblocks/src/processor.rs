@@ -142,10 +142,10 @@ impl StateUpdate {
             };
         }
 
-        // A canonical notification can race ahead of provider visibility. Processing it would
-        // rebase against state that cannot be read yet, so leave the tip-aligned snapshot intact.
+        // A canonical notification can race ahead of provider visibility. The existing snapshot
+        // is already stale once the notification arrives, so clear it and wait for a tip child.
         if matches!(self, Self::Canonical(block) if block.number > best_number) {
-            return UpdatePreflight::Skip;
+            return UpdatePreflight::EnterRecovery;
         }
 
         // A canonical tip update can rebase pending. A flashblock cannot safely extend a snapshot
@@ -180,6 +180,7 @@ pub struct StateProcessor<Client> {
     cache: Arc<Mutex<FlashblockCache>>,
     live_state: StdMutex<Option<LivePendingState>>,
     quarantined_flashblock: StdMutex<Option<(BlockNumber, PayloadId)>>,
+    max_pending_blocks_depth: u64,
 }
 
 impl<Client> StateProcessor<Client>
@@ -222,6 +223,7 @@ where
     pub fn new(
         client: Client,
         pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
+        max_pending_blocks_depth: u64,
         rx: Arc<Mutex<UnboundedReceiver<StateUpdate>>>,
         sender: Sender<Arc<PendingBlocks>>,
     ) -> Self {
@@ -237,11 +239,18 @@ where
             cache: Arc::new(Mutex::new(cache)),
             live_state: StdMutex::new(None),
             quarantined_flashblock: StdMutex::new(None),
+            max_pending_blocks_depth,
         }
     }
 
     fn best_canonical_header(&self) -> Option<SealedHeader> {
         self.client.sealed_header_by_number_or_tag(BlockNumberOrTag::Latest).ok().flatten()
+    }
+
+    fn pending_tracks_canonical_tip(&self, pending: &PendingBlocks, best: &SealedHeader) -> bool {
+        pending.is_based_on_canonical(best.number(), best.hash())
+            && pending.latest_block_number().saturating_sub(best.number())
+                <= self.max_pending_blocks_depth
     }
 
     async fn enter_recovery(&self, best_number: u64) {
@@ -282,6 +291,10 @@ where
                 break best;
             }
             if provider_retries >= 20 {
+                let last_canonical =
+                    self.cache.lock().await.latest_canonical_number().unwrap_or_default();
+                self.enter_recovery(last_canonical).await;
+                *recovering = true;
                 Metrics::pending_stale_events_skipped().increment(1);
                 return None;
             }
@@ -297,13 +310,18 @@ where
         let pending_blocks = self.pending_blocks.load_full();
         let pending_is_based_on_best = pending_blocks
             .as_ref()
-            .is_some_and(|pending| pending.is_based_on_canonical(best.number(), best.hash()));
+            .is_some_and(|pending| self.pending_tracks_canonical_tip(pending, &best));
         if let (StateUpdate::Flashblock(flashblock), Some(pending)) =
             (update, pending_blocks.as_ref())
         {
             if flashblock.metadata.block_number == pending.latest_block_number()
                 && flashblock.payload_id != pending.latest_payload_id()
             {
+                if flashblock.index == 0 && update.is_recovery_resume(best.number(), best.hash()) {
+                    self.enter_recovery(best.number()).await;
+                    *recovering = true;
+                    return Some((best, true));
+                }
                 Metrics::pending_stale_events_skipped().increment(1);
                 return None;
             }
@@ -397,10 +415,7 @@ where
                                     recovering = true;
                                     continue;
                                 };
-                                if !pending.is_based_on_canonical(
-                                    current_best.number(),
-                                    current_best.hash(),
-                                ) {
+                                if !self.pending_tracks_canonical_tip(pending, &current_best) {
                                     self.enter_recovery(current_best.number()).await;
                                     recovering = true;
                                     continue;
@@ -515,10 +530,7 @@ where
         let mut provider_retries = 0;
         let result = loop {
             let result = self.process_flashblock(prev_pending_blocks.clone(), &flashblock);
-            if !cache_on_missing_canonical_header
-                && matches!(result, Err(StateProcessorError::Provider(_)))
-                && provider_retries < 20
-            {
+            if matches!(result, Err(StateProcessorError::Provider(_))) && provider_retries < 20 {
                 provider_retries += 1;
                 sleep(Duration::from_millis(25)).await;
                 continue;
@@ -534,7 +546,7 @@ where
                         self.enter_recovery(expected_best.number()).await;
                         return (false, true);
                     };
-                    if !pb.is_based_on_canonical(current_best.number(), current_best.hash()) {
+                    if !self.pending_tracks_canonical_tip(pb, &current_best) {
                         self.enter_recovery(current_best.number()).await;
                         return (false, true);
                     }
@@ -570,6 +582,11 @@ where
                         }
                         // we should ignore this error since it doesn't necessarily indicate a problem
                         return (false, false);
+                    }
+                    StateProcessorError::Provider(_) => {
+                        error!(message = "provider remained unavailable while processing flashblock", error = %e);
+                        self.enter_recovery(expected_best.number()).await;
+                        return (false, true);
                     }
                     _ => {}
                 }
@@ -1386,7 +1403,7 @@ mod tests {
     }
 
     #[test]
-    fn preflight_skips_canonical_ahead_of_provider_visibility() {
+    fn preflight_enters_recovery_for_canonical_ahead_of_provider_visibility() {
         let best = 100;
         let best_hash = B256::repeat_byte(0xAB);
         let block = BaseBlock {
@@ -1397,7 +1414,7 @@ mod tests {
 
         assert_eq!(
             StateUpdate::Canonical(block).preflight(Some((best, best_hash)), true, true, false),
-            UpdatePreflight::Skip
+            UpdatePreflight::EnterRecovery
         );
     }
 

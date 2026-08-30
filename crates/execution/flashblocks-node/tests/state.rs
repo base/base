@@ -1037,6 +1037,51 @@ async fn test_wrong_parent_quarantine_is_scoped_to_payload() {
 }
 
 #[tokio::test]
+async fn test_current_base_from_new_payload_replaces_pending() {
+    let test = FlashblocksBuilderTestHarness::new().await;
+    test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
+
+    let replacement_payload = PayloadId::new([9; 8]);
+    let mut replacement = FlashblockBuilder::new_base(&test).build();
+    replacement.payload_id = replacement_payload;
+    test.flashblocks.on_flashblock_received(replacement);
+
+    wait_until(
+        Duration::from_secs(5),
+        || {
+            test.flashblocks.get_pending_blocks().as_ref().is_some_and(|pending| {
+                pending.latest_payload_id() == replacement_payload
+                    && pending.latest_flashblock_index() == 0
+            })
+        },
+        "a new current payload base must replace abandoned pending state",
+    )
+    .await;
+
+    let mut replacement_delta = FlashblockBuilder::new(&test, 1)
+        .with_transactions(vec![test.build_transaction_to_send_eth(
+            Account::Alice,
+            Account::Bob,
+            100_000,
+        )])
+        .build();
+    replacement_delta.payload_id = replacement_payload;
+    test.flashblocks.on_flashblock_received(replacement_delta);
+
+    wait_until(
+        Duration::from_secs(5),
+        || {
+            test.flashblocks
+                .get_pending_blocks()
+                .as_ref()
+                .is_some_and(|pending| pending.pending_transaction_count() == 2)
+        },
+        "deltas from the replacement payload must extend pending state",
+    )
+    .await;
+}
+
+#[tokio::test]
 async fn test_wrong_internal_parent_does_not_extend_pending_sequence() {
     let test = FlashblocksBuilderTestHarness::new().await;
     test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
@@ -1070,6 +1115,24 @@ async fn test_wrong_internal_parent_does_not_extend_pending_sequence() {
                 .is_some_and(|pending| pending.latest_block_number() == 2)
         },
         "a corrected base must extend the pending sequence",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn test_pending_depth_remains_bounded_during_canonical_stall() {
+    let test = FlashblocksBuilderTestHarness::new().await;
+    for parent in 0..=5 {
+        test.send_flashblock(
+            FlashblockBuilder::new_base(&test).with_canonical_block_number(parent).build(),
+        )
+        .await;
+    }
+
+    wait_until(
+        Duration::from_secs(5),
+        || test.flashblocks.get_pending_blocks().is_none(),
+        "pending state must clear when it exceeds the configured depth",
     )
     .await;
 }

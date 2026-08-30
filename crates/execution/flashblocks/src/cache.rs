@@ -11,13 +11,28 @@ use base_common_flashblocks::Flashblock;
 /// to avoid unbounded memory growth during syncing.
 const MAX_CACHE_AHEAD_BLOCKS: u64 = 5;
 
+/// Flashblocks from one payload, keyed by their sequence index.
+pub type CachedPayloadFlashblocks = HashMap<u64, Flashblock>;
+
+/// Cached payload sequence number and its flashblocks.
+pub type CachedPayload = (u64, CachedPayloadFlashblocks);
+
+/// Cached payload attempts keyed by payload ID.
+pub type CachedPayloads = HashMap<PayloadId, CachedPayload>;
+
 /// Buffers flashblocks that arrive before their parent canonical block has been
 /// processed. Once the canonical block lands, the caller drains the
 /// corresponding entries and feeds them through normal execution.
 #[derive(Debug)]
 pub struct FlashblockCache {
     /// Flashblocks keyed by block number, payload ID, then flashblock index.
-    entries: HashMap<BlockNumber, HashMap<PayloadId, HashMap<u64, Flashblock>>>,
+    ///
+    /// Each payload stores the arrival sequence of its index-zero base so a
+    /// replacement build is preferred over an older, longer attempt.
+    entries: HashMap<BlockNumber, CachedPayloads>,
+
+    /// Monotonic sequence assigned to newly observed payload bases.
+    next_payload_sequence: u64,
 
     /// The latest canonical block number we have observed, used to decide
     /// whether a flashblock is close enough to cache.
@@ -27,7 +42,11 @@ pub struct FlashblockCache {
 impl FlashblockCache {
     /// Creates a new cache initialized with the given canonical block number.
     pub fn new(latest_canonical: BlockNumber) -> Self {
-        Self { entries: HashMap::new(), latest_canonical: Some(latest_canonical) }
+        Self {
+            entries: HashMap::new(),
+            next_payload_sequence: 0,
+            latest_canonical: Some(latest_canonical),
+        }
     }
 
     /// Returns `true` when the flashblock is cached.
@@ -40,7 +59,7 @@ impl FlashblockCache {
         self.entries
             .get(&block_number)
             .and_then(|by_payload| by_payload.get(&payload_id))
-            .and_then(|by_index| by_index.get(&index))
+            .and_then(|(_, by_index)| by_index.get(&index))
             .is_some()
     }
 
@@ -65,34 +84,47 @@ impl FlashblockCache {
         }
         let min_block_number_to_retain = block_number.saturating_sub(MAX_CACHE_AHEAD_BLOCKS);
         self.entries.retain(|&bn, _| bn > min_block_number_to_retain);
-        self.entries
-            .entry(block_number)
-            .or_default()
-            .entry(flashblock.payload_id)
-            .or_default()
-            .insert(flashblock.index, flashblock);
+        let by_payload = self.entries.entry(block_number).or_default();
+        let payload = by_payload.entry(flashblock.payload_id).or_insert_with(|| {
+            self.next_payload_sequence = self.next_payload_sequence.saturating_add(1);
+            (self.next_payload_sequence, HashMap::new())
+        });
+        if flashblock.index == 0 && !payload.1.is_empty() {
+            self.next_payload_sequence = self.next_payload_sequence.saturating_add(1);
+            payload.0 = self.next_payload_sequence;
+        }
+        payload.1.insert(flashblock.index, flashblock);
         true
     }
 
-    /// Drains the most complete cached payload whose base names `parent_hash`.
+    /// Drains the newest cached payload whose base names `parent_hash`.
     ///
-    /// Flashblocks from different payload IDs are never combined.
+    /// Flashblocks from different payload IDs are never combined, and older
+    /// alternatives remain cached until one can be replayed successfully.
     pub fn drain(&mut self, block_number: BlockNumber, parent_hash: B256) -> Vec<Flashblock> {
-        let Some(by_payload) = self.entries.remove(&block_number) else {
+        let Some(payload_id) = self.entries.get(&block_number).and_then(|by_payload| {
+            by_payload
+                .iter()
+                .filter(|(_, (_, by_index))| {
+                    by_index
+                        .get(&0)
+                        .and_then(|flashblock| flashblock.base.as_ref())
+                        .is_some_and(|base| base.parent_hash == parent_hash)
+                })
+                .max_by_key(|(_, (base_sequence, _))| *base_sequence)
+                .map(|(payload_id, _)| *payload_id)
+        }) else {
             return Vec::new();
         };
-        let Some(by_index) = by_payload
-            .into_values()
-            .filter(|by_index| {
-                by_index
-                    .get(&0)
-                    .and_then(|flashblock| flashblock.base.as_ref())
-                    .is_some_and(|base| base.parent_hash == parent_hash)
-            })
-            .max_by_key(HashMap::len)
-        else {
-            return Vec::new();
-        };
+        let by_index = self
+            .entries
+            .get_mut(&block_number)
+            .and_then(|by_payload| by_payload.remove(&payload_id))
+            .map(|(_, by_index)| by_index)
+            .unwrap_or_default();
+        if self.entries.get(&block_number).is_some_and(HashMap::is_empty) {
+            self.entries.remove(&block_number);
+        }
         let mut flashblocks: Vec<Flashblock> = by_index.into_values().collect();
         flashblocks.sort_by_key(|fb| fb.index);
         flashblocks
@@ -123,7 +155,7 @@ impl FlashblockCache {
     /// Returns the total number of individual flashblocks cached across all
     /// block numbers.
     pub fn total_flashblocks(&self) -> usize {
-        self.entries.values().flat_map(HashMap::values).map(HashMap::len).sum()
+        self.entries.values().flat_map(HashMap::values).map(|(_, by_index)| by_index.len()).sum()
     }
 }
 
@@ -204,7 +236,11 @@ mod tests {
 
     #[test]
     fn not_cacheable_without_canonical() {
-        let mut cache = FlashblockCache { entries: HashMap::new(), latest_canonical: None };
+        let mut cache = FlashblockCache {
+            entries: HashMap::new(),
+            next_payload_sequence: 0,
+            latest_canonical: None,
+        };
         assert!(!cache.is_cacheable(1));
         assert!(!cache.insert(make_flashblock(1, 0)));
     }
@@ -261,5 +297,26 @@ mod tests {
         let drained = cache.drain(11, B256::ZERO);
         assert_eq!(drained.len(), 2);
         assert!(drained.iter().all(|flashblock| flashblock.payload_id == PayloadId::new([1; 8])));
+    }
+
+    #[test]
+    fn newest_base_wins_over_longer_abandoned_payload() {
+        let mut cache = FlashblockCache::new(10);
+        for index in 0..3 {
+            let mut flashblock = make_flashblock(11, index);
+            flashblock.payload_id = PayloadId::new([1; 8]);
+            assert!(cache.insert(flashblock));
+        }
+        let mut replacement = make_flashblock(11, 0);
+        replacement.payload_id = PayloadId::new([2; 8]);
+        assert!(cache.insert(replacement));
+
+        let replacement = cache.drain(11, B256::ZERO);
+        assert_eq!(replacement.len(), 1);
+        assert_eq!(replacement[0].payload_id, PayloadId::new([2; 8]));
+
+        let abandoned = cache.drain(11, B256::ZERO);
+        assert_eq!(abandoned.len(), 3);
+        assert!(abandoned.iter().all(|flashblock| flashblock.payload_id == PayloadId::new([1; 8])));
     }
 }
