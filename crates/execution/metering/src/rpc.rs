@@ -81,9 +81,9 @@ where
     async fn meter_bundle(&self, bundle: Bundle) -> RpcResult<MeterBundleResponse> {
         debug!(num_transactions = &bundle.txs.len(), "Starting bundle metering");
 
-        // Simulate against latest canonical state. Flashblock pending state is
-        // intentionally unused: when that overlay lags, metering falls back to
-        // expensive database reads that can stall the node.
+        // Simulate against the latest canonical header and state for that
+        // header's hash. Do not pin state to `Number(n)`: reth routes numbered
+        // lookups through historical/DB state instead of the in-memory tip.
         let header = self
             .provider
             .sealed_header_by_number_or_tag(BlockNumberOrTag::Latest)
@@ -112,18 +112,17 @@ where
             )
         })?;
 
-        let state_provider =
-            self.provider.state_by_block_number_or_tag(BlockNumberOrTag::Latest).map_err(|e| {
-                error!(error = %e, "Failed to get state provider");
-                jsonrpsee::types::ErrorObjectOwned::owned(
-                    jsonrpsee::types::ErrorCode::InternalError.code(),
-                    format!("Failed to get state provider: {e}"),
-                    None::<()>,
-                )
-            })?;
+        let state_provider = self.provider.state_by_block_hash(header.hash()).map_err(|e| {
+            error!(error = %e, block_hash = %header.hash(), "Failed to get state provider");
+            jsonrpsee::types::ErrorObjectOwned::owned(
+                jsonrpsee::types::ErrorCode::InternalError.code(),
+                format!("Failed to get state provider: {e}"),
+                None::<()>,
+            )
+        })?;
 
         let parent_beacon_block_root = header.parent_beacon_block_root();
-        let l1_block_info = self.get_l1_block_info(BlockNumberOrTag::Latest)?;
+        let l1_block_info = self.get_l1_block_info(header.hash())?;
         let state_block_number = header.number;
 
         let output = meter_bundle(MeterBundleInput {
@@ -354,12 +353,12 @@ where
         + 'static,
 {
     /// Get L1 block info from the first transaction of a canonical block.
-    fn get_l1_block_info(&self, block_id: BlockNumberOrTag) -> RpcResult<L1BlockInfo> {
+    fn get_l1_block_info(&self, block_hash: B256) -> RpcResult<L1BlockInfo> {
         let first_tx = self
             .provider
-            .block_by_number_or_tag(block_id)
+            .block_by_hash(block_hash)
             .map_err(|e| {
-                error!(error = %e, block = ?block_id, "Failed to get block");
+                error!(error = %e, block_hash = %block_hash, "Failed to get block");
                 jsonrpsee::types::ErrorObjectOwned::owned(
                     jsonrpsee::types::ErrorCode::InternalError.code(),
                     format!("Failed to get block: {e}"),
@@ -369,7 +368,7 @@ where
             .ok_or_else(|| {
                 jsonrpsee::types::ErrorObjectOwned::owned(
                     jsonrpsee::types::ErrorCode::InvalidParams.code(),
-                    format!("Block not found: {block_id:?}"),
+                    format!("Block not found: {block_hash}"),
                     None::<()>,
                 )
             })?
@@ -379,7 +378,7 @@ where
             .ok_or_else(|| {
                 jsonrpsee::types::ErrorObjectOwned::owned(
                     jsonrpsee::types::ErrorCode::InvalidParams.code(),
-                    format!("Block has no transactions: {block_id:?}"),
+                    format!("Block has no transactions: {block_hash}"),
                     None::<()>,
                 )
             })?
