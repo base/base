@@ -146,6 +146,10 @@ impl Checkpoint {
             .map_err(|_| eyre!("intermediate root count does not fit u64"))?;
         let block_count =
             interval.checked_mul(root_count).ok_or_else(|| eyre!("proposal range overflow"))?;
+        // Upholds the invariant `target_block` relies on for its unchecked add.
+        starting_block
+            .checked_add(block_count)
+            .ok_or_else(|| eyre!("proposal target block overflow"))?;
 
         Ok(Self {
             index: 0,
