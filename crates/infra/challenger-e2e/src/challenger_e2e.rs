@@ -1,6 +1,6 @@
 //! Drives a real challenger binary against a throwaway fork of the target L1.
 
-use std::{sync::Arc, time::Duration};
+use std::{path::Path, sync::Arc, time::Duration};
 
 use alloy_node_bindings::{Anvil, AnvilInstance};
 use alloy_primitives::{Address, U256, hex};
@@ -16,7 +16,7 @@ use base_prover_service_protocol::ZkBackend;
 use base_tx_manager::{NoopTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
 use base_zk_fork_dispute::{Checkpoint, Config as ForkConfig};
 use clap::Parser;
-use eyre::{Context, Result, bail, ensure};
+use eyre::{Context, Result, bail, ensure, eyre};
 use tracing::{info, warn};
 use url::Url;
 
@@ -25,6 +25,11 @@ use crate::{config::Config, metrics::Scrape};
 /// Wei granted to each throwaway account on the fork. Orders of magnitude more
 /// than a dispute costs, and worthless outside the pod.
 const FUNDING_WEI: u128 = 100_000_000_000_000_000_000;
+
+/// Handshake file the driver writes to release the challenger sidecar, which
+/// blocks on it appearing. The sidecar hardcodes the same path, so this was
+/// never independently configurable.
+const CHALLENGER_ENV_FILE: &str = "/shared/challenger.env";
 
 /// A game the challenger has been observed to accept, plus its root count.
 #[derive(Debug, Clone, Copy)]
@@ -58,6 +63,7 @@ impl ChallengerE2e {
         let driver = PrivateKeySigner::random();
         let challenger = PrivateKeySigner::random();
 
+        // Held until the end of run(); the fork dies with this binding.
         let anvil = Self::spawn_fork(&config)?;
         let fork_url = anvil.endpoint_url();
         let provider: RootProvider = RootProvider::new_http(fork_url.clone());
@@ -75,7 +81,7 @@ impl ChallengerE2e {
 
         Self::stage_dual_proof(&config, &fork_url, &verifier, &provider, &driver, game_b).await?;
 
-        Self::release_challenger(&config, &fork_url, &challenger)?;
+        Self::release_challenger(&fork_url, &challenger)?;
         Self::await_first_scan(&config).await?;
 
         Self::assert_quiet_on_valid_games(&config).await?;
@@ -95,9 +101,6 @@ impl ChallengerE2e {
         )
         .await?;
 
-        // Anvil dies with the process anyway; the explicit drop documents that
-        // nothing above may outlive the fork.
-        drop(anvil);
         Ok(())
     }
 
@@ -165,12 +168,9 @@ impl ChallengerE2e {
                 continue;
             }
             let root_count = verifier.intermediate_output_roots(game.proxy).await?.len();
-            let Ok(root_count) = u64::try_from(root_count) else {
+            let Ok(root_count @ 1..) = u64::try_from(root_count) else {
                 continue;
             };
-            if root_count == 0 {
-                continue;
-            }
 
             info!(
                 game = %game.proxy,
@@ -232,7 +232,15 @@ impl ChallengerE2e {
         let tx_manager = SimpleTxManager::new(
             provider.clone(),
             SignerConfig::local(driver.clone()),
-            Self::tx_manager_config(),
+            TxManagerConfig {
+                num_confirmations: 1,
+                resubmission_timeout: Duration::from_secs(10),
+                receipt_query_interval: Duration::from_secs(1),
+                tx_send_timeout: Duration::from_secs(180),
+                tx_not_in_mempool_timeout: Duration::from_secs(30),
+                confirmation_timeout: Duration::from_secs(120),
+                ..Default::default()
+            },
             chain_id,
             Arc::new(NoopTxMetrics),
         )
@@ -269,11 +277,7 @@ impl ChallengerE2e {
     /// blocked on this file appearing.
     ///
     /// Written via a rename so the sidecar can never source a partial file.
-    fn release_challenger(
-        config: &Config,
-        fork_url: &Url,
-        signer: &PrivateKeySigner,
-    ) -> Result<()> {
+    fn release_challenger(fork_url: &Url, signer: &PrivateKeySigner) -> Result<()> {
         // Sourced after /envmapper/mapping.env, so these override the
         // config-service values for the run.
         let contents = format!(
@@ -282,7 +286,7 @@ impl ChallengerE2e {
             hex::encode_prefixed(signer.to_bytes())
         );
 
-        let path = &config.challenger_env_file;
+        let path = Path::new(CHALLENGER_ENV_FILE);
         let staging = path.with_extension("tmp");
         std::fs::write(&staging, contents)
             .with_context(|| format!("failed to write {}", staging.display()))?;
@@ -451,7 +455,7 @@ impl ChallengerE2e {
 
         let mut nonce = provider.get_transaction_count(challenger.address()).await?;
 
-        let tee_cleared = Self::poll_until(
+        Self::poll_until(
             config,
             config.dispute_timeout,
             "the challenger to TEE-nullify the dual-proof game",
@@ -459,10 +463,7 @@ impl ChallengerE2e {
                 Ok((verifier.tee_prover(game.address).await? == Address::ZERO).then_some(()))
             },
         )
-        .await;
-        if let Err(error) = tee_cleared {
-            return Err(Self::annotate_timeout(error, config).await);
-        }
+        .await?;
         nonce = Self::assert_challenger_acted(
             provider,
             challenger,
@@ -472,7 +473,7 @@ impl ChallengerE2e {
         .await?;
         info!(game = %game.address, "Path 4: TEE proof nullified");
 
-        let zk_cleared = Self::poll_until(
+        Self::poll_until(
             config,
             config.dispute_timeout,
             "the challenger to ZK-nullify the remaining proof",
@@ -480,10 +481,7 @@ impl ChallengerE2e {
                 Ok((verifier.zk_prover(game.address).await? == Address::ZERO).then_some(()))
             },
         )
-        .await;
-        if let Err(error) = zk_cleared {
-            return Err(Self::annotate_timeout(error, config).await);
-        }
+        .await?;
         Self::assert_challenger_acted(
             provider,
             challenger,
@@ -510,7 +508,7 @@ impl ChallengerE2e {
     ) -> Result<Path1Outcome> {
         let nonce_before = provider.get_transaction_count(challenger.address()).await?;
 
-        let disputed = Self::poll_until(
+        let outcome = Self::poll_until(
             config,
             config.dispute_timeout,
             "the challenger to dispute the corrupted game",
@@ -525,11 +523,7 @@ impl ChallengerE2e {
                 Ok(None)
             },
         )
-        .await;
-        let outcome = match disputed {
-            Ok(outcome) => outcome,
-            Err(error) => return Err(Self::annotate_timeout(error, config).await),
-        };
+        .await?;
 
         let label = match outcome {
             Path1Outcome::TeeNullify => "nullified via TEE proof",
@@ -611,18 +605,6 @@ impl ChallengerE2e {
         }
     }
 
-    fn tx_manager_config() -> TxManagerConfig {
-        TxManagerConfig {
-            num_confirmations: 1,
-            resubmission_timeout: Duration::from_secs(10),
-            receipt_query_interval: Duration::from_secs(1),
-            tx_send_timeout: Duration::from_secs(180),
-            tx_not_in_mempool_timeout: Duration::from_secs(30),
-            confirmation_timeout: Duration::from_secs(120),
-            ..Default::default()
-        }
-    }
-
     /// Polls `check` every `poll_interval` until it yields a value or `budget`
     /// elapses.
     async fn poll_until<T, F, Fut>(
@@ -656,10 +638,11 @@ impl ChallengerE2e {
             Ok(result) => result,
             Err(_) => {
                 let msg = format!("timed out after {budget:?} waiting for {waiting_for}");
-                match last_error {
-                    Some(error) => Err(error.wrap_err(msg)),
-                    None => bail!("{msg}"),
-                }
+                let error = match last_error {
+                    Some(error) => error.wrap_err(msg),
+                    None => eyre!("{msg}"),
+                };
+                Err(Self::annotate_timeout(error, config).await)
             }
         }
     }

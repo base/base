@@ -32,11 +32,8 @@ impl Scrape {
     /// never been incremented is not exported at all, and that is the same
     /// thing as "it did not happen".
     pub fn sum(&self, name: &str) -> f64 {
-        self.series
-            .iter()
-            .filter(|(series_name, ..)| series_name == name)
-            .map(|(.., value)| value)
-            .sum()
+        // Every string contains "", so this matches the name alone.
+        self.label_sum(name, "")
     }
 
     /// Sum of every series sharing `name` whose label set mentions `label`.

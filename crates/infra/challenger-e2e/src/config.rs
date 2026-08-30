@@ -5,7 +5,7 @@
 //! forks exactly the L1 the challenger is configured against. The
 //! `CHALLENGER_E2E_*` variables belong to the driver alone.
 
-use std::{path::PathBuf, time::Duration};
+use std::time::Duration;
 
 use alloy_primitives::Address;
 use clap::Parser;
@@ -42,14 +42,6 @@ pub struct Config {
     /// for the keychain signer sidecar.
     #[arg(long = "anvil-port", env = "CHALLENGER_E2E_ANVIL_PORT", default_value = "18545")]
     pub anvil_port: u16,
-
-    /// File the driver writes to release the challenger sidecar.
-    #[arg(
-        long = "challenger-env-file",
-        env = "CHALLENGER_E2E_CHALLENGER_ENV_FILE",
-        default_value = "/shared/challenger.env"
-    )]
-    pub challenger_env_file: PathBuf,
 
     /// Prometheus endpoint of the challenger under test.
     #[arg(

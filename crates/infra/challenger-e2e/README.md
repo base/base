@@ -69,7 +69,6 @@ is pointed at and talks to the same prover-service.
 | `BASE_CHALLENGER_DISPUTE_GAME_FACTORY_ADDR` | Yes | `DisputeGameFactory` on L1 |
 | `BASE_CHALLENGER_GAME_TYPE` | Yes | `AggregateVerifier` game type |
 | `CHALLENGER_E2E_ANVIL_PORT` | No (default `18545`) | Fork port; not 8545, which the production challenger reserves for its signer sidecar |
-| `CHALLENGER_E2E_CHALLENGER_ENV_FILE` | No (default `/shared/challenger.env`) | Written to release the challenger sidecar |
 | `CHALLENGER_E2E_CHALLENGER_METRICS_URL` | No (default `http://127.0.0.1:7300/metrics`) | Prometheus endpoint of the challenger under test |
 | `CHALLENGER_E2E_GAME_LOOKBACK` | No (default `50`) | Factory indices searched for two games to corrupt |
 | `CHALLENGER_E2E_STARTUP_TIMEOUT` | No (default `5m`) | Budget for the fork and the first scan |
