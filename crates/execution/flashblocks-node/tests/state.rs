@@ -1082,6 +1082,49 @@ async fn test_current_base_from_new_payload_replaces_pending() {
 }
 
 #[tokio::test]
+async fn test_new_payload_replaces_latest_block_of_pending_chain() {
+    let test = FlashblocksBuilderTestHarness::new().await;
+    test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
+
+    let block_two = FlashblockBuilder::new_base(&test).with_canonical_block_number(1).build();
+    test.send_flashblock(block_two.clone()).await;
+
+    let replacement_payload = PayloadId::new([8; 8]);
+    let mut replacement = block_two;
+    replacement.payload_id = replacement_payload;
+    test.flashblocks.on_flashblock_received(replacement);
+
+    wait_until(
+        Duration::from_secs(5),
+        || {
+            test.flashblocks.get_pending_blocks().as_ref().is_some_and(|pending| {
+                pending.earliest_block_number() == 1
+                    && pending.latest_block_number() == 2
+                    && pending.latest_payload_id() == replacement_payload
+            })
+        },
+        "a replacement payload must rebuild the latest pending suffix",
+    )
+    .await;
+
+    let mut replacement_delta =
+        FlashblockBuilder::new(&test, 1).with_canonical_block_number(1).build();
+    replacement_delta.payload_id = replacement_payload;
+    test.flashblocks.on_flashblock_received(replacement_delta);
+    wait_until(
+        Duration::from_secs(5),
+        || {
+            test.flashblocks
+                .get_pending_blocks()
+                .as_ref()
+                .is_some_and(|pending| pending.latest_flashblock_index() == 1)
+        },
+        "the replacement payload must accept its following deltas",
+    )
+    .await;
+}
+
+#[tokio::test]
 async fn test_wrong_internal_parent_does_not_extend_pending_sequence() {
     let test = FlashblocksBuilderTestHarness::new().await;
     test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;

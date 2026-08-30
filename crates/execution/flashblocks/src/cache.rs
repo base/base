@@ -11,6 +11,12 @@ use base_common_flashblocks::Flashblock;
 /// to avoid unbounded memory growth during syncing.
 const MAX_CACHE_AHEAD_BLOCKS: u64 = 5;
 
+/// Maximum payload attempts retained for one block number.
+const MAX_PAYLOADS_PER_BLOCK: usize = 8;
+
+/// Maximum flashblock indices retained for one payload attempt.
+const MAX_FLASHBLOCKS_PER_PAYLOAD: u64 = 64;
+
 /// Flashblocks from one payload, keyed by their sequence index.
 pub type CachedPayloadFlashblocks = HashMap<u64, Flashblock>;
 
@@ -79,12 +85,21 @@ impl FlashblockCache {
     /// because its block number exceeds the cache-ahead limit.
     pub fn insert(&mut self, flashblock: Flashblock) -> bool {
         let block_number = flashblock.metadata.block_number;
-        if !self.is_cacheable(block_number) {
+        if !self.is_cacheable(block_number) || flashblock.index >= MAX_FLASHBLOCKS_PER_PAYLOAD {
             return false;
         }
         let min_block_number_to_retain = block_number.saturating_sub(MAX_CACHE_AHEAD_BLOCKS);
         self.entries.retain(|&bn, _| bn > min_block_number_to_retain);
         let by_payload = self.entries.entry(block_number).or_default();
+        if !by_payload.contains_key(&flashblock.payload_id)
+            && by_payload.len() >= MAX_PAYLOADS_PER_BLOCK
+            && let Some(oldest) = by_payload
+                .iter()
+                .min_by_key(|(_, (base_sequence, _))| *base_sequence)
+                .map(|(payload_id, _)| *payload_id)
+        {
+            by_payload.remove(&oldest);
+        }
         let payload = by_payload.entry(flashblock.payload_id).or_insert_with(|| {
             self.next_payload_sequence = self.next_payload_sequence.saturating_add(1);
             (self.next_payload_sequence, HashMap::new())
@@ -318,5 +333,26 @@ mod tests {
         let abandoned = cache.drain(11, B256::ZERO);
         assert_eq!(abandoned.len(), 3);
         assert!(abandoned.iter().all(|flashblock| flashblock.payload_id == PayloadId::new([1; 8])));
+    }
+
+    #[test]
+    fn cache_bounds_payload_attempts_and_indices() {
+        let mut cache = FlashblockCache::new(10);
+        for payload in 1u64..=9 {
+            let mut flashblock = make_flashblock(11, 0);
+            flashblock.payload_id = PayloadId::new(payload.to_be_bytes());
+            assert!(cache.insert(flashblock));
+        }
+
+        assert_eq!(cache.total_flashblocks(), MAX_PAYLOADS_PER_BLOCK);
+        let mut excessive_index = make_flashblock(11, MAX_FLASHBLOCKS_PER_PAYLOAD);
+        excessive_index.payload_id = PayloadId::new(9u64.to_be_bytes());
+        assert!(!cache.insert(excessive_index));
+
+        for expected in (2u64..=9).rev() {
+            let drained = cache.drain(11, B256::ZERO);
+            assert_eq!(drained[0].payload_id, PayloadId::new(expected.to_be_bytes()));
+        }
+        assert!(cache.is_empty());
     }
 }

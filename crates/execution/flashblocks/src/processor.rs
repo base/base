@@ -317,10 +317,13 @@ where
             if flashblock.metadata.block_number == pending.latest_block_number()
                 && flashblock.payload_id != pending.latest_payload_id()
             {
-                if flashblock.index == 0 && update.is_recovery_resume(best.number(), best.hash()) {
-                    self.enter_recovery(best.number()).await;
-                    *recovering = true;
-                    return Some((best, true));
+                if flashblock.index == 0
+                    && flashblock.base.as_ref().is_some_and(|base| {
+                        pending.expected_parent_hash(flashblock.metadata.block_number)
+                            == Some(base.parent_hash)
+                    })
+                {
+                    return Some((best, false));
                 }
                 Metrics::pending_stale_events_skipped().increment(1);
                 return None;
@@ -478,7 +481,7 @@ where
                                             recovering = true;
                                             break;
                                         }
-                                        if cached_resuming_recovery && applied {
+                                        if applied {
                                             recovering = false;
                                         }
                                         if recovering {
@@ -511,7 +514,7 @@ where
                         .await;
                     if requires_recovery {
                         recovering = true;
-                    } else if resuming_recovery && applied {
+                    } else if applied {
                         recovering = false;
                     }
                 }
@@ -766,6 +769,19 @@ where
                 return Err(StateProcessorError::MissingFirstFlashblock);
             }
         };
+
+        if flashblock.index == 0
+            && flashblock.metadata.block_number == pending_blocks.latest_block_number()
+            && flashblock.payload_id != pending_blocks.latest_payload_id()
+        {
+            let mut flashblocks = pending_blocks.get_flashblocks();
+            flashblocks.retain(|existing| {
+                existing.metadata.block_number < flashblock.metadata.block_number
+            });
+            flashblocks.push(flashblock.clone());
+            self.clear_live_state();
+            return self.build_pending_state(Some(Arc::clone(pending_blocks)), &flashblocks);
+        }
 
         let validation_result = FlashblockSequenceValidator::validate(
             pending_blocks.latest_block_number(),

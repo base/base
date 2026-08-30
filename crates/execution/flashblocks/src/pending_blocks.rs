@@ -464,6 +464,19 @@ impl PendingBlocks {
             .unwrap_or_default()
     }
 
+    /// Returns the expected parent hash for a pending block number.
+    #[inline]
+    pub fn expected_parent_hash(&self, block_number: BlockNumber) -> Option<B256> {
+        if block_number == self.earliest_block_number() {
+            return Some(self.parent_hash());
+        }
+        self.flashblocks
+            .iter()
+            .filter(|flashblock| flashblock.metadata.block_number.saturating_add(1) == block_number)
+            .last()
+            .map(|flashblock| flashblock.diff.block_hash)
+    }
+
     /// Returns the index of the latest flashblock.
     #[inline]
     pub const fn latest_flashblock_index(&self) -> u64 {
