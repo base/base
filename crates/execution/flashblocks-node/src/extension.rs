@@ -9,8 +9,12 @@ use base_flashblocks::{
 };
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use reth_chain_state::CanonStateSubscriptions;
-use tokio_stream::{StreamExt, wrappers::BroadcastStream};
-use tracing::info;
+use reth_provider::{BlockNumReader, BlockReader, TransactionVariant};
+use tokio_stream::{
+    StreamExt,
+    wrappers::{BroadcastStream, errors::BroadcastStreamRecvError},
+};
+use tracing::{info, warn};
 
 /// Helper struct that wires the Flashblocks feature (canonical subscription and RPC) into the node builder.
 #[derive(Debug)]
@@ -51,15 +55,39 @@ impl BaseNodeExtension for FlashblocksExtension {
             state_for_start.start(ctx.provider().clone());
             subscriber.start();
 
+            let provider = ctx.provider().clone();
             let mut canonical_stream =
-                BroadcastStream::new(ctx.provider().subscribe_to_canonical_state());
+                BroadcastStream::new(provider.subscribe_to_canonical_state());
             tokio::spawn(async move {
-                while let Some(Ok(notification)) = canonical_stream.next().await {
-                    let committed = notification.committed();
-                    for block in committed.blocks_iter() {
-                        state_for_canonical.on_canonical_block_received(block.as_ref().clone());
+                while let Some(result) = canonical_stream.next().await {
+                    match result {
+                        Ok(notification) => {
+                            let committed = notification.committed();
+                            for block in committed.blocks_iter() {
+                                state_for_canonical
+                                    .on_canonical_block_received(block.as_ref().clone());
+                            }
+                        }
+                        Err(BroadcastStreamRecvError::Lagged(skipped)) => {
+                            warn!(
+                                skipped,
+                                "canonical state subscription lagged; resynchronizing from provider"
+                            );
+                            let latest = provider.best_block_number().ok().and_then(|number| {
+                                provider
+                                    .recovered_block(number.into(), TransactionVariant::WithHash)
+                                    .ok()
+                                    .flatten()
+                            });
+                            if let Some(block) = latest {
+                                state_for_canonical.on_canonical_block_received(block);
+                            } else {
+                                warn!("canonical state subscription could not load provider tip");
+                            }
+                        }
                     }
                 }
+                warn!("canonical state subscription closed");
             });
 
             Ok(())

@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use alloy_consensus::{Header, Sealed};
 use alloy_network::BlockResponse;
 use alloy_primitives::{B256, U256};
+use alloy_rpc_types_engine::PayloadId;
 use base_common_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
@@ -983,20 +984,22 @@ async fn test_untracked_older_canonical_does_not_false_reorg() {
 }
 
 #[tokio::test]
-async fn test_wrong_parent_base_quarantines_following_deltas() {
+async fn test_wrong_parent_quarantine_is_scoped_to_payload() {
     let test = FlashblocksBuilderTestHarness::new().await;
     test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
 
     let mut wrong_parent = FlashblockBuilder::new_base(&test).build();
+    wrong_parent.payload_id = PayloadId::new([1; 8]);
     wrong_parent.base.as_mut().expect("base flashblock has a base payload").parent_hash =
         B256::repeat_byte(0x42);
-    let quarantined_delta = FlashblockBuilder::new(&test, 1)
+    let mut quarantined_delta = FlashblockBuilder::new(&test, 1)
         .with_transactions(vec![test.build_transaction_to_send_eth(
             Account::Alice,
             Account::Bob,
             50_000,
         )])
         .build();
+    quarantined_delta.payload_id = PayloadId::new([1; 8]);
 
     test.flashblocks.on_flashblock_received(wrong_parent);
     test.flashblocks.on_flashblock_received(quarantined_delta);
@@ -1010,7 +1013,6 @@ async fn test_wrong_parent_base_quarantines_following_deltas() {
         1
     );
 
-    test.flashblocks.on_flashblock_received(FlashblockBuilder::new_base(&test).build());
     test.flashblocks.on_flashblock_received(
         FlashblockBuilder::new(&test, 1)
             .with_transactions(vec![test.build_transaction_to_send_eth(
@@ -1029,7 +1031,29 @@ async fn test_wrong_parent_base_quarantines_following_deltas() {
                 .as_ref()
                 .is_some_and(|pending| pending.pending_transaction_count() == 2)
         },
-        "a valid base must release quarantine for its own deltas",
+        "a wrong build must not quarantine deltas from the accepted payload",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn test_current_base_immediately_recovers_stale_pending() {
+    let mut test = FlashblocksBuilderTestHarness::new().await;
+    test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
+
+    let block_one = test.new_canonical_block_without_processing(vec![]).await;
+    let current_base = FlashblockBuilder::new_base(&test).build();
+    test.flashblocks.on_flashblock_received(current_base);
+
+    wait_until(
+        Duration::from_secs(5),
+        || {
+            test.flashblocks.get_pending_blocks().as_ref().is_some_and(|pending| {
+                pending.earliest_block_number() == block_one.number + 1
+                    && pending.parent_hash() == block_one.hash()
+            })
+        },
+        "the flashblock that discovers stale pending must also resume recovery",
     )
     .await;
 }
