@@ -73,6 +73,14 @@ base_metrics::define_metrics! {
         ]
     )]
     pipeline_reset_total: counter,
+    #[describe(
+        "EIP-4844 blobs carried by one blob batch transaction, sampled once per submission attempt"
+    )]
+    blobs_per_tx: histogram,
+    #[describe(
+        "Share of one blob's frame capacity filled by its packed frames, sampled per blob per submission attempt"
+    )]
+    blob_fill_ratio: histogram,
 }
 
 impl BatcherMetrics {

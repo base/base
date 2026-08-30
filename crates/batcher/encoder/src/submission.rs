@@ -40,6 +40,15 @@ impl BlobPayload {
     pub fn frames(&self) -> &[Arc<Frame>] {
         &self.frames
     }
+
+    /// Returns the encoded frame bytes packed into this blob.
+    ///
+    /// Excludes the derivation-version prefix, so the result is directly comparable
+    /// to [`DaEgress::BLOB_CAPACITY`](crate::DaEgress::BLOB_CAPACITY), the budget the
+    /// packer fills.
+    pub fn frame_bytes(&self) -> usize {
+        self.frames.iter().map(|frame| frame.encoded_len()).sum()
+    }
 }
 
 /// Payload carried by one L1 batch transaction.

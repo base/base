@@ -4,8 +4,8 @@ use std::{future::Future, pin::Pin, sync::Arc};
 
 use alloy_primitives::{Address, Bytes, U256};
 use base_batcher_encoder::{
-    BatchPipeline, BatcherMetrics, BlobPayload, DaType, EncoderConfig, FrameEncoder, SubmissionId,
-    SubmissionPayload,
+    BatchPipeline, BatcherMetrics, BlobPayload, DaEgress, DaType, EncoderConfig, FrameEncoder,
+    SubmissionId, SubmissionPayload,
 };
 use base_blobs::{BlobEncodeError, BlobEncoder};
 use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
@@ -61,11 +61,7 @@ impl BatchTxCandidateBuilder {
         // Encode each packed payload independently; blob boundaries are already
         // fixed by the encoder and must remain visible to the transaction sidecar.
         for payload in payloads {
-            payload_size += 1 + payload
-                .frames()
-                .iter()
-                .map(|frame| BlobEncoder::FRAME_OVERHEAD + frame.data.len())
-                .sum::<usize>();
+            payload_size += 1 + payload.frame_bytes();
             blobs.push(BlobEncoder::encode_packed(payload.frames())?);
         }
 
@@ -150,6 +146,12 @@ impl<TM: TxManager> SubmissionQueue<TM> {
                     match BatchTxCandidateBuilder::blob_tx_candidate(self.inbox, payloads) {
                         Ok((candidate, payload_size)) => {
                             blob_payload_bytes = Some(payload_size);
+                            BatcherMetrics::blobs_per_tx().record(payloads.len() as f64);
+                            for payload in payloads {
+                                BatcherMetrics::blob_fill_ratio().record(
+                                    payload.frame_bytes() as f64 / DaEgress::BLOB_CAPACITY as f64,
+                                );
+                            }
                             candidate
                         }
                         Err(e) => {
