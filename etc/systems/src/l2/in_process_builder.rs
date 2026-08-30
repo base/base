@@ -146,6 +146,7 @@ impl InProcessBuilder {
         );
         let builder_config = BuilderConfig {
             block_time: config.block_time,
+            block_time_leeway: Duration::from_secs(20),
             flashblocks_ws_addr: SocketAddr::new(Ipv4Addr::LOCALHOST.into(), flashblocks_port),
             flashblocks_interval: Duration::from_millis(200),
             ..Default::default()

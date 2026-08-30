@@ -30,7 +30,7 @@ use base_upgrade_signal::{
     UpgradeSignalRuntimeApplier,
 };
 use eyre::{Result, WrapErr};
-use jsonrpsee::http_client::HttpClientBuilder;
+use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use tempfile::TempDir;
 use tokio::{
     task::JoinHandle,
@@ -95,6 +95,7 @@ pub struct InProcessConsensusConfig {
 /// A running in-process consensus node.
 pub struct InProcessConsensus {
     rpc_addr: SocketAddr,
+    rpc_client: HttpClient,
     p2p_tcp_port: u16,
     peer_id: String,
     _checkpoint_dir: TempDir,
@@ -277,8 +278,13 @@ impl InProcessConsensus {
             }
         }
 
+        let rpc_client = HttpClientBuilder::default()
+            .build(format!("http://{rpc_addr}"))
+            .wrap_err("Failed to build RPC client")?;
+
         Ok(Self {
             rpc_addr,
+            rpc_client,
             p2p_tcp_port,
             peer_id,
             _checkpoint_dir: checkpoint_dir,
@@ -291,13 +297,9 @@ impl InProcessConsensus {
     /// Retries the connection attempt because the P2P layer may not be fully ready immediately
     /// after the RPC endpoint becomes reachable.
     pub async fn connect_peer(&self, multiaddr: &str) -> Result<()> {
-        let client = HttpClientBuilder::default()
-            .build(self.rpc_url().as_str())
-            .wrap_err("Failed to build RPC client")?;
-
         let mut last_err = None;
         for attempt in 0..20 {
-            match client.opp2p_connect_peer(multiaddr.to_string()).await {
+            match self.rpc_client.opp2p_connect_peer(multiaddr.to_string()).await {
                 Ok(()) => {
                     info!(attempts = attempt + 1, "peer connected");
                     return Ok(());
@@ -317,17 +319,13 @@ impl InProcessConsensus {
     /// Use this after connecting peers when the consensus node was started with
     /// `sequencer_stopped: true` to ensure the validator receives all blocks from the start.
     pub async fn start_sequencer(&self) -> Result<()> {
-        let client = HttpClientBuilder::default()
-            .build(self.rpc_url().as_str())
-            .wrap_err("Failed to build RPC client")?;
-
         // The consensus node validates that the provided hash matches the engine's actual unsafe
         // head before activating the sequencer. Poll sync status until the engine is initialized
         // (non-zero unsafe head hash), then pass the real value.
         let mut last_sync_error = None;
         let unsafe_head = timeout(SEQUENCER_UNSAFE_HEAD_TIMEOUT, async {
             loop {
-                match client.sync_status().await {
+                match self.rpc_client.sync_status().await {
                     Ok(status) if status.unsafe_l2.block_info.hash != B256::ZERO => {
                         return status.unsafe_l2.block_info.hash;
                     }
@@ -347,11 +345,20 @@ impl InProcessConsensus {
             eyre::eyre!("Engine unsafe head did not initialize within 60s{suffix}")
         })?;
 
-        client
+        self.rpc_client
             .admin_start_sequencer(unsafe_head)
             .await
             .wrap_err("Failed to start sequencer via RPC")?;
         info!(unsafe_head = %unsafe_head, "sequencer started via admin RPC");
+        Ok(())
+    }
+
+    /// Stops the sequencer via the `admin_stopSequencer` RPC.
+    pub async fn stop_sequencer(&self) -> Result<()> {
+        self.rpc_client
+            .admin_stop_sequencer()
+            .await
+            .wrap_err("Failed to stop sequencer via RPC")?;
         Ok(())
     }
 

@@ -178,6 +178,7 @@ fn beacon_command(execution_endpoint: &str) -> Vec<String> {
         format!("--http-port={LIGHTHOUSE_HTTP_PORT}"),
         "--http-allow-origin=*".to_string(),
         "--target-peers=0".to_string(),
+        "--supernode".to_string(),
         format!("--execution-endpoint={execution_endpoint}"),
         format!("--execution-jwt={LIGHTHOUSE_JWT_PATH}"),
     ]
