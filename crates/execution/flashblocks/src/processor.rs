@@ -1,7 +1,7 @@
 //! Flashblocks state processor.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     sync::{Arc, Mutex as StdMutex, MutexGuard as StdMutexGuard},
     time::{Duration, Instant},
 };
@@ -44,6 +44,7 @@ use crate::{
 };
 
 type PendingExecutionDb = State<StateProviderDatabase<StateProviderBox>>;
+const MAX_QUARANTINED_PAYLOADS: usize = 8;
 
 #[derive(Debug)]
 struct LivePendingState {
@@ -179,7 +180,7 @@ pub struct StateProcessor<Client> {
     sender: Sender<Arc<PendingBlocks>>,
     cache: Arc<Mutex<FlashblockCache>>,
     live_state: StdMutex<Option<LivePendingState>>,
-    quarantined_flashblock: StdMutex<Option<(BlockNumber, PayloadId)>>,
+    quarantined_flashblocks: StdMutex<VecDeque<(BlockNumber, PayloadId)>>,
     max_pending_blocks_depth: u64,
 }
 
@@ -238,7 +239,7 @@ where
             sender,
             cache: Arc::new(Mutex::new(cache)),
             live_state: StdMutex::new(None),
-            quarantined_flashblock: StdMutex::new(None),
+            quarantined_flashblocks: StdMutex::new(VecDeque::new()),
             max_pending_blocks_depth,
         }
     }
@@ -258,7 +259,10 @@ where
         Metrics::pending_queue_recovery().increment(1);
         self.pending_blocks.swap(None);
         self.clear_live_state();
-        *self.quarantined_flashblock.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+        self.quarantined_flashblocks
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
         *self.cache.lock().await = FlashblockCache::new(best_number);
     }
 
@@ -266,17 +270,29 @@ where
         let StateUpdate::Flashblock(flashblock) = update else {
             return false;
         };
+        let identity = (flashblock.metadata.block_number, flashblock.payload_id);
         let mut quarantined =
-            self.quarantined_flashblock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        if *quarantined != Some((flashblock.metadata.block_number, flashblock.payload_id)) {
+            self.quarantined_flashblocks.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let Some(position) = quarantined.iter().position(|candidate| *candidate == identity) else {
             return false;
-        }
+        };
 
         if flashblock.index == 0 {
-            *quarantined = None;
+            quarantined.remove(position);
             false
         } else {
             true
+        }
+    }
+
+    fn quarantine_flashblock(&self, flashblock: &Flashblock) {
+        let identity = (flashblock.metadata.block_number, flashblock.payload_id);
+        let mut quarantined =
+            self.quarantined_flashblocks.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        quarantined.retain(|candidate| *candidate != identity);
+        quarantined.push_back(identity);
+        while quarantined.len() > MAX_QUARANTINED_PAYLOADS {
+            quarantined.pop_front();
         }
     }
 
@@ -314,19 +330,27 @@ where
         if let (StateUpdate::Flashblock(flashblock), Some(pending)) =
             (update, pending_blocks.as_ref())
         {
-            if flashblock.metadata.block_number == pending.latest_block_number()
-                && flashblock.payload_id != pending.latest_payload_id()
+            if pending_is_based_on_best
+                && let Some(payload_id) =
+                    pending.payload_id_for_block(flashblock.metadata.block_number)
             {
-                if flashblock.index == 0
-                    && flashblock.base.as_ref().is_some_and(|base| {
+                if flashblock.index == 0 {
+                    if flashblock.base.as_ref().is_none_or(|base| {
                         pending.expected_parent_hash(flashblock.metadata.block_number)
-                            == Some(base.parent_hash)
-                    })
-                {
-                    return Some((best, false));
+                            != Some(base.parent_hash)
+                    }) {
+                        self.quarantine_flashblock(flashblock);
+                        Metrics::pending_stale_events_skipped().increment(1);
+                        return None;
+                    }
+                    if flashblock.payload_id != payload_id {
+                        return Some((best, false));
+                    }
                 }
-                Metrics::pending_stale_events_skipped().increment(1);
-                return None;
+                if flashblock.payload_id != payload_id || flashblock.index == 0 {
+                    Metrics::pending_stale_events_skipped().increment(1);
+                    return None;
+                }
             }
 
             if pending_is_based_on_best
@@ -338,11 +362,7 @@ where
                     .as_ref()
                     .is_none_or(|base| base.parent_hash != pending.latest_block_hash())
             {
-                *self
-                    .quarantined_flashblock
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner()) =
-                    Some((flashblock.metadata.block_number, flashblock.payload_id));
+                self.quarantine_flashblock(flashblock);
                 Metrics::pending_stale_events_skipped().increment(1);
                 return None;
             }
@@ -372,11 +392,7 @@ where
                         best.hash(),
                     )
                 {
-                    *self
-                        .quarantined_flashblock
-                        .lock()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner()) =
-                        Some((flashblock.metadata.block_number, flashblock.payload_id));
+                    self.quarantine_flashblock(flashblock);
                 }
                 Metrics::pending_stale_events_skipped().increment(1);
                 None
@@ -771,16 +787,19 @@ where
         };
 
         if flashblock.index == 0
-            && flashblock.metadata.block_number == pending_blocks.latest_block_number()
-            && flashblock.payload_id != pending_blocks.latest_payload_id()
+            && let Some(payload_id) =
+                pending_blocks.payload_id_for_block(flashblock.metadata.block_number)
         {
+            if flashblock.payload_id == payload_id {
+                return Ok(prev_pending_blocks);
+            }
             let mut flashblocks = pending_blocks.get_flashblocks();
             flashblocks.retain(|existing| {
                 existing.metadata.block_number < flashblock.metadata.block_number
             });
             flashblocks.push(flashblock.clone());
             self.clear_live_state();
-            return self.build_pending_state(Some(Arc::clone(pending_blocks)), &flashblocks);
+            return self.build_pending_state(None, &flashblocks);
         }
 
         let validation_result = FlashblockSequenceValidator::validate(
@@ -868,6 +887,7 @@ where
 
         let mut live_state = self.lock_live_state();
         let Some(LivePendingState { mut db, state_overrides }) = live_state.take() else {
+            drop(live_state);
             warn!(
                 message = "live pending state unavailable, falling back to full rebuild",
                 block_number = flashblock.metadata.block_number,
@@ -1016,6 +1036,7 @@ where
 
         let mut live_state = self.lock_live_state();
         let Some(LivePendingState { mut db, state_overrides }) = live_state.take() else {
+            drop(live_state);
             warn!(
                 message = "live pending state unavailable, falling back to full rebuild",
                 block_number = flashblock.metadata.block_number,

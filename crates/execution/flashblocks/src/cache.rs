@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use alloy_primitives::{B256, BlockNumber};
 use alloy_rpc_types_engine::PayloadId;
-use base_common_flashblocks::Flashblock;
+use base_common_flashblocks::{Flashblock, MAX_DECOMPRESSED_FLASHBLOCK_BYTES};
 
 /// Maximum number of blocks ahead of the latest canonical block for which
 /// flashblocks may be cached. Flashblocks further ahead than this are rejected
@@ -15,7 +15,13 @@ const MAX_CACHE_AHEAD_BLOCKS: u64 = 5;
 const MAX_PAYLOADS_PER_BLOCK: usize = 8;
 
 /// Maximum flashblock indices retained for one payload attempt.
-const MAX_FLASHBLOCKS_PER_PAYLOAD: u64 = 64;
+const MAX_FLASHBLOCKS_PER_PAYLOAD: u64 = 16;
+
+/// Worst-case decoded bytes retained by the cache.
+const MAX_CACHE_BYTES: usize = 80 * 1024 * 1024;
+
+/// Maximum cached messages, derived from the decoder's per-message byte limit.
+const MAX_TOTAL_CACHED_FLASHBLOCKS: usize = MAX_CACHE_BYTES / MAX_DECOMPRESSED_FLASHBLOCK_BYTES;
 
 /// Flashblocks from one payload, keyed by their sequence index.
 pub type CachedPayloadFlashblocks = HashMap<u64, Flashblock>;
@@ -109,6 +115,26 @@ impl FlashblockCache {
             payload.0 = self.next_payload_sequence;
         }
         payload.1.insert(flashblock.index, flashblock);
+        while self.total_flashblocks() > MAX_TOTAL_CACHED_FLASHBLOCKS {
+            let oldest = self
+                .entries
+                .iter()
+                .flat_map(|(block_number, by_payload)| {
+                    by_payload.iter().map(move |(payload_id, (base_sequence, _))| {
+                        (*base_sequence, *block_number, *payload_id)
+                    })
+                })
+                .min_by_key(|(base_sequence, _, _)| *base_sequence);
+            let Some((_, oldest_block, oldest_payload)) = oldest else {
+                break;
+            };
+            if let Some(by_payload) = self.entries.get_mut(&oldest_block) {
+                by_payload.remove(&oldest_payload);
+                if by_payload.is_empty() {
+                    self.entries.remove(&oldest_block);
+                }
+            }
+        }
         true
     }
 
@@ -354,5 +380,24 @@ mod tests {
             assert_eq!(drained[0].payload_id, PayloadId::new(expected.to_be_bytes()));
         }
         assert!(cache.is_empty());
+    }
+
+    #[test]
+    fn cache_enforces_global_decoded_byte_budget() {
+        let mut cache = FlashblockCache::new(10);
+        for block_number in 11u64..=13 {
+            for payload in 1u64..=8 {
+                let mut flashblock = make_flashblock(block_number, 0);
+                flashblock.payload_id =
+                    PayloadId::new((block_number * 100 + payload).to_be_bytes());
+                assert!(cache.insert(flashblock));
+            }
+        }
+
+        assert!(cache.total_flashblocks() <= MAX_TOTAL_CACHED_FLASHBLOCKS);
+        assert_eq!(
+            MAX_TOTAL_CACHED_FLASHBLOCKS * MAX_DECOMPRESSED_FLASHBLOCK_BYTES,
+            MAX_CACHE_BYTES
+        );
     }
 }

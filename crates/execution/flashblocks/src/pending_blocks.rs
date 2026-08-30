@@ -454,6 +454,15 @@ impl PendingBlocks {
         self.flashblocks.iter().last().map(|flashblock| flashblock.payload_id).unwrap_or_default()
     }
 
+    /// Returns the payload ID represented for `block_number`.
+    #[inline]
+    pub fn payload_id_for_block(&self, block_number: BlockNumber) -> Option<PayloadId> {
+        self.flashblocks
+            .iter()
+            .find(|flashblock| flashblock.metadata.block_number == block_number)
+            .map(|flashblock| flashblock.payload_id)
+    }
+
     /// Returns the block hash reported by the latest flashblock.
     #[inline]
     pub fn latest_block_hash(&self) -> B256 {

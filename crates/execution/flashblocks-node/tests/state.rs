@@ -992,6 +992,10 @@ async fn test_wrong_parent_quarantine_is_scoped_to_payload() {
     wrong_parent.payload_id = PayloadId::new([1; 8]);
     wrong_parent.base.as_mut().expect("base flashblock has a base payload").parent_hash =
         B256::repeat_byte(0x42);
+    let mut second_wrong_parent = FlashblockBuilder::new_base(&test).build();
+    second_wrong_parent.payload_id = PayloadId::new([2; 8]);
+    second_wrong_parent.base.as_mut().expect("base flashblock has a base payload").parent_hash =
+        B256::repeat_byte(0x43);
     let mut quarantined_delta = FlashblockBuilder::new(&test, 1)
         .with_transactions(vec![test.build_transaction_to_send_eth(
             Account::Alice,
@@ -1002,6 +1006,7 @@ async fn test_wrong_parent_quarantine_is_scoped_to_payload() {
     quarantined_delta.payload_id = PayloadId::new([1; 8]);
 
     test.flashblocks.on_flashblock_received(wrong_parent);
+    test.flashblocks.on_flashblock_received(second_wrong_parent);
     test.flashblocks.on_flashblock_received(quarantined_delta);
     sleep(Duration::from_millis(100)).await;
     assert_eq!(
@@ -1082,6 +1087,30 @@ async fn test_current_base_from_new_payload_replaces_pending() {
 }
 
 #[tokio::test]
+async fn test_same_payload_base_retry_does_not_clear_deltas() {
+    let test = FlashblocksBuilderTestHarness::new().await;
+    let base = FlashblockBuilder::new_base(&test).build();
+    test.send_flashblock(base.clone()).await;
+    test.send_flashblock(
+        FlashblockBuilder::new(&test, 1)
+            .with_transactions(vec![test.build_transaction_to_send_eth(
+                Account::Alice,
+                Account::Bob,
+                100_000,
+            )])
+            .build(),
+    )
+    .await;
+
+    test.flashblocks.on_flashblock_received(base);
+    sleep(Duration::from_millis(100)).await;
+    let pending = test.flashblocks.get_pending_blocks();
+    let pending = pending.as_ref().expect("pending state remains published");
+    assert_eq!(pending.latest_flashblock_index(), 1);
+    assert_eq!(pending.pending_transaction_count(), 2);
+}
+
+#[tokio::test]
 async fn test_new_payload_replaces_latest_block_of_pending_chain() {
     let test = FlashblocksBuilderTestHarness::new().await;
     test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
@@ -1120,6 +1149,33 @@ async fn test_new_payload_replaces_latest_block_of_pending_chain() {
                 .is_some_and(|pending| pending.latest_flashblock_index() == 1)
         },
         "the replacement payload must accept its following deltas",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn test_new_payload_replaces_earlier_block_and_discards_suffix() {
+    let test = FlashblocksBuilderTestHarness::new().await;
+    let block_one = FlashblockBuilder::new_base(&test).build();
+    test.send_flashblock(block_one.clone()).await;
+    test.send_flashblock(FlashblockBuilder::new_base(&test).with_canonical_block_number(1).build())
+        .await;
+
+    let replacement_payload = PayloadId::new([7; 8]);
+    let mut replacement = block_one;
+    replacement.payload_id = replacement_payload;
+    test.flashblocks.on_flashblock_received(replacement);
+
+    wait_until(
+        Duration::from_secs(5),
+        || {
+            test.flashblocks.get_pending_blocks().as_ref().is_some_and(|pending| {
+                pending.earliest_block_number() == 1
+                    && pending.latest_block_number() == 1
+                    && pending.latest_payload_id() == replacement_payload
+            })
+        },
+        "replacing an earlier payload must discard its abandoned pending suffix",
     )
     .await;
 }
