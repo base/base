@@ -227,6 +227,7 @@ base-telemetry-service = { path = "crates/infra/telemetry" }
 base-shadow-metrics = { path = "crates/infra/shadow-metrics" }
 base-zk-benchmarks = { path = "crates/infra/zk-benchmarks" }
 base-zk-fork-dispute = { path = "crates/infra/zk-fork-dispute" }
+base-challenger-fort = { path = "crates/infra/challenger-fort" }
 
 # Proof
 base-proof-rpc = { path = "crates/proof/rpc" }
