@@ -50,7 +50,7 @@ base_metrics::define_metrics! {
     transaction_events_validation_failures: counter,
     #[describe("Transaction observability event database persistence failures")]
     transaction_events_database_failures: counter,
-    #[describe("Transaction observability database operations retried after a retryable error")]
+    #[describe("Retryable Postgres lock errors on transaction observability INSERT or expire DELETE")]
     #[label(name = "reason", default = ["deadlock", "serialization", "lock_timeout"])]
     transaction_events_persist_retries: counter,
     #[describe("Transaction observability HTTP ingest batch size")]

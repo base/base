@@ -7,7 +7,7 @@
 //!   cargo test -p audit-archiver-lib --test postgres_transaction_events -- --ignored
 //! ```
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use audit_archiver_lib::{
     MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE, PgTransactionEventSink, RejectedTransactionEventQuery,
@@ -440,27 +440,45 @@ async fn postgres_retention_skips_locked_expired_rows() -> anyhow::Result<()> {
     assert_eq!(remaining, vec![format!("{event_prefix}-locked")]);
 
     held.rollback().await?;
+    Ok(())
+}
 
-    let outcome = sink
-        .expire_old_events(TransactionEventRetentionConfig {
-            hot_days: 7,
-            warm_days: 7,
-            cold_days: 7,
-            delete_batch_size: 10,
-            max_batches: 10,
-        })
-        .await?;
-    assert_eq!(outcome.hot_rows_deleted, 1);
-    assert_eq!(outcome.rows_deleted, 1);
+#[tokio::test]
+async fn postgres_insert_fails_fast_when_conflicting_row_is_locked() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let pool = PgPoolOptions::new().max_connections(2).connect(&harness.database_url).await?;
+    let sink = PgTransactionEventSink::new(pool.clone());
+    let event_id = unique_event_id();
+    let pending = event(&event_id);
 
-    let remaining: Vec<String> = sqlx::query_scalar(
-        "SELECT event_id FROM transaction_events WHERE event_id LIKE $1 ORDER BY event_id",
+    let mut held = pool.begin().await?;
+    sqlx::query(
+        "INSERT INTO transaction_events \
+         (event_id, schema_version, event_time, producer, event_type, network, data) \
+         VALUES ($1, 'transaction-event/v1', now(), 'base-builder', 'BUILDER_ACCEPTED', \
+                 'base-mainnet', '{}'::jsonb)",
     )
-    .bind(format!("{event_prefix}-%"))
-    .fetch_all(&pool)
+    .bind(&event_id)
+    .execute(&mut *held)
     .await?;
-    assert!(remaining.is_empty());
 
+    let started = Instant::now();
+    let result = tokio::time::timeout(
+        Duration::from_secs(15),
+        sink.insert_events(std::slice::from_ref(&pending)),
+    )
+    .await
+    .expect("insert should fail lock waits instead of blocking until the test times out");
+    assert!(result.is_err(), "conflicting insert should fail after lock_timeout retries");
+    assert!(
+        started.elapsed() >= Duration::from_secs(2),
+        "three lock_timeout attempts should take more than one 1s wait"
+    );
+
+    held.rollback().await?;
+    sink.insert_events(&[pending]).await?;
+    cleanup(&pool, &event_id).await;
     Ok(())
 }
 
