@@ -1,6 +1,11 @@
 //! HTTP ingest path for transaction observability events.
 
-use std::{collections::HashSet, sync::Arc, time::Instant};
+use std::{
+    collections::HashSet,
+    hash::{BuildHasher, RandomState},
+    sync::Arc,
+    time::{Duration as WaitDuration, Instant},
+};
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -22,9 +27,9 @@ use serde::{
     },
 };
 use serde_json::Value;
-use sqlx::{PgPool, QueryBuilder, Row, migrate::Migrator, postgres::PgPoolOptions};
+use sqlx::{Connection, PgPool, QueryBuilder, Row, migrate::Migrator, postgres::PgPoolOptions};
 use tower_http::limit::RequestBodyLimitLayer;
-use tracing::error;
+use tracing::{error, warn};
 
 use crate::Metrics;
 
@@ -48,6 +53,12 @@ pub const DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES: usize = 8 * 1024 * 1024;
 /// Each row uses 12 bind parameters, so this stays below Postgres' 65,535 bind
 /// parameter limit with room for future columns.
 pub const MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE: usize = 5_000;
+
+/// Session `lock_timeout` applied to each persist INSERT and retention DELETE.
+const TRANSACTION_EVENT_LOCK_TIMEOUT_SQL: &str = "SET LOCAL lock_timeout = '1s'";
+
+/// Attempts per INSERT chunk or DELETE batch, including the first try.
+const TRANSACTION_EVENT_DB_MAX_ATTEMPTS: u32 = 3;
 
 /// Default days to keep high-volume proxy and builder-decision events.
 pub const DEFAULT_TRANSACTION_EVENT_HOT_RETENTION_DAYS: u32 = 3;
@@ -611,25 +622,17 @@ impl PgTransactionEventSink {
                 let cutoff = Utc::now() - Duration::days(i64::from(config.class_days(class)));
                 let event_types = class.event_type_labels();
                 while batches < u64::from(config.max_batches) {
-                    // Delete by ctid via Tid Scan so the batch is not a second
-                    // primary-key lookup. ANY(ARRAY(ctid)) keeps that plan as
-                    // catch-up shrinks the heap; USING ctid can seq-scan.
-                    let deleted = sqlx::query(
-                        "WITH doomed AS ( \
-                            SELECT ctid \
-                            FROM transaction_events \
-                            WHERE event_type = ANY($1) AND ingested_at < $2 \
-                            LIMIT $3 \
-                         ) \
-                         DELETE FROM transaction_events \
-                         WHERE ctid = ANY (ARRAY(SELECT ctid FROM doomed)::tid[])",
+                    let deleted = match delete_expired_event_batch_with_retry(
+                        lock.conn(),
+                        &event_types,
+                        cutoff,
+                        batch_size,
                     )
-                    .bind(&event_types)
-                    .bind(cutoff)
-                    .bind(batch_size)
-                    .execute(lock.conn())
-                    .await?
-                    .rows_affected();
+                    .await
+                    {
+                        Ok(deleted) => deleted,
+                        Err(err) => return Err(err),
+                    };
                     batches += 1;
                     if deleted == 0 {
                         break;
@@ -671,6 +674,14 @@ impl PgTransactionEventSink {
         &self,
         events: &[TransactionEvent],
     ) -> std::result::Result<HashSet<String>, TransactionEventStorageError> {
+        let ordered = events_sorted_by_event_id(events);
+        retry_persist(|| self.insert_ordered_event_chunk(&ordered)).await
+    }
+
+    async fn insert_ordered_event_chunk(
+        &self,
+        events: &[&TransactionEvent],
+    ) -> std::result::Result<HashSet<String>, TransactionEventStorageError> {
         let block_numbers: Vec<Option<i64>> = events
             .iter()
             .map(|event| {
@@ -689,7 +700,7 @@ impl PgTransactionEventSink {
         );
 
         query_builder.push_values(
-            events.iter().zip(block_numbers),
+            events.iter().copied().zip(block_numbers),
             |mut row, (event, block_number)| {
                 let tx_hash = event.tx_hash.map(|hash| format!("{hash:#x}"));
                 let block_hash = event.block_hash.map(|hash| format!("{hash:#x}"));
@@ -714,11 +725,21 @@ impl PgTransactionEventSink {
 
         query_builder.push(" ON CONFLICT (event_id) DO NOTHING RETURNING event_id");
 
-        let rows: Vec<(String,)> = query_builder
-            .build_query_as()
-            .fetch_all(&self.pool)
+        let mut tx = self
+            .pool
+            .begin()
             .await
             .map_err(|source| TransactionEventStorageError::new(source.into()))?;
+        sqlx::query(TRANSACTION_EVENT_LOCK_TIMEOUT_SQL)
+            .execute(&mut *tx)
+            .await
+            .map_err(|source| TransactionEventStorageError::new(source.into()))?;
+        let rows: Vec<(String,)> = query_builder
+            .build_query_as()
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(|source| TransactionEventStorageError::new(source.into()))?;
+        tx.commit().await.map_err(|source| TransactionEventStorageError::new(source.into()))?;
 
         Ok(rows.into_iter().map(|(event_id,)| event_id).collect())
     }
@@ -958,6 +979,145 @@ fn metric_len_u64(len: usize) -> u64 {
 
 fn metric_len_f64(len: usize) -> f64 {
     f64::from(u32::try_from(len).unwrap_or(u32::MAX))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PersistRetryReason {
+    Deadlock,
+    Serialization,
+    LockTimeout,
+}
+
+impl PersistRetryReason {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Deadlock => "deadlock",
+            Self::Serialization => "serialization",
+            Self::LockTimeout => "lock_timeout",
+        }
+    }
+}
+
+fn events_sorted_by_event_id(events: &[TransactionEvent]) -> Vec<&TransactionEvent> {
+    let mut ordered: Vec<&TransactionEvent> = events.iter().collect();
+    ordered.sort_unstable_by(|lhs, rhs| lhs.event_id.cmp(&rhs.event_id));
+    ordered
+}
+
+fn persist_retry_reason(err: &TransactionEventStorageError) -> Option<PersistRetryReason> {
+    err.source
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<sqlx::Error>().and_then(persist_retry_reason_sqlx))
+}
+
+fn persist_retry_reason_sqlx(err: &sqlx::Error) -> Option<PersistRetryReason> {
+    match err {
+        sqlx::Error::Database(database) => {
+            postgres_sqlstate_retry_reason(database.code().as_deref()?)
+        }
+        _ => None,
+    }
+}
+
+fn postgres_sqlstate_retry_reason(code: &str) -> Option<PersistRetryReason> {
+    match code {
+        "40P01" => Some(PersistRetryReason::Deadlock),
+        "40001" => Some(PersistRetryReason::Serialization),
+        "55P03" => Some(PersistRetryReason::LockTimeout),
+        _ => None,
+    }
+}
+
+fn persist_retry_backoff(attempt: u32) -> WaitDuration {
+    let jitter_ms = RandomState::new().hash_one(attempt) % 51;
+    WaitDuration::from_millis(25 * u64::from(attempt) + jitter_ms)
+}
+
+fn record_persist_retry(attempt: u32, reason: PersistRetryReason, err: &impl std::fmt::Display) {
+    warn!(
+        attempt,
+        reason = reason.as_str(),
+        error = %err,
+        "retrying transaction event database operation"
+    );
+    Metrics::transaction_events_persist_retries(reason.as_str()).increment(1);
+}
+
+async fn retry_persist<T, F, Fut>(mut op: F) -> std::result::Result<T, TransactionEventStorageError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = std::result::Result<T, TransactionEventStorageError>>,
+{
+    let mut attempt = 1u32;
+    loop {
+        match op().await {
+            Ok(value) => return Ok(value),
+            Err(err) => match persist_retry_reason(&err) {
+                Some(reason) if attempt < TRANSACTION_EVENT_DB_MAX_ATTEMPTS => {
+                    record_persist_retry(attempt, reason, &err);
+                    tokio::time::sleep(persist_retry_backoff(attempt)).await;
+                    attempt += 1;
+                }
+                _ => return Err(err),
+            },
+        }
+    }
+}
+
+async fn delete_expired_event_batch_with_retry(
+    conn: &mut sqlx::PgConnection,
+    event_types: &[String],
+    cutoff: DateTime<Utc>,
+    batch_size: i64,
+) -> Result<u64> {
+    let mut attempt = 1u32;
+    loop {
+        match delete_expired_event_batch(conn, event_types, cutoff, batch_size).await {
+            Ok(deleted) => return Ok(deleted),
+            Err(err) => match persist_retry_reason_sqlx(&err) {
+                Some(reason) if attempt < TRANSACTION_EVENT_DB_MAX_ATTEMPTS => {
+                    record_persist_retry(attempt, reason, &err);
+                    tokio::time::sleep(persist_retry_backoff(attempt)).await;
+                    attempt += 1;
+                }
+                _ => return Err(err.into()),
+            },
+        }
+    }
+}
+
+async fn delete_expired_event_batch(
+    conn: &mut sqlx::PgConnection,
+    event_types: &[String],
+    cutoff: DateTime<Utc>,
+    batch_size: i64,
+) -> std::result::Result<u64, sqlx::Error> {
+    let mut tx = conn.begin().await?;
+    sqlx::query(TRANSACTION_EVENT_LOCK_TIMEOUT_SQL).execute(&mut *tx).await?;
+    // Delete by ctid via Tid Scan so the batch is not a second primary-key
+    // lookup. ANY(ARRAY(ctid)) keeps that plan as catch-up shrinks the heap;
+    // USING ctid can seq-scan. FOR UPDATE SKIP LOCKED skips rows held by a
+    // concurrent writer instead of waiting. Do not ORDER BY ctid: that would
+    // sort every matching expired row before LIMIT on a large warm backlog.
+    let deleted = sqlx::query(
+        "WITH doomed AS ( \
+            SELECT ctid \
+            FROM transaction_events \
+            WHERE event_type = ANY($1) AND ingested_at < $2 \
+            FOR UPDATE SKIP LOCKED \
+            LIMIT $3 \
+         ) \
+         DELETE FROM transaction_events \
+         WHERE ctid = ANY (ARRAY(SELECT ctid FROM doomed)::tid[])",
+    )
+    .bind(event_types)
+    .bind(cutoff)
+    .bind(batch_size)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    tx.commit().await?;
+    Ok(deleted)
 }
 
 #[async_trait]
@@ -1297,11 +1457,19 @@ fn response_from_results(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
+    use std::{
+        borrow::Cow,
+        error::Error as StdError,
+        sync::{
+            Mutex,
+            atomic::{AtomicU32, Ordering},
+        },
+    };
 
     use axum::http::StatusCode;
     use chrono::Utc;
     use serde_json::{Map, json};
+    use sqlx::error::{DatabaseError, ErrorKind};
 
     use super::*;
 
@@ -1325,6 +1493,96 @@ mod tests {
                 }
             }
             Ok(TransactionEventInsertOutcome { inserted_event_ids })
+        }
+    }
+
+    #[derive(Debug)]
+    struct RetryableDbError {
+        code: &'static str,
+    }
+
+    impl std::fmt::Display for RetryableDbError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "retryable database error {}", self.code)
+        }
+    }
+
+    impl StdError for RetryableDbError {}
+
+    impl DatabaseError for RetryableDbError {
+        fn message(&self) -> &str {
+            self.code
+        }
+
+        fn code(&self) -> Option<Cow<'_, str>> {
+            Some(Cow::Borrowed(self.code))
+        }
+
+        fn kind(&self) -> ErrorKind {
+            ErrorKind::Other
+        }
+
+        fn as_error(&self) -> &(dyn StdError + Send + Sync + 'static) {
+            self
+        }
+
+        fn as_error_mut(&mut self) -> &mut (dyn StdError + Send + Sync + 'static) {
+            self
+        }
+
+        fn into_error(self: Box<Self>) -> Box<dyn StdError + Send + Sync + 'static> {
+            self
+        }
+    }
+
+    fn retryable_storage_error(code: &'static str) -> TransactionEventStorageError {
+        TransactionEventStorageError::new(
+            sqlx::Error::Database(Box::new(RetryableDbError { code })).into(),
+        )
+    }
+
+    #[derive(Debug)]
+    struct FlakySink {
+        remaining_failures: Mutex<u32>,
+        inner: FakeSink,
+    }
+
+    impl FlakySink {
+        fn fail_times(times: u32) -> Self {
+            Self { remaining_failures: Mutex::new(times), inner: FakeSink::default() }
+        }
+    }
+
+    #[async_trait]
+    impl TransactionEventSink for FlakySink {
+        async fn insert_events(
+            &self,
+            events: &[TransactionEvent],
+        ) -> std::result::Result<TransactionEventInsertOutcome, TransactionEventStorageError>
+        {
+            {
+                let mut remaining = self.remaining_failures.lock().unwrap();
+                if *remaining > 0 {
+                    *remaining -= 1;
+                    return Err(retryable_storage_error("40P01"));
+                }
+            }
+            self.inner.insert_events(events).await
+        }
+    }
+
+    struct RetryingSink<S> {
+        inner: S,
+    }
+
+    #[async_trait]
+    impl<S: TransactionEventSink> TransactionEventSink for RetryingSink<S> {
+        async fn insert_events(
+            &self,
+            events: &[TransactionEvent],
+        ) -> std::result::Result<TransactionEventInsertOutcome, TransactionEventStorageError>
+        {
+            retry_persist(|| self.inner.insert_events(events)).await
         }
     }
 
@@ -1460,6 +1718,123 @@ mod tests {
             TransactionEventRetentionConfig { max_batches: 0, ..Default::default() }
                 .validate()
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn sorts_insert_chunks_by_event_id() {
+        let later = TransactionEvent::new(
+            "z-event",
+            Utc::now(),
+            TransactionEventProducer::BaseBuilder,
+            TransactionEventType::BuilderAccepted,
+        );
+        let earlier = TransactionEvent::new(
+            "a-event",
+            Utc::now(),
+            TransactionEventProducer::BaseBuilder,
+            TransactionEventType::BuilderAccepted,
+        );
+        let events = [later, earlier];
+        let ordered = events_sorted_by_event_id(&events);
+        assert_eq!(ordered[0].event_id, "a-event");
+        assert_eq!(ordered[1].event_id, "z-event");
+    }
+
+    #[test]
+    fn classifies_retryable_postgres_sqlstates() {
+        assert_eq!(postgres_sqlstate_retry_reason("40P01"), Some(PersistRetryReason::Deadlock));
+        assert_eq!(
+            postgres_sqlstate_retry_reason("40001"),
+            Some(PersistRetryReason::Serialization)
+        );
+        assert_eq!(postgres_sqlstate_retry_reason("55P03"), Some(PersistRetryReason::LockTimeout));
+        assert_eq!(postgres_sqlstate_retry_reason("23505"), None);
+    }
+
+    #[test]
+    fn does_not_retry_pool_timeout() {
+        let err = TransactionEventStorageError::new(sqlx::Error::PoolTimedOut.into());
+        assert_eq!(persist_retry_reason(&err), None);
+    }
+
+    #[test]
+    fn persist_retry_backoff_stays_bounded() {
+        for attempt in 1..=2 {
+            let delay = persist_retry_backoff(attempt);
+            let min = WaitDuration::from_millis(25 * u64::from(attempt));
+            let max = WaitDuration::from_millis(25 * u64::from(attempt) + 50);
+            assert!(delay >= min, "{delay:?} below {min:?}");
+            assert!(delay <= max, "{delay:?} above {max:?}");
+        }
+        let samples: std::collections::BTreeSet<_> =
+            (0..32).map(|_| persist_retry_backoff(1)).collect();
+        assert!(samples.len() > 1, "retry backoff should vary across calls");
+    }
+
+    #[tokio::test]
+    async fn retries_retryable_persist_errors_then_succeeds() {
+        let attempts = AtomicU32::new(0);
+        let value = retry_persist(|| async {
+            let attempt = attempts.fetch_add(1, Ordering::SeqCst);
+            if attempt < 2 { Err(retryable_storage_error("40P01")) } else { Ok(7u8) }
+        })
+        .await
+        .unwrap();
+        assert_eq!(value, 7);
+        assert_eq!(attempts.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn stops_retrying_after_persist_attempt_budget() {
+        let attempts = AtomicU32::new(0);
+        let err = retry_persist(|| async {
+            attempts.fetch_add(1, Ordering::SeqCst);
+            Err::<(), _>(retryable_storage_error("40P01"))
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(persist_retry_reason(&err), Some(PersistRetryReason::Deadlock));
+        assert_eq!(attempts.load(Ordering::SeqCst), TRANSACTION_EVENT_DB_MAX_ATTEMPTS);
+    }
+
+    #[tokio::test]
+    async fn does_not_retry_pool_timeout_in_persist_loop() {
+        let attempts = AtomicU32::new(0);
+        let err = retry_persist(|| async {
+            attempts.fetch_add(1, Ordering::SeqCst);
+            Err::<(), _>(TransactionEventStorageError::new(sqlx::Error::PoolTimedOut.into()))
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(persist_retry_reason(&err), None);
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn ingest_succeeds_when_sink_fails_then_recovers() {
+        let state = state(Arc::new(RetryingSink { inner: FlakySink::fail_times(2) }));
+        let (status, Json(response)) =
+            ingest_transaction_event_batch(&state, ndjson(vec![event("event-1")])).await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(response.status, TransactionEventBatchStatus::Accepted);
+        assert_eq!(response.accepted, 1);
+    }
+
+    #[tokio::test]
+    async fn ingest_returns_503_when_sink_exhausts_retry_budget() {
+        let state = state(Arc::new(RetryingSink {
+            inner: FlakySink::fail_times(TRANSACTION_EVENT_DB_MAX_ATTEMPTS),
+        }));
+        let (status, Json(response)) =
+            ingest_transaction_event_batch(&state, ndjson(vec![event("event-1")])).await;
+
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(response.status, TransactionEventBatchStatus::Rejected);
+        assert_eq!(
+            response.results[0].reason.as_deref(),
+            Some("database unavailable; retry batch")
         );
     }
 

@@ -394,6 +394,95 @@ async fn postgres_retention_skips_when_another_replica_holds_lock() -> anyhow::R
 }
 
 #[tokio::test]
+async fn postgres_retention_skips_locked_expired_rows() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
+    let pool = PgPoolOptions::new().max_connections(2).connect(&harness.database_url).await?;
+    let event_prefix = unique_event_id();
+
+    let events =
+        [event(&format!("{event_prefix}-locked")), event(&format!("{event_prefix}-unlocked"))];
+    sink.insert_events(&events).await?;
+    sqlx::query(
+        "UPDATE transaction_events SET ingested_at = now() - interval '10 days' \
+         WHERE event_id IN ($1, $2)",
+    )
+    .bind(format!("{event_prefix}-locked"))
+    .bind(format!("{event_prefix}-unlocked"))
+    .execute(&pool)
+    .await?;
+
+    let mut held = pool.begin().await?;
+    sqlx::query("SELECT * FROM transaction_events WHERE event_id = $1 FOR UPDATE")
+        .bind(format!("{event_prefix}-locked"))
+        .execute(&mut *held)
+        .await?;
+
+    let outcome = sink
+        .expire_old_events(TransactionEventRetentionConfig {
+            hot_days: 7,
+            warm_days: 7,
+            cold_days: 7,
+            delete_batch_size: 10,
+            max_batches: 10,
+        })
+        .await?;
+    assert_eq!(outcome.hot_rows_deleted, 1);
+    assert_eq!(outcome.rows_deleted, 1);
+
+    let remaining: Vec<String> = sqlx::query_scalar(
+        "SELECT event_id FROM transaction_events WHERE event_id LIKE $1 ORDER BY event_id",
+    )
+    .bind(format!("{event_prefix}-%"))
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(remaining, vec![format!("{event_prefix}-locked")]);
+
+    held.rollback().await?;
+
+    let outcome = sink
+        .expire_old_events(TransactionEventRetentionConfig {
+            hot_days: 7,
+            warm_days: 7,
+            cold_days: 7,
+            delete_batch_size: 10,
+            max_batches: 10,
+        })
+        .await?;
+    assert_eq!(outcome.hot_rows_deleted, 1);
+    assert_eq!(outcome.rows_deleted, 1);
+
+    let remaining: Vec<String> = sqlx::query_scalar(
+        "SELECT event_id FROM transaction_events WHERE event_id LIKE $1 ORDER BY event_id",
+    )
+    .bind(format!("{event_prefix}-%"))
+    .fetch_all(&pool)
+    .await?;
+    assert!(remaining.is_empty());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn postgres_insert_does_not_leak_lock_timeout() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    let sink = PgTransactionEventSink::new(pool.clone());
+    let event_id = unique_event_id();
+    sink.insert_events(&[event(&event_id)]).await?;
+
+    let lock_timeout: String = sqlx::query_scalar("SHOW lock_timeout").fetch_one(&pool).await?;
+    assert_ne!(
+        lock_timeout, "1s",
+        "SET LOCAL lock_timeout leaked onto the pooled connection: {lock_timeout}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 #[ignore = "requires a running Postgres (set DATABASE_URL)"]
 async fn postgres_sink_persists_and_dedupes_by_event_id() {
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
