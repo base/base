@@ -225,10 +225,12 @@ skip = [
     "alloy-consensus",
     "alloy-consensus-any",
     "alloy-eips",
+    # alloy-node-bindings (anvil harness for base-challenger-e2e) pins an older
+    # alloy-hardforks than the rest of the workspace.
+    "alloy-hardforks",
     "alloy-json-rpc",
     "alloy-network",
     "alloy-network-primitives",
-    "alloy-node-bindings",
     "alloy-rpc-types-any",
     "alloy-rpc-types-eth",
     "alloy-serde",

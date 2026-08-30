@@ -65,11 +65,9 @@ impl ChallengerE2e {
 
         let factory = DisputeGameFactoryContractClient::new(
             config.dispute_game_factory_addr,
-            fork_url.clone(),
-        )
-        .context("failed to build a DisputeGameFactory client for the fork")?;
-        let verifier = AggregateVerifierContractClient::new(fork_url.clone())
-            .context("failed to build an AggregateVerifier client for the fork")?;
+            provider.clone(),
+        );
+        let verifier = AggregateVerifierContractClient::new(provider.clone());
 
         // Chosen before the challenger boots so the positive case below is
         // measured against a fork that already contains the target games.

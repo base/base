@@ -3484,10 +3484,10 @@ dependencies = [
 name = "base-challenger-e2e"
 version = "0.0.0"
 dependencies = [
- "alloy-node-bindings 2.2.0",
+ "alloy-node-bindings",
  "alloy-primitives",
- "alloy-provider 2.2.0",
- "alloy-signer-local 2.2.0",
+ "alloy-provider",
+ "alloy-signer-local 2.4.1",
  "base-proof-contracts",
  "base-proof-rpc",
  "base-proof-submission",
@@ -3510,7 +3510,7 @@ dependencies = [
  "base-challenger-e2e",
  "tokio",
  "tracing",
- "tracing-subscriber 0.3.23",
+ "tracing-subscriber",
 ]
 
 [[package]]
