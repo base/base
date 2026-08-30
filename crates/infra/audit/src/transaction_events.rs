@@ -1,10 +1,6 @@
 //! HTTP ingest path for transaction observability events.
 
-use std::{
-    collections::HashSet,
-    sync::Arc,
-    time::Instant,
-};
+use std::{collections::HashSet, sync::Arc, time::Instant};
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -621,13 +617,9 @@ impl PgTransactionEventSink {
                 let cutoff = Utc::now() - Duration::days(i64::from(config.class_days(class)));
                 let event_types = class.event_type_labels();
                 while batches < u64::from(config.max_batches) {
-                    let deleted = delete_expired_event_batch(
-                        lock.conn(),
-                        &event_types,
-                        cutoff,
-                        batch_size,
-                    )
-                    .await?;
+                    let deleted =
+                        delete_expired_event_batch(lock.conn(), &event_types, cutoff, batch_size)
+                            .await?;
                     batches += 1;
                     if deleted == 0 {
                         break;
@@ -1044,8 +1036,7 @@ async fn delete_expired_event_batch(
                     "retrying transaction event expire"
                 );
                 Metrics::transaction_events_persist_retries(reason).increment(1);
-                tokio::time::sleep(std::time::Duration::from_millis(25 * u64::from(attempt)))
-                    .await;
+                tokio::time::sleep(std::time::Duration::from_millis(25 * u64::from(attempt))).await;
                 attempt += 1;
             }
         }
