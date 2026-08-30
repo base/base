@@ -1,7 +1,7 @@
 //! Contains the [`FlashblocksExtension`] which wires up the flashblocks feature
 //! (canonical block subscription and RPC surface) on the Base node builder.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use base_flashblocks::{
     EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksConfig,
@@ -10,6 +10,7 @@ use base_flashblocks::{
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use reth_chain_state::CanonStateSubscriptions;
 use reth_provider::{BlockNumReader, BlockReader, TransactionVariant};
+use tokio::time::{MissedTickBehavior, interval};
 use tokio_stream::{
     StreamExt,
     wrappers::{BroadcastStream, errors::BroadcastStreamRecvError},
@@ -59,20 +60,35 @@ impl BaseNodeExtension for FlashblocksExtension {
             let mut canonical_stream =
                 BroadcastStream::new(provider.subscribe_to_canonical_state());
             tokio::spawn(async move {
-                while let Some(result) = canonical_stream.next().await {
-                    match result {
-                        Ok(notification) => {
-                            let committed = notification.committed();
-                            for block in committed.blocks_iter() {
-                                state_for_canonical
-                                    .on_canonical_block_received(block.as_ref().clone());
+                let mut needs_resync = false;
+                let mut resync_interval = interval(Duration::from_millis(100));
+                resync_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+                loop {
+                    tokio::select! {
+                        result = canonical_stream.next() => {
+                            let Some(result) = result else {
+                                warn!("canonical state subscription closed");
+                                break;
+                            };
+                            match result {
+                                Ok(notification) => {
+                                    needs_resync = false;
+                                    let committed = notification.committed();
+                                    for block in committed.blocks_iter() {
+                                        state_for_canonical
+                                            .on_canonical_block_received(block.as_ref().clone());
+                                    }
+                                }
+                                Err(BroadcastStreamRecvError::Lagged(skipped)) => {
+                                    needs_resync = true;
+                                    warn!(
+                                        skipped,
+                                        "canonical state subscription lagged; resynchronizing from provider"
+                                    );
+                                }
                             }
                         }
-                        Err(BroadcastStreamRecvError::Lagged(skipped)) => {
-                            warn!(
-                                skipped,
-                                "canonical state subscription lagged; resynchronizing from provider"
-                            );
+                        _ = resync_interval.tick(), if needs_resync => {
                             let latest = provider.best_block_number().ok().and_then(|number| {
                                 provider
                                     .recovered_block(number.into(), TransactionVariant::WithHash)
@@ -81,13 +97,11 @@ impl BaseNodeExtension for FlashblocksExtension {
                             });
                             if let Some(block) = latest {
                                 state_for_canonical.on_canonical_block_received(block);
-                            } else {
-                                warn!("canonical state subscription could not load provider tip");
+                                needs_resync = false;
                             }
                         }
                     }
                 }
-                warn!("canonical state subscription closed");
             });
 
             Ok(())

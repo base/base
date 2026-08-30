@@ -3,7 +3,7 @@
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex as StdMutex, MutexGuard as StdMutexGuard},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use alloy_consensus::{
@@ -27,11 +27,15 @@ use reth_primitives_traits::{RecoveredBlock, SealedHeader};
 use reth_provider::{BlockReaderIdExt, StateProviderBox, StateProviderFactory};
 use reth_revm::{State, database::StateProviderDatabase};
 use revm_database::states::bundle_state::BundleRetention;
-use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
+use tokio::{
+    sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver},
+    time::sleep,
+};
 
 use crate::{
     AssembledBlock, BlockAssembler, ExecutionError, FlashblockCache, PendingBlocks,
-    PendingBlocksBuilder, PendingStateBuilder, ProviderError, Result, StateProcessorError,
+    PendingBlocksBuilder, PendingStateBuilder, ProtocolError, ProviderError, Result,
+    StateProcessorError,
     metrics::Metrics,
     validation::{
         CanonicalBlockReconciler, FlashblockSequenceValidator, ReconciliationStrategy,
@@ -249,7 +253,7 @@ where
         *self.cache.lock().await = FlashblockCache::new(best_number);
     }
 
-    fn is_quarantined_flashblock(&self, update: &StateUpdate, best: &SealedHeader) -> bool {
+    fn is_quarantined_flashblock(&self, update: &StateUpdate) -> bool {
         let StateUpdate::Flashblock(flashblock) = update else {
             return false;
         };
@@ -259,7 +263,7 @@ where
             return false;
         }
 
-        if update.is_recovery_resume(best.number(), best.hash()) {
+        if flashblock.index == 0 {
             *quarantined = None;
             false
         } else {
@@ -272,12 +276,20 @@ where
         update: &StateUpdate,
         recovering: &mut bool,
     ) -> Option<(SealedHeader, bool)> {
-        let Some(best) = self.best_canonical_header() else {
-            Metrics::pending_stale_events_skipped().increment(1);
-            return None;
+        let mut provider_retries = 0;
+        let best = loop {
+            if let Some(best) = self.best_canonical_header() {
+                break best;
+            }
+            if provider_retries >= 20 {
+                Metrics::pending_stale_events_skipped().increment(1);
+                return None;
+            }
+            provider_retries += 1;
+            sleep(Duration::from_millis(25)).await;
         };
 
-        if self.is_quarantined_flashblock(update, &best) {
+        if self.is_quarantined_flashblock(update) {
             Metrics::pending_stale_events_skipped().increment(1);
             return None;
         }
@@ -286,6 +298,35 @@ where
         let pending_is_based_on_best = pending_blocks
             .as_ref()
             .is_some_and(|pending| pending.is_based_on_canonical(best.number(), best.hash()));
+        if let (StateUpdate::Flashblock(flashblock), Some(pending)) =
+            (update, pending_blocks.as_ref())
+        {
+            if flashblock.metadata.block_number == pending.latest_block_number()
+                && flashblock.payload_id != pending.latest_payload_id()
+            {
+                Metrics::pending_stale_events_skipped().increment(1);
+                return None;
+            }
+
+            if pending_is_based_on_best
+                && flashblock.index == 0
+                && flashblock.metadata.block_number
+                    == pending.latest_block_number().saturating_add(1)
+                && flashblock
+                    .base
+                    .as_ref()
+                    .is_none_or(|base| base.parent_hash != pending.latest_block_hash())
+            {
+                *self
+                    .quarantined_flashblock
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+                    Some((flashblock.metadata.block_number, flashblock.payload_id));
+                Metrics::pending_stale_events_skipped().increment(1);
+                return None;
+            }
+        }
+
         let preflight = update.preflight(
             Some((best.number(), best.hash())),
             pending_blocks.is_some(),
@@ -374,10 +415,17 @@ where
                                 .is_none_or(|canonical| block.number >= canonical);
                             if should_advance {
                                 cache.update_canonical(block.number);
-                                let cached = cache.drain(block.number + 1);
+                                let cached_block_number = block.number.saturating_add(1);
+                                let mut cached = cache.drain(cached_block_number, block.hash());
                                 // Recovery may replace the cache while replaying, so release this
                                 // lock before preflighting any cached payload.
                                 drop(cache);
+
+                                if self.pending_blocks.load_full().is_some_and(|pending| {
+                                    pending.latest_block_number() >= cached_block_number
+                                }) {
+                                    cached.clear();
+                                }
 
                                 if !cached.is_empty() {
                                     debug!(
@@ -464,7 +512,21 @@ where
         expected_best: &SealedHeader,
     ) -> (bool, bool) {
         let start_time = Instant::now();
-        match self.process_flashblock(prev_pending_blocks, &flashblock) {
+        let mut provider_retries = 0;
+        let result = loop {
+            let result = self.process_flashblock(prev_pending_blocks.clone(), &flashblock);
+            if !cache_on_missing_canonical_header
+                && matches!(result, Err(StateProcessorError::Provider(_)))
+                && provider_retries < 20
+            {
+                provider_retries += 1;
+                sleep(Duration::from_millis(25)).await;
+                continue;
+            }
+            break result;
+        };
+
+        match result {
             Ok(new_pending_blocks) => {
                 let applied = new_pending_blocks.is_some();
                 if let Some(ref pb) = new_pending_blocks {
@@ -499,6 +561,7 @@ where
                         if flashblock.index > 0
                             && cache.has_flashblock(
                                 flashblock.metadata.block_number,
+                                flashblock.payload_id,
                                 flashblock.index - 1,
                             )
                             && cache.insert(flashblock)
@@ -909,6 +972,14 @@ where
         let Some(base) = flashblock.base.clone() else {
             return Err(StateProcessorError::MissingFirstFlashblock);
         };
+        let expected_parent = prev_pending_blocks.latest_block_hash();
+        if base.parent_hash != expected_parent {
+            return Err(ProtocolError::ParentHashMismatch {
+                expected: expected_parent,
+                actual: base.parent_hash,
+            }
+            .into());
+        }
 
         let mut live_state = self.lock_live_state();
         let Some(LivePendingState { mut db, state_overrides }) = live_state.take() else {
@@ -1047,6 +1118,7 @@ where
             .header_by_number(canonical_block)
             .map_err(|e| ProviderError::StateProvider(e.to_string()))?
             .ok_or(ProviderError::MissingCanonicalHeader { block_number: canonical_block })?;
+        let mut last_block_hash = last_block_header.hash_slow();
 
         let evm_config = BaseEvmConfig::base(self.client.chain_spec());
         let state_provider = self
@@ -1069,8 +1141,17 @@ where
         for (_block_number, flashblocks) in flashblocks_per_block {
             // Use BlockAssembler to reconstruct the block from flashblocks
             let assembled = BlockAssembler::assemble(&flashblocks)?;
+            if assembled.base.parent_hash != last_block_hash {
+                return Err(ProtocolError::ParentHashMismatch {
+                    expected: last_block_hash,
+                    actual: assembled.base.parent_hash,
+                }
+                .into());
+            }
             let latest_flashblock_tx_count =
                 flashblocks.last().map(|latest| latest.diff.transactions.len()).unwrap_or_default();
+            let latest_block_hash =
+                flashblocks.last().map(|latest| latest.diff.block_hash).unwrap_or_default();
             let latest_block_base = assembled.base.clone();
 
             pending_blocks_builder.with_flashblocks(assembled.flashblocks.clone());
@@ -1181,6 +1262,7 @@ where
 
             (db, state_overrides) = pending_state_builder.into_db_and_state_overrides();
             last_block_header = block_header;
+            last_block_hash = latest_block_hash;
         }
 
         self.publish_pending_blocks(pending_blocks_builder, db, state_overrides)

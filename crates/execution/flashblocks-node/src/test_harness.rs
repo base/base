@@ -588,13 +588,22 @@ impl<'a> FlashblockBuilder<'a> {
         let current_block = self.harness.node.latest_block();
         let canonical_block_num =
             self.canonical_block_number.unwrap_or_else(|| current_block.number) + 1;
+        let pending = self.harness.flashblocks.get_pending_blocks();
+        let parent_hash = pending
+            .as_ref()
+            .filter(|pending| {
+                pending.is_based_on_canonical(current_block.number, current_block.hash())
+                    && pending.latest_block_number().saturating_add(1) == canonical_block_num
+            })
+            .map(|pending| pending.latest_block_hash())
+            .unwrap_or_else(|| current_block.hash());
 
         let base = if self.index == 0 {
             Some(ExecutionPayloadBaseV1 {
                 parent_beacon_block_root: current_block
                     .parent_beacon_block_root()
                     .unwrap_or_default(),
-                parent_hash: current_block.hash(),
+                parent_hash,
                 fee_recipient: Address::random(),
                 prev_randao: B256::random(),
                 block_number: canonical_block_num,
@@ -613,13 +622,13 @@ impl<'a> FlashblockBuilder<'a> {
         }
 
         Flashblock {
-            payload_id: PayloadId::default(),
+            payload_id: PayloadId::new(canonical_block_num.to_be_bytes()),
             index: self.index,
             base,
             diff: ExecutionPayloadFlashblockDeltaV1 {
                 state_root: B256::default(),
                 receipts_root: B256::default(),
-                block_hash: B256::default(),
+                block_hash: B256::random(),
                 gas_used: 0,
                 withdrawals: Vec::new(),
                 logs_bloom: Default::default(),

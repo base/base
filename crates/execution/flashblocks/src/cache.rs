@@ -2,7 +2,8 @@
 
 use std::collections::HashMap;
 
-use alloy_primitives::BlockNumber;
+use alloy_primitives::{B256, BlockNumber};
+use alloy_rpc_types_engine::PayloadId;
 use base_common_flashblocks::Flashblock;
 
 /// Maximum number of blocks ahead of the latest canonical block for which
@@ -15,10 +16,8 @@ const MAX_CACHE_AHEAD_BLOCKS: u64 = 5;
 /// corresponding entries and feeds them through normal execution.
 #[derive(Debug)]
 pub struct FlashblockCache {
-    /// Flashblocks keyed by block number, then by flashblock index. Using a
-    /// nested map deduplicates by index — a later flashblock with the same
-    /// index silently replaces the earlier one.
-    entries: HashMap<BlockNumber, HashMap<u64, Flashblock>>,
+    /// Flashblocks keyed by block number, payload ID, then flashblock index.
+    entries: HashMap<BlockNumber, HashMap<PayloadId, HashMap<u64, Flashblock>>>,
 
     /// The latest canonical block number we have observed, used to decide
     /// whether a flashblock is close enough to cache.
@@ -32,8 +31,17 @@ impl FlashblockCache {
     }
 
     /// Returns `true` when the flashblock is cached.
-    pub fn has_flashblock(&self, block_number: BlockNumber, index: u64) -> bool {
-        self.entries.get(&block_number).and_then(|by_index| by_index.get(&index)).is_some()
+    pub fn has_flashblock(
+        &self,
+        block_number: BlockNumber,
+        payload_id: PayloadId,
+        index: u64,
+    ) -> bool {
+        self.entries
+            .get(&block_number)
+            .and_then(|by_payload| by_payload.get(&payload_id))
+            .and_then(|by_index| by_index.get(&index))
+            .is_some()
     }
 
     /// Returns `true` when the flashblock's block number is within
@@ -57,14 +65,32 @@ impl FlashblockCache {
         }
         let min_block_number_to_retain = block_number.saturating_sub(MAX_CACHE_AHEAD_BLOCKS);
         self.entries.retain(|&bn, _| bn > min_block_number_to_retain);
-        self.entries.entry(block_number).or_default().insert(flashblock.index, flashblock);
+        self.entries
+            .entry(block_number)
+            .or_default()
+            .entry(flashblock.payload_id)
+            .or_default()
+            .insert(flashblock.index, flashblock);
         true
     }
 
-    /// Drains all cached flashblocks for the given block number, returning them
-    /// sorted by index. Returns an empty `Vec` when nothing is cached.
-    pub fn drain(&mut self, block_number: BlockNumber) -> Vec<Flashblock> {
-        let Some(by_index) = self.entries.remove(&block_number) else {
+    /// Drains the most complete cached payload whose base names `parent_hash`.
+    ///
+    /// Flashblocks from different payload IDs are never combined.
+    pub fn drain(&mut self, block_number: BlockNumber, parent_hash: B256) -> Vec<Flashblock> {
+        let Some(by_payload) = self.entries.remove(&block_number) else {
+            return Vec::new();
+        };
+        let Some(by_index) = by_payload
+            .into_values()
+            .filter(|by_index| {
+                by_index
+                    .get(&0)
+                    .and_then(|flashblock| flashblock.base.as_ref())
+                    .is_some_and(|base| base.parent_hash == parent_hash)
+            })
+            .max_by_key(HashMap::len)
+        else {
             return Vec::new();
         };
         let mut flashblocks: Vec<Flashblock> = by_index.into_values().collect();
@@ -97,14 +123,16 @@ impl FlashblockCache {
     /// Returns the total number of individual flashblocks cached across all
     /// block numbers.
     pub fn total_flashblocks(&self) -> usize {
-        self.entries.values().map(|by_index| by_index.len()).sum()
+        self.entries.values().flat_map(HashMap::values).map(HashMap::len).sum()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use alloy_rpc_types_engine::PayloadId;
-    use base_common_flashblocks::{ExecutionPayloadFlashblockDeltaV1, Metadata};
+    use base_common_flashblocks::{
+        ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Metadata,
+    };
 
     use super::*;
 
@@ -112,7 +140,11 @@ mod tests {
         Flashblock {
             payload_id: PayloadId::default(),
             index,
-            base: None,
+            base: (index == 0).then_some(ExecutionPayloadBaseV1 {
+                parent_hash: B256::ZERO,
+                block_number,
+                ..Default::default()
+            }),
             diff: ExecutionPayloadFlashblockDeltaV1::default(),
             metadata: Metadata::new(block_number),
         }
@@ -127,7 +159,7 @@ mod tests {
         assert_eq!(cache.len(), 1);
         assert_eq!(cache.total_flashblocks(), 2);
 
-        let drained = cache.drain(11);
+        let drained = cache.drain(11, B256::ZERO);
         assert_eq!(drained.len(), 2);
         // Should be sorted by index
         assert_eq!(drained[0].index, 0);
@@ -138,7 +170,7 @@ mod tests {
     #[test]
     fn drain_empty() {
         let mut cache = FlashblockCache::new(0);
-        let drained = cache.drain(42);
+        let drained = cache.drain(42, B256::ZERO);
         assert!(drained.is_empty());
     }
 
@@ -165,9 +197,9 @@ mod tests {
         // Advancing canonical to 12 should evict blocks 11 and 12
         cache.update_canonical(12);
         assert_eq!(cache.len(), 1);
-        assert!(cache.drain(11).is_empty());
-        assert!(cache.drain(12).is_empty());
-        assert_eq!(cache.drain(13).len(), 1);
+        assert!(cache.drain(11, B256::ZERO).is_empty());
+        assert!(cache.drain(12, B256::ZERO).is_empty());
+        assert_eq!(cache.drain(13, B256::ZERO).len(), 1);
     }
 
     #[test]
@@ -190,7 +222,7 @@ mod tests {
         assert!(cache.insert(fb_new.clone()));
         assert_eq!(cache.total_flashblocks(), 1);
 
-        let drained = cache.drain(11);
+        let drained = cache.drain(11, B256::ZERO);
         assert_eq!(drained.len(), 1);
         assert_eq!(drained[0].diff.state_root, fb_new.diff.state_root);
     }
@@ -205,10 +237,29 @@ mod tests {
         assert_eq!(cache.total_flashblocks(), 3);
         assert_eq!(cache.len(), 1);
 
-        let drained = cache.drain(11);
+        let drained = cache.drain(11, B256::ZERO);
         assert_eq!(drained.len(), 3);
         assert_eq!(drained[0].index, 0);
         assert_eq!(drained[1].index, 1);
         assert_eq!(drained[2].index, 2);
+    }
+
+    #[test]
+    fn payloads_are_not_mixed() {
+        let mut cache = FlashblockCache::new(10);
+        let mut first_base = make_flashblock(11, 0);
+        first_base.payload_id = PayloadId::new([1; 8]);
+        let mut first_delta = make_flashblock(11, 1);
+        first_delta.payload_id = PayloadId::new([1; 8]);
+        let mut second_delta = make_flashblock(11, 2);
+        second_delta.payload_id = PayloadId::new([2; 8]);
+
+        assert!(cache.insert(first_base));
+        assert!(cache.insert(first_delta));
+        assert!(cache.insert(second_delta));
+
+        let drained = cache.drain(11, B256::ZERO);
+        assert_eq!(drained.len(), 2);
+        assert!(drained.iter().all(|flashblock| flashblock.payload_id == PayloadId::new([1; 8])));
     }
 }

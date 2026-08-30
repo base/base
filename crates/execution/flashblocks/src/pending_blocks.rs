@@ -448,6 +448,22 @@ impl PendingBlocks {
         self.flashblocks.iter().next().map(|fb| fb.payload_id).unwrap_or_default()
     }
 
+    /// Returns the payload ID of the latest pending block.
+    #[inline]
+    pub fn latest_payload_id(&self) -> PayloadId {
+        self.flashblocks.iter().last().map(|flashblock| flashblock.payload_id).unwrap_or_default()
+    }
+
+    /// Returns the block hash reported by the latest flashblock.
+    #[inline]
+    pub fn latest_block_hash(&self) -> B256 {
+        self.flashblocks
+            .iter()
+            .last()
+            .map(|flashblock| flashblock.diff.block_hash)
+            .unwrap_or_default()
+    }
+
     /// Returns the index of the latest flashblock.
     #[inline]
     pub const fn latest_flashblock_index(&self) -> u64 {

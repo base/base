@@ -18,6 +18,15 @@ pub enum ProtocolError {
     /// Cannot build from an empty flashblocks collection.
     #[error("empty flashblocks: cannot build state from zero flashblocks")]
     EmptyFlashblocks,
+
+    /// A pending block does not extend the preceding pending or canonical block.
+    #[error("invalid pending parent hash: expected {expected}, got {actual}")]
+    ParentHashMismatch {
+        /// Expected parent block hash.
+        expected: B256,
+        /// Parent block hash declared by the flashblock base.
+        actual: B256,
+    },
 }
 
 /// Errors related to state provider and infrastructure operations.
@@ -185,6 +194,13 @@ mod tests {
     #[case::empty_flashblocks(
         ProtocolError::EmptyFlashblocks,
         "empty flashblocks: cannot build state from zero flashblocks"
+    )]
+    #[case::parent_hash_mismatch(
+        ProtocolError::ParentHashMismatch {
+            expected: B256::repeat_byte(0x11),
+            actual: B256::repeat_byte(0x22),
+        },
+        "invalid pending parent hash: expected 0x1111111111111111111111111111111111111111111111111111111111111111, got 0x2222222222222222222222222222222222222222222222222222222222222222"
     )]
     fn test_protocol_error_display(#[case] error: ProtocolError, #[case] expected: &str) {
         assert_eq!(error.to_string(), expected);

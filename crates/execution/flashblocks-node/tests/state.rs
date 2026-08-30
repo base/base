@@ -1037,6 +1037,44 @@ async fn test_wrong_parent_quarantine_is_scoped_to_payload() {
 }
 
 #[tokio::test]
+async fn test_wrong_internal_parent_does_not_extend_pending_sequence() {
+    let test = FlashblocksBuilderTestHarness::new().await;
+    test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
+
+    let mut wrong_base = FlashblockBuilder::new_base(&test).with_canonical_block_number(1).build();
+    wrong_base.base.as_mut().expect("base flashblock has a base payload").parent_hash =
+        B256::repeat_byte(0x42);
+    let wrong_delta = FlashblockBuilder::new(&test, 1).with_canonical_block_number(1).build();
+    test.flashblocks.on_flashblock_received(wrong_base);
+    test.flashblocks.on_flashblock_received(wrong_delta);
+    sleep(Duration::from_millis(100)).await;
+
+    assert_eq!(
+        test.flashblocks
+            .get_pending_blocks()
+            .as_ref()
+            .expect("existing pending state remains available")
+            .latest_block_number(),
+        1
+    );
+
+    test.flashblocks.on_flashblock_received(
+        FlashblockBuilder::new_base(&test).with_canonical_block_number(1).build(),
+    );
+    wait_until(
+        Duration::from_secs(5),
+        || {
+            test.flashblocks
+                .get_pending_blocks()
+                .as_ref()
+                .is_some_and(|pending| pending.latest_block_number() == 2)
+        },
+        "a corrected base must extend the pending sequence",
+    )
+    .await;
+}
+
+#[tokio::test]
 async fn test_current_base_immediately_recovers_stale_pending() {
     let mut test = FlashblocksBuilderTestHarness::new().await;
     test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
