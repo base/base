@@ -190,6 +190,7 @@ benches:
     @just bench-flashblocks-sender-recovery
     @just bench-proof-mpt
     @just bench-protocol
+    @just bench-protocol-decompress
     @just bench-consensus-derive
     @just bench-precompiles
     @just bench-node-runner
@@ -213,6 +214,10 @@ bench-proof-mpt:
 # Runs consensus protocol batch transaction benchmarks
 bench-protocol:
     cargo bench -p base-protocol --bench batch_transaction
+
+# Runs consensus protocol brotli channel decompression benchmarks
+bench-protocol-decompress:
+    cargo bench -p base-protocol --bench decompress
 
 # Runs consensus derive batch queue benchmarks
 bench-consensus-derive:

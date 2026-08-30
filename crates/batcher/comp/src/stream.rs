@@ -198,7 +198,7 @@ mod tests {
         let compressed = collect(CompressionAlgo::Brotli10, &CHUNKS);
 
         assert_eq!(compressed.first(), Some(&CompressionAlgo::BROTLI_CHANNEL_VERSION));
-        let decompressed = Brotli
+        let decompressed = Brotli::new()
             .decompress(&compressed[1..], RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize)
             .unwrap();
         assert_eq!(decompressed, expected);

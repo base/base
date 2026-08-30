@@ -190,7 +190,7 @@ mod tests {
         let compressed =
             BrotliCompressor::compress(&raw_batch_decompressed, BrotliLevel::Brotli11).unwrap();
 
-        let decompressed = Brotli
+        let decompressed = Brotli::new()
             .decompress(&compressed, RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize)
             .unwrap();
         assert_eq!(decompressed, raw_batch_decompressed);

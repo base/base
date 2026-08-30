@@ -43,3 +43,5 @@ run cargo bench -p base-common-flashblocks --bench flashblock_decode \
   -- --save-baseline "$baseline" --noplot
 run cargo bench -p base-protocol --bench frame_parse \
   -- --save-baseline "$baseline" --noplot
+run cargo bench -p base-protocol --bench decompress \
+  -- --save-baseline "$baseline" --noplot

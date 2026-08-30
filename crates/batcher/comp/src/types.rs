@@ -123,7 +123,7 @@ mod tests {
     fn brotli_channel_roundtrips() {
         let input = b"batch channel data";
         let channel = CompressionAlgo::Brotli10.compress_channel(input).unwrap();
-        let decompressed = Brotli
+        let decompressed = Brotli::new()
             .decompress(&channel[1..], RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize)
             .unwrap();
         assert_eq!(decompressed, input);

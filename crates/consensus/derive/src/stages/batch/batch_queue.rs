@@ -513,7 +513,9 @@ mod tests {
     use base_common_genesis::{
         BaseUpgradeConfig, ChainGenesis, RollupConfig, SystemConfig, UpgradeConfig,
     };
-    use base_protocol::{BatchReader, BatchValidationProvider, SpanBatch, SpanBatchElement};
+    use base_protocol::{
+        BatchReader, BatchValidationProvider, Brotli, SpanBatch, SpanBatchElement,
+    };
     use tracing::Level;
 
     use super::*;
@@ -554,13 +556,17 @@ mod tests {
         }
     }
 
-    fn new_batch_reader() -> BatchReader {
+    /// The fixture is a zlib channel, so the paired decompressor never allocates scratch.
+    fn new_batch_reader() -> (BatchReader, Brotli) {
         let file_contents =
             alloc::string::String::from_utf8_lossy(include_bytes!("../../../testdata/batch.hex"));
         let file_contents = &(&*file_contents)[..file_contents.len() - 1];
         let data = alloy_primitives::hex::decode(file_contents).unwrap();
         let bytes: alloy_primitives::Bytes = data.into();
-        BatchReader::new(bytes, RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize, true)
+        (
+            BatchReader::new(bytes, RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize, true),
+            Brotli::new(),
+        )
     }
 
     #[test]
@@ -818,10 +824,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_derive_next_batch_invalid_parent() {
-        let mut reader = new_batch_reader();
+        let (mut reader, mut brotli) = new_batch_reader();
         let cfg = Arc::new(RollupConfig::default());
         let mut batch_vec: Vec<PipelineResult<Batch>> = vec![];
-        while let Some(batch) = reader.next_batch(cfg.as_ref()) {
+        while let Some(batch) = reader.next_batch(cfg.as_ref(), &mut brotli) {
             batch_vec.push(Ok(batch));
         }
         let mut mock = TestNextBatchProvider::new(batch_vec);
@@ -857,10 +863,10 @@ mod tests {
     #[tokio::test]
     async fn test_derive_next_batch_no_batches() {
         // Setup
-        let mut reader = new_batch_reader();
+        let (mut reader, mut brotli) = new_batch_reader();
         let cfg = Arc::new(RollupConfig::default());
         let mut batch_vec: Vec<PipelineResult<Batch>> = vec![];
-        while let Some(batch) = reader.next_batch(cfg.as_ref()) {
+        while let Some(batch) = reader.next_batch(cfg.as_ref(), &mut brotli) {
             batch_vec.push(Ok(batch));
         }
         let mut mock = TestNextBatchProvider::new(batch_vec);
@@ -881,10 +887,10 @@ mod tests {
     #[tokio::test]
     async fn test_derive_next_batch_dont_force_empty_batches() {
         // Setup
-        let mut reader = new_batch_reader();
+        let (mut reader, mut brotli) = new_batch_reader();
         let cfg = Arc::new(RollupConfig::default());
         let mut batch_vec: Vec<PipelineResult<Batch>> = vec![];
-        while let Some(batch) = reader.next_batch(cfg.as_ref()) {
+        while let Some(batch) = reader.next_batch(cfg.as_ref(), &mut brotli) {
             batch_vec.push(Ok(batch));
         }
         let mut mock = TestNextBatchProvider::new(batch_vec);
@@ -905,10 +911,10 @@ mod tests {
     #[tokio::test]
     async fn test_derive_next_batch_advances_l1_blocks() {
         // Setup
-        let mut reader = new_batch_reader();
+        let (mut reader, mut brotli) = new_batch_reader();
         let cfg = Arc::new(RollupConfig::default());
         let mut batch_vec: Vec<PipelineResult<Batch>> = vec![];
-        while let Some(batch) = reader.next_batch(cfg.as_ref()) {
+        while let Some(batch) = reader.next_batch(cfg.as_ref(), &mut brotli) {
             batch_vec.push(Ok(batch));
         }
         let mut mock = TestNextBatchProvider::new(batch_vec);
@@ -1077,10 +1083,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_next_batch_cached_single_batch() {
-        let mut reader = new_batch_reader();
+        let (mut reader, mut brotli) = new_batch_reader();
         let cfg = Arc::new(RollupConfig::default());
         let mut batch_vec: Vec<PipelineResult<Batch>> = vec![];
-        while let Some(batch) = reader.next_batch(cfg.as_ref()) {
+        while let Some(batch) = reader.next_batch(cfg.as_ref(), &mut brotli) {
             batch_vec.push(Ok(batch));
         }
         let mut mock = TestNextBatchProvider::new(batch_vec);
@@ -1096,10 +1102,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_next_batch_clear_next_spans() {
-        let mut reader = new_batch_reader();
+        let (mut reader, mut brotli) = new_batch_reader();
         let cfg = Arc::new(RollupConfig { block_time: 100, ..Default::default() });
         let mut batch_vec: Vec<PipelineResult<Batch>> = vec![];
-        while let Some(batch) = reader.next_batch(cfg.as_ref()) {
+        while let Some(batch) = reader.next_batch(cfg.as_ref(), &mut brotli) {
             batch_vec.push(Ok(batch));
         }
         let mut mock = TestNextBatchProvider::new(batch_vec);
@@ -1115,9 +1121,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_next_batch_not_enough_data() {
-        let mut reader = new_batch_reader();
+        let (mut reader, mut brotli) = new_batch_reader();
         let cfg = Arc::new(RollupConfig::default());
-        let batch = reader.next_batch(cfg.as_ref()).unwrap();
+        let batch = reader.next_batch(cfg.as_ref(), &mut brotli).unwrap();
         let mock = TestNextBatchProvider::new(vec![Ok(batch)]);
         let fetcher = TestL2ChainProvider::default();
         let mut bq = BatchQueue::new(cfg, mock, fetcher);
@@ -1128,10 +1134,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_next_batch_origin_behind() {
-        let mut reader = new_batch_reader();
+        let (mut reader, mut brotli) = new_batch_reader();
         let cfg = Arc::new(RollupConfig::default());
         let mut batch_vec: Vec<PipelineResult<Batch>> = vec![];
-        while let Some(batch) = reader.next_batch(cfg.as_ref()) {
+        while let Some(batch) = reader.next_batch(cfg.as_ref(), &mut brotli) {
             batch_vec.push(Ok(batch));
         }
         let mut mock = TestNextBatchProvider::new(batch_vec);

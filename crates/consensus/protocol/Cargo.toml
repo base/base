@@ -72,11 +72,19 @@ name = "frame_parse"
 harness = false
 
 [[bench]]
+name = "decompress"
+harness = false
+
+[[bench]]
 name = "batch_transaction_iai"
 harness = false
 
 [[bench]]
 name = "frame_parse_iai"
+harness = false
+
+[[bench]]
+name = "decompress_iai"
 harness = false
 
 [features]

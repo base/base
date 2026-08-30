@@ -7,7 +7,7 @@ use alloy_eips::BlockNumHash;
 use alloy_primitives::Bytes;
 use async_trait::async_trait;
 use base_common_genesis::{RollupConfig, SystemConfig};
-use base_protocol::{Batch, BatchReader, BlockInfo};
+use base_protocol::{Batch, BatchReader, BlockInfo, Brotli};
 use tracing::{debug, warn};
 
 use crate::{
@@ -45,6 +45,12 @@ where
     pub next_batch: Option<BatchReader>,
     /// The rollup configuration.
     pub cfg: Arc<RollupConfig>,
+    /// Brotli scratch memory, reused across channels.
+    ///
+    /// A [`BatchReader`] lives for a single channel, so it is the wrong owner for the
+    /// ~52 `MiB` of scratch the brotli decoder allocates from. Holding it on the stage
+    /// instead keeps the allocation off the per-channel path.
+    pub brotli: Brotli,
 }
 
 impl<P> ChannelReader<P>
@@ -53,7 +59,7 @@ where
 {
     /// Create a new [`ChannelReader`] stage.
     pub const fn new(prev: P, cfg: Arc<RollupConfig>) -> Self {
-        Self { prev, next_batch: None, cfg }
+        Self { prev, next_batch: None, cfg, brotli: Brotli::new() }
     }
 
     /// Creates the batch reader from available channel data.
@@ -125,7 +131,7 @@ where
         let next_batch = self.next_batch.as_mut().expect("Batch reader must be set");
         let decompress_result =
             base_metrics::time!(Metrics::pipeline_batch_decompress_duration_seconds(), {
-                next_batch.decompress()
+                next_batch.decompress(&mut self.brotli)
             });
         match decompress_result {
             Ok(()) => {
@@ -149,7 +155,7 @@ where
         // Read the next batch from the reader's decompressed data
         let batch_result =
             base_metrics::time!(Metrics::pipeline_batch_decode_duration_seconds(), {
-                next_batch.next_batch(self.cfg.as_ref())
+                next_batch.next_batch(self.cfg.as_ref(), &mut self.brotli)
             });
         match batch_result.ok_or(PipelineError::NotEnoughData.temp()) {
             Ok(batch) => {
