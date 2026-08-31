@@ -620,6 +620,9 @@ impl<'a> FlashblockBuilder<'a> {
         if self.auto_deposit {
             transactions.insert(0, build_unique_deposit_tx(canonical_block_num));
         }
+        let mut block_hash = [0; 32];
+        block_hash[16..24].copy_from_slice(&canonical_block_num.to_be_bytes());
+        block_hash[24..].copy_from_slice(&self.index.to_be_bytes());
 
         Flashblock {
             payload_id: PayloadId::new(canonical_block_num.to_be_bytes()),
@@ -628,7 +631,7 @@ impl<'a> FlashblockBuilder<'a> {
             diff: ExecutionPayloadFlashblockDeltaV1 {
                 state_root: B256::default(),
                 receipts_root: B256::default(),
-                block_hash: B256::random(),
+                block_hash: B256::from(block_hash),
                 gas_used: 0,
                 withdrawals: Vec::new(),
                 logs_bloom: Default::default(),
