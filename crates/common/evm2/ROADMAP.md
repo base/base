@@ -113,15 +113,23 @@ Type 3 (EIP-4844 blob) is intentionally unregistered — Base rejects blob txs.
 
 Landed and tested in this spike (revm-free non-test build preserved throughout):
 
-- **Phase 1** — block gas-limit pre-check; executor fork-schedule input (`BaseForkActivations`)
-  and irregular-state flush (`IrregularStateChange`).
-- **Phase 2** — Canyon create2-deployer, Denim `BaseTime`, and Cobalt EIP-8130 system-account
-  transition hooks.
-- **Phase 3** — Jovian DA-footprint metering + `blob_gas_used`; Azul EIP-7825 per-tx gas cap
-  (already enforced by the evm2 handlers, pinned by tests).
+- **Phase 1 (complete)** — block gas-limit pre-check; executor fork-schedule input
+  (`BaseForkActivations`) and irregular-state flush (`IrregularStateChange`).
+- **Phase 2 (complete)** — Canyon create2-deployer, Denim `BaseTime`, and Cobalt EIP-8130
+  system-account transition hooks.
+- **Phase 3 (complete)** — Jovian DA-footprint metering + `blob_gas_used`; Azul EIP-7825 per-tx
+  gas cap (already enforced by the evm2 handlers, pinned by tests).
+- **Phase 4 (complete)** — block-level differential parity harness (cumulative gas + per-tx
+  success vs revm across Ecotone/Fjord/Isthmus); `blob_gas_used` and state-gas accounting; OP
+  post-block balance increments are a no-op (no block reward, no in-body withdrawals).
 - **Phase 5 (partial)** — `BaseEvmTypes::precompiles()` with Fjord `P256VERIFY`.
 
-Remaining, in rough size order: post-block balance increments + full block-level differential
-parity test (Phase 4), the Base bn254/BLS precompile variants and Beryl/Cobalt dynamic precompiles
-(Phase 5), **EIP-8130** (Phase 6, XL — its own track), and **node wiring** (Phase 7, blocked on the
-upstream EVM2 bridge).
+Remaining, in rough size order, with the reason each is out of scope for this spike:
+
+- **Phase 5** — Base bn254/BLS precompile variants and Beryl/Cobalt dynamic precompiles. evm2's
+  `PrecompileFn` is evm2-specific and `base-common-precompiles` is revm-typed, so these need an
+  evm2-native reimplementation (with their own differential validation), not a plug-in.
+- **Phase 6 — EIP-8130 (XL).** ~3,400 lines in the revm reference, deeply coupled to revm's `Evm`;
+  its own multi-PR track.
+- **Phase 7 — node wiring.** Blocked on the upstream `alloy-evm`/`reth` EVM2 bridge, which does not
+  exist yet.
