@@ -80,6 +80,13 @@ Type 3 (EIP-4844 blob) is intentionally unregistered — Base rejects blob txs.
 
 ### Phase 6 — EIP-8130 enshrined account abstraction (type `0x79`)
 
+> **Scope note.** The reference EIP-8130 engine (`base-common-evm`'s `eip8130.rs`, ~3,400 lines,
+> plus the revm-based `base-execution-eip8130` crate) is deeply coupled to revm's `Evm` internals.
+> Porting it onto evm2 without pulling revm into this crate is a large, self-contained track and is
+> **not** started in this spike; the items below are the decomposition. Only the receipt arm
+> (`0x79 → BaseReceiptEnvelope::Eip8130`) and the block-gas payer-auth reservation shape exist so
+> far.
+
 | Item | Status | Notes |
 | --- | --- | --- |
 | Envelope variant + registry handler | ⬜ | receipt arm already exists |
@@ -91,7 +98,29 @@ Type 3 (EIP-4844 blob) is intentionally unregistered — Base rejects blob txs.
 
 ### Phase 7 — Node integration
 
+> **Scope note.** Wiring the crate into the node depends on the upstream `alloy-evm`/`reth` EVM2
+> bridge, which does not exist yet (the scaffold, #4693, deliberately keeps this crate un-wired
+> "before the upstream alloy-evm and reth EVM2 bridge lands"). This phase is **blocked on
+> upstream** and cannot land here until that bridge is available.
+
 | Item | Status | Notes |
 | --- | --- | --- |
-| alloy-evm / reth EVM2 bridge | ⬜ | wire the crate into the node |
-| End-to-end block import parity | ⬜ | |
+| alloy-evm / reth EVM2 bridge | ⬜ | blocked on upstream bridge |
+| End-to-end block import parity | ⬜ | blocked on the above |
+
+## Spike status summary
+
+Landed and tested in this spike (revm-free non-test build preserved throughout):
+
+- **Phase 1** — block gas-limit pre-check; executor fork-schedule input (`BaseForkActivations`)
+  and irregular-state flush (`IrregularStateChange`).
+- **Phase 2** — Canyon create2-deployer, Denim `BaseTime`, and Cobalt EIP-8130 system-account
+  transition hooks.
+- **Phase 3** — Jovian DA-footprint metering + `blob_gas_used`; Azul EIP-7825 per-tx gas cap
+  (already enforced by the evm2 handlers, pinned by tests).
+- **Phase 5 (partial)** — `BaseEvmTypes::precompiles()` with Fjord `P256VERIFY`.
+
+Remaining, in rough size order: post-block balance increments + full block-level differential
+parity test (Phase 4), the Base bn254/BLS precompile variants and Beryl/Cobalt dynamic precompiles
+(Phase 5), **EIP-8130** (Phase 6, XL — its own track), and **node wiring** (Phase 7, blocked on the
+upstream EVM2 bridge).
