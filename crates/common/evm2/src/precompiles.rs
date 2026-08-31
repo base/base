@@ -52,35 +52,59 @@ macro_rules! capped_precompile {
 
 capped_precompile!(
     /// bn254 pairing with the Granite input cap.
-    run_bn254_pair_granite, BN254_PAIR_GRANITE_MAX, Bn254PairLength, bn254::pair::run_istanbul
+    run_bn254_pair_granite,
+    BN254_PAIR_GRANITE_MAX,
+    Bn254PairLength,
+    bn254::pair::run_istanbul
 );
 capped_precompile!(
     /// bn254 pairing with the Jovian input cap.
-    run_bn254_pair_jovian, BN254_PAIR_JOVIAN_MAX, Bn254PairLength, bn254::pair::run_istanbul
+    run_bn254_pair_jovian,
+    BN254_PAIR_JOVIAN_MAX,
+    Bn254PairLength,
+    bn254::pair::run_istanbul
 );
 capped_precompile!(
     /// BLS12-381 G1 MSM with the Isthmus input cap.
-    run_bls_g1_msm_isthmus, BLS_G1_MSM_ISTHMUS_MAX, Bls12381G1MsmInputLength, bls12_381::g1_msm::run
+    run_bls_g1_msm_isthmus,
+    BLS_G1_MSM_ISTHMUS_MAX,
+    Bls12381G1MsmInputLength,
+    bls12_381::g1_msm::run
 );
 capped_precompile!(
     /// BLS12-381 G1 MSM with the Jovian input cap.
-    run_bls_g1_msm_jovian, BLS_G1_MSM_JOVIAN_MAX, Bls12381G1MsmInputLength, bls12_381::g1_msm::run
+    run_bls_g1_msm_jovian,
+    BLS_G1_MSM_JOVIAN_MAX,
+    Bls12381G1MsmInputLength,
+    bls12_381::g1_msm::run
 );
 capped_precompile!(
     /// BLS12-381 G2 MSM with the Isthmus input cap.
-    run_bls_g2_msm_isthmus, BLS_G2_MSM_ISTHMUS_MAX, Bls12381G2MsmInputLength, bls12_381::g2_msm::run
+    run_bls_g2_msm_isthmus,
+    BLS_G2_MSM_ISTHMUS_MAX,
+    Bls12381G2MsmInputLength,
+    bls12_381::g2_msm::run
 );
 capped_precompile!(
     /// BLS12-381 G2 MSM with the Jovian input cap.
-    run_bls_g2_msm_jovian, BLS_G2_MSM_JOVIAN_MAX, Bls12381G2MsmInputLength, bls12_381::g2_msm::run
+    run_bls_g2_msm_jovian,
+    BLS_G2_MSM_JOVIAN_MAX,
+    Bls12381G2MsmInputLength,
+    bls12_381::g2_msm::run
 );
 capped_precompile!(
     /// BLS12-381 pairing with the Isthmus input cap.
-    run_bls_pairing_isthmus, BLS_PAIRING_ISTHMUS_MAX, Bls12381PairingInputLength, bls12_381::pairing::run
+    run_bls_pairing_isthmus,
+    BLS_PAIRING_ISTHMUS_MAX,
+    Bls12381PairingInputLength,
+    bls12_381::pairing::run
 );
 capped_precompile!(
     /// BLS12-381 pairing with the Jovian input cap.
-    run_bls_pairing_jovian, BLS_PAIRING_JOVIAN_MAX, Bls12381PairingInputLength, bls12_381::pairing::run
+    run_bls_pairing_jovian,
+    BLS_PAIRING_JOVIAN_MAX,
+    Bls12381PairingInputLength,
+    bls12_381::pairing::run
 );
 
 impl BaseEvmTypes {
