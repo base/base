@@ -5,7 +5,7 @@ use std::{env, path::PathBuf, sync::Arc, time::Duration};
 use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
-use base_metering::{MeteredOpcodes, MeteringConfig, MeteringExtension, MeteringResourceLimits};
+use base_metering::{MeteredOpcodes, MeteringConfig, MeteringExtension};
 use base_node_core::{HasRollupArgs, RollupArgs};
 use base_node_runner::{BaseNodeBuilder, BaseNodeRunner, LaunchedBaseNode, PayloadServiceBuilder};
 use base_observability_events::{
@@ -34,18 +34,20 @@ use crate::upgrade_signal::{
     ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalRuntimeExtension,
 };
 
-/// CLI arguments for metering RPC and priority-fee resource budgets.
+/// CLI arguments for metering RPC.
 #[derive(Debug, Clone, PartialEq, Eq, Default, clap::Args)]
 pub struct MeteringArgs {
     /// Enable metering RPC for transaction bundle simulation
     #[arg(long = "enable-metering", value_name = "ENABLE_METERING")]
     pub enable_metering: bool,
 
-    /// Whole-block gas budget for priority fee estimation.
-    #[arg(
-        long = "metering.gas-limit",
-        requires_all = ["enable_metering", "metering_target_flashblocks_per_block"]
-    )]
+    /// Comma-separated list of EVM opcodes to track for gas metering
+    /// (e.g., "SSTORE,SLOAD,KECCAK256"). Precompile gas is always tracked.
+    #[arg(long = "metering.metered-opcodes", requires = "enable_metering", value_delimiter = ',')]
+    pub metering_metered_opcodes: Vec<String>,
+
+    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
+    #[arg(long = "metering.gas-limit", requires = "enable_metering", hide = true)]
     pub metering_gas_limit: Option<u64>,
 
     /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
@@ -53,31 +55,16 @@ pub struct MeteringArgs {
     pub metering_execution_time_us: Option<u64>,
 
     /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
-    #[arg(
-        long = "metering.state-root-time-us",
-        requires_all = ["enable_metering", "metering_target_flashblocks_per_block"],
-        hide = true
-    )]
+    #[arg(long = "metering.state-root-time-us", requires = "enable_metering", hide = true)]
     pub metering_state_root_time_us: Option<u64>,
 
-    /// Whole-block data availability byte budget for priority fee estimation.
-    #[arg(
-        long = "metering.da-bytes",
-        requires_all = ["enable_metering", "metering_target_flashblocks_per_block"]
-    )]
+    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
+    #[arg(long = "metering.da-bytes", requires = "enable_metering", hide = true)]
     pub metering_da_bytes: Option<u64>,
 
-    /// Target number of tx-pool flashblocks the builder budgets per block.
-    ///
-    /// This excludes the base flashblock at index `0` and is required when gas or DA
-    /// estimation is enabled.
-    #[arg(long = "metering.target-flashblocks-per-block", requires = "enable_metering")]
+    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
+    #[arg(long = "metering.target-flashblocks-per-block", requires = "enable_metering", hide = true)]
     pub metering_target_flashblocks_per_block: Option<usize>,
-
-    /// Comma-separated list of EVM opcodes to track for gas metering
-    /// (e.g., "SSTORE,SLOAD,KECCAK256"). Precompile gas is always tracked.
-    #[arg(long = "metering.metered-opcodes", requires = "enable_metering", value_delimiter = ',')]
-    pub metering_metered_opcodes: Vec<String>,
 }
 
 /// Default maximum number of open shadow indexer database connections.
@@ -609,14 +596,13 @@ impl StandardBaseRethNode {
 
         if args.metering.metering_execution_time_us.is_some()
             || args.metering.metering_state_root_time_us.is_some()
+            || args.metering.metering_gas_limit.is_some()
+            || args.metering.metering_da_bytes.is_some()
+            || args.metering.metering_target_flashblocks_per_block.is_some()
         {
             warn!("deprecated metering resource limit flags are ignored");
         }
 
-        let resource_limits = MeteringResourceLimits {
-            gas_limit: args.metering.metering_gas_limit,
-            da_bytes: args.metering.metering_da_bytes,
-        };
         let metering_config = if args.metering.enable_metering {
             let metered_opcodes = if args.metering.metering_metered_opcodes.is_empty() {
                 MeteredOpcodes::default()
@@ -625,17 +611,10 @@ impl StandardBaseRethNode {
             }
             .with_all_precompiles();
 
-            let mut config = flashblocks_config
+            flashblocks_config
                 .clone()
                 .map_or_else(MeteringConfig::enabled, MeteringConfig::with_flashblocks)
-                .with_resource_limits(resource_limits)
-                .with_metered_opcodes(metered_opcodes);
-            if let Some(target_flashblocks_per_block) =
-                args.metering.metering_target_flashblocks_per_block
-            {
-                config = config.with_target_flashblocks_per_block(target_flashblocks_per_block);
-            }
-            config
+                .with_metered_opcodes(metered_opcodes)
         } else {
             MeteringConfig::disabled()
         };
@@ -1007,15 +986,16 @@ mod tests {
         let args = CommandParser::<StandardNodeArgs>::parse_from([
             "reth",
             "--enable-metering",
-            "--metering.target-flashblocks-per-block",
-            "4",
-            "--metering.gas-limit",
-            "30000000",
+            "--metering.metered-opcodes",
+            "SSTORE,SLOAD",
         ])
         .args;
 
         assert!(args.metering.enable_metering);
-        assert_eq!(args.metering.metering_gas_limit, Some(30_000_000));
+        assert_eq!(
+            args.metering.metering_metered_opcodes,
+            vec!["SSTORE".to_string(), "SLOAD".to_string()]
+        );
     }
 
     #[test]
@@ -1227,6 +1207,10 @@ mod tests {
             "5000000",
             "--metering.state-root-time-us",
             "1000000",
+            "--metering.gas-limit",
+            "30000000",
+            "--metering.da-bytes",
+            "1572860",
             "--metering.target-flashblocks-per-block",
             "4",
         ])
@@ -1234,5 +1218,8 @@ mod tests {
 
         assert_eq!(args.metering.metering_execution_time_us, Some(5_000_000));
         assert_eq!(args.metering.metering_state_root_time_us, Some(1_000_000));
+        assert_eq!(args.metering.metering_gas_limit, Some(30_000_000));
+        assert_eq!(args.metering.metering_da_bytes, Some(1_572_860));
+        assert_eq!(args.metering.metering_target_flashblocks_per_block, Some(4));
     }
 }
